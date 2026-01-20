@@ -1,0 +1,26 @@
+name: Spectrum-X Multi-Rail SWPLB
+plugin: network-operator
+profileRequirements:
+  fabric: ethernet
+  deployment: sriov
+  spectrumX:
+    spcxVersion: "RA2.1"
+    multiplaneMode: ["swplb"]
+  multirail: true
+nodeCapabilities:
+    sriov: true
+    rdma: true
+description: |
+  Spectrum-X profile for software plane load balancing (swplb) multiplane mode.
+  Generates separate resources per-rail per-plane for OVS hardware offload,
+  DOCA acceleration, and advanced NIC firmware configuration for AI workloads.
+deploymentGuide: spectrum-x.rst
+templates:
+  - 10-nicclusterpolicy.yaml
+  - 30-nicconfigurationtemplate.yaml
+  - 35-nicinterfacenametemplate.yaml
+  - 40-sriovnetworkpoolconfig.yaml
+  - 50-sriovnetworknodepolicy.yaml
+  - 70-ovsnetwork.yaml
+  - 80-spectrumxrailpoolconfig.yaml
+  - 90-pod.yaml

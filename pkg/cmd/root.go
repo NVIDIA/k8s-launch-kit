@@ -39,6 +39,9 @@ var (
 	multirail             bool
 	spectrumX             bool
 	ai                    bool
+	spcxVersion           string
+	multiplaneMode        string
+	numberOfPlanes        int
 	prompt                string
 	llmApiKey             string
 	llmApiUrl             string
@@ -90,6 +93,9 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 			Multirail:             multirail,
 			SpectrumX:             spectrumX,
 			Ai:                    ai,
+			SPCXVersion:           spcxVersion,
+			MultiplaneMode:        multiplaneMode,
+			NumberOfPlanes:        numberOfPlanes,
 			Prompt:                prompt,
 			SaveDeploymentFiles:   saveDeploymentFiles,
 			Deploy:                deploy,
@@ -103,9 +109,15 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 			LLMInteractive:        llmInteractive,
 		}
 
+		// Apply Spectrum-X implied defaults (fabric, deployment, multirail)
+		if err := applySpectrumXDefaults(&options); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(1)
+		}
+
 		// Validate CLI configuration
 		if err := validateConfig(options); err != nil {
-			logger.Error(err, "Invalid command line arguments")
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			os.Exit(1)
 		}
 
@@ -147,6 +159,9 @@ func init() {
 	rootCmd.Flags().BoolVar(&multirail, "multirail", false, "Enable multirail deployment")
 	rootCmd.Flags().BoolVar(&spectrumX, "spectrum-x", false, "Enable Spectrum X deployment")
 	rootCmd.Flags().BoolVar(&ai, "ai", false, "Enable AI deployment")
+	rootCmd.Flags().StringVar(&spcxVersion, "spcx-version", "", "Spectrum-X firmware version (requires --spectrum-x)")
+	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
+	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
 	rootCmd.Flags().StringVar(&prompt, "prompt", "", "Path to file with a prompt to use for LLM-assisted profile generation")
 	rootCmd.Flags().StringVar(&llmApiKey, "llm-api-key", "", "API key for the LLM API (required when using --prompt)")
 	rootCmd.Flags().StringVar(&llmApiUrl, "llm-api-url", "", "API URL for the LLM API")
@@ -191,6 +206,17 @@ func validateConfig(options options.Options) error {
 		return fmt.Errorf("--deploy requires --kubeconfig to be specified")
 	}
 
+	// Spectrum-X specific parameter validation
+	if options.SPCXVersion != "" && !options.SpectrumX {
+		return fmt.Errorf("--spcx-version can only be used with --spectrum-x")
+	}
+	if options.MultiplaneMode != "" && !options.SpectrumX {
+		return fmt.Errorf("--multiplane-mode can only be used with --spectrum-x")
+	}
+	if options.NumberOfPlanes != 0 && !options.SpectrumX {
+		return fmt.Errorf("--number-of-planes can only be used with --spectrum-x")
+	}
+
 	// Network Operator plugin rules
 	if slices.Contains(options.EnabledPlugins, networkoperatorplugin.PluginName) {
 		// If profile is selected, either save-deployment-files or deploy options should be provided
@@ -199,8 +225,8 @@ func validateConfig(options options.Options) error {
 		}
 
 		// Save-deployment-files or deploy can't work without profile
-		if options.Fabric == "" && options.DeploymentType == "" && options.Prompt == "" && !options.LLMInteractive && options.Deploy {
-			return fmt.Errorf("--deploy requires --deployment-type, --prompt, or --llm-interactive to be specified")
+		if options.Fabric == "" && options.DeploymentType == "" && options.Prompt == "" && !options.LLMInteractive && options.UserConfig == "" && options.Deploy {
+			return fmt.Errorf("--deploy requires --deployment-type, --prompt, --llm-interactive, or --user-config with a profile to be specified")
 		}
 
 		if (options.Prompt != "" || options.LLMInteractive) && (options.Fabric != "" || options.DeploymentType != "") {
@@ -235,6 +261,24 @@ func validateConfig(options options.Options) error {
 		}
 	}
 
+	return nil
+}
+
+// applySpectrumXDefaults sets implied defaults when --spectrum-x is used.
+// Spectrum-X always requires ethernet fabric, sriov deployment, and multirail.
+func applySpectrumXDefaults(opts *options.Options) error {
+	if !opts.SpectrumX {
+		return nil
+	}
+	if opts.Fabric != "" && opts.Fabric != "ethernet" {
+		return fmt.Errorf("--spectrum-x requires ethernet fabric, got --fabric %s", opts.Fabric)
+	}
+	if opts.DeploymentType != "" && opts.DeploymentType != "sriov" {
+		return fmt.Errorf("--spectrum-x requires sriov deployment, got --deployment-type %s", opts.DeploymentType)
+	}
+	opts.Fabric = "ethernet"
+	opts.DeploymentType = "sriov"
+	opts.Multirail = true
 	return nil
 }
 

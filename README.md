@@ -77,13 +77,19 @@ Flags:
   -h, --help                           help for l8k
       --kubeconfig string              Path to kubeconfig file for cluster deployment (required when using --deploy)
       --llm-api-key string             API key for the LLM API (required when using --prompt)
-      --llm-api-url string             API URL for the LLM API (required when using --prompt)
-      --llm-vendor string              Vendor of the LLM API (required when using --prompt) (default "openai-azure")
-      --log-level string               Log level (debug, info, warn, error) (default "info")
+      --llm-api-url string             API URL for the LLM API
+      --llm-interactive                Enable interactive chat mode for LLM-assisted profile selection
+      --llm-model string               Model name for the LLM API (e.g., claude-3-5-sonnet-20241022, gpt-4)
+      --llm-vendor string              Vendor of the LLM API: openai, openai-azure, anthropic, gemini (default "openai-azure")
+      --log-file string                Write logs to file instead of stderr
+      --log-level string               Enable logging at specified level (debug, info, warn, error)
+      --multiplane-mode string         Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)
       --multirail                      Enable multirail deployment
+      --number-of-planes int           Number of planes for Spectrum-X (requires --spectrum-x)
       --prompt string                  Path to file with a prompt to use for LLM-assisted profile generation
       --save-cluster-config string     Save discovered cluster configuration to the specified path (default "/opt/nvidia/k8s-launch-kit/cluster-config.yaml")
       --save-deployment-files string   Save generated deployment files to the specified directory (default "/opt/nvidia/k8s-launch-kit/deployment")
+      --spcx-version string            Spectrum-X firmware version (requires --spectrum-x)
       --spectrum-x                     Enable Spectrum X deployment
       --user-config string             Use provided cluster configuration file instead of auto-discovery (skips cluster discovery)
 
@@ -146,10 +152,16 @@ Example of the configuration file discovered from the cluster:
 
 ```yaml
 networkOperator:
-  version: v25.7.0
-  componentVersion: network-operator-v25.7.0
+  version: v26.1.0
+  componentVersion: network-operator-v26.1.0
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
+
+docaDriver:
+  version: doca3.3.0-26.01-0.9.6.0-0
+  unloadStorageModules: false
+  enableNFSRDMA: false
+
 nvIpam:
   poolName: nv-ipam-pool
   subnets:
@@ -171,45 +183,78 @@ nvIpam:
     gateway: 192.168.9.1
   - subnet: 192.168.10.0/24
     gateway: 192.168.10.1
+
 sriov:
-  mtu: 9000
+  ethernetMtu: 9000
+  infinibandMtu: 4000
   numVfs: 8
   priority: 90
   resourceName: sriov_resource
   networkName: sriov_network
+
 hostdev:
   resourceName: hostdev-resource
   networkName: hostdev-network
+
 rdmaShared:
-  resourceName: rdma_shared_resource
+  resourceName: rdma_shared_resource # with multiple pools, _a, _b, _c, prefixes are added to the resource name
   hcaMax: 63
+
 ipoib:
-  networkName: ipoib-network
+  networkName: ipoib-network # with multiple networks, -a, -b, -c, prefixes are added to the network name
+
 macvlan:
-  networkName: macvlan-network
+  networkName: macvlan-network # with multiple networks, -a, -b, -c, prefixes are added to the network name
+
+spectrumX:
+  nicType: "1023" # "1023" for ConnectX-8, "a2dc" for BlueField-3 SuperNIC
+  overlay: "none"
+  rdmaPrefix: "roce_p%plane%_r%rail%"
+  netdevPrefix: "eth_p%plane%_r%rail%"
+
+profile:
+  fabric: ethernet # infiniband, ethernet TODO consider ETH/IB
+  deployment: sriov # rdma_shared, sriov, host_device
+  multirail: false
+  spectrumX: # Spectrum-X configuration (set to null or omit if not using Spectrum-X)
+    spcxVersion: "RA2.1" # CLI parameter (overrides this value): --spcx-version
+    multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
+    numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
+  ai: false
+
 clusterConfig:
   capabilities:
     nodes:
-      sriov: true
-      rdma: true
-      ib: true
+      sriov: true # has nodes with feature.node.kubernetes.io/pci-15b3.present=true
+      rdma: true # has nodes with feature.node.kubernetes.io/rdma.capable=true
+      ib: true # has nodes with IB capable NICs (find via nic config op)      
+  workerNodes: ["worker-0", "worker-1", "worker-2"]
   pfs:
-  - rdmaDevice: mlx5_0
-    pciAddress: "0000:03:00.0"
-    networkInterface: enp3s0f0np0
-    traffic: east-west
-  - rdmaDevice: mlx5_1
-    pciAddress: "0000:03:00.1"
-    networkInterface: enp3s0f1np1
-    traffic: east-west
-  - rdmaDevice: mlx5_2
-    pciAddress: 0000:81:00.0
-    networkInterface: enp129s0np0
-    traffic: east-west
-  workerNodes:
-  - worker-node-1
-  - worker-node-2
-  - worker-node-3
+    - deviceID: 1023
+      pciAddress: 0000:05:00.0
+      rdmaDevice: "mlx5_0"
+      networkInterface: "net1"
+      traffic: east-west
+    - deviceID: 1023
+      pciAddress: 0000:75:00.0
+      rdmaDevice: "mlx5_1"
+      networkInterface: "net2"
+      traffic: east-west
+    - deviceID: 1023
+      pciAddress: 0000:85:00.0
+      rdmaDevice: "mlx5_2"
+      networkInterface: "net3"
+      traffic: east-west
+    - deviceID: 1023
+      pciAddress: 0000:f5:00.0
+      rdmaDevice: "mlx5_3"
+      networkInterface: "net4"
+      traffic: east-west
+    - deviceID: 1023
+      pciAddress: 0000:6a:00.0
+      rdmaDevice: "mlx5_4"
+      networkInterface: "net5"
+      traffic: north-south
   nodeSelector:
     feature.node.kubernetes.io/pci-15b3.present: "true"
 ```
@@ -219,7 +264,7 @@ clusterConfig:
 You can run the l8k tool as a docker container:
 
 ```bash
-docker run -v ~/launch-kubernetes/user-prompt:/user-prompt -v ~/remote-cluster/:/remote-cluster -v /tmp:/output --net=host harbor.mellanox.com/k8s-launch-kit:poc --discover-cluster-config --kubeconfig /remote-cluster/kubeconf.yaml --save-cluster-config /output/config.yaml --log-level debug  --save-deployment-files /output --fabric infiniband --deployment-type rdma_shared --multirail
+docker run -v ~/launch-kubernetes/user-prompt:/user-prompt -v ~/remote-cluster/:/remote-cluster -v /tmp:/output --net=host nvcr.io/nvidia/cloud-native/k8s-launch-kit:v26.1.0 --discover-cluster-config --kubeconfig /remote-cluster/kubeconf.yaml --save-cluster-config /output/config.yaml --log-level debug  --save-deployment-files /output --fabric infiniband --deployment-type rdma_shared --multirail
 ```
 
 Don't forget to enable `--net=host` and mount the necessary directories for input and output files with `-v`.

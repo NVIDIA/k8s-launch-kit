@@ -18,6 +18,7 @@ package networkoperatorplugin
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
@@ -50,10 +51,59 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 	profile.Fabric = options.Fabric
 	profile.Deployment = options.DeploymentType
 	profile.Multirail = options.Multirail
-	profile.SpectrumX = options.SpectrumX
 	profile.Ai = options.Ai
+	
+	// Build SpectrumX nested struct if enabled
+	if options.SpectrumX {
+		profile.SpectrumX = &config.ProfileSpectrumX{
+			SPCXVersion:    options.SPCXVersion,
+			MultiplaneMode: options.MultiplaneMode,
+			NumberOfPlanes: options.NumberOfPlanes,
+		}
+	}
 
 	log.Log.V(1).Info("Built profile for plugin", "plugin", p.GetName(), "profile", profile)
+	return nil
+}
+
+// ApplyOptionsToConfig applies CLI options to the configuration, overriding file values.
+// CLI flags take precedence over config file values for any explicitly set option.
+func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fullConfig *config.LaunchKubernetesConfig) error {
+	if fullConfig.Profile == nil {
+		return nil
+	}
+
+	// Apply base profile overrides from CLI (non-empty strings and true bools override config)
+	if options.Fabric != "" {
+		fullConfig.Profile.Fabric = options.Fabric
+	}
+	if options.DeploymentType != "" {
+		fullConfig.Profile.Deployment = options.DeploymentType
+	}
+	if options.Multirail {
+		fullConfig.Profile.Multirail = true
+	}
+	if options.Ai {
+		fullConfig.Profile.Ai = true
+	}
+
+	// Apply Spectrum-X CLI options
+	if options.SpectrumX {
+		if fullConfig.Profile.SpectrumX == nil {
+			fullConfig.Profile.SpectrumX = &config.ProfileSpectrumX{}
+		}
+		if options.SPCXVersion != "" {
+			fullConfig.Profile.SpectrumX.SPCXVersion = options.SPCXVersion
+		}
+		if options.MultiplaneMode != "" {
+			fullConfig.Profile.SpectrumX.MultiplaneMode = options.MultiplaneMode
+		}
+		if options.NumberOfPlanes != 0 {
+			fullConfig.Profile.SpectrumX.NumberOfPlanes = options.NumberOfPlanes
+		}
+	}
+
+	log.Log.V(1).Info("Applied options to config", "plugin", p.GetName())
 	return nil
 }
 
@@ -61,8 +111,47 @@ func (p *NetworkOperatorPlugin) BuildProfileFromLLMResponse(llmResponse map[stri
 	profile.Fabric = llmResponse["fabric"]
 	profile.Deployment = llmResponse["deploymentType"]
 	profile.Multirail = llmResponse["multirail"] == "true"
-	profile.SpectrumX = llmResponse["spectrumX"] == "true"
 	profile.Ai = llmResponse["ai"] == "true"
+
+	// Build SpectrumX nested struct if enabled
+	if llmResponse["spectrumX"] == "true" {
+		// Enforce Spectrum-X implied settings
+		if profile.Fabric == "" {
+			profile.Fabric = "ethernet"
+		}
+		if profile.Deployment == "" {
+			profile.Deployment = "sriov"
+		}
+		profile.Multirail = true
+
+		spcxVersion := llmResponse["spectrumXVersion"]
+		if spcxVersion == "" {
+			spcxVersion = "RA2.1"
+		}
+
+		multiplaneMode := llmResponse["spectrumXMultiplaneMode"]
+		if multiplaneMode == "" {
+			multiplaneMode = "swplb"
+		}
+
+		numberOfPlanes := 4 // default for swplb/hwplb
+		if np, ok := llmResponse["spectrumXNumberOfPlanes"]; ok && np != "" {
+			if parsed, err := strconv.Atoi(np); err == nil && (parsed == 1 || parsed == 2 || parsed == 4) {
+				numberOfPlanes = parsed
+			}
+		}
+
+		// Enforce: "none" and "uniplane" modes always use 1 plane
+		if multiplaneMode == "none" || multiplaneMode == "uniplane" {
+			numberOfPlanes = 1
+		}
+
+		profile.SpectrumX = &config.ProfileSpectrumX{
+			SPCXVersion:    spcxVersion,
+			MultiplaneMode: multiplaneMode,
+			NumberOfPlanes: numberOfPlanes,
+		}
+	}
 
 	log.Log.V(1).Info("Built profile for plugin", "plugin", p.GetName(), "profile", profile)
 	return nil

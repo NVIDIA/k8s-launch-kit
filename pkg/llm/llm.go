@@ -133,10 +133,17 @@ func SelectPromptWithModel(promptPath string, config config.ClusterConfig, llmAp
 	// Strip markdown code blocks if present
 	response = trimMarkdownJSON(response)
 
-	jsonResponse := make(map[string]string)
-	err = json.Unmarshal([]byte(response), &jsonResponse)
+	// First unmarshal to interface{} to handle mixed types (bool, string, number, etc.)
+	var rawResponse map[string]interface{}
+	err = json.Unmarshal([]byte(response), &rawResponse)
 	if err != nil {
 		return nil, err
+	}
+
+	// Convert all values to strings
+	jsonResponse := make(map[string]string)
+	for k, v := range rawResponse {
+		jsonResponse[k] = fmt.Sprintf("%v", v)
 	}
 
 	return jsonResponse, nil

@@ -113,6 +113,11 @@ func (l *Launcher) executeWorkflow() error {
 		configPath = l.options.UserConfig
 	}
 
+	fullConfig, err := config.LoadFullConfig(configPath, l.logger)
+	if err != nil {
+		return fmt.Errorf("failed to load full config: %w", err)
+	}
+
 	profilesConfiguredInCmd := true
 	for _, plugin := range l.plugins {
 		if !plugin.ProfileConfiguredInCmd(l.options) {
@@ -121,15 +126,11 @@ func (l *Launcher) executeWorkflow() error {
 		}
 	}
 
-	if !profilesConfiguredInCmd && l.options.Prompt == "" && !l.options.LLMInteractive {
+	profileInConfig := fullConfig.Profile != nil
+	if !profilesConfiguredInCmd && !profileInConfig && l.options.Prompt == "" && !l.options.LLMInteractive {
 		l.ui.Info("Profiles not configured, skipping deployment file generation")
 		l.logger.Info("Profiles are not configured for every plugin, skipping deployment files generation")
 		return nil
-	}
-
-	fullConfig, err := config.LoadFullConfig(configPath, l.logger)
-	if err != nil {
-		return fmt.Errorf("failed to load full config: %w", err)
 	}
 
 	if fullConfig.Profile == nil {
@@ -161,6 +162,12 @@ func (l *Launcher) executeWorkflow() error {
 			l.ui.Info("  Fabric: %s", fullConfig.Profile.Fabric)
 			l.ui.Info("  Deployment: %s", fullConfig.Profile.Deployment)
 			l.ui.Info("  Multirail: %v", fullConfig.Profile.Multirail)
+			if fullConfig.Profile.SpectrumX != nil {
+				l.ui.Info("  Spectrum-X: enabled")
+				l.ui.Info("    Multiplane Mode: %s", fullConfig.Profile.SpectrumX.MultiplaneMode)
+				l.ui.Info("    Number of Planes: %d", fullConfig.Profile.SpectrumX.NumberOfPlanes)
+				l.ui.Info("    SPCX Version: %s", fullConfig.Profile.SpectrumX.SPCXVersion)
+			}
 			l.logger.Info("Selected options",
 				"fabric", fullConfig.Profile.Fabric,
 				"deployment", fullConfig.Profile.Deployment,
@@ -199,6 +206,12 @@ func (l *Launcher) executeWorkflow() error {
 			l.ui.Info("  Fabric: %s", fullConfig.Profile.Fabric)
 			l.ui.Info("  Deployment: %s", fullConfig.Profile.Deployment)
 			l.ui.Info("  Multirail: %v", fullConfig.Profile.Multirail)
+			if fullConfig.Profile.SpectrumX != nil {
+				l.ui.Info("  Spectrum-X: enabled")
+				l.ui.Info("    Multiplane Mode: %s", fullConfig.Profile.SpectrumX.MultiplaneMode)
+				l.ui.Info("    Number of Planes: %d", fullConfig.Profile.SpectrumX.NumberOfPlanes)
+				l.ui.Info("    SPCX Version: %s", fullConfig.Profile.SpectrumX.SPCXVersion)
+			}
 			l.logger.Info("Selected options",
 				"fabric", fullConfig.Profile.Fabric,
 				"deployment", fullConfig.Profile.Deployment,
@@ -208,6 +221,17 @@ func (l *Launcher) executeWorkflow() error {
 				"reasoning", prompt["reasoning"])
 		} else {
 			return fmt.Errorf("no profile configured in the command line and no prompt provided")
+		}
+	}
+
+	// Apply CLI options to override config values
+	for _, plugin := range l.plugins {
+		if applier, ok := plugin.(interface {
+			ApplyOptionsToConfig(options.Options, *config.LaunchKubernetesConfig) error
+		}); ok {
+			if err := applier.ApplyOptionsToConfig(l.options, fullConfig); err != nil {
+				return fmt.Errorf("failed to apply options to config for plugin %s: %w", plugin.GetName(), err)
+			}
 		}
 	}
 
@@ -412,7 +436,8 @@ func (l *Launcher) runInteractiveSession(clusterConfig *config.ClusterConfig) (m
 	fmt.Println("Ask questions about network configuration or describe your requirements.")
 	fmt.Println("Type 'generate' to generate manifests based on the recommended profile.")
 	fmt.Println("Type 'exit' or 'quit' to cancel.")
-	fmt.Println("================================\n")
+	fmt.Println("================================")
+	fmt.Println()
 
 	for {
 		fmt.Print("You: ")

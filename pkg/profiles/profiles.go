@@ -28,11 +28,16 @@ import (
 )
 
 type ProfileRequirements struct {
-	Fabric     string `yaml:"fabric"`
-	Deployment string `yaml:"deployment"`
-	Multirail  *bool  `yaml:"multirail"`
-	SpectrumX  *bool  `yaml:"spectrumX"`
-	Ai         *bool  `yaml:"ai"`
+	Fabric     string                          `yaml:"fabric"`
+	Deployment string                          `yaml:"deployment"`
+	Multirail  *bool                           `yaml:"multirail"`
+	SpectrumX  *ProfileRequirementsSpectrumX   `yaml:"spectrumX,omitempty"`
+	Ai         *bool                           `yaml:"ai"`
+}
+
+type ProfileRequirementsSpectrumX struct {
+	SPCXVersion    string   `yaml:"spcxVersion"`              // Required version, e.g., "RA2.1"
+	MultiplaneMode []string `yaml:"multiplaneMode,omitempty"` // Allowed multiplane modes, e.g., ["hwplb", "uniplane", "none"]
 }
 
 type NodeCapabilities struct {
@@ -116,11 +121,32 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 	}
 
 	if p.ProfileRequirements.SpectrumX != nil {
-		if !(*p.ProfileRequirements.SpectrumX) && !requirements.SpectrumX {
-			return false, fmt.Sprintf("profile is not applicable to Spectrum-X clusters: %t", *p.ProfileRequirements.SpectrumX)
+		// Profile requires Spectrum-X
+		if requirements.SpectrumX == nil {
+			return false, "profile requires Spectrum-X but it is not enabled"
 		}
-		if *p.ProfileRequirements.SpectrumX && requirements.SpectrumX {
-			return false, fmt.Sprintf("profile can obly be deployed on Spectrum-X clusters: %t", *p.ProfileRequirements.SpectrumX)
+		
+		// Validate SPCX version if specified in profile requirements
+		if p.ProfileRequirements.SpectrumX.SPCXVersion != "" {
+			if requirements.SpectrumX.SPCXVersion != p.ProfileRequirements.SpectrumX.SPCXVersion {
+				return false, fmt.Sprintf("profile requires SPCX version %s but got %s",
+					p.ProfileRequirements.SpectrumX.SPCXVersion, requirements.SpectrumX.SPCXVersion)
+			}
+		}
+
+		// Validate multiplane mode if specified in profile requirements
+		if len(p.ProfileRequirements.SpectrumX.MultiplaneMode) > 0 {
+			modeMatch := false
+			for _, mode := range p.ProfileRequirements.SpectrumX.MultiplaneMode {
+				if mode == requirements.SpectrumX.MultiplaneMode {
+					modeMatch = true
+					break
+				}
+			}
+			if !modeMatch {
+				return false, fmt.Sprintf("multiplane mode %s not in profile's allowed modes %v",
+					requirements.SpectrumX.MultiplaneMode, p.ProfileRequirements.SpectrumX.MultiplaneMode)
+			}
 		}
 	}
 

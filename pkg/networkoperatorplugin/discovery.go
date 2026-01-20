@@ -197,6 +197,7 @@ func buildClusterConfigFromNicDevices(devices []nicop.NicDevice, cluster *config
 			}
 
 			pfs[config.PFConfig{
+				DeviceID:         d.Status.Type, // NIC model name, e.g. "ConnectX7"
 				RdmaDevice:       p.RdmaInterface,
 				PciAddress:       p.PCI,
 				NetworkInterface: p.NetworkInterface,
