@@ -39,7 +39,7 @@ RUN make build
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM nvcr.io/nvidia/distroless/go:v3.1.13
+FROM nvcr.io/nvidia/distroless/go:v4.0.1
 
 
 COPY . /src
