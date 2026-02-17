@@ -1,0 +1,38 @@
+{{- /* SWPLB: Create separate SriovNetworkNodePolicy per rail per plane */ -}}
+{{- range $i, $pf := .ClusterConfig.PFs}}
+{{- if eq $pf.Traffic "east-west"}}
+{{- range $planeIdx := untilStep 0 $.Profile.SpectrumX.NumberOfPlanes 1}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: rail-{{$i}}-plane-{{$planeIdx}}
+  namespace: {{$.NetworkOperator.Namespace}}
+spec:
+  bridge:
+    groupingPolicy: perPF
+    ovs:
+      bridge:
+        datapathType: netdev
+        failMode: secure
+      uplink:
+        interface:
+          type: dpdk
+          mtuRequest: 9216
+  eSwitchMode: switchdev
+  mtu: 9216
+  {{- if $.ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := $.ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+  nicSelector:
+    pfNames: ["{{replaceVars $.SpectrumX.NetdevPrefix $i $planeIdx $i}}"]
+  numVfs: 1
+  isRdma: true
+  linkType: ETH
+  resourceName: rail_{{$i}}_plane_{{$planeIdx}}
+---
+{{- end }}
+{{- end }}
+{{- end }}

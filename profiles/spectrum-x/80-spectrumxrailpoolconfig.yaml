@@ -1,0 +1,15 @@
+{{- /* Create separate SpectrumXRailPoolConfig per rail */ -}}
+{{- range $i, $pf := .ClusterConfig.PFs}}
+{{- if eq $pf.Traffic "east-west"}}
+apiVersion: spectrumx.net.nvidia.com/v1alpha1
+kind: SpectrumXRailPoolConfig
+metadata:
+  name: rail-{{$i}}
+  namespace: {{$.NetworkOperator.Namespace}}
+spec:
+  multiplaneMode: {{$.Profile.SpectrumX.MultiplaneMode}}  # swplb, hwplb, uniplane
+  sriovNetworkNodePolicyRef: rail-{{$i}}
+  cidrPoolRef: rail-{{$i}}
+{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
+{{- end -}}
+{{- end -}}

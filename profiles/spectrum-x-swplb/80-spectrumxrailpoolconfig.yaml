@@ -1,0 +1,17 @@
+{{- /* SWPLB: Create separate SpectrumXRailPoolConfig per rail per plane */ -}}
+{{- range $i, $pf := .ClusterConfig.PFs}}
+{{- if eq $pf.Traffic "east-west"}}
+{{- range $planeIdx := untilStep 0 $.Profile.SpectrumX.NumberOfPlanes 1}}
+apiVersion: spectrumx.net.nvidia.com/v1alpha1
+kind: SpectrumXRailPoolConfig
+metadata:
+  name: rail-{{$i}}-plane-{{$planeIdx}}
+  namespace: {{$.NetworkOperator.Namespace}}
+spec:
+  multiplaneMode: {{$.Profile.SpectrumX.MultiplaneMode}}
+  sriovNetworkNodePolicyRef: rail-{{$i}}-plane-{{$planeIdx}}
+  cidrPoolRef: rail-{{$i}}-plane-{{$planeIdx}}
+---
+{{- end }}
+{{- end }}
+{{- end }}

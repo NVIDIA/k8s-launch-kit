@@ -52,7 +52,6 @@ profile:
   fabric: ethernet
   deployment: sriov
   multirail: false
-  spectrumX: false
   ai: false
 `
 		err := os.WriteFile(configPath, []byte(configContent), 0644)
@@ -83,7 +82,7 @@ profile:
 		assert.Equal(t, "ethernet", config.Profile.Fabric)
 		assert.Equal(t, "sriov", config.Profile.Deployment)
 		assert.False(t, config.Profile.Multirail)
-		assert.False(t, config.Profile.SpectrumX)
+		assert.Nil(t, config.Profile.SpectrumX)
 		assert.False(t, config.Profile.Ai)
 	})
 
@@ -289,3 +288,409 @@ func TestSriovConfig(t *testing.T) {
 		assert.Equal(t, 4000, infinibandConfig.InfinibandMtu)
 	})
 }
+
+func TestSpectrumXConfig(t *testing.T) {
+	t.Run("load config with Spectrum-X parameters", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configPath := filepath.Join(tempDir, "spectrum-x-config.yaml")
+
+		configContent := `networkOperator:
+  version: v26.1.0
+  componentVersion: network-operator-v26.1.0
+  repository: nvcr.io/nvidia/mellanox
+  namespace: nvidia-network-operator
+
+sriov:
+  ethernetMtu: 9216
+  infinibandMtu: 4000
+  numVfs: 8
+  priority: 90
+  resourceName: rail-1
+  networkName: rail-1
+
+spectrumX:
+  nicType: "1023"
+  overlay: "none"
+  rdmaPrefix: "roce_nic%nic_id%_p%plane%_r%rail%"
+  netdevPrefix: "nic%nic_id%_p%plane%_r%rail%"
+
+profile:
+  fabric: ethernet
+  deployment: sriov
+  multirail: true
+  spectrumX:
+    spcxVersion: "RA2.1"
+    multiplaneMode: hwplb
+    numberOfPlanes: 4
+  ai: true
+`
+		err := os.WriteFile(configPath, []byte(configContent), 0644)
+		require.NoError(t, err)
+
+		logger := logr.Discard()
+		config, err := LoadFullConfig(configPath, logger)
+		require.NoError(t, err)
+		require.NotNil(t, config)
+
+		// Verify Spectrum-X config
+		require.NotNil(t, config.SpectrumX)
+		assert.Equal(t, "1023", config.SpectrumX.NicType)
+		assert.Equal(t, "none", config.SpectrumX.Overlay)
+		assert.Equal(t, "roce_nic%nic_id%_p%plane%_r%rail%", config.SpectrumX.RdmaPrefix)
+		assert.Equal(t, "nic%nic_id%_p%plane%_r%rail%", config.SpectrumX.NetdevPrefix)
+
+		// Verify profile flags
+		require.NotNil(t, config.Profile)
+		require.NotNil(t, config.Profile.SpectrumX)
+		assert.Equal(t, "RA2.1", config.Profile.SpectrumX.SPCXVersion)
+		assert.Equal(t, "hwplb", config.Profile.SpectrumX.MultiplaneMode)
+		assert.Equal(t, 4, config.Profile.SpectrumX.NumberOfPlanes)
+		assert.True(t, config.Profile.Multirail)
+		assert.True(t, config.Profile.Ai)
+	})
+
+	t.Run("verify Spectrum-X struct fields", func(t *testing.T) {
+		config := &SpectrumXConfig{
+			NicType:      "1023",
+			Overlay:      "none",
+			RdmaPrefix:   "roce_",
+			NetdevPrefix: "eth_p%plane%_r%rail%",
+		}
+
+		assert.Equal(t, "1023", config.NicType)
+		assert.Equal(t, "none", config.Overlay)
+		assert.Equal(t, "roce_", config.RdmaPrefix)
+		assert.Equal(t, "eth_p%plane%_r%rail%", config.NetdevPrefix)
+	})
+
+	t.Run("verify different multiplane modes", func(t *testing.T) {
+		modes := []string{"swplb", "hwplb", "uniplane"}
+
+		for _, mode := range modes {
+			profileSpectrumX := &ProfileSpectrumX{
+				MultiplaneMode: mode,
+			}
+			assert.Contains(t, modes, profileSpectrumX.MultiplaneMode,
+				"Multiplane mode should be one of the supported values")
+		}
+	})
+
+	t.Run("verify NIC types", func(t *testing.T) {
+		connectX8 := &SpectrumXConfig{
+			NicType: "1023",
+		}
+		blueField3 := &SpectrumXConfig{
+			NicType: "a2dc",
+		}
+
+		assert.Equal(t, "1023", connectX8.NicType, "ConnectX-8 NIC type")
+		assert.Equal(t, "a2dc", blueField3.NicType, "BlueField-3 SuperNIC type")
+	})
+}
+
+func TestValidateSpectrumXTemplates(t *testing.T) {
+	t.Run("valid multiplane and multirail templates", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 4,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic%nic_id%_p%plane%_r%rail%",
+				RdmaPrefix:   "roce_nic%nic_id%_p%plane%_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.NoError(t, err)
+	})
+
+	t.Run("multiplane without plane placeholder in netdevPrefix", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 4, // Multiplane
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic%nic_id%_r%rail%", // Missing %plane%
+				RdmaPrefix:   "roce_p%plane%_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "netdevPrefix must contain %plane% placeholder")
+	})
+
+	t.Run("multiplane without plane placeholder in rdmaPrefix", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "hwplb",
+					NumberOfPlanes: 2, // Multiplane
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic_p%plane%_r%rail%",
+				RdmaPrefix:   "roce_nic%nic_id%_r%rail%", // Missing %plane%
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "rdmaPrefix must contain %plane% placeholder")
+	})
+
+	t.Run("multirail without rail placeholder in netdevPrefix", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true, // Multirail
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 1,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic%nic_id%_p%plane%", // Missing %rail%
+				RdmaPrefix:   "roce_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "netdevPrefix must contain %rail% placeholder")
+	})
+
+	t.Run("multirail without rail placeholder in rdmaPrefix", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true, // Multirail
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "uniplane",
+					NumberOfPlanes: 1,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic_p%plane%_r%rail%",
+				RdmaPrefix:   "roce_nic%nic_id%", // Missing %rail%
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "rdmaPrefix must contain %rail% placeholder")
+	})
+
+	t.Run("valid template with plane and rail only", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 4,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "eth_p%plane%_r%rail%", // No %nic_id% but has plane and rail
+				RdmaPrefix:   "roce_p%plane%_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.NoError(t, err)
+	})
+
+	t.Run("non-multiplane with single rail", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: false, // Single rail
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "none",
+					NumberOfPlanes: 1, // Single plane
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic%nic_id%", // No plane or rail required
+				RdmaPrefix:   "roce%nic_id%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.NoError(t, err, "Single plane and single rail don't require plane/rail placeholders")
+	})
+
+	t.Run("non-SpectrumX config should not validate templates", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: nil, // No Spectrum-X
+			},
+			Sriov: &SriovConfig{
+				ResourceName: "sriov_resource",
+				NetworkName:  "sriov_network",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "sriov-rdma")
+		assert.NoError(t, err, "Non-Spectrum-X profiles should not validate template placeholders")
+	})
+
+	t.Run("multiplane mode swplb requires RA2.1", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA1.0", // Wrong version for multiplane
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 4,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic_p%plane%_r%rail%",
+				RdmaPrefix:   "roce_p%plane%_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "multiplane mode swplb requires spcxVersion RA2.1")
+	})
+
+	t.Run("multiplane mode hwplb requires RA2.1", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA1.0",
+					MultiplaneMode: "hwplb",
+					NumberOfPlanes: 4,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic_p%plane%_r%rail%",
+				RdmaPrefix:   "roce_p%plane%_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "multiplane mode hwplb requires spcxVersion RA2.1")
+	})
+
+	t.Run("multiplane mode none does not require RA2.1", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: false,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA1.0", // Any version is fine for mode "none"
+					MultiplaneMode: "none",
+					NumberOfPlanes: 1,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic%nic_id%",
+				RdmaPrefix:   "roce%nic_id%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.NoError(t, err, "Mode 'none' should not require RA2.1")
+	})
+
+	t.Run("multiplane and multirail with missing both placeholders", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 4,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "static_interface", // Missing both %plane% and %rail%
+				RdmaPrefix:   "roce_p%plane%_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.Error(t, err)
+		// Should fail on the first check (plane)
+		assert.Contains(t, err.Error(), "netdevPrefix must contain %plane% placeholder")
+	})
+}
+

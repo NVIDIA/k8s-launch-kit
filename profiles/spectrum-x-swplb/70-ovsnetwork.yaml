@@ -1,0 +1,31 @@
+{{- /* SWPLB: Create separate OVSNetwork per rail per plane */ -}}
+{{- range $i, $pf := .ClusterConfig.PFs}}
+{{- if eq $pf.Traffic "east-west"}}
+{{- range $planeIdx := untilStep 0 $.Profile.SpectrumX.NumberOfPlanes 1}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: OVSNetwork
+metadata:
+  name: rail-{{$i}}-plane-{{$planeIdx}}
+  namespace: {{$.NetworkOperator.Namespace}}
+spec:
+  resourceName: rail_{{$i}}_plane_{{$planeIdx}}
+  interfaceType: dpdk
+  networkNamespace: default
+  mtu: 9216
+  ipam: |
+    {
+      "type": "nv-ipam",
+      "poolName": "rail-{{$i}}-plane-{{$planeIdx}}",
+      "poolType": "cidrpool"
+    }
+  metaPlugins: |
+    {
+      "type": "rdma"
+    },
+    {
+      "type": "rail"
+    }
+---
+{{- end }}
+{{- end }}
+{{- end }}

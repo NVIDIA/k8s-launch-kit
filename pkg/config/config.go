@@ -19,6 +19,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/go-logr/logr"
 	"gopkg.in/yaml.v2"
@@ -34,6 +35,7 @@ type LaunchKubernetesConfig struct {
 	RdmaShared      *RdmaSharedConfig      `yaml:"rdmaShared,omitempty"`
 	Ipoib           *IpoibConfig           `yaml:"ipoib,omitempty"`
 	Macvlan         *MacvlanConfig         `yaml:"macvlan,omitempty"`
+	SpectrumX       *SpectrumXConfig       `yaml:"spectrumX,omitempty"`
 	Profile         *Profile               `yaml:"profile,omitempty"`
 	ClusterConfig   *ClusterConfig         `yaml:"clusterConfig,omitempty"`
 }
@@ -70,6 +72,13 @@ type SriovConfig struct {
 	NetworkName   string `yaml:"networkName"`
 }
 
+type SpectrumXConfig struct {
+	NicType      string `yaml:"nicType"`      // "1023" for ConnectX-8, "a2dc" for BlueField-3 SuperNIC
+	Overlay      string `yaml:"overlay"`      // "none"
+	RdmaPrefix   string `yaml:"rdmaPrefix"`   // e.g., "roce_nic%nic_id%_p%plane%_r%rail%"
+	NetdevPrefix string `yaml:"netdevPrefix"` // e.g., "nic%nic_id%_p%plane%_r%rail%"
+}
+
 type HostdevConfig struct {
 	ResourceName string `yaml:"resourceName"`
 	NetworkName  string `yaml:"networkName"`
@@ -89,11 +98,17 @@ type MacvlanConfig struct {
 }
 
 type Profile struct {
-	Fabric     string `yaml:"fabric"`
-	Deployment string `yaml:"deployment"`
-	Multirail  bool   `yaml:"multirail"`
-	SpectrumX  bool   `yaml:"spectrumX"`
-	Ai         bool   `yaml:"ai"`
+	Fabric     string           `yaml:"fabric"`
+	Deployment string           `yaml:"deployment"`
+	Multirail  bool             `yaml:"multirail"`
+	SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+	Ai         bool             `yaml:"ai"`
+}
+
+type ProfileSpectrumX struct {
+	SPCXVersion    string `yaml:"spcxVersion"`    // e.g., "RA2.1"
+	MultiplaneMode string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
+	NumberOfPlanes int    `yaml:"numberOfPlanes"` // 2 or 4
 }
 
 type ClusterConfig struct {
@@ -114,6 +129,7 @@ type NodesCapabilities struct {
 }
 
 type PFConfig struct {
+	DeviceID         string `yaml:"deviceID"`
 	RdmaDevice       string `yaml:"rdmaDevice"`
 	PciAddress       string `yaml:"pciAddress"`
 	NetworkInterface string `yaml:"networkInterface"`
@@ -166,6 +182,13 @@ func ValidateClusterConfig(config *LaunchKubernetesConfig, profile string) error
 		return fmt.Errorf("networkOperator.namespace is required")
 	}
 
+	// Validate Spectrum-X specific requirements
+	if config.Profile != nil && config.Profile.SpectrumX != nil && config.SpectrumX != nil {
+		if err := validateSpectrumXTemplates(config); err != nil {
+			return err
+		}
+	}
+
 	// Validate profile-specific requirements based on the selected profile
 	if profile == "host-device-rdma" || profile == "hostdevice" {
 		if config.Hostdev.ResourceName == "" {
@@ -186,4 +209,54 @@ func ValidateClusterConfig(config *LaunchKubernetesConfig, profile string) error
 	}
 
 	return nil
+}
+
+// validateSpectrumXTemplates validates that Spectrum-X templates have required placeholders
+func validateSpectrumXTemplates(config *LaunchKubernetesConfig) error {
+	netdevPrefix := config.SpectrumX.NetdevPrefix
+	rdmaPrefix := config.SpectrumX.RdmaPrefix
+	
+	// Multiplane modes (swplb, hwplb, uniplane) require RA2.1
+	if config.Profile.SpectrumX.MultiplaneMode != "none" && config.Profile.SpectrumX.MultiplaneMode != "" {
+		if config.Profile.SpectrumX.SPCXVersion != "RA2.1" {
+			return fmt.Errorf("multiplane mode %s requires spcxVersion RA2.1, got %s",
+				config.Profile.SpectrumX.MultiplaneMode, config.Profile.SpectrumX.SPCXVersion)
+		}
+	}
+
+	isMultiplane := config.Profile.SpectrumX.NumberOfPlanes > 1
+	isMultirail := config.Profile.Multirail
+	
+	// Check netdevPrefix
+	hasPlaneInNetdev := containsPlaceholder(netdevPrefix, "%plane%")
+	hasRailInNetdev := containsPlaceholder(netdevPrefix, "%rail%")
+	
+	if isMultiplane && !hasPlaneInNetdev {
+		return fmt.Errorf("spectrumX.netdevPrefix must contain %%plane%% placeholder when numberOfPlanes > 1 (multiplane mode)")
+	}
+	
+	if isMultirail && !hasRailInNetdev {
+		return fmt.Errorf("spectrumX.netdevPrefix must contain %%rail%% placeholder when multirail is enabled")
+	}
+	
+	// Check rdmaPrefix (same rules)
+	hasPlaneInRdma := containsPlaceholder(rdmaPrefix, "%plane%")
+	hasRailInRdma := containsPlaceholder(rdmaPrefix, "%rail%")
+	
+	if isMultiplane && !hasPlaneInRdma {
+		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%plane%% placeholder when numberOfPlanes > 1 (multiplane mode)")
+	}
+	
+	if isMultirail && !hasRailInRdma {
+		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%rail%% placeholder when multirail is enabled")
+	}
+	
+	return nil
+}
+
+// containsPlaceholder checks if a string contains a specific placeholder
+func containsPlaceholder(s, placeholder string) bool {
+	return len(s) > 0 && len(placeholder) > 0 && 
+		len(s) >= len(placeholder) &&
+		strings.Contains(s, placeholder)
 }

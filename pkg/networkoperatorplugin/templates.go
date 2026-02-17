@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -32,6 +33,21 @@ var templateFuncs = template.FuncMap{
 	"add": func(a, b int) int { return a + b },
 	"sub": func(a, b int) int { return a - b },
 	"gt":  func(a, b int) bool { return a > b },
+	"untilStep": func(start, stop, step int) []int {
+		result := []int{}
+		for i := start; i < stop; i += step {
+			result = append(result, i)
+		}
+		return result
+	},
+	"replaceVars": func(template string, nicID, plane, rail int) string {
+		// Replace template variables with actual values
+		result := template
+		result = strings.ReplaceAll(result, "%nic_id%", fmt.Sprintf("%d", nicID))
+		result = strings.ReplaceAll(result, "%plane%", fmt.Sprintf("%d", plane))
+		result = strings.ReplaceAll(result, "%rail%", fmt.Sprintf("%d", rail))
+		return result
+	},
 }
 
 // ProcessTemplate processes a Go template file with the given config

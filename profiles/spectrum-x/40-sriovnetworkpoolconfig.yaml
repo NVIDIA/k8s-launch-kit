@@ -1,0 +1,19 @@
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkPoolConfig
+metadata:
+  name: spectrum-x-node-pool-config
+  namespace: {{.NetworkOperator.Namespace}}
+spec:
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    matchLabels:
+      {{- range $key, $value := .ClusterConfig.NodeSelector }}
+      {{ $key }}: "{{ $value }}"
+      {{- end }}
+  {{- end }}
+  ovsHardwareOffloadConfig:
+    otherConfig:
+      doca-init: "true"
+      hw-offload: "true"
+      hw-offload-ct-size: "0"
+      max-idle: "300000"
