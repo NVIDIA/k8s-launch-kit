@@ -69,6 +69,14 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 // ApplyOptionsToConfig applies CLI options to the configuration, overriding file values.
 // CLI flags take precedence over config file values for any explicitly set option.
 func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fullConfig *config.LaunchKubernetesConfig) error {
+	// Apply network operator namespace override from CLI
+	if options.NetworkOperatorNamespace != "" {
+		if fullConfig.NetworkOperator == nil {
+			fullConfig.NetworkOperator = &config.NetworkOperatorConfig{}
+		}
+		fullConfig.NetworkOperator.Namespace = options.NetworkOperatorNamespace
+	}
+
 	if fullConfig.Profile == nil {
 		return nil
 	}

@@ -292,6 +292,12 @@ func (l *Launcher) discoverClusterConfig() error {
 		return fmt.Errorf("failed to load default config from %s: %w", defaultsPath, err)
 	}
 
+	// Override namespace from CLI flag if provided
+	if l.options.NetworkOperatorNamespace != "" {
+		defaults.NetworkOperator.Namespace = l.options.NetworkOperatorNamespace
+		l.logger.Info("Using CLI override for network operator namespace", "namespace", l.options.NetworkOperatorNamespace)
+	}
+
 	defaults.ClusterConfig = &config.ClusterConfig{
 		Capabilities: &config.ClusterCapabilities{
 			Nodes: &config.NodesCapabilities{},
