@@ -4,7 +4,7 @@
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
-  name: rail-{{$i}}
+  name: rail-{{$i}}{{suffix $.ClusterConfig.Identifier}}
   namespace: {{$.NetworkOperator.Namespace}}
 spec:
   bridge:

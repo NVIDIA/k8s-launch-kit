@@ -57,6 +57,8 @@ var (
 	logger                = log.Log.WithName("l8k")
 	enabledPlugins              string
 	networkOperatorNamespace    string
+	group                       string
+	labelSelector               string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -98,6 +100,8 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 			MultiplaneMode:        multiplaneMode,
 			NumberOfPlanes:        numberOfPlanes,
 			Prompt:                prompt,
+			Group:                group,
+			LabelSelector:        labelSelector,
 			SaveDeploymentFiles:   saveDeploymentFiles,
 			Deploy:                deploy,
 			Kubeconfig:            kubeconfig,
@@ -165,6 +169,8 @@ func init() {
 	rootCmd.Flags().StringVar(&spcxVersion, "spcx-version", "", "Spectrum-X firmware version (requires --spectrum-x)")
 	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
+	rootCmd.Flags().StringVar(&group, "group", "", "Generate templates for a specific group only (e.g., group-0)")
+	rootCmd.Flags().StringVar(&labelSelector, "label-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes for discovery by label (e.g., key=value,key2=value2)")
 	rootCmd.Flags().StringVar(&prompt, "prompt", "", "Path to file with a prompt to use for LLM-assisted profile generation")
 	rootCmd.Flags().StringVar(&llmApiKey, "llm-api-key", "", "API key for the LLM API (required when using --prompt)")
 	rootCmd.Flags().StringVar(&llmApiUrl, "llm-api-url", "", "API URL for the LLM API")

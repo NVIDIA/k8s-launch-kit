@@ -5,7 +5,7 @@
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
-  name: ethernet-sriov-{{printf "%c" (add 97 $i)}}
+  name: ethernet-sriov-{{printf "%c" (add 97 $i)}}{{suffix $.ClusterConfig.Identifier}}
   namespace: {{$.NetworkOperator.Namespace}}
 spec:
   deviceType: netdevice
@@ -32,7 +32,7 @@ spec:
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
-  name: ethernet-sriov
+  name: ethernet-sriov{{suffix $.ClusterConfig.Identifier}}
   namespace: {{.NetworkOperator.Namespace}}
 spec:
   deviceType: netdevice

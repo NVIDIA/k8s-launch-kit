@@ -1,7 +1,7 @@
 apiVersion: configuration.net.nvidia.com/v1alpha1
 kind: NicConfigurationTemplate
 metadata:
-  name: spectrum-x-configuration
+  name: spectrum-x-configuration{{suffix .ClusterConfig.Identifier}}
   namespace: {{.NetworkOperator.Namespace}}
 spec:
   {{- if .ClusterConfig.NodeSelector }}

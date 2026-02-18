@@ -37,7 +37,7 @@ type LaunchKubernetesConfig struct {
 	Macvlan         *MacvlanConfig         `yaml:"macvlan,omitempty"`
 	SpectrumX       *SpectrumXConfig       `yaml:"spectrumX,omitempty"`
 	Profile         *Profile               `yaml:"profile,omitempty"`
-	ClusterConfig   *ClusterConfig         `yaml:"clusterConfig,omitempty"`
+	ClusterConfig   []ClusterConfig        `yaml:"clusterConfig,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
@@ -112,10 +112,14 @@ type ProfileSpectrumX struct {
 }
 
 type ClusterConfig struct {
-	Capabilities *ClusterCapabilities `yaml:"capabilities"`
-	PFs          []PFConfig           `yaml:"pfs"`
-	WorkerNodes  []string             `yaml:"workerNodes"`
-	NodeSelector map[string]string    `yaml:"nodeSelector,omitempty"`
+	Identifier    string              `yaml:"identifier"`
+	MachineType   string              `yaml:"machineType,omitempty"`
+	ProductType   string              `yaml:"productType,omitempty"`
+	LabelSelector map[string]string   `yaml:"labelSelector,omitempty"`
+	Capabilities  *ClusterCapabilities `yaml:"capabilities"`
+	PFs           []PFConfig           `yaml:"pfs"`
+	WorkerNodes   []string             `yaml:"workerNodes"`
+	NodeSelector  map[string]string    `yaml:"nodeSelector,omitempty"`
 }
 
 type ClusterCapabilities struct {
@@ -134,6 +138,20 @@ type PFConfig struct {
 	PciAddress       string `yaml:"pciAddress"`
 	NetworkInterface string `yaml:"networkInterface"`
 	Traffic          string `yaml:"traffic"`
+}
+
+// AggregateCapabilities computes the union of capabilities across all cluster config groups.
+// If any group has a capability, the aggregate has it.
+func AggregateCapabilities(groups []ClusterConfig) *ClusterCapabilities {
+	result := &ClusterCapabilities{Nodes: &NodesCapabilities{}}
+	for _, g := range groups {
+		if g.Capabilities != nil && g.Capabilities.Nodes != nil {
+			result.Nodes.Sriov = result.Nodes.Sriov || g.Capabilities.Nodes.Sriov
+			result.Nodes.Rdma = result.Nodes.Rdma || g.Capabilities.Nodes.Rdma
+			result.Nodes.Ib = result.Nodes.Ib || g.Capabilities.Nodes.Ib
+		}
+	}
+	return result
 }
 
 // LoadFullConfig loads and parses the cluster configuration from the specified path

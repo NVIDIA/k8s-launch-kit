@@ -72,7 +72,10 @@ func (l *Launcher) Run() error {
 	for _, plugin := range l.options.EnabledPlugins {
 		switch plugin {
 		case networkoperatorplugin.PluginName:
-			l.plugins[plugin] = &networkoperatorplugin.NetworkOperatorPlugin{}
+			l.plugins[plugin] = &networkoperatorplugin.NetworkOperatorPlugin{
+				GroupFilter:   l.options.Group,
+				LabelSelector: parseLabelSelector(l.options.LabelSelector),
+			}
 		default:
 			err := fmt.Errorf("unknown plugin: %s", plugin)
 			l.logger.Error(err, "Skipping plugin")
@@ -182,7 +185,7 @@ func (l *Launcher) executeWorkflow() error {
 
 			l.logger.Info("Selecting a profile using LLM-assisted prompt")
 
-			prompt, err := llm.SelectPromptWithModel(l.options.Prompt, *fullConfig.ClusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel)
+			prompt, err := llm.SelectPromptWithModel(l.options.Prompt, fullConfig.ClusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel)
 			if err != nil {
 				progress.Fail("AI selection failed")
 				l.ui.Error("Failed to get AI recommendation: %v", err)
@@ -235,12 +238,14 @@ func (l *Launcher) executeWorkflow() error {
 		}
 	}
 
+	aggregatedCapabilities := config.AggregateCapabilities(fullConfig.ClusterConfig)
+
 	foundProfiles := []profiles.Profile{}
 	for pluginName, plugin := range l.plugins {
-		profile, err := profiles.FindApplicableProfile(fullConfig.Profile, fullConfig.ClusterConfig.Capabilities, pluginName)
+		profile, err := profiles.FindApplicableProfile(fullConfig.Profile, aggregatedCapabilities, pluginName)
 		if err != nil {
 			l.ui.Error("Failed to find profile: %v", err)
-			l.logger.Error(err, "Failed to find applicable profile for the plugin", "plugin", plugin.GetName(), "cluster capabilities", fullConfig.ClusterConfig.Capabilities, "profile requirements", fullConfig.Profile)
+			l.logger.Error(err, "Failed to find applicable profile for the plugin", "plugin", plugin.GetName(), "cluster capabilities", aggregatedCapabilities, "profile requirements", fullConfig.Profile)
 			return err
 		}
 		foundProfiles = append(foundProfiles, *profile)
@@ -298,14 +303,7 @@ func (l *Launcher) discoverClusterConfig() error {
 		l.logger.Info("Using CLI override for network operator namespace", "namespace", l.options.NetworkOperatorNamespace)
 	}
 
-	defaults.ClusterConfig = &config.ClusterConfig{
-		Capabilities: &config.ClusterCapabilities{
-			Nodes: &config.NodesCapabilities{},
-		},
-		PFs:          []config.PFConfig{},
-		WorkerNodes:  []string{},
-		NodeSelector: map[string]string{"feature.node.kubernetes.io/pci-15b3.present": "true"},
-	}
+	defaults.ClusterConfig = nil
 	defaults.Profile = nil
 
 	ctx := ui.WithOutput(context.Background(), l.ui)
@@ -430,8 +428,8 @@ func (l *Launcher) deployConfigurationProfile(profile *profiles.Profile) error {
 }
 
 // runInteractiveSession runs an interactive chat session with the LLM
-func (l *Launcher) runInteractiveSession(clusterConfig *config.ClusterConfig) (map[string]string, error) {
-	session, err := llm.NewChatSession(*clusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel)
+func (l *Launcher) runInteractiveSession(clusterConfig []config.ClusterConfig) (map[string]string, error) {
+	session, err := llm.NewChatSession(clusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chat session: %w", err)
 	}
@@ -501,4 +499,26 @@ func (l *Launcher) runInteractiveSession(clusterConfig *config.ClusterConfig) (m
 		fmt.Println(llm.InteractivePromptSuffix)
 		fmt.Println()
 	}
+}
+
+// parseLabelSelector parses a comma-separated "key=value" string into a map.
+func parseLabelSelector(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	result := map[string]string{}
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 {
+			result[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }

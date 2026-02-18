@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: hostdev-test-pod
+  name: hostdev-test-pod{{suffix .ClusterConfig.Identifier}}
   namespace: default
   annotations:
     k8s.v1.cni.cncf.io/networks: {{.Hostdev.NetworkName}}

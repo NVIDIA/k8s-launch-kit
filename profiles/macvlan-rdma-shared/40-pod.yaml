@@ -5,7 +5,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: macvlan-test-pod-{{printf "%c" (add 97 $i)}}
+  name: macvlan-test-pod-{{printf "%c" (add 97 $i)}}{{suffix $.ClusterConfig.Identifier}}
   namespace: default
   annotations:
     k8s.v1.cni.cncf.io/networks: {{$.Macvlan.NetworkName}}-{{printf "%c" (add 97 $i)}}
@@ -47,7 +47,7 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: macvlan-test-pod
+  name: macvlan-test-pod{{suffix $.ClusterConfig.Identifier}}
   namespace: default
   annotations:
     k8s.v1.cni.cncf.io/networks: {{.Macvlan.NetworkName}}

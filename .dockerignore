@@ -9,8 +9,10 @@ Dockerfile
 
 # Build artifacts
 build/
+bin/
 l8k
 launch-kubernetes
+cluster-configuration/
 *.exe
 *.exe~
 *.dll

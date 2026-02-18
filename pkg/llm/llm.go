@@ -92,11 +92,11 @@ func createLLM(llmApiKey string, llmApiUrl string, llmVendor string, llmModel st
 	}
 }
 
-func SelectPrompt(promptPath string, config config.ClusterConfig, llmApiKey string, llmApiUrl string, llmVendor string) (map[string]string, error) {
+func SelectPrompt(promptPath string, config []config.ClusterConfig, llmApiKey string, llmApiUrl string, llmVendor string) (map[string]string, error) {
 	return SelectPromptWithModel(promptPath, config, llmApiKey, llmApiUrl, llmVendor, "")
 }
 
-func SelectPromptWithModel(promptPath string, config config.ClusterConfig, llmApiKey string, llmApiUrl string, llmVendor string, llmModel string) (map[string]string, error) {
+func SelectPromptWithModel(promptPath string, config []config.ClusterConfig, llmApiKey string, llmApiUrl string, llmVendor string, llmModel string) (map[string]string, error) {
 	llm, err := createLLM(llmApiKey, llmApiUrl, llmVendor, llmModel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LLM client: %w", err)
@@ -182,7 +182,7 @@ type ChatSession struct {
 }
 
 // NewChatSession creates a new interactive chat session
-func NewChatSession(clusterConfig config.ClusterConfig, llmApiKey, llmApiUrl, llmVendor, llmModel string) (*ChatSession, error) {
+func NewChatSession(clusterConfig []config.ClusterConfig, llmApiKey, llmApiUrl, llmVendor, llmModel string) (*ChatSession, error) {
 	llm, err := createLLM(llmApiKey, llmApiUrl, llmVendor, llmModel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LLM client: %w", err)

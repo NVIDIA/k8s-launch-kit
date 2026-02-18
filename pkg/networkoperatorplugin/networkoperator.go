@@ -33,6 +33,8 @@ const (
 )
 
 type NetworkOperatorPlugin struct {
+	GroupFilter   string
+	LabelSelector map[string]string
 }
 
 func (p *NetworkOperatorPlugin) GetName() string {
