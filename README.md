@@ -90,11 +90,11 @@ Flags:
       --network-operator-namespace string Override the network operator namespace from the config file
       --number-of-planes int              Number of planes for Spectrum-X (requires --spectrum-x)
       --prompt string                     Path to file with a prompt to use for LLM-assisted profile generation
-      --save-cluster-config string        Save discovered cluster configuration to the specified path (default "/opt/nvidia/k8s-launch-kit/cluster-config.yaml")
+      --save-cluster-config string        Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise /opt/nvidia/k8s-launch-kit/cluster-config.yaml)
       --save-deployment-files string      Save generated deployment files to the specified directory (default "/opt/nvidia/k8s-launch-kit/deployment")
       --spcx-version string               Spectrum-X firmware version (requires --spectrum-x)
       --spectrum-x                        Enable Spectrum X deployment
-      --user-config string                Use provided cluster configuration file instead of auto-discovery (skips cluster discovery)
+      --user-config string                Use provided cluster configuration file (as base config for discovery or as full config without discovery)
 
 Use "l8k [command] --help" for more information about a command.
 ```
@@ -126,6 +126,23 @@ Filter discovery to specific nodes using a label selector:
 ```bash
 l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml \
     --label-selector "feature.node.kubernetes.io/pci-15b3.present=true" \
+    --kubeconfig ~/.kube/config
+```
+
+### Discovery with User-Provided Base Config
+
+Use your own config file (with custom network operator version, subnets, etc.) as the base for discovery. Without `--save-cluster-config`, the file is rewritten in place with discovery results:
+
+```bash
+l8k --user-config ./my-config.yaml --discover-cluster-config \
+    --kubeconfig ~/.kube/config
+```
+
+Save discovery results to a separate file instead:
+
+```bash
+l8k --user-config ./my-config.yaml --discover-cluster-config \
+    --save-cluster-config ./discovered-config.yaml \
     --kubeconfig ~/.kube/config
 ```
 
@@ -169,7 +186,7 @@ l8k --user-config ./config.yaml \
 
 ## Configuration file
 
-During cluster discovery stage, Kubernetes Launch Kit creates a configuration file, which it later uses to generate deployment manifests from the templates. This config file can be edited by the user to customize their deployment configuration. The user can provide the custom config file to the tool using the `--user-config` cli flag.
+During cluster discovery stage, Kubernetes Launch Kit creates a configuration file, which it later uses to generate deployment manifests from the templates. This config file can be edited by the user to customize their deployment configuration. The user can provide the custom config file to the tool using the `--user-config` cli flag — either as a standalone config (skipping discovery) or as a base config combined with `--discover-cluster-config` (discovery takes network operator parameters from the file and adds discovered cluster config).
 
 Example of the configuration file discovered from the cluster:
 

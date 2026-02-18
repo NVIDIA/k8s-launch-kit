@@ -280,21 +280,18 @@ func (l *Launcher) executeWorkflow() error {
 
 // discoverClusterConfig handles cluster configuration discovery
 func (l *Launcher) discoverClusterConfig() error {
-	if l.options.UserConfig != "" {
-		l.ui.Info("Using provided configuration: %s", l.options.UserConfig)
-		l.logger.Info("Using provided user config", "path", l.options.UserConfig)
-		// TODO: Validate and load user config file
-		return nil
-	}
-
 	l.ui.Info("Discovering cluster capabilities")
 	l.logger.Info("Discovering cluster configuration")
 
-	// Load defaults from l8k-config.yaml (temporary default path)
+	// Load base config: from --user-config if provided, otherwise from built-in defaults
 	defaultsPath := "l8k-config.yaml"
+	if l.options.UserConfig != "" {
+		defaultsPath = l.options.UserConfig
+		l.ui.Info("Using base configuration: %s", defaultsPath)
+	}
 	defaults, err := config.LoadFullConfig(defaultsPath, l.logger)
 	if err != nil {
-		return fmt.Errorf("failed to load default config from %s: %w", defaultsPath, err)
+		return fmt.Errorf("failed to load base config from %s: %w", defaultsPath, err)
 	}
 
 	// Override namespace from CLI flag if provided
@@ -317,26 +314,35 @@ func (l *Launcher) discoverClusterConfig() error {
 
 	discoveredConfig := *defaults
 
-	// Ensure output path provided
-	if l.options.SaveClusterConfig == "" {
-		return fmt.Errorf("no output path provided for discovered cluster config (use --discover-cluster-config)")
+	// Compute effective save path:
+	// 1. --save-cluster-config if explicitly provided
+	// 2. --user-config path (rewrite in place) if provided
+	// 3. Default path as fallback
+	savePath := l.options.SaveClusterConfig
+	if savePath == "" {
+		if l.options.UserConfig != "" {
+			savePath = l.options.UserConfig
+		} else {
+			savePath = "/opt/nvidia/k8s-launch-kit/cluster-config.yaml"
+		}
 	}
+	l.options.SaveClusterConfig = savePath
 
 	// Marshal and save merged config to disk
 	data, err := yaml.Marshal(discoveredConfig)
 	if err != nil {
 		return fmt.Errorf("failed to marshal discovered config: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(l.options.SaveClusterConfig), 0755); err != nil {
-		return fmt.Errorf("failed to create output directory %s: %w", filepath.Dir(l.options.SaveClusterConfig), err)
+	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
+		return fmt.Errorf("failed to create output directory %s: %w", filepath.Dir(savePath), err)
 	}
-	if err := os.WriteFile(l.options.SaveClusterConfig, data, 0644); err != nil {
+	if err := os.WriteFile(savePath, data, 0644); err != nil {
 		l.ui.Error("Failed to save configuration: %v", err)
-		return fmt.Errorf("failed to write discovered config to %s: %w", l.options.SaveClusterConfig, err)
+		return fmt.Errorf("failed to write discovered config to %s: %w", savePath, err)
 	}
 
-	l.ui.Success("Configuration saved: %s", l.options.SaveClusterConfig)
-	l.logger.Info("Discovered cluster config saved", "path", l.options.SaveClusterConfig)
+	l.ui.Success("Configuration saved: %s", savePath)
+	l.logger.Info("Discovered cluster config saved", "path", savePath)
 	return nil
 }
 
