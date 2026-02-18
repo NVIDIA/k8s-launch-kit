@@ -156,8 +156,8 @@ func init() {
 
 	// Phase 1: Cluster discovery flags
 	rootCmd.Flags().BoolVar(&discoverClusterConfig, "discover-cluster-config", false, "Deploy a thin Network Operator profile to discover cluster capabilities")
-	rootCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "/opt/nvidia/k8s-launch-kit/cluster-config.yaml", "Save discovered cluster configuration to the specified path")
-	rootCmd.Flags().StringVar(&userConfig, "user-config", "", "Use provided cluster configuration file instead of auto-discovery (skips cluster discovery)")
+	rootCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "", "Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise /opt/nvidia/k8s-launch-kit/cluster-config.yaml)")
+	rootCmd.Flags().StringVar(&userConfig, "user-config", "", "Use provided cluster configuration file (as base config for discovery or as full config without discovery)")
 	rootCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from the config file")
 
 	// Phase 2: Deployment generation flags
@@ -195,14 +195,9 @@ func validateConfig(options options.Options) error {
 		return fmt.Errorf("no plugins enabled, use --enabled-plugins to enable plugins")
 	}
 
-	// Either user-config or discover-cluster-config should be provided
+	// At least one of user-config or discover-cluster-config should be provided
 	if options.UserConfig == "" && !options.DiscoverClusterConfig {
 		return fmt.Errorf("either --user-config or --discover-cluster-config must be provided")
-	}
-
-	// Both user-config and discover-cluster-config cannot be provided together
-	if options.UserConfig != "" && options.DiscoverClusterConfig {
-		return fmt.Errorf("--user-config and --discover-cluster-config cannot be used together")
 	}
 
 	// If discover-cluster-config is provided, kubeconfig should be too
