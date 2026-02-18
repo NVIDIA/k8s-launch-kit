@@ -29,22 +29,54 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// EnsureNicClusterPolicy creates the provided NicClusterPolicy if none exist and waits until it's ready.
-func EnsureNicClusterPolicy(ctx context.Context, c client.Client, policy *netop.NicClusterPolicy) error {
-	// Ensure no NicClusterPolicy exists yet
+// EnsureNicClusterPolicy checks for existing NicClusterPolicies and creates the provided one if none exist.
+// If policies already exist, returns them without creating a new one and without error.
+// If no policies exist, creates the provided policy, waits for it to become ready, and returns nil.
+func EnsureNicClusterPolicy(ctx context.Context, c client.Client, policy *netop.NicClusterPolicy) ([]netop.NicClusterPolicy, error) {
 	list := &netop.NicClusterPolicyList{}
 	if err := c.List(ctx, list); err != nil {
-		return err
+		return nil, err
 	}
 	if len(list.Items) > 0 {
-		return fmt.Errorf("NicClusterPolicy already exists (count=%d)", len(list.Items))
+		return list.Items, nil
 	}
 
 	if err := c.Create(ctx, policy); err != nil {
-		return err
+		return nil, err
 	}
 
-	return WaitNicClusterPolicyReady(ctx, c, policy.Name)
+	return nil, WaitNicClusterPolicyReady(ctx, c, policy.Name)
+}
+
+// DeleteNicClusterPolicies deletes the given NicClusterPolicies from the cluster.
+func DeleteNicClusterPolicies(ctx context.Context, c client.Client, policies []netop.NicClusterPolicy) error {
+	for i := range policies {
+		if err := c.Delete(ctx, &policies[i]); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to delete existing NicClusterPolicy %q: %w", policies[i].Name, err)
+			}
+		}
+		log.Log.Info("Deleted existing NicClusterPolicy for discovery", "name", policies[i].Name)
+	}
+	return nil
+}
+
+// RestoreNicClusterPolicies re-creates previously saved NicClusterPolicies on the cluster.
+func RestoreNicClusterPolicies(ctx context.Context, c client.Client, policies []netop.NicClusterPolicy) error {
+	for i := range policies {
+		// Clear server-set fields so the object can be recreated
+		policies[i].ResourceVersion = ""
+		policies[i].UID = ""
+		policies[i].Generation = 0
+		policies[i].CreationTimestamp = metav1.Time{}
+		policies[i].ManagedFields = nil
+		policies[i].Status = netop.NicClusterPolicyStatus{}
+		if err := c.Create(ctx, &policies[i]); err != nil {
+			return fmt.Errorf("failed to restore NicClusterPolicy %q: %w", policies[i].Name, err)
+		}
+		log.Log.Info("Restored NicClusterPolicy after discovery", "name", policies[i].Name)
+	}
+	return nil
 }
 
 // WaitNicClusterPolicyReady polls NicClusterPolicy until Status.State is ready or error, with a timeout.

@@ -17,6 +17,7 @@
 package ui
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +42,10 @@ type Output interface {
 	Header(text string)
 	// Section displays a section header
 	Section(text string)
+	// Confirm displays a yes/no prompt and returns the user's choice.
+	// Returns true if the user confirms, false otherwise.
+	// In non-interactive contexts (e.g., silent output), returns false.
+	Confirm(prompt string) (bool, error)
 }
 
 // Progress represents a long-running operation with progress updates
@@ -143,6 +148,21 @@ func (o *StandardOutput) Header(text string) {
 	fmt.Fprintf(o.writer, "\n%s\n", border)
 	fmt.Fprintf(o.writer, "%s%s\n", strings.Repeat(" ", padding), text)
 	fmt.Fprintf(o.writer, "%s\n\n", border)
+}
+
+// Confirm displays a yes/no prompt and waits for user input
+func (o *StandardOutput) Confirm(prompt string) (bool, error) {
+	if !o.isTTY {
+		return false, nil
+	}
+	fmt.Fprintf(o.writer, "%s [y/N]: ", prompt)
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return false, fmt.Errorf("failed to read user input: %w", err)
+	}
+	input = strings.TrimSpace(strings.ToLower(input))
+	return input == "y" || input == "yes", nil
 }
 
 // Section displays a section header

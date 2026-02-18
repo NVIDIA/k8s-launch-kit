@@ -55,7 +55,8 @@ var (
 	discoverClusterConfig bool
 	saveClusterConfig     string
 	logger                = log.Log.WithName("l8k")
-	enabledPlugins        string
+	enabledPlugins              string
+	networkOperatorNamespace    string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -100,8 +101,9 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 			SaveDeploymentFiles:   saveDeploymentFiles,
 			Deploy:                deploy,
 			Kubeconfig:            kubeconfig,
-			SaveClusterConfig:     saveClusterConfig,
-			EnabledPlugins:        enabledPlugins,
+			SaveClusterConfig:        saveClusterConfig,
+			NetworkOperatorNamespace: networkOperatorNamespace,
+			EnabledPlugins:           enabledPlugins,
 			LLMApiKey:             llmApiKey,
 			LLMApiUrl:             llmApiUrl,
 			LLMVendor:             llmVendor,
@@ -152,6 +154,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&discoverClusterConfig, "discover-cluster-config", false, "Deploy a thin Network Operator profile to discover cluster capabilities")
 	rootCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "/opt/nvidia/k8s-launch-kit/cluster-config.yaml", "Save discovered cluster configuration to the specified path")
 	rootCmd.Flags().StringVar(&userConfig, "user-config", "", "Use provided cluster configuration file instead of auto-discovery (skips cluster discovery)")
+	rootCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from the config file")
 
 	// Phase 2: Deployment generation flags
 	rootCmd.Flags().StringVar(&fabric, "fabric", "", "Select the fabric type to deploy (infiniband, ethernet)")

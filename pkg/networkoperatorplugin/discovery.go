@@ -61,11 +61,58 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	uiOutput.Info("Deploying discovery profile")
 	log.Log.Info("Deploying a thin NicClusterPolicy for cluster config discovery")
 
-	if err := EnsureNicClusterPolicy(ctx, c, policy); err != nil {
+	existingPolicies, err := EnsureNicClusterPolicy(ctx, c, policy)
+	if err != nil {
 		return err
 	}
 
-	// Always attempt cleanup of the NicClusterPolicy at the end of discovery
+	var savedPolicies []netop.NicClusterPolicy
+	if len(existingPolicies) > 0 {
+		// Existing policies detected — ask user for permission to replace
+		uiOutput.Warning("Found %d existing NicClusterPolicy resource(s) on the cluster.", len(existingPolicies))
+		uiOutput.Info("The launch kit needs to deploy its own NicClusterPolicy for discovery.")
+		uiOutput.Info("The existing policy will be saved, deleted, and restored after discovery completes.")
+
+		confirmed, err := uiOutput.Confirm("Do you agree to temporarily replace the existing NicClusterPolicy?")
+		if err != nil {
+			return fmt.Errorf("failed to get user confirmation: %w", err)
+		}
+		if !confirmed {
+			return fmt.Errorf("discovery aborted: user declined to replace existing NicClusterPolicy")
+		}
+
+		// Deep-copy existing policies for later restoration
+		savedPolicies = make([]netop.NicClusterPolicy, len(existingPolicies))
+		copy(savedPolicies, existingPolicies)
+
+		if err := DeleteNicClusterPolicies(ctx, c, existingPolicies); err != nil {
+			return fmt.Errorf("failed to remove existing NicClusterPolicies: %w", err)
+		}
+
+		// Now create the thin discovery policy
+		if err := c.Create(ctx, policy); err != nil {
+			return fmt.Errorf("failed to create discovery NicClusterPolicy: %w", err)
+		}
+		if err := WaitNicClusterPolicyReady(ctx, c, policy.Name); err != nil {
+			return err
+		}
+	}
+
+	// Defers run LIFO: restore must be registered first so it runs after cleanup.
+	// Order of execution: (1) delete thin discovery policy, (2) restore saved policies.
+	if len(savedPolicies) > 0 {
+		defer func() {
+			uiOutput.Info("Restoring previously saved NicClusterPolicy resource(s)")
+			if err := RestoreNicClusterPolicies(ctx, c, savedPolicies); err != nil {
+				log.Log.Error(err, "failed to restore NicClusterPolicies after discovery")
+				uiOutput.Error("Failed to restore original NicClusterPolicy: %v", err)
+			} else {
+				uiOutput.Success("Original NicClusterPolicy restored successfully")
+			}
+		}()
+	}
+
+	// Always attempt cleanup of the thin discovery NicClusterPolicy
 	defer func() {
 		if err := DeleteNicClusterPolicy(ctx, c, "nic-cluster-policy"); err != nil {
 			log.Log.Error(err, "failed to delete NicClusterPolicy after discovery")
