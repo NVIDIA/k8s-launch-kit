@@ -5,7 +5,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: sriov-test-pod-{{printf "%c" (add 97 $i)}}
+  name: sriov-test-pod-{{printf "%c" (add 97 $i)}}{{suffix $.ClusterConfig.Identifier}}
   namespace: default
   annotations:
     k8s.v1.cni.cncf.io/networks: {{$.Sriov.NetworkName}}-{{printf "%c" (add 97 $i)}}
@@ -46,7 +46,7 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: sriov-test-pod
+  name: sriov-test-pod{{suffix $.ClusterConfig.Identifier}}
   namespace: default
   annotations:
     k8s.v1.cni.cncf.io/networks: {{.Sriov.NetworkName}}

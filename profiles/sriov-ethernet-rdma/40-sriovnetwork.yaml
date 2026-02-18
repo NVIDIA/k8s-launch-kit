@@ -5,7 +5,7 @@
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetwork
 metadata:
-  name: {{$.Sriov.NetworkName}}-{{printf "%c" (add 97 $i)}}
+  name: {{$.Sriov.NetworkName}}-{{printf "%c" (add 97 $i)}}{{suffix $.ClusterConfig.Identifier}}
   namespace: {{$.NetworkOperator.Namespace}}
 spec:
   ipam: |
@@ -22,7 +22,7 @@ spec:
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetwork
 metadata:
-  name: {{.Sriov.NetworkName}}
+  name: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
   namespace: {{.NetworkOperator.Namespace}}
 spec:
   ipam: |

@@ -1,6 +1,6 @@
 networkOperator:
   version: v26.1.0
-  componentVersion: network-operator-v25.10.0
+  componentVersion: network-operator-v26.1.0
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
 
@@ -37,7 +37,7 @@ sriov:
   numVfs: 8
   priority: 90
   resourceName: sriov_resource
-  networkName: sriov_network
+  networkName: sriov-network
 
 hostdev:
   resourceName: hostdev-resource
@@ -70,37 +70,38 @@ profile:
   ai: false
 
 clusterConfig:
-  capabilities:
-    nodes:
-      sriov: true # has nodes with feature.node.kubernetes.io/pci-15b3.present=true
-      rdma: true # has nodes with feature.node.kubernetes.io/rdma.capable=true
-      ib: true # has nodes with IB capable NICs (find via nic config op)      
-  workerNodes: ["worker-0", "worker-1", "worker-2"]
-  pfs:
-    - deviceID: 1023
-      pciAddress: 0000:05:00.0
-      rdmaDevice: "mlx5_0"
-      networkInterface: "net1"
-      traffic: east-west
-    - deviceID: 1023
-      pciAddress: 0000:75:00.0
-      rdmaDevice: "mlx5_1"
-      networkInterface: "net2"
-      traffic: east-west
-    - deviceID: 1023
-      pciAddress: 0000:85:00.0
-      rdmaDevice: "mlx5_2"
-      networkInterface: "net3"
-      traffic: east-west
-    - deviceID: 1023
-      pciAddress: 0000:f5:00.0
-      rdmaDevice: "mlx5_3"
-      networkInterface: "net4"
-      traffic: east-west
-    - deviceID: 1023
-      pciAddress: 0000:6a:00.0
-      rdmaDevice: "mlx5_4"
-      networkInterface: "net5"
-      traffic: north-south
-  nodeSelector:
-    feature.node.kubernetes.io/pci-15b3.present: "true"
+  - identifier: ""
+    capabilities:
+      nodes:
+        sriov: true # has nodes with feature.node.kubernetes.io/pci-15b3.present=true
+        rdma: true # has nodes with feature.node.kubernetes.io/rdma.capable=true
+        ib: true # has nodes with IB capable NICs (find via nic config op)
+    workerNodes: ["worker-0", "worker-1", "worker-2"]
+    pfs:
+      - deviceID: 1023
+        pciAddress: 0000:05:00.0
+        rdmaDevice: "mlx5_0"
+        networkInterface: "net1"
+        traffic: east-west
+      - deviceID: 1023
+        pciAddress: 0000:75:00.0
+        rdmaDevice: "mlx5_1"
+        networkInterface: "net2"
+        traffic: east-west
+      - deviceID: 1023
+        pciAddress: 0000:85:00.0
+        rdmaDevice: "mlx5_2"
+        networkInterface: "net3"
+        traffic: east-west
+      - deviceID: 1023
+        pciAddress: 0000:f5:00.0
+        rdmaDevice: "mlx5_3"
+        networkInterface: "net4"
+        traffic: east-west
+      - deviceID: 1023
+        pciAddress: 0000:6a:00.0
+        rdmaDevice: "mlx5_4"
+        networkInterface: "net5"
+        traffic: north-south
+    nodeSelector:
+      feature.node.kubernetes.io/pci-15b3.present: "true"

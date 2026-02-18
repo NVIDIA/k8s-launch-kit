@@ -18,6 +18,7 @@ package networkoperatorplugin
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"slices"
 	"strings"
@@ -32,6 +33,43 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+//go:embed ns-product-ids
+var nsProductIDsData string
+
+// nsProductIDs is the set of product codes / legacy product IDs for
+// BlueField DPU devices (not SuperNICs). Devices whose PartNumber matches
+// an entry in this set are marked as north-south traffic.
+var nsProductIDs = parseNSProductIDs(nsProductIDsData)
+
+func parseNSProductIDs(data string) map[string]bool {
+	ids := map[string]bool{}
+	for _, line := range strings.Split(data, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Format: ProductCode | LegacyProductId | ProductName
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) >= 2 {
+			productCode := strings.TrimSpace(parts[0])
+			legacyID := strings.TrimSpace(parts[1])
+			if productCode != "" {
+				ids[productCode] = true
+			}
+			if legacyID != "" {
+				ids[legacyID] = true
+			}
+		}
+	}
+	return ids
+}
+
+// isNorthSouthDevice returns true if the device's part number matches
+// a known BlueField DPU (non-SuperNIC) product ID from the ns-product-ids file.
+func isNorthSouthDevice(partNumber string) bool {
+	return nsProductIDs[partNumber]
+}
 
 func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, defaultConfig *config.LaunchKubernetesConfig) error {
 	uiOutput := ui.FromContext(ctx)
@@ -122,39 +160,52 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	}()
 
 	// After creation, list pods in the target namespace and ensure all pods
-	// from the nic-configuration-daemon DaemonSet are Ready
-	if err := checkDaemonSetPodsReady(ctx, c, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon"); err != nil {
+	// from the nic-configuration-daemon DaemonSet are Ready.
+	// Returns the set of node names running daemon pods.
+	expectedNodes, err := checkDaemonSetPodsReady(ctx, c, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon")
+	if err != nil {
 		return err
 	}
 
-	// Get NicDevice resources and build ClusterConfig.NvidiaNICs from their statuses
+	// Fetch node labels early — needed both for filtering and nodeSelector computation
+	nodeLabels, err := fetchNodeLabels(ctx, c)
+	if err != nil {
+		log.Log.Error(err, "failed to fetch node labels; nodeSelectors will be empty")
+		nodeLabels = map[string]map[string]string{}
+	}
+
+	// Filter expected nodes using the label selector.
+	// Nodes not matching will never report NicDevices, so waiting for them
+	// would cause a timeout.
+	if len(p.LabelSelector) > 0 {
+		expectedNodes = filterNodesByLabels(expectedNodes, nodeLabels, p.LabelSelector)
+		if len(expectedNodes) == 0 {
+			return fmt.Errorf("no nodes match the label selector %v", p.LabelSelector)
+		}
+	}
+
+	// Wait for all expected nodes to report their NicDevice resources
+	if err := waitNicDevicesDiscovered(ctx, c, defaultConfig.NetworkOperator.Namespace, expectedNodes); err != nil {
+		return err
+	}
+
+	// Get NicDevice resources and build ClusterConfig from their statuses
 	devices := &nicop.NicDeviceList{}
 	if err := c.List(ctx, devices, client.InNamespace(defaultConfig.NetworkOperator.Namespace)); err != nil {
 		return err
 	}
-	if len(devices.Items) == 0 {
-		log.Log.Info("No NicDevice resources found yet; waiting for discovery", "namespace", defaultConfig.NetworkOperator.Namespace)
-		if err := waitNicDevicesDiscovered(ctx, c, defaultConfig.NetworkOperator.Namespace); err != nil {
-			return err
-		}
-		// re-list after wait
-		if err := c.List(ctx, devices, client.InNamespace(defaultConfig.NetworkOperator.Namespace)); err != nil {
-			return err
-		}
-		log.Log.Info("NicDevice resources discovered", "count", len(devices.Items))
-	}
 
-	buildClusterConfigFromNicDevices(devices.Items, defaultConfig.ClusterConfig)
+	defaultConfig.ClusterConfig = buildClusterConfig(devices.Items, nodeLabels, p.LabelSelector)
 
 	return nil
 }
 
 // checkDaemonSetPodsReady verifies that all pods owned by the given DaemonSet
-// in the provided namespace are Ready.
-func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, daemonSetName string) error {
+// in the provided namespace are Ready. Returns the list of node names running those pods.
+func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, daemonSetName string) ([]string, error) {
 	podList := &corev1.PodList{}
 	if err := c.List(ctx, podList, client.InNamespace(namespace)); err != nil {
-		return err
+		return nil, err
 	}
 
 	var dsPods []corev1.Pod
@@ -168,16 +219,20 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 	}
 
 	if len(dsPods) == 0 {
-		return fmt.Errorf("no pods found for DaemonSet %q in namespace %q", daemonSetName, namespace)
+		return nil, fmt.Errorf("no pods found for DaemonSet %q in namespace %q", daemonSetName, namespace)
 	}
 
+	nodes := make([]string, 0, len(dsPods))
 	for _, pod := range dsPods {
 		if !isPodReady(&pod) {
-			return fmt.Errorf("pod %q from DaemonSet %q is not Ready", pod.Name, daemonSetName)
+			return nil, fmt.Errorf("pod %q from DaemonSet %q is not Ready", pod.Name, daemonSetName)
+		}
+		if pod.Spec.NodeName != "" {
+			nodes = append(nodes, pod.Spec.NodeName)
 		}
 	}
 
-	return nil
+	return nodes, nil
 }
 
 func isPodReady(pod *corev1.Pod) bool {
@@ -189,10 +244,10 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-// waitNicDevicesDiscovered polls until one or more NicDevice objects exist in the given namespace.
-func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, namespace string) error {
+// waitNicDevicesDiscovered polls until NicDevice objects exist for all expected nodes in the given namespace.
+func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, namespace string, expectedNodes []string) error {
 	uiOutput := ui.FromContext(parentCtx)
-	progress := uiOutput.StartProgress("Discovering network devices (timeout: 5 min)")
+	progress := uiOutput.StartProgress(fmt.Sprintf("Discovering network devices on %d node(s) (timeout: 5 min)", len(expectedNodes)))
 
 	// Use a bounded timeout if none supplied
 	ctx := parentCtx
@@ -202,72 +257,390 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, namesp
 		defer cancel()
 	}
 
+	expectedSet := make(map[string]bool, len(expectedNodes))
+	for _, n := range expectedNodes {
+		expectedSet[n] = true
+	}
+
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		list := &nicop.NicDeviceList{}
 		if err := c.List(ctx, list, client.InNamespace(namespace)); err == nil {
-			if len(list.Items) > 0 {
-				progress.Success(fmt.Sprintf("Found %d device(s)", len(list.Items)))
+			discoveredNodes := make(map[string]bool)
+			for _, d := range list.Items {
+				if d.Status.Node != "" {
+					discoveredNodes[d.Status.Node] = true
+				}
+			}
+
+			allFound := true
+			for node := range expectedSet {
+				if !discoveredNodes[node] {
+					allFound = false
+					break
+				}
+			}
+
+			if allFound && len(discoveredNodes) > 0 {
+				progress.Success(fmt.Sprintf("Found %d device(s) on %d node(s)", len(list.Items), len(discoveredNodes)))
 				return nil
 			}
+
+			progress.Update(fmt.Sprintf("Discovered devices on %d/%d node(s)...", len(discoveredNodes), len(expectedSet)))
 		}
 
 		select {
 		case <-ctx.Done():
 			progress.Fail("Timeout waiting for devices")
-			return fmt.Errorf("timeout waiting for NicDevice resources in namespace %q", namespace)
+			return fmt.Errorf("timeout waiting for NicDevice resources from all nodes in namespace %q", namespace)
 		case <-ticker.C:
-			progress.Update("Still waiting for device discovery...")
 		}
 	}
 }
 
-// buildClusterConfigFromNicDevices constructs ClusterConfig.NvidiaNICs based on NicDevice statuses.
-func buildClusterConfigFromNicDevices(devices []nicop.NicDevice, cluster *config.ClusterConfig) {
-	cluster.Capabilities.Nodes.Rdma = false
-	cluster.Capabilities.Nodes.Sriov = false
-	cluster.Capabilities.Nodes.Ib = true // TODO fix
+// pfFingerprint identifies a PF by its device ID and PCI address (ignoring RDMA/net names).
+type pfFingerprint struct {
+	DeviceID   string
+	PciAddress string
+}
 
-	cluster.PFs = []config.PFConfig{}
-	pfs := map[config.PFConfig]interface{}{}
-	workerNodes := map[string]interface{}{}
+// nodePFEntry holds the full PF info discovered on a specific node.
+type nodePFEntry struct {
+	pfFingerprint
+	RdmaDevice       string
+	NetworkInterface string
+	IsNorthSouth     bool // true when the device's partNumber matches a DPU product ID
+}
+
+// fetchNodeLabels lists all Kubernetes nodes and returns a map of nodeName → labels.
+func fetchNodeLabels(ctx context.Context, c client.Client) (map[string]map[string]string, error) {
+	nodeList := &corev1.NodeList{}
+	if err := c.List(ctx, nodeList); err != nil {
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+	result := make(map[string]map[string]string, len(nodeList.Items))
+	for _, node := range nodeList.Items {
+		result[node.Name] = node.Labels
+	}
+	return result, nil
+}
+
+// filterNodesByLabels returns only nodes whose labels match all entries in the selector.
+func filterNodesByLabels(nodes []string, nodeLabels map[string]map[string]string, selector map[string]string) []string {
+	var filtered []string
+	for _, n := range nodes {
+		labels := nodeLabels[n]
+		if labels == nil {
+			continue
+		}
+		match := true
+		for k, v := range selector {
+			if labels[k] != v {
+				match = false
+				break
+			}
+		}
+		if match {
+			filtered = append(filtered, n)
+		}
+	}
+	return filtered
+}
+
+// buildClusterConfig groups NicDevices by identical PF fingerprints across nodes
+// and returns a ClusterConfig slice with one entry per group.
+func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, labelSelector map[string]string) []config.ClusterConfig {
+	// Step 1: Build per-node PF map and track capabilities per node
+	type nodeInfo struct {
+		pfs     []nodePFEntry
+		hasRdma bool
+		hasPCI  bool
+	}
+	nodeMap := map[string]*nodeInfo{}
 
 	for _, d := range devices {
+		nodeName := d.Status.Node
+		if nodeName == "" {
+			continue
+		}
+		if nodeMap[nodeName] == nil {
+			nodeMap[nodeName] = &nodeInfo{}
+		}
+		ni := nodeMap[nodeName]
+		northSouth := isNorthSouthDevice(d.Status.PartNumber)
 		for _, p := range d.Status.Ports {
+			entry := nodePFEntry{
+				pfFingerprint: pfFingerprint{
+					DeviceID:   d.Status.Type,
+					PciAddress: p.PCI,
+				},
+				RdmaDevice:       p.RdmaInterface,
+				NetworkInterface: p.NetworkInterface,
+				IsNorthSouth:     northSouth,
+			}
+			ni.pfs = append(ni.pfs, entry)
 			if p.RdmaInterface != "" {
-				cluster.Capabilities.Nodes.Rdma = true
+				ni.hasRdma = true
 			}
 			if p.PCI != "" {
-				cluster.Capabilities.Nodes.Sriov = true
+				ni.hasPCI = true
 			}
-
-			pfs[config.PFConfig{
-				DeviceID:         d.Status.Type, // NIC model name, e.g. "ConnectX7"
-				RdmaDevice:       p.RdmaInterface,
-				PciAddress:       p.PCI,
-				NetworkInterface: p.NetworkInterface,
-				Traffic:          "east-west", // TODO fix
-			}] = struct{}{}
-		}
-
-		workerNodes[d.Status.Node] = struct{}{}
-	}
-
-	for node := range workerNodes {
-		if node != "" {
-			cluster.WorkerNodes = append(cluster.WorkerNodes, node)
 		}
 	}
 
-	slices.Sort(cluster.WorkerNodes)
-
-	for pf := range pfs {
-		cluster.PFs = append(cluster.PFs, pf)
+	// Step 2: Compute PF fingerprint per node and group nodes
+	type fingerprintKey string
+	computeFingerprint := func(pfs []nodePFEntry) fingerprintKey {
+		fps := make([]pfFingerprint, len(pfs))
+		for i, p := range pfs {
+			fps[i] = p.pfFingerprint
+		}
+		slices.SortFunc(fps, func(a, b pfFingerprint) int {
+			if c := strings.Compare(a.DeviceID, b.DeviceID); c != 0 {
+				return c
+			}
+			return strings.Compare(a.PciAddress, b.PciAddress)
+		})
+		parts := make([]string, len(fps))
+		for i, fp := range fps {
+			parts[i] = fp.DeviceID + ":" + fp.PciAddress
+		}
+		return fingerprintKey(strings.Join(parts, "|"))
 	}
 
-	slices.SortFunc(cluster.PFs, func(a, b config.PFConfig) int {
-		return strings.Compare(a.PciAddress, b.PciAddress)
-	})
+	// Group nodes by fingerprint, preserving order by first-seen node
+	type nodeGroup struct {
+		fingerprint fingerprintKey
+		nodes       []string
+		pfs         []nodePFEntry // representative PFs from first node
+		hasRdma     bool
+		hasPCI      bool
+	}
+	fingerprintOrder := []fingerprintKey{}
+	groupMap := map[fingerprintKey]*nodeGroup{}
+
+	// Sort node names for deterministic grouping
+	sortedNodes := make([]string, 0, len(nodeMap))
+	for n := range nodeMap {
+		sortedNodes = append(sortedNodes, n)
+	}
+	slices.Sort(sortedNodes)
+
+	for _, nodeName := range sortedNodes {
+		ni := nodeMap[nodeName]
+		fp := computeFingerprint(ni.pfs)
+		if g, ok := groupMap[fp]; ok {
+			g.nodes = append(g.nodes, nodeName)
+			g.hasRdma = g.hasRdma || ni.hasRdma
+			g.hasPCI = g.hasPCI || ni.hasPCI
+		} else {
+			fingerprintOrder = append(fingerprintOrder, fp)
+			groupMap[fp] = &nodeGroup{
+				fingerprint: fp,
+				nodes:       []string{nodeName},
+				pfs:         ni.pfs,
+				hasRdma:     ni.hasRdma,
+				hasPCI:      ni.hasPCI,
+			}
+		}
+	}
+
+	// Step 3: Build ClusterConfig per group
+	singleGroup := len(fingerprintOrder) == 1
+	groups := make([]config.ClusterConfig, 0, len(fingerprintOrder))
+
+	for i, fp := range fingerprintOrder {
+		g := groupMap[fp]
+
+		identifier := ""
+		if !singleGroup {
+			identifier = fmt.Sprintf("group-%d", i)
+		}
+
+		// Build PFs from the representative node's entries.
+		// If multiple nodes exist in the group, RDMA/net device names may differ — omit them.
+		pfs := make([]config.PFConfig, len(g.pfs))
+		for j, entry := range g.pfs {
+			traffic := "east-west"
+			if entry.IsNorthSouth {
+				traffic = "north-south"
+			}
+			pfs[j] = config.PFConfig{
+				DeviceID:   entry.DeviceID,
+				PciAddress: entry.PciAddress,
+				Traffic:    traffic,
+			}
+			if singleGroup || len(g.nodes) == 1 {
+				// Safe to include RDMA/net device names when only one node in group
+				pfs[j].RdmaDevice = entry.RdmaDevice
+				pfs[j].NetworkInterface = entry.NetworkInterface
+			}
+		}
+
+		slices.SortFunc(pfs, func(a, b config.PFConfig) int {
+			return strings.Compare(a.PciAddress, b.PciAddress)
+		})
+
+		slices.Sort(g.nodes)
+
+		// Extract machine/product type from common node labels
+		commonLabels := computeCommonLabels(g.nodes, nodeLabels)
+		machineType := commonLabels["nvidia.com/gpu.machine"]
+		productType := commonLabels["nvidia.com/gpu.product"]
+
+		cc := config.ClusterConfig{
+			Identifier:    identifier,
+			MachineType:   machineType,
+			ProductType:   productType,
+			LabelSelector: labelSelector,
+			Capabilities: &config.ClusterCapabilities{
+				Nodes: &config.NodesCapabilities{
+					Rdma:  g.hasRdma,
+					Sriov: g.hasPCI,
+					Ib:    true, // TODO: detect from NicDevice
+				},
+			},
+			PFs:         pfs,
+			WorkerNodes: g.nodes,
+		}
+
+		groups = append(groups, cc)
+	}
+
+	// Step 4: Compute nodeSelectors per group
+	if len(groups) > 1 {
+		computeNodeSelectors(groups, nodeLabels)
+	}
+
+	return groups
 }
+
+// computeNodeSelectors assigns NodeSelectors to each group using ALL label keys
+// where groups have differing common values. This ensures every group uses the
+// same set of label keys (with different values), making the selectors consistent.
+func computeNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]map[string]string) {
+	n := len(groups)
+	if n <= 1 {
+		return
+	}
+
+	// Compute common labels per group (intersection of labels across all nodes)
+	groupCommonLabels := make([]map[string]string, n)
+	for i, g := range groups {
+		groupCommonLabels[i] = computeCommonLabels(g.WorkerNodes, nodeLabels)
+	}
+
+	// Collect all label keys present in any group's common labels
+	allKeys := map[string]bool{}
+	for _, cl := range groupCommonLabels {
+		for k := range cl {
+			allKeys[k] = true
+		}
+	}
+
+	// Find all label keys where at least two groups have different common values.
+	// A key "differs" if: group A has value X and group B has value Y (Y != X),
+	// or one group has the key in common and another doesn't.
+	differingKeys := []string{}
+	for k := range allKeys {
+		values := map[string]bool{}
+		missing := false
+		for _, cl := range groupCommonLabels {
+			v, ok := cl[k]
+			if !ok {
+				missing = true
+			} else {
+				values[v] = true
+			}
+		}
+		if len(values) > 1 || (len(values) >= 1 && missing) {
+			differingKeys = append(differingKeys, k)
+		}
+	}
+
+	slices.Sort(differingKeys)
+
+	// Assign ALL differing label keys to each group's NodeSelector
+	for i := range groups {
+		selector := map[string]string{}
+		for _, k := range differingKeys {
+			if v, ok := groupCommonLabels[i][k]; ok {
+				selector[k] = v
+			}
+			// If this group doesn't have the key in common, omit it —
+			// the key still discriminates because other groups DO have it.
+		}
+		if len(selector) > 0 {
+			groups[i].NodeSelector = selector
+		} else {
+			log.Log.Info("Warning: could not compute a unique nodeSelector for group",
+				"group", groups[i].Identifier, "nodes", groups[i].WorkerNodes)
+		}
+	}
+}
+
+// computeCommonLabels returns labels with identical values across all specified nodes.
+func computeCommonLabels(nodes []string, nodeLabels map[string]map[string]string) map[string]string {
+	if len(nodes) == 0 {
+		return map[string]string{}
+	}
+
+	// Start with labels from the first node
+	firstLabels := nodeLabels[nodes[0]]
+	if firstLabels == nil {
+		return map[string]string{}
+	}
+
+	common := make(map[string]string, len(firstLabels))
+	for k, v := range firstLabels {
+		if isNoisyLabel(k) {
+			continue
+		}
+		common[k] = v
+	}
+
+	// Intersect with remaining nodes
+	for _, node := range nodes[1:] {
+		labels := nodeLabels[node]
+		for k, v := range common {
+			if labels[k] != v {
+				delete(common, k)
+			}
+		}
+	}
+
+	return common
+}
+
+// isNoisyLabel returns true for labels that are node-specific or not useful for discrimination.
+func isNoisyLabel(key string) bool {
+	noisyPrefixes := []string{
+		"kubernetes.io/metadata",
+		"node.kubernetes.io/instance-type",
+		"kubernetes.io/hostname",
+		"kubernetes.io/arch",
+		"kubernetes.io/os",
+		"pod-security.kubernetes.io",
+		"topology.kubernetes.io",
+	}
+	noisyExact := []string{
+		"beta.kubernetes.io/arch",
+		"beta.kubernetes.io/os",
+		"kubernetes.io/hostname",
+	}
+
+	for _, prefix := range noisyPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	for _, exact := range noisyExact {
+		if key == exact {
+			return true
+		}
+	}
+	return false
+}
+

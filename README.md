@@ -68,30 +68,33 @@ Available Commands:
   version     Print the version number
 
 Flags:
-      --ai                             Enable AI deployment
-      --deploy                         Deploy the generated files to the Kubernetes cluster
-      --deployment-type string         Select the deployment type (sriov, rdma_shared, host_device)
-      --discover-cluster-config        Deploy a thin Network Operator profile to discover cluster capabilities
-      --enabled-plugins string         Comma-separated list of plugins to enable (default "network-operator")
-      --fabric string                  Select the fabric type to deploy (infiniband, ethernet)
-  -h, --help                           help for l8k
-      --kubeconfig string              Path to kubeconfig file for cluster deployment (required when using --deploy)
-      --llm-api-key string             API key for the LLM API (required when using --prompt)
-      --llm-api-url string             API URL for the LLM API
-      --llm-interactive                Enable interactive chat mode for LLM-assisted profile selection
-      --llm-model string               Model name for the LLM API (e.g., claude-3-5-sonnet-20241022, gpt-4)
-      --llm-vendor string              Vendor of the LLM API: openai, openai-azure, anthropic, gemini (default "openai-azure")
-      --log-file string                Write logs to file instead of stderr
-      --log-level string               Enable logging at specified level (debug, info, warn, error)
-      --multiplane-mode string         Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)
-      --multirail                      Enable multirail deployment
-      --number-of-planes int           Number of planes for Spectrum-X (requires --spectrum-x)
-      --prompt string                  Path to file with a prompt to use for LLM-assisted profile generation
-      --save-cluster-config string     Save discovered cluster configuration to the specified path (default "/opt/nvidia/k8s-launch-kit/cluster-config.yaml")
-      --save-deployment-files string   Save generated deployment files to the specified directory (default "/opt/nvidia/k8s-launch-kit/deployment")
-      --spcx-version string            Spectrum-X firmware version (requires --spectrum-x)
-      --spectrum-x                     Enable Spectrum X deployment
-      --user-config string             Use provided cluster configuration file instead of auto-discovery (skips cluster discovery)
+      --ai                                Enable AI deployment
+      --deploy                            Deploy the generated files to the Kubernetes cluster
+      --deployment-type string            Select the deployment type (sriov, rdma_shared, host_device)
+      --discover-cluster-config           Deploy a thin Network Operator profile to discover cluster capabilities
+      --enabled-plugins string            Comma-separated list of plugins to enable (default "network-operator")
+      --fabric string                     Select the fabric type to deploy (infiniband, ethernet)
+      --group string                      Generate templates for a specific group only (e.g., group-0)
+  -h, --help                              help for l8k
+      --kubeconfig string                 Path to kubeconfig file for cluster deployment (required when using --deploy)
+      --label-selector string             Filter nodes for discovery by label (default "feature.node.kubernetes.io/pci-15b3.present=true")
+      --llm-api-key string                API key for the LLM API (required when using --prompt)
+      --llm-api-url string                API URL for the LLM API
+      --llm-interactive                   Enable interactive chat mode for LLM-assisted profile selection
+      --llm-model string                  Model name for the LLM API (e.g., claude-3-5-sonnet-20241022, gpt-4)
+      --llm-vendor string                 Vendor of the LLM API: openai, openai-azure, anthropic, gemini (default "openai-azure")
+      --log-file string                   Write logs to file instead of stderr
+      --log-level string                  Enable logging at specified level (debug, info, warn, error)
+      --multiplane-mode string            Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)
+      --multirail                         Enable multirail deployment
+      --network-operator-namespace string Override the network operator namespace from the config file
+      --number-of-planes int              Number of planes for Spectrum-X (requires --spectrum-x)
+      --prompt string                     Path to file with a prompt to use for LLM-assisted profile generation
+      --save-cluster-config string        Save discovered cluster configuration to the specified path (default "/opt/nvidia/k8s-launch-kit/cluster-config.yaml")
+      --save-deployment-files string      Save generated deployment files to the specified directory (default "/opt/nvidia/k8s-launch-kit/deployment")
+      --spcx-version string               Spectrum-X firmware version (requires --spectrum-x)
+      --spectrum-x                        Enable Spectrum X deployment
+      --user-config string                Use provided cluster configuration file instead of auto-discovery (skips cluster discovery)
 
 Use "l8k [command] --help" for more information about a command.
 ```
@@ -114,10 +117,19 @@ l8k --discover-cluster-config --save-cluster-config ./cluster-config.yaml \
 ### Discover Cluster Configuration
 
 ```bash
-l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml
+l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml \
+    --kubeconfig ~/.kube/config
 ```
 
-### Use Existing Configuration  
+Filter discovery to specific nodes using a label selector:
+
+```bash
+l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml \
+    --label-selector "feature.node.kubernetes.io/pci-15b3.present=true" \
+    --kubeconfig ~/.kube/config
+```
+
+### Use Existing Configuration
 
 Generate and deploy with pre-existing config:
 
@@ -132,6 +144,17 @@ l8k --user-config ./existing-config.yaml \
 ```bash
 l8k --user-config ./config.yaml \
     --fabric ethernet --deployment-type sriov --multirail \
+    --save-deployment-files ./deployments
+```
+
+### Generate Deployment Files for a Specific Node Group
+
+In heterogeneous clusters, discovery produces multiple node groups. Use `--group` to generate manifests for a single group:
+
+```bash
+l8k --user-config ./config.yaml \
+    --fabric infiniband --deployment-type sriov --multirail \
+    --group group-0 \
     --save-deployment-files ./deployments
 ```
 
@@ -156,12 +179,10 @@ networkOperator:
   componentVersion: network-operator-v26.1.0
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
-
 docaDriver:
-  version: doca3.3.0-26.01-0.9.6.0-0
+  version: doca3.2.0-25.10-1.2.8.0-2
   unloadStorageModules: false
   enableNFSRDMA: false
-
 nvIpam:
   poolName: nv-ipam-pool
   subnets:
@@ -183,80 +204,264 @@ nvIpam:
     gateway: 192.168.9.1
   - subnet: 192.168.10.0/24
     gateway: 192.168.10.1
-
+  - subnet: 192.168.11.0/24
+    gateway: 192.168.11.1
+  - subnet: 192.168.12.0/24
+    gateway: 192.168.12.1
+  - subnet: 192.168.13.0/24
+    gateway: 192.168.13.1
+  - subnet: 192.168.14.0/24
+    gateway: 192.168.14.1
+  - subnet: 192.168.15.0/24
+    gateway: 192.168.15.1
+  - subnet: 192.168.16.0/24
+    gateway: 192.168.16.1
+  - subnet: 192.168.17.0/24
+    gateway: 192.168.17.1
+  - subnet: 192.168.18.0/24
+    gateway: 192.168.18.1
+  - subnet: 192.168.19.0/24
 sriov:
   ethernetMtu: 9000
   infinibandMtu: 4000
   numVfs: 8
   priority: 90
   resourceName: sriov_resource
-  networkName: sriov_network
-
+  networkName: sriov-network
 hostdev:
   resourceName: hostdev-resource
   networkName: hostdev-network
-
 rdmaShared:
-  resourceName: rdma_shared_resource # with multiple pools, _a, _b, _c, prefixes are added to the resource name
+  resourceName: rdma_shared_resource
   hcaMax: 63
-
 ipoib:
-  networkName: ipoib-network # with multiple networks, -a, -b, -c, prefixes are added to the network name
-
+  networkName: ipoib-network
 macvlan:
-  networkName: macvlan-network # with multiple networks, -a, -b, -c, prefixes are added to the network name
-
+  networkName: macvlan-network
 spectrumX:
-  nicType: "1023" # "1023" for ConnectX-8, "a2dc" for BlueField-3 SuperNIC
-  overlay: "none"
-  rdmaPrefix: "roce_p%plane%_r%rail%"
-  netdevPrefix: "eth_p%plane%_r%rail%"
-
-profile:
-  fabric: ethernet # infiniband, ethernet TODO consider ETH/IB
-  deployment: sriov # rdma_shared, sriov, host_device
-  multirail: false
-  spectrumX: # Spectrum-X configuration (set to null or omit if not using Spectrum-X)
-    spcxVersion: "RA2.1" # CLI parameter (overrides this value): --spcx-version
-    multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
-    numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
-  ai: false
-
+  nicType: "1023"
+  overlay: none
+  rdmaPrefix: roce_p%plane%_r%rail%
+  netdevPrefix: eth_p%plane%_r%rail%
 clusterConfig:
+- identifier: group-0
   capabilities:
     nodes:
-      sriov: true # has nodes with feature.node.kubernetes.io/pci-15b3.present=true
-      rdma: true # has nodes with feature.node.kubernetes.io/rdma.capable=true
-      ib: true # has nodes with IB capable NICs (find via nic config op)      
-  workerNodes: ["worker-0", "worker-1", "worker-2"]
+      sriov: true
+      rdma: true
+      ib: true
   pfs:
-    - deviceID: 1023
-      pciAddress: 0000:05:00.0
-      rdmaDevice: "mlx5_0"
-      networkInterface: "net1"
-      traffic: east-west
-    - deviceID: 1023
-      pciAddress: 0000:75:00.0
-      rdmaDevice: "mlx5_1"
-      networkInterface: "net2"
-      traffic: east-west
-    - deviceID: 1023
-      pciAddress: 0000:85:00.0
-      rdmaDevice: "mlx5_2"
-      networkInterface: "net3"
-      traffic: east-west
-    - deviceID: 1023
-      pciAddress: 0000:f5:00.0
-      rdmaDevice: "mlx5_3"
-      networkInterface: "net4"
-      traffic: east-west
-    - deviceID: 1023
-      pciAddress: 0000:6a:00.0
-      rdmaDevice: "mlx5_4"
-      networkInterface: "net5"
-      traffic: north-south
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:19:00.0"
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:2a:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:3b:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:4c:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: 101f
+    rdmaDevice: ""
+    pciAddress: 0000:5a:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: 101f
+    rdmaDevice: ""
+    pciAddress: 0000:5a:00.1
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9b:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:ab:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:c1:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:cb:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:d8:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:d8:00.1
+    networkInterface: ""
+    traffic: east-west
+  workerNodes:
+  - pdx-g22r13-2894-lh2-w01
+  - pdx-g24r13-2894-lh2-w02
   nodeSelector:
-    feature.node.kubernetes.io/pci-15b3.present: "true"
+    nvidia.com/gpu.machine: ThinkSystem-SR680a-V3
+- identifier: group-1
+  capabilities:
+    nodes:
+      sriov: true
+      rdma: true
+      ib: true
+  pfs:
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:1a:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:3c:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:4d:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:5e:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9c:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9d:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9d:00.1
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:bc:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:cc:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:dc:00.0
+    networkInterface: ""
+    traffic: east-west
+  workerNodes:
+  - pdx-g22r23-2894-dh2-w03
+  - pdx-g24r23-2894-dh2-w04
+  nodeSelector:
+    nvidia.com/gpu.machine: PowerEdge-XE9680
+- identifier: group-2
+  capabilities:
+    nodes:
+      sriov: true
+      rdma: true
+      ib: true
+  pfs:
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:09:00.0"
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:23:00.0"
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:35:00.0"
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:35:00.1"
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:53:00.0"
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:69:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:8f:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9c:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:cd:00.0
+    networkInterface: ""
+    traffic: east-west
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:f1:00.0
+    networkInterface: ""
+    traffic: east-west
+  workerNodes:
+  - pdx-g22r31-2894-ch2-w05
+  - pdx-g24r31-2894-ch2-w06
+  nodeSelector:
+    nvidia.com/gpu.machine: UCSC-885A-M8-H22
+```
+
+### North-South Traffic Detection
+
+During cluster discovery, the tool automatically identifies BlueField DPU devices (as opposed to SuperNICs or ConnectX NICs) by matching each device's `partNumber` against a known list of DPU product codes in [pkg/networkoperatorplugin/ns-product-ids](pkg/networkoperatorplugin/ns-product-ids). Devices matching a DPU product code are classified as **north-south** traffic (management/external), while all other devices are classified as **east-west** traffic (GPU interconnect).
+
+North-south PFs are included in the saved cluster configuration for visibility, but are **automatically filtered out** during template rendering so that only east-west PFs appear in the generated manifests. This ensures sequential naming (a, b, c, d) for resources like SriovNetworkNodePolicy and IPPool entries.
+
+Example of mixed traffic types in the config:
+```yaml
+clusterConfig:
+- identifier: group-0
+  pfs:
+  - deviceID: a2dc
+    pciAddress: "0000:19:00.0"
+    traffic: east-west       # SuperNIC — included in manifests
+  - deviceID: a2dc
+    pciAddress: "0000:2a:00.0"
+    traffic: east-west
+  - deviceID: a2dc
+    pciAddress: "0000:3b:00.0"
+    traffic: north-south     # BlueField DPU — excluded from manifests
 ```
 
 ## Docker container

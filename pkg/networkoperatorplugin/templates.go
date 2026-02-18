@@ -48,43 +48,129 @@ var templateFuncs = template.FuncMap{
 		result = strings.ReplaceAll(result, "%rail%", fmt.Sprintf("%d", rail))
 		return result
 	},
+	// suffix prepends a "-" if the string is non-empty, producing a name suffix.
+	// e.g., suffix("group-0") → "-group-0", suffix("") → ""
+	"suffix": func(s string) string {
+		if s == "" {
+			return ""
+		}
+		return "-" + s
+	},
 }
 
-// ProcessTemplate processes a Go template file with the given config
-func ProcessTemplate(templatePath string, config *config.LaunchKubernetesConfig) (string, error) {
+// templateContext wraps the full config but presents a single ClusterConfig group.
+// The ClusterConfig field shadows the slice field in LaunchKubernetesConfig,
+// so templates can use .ClusterConfig.PFs, .ClusterConfig.NodeSelector, etc.
+type templateContext struct {
+	*config.LaunchKubernetesConfig
+	ClusterConfig *config.ClusterConfig
+}
+
+// ProcessTemplate processes a Go template file with the given config.
+// Returns a map of filename → rendered content. Templates that reference
+// .ClusterConfig are rendered once per group (producing separate files),
+// while other templates are rendered once.
+func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, groupFilter string) (map[string]string, error) {
 	// Read the template file
 	templateContent, err := os.ReadFile(templatePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read template file %s: %w", templatePath, err)
+		return nil, fmt.Errorf("failed to read template file %s: %w", templatePath, err)
 	}
 
 	// Parse the template with helper functions
 	tmpl, err := template.New(filepath.Base(templatePath)).Funcs(templateFuncs).Parse(string(templateContent))
 	if err != nil {
-		return "", fmt.Errorf("failed to parse template %s: %w", templatePath, err)
+		return nil, fmt.Errorf("failed to parse template %s: %w", templatePath, err)
 	}
 
-	// Execute the template
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, config)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute template %s: %w", templatePath, err)
+	baseName := filepath.Base(templatePath)
+	usesClusterConfig := strings.Contains(string(templateContent), ".ClusterConfig")
+
+	if !usesClusterConfig || len(cfg.ClusterConfig) == 0 {
+		// Render once — no per-group variation
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, cfg); err != nil {
+			return nil, fmt.Errorf("failed to execute template %s: %w", templatePath, err)
+		}
+		return map[string]string{baseName: buf.String()}, nil
 	}
 
-	return buf.String(), nil
+	// Determine which groups to render
+	groups := cfg.ClusterConfig
+	singleGroupMode := false
+	if groupFilter != "" {
+		filtered := []config.ClusterConfig{}
+		for _, g := range groups {
+			if g.Identifier == groupFilter {
+				filtered = append(filtered, g)
+			}
+		}
+		if len(filtered) == 0 {
+			return nil, fmt.Errorf("group %q not found in ClusterConfig", groupFilter)
+		}
+		groups = filtered
+		singleGroupMode = true
+	}
+
+	// Render once per group → separate file per group
+	results := map[string]string{}
+	ext := filepath.Ext(baseName)
+	nameNoExt := strings.TrimSuffix(baseName, ext)
+
+	for i := range groups {
+		// When --group is used, clear the identifier so CR names and filenames
+		// don't carry the group suffix (only one group is being rendered).
+		renderGroup := groups[i]
+		if singleGroupMode {
+			renderGroup.Identifier = ""
+		}
+		// Filter out north-south PFs so templates only see east-west devices.
+		// This keeps indices sequential for naming (a, b, c, d instead of a, d, e, f).
+		renderGroup.PFs = filterEastWestPFs(renderGroup.PFs)
+		ctx := &templateContext{
+			LaunchKubernetesConfig: cfg,
+			ClusterConfig:          &renderGroup,
+		}
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, ctx); err != nil {
+			return nil, fmt.Errorf("failed to execute template %s for group %s: %w", templatePath, groups[i].Identifier, err)
+		}
+		id := renderGroup.Identifier
+		fileName := baseName
+		if id != "" {
+			fileName = fmt.Sprintf("%s-%s%s", nameNoExt, id, ext)
+		}
+		results[fileName] = buf.String()
+	}
+
+	return results, nil
 }
 
-// ProcessProfileTemplates processes all template files in a profile directory
-func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, config *config.LaunchKubernetesConfig) (map[string]string, error) {
+// filterEastWestPFs returns only PFs with traffic == "east-west",
+// so that template indices stay sequential for naming (a, b, c, d).
+func filterEastWestPFs(pfs []config.PFConfig) []config.PFConfig {
+	var filtered []config.PFConfig
+	for _, pf := range pfs {
+		if pf.Traffic == "east-west" {
+			filtered = append(filtered, pf)
+		}
+	}
+	return filtered
+}
+
+// GenerateProfileDeploymentFiles processes all template files in a profile directory
+func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKubernetesConfig) (map[string]string, error) {
 	results := make(map[string]string)
 
 	for _, templatePath := range profile.Templates {
-		processed, err := ProcessTemplate(templatePath, config)
+		rendered, err := ProcessTemplate(templatePath, cfg, p.GroupFilter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process template %s: %w", templatePath, err)
 		}
 
-		results[filepath.Base(templatePath)] = processed
+		for filename, content := range rendered {
+			results[filename] = content
+		}
 	}
 
 	return results, nil
