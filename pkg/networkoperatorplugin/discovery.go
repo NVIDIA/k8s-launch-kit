@@ -483,6 +483,16 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			return strings.Compare(a.PciAddress, b.PciAddress)
 		})
 
+		// Assign rail numbers sequentially to east-west PFs only (north-south are skipped).
+		railIndex := 0
+		for j := range pfs {
+			if pfs[j].Traffic == "east-west" {
+				r := railIndex
+				pfs[j].Rail = &r
+				railIndex++
+			}
+		}
+
 		slices.Sort(g.nodes)
 
 		// Extract machine/product type from common node labels
