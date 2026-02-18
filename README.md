@@ -256,61 +256,73 @@ clusterConfig:
     pciAddress: "0000:19:00.0"
     networkInterface: ""
     traffic: east-west
+    rail: 0
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:2a:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 1
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:3b:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 2
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:4c:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 3
   - deviceID: 101f
     rdmaDevice: ""
     pciAddress: 0000:5a:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 4
   - deviceID: 101f
     rdmaDevice: ""
     pciAddress: 0000:5a:00.1
     networkInterface: ""
     traffic: east-west
+    rail: 5
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:9b:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 6
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:ab:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 7
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:c1:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 8
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:cb:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 9
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:d8:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 10
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:d8:00.1
     networkInterface: ""
     traffic: east-west
+    rail: 11
   workerNodes:
   - pdx-g22r13-2894-lh2-w01
   - pdx-g24r13-2894-lh2-w02
@@ -328,51 +340,61 @@ clusterConfig:
     pciAddress: 0000:1a:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 0
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:3c:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 1
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:4d:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 2
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:5e:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 3
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:9c:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 4
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:9d:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 5
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:9d:00.1
     networkInterface: ""
     traffic: east-west
+    rail: 6
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:bc:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 7
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:cc:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 8
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:dc:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 9
   workerNodes:
   - pdx-g22r23-2894-dh2-w03
   - pdx-g24r23-2894-dh2-w04
@@ -390,51 +412,61 @@ clusterConfig:
     pciAddress: "0000:09:00.0"
     networkInterface: ""
     traffic: east-west
+    rail: 0
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: "0000:23:00.0"
     networkInterface: ""
     traffic: east-west
+    rail: 1
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: "0000:35:00.0"
     networkInterface: ""
     traffic: east-west
+    rail: 2
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: "0000:35:00.1"
     networkInterface: ""
     traffic: east-west
+    rail: 3
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: "0000:53:00.0"
     networkInterface: ""
     traffic: east-west
+    rail: 4
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:69:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 5
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:8f:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 6
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:9c:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 7
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:cd:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 8
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:f1:00.0
     networkInterface: ""
     traffic: east-west
+    rail: 9
   workerNodes:
   - pdx-g22r31-2894-ch2-w05
   - pdx-g24r31-2894-ch2-w06
@@ -446,7 +478,7 @@ clusterConfig:
 
 During cluster discovery, the tool automatically identifies BlueField DPU devices (as opposed to SuperNICs or ConnectX NICs) by matching each device's `partNumber` against a known list of DPU product codes in [pkg/networkoperatorplugin/ns-product-ids](pkg/networkoperatorplugin/ns-product-ids). Devices matching a DPU product code are classified as **north-south** traffic (management/external), while all other devices are classified as **east-west** traffic (GPU interconnect).
 
-North-south PFs are included in the saved cluster configuration for visibility, but are **automatically filtered out** during template rendering so that only east-west PFs appear in the generated manifests. This ensures sequential naming (a, b, c, d) for resources like SriovNetworkNodePolicy and IPPool entries.
+North-south PFs are included in the saved cluster configuration for visibility, but are **automatically filtered out** during template rendering so that only east-west PFs appear in the generated manifests. Each east-west PF is assigned a sequential rail number (rail-0, rail-1, rail-2, ...) used for naming resources like SriovNetworkNodePolicy and IPPool entries.
 
 Example of mixed traffic types in the config:
 ```yaml
@@ -456,9 +488,11 @@ clusterConfig:
   - deviceID: a2dc
     pciAddress: "0000:19:00.0"
     traffic: east-west       # SuperNIC — included in manifests
+    rail: 0
   - deviceID: a2dc
     pciAddress: "0000:2a:00.0"
     traffic: east-west
+    rail: 1
   - deviceID: a2dc
     pciAddress: "0000:3b:00.0"
     traffic: north-south     # BlueField DPU — excluded from manifests

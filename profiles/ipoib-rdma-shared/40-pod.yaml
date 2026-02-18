@@ -5,10 +5,10 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ipoib-test-pod-{{printf "%c" (add 97 $i)}}{{suffix $.ClusterConfig.Identifier}}
+  name: ipoib-test-pod-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
   namespace: default
   annotations:
-    k8s.v1.cni.cncf.io/networks: {{$.Ipoib.NetworkName}}-{{printf "%c" (add 97 $i)}}
+    k8s.v1.cni.cncf.io/networks: {{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}
 spec:
   {{- if $.ClusterConfig.NodeSelector }}
   affinity:
@@ -36,9 +36,9 @@ spec:
         add: ["IPC_LOCK"]
     resources:
       requests:
-        rdma/{{$.RdmaShared.ResourceName}}-{{printf "%c" (add 97 $i)}}: 1
+        rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}: 1
       limits:
-        rdma/{{$.RdmaShared.ResourceName}}-{{printf "%c" (add 97 $i)}}: 1
+        rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}: 1
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{end}}
 {{- end}}

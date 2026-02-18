@@ -5,10 +5,10 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: sriov-test-pod-{{printf "%c" (add 97 $i)}}{{suffix $.ClusterConfig.Identifier}}
+  name: sriov-test-pod-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
   namespace: default
   annotations:
-    k8s.v1.cni.cncf.io/networks: {{$.Sriov.NetworkName}}-{{printf "%c" (add 97 $i)}}
+    k8s.v1.cni.cncf.io/networks: {{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}
 spec:
   {{- if $.ClusterConfig.NodeSelector }}
   affinity:
@@ -36,9 +36,9 @@ spec:
         add: ["IPC_LOCK"]
     resources:
       requests:
-        nvidia.com/{{$.Sriov.ResourceName}}-{{printf "%c" (add 97 $i)}}: '1'
+        nvidia.com/{{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}: '1'
       limits:
-        nvidia.com/{{$.Sriov.ResourceName}}-{{printf "%c" (add 97 $i)}}: '1'
+        nvidia.com/{{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}: '1'
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
 {{- end -}}

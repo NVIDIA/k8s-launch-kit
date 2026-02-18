@@ -5,15 +5,15 @@
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovIBNetwork
 metadata:
-  name: {{$.Sriov.NetworkName}}-{{printf "%c" (add 97 $i)}}
+  name: {{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}
   namespace: {{$.NetworkOperator.Namespace}}
 spec:
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{$.NvIpam.PoolName}}-{{printf "%c" (add 97 $i)}}"
+      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}"
     }
-  resourceName: {{$.Sriov.ResourceName}}-{{printf "%c" (add 97 $i)}}
+  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
   linkState: enable
   networkNamespace: default
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}

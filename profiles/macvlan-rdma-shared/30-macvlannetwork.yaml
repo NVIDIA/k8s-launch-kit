@@ -5,7 +5,7 @@
 apiVersion: mellanox.com/v1alpha1
 kind: MacvlanNetwork
 metadata:
-  name: {{$.Macvlan.NetworkName}}-{{printf "%c" (add 97 $i)}}
+  name: {{$.Macvlan.NetworkName}}-rail-{{$pf.Rail}}
 spec:
   networkNamespace: "default"
   master: "{{$pf.NetworkInterface}}"
@@ -14,7 +14,7 @@ spec:
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{$.NvIpam.PoolName}}-{{printf "%c" (add 97 $i)}}"
+      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}"
     }
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end}}
 {{- end}}

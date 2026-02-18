@@ -5,7 +5,7 @@
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
-  name: infiniband-sriov-{{printf "%c" (add 97 $i)}}{{suffix $.ClusterConfig.Identifier}}
+  name: infiniband-sriov-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
   namespace: {{$.NetworkOperator.Namespace}}
 spec:
   deviceType: netdevice
@@ -24,7 +24,7 @@ spec:
   isRdma: true
   numVfs: {{$.Sriov.NumVfs}}
   priority: {{$.Sriov.Priority}}
-  resourceName: {{$.Sriov.ResourceName}}-{{printf "%c" (add 97 $i)}}
+  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
 {{- end -}}

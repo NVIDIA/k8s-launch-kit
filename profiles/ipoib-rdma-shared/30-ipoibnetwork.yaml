@@ -5,14 +5,14 @@
 apiVersion: mellanox.com/v1alpha1
 kind: IPoIBNetwork
 metadata:
-  name: {{$.Ipoib.NetworkName}}-{{printf "%c" (add 97 $i)}}
+  name: {{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}
 spec:
   networkNamespace: "default"
   master: "{{$pf.NetworkInterface}}"
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{$.NvIpam.PoolName}}-{{printf "%c" (add 97 $i)}}"
+      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}"
     }  
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end}}

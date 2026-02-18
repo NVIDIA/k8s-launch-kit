@@ -41,7 +41,7 @@ spec:
           {{- range $i, $pf := .ClusterConfig.PFs}}
           {{- if eq $pf.Traffic "east-west"}}
           {
-            "resourceName": "{{$.RdmaShared.ResourceName}}_{{printf "%c" (add 97 $i)}}",
+            "resourceName": "{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}",
             "rdmaHcaMax": {{$.RdmaShared.HcaMax}},
             "selectors": {
               "ifNames": ["{{$pf.NetworkInterface}}"]
