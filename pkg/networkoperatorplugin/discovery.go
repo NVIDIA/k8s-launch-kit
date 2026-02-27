@@ -217,7 +217,12 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		return err
 	}
 
-	defaultConfig.ClusterConfig = buildClusterConfig(devices.Items, nodeLabels, p.LabelSelector)
+	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, p.LabelSelector)
+	defaultConfig.ClusterConfig = clusterConfig
+
+	for _, w := range nsWarnings {
+		uiOutput.Warning(w)
+	}
 
 	return nil
 }
@@ -373,15 +378,94 @@ func filterNodesByLabels(nodes []string, nodeLabels map[string]map[string]string
 	return filtered
 }
 
+// isPowerOfTwo returns true if n is a positive power of two (2, 4, 8, 16, ...).
+func isPowerOfTwo(n int) bool {
+	return n >= 2 && (n&(n-1)) == 0
+}
+
+// classifyByPartNumberFrequency applies a heuristic for nodes with 5+ PFs:
+// the most common part number (preferring power-of-2 counts) is east-west,
+// and all other part numbers are reclassified as north-south.
+// PFs already marked north-south by product ID matching are not changed.
+// Returns warning messages for the caller to display to the user.
+func classifyByPartNumberFrequency(nodeMap map[string]*nodeInfo) []string {
+	var warnings []string
+	for nodeName, ni := range nodeMap {
+		if len(ni.pfs) < 5 {
+			continue
+		}
+
+		// Count PFs by part number (skip empty)
+		partCounts := map[string]int{}
+		for _, pf := range ni.pfs {
+			if pf.PartNumber != "" {
+				partCounts[pf.PartNumber]++
+			}
+		}
+		if len(partCounts) <= 1 {
+			// All PFs have the same (or empty) part number — nothing to classify
+			continue
+		}
+
+		// Find the east-west part number: prefer the one with a power-of-2 count,
+		// break ties by highest count then alphabetically.
+		var ewPart string
+		var ewCount int
+		for part, count := range partCounts {
+			better := false
+			if ewPart == "" {
+				better = true
+			} else if isPowerOfTwo(count) && !isPowerOfTwo(ewCount) {
+				better = true
+			} else if isPowerOfTwo(count) == isPowerOfTwo(ewCount) {
+				if count > ewCount {
+					better = true
+				} else if count == ewCount && part < ewPart {
+					better = true
+				}
+			}
+			if better {
+				ewPart = part
+				ewCount = count
+			}
+		}
+
+		// Warn if E-W count is not a power of two
+		if !isPowerOfTwo(ewCount) {
+			warnings = append(warnings, fmt.Sprintf(
+				"East-west NIC count (%d) is not a power of two on node %s. Please verify traffic classification in the config file.",
+				ewCount, nodeName))
+		}
+
+		// Mark minority part numbers as north-south
+		reclassified := false
+		for i := range ni.pfs {
+			if ni.pfs[i].PartNumber != ewPart && !ni.pfs[i].IsNorthSouth {
+				ni.pfs[i].IsNorthSouth = true
+				reclassified = true
+			}
+		}
+
+		if !reclassified {
+			warnings = append(warnings, fmt.Sprintf(
+				"Could not identify north-south NICs on node %s. Please verify traffic classification and rail assignments in the config file.",
+				nodeName))
+		}
+	}
+	return warnings
+}
+
 // buildClusterConfig groups NicDevices by identical PF fingerprints across nodes
 // and returns a ClusterConfig slice with one entry per group.
-func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, labelSelector map[string]string) []config.ClusterConfig {
+// nodeInfo holds discovered PF entries and capability flags for a single node.
+type nodeInfo struct {
+	pfs     []nodePFEntry
+	hasRdma bool
+	hasPCI  bool
+}
+
+func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, labelSelector map[string]string) ([]config.ClusterConfig, []string) {
 	// Step 1: Build per-node PF map and track capabilities per node
-	type nodeInfo struct {
-		pfs     []nodePFEntry
-		hasRdma bool
-		hasPCI  bool
-	}
 	nodeMap := map[string]*nodeInfo{}
 
 	for _, d := range devices {
@@ -393,9 +477,8 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			nodeMap[nodeName] = &nodeInfo{}
 		}
 		ni := nodeMap[nodeName]
-		// DPU devices are north-south; SuperNICs and regular NICs are east-west.
-		// Fall back to product ID file matching if the DPU/SuperNIC flags are not set.
-		northSouth := d.Status.DPU || (!d.Status.SuperNIC && isNorthSouthDevice(d.Status.PartNumber))
+		// Match part number against known DPU product IDs for north-south classification.
+		northSouth := isNorthSouthDevice(d.Status.PartNumber)
 		for _, p := range d.Status.Ports {
 			entry := nodePFEntry{
 				pfFingerprint: pfFingerprint{
@@ -417,6 +500,11 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			}
 		}
 	}
+
+	// Step 1.5: Apply part-number frequency heuristic for nodes with 5+ PFs.
+	// The most common part number (ideally with a power-of-2 count) is east-west;
+	// all other part numbers are north-south.
+	nsWarnings := classifyByPartNumberFrequency(nodeMap)
 
 	// Step 2: Compute PF fingerprint per node and group nodes
 	type fingerprintKey string
@@ -554,7 +642,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		computeNodeSelectors(groups, nodeLabels)
 	}
 
-	return groups
+	return groups, nsWarnings
 }
 
 // computeNodeSelectors assigns NodeSelectors to each group using ALL label keys
