@@ -690,6 +690,21 @@ func computeNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]m
 
 	slices.Sort(differingKeys)
 
+	// Deprioritize feature.node.kubernetes.io/* labels — only include them
+	// if the remaining labels can't differentiate all groups on their own.
+	var primaryKeys, fallbackKeys []string
+	for _, k := range differingKeys {
+		if strings.HasPrefix(k, "feature.node.kubernetes.io/") {
+			fallbackKeys = append(fallbackKeys, k)
+		} else {
+			primaryKeys = append(primaryKeys, k)
+		}
+	}
+	if canDifferentiate(primaryKeys, groupCommonLabels) {
+		differingKeys = primaryKeys
+	}
+	// else: keep all differingKeys (primary + fallback) as-is
+
 	// Assign ALL differing label keys to each group's NodeSelector
 	for i := range groups {
 		selector := map[string]string{}
@@ -707,6 +722,27 @@ func computeNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]m
 				"group", groups[i].Identifier, "nodes", groups[i].WorkerNodes)
 		}
 	}
+}
+
+// canDifferentiate returns true if the given label keys are sufficient to produce
+// a unique fingerprint for each group (no two groups share the same key-value set).
+func canDifferentiate(keys []string, groupLabels []map[string]string) bool {
+	if len(keys) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, labels := range groupLabels {
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = k + "=" + labels[k]
+		}
+		fp := strings.Join(parts, ",")
+		if seen[fp] {
+			return false
+		}
+		seen[fp] = true
+	}
+	return true
 }
 
 // computeCommonLabels returns labels with identical values across all specified nodes.
