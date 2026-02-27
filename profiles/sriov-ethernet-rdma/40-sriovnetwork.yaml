@@ -11,10 +11,10 @@ spec:
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}"
+      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }
   networkNamespace: default
-  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
+  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
 {{- end -}}
@@ -28,8 +28,8 @@ spec:
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{.NvIpam.PoolName}}"
+      "poolName": "{{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}"
     }
   networkNamespace: default
-  resourceName: {{.Sriov.ResourceName}}
+  resourceName: {{.Sriov.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}
 {{- end}}

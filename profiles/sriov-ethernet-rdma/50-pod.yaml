@@ -6,7 +6,7 @@ metadata:
   name: sriov-test-pod{{suffix .ClusterConfig.Identifier}}
   namespace: default
   annotations:
-    k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{- end}}{{- end}}
+    k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{- end}}{{- end}}
 spec:
   {{- if .ClusterConfig.NodeSelector }}
   affinity:
@@ -36,13 +36,13 @@ spec:
       requests:
         {{- range $i, $pf := .ClusterConfig.PFs}}
         {{- if eq $pf.Traffic "east-west"}}
-        nvidia.com/{{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}: '1'
+        nvidia.com/{{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
         {{- end}}
         {{- end}}
       limits:
         {{- range $i, $pf := .ClusterConfig.PFs}}
         {{- if eq $pf.Traffic "east-west"}}
-        nvidia.com/{{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}: '1'
+        nvidia.com/{{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
         {{- end}}
         {{- end}}
 {{- else}}
@@ -52,7 +52,7 @@ metadata:
   name: sriov-test-pod{{suffix $.ClusterConfig.Identifier}}
   namespace: default
   annotations:
-    k8s.v1.cni.cncf.io/networks: {{.Sriov.NetworkName}}
+    k8s.v1.cni.cncf.io/networks: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
 spec:
   {{- if $.ClusterConfig.NodeSelector }}
   affinity:
@@ -80,7 +80,7 @@ spec:
         add: ["IPC_LOCK"]
     resources:
       requests:
-        nvidia.com/{{.Sriov.ResourceName}}: '1'
+        nvidia.com/{{.Sriov.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
       limits:
-        nvidia.com/{{.Sriov.ResourceName}}: '1'
+        nvidia.com/{{.Sriov.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
 {{- end}}

@@ -58,6 +58,7 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 	// Build SpectrumX nested struct if enabled
 	if options.SpectrumX {
 		profile.SpectrumX = &config.ProfileSpectrumX{
+			Enable:         true,
 			SPCXVersion:    options.SPCXVersion,
 			MultiplaneMode: options.MultiplaneMode,
 			NumberOfPlanes: options.NumberOfPlanes,
@@ -110,6 +111,7 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		if fullConfig.Profile.SpectrumX == nil {
 			fullConfig.Profile.SpectrumX = &config.ProfileSpectrumX{}
 		}
+		fullConfig.Profile.SpectrumX.Enable = true
 		if options.SPCXVersion != "" {
 			fullConfig.Profile.SpectrumX.SPCXVersion = options.SPCXVersion
 		}
@@ -165,6 +167,7 @@ func (p *NetworkOperatorPlugin) BuildProfileFromLLMResponse(llmResponse map[stri
 		}
 
 		profile.SpectrumX = &config.ProfileSpectrumX{
+			Enable:         true,
 			SPCXVersion:    spcxVersion,
 			MultiplaneMode: multiplaneMode,
 			NumberOfPlanes: numberOfPlanes,

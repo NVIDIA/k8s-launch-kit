@@ -5,15 +5,15 @@
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovIBNetwork
 metadata:
-  name: {{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}
+  name: {{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
   namespace: {{$.NetworkOperator.Namespace}}
 spec:
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}"
+      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }
-  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
+  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}
   linkState: enable
   networkNamespace: default
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
@@ -23,15 +23,15 @@ spec:
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovIBNetwork
 metadata:
-  name: {{.Sriov.NetworkName}}
+  name: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
   namespace: {{.NetworkOperator.Namespace}}
 spec:
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{.NvIpam.PoolName}}"
+      "poolName": "{{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}"
     }
-  resourceName: {{.Sriov.ResourceName}}
+  resourceName: {{.Sriov.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}
   linkState: enable
   networkNamespace: default
 {{- end}}

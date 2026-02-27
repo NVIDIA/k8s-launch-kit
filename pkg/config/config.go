@@ -113,6 +113,7 @@ type Profile struct {
 }
 
 type ProfileSpectrumX struct {
+	Enable         bool   `yaml:"enable"`         // must be true for Spectrum-X profiles to match
 	SPCXVersion    string `yaml:"spcxVersion"`    // e.g., "RA2.1"
 	MultiplaneMode string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
 	NumberOfPlanes int    `yaml:"numberOfPlanes"` // 2 or 4

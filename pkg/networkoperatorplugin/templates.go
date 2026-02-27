@@ -56,6 +56,15 @@ var templateFuncs = template.FuncMap{
 		}
 		return "-" + s
 	},
+	// resourceSuffix prepends a "_" and replaces all "-" with "_", producing a
+	// suffix suitable for K8s extended resource names (which use underscores).
+	// e.g., resourceSuffix("group-0") → "_group_0", resourceSuffix("") → ""
+	"resourceSuffix": func(s string) string {
+		if s == "" {
+			return ""
+		}
+		return "_" + strings.ReplaceAll(s, "-", "_")
+	},
 }
 
 // templateContext wraps the full config but presents a single ClusterConfig group.

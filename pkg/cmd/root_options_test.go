@@ -231,6 +231,7 @@ func TestConfigOnlyProfileResolution(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
@@ -246,6 +247,7 @@ func TestConfigOnlyProfileResolution(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -300,6 +302,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
@@ -319,6 +322,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
@@ -350,6 +354,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
@@ -398,6 +403,7 @@ func TestMissingInvalidParams(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -414,6 +420,7 @@ func TestMissingInvalidParams(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  false,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,

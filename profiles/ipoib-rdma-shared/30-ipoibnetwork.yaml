@@ -5,14 +5,14 @@
 apiVersion: mellanox.com/v1alpha1
 kind: IPoIBNetwork
 metadata:
-  name: {{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}
+  name: {{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
 spec:
   networkNamespace: "default"
   master: "{{$pf.NetworkInterface}}"
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}"
+      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }  
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end}}
@@ -22,13 +22,13 @@ spec:
 apiVersion: mellanox.com/v1alpha1
 kind: IPoIBNetwork
 metadata:
-  name: {{.Ipoib.NetworkName}}
+  name: {{.Ipoib.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
 spec:
   networkNamespace: "default"
   master: "{{(index .ClusterConfig.PFs 0).NetworkInterface}}"
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{.NvIpam.PoolName}}"
+      "poolName": "{{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}"
     }
 {{end}}

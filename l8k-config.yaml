@@ -70,7 +70,8 @@ profile:
   fabric: ethernet # infiniband, ethernet TODO consider ETH/IB
   deployment: sriov # rdma_shared, sriov, host_device
   multirail: false
-  spectrumX: # Spectrum-X configuration (set to null or omit if not using Spectrum-X)
+  spectrumX: # Spectrum-X configuration (set enable: true or use --spectrum-x CLI flag)
+    enable: false # CLI parameter (overrides this value): --spectrum-x
     spcxVersion: "RA2.1" # CLI parameter (overrides this value): --spcx-version
     multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
     numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic

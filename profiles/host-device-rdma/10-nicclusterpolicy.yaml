@@ -43,7 +43,7 @@ spec:
         {{- if eq $pf.Traffic "east-west"}}
           {
             "resourcePrefix": "nvidia.com",
-            "resourceName": "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}",
+            "resourceName": "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}",
             "selectors": {
               "vendors": ["15b3"],
               "pciAddresses": ["{{$pf.PciAddress}}"],
@@ -55,7 +55,7 @@ spec:
         {{- else}}
           {
             "resourcePrefix": "nvidia.com",
-            "resourceName": "{{.Hostdev.ResourceName}}",
+            "resourceName": "{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}",
             "selectors": {
               "vendors": ["15b3"],
               "isRdma": true
