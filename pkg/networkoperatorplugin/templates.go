@@ -117,6 +117,45 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, gr
 	ext := filepath.Ext(baseName)
 	nameNoExt := strings.TrimSuffix(baseName, ext)
 
+	// Auto-generate per-group subnets if configured (startingSubnet + mask + offset
+	// are set, but the explicit subnets list is empty).
+	var groupSubnets [][]config.NvIpamSubnetConfig
+	autoGenSubnets := cfg.NvIpam != nil &&
+		cfg.NvIpam.StartingSubnet != "" &&
+		cfg.NvIpam.Mask > 0 &&
+		cfg.NvIpam.Offset > 0 &&
+		len(cfg.NvIpam.Subnets) == 0
+
+	if autoGenSubnets {
+		multirail := cfg.Profile != nil && cfg.Profile.Multirail
+
+		// Calculate per-group subnet counts
+		totalSubnets := 0
+		groupCounts := make([]int, len(groups))
+		for gi := range groups {
+			ewPFs := filterEastWestPFs(groups[gi].PFs)
+			if multirail && len(ewPFs) > 0 {
+				groupCounts[gi] = len(ewPFs)
+			} else {
+				groupCounts[gi] = 1
+			}
+			totalSubnets += groupCounts[gi]
+		}
+
+		allSubnets, err := config.GenerateSubnets(
+			cfg.NvIpam.StartingSubnet, cfg.NvIpam.Mask, cfg.NvIpam.Offset, totalSubnets)
+		if err != nil {
+			return nil, fmt.Errorf("failed to auto-generate subnets: %w", err)
+		}
+
+		groupSubnets = make([][]config.NvIpamSubnetConfig, len(groups))
+		subnetOffset := 0
+		for gi := range groups {
+			groupSubnets[gi] = allSubnets[subnetOffset : subnetOffset+groupCounts[gi]]
+			subnetOffset += groupCounts[gi]
+		}
+	}
+
 	for i := range groups {
 		// When --group is used, clear the identifier so CR names and filenames
 		// don't carry the group suffix (only one group is being rendered).
@@ -127,8 +166,20 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, gr
 		// Filter out north-south PFs so templates only see east-west devices.
 		// This keeps indices sequential for naming (a, b, c, d instead of a, d, e, f).
 		renderGroup.PFs = filterEastWestPFs(renderGroup.PFs)
+
+		// When auto-generating subnets, give each group its own unique slice
+		// so subnets don't overlap between groups.
+		cfgForGroup := cfg
+		if autoGenSubnets {
+			groupCfg := *cfg
+			groupNvIpam := *cfg.NvIpam
+			groupNvIpam.Subnets = groupSubnets[i]
+			groupCfg.NvIpam = &groupNvIpam
+			cfgForGroup = &groupCfg
+		}
+
 		ctx := &templateContext{
-			LaunchKubernetesConfig: cfg,
+			LaunchKubernetesConfig: cfgForGroup,
 			ClusterConfig:          &renderGroup,
 		}
 		var buf bytes.Buffer

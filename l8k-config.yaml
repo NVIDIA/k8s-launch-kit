@@ -12,25 +12,31 @@ docaDriver:
 
 nvIpam:
   poolName: nv-ipam-pool
-  subnets:
-  - subnet: 192.168.2.0/24
-    gateway: 192.168.2.1
-  - subnet: 192.168.3.0/24
-    gateway: 192.168.3.1
-  - subnet: 192.168.4.0/24
-    gateway: 192.168.4.1
-  - subnet: 192.168.5.0/24
-    gateway: 192.168.5.1
-  - subnet: 192.168.6.0/24
-    gateway: 192.168.6.1
-  - subnet: 192.168.7.0/24
-    gateway: 192.168.7.1
-  - subnet: 192.168.8.0/24
-    gateway: 192.168.8.1
-  - subnet: 192.168.9.0/24
-    gateway: 192.168.9.1
-  - subnet: 192.168.10.0/24
-    gateway: 192.168.10.1
+  # Option 1: Auto-generate subnets (used when subnets list is empty).
+  # Each group gets its own unique subnet slice; gateway = network address + 1.
+  startingSubnet: "192.168.2.0"
+  mask: 24
+  offset: 1
+  # Option 2: Manually list subnets (takes precedence if non-empty)
+  # subnets:
+  # - subnet: 192.168.2.0/24
+  #   gateway: 192.168.2.1
+  # - subnet: 192.168.3.0/24
+  #   gateway: 192.168.3.1
+  # - subnet: 192.168.4.0/24
+  #   gateway: 192.168.4.1
+  # - subnet: 192.168.5.0/24
+  #   gateway: 192.168.5.1
+  # - subnet: 192.168.6.0/24
+  #   gateway: 192.168.6.1
+  # - subnet: 192.168.7.0/24
+  #   gateway: 192.168.7.1
+  # - subnet: 192.168.8.0/24
+  #   gateway: 192.168.8.1
+  # - subnet: 192.168.9.0/24
+  #   gateway: 192.168.9.1
+  # - subnet: 192.168.10.0/24
+  #   gateway: 192.168.10.1
 
 sriov:
   ethernetMtu: 9000
