@@ -5,6 +5,7 @@ networkOperator:
   namespace: nvidia-network-operator
 
 docaDriver:
+  enable: true
   version: doca3.3.0-26.01-0.9.6.0-0
   unloadStorageModules: false
   enableNFSRDMA: false
@@ -40,7 +41,7 @@ sriov:
   networkName: sriov-network
 
 hostdev:
-  resourceName: hostdev-resource
+  resourceName: hostdev_resource
   networkName: hostdev-network
 
 rdmaShared:

@@ -48,6 +48,7 @@ type NetworkOperatorConfig struct {
 }
 
 type DOCADriverConfig struct {
+	Enable               bool   `yaml:"enable"`
 	Version              string `yaml:"version"`
 	UnloadStorageModules bool   `yaml:"unloadStorageModules"`
 	EnableNFSRDMA        bool   `yaml:"enableNFSRDMA"`

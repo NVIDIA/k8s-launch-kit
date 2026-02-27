@@ -1,22 +1,20 @@
 {{- if .Profile.Multirail -}}
-{{- /* Create test pods for each separate network (per PF) */ -}}
-{{- range $i, $pf := .ClusterConfig.PFs}}
-{{- if eq $pf.Traffic "east-west"}}
+{{- /* Create single test pod with all macvlan networks */ -}}
 apiVersion: v1
 kind: Pod
 metadata:
-  name: macvlan-test-pod-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
+  name: macvlan-test-pod{{suffix .ClusterConfig.Identifier}}
   namespace: default
   annotations:
-    k8s.v1.cni.cncf.io/networks: {{$.Macvlan.NetworkName}}-rail-{{$pf.Rail}}
+    k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Macvlan.NetworkName}}-rail-{{$pf.Rail}}{{- end}}{{- end}}
 spec:
-  {{- if $.ClusterConfig.NodeSelector }}
+  {{- if .ClusterConfig.NodeSelector }}
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
         - matchExpressions:
-          {{- range $key, $value := $.ClusterConfig.NodeSelector }}
+          {{- range $key, $value := .ClusterConfig.NodeSelector }}
           - key: {{ $key }}
             {{- if ne $value "" }}
             operator: In
@@ -36,13 +34,18 @@ spec:
         add: ["IPC_LOCK"]
     resources:
       requests:
+        {{- range $i, $pf := .ClusterConfig.PFs}}
+        {{- if eq $pf.Traffic "east-west"}}
         rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}: 1
+        {{- end}}
+        {{- end}}
       limits:
+        {{- range $i, $pf := .ClusterConfig.PFs}}
+        {{- if eq $pf.Traffic "east-west"}}
         rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}: 1
-{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
-{{end}}
-{{- end}}
-{{else}}
+        {{- end}}
+        {{- end}}
+{{- else}}
 {{/* Create single test pod for shared network */}}
 apiVersion: v1
 kind: Pod

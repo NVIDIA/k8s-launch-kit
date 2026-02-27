@@ -1,3 +1,35 @@
+{{- if .Profile.Multirail -}}
+{{- /* Create separate IP pools for each PF interface */}}
+{{- range $i, $pf := .ClusterConfig.PFs}}
+{{- if eq $pf.Traffic "east-west"}}
+apiVersion: nv-ipam.nvidia.com/v1alpha1
+kind: IPPool
+metadata:
+  name: {{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}
+  namespace: {{$.NetworkOperator.Namespace}}
+spec:
+  subnet: {{(index $.NvIpam.Subnets $i).Subnet}}
+  perNodeBlockSize: 50
+  gateway: {{(index $.NvIpam.Subnets $i).Gateway}}
+  {{- if $.ClusterConfig.NodeSelector }}
+  nodeSelector:
+    nodeSelectorTerms:
+    - matchExpressions:
+      {{- range $key, $value := $.ClusterConfig.NodeSelector }}
+      - key: {{ $key }}
+        {{- if ne $value "" }}
+        operator: In
+        values:
+        - {{ $value }}
+        {{- else }}
+        operator: Exists
+        {{- end }}
+      {{- end }}
+  {{- end }}
+{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end}}
+{{- end}}
+{{- end}}
+{{- else}}
 apiVersion: nv-ipam.nvidia.com/v1alpha1
 kind: IPPool
 metadata:
@@ -22,3 +54,4 @@ spec:
         {{- end }}
       {{- end }}
   {{- end }}
+{{- end}}

@@ -97,6 +97,14 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		fullConfig.Profile.Ai = true
 	}
 
+	// Apply DOCA driver enable override from CLI
+	if options.EnableDocaDriver != nil {
+		if fullConfig.DOCADriver == nil {
+			fullConfig.DOCADriver = &config.DOCADriverConfig{}
+		}
+		fullConfig.DOCADriver.Enable = *options.EnableDocaDriver
+	}
+
 	// Apply Spectrum-X CLI options
 	if options.SpectrumX {
 		if fullConfig.Profile.SpectrumX == nil {

@@ -3,6 +3,7 @@ kind: NicClusterPolicy
 metadata:
   name: nic-cluster-policy
 spec:
+  {{- if .DOCADriver.Enable }}
   ofedDriver:
     image: doca-driver
     repository: {{.NetworkOperator.Repository}}
@@ -29,6 +30,7 @@ spec:
     readinessProbe:
       initialDelaySeconds: 10
       periodSeconds: 30
+  {{- end }}
   rdmaSharedDevicePlugin:
     image: k8s-rdma-shared-dev-plugin
     repository: {{.NetworkOperator.Repository}}

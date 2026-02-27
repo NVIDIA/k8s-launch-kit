@@ -21,7 +21,7 @@ spec:
     rootDevices:
       - "{{$pf.PciAddress}}"
   isRdma: true
-  linkType: Ethernet
+  linkType: ETH
   numVfs: {{$.Sriov.NumVfs}}
   priority: {{$.Sriov.Priority}}
   resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
@@ -46,7 +46,7 @@ spec:
   nicSelector:
     vendor: "15b3"
   isRdma: true
-  linkType: Ethernet
+  linkType: ETH
   numVfs: {{.Sriov.NumVfs}}
   priority: {{.Sriov.Priority}}
   resourceName: {{.Sriov.ResourceName}}
