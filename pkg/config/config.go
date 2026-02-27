@@ -147,6 +147,8 @@ type PFConfig struct {
 	NetworkInterface string `yaml:"networkInterface"`
 	Traffic          string `yaml:"traffic"`
 	Rail             *int   `yaml:"rail,omitempty"`
+	PSID             string `yaml:"psid,omitempty"`
+	PartNumber       string `yaml:"partNumber,omitempty"`
 }
 
 // AggregateCapabilities computes the union of capabilities across all cluster config groups.

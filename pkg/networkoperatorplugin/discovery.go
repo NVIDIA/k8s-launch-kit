@@ -96,44 +96,64 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		},
 	}
 
-	uiOutput.Info("Deploying discovery profile")
 	log.Log.Info("Deploying a thin NicClusterPolicy for cluster config discovery")
 
+	// Check if an existing NicClusterPolicy already has NicConfigurationOperator.
+	// If so, we can reuse it without redeploying.
 	existingPolicies, err := EnsureNicClusterPolicy(ctx, c, policy)
 	if err != nil {
 		return err
 	}
 
+	reuseExisting := false
 	var savedPolicies []netop.NicClusterPolicy
 	if len(existingPolicies) > 0 {
-		// Existing policies detected — ask user for permission to replace
-		uiOutput.Warning("Found %d existing NicClusterPolicy resource(s) on the cluster.", len(existingPolicies))
-		uiOutput.Info("The launch kit needs to deploy its own NicClusterPolicy for discovery.")
-		uiOutput.Info("The existing policy will be saved, deleted, and restored after discovery completes.")
-
-		confirmed, err := uiOutput.Confirm("Do you agree to temporarily replace the existing NicClusterPolicy?")
-		if err != nil {
-			return fmt.Errorf("failed to get user confirmation: %w", err)
-		}
-		if !confirmed {
-			return fmt.Errorf("discovery aborted: user declined to replace existing NicClusterPolicy")
-		}
-
-		// Deep-copy existing policies for later restoration
-		savedPolicies = make([]netop.NicClusterPolicy, len(existingPolicies))
-		copy(savedPolicies, existingPolicies)
-
-		if err := DeleteNicClusterPolicies(ctx, c, existingPolicies); err != nil {
-			return fmt.Errorf("failed to remove existing NicClusterPolicies: %w", err)
+		// Check if any existing policy already has the nic-configuration daemon with the required version
+		requiredVersion := defaultConfig.NetworkOperator.ComponentVersion
+		for _, ep := range existingPolicies {
+			if ep.Spec.NicConfigurationOperator != nil &&
+				ep.Spec.NicConfigurationOperator.ConfigurationDaemon != nil &&
+				ep.Spec.NicConfigurationOperator.ConfigurationDaemon.Version == requiredVersion {
+				reuseExisting = true
+				uiOutput.Info("Existing NicClusterPolicy already includes nic-configuration-daemon %s, reusing", requiredVersion)
+				log.Log.Info("Reusing existing NicClusterPolicy with NicConfigurationOperator",
+					"name", ep.Name, "version", requiredVersion)
+				break
+			}
 		}
 
-		// Now create the thin discovery policy
-		if err := c.Create(ctx, policy); err != nil {
-			return fmt.Errorf("failed to create discovery NicClusterPolicy: %w", err)
+		if !reuseExisting {
+			// Existing policies detected but missing nic-configuration operator — ask user for permission to replace
+			uiOutput.Warning("Found %d existing NicClusterPolicy resource(s) on the cluster.", len(existingPolicies))
+			uiOutput.Info("The launch kit needs to deploy its own NicClusterPolicy for discovery.")
+			uiOutput.Info("The existing policy will be saved, deleted, and restored after discovery completes.")
+
+			confirmed, err := uiOutput.Confirm("Do you agree to temporarily replace the existing NicClusterPolicy?")
+			if err != nil {
+				return fmt.Errorf("failed to get user confirmation: %w", err)
+			}
+			if !confirmed {
+				return fmt.Errorf("discovery aborted: user declined to replace existing NicClusterPolicy")
+			}
+
+			// Deep-copy existing policies for later restoration
+			savedPolicies = make([]netop.NicClusterPolicy, len(existingPolicies))
+			copy(savedPolicies, existingPolicies)
+
+			if err := DeleteNicClusterPolicies(ctx, c, existingPolicies); err != nil {
+				return fmt.Errorf("failed to remove existing NicClusterPolicies: %w", err)
+			}
+
+			// Now create the thin discovery policy
+			if err := c.Create(ctx, policy); err != nil {
+				return fmt.Errorf("failed to create discovery NicClusterPolicy: %w", err)
+			}
+			if err := WaitNicClusterPolicyReady(ctx, c, policy.Name); err != nil {
+				return err
+			}
 		}
-		if err := WaitNicClusterPolicyReady(ctx, c, policy.Name); err != nil {
-			return err
-		}
+	} else {
+		uiOutput.Info("Deploying discovery profile")
 	}
 
 	// Defers run LIFO: restore must be registered first so it runs after cleanup.
@@ -150,14 +170,16 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		}()
 	}
 
-	// Always attempt cleanup of the thin discovery NicClusterPolicy
-	defer func() {
-		if err := DeleteNicClusterPolicy(ctx, c, "nic-cluster-policy"); err != nil {
-			log.Log.Error(err, "failed to delete NicClusterPolicy after discovery")
-		} else {
-			log.Log.Info("NicClusterPolicy deleted after discovery")
-		}
-	}()
+	// Only clean up the discovery policy if we created it (not reusing an existing one)
+	if !reuseExisting {
+		defer func() {
+			if err := DeleteNicClusterPolicy(ctx, c, "nic-cluster-policy"); err != nil {
+				log.Log.Error(err, "failed to delete NicClusterPolicy after discovery")
+			} else {
+				log.Log.Info("NicClusterPolicy deleted after discovery")
+			}
+		}()
+	}
 
 	// After creation, list pods in the target namespace and ensure all pods
 	// from the nic-configuration-daemon DaemonSet are Ready.
@@ -247,13 +269,13 @@ func isPodReady(pod *corev1.Pod) bool {
 // waitNicDevicesDiscovered polls until NicDevice objects exist for all expected nodes in the given namespace.
 func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, namespace string, expectedNodes []string) error {
 	uiOutput := ui.FromContext(parentCtx)
-	progress := uiOutput.StartProgress(fmt.Sprintf("Discovering network devices on %d node(s) (timeout: 5 min)", len(expectedNodes)))
+	progress := uiOutput.StartProgress(fmt.Sprintf("Discovering network devices on %d node(s) (timeout: 10 min)", len(expectedNodes)))
 
 	// Use a bounded timeout if none supplied
 	ctx := parentCtx
 	if _, hasDeadline := parentCtx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(parentCtx, 5*time.Minute)
+		ctx, cancel = context.WithTimeout(parentCtx, 10*time.Minute)
 		defer cancel()
 	}
 
@@ -262,7 +284,7 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, namesp
 		expectedSet[n] = true
 	}
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -311,7 +333,9 @@ type nodePFEntry struct {
 	pfFingerprint
 	RdmaDevice       string
 	NetworkInterface string
-	IsNorthSouth     bool // true when the device's partNumber matches a DPU product ID
+	IsNorthSouth     bool // true when device is a DPU (not a SuperNIC)
+	PSID             string
+	PartNumber       string
 }
 
 // fetchNodeLabels lists all Kubernetes nodes and returns a map of nodeName → labels.
@@ -369,7 +393,9 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			nodeMap[nodeName] = &nodeInfo{}
 		}
 		ni := nodeMap[nodeName]
-		northSouth := isNorthSouthDevice(d.Status.PartNumber)
+		// DPU devices are north-south; SuperNICs and regular NICs are east-west.
+		// Fall back to product ID file matching if the DPU/SuperNIC flags are not set.
+		northSouth := d.Status.DPU || (!d.Status.SuperNIC && isNorthSouthDevice(d.Status.PartNumber))
 		for _, p := range d.Status.Ports {
 			entry := nodePFEntry{
 				pfFingerprint: pfFingerprint{
@@ -379,6 +405,8 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 				RdmaDevice:       p.RdmaInterface,
 				NetworkInterface: p.NetworkInterface,
 				IsNorthSouth:     northSouth,
+				PSID:             d.Status.PSID,
+				PartNumber:       d.Status.PartNumber,
 			}
 			ni.pfs = append(ni.pfs, entry)
 			if p.RdmaInterface != "" {
@@ -471,6 +499,8 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 				DeviceID:   entry.DeviceID,
 				PciAddress: entry.PciAddress,
 				Traffic:    traffic,
+				PSID:       entry.PSID,
+				PartNumber: entry.PartNumber,
 			}
 			if singleGroup || len(g.nodes) == 1 {
 				// Safe to include RDMA/net device names when only one node in group
@@ -653,4 +683,3 @@ func isNoisyLabel(key string) bool {
 	}
 	return false
 }
-
