@@ -58,6 +58,7 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 	// Build SpectrumX nested struct if enabled
 	if options.SpectrumX {
 		profile.SpectrumX = &config.ProfileSpectrumX{
+			Enable:         true,
 			SPCXVersion:    options.SPCXVersion,
 			MultiplaneMode: options.MultiplaneMode,
 			NumberOfPlanes: options.NumberOfPlanes,
@@ -97,11 +98,20 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		fullConfig.Profile.Ai = true
 	}
 
+	// Apply DOCA driver enable override from CLI
+	if options.EnableDocaDriver != nil {
+		if fullConfig.DOCADriver == nil {
+			fullConfig.DOCADriver = &config.DOCADriverConfig{}
+		}
+		fullConfig.DOCADriver.Enable = *options.EnableDocaDriver
+	}
+
 	// Apply Spectrum-X CLI options
 	if options.SpectrumX {
 		if fullConfig.Profile.SpectrumX == nil {
 			fullConfig.Profile.SpectrumX = &config.ProfileSpectrumX{}
 		}
+		fullConfig.Profile.SpectrumX.Enable = true
 		if options.SPCXVersion != "" {
 			fullConfig.Profile.SpectrumX.SPCXVersion = options.SPCXVersion
 		}
@@ -157,6 +167,7 @@ func (p *NetworkOperatorPlugin) BuildProfileFromLLMResponse(llmResponse map[stri
 		}
 
 		profile.SpectrumX = &config.ProfileSpectrumX{
+			Enable:         true,
 			SPCXVersion:    spcxVersion,
 			MultiplaneMode: multiplaneMode,
 			NumberOfPlanes: numberOfPlanes,

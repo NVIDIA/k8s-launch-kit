@@ -50,6 +50,9 @@ type Options struct {
 
 	EnabledPlugins []string // Enabled plugins
 
+	// DOCA Driver
+	EnableDocaDriver *bool // Override docaDriver.enable from config (nil = use config value)
+
 	// Phase 3: Cluster Deployment
 	Deploy     bool   // Whether to deploy to cluster
 	Kubeconfig string // Path to kubeconfig for discovery and deployment

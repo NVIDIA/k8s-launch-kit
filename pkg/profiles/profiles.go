@@ -121,8 +121,8 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 	}
 
 	if p.ProfileRequirements.SpectrumX != nil {
-		// Profile requires Spectrum-X
-		if requirements.SpectrumX == nil {
+		// Profile requires Spectrum-X with enable: true
+		if requirements.SpectrumX == nil || !requirements.SpectrumX.Enable {
 			return false, "profile requires Spectrum-X but it is not enabled"
 		}
 		

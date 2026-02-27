@@ -1,12 +1,33 @@
+{{- if .Profile.Multirail -}}
+{{- /* Create separate HostDeviceNetwork per PF */ -}}
+{{- range $i, $pf := .ClusterConfig.PFs}}
+{{- if eq $pf.Traffic "east-west"}}
 apiVersion: mellanox.com/v1alpha1
 kind: HostDeviceNetwork
 metadata:
-  name: {{.Hostdev.NetworkName}}
+  name: {{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
 spec:
   networkNamespace: "default"
-  resourceName: "{{.Hostdev.ResourceName}}"
+  resourceName: "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}"
   ipam: |
     {
       "type": "nv-ipam",
-      "poolName": "{{.NvIpam.PoolName}}"
+      "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }
+{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
+apiVersion: mellanox.com/v1alpha1
+kind: HostDeviceNetwork
+metadata:
+  name: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
+spec:
+  networkNamespace: "default"
+  resourceName: "{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}"
+  ipam: |
+    {
+      "type": "nv-ipam",
+      "poolName": "{{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}"
+    }
+{{- end}}

@@ -50,6 +50,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -120,6 +121,7 @@ func TestProfileValidation(t *testing.T) {
 			Fabric:     "ethernet",
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.0", // Wrong version
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -186,6 +188,7 @@ func TestProfileValidation(t *testing.T) {
 			Fabric:     "ethernet",
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -221,6 +224,7 @@ func TestProfileValidation(t *testing.T) {
 			Fabric:     "infiniband", // Wrong fabric
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -256,6 +260,7 @@ func TestProfileValidation(t *testing.T) {
 			Fabric:     "ethernet",
 			Deployment: "rdma_shared", // Wrong deployment type
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -293,6 +298,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  false, // Wrong multirail setting
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -335,6 +341,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 4,
@@ -377,6 +384,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -419,6 +427,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -455,6 +464,7 @@ func TestProfileValidation(t *testing.T) {
 			Fabric:     "ethernet",
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
@@ -494,6 +504,7 @@ func TestProfileValidation(t *testing.T) {
 			Fabric:     "ethernet",
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
 				SPCXVersion:    "RA2.1",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,

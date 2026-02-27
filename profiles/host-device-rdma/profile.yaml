@@ -2,7 +2,6 @@ name: Host device RDMA
 plugin: network-operator
 profileRequirements:
   deployment: host_device
-  multirail: false
 nodeCapabilities:
   rdma: true
 description: |

@@ -55,6 +55,7 @@ var (
 	discoverClusterConfig bool
 	saveClusterConfig     string
 	logger                = log.Log.WithName("l8k")
+	enableDocaDriver            bool
 	enabledPlugins              string
 	networkOperatorNamespace    string
 	group                       string
@@ -113,6 +114,11 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 			LLMVendor:             llmVendor,
 			LLMModel:              llmModel,
 			LLMInteractive:        llmInteractive,
+		}
+
+		// Set EnableDocaDriver only if the flag was explicitly provided
+		if cmd.Flags().Lookup("enable-doca-driver").Changed {
+			options.EnableDocaDriver = &enableDocaDriver
 		}
 
 		// Apply Spectrum-X implied defaults (fabric, deployment, multirail)
@@ -178,6 +184,7 @@ func init() {
 	rootCmd.Flags().StringVar(&llmModel, "llm-model", "", "Model name for the LLM API (e.g., claude-3-5-sonnet-20241022, gpt-4)")
 	rootCmd.Flags().BoolVar(&llmInteractive, "llm-interactive", false, "Enable interactive chat mode for LLM-assisted profile selection")
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "/opt/nvidia/k8s-launch-kit/deployment", "Save generated deployment files to the specified directory")
+	rootCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment (overrides config file docaDriver.enable)")
 
 	// Phase 3: Cluster deployment flags
 	rootCmd.Flags().BoolVar(&deploy, "deploy", false, "Deploy the generated files to the Kubernetes cluster")

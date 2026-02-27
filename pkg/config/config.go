@@ -17,7 +17,10 @@
 package config
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math"
+	"net"
 	"os"
 	"strings"
 
@@ -48,14 +51,18 @@ type NetworkOperatorConfig struct {
 }
 
 type DOCADriverConfig struct {
+	Enable               bool   `yaml:"enable"`
 	Version              string `yaml:"version"`
 	UnloadStorageModules bool   `yaml:"unloadStorageModules"`
 	EnableNFSRDMA        bool   `yaml:"enableNFSRDMA"`
 }
 
 type NvIpamConfig struct {
-	PoolName string               `yaml:"poolName"`
-	Subnets  []NvIpamSubnetConfig `yaml:"subnets"`
+	PoolName       string               `yaml:"poolName"`
+	Subnets        []NvIpamSubnetConfig `yaml:"subnets,omitempty"`
+	StartingSubnet string               `yaml:"startingSubnet,omitempty"`
+	Mask           int                  `yaml:"mask,omitempty"`
+	Offset         int                  `yaml:"offset,omitempty"`
 }
 
 type NvIpamSubnetConfig struct {
@@ -106,6 +113,7 @@ type Profile struct {
 }
 
 type ProfileSpectrumX struct {
+	Enable         bool   `yaml:"enable"`         // must be true for Spectrum-X profiles to match
 	SPCXVersion    string `yaml:"spcxVersion"`    // e.g., "RA2.1"
 	MultiplaneMode string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
 	NumberOfPlanes int    `yaml:"numberOfPlanes"` // 2 or 4
@@ -139,6 +147,8 @@ type PFConfig struct {
 	NetworkInterface string `yaml:"networkInterface"`
 	Traffic          string `yaml:"traffic"`
 	Rail             *int   `yaml:"rail,omitempty"`
+	PSID             string `yaml:"psid,omitempty"`
+	PartNumber       string `yaml:"partNumber,omitempty"`
 }
 
 // AggregateCapabilities computes the union of capabilities across all cluster config groups.
@@ -275,7 +285,64 @@ func validateSpectrumXTemplates(config *LaunchKubernetesConfig) error {
 
 // containsPlaceholder checks if a string contains a specific placeholder
 func containsPlaceholder(s, placeholder string) bool {
-	return len(s) > 0 && len(placeholder) > 0 && 
+	return len(s) > 0 && len(placeholder) > 0 &&
 		len(s) >= len(placeholder) &&
 		strings.Contains(s, placeholder)
+}
+
+// GenerateSubnets creates a list of subnet configurations by incrementing from a
+// starting network address. Each subsequent subnet is offset by `offset` subnet-sized
+// blocks. The gateway for each subnet is the first usable address (network + 1).
+func GenerateSubnets(startingSubnet string, mask, offset, count int) ([]NvIpamSubnetConfig, error) {
+	if count < 1 {
+		return nil, fmt.Errorf("subnet count must be >= 1, got %d", count)
+	}
+	if mask < 1 || mask > 30 {
+		return nil, fmt.Errorf("mask must be between 1 and 30, got %d", mask)
+	}
+	if offset < 1 {
+		return nil, fmt.Errorf("offset must be >= 1, got %d", offset)
+	}
+
+	ip := net.ParseIP(startingSubnet)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid starting subnet IP: %q", startingSubnet)
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return nil, fmt.Errorf("starting subnet must be an IPv4 address, got %q", startingSubnet)
+	}
+
+	baseIP := binary.BigEndian.Uint32(ip4)
+	blockSize := uint32(1) << uint(32-mask)
+	hostMask := blockSize - 1
+
+	// Verify the starting address is properly aligned (host bits must be zero)
+	if baseIP&hostMask != 0 {
+		return nil, fmt.Errorf("starting subnet %s is not aligned for /%d (host bits are not zero)", startingSubnet, mask)
+	}
+
+	// Check that the last subnet won't overflow the IPv4 address space
+	lastIndex := uint64(count-1) * uint64(offset)
+	lastAddr := uint64(baseIP) + lastIndex*uint64(blockSize)
+	if lastAddr > math.MaxUint32 {
+		return nil, fmt.Errorf("subnet generation would overflow IPv4 address space: starting %s/%d, offset %d, count %d",
+			startingSubnet, mask, offset, count)
+	}
+
+	subnets := make([]NvIpamSubnetConfig, count)
+	for i := 0; i < count; i++ {
+		networkAddr := baseIP + uint32(i*offset)*blockSize
+		subnetIP := make(net.IP, 4)
+		binary.BigEndian.PutUint32(subnetIP, networkAddr)
+		gatewayIP := make(net.IP, 4)
+		binary.BigEndian.PutUint32(gatewayIP, networkAddr+1)
+
+		subnets[i] = NvIpamSubnetConfig{
+			Subnet:  fmt.Sprintf("%s/%d", subnetIP.String(), mask),
+			Gateway: gatewayIP.String(),
+		}
+	}
+
+	return subnets, nil
 }

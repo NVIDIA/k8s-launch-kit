@@ -96,44 +96,64 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		},
 	}
 
-	uiOutput.Info("Deploying discovery profile")
 	log.Log.Info("Deploying a thin NicClusterPolicy for cluster config discovery")
 
+	// Check if an existing NicClusterPolicy already has NicConfigurationOperator.
+	// If so, we can reuse it without redeploying.
 	existingPolicies, err := EnsureNicClusterPolicy(ctx, c, policy)
 	if err != nil {
 		return err
 	}
 
+	reuseExisting := false
 	var savedPolicies []netop.NicClusterPolicy
 	if len(existingPolicies) > 0 {
-		// Existing policies detected — ask user for permission to replace
-		uiOutput.Warning("Found %d existing NicClusterPolicy resource(s) on the cluster.", len(existingPolicies))
-		uiOutput.Info("The launch kit needs to deploy its own NicClusterPolicy for discovery.")
-		uiOutput.Info("The existing policy will be saved, deleted, and restored after discovery completes.")
-
-		confirmed, err := uiOutput.Confirm("Do you agree to temporarily replace the existing NicClusterPolicy?")
-		if err != nil {
-			return fmt.Errorf("failed to get user confirmation: %w", err)
-		}
-		if !confirmed {
-			return fmt.Errorf("discovery aborted: user declined to replace existing NicClusterPolicy")
-		}
-
-		// Deep-copy existing policies for later restoration
-		savedPolicies = make([]netop.NicClusterPolicy, len(existingPolicies))
-		copy(savedPolicies, existingPolicies)
-
-		if err := DeleteNicClusterPolicies(ctx, c, existingPolicies); err != nil {
-			return fmt.Errorf("failed to remove existing NicClusterPolicies: %w", err)
+		// Check if any existing policy already has the nic-configuration daemon with the required version
+		requiredVersion := defaultConfig.NetworkOperator.ComponentVersion
+		for _, ep := range existingPolicies {
+			if ep.Spec.NicConfigurationOperator != nil &&
+				ep.Spec.NicConfigurationOperator.ConfigurationDaemon != nil &&
+				ep.Spec.NicConfigurationOperator.ConfigurationDaemon.Version == requiredVersion {
+				reuseExisting = true
+				uiOutput.Info("Existing NicClusterPolicy already includes nic-configuration-daemon %s, reusing", requiredVersion)
+				log.Log.Info("Reusing existing NicClusterPolicy with NicConfigurationOperator",
+					"name", ep.Name, "version", requiredVersion)
+				break
+			}
 		}
 
-		// Now create the thin discovery policy
-		if err := c.Create(ctx, policy); err != nil {
-			return fmt.Errorf("failed to create discovery NicClusterPolicy: %w", err)
+		if !reuseExisting {
+			// Existing policies detected but missing nic-configuration operator — ask user for permission to replace
+			uiOutput.Warning("Found %d existing NicClusterPolicy resource(s) on the cluster.", len(existingPolicies))
+			uiOutput.Info("The launch kit needs to deploy its own NicClusterPolicy for discovery.")
+			uiOutput.Info("The existing policy will be saved, deleted, and restored after discovery completes.")
+
+			confirmed, err := uiOutput.Confirm("Do you agree to temporarily replace the existing NicClusterPolicy?")
+			if err != nil {
+				return fmt.Errorf("failed to get user confirmation: %w", err)
+			}
+			if !confirmed {
+				return fmt.Errorf("discovery aborted: user declined to replace existing NicClusterPolicy")
+			}
+
+			// Deep-copy existing policies for later restoration
+			savedPolicies = make([]netop.NicClusterPolicy, len(existingPolicies))
+			copy(savedPolicies, existingPolicies)
+
+			if err := DeleteNicClusterPolicies(ctx, c, existingPolicies); err != nil {
+				return fmt.Errorf("failed to remove existing NicClusterPolicies: %w", err)
+			}
+
+			// Now create the thin discovery policy
+			if err := c.Create(ctx, policy); err != nil {
+				return fmt.Errorf("failed to create discovery NicClusterPolicy: %w", err)
+			}
+			if err := WaitNicClusterPolicyReady(ctx, c, policy.Name); err != nil {
+				return err
+			}
 		}
-		if err := WaitNicClusterPolicyReady(ctx, c, policy.Name); err != nil {
-			return err
-		}
+	} else {
+		uiOutput.Info("Deploying discovery profile")
 	}
 
 	// Defers run LIFO: restore must be registered first so it runs after cleanup.
@@ -150,14 +170,16 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		}()
 	}
 
-	// Always attempt cleanup of the thin discovery NicClusterPolicy
-	defer func() {
-		if err := DeleteNicClusterPolicy(ctx, c, "nic-cluster-policy"); err != nil {
-			log.Log.Error(err, "failed to delete NicClusterPolicy after discovery")
-		} else {
-			log.Log.Info("NicClusterPolicy deleted after discovery")
-		}
-	}()
+	// Only clean up the discovery policy if we created it (not reusing an existing one)
+	if !reuseExisting {
+		defer func() {
+			if err := DeleteNicClusterPolicy(ctx, c, "nic-cluster-policy"); err != nil {
+				log.Log.Error(err, "failed to delete NicClusterPolicy after discovery")
+			} else {
+				log.Log.Info("NicClusterPolicy deleted after discovery")
+			}
+		}()
+	}
 
 	// After creation, list pods in the target namespace and ensure all pods
 	// from the nic-configuration-daemon DaemonSet are Ready.
@@ -195,7 +217,12 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		return err
 	}
 
-	defaultConfig.ClusterConfig = buildClusterConfig(devices.Items, nodeLabels, p.LabelSelector)
+	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, p.LabelSelector)
+	defaultConfig.ClusterConfig = clusterConfig
+
+	for _, w := range nsWarnings {
+		uiOutput.Warning(w)
+	}
 
 	return nil
 }
@@ -247,13 +274,13 @@ func isPodReady(pod *corev1.Pod) bool {
 // waitNicDevicesDiscovered polls until NicDevice objects exist for all expected nodes in the given namespace.
 func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, namespace string, expectedNodes []string) error {
 	uiOutput := ui.FromContext(parentCtx)
-	progress := uiOutput.StartProgress(fmt.Sprintf("Discovering network devices on %d node(s) (timeout: 5 min)", len(expectedNodes)))
+	progress := uiOutput.StartProgress(fmt.Sprintf("Discovering network devices on %d node(s) (timeout: 10 min)", len(expectedNodes)))
 
 	// Use a bounded timeout if none supplied
 	ctx := parentCtx
 	if _, hasDeadline := parentCtx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(parentCtx, 5*time.Minute)
+		ctx, cancel = context.WithTimeout(parentCtx, 10*time.Minute)
 		defer cancel()
 	}
 
@@ -262,7 +289,7 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, namesp
 		expectedSet[n] = true
 	}
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -311,7 +338,9 @@ type nodePFEntry struct {
 	pfFingerprint
 	RdmaDevice       string
 	NetworkInterface string
-	IsNorthSouth     bool // true when the device's partNumber matches a DPU product ID
+	IsNorthSouth     bool // true when device is a DPU (not a SuperNIC)
+	PSID             string
+	PartNumber       string
 }
 
 // fetchNodeLabels lists all Kubernetes nodes and returns a map of nodeName → labels.
@@ -349,15 +378,94 @@ func filterNodesByLabels(nodes []string, nodeLabels map[string]map[string]string
 	return filtered
 }
 
+// isPowerOfTwo returns true if n is a positive power of two (2, 4, 8, 16, ...).
+func isPowerOfTwo(n int) bool {
+	return n >= 2 && (n&(n-1)) == 0
+}
+
+// classifyByPartNumberFrequency applies a heuristic for nodes with 5+ PFs:
+// the most common part number (preferring power-of-2 counts) is east-west,
+// and all other part numbers are reclassified as north-south.
+// PFs already marked north-south by product ID matching are not changed.
+// Returns warning messages for the caller to display to the user.
+func classifyByPartNumberFrequency(nodeMap map[string]*nodeInfo) []string {
+	var warnings []string
+	for nodeName, ni := range nodeMap {
+		if len(ni.pfs) < 5 {
+			continue
+		}
+
+		// Count PFs by part number (skip empty)
+		partCounts := map[string]int{}
+		for _, pf := range ni.pfs {
+			if pf.PartNumber != "" {
+				partCounts[pf.PartNumber]++
+			}
+		}
+		if len(partCounts) <= 1 {
+			// All PFs have the same (or empty) part number — nothing to classify
+			continue
+		}
+
+		// Find the east-west part number: prefer the one with a power-of-2 count,
+		// break ties by highest count then alphabetically.
+		var ewPart string
+		var ewCount int
+		for part, count := range partCounts {
+			better := false
+			if ewPart == "" {
+				better = true
+			} else if isPowerOfTwo(count) && !isPowerOfTwo(ewCount) {
+				better = true
+			} else if isPowerOfTwo(count) == isPowerOfTwo(ewCount) {
+				if count > ewCount {
+					better = true
+				} else if count == ewCount && part < ewPart {
+					better = true
+				}
+			}
+			if better {
+				ewPart = part
+				ewCount = count
+			}
+		}
+
+		// Warn if E-W count is not a power of two
+		if !isPowerOfTwo(ewCount) {
+			warnings = append(warnings, fmt.Sprintf(
+				"East-west NIC count (%d) is not a power of two on node %s. Please verify traffic classification in the config file.",
+				ewCount, nodeName))
+		}
+
+		// Mark minority part numbers as north-south
+		reclassified := false
+		for i := range ni.pfs {
+			if ni.pfs[i].PartNumber != ewPart && !ni.pfs[i].IsNorthSouth {
+				ni.pfs[i].IsNorthSouth = true
+				reclassified = true
+			}
+		}
+
+		if !reclassified {
+			warnings = append(warnings, fmt.Sprintf(
+				"Could not identify north-south NICs on node %s. Please verify traffic classification and rail assignments in the config file.",
+				nodeName))
+		}
+	}
+	return warnings
+}
+
 // buildClusterConfig groups NicDevices by identical PF fingerprints across nodes
 // and returns a ClusterConfig slice with one entry per group.
-func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, labelSelector map[string]string) []config.ClusterConfig {
+// nodeInfo holds discovered PF entries and capability flags for a single node.
+type nodeInfo struct {
+	pfs     []nodePFEntry
+	hasRdma bool
+	hasPCI  bool
+}
+
+func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, labelSelector map[string]string) ([]config.ClusterConfig, []string) {
 	// Step 1: Build per-node PF map and track capabilities per node
-	type nodeInfo struct {
-		pfs     []nodePFEntry
-		hasRdma bool
-		hasPCI  bool
-	}
 	nodeMap := map[string]*nodeInfo{}
 
 	for _, d := range devices {
@@ -369,6 +477,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			nodeMap[nodeName] = &nodeInfo{}
 		}
 		ni := nodeMap[nodeName]
+		// Match part number against known DPU product IDs for north-south classification.
 		northSouth := isNorthSouthDevice(d.Status.PartNumber)
 		for _, p := range d.Status.Ports {
 			entry := nodePFEntry{
@@ -379,6 +488,8 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 				RdmaDevice:       p.RdmaInterface,
 				NetworkInterface: p.NetworkInterface,
 				IsNorthSouth:     northSouth,
+				PSID:             d.Status.PSID,
+				PartNumber:       d.Status.PartNumber,
 			}
 			ni.pfs = append(ni.pfs, entry)
 			if p.RdmaInterface != "" {
@@ -389,6 +500,11 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			}
 		}
 	}
+
+	// Step 1.5: Apply part-number frequency heuristic for nodes with 5+ PFs.
+	// The most common part number (ideally with a power-of-2 count) is east-west;
+	// all other part numbers are north-south.
+	nsWarnings := classifyByPartNumberFrequency(nodeMap)
 
 	// Step 2: Compute PF fingerprint per node and group nodes
 	type fingerprintKey string
@@ -471,6 +587,8 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 				DeviceID:   entry.DeviceID,
 				PciAddress: entry.PciAddress,
 				Traffic:    traffic,
+				PSID:       entry.PSID,
+				PartNumber: entry.PartNumber,
 			}
 			if singleGroup || len(g.nodes) == 1 {
 				// Safe to include RDMA/net device names when only one node in group
@@ -524,7 +642,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		computeNodeSelectors(groups, nodeLabels)
 	}
 
-	return groups
+	return groups, nsWarnings
 }
 
 // computeNodeSelectors assigns NodeSelectors to each group using ALL label keys
@@ -572,6 +690,21 @@ func computeNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]m
 
 	slices.Sort(differingKeys)
 
+	// Deprioritize feature.node.kubernetes.io/* labels — only include them
+	// if the remaining labels can't differentiate all groups on their own.
+	var primaryKeys, fallbackKeys []string
+	for _, k := range differingKeys {
+		if strings.HasPrefix(k, "feature.node.kubernetes.io/") {
+			fallbackKeys = append(fallbackKeys, k)
+		} else {
+			primaryKeys = append(primaryKeys, k)
+		}
+	}
+	if canDifferentiate(primaryKeys, groupCommonLabels) {
+		differingKeys = primaryKeys
+	}
+	// else: keep all differingKeys (primary + fallback) as-is
+
 	// Assign ALL differing label keys to each group's NodeSelector
 	for i := range groups {
 		selector := map[string]string{}
@@ -589,6 +722,27 @@ func computeNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]m
 				"group", groups[i].Identifier, "nodes", groups[i].WorkerNodes)
 		}
 	}
+}
+
+// canDifferentiate returns true if the given label keys are sufficient to produce
+// a unique fingerprint for each group (no two groups share the same key-value set).
+func canDifferentiate(keys []string, groupLabels []map[string]string) bool {
+	if len(keys) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, labels := range groupLabels {
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = k + "=" + labels[k]
+		}
+		fp := strings.Join(parts, ",")
+		if seen[fp] {
+			return false
+		}
+		seen[fp] = true
+	}
+	return true
 }
 
 // computeCommonLabels returns labels with identical values across all specified nodes.
@@ -653,4 +807,3 @@ func isNoisyLabel(key string) bool {
 	}
 	return false
 }
-

@@ -3,6 +3,7 @@ kind: NicClusterPolicy
 metadata:
   name: nic-cluster-policy
 spec:
+  {{- if .DOCADriver.Enable }}
   ofedDriver:
     image: doca-driver
     repository: {{.NetworkOperator.Repository}}
@@ -29,6 +30,7 @@ spec:
     readinessProbe:
       initialDelaySeconds: 10
       periodSeconds: 30
+  {{- end }}
   rdmaSharedDevicePlugin:
     image: k8s-rdma-shared-dev-plugin
     repository: {{.NetworkOperator.Repository}}
@@ -41,7 +43,7 @@ spec:
           {{- range $i, $pf := .ClusterConfig.PFs}}
           {{- if eq $pf.Traffic "east-west"}}
           {
-            "resourceName": "{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}",
+            "resourceName": "{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}",
             "rdmaHcaMax": {{$.RdmaShared.HcaMax}},
             "selectors": {
               "ifNames": ["{{$pf.NetworkInterface}}"]
@@ -52,7 +54,7 @@ spec:
         {{- else}}
           {{- /* Create single RDMA resource with all interfaces */ -}}
           {
-            "resourceName": "{{.RdmaShared.ResourceName}}",
+            "resourceName": "{{.RdmaShared.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}",
             "rdmaHcaMax": {{.RdmaShared.HcaMax}},
             "selectors": {
               "ifNames": [{{range $i, $pf := .ClusterConfig.PFs}}{{if gt $i 0}}, {{end}}"{{$pf.NetworkInterface}}"{{end}}]

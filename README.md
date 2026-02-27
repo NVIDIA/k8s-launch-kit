@@ -188,6 +188,40 @@ l8k --user-config ./config.yaml \
 
 During cluster discovery stage, Kubernetes Launch Kit creates a configuration file, which it later uses to generate deployment manifests from the templates. This config file can be edited by the user to customize their deployment configuration. The user can provide the custom config file to the tool using the `--user-config` cli flag — either as a standalone config (skipping discovery) or as a base config combined with `--discover-cluster-config` (discovery takes network operator parameters from the file and adds discovered cluster config).
 
+### DOCA Driver
+
+The `docaDriver` section controls the OFED driver deployment in the NicClusterPolicy. Set `enable: true` to include the `ofedDriver` section in generated manifests, or `enable: false` to omit it. This can also be overridden via the `--enable-doca-driver` CLI flag.
+
+### NV-IPAM Subnet Configuration
+
+The `nvIpam` section supports two modes for subnet configuration:
+
+**Option 1: Manual subnet list** — List each subnet explicitly. This takes precedence if the list is non-empty:
+```yaml
+nvIpam:
+  poolName: nv-ipam-pool
+  subnets:
+  - subnet: 192.168.2.0/24
+    gateway: 192.168.2.1
+  - subnet: 192.168.3.0/24
+    gateway: 192.168.3.1
+```
+
+**Option 2: Auto-generate subnets** — When the `subnets` list is empty but `startingSubnet`, `mask`, and `offset` are all set, subnets are automatically generated. Each cluster config group gets its own unique, non-overlapping subnet slice. The gateway for each subnet is the first usable address (network + 1).
+```yaml
+nvIpam:
+  poolName: nv-ipam-pool
+  startingSubnet: "192.168.2.0"
+  mask: 24
+  offset: 1
+```
+
+With the auto-generation example above, a cluster with 2 groups (4 east-west PFs each) would receive:
+- Group 0: 192.168.2.0/24, 192.168.3.0/24, 192.168.4.0/24, 192.168.5.0/24
+- Group 1: 192.168.6.0/24, 192.168.7.0/24, 192.168.8.0/24, 192.168.9.0/24
+
+The `offset` parameter controls how many subnet blocks to skip between consecutive subnets (offset=1 is contiguous, offset=2 skips every other).
+
 Example of the configuration file discovered from the cluster:
 
 ```yaml
@@ -197,6 +231,7 @@ networkOperator:
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
 docaDriver:
+  enable: true
   version: doca3.2.0-25.10-1.2.8.0-2
   unloadStorageModules: false
   enableNFSRDMA: false

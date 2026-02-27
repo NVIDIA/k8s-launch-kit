@@ -3,6 +3,34 @@ kind: NicClusterPolicy
 metadata:
   name: nic-cluster-policy
 spec:
+  {{- if .DOCADriver.Enable }}
+  ofedDriver:
+    image: doca-driver
+    repository: {{.NetworkOperator.Repository}}
+    version: {{.DOCADriver.Version}}
+    env:
+      - name: UNLOAD_STORAGE_MODULES
+        value: "{{.DOCADriver.UnloadStorageModules}}"
+      - name: ENABLE_NFSRDMA
+        value: "{{.DOCADriver.EnableNFSRDMA}}"
+    upgradePolicy:
+      autoUpgrade: true
+      drain:
+        deleteEmptyDir: true
+        enable: true
+        force: true
+        timeoutSeconds: 300
+      maxParallelUpgrades: 1
+    startupProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    livenessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+    readinessProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 30
+  {{- end }}
   sriovDevicePlugin:
     image: sriov-network-device-plugin
     repository: {{.NetworkOperator.Repository}}
@@ -10,14 +38,30 @@ spec:
     config: |
       {
         "resourceList": [
+        {{- if .Profile.Multirail -}}
+        {{- range $i, $pf := .ClusterConfig.PFs}}
+        {{- if eq $pf.Traffic "east-west"}}
           {
             "resourcePrefix": "nvidia.com",
-            "resourceName": "{{.Hostdev.ResourceName}}",
+            "resourceName": "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}",
+            "selectors": {
+              "vendors": ["15b3"],
+              "pciAddresses": ["{{$pf.PciAddress}}"],
+              "isRdma": true
+            }
+          }{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}},{{end}}
+        {{- end}}
+        {{- end}}
+        {{- else}}
+          {
+            "resourcePrefix": "nvidia.com",
+            "resourceName": "{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}",
             "selectors": {
               "vendors": ["15b3"],
               "isRdma": true
             }
           }
+        {{- end}}
         ]
       }
   nvIpam:

@@ -694,3 +694,118 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 }
 
+func TestGenerateSubnets(t *testing.T) {
+	t.Run("basic sequential /24 subnets", func(t *testing.T) {
+		subnets, err := GenerateSubnets("192.168.2.0", 24, 1, 4)
+		require.NoError(t, err)
+		require.Len(t, subnets, 4)
+
+		assert.Equal(t, "192.168.2.0/24", subnets[0].Subnet)
+		assert.Equal(t, "192.168.2.1", subnets[0].Gateway)
+		assert.Equal(t, "192.168.3.0/24", subnets[1].Subnet)
+		assert.Equal(t, "192.168.3.1", subnets[1].Gateway)
+		assert.Equal(t, "192.168.4.0/24", subnets[2].Subnet)
+		assert.Equal(t, "192.168.4.1", subnets[2].Gateway)
+		assert.Equal(t, "192.168.5.0/24", subnets[3].Subnet)
+		assert.Equal(t, "192.168.5.1", subnets[3].Gateway)
+	})
+
+	t.Run("offset of 2 skips every other subnet", func(t *testing.T) {
+		subnets, err := GenerateSubnets("10.0.0.0", 24, 2, 3)
+		require.NoError(t, err)
+		require.Len(t, subnets, 3)
+
+		assert.Equal(t, "10.0.0.0/24", subnets[0].Subnet)
+		assert.Equal(t, "10.0.0.1", subnets[0].Gateway)
+		assert.Equal(t, "10.0.2.0/24", subnets[1].Subnet)
+		assert.Equal(t, "10.0.2.1", subnets[1].Gateway)
+		assert.Equal(t, "10.0.4.0/24", subnets[2].Subnet)
+		assert.Equal(t, "10.0.4.1", subnets[2].Gateway)
+	})
+
+	t.Run("/16 subnets", func(t *testing.T) {
+		subnets, err := GenerateSubnets("10.0.0.0", 16, 1, 3)
+		require.NoError(t, err)
+		require.Len(t, subnets, 3)
+
+		assert.Equal(t, "10.0.0.0/16", subnets[0].Subnet)
+		assert.Equal(t, "10.0.0.1", subnets[0].Gateway)
+		assert.Equal(t, "10.1.0.0/16", subnets[1].Subnet)
+		assert.Equal(t, "10.1.0.1", subnets[1].Gateway)
+		assert.Equal(t, "10.2.0.0/16", subnets[2].Subnet)
+		assert.Equal(t, "10.2.0.1", subnets[2].Gateway)
+	})
+
+	t.Run("single subnet", func(t *testing.T) {
+		subnets, err := GenerateSubnets("172.16.0.0", 24, 1, 1)
+		require.NoError(t, err)
+		require.Len(t, subnets, 1)
+
+		assert.Equal(t, "172.16.0.0/24", subnets[0].Subnet)
+		assert.Equal(t, "172.16.0.1", subnets[0].Gateway)
+	})
+
+	t.Run("reject misaligned starting address", func(t *testing.T) {
+		_, err := GenerateSubnets("192.168.2.5", 24, 1, 4)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not aligned")
+	})
+
+	t.Run("reject invalid mask 0", func(t *testing.T) {
+		_, err := GenerateSubnets("192.168.0.0", 0, 1, 1)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "mask must be between 1 and 30")
+	})
+
+	t.Run("reject invalid mask 31", func(t *testing.T) {
+		_, err := GenerateSubnets("192.168.0.0", 31, 1, 1)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "mask must be between 1 and 30")
+	})
+
+	t.Run("reject invalid mask 32", func(t *testing.T) {
+		_, err := GenerateSubnets("192.168.0.0", 32, 1, 1)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "mask must be between 1 and 30")
+	})
+
+	t.Run("reject offset 0", func(t *testing.T) {
+		_, err := GenerateSubnets("192.168.0.0", 24, 0, 4)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "offset must be >= 1")
+	})
+
+	t.Run("reject count 0", func(t *testing.T) {
+		_, err := GenerateSubnets("192.168.0.0", 24, 1, 0)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "count must be >= 1")
+	})
+
+	t.Run("reject invalid IP address", func(t *testing.T) {
+		_, err := GenerateSubnets("not-an-ip", 24, 1, 1)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid starting subnet IP")
+	})
+
+	t.Run("reject IPv6 address", func(t *testing.T) {
+		_, err := GenerateSubnets("::1", 24, 1, 1)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "must be an IPv4 address")
+	})
+
+	t.Run("reject overflow", func(t *testing.T) {
+		// 255.255.254.0/24 with count=3 → third subnet would be 256.0.0.0
+		_, err := GenerateSubnets("255.255.254.0", 24, 1, 3)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "overflow")
+	})
+
+	t.Run("boundary - last valid /24 subnet", func(t *testing.T) {
+		subnets, err := GenerateSubnets("255.255.255.0", 24, 1, 1)
+		require.NoError(t, err)
+		require.Len(t, subnets, 1)
+		assert.Equal(t, "255.255.255.0/24", subnets[0].Subnet)
+		assert.Equal(t, "255.255.255.1", subnets[0].Gateway)
+	})
+}
+
