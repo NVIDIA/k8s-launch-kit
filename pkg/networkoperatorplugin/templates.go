@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -220,6 +221,14 @@ func filterEastWestPFs(pfs []config.PFConfig) []config.PFConfig {
 
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
 func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKubernetesConfig) (map[string]string, error) {
+	// Merge compatible groups when: multiple groups, no --group filter, not spectrum-x
+	if p.GroupFilter == "" && cfg.Profile != nil &&
+		len(cfg.ClusterConfig) > 1 && !isSpectrumX(cfg) {
+		mergedCfg := *cfg
+		mergedCfg.ClusterConfig = mergeCompatibleGroups(cfg.ClusterConfig)
+		cfg = &mergedCfg
+	}
+
 	results := make(map[string]string)
 
 	for _, templatePath := range profile.Templates {
@@ -234,4 +243,124 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	}
 
 	return results, nil
+}
+
+// isSpectrumX returns true if the config targets a Spectrum-X profile.
+func isSpectrumX(cfg *config.LaunchKubernetesConfig) bool {
+	return cfg.Profile != nil && cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable
+}
+
+// sanitizeIdentifier converts a product type string to a valid K8s name component.
+// Lowercases the string and replaces spaces with hyphens.
+func sanitizeIdentifier(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	return s
+}
+
+// mergeCompatibleGroups merges ClusterConfig groups that share the same productType
+// and number of east-west rails into a single group per productType.
+// For each merged group:
+//   - Identifier = sanitized productType (lowercase, spaces→hyphens)
+//   - NodeSelector = {"nvidia.com/gpu.product": productType}
+//   - RailPciAddresses = per-rail list of all PCI addresses from source groups
+//   - WorkerNodes = union of all worker nodes
+//   - Capabilities = aggregated (union)
+//
+// Groups with empty productType are never merged.
+// Single-entry buckets are returned as-is.
+func mergeCompatibleGroups(groups []config.ClusterConfig) []config.ClusterConfig {
+	type mergeKey struct {
+		productType string
+		railCount   int
+	}
+
+	// Group indices by (productType, railCount)
+	bucketOrder := []mergeKey{}
+	buckets := map[mergeKey][]int{}
+
+	for i, g := range groups {
+		ewCount := len(filterEastWestPFs(g.PFs))
+		key := mergeKey{productType: g.ProductType, railCount: ewCount}
+		if g.ProductType == "" {
+			// Never merge groups without a productType — use a unique key per group
+			key = mergeKey{productType: fmt.Sprintf("__empty_%d", i), railCount: ewCount}
+		}
+		if _, exists := buckets[key]; !exists {
+			bucketOrder = append(bucketOrder, key)
+		}
+		buckets[key] = append(buckets[key], i)
+	}
+
+	var result []config.ClusterConfig
+	for _, key := range bucketOrder {
+		indices := buckets[key]
+
+		if len(indices) == 1 || groups[indices[0]].ProductType == "" {
+			// No merge: single group or empty productType
+			result = append(result, groups[indices[0]])
+			continue
+		}
+
+		// Merge all groups in this bucket
+		result = append(result, buildMergedGroup(groups, indices))
+	}
+
+	return result
+}
+
+// buildMergedGroup creates a single ClusterConfig from multiple groups that share
+// the same productType and east-west rail count.
+func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.ClusterConfig {
+	first := groups[indices[0]]
+	productType := first.ProductType
+
+	// Collect east-west PFs per group (all have the same count)
+	ewPFsByGroup := make([][]config.PFConfig, len(indices))
+	for i, idx := range indices {
+		ewPFsByGroup[i] = filterEastWestPFs(groups[idx].PFs)
+	}
+	railCount := len(ewPFsByGroup[0])
+
+	// Build RailPciAddresses: for each rail, collect PCI addresses from all groups
+	railPciAddresses := make([][]string, railCount)
+	for rail := 0; rail < railCount; rail++ {
+		addrs := make([]string, 0, len(indices))
+		for _, pfs := range ewPFsByGroup {
+			addrs = append(addrs, pfs[rail].PciAddress)
+		}
+		railPciAddresses[rail] = addrs
+	}
+
+	// Collect all worker nodes
+	var allNodes []string
+	for _, idx := range indices {
+		allNodes = append(allNodes, groups[idx].WorkerNodes...)
+	}
+	slices.Sort(allNodes)
+
+	// Aggregate capabilities
+	caps := &config.ClusterCapabilities{
+		Nodes: &config.NodesCapabilities{},
+	}
+	for _, idx := range indices {
+		g := groups[idx]
+		if g.Capabilities != nil && g.Capabilities.Nodes != nil {
+			caps.Nodes.Sriov = caps.Nodes.Sriov || g.Capabilities.Nodes.Sriov
+			caps.Nodes.Rdma = caps.Nodes.Rdma || g.Capabilities.Nodes.Rdma
+			caps.Nodes.Ib = caps.Nodes.Ib || g.Capabilities.Nodes.Ib
+		}
+	}
+
+	return config.ClusterConfig{
+		Identifier:   sanitizeIdentifier(productType),
+		ProductType:  productType,
+		Capabilities: caps,
+		PFs:          first.PFs, // Representative PFs from first group
+		WorkerNodes:  allNodes,
+		NodeSelector: map[string]string{
+			"nvidia.com/gpu.product": productType,
+		},
+		RailPciAddresses: railPciAddresses,
+	}
 }

@@ -19,7 +19,13 @@ spec:
   nicSelector:
     vendor: "15b3"
     rootDevices:
+    {{- if $.ClusterConfig.RailPciAddresses }}
+    {{- range $addr := (index $.ClusterConfig.RailPciAddresses $i) }}
+      - "{{ $addr }}"
+    {{- end }}
+    {{- else }}
       - "{{$pf.PciAddress}}"
+    {{- end }}
   isRdma: true
   linkType: ETH
   numVfs: {{$.Sriov.NumVfs}}
