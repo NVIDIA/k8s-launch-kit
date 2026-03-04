@@ -89,6 +89,15 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		fullConfig.PodNamespace = "default"
 	}
 
+	// Default NicConfigurationOperator if not set
+	if fullConfig.NicConfigurationOperator == nil {
+		fullConfig.NicConfigurationOperator = &config.NicConfigurationOperatorConfig{
+			DeployNicInterfaceNameTemplate: true,
+			RdmaPrefix:                     "rdma_r%rail_id%",
+			NetdevPrefix:                   "eth_r%rail_id%",
+		}
+	}
+
 	if fullConfig.Profile == nil {
 		return nil
 	}

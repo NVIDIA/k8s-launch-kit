@@ -31,6 +31,18 @@ spec:
       initialDelaySeconds: 10
       periodSeconds: 30
   {{- end }}
+  {{- if and .NicConfigurationOperator .NicConfigurationOperator.DeployNicInterfaceNameTemplate }}
+  nicConfigurationOperator:
+    operator:
+      image: nic-configuration-operator
+      repository: {{.NetworkOperator.Repository}}
+      version: {{.NetworkOperator.ComponentVersion}}
+    configurationDaemon:
+      image: nic-configuration-operator-daemon
+      repository: {{.NetworkOperator.Repository}}
+      version: {{.NetworkOperator.ComponentVersion}}
+    logLevel: info
+  {{- end }}
   sriovDevicePlugin:
     image: sriov-network-device-plugin
     repository: {{.NetworkOperator.Repository}}
@@ -46,7 +58,9 @@ spec:
             "resourceName": "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}",
             "selectors": {
               "vendors": ["15b3"],
-              {{- if $.ClusterConfig.RailPciAddresses }}
+              {{- if $pf.NetworkInterface }}
+              "pfNames": ["{{$pf.NetworkInterface}}"],
+              {{- else if $.ClusterConfig.RailPciAddresses }}
               "pciAddresses": [{{ $f := true }}{{- range $addr := (index $.ClusterConfig.RailPciAddresses $i) }}{{- if not $f }}, {{ end }}{{- $f = false }}"{{ $addr }}"{{- end }}],
               {{- else }}
               "pciAddresses": ["{{$pf.PciAddress}}"],

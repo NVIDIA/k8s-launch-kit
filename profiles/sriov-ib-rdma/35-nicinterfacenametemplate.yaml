@@ -1,7 +1,8 @@
+{{- if and .NicConfigurationOperator .NicConfigurationOperator.DeployNicInterfaceNameTemplate .Profile.Multirail -}}
 apiVersion: configuration.net.nvidia.com/v1alpha1
 kind: NicInterfaceNameTemplate
 metadata:
-  name: nic-rename-for-spectrum-x
+  name: nic-rename{{suffix .ClusterConfig.Identifier}}
   namespace: {{.NetworkOperator.Namespace}}
 spec:
   {{- if .ClusterConfig.NodeSelector }}
@@ -10,7 +11,8 @@ spec:
     {{ $key }}: "{{ $value }}"
     {{- end }}
   {{- end }}
-  rdmaDevicePrefix: "{{.SpectrumX.RdmaPrefix}}"
-  netDevicePrefix: "{{.SpectrumX.NetdevPrefix}}"
-  pfsPerNic: {{.Profile.SpectrumX.NumberOfPlanes}}
+  rdmaDevicePrefix: "{{.NicConfigurationOperator.RdmaPrefix}}"
+  netDevicePrefix: "{{.NicConfigurationOperator.NetdevPrefix}}"
+  pfsPerNic: {{pfsPerNic .ClusterConfig.PFs}}
   railPciAddresses: [{{- $first := true }}{{- range $railIdx, $rail := .ClusterConfig.PFs }}{{- if eq $rail.Traffic "east-west" }}{{- if not $first }}, {{end}}{{- $first = false }}["{{$rail.PciAddress}}"]{{- end }}{{- end }}]
+{{- end }}

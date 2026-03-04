@@ -290,10 +290,14 @@ ipoib:
   networkName: ipoib-network
 macvlan:
   networkName: macvlan-network
+nicConfigurationOperator:
+  deployNicInterfaceNameTemplate: true  # Deploy NICInterfaceNameTemplate CR for consistent NIC naming
+  rdmaPrefix: "rdma_r%rail%"           # RDMA device name template (%rail% substituted per rail)
+  netdevPrefix: "eth_r%rail%"          # Network interface name template (%rail% substituted per rail)
 spectrumX:
   nicType: "1023"
   overlay: none
-  rdmaPrefix: roce_p%plane%_r%rail%
+  rdmaPrefix: roce_p%plane%_r%rail%    # Spectrum-X uses its own prefixes (with %plane%)
   netdevPrefix: eth_p%plane%_r%rail%
 clusterConfig:
 - identifier: group-0

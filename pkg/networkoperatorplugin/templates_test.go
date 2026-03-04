@@ -499,7 +499,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups)
+		result := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 1)
 		merged := result[0]
@@ -535,7 +535,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups)
+		result := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 2)
 		assert.Equal(t, "group-0", result[0].Identifier)
@@ -563,7 +563,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups)
+		result := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 2)
 		assert.Equal(t, "group-0", result[0].Identifier)
@@ -594,7 +594,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups)
+		result := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 2)
 		// First: merged H200 group (group-0 + group-2)
@@ -617,7 +617,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups)
+		result := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 1)
 		assert.Equal(t, "group-0", result[0].Identifier)
@@ -640,7 +640,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups)
+		result := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 2)
 		assert.Equal(t, "group-0", result[0].Identifier)
@@ -666,13 +666,115 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups)
+		result := mergeCompatibleGroups(groups, false)
 
 		// Should merge: both have 1 east-west rail (north-south excluded from count)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "nvidia-h200", result[0].Identifier)
 		assert.Len(t, result[0].RailPciAddresses, 1)
 		assert.Equal(t, []string{"0000:19:00.0", "0000:1a:00.0"}, result[0].RailPciAddresses[0])
+	})
+
+	t.Run("cross-rail PCI address conflict prevents merge", func(t *testing.T) {
+		// Same PCI address 0000:9c:00.0 at rail 4 in group-1 and rail 5 in group-2.
+		// Merging would cause the device plugin to claim it for the wrong rail.
+		groups := []config.ClusterConfig{
+			{
+				Identifier:  "group-0",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					ewPF("0000:19:00.0", 0),
+					ewPF("0000:9b:00.0", 1),
+				},
+				WorkerNodes: []string{"node-a"},
+			},
+			{
+				Identifier:  "group-1",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					ewPF("0000:1a:00.0", 0),
+					ewPF("0000:9c:00.0", 1), // this address...
+				},
+				WorkerNodes: []string{"node-b"},
+			},
+			{
+				Identifier:  "group-2",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					ewPF("0000:9c:00.0", 0), // ...appears at a different rail here
+					ewPF("0000:cd:00.0", 1),
+				},
+				WorkerNodes: []string{"node-c"},
+			},
+		}
+
+		result := mergeCompatibleGroups(groups, false)
+
+		// Should NOT merge: PCI conflict on 0000:9c:00.0 (rail 1 vs rail 0)
+		assert.Len(t, result, 3)
+		assert.Equal(t, "group-0", result[0].Identifier)
+		assert.Equal(t, "group-1", result[1].Identifier)
+		assert.Equal(t, "group-2", result[2].Identifier)
+		assert.Nil(t, result[0].RailPciAddresses)
+	})
+}
+
+func TestApplyPrefix(t *testing.T) {
+	tests := []struct {
+		prefix   string
+		nicID    int
+		plane    int
+		rail     int
+		expected string
+	}{
+		{"eth_r%rail%", 0, 0, 0, "eth_r0"},
+		{"eth_r%rail%", 0, 0, 3, "eth_r3"},
+		{"rdma_r%rail%", 0, 0, 7, "rdma_r7"},
+		{"roce_p%plane%_r%rail%", 1, 2, 3, "roce_p2_r3"},
+		{"nic%nic_id%_p%plane%_r%rail%", 5, 1, 2, "nic5_p1_r2"},
+		{"static_name", 0, 0, 0, "static_name"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.expected, func(t *testing.T) {
+			assert.Equal(t, tc.expected, applyPrefix(tc.prefix, tc.nicID, tc.plane, tc.rail))
+		})
+	}
+}
+
+func TestPfsPerNic(t *testing.T) {
+	t.Run("single-port NICs", func(t *testing.T) {
+		pfs := []config.PFConfig{
+			ewPF("0000:19:00.0", 0),
+			ewPF("0000:2a:00.0", 1),
+			ewPF("0000:3b:00.0", 2),
+			ewPF("0000:4c:00.0", 3),
+		}
+		assert.Equal(t, 1, pfsPerNic(pfs))
+	})
+
+	t.Run("dual-port NICs", func(t *testing.T) {
+		pfs := []config.PFConfig{
+			ewPF("0000:19:00.0", 0),
+			ewPF("0000:19:00.1", 1),
+			ewPF("0000:2a:00.0", 2),
+			ewPF("0000:2a:00.1", 3),
+		}
+		assert.Equal(t, 2, pfsPerNic(pfs))
+	})
+
+	t.Run("empty PFs", func(t *testing.T) {
+		assert.Equal(t, 1, pfsPerNic(nil))
+		assert.Equal(t, 1, pfsPerNic([]config.PFConfig{}))
+	})
+
+	t.Run("north-south PFs excluded", func(t *testing.T) {
+		pfs := []config.PFConfig{
+			ewPF("0000:19:00.0", 0),
+			ewPF("0000:2a:00.0", 1),
+			{DeviceID: "101f", PciAddress: "0000:5a:00.0", Traffic: "north-south"},
+			{DeviceID: "101f", PciAddress: "0000:5a:00.1", Traffic: "north-south"},
+		}
+		assert.Equal(t, 1, pfsPerNic(pfs))
 	})
 }
 

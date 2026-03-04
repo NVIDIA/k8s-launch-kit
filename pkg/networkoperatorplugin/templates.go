@@ -43,9 +43,12 @@ var templateFuncs = template.FuncMap{
 	},
 	"replaceVars": func(template string, nicID, plane, rail int) string {
 		// Replace template variables with actual values
+		// Supports both old (%rail%) and new (%rail_id%) placeholder formats
 		result := template
 		result = strings.ReplaceAll(result, "%nic_id%", fmt.Sprintf("%d", nicID))
+		result = strings.ReplaceAll(result, "%plane_id%", fmt.Sprintf("%d", plane))
 		result = strings.ReplaceAll(result, "%plane%", fmt.Sprintf("%d", plane))
+		result = strings.ReplaceAll(result, "%rail_id%", fmt.Sprintf("%d", rail))
 		result = strings.ReplaceAll(result, "%rail%", fmt.Sprintf("%d", rail))
 		return result
 	},
@@ -66,6 +69,39 @@ var templateFuncs = template.FuncMap{
 		}
 		return "_" + strings.ReplaceAll(s, "-", "_")
 	},
+	// pfsPerNic computes how many PFs share the same physical NIC by grouping
+	// east-west PFs by PCI bus:device prefix (everything before the last ".").
+	// E.g., 8 PFs across 8 NICs → 1; 8 PFs across 4 NICs → 2.
+	"pfsPerNic": func(pfs []config.PFConfig) int {
+		return pfsPerNic(pfs)
+	},
+}
+
+// applyPrefix substitutes %nic_id%, %plane%, %rail% placeholders in a prefix template.
+func applyPrefix(prefix string, nicID, plane, rail int) string {
+	result := prefix
+	// Supports both old (%rail%) and new (%rail_id%) placeholder formats
+	result = strings.ReplaceAll(result, "%nic_id%", fmt.Sprintf("%d", nicID))
+	result = strings.ReplaceAll(result, "%plane_id%", fmt.Sprintf("%d", plane))
+	result = strings.ReplaceAll(result, "%plane%", fmt.Sprintf("%d", plane))
+	result = strings.ReplaceAll(result, "%rail_id%", fmt.Sprintf("%d", rail))
+	result = strings.ReplaceAll(result, "%rail%", fmt.Sprintf("%d", rail))
+	return result
+}
+
+// pfsPerNic computes PFs-per-NIC by grouping east-west PFs by PCI bus:device prefix.
+func pfsPerNic(pfs []config.PFConfig) int {
+	ewPFs := filterEastWestPFs(pfs)
+	nicDevices := map[string]bool{}
+	for _, pf := range ewPFs {
+		if idx := strings.LastIndex(pf.PciAddress, "."); idx > 0 {
+			nicDevices[pf.PciAddress[:idx]] = true
+		}
+	}
+	if len(nicDevices) == 0 {
+		return 1
+	}
+	return len(ewPFs) / len(nicDevices)
 }
 
 // templateContext wraps the full config but presents a single ClusterConfig group.
@@ -177,6 +213,23 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, gr
 		// This keeps indices sequential for naming (a, b, c, d instead of a, d, e, f).
 		renderGroup.PFs = filterEastWestPFs(renderGroup.PFs)
 
+		// For non-Spectrum-X profiles with NicInterfaceNameTemplate enabled,
+		// pre-compute NetworkInterface and RdmaDevice names on each PF.
+		// Templates use $pf.NetworkInterface for pfNames selectors.
+		if cfg.NicConfigurationOperator != nil &&
+			cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate &&
+			!isSpectrumX(cfg) {
+			for j := range renderGroup.PFs {
+				if renderGroup.PFs[j].Rail != nil {
+					rail := *renderGroup.PFs[j].Rail
+					renderGroup.PFs[j].NetworkInterface = applyPrefix(
+						cfg.NicConfigurationOperator.NetdevPrefix, 0, 0, rail)
+					renderGroup.PFs[j].RdmaDevice = applyPrefix(
+						cfg.NicConfigurationOperator.RdmaPrefix, 0, 0, rail)
+				}
+			}
+		}
+
 		// When auto-generating subnets, give each group its own unique slice
 		// so subnets don't overlap between groups.
 		cfgForGroup := cfg
@@ -221,18 +274,29 @@ func filterEastWestPFs(pfs []config.PFConfig) []config.PFConfig {
 
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
 func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKubernetesConfig) (map[string]string, error) {
+	// Keep unmerged config for NicInterfaceNameTemplate (needs per-machine-type PCI addresses)
+	unmrgCfg := cfg
+
 	// Merge compatible groups when: multiple groups, no --group filter, not spectrum-x
 	if p.GroupFilter == "" && cfg.Profile != nil &&
 		len(cfg.ClusterConfig) > 1 && !isSpectrumX(cfg) {
 		mergedCfg := *cfg
-		mergedCfg.ClusterConfig = mergeCompatibleGroups(cfg.ClusterConfig)
+		useNameTemplates := cfg.NicConfigurationOperator != nil &&
+			cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
+		mergedCfg.ClusterConfig = mergeCompatibleGroups(cfg.ClusterConfig, useNameTemplates)
 		cfg = &mergedCfg
 	}
 
 	results := make(map[string]string)
 
 	for _, templatePath := range profile.Templates {
-		rendered, err := ProcessTemplate(templatePath, cfg, p.GroupFilter)
+		// NicInterfaceNameTemplate must be rendered per original group (not merged)
+		// because each machine type has different PCI addresses for railPciAddresses.
+		renderCfg := cfg
+		if strings.Contains(filepath.Base(templatePath), "nicinterfacenametemplate") {
+			renderCfg = unmrgCfg
+		}
+		rendered, err := ProcessTemplate(templatePath, renderCfg, p.GroupFilter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process template %s: %w", templatePath, err)
 		}
@@ -269,7 +333,7 @@ func sanitizeIdentifier(s string) string {
 //
 // Groups with empty productType are never merged.
 // Single-entry buckets are returned as-is.
-func mergeCompatibleGroups(groups []config.ClusterConfig) []config.ClusterConfig {
+func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool) []config.ClusterConfig {
 	type mergeKey struct {
 		productType string
 		railCount   int
@@ -302,11 +366,43 @@ func mergeCompatibleGroups(groups []config.ClusterConfig) []config.ClusterConfig
 			continue
 		}
 
+		// Check for cross-rail PCI address conflicts before merging.
+		// Skip when NicInterfaceNameTemplate is used — renamed pfNames avoid the conflict.
+		if !useNameTemplates && hasRailPciConflict(groups, indices) {
+			for _, idx := range indices {
+				result = append(result, groups[idx])
+			}
+			continue
+		}
+
 		// Merge all groups in this bucket
 		result = append(result, buildMergedGroup(groups, indices))
 	}
 
 	return result
+}
+
+// hasRailPciConflict returns true if any PCI address appears at different rail
+// positions across the groups identified by indices. This would cause the device
+// plugin to claim a device for the wrong rail on some nodes.
+func hasRailPciConflict(groups []config.ClusterConfig, indices []int) bool {
+	// Map each PCI address to the rail index where it first appears
+	addrToRail := map[string]int{}
+	for _, idx := range indices {
+		for _, pf := range filterEastWestPFs(groups[idx].PFs) {
+			if pf.Rail == nil {
+				continue
+			}
+			if prevRail, seen := addrToRail[pf.PciAddress]; seen {
+				if prevRail != *pf.Rail {
+					return true
+				}
+			} else {
+				addrToRail[pf.PciAddress] = *pf.Rail
+			}
+		}
+	}
+	return false
 }
 
 // buildMergedGroup creates a single ClusterConfig from multiple groups that share

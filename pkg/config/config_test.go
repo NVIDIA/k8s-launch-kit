@@ -437,7 +437,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "netdevPrefix must contain %plane% placeholder")
+		assert.Contains(t, err.Error(), "netdevPrefix must contain %plane_id% placeholder")
 	})
 
 	t.Run("multiplane without plane placeholder in rdmaPrefix", func(t *testing.T) {
@@ -463,7 +463,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "rdmaPrefix must contain %plane% placeholder")
+		assert.Contains(t, err.Error(), "rdmaPrefix must contain %plane_id% placeholder")
 	})
 
 	t.Run("multirail without rail placeholder in netdevPrefix", func(t *testing.T) {
@@ -489,7 +489,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "netdevPrefix must contain %rail% placeholder")
+		assert.Contains(t, err.Error(), "netdevPrefix must contain %rail_id% placeholder")
 	})
 
 	t.Run("multirail without rail placeholder in rdmaPrefix", func(t *testing.T) {
@@ -515,7 +515,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "rdmaPrefix must contain %rail% placeholder")
+		assert.Contains(t, err.Error(), "rdmaPrefix must contain %rail_id% placeholder")
 	})
 
 	t.Run("valid template with plane and rail only", func(t *testing.T) {
@@ -690,7 +690,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
 		// Should fail on the first check (plane)
-		assert.Contains(t, err.Error(), "netdevPrefix must contain %plane% placeholder")
+		assert.Contains(t, err.Error(), "netdevPrefix must contain %plane_id% placeholder")
 	})
 }
 

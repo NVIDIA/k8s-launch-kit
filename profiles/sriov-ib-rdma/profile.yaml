@@ -12,6 +12,7 @@ deploymentGuide: sriov-ib-rdma.rst
 templates:
   - 10-nicclusterpolicy.yaml
   - 20-ippool.yaml
+  - 35-nicinterfacenametemplate.yaml
   - 30-sriovnetworknodepolicy.yaml
   - 40-sriovibnetwork.yaml
   - 50-pod.yaml

@@ -31,6 +31,18 @@ spec:
       initialDelaySeconds: 10
       periodSeconds: 30
   {{- end }}
+  {{- if and .NicConfigurationOperator .NicConfigurationOperator.DeployNicInterfaceNameTemplate }}
+  nicConfigurationOperator:
+    operator:
+      image: nic-configuration-operator
+      repository: {{.NetworkOperator.Repository}}
+      version: {{.NetworkOperator.ComponentVersion}}
+    configurationDaemon:
+      image: nic-configuration-operator-daemon
+      repository: {{.NetworkOperator.Repository}}
+      version: {{.NetworkOperator.ComponentVersion}}
+    logLevel: info
+  {{- end }}
   rdmaSharedDevicePlugin:
     image: k8s-rdma-shared-dev-plugin
     repository: {{.NetworkOperator.Repository}}
