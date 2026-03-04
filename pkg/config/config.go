@@ -39,6 +39,7 @@ type LaunchKubernetesConfig struct {
 	Ipoib           *IpoibConfig           `yaml:"ipoib,omitempty"`
 	Macvlan         *MacvlanConfig         `yaml:"macvlan,omitempty"`
 	SpectrumX       *SpectrumXConfig       `yaml:"spectrumX,omitempty"`
+	PodNamespace    string                 `yaml:"podNamespace,omitempty"`
 	Profile         *Profile               `yaml:"profile,omitempty"`
 	ClusterConfig   []ClusterConfig        `yaml:"clusterConfig,omitempty"`
 }

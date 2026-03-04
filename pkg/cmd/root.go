@@ -60,6 +60,7 @@ var (
 	networkOperatorNamespace    string
 	group                       string
 	labelSelector               string
+	podNamespace                string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -103,6 +104,7 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 			Prompt:                prompt,
 			Group:                group,
 			LabelSelector:        labelSelector,
+			PodNamespace:         podNamespace,
 			SaveDeploymentFiles:   saveDeploymentFiles,
 			Deploy:                deploy,
 			Kubeconfig:            kubeconfig,
@@ -184,6 +186,7 @@ func init() {
 	rootCmd.Flags().StringVar(&llmModel, "llm-model", "", "Model name for the LLM API (e.g., claude-3-5-sonnet-20241022, gpt-4)")
 	rootCmd.Flags().BoolVar(&llmInteractive, "llm-interactive", false, "Enable interactive chat mode for LLM-assisted profile selection")
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "/opt/nvidia/k8s-launch-kit/deployment", "Save generated deployment files to the specified directory")
+	rootCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Namespace for pods and network resources (overrides config podNamespace, default: 'default')")
 	rootCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment (overrides config file docaDriver.enable)")
 
 	// Phase 3: Cluster deployment flags

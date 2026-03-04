@@ -15,7 +15,7 @@ spec:
     }
   resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}
   linkState: enable
-  networkNamespace: default
+  networkNamespace: {{$.PodNamespace}}
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
 {{- end -}}
@@ -33,5 +33,5 @@ spec:
     }
   resourceName: {{.Sriov.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}
   linkState: enable
-  networkNamespace: default
+  networkNamespace: {{$.PodNamespace}}
 {{- end}}

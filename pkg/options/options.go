@@ -40,6 +40,7 @@ type Options struct {
 	Prompt              string // Path to file with a prompt to use for LLM-assisted profile generation
 	Group               string // Generate templates for a specific group identifier only
 	LabelSelector       string // Filter nodes for discovery and manifests (e.g., "key1=val1,key2=val2")
+	PodNamespace        string // Namespace for pods and network resources (overrides config)
 	SaveDeploymentFiles string // Directory to save generated files
 
 	LLMApiKey      string // API key for the LLM API

@@ -7,7 +7,7 @@ kind: MacvlanNetwork
 metadata:
   name: {{$.Macvlan.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
 spec:
-  networkNamespace: "default"
+  networkNamespace: "{{$.PodNamespace}}"
   master: "{{$pf.NetworkInterface}}"
   mode: "bridge"
   mtu: {{$.Sriov.EthernetMtu}}
@@ -26,7 +26,7 @@ kind: MacvlanNetwork
 metadata:
   name: {{.Macvlan.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
 spec:
-  networkNamespace: "default"
+  networkNamespace: "{{$.PodNamespace}}"
   master: "{{(index .ClusterConfig.PFs 0).NetworkInterface}}"
   mode: "bridge"
   mtu: {{.Sriov.EthernetMtu}}

@@ -80,6 +80,15 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		fullConfig.NetworkOperator.Namespace = options.NetworkOperatorNamespace
 	}
 
+	// Apply pod namespace override from CLI
+	if options.PodNamespace != "" {
+		fullConfig.PodNamespace = options.PodNamespace
+	}
+	// Default to "default" if not set by config or CLI
+	if fullConfig.PodNamespace == "" {
+		fullConfig.PodNamespace = "default"
+	}
+
 	if fullConfig.Profile == nil {
 		return nil
 	}
