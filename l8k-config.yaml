@@ -4,6 +4,8 @@ networkOperator:
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
 
+podNamespace: default
+
 docaDriver:
   enable: true
   version: doca3.3.0-26.01-0.9.6.0-0
@@ -60,11 +62,16 @@ ipoib:
 macvlan:
   networkName: macvlan-network # with multiple networks, -rail-0, -rail-1, etc. suffixes are added to the network name
 
+nicConfigurationOperator:
+  deployNicInterfaceNameTemplate: true
+  rdmaPrefix: "rdma_r%rail_id%"
+  netdevPrefix: "eth_r%rail_id%"
+
 spectrumX:
   nicType: "1023" # "1023" for ConnectX-8, "a2dc" for BlueField-3 SuperNIC
   overlay: "none"
-  rdmaPrefix: "roce_p%plane%_r%rail%"
-  netdevPrefix: "eth_p%plane%_r%rail%"
+  rdmaPrefix: "roce_p%plane_id%_r%rail_id%"
+  netdevPrefix: "eth_p%plane_id%_r%rail_id%"
 
 profile:
   fabric: ethernet # infiniband, ethernet TODO consider ETH/IB

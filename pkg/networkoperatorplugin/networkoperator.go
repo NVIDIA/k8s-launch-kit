@@ -80,6 +80,24 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		fullConfig.NetworkOperator.Namespace = options.NetworkOperatorNamespace
 	}
 
+	// Apply pod namespace override from CLI
+	if options.PodNamespace != "" {
+		fullConfig.PodNamespace = options.PodNamespace
+	}
+	// Default to "default" if not set by config or CLI
+	if fullConfig.PodNamespace == "" {
+		fullConfig.PodNamespace = "default"
+	}
+
+	// Default NicConfigurationOperator if not set
+	if fullConfig.NicConfigurationOperator == nil {
+		fullConfig.NicConfigurationOperator = &config.NicConfigurationOperatorConfig{
+			DeployNicInterfaceNameTemplate: true,
+			RdmaPrefix:                     "rdma_r%rail_id%",
+			NetdevPrefix:                   "eth_r%rail_id%",
+		}
+	}
+
 	if fullConfig.Profile == nil {
 		return nil
 	}

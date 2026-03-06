@@ -7,7 +7,7 @@ kind: IPoIBNetwork
 metadata:
   name: {{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
 spec:
-  networkNamespace: "default"
+  networkNamespace: "{{$.PodNamespace}}"
   master: "{{$pf.NetworkInterface}}"
   ipam: |
     {
@@ -24,7 +24,7 @@ kind: IPoIBNetwork
 metadata:
   name: {{.Ipoib.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
 spec:
-  networkNamespace: "default"
+  networkNamespace: "{{$.PodNamespace}}"
   master: "{{(index .ClusterConfig.PFs 0).NetworkInterface}}"
   ipam: |
     {

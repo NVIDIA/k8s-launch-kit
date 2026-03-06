@@ -7,7 +7,7 @@ kind: HostDeviceNetwork
 metadata:
   name: {{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
 spec:
-  networkNamespace: "default"
+  networkNamespace: "{{$.PodNamespace}}"
   resourceName: "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}"
   ipam: |
     {
@@ -23,7 +23,7 @@ kind: HostDeviceNetwork
 metadata:
   name: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
 spec:
-  networkNamespace: "default"
+  networkNamespace: "{{$.PodNamespace}}"
   resourceName: "{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}"
   ipam: |
     {

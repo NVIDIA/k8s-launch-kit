@@ -9,7 +9,7 @@ metadata:
 spec:
   resourceName: rail_{{$i}}
   interfaceType: dpdk
-  networkNamespace: default
+  networkNamespace: {{$.PodNamespace}}
   mtu: 9216
   ipam: |
     {

@@ -17,9 +17,20 @@ spec:
     {{- end }}
   {{- end }}
   nicSelector:
+    {{- if $pf.NetworkInterface }}
+    pfNames:
+      - "{{$pf.NetworkInterface}}"
+    {{- else }}
     vendor: "15b3"
     rootDevices:
+    {{- if $.ClusterConfig.RailPciAddresses }}
+    {{- range $addr := (index $.ClusterConfig.RailPciAddresses $i) }}
+      - "{{ $addr }}"
+    {{- end }}
+    {{- else }}
       - "{{$pf.PciAddress}}"
+    {{- end }}
+    {{- end }}
   linkType: IB
   isRdma: true
   numVfs: {{$.Sriov.NumVfs}}

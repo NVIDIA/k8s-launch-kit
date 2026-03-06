@@ -38,7 +38,9 @@ type LaunchKubernetesConfig struct {
 	RdmaShared      *RdmaSharedConfig      `yaml:"rdmaShared,omitempty"`
 	Ipoib           *IpoibConfig           `yaml:"ipoib,omitempty"`
 	Macvlan         *MacvlanConfig         `yaml:"macvlan,omitempty"`
-	SpectrumX       *SpectrumXConfig       `yaml:"spectrumX,omitempty"`
+	SpectrumX                *SpectrumXConfig                `yaml:"spectrumX,omitempty"`
+	NicConfigurationOperator *NicConfigurationOperatorConfig `yaml:"nicConfigurationOperator,omitempty"`
+	PodNamespace             string                          `yaml:"podNamespace,omitempty"`
 	Profile         *Profile               `yaml:"profile,omitempty"`
 	ClusterConfig   []ClusterConfig        `yaml:"clusterConfig,omitempty"`
 }
@@ -82,8 +84,14 @@ type SriovConfig struct {
 type SpectrumXConfig struct {
 	NicType      string `yaml:"nicType"`      // "1023" for ConnectX-8, "a2dc" for BlueField-3 SuperNIC
 	Overlay      string `yaml:"overlay"`      // "none"
-	RdmaPrefix   string `yaml:"rdmaPrefix"`   // e.g., "roce_nic%nic_id%_p%plane%_r%rail%"
-	NetdevPrefix string `yaml:"netdevPrefix"` // e.g., "nic%nic_id%_p%plane%_r%rail%"
+	RdmaPrefix   string `yaml:"rdmaPrefix"`   // e.g., "roce_p%plane_id%_r%rail_id%"
+	NetdevPrefix string `yaml:"netdevPrefix"` // e.g., "eth_p%plane_id%_r%rail_id%"
+}
+
+type NicConfigurationOperatorConfig struct {
+	DeployNicInterfaceNameTemplate bool   `yaml:"deployNicInterfaceNameTemplate"`
+	RdmaPrefix                     string `yaml:"rdmaPrefix"`   // e.g., "rdma_r%rail_id%"
+	NetdevPrefix                   string `yaml:"netdevPrefix"` // e.g., "eth_r%rail_id%"
 }
 
 type HostdevConfig struct {
@@ -120,14 +128,15 @@ type ProfileSpectrumX struct {
 }
 
 type ClusterConfig struct {
-	Identifier    string              `yaml:"identifier"`
-	MachineType   string              `yaml:"machineType,omitempty"`
-	ProductType   string              `yaml:"productType,omitempty"`
-	LabelSelector map[string]string   `yaml:"labelSelector,omitempty"`
-	Capabilities  *ClusterCapabilities `yaml:"capabilities"`
-	PFs           []PFConfig           `yaml:"pfs"`
-	WorkerNodes   []string             `yaml:"workerNodes"`
-	NodeSelector  map[string]string    `yaml:"nodeSelector,omitempty"`
+	Identifier       string               `yaml:"identifier"`
+	MachineType      string               `yaml:"machineType,omitempty"`
+	ProductType      string               `yaml:"productType,omitempty"`
+	LabelSelector    map[string]string    `yaml:"labelSelector,omitempty"`
+	Capabilities     *ClusterCapabilities `yaml:"capabilities"`
+	PFs              []PFConfig           `yaml:"pfs"`
+	WorkerNodes      []string             `yaml:"workerNodes"`
+	NodeSelector     map[string]string    `yaml:"nodeSelector,omitempty"`
+	RailPciAddresses [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
 }
 
 type ClusterCapabilities struct {
@@ -256,28 +265,28 @@ func validateSpectrumXTemplates(config *LaunchKubernetesConfig) error {
 	isMultiplane := config.Profile.SpectrumX.NumberOfPlanes > 1
 	isMultirail := config.Profile.Multirail
 	
-	// Check netdevPrefix
-	hasPlaneInNetdev := containsPlaceholder(netdevPrefix, "%plane%")
-	hasRailInNetdev := containsPlaceholder(netdevPrefix, "%rail%")
-	
+	// Check netdevPrefix (accept both %plane%/%rail% and %plane_id%/%rail_id%)
+	hasPlaneInNetdev := containsPlaceholder(netdevPrefix, "%plane%") || containsPlaceholder(netdevPrefix, "%plane_id%")
+	hasRailInNetdev := containsPlaceholder(netdevPrefix, "%rail%") || containsPlaceholder(netdevPrefix, "%rail_id%")
+
 	if isMultiplane && !hasPlaneInNetdev {
-		return fmt.Errorf("spectrumX.netdevPrefix must contain %%plane%% placeholder when numberOfPlanes > 1 (multiplane mode)")
+		return fmt.Errorf("spectrumX.netdevPrefix must contain %%plane_id%% placeholder when numberOfPlanes > 1 (multiplane mode)")
 	}
-	
+
 	if isMultirail && !hasRailInNetdev {
-		return fmt.Errorf("spectrumX.netdevPrefix must contain %%rail%% placeholder when multirail is enabled")
+		return fmt.Errorf("spectrumX.netdevPrefix must contain %%rail_id%% placeholder when multirail is enabled")
 	}
-	
+
 	// Check rdmaPrefix (same rules)
-	hasPlaneInRdma := containsPlaceholder(rdmaPrefix, "%plane%")
-	hasRailInRdma := containsPlaceholder(rdmaPrefix, "%rail%")
-	
+	hasPlaneInRdma := containsPlaceholder(rdmaPrefix, "%plane%") || containsPlaceholder(rdmaPrefix, "%plane_id%")
+	hasRailInRdma := containsPlaceholder(rdmaPrefix, "%rail%") || containsPlaceholder(rdmaPrefix, "%rail_id%")
+
 	if isMultiplane && !hasPlaneInRdma {
-		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%plane%% placeholder when numberOfPlanes > 1 (multiplane mode)")
+		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%plane_id%% placeholder when numberOfPlanes > 1 (multiplane mode)")
 	}
-	
+
 	if isMultirail && !hasRailInRdma {
-		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%rail%% placeholder when multirail is enabled")
+		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%rail_id%% placeholder when multirail is enabled")
 	}
 	
 	return nil
