@@ -21,7 +21,11 @@ GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 
-.PHONY: all build clean test coverage deps lint docker-build docker-run update-readme help
+# Sosreport script
+SOSREPORT_SCRIPT=scripts/kubectl-netop_sosreport
+SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/master/scripts/sosreport/kubectl-netop_sosreport
+
+.PHONY: all build clean test coverage deps lint docker-build docker-run update-readme download-sosreport help
 
 ## Build the binary
 build:
@@ -134,6 +138,12 @@ update-readme: build
 	@mv /tmp/README_new.md README.md
 	@rm -f /tmp/l8k_help.txt
 	@echo "README.md updated successfully"
+
+## Download sosreport script
+download-sosreport:
+	@mkdir -p scripts
+	curl -fsSL -o $(SOSREPORT_SCRIPT) $(SOSREPORT_URL)
+	chmod +x $(SOSREPORT_SCRIPT)
 
 ## Display help
 help:

@@ -116,6 +116,19 @@ func (l *Launcher) executeWorkflow() error {
 		configPath = l.options.UserConfig
 	}
 
+	// When in interactive mode without a config, go directly to interactive session
+	// (supports troubleshooting via sosreport without needing a cluster config)
+	if configPath == "" && l.options.LLMInteractive {
+		l.ui.Section("Interactive Session (AI-Assisted)")
+		l.logger.Info("Starting interactive session (no cluster config)")
+		_, err := l.runInteractiveSession(nil)
+		if err != nil {
+			l.ui.Error("Interactive session failed: %v", err)
+			return fmt.Errorf("interactive session failed: %w", err)
+		}
+		return nil
+	}
+
 	fullConfig, err := config.LoadFullConfig(configPath, l.logger)
 	if err != nil {
 		return fmt.Errorf("failed to load full config: %w", err)
@@ -435,7 +448,8 @@ func (l *Launcher) deployConfigurationProfile(profile *profiles.Profile) error {
 
 // runInteractiveSession runs an interactive chat session with the LLM
 func (l *Launcher) runInteractiveSession(clusterConfig []config.ClusterConfig) (map[string]string, error) {
-	session, err := llm.NewChatSession(clusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel)
+	session, err := llm.NewChatSession(clusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel,
+		l.options.Kubeconfig, l.options.SosreportPath, l.options.LLMThrottle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chat session: %w", err)
 	}
@@ -443,7 +457,8 @@ func (l *Launcher) runInteractiveSession(clusterConfig []config.ClusterConfig) (
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("\n=== Interactive LLM Session ===")
-	fmt.Println("Ask questions about network configuration or describe your requirements.")
+	fmt.Println("Ask questions about network configuration, describe your requirements,")
+	fmt.Println("or ask for help troubleshooting Network Operator issues.")
 	fmt.Println("Type 'generate' to generate manifests based on the recommended profile.")
 	fmt.Println("Type 'exit' or 'quit' to cancel.")
 	fmt.Println("================================")
@@ -473,6 +488,12 @@ func (l *Launcher) runInteractiveSession(clusterConfig []config.ClusterConfig) (
 				continue
 			}
 
+			if profile["fabric"] == "" || profile["deploymentType"] == "" {
+				fmt.Println("No profile recommendation found in the last response.")
+				fmt.Println("Ask a profile selection question first (e.g., what deployment type should I use?).")
+				continue
+			}
+
 			confidence := profile["confidence"]
 			if confidence == "low" {
 				fmt.Printf("\nWarning: The LLM has low confidence in this recommendation.\n")
@@ -491,8 +512,18 @@ func (l *Launcher) runInteractiveSession(clusterConfig []config.ClusterConfig) (
 			return profile, nil
 		}
 
-		// Send message to LLM
+		// Send message to LLM — single progress indicator, updated in-place
 		progress := l.ui.StartProgress("Waiting for AI response")
+		session.OnStatus = func(action, message string) {
+			switch action {
+			case "update":
+				progress.Update(message)
+			case "done":
+				// Finish current step and start a new spinner
+				progress.Success(message)
+				progress = l.ui.StartProgress("Waiting for AI response")
+			}
+		}
 		response, err := session.SendMessage(context.Background(), input)
 		if err != nil {
 			progress.Fail("AI request failed")
@@ -501,7 +532,13 @@ func (l *Launcher) runInteractiveSession(clusterConfig []config.ClusterConfig) (
 		}
 		progress.Success("Response received")
 
-		fmt.Printf("\nAssistant: %s", response)
+		// Strip JSON block from display unless debug logging is enabled
+		displayResponse := response
+		if l.options.LogLevel != "debug" {
+			displayResponse = llm.StripJSONBlock(displayResponse)
+		}
+
+		fmt.Printf("\nAssistant: %s", displayResponse)
 		fmt.Println(llm.InteractivePromptSuffix)
 		fmt.Println()
 	}
