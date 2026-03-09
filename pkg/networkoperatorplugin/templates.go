@@ -138,6 +138,10 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, gr
 		if err := tmpl.Execute(&buf, cfg); err != nil {
 			return nil, fmt.Errorf("failed to execute template %s: %w", templatePath, err)
 		}
+		// Skip empty output (e.g., template guarded by a false condition)
+		if strings.TrimSpace(buf.String()) == "" {
+			return map[string]string{}, nil
+		}
 		return map[string]string{baseName: buf.String()}, nil
 	}
 
@@ -254,7 +258,10 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, gr
 		if id != "" {
 			fileName = fmt.Sprintf("%s-%s%s", nameNoExt, id, ext)
 		}
-		results[fileName] = buf.String()
+		// Skip empty output (e.g., template guarded by a false condition)
+		if strings.TrimSpace(buf.String()) != "" {
+			results[fileName] = buf.String()
+		}
 	}
 
 	return results, nil
