@@ -48,11 +48,15 @@ type Options struct {
 	LLMVendor      string // Vendor of the LLM API
 	LLMModel       string // Model name for the LLM API
 	LLMInteractive bool   // Enable interactive chat mode
+	LLMThrottle    bool   // Enable rate limit throttling for API calls
 
 	EnabledPlugins []string // Enabled plugins
 
 	// DOCA Driver
 	EnableDocaDriver *bool // Override docaDriver.enable from config (nil = use config value)
+
+	// Troubleshooting (used in interactive mode)
+	SosreportPath string // Pre-collected sosreport directory (skip collection)
 
 	// Phase 3: Cluster Deployment
 	Deploy     bool   // Whether to deploy to cluster

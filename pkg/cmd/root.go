@@ -61,6 +61,8 @@ var (
 	group                       string
 	labelSelector               string
 	podNamespace                string
+	sosreportPath               string
+	llmThrottle                 bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -116,6 +118,8 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 			LLMVendor:             llmVendor,
 			LLMModel:              llmModel,
 			LLMInteractive:        llmInteractive,
+			SosreportPath:         sosreportPath,
+			LLMThrottle:           llmThrottle,
 		}
 
 		// Set EnableDocaDriver only if the flag was explicitly provided
@@ -188,6 +192,8 @@ func init() {
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "/opt/nvidia/k8s-launch-kit/deployment", "Save generated deployment files to the specified directory")
 	rootCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Namespace for pods and network resources (overrides config podNamespace, default: 'default')")
 	rootCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment (overrides config file docaDriver.enable)")
+	rootCmd.Flags().StringVar(&sosreportPath, "sosreport-path", "", "Path to pre-collected sosreport directory for troubleshooting analysis (implies --llm-interactive)")
+	rootCmd.Flags().BoolVar(&llmThrottle, "llm-throttle", false, "Enable rate limit throttling for LLM API calls (use when hitting token-per-minute limits)")
 
 	// Phase 3: Cluster deployment flags
 	rootCmd.Flags().BoolVar(&deploy, "deploy", false, "Deploy the generated files to the Kubernetes cluster")
@@ -206,8 +212,14 @@ func validateConfig(options options.Options) error {
 	}
 
 	// At least one of user-config or discover-cluster-config should be provided
-	if options.UserConfig == "" && !options.DiscoverClusterConfig {
+	// (not required in interactive mode — the agent can troubleshoot without a cluster config)
+	if options.UserConfig == "" && !options.DiscoverClusterConfig && !options.LLMInteractive {
 		return fmt.Errorf("either --user-config or --discover-cluster-config must be provided")
+	}
+
+	// Sosreport flags require interactive mode
+	if options.SosreportPath != "" && !options.LLMInteractive {
+		return fmt.Errorf("--sosreport-path requires --llm-interactive")
 	}
 
 	// If discover-cluster-config is provided, kubeconfig should be too

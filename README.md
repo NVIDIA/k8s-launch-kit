@@ -184,6 +184,37 @@ l8k --user-config ./config.yaml \
     --save-deployment-files ./deployments
 ```
 
+### Troubleshooting Network Operator Issues
+
+The interactive mode can also help troubleshoot NVIDIA Network Operator failures by collecting and analyzing diagnostic data (sosreport). The sosreport script must first be downloaded:
+
+```bash
+make download-sosreport
+```
+
+Then use the interactive mode with `--kubeconfig` to enable troubleshooting:
+
+```bash
+l8k --llm-interactive \
+    --kubeconfig ~/.kube/config \
+    --user-config ./cluster-config.yaml \
+    --llm-api-key $KEY --llm-vendor anthropic \
+    --llm-model claude-sonnet-4-20250514
+```
+
+In the session, ask about issues: *"My OFED driver pods are crashing, can you investigate?"*
+
+The AI agent will automatically collect a sosreport from the cluster, examine the diagnostic data, and provide analysis with remediation steps.
+
+You can also provide a pre-collected sosreport directory (no cluster access needed):
+
+```bash
+l8k --llm-interactive \
+    --sosreport-path ./network-operator-sosreport-20260306-120000 \
+    --llm-api-key $KEY --llm-vendor anthropic \
+    --llm-model claude-sonnet-4-20250514
+```
+
 ## Configuration file
 
 During cluster discovery stage, Kubernetes Launch Kit creates a configuration file, which it later uses to generate deployment manifests from the templates. This config file can be edited by the user to customize their deployment configuration. The user can provide the custom config file to the tool using the `--user-config` cli flag — either as a standalone config (skipping discovery) or as a base config combined with `--discover-cluster-config` (discovery takes network operator parameters from the file and adds discovered cluster config).
