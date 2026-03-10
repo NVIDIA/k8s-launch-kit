@@ -25,7 +25,7 @@ GOMOD=$(GOCMD) mod
 SOSREPORT_SCRIPT=scripts/kubectl-netop_sosreport
 SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/master/scripts/sosreport/kubectl-netop_sosreport
 
-.PHONY: all build clean test coverage deps lint docker-build docker-run update-readme download-sosreport help
+.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport help
 
 ## Build the binary
 build:
@@ -88,6 +88,15 @@ lint-check: install-lint lint
 docker-build:
 	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 	docker tag $(DOCKER_IMAGE):$(DOCKER_TAG) $(DOCKER_IMAGE):latest
+
+## Build in container and copy binary to host
+docker-build-local:
+	docker build -t $(DOCKER_IMAGE):build-tmp .
+	docker create --name l8k-extract $(DOCKER_IMAGE):build-tmp
+	@mkdir -p $(BUILD_DIR)
+	docker cp l8k-extract:/src/l8k $(BINARY_PATH)
+	docker rm l8k-extract
+	docker rmi $(DOCKER_IMAGE):build-tmp
 
 ## Run Docker container
 docker-run:
