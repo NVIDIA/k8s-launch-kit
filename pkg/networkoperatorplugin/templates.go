@@ -290,7 +290,27 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		mergedCfg := *cfg
 		useNameTemplates := cfg.NicConfigurationOperator != nil &&
 			cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
-		mergedCfg.ClusterConfig = mergeCompatibleGroups(cfg.ClusterConfig, useNameTemplates)
+		var hadPciConflicts bool
+		mergedCfg.ClusterConfig, hadPciConflicts = mergeCompatibleGroups(cfg.ClusterConfig, useNameTemplates)
+
+		// NicInterfaceNameTemplate is only needed when:
+		// 1. Groups were merged AND PCI addresses conflict across rails, OR
+		// 2. Deployment is rdma_shared AND PFs have empty NetworkInterface names
+		//    (rdmaSharedDevicePlugin uses ifNames selectors that require them).
+		// When neither condition holds, disable name templates so the device
+		// plugin uses PCI addresses directly.
+		needsNameTemplates := hadPciConflicts ||
+			(isRdmaShared(cfg) && hasEmptyNetworkInterfaceNames(cfg.ClusterConfig))
+		if useNameTemplates && !needsNameTemplates {
+			overrideNicCfg := *cfg.NicConfigurationOperator
+			overrideNicCfg.DeployNicInterfaceNameTemplate = false
+			mergedCfg.NicConfigurationOperator = &overrideNicCfg
+			// Also update unmerged config so nicinterfacenametemplate files are skipped.
+			unmrgOverride := *unmrgCfg
+			unmrgOverride.NicConfigurationOperator = &overrideNicCfg
+			unmrgCfg = &unmrgOverride
+		}
+
 		cfg = &mergedCfg
 	}
 
@@ -314,6 +334,27 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	}
 
 	return results, nil
+}
+
+// hasEmptyNetworkInterfaceNames returns true if any east-west PF across all
+// groups has an empty NetworkInterface. This happens when discovery finds
+// multiple nodes per group and omits device names for safety. In rdma_shared
+// deployments the rdmaSharedDevicePlugin needs interface names (ifNames
+// selector), so NicInterfaceNameTemplate must be enabled to provide them.
+func hasEmptyNetworkInterfaceNames(groups []config.ClusterConfig) bool {
+	for i := range groups {
+		for _, pf := range filterEastWestPFs(groups[i].PFs) {
+			if pf.NetworkInterface == "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isRdmaShared returns true if the config targets an rdma_shared deployment.
+func isRdmaShared(cfg *config.LaunchKubernetesConfig) bool {
+	return cfg.Profile != nil && cfg.Profile.Deployment == "rdma_shared"
 }
 
 // isSpectrumX returns true if the config targets a Spectrum-X profile.
@@ -340,7 +381,7 @@ func sanitizeIdentifier(s string) string {
 //
 // Groups with empty productType are never merged.
 // Single-entry buckets are returned as-is.
-func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool) []config.ClusterConfig {
+func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool) ([]config.ClusterConfig, bool) {
 	type mergeKey struct {
 		productType string
 		railCount   int
@@ -364,6 +405,7 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 	}
 
 	var result []config.ClusterConfig
+	hadPciConflicts := false
 	for _, key := range bucketOrder {
 		indices := buckets[key]
 
@@ -374,19 +416,23 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 		}
 
 		// Check for cross-rail PCI address conflicts before merging.
-		// Skip when NicInterfaceNameTemplate is used — renamed pfNames avoid the conflict.
-		if !useNameTemplates && hasRailPciConflict(groups, indices) {
-			for _, idx := range indices {
-				result = append(result, groups[idx])
+		// When NicInterfaceNameTemplate is enabled, merge despite conflicts
+		// (renamed pfNames avoid the conflict) and track that it happened.
+		if hasRailPciConflict(groups, indices) {
+			if !useNameTemplates {
+				for _, idx := range indices {
+					result = append(result, groups[idx])
+				}
+				continue
 			}
-			continue
+			hadPciConflicts = true
 		}
 
 		// Merge all groups in this bucket
 		result = append(result, buildMergedGroup(groups, indices))
 	}
 
-	return result
+	return result, hadPciConflicts
 }
 
 // hasRailPciConflict returns true if any PCI address appears at different rail

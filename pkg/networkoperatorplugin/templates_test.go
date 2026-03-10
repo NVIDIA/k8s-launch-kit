@@ -499,7 +499,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups, false)
+		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 1)
 		merged := result[0]
@@ -535,7 +535,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups, false)
+		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 2)
 		assert.Equal(t, "group-0", result[0].Identifier)
@@ -563,7 +563,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups, false)
+		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 2)
 		assert.Equal(t, "group-0", result[0].Identifier)
@@ -594,7 +594,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups, false)
+		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 2)
 		// First: merged H200 group (group-0 + group-2)
@@ -617,7 +617,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups, false)
+		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 1)
 		assert.Equal(t, "group-0", result[0].Identifier)
@@ -640,7 +640,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups, false)
+		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 2)
 		assert.Equal(t, "group-0", result[0].Identifier)
@@ -666,13 +666,64 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups, false)
+		result, _ := mergeCompatibleGroups(groups, false)
 
 		// Should merge: both have 1 east-west rail (north-south excluded from count)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "nvidia-h200", result[0].Identifier)
 		assert.Len(t, result[0].RailPciAddresses, 1)
 		assert.Equal(t, []string{"0000:19:00.0", "0000:1a:00.0"}, result[0].RailPciAddresses[0])
+	})
+
+	t.Run("no PCI conflict reports hadPciConflicts false", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				Identifier:  "group-0",
+				ProductType: "NVIDIA-H200",
+				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
+				WorkerNodes: []string{"node-a"},
+			},
+			{
+				Identifier:  "group-1",
+				ProductType: "NVIDIA-H200",
+				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0)},
+				WorkerNodes: []string{"node-b"},
+			},
+		}
+
+		result, hadPciConflicts := mergeCompatibleGroups(groups, true)
+
+		assert.Len(t, result, 1)
+		assert.False(t, hadPciConflicts, "no PCI conflicts, name templates not needed")
+	})
+
+	t.Run("PCI conflict with name templates merges and reports hadPciConflicts true", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				Identifier:  "group-0",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					ewPF("0000:19:00.0", 0),
+					ewPF("0000:9c:00.0", 1),
+				},
+				WorkerNodes: []string{"node-a"},
+			},
+			{
+				Identifier:  "group-1",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					ewPF("0000:9c:00.0", 0), // same PCI at different rail
+					ewPF("0000:cd:00.0", 1),
+				},
+				WorkerNodes: []string{"node-b"},
+			},
+		}
+
+		result, hadPciConflicts := mergeCompatibleGroups(groups, true)
+
+		// With name templates enabled, should merge despite PCI conflict
+		assert.Len(t, result, 1)
+		assert.True(t, hadPciConflicts, "PCI conflicts exist, name templates needed")
 	})
 
 	t.Run("cross-rail PCI address conflict prevents merge", func(t *testing.T) {
@@ -708,7 +759,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 		}
 
-		result := mergeCompatibleGroups(groups, false)
+		result, _ := mergeCompatibleGroups(groups, false)
 
 		// Should NOT merge: PCI conflict on 0000:9c:00.0 (rail 1 vs rail 0)
 		assert.Len(t, result, 3)
@@ -775,6 +826,81 @@ func TestPfsPerNic(t *testing.T) {
 			{DeviceID: "101f", PciAddress: "0000:5a:00.1", Traffic: "north-south"},
 		}
 		assert.Equal(t, 1, pfsPerNic(pfs))
+	})
+}
+
+func TestHasEmptyNetworkInterfaceNames(t *testing.T) {
+	t.Run("all PFs have interface names", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				PFs: []config.PFConfig{
+					{PciAddress: "0000:19:00.0", Traffic: "east-west", NetworkInterface: "eth0"},
+					{PciAddress: "0000:2a:00.0", Traffic: "east-west", NetworkInterface: "eth1"},
+				},
+			},
+		}
+		assert.False(t, hasEmptyNetworkInterfaceNames(groups))
+	})
+
+	t.Run("some PFs have empty interface names", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				PFs: []config.PFConfig{
+					{PciAddress: "0000:19:00.0", Traffic: "east-west", NetworkInterface: "eth0"},
+					{PciAddress: "0000:2a:00.0", Traffic: "east-west", NetworkInterface: ""},
+				},
+			},
+		}
+		assert.True(t, hasEmptyNetworkInterfaceNames(groups))
+	})
+
+	t.Run("north-south PFs excluded", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				PFs: []config.PFConfig{
+					{PciAddress: "0000:19:00.0", Traffic: "east-west", NetworkInterface: "eth0"},
+					{PciAddress: "0000:5a:00.0", Traffic: "north-south", NetworkInterface: ""},
+				},
+			},
+		}
+		assert.False(t, hasEmptyNetworkInterfaceNames(groups))
+	})
+
+	t.Run("empty interface in second group", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				PFs: []config.PFConfig{
+					{PciAddress: "0000:19:00.0", Traffic: "east-west", NetworkInterface: "eth0"},
+				},
+			},
+			{
+				PFs: []config.PFConfig{
+					{PciAddress: "0000:1a:00.0", Traffic: "east-west", NetworkInterface: ""},
+				},
+			},
+		}
+		assert.True(t, hasEmptyNetworkInterfaceNames(groups))
+	})
+}
+
+func TestIsRdmaShared(t *testing.T) {
+	t.Run("rdma_shared deployment", func(t *testing.T) {
+		cfg := &config.LaunchKubernetesConfig{
+			Profile: &config.Profile{Deployment: "rdma_shared"},
+		}
+		assert.True(t, isRdmaShared(cfg))
+	})
+
+	t.Run("sriov deployment", func(t *testing.T) {
+		cfg := &config.LaunchKubernetesConfig{
+			Profile: &config.Profile{Deployment: "sriov"},
+		}
+		assert.False(t, isRdmaShared(cfg))
+	})
+
+	t.Run("nil profile", func(t *testing.T) {
+		cfg := &config.LaunchKubernetesConfig{}
+		assert.False(t, isRdmaShared(cfg))
 	})
 }
 
