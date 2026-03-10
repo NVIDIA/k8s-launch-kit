@@ -58,7 +58,7 @@ spec:
             "resourceName": "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}",
             "selectors": {
               "vendors": ["15b3"],
-              {{- if $pf.NetworkInterface }}
+              {{- if and $.NicConfigurationOperator $.NicConfigurationOperator.DeployNicInterfaceNameTemplate }}
               "pfNames": ["{{$pf.NetworkInterface}}"],
               {{- else if $.ClusterConfig.RailPciAddresses }}
               "pciAddresses": [{{ $f := true }}{{- range $addr := (index $.ClusterConfig.RailPciAddresses $i) }}{{- if not $f }}, {{ end }}{{- $f = false }}"{{ $addr }}"{{- end }}],
