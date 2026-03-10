@@ -3,7 +3,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: sriov-ib-test-pod{{suffix .ClusterConfig.Identifier}}
+  generateName: sriov-ib-test-pod{{suffix .ClusterConfig.Identifier}}-
   annotations:
     k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{- end}}{{- end}}
 spec:
@@ -48,7 +48,7 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: sriov-ib-test-pod{{suffix $.ClusterConfig.Identifier}}
+  generateName: sriov-ib-test-pod{{suffix $.ClusterConfig.Identifier}}-
   annotations:
     k8s.v1.cni.cncf.io/networks: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
 spec:
