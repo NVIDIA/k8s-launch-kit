@@ -285,33 +285,37 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	unmrgCfg := cfg
 
 	// Merge compatible groups when: multiple groups, no --group filter, not spectrum-x
+	useNameTemplates := cfg.NicConfigurationOperator != nil &&
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
+	hadPciConflicts := false
+
 	if p.GroupFilter == "" && cfg.Profile != nil &&
 		len(cfg.ClusterConfig) > 1 && !isSpectrumX(cfg) {
 		mergedCfg := *cfg
-		useNameTemplates := cfg.NicConfigurationOperator != nil &&
-			cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
-		var hadPciConflicts bool
 		mergedCfg.ClusterConfig, hadPciConflicts = mergeCompatibleGroups(cfg.ClusterConfig, useNameTemplates)
+		cfg = &mergedCfg
+	}
 
-		// NicInterfaceNameTemplate is only needed when:
-		// 1. Groups were merged AND PCI addresses conflict across rails, OR
-		// 2. Deployment is rdma_shared AND PFs have empty NetworkInterface names
-		//    (rdmaSharedDevicePlugin uses ifNames selectors that require them).
-		// When neither condition holds, disable name templates so the device
-		// plugin uses PCI addresses directly.
+	// NicInterfaceNameTemplate is only needed when:
+	// 1. Groups were merged AND PCI addresses conflict across rails, OR
+	// 2. Deployment is rdma_shared AND PFs have empty NetworkInterface names
+	//    (rdmaSharedDevicePlugin uses ifNames selectors that require them).
+	// When neither condition holds, disable name templates so the device
+	// plugin uses PCI addresses directly.
+	if useNameTemplates && !isSpectrumX(cfg) {
 		needsNameTemplates := hadPciConflicts ||
 			(isRdmaShared(cfg) && hasEmptyNetworkInterfaceNames(cfg.ClusterConfig))
-		if useNameTemplates && !needsNameTemplates {
+		if !needsNameTemplates {
 			overrideNicCfg := *cfg.NicConfigurationOperator
 			overrideNicCfg.DeployNicInterfaceNameTemplate = false
-			mergedCfg.NicConfigurationOperator = &overrideNicCfg
+			overrideCfg := *cfg
+			overrideCfg.NicConfigurationOperator = &overrideNicCfg
+			cfg = &overrideCfg
 			// Also update unmerged config so nicinterfacenametemplate files are skipped.
 			unmrgOverride := *unmrgCfg
 			unmrgOverride.NicConfigurationOperator = &overrideNicCfg
 			unmrgCfg = &unmrgOverride
 		}
-
-		cfg = &mergedCfg
 	}
 
 	results := make(map[string]string)
