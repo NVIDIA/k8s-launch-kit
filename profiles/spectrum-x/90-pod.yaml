@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: spectrum-x-multirail-test-pod{{suffix .ClusterConfig.Identifier}}
+  generateName: spectrum-x-multirail-test-pod{{suffix .ClusterConfig.Identifier}}-
   namespace: {{$.PodNamespace}}
   annotations:
     k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}rail-{{$i}}{{- end}}{{- end}}
