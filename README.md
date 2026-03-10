@@ -322,7 +322,7 @@ ipoib:
 macvlan:
   networkName: macvlan-network
 nicConfigurationOperator:
-  deployNicInterfaceNameTemplate: true  # Deploy NICInterfaceNameTemplate CR for consistent NIC naming
+  deployNicInterfaceNameTemplate: true  # Enable NIC rename when needed (see NIC Interface Name Templates section)
   rdmaPrefix: "rdma_r%rail%"           # RDMA device name template (%rail% substituted per rail)
   netdevPrefix: "eth_r%rail%"          # Network interface name template (%rail% substituted per rail)
 spectrumX:
@@ -584,6 +584,16 @@ clusterConfig:
     pciAddress: "0000:3b:00.0"
     traffic: north-south     # BlueField DPU — excluded from manifests
 ```
+
+### NIC Interface Name Templates
+
+The `nicConfigurationOperator.deployNicInterfaceNameTemplate` setting controls whether a `NicInterfaceNameTemplate` CR is deployed to rename NIC interfaces to predictable, rail-based names (e.g., `eth_r0`, `eth_r1`). When set to `true`, the tool treats it as "enable when needed" rather than "always enable". The NicInterfaceNameTemplate CR and associated `nicConfigurationOperator` section in NicClusterPolicy are only deployed when one of the following conditions is met:
+
+1. **Merged groups with PCI address conflicts** — When multiple node groups share the same GPU product type and are merged into a single group, but the same PCI address appears at different rail positions across groups. In this case PCI addresses alone cannot identify the correct rail, so interface name templates are used instead.
+
+2. **rdma_shared deployment with empty network interface names** — When the deployment type is `rdma_shared` (macvlan-rdma-shared or ipoib-rdma-shared profiles) and PFs have empty `networkInterface` fields. The `rdmaSharedDevicePlugin` uses `ifNames` selectors that require interface names, so NicInterfaceNameTemplate must be enabled to provide them. This typically happens when discovery finds multiple nodes per group and omits device names for safety.
+
+When neither condition holds, name templates are disabled and the device plugin uses PCI addresses directly, avoiding the overhead of deploying the NIC configuration operator.
 
 ## Docker container
 

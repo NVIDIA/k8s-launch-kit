@@ -8,8 +8,8 @@ podNamespace: default
 
 docaDriver:
   enable: true
-  version: doca3.3.0-26.01-0.9.6.0-0
-  unloadStorageModules: false
+  version: doca3.3.0-26.01-1.0.0.0-0
+  unloadStorageModules: true
   enableNFSRDMA: false
 
 nvIpam:
