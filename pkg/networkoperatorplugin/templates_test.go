@@ -921,3 +921,137 @@ func indexOf(s, substr string) int {
 	}
 	return -1
 }
+
+func TestJoinModules(t *testing.T) {
+	joinModulesFunc := templateFuncs["joinModules"].(func([]string) string)
+
+	t.Run("single module", func(t *testing.T) {
+		result := joinModulesFunc([]string{"iw_cm"})
+		assert.Equal(t, "iw_cm", result)
+	})
+
+	t.Run("multiple modules semicolon separated", func(t *testing.T) {
+		result := joinModulesFunc([]string{"iw_cm", "nfsrdma", "xprtrdma"})
+		assert.Equal(t, "iw_cm;nfsrdma;xprtrdma", result)
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		result := joinModulesFunc([]string{})
+		assert.Equal(t, "", result)
+	})
+}
+
+func TestMergeCompatibleGroups_MergesOfedDependentModules(t *testing.T) {
+	rail0 := 0
+	rail1 := 1
+
+	t.Run("merges modules from all groups deduplicated and sorted", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				Identifier:  "group-0",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0},
+					{DeviceID: "a2dc", PciAddress: "0000:2a:00.0", Traffic: "east-west", Rail: &rail1},
+				},
+				WorkerNodes:          []string{"node-1"},
+				OfedDependentModules: []string{"iw_cm", "nfsrdma"},
+			},
+			{
+				Identifier:  "group-1",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: &rail0},
+					{DeviceID: "a2dc", PciAddress: "0000:3c:00.0", Traffic: "east-west", Rail: &rail1},
+				},
+				WorkerNodes:          []string{"node-2"},
+				OfedDependentModules: []string{"iw_cm", "xprtrdma"},
+			},
+		}
+
+		merged, _ := mergeCompatibleGroups(groups, false)
+		assert.Len(t, merged, 1)
+		assert.Equal(t, []string{"iw_cm", "nfsrdma", "xprtrdma"}, merged[0].OfedDependentModules)
+	})
+
+	t.Run("no modules when source groups have none", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				Identifier:  "group-0",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0},
+				},
+				WorkerNodes: []string{"node-1"},
+			},
+			{
+				Identifier:  "group-1",
+				ProductType: "NVIDIA-H200",
+				PFs: []config.PFConfig{
+					{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: &rail0},
+				},
+				WorkerNodes: []string{"node-2"},
+			},
+		}
+
+		merged, _ := mergeCompatibleGroups(groups, false)
+		assert.Len(t, merged, 1)
+		assert.Nil(t, merged[0].OfedDependentModules)
+	})
+
+	t.Run("unmerged groups keep their own modules", func(t *testing.T) {
+		groups := []config.ClusterConfig{
+			{
+				Identifier:           "group-0",
+				ProductType:          "NVIDIA-H200",
+				PFs:                  []config.PFConfig{{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0}},
+				WorkerNodes:          []string{"node-1"},
+				OfedDependentModules: []string{"iw_cm"},
+			},
+			{
+				Identifier:           "group-1",
+				ProductType:          "NVIDIA-A100", // different product
+				PFs:                  []config.PFConfig{{DeviceID: "1017", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: &rail0}},
+				WorkerNodes:          []string{"node-2"},
+				OfedDependentModules: []string{"xprtrdma"},
+			},
+		}
+
+		merged, _ := mergeCompatibleGroups(groups, false)
+		assert.Len(t, merged, 2)
+		assert.Equal(t, []string{"iw_cm"}, merged[0].OfedDependentModules)
+		assert.Equal(t, []string{"xprtrdma"}, merged[1].OfedDependentModules)
+	})
+}
+
+func TestParseModuleList(t *testing.T) {
+	exclude := []string{"mlx5_core", "mlx5_ib", "ib_umad", "ib_uverbs", "ib_ipoib", "rdma_cm", "rdma_ucm", "ib_core", "ib_cm"}
+
+	t.Run("filters out target modules", func(t *testing.T) {
+		output := "iw_cm\nmlx5_core\nib_core\nnfsrdma\n"
+		result := parseModuleList(output, exclude)
+		assert.Equal(t, []string{"iw_cm", "nfsrdma"}, result)
+	})
+
+	t.Run("empty output returns nil", func(t *testing.T) {
+		result := parseModuleList("", exclude)
+		assert.Nil(t, result)
+	})
+
+	t.Run("only target modules returns nil", func(t *testing.T) {
+		result := parseModuleList("mlx5_core\nib_core\n", exclude)
+		assert.Nil(t, result)
+	})
+
+	t.Run("handles whitespace and blank lines", func(t *testing.T) {
+		output := "  iw_cm  \n\n  xprtrdma\n  \n"
+		result := parseModuleList(output, exclude)
+		assert.Equal(t, []string{"iw_cm", "xprtrdma"}, result)
+	})
+
+	t.Run("deduplicates", func(t *testing.T) {
+		output := "iw_cm\niw_cm\niw_cm\n"
+		result := parseModuleList(output, exclude)
+		assert.Equal(t, []string{"iw_cm"}, result)
+	})
+}

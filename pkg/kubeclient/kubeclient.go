@@ -18,6 +18,7 @@ package kubeclient
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,12 +29,13 @@ import (
 )
 
 // New builds a controller-runtime client using the provided kubeconfig path
-// and registers required schemes.
-func New(kubeconfigPath string) (client.Client, error) {
+// and registers required schemes. It also returns the underlying REST config
+// for use with client-go APIs (e.g., pod exec).
+func New(kubeconfigPath string) (client.Client, *rest.Config, error) {
 	// Build REST config from kubeconfig path
 	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Prepare scheme and client
@@ -43,5 +45,10 @@ func New(kubeconfigPath string) (client.Client, error) {
 	_ = netop.AddToScheme(scheme)
 	_ = nicop.AddToScheme(scheme)
 
-	return client.New(restCfg, client.Options{Scheme: scheme})
+	c, err := client.New(restCfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return c, restCfg, nil
 }

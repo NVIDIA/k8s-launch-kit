@@ -17,10 +17,12 @@
 package networkoperatorplugin
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +31,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -106,7 +112,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	}
 
 	reuseExisting := false
-	var savedPolicies []netop.NicClusterPolicy
+	patchedPolicyName := ""
 	if len(existingPolicies) > 0 {
 		// Check if any existing policy already has the nic-configuration daemon with the required version
 		requiredVersion := defaultConfig.NetworkOperator.ComponentVersion
@@ -123,55 +129,32 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		}
 
 		if !reuseExisting {
-			// Existing policies detected but missing nic-configuration operator — ask user for permission to replace
-			uiOutput.Warning("Found %d existing NicClusterPolicy resource(s) on the cluster.", len(existingPolicies))
-			uiOutput.Info("The launch kit needs to deploy its own NicClusterPolicy for discovery.")
-			uiOutput.Info("The existing policy will be saved, deleted, and restored after discovery completes.")
+			// Patch existing policy to add NicConfigurationOperator (non-disruptive)
+			targetPolicy := existingPolicies[0]
+			uiOutput.Info("Patching existing NicClusterPolicy %q to add NicConfigurationOperator for discovery", targetPolicy.Name)
 
-			confirmed, err := uiOutput.Confirm("Do you agree to temporarily replace the existing NicClusterPolicy?")
-			if err != nil {
-				return fmt.Errorf("failed to get user confirmation: %w", err)
+			if err := PatchNicConfigOperatorIntoPolicy(ctx, c, targetPolicy.Name, policy.Spec.NicConfigurationOperator); err != nil {
+				return fmt.Errorf("failed to patch NicClusterPolicy with NicConfigurationOperator: %w", err)
 			}
-			if !confirmed {
-				return fmt.Errorf("discovery aborted: user declined to replace existing NicClusterPolicy")
-			}
-
-			// Deep-copy existing policies for later restoration
-			savedPolicies = make([]netop.NicClusterPolicy, len(existingPolicies))
-			copy(savedPolicies, existingPolicies)
-
-			if err := DeleteNicClusterPolicies(ctx, c, existingPolicies); err != nil {
-				return fmt.Errorf("failed to remove existing NicClusterPolicies: %w", err)
-			}
-
-			// Now create the thin discovery policy
-			if err := c.Create(ctx, policy); err != nil {
-				return fmt.Errorf("failed to create discovery NicClusterPolicy: %w", err)
-			}
-			if err := WaitNicClusterPolicyReady(ctx, c, policy.Name); err != nil {
+			if err := WaitNicClusterPolicyReady(ctx, c, targetPolicy.Name); err != nil {
 				return err
 			}
+			patchedPolicyName = targetPolicy.Name
 		}
 	} else {
 		uiOutput.Info("Deploying discovery profile")
 	}
 
-	// Defers run LIFO: restore must be registered first so it runs after cleanup.
-	// Order of execution: (1) delete thin discovery policy, (2) restore saved policies.
-	if len(savedPolicies) > 0 {
+	// Cleanup: remove NicConfigurationOperator we patched in, or delete the thin policy we created
+	if patchedPolicyName != "" {
 		defer func() {
-			uiOutput.Info("Restoring previously saved NicClusterPolicy resource(s)")
-			if err := RestoreNicClusterPolicies(ctx, c, savedPolicies); err != nil {
-				log.Log.Error(err, "failed to restore NicClusterPolicies after discovery")
-				uiOutput.Error("Failed to restore original NicClusterPolicy: %v", err)
-			} else {
-				uiOutput.Success("Original NicClusterPolicy restored successfully")
+			uiOutput.Info("Removing discovery NicConfigurationOperator from NicClusterPolicy %q", patchedPolicyName)
+			if err := RemoveNicConfigOperatorFromPolicy(ctx, c, patchedPolicyName); err != nil {
+				log.Log.Error(err, "failed to remove NicConfigurationOperator after discovery")
+				uiOutput.Error("Failed to remove NicConfigurationOperator: %v", err)
 			}
 		}()
-	}
-
-	// Only clean up the discovery policy if we created it (not reusing an existing one)
-	if !reuseExisting {
+	} else if !reuseExisting {
 		defer func() {
 			if err := DeleteNicClusterPolicy(ctx, c, "nic-cluster-policy"); err != nil {
 				log.Log.Error(err, "failed to delete NicClusterPolicy after discovery")
@@ -183,8 +166,8 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 
 	// After creation, list pods in the target namespace and ensure all pods
 	// from the nic-configuration-daemon DaemonSet are Ready.
-	// Returns the set of node names running daemon pods.
-	expectedNodes, err := checkDaemonSetPodsReady(ctx, c, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon")
+	// Returns the set of node names running daemon pods and the pods themselves.
+	expectedNodes, dsPods, err := checkDaemonSetPodsReady(ctx, c, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon")
 	if err != nil {
 		return err
 	}
@@ -224,15 +207,36 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		uiOutput.Warning(w)
 	}
 
+	// Discover OFED-dependent kernel modules per group via pod exec.
+	// Results are always saved to config for user inspection; the
+	// blacklistDependentModules flag only controls template rendering.
+	if p.RESTConfig != nil {
+		for i := range defaultConfig.ClusterConfig {
+			group := &defaultConfig.ClusterConfig[i]
+			modules, err := discoverOfedDependentModules(ctx, p.RESTConfig,
+				defaultConfig.NetworkOperator.Namespace, group.WorkerNodes, dsPods)
+			if err != nil {
+				log.Log.Error(err, "failed to discover OFED-dependent modules", "group", group.Identifier)
+				uiOutput.Warning("Could not discover OFED modules for group %s: %v", group.Identifier, err)
+				continue
+			}
+			if len(modules) > 0 {
+				group.OfedDependentModules = modules
+				uiOutput.Info("Discovered %d OFED-dependent module(s) for group %s", len(modules), group.Identifier)
+			}
+		}
+	}
+
 	return nil
 }
 
 // checkDaemonSetPodsReady verifies that all pods owned by the given DaemonSet
-// in the provided namespace are Ready. Returns the list of node names running those pods.
-func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, daemonSetName string) ([]string, error) {
+// in the provided namespace are Ready. Returns the list of node names running
+// those pods and the pods themselves (for later use in pod exec).
+func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, daemonSetName string) ([]string, []corev1.Pod, error) {
 	podList := &corev1.PodList{}
 	if err := c.List(ctx, podList, client.InNamespace(namespace)); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var dsPods []corev1.Pod
@@ -246,20 +250,20 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 	}
 
 	if len(dsPods) == 0 {
-		return nil, fmt.Errorf("no pods found for DaemonSet %q in namespace %q", daemonSetName, namespace)
+		return nil, nil, fmt.Errorf("no pods found for DaemonSet %q in namespace %q", daemonSetName, namespace)
 	}
 
 	nodes := make([]string, 0, len(dsPods))
 	for _, pod := range dsPods {
 		if !isPodReady(&pod) {
-			return nil, fmt.Errorf("pod %q from DaemonSet %q is not Ready", pod.Name, daemonSetName)
+			return nil, nil, fmt.Errorf("pod %q from DaemonSet %q is not Ready", pod.Name, daemonSetName)
 		}
 		if pod.Spec.NodeName != "" {
 			nodes = append(nodes, pod.Spec.NodeName)
 		}
 	}
 
-	return nodes, nil
+	return nodes, dsPods, nil
 }
 
 func isPodReady(pod *corev1.Pod) bool {
@@ -806,4 +810,127 @@ func isNoisyLabel(key string) bool {
 		}
 	}
 	return false
+}
+
+// ofedTargetModules is the list of MLX/OFED kernel modules to check for during
+// pre-flight discovery. These modules (and any modules that depend on them) may
+// need to be blacklisted when the DOCA driver is deployed.
+var ofedTargetModules = []string{
+	"mlx5_core", "mlx5_ib", "ib_umad", "ib_uverbs",
+	"ib_ipoib", "rdma_cm", "rdma_ucm", "ib_core", "ib_cm",
+}
+
+// discoverOfedDependentModules execs into a nic-configuration-daemon pod on one
+// of the group's nodes and discovers which OFED target modules are loaded along
+// with their holder (dependent) modules.
+func discoverOfedDependentModules(ctx context.Context, restConfig *rest.Config,
+	namespace string, groupNodes []string, dsPods []corev1.Pod) ([]string, error) {
+
+	if len(groupNodes) == 0 {
+		return nil, nil
+	}
+
+	// Find a daemon pod running on one of the group's nodes.
+	// All nodes in a group have identical hardware, so one is sufficient.
+	nodeSet := make(map[string]bool, len(groupNodes))
+	for _, n := range groupNodes {
+		nodeSet[n] = true
+	}
+
+	var targetPod *corev1.Pod
+	for i := range dsPods {
+		if nodeSet[dsPods[i].Spec.NodeName] {
+			targetPod = &dsPods[i]
+			break
+		}
+	}
+	if targetPod == nil {
+		return nil, fmt.Errorf("no nic-configuration-daemon pod found on group nodes")
+	}
+
+	// Build a shell script that outputs only holder (dependent) module names,
+	// excluding the target modules themselves. One module name per line.
+	modList := strings.Join(ofedTargetModules, " ")
+	script := fmt.Sprintf(`for mod in %s; do
+  if [ -d /sys/module/$mod ]; then
+    for dep in /sys/module/$mod/holders/*; do
+      [ -e "$dep" ] && echo "$(basename $dep)"
+    done
+  fi
+done | sort -u`, modList)
+
+	containerName := ""
+	if len(targetPod.Spec.Containers) > 0 {
+		containerName = targetPod.Spec.Containers[0].Name
+	}
+
+	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
+		[]string{"/bin/sh", "-c", script})
+	if err != nil {
+		return nil, fmt.Errorf("exec in pod %q failed: %w", targetPod.Name, err)
+	}
+
+	return parseModuleList(output, ofedTargetModules), nil
+}
+
+// parseModuleList splits newline-separated module names, deduplicates, sorts them,
+// and filters out any modules in the exclude list (the OFED target modules themselves).
+func parseModuleList(output string, exclude []string) []string {
+	excludeSet := make(map[string]bool, len(exclude))
+	for _, m := range exclude {
+		excludeSet[m] = true
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(output, "\n") {
+		mod := strings.TrimSpace(line)
+		if mod != "" && !excludeSet[mod] {
+			seen[mod] = true
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	modules := make([]string, 0, len(seen))
+	for mod := range seen {
+		modules = append(modules, mod)
+	}
+	sort.Strings(modules)
+	return modules
+}
+
+// execInPod runs a command in a pod container and returns stdout.
+func execInPod(ctx context.Context, restConfig *rest.Config,
+	namespace, podName, containerName string, command []string) (string, error) {
+
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	req := clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: containerName,
+			Command:   command,
+			Stdout:    true,
+			Stderr:    true,
+		}, scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(restConfig, "POST", req.URL())
+	if err != nil {
+		return "", fmt.Errorf("failed to create SPDY executor: %w", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}); err != nil {
+		return "", fmt.Errorf("exec stream failed (stderr: %s): %w", stderr.String(), err)
+	}
+
+	return stdout.String(), nil
 }
