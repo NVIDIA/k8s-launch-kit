@@ -223,6 +223,42 @@ During cluster discovery stage, Kubernetes Launch Kit creates a configuration fi
 
 The `docaDriver` section controls the OFED driver deployment in the NicClusterPolicy. Set `enable: true` to include the `ofedDriver` section in generated manifests, or `enable: false` to omit it. This can also be overridden via the `--enable-doca-driver` CLI flag.
 
+#### OFED Dependent Module Blacklisting
+
+When the DOCA/OFED driver loads on a node, it replaces the inbox MLX kernel modules (`mlx5_core`, `mlx5_ib`, `ib_core`, etc.) with its own versions. However, if third-party or distribution-specific kernel modules depend on the inbox MLX modules (e.g., `iw_cm`, `nfsrdma`), they will block the inbox modules from being unloaded, causing the DOCA driver to fail to load or leaving the system in an inconsistent state.
+
+To solve this, `blacklistDependentModules: true` enables a pre-flight check during cluster discovery. The tool execs into `nic-configuration-daemon` pods and inspects `/sys/module/*/holders/` for each of the following MLX/OFED kernel modules:
+
+`mlx5_core`, `mlx5_ib`, `ib_umad`, `ib_uverbs`, `ib_ipoib`, `rdma_cm`, `rdma_ucm`, `ib_core`, `ib_cm`
+
+Any kernel modules found as holders (dependents) of these — but not the MLX modules themselves — are saved per group as `ofedDependentModules`. During manifest generation, these modules are passed to the DOCA driver pod via the `OFED_BLACKLIST_MODULES` environment variable (semicolon-separated), which tells the driver to unload them before attempting to replace the inbox modules.
+
+Module discovery always runs during cluster discovery (so results are saved for inspection), but the `OFED_BLACKLIST_MODULES` env var is only rendered when `blacklistDependentModules` is `true`. When multiple node groups are merged, their dependent modules are aggregated as a union.
+
+```yaml
+docaDriver:
+  enable: true
+  version: doca3.3.0-26.01-1.0.0.0-0
+  unloadStorageModules: true
+  enableNFSRDMA: false
+  blacklistDependentModules: true   # Enable dependent module discovery and blacklisting
+```
+
+After discovery, the config will contain the discovered dependents:
+```yaml
+clusterConfig:
+- identifier: group-0
+  ofedDependentModules:
+  - iw_cm
+```
+
+The generated NicClusterPolicy `ofedDriver` section will include:
+```yaml
+env:
+  - name: OFED_BLACKLIST_MODULES
+    value: "iw_cm"
+```
+
 ### NV-IPAM Subnet Configuration
 
 The `nvIpam` section supports two modes for subnet configuration:
@@ -266,6 +302,7 @@ docaDriver:
   version: doca3.2.0-25.10-1.2.8.0-2
   unloadStorageModules: false
   enableNFSRDMA: false
+  blacklistDependentModules: false
 nvIpam:
   poolName: nv-ipam-pool
   subnets:

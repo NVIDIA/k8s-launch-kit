@@ -34,6 +34,9 @@ var templateFuncs = template.FuncMap{
 	"add": func(a, b int) int { return a + b },
 	"sub": func(a, b int) int { return a - b },
 	"gt":  func(a, b int) bool { return a > b },
+	"joinModules": func(modules []string) string {
+		return strings.Join(modules, ";")
+	},
 	"untilStep": func(start, stop, step int) []int {
 		result := []int{}
 		for i := start; i < stop; i += step {
@@ -505,12 +508,29 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 		}
 	}
 
+	// Merge OFED-dependent modules (union across all groups, deduplicated and sorted)
+	depModSet := map[string]bool{}
+	for _, idx := range indices {
+		for _, mod := range groups[idx].OfedDependentModules {
+			depModSet[mod] = true
+		}
+	}
+	var mergedDepMods []string
+	if len(depModSet) > 0 {
+		mergedDepMods = make([]string, 0, len(depModSet))
+		for mod := range depModSet {
+			mergedDepMods = append(mergedDepMods, mod)
+		}
+		slices.Sort(mergedDepMods)
+	}
+
 	return config.ClusterConfig{
-		Identifier:   sanitizeIdentifier(productType),
-		ProductType:  productType,
-		Capabilities: caps,
-		PFs:          first.PFs, // Representative PFs from first group
-		WorkerNodes:  allNodes,
+		Identifier:           sanitizeIdentifier(productType),
+		ProductType:          productType,
+		Capabilities:         caps,
+		PFs:                  first.PFs, // Representative PFs from first group
+		WorkerNodes:          allNodes,
+		OfedDependentModules: mergedDepMods,
 		NodeSelector: map[string]string{
 			"nvidia.com/gpu.product": productType,
 		},

@@ -11,13 +11,14 @@ docaDriver:
   version: doca3.3.0-26.01-1.0.0.0-0
   unloadStorageModules: true
   enableNFSRDMA: false
+  blacklistDependentModules: true
 
 nvIpam:
   poolName: nv-ipam-pool
   # Option 1: Auto-generate subnets (used when subnets list is empty).
   # Each group gets its own unique subnet slice; gateway = network address + 1.
-  startingSubnet: "192.168.2.0"
-  mask: 24
+  startingSubnet: "192.168.0.0"
+  mask: 22
   offset: 1
   # Option 2: Manually list subnets (takes precedence if non-empty)
   # subnets:

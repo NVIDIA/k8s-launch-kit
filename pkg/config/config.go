@@ -53,10 +53,11 @@ type NetworkOperatorConfig struct {
 }
 
 type DOCADriverConfig struct {
-	Enable               bool   `yaml:"enable"`
-	Version              string `yaml:"version"`
-	UnloadStorageModules bool   `yaml:"unloadStorageModules"`
-	EnableNFSRDMA        bool   `yaml:"enableNFSRDMA"`
+	Enable                    bool   `yaml:"enable"`
+	Version                   string `yaml:"version"`
+	UnloadStorageModules      bool   `yaml:"unloadStorageModules"`
+	EnableNFSRDMA             bool   `yaml:"enableNFSRDMA"`
+	BlacklistDependentModules bool   `yaml:"blacklistDependentModules"`
 }
 
 type NvIpamConfig struct {
@@ -128,15 +129,16 @@ type ProfileSpectrumX struct {
 }
 
 type ClusterConfig struct {
-	Identifier       string               `yaml:"identifier"`
-	MachineType      string               `yaml:"machineType,omitempty"`
-	ProductType      string               `yaml:"productType,omitempty"`
-	LabelSelector    map[string]string    `yaml:"labelSelector,omitempty"`
-	Capabilities     *ClusterCapabilities `yaml:"capabilities"`
-	PFs              []PFConfig           `yaml:"pfs"`
-	WorkerNodes      []string             `yaml:"workerNodes"`
-	NodeSelector     map[string]string    `yaml:"nodeSelector,omitempty"`
-	RailPciAddresses [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
+	Identifier           string               `yaml:"identifier"`
+	MachineType          string               `yaml:"machineType,omitempty"`
+	ProductType          string               `yaml:"productType,omitempty"`
+	LabelSelector        map[string]string    `yaml:"labelSelector,omitempty"`
+	Capabilities         *ClusterCapabilities `yaml:"capabilities"`
+	PFs                  []PFConfig           `yaml:"pfs"`
+	WorkerNodes          []string             `yaml:"workerNodes"`
+	NodeSelector         map[string]string    `yaml:"nodeSelector,omitempty"`
+	OfedDependentModules []string             `yaml:"ofedDependentModules,omitempty"`
+	RailPciAddresses     [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
 }
 
 type ClusterCapabilities struct {

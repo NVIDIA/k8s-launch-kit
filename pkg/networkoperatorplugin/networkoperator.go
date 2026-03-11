@@ -24,6 +24,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/plugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -35,6 +36,7 @@ const (
 type NetworkOperatorPlugin struct {
 	GroupFilter   string
 	LabelSelector map[string]string
+	RESTConfig    *rest.Config
 }
 
 func (p *NetworkOperatorPlugin) GetName() string {

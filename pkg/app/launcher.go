@@ -29,6 +29,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"k8s.io/client-go/rest"
+
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/llm"
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
@@ -46,6 +48,7 @@ type Launcher struct {
 	logger     logr.Logger
 	plugins    map[string]plugin.Plugin
 	kubeClient client.Client
+	restConfig *rest.Config
 	ui         ui.Output
 }
 
@@ -69,26 +72,32 @@ func (l *Launcher) Run() error {
 		}
 	}
 
-	for _, plugin := range l.options.EnabledPlugins {
-		switch plugin {
+	for _, pluginName := range l.options.EnabledPlugins {
+		switch pluginName {
 		case networkoperatorplugin.PluginName:
-			l.plugins[plugin] = &networkoperatorplugin.NetworkOperatorPlugin{
+			l.plugins[pluginName] = &networkoperatorplugin.NetworkOperatorPlugin{
 				GroupFilter:   l.options.Group,
 				LabelSelector: parseLabelSelector(l.options.LabelSelector),
 			}
 		default:
-			err := fmt.Errorf("unknown plugin: %s", plugin)
+			err := fmt.Errorf("unknown plugin: %s", pluginName)
 			l.logger.Error(err, "Skipping plugin")
 			return err
 		}
 	}
 
 	if l.options.Kubeconfig != "" {
-		k8sClient, err := kubeclient.New(l.options.Kubeconfig)
+		k8sClient, restCfg, err := kubeclient.New(l.options.Kubeconfig)
 		if err != nil {
 			return fmt.Errorf("failed to create k8s client: %w", err)
 		}
 		l.kubeClient = k8sClient
+		l.restConfig = restCfg
+
+		// Pass REST config to network operator plugin for pod exec during discovery
+		if nop, ok := l.plugins[networkoperatorplugin.PluginName]; ok {
+			nop.(*networkoperatorplugin.NetworkOperatorPlugin).RESTConfig = restCfg
+		}
 	}
 
 	if err := l.executeWorkflow(); err != nil {

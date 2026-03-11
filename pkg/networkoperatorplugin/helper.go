@@ -135,3 +135,44 @@ func DeleteNicClusterPolicy(ctx context.Context, c client.Client, name string) e
 	}
 	return nil
 }
+
+// PatchNicConfigOperatorIntoPolicy patches an existing NicClusterPolicy to add
+// the NicConfigurationOperator section via server-side apply, preserving all
+// other fields (ofedDriver, secondaryNetwork, etc.).
+func PatchNicConfigOperatorIntoPolicy(ctx context.Context, c client.Client, policyName string, nicConfigOp *netop.NicConfigurationOperatorSpec) error {
+	// Build a minimal apply-configuration containing only the field we want to own.
+	patch := &netop.NicClusterPolicy{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "mellanox.com/v1alpha1",
+			Kind:       "NicClusterPolicy",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: policyName,
+		},
+		Spec: netop.NicClusterPolicySpec{
+			NicConfigurationOperator: nicConfigOp,
+		},
+	}
+
+	return c.Patch(ctx, patch, client.Apply, client.FieldOwner("l8k-discovery"), client.ForceOwnership)
+}
+
+// RemoveNicConfigOperatorFromPolicy removes the NicConfigurationOperator section
+// that was added during discovery by fetching the policy and updating it.
+func RemoveNicConfigOperatorFromPolicy(ctx context.Context, c client.Client, policyName string) error {
+	policy := &netop.NicClusterPolicy{}
+	if err := c.Get(ctx, client.ObjectKey{Name: policyName}, policy); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get NicClusterPolicy %q for cleanup: %w", policyName, err)
+	}
+
+	policy.Spec.NicConfigurationOperator = nil
+	if err := c.Update(ctx, policy); err != nil {
+		return fmt.Errorf("failed to remove NicConfigurationOperator from %q: %w", policyName, err)
+	}
+
+	log.Log.Info("Removed NicConfigurationOperator from NicClusterPolicy after discovery", "name", policyName)
+	return nil
+}
