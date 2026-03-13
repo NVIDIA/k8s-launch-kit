@@ -169,7 +169,18 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	// Returns the set of node names running daemon pods and the pods themselves.
 	expectedNodes, dsPods, err := checkDaemonSetPodsReady(ctx, c, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon")
 	if err != nil {
-		return err
+		// Try the other common namespace before giving up
+		alternateNS := alternateNamespace(defaultConfig.NetworkOperator.Namespace)
+		if alternateNS != "" {
+			uiOutput.Info("Retrying in namespace %q", alternateNS)
+			expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, alternateNS, "nic-configuration-daemon")
+			if err == nil {
+				defaultConfig.NetworkOperator.Namespace = alternateNS
+			}
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	// Fetch node labels early — needed both for filtering and nodeSelector computation
@@ -250,7 +261,10 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 	}
 
 	if len(dsPods) == 0 {
-		return nil, nil, fmt.Errorf("no pods found for DaemonSet %q in namespace %q", daemonSetName, namespace)
+		return nil, nil, fmt.Errorf(
+			"no pods found for DaemonSet %q in namespace %q; "+
+				"use --network-operator-namespace to specify the correct namespace",
+			daemonSetName, namespace)
 	}
 
 	nodes := make([]string, 0, len(dsPods))
@@ -264,6 +278,19 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 	}
 
 	return nodes, dsPods, nil
+}
+
+// alternateNamespace returns the other common network operator namespace,
+// or empty string if the current namespace isn't one of the two known defaults.
+func alternateNamespace(current string) string {
+	switch current {
+	case "nvidia-network-operator":
+		return "network-operator"
+	case "network-operator":
+		return "nvidia-network-operator"
+	default:
+		return ""
+	}
 }
 
 func isPodReady(pod *corev1.Pod) bool {

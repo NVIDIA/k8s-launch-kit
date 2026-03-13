@@ -84,8 +84,9 @@ func TestValidateConfig_DeployWithUserConfigPassesWithoutProfileFlags(t *testing
 		Deploy:         true,
 		Kubeconfig:     "/path/to/kubeconfig",
 		EnabledPlugins: []string{"network-operator"},
+		OutputFormat:   "text",
 	}
-	err := validateConfig(opts)
+	err := validateConfig(&opts)
 	assert.NoError(t, err)
 }
 
@@ -95,8 +96,61 @@ func TestValidateConfig_DeployWithoutAnyProfileSourceFails(t *testing.T) {
 		Deploy:                true,
 		Kubeconfig:            "/path/to/kubeconfig",
 		EnabledPlugins:        []string{"network-operator"},
+		OutputFormat:          "text",
 	}
-	err := validateConfig(opts)
+	err := validateConfig(&opts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--deploy requires")
+}
+
+func TestValidateConfig_InvalidOutputFormat(t *testing.T) {
+	opts := options.Options{
+		UserConfig:     "config.yaml",
+		EnabledPlugins: []string{"network-operator"},
+		OutputFormat:   "xml",
+	}
+	err := validateConfig(&opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--output must be one of")
+}
+
+func TestValidateConfig_ValidOutputFormats(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		opts := options.Options{
+			UserConfig:     "config.yaml",
+			EnabledPlugins: []string{"network-operator"},
+			OutputFormat:   format,
+		}
+		err := validateConfig(&opts)
+		assert.NoError(t, err, "format %q should be valid", format)
+	}
+}
+
+func TestValidateConfig_DryRunRequiresDeploy(t *testing.T) {
+	opts := options.Options{
+		UserConfig:     "config.yaml",
+		EnabledPlugins: []string{"network-operator"},
+		OutputFormat:   "text",
+		DryRun:         true,
+		Deploy:         false,
+	}
+	err := validateConfig(&opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--dry-run requires --deploy")
+}
+
+func TestValidateConfig_DryRunWithDeployPasses(t *testing.T) {
+	opts := options.Options{
+		UserConfig:     "config.yaml",
+		EnabledPlugins: []string{"network-operator"},
+		OutputFormat:   "text",
+		DryRun:         true,
+		Deploy:         true,
+		Kubeconfig:     "/path/to/kubeconfig",
+		Fabric:         "ethernet",
+		DeploymentType: "sriov",
+		SaveDeploymentFiles: "/tmp/test",
+	}
+	err := validateConfig(&opts)
+	assert.NoError(t, err)
 }

@@ -114,6 +114,14 @@ version:
 run: build
 	$(BINARY_PATH)
 
+## Install l8k to system paths (copies binary, profiles, config)
+install: build
+	scripts/install.sh
+
+## Install l8k with dev symlinks (for development)
+dev-install: build
+	scripts/install.sh --dev-env
+
 ## Development setup
 dev-setup: deps lint-check test
 
