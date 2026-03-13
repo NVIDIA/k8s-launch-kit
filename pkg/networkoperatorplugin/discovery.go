@@ -164,20 +164,32 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		}()
 	}
 
-	// After creation, list pods in the target namespace and ensure all pods
-	// from the nic-configuration-daemon DaemonSet are Ready.
-	// Returns the set of node names running daemon pods and the pods themselves.
-	expectedNodes, dsPods, err := checkDaemonSetPodsReady(ctx, c, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon")
-	if err != nil {
-		// Try the other common namespace before giving up
-		alternateNS := alternateNamespace(defaultConfig.NetworkOperator.Namespace)
-		if alternateNS != "" {
-			uiOutput.Info("Retrying in namespace %q", alternateNS)
-			expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, alternateNS, "nic-configuration-daemon")
-			if err == nil {
-				defaultConfig.NetworkOperator.Namespace = alternateNS
+	// After creation/patching, wait for nic-configuration-daemon pods to be Ready.
+	// If we just patched the policy, pods need time to start — poll with timeout.
+	// If we're reusing an existing policy, pods should already be running — try once,
+	// then fall back to the alternate namespace.
+	var expectedNodes []string
+	var dsPods []corev1.Pod
+	if reuseExisting {
+		expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon")
+		if err != nil {
+			// Try the other common namespace before giving up
+			alternateNS := alternateNamespace(defaultConfig.NetworkOperator.Namespace)
+			if alternateNS != "" {
+				uiOutput.Info("Retrying in namespace %q", alternateNS)
+				expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, alternateNS, "nic-configuration-daemon")
+				if err == nil {
+					defaultConfig.NetworkOperator.Namespace = alternateNS
+				}
+			}
+			if err != nil {
+				return err
 			}
 		}
+	} else {
+		// We just patched/created the policy — pods need time to start.
+		// Poll both the configured namespace and alternate namespace.
+		expectedNodes, dsPods, err = waitForDaemonSetPods(ctx, c, uiOutput, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon", 10*time.Minute)
 		if err != nil {
 			return err
 		}
@@ -278,6 +290,53 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 	}
 
 	return nodes, dsPods, nil
+}
+
+// waitForDaemonSetPods polls for daemon pods to become ready, checking both the
+// configured namespace and the alternate common namespace. This is needed after
+// patching a NicClusterPolicy to add NicConfigurationOperator, because the
+// network operator needs time to reconcile and create the DaemonSet pods.
+func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, error) {
+	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s pods (timeout: %s)", daemonSetName, timeout.Truncate(time.Second)))
+
+	ctx := parentCtx
+	if _, hasDeadline := parentCtx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parentCtx, timeout)
+		defer cancel()
+	}
+
+	altNS := alternateNamespace(namespace)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		// Try the configured namespace first
+		nodes, pods, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName)
+		if err == nil {
+			progress.Success(fmt.Sprintf("Found %d pod(s) in namespace %q", len(pods), namespace))
+			return nodes, pods, nil
+		}
+		lastErr = err
+
+		// Try alternate namespace
+		if altNS != "" {
+			nodes, pods, err = checkDaemonSetPodsReady(ctx, c, altNS, daemonSetName)
+			if err == nil {
+				progress.Success(fmt.Sprintf("Found %d pod(s) in namespace %q", len(pods), altNS))
+				return nodes, pods, nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			progress.Fail("Timeout waiting for daemon pods")
+			return nil, nil, fmt.Errorf("timeout waiting for %s pods to start: %w", daemonSetName, lastErr)
+		case <-ticker.C:
+			progress.Update(fmt.Sprintf("Waiting for %s pods...", daemonSetName))
+		}
+	}
 }
 
 // alternateNamespace returns the other common network operator namespace,
