@@ -104,7 +104,6 @@ func (l *Launcher) discoverClusterConfig() error {
 	for _, plugin := range l.plugins {
 		err := plugin.DiscoverClusterConfig(ctx, l.kubeClient, defaults)
 		if err != nil {
-			l.ui.Error("Discovery failed: %v", err)
 			return fmt.Errorf("failed to discover cluster config: %w", err)
 		}
 	}
