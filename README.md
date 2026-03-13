@@ -25,12 +25,38 @@ make build
 
 The binary will be available at `build/l8k`.
 
-### Docker
+### Install
 
-Build the Docker image:
+After building, install the binary, profiles, and config to `/usr/local`:
 
 ```bash
-make docker-build
+make install        # Copies binary, profiles, config to /usr/local
+make dev-install    # Symlinks instead of copies (for development)
+```
+
+This runs `scripts/install.sh`, which places:
+- `<prefix>/bin/l8k`
+- `<prefix>/share/l8k/profiles/`
+- `<prefix>/share/l8k/l8k-config.yaml`
+
+Default prefix is `/usr/local`. Override with `PREFIX=/opt/l8k make install`.
+
+### Docker
+
+```bash
+make docker-build          # Build Docker image (l8k:v0.1.0 + l8k:latest)
+make docker-build-local    # Build inside container, extract binary to host build/l8k
+```
+
+`docker-build-local` is useful when you don't have the Go toolchain installed — it compiles inside a container and copies the resulting binary to `build/l8k` on your host.
+
+```bash
+# Run from the Docker image
+docker run --net=host \
+  -v ~/.kube:/kube:ro \
+  -v $(pwd):/output \
+  l8k:latest discover --kubeconfig /kube/config \
+    --save-cluster-config /output/cluster-config.yaml
 ```
 
 ## Usage
@@ -90,8 +116,8 @@ Flags:
       --network-operator-namespace string Override the network operator namespace from the config file
       --number-of-planes int              Number of planes for Spectrum-X (requires --spectrum-x)
       --prompt string                     Path to file with a prompt to use for LLM-assisted profile generation
-      --save-cluster-config string        Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise /opt/nvidia/k8s-launch-kit/cluster-config.yaml)
-      --save-deployment-files string      Save generated deployment files to the specified directory (default "/opt/nvidia/k8s-launch-kit/deployment")
+      --save-cluster-config string        Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)
+      --save-deployment-files string      Save generated deployment files to the specified directory (default "./deployment")
       --spcx-version string               Spectrum-X firmware version (requires --spectrum-x)
       --spectrum-x                        Enable Spectrum X deployment
       --user-config string                Use provided cluster configuration file (as base config for discovery or as full config without discovery)
@@ -101,11 +127,45 @@ Use "l8k [command] --help" for more information about a command.
 
 <!-- END HELP -->
 
+> **Note:** The help text above is auto-generated. Run `make update-readme` after CLI changes to refresh it.
+
 ## Usage Examples
 
-### Complete Workflow
+### Subcommand Workflow (Recommended)
 
-Discover cluster config, generate files, and deploy:
+Discover cluster hardware:
+
+```bash
+l8k discover --kubeconfig ~/.kube/config \
+    --save-cluster-config ./cluster-config.yaml
+```
+
+Generate deployment manifests:
+
+```bash
+l8k generate --user-config ./cluster-config.yaml \
+    --fabric ethernet --deployment-type sriov --multirail \
+    --save-deployment-files ./deployments
+```
+
+Interactive AI-assisted troubleshooting or profile selection:
+
+```bash
+l8k chat --kubeconfig ~/.kube/config \
+    --user-config ./cluster-config.yaml \
+    --llm-api-key $KEY --llm-vendor anthropic \
+    --llm-model claude-sonnet-4-20250514
+```
+
+Collect a diagnostic dump:
+
+```bash
+l8k sosreport --kubeconfig ~/.kube/config
+```
+
+### Complete Workflow (Root Command)
+
+The root command still supports all flags for backward compatibility and running the full pipeline in one shot:
 
 ```bash
 l8k --discover-cluster-config --save-cluster-config ./cluster-config.yaml \
@@ -116,16 +176,25 @@ l8k --discover-cluster-config --save-cluster-config ./cluster-config.yaml \
 
 ### Discover Cluster Configuration
 
+Using the subcommand:
+
 ```bash
-l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml \
-    --kubeconfig ~/.kube/config
+l8k discover --kubeconfig ~/.kube/config \
+    --save-cluster-config ./my-cluster-config.yaml
 ```
 
 Filter discovery to specific nodes using a label selector:
 
 ```bash
+l8k discover --kubeconfig ~/.kube/config \
+    --save-cluster-config ./my-cluster-config.yaml \
+    --label-selector "feature.node.kubernetes.io/pci-15b3.present=true"
+```
+
+Or using the root command (backward compatible):
+
+```bash
 l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml \
-    --label-selector "feature.node.kubernetes.io/pci-15b3.present=true" \
     --kubeconfig ~/.kube/config
 ```
 
@@ -134,14 +203,14 @@ l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml \
 Use your own config file (with custom network operator version, subnets, etc.) as the base for discovery. Without `--save-cluster-config`, the file is rewritten in place with discovery results:
 
 ```bash
-l8k --user-config ./my-config.yaml --discover-cluster-config \
+l8k discover --user-config ./my-config.yaml \
     --kubeconfig ~/.kube/config
 ```
 
 Save discovery results to a separate file instead:
 
 ```bash
-l8k --user-config ./my-config.yaml --discover-cluster-config \
+l8k discover --user-config ./my-config.yaml \
     --save-cluster-config ./discovered-config.yaml \
     --kubeconfig ~/.kube/config
 ```
@@ -151,15 +220,16 @@ l8k --user-config ./my-config.yaml --discover-cluster-config \
 Generate and deploy with pre-existing config:
 
 ```bash
-l8k --user-config ./existing-config.yaml \
+l8k generate --user-config ./existing-config.yaml \
     --fabric ethernet --deployment-type sriov --multirail \
+    --save-deployment-files ./deployments \
     --deploy --kubeconfig ~/.kube/config
 ```
 
 ### Generate Deployment Files
 
 ```bash
-l8k --user-config ./config.yaml \
+l8k generate --user-config ./config.yaml \
     --fabric ethernet --deployment-type sriov --multirail \
     --save-deployment-files ./deployments
 ```
@@ -169,7 +239,7 @@ l8k --user-config ./config.yaml \
 In heterogeneous clusters, discovery produces multiple node groups. Use `--group` to generate manifests for a single group:
 
 ```bash
-l8k --user-config ./config.yaml \
+l8k generate --user-config ./config.yaml \
     --fabric infiniband --deployment-type sriov --multirail \
     --group group-0 \
     --save-deployment-files ./deployments
@@ -179,24 +249,17 @@ l8k --user-config ./config.yaml \
 
 ```bash
 echo "I want to enable multirail networking in my AI cluster" > requirements.txt
-l8k --user-config ./config.yaml \
+l8k generate --user-config ./config.yaml \
     --prompt requirements.txt --llm-vendor openai-azure --llm-api-key <OPENAI_AZURE_KEY> \
     --save-deployment-files ./deployments
 ```
 
 ### Troubleshooting Network Operator Issues
 
-The interactive mode can also help troubleshoot NVIDIA Network Operator failures by collecting and analyzing diagnostic data (sosreport). The sosreport script must first be downloaded:
+Use the `chat` subcommand for interactive AI-assisted troubleshooting. The AI agent can collect and analyze diagnostic data (sosreport) from the cluster:
 
 ```bash
-make download-sosreport
-```
-
-Then use the interactive mode with `--kubeconfig` to enable troubleshooting:
-
-```bash
-l8k --llm-interactive \
-    --kubeconfig ~/.kube/config \
+l8k chat --kubeconfig ~/.kube/config \
     --user-config ./cluster-config.yaml \
     --llm-api-key $KEY --llm-vendor anthropic \
     --llm-model claude-sonnet-4-20250514
@@ -206,18 +269,88 @@ In the session, ask about issues: *"My OFED driver pods are crashing, can you in
 
 The AI agent will automatically collect a sosreport from the cluster, examine the diagnostic data, and provide analysis with remediation steps.
 
-You can also provide a pre-collected sosreport directory (no cluster access needed):
+You can also collect a sosreport separately and provide it to the chat session (no cluster access needed):
 
 ```bash
-l8k --llm-interactive \
-    --sosreport-path ./network-operator-sosreport-20260306-120000 \
+l8k sosreport --kubeconfig ~/.kube/config
+
+l8k chat --sosreport-path ./network-operator-sosreport-20260306-120000 \
     --llm-api-key $KEY --llm-vendor anthropic \
     --llm-model claude-sonnet-4-20250514
 ```
 
+### AI Agent / Automation Usage
+
+l8k supports structured output for AI agents and CI/CD pipelines. Use `--output json` to get machine-readable output, `--yes` to skip interactive prompts, and `--dry-run` to preview changes safely.
+
+#### Structured JSON Output
+
+```bash
+# Get structured output for programmatic consumption
+l8k generate --user-config ./config.yaml \
+    --fabric ethernet --deployment-type sriov --multirail \
+    --save-deployment-files ./deployments \
+    --output json --yes 2>/dev/null | jq .
+```
+
+Example JSON output:
+```json
+{
+  "success": true,
+  "phase": "generate",
+  "profile": {
+    "fabric": "ethernet",
+    "deployment": "sriov",
+    "multirail": "true"
+  },
+  "generatedFiles": [
+    "./deployments/network-operator/nic-cluster-policy.yaml",
+    "./deployments/network-operator/sriov-network-node-policy.yaml"
+  ],
+  "deployed": false,
+  "messages": [
+    {"level": "info", "message": "Generating files for profile: SR-IOV Ethernet RDMA", "timestamp": "..."}
+  ]
+}
+```
+
+#### Dry-Run Preview
+
+Preview what would be deployed without making changes:
+
+```bash
+l8k generate --user-config ./config.yaml --spectrum-x --deploy \
+    --dry-run --output json --kubeconfig ~/.kube/config
+```
+
+#### Schema Discovery
+
+AI agents can programmatically discover l8k's capabilities:
+
+```bash
+l8k schema
+```
+
+This outputs a JSON description of available phases, fabrics, deployment types, flags, exit codes, and output formats.
+
+#### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Validation error (bad flags, invalid config) |
+| 3 | Cluster error (API unreachable, discovery failed) |
+| 4 | Deployment error (apply failed) |
+| 5 | Partial success (discovery ok but deploy failed) |
+
+In JSON mode, errors include structured fields (`code`, `category`, `transient`, `suggestion`) to help agents decide whether to retry or fix input.
+
 ## Configuration file
 
-During cluster discovery stage, Kubernetes Launch Kit creates a configuration file, which it later uses to generate deployment manifests from the templates. This config file can be edited by the user to customize their deployment configuration. The user can provide the custom config file to the tool using the `--user-config` cli flag — either as a standalone config (skipping discovery) or as a base config combined with `--discover-cluster-config` (discovery takes network operator parameters from the file and adds discovered cluster config).
+During cluster discovery stage, Kubernetes Launch Kit creates a configuration file, which it later uses to generate deployment manifests from the templates. This config file can be edited by the user to customize their deployment configuration. The user can provide the custom config file to the tool using the `--user-config` cli flag — either as a standalone config (skipping discovery) or as a base config combined with `l8k discover` / `--discover-cluster-config` (discovery takes network operator parameters from the file and adds discovered cluster config).
+
+The tool resolves configuration and profile paths in order: local directory first (`./l8k-config.yaml`, `./profiles`), then installed location (`/usr/local/share/l8k/`), then binary-relative.
 
 ### DOCA Driver
 

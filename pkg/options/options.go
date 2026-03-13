@@ -61,4 +61,10 @@ type Options struct {
 	// Phase 3: Cluster Deployment
 	Deploy     bool   // Whether to deploy to cluster
 	Kubeconfig string // Path to kubeconfig for discovery and deployment
+
+	// Output control
+	OutputFormat string // Output format: "text" (default) or "json"
+	Yes          bool   // Auto-confirm all prompts (--yes)
+	Quiet        bool   // Suppress informational output (--quiet)
+	DryRun       bool   // Preview without applying changes (--dry-run)
 }

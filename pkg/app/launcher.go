@@ -17,48 +17,58 @@
 package app
 
 import (
-	"bufio"
-	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/go-logr/logr"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	"k8s.io/client-go/rest"
-
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
-	"github.com/nvidia/k8s-launch-kit/pkg/llm"
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/plugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
-	"gopkg.in/yaml.v2"
 )
 
 // Launcher represents the main application launcher
 type Launcher struct {
-	options    options.Options
-	logger     logr.Logger
-	plugins    map[string]plugin.Plugin
-	kubeClient client.Client
-	restConfig *rest.Config
-	ui         ui.Output
+	options       options.Options
+	logger        logr.Logger
+	plugins       map[string]plugin.Plugin
+	kubeClient    client.Client
+	restConfig    *rest.Config
+	ui            ui.Output
+	jsonOutput    *ui.JSONOutput // non-nil only in JSON mode
+	result        *ui.JSONResult // accumulated result for JSON output
+	foundProfiles []profiles.Profile // populated by executeGeneration, consumed by executeDeploy
 }
 
 // New creates a new Launcher instance with the given options
-func New(options options.Options) *Launcher {
+func New(opts options.Options) *Launcher {
+	output, jsonOut := ui.NewOutputForFormat(opts.OutputFormat, opts.Yes)
+	if opts.Quiet && opts.OutputFormat != "json" {
+		output = ui.NewSilent()
+	}
+
 	l := &Launcher{
-		options: options,
-		logger:  log.Log,
-		plugins: make(map[string]plugin.Plugin),
-		ui:      ui.New(),
+		options:    opts,
+		logger:     log.Log,
+		plugins:    make(map[string]plugin.Plugin),
+		ui:         output,
+		jsonOutput: jsonOut,
+		result: &ui.JSONResult{
+			Success:  true,
+			Phase:    "init",
+			Messages: []ui.LogEntry{},
+		},
 	}
 
 	return l
@@ -82,14 +92,15 @@ func (l *Launcher) Run() error {
 		default:
 			err := fmt.Errorf("unknown plugin: %s", pluginName)
 			l.logger.Error(err, "Skipping plugin")
-			return err
+			return apperrors.NewValidationError("unknown plugin: "+pluginName, err, "Check --enabled-plugins value")
 		}
 	}
 
 	if l.options.Kubeconfig != "" {
 		k8sClient, restCfg, err := kubeclient.New(l.options.Kubeconfig)
 		if err != nil {
-			return fmt.Errorf("failed to create k8s client: %w", err)
+			return apperrors.NewClusterError("failed to create k8s client", err,
+				"Check that kubeconfig is valid and the cluster is reachable")
 		}
 		l.kubeClient = k8sClient
 		l.restConfig = restCfg
@@ -100,11 +111,31 @@ func (l *Launcher) Run() error {
 		}
 	}
 
-	if err := l.executeWorkflow(); err != nil {
-		return err
+	err := l.executeWorkflow()
+
+	// Finalize JSON output if in JSON mode
+	if l.jsonOutput != nil {
+		if err != nil {
+			l.result.Success = false
+			errJSON, _ := json.Marshal(apperrors.StructuredFromError(err))
+			l.result.Error = errJSON
+		}
+		if finalizeErr := l.jsonOutput.Finalize(l.result); finalizeErr != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write JSON output: %v\n", finalizeErr)
+		}
+		// In JSON mode, Finalize() already emitted the JSON to stdout.
+		// Exit directly to prevent root.go:exitWithError() from emitting a second JSON object.
+		if err != nil {
+			var se *apperrors.StructuredError
+			if errors.As(err, &se) {
+				os.Exit(se.ExitCode)
+			}
+			os.Exit(apperrors.ExitGeneral)
+		}
+		return nil // Success — return nil so root.go doesn't emit again
 	}
 
-	return nil
+	return err
 }
 
 // executeWorkflow executes the main 3-phase workflow
@@ -114,10 +145,16 @@ func (l *Launcher) executeWorkflow() error {
 
 	configPath := ""
 	if l.options.DiscoverClusterConfig {
+		l.result.Phase = "discover"
 		l.ui.Section("Phase 1: Cluster Discovery")
 		if err := l.discoverClusterConfig(); err != nil {
 			l.ui.Error("Cluster discovery failed: %v", err)
-			return fmt.Errorf("cluster discovery failed: %w", err)
+			var se *apperrors.StructuredError
+			if errors.As(err, &se) {
+				return se // Already has context-specific suggestion
+			}
+			return apperrors.NewClusterError("cluster discovery failed", err,
+				"Check that kubeconfig is valid and the cluster is reachable")
 		}
 
 		configPath = l.options.SaveClusterConfig
@@ -125,432 +162,19 @@ func (l *Launcher) executeWorkflow() error {
 		configPath = l.options.UserConfig
 	}
 
-	// When in interactive mode without a config, go directly to interactive session
-	// (supports troubleshooting via sosreport without needing a cluster config)
-	if configPath == "" && l.options.LLMInteractive {
-		l.ui.Section("Interactive Session (AI-Assisted)")
-		l.logger.Info("Starting interactive session (no cluster config)")
-		_, err := l.runInteractiveSession(nil)
-		if err != nil {
-			l.ui.Error("Interactive session failed: %v", err)
-			return fmt.Errorf("interactive session failed: %w", err)
-		}
-		return nil
+	if err := l.executeGeneration(configPath); err != nil {
+		return err
 	}
 
-	fullConfig, err := config.LoadFullConfig(configPath, l.logger)
-	if err != nil {
-		return fmt.Errorf("failed to load full config: %w", err)
-	}
-
-	profilesConfiguredInCmd := true
-	for _, plugin := range l.plugins {
-		if !plugin.ProfileConfiguredInCmd(l.options) {
-			profilesConfiguredInCmd = false
-			break
-		}
-	}
-
-	profileInConfig := fullConfig.Profile != nil
-	if !profilesConfiguredInCmd && !profileInConfig && l.options.Prompt == "" && !l.options.LLMInteractive {
-		l.ui.Info("Profiles not configured, skipping deployment file generation")
-		l.logger.Info("Profiles are not configured for every plugin, skipping deployment files generation")
-		return nil
-	}
-
-	if fullConfig.Profile == nil {
-		fullConfig.Profile = &config.Profile{}
-
-		if profilesConfiguredInCmd {
-			for _, plugin := range l.plugins {
-				if err := plugin.BuildProfileFromOptions(l.options, fullConfig.Profile); err != nil {
-					return fmt.Errorf("failed to build profile for plugin %s: %w", plugin.GetName(), err)
-				}
-			}
-		} else if l.options.LLMInteractive {
-			l.ui.Section("Profile Selection (AI-Assisted)")
-			l.logger.Info("Starting interactive LLM session")
-
-			prompt, err := l.runInteractiveSession(fullConfig.ClusterConfig)
-			if err != nil {
-				l.ui.Error("Interactive session failed: %v", err)
-				return fmt.Errorf("interactive session failed: %w", err)
-			}
-
-			for _, plugin := range l.plugins {
-				if err := plugin.BuildProfileFromLLMResponse(prompt, fullConfig.Profile); err != nil {
-					return fmt.Errorf("failed to build profile for plugin %s: %w", plugin.GetName(), err)
-				}
-			}
-
-			l.ui.Success("Profile selected")
-			l.ui.Info("  Fabric: %s", fullConfig.Profile.Fabric)
-			l.ui.Info("  Deployment: %s", fullConfig.Profile.Deployment)
-			l.ui.Info("  Multirail: %v", fullConfig.Profile.Multirail)
-			if fullConfig.Profile.SpectrumX != nil {
-				l.ui.Info("  Spectrum-X: enabled")
-				l.ui.Info("    Multiplane Mode: %s", fullConfig.Profile.SpectrumX.MultiplaneMode)
-				l.ui.Info("    Number of Planes: %d", fullConfig.Profile.SpectrumX.NumberOfPlanes)
-				l.ui.Info("    SPCX Version: %s", fullConfig.Profile.SpectrumX.SPCXVersion)
-			}
-			l.logger.Info("Selected options",
-				"fabric", fullConfig.Profile.Fabric,
-				"deployment", fullConfig.Profile.Deployment,
-				"multirail", fullConfig.Profile.Multirail,
-				"spectrumX", fullConfig.Profile.SpectrumX,
-				"ai", fullConfig.Profile.Ai,
-				"reasoning", prompt["reasoning"])
-		} else if l.options.Prompt != "" {
-			l.ui.Section("Profile Selection (AI-Assisted)")
-			l.ui.Info("Analyzing requirements with AI")
-			progress := l.ui.StartProgress("Waiting for AI recommendation")
-
-			l.logger.Info("Selecting a profile using LLM-assisted prompt")
-
-			prompt, err := llm.SelectPromptWithModel(l.options.Prompt, fullConfig.ClusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel)
-			if err != nil {
-				progress.Fail("AI selection failed")
-				l.ui.Error("Failed to get AI recommendation: %v", err)
-				return fmt.Errorf("failed to select prompt: %w", err)
-			}
-			confidence := prompt["confidence"]
-			if confidence == "low" {
-				progress.Fail("Low confidence recommendation")
-				l.ui.Warning("AI has low confidence: %s", prompt["reasoning"])
-				return fmt.Errorf("couldn't select a deployment profile based on the user prompt. Try again with a different prompt or use the cli flags (--fabric, --deployment-type, --multirail) to select the profile manually. Reason: %s", prompt["reasoning"])
-			}
-
-			for _, plugin := range l.plugins {
-				if err := plugin.BuildProfileFromLLMResponse(prompt, fullConfig.Profile); err != nil {
-					progress.Fail("Profile building failed")
-					return fmt.Errorf("failed to build profile for plugin %s: %w", plugin.GetName(), err)
-				}
-			}
-
-			progress.Success("Profile selected")
-			l.ui.Info("  Fabric: %s", fullConfig.Profile.Fabric)
-			l.ui.Info("  Deployment: %s", fullConfig.Profile.Deployment)
-			l.ui.Info("  Multirail: %v", fullConfig.Profile.Multirail)
-			if fullConfig.Profile.SpectrumX != nil {
-				l.ui.Info("  Spectrum-X: enabled")
-				l.ui.Info("    Multiplane Mode: %s", fullConfig.Profile.SpectrumX.MultiplaneMode)
-				l.ui.Info("    Number of Planes: %d", fullConfig.Profile.SpectrumX.NumberOfPlanes)
-				l.ui.Info("    SPCX Version: %s", fullConfig.Profile.SpectrumX.SPCXVersion)
-			}
-			l.logger.Info("Selected options",
-				"fabric", fullConfig.Profile.Fabric,
-				"deployment", fullConfig.Profile.Deployment,
-				"multirail", fullConfig.Profile.Multirail,
-				"spectrumX", fullConfig.Profile.SpectrumX,
-				"ai", fullConfig.Profile.Ai,
-				"reasoning", prompt["reasoning"])
-		} else {
-			return fmt.Errorf("no profile configured in the command line and no prompt provided")
-		}
-	}
-
-	// Apply CLI options to override config values
-	for _, plugin := range l.plugins {
-		if applier, ok := plugin.(interface {
-			ApplyOptionsToConfig(options.Options, *config.LaunchKubernetesConfig) error
-		}); ok {
-			if err := applier.ApplyOptionsToConfig(l.options, fullConfig); err != nil {
-				return fmt.Errorf("failed to apply options to config for plugin %s: %w", plugin.GetName(), err)
-			}
-		}
-	}
-
-	aggregatedCapabilities := config.AggregateCapabilities(fullConfig.ClusterConfig)
-
-	foundProfiles := []profiles.Profile{}
-	for pluginName, plugin := range l.plugins {
-		profile, err := profiles.FindApplicableProfile(fullConfig.Profile, aggregatedCapabilities, pluginName)
-		if err != nil {
-			l.ui.Error("Failed to find profile: %v", err)
-			l.logger.Error(err, "Failed to find applicable profile for the plugin", "plugin", plugin.GetName(), "cluster capabilities", aggregatedCapabilities, "profile requirements", fullConfig.Profile)
-			return err
-		}
-		foundProfiles = append(foundProfiles, *profile)
-	}
-
-	l.ui.Section("Deployment File Generation")
-	for _, profile := range foundProfiles {
-		l.ui.Info("Generating files for profile: %s", profile.Name)
-		l.logger.Info("Generating deployment files for profile", "profile", profile.Name)
-
-		if err := l.generateDeploymentFiles(&profile, fullConfig); err != nil {
-			l.ui.Error("File generation failed: %v", err)
-			return fmt.Errorf("deployment files generation failed: %w", err)
-		}
-	}
-
-	// Phase 3: Cluster Deployment
 	if l.options.Deploy {
-		l.ui.Section("Cluster Deployment")
-		for _, profile := range foundProfiles {
-			if err := l.deployConfigurationProfile(&profile); err != nil {
-				l.ui.Error("Deployment failed: %v", err)
-				return fmt.Errorf("deployment failed: %w", err)
-			}
+		if err := l.executeDeploy(); err != nil {
+			return err
 		}
 	}
 
 	l.ui.Success("Workflow completed successfully")
 	l.logger.Info("l8k workflow completed successfully")
 	return nil
-}
-
-// discoverClusterConfig handles cluster configuration discovery
-func (l *Launcher) discoverClusterConfig() error {
-	l.ui.Info("Discovering cluster capabilities")
-	l.logger.Info("Discovering cluster configuration")
-
-	// Load base config: from --user-config if provided, otherwise from built-in defaults
-	defaultsPath := "l8k-config.yaml"
-	if l.options.UserConfig != "" {
-		defaultsPath = l.options.UserConfig
-		l.ui.Info("Using base configuration: %s", defaultsPath)
-	}
-	defaults, err := config.LoadFullConfig(defaultsPath, l.logger)
-	if err != nil {
-		return fmt.Errorf("failed to load base config from %s: %w", defaultsPath, err)
-	}
-
-	// Override namespace from CLI flag if provided
-	if l.options.NetworkOperatorNamespace != "" {
-		defaults.NetworkOperator.Namespace = l.options.NetworkOperatorNamespace
-		l.logger.Info("Using CLI override for network operator namespace", "namespace", l.options.NetworkOperatorNamespace)
-	}
-
-	defaults.ClusterConfig = nil
-	defaults.Profile = nil
-
-	ctx := ui.WithOutput(context.Background(), l.ui)
-	for _, plugin := range l.plugins {
-		err := plugin.DiscoverClusterConfig(ctx, l.kubeClient, defaults)
-		if err != nil {
-			l.ui.Error("Discovery failed: %v", err)
-			return fmt.Errorf("failed to discover cluster config: %w", err)
-		}
-	}
-
-	discoveredConfig := *defaults
-
-	// Compute effective save path:
-	// 1. --save-cluster-config if explicitly provided
-	// 2. --user-config path (rewrite in place) if provided
-	// 3. Default path as fallback
-	savePath := l.options.SaveClusterConfig
-	if savePath == "" {
-		if l.options.UserConfig != "" {
-			savePath = l.options.UserConfig
-		} else {
-			savePath = "/opt/nvidia/k8s-launch-kit/cluster-config.yaml"
-		}
-	}
-	l.options.SaveClusterConfig = savePath
-
-	// Marshal and save merged config to disk
-	data, err := yaml.Marshal(discoveredConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal discovered config: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
-		return fmt.Errorf("failed to create output directory %s: %w", filepath.Dir(savePath), err)
-	}
-	if err := os.WriteFile(savePath, data, 0644); err != nil {
-		l.ui.Error("Failed to save configuration: %v", err)
-		return fmt.Errorf("failed to write discovered config to %s: %w", savePath, err)
-	}
-
-	l.ui.Success("Configuration saved: %s", savePath)
-	l.logger.Info("Discovered cluster config saved", "path", savePath)
-	return nil
-}
-
-// generateDeploymentFiles handles deployment file generation
-func (l *Launcher) generateDeploymentFiles(profile *profiles.Profile, clusterConfig *config.LaunchKubernetesConfig) error {
-	l.logger.Info("Generating deployment files", "profile", profile.Name)
-	l.logger.Info("Generating deployment files", "config", clusterConfig)
-
-	plugin, ok := l.plugins[profile.Plugin]
-	if !ok {
-		return fmt.Errorf("plugin %s not found", profile.Plugin)
-	}
-
-	renderedFiles, err := plugin.GenerateProfileDeploymentFiles(profile, clusterConfig)
-	if err != nil {
-		return fmt.Errorf("failed to process profile templates: %w", err)
-	}
-
-	if l.options.SaveDeploymentFiles != "" {
-		if err := l.saveDeploymentFiles(renderedFiles, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin)); err != nil {
-			return fmt.Errorf("failed to save deployment files: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// saveDeploymentFiles saves the rendered deployment files to disk
-func (l *Launcher) saveDeploymentFiles(renderedFiles map[string]string, outputDir string) error {
-	l.logger.Info("Saving deployment files", "directory", outputDir)
-
-	// Clean the output directory before saving files
-	if err := os.RemoveAll(outputDir); err != nil {
-		return fmt.Errorf("failed to clean output directory %s: %w", outputDir, err)
-	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory %s: %w", outputDir, err)
-	}
-
-	for filename, content := range renderedFiles {
-		outputPath := fmt.Sprintf("%s/%s", outputDir, filename)
-
-		if err := os.WriteFile(outputPath, []byte(content), 0644); err != nil {
-			l.ui.Error("Failed to write file %s: %v", outputPath, err)
-			return fmt.Errorf("failed to write file %s: %w", outputPath, err)
-		}
-
-		l.logger.Info("Saved deployment file", "file", outputPath)
-	}
-
-	l.ui.Success("Saved %d file(s) to: %s", len(renderedFiles), outputDir)
-	l.logger.Info("All deployment files saved successfully",
-		"directory", outputDir,
-		"fileCount", len(renderedFiles))
-
-	return nil
-}
-
-// deployConfigurationProfile handles cluster deployment
-func (l *Launcher) deployConfigurationProfile(profile *profiles.Profile) error {
-	if !l.options.Deploy {
-		l.logger.Info("Skipped (deploy not requested)")
-		return nil
-	}
-
-	l.ui.Info("Deploying profile: %s", profile.Name)
-	l.logger.Info("Deploying profile to cluster", "profile", profile.Name, "kubeconfig", l.options.Kubeconfig)
-
-	if l.options.SaveDeploymentFiles == "" {
-		l.ui.Error("Deployment requires generated files (use --save-deployment-files)")
-		return fmt.Errorf("--deploy requires generated files directory; provide --save-deployment-files")
-	}
-
-	plugin, ok := l.plugins[profile.Plugin]
-	if !ok {
-		l.ui.Error("Plugin not found: %s", profile.Plugin)
-		return fmt.Errorf("plugin %s not found", profile.Plugin)
-	}
-
-	ctx := ui.WithOutput(context.Background(), l.ui)
-	if err := plugin.DeployProfile(ctx, profile, l.kubeClient, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin)); err != nil {
-		l.ui.Error("Deployment failed: %v", err)
-		return fmt.Errorf("failed to deploy profile: %w", err)
-	}
-
-	l.ui.Success("Profile deployed: %s", profile.Name)
-	l.logger.Info("Deployment profile applied successfully", "profile", profile.Name)
-	return nil
-}
-
-// runInteractiveSession runs an interactive chat session with the LLM
-func (l *Launcher) runInteractiveSession(clusterConfig []config.ClusterConfig) (map[string]string, error) {
-	session, err := llm.NewChatSession(clusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel,
-		l.options.Kubeconfig, l.options.SosreportPath, l.options.LLMThrottle)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create chat session: %w", err)
-	}
-
-	reader := bufio.NewReader(os.Stdin)
-
-	fmt.Println("\n=== Interactive LLM Session ===")
-	fmt.Println("Ask questions about network configuration, describe your requirements,")
-	fmt.Println("or ask for help troubleshooting Network Operator issues.")
-	fmt.Println("Type 'generate' to generate manifests based on the recommended profile.")
-	fmt.Println("Type 'exit' or 'quit' to cancel.")
-	fmt.Println("================================")
-	fmt.Println()
-
-	for {
-		fmt.Print("You: ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return nil, fmt.Errorf("failed to read input: %w", err)
-		}
-
-		input = strings.TrimSpace(input)
-
-		// Check for exit commands
-		if strings.EqualFold(input, "exit") || strings.EqualFold(input, "quit") {
-			return nil, fmt.Errorf("session cancelled by user")
-		}
-
-		// Check for generate command
-		if strings.EqualFold(input, "generate") {
-			fmt.Println("\nExtracting profile from last response...")
-			profile, err := session.ExtractProfile()
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-				fmt.Println("Please ask a question first to get a profile recommendation.")
-				continue
-			}
-
-			if profile["fabric"] == "" || profile["deploymentType"] == "" {
-				fmt.Println("No profile recommendation found in the last response.")
-				fmt.Println("Ask a profile selection question first (e.g., what deployment type should I use?).")
-				continue
-			}
-
-			confidence := profile["confidence"]
-			if confidence == "low" {
-				fmt.Printf("\nWarning: The LLM has low confidence in this recommendation.\n")
-				fmt.Printf("Reason: %s\n", profile["reasoning"])
-				fmt.Print("Do you want to proceed anyway? (yes/no): ")
-
-				confirm, _ := reader.ReadString('\n')
-				confirm = strings.TrimSpace(strings.ToLower(confirm))
-				if confirm != "yes" && confirm != "y" {
-					fmt.Println("Cancelled. Ask another question or refine your requirements.")
-					continue
-				}
-			}
-
-			fmt.Println("\nProceeding with profile generation...")
-			return profile, nil
-		}
-
-		// Send message to LLM — single progress indicator, updated in-place
-		progress := l.ui.StartProgress("Waiting for AI response")
-		session.OnStatus = func(action, message string) {
-			switch action {
-			case "update":
-				progress.Update(message)
-			case "done":
-				// Finish current step and start a new spinner
-				progress.Success(message)
-				progress = l.ui.StartProgress("Waiting for AI response")
-			}
-		}
-		response, err := session.SendMessage(context.Background(), input)
-		if err != nil {
-			progress.Fail("AI request failed")
-			fmt.Printf("Error: %v\n", err)
-			continue
-		}
-		progress.Success("Response received")
-
-		// Strip JSON block from display unless debug logging is enabled
-		displayResponse := response
-		if l.options.LogLevel != "debug" {
-			displayResponse = llm.StripJSONBlock(displayResponse)
-		}
-
-		fmt.Printf("\nAssistant: %s", displayResponse)
-		fmt.Println(llm.InteractivePromptSuffix)
-		fmt.Println()
-	}
 }
 
 // parseLabelSelector parses a comma-separated "key=value" string into a map.

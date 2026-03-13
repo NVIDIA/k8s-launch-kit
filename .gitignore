@@ -54,6 +54,7 @@ build/
 dist/
 
 claude.md
+CLAUDE.md
 licenses.csv
 licenses_raw.csv
 modules.csv

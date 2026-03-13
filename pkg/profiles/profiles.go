@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"gopkg.in/yaml.v2"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -56,11 +58,38 @@ type Profile struct {
 	Templates           []string
 }
 
-const ProfilesDir = "profiles"
+// getprofilesDir resolves the profiles directory using a lookup chain:
+// 1. ./profiles (CWD — container/repo root)
+// 2. /usr/local/share/l8k/profiles (default install)
+// 3. <binary-dir>/../share/l8k/profiles (custom prefix install)
+func getprofilesDir() (string, error) {
+	candidates := []string{
+		"profiles",
+		"/usr/local/share/l8k/profiles",
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "share", "l8k", "profiles"))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", apperrors.NewValidationError(
+		"profiles directory not found",
+		fmt.Errorf("checked: %s", strings.Join(candidates, ", ")),
+		"Run 'scripts/install.sh' to install l8k, or run from the repository root")
+}
 
 func FindApplicableProfile(requirements *config.Profile, capabilities *config.ClusterCapabilities, pluginName string) (*Profile, error) {
 	log.Log.Info("Finding applicable profile", "requirements", requirements)
-	entries, err := os.ReadDir(ProfilesDir)
+
+	profilesDir, err := getprofilesDir()
+	if err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(profilesDir)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +100,7 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 
 	for _, entry := range entries {
 		if entry.IsDir() {
-			profileManifest := filepath.Join(ProfilesDir, entry.Name(), "profile.yaml")
+			profileManifest := filepath.Join(profilesDir, entry.Name(), "profile.yaml")
 			profileData, err := os.ReadFile(profileManifest)
 			if err != nil {
 				log.Log.Error(err, "failed to read profile manifest", "profileManifest", profileManifest)
@@ -89,7 +118,7 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 			valid, reason := profile.Validate(requirements, capabilities)
 			if valid {
 				log.Log.V(1).Info("Found applicable profile", "profile", profile)
-				profile.UpdateManifestsPaths(filepath.Join(ProfilesDir, entry.Name()))
+				profile.UpdateManifestsPaths(filepath.Join(profilesDir, entry.Name()))
 				return profile, nil
 			} else {
 				errorMessages = append(errorMessages, fmt.Sprintf("profile %s is not applicable: %s", entry.Name(), reason))
@@ -102,7 +131,10 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 		log.Log.Error(errors.New(errorMessage), "errorMessage")
 	}
 
-	return nil, errors.New("no applicable profile found")
+	return nil, apperrors.NewValidationError(
+		"no applicable profile found",
+		fmt.Errorf("tried %d profiles, none matched: %s", len(errorMessages), strings.Join(errorMessages, "; ")),
+		"Check --fabric, --deployment-type, and --spectrum-x flags")
 }
 
 func (p *Profile) Validate(requirements *config.Profile, capabilities *config.ClusterCapabilities) (bool, string) {

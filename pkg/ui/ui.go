@@ -63,6 +63,13 @@ type StandardOutput struct {
 	writer       io.Writer
 	isTTY        bool
 	colorEnabled bool
+	autoConfirm  bool
+}
+
+// OutputOptions configures StandardOutput behavior.
+type OutputOptions struct {
+	Writer      io.Writer
+	AutoConfirm bool
 }
 
 // New creates a standard output handler writing to stdout
@@ -81,6 +88,24 @@ func NewWithWriter(w io.Writer) Output {
 		writer:       w,
 		isTTY:        isTTY,
 		colorEnabled: isTTY, // Enable colors only for TTY
+	}
+}
+
+// NewWithOptions creates a standard output handler with the given options.
+func NewWithOptions(opts OutputOptions) Output {
+	w := opts.Writer
+	if w == nil {
+		w = os.Stdout
+	}
+	isTTY := false
+	if f, ok := w.(*os.File); ok {
+		isTTY = term.IsTerminal(int(f.Fd()))
+	}
+	return &StandardOutput{
+		writer:       w,
+		isTTY:        isTTY,
+		colorEnabled: isTTY,
+		autoConfirm:  opts.AutoConfirm,
 	}
 }
 
@@ -150,8 +175,12 @@ func (o *StandardOutput) Header(text string) {
 	fmt.Fprintf(o.writer, "%s\n\n", border)
 }
 
-// Confirm displays a yes/no prompt and waits for user input
+// Confirm displays a yes/no prompt and waits for user input.
+// Returns true immediately when AutoConfirm is set (--yes flag or JSON mode).
 func (o *StandardOutput) Confirm(prompt string) (bool, error) {
+	if o.autoConfirm {
+		return true, nil
+	}
 	if !o.isTTY {
 		return false, nil
 	}

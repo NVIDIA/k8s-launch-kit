@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -37,6 +38,17 @@ var versionCmd = &cobra.Command{
 	Short: "Print the version number",
 	Long:  `Print the version number of l8k along with build information.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		format, _ := cmd.Flags().GetString("output")
+		if format == "json" {
+			info := map[string]string{
+				"version":   Version,
+				"gitCommit": GitCommit,
+				"buildDate": BuildDate,
+			}
+			data, _ := json.MarshalIndent(info, "", "  ")
+			fmt.Println(string(data))
+			return
+		}
 		fmt.Printf("l8k %s\n", Version)
 		fmt.Printf("Git Commit: %s\n", GitCommit)
 		fmt.Printf("Build Date: %s\n", BuildDate)
