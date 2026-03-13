@@ -1,0 +1,138 @@
+# Spectrum-X Multiplane Modes
+
+## Overview
+
+Spectrum-X supports four multiplane modes that determine how network planes are
+organized, how resources are named, and which NIC types are supported. The mode
+is selected via `--multiplane-mode` or `profile.spectrumX.multiplaneMode` in the
+config file.
+
+All Spectrum-X deployments require:
+- `fabric=ethernet`
+- `deployment=sriov`
+- `multirail=true`
+- `spectrumX.enable=true`
+
+## Mode: none
+
+- **NIC type**: BlueField-3 SuperNIC only (deviceID `a2dc`)
+- **Number of planes**: 1 (fixed, no other value allowed)
+- **Profile**: `spectrum-x` (the base Spectrum-X profile)
+- **Resource naming**: Per-rail only
+
+```
+sriov-network-node-policy-rail-0
+sriov-network-node-policy-rail-1
+ovs-network-rail-0
+ovs-network-rail-1
+```
+
+- **Description**: Single-plane operation for BF3 SuperNICs. No multiplane support
+  because BF3 hardware does not implement plane load balancing. This is the only
+  valid mode for BF3 deployments.
+
+## Mode: swplb (Software Plane Load Balancing)
+
+- **NIC type**: ConnectX-8 only (deviceID `1023`)
+- **Number of planes**: 2 or 4 (default: 4)
+- **Profile**: `spectrum-x-swplb` (dedicated SWPLB profile)
+- **Resource naming**: Per-rail AND per-plane (finest granularity)
+
+```
+sriov-network-node-policy-plane-0-rail-0
+sriov-network-node-policy-plane-0-rail-1
+sriov-network-node-policy-plane-1-rail-0
+sriov-network-node-policy-plane-1-rail-1
+ovs-network-plane-0-rail-0
+ovs-network-plane-1-rail-0
+```
+
+- **Description**: Software-based distribution of traffic across multiple planes.
+  Each rail-plane combination gets its own SR-IOV policy, OVS network, and CIDR
+  pool. This provides the finest resource granularity and is the default mode for
+  CX8 deployments. Best for small-to-medium Spectrum-X clusters.
+- **docaEswitchMax**: planes x number of rails
+
+## Mode: hwplb (Hardware Plane Load Balancing)
+
+- **NIC type**: ConnectX-8 only (deviceID `1023`)
+- **Number of planes**: 2 or 4 (default: 4)
+- **Profile**: `spectrum-x` (base Spectrum-X profile)
+- **Resource naming**: Per-rail only (hardware handles plane distribution)
+
+```
+sriov-network-node-policy-rail-0
+sriov-network-node-policy-rail-1
+ovs-network-rail-0
+ovs-network-rail-1
+```
+
+- **Description**: Hardware-based distribution of traffic across planes. The NIC
+  firmware handles plane selection, so resources are only per-rail. Better for
+  large-scale 2-tier and 3-tier network topologies where per-plane granularity
+  is not needed and hardware efficiency matters.
+- **docaEswitchMax**: number of rails
+
+## Mode: uniplane
+
+- **NIC type**: ConnectX-8 only (deviceID `1023`)
+- **Number of planes**: 1 (fixed, no other value allowed)
+- **Profile**: `spectrum-x` (base Spectrum-X profile)
+- **Resource naming**: Per-rail only
+
+```
+sriov-network-node-policy-rail-0
+sriov-network-node-policy-rail-1
+ovs-network-rail-0
+ovs-network-rail-1
+```
+
+- **Description**: Single logical plane encompassing all physical connections.
+  Simplest CX8 topology with no plane management overhead. Use when the network
+  topology does not benefit from multiple planes.
+- **docaEswitchMax**: number of rails
+
+## NIC Type Constraint Summary
+
+| NIC Type        | deviceID | Allowed Modes              | Default Mode |
+|-----------------|----------|----------------------------|--------------|
+| BlueField-3     | `a2dc`   | `none`                     | `none`       |
+| ConnectX-8      | `1023`   | `swplb`, `hwplb`, `uniplane` | `swplb`   |
+
+## Number of Planes Rules
+
+| Mode      | Valid Values | Default | Notes                                  |
+|-----------|-------------|---------|----------------------------------------|
+| `none`    | 1           | 1       | BF3 only, single plane                 |
+| `uniplane`| 1           | 1       | Single logical plane                   |
+| `swplb`   | 2, 4        | 4       | More planes = finer resource granularity|
+| `hwplb`   | 2, 4        | 4       | More planes = more hardware capacity   |
+
+## Version
+
+All Spectrum-X modes use version `RA2.1`. This is set via `--spcx-version` or
+`profile.spectrumX.spcxVersion` in the config file. There is currently only one
+supported version.
+
+## Mode Selection Guide
+
+| Scenario                                  | Recommended Mode |
+|-------------------------------------------|------------------|
+| BF3 SuperNIC deployment                   | `none`           |
+| CX8, small cluster, fine-grained control  | `swplb`          |
+| CX8, large multi-tier topology            | `hwplb`          |
+| CX8, simple single-tier topology          | `uniplane`       |
+| Not sure (CX8)                            | `swplb` (default)|
+
+## Validation Rules
+
+l8k validates the mode and planes combination at startup:
+
+1. If `nicType=a2dc` (BF3), mode must be `none` and planes must be 1
+2. If `nicType=1023` (CX8), mode must be `swplb`, `hwplb`, or `uniplane`
+3. If mode is `none` or `uniplane`, planes must be 1
+4. If mode is `swplb` or `hwplb`, planes must be 2 or 4
+5. Version must be `RA2.1`
+
+Validation failures produce exit code 2 (validation error) with a descriptive
+error message.

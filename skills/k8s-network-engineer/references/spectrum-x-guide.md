@@ -1,0 +1,173 @@
+# Spectrum-X Configuration Guide
+
+## Overview
+
+The Spectrum-X profile provides optimized multi-rail networking with OVS hardware
+offload, DOCA acceleration, and advanced NIC firmware configuration for AI workloads.
+It always requires `fabric=ethernet`, `deployment=sriov`, and `multirail=true`.
+
+## Multiplane Modes
+
+Spectrum-X supports four multiplane modes that determine how network planes are
+organized and how resources are named:
+
+### none (BF3 Only)
+
+- Single plane, no multiplane support
+- BlueField-3 SuperNIC only (deviceID `a2dc`)
+- Number of planes: 1 (fixed)
+- Resources are named per-rail only
+- Simplest Spectrum-X deployment
+
+### swplb (Software Plane Load Balancing)
+
+- ConnectX-8 only (deviceID `1023`)
+- Software-based load balancing across planes
+- Number of planes: 2 or 4 (default: 4)
+- Resources are named per-rail AND per-plane (finest granularity)
+- Generates separate SR-IOV policies, OVS networks, and CIDR pools for each
+  rail-plane combination
+- Uses the dedicated `spectrum-x-swplb` profile directory
+- Best for small-to-medium Spectrum-X clusters
+
+### hwplb (Hardware Plane Load Balancing)
+
+- ConnectX-8 only (deviceID `1023`)
+- Hardware-based load balancing across planes
+- Number of planes: 2 or 4 (default: 4)
+- Resources are named per-rail only (hardware handles plane distribution)
+- Better for large-scale 2-tier and 3-tier network topologies
+- Uses the `spectrum-x` profile directory
+
+### uniplane (Unified Plane)
+
+- ConnectX-8 only (deviceID `1023`)
+- Single logical plane encompassing all physical connections
+- Number of planes: 1 (fixed)
+- Resources are named per-rail only
+- Simplest CX8 topology
+- Uses the `spectrum-x` profile directory
+
+## OVS Bridge Configuration
+
+Spectrum-X uses DOCA-accelerated Open vSwitch with hardware offloading:
+
+- **Datapath type**: `netdev` (DPDK datapath for hardware offload)
+- **Fail mode**: `secure` (drops traffic if controller is unreachable)
+- **Uplink interface type**: `dpdk`
+- **Bridge grouping policy**: Configurable (`perPF`, `perNIC`, or `all`)
+- **docaEswitchMax**: Number of OVS bridges
+  - hwplb: number of rails (e.g., 4 for a 4-rail config)
+  - swplb: planes x number of rails
+  - BF3: number of rails (e.g., 8 for Hopper)
+
+The SriovNetworkPoolConfig CR configures OVS bridge settings and enables RDMA
+exclusive mode for each rail.
+
+## RDMA Configuration
+
+- **Mode**: `exclusive` -- each workload gets dedicated RDMA resources (not shared)
+- **rdmaPrefix**: Template for RDMA device names
+  - Non-swplb: `"roce_p%plane_id%_r%rail_id%"` (from spectrumX config)
+  - swplb: `"roce_p%plane_id%_r%rail_id%"` with per-plane expansion
+- **netdevPrefix**: Template for network interface names
+  - Pattern: `"eth_p%plane_id%_r%rail_id%"`
+- **eSwitchMultiport**: `"true"` for Spectrum-X configurations
+
+Note: RDMA exclusive mode requires a node reboot and cannot be set when namespaces
+are already configured. This is a tech-preview feature for non-BCM workflows.
+
+## Resource Naming Patterns
+
+Resources are named based on rail and (optionally) plane indices:
+
+### Per-Rail Resources (hwplb, uniplane, none)
+
+```
+sriov-network-node-policy-rail-0
+sriov-network-node-policy-rail-1
+ovs-network-rail-0
+ovs-network-rail-1
+cidr-pool-rail-0
+cidr-pool-rail-1
+spectrum-x-rail-pool-config-rail-0
+spectrum-x-rail-pool-config-rail-1
+```
+
+### Per-Rail-Per-Plane Resources (swplb)
+
+```
+sriov-network-node-policy-plane-0-rail-0
+sriov-network-node-policy-plane-0-rail-1
+sriov-network-node-policy-plane-1-rail-0
+sriov-network-node-policy-plane-1-rail-1
+ovs-network-plane-0-rail-0
+ovs-network-plane-1-rail-0
+```
+
+## CIDRPool Configuration
+
+Each rail (or rail-plane combination for swplb) gets its own CIDRPool:
+
+- **perNodeNetworkPrefix**: Typically `31` (point-to-point /31 subnets)
+- **gatewayIndex**: `0` (first address in subnet is the gateway)
+- **exclusions**: Index `1` is typically excluded
+- **Size limits**: Each CIDRPool CRD has a 1.5 MB etcd limit
+  - `kubectl apply`: ~6,424 nodes per pool
+  - `kubectl apply --server-side`: ~10,105 nodes per pool (recommended)
+
+## Generated CRDs
+
+The Spectrum-X profile generates these Kubernetes Custom Resources:
+
+| Order | CRD                        | File                              | Purpose                                       |
+|-------|----------------------------|-----------------------------------|-----------------------------------------------|
+| 1     | NicClusterPolicy           | 10-nicclusterpolicy.yaml          | Network Operator, NV-IPAM, Spectrum-X Operator|
+| 2     | NicConfigurationTemplate   | 30-nicconfigurationtemplate.yaml  | Spectrum-X firmware settings per NIC type      |
+| 3     | NICInterfaceNameTemplate   | 35-nicinterfacenametemplate.yaml  | Interface naming for multi-rail topology       |
+| 4     | SriovNetworkPoolConfig     | 40-sriovnetworkpoolconfig.yaml    | RDMA mode and OVS hardware offload per rail    |
+| 5     | SriovNetworkNodePolicy     | 50-sriovnetworknodepolicy.yaml    | SR-IOV VF policies per rail (per plane for swplb)|
+| 6     | OVSNetwork                 | 70-ovsnetwork.yaml                | OVS network attachment definitions per rail    |
+| 7     | SpectrumXRailPoolConfig    | 80-spectrumxrailpoolconfig.yaml   | Links SR-IOV policies to CIDR pools per rail   |
+| 8     | Test Pod                   | 90-pod.yaml                       | Example pod for validation                     |
+
+Additional CRDs may be generated depending on configuration:
+- NicFirmwareSource / NicFirmwareTemplate for firmware management
+- CIDRPool for IP address allocation
+
+## Prerequisites
+
+1. Kubernetes cluster with SR-IOV capable nodes
+2. NVIDIA Network Operator v26.1.0 or later
+3. ConnectX-8 or BlueField-3 SuperNIC adapters
+4. Firmware compatible with Spectrum-X RA2.1
+5. Helm values enabling `sriovNetworkOperator`, `maintenanceOperator`, and
+   feature gate `manageSoftwareBridges: true`
+
+## Quick Reference
+
+```bash
+# BF3 SuperNIC deployment
+l8k --user-config config.yaml \
+  --fabric ethernet --deployment-type sriov \
+  --multirail --spectrum-x \
+  --multiplane-mode none --number-of-planes 1
+
+# CX8 with software plane load balancing (default)
+l8k --user-config config.yaml \
+  --fabric ethernet --deployment-type sriov \
+  --multirail --spectrum-x \
+  --multiplane-mode swplb --number-of-planes 4
+
+# CX8 with hardware plane load balancing (large scale)
+l8k --user-config config.yaml \
+  --fabric ethernet --deployment-type sriov \
+  --multirail --spectrum-x \
+  --multiplane-mode hwplb --number-of-planes 4
+
+# CX8 uniplane (simplest)
+l8k --user-config config.yaml \
+  --fabric ethernet --deployment-type sriov \
+  --multirail --spectrum-x \
+  --multiplane-mode uniplane --number-of-planes 1
+```
