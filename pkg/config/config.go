@@ -57,7 +57,7 @@ type DOCADriverConfig struct {
 	Version                   string `yaml:"version"`
 	UnloadStorageModules      bool   `yaml:"unloadStorageModules"`
 	EnableNFSRDMA             bool   `yaml:"enableNFSRDMA"`
-	BlacklistDependentModules bool   `yaml:"blacklistDependentModules"`
+	UnloadDependentModules    bool   `yaml:"unloadDependentModules"`
 }
 
 type NvIpamConfig struct {

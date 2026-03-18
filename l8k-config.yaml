@@ -11,7 +11,7 @@ docaDriver:
   version: doca3.3.0-26.01-1.0.0.0-0
   unloadStorageModules: true
   enableNFSRDMA: false
-  blacklistDependentModules: true
+  unloadDependentModules: true
 
 nvIpam:
   poolName: nv-ipam-pool

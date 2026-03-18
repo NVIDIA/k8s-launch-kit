@@ -360,13 +360,13 @@ The `docaDriver` section controls the OFED driver deployment in the NicClusterPo
 
 When the DOCA/OFED driver loads on a node, it replaces the inbox MLX kernel modules (`mlx5_core`, `mlx5_ib`, `ib_core`, etc.) with its own versions. However, if third-party or distribution-specific kernel modules depend on the inbox MLX modules (e.g., `iw_cm`, `nfsrdma`), they will block the inbox modules from being unloaded, causing the DOCA driver to fail to load or leaving the system in an inconsistent state.
 
-To solve this, `blacklistDependentModules: true` enables a pre-flight check during cluster discovery. The tool execs into `nic-configuration-daemon` pods and inspects `/sys/module/*/holders/` for each of the following MLX/OFED kernel modules:
+To solve this, `unloadDependentModules: true` enables a pre-flight check during cluster discovery. The tool execs into `nic-configuration-daemon` pods and builds a full reverse dependency graph from `/sys/module/*/holders/` for all loaded modules, then BFS-traverses from each of the following MLX/OFED kernel modules to find all transitive non-MOFED dependents:
 
 `mlx5_core`, `mlx5_ib`, `ib_umad`, `ib_uverbs`, `ib_ipoib`, `rdma_cm`, `rdma_ucm`, `ib_core`, `ib_cm`
 
-Any kernel modules found as holders (dependents) of these — but not the MLX modules themselves — are saved per group as `ofedDependentModules`. During manifest generation, these modules are passed to the DOCA driver pod via the `OFED_BLACKLIST_MODULES` environment variable (semicolon-separated), which tells the driver to unload them before attempting to replace the inbox modules.
+Any kernel modules found as transitive dependents of these — but not the MLX modules themselves — are saved per group as `ofedDependentModules`. During manifest generation, these modules are passed to the DOCA driver pod via the `UNLOAD_CUSTOM_MODULES` environment variable (space-separated), which tells the driver to blacklist and unload them before attempting to replace the inbox modules.
 
-Module discovery always runs during cluster discovery (so results are saved for inspection), but the `OFED_BLACKLIST_MODULES` env var is only rendered when `blacklistDependentModules` is `true`. When multiple node groups are merged, their dependent modules are aggregated as a union.
+Module discovery always runs during cluster discovery (so results are saved for inspection), but the `UNLOAD_CUSTOM_MODULES` env var is only rendered when `unloadDependentModules` is `true`. When multiple node groups are merged, their dependent modules are aggregated as a union.
 
 ```yaml
 docaDriver:
@@ -374,7 +374,7 @@ docaDriver:
   version: doca3.3.0-26.01-1.0.0.0-0
   unloadStorageModules: true
   enableNFSRDMA: false
-  blacklistDependentModules: true   # Enable dependent module discovery and blacklisting
+  unloadDependentModules: true   # Enable dependent module discovery and unloading
 ```
 
 After discovery, the config will contain the discovered dependents:
@@ -388,7 +388,7 @@ clusterConfig:
 The generated NicClusterPolicy `ofedDriver` section will include:
 ```yaml
 env:
-  - name: OFED_BLACKLIST_MODULES
+  - name: UNLOAD_CUSTOM_MODULES
     value: "iw_cm"
 ```
 
@@ -435,7 +435,7 @@ docaDriver:
   version: doca3.2.0-25.10-1.2.8.0-2
   unloadStorageModules: false
   enableNFSRDMA: false
-  blacklistDependentModules: false
+  unloadDependentModules: false
 nvIpam:
   poolName: nv-ipam-pool
   subnets:
