@@ -189,10 +189,12 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	} else {
 		// We just patched/created the policy — pods need time to start.
 		// Poll both the configured namespace and alternate namespace.
-		expectedNodes, dsPods, err = waitForDaemonSetPods(ctx, c, uiOutput, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon", 10*time.Minute)
+		var foundNS string
+		expectedNodes, dsPods, foundNS, err = waitForDaemonSetPods(ctx, c, uiOutput, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon", 10*time.Minute)
 		if err != nil {
 			return err
 		}
+		defaultConfig.NetworkOperator.Namespace = foundNS
 	}
 
 	// Fetch node labels early — needed both for filtering and nodeSelector computation
@@ -232,7 +234,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 
 	// Discover OFED-dependent kernel modules per group via pod exec.
 	// Results are always saved to config for user inspection; the
-	// blacklistDependentModules flag only controls template rendering.
+	// unloadDependentModules flag only controls template rendering.
 	if p.RESTConfig != nil {
 		for i := range defaultConfig.ClusterConfig {
 			group := &defaultConfig.ClusterConfig[i]
@@ -296,7 +298,7 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 // configured namespace and the alternate common namespace. This is needed after
 // patching a NicClusterPolicy to add NicConfigurationOperator, because the
 // network operator needs time to reconcile and create the DaemonSet pods.
-func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, error) {
+func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s pods (timeout: %s)", daemonSetName, timeout.Truncate(time.Second)))
 
 	ctx := parentCtx
@@ -316,7 +318,7 @@ func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput u
 		nodes, pods, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName)
 		if err == nil {
 			progress.Success(fmt.Sprintf("Found %d pod(s) in namespace %q", len(pods), namespace))
-			return nodes, pods, nil
+			return nodes, pods, namespace, nil
 		}
 		lastErr = err
 
@@ -325,14 +327,14 @@ func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput u
 			nodes, pods, err = checkDaemonSetPodsReady(ctx, c, altNS, daemonSetName)
 			if err == nil {
 				progress.Success(fmt.Sprintf("Found %d pod(s) in namespace %q", len(pods), altNS))
-				return nodes, pods, nil
+				return nodes, pods, altNS, nil
 			}
 		}
 
 		select {
 		case <-ctx.Done():
 			progress.Fail("Timeout waiting for daemon pods")
-			return nil, nil, fmt.Errorf("timeout waiting for %s pods to start: %w", daemonSetName, lastErr)
+			return nil, nil, "", fmt.Errorf("timeout waiting for %s pods to start: %w", daemonSetName, lastErr)
 		case <-ticker.C:
 			progress.Update(fmt.Sprintf("Waiting for %s pods...", daemonSetName))
 		}
@@ -934,16 +936,52 @@ func discoverOfedDependentModules(ctx context.Context, restConfig *rest.Config,
 		return nil, fmt.Errorf("no nic-configuration-daemon pod found on group nodes")
 	}
 
-	// Build a shell script that outputs only holder (dependent) module names,
-	// excluding the target modules themselves. One module name per line.
+	// Build a shell script that does full transitive BFS discovery of
+	// OFED-dependent modules. It scans ALL /sys/module/*/holders/ to build a
+	// complete reverse dependency map, then BFS-traverses from OFED target
+	// modules upward through non-OFED holders. This matches the init
+	// container's checker.go approach.
 	modList := strings.Join(ofedTargetModules, " ")
-	script := fmt.Sprintf(`for mod in %s; do
-  if [ -d /sys/module/$mod ]; then
-    for dep in /sys/module/$mod/holders/*; do
-      [ -e "$dep" ] && echo "$(basename $dep)"
-    done
-  fi
-done | sort -u`, modList)
+	script := fmt.Sprintf(`targets="%s"
+awk_script='
+BEGIN {
+  split(ENVIRON["TARGETS"], arr)
+  for (i in arr) target[arr[i]] = 1
+}
+{
+  mod = $1; holder = $2
+  holders[mod] = holders[mod] " " holder
+}
+END {
+  n = 0
+  for (t in target) {
+    split(holders[t], h)
+    for (i in h) {
+      if (h[i] != "" && !(h[i] in target) && !(h[i] in visited)) {
+        visited[h[i]] = 1
+        queue[n++] = h[i]
+      }
+    }
+  }
+  qi = 0
+  while (qi < n) {
+    cur = queue[qi++]
+    split(holders[cur], h)
+    for (i in h) {
+      if (h[i] != "" && !(h[i] in target) && !(h[i] in visited)) {
+        visited[h[i]] = 1
+        queue[n++] = h[i]
+      }
+    }
+  }
+  for (m in visited) print m
+}'
+for mod_dir in /sys/module/*/; do
+  mod=$(basename "$mod_dir")
+  for dep in "$mod_dir"holders/*; do
+    [ -e "$dep" ] && echo "$mod $(basename "$dep")"
+  done
+done | TARGETS="$targets" awk "$awk_script" | sort -u`, modList)
 
 	containerName := ""
 	if len(targetPod.Spec.Containers) > 0 {

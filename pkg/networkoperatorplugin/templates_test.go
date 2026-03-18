@@ -930,9 +930,9 @@ func TestJoinModules(t *testing.T) {
 		assert.Equal(t, "iw_cm", result)
 	})
 
-	t.Run("multiple modules semicolon separated", func(t *testing.T) {
+	t.Run("multiple modules space separated", func(t *testing.T) {
 		result := joinModulesFunc([]string{"iw_cm", "nfsrdma", "xprtrdma"})
-		assert.Equal(t, "iw_cm;nfsrdma;xprtrdma", result)
+		assert.Equal(t, "iw_cm nfsrdma xprtrdma", result)
 	})
 
 	t.Run("empty list", func(t *testing.T) {

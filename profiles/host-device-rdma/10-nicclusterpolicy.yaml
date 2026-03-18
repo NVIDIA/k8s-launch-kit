@@ -13,9 +13,9 @@ spec:
         value: "{{.DOCADriver.UnloadStorageModules}}"
       - name: ENABLE_NFSRDMA
         value: "{{.DOCADriver.EnableNFSRDMA}}"
-      {{- if and .DOCADriver.BlacklistDependentModules .ClusterConfig }}
+      {{- if and .DOCADriver.UnloadDependentModules .ClusterConfig }}
       {{- if .ClusterConfig.OfedDependentModules }}
-      - name: OFED_BLACKLIST_MODULES
+      - name: UNLOAD_CUSTOM_MODULES
         value: "{{joinModules .ClusterConfig.OfedDependentModules}}"
       {{- end }}
       {{- end }}

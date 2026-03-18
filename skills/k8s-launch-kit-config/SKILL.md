@@ -84,7 +84,7 @@ podNamespace: "my-namespace"
 
 - Start by running discovery (`l8k discover`) to generate a baseline, then edit it.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
-- `docaDriver.blacklistDependentModules: true` auto-populates the blacklist from discovered OFED modules.
+- `docaDriver.unloadDependentModules: true` auto-populates `UNLOAD_CUSTOM_MODULES` from discovered OFED-dependent modules.
 
 ## See Also
 

@@ -42,7 +42,7 @@
 
 - **OFED (OpenFabrics Enterprise Distribution)**: NVIDIA's network driver stack for Mellanox NICs. Replaces inbox kernel drivers with optimized versions.
 - **DOCA**: NVIDIA's Data Center Infrastructure-on-a-Chip Architecture. The DOCA driver is the containerized OFED driver deployed by the Network Operator.
-- **Dependent module blacklisting**: Before loading DOCA/OFED drivers, kernel modules that depend on inbox MLX modules (e.g., `iw_cm`, `nfsrdma`) must be unloaded. Discovery detects these automatically; `blacklistDependentModules: true` enables the blacklist in generated manifests.
+- **Dependent module unloading**: Before loading DOCA/OFED drivers, kernel modules that depend on inbox MLX modules (e.g., `iw_cm`, `nfsrdma`) must be unloaded. Discovery detects these automatically (including transitive dependencies); `unloadDependentModules: true` enables `UNLOAD_CUSTOM_MODULES` in generated manifests.
 
 ## l8k Concepts
 

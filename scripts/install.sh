@@ -81,6 +81,7 @@ else
     mkdir -p "${BIN_DIR}"
     install -m 755 "${REPO_ROOT}/build/l8k" "${BIN_DIR}/l8k"
     mkdir -p "${SHARE_DIR}"
+    rm -rf "${SHARE_DIR}/profiles"
     cp -r "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
     cp "${REPO_ROOT}/l8k-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
 fi

@@ -55,10 +55,10 @@ docaDriver:
   enableNFSRDMA: false
 
   # bool | default: true
-  # When true, adds OFED_BLACKLIST_MODULES env var to the ofedDriver container.
-  # The blacklist is populated from ofedDependentModules discovered per group.
-  # Prevents dependent modules from blocking OFED driver loading.
-  blacklistDependentModules: true
+  # When true, adds UNLOAD_CUSTOM_MODULES env var to the ofedDriver container.
+  # The list is populated from ofedDependentModules discovered per group.
+  # These modules are blacklisted and unloaded before OFED driver reload.
+  unloadDependentModules: true
 
 # ============================================================================
 # NV-IPAM (IP Address Management)

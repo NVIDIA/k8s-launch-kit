@@ -35,7 +35,7 @@ var templateFuncs = template.FuncMap{
 	"sub": func(a, b int) int { return a - b },
 	"gt":  func(a, b int) bool { return a > b },
 	"joinModules": func(modules []string) string {
-		return strings.Join(modules, ";")
+		return strings.Join(modules, " ")
 	},
 	"untilStep": func(start, stop, step int) []int {
 		result := []int{}
