@@ -23,4 +23,4 @@ templates:
   - 50-sriovnetworknodepolicy.yaml
   - 70-ovsnetwork.yaml
   - 80-spectrumxrailpoolconfig.yaml
-  - 90-pod.yaml
+  - 90-example-daemonset.yaml

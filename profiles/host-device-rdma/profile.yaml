@@ -12,4 +12,4 @@ templates:
   - 20-ippool.yaml
   - 35-nicinterfacenametemplate.yaml
   - 30-hostdevicenetwork.yaml
-  - 40-pod.yaml
+  - 40-example-daemonset.yaml

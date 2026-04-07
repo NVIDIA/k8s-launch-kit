@@ -234,20 +234,20 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 
 	// Discover OFED-dependent kernel modules per group via pod exec.
 	// Results are always saved to config for user inspection; the
-	// unloadDependentModules flag only controls template rendering.
+	// unloadThirdPartyRDMAModules flag only controls template rendering.
 	if p.RESTConfig != nil {
 		for i := range defaultConfig.ClusterConfig {
 			group := &defaultConfig.ClusterConfig[i]
-			modules, err := discoverOfedDependentModules(ctx, p.RESTConfig,
+			modules, err := discoverThirdPartyRDMAModules(ctx, p.RESTConfig,
 				defaultConfig.NetworkOperator.Namespace, group.WorkerNodes, dsPods)
 			if err != nil {
-				log.Log.Error(err, "failed to discover OFED-dependent modules", "group", group.Identifier)
-				uiOutput.Warning("Could not discover OFED modules for group %s: %v", group.Identifier, err)
+				log.Log.Error(err, "failed to discover third-party RDMA modules", "group", group.Identifier)
+				uiOutput.Warning("Could not discover third-party RDMA modules for group %s: %v", group.Identifier, err)
 				continue
 			}
 			if len(modules) > 0 {
-				group.OfedDependentModules = modules
-				uiOutput.Info("Discovered %d OFED-dependent module(s) for group %s", len(modules), group.Identifier)
+				group.ThirdPartyRDMAModules = modules
+				uiOutput.Info("Discovered %d third-party RDMA module(s) for group %s", len(modules), group.Identifier)
 			}
 		}
 	}
@@ -908,10 +908,10 @@ var ofedTargetModules = []string{
 	"ib_ipoib", "rdma_cm", "rdma_ucm", "ib_core", "ib_cm",
 }
 
-// discoverOfedDependentModules execs into a nic-configuration-daemon pod on one
-// of the group's nodes and discovers which OFED target modules are loaded along
-// with their holder (dependent) modules.
-func discoverOfedDependentModules(ctx context.Context, restConfig *rest.Config,
+// discoverThirdPartyRDMAModules execs into a nic-configuration-daemon pod on one
+// of the group's nodes and discovers third-party RDMA modules that depend on
+// OFED target modules via the kernel module holder graph.
+func discoverThirdPartyRDMAModules(ctx context.Context, restConfig *rest.Config,
 	namespace string, groupNodes []string, dsPods []corev1.Pod) ([]string, error) {
 
 	if len(groupNodes) == 0 {
@@ -937,7 +937,7 @@ func discoverOfedDependentModules(ctx context.Context, restConfig *rest.Config,
 	}
 
 	// Build a shell script that does full transitive BFS discovery of
-	// OFED-dependent modules. It scans ALL /sys/module/*/holders/ to build a
+	// third-party RDMA modules. It scans ALL /sys/module/*/holders/ to build a
 	// complete reverse dependency map, then BFS-traverses from OFED target
 	// modules upward through non-OFED holders. This matches the init
 	// container's checker.go approach.

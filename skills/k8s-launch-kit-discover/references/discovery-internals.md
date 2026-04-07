@@ -95,7 +95,7 @@ directory to find modules that depend on OFED. Common dependents include:
 - `nvidia_peermem` -- modern GPUDirect RDMA peer memory module.
 - `mlx5_vdpa` -- vDPA offload module.
 
-The discovered dependents are saved per group as `ofedDependentModules`. These are used
+The discovered dependents are saved per group as `thirdPartyRDMAModules`. These are used
 during manifest generation to configure the NicClusterPolicy's `ofedDriver` section
 with the correct secondary module list.
 
@@ -118,7 +118,7 @@ Two groups are eligible for merging if:
 
 - Worker node lists are concatenated.
 - Node selectors are updated to cover all merged nodes.
-- `ofedDependentModules` are merged as a **union** (all unique modules from both groups).
+- `thirdPartyRDMAModules` are merged as a **union** (all unique modules from both groups).
 
 ### Merge Exceptions
 

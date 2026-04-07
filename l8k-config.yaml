@@ -3,15 +3,20 @@ networkOperator:
   componentVersion: network-operator-v26.1.0
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
+  # imagePullSecrets:
+  #   - my-registry-secret
 
 podNamespace: default
+
+# workload:
+#   manifest: /path/to/my-deployment.yaml  # Custom workload manifest (replaces default example DaemonSet)
 
 docaDriver:
   enable: true
   version: doca3.3.0-26.01-1.0.0.0-0
   unloadStorageModules: true
   enableNFSRDMA: false
-  unloadDependentModules: true
+  unloadThirdPartyRDMAModules: false
 
 nvIpam:
   poolName: nv-ipam-pool

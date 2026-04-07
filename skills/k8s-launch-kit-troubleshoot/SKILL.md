@@ -55,7 +55,7 @@ kubectl get pods -A -o wide | grep -E 'ContainerCreating|Init'
 |---------|-------------|-----|
 | NicClusterPolicy `state: notReady` | OFED driver pods failing | Check mofed pod logs, verify kernel/driver compatibility |
 | Pods stuck in `ContainerCreating` | VFs not allocated or SR-IOV policy not applied | Check `sriovnetworknodestates`, verify device plugin pods |
-| `CrashLoopBackOff` on mofed pods | Kernel module conflict | Check `ofedDependentModules`, enable `unloadDependentModules` |
+| `CrashLoopBackOff` on mofed pods | Kernel module conflict | Check `thirdPartyRDMAModules`, enable `unloadThirdPartyRDMAModules` |
 | No VFs on node | SriovNetworkNodePolicy not matching | Verify `nodeSelector` labels match worker nodes |
 | RDMA not working | Missing RDMA device plugin or wrong resource name | Check `rdma-shared-dp` pods, verify resource annotations |
 | NIC config daemon not starting | Operator namespace mismatch | Verify `--network-operator-namespace` matches actual namespace |

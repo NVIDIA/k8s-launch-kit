@@ -30,10 +30,10 @@ Controls DOCA/OFED driver deployment in the NicClusterPolicy.
 | `version`                  | string | `doca3.3.0-26.01-1.0.0.0-0`     | DOCA driver image tag                                    |
 | `unloadStorageModules`     | bool   | `true`                           | Unload storage kernel modules before driver load         |
 | `enableNFSRDMA`            | bool   | `false`                          | Enable NFS over RDMA support                             |
-| `unloadDependentModules`   | bool   | `true`                           | Unload kernel modules that depend on MLX/OFED drivers    |
+| `unloadThirdPartyRDMAModules`   | bool   | `true`                           | Unload kernel modules that depend on MLX/OFED drivers    |
 
-When `unloadDependentModules` is true and dependent modules are discovered,
-the generated NicClusterPolicy includes `UNLOAD_CUSTOM_MODULES` env var
+When `unloadThirdPartyRDMAModules` is true and dependent modules are discovered,
+the generated NicClusterPolicy includes `UNLOAD_THIRD_PARTY_RDMA_MODULES` env var
 (space-separated module names) in the ofedDriver section.
 
 ## nvIpam

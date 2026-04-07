@@ -52,6 +52,9 @@ type Options struct {
 
 	EnabledPlugins []string // Enabled plugins
 
+	// Workload
+	WorkloadManifest string // Path to user-defined workload manifest
+
 	// DOCA Driver
 	EnableDocaDriver *bool // Override docaDriver.enable from config (nil = use config value)
 

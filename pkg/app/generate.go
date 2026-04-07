@@ -141,6 +141,8 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	// Store found profiles for deploy phase
 	l.foundProfiles = foundProfiles
 
+	warnThirdPartyRDMAModules(fullConfig, "generate", l.ui)
+
 	return nil
 }
 

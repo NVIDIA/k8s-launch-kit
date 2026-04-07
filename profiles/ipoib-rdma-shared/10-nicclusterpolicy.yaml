@@ -3,6 +3,13 @@ kind: NicClusterPolicy
 metadata:
   name: nic-cluster-policy
 spec:
+  {{- if .NetworkOperator.ImagePullSecrets }}
+  global:
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - {{ . }}
+    {{- end }}
+  {{- end }}
   {{- if .DOCADriver.Enable }}
   ofedDriver:
     image: doca-driver
@@ -13,11 +20,9 @@ spec:
         value: "{{.DOCADriver.UnloadStorageModules}}"
       - name: ENABLE_NFSRDMA
         value: "{{.DOCADriver.EnableNFSRDMA}}"
-      {{- if and .DOCADriver.UnloadDependentModules .ClusterConfig }}
-      {{- if .ClusterConfig.OfedDependentModules }}
-      - name: UNLOAD_CUSTOM_MODULES
-        value: "{{joinModules .ClusterConfig.OfedDependentModules}}"
-      {{- end }}
+      {{- if .DOCADriver.UnloadThirdPartyRDMAModules }}
+      - name: UNLOAD_THIRD_PARTY_RDMA_MODULES
+        value: "true"
       {{- end }}
     upgradePolicy:
       autoUpgrade: true
