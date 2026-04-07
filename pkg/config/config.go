@@ -41,23 +41,25 @@ type LaunchKubernetesConfig struct {
 	SpectrumX                *SpectrumXConfig                `yaml:"spectrumX,omitempty"`
 	NicConfigurationOperator *NicConfigurationOperatorConfig `yaml:"nicConfigurationOperator,omitempty"`
 	PodNamespace             string                          `yaml:"podNamespace,omitempty"`
+	Workload                 *WorkloadConfig                 `yaml:"workload,omitempty"`
 	Profile         *Profile               `yaml:"profile,omitempty"`
 	ClusterConfig   []ClusterConfig        `yaml:"clusterConfig,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
-	Version          string `yaml:"version"`
-	ComponentVersion string `yaml:"componentVersion"`
-	Repository       string `yaml:"repository"`
-	Namespace        string `yaml:"namespace"`
+	Version          string   `yaml:"version"`
+	ComponentVersion string   `yaml:"componentVersion"`
+	Repository       string   `yaml:"repository"`
+	Namespace        string   `yaml:"namespace"`
+	ImagePullSecrets []string `yaml:"imagePullSecrets,omitempty"`
 }
 
 type DOCADriverConfig struct {
-	Enable                    bool   `yaml:"enable"`
-	Version                   string `yaml:"version"`
-	UnloadStorageModules      bool   `yaml:"unloadStorageModules"`
-	EnableNFSRDMA             bool   `yaml:"enableNFSRDMA"`
-	UnloadDependentModules    bool   `yaml:"unloadDependentModules"`
+	Enable                       bool   `yaml:"enable"`
+	Version                      string `yaml:"version"`
+	UnloadStorageModules         bool   `yaml:"unloadStorageModules"`
+	EnableNFSRDMA                bool   `yaml:"enableNFSRDMA"`
+	UnloadThirdPartyRDMAModules  bool   `yaml:"unloadThirdPartyRDMAModules"`
 }
 
 type NvIpamConfig struct {
@@ -113,6 +115,10 @@ type MacvlanConfig struct {
 	NetworkName string `yaml:"networkName"`
 }
 
+type WorkloadConfig struct {
+	Manifest string `yaml:"manifest,omitempty"`
+}
+
 type Profile struct {
 	Fabric     string           `yaml:"fabric"`
 	Deployment string           `yaml:"deployment"`
@@ -137,7 +143,7 @@ type ClusterConfig struct {
 	PFs                  []PFConfig           `yaml:"pfs"`
 	WorkerNodes          []string             `yaml:"workerNodes"`
 	NodeSelector         map[string]string    `yaml:"nodeSelector,omitempty"`
-	OfedDependentModules []string             `yaml:"ofedDependentModules,omitempty"`
+	ThirdPartyRDMAModules []string            `yaml:"thirdPartyRDMAModules,omitempty"`
 	RailPciAddresses     [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
 }
 

@@ -139,5 +139,8 @@ func (l *Launcher) discoverClusterConfig() error {
 
 	l.ui.Success("Configuration saved: %s", savePath)
 	l.logger.Info("Discovered cluster config saved", "path", savePath)
+
+	warnThirdPartyRDMAModules(&discoveredConfig, "discover", l.ui)
+
 	return nil
 }

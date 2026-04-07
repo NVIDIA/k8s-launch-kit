@@ -82,7 +82,7 @@ clusterConfig:
     workerNodes: [node-01, node-02]
     nodeSelector:
       feature.node.kubernetes.io/pci-15b3.present: "true"
-    ofedDependentModules: [nv_peer_mem]
+    thirdPartyRDMAModules: [nv_peer_mem]
 ```
 
 ## Prerequisites

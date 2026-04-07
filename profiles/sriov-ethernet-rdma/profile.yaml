@@ -14,4 +14,4 @@ templates:
   - 35-nicinterfacenametemplate.yaml
   - 30-sriovnetworknodepolicy.yaml
   - 40-sriovnetwork.yaml
-  - 50-pod.yaml
+  - 50-example-daemonset.yaml

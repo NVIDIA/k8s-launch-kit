@@ -1,0 +1,102 @@
+{{- if .Profile.Multirail -}}
+{{- /* Create DaemonSet with all host device networks */ -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hostdev-test{{suffix .ClusterConfig.Identifier}}
+  namespace: {{$.PodNamespace}}
+spec:
+  selector:
+    matchLabels:
+      app: hostdev-test{{suffix .ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: hostdev-test{{suffix .ClusterConfig.Identifier}}
+      annotations:
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{- end}}{{- end}}
+    spec:
+      {{- if .ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- range $key, $value := .ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - {{ $value }}
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+      {{- end }}
+      containers:
+      - name: test-container
+        image: mellanox/rping-test
+        command: ["/bin/bash", "-c", "sleep infinity"]
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK"]
+        resources:
+          requests:
+            {{- range $i, $pf := .ClusterConfig.PFs}}
+            {{- if eq $pf.Traffic "east-west"}}
+            nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
+            {{- end}}
+            {{- end}}
+          limits:
+            {{- range $i, $pf := .ClusterConfig.PFs}}
+            {{- if eq $pf.Traffic "east-west"}}
+            nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
+            {{- end}}
+            {{- end}}
+{{- else}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hostdev-test{{suffix .ClusterConfig.Identifier}}
+  namespace: {{$.PodNamespace}}
+spec:
+  selector:
+    matchLabels:
+      app: hostdev-test{{suffix .ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: hostdev-test{{suffix .ClusterConfig.Identifier}}
+      annotations:
+        k8s.v1.cni.cncf.io/networks: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
+    spec:
+      {{- if .ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- range $key, $value := .ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - {{ $value }}
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+      {{- end }}
+      containers:
+      - name: test-container
+        image: mellanox/rping-test
+        command: ["/bin/bash", "-c", "sleep infinity"]
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK"]
+        resources:
+          requests:
+            nvidia.com/{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
+          limits:
+            nvidia.com/{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
+{{- end}}

@@ -3,6 +3,13 @@ kind: NicClusterPolicy
 metadata:
   name: nic-cluster-policy
 spec:
+  {{- if .NetworkOperator.ImagePullSecrets }}
+  global:
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - {{ . }}
+    {{- end }}
+  {{- end }}
   nicConfigurationOperator:
     operator:
       image: nic-configuration-operator

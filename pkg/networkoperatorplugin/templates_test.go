@@ -922,26 +922,8 @@ func indexOf(s, substr string) int {
 	return -1
 }
 
-func TestJoinModules(t *testing.T) {
-	joinModulesFunc := templateFuncs["joinModules"].(func([]string) string)
 
-	t.Run("single module", func(t *testing.T) {
-		result := joinModulesFunc([]string{"iw_cm"})
-		assert.Equal(t, "iw_cm", result)
-	})
-
-	t.Run("multiple modules space separated", func(t *testing.T) {
-		result := joinModulesFunc([]string{"iw_cm", "nfsrdma", "xprtrdma"})
-		assert.Equal(t, "iw_cm nfsrdma xprtrdma", result)
-	})
-
-	t.Run("empty list", func(t *testing.T) {
-		result := joinModulesFunc([]string{})
-		assert.Equal(t, "", result)
-	})
-}
-
-func TestMergeCompatibleGroups_MergesOfedDependentModules(t *testing.T) {
+func TestMergeCompatibleGroups_MergesThirdPartyRDMAModules(t *testing.T) {
 	rail0 := 0
 	rail1 := 1
 
@@ -955,7 +937,7 @@ func TestMergeCompatibleGroups_MergesOfedDependentModules(t *testing.T) {
 					{DeviceID: "a2dc", PciAddress: "0000:2a:00.0", Traffic: "east-west", Rail: &rail1},
 				},
 				WorkerNodes:          []string{"node-1"},
-				OfedDependentModules: []string{"iw_cm", "nfsrdma"},
+				ThirdPartyRDMAModules: []string{"iw_cm", "nfsrdma"},
 			},
 			{
 				Identifier:  "group-1",
@@ -965,13 +947,13 @@ func TestMergeCompatibleGroups_MergesOfedDependentModules(t *testing.T) {
 					{DeviceID: "a2dc", PciAddress: "0000:3c:00.0", Traffic: "east-west", Rail: &rail1},
 				},
 				WorkerNodes:          []string{"node-2"},
-				OfedDependentModules: []string{"iw_cm", "xprtrdma"},
+				ThirdPartyRDMAModules: []string{"iw_cm", "xprtrdma"},
 			},
 		}
 
 		merged, _ := mergeCompatibleGroups(groups, false)
 		assert.Len(t, merged, 1)
-		assert.Equal(t, []string{"iw_cm", "nfsrdma", "xprtrdma"}, merged[0].OfedDependentModules)
+		assert.Equal(t, []string{"iw_cm", "nfsrdma", "xprtrdma"}, merged[0].ThirdPartyRDMAModules)
 	})
 
 	t.Run("no modules when source groups have none", func(t *testing.T) {
@@ -996,7 +978,7 @@ func TestMergeCompatibleGroups_MergesOfedDependentModules(t *testing.T) {
 
 		merged, _ := mergeCompatibleGroups(groups, false)
 		assert.Len(t, merged, 1)
-		assert.Nil(t, merged[0].OfedDependentModules)
+		assert.Nil(t, merged[0].ThirdPartyRDMAModules)
 	})
 
 	t.Run("unmerged groups keep their own modules", func(t *testing.T) {
@@ -1006,21 +988,21 @@ func TestMergeCompatibleGroups_MergesOfedDependentModules(t *testing.T) {
 				ProductType:          "NVIDIA-H200",
 				PFs:                  []config.PFConfig{{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0}},
 				WorkerNodes:          []string{"node-1"},
-				OfedDependentModules: []string{"iw_cm"},
+				ThirdPartyRDMAModules: []string{"iw_cm"},
 			},
 			{
 				Identifier:           "group-1",
 				ProductType:          "NVIDIA-A100", // different product
 				PFs:                  []config.PFConfig{{DeviceID: "1017", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: &rail0}},
 				WorkerNodes:          []string{"node-2"},
-				OfedDependentModules: []string{"xprtrdma"},
+				ThirdPartyRDMAModules: []string{"xprtrdma"},
 			},
 		}
 
 		merged, _ := mergeCompatibleGroups(groups, false)
 		assert.Len(t, merged, 2)
-		assert.Equal(t, []string{"iw_cm"}, merged[0].OfedDependentModules)
-		assert.Equal(t, []string{"xprtrdma"}, merged[1].OfedDependentModules)
+		assert.Equal(t, []string{"iw_cm"}, merged[0].ThirdPartyRDMAModules)
+		assert.Equal(t, []string{"xprtrdma"}, merged[1].ThirdPartyRDMAModules)
 	})
 }
 

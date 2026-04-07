@@ -356,17 +356,17 @@ The tool resolves configuration and profile paths in order: local directory firs
 
 The `docaDriver` section controls the OFED driver deployment in the NicClusterPolicy. Set `enable: true` to include the `ofedDriver` section in generated manifests, or `enable: false` to omit it. This can also be overridden via the `--enable-doca-driver` CLI flag.
 
-#### OFED Dependent Module Blacklisting
+#### Third-Party RDMA Module Handling
 
 When the DOCA/OFED driver loads on a node, it replaces the inbox MLX kernel modules (`mlx5_core`, `mlx5_ib`, `ib_core`, etc.) with its own versions. However, if third-party or distribution-specific kernel modules depend on the inbox MLX modules (e.g., `iw_cm`, `nfsrdma`), they will block the inbox modules from being unloaded, causing the DOCA driver to fail to load or leaving the system in an inconsistent state.
 
-To solve this, `unloadDependentModules: true` enables a pre-flight check during cluster discovery. The tool execs into `nic-configuration-daemon` pods and builds a full reverse dependency graph from `/sys/module/*/holders/` for all loaded modules, then BFS-traverses from each of the following MLX/OFED kernel modules to find all transitive non-MOFED dependents:
+During cluster discovery, the tool execs into `nic-configuration-daemon` pods and builds a full reverse dependency graph from `/sys/module/*/holders/` for all loaded modules, then BFS-traverses from each of the following MLX/OFED kernel modules to find all transitive non-MOFED dependents:
 
 `mlx5_core`, `mlx5_ib`, `ib_umad`, `ib_uverbs`, `ib_ipoib`, `rdma_cm`, `rdma_ucm`, `ib_core`, `ib_cm`
 
-Any kernel modules found as transitive dependents of these — but not the MLX modules themselves — are saved per group as `ofedDependentModules`. During manifest generation, these modules are passed to the DOCA driver pod via the `UNLOAD_CUSTOM_MODULES` environment variable (space-separated), which tells the driver to blacklist and unload them before attempting to replace the inbox modules.
+Discovered third-party modules are saved per group as `thirdPartyRDMAModules` for user visibility and warnings only. When `unloadThirdPartyRDMAModules: true`, the generated NicClusterPolicy renders `UNLOAD_THIRD_PARTY_RDMA_MODULES: "true"` env var (a boolean flag, not a module list) in the ofedDriver section. The driver container has the 24 known third-party modules hardcoded.
 
-Module discovery always runs during cluster discovery (so results are saved for inspection), but the `UNLOAD_CUSTOM_MODULES` env var is only rendered when `unloadDependentModules` is `true`. When multiple node groups are merged, their dependent modules are aggregated as a union.
+Module discovery always runs during cluster discovery (so results are saved for inspection), but the `UNLOAD_THIRD_PARTY_RDMA_MODULES` env var is only rendered when `unloadThirdPartyRDMAModules` is `true`. When multiple node groups are merged, their third-party RDMA modules are aggregated as a union.
 
 ```yaml
 docaDriver:
@@ -374,22 +374,22 @@ docaDriver:
   version: doca3.3.0-26.01-1.0.0.0-0
   unloadStorageModules: true
   enableNFSRDMA: false
-  unloadDependentModules: true   # Enable dependent module discovery and unloading
+  unloadThirdPartyRDMAModules: true   # Enable third-party RDMA module unloading
 ```
 
-After discovery, the config will contain the discovered dependents:
+After discovery, the config will contain the discovered third-party modules:
 ```yaml
 clusterConfig:
 - identifier: group-0
-  ofedDependentModules:
+  thirdPartyRDMAModules:
   - iw_cm
 ```
 
 The generated NicClusterPolicy `ofedDriver` section will include:
 ```yaml
 env:
-  - name: UNLOAD_CUSTOM_MODULES
-    value: "iw_cm"
+  - name: UNLOAD_THIRD_PARTY_RDMA_MODULES
+    value: "true"
 ```
 
 ### NV-IPAM Subnet Configuration
@@ -430,12 +430,13 @@ networkOperator:
   componentVersion: network-operator-v26.1.0
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
+  imagePullSecrets: []
 docaDriver:
   enable: true
   version: doca3.2.0-25.10-1.2.8.0-2
   unloadStorageModules: false
   enableNFSRDMA: false
-  unloadDependentModules: false
+  unloadThirdPartyRDMAModules: false
 nvIpam:
   poolName: nv-ipam-pool
   subnets:
@@ -764,6 +765,23 @@ The `nicConfigurationOperator.deployNicInterfaceNameTemplate` setting controls w
 2. **rdma_shared deployment with empty network interface names** — When the deployment type is `rdma_shared` (macvlan-rdma-shared or ipoib-rdma-shared profiles) and PFs have empty `networkInterface` fields. The `rdmaSharedDevicePlugin` uses `ifNames` selectors that require interface names, so NicInterfaceNameTemplate must be enabled to provide them. This typically happens when discovery finds multiple nodes per group and omits device names for safety.
 
 When neither condition holds, name templates are disabled and the device plugin uses PCI addresses directly, avoiding the overhead of deploying the NIC configuration operator.
+
+### Custom Workload Manifest
+
+By default, l8k generates example workload DaemonSets (file pattern: `*-example-daemonset.yaml`) for each profile. To use your own workload manifest instead, specify it in the config or via CLI flag:
+
+```yaml
+workload:
+  manifest: /path/to/my-workload.yaml
+```
+
+Or via CLI:
+```bash
+l8k generate --user-config ./config.yaml \
+    --workload-manifest /path/to/my-workload.yaml \
+    --fabric ethernet --deployment-type sriov \
+    --save-deployment-files ./deployments
+```
 
 ## Docker container
 

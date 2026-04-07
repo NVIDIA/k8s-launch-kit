@@ -34,9 +34,6 @@ var templateFuncs = template.FuncMap{
 	"add": func(a, b int) int { return a + b },
 	"sub": func(a, b int) int { return a - b },
 	"gt":  func(a, b int) bool { return a > b },
-	"joinModules": func(modules []string) string {
-		return strings.Join(modules, " ")
-	},
 	"untilStep": func(start, stop, step int) []int {
 		result := []int{}
 		for i := start; i < stop; i += step {
@@ -323,7 +320,13 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 
 	results := make(map[string]string)
 
+	// When a custom workload manifest is provided, skip the default example-daemonset templates
+	skipWorkloadTemplates := cfg.Workload != nil && cfg.Workload.Manifest != ""
+
 	for _, templatePath := range profile.Templates {
+		if skipWorkloadTemplates && isWorkloadTemplate(filepath.Base(templatePath)) {
+			continue
+		}
 		// NicInterfaceNameTemplate must be rendered per original group (not merged)
 		// because each machine type has different PCI addresses for railPciAddresses.
 		renderCfg := cfg
@@ -337,6 +340,32 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 
 		for filename, content := range rendered {
 			results[filename] = content
+		}
+	}
+
+	// Render user-provided workload manifest per group
+	if skipWorkloadTemplates {
+		groups := cfg.ClusterConfig
+		if p.GroupFilter != "" {
+			for _, g := range cfg.ClusterConfig {
+				if g.Identifier == p.GroupFilter {
+					groups = []config.ClusterConfig{g}
+					break
+				}
+			}
+		}
+		for _, group := range groups {
+			ewGroup := group
+			ewGroup.PFs = filterEastWestPFs(group.PFs)
+			rendered, err := patchWorkloadManifest(cfg.Workload.Manifest, cfg, &ewGroup)
+			if err != nil {
+				return nil, fmt.Errorf("failed to patch workload manifest for group %s: %w", group.Identifier, err)
+			}
+			filename := "90-workload.yaml"
+			if group.Identifier != "" {
+				filename = fmt.Sprintf("90-workload-%s.yaml", group.Identifier)
+			}
+			results[filename] = rendered
 		}
 	}
 
@@ -511,7 +540,7 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 	// Merge OFED-dependent modules (union across all groups, deduplicated and sorted)
 	depModSet := map[string]bool{}
 	for _, idx := range indices {
-		for _, mod := range groups[idx].OfedDependentModules {
+		for _, mod := range groups[idx].ThirdPartyRDMAModules {
 			depModSet[mod] = true
 		}
 	}
@@ -530,7 +559,7 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 		Capabilities:         caps,
 		PFs:                  first.PFs, // Representative PFs from first group
 		WorkerNodes:          allNodes,
-		OfedDependentModules: mergedDepMods,
+		ThirdPartyRDMAModules: mergedDepMods,
 		NodeSelector: map[string]string{
 			"nvidia.com/gpu.product": productType,
 		},

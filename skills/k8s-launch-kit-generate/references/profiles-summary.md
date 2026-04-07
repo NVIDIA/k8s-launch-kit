@@ -132,5 +132,5 @@ returned with a validation error.
 - Files prefixed with numbers (10-, 20-, 30-...) indicate apply ordering
 - Files containing "nicinterfacenametemplate" are rendered per original (unmerged)
   group to preserve PCI-to-rail mappings
-- Pod files (40-pod.yaml, 50-pod.yaml, 90-pod.yaml) are test/example pods
+- DaemonSet files (*-example-daemonset.yaml) are test/example workload DaemonSets
 - All templates use Go `text/template` syntax with the full config context

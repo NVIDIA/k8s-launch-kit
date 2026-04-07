@@ -14,10 +14,10 @@ failures or dependency errors.
 `nv_peer_mem`) are loaded and prevent the OFED driver from replacing the in-tree modules.
 
 **Remediation**:
-1. Check `ofedDependentModules` in your cluster config -- these modules must be unloaded.
-2. Set `docaDriver.unloadDependentModules: true` in your l8k config.
+1. Check `thirdPartyRDMAModules` in your cluster config -- these modules must be unloaded.
+2. Set `docaDriver.unloadThirdPartyRDMAModules: true` in your l8k config.
 3. Re-run discovery (`--discover-cluster-config`) to refresh the dependent modules list.
-4. Redeploy. The generated NicClusterPolicy will include `UNLOAD_CUSTOM_MODULES` env var
+4. Redeploy. The generated NicClusterPolicy will include `UNLOAD_THIRD_PARTY_RDMA_MODULES` env var
    in the ofedDriver section.
 5. If the issue persists, exec into the OFED pod and check `/sys/module/*/holders/` to
    find additional unlisted dependents.

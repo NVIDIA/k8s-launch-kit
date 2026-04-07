@@ -55,10 +55,10 @@ docaDriver:
   enableNFSRDMA: false
 
   # bool | default: true
-  # When true, adds UNLOAD_CUSTOM_MODULES env var to the ofedDriver container.
-  # The list is populated from ofedDependentModules discovered per group.
+  # When true, adds UNLOAD_THIRD_PARTY_RDMA_MODULES env var to the ofedDriver container.
+  # The list is populated from thirdPartyRDMAModules discovered per group.
   # These modules are blacklisted and unloaded before OFED driver reload.
-  unloadDependentModules: true
+  unloadThirdPartyRDMAModules: true
 
 # ============================================================================
 # NV-IPAM (IP Address Management)
@@ -291,7 +291,7 @@ clusterConfig:
 
     # list[string] — Kernel modules to blacklist for OFED driver loading.
     # Discovered by execing into nic-configuration-daemon pods.
-    # ofedDependentModules:
+    # thirdPartyRDMAModules:
     #   - nv_peer_mem
     #   - nvidia_peermem
 ```

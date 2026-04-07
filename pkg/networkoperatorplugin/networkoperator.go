@@ -118,6 +118,14 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		fullConfig.Profile.Ai = true
 	}
 
+	// Apply workload manifest override from CLI
+	if options.WorkloadManifest != "" {
+		if fullConfig.Workload == nil {
+			fullConfig.Workload = &config.WorkloadConfig{}
+		}
+		fullConfig.Workload.Manifest = options.WorkloadManifest
+	}
+
 	// Apply DOCA driver enable override from CLI
 	if options.EnableDocaDriver != nil {
 		if fullConfig.DOCADriver == nil {

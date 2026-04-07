@@ -70,6 +70,7 @@ var (
 	outputFormat                string
 	yesFlag                     bool
 	quietFlag                   bool
+	workloadManifest            string
 	dryRunFlag                  bool
 )
 
@@ -151,6 +152,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			LLMInteractive:        llmInteractive,
 			SosreportPath:         sosreportPath,
 			LLMThrottle:           llmThrottle,
+			WorkloadManifest:      workloadManifest,
 			OutputFormat:           outputFormat,
 			Yes:                    yesFlag,
 			Quiet:                  quietFlag,
@@ -227,6 +229,7 @@ func init() {
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "./deployment", "Save generated deployment files to the specified directory")
 	rootCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Namespace for pods and network resources (overrides config podNamespace, default: 'default')")
 	rootCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment (overrides config file docaDriver.enable)")
+	rootCmd.Flags().StringVar(&workloadManifest, "workload-manifest", "", "Path to a custom workload manifest YAML (replaces the profile's default example workload)")
 	rootCmd.Flags().StringVar(&sosreportPath, "sosreport-path", "", "Path to pre-collected sosreport directory for troubleshooting analysis (implies --llm-interactive)")
 	rootCmd.Flags().BoolVar(&llmThrottle, "llm-throttle", false, "Enable rate limit throttling for LLM API calls (use when hitting token-per-minute limits)")
 
@@ -255,6 +258,13 @@ func validateConfig(options *options.Options) error {
 	// Validate --dry-run requires --deploy
 	if options.DryRun && !options.Deploy {
 		return fmt.Errorf("--dry-run requires --deploy to be specified (it previews what deploy would do)")
+	}
+
+	// Validate --workload-manifest file exists
+	if options.WorkloadManifest != "" {
+		if _, err := os.Stat(options.WorkloadManifest); os.IsNotExist(err) {
+			return fmt.Errorf("workload manifest file does not exist: %s", options.WorkloadManifest)
+		}
 	}
 
 	// At least one plugin should be enabled

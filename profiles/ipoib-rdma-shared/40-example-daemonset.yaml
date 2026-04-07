@@ -1,0 +1,103 @@
+{{- if .Profile.Multirail -}}
+{{- /* Create DaemonSet with all IPoIB networks */ -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ipoib-test{{suffix .ClusterConfig.Identifier}}
+  namespace: {{$.PodNamespace}}
+spec:
+  selector:
+    matchLabels:
+      app: ipoib-test{{suffix .ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: ipoib-test{{suffix .ClusterConfig.Identifier}}
+      annotations:
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{- end}}{{- end}}
+    spec:
+      {{- if .ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- range $key, $value := .ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - {{ $value }}
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+      {{- end }}
+      containers:
+      - name: test-container
+        image: mellanox/rping-test
+        command: ["/bin/bash", "-c", "sleep infinity"]
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK"]
+        resources:
+          requests:
+            {{- range $i, $pf := .ClusterConfig.PFs}}
+            {{- if eq $pf.Traffic "east-west"}}
+            rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}: 1
+            {{- end}}
+            {{- end}}
+          limits:
+            {{- range $i, $pf := .ClusterConfig.PFs}}
+            {{- if eq $pf.Traffic "east-west"}}
+            rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}: 1
+            {{- end}}
+            {{- end}}
+{{- else}}
+{{/* Create DaemonSet for shared or first device network */}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ipoib-test{{suffix $.ClusterConfig.Identifier}}
+  namespace: {{$.PodNamespace}}
+spec:
+  selector:
+    matchLabels:
+      app: ipoib-test{{suffix $.ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: ipoib-test{{suffix $.ClusterConfig.Identifier}}
+      annotations:
+        k8s.v1.cni.cncf.io/networks: {{.Ipoib.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
+    spec:
+      {{- if $.ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- range $key, $value := $.ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - {{ $value }}
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+      {{- end }}
+      containers:
+      - name: test-container
+        image: mellanox/rping-test
+        command: ["/bin/bash", "-c", "sleep infinity"]
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK"]
+        resources:
+          requests:
+            rdma/{{.RdmaShared.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}: 1
+          limits:
+            rdma/{{.RdmaShared.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}: 1
+{{end}}

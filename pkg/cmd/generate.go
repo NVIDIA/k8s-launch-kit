@@ -97,6 +97,7 @@ Optionally deploy the generated manifests with --deploy.`,
 			Kubeconfig:              kubeconfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
+			WorkloadManifest:        workloadManifest,
 			OutputFormat:             outputFormat,
 			Yes:                      yesFlag,
 			Quiet:                    quietFlag,
@@ -157,6 +158,7 @@ func init() {
 	generateCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "", "Output directory for generated YAMLs")
 	generateCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Namespace for pods and network resources")
 	generateCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment")
+	generateCmd.Flags().StringVar(&workloadManifest, "workload-manifest", "", "Path to a custom workload manifest YAML")
 	generateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace")
 	generateCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 
