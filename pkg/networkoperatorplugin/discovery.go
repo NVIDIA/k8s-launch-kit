@@ -89,14 +89,16 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		Spec: netop.NicClusterPolicySpec{
 			NicConfigurationOperator: &netop.NicConfigurationOperatorSpec{
 				Operator: &netop.ImageSpec{
-					Repository: defaultConfig.NetworkOperator.Repository,
-					Image:      "nic-configuration-operator",
-					Version:    defaultConfig.NetworkOperator.ComponentVersion,
+					Repository:       defaultConfig.NetworkOperator.Repository,
+					Image:            "nic-configuration-operator",
+					Version:          defaultConfig.NetworkOperator.ComponentVersion,
+					ImagePullSecrets: defaultConfig.NetworkOperator.ImagePullSecrets,
 				},
 				ConfigurationDaemon: &netop.ImageSpec{
-					Repository: defaultConfig.NetworkOperator.Repository,
-					Image:      "nic-configuration-operator-daemon",
-					Version:    defaultConfig.NetworkOperator.ComponentVersion,
+					Repository:       defaultConfig.NetworkOperator.Repository,
+					Image:            "nic-configuration-operator-daemon",
+					Version:          defaultConfig.NetworkOperator.ComponentVersion,
+					ImagePullSecrets: defaultConfig.NetworkOperator.ImagePullSecrets,
 				},
 			},
 		},

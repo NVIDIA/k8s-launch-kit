@@ -62,6 +62,7 @@ The root command `l8k --discover-cluster-config ...` still works for backward-co
 | `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`) |
 | `--pod-namespace <NS>` | Namespace for pods and network resources (default: `default`) |
 | `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
+| `--image-pull-secrets <NAMES>` | Image pull secret names for NicClusterPolicy (comma-separated) |
 
 ## Agent / JSON Mode
 

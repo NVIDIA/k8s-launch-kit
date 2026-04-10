@@ -102,6 +102,7 @@ Flags:
       --fabric string                     Select the fabric type to deploy (infiniband, ethernet)
       --group string                      Generate templates for a specific group only (e.g., group-0)
   -h, --help                              help for l8k
+      --image-pull-secrets strings        Image pull secret names for NicClusterPolicy (comma-separated)
       --kubeconfig string                 Path to kubeconfig file for cluster deployment (required when using --deploy)
       --node-selector string             Filter nodes for discovery by label (default "feature.node.kubernetes.io/pci-15b3.present=true")
       --llm-api-key string                API key for the LLM API (required when using --prompt)

@@ -174,6 +174,10 @@ var schemaCmd = &cobra.Command{
 					Default:     "feature.node.kubernetes.io/pci-15b3.present=true",
 					Description: "Filter nodes for discovery by label (e.g., key=value,key2=value2)",
 				},
+				"--image-pull-secrets": {
+					Type:        "[]string",
+					Description: "Image pull secret names for NicClusterPolicy (comma-separated)",
+				},
 			},
 		}
 		data, _ := json.MarshalIndent(s, "", "  ")
