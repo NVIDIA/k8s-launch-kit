@@ -82,6 +82,14 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		fullConfig.NetworkOperator.Namespace = options.NetworkOperatorNamespace
 	}
 
+	// Apply image pull secrets override from CLI
+	if len(options.ImagePullSecrets) > 0 {
+		if fullConfig.NetworkOperator == nil {
+			fullConfig.NetworkOperator = &config.NetworkOperatorConfig{}
+		}
+		fullConfig.NetworkOperator.ImagePullSecrets = options.ImagePullSecrets
+	}
+
 	// Apply pod namespace override from CLI
 	if options.PodNamespace != "" {
 		fullConfig.PodNamespace = options.PodNamespace

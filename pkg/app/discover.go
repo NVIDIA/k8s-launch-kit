@@ -97,6 +97,12 @@ func (l *Launcher) discoverClusterConfig() error {
 		l.logger.Info("Using CLI override for network operator namespace", "namespace", l.options.NetworkOperatorNamespace)
 	}
 
+	// Override image pull secrets from CLI flag if provided
+	if len(l.options.ImagePullSecrets) > 0 {
+		defaults.NetworkOperator.ImagePullSecrets = l.options.ImagePullSecrets
+		l.logger.Info("Using CLI override for image pull secrets", "secrets", l.options.ImagePullSecrets)
+	}
+
 	defaults.ClusterConfig = nil
 	defaults.Profile = nil
 

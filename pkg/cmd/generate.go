@@ -91,6 +91,7 @@ Optionally deploy the generated manifests with --deploy.`,
 			NumberOfPlanes:          numberOfPlanes,
 			Group:                   group,
 			NodeSelector:            nodeSelector,
+			ImagePullSecrets:        imagePullSecrets,
 			PodNamespace:            podNamespace,
 			SaveDeploymentFiles:     saveDeploymentFiles,
 			Deploy:                  deploy,
@@ -160,6 +161,7 @@ func init() {
 	generateCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment")
 	generateCmd.Flags().StringVar(&workloadManifest, "workload-manifest", "", "Path to a custom workload manifest YAML")
 	generateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace")
+	generateCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	generateCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 
 	// Deploy (optional)

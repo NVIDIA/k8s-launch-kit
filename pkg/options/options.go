@@ -26,7 +26,8 @@ type Options struct {
 	UserConfig              string // Path to user-provided config (skips discovery)
 	DiscoverClusterConfig   bool   // Whether to discover cluster config
 	SaveClusterConfig       string // Path to save discovered config
-	NetworkOperatorNamespace string // Override namespace for Network Operator (optional)
+	NetworkOperatorNamespace string   // Override namespace for Network Operator (optional)
+	ImagePullSecrets        []string // Image pull secret names for NicClusterPolicy
 
 	// Phase 2: Deployment Generation
 	Fabric              string // Fabric type to deploy

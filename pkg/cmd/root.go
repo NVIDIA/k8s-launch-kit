@@ -64,6 +64,7 @@ var (
 	networkOperatorNamespace    string
 	group                       string
 	nodeSelector                string
+	imagePullSecrets            []string
 	podNamespace                string
 	sosreportPath               string
 	llmThrottle                 bool
@@ -138,6 +139,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			Prompt:                prompt,
 			Group:                group,
 			NodeSelector:         nodeSelector,
+			ImagePullSecrets:     imagePullSecrets,
 			PodNamespace:         podNamespace,
 			SaveDeploymentFiles:   saveDeploymentFiles,
 			Deploy:                deploy,
@@ -220,6 +222,7 @@ func init() {
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
 	rootCmd.Flags().StringVar(&group, "group", "", "Generate templates for a specific group only (e.g., group-0)")
 	rootCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes for discovery by label (e.g., key=value,key2=value2)")
+	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	rootCmd.Flags().StringVar(&prompt, "prompt", "", "Path to file with a prompt to use for LLM-assisted profile generation")
 	rootCmd.Flags().StringVar(&llmApiKey, "llm-api-key", "", "API key for the LLM API (required when using --prompt)")
 	rootCmd.Flags().StringVar(&llmApiUrl, "llm-api-url", "", "API URL for the LLM API")

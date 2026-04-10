@@ -444,4 +444,39 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		assert.Equal(t, "hwplb", cfg.Profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 2, cfg.Profile.SpectrumX.NumberOfPlanes)
 	})
+
+	t.Run("CLI image-pull-secrets overrides config", func(t *testing.T) {
+		cfg := &config.LaunchKubernetesConfig{
+			NetworkOperator: &config.NetworkOperatorConfig{
+				ImagePullSecrets: []string{"old-secret"},
+			},
+			Profile: &config.Profile{},
+		}
+		err := p.ApplyOptionsToConfig(options.Options{ImagePullSecrets: []string{"new-secret"}}, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"new-secret"}, cfg.NetworkOperator.ImagePullSecrets)
+	})
+
+	t.Run("empty CLI image-pull-secrets preserves config", func(t *testing.T) {
+		cfg := &config.LaunchKubernetesConfig{
+			NetworkOperator: &config.NetworkOperatorConfig{
+				ImagePullSecrets: []string{"existing"},
+			},
+			Profile: &config.Profile{},
+		}
+		err := p.ApplyOptionsToConfig(options.Options{}, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"existing"}, cfg.NetworkOperator.ImagePullSecrets)
+	})
+
+	t.Run("CLI image-pull-secrets creates NetworkOperator if nil", func(t *testing.T) {
+		cfg := &config.LaunchKubernetesConfig{
+			NetworkOperator: nil,
+			Profile:         &config.Profile{},
+		}
+		err := p.ApplyOptionsToConfig(options.Options{ImagePullSecrets: []string{"my-secret"}}, cfg)
+		require.NoError(t, err)
+		require.NotNil(t, cfg.NetworkOperator)
+		assert.Equal(t, []string{"my-secret"}, cfg.NetworkOperator.ImagePullSecrets)
+	})
 }

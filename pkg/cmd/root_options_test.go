@@ -432,3 +432,40 @@ func TestMissingInvalidParams(t *testing.T) {
 		assert.Contains(t, reason, "multirail")
 	})
 }
+
+func TestImagePullSecretsOptionFlow(t *testing.T) {
+	plugin := &networkoperatorplugin.NetworkOperatorPlugin{}
+
+	t.Run("CLI image-pull-secrets flows through to config", func(t *testing.T) {
+		fullConfig := &config.LaunchKubernetesConfig{
+			NetworkOperator: &config.NetworkOperatorConfig{
+				Repository: "nvcr.io/nvidia/mellanox",
+			},
+			Profile: &config.Profile{
+				Fabric:     "ethernet",
+				Deployment: "sriov",
+			},
+		}
+		opts := options.Options{
+			ImagePullSecrets: []string{"registry-secret", "other-secret"},
+		}
+		err := plugin.ApplyOptionsToConfig(opts, fullConfig)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"registry-secret", "other-secret"}, fullConfig.NetworkOperator.ImagePullSecrets)
+	})
+
+	t.Run("empty CLI preserves config image-pull-secrets", func(t *testing.T) {
+		fullConfig := &config.LaunchKubernetesConfig{
+			NetworkOperator: &config.NetworkOperatorConfig{
+				ImagePullSecrets: []string{"existing-secret"},
+			},
+			Profile: &config.Profile{
+				Fabric:     "ethernet",
+				Deployment: "sriov",
+			},
+		}
+		err := plugin.ApplyOptionsToConfig(options.Options{}, fullConfig)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"existing-secret"}, fullConfig.NetworkOperator.ImagePullSecrets)
+	})
+}

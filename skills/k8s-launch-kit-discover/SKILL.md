@@ -37,6 +37,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--network-operator-namespace` | — | `nvidia-network-operator` | Override operator namespace |
 | `--user-config` | — | — | Base config to merge with discovered hardware |
 | `--node-selector` | — | — | Restrict to matching nodes |
+| `--image-pull-secrets` | — | — | Image pull secret names for NicClusterPolicy (comma-separated) |
 
 ## Examples
 
