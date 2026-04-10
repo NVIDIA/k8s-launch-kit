@@ -103,7 +103,7 @@ Flags:
       --group string                      Generate templates for a specific group only (e.g., group-0)
   -h, --help                              help for l8k
       --kubeconfig string                 Path to kubeconfig file for cluster deployment (required when using --deploy)
-      --label-selector string             Filter nodes for discovery by label (default "feature.node.kubernetes.io/pci-15b3.present=true")
+      --node-selector string             Filter nodes for discovery by label (default "feature.node.kubernetes.io/pci-15b3.present=true")
       --llm-api-key string                API key for the LLM API (required when using --prompt)
       --llm-api-url string                API URL for the LLM API
       --llm-interactive                   Enable interactive chat mode for LLM-assisted profile selection
@@ -188,7 +188,7 @@ Filter discovery to specific nodes using a label selector:
 ```bash
 l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./my-cluster-config.yaml \
-    --label-selector "feature.node.kubernetes.io/pci-15b3.present=true"
+    --node-selector "feature.node.kubernetes.io/pci-15b3.present=true"
 ```
 
 Or using the root command (backward compatible):

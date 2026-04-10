@@ -138,7 +138,6 @@ type ClusterConfig struct {
 	Identifier           string               `yaml:"identifier"`
 	MachineType          string               `yaml:"machineType,omitempty"`
 	ProductType          string               `yaml:"productType,omitempty"`
-	LabelSelector        map[string]string    `yaml:"labelSelector,omitempty"`
 	Capabilities         *ClusterCapabilities `yaml:"capabilities"`
 	PFs                  []PFConfig           `yaml:"pfs"`
 	WorkerNodes          []string             `yaml:"workerNodes"`

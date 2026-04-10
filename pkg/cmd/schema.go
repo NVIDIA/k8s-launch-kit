@@ -169,7 +169,7 @@ var schemaCmd = &cobra.Command{
 					Type:        "string",
 					Description: "Generate templates for a specific group only (e.g., group-0)",
 				},
-				"--label-selector": {
+				"--node-selector": {
 					Type:        "string",
 					Default:     "feature.node.kubernetes.io/pci-15b3.present=true",
 					Description: "Filter nodes for discovery by label (e.g., key=value,key2=value2)",

@@ -204,13 +204,13 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		nodeLabels = map[string]map[string]string{}
 	}
 
-	// Filter expected nodes using the label selector.
+	// Filter expected nodes using the node selector.
 	// Nodes not matching will never report NicDevices, so waiting for them
 	// would cause a timeout.
-	if len(p.LabelSelector) > 0 {
-		expectedNodes = filterNodesByLabels(expectedNodes, nodeLabels, p.LabelSelector)
+	if len(p.NodeSelector) > 0 {
+		expectedNodes = filterNodesByLabels(expectedNodes, nodeLabels, p.NodeSelector)
 		if len(expectedNodes) == 0 {
-			return fmt.Errorf("no nodes match the label selector %v", p.LabelSelector)
+			return fmt.Errorf("no nodes match the node selector %v", p.NodeSelector)
 		}
 	}
 
@@ -225,7 +225,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		return err
 	}
 
-	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, p.LabelSelector)
+	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, p.NodeSelector)
 	defaultConfig.ClusterConfig = clusterConfig
 
 	for _, w := range nsWarnings {
@@ -556,7 +556,7 @@ type nodeInfo struct {
 	hasPCI  bool
 }
 
-func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, labelSelector map[string]string) ([]config.ClusterConfig, []string) {
+func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, nodeSelector map[string]string) ([]config.ClusterConfig, []string) {
 	// Step 1: Build per-node PF map and track capabilities per node
 	nodeMap := map[string]*nodeInfo{}
 
@@ -714,7 +714,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			Identifier:    identifier,
 			MachineType:   machineType,
 			ProductType:   productType,
-			LabelSelector: labelSelector,
+			NodeSelector:  nodeSelector,
 			Capabilities: &config.ClusterCapabilities{
 				Nodes: &config.NodesCapabilities{
 					Rdma:  g.hasRdma,
@@ -729,7 +729,8 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		groups = append(groups, cc)
 	}
 
-	// Step 4: Compute nodeSelectors per group
+	// Step 4: Compute nodeSelectors per group — overrides the initial
+	// value with discriminating labels when multiple groups exist.
 	if len(groups) > 1 {
 		computeNodeSelectors(groups, nodeLabels)
 	}

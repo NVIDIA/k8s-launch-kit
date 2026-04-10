@@ -189,7 +189,7 @@ NVIDIA/Mellanox NICs detected by NFD.
 **Remediation**:
 1. Verify nodes have the expected label:
    `kubectl get nodes -l feature.node.kubernetes.io/pci-15b3.present=true`
-2. If using `--label-selector`, verify your selector matches existing node labels:
+2. If using `--node-selector`, verify your selector matches existing node labels:
    `kubectl get nodes --show-labels`
 3. Verify Node Feature Discovery (NFD) is running:
    `kubectl get pods -n node-feature-discovery` (or the namespace where NFD is deployed)

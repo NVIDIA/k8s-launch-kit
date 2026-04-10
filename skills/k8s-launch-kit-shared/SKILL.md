@@ -61,7 +61,7 @@ The root command `l8k --discover-cluster-config ...` still works for backward-co
 | `--quiet` / `-q` | Suppress informational output (errors still shown) |
 | `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`) |
 | `--pod-namespace <NS>` | Namespace for pods and network resources (default: `default`) |
-| `--label-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
+| `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
 
 ## Agent / JSON Mode
 
