@@ -36,7 +36,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--save-cluster-config` | Yes | — | Output path for cluster-config.yaml |
 | `--network-operator-namespace` | — | `nvidia-network-operator` | Override operator namespace |
 | `--user-config` | — | — | Base config to merge with discovered hardware |
-| `--label-selector` | — | — | Restrict to matching nodes |
+| `--node-selector` | — | — | Restrict to matching nodes |
 
 ## Examples
 

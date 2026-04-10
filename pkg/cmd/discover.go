@@ -69,7 +69,7 @@ east-west vs north-south NICs, and probes OFED dependent modules.`,
 			UserConfig:              userConfig,
 			SaveClusterConfig:       saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
-			LabelSelector:           labelSelector,
+			NodeSelector:            nodeSelector,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
 			OutputFormat:             outputFormat,
 			Yes:                      yesFlag,
@@ -94,6 +94,6 @@ func init() {
 	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Base config to merge with discovered hardware")
 	discoverCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "", "Output path for cluster-config.yaml")
 	discoverCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace (default: nvidia-network-operator)")
-	discoverCmd.Flags().StringVar(&labelSelector, "label-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes by label")
+	discoverCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes by label")
 	discoverCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 }

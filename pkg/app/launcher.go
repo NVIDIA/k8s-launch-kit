@@ -87,7 +87,7 @@ func (l *Launcher) Run() error {
 		case networkoperatorplugin.PluginName:
 			l.plugins[pluginName] = &networkoperatorplugin.NetworkOperatorPlugin{
 				GroupFilter:   l.options.Group,
-				LabelSelector: parseLabelSelector(l.options.LabelSelector),
+				NodeSelector: parseNodeSelector(l.options.NodeSelector),
 			}
 		default:
 			err := fmt.Errorf("unknown plugin: %s", pluginName)
@@ -177,8 +177,8 @@ func (l *Launcher) executeWorkflow() error {
 	return nil
 }
 
-// parseLabelSelector parses a comma-separated "key=value" string into a map.
-func parseLabelSelector(s string) map[string]string {
+// parseNodeSelector parses a comma-separated "key=value" string into a map.
+func parseNodeSelector(s string) map[string]string {
 	if s == "" {
 		return nil
 	}

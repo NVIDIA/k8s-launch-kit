@@ -35,7 +35,7 @@ const (
 
 type NetworkOperatorPlugin struct {
 	GroupFilter   string
-	LabelSelector map[string]string
+	NodeSelector map[string]string
 	RESTConfig    *rest.Config
 }
 
