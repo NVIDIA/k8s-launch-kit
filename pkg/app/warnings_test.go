@@ -50,7 +50,7 @@ func (p *noopProgress) Fail(message string)    {}
 func TestWarnThirdPartyRDMAModules_DriverDisabled(t *testing.T) {
 	out := &testOutput{}
 	cfg := &config.LaunchKubernetesConfig{
-		DOCADriver: &config.DOCADriverConfig{Enable: false},
+		DOCADriver: &config.DOCADriverConfig{Enable: false, UnloadThirdPartyRDMAModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
 		},
@@ -71,22 +71,7 @@ func TestWarnThirdPartyRDMAModules_NilDriver(t *testing.T) {
 	assert.Empty(t, out.warnings)
 }
 
-func TestWarnThirdPartyRDMAModules_UnloadFalse_Discover(t *testing.T) {
-	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
-		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: false},
-		ClusterConfig: []config.ClusterConfig{
-			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe", "ib_isert"}},
-		},
-	}
-	warnThirdPartyRDMAModules(cfg, "discover", out)
-	assert.Len(t, out.warnings, 1)
-	assert.Contains(t, out.warnings[0], "rdma_rxe, ib_isert")
-	assert.Contains(t, out.warnings[0], "g1")
-	assert.Contains(t, out.warnings[0], "unloadThirdPartyRDMAModules: true")
-}
-
-func TestWarnThirdPartyRDMAModules_UnloadFalse_Generate(t *testing.T) {
+func TestWarnThirdPartyRDMAModules_FlagFalse_NoWarning(t *testing.T) {
 	out := &testOutput{}
 	cfg := &config.LaunchKubernetesConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: false},
@@ -94,12 +79,27 @@ func TestWarnThirdPartyRDMAModules_UnloadFalse_Generate(t *testing.T) {
 			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
 		},
 	}
-	warnThirdPartyRDMAModules(cfg, "generate", out)
-	assert.Len(t, out.warnings, 1)
-	assert.Contains(t, out.warnings[0], "DOCA driver container will fail")
+	warnThirdPartyRDMAModules(cfg, "discover", out)
+	assert.Empty(t, out.warnings, "no warning when flag is false — discovery auto-enables it")
 }
 
-func TestWarnThirdPartyRDMAModules_UnloadTrue_Generate(t *testing.T) {
+func TestWarnThirdPartyRDMAModules_AutoEnabled_Discover(t *testing.T) {
+	out := &testOutput{}
+	cfg := &config.LaunchKubernetesConfig{
+		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
+		ClusterConfig: []config.ClusterConfig{
+			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
+		},
+	}
+	warnThirdPartyRDMAModules(cfg, "discover", out)
+	assert.Len(t, out.warnings, 1)
+	assert.Contains(t, out.warnings[0], "unloadThirdPartyRDMAModules is enabled")
+	assert.Contains(t, out.warnings[0], "rdma_rxe")
+	assert.Contains(t, out.warnings[0], "g1")
+	assert.Contains(t, out.warnings[0], "Verify it is safe")
+}
+
+func TestWarnThirdPartyRDMAModules_AutoEnabled_Generate(t *testing.T) {
 	out := &testOutput{}
 	cfg := &config.LaunchKubernetesConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
@@ -110,27 +110,13 @@ func TestWarnThirdPartyRDMAModules_UnloadTrue_Generate(t *testing.T) {
 	warnThirdPartyRDMAModules(cfg, "generate", out)
 	assert.Len(t, out.warnings, 1)
 	assert.Contains(t, out.warnings[0], "unloadThirdPartyRDMAModules is enabled")
-	assert.Contains(t, out.warnings[0], "rdma_rxe")
-	assert.Contains(t, out.warnings[0], "g1")
 	assert.Contains(t, out.warnings[0], "Verify it is safe")
-}
-
-func TestWarnThirdPartyRDMAModules_UnloadTrue_Discover(t *testing.T) {
-	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
-		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
-		ClusterConfig: []config.ClusterConfig{
-			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
-		},
-	}
-	warnThirdPartyRDMAModules(cfg, "discover", out)
-	assert.Empty(t, out.warnings)
 }
 
 func TestWarnThirdPartyRDMAModules_NoModules(t *testing.T) {
 	out := &testOutput{}
 	cfg := &config.LaunchKubernetesConfig{
-		DOCADriver: &config.DOCADriverConfig{Enable: true},
+		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", ThirdPartyRDMAModules: nil},
 			{Identifier: "g2", ThirdPartyRDMAModules: []string{}},
@@ -143,10 +129,10 @@ func TestWarnThirdPartyRDMAModules_NoModules(t *testing.T) {
 func TestWarnThirdPartyRDMAModules_MultipleGroups(t *testing.T) {
 	out := &testOutput{}
 	cfg := &config.LaunchKubernetesConfig{
-		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: false},
+		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "group-a", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
-			{Identifier: "group-b", ThirdPartyRDMAModules: []string{"ib_isert", "ib_srpt"}},
+			{Identifier: "group-b", ThirdPartyRDMAModules: []string{"qedr", "siw"}},
 		},
 	}
 	warnThirdPartyRDMAModules(cfg, "discover", out)
@@ -154,5 +140,70 @@ func TestWarnThirdPartyRDMAModules_MultipleGroups(t *testing.T) {
 	assert.Contains(t, out.warnings[0], "group-a")
 	assert.Contains(t, out.warnings[0], "rdma_rxe")
 	assert.Contains(t, out.warnings[1], "group-b")
-	assert.Contains(t, out.warnings[1], "ib_isert, ib_srpt")
+	assert.Contains(t, out.warnings[1], "qedr, siw")
+}
+
+func TestWarnStorageModules_FlagFalse_NoWarning(t *testing.T) {
+	out := &testOutput{}
+	cfg := &config.LaunchKubernetesConfig{
+		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadStorageModules: false},
+		ClusterConfig: []config.ClusterConfig{
+			{Identifier: "g1", StorageModules: []string{"nvme_rdma", "ib_isert"}},
+		},
+	}
+	warnStorageModules(cfg, "discover", out)
+	assert.Empty(t, out.warnings, "no warning when flag is false — discovery auto-enables it")
+}
+
+func TestWarnStorageModules_AutoEnabled_Discover(t *testing.T) {
+	out := &testOutput{}
+	cfg := &config.LaunchKubernetesConfig{
+		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadStorageModules: true},
+		ClusterConfig: []config.ClusterConfig{
+			{Identifier: "g1", StorageModules: []string{"nvme_rdma"}},
+		},
+	}
+	warnStorageModules(cfg, "discover", out)
+	assert.Len(t, out.warnings, 1)
+	assert.Contains(t, out.warnings[0], "unloadStorageModules is enabled")
+	assert.Contains(t, out.warnings[0], "nvme_rdma")
+	assert.Contains(t, out.warnings[0], "Verify")
+}
+
+func TestWarnStorageModules_AutoEnabled_Generate(t *testing.T) {
+	out := &testOutput{}
+	cfg := &config.LaunchKubernetesConfig{
+		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadStorageModules: true},
+		ClusterConfig: []config.ClusterConfig{
+			{Identifier: "g1", StorageModules: []string{"nvme_rdma"}},
+		},
+	}
+	warnStorageModules(cfg, "generate", out)
+	assert.Len(t, out.warnings, 1)
+	assert.Contains(t, out.warnings[0], "unloadStorageModules is enabled")
+	assert.Contains(t, out.warnings[0], "Verify")
+}
+
+func TestWarnStorageModules_NoModules(t *testing.T) {
+	out := &testOutput{}
+	cfg := &config.LaunchKubernetesConfig{
+		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadStorageModules: true},
+		ClusterConfig: []config.ClusterConfig{
+			{Identifier: "g1", StorageModules: nil},
+		},
+	}
+	warnStorageModules(cfg, "generate", out)
+	assert.Empty(t, out.warnings)
+}
+
+func TestWarnStorageModules_DriverDisabled(t *testing.T) {
+	out := &testOutput{}
+	cfg := &config.LaunchKubernetesConfig{
+		DOCADriver: &config.DOCADriverConfig{Enable: false, UnloadStorageModules: true},
+		ClusterConfig: []config.ClusterConfig{
+			{Identifier: "g1", StorageModules: []string{"nvme_rdma"}},
+		},
+	}
+	warnStorageModules(cfg, "discover", out)
+	assert.Empty(t, out.warnings)
 }

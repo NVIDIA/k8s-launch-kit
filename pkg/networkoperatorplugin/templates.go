@@ -553,6 +553,22 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 		slices.Sort(mergedDepMods)
 	}
 
+	// Merge storage modules (same union pattern)
+	storageModSet := map[string]bool{}
+	for _, idx := range indices {
+		for _, mod := range groups[idx].StorageModules {
+			storageModSet[mod] = true
+		}
+	}
+	var mergedStorageMods []string
+	if len(storageModSet) > 0 {
+		mergedStorageMods = make([]string, 0, len(storageModSet))
+		for mod := range storageModSet {
+			mergedStorageMods = append(mergedStorageMods, mod)
+		}
+		slices.Sort(mergedStorageMods)
+	}
+
 	return config.ClusterConfig{
 		Identifier:           sanitizeIdentifier(productType),
 		ProductType:          productType,
@@ -560,6 +576,7 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 		PFs:                  first.PFs, // Representative PFs from first group
 		WorkerNodes:          allNodes,
 		ThirdPartyRDMAModules: mergedDepMods,
+		StorageModules:        mergedStorageMods,
 		NodeSelector: map[string]string{
 			"nvidia.com/gpu.product": productType,
 		},

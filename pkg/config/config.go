@@ -143,6 +143,7 @@ type ClusterConfig struct {
 	WorkerNodes          []string             `yaml:"workerNodes"`
 	NodeSelector         map[string]string    `yaml:"nodeSelector,omitempty"`
 	ThirdPartyRDMAModules []string            `yaml:"thirdPartyRDMAModules,omitempty"`
+	StorageModules        []string            `yaml:"storageModules,omitempty"`
 	RailPciAddresses     [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
 }
 
