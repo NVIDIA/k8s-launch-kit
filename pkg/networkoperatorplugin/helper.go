@@ -124,6 +124,50 @@ func WaitNicClusterPolicyReady(parentCtx context.Context, c client.Client, name 
 	}
 }
 
+// WaitNicNodePolicyReady polls NicNodePolicy until Status.State is ready or error, with a timeout.
+func WaitNicNodePolicyReady(parentCtx context.Context, c client.Client, name string) error {
+	uiOutput := ui.FromContext(parentCtx)
+	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for NIC Node Policy %q to become ready", name))
+
+	// Use a bounded timeout if none supplied
+	ctx := parentCtx
+	if _, hasDeadline := parentCtx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parentCtx, 15*time.Minute)
+		defer cancel()
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		policy := &netop.NicNodePolicy{}
+		if err := c.Get(ctx, client.ObjectKey{Name: name}, policy); err == nil {
+			switch policy.Status.State {
+			case netop.StateReady:
+				progress.Success(fmt.Sprintf("NIC Node Policy %q is ready", name))
+				log.Log.Info("NicNodePolicy is ready", "name", name)
+				return nil
+			case netop.StateError:
+				progress.Fail(fmt.Sprintf("Policy %q error: %s", name, policy.Status.Reason))
+				return fmt.Errorf("NicNodePolicy %q in error state: %s", name, policy.Status.Reason)
+			default:
+				if policy.Status.State != "" {
+					progress.Update(fmt.Sprintf("NicNodePolicy %q state: %s", name, policy.Status.State))
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			progress.Fail(fmt.Sprintf("Timeout waiting for NicNodePolicy %q", name))
+			return fmt.Errorf("timeout waiting for NicNodePolicy %q to become ready", name)
+		case <-ticker.C:
+			// continue
+		}
+	}
+}
+
 // DeleteNicClusterPolicy deletes the NicClusterPolicy by name, ignoring NotFound errors.
 func DeleteNicClusterPolicy(ctx context.Context, c client.Client, name string) error {
 	obj := &netop.NicClusterPolicy{ObjectMeta: metav1.ObjectMeta{Name: name}}
