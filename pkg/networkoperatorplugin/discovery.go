@@ -235,21 +235,31 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	}
 
 	// Discover OFED-dependent kernel modules per group via pod exec.
-	// Results are always saved to config for user inspection; the
-	// unloadThirdPartyRDMAModules flag only controls template rendering.
+	// Results are classified into third-party RDMA vs storage modules and
+	// saved to config for user inspection. mlx5-prefixed modules (NVIDIA's own)
+	// are silently filtered out.
 	if p.RESTConfig != nil {
 		for i := range defaultConfig.ClusterConfig {
 			group := &defaultConfig.ClusterConfig[i]
 			modules, err := discoverThirdPartyRDMAModules(ctx, p.RESTConfig,
 				defaultConfig.NetworkOperator.Namespace, group.WorkerNodes, dsPods)
 			if err != nil {
-				log.Log.Error(err, "failed to discover third-party RDMA modules", "group", group.Identifier)
-				uiOutput.Warning("Could not discover third-party RDMA modules for group %s: %v", group.Identifier, err)
+				log.Log.Error(err, "failed to discover OFED-dependent modules", "group", group.Identifier)
+				uiOutput.Warning("Could not discover OFED-dependent modules for group %s: %v", group.Identifier, err)
 				continue
 			}
-			if len(modules) > 0 {
-				group.ThirdPartyRDMAModules = modules
-				uiOutput.Info("Discovered %d third-party RDMA module(s) for group %s", len(modules), group.Identifier)
+			rdma, storage := classifyDiscoveredModules(modules)
+			if len(rdma) > 0 {
+				group.ThirdPartyRDMAModules = rdma
+				defaultConfig.DOCADriver.UnloadThirdPartyRDMAModules = true
+				uiOutput.Info("Discovered %d third-party RDMA module(s) for group %s — enabled unloadThirdPartyRDMAModules",
+					len(rdma), group.Identifier)
+			}
+			if len(storage) > 0 {
+				group.StorageModules = storage
+				defaultConfig.DOCADriver.UnloadStorageModules = true
+				uiOutput.Info("Discovered %d storage module(s) for group %s — enabled unloadStorageModules",
+					len(storage), group.Identifier)
 			}
 		}
 	}
@@ -911,6 +921,14 @@ var ofedTargetModules = []string{
 	"ib_ipoib", "rdma_cm", "rdma_ucm", "ib_core", "ib_cm",
 }
 
+// knownStorageModules is the set of storage-over-RDMA kernel modules handled by
+// UNLOAD_STORAGE_MODULES in the driver container. Must be kept in sync with
+// doca-driver-build's StorageModules (entrypoint/internal/config/config.go).
+var knownStorageModules = map[string]bool{
+	"ib_isert": true, "nvme_rdma": true, "nvmet_rdma": true,
+	"rpcrdma": true, "xprtrdma": true, "ib_srpt": true,
+}
+
 // discoverThirdPartyRDMAModules execs into a nic-configuration-daemon pod on one
 // of the group's nodes and discovers third-party RDMA modules that depend on
 // OFED target modules via the kernel module holder graph.
@@ -1023,6 +1041,23 @@ func parseModuleList(output string, exclude []string) []string {
 	}
 	sort.Strings(modules)
 	return modules
+}
+
+// classifyDiscoveredModules splits a list of discovered OFED-dependent modules into
+// third-party RDMA modules and storage modules. mlx5-prefixed modules (NVIDIA's own)
+// are silently dropped.
+func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
+	for _, mod := range modules {
+		if strings.HasPrefix(mod, "mlx5") {
+			continue // NVIDIA module — always greenlit
+		}
+		if knownStorageModules[mod] {
+			storage = append(storage, mod)
+		} else {
+			rdma = append(rdma, mod)
+		}
+	}
+	return rdma, storage
 }
 
 // execInPod runs a command in a pod container and returns stdout.

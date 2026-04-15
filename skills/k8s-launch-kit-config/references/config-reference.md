@@ -45,19 +45,20 @@ docaDriver:
   # DOCA driver container image version. Must match the operator version.
   version: doca3.3.0-26.01-1.0.0.0-0
 
-  # bool | default: true
-  # Unload in-tree storage kernel modules (e.g., ib_isert, ib_srpt) before
-  # loading OFED modules. Prevents module conflicts on storage nodes.
+  # bool | default: false, auto-enabled by discovery when storage modules are found
+  # Unload known storage-over-RDMA kernel modules (ib_isert, nvme_rdma, nvmet_rdma,
+  # rpcrdma, xprtrdma, ib_srpt) before loading OFED modules.
+  # Discovery automatically sets this to true when storage modules are detected.
   unloadStorageModules: true
 
   # bool | default: false
   # Enable NFS over RDMA kernel module support in the OFED driver.
   enableNFSRDMA: false
 
-  # bool | default: true
+  # bool | default: false, auto-enabled by discovery when third-party RDMA modules are found
   # When true, adds UNLOAD_THIRD_PARTY_RDMA_MODULES env var to the ofedDriver container.
-  # The list is populated from thirdPartyRDMAModules discovered per group.
-  # These modules are blacklisted and unloaded before OFED driver reload.
+  # Third-party RDMA modules are blacklisted and unloaded before OFED driver reload.
+  # Discovery automatically sets this to true when third-party RDMA modules are detected.
   unloadThirdPartyRDMAModules: true
 
 # ============================================================================

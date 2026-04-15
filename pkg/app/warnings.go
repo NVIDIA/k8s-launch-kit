@@ -23,12 +23,11 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
-// warnThirdPartyRDMAModules prints contextual warnings about discovered
-// third-party RDMA modules. The phase parameter selects which warnings
-// to emit: "discover" emits only the unload-disabled warning, while
-// "generate" emits both.
-func warnThirdPartyRDMAModules(cfg *config.LaunchKubernetesConfig, phase string, output ui.Output) {
-	if cfg.DOCADriver == nil || !cfg.DOCADriver.Enable {
+// warnThirdPartyRDMAModules warns about third-party RDMA modules that will be
+// unloaded. Discovery auto-enables the flag when modules are found, so this only
+// emits the "verify safety" warning when the flag is true and modules are present.
+func warnThirdPartyRDMAModules(cfg *config.LaunchKubernetesConfig, _ string, output ui.Output) {
+	if cfg.DOCADriver == nil || !cfg.DOCADriver.Enable || !cfg.DOCADriver.UnloadThirdPartyRDMAModules {
 		return
 	}
 
@@ -37,21 +36,31 @@ func warnThirdPartyRDMAModules(cfg *config.LaunchKubernetesConfig, phase string,
 			continue
 		}
 		moduleList := strings.Join(group.ThirdPartyRDMAModules, ", ")
+		output.Warning(
+			"unloadThirdPartyRDMAModules is enabled. The DOCA driver will unload known third-party RDMA modules "+
+				"(including [%s] found on group %s) before driver installation. "+
+				"Verify it is safe to unload these modules before deploying.",
+			moduleList, group.Identifier)
+	}
+}
 
-		if !cfg.DOCADriver.UnloadThirdPartyRDMAModules {
-			output.Warning(
-				"Third-party RDMA modules detected on group %s: [%s]. "+
-					"The DOCA driver container will fail to load because these modules hold references to inbox MLX drivers. "+
-					"Set docaDriver.unloadThirdPartyRDMAModules: true in your config to enable automatic unloading.",
-				group.Identifier, moduleList)
-		}
+// warnStorageModules warns about storage-over-RDMA modules that will be unloaded.
+// Discovery auto-enables the flag when modules are found, so this only emits the
+// "verify safety" warning when the flag is true and modules are present.
+func warnStorageModules(cfg *config.LaunchKubernetesConfig, _ string, output ui.Output) {
+	if cfg.DOCADriver == nil || !cfg.DOCADriver.Enable || !cfg.DOCADriver.UnloadStorageModules {
+		return
+	}
 
-		if cfg.DOCADriver.UnloadThirdPartyRDMAModules && phase == "generate" {
-			output.Warning(
-				"unloadThirdPartyRDMAModules is enabled. The DOCA driver will unload known third-party RDMA modules "+
-					"(including [%s] found on group %s) before driver installation. "+
-					"Verify it is safe to unload these modules before deploying the generated manifests.",
-				moduleList, group.Identifier)
+	for _, group := range cfg.ClusterConfig {
+		if len(group.StorageModules) == 0 {
+			continue
 		}
+		moduleList := strings.Join(group.StorageModules, ", ")
+		output.Warning(
+			"unloadStorageModules is enabled. The DOCA driver will unload known storage-over-RDMA modules "+
+				"(including [%s] found on group %s) before driver installation. "+
+				"Verify that no running workloads depend on these modules before deploying.",
+			moduleList, group.Identifier)
 	}
 }

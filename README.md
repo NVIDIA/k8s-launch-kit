@@ -357,41 +357,50 @@ The tool resolves configuration and profile paths in order: local directory firs
 
 The `docaDriver` section controls the OFED driver deployment in the NicClusterPolicy. Set `enable: true` to include the `ofedDriver` section in generated manifests, or `enable: false` to omit it. This can also be overridden via the `--enable-doca-driver` CLI flag.
 
-#### Third-Party RDMA Module Handling
+#### OFED-Dependent Module Handling
 
-When the DOCA/OFED driver loads on a node, it replaces the inbox MLX kernel modules (`mlx5_core`, `mlx5_ib`, `ib_core`, etc.) with its own versions. However, if third-party or distribution-specific kernel modules depend on the inbox MLX modules (e.g., `iw_cm`, `nfsrdma`), they will block the inbox modules from being unloaded, causing the DOCA driver to fail to load or leaving the system in an inconsistent state.
+When the DOCA/OFED driver loads on a node, it replaces the inbox MLX kernel modules (`mlx5_core`, `mlx5_ib`, `ib_core`, etc.) with its own versions. If other kernel modules depend on the inbox MLX modules, they will block the inbox modules from being unloaded, causing the DOCA driver to fail to load.
 
 During cluster discovery, the tool execs into `nic-configuration-daemon` pods and builds a full reverse dependency graph from `/sys/module/*/holders/` for all loaded modules, then BFS-traverses from each of the following MLX/OFED kernel modules to find all transitive non-MOFED dependents:
 
 `mlx5_core`, `mlx5_ib`, `ib_umad`, `ib_uverbs`, `ib_ipoib`, `rdma_cm`, `rdma_ucm`, `ib_core`, `ib_cm`
 
-Discovered third-party modules are saved per group as `thirdPartyRDMAModules` for user visibility and warnings only. When `unloadThirdPartyRDMAModules: true`, the generated NicClusterPolicy renders `UNLOAD_THIRD_PARTY_RDMA_MODULES: "true"` env var (a boolean flag, not a module list) in the ofedDriver section. The driver container has the 24 known third-party modules hardcoded.
+Discovered modules are classified into three categories:
 
-Module discovery always runs during cluster discovery (so results are saved for inspection), but the `UNLOAD_THIRD_PARTY_RDMA_MODULES` env var is only rendered when `unloadThirdPartyRDMAModules` is `true`. When multiple node groups are merged, their third-party RDMA modules are aggregated as a union.
+1. **mlx5-prefixed modules** (e.g. `mlx5_vdpa`, `mlx5_netdev`) — NVIDIA's own modules, silently filtered out.
+2. **Known storage-over-RDMA modules** (`ib_isert`, `nvme_rdma`, `nvmet_rdma`, `rpcrdma`, `xprtrdma`, `ib_srpt`) — saved per-group as `storageModules`. Discovery **automatically enables** `docaDriver.unloadStorageModules: true` when any are found. The generated NicClusterPolicy renders `UNLOAD_STORAGE_MODULES: "true"`.
+3. **Third-party RDMA modules** (everything else, e.g. `qedr`, `bnxt_re`, `rdma_rxe`) — saved per-group as `thirdPartyRDMAModules`. Discovery **automatically enables** `docaDriver.unloadThirdPartyRDMAModules: true` when any are found. The generated NicClusterPolicy renders `UNLOAD_THIRD_PARTY_RDMA_MODULES: "true"`. The driver container has 15 known third-party modules hardcoded.
 
+Both flags are auto-enabled during discovery so the DOCA driver can unload blocking modules. A warning is emitted after discovery and generation reminding you to verify that no running workloads depend on these modules. When multiple node groups are merged, both module lists are aggregated as unions.
+
+After discovery, the config will contain the discovered modules and auto-enabled flags:
 ```yaml
 docaDriver:
   enable: true
   version: doca3.3.0-26.01-1.0.0.0-0
-  unloadStorageModules: true
+  unloadStorageModules: true            # auto-enabled by discovery
   enableNFSRDMA: false
-  unloadThirdPartyRDMAModules: true   # Enable third-party RDMA module unloading
-```
+  unloadThirdPartyRDMAModules: true     # auto-enabled by discovery
 
-After discovery, the config will contain the discovered third-party modules:
-```yaml
 clusterConfig:
 - identifier: group-0
   thirdPartyRDMAModules:
-  - iw_cm
+  - rdma_rxe
+  storageModules:
+  - nvme_rdma
+  - ib_isert
 ```
 
 The generated NicClusterPolicy `ofedDriver` section will include:
 ```yaml
 env:
+  - name: UNLOAD_STORAGE_MODULES
+    value: "true"
   - name: UNLOAD_THIRD_PARTY_RDMA_MODULES
     value: "true"
 ```
+
+To disable automatic unloading, set the flags back to `false` in your config after discovery.
 
 ### NV-IPAM Subnet Configuration
 
