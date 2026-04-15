@@ -17,6 +17,7 @@
 package networkoperatorplugin
 
 import (
+	"os"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -1035,5 +1036,250 @@ func TestParseModuleList(t *testing.T) {
 		output := "iw_cm\niw_cm\niw_cm\n"
 		result := parseModuleList(output, exclude)
 		assert.Equal(t, []string{"iw_cm"}, result)
+	})
+}
+
+func TestNnpName(t *testing.T) {
+	t.Run("empty identifier returns l8k", func(t *testing.T) {
+		assert.Equal(t, "l8k", nnpName(""))
+	})
+
+	t.Run("normal identifier pass-through", func(t *testing.T) {
+		assert.Equal(t, "nvidia-h200", nnpName("nvidia-h200"))
+	})
+
+	t.Run("truncates to 30 chars", func(t *testing.T) {
+		longName := "this-is-a-very-long-identifier-that-exceeds-limit"
+		result := nnpName(longName)
+		assert.Len(t, result, 30)
+		assert.Equal(t, "this-is-a-very-long-identifier", result)
+	})
+
+	t.Run("exactly 30 chars is untouched", func(t *testing.T) {
+		exact := "abcdefghijklmnopqrstuvwxyz1234"
+		assert.Len(t, exact, 30)
+		assert.Equal(t, exact, nnpName(exact))
+	})
+
+	t.Run("template function matches direct call", func(t *testing.T) {
+		nnpNameFunc := templateFuncs["nnpName"].(func(string) string)
+		assert.Equal(t, "l8k", nnpNameFunc(""))
+		assert.Equal(t, "nvidia-h200", nnpNameFunc("nvidia-h200"))
+	})
+}
+
+func TestProcessTemplate_NicNodePolicy(t *testing.T) {
+	// Create a minimal NNP template in a temp dir
+	tmpDir := t.TempDir()
+
+	rail0 := 0
+	rail1 := 1
+
+	baseCfg := &config.LaunchKubernetesConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{
+			Repository:       "nvcr.io/nvidia/mellanox",
+			ComponentVersion: "v1.0.0",
+		},
+		DOCADriver: &config.DOCADriverConfig{
+			Enable:  true,
+			Version: "24.10",
+		},
+		Profile: &config.Profile{
+			Fabric:     "ethernet",
+			Deployment: "host_device",
+			Multirail:  false,
+		},
+		Hostdev: &config.HostdevConfig{
+			ResourceName: "rdma_host",
+		},
+	}
+
+	t.Run("single group renders one NNP file", func(t *testing.T) {
+		tmplContent := `apiVersion: mellanox.com/v1alpha1
+kind: NicNodePolicy
+metadata:
+  name: {{.ClusterConfig.Identifier | nnpName}}
+spec:
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $k, $v := .ClusterConfig.NodeSelector }}
+    {{ $k }}: "{{ $v }}"
+    {{- end }}
+  {{- end }}
+  {{- if .DOCADriver.Enable }}
+  ofedDriver:
+    image: doca-driver
+    version: {{.DOCADriver.Version}}
+  {{- end }}`
+
+		tmplPath := tmpDir + "/11-nicnodepolicy.yaml"
+		err := os.WriteFile(tmplPath, []byte(tmplContent), 0644)
+		assert.NoError(t, err)
+
+		cfg := *baseCfg
+		cfg.ClusterConfig = []config.ClusterConfig{
+			{
+				Identifier: "nvidia-h200",
+				NodeSelector: map[string]string{
+					"nvidia.com/gpu.product": "NVIDIA-H200",
+				},
+				PFs: []config.PFConfig{
+					{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0},
+				},
+			},
+		}
+
+		results, err := ProcessTemplate(tmplPath, &cfg, "")
+		assert.NoError(t, err)
+		assert.Len(t, results, 1)
+
+		content, ok := results["11-nicnodepolicy-nvidia-h200.yaml"]
+		assert.True(t, ok, "expected file with group suffix")
+		assert.Contains(t, content, "kind: NicNodePolicy")
+		assert.Contains(t, content, "name: nvidia-h200")
+		assert.Contains(t, content, `nvidia.com/gpu.product: "NVIDIA-H200"`)
+		assert.Contains(t, content, "version: 24.10")
+	})
+
+	t.Run("multiple groups render separate NNP files", func(t *testing.T) {
+		tmplContent := `apiVersion: mellanox.com/v1alpha1
+kind: NicNodePolicy
+metadata:
+  name: {{.ClusterConfig.Identifier | nnpName}}
+spec:
+  {{- if .DOCADriver.Enable }}
+  ofedDriver:
+    version: {{.DOCADriver.Version}}
+  {{- end }}`
+
+		tmplPath := tmpDir + "/11-nnp-multi.yaml"
+		err := os.WriteFile(tmplPath, []byte(tmplContent), 0644)
+		assert.NoError(t, err)
+
+		cfg := *baseCfg
+		cfg.ClusterConfig = []config.ClusterConfig{
+			{
+				Identifier: "nvidia-h200",
+				PFs:        []config.PFConfig{ewPF("0000:19:00.0", 0)},
+			},
+			{
+				Identifier: "nvidia-a100",
+				PFs:        []config.PFConfig{ewPF("0000:1a:00.0", 0)},
+			},
+		}
+
+		results, err := ProcessTemplate(tmplPath, &cfg, "")
+		assert.NoError(t, err)
+		assert.Len(t, results, 2)
+
+		_, ok1 := results["11-nnp-multi-nvidia-h200.yaml"]
+		_, ok2 := results["11-nnp-multi-nvidia-a100.yaml"]
+		assert.True(t, ok1)
+		assert.True(t, ok2)
+		assert.Contains(t, results["11-nnp-multi-nvidia-h200.yaml"], "name: nvidia-h200")
+		assert.Contains(t, results["11-nnp-multi-nvidia-a100.yaml"], "name: nvidia-a100")
+	})
+
+	t.Run("empty identifier uses l8k default name", func(t *testing.T) {
+		tmplContent := `apiVersion: mellanox.com/v1alpha1
+kind: NicNodePolicy
+metadata:
+  name: {{.ClusterConfig.Identifier | nnpName}}`
+
+		tmplPath := tmpDir + "/11-nnp-single.yaml"
+		err := os.WriteFile(tmplPath, []byte(tmplContent), 0644)
+		assert.NoError(t, err)
+
+		cfg := *baseCfg
+		cfg.ClusterConfig = []config.ClusterConfig{
+			{
+				Identifier: "",
+				PFs:        []config.PFConfig{ewPF("0000:19:00.0", 0)},
+			},
+		}
+
+		// Single group with empty identifier — renders as base filename (no suffix)
+		results, err := ProcessTemplate(tmplPath, &cfg, "")
+		assert.NoError(t, err)
+		assert.Len(t, results, 1)
+
+		content, ok := results["11-nnp-single.yaml"]
+		assert.True(t, ok)
+		assert.Contains(t, content, "name: l8k")
+	})
+
+	t.Run("NNP with nodeSelector renders correctly", func(t *testing.T) {
+		tmplContent := `apiVersion: mellanox.com/v1alpha1
+kind: NicNodePolicy
+metadata:
+  name: {{.ClusterConfig.Identifier | nnpName}}
+spec:
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $k, $v := .ClusterConfig.NodeSelector }}
+    {{ $k }}: "{{ $v }}"
+    {{- end }}
+  {{- end }}`
+
+		tmplPath := tmpDir + "/11-nnp-selector.yaml"
+		err := os.WriteFile(tmplPath, []byte(tmplContent), 0644)
+		assert.NoError(t, err)
+
+		cfg := *baseCfg
+		cfg.ClusterConfig = []config.ClusterConfig{
+			{
+				Identifier: "pool-a",
+				NodeSelector: map[string]string{
+					"nvidia.com/gpu.product": "NVIDIA-H200",
+				},
+				PFs: []config.PFConfig{
+					{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0},
+					{DeviceID: "a2dc", PciAddress: "0000:2a:00.0", Traffic: "east-west", Rail: &rail1},
+				},
+			},
+		}
+
+		results, err := ProcessTemplate(tmplPath, &cfg, "")
+		assert.NoError(t, err)
+		assert.Len(t, results, 1)
+
+		content := results["11-nnp-selector-pool-a.yaml"]
+		assert.Contains(t, content, "name: pool-a")
+		assert.Contains(t, content, `nvidia.com/gpu.product: "NVIDIA-H200"`)
+	})
+
+	t.Run("NNP without nodeSelector omits section", func(t *testing.T) {
+		tmplContent := `apiVersion: mellanox.com/v1alpha1
+kind: NicNodePolicy
+metadata:
+  name: {{.ClusterConfig.Identifier | nnpName}}
+spec:
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $k, $v := .ClusterConfig.NodeSelector }}
+    {{ $k }}: "{{ $v }}"
+    {{- end }}
+  {{- end }}
+  ofedDriver:
+    version: {{.DOCADriver.Version}}`
+
+		tmplPath := tmpDir + "/11-nnp-noselector.yaml"
+		err := os.WriteFile(tmplPath, []byte(tmplContent), 0644)
+		assert.NoError(t, err)
+
+		cfg := *baseCfg
+		cfg.ClusterConfig = []config.ClusterConfig{
+			{
+				Identifier: "single",
+				PFs:        []config.PFConfig{ewPF("0000:19:00.0", 0)},
+			},
+		}
+
+		results, err := ProcessTemplate(tmplPath, &cfg, "")
+		assert.NoError(t, err)
+
+		content := results["11-nnp-noselector-single.yaml"]
+		assert.NotContains(t, content, "nodeSelector")
+		assert.Contains(t, content, "ofedDriver")
 	})
 }

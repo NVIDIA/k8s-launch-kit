@@ -231,7 +231,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	defaultConfig.ClusterConfig = clusterConfig
 
 	for _, w := range nsWarnings {
-		uiOutput.Warning(w)
+		uiOutput.Warning("%s", w)
 	}
 
 	// Discover OFED-dependent kernel modules per group via pod exec.

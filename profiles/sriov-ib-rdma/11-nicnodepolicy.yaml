@@ -1,0 +1,41 @@
+apiVersion: mellanox.com/v1alpha1
+kind: NicNodePolicy
+metadata:
+  name: {{.ClusterConfig.Identifier | nnpName}}
+spec:
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $k, $v := .ClusterConfig.NodeSelector }}
+    {{ $k }}: "{{ $v }}"
+    {{- end }}
+  {{- end }}
+  {{- if .DOCADriver.Enable }}
+  ofedDriver:
+    image: doca-driver
+    repository: {{.NetworkOperator.Repository}}
+    version: {{.DOCADriver.Version}}
+    env:
+      - name: UNLOAD_STORAGE_MODULES
+        value: "{{.DOCADriver.UnloadStorageModules}}"
+      - name: ENABLE_NFSRDMA
+        value: "{{.DOCADriver.EnableNFSRDMA}}"
+      - name: UNLOAD_THIRD_PARTY_RDMA_MODULES
+        value: "{{.DOCADriver.UnloadThirdPartyRDMAModules}}"
+    upgradePolicy:
+      autoUpgrade: true
+      drain:
+        deleteEmptyDir: true
+        enable: true
+        force: true
+        timeoutSeconds: 300
+      maxParallelUpgrades: 1
+    startupProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    livenessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+    readinessProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 30
+  {{- end }}

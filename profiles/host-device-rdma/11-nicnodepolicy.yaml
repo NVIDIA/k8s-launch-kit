@@ -1,0 +1,80 @@
+apiVersion: mellanox.com/v1alpha1
+kind: NicNodePolicy
+metadata:
+  name: {{.ClusterConfig.Identifier | nnpName}}
+spec:
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $k, $v := .ClusterConfig.NodeSelector }}
+    {{ $k }}: "{{ $v }}"
+    {{- end }}
+  {{- end }}
+  {{- if .DOCADriver.Enable }}
+  ofedDriver:
+    image: doca-driver
+    repository: {{.NetworkOperator.Repository}}
+    version: {{.DOCADriver.Version}}
+    env:
+      - name: UNLOAD_STORAGE_MODULES
+        value: "{{.DOCADriver.UnloadStorageModules}}"
+      - name: ENABLE_NFSRDMA
+        value: "{{.DOCADriver.EnableNFSRDMA}}"
+      - name: UNLOAD_THIRD_PARTY_RDMA_MODULES
+        value: "{{.DOCADriver.UnloadThirdPartyRDMAModules}}"
+    upgradePolicy:
+      autoUpgrade: true
+      drain:
+        deleteEmptyDir: true
+        enable: true
+        force: true
+        timeoutSeconds: 300
+      maxParallelUpgrades: 1
+    startupProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    livenessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+    readinessProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 30
+  {{- end }}
+  sriovDevicePlugin:
+    image: sriov-network-device-plugin
+    repository: {{.NetworkOperator.Repository}}
+    version: {{.NetworkOperator.ComponentVersion}}
+    config: |
+      {
+        "resourceList": [
+        {{- if .Profile.Multirail -}}
+        {{- range $i, $pf := .ClusterConfig.PFs}}
+        {{- if eq $pf.Traffic "east-west"}}
+          {
+            "resourcePrefix": "nvidia.com",
+            "resourceName": "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}",
+            "selectors": {
+              "vendors": ["15b3"],
+              {{- if and $.NicConfigurationOperator $.NicConfigurationOperator.DeployNicInterfaceNameTemplate }}
+              "pfNames": ["{{$pf.NetworkInterface}}"],
+              {{- else if $.ClusterConfig.RailPciAddresses }}
+              "pciAddresses": [{{ $f := true }}{{- range $addr := (index $.ClusterConfig.RailPciAddresses $i) }}{{- if not $f }}, {{ end }}{{- $f = false }}"{{ $addr }}"{{- end }}],
+              {{- else }}
+              "pciAddresses": ["{{$pf.PciAddress}}"],
+              {{- end }}
+              "isRdma": true
+            }
+          }{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}},{{end}}
+        {{- end}}
+        {{- end}}
+        {{- else}}
+          {
+            "resourcePrefix": "nvidia.com",
+            "resourceName": "{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}",
+            "selectors": {
+              "vendors": ["15b3"],
+              "isRdma": true
+            }
+          }
+        {{- end}}
+        ]
+      }

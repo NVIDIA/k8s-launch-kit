@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Build the image
-FROM golang:1.24 AS builder
+FROM golang:1.26 AS builder
 
 ARG GOPROXY
 ENV GOPROXY=$GOPROXY
@@ -43,7 +43,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-$(go env GOOS)} GOARCH=${TARGETARCH:-$(go env
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM nvcr.io/nvidia/distroless/go:v4.0.1
+FROM nvcr.io/nvidia/distroless/go:v4.0.4
 
 
 COPY . /src

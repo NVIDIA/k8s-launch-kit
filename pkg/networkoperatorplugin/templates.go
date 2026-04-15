@@ -75,6 +75,23 @@ var templateFuncs = template.FuncMap{
 	"pfsPerNic": func(pfs []config.PFConfig) int {
 		return pfsPerNic(pfs)
 	},
+	// nnpName produces a valid NicNodePolicy name from a group identifier.
+	// Returns "l8k" for empty identifiers, truncates to 30 chars (NNP name limit).
+	"nnpName": func(identifier string) string {
+		return nnpName(identifier)
+	},
+}
+
+// nnpName produces a valid NicNodePolicy name from a group identifier.
+// Returns "l8k" for empty identifiers, truncates to 30 chars (NNP name limit).
+func nnpName(identifier string) string {
+	if identifier == "" {
+		return "l8k"
+	}
+	if len(identifier) > 30 {
+		return identifier[:30]
+	}
+	return identifier
 }
 
 // applyPrefix substitutes %nic_id%, %plane%, %rail% placeholders in a prefix template.
