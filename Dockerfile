@@ -34,8 +34,12 @@ COPY . /workspace
 # Vendor after all source is copied
 RUN go mod vendor
 
+# Build args for cross-compilation (used by docker-build-local)
+ARG TARGETOS
+ARG TARGETARCH
+
 # Build with make to apply all build logic defined in Makefile
-RUN make build
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-$(go env GOOS)} GOARCH=${TARGETARCH:-$(go env GOARCH)} make build
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
