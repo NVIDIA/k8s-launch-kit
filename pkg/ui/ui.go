@@ -116,7 +116,7 @@ func NewSilent() Output {
 
 // Info displays an informational message
 func (o *StandardOutput) Info(format string, args ...interface{}) {
-	fmt.Fprintf(o.writer, format+"\n", args...)
+	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
 }
 
 // Success displays a success message
@@ -124,11 +124,11 @@ func (o *StandardOutput) Success(format string, args ...interface{}) {
 	symbol := "✓"
 	if o.colorEnabled {
 		// Green checkmark
-		fmt.Fprintf(o.writer, "\033[32m%s\033[0m ", symbol)
+		_, _ = fmt.Fprintf(o.writer, "\033[32m%s\033[0m ", symbol)
 	} else {
-		fmt.Fprintf(o.writer, "%s ", symbol)
+		_, _ = fmt.Fprintf(o.writer, "%s ", symbol)
 	}
-	fmt.Fprintf(o.writer, format+"\n", args...)
+	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
 }
 
 // Warning displays a warning message
@@ -136,11 +136,11 @@ func (o *StandardOutput) Warning(format string, args ...interface{}) {
 	symbol := "⚠"
 	if o.colorEnabled {
 		// Yellow warning
-		fmt.Fprintf(o.writer, "\033[33m%s\033[0m ", symbol)
+		_, _ = fmt.Fprintf(o.writer, "\033[33m%s\033[0m ", symbol)
 	} else {
-		fmt.Fprintf(o.writer, "%s ", symbol)
+		_, _ = fmt.Fprintf(o.writer, "%s ", symbol)
 	}
-	fmt.Fprintf(o.writer, format+"\n", args...)
+	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
 }
 
 // Error displays an error message
@@ -148,11 +148,11 @@ func (o *StandardOutput) Error(format string, args ...interface{}) {
 	symbol := "✗"
 	if o.colorEnabled {
 		// Red X
-		fmt.Fprintf(o.writer, "\033[31m%s\033[0m ", symbol)
+		_, _ = fmt.Fprintf(o.writer, "\033[31m%s\033[0m ", symbol)
 	} else {
-		fmt.Fprintf(o.writer, "%s ", symbol)
+		_, _ = fmt.Fprintf(o.writer, "%s ", symbol)
 	}
-	fmt.Fprintf(o.writer, format+"\n", args...)
+	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
 }
 
 // StartProgress starts a progress indicator
@@ -170,9 +170,9 @@ func (o *StandardOutput) Header(text string) {
 	border := strings.Repeat("═", width)
 	padding := (width - len(text)) / 2
 
-	fmt.Fprintf(o.writer, "\n%s\n", border)
-	fmt.Fprintf(o.writer, "%s%s\n", strings.Repeat(" ", padding), text)
-	fmt.Fprintf(o.writer, "%s\n\n", border)
+	_, _ = fmt.Fprintf(o.writer, "\n%s\n", border)
+	_, _ = fmt.Fprintf(o.writer, "%s%s\n", strings.Repeat(" ", padding), text)
+	_, _ = fmt.Fprintf(o.writer, "%s\n\n", border)
 }
 
 // Confirm displays a yes/no prompt and waits for user input.
@@ -184,7 +184,7 @@ func (o *StandardOutput) Confirm(prompt string) (bool, error) {
 	if !o.isTTY {
 		return false, nil
 	}
-	fmt.Fprintf(o.writer, "%s [y/N]: ", prompt)
+	_, _ = fmt.Fprintf(o.writer, "%s [y/N]: ", prompt)
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil {
@@ -198,11 +198,11 @@ func (o *StandardOutput) Confirm(prompt string) (bool, error) {
 func (o *StandardOutput) Section(text string) {
 	if o.colorEnabled {
 		// Bold text
-		fmt.Fprintf(o.writer, "\n\033[1m%s\033[0m\n", text)
+		_, _ = fmt.Fprintf(o.writer, "\n\033[1m%s\033[0m\n", text)
 	} else {
-		fmt.Fprintf(o.writer, "\n%s\n", text)
+		_, _ = fmt.Fprintf(o.writer, "\n%s\n", text)
 	}
 
 	// Underline with dashes
-	fmt.Fprintf(o.writer, "%s\n\n", strings.Repeat("─", len(text)))
+	_, _ = fmt.Fprintf(o.writer, "%s\n\n", strings.Repeat("─", len(text)))
 }

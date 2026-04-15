@@ -139,7 +139,7 @@ func listDirectory(dirPath string) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Directory listing of %s:\n", dirPath))
+	fmt.Fprintf(&sb, "Directory listing of %s:\n", dirPath)
 	for _, entry := range entries {
 		suffix := ""
 		if entry.IsDir() {
@@ -147,10 +147,10 @@ func listDirectory(dirPath string) string {
 		}
 		info, err := entry.Info()
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("  %s%s\n", entry.Name(), suffix))
+			fmt.Fprintf(&sb, "  %s%s\n", entry.Name(), suffix)
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("  %s%s (%d bytes)\n", entry.Name(), suffix, info.Size()))
+		fmt.Fprintf(&sb, "  %s%s (%d bytes)\n", entry.Name(), suffix, info.Size())
 	}
 	return sb.String()
 }
@@ -162,7 +162,7 @@ func readFileContent(filePath string, size int64) string {
 		if err != nil {
 			return fmt.Sprintf("Error: cannot open file: %v", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		n, err := f.Read(data)
 		if err != nil {
 			return fmt.Sprintf("Error: cannot read file: %v", err)

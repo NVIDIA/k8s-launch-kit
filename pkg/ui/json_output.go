@@ -75,7 +75,7 @@ func (o *JSONOutput) appendMessage(level, format string, args ...interface{}) {
 	o.messages = append(o.messages, entry)
 	o.mu.Unlock()
 	// Also write to stderr so humans can follow along
-	fmt.Fprintf(o.stderr, "[%s] %s\n", level, msg)
+	_, _ = fmt.Fprintf(o.stderr, "[%s] %s\n", level, msg)
 }
 
 func (o *JSONOutput) Info(format string, args ...interface{}) {

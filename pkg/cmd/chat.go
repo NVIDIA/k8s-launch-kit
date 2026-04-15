@@ -105,5 +105,5 @@ func init() {
 	chatCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace")
 	chatCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 
-	chatCmd.MarkFlagRequired("llm-api-key")
+	_ = chatCmd.MarkFlagRequired("llm-api-key")
 }

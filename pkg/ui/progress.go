@@ -77,7 +77,7 @@ func (p *standardProgress) spin() {
 
 			if p.output.isTTY {
 				// Use carriage return and clear line to update same line
-				fmt.Fprintf(p.output.writer, "\r\033[K%s %s%s", spinnerChars[p.spinIndex], p.message, timeStr)
+				_, _ = fmt.Fprintf(p.output.writer, "\r\033[K%s %s%s", spinnerChars[p.spinIndex], p.message, timeStr)
 				p.spinIndex = (p.spinIndex + 1) % len(spinnerChars)
 			}
 			p.mu.Unlock()
@@ -98,7 +98,7 @@ func (p *standardProgress) Update(message string) {
 
 	// For non-TTY, print the update as a new line
 	if !p.output.isTTY {
-		fmt.Fprintf(p.output.writer, "  %s\n", message)
+		_, _ = fmt.Fprintf(p.output.writer, "  %s\n", message)
 	}
 }
 
@@ -108,12 +108,12 @@ func (p *standardProgress) Success(message string) {
 
 	symbol := "✓"
 	if p.output.colorEnabled {
-		fmt.Fprintf(p.output.writer, "\r\033[K\033[32m%s\033[0m %s\n", symbol, message)
+		_, _ = fmt.Fprintf(p.output.writer, "\r\033[K\033[32m%s\033[0m %s\n", symbol, message)
 	} else {
 		if p.output.isTTY {
-			fmt.Fprintf(p.output.writer, "\r\033[K%s %s\n", symbol, message)
+			_, _ = fmt.Fprintf(p.output.writer, "\r\033[K%s %s\n", symbol, message)
 		} else {
-			fmt.Fprintf(p.output.writer, "%s %s\n", symbol, message)
+			_, _ = fmt.Fprintf(p.output.writer, "%s %s\n", symbol, message)
 		}
 	}
 }
@@ -124,12 +124,12 @@ func (p *standardProgress) Fail(message string) {
 
 	symbol := "✗"
 	if p.output.colorEnabled {
-		fmt.Fprintf(p.output.writer, "\r\033[K\033[31m%s\033[0m %s\n", symbol, message)
+		_, _ = fmt.Fprintf(p.output.writer, "\r\033[K\033[31m%s\033[0m %s\n", symbol, message)
 	} else {
 		if p.output.isTTY {
-			fmt.Fprintf(p.output.writer, "\r\033[K%s %s\n", symbol, message)
+			_, _ = fmt.Fprintf(p.output.writer, "\r\033[K%s %s\n", symbol, message)
 		} else {
-			fmt.Fprintf(p.output.writer, "%s %s\n", symbol, message)
+			_, _ = fmt.Fprintf(p.output.writer, "%s %s\n", symbol, message)
 		}
 	}
 }
@@ -149,7 +149,7 @@ func (p *standardProgress) stop() {
 	// Clear the spinner line in TTY mode
 	if p.output.isTTY {
 		// Move to beginning of line and clear
-		fmt.Fprintf(p.output.writer, "\r\033[K")
+		_, _ = fmt.Fprintf(p.output.writer, "\r\033[K")
 	}
 }
 

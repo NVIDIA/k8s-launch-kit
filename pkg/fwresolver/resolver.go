@@ -110,7 +110,7 @@ func ResolveURLs(ctx context.Context, logger logr.Logger, psidInfos []PSIDInfo, 
 	if err != nil {
 		return nil, fmt.Errorf("firmware API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
