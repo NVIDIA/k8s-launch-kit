@@ -25,12 +25,14 @@
 # Install layout:
 #   <prefix>/bin/l8k                       # Binary
 #   <prefix>/share/l8k/profiles/           # Profile templates
+#   <prefix>/share/l8k/presets/            # Predefined cluster topology presets
 #   <prefix>/share/l8k/l8k-config.yaml    # Default configuration
 
 set -euo pipefail
 
 PREFIX="/usr/local"
 DEV_ENV=false
+SKIP_PRESETS_UPDATE=false
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 while [[ $# -gt 0 ]]; do
@@ -43,17 +45,22 @@ while [[ $# -gt 0 ]]; do
             PREFIX="$2"
             shift 2
             ;;
+        --skip-presets-update)
+            SKIP_PRESETS_UPDATE=true
+            shift
+            ;;
         -h|--help)
-            echo "Usage: install.sh [--dev-env] [--prefix /path]"
+            echo "Usage: install.sh [--dev-env] [--prefix /path] [--skip-presets-update]"
             echo ""
             echo "Options:"
-            echo "  --dev-env    Create symlinks instead of copies (for development)"
-            echo "  --prefix     Install prefix (default: /usr/local)"
+            echo "  --dev-env              Create symlinks instead of copies (for development)"
+            echo "  --prefix               Install prefix (default: /usr/local)"
+            echo "  --skip-presets-update   Skip downloading latest presets from GitHub"
             exit 0
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: install.sh [--dev-env] [--prefix /path]"
+            echo "Usage: install.sh [--dev-env] [--prefix /path] [--skip-presets-update]"
             exit 1
             ;;
     esac
@@ -75,6 +82,7 @@ if [ "$DEV_ENV" = true ]; then
     ln -sfn "${REPO_ROOT}/build/l8k" "${BIN_DIR}/l8k"
     mkdir -p "${SHARE_DIR}"
     ln -sfn "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
+    ln -sfn "${REPO_ROOT}/presets" "${SHARE_DIR}/presets"
     ln -sfn "${REPO_ROOT}/l8k-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
 else
     echo "Installing l8k..."
@@ -83,6 +91,8 @@ else
     mkdir -p "${SHARE_DIR}"
     rm -rf "${SHARE_DIR}/profiles"
     cp -r "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
+    rm -rf "${SHARE_DIR}/presets"
+    cp -r "${REPO_ROOT}/presets" "${SHARE_DIR}/presets"
     cp "${REPO_ROOT}/l8k-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
 fi
 
@@ -90,4 +100,14 @@ echo ""
 echo "Installed successfully:"
 echo "  Binary:   ${BIN_DIR}/l8k"
 echo "  Profiles: ${SHARE_DIR}/profiles"
+echo "  Presets:  ${SHARE_DIR}/presets"
 echo "  Config:   ${SHARE_DIR}/l8k-config.yaml"
+
+# Try to download latest presets from GitHub (non-fatal on failure)
+if [ "$SKIP_PRESETS_UPDATE" = false ] && [ "$DEV_ENV" = false ]; then
+    echo ""
+    echo "Downloading latest presets from GitHub..."
+    "${BIN_DIR}/l8k" preset update --dir "${SHARE_DIR}/presets" 2>/dev/null \
+        && echo "Presets updated successfully." \
+        || echo "[WARNING] Could not download presets (offline?). Using bundled presets."
+fi

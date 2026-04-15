@@ -51,7 +51,7 @@ func TestResolveURLs_Found(t *testing.T) {
 			{Found: 0, PSID: "MT_0000000222", URL: ""},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -72,7 +72,7 @@ func TestResolveURLs_Found(t *testing.T) {
 func TestResolveURLs_NetworkError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
+		_, _ = w.Write([]byte("internal error"))
 	}))
 	defer server.Close()
 
@@ -87,7 +87,7 @@ func TestResolveURLs_NetworkError(t *testing.T) {
 func TestResolveURLs_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("not-valid-json"))
+		_, _ = w.Write([]byte("not-valid-json"))
 	}))
 	defer server.Close()
 

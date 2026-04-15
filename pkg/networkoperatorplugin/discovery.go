@@ -29,6 +29,7 @@ import (
 	netop "github.com/Mellanox/network-operator/api/v1alpha1"
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -257,6 +258,26 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 				if needProduct && product != "" {
 					group.ProductType = product
 					uiOutput.Info("Discovered GPU product type for group %s: %s", group.Identifier, product)
+				}
+			}
+
+			// Try to enrich with a predefined topology preset for this machine type.
+			// Presets provide authoritative traffic classification, rail assignments,
+			// and NUMA/GPU topology metadata for known hardware configurations.
+			if group.MachineType != "" {
+				preset, presetErr := presets.LoadPreset(group.MachineType)
+				if presetErr != nil {
+					log.Log.Error(presetErr, "failed to load preset", "machineType", group.MachineType)
+					uiOutput.Warning("Failed to load preset for %s: %v", group.MachineType, presetErr)
+				} else if preset != nil {
+					if presetErr := presets.ValidatePreset(preset, group.PFs); presetErr != nil {
+						log.Log.Info("Preset did not match discovered hardware",
+							"machineType", group.MachineType, "error", presetErr)
+						uiOutput.Info("Preset for %s did not match discovered hardware: %v", group.MachineType, presetErr)
+					} else {
+						presets.ApplyPreset(preset, group)
+						uiOutput.Info("Applied preset configuration for %s", group.MachineType)
+					}
 				}
 			}
 
@@ -816,11 +837,9 @@ func computeNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]m
 
 	// Deprioritize feature.node.kubernetes.io/* labels — only include them
 	// if the remaining labels can't differentiate all groups on their own.
-	var primaryKeys, fallbackKeys []string
+	var primaryKeys []string
 	for _, k := range differingKeys {
-		if strings.HasPrefix(k, "feature.node.kubernetes.io/") {
-			fallbackKeys = append(fallbackKeys, k)
-		} else {
+		if !strings.HasPrefix(k, "feature.node.kubernetes.io/") {
 			primaryKeys = append(primaryKeys, k)
 		}
 	}

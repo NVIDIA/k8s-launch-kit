@@ -138,6 +138,7 @@ type ClusterConfig struct {
 	Identifier           string               `yaml:"identifier"`
 	MachineType          string               `yaml:"machineType,omitempty"`
 	ProductType          string               `yaml:"productType,omitempty"`
+	PresetApplied        bool                 `yaml:"presetApplied,omitempty"`
 	Capabilities         *ClusterCapabilities `yaml:"capabilities"`
 	PFs                  []PFConfig           `yaml:"pfs"`
 	WorkerNodes          []string             `yaml:"workerNodes"`
@@ -166,6 +167,10 @@ type PFConfig struct {
 	Rail             *int   `yaml:"rail,omitempty"`
 	PSID             string `yaml:"psid,omitempty"`
 	PartNumber       string `yaml:"partNumber,omitempty"`
+	// Topology fields (populated from presets when available)
+	NumaNode     *int   `yaml:"numaNode,omitempty"`
+	ConnectedGPU string `yaml:"connectedGPU,omitempty"`
+	GPUProximity string `yaml:"gpuProximity,omitempty"`
 }
 
 // AggregateCapabilities computes the union of capabilities across all cluster config groups.

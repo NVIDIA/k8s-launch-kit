@@ -166,9 +166,7 @@ func trimMarkdownJSON(s string) string {
 	}
 
 	// Check for ``` at the end
-	if strings.HasSuffix(s, "```") {
-		s = strings.TrimSuffix(s, "```")
-	}
+	s = strings.TrimSuffix(s, "```")
 
 	return strings.TrimSpace(s)
 }
