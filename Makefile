@@ -91,7 +91,7 @@ docker-build:
 
 ## Build in container and copy binary to host
 docker-build-local:
-	docker build -t $(DOCKER_IMAGE):build-tmp .
+	docker build --build-arg TARGETOS=$(shell go env GOOS) --build-arg TARGETARCH=$(shell go env GOARCH) -t $(DOCKER_IMAGE):build-tmp .
 	docker create --name l8k-extract $(DOCKER_IMAGE):build-tmp
 	@mkdir -p $(BUILD_DIR)
 	docker cp l8k-extract:/src/l8k $(BINARY_PATH)
