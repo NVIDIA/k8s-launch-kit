@@ -241,6 +241,25 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	if p.RESTConfig != nil {
 		for i := range defaultConfig.ClusterConfig {
 			group := &defaultConfig.ClusterConfig[i]
+
+			// Fill in missing machine/GPU product types by probing hardware
+			// directly when GPU operator node labels are absent.
+			needMachine := group.MachineType == ""
+			needProduct := group.ProductType == ""
+			if needMachine || needProduct {
+				machine, product := discoverHardwareTypes(ctx, p.RESTConfig,
+					defaultConfig.NetworkOperator.Namespace, group.WorkerNodes, dsPods,
+					needMachine, needProduct)
+				if needMachine && machine != "" {
+					group.MachineType = machine
+					uiOutput.Info("Discovered machine type for group %s: %s", group.Identifier, machine)
+				}
+				if needProduct && product != "" {
+					group.ProductType = product
+					uiOutput.Info("Discovered GPU product type for group %s: %s", group.Identifier, product)
+				}
+			}
+
 			modules, err := discoverThirdPartyRDMAModules(ctx, p.RESTConfig,
 				defaultConfig.NetworkOperator.Namespace, group.WorkerNodes, dsPods)
 			if err != nil {
@@ -929,6 +948,97 @@ var knownStorageModules = map[string]bool{
 	"rpcrdma": true, "xprtrdma": true, "ib_srpt": true,
 }
 
+// parseMachineTypeFromDMI extracts and sanitizes a machine type string from
+// raw /sys/class/dmi/id/product_name content. It trims whitespace/newlines
+// and replaces spaces with dashes to match GPU operator label format.
+// Returns empty string if input is blank after trimming.
+func parseMachineTypeFromDMI(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	return strings.ReplaceAll(s, " ", "-")
+}
+
+// parseGPUProductFromNvidiaSmi extracts the first "Product Name" value from
+// nvidia-smi -q output and sanitizes it to match GPU operator label format
+// (spaces replaced with dashes). Returns empty string if no product name found.
+func parseGPUProductFromNvidiaSmi(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "Product Name") {
+			continue
+		}
+		parts := strings.SplitN(line, " : ", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[1])
+		if name == "" {
+			continue
+		}
+		return strings.ReplaceAll(name, " ", "-")
+	}
+	return ""
+}
+
+// discoverHardwareTypes attempts to discover machineType and productType by
+// probing hardware directly when label-derived values are empty. It execs into
+// a nic-configuration-daemon pod on one of the group's nodes.
+// Returns (machineType, productType) — either or both may still be empty if
+// discovery fails or hardware info is unavailable.
+func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
+	namespace string, groupNodes []string, dsPods []corev1.Pod,
+	needMachine, needProduct bool) (machineType, productType string) {
+
+	targetPod := findDaemonPod(groupNodes, dsPods)
+	if targetPod == nil {
+		log.Log.Info("No nic-configuration-daemon pod found on group nodes; skipping hardware type probing")
+		return "", ""
+	}
+
+	containerName := ""
+	if len(targetPod.Spec.Containers) > 0 {
+		containerName = targetPod.Spec.Containers[0].Name
+	}
+
+	if needMachine {
+		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
+			[]string{"/bin/sh", "-c", "cat /sys/class/dmi/id/product_name 2>/dev/null"})
+		if err != nil {
+			log.Log.Error(err, "failed to read machine type from DMI", "pod", targetPod.Name)
+		} else {
+			machineType = parseMachineTypeFromDMI(output)
+		}
+	}
+
+	if needProduct {
+		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
+			[]string{"/bin/sh", "-c", "LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH /host/usr/bin/nvidia-smi -q 2>/dev/null"})
+		if err != nil {
+			log.Log.Error(err, "failed to read GPU product type from nvidia-smi", "pod", targetPod.Name)
+		} else {
+			productType = parseGPUProductFromNvidiaSmi(output)
+		}
+	}
+
+	return machineType, productType
+}
+
+// findDaemonPod returns a nic-configuration-daemon pod running on one of the
+// given nodes. Returns nil if no pod is found on any of the nodes.
+func findDaemonPod(groupNodes []string, dsPods []corev1.Pod) *corev1.Pod {
+	nodeSet := make(map[string]bool, len(groupNodes))
+	for _, n := range groupNodes {
+		nodeSet[n] = true
+	}
+	for i := range dsPods {
+		if nodeSet[dsPods[i].Spec.NodeName] {
+			return &dsPods[i]
+		}
+	}
+	return nil
+}
+
 // discoverThirdPartyRDMAModules execs into a nic-configuration-daemon pod on one
 // of the group's nodes and discovers third-party RDMA modules that depend on
 // OFED target modules via the kernel module holder graph.
@@ -941,18 +1051,7 @@ func discoverThirdPartyRDMAModules(ctx context.Context, restConfig *rest.Config,
 
 	// Find a daemon pod running on one of the group's nodes.
 	// All nodes in a group have identical hardware, so one is sufficient.
-	nodeSet := make(map[string]bool, len(groupNodes))
-	for _, n := range groupNodes {
-		nodeSet[n] = true
-	}
-
-	var targetPod *corev1.Pod
-	for i := range dsPods {
-		if nodeSet[dsPods[i].Spec.NodeName] {
-			targetPod = &dsPods[i]
-			break
-		}
-	}
+	targetPod := findDaemonPod(groupNodes, dsPods)
 	if targetPod == nil {
 		return nil, fmt.Errorf("no nic-configuration-daemon pod found on group nodes")
 	}

@@ -101,3 +101,110 @@ func TestAlternateNamespace(t *testing.T) {
 	assert.Equal(t, "nvidia-network-operator", alternateNamespace("network-operator"))
 	assert.Equal(t, "", alternateNamespace("custom-namespace"))
 }
+
+func TestParseMachineTypeFromDMI(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"normal value", "DGXH100 880G\n", "DGXH100-880G"},
+		{"trailing whitespace", "  DGXH100 880G  \n\n", "DGXH100-880G"},
+		{"no spaces", "DGX-A100\n", "DGX-A100"},
+		{"empty", "", ""},
+		{"whitespace only", "  \n", ""},
+		{"multiple spaces", "ThinkSystem SR680a V3\n", "ThinkSystem-SR680a-V3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseMachineTypeFromDMI(tt.raw))
+		})
+	}
+}
+
+func TestParseGPUProductFromNvidiaSmi(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name: "single GPU",
+			output: `GPU 00000000:E1:00.0
+    Product Name                          : NVIDIA H100 NVL
+    Product Brand                         : NVIDIA
+`,
+			want: "NVIDIA-H100-NVL",
+		},
+		{
+			name: "multiple GPUs returns first",
+			output: `GPU 00000000:E1:00.0
+    Product Name                          : NVIDIA H100 NVL
+GPU 00000000:E2:00.0
+    Product Name                          : NVIDIA A100 80GB
+`,
+			want: "NVIDIA-H100-NVL",
+		},
+		{
+			name:   "no product name",
+			output: "Driver Version: 550.90\nCUDA Version: 12.4\n",
+			want:   "",
+		},
+		{
+			name:   "empty output",
+			output: "",
+			want:   "",
+		},
+		{
+			name:   "extra whitespace",
+			output: "    Product Name                          : NVIDIA H100 NVL   \n",
+			want:   "NVIDIA-H100-NVL",
+		},
+		{
+			name:   "SXM variant",
+			output: "    Product Name                          : NVIDIA H100 80GB HBM3\n",
+			want:   "NVIDIA-H100-80GB-HBM3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseGPUProductFromNvidiaSmi(tt.output))
+		})
+	}
+}
+
+func TestFindDaemonPod(t *testing.T) {
+	pods := []corev1.Pod{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "daemon-pod-1"},
+			Spec:       corev1.PodSpec{NodeName: "node-1"},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "daemon-pod-2"},
+			Spec:       corev1.PodSpec{NodeName: "node-2"},
+		},
+	}
+
+	t.Run("pod found on matching node", func(t *testing.T) {
+		result := findDaemonPod([]string{"node-2", "node-3"}, pods)
+		require.NotNil(t, result)
+		assert.Equal(t, "daemon-pod-2", result.Name)
+	})
+
+	t.Run("no matching node", func(t *testing.T) {
+		result := findDaemonPod([]string{"node-5"}, pods)
+		assert.Nil(t, result)
+	})
+
+	t.Run("empty nodes list", func(t *testing.T) {
+		result := findDaemonPod([]string{}, pods)
+		assert.Nil(t, result)
+	})
+
+	t.Run("empty pods list", func(t *testing.T) {
+		result := findDaemonPod([]string{"node-1"}, []corev1.Pod{})
+		assert.Nil(t, result)
+	})
+}

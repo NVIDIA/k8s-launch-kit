@@ -766,6 +766,26 @@ clusterConfig:
     traffic: north-south     # BlueField DPU — excluded from manifests
 ```
 
+### Machine and GPU Product Type
+
+During discovery, each node group's `machineType` and `productType` are populated from GPU operator node labels (`nvidia.com/gpu.machine` and `nvidia.com/gpu.product`). When these labels are absent — for example, when the GPU operator is not deployed — the tool falls back to probing hardware directly from a `nic-configuration-daemon` pod on one of the group's nodes:
+
+- **Machine type**: read from `/sys/class/dmi/id/product_name`
+- **GPU product type**: parsed from `nvidia-smi -q` output (the first `Product Name` field)
+
+Values are sanitized to match the GPU operator label format (spaces replaced with dashes). If either probe fails (e.g., `nvidia-smi` not installed, DMI not readable), the corresponding field is left empty and discovery continues without error.
+
+Example of discovered hardware types in the config:
+```yaml
+clusterConfig:
+- identifier: group-0
+  machineType: ThinkSystem-SR680a-V3
+  productType: NVIDIA-H100-NVL
+  workerNodes:
+  - node-1
+  - node-2
+```
+
 ### NIC Interface Name Templates
 
 The `nicConfigurationOperator.deployNicInterfaceNameTemplate` setting controls whether a `NicInterfaceNameTemplate` CR is deployed to rename NIC interfaces to predictable, rail-based names (e.g., `eth_r0`, `eth_r1`). When set to `true`, the tool treats it as "enable when needed" rather than "always enable". The NicInterfaceNameTemplate CR and associated `nicConfigurationOperator` section in NicClusterPolicy are only deployed when one of the following conditions is met:
