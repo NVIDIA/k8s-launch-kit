@@ -61,10 +61,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Go Proxy
-        id: go-proxy
-        uses: nv-gha-runners/setup-artifactory-go-proxy@main
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -83,7 +79,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_DEPLOY_KEY: ${{ secrets.HOMEBREW_DEPLOY_KEY }}
-          GOPROXY: ${{ steps.go-proxy.outputs.goproxy-url || 'direct' }}
 
   summary:
     name: Release summary
