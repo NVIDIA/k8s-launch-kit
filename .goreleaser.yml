@@ -74,7 +74,7 @@ metadata:
   mod_timestamp: "{{ .CommitTimestamp }}"
 
 release:
-  prerelease: auto
+  mode: append
 
 changelog:
   sort: asc
