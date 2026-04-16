@@ -1,5 +1,5 @@
-#!/bin/bash
-# Copyright 2025 NVIDIA CORPORATION & AFFILIATES
+#!/bin/sh
+# Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,99 +15,176 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Install l8k binary, profiles, and default config to system paths.
+# Install or uninstall l8k from GitHub Releases.
 #
 # Usage:
-#   scripts/install.sh                     # Install to /usr/local (copies files)
-#   scripts/install.sh --dev-env           # Install symlinks for development
-#   scripts/install.sh --prefix /opt/l8k   # Custom install prefix
+#   curl -fsSL https://raw.githubusercontent.com/nvidia/k8s-launch-kit/main/scripts/install-standalone.sh | sh
+#   curl -fsSL ... | sh -s -- -d ~/local
+#   curl -fsSL ... | sh -s -- --uninstall
+#   L8K_VERSION=v1.2.0 sh install-standalone.sh
 #
-# Install layout:
-#   <prefix>/bin/l8k                       # Binary
-#   <prefix>/share/l8k/profiles/           # Profile templates
-#   <prefix>/share/l8k/presets/            # Predefined cluster topology presets
-#   <prefix>/share/l8k/l8k-config.yaml    # Default configuration
+# Environment variables:
+#   L8K_VERSION   Pin a specific version (default: latest release)
+#   GITHUB_TOKEN  Authenticate GitHub API requests (avoids rate limits)
 
-set -euo pipefail
+set -eu
 
-PREFIX="/usr/local"
-DEV_ENV=false
-SKIP_PRESETS_UPDATE=false
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="nvidia/k8s-launch-kit"
+INSTALL_DIR="/usr/local"
+UNINSTALL=false
 
-while [[ $# -gt 0 ]]; do
+# --- Parse flags ---
+while [ $# -gt 0 ]; do
     case "$1" in
-        --dev-env)
-            DEV_ENV=true
-            shift
-            ;;
-        --prefix)
-            PREFIX="$2"
+        -d)
+            INSTALL_DIR="$2"
             shift 2
             ;;
-        --skip-presets-update)
-            SKIP_PRESETS_UPDATE=true
+        --uninstall)
+            UNINSTALL=true
             shift
             ;;
         -h|--help)
-            echo "Usage: install.sh [--dev-env] [--prefix /path] [--skip-presets-update]"
+            echo "Usage: install-standalone.sh [-d install_prefix] [--uninstall]"
             echo ""
             echo "Options:"
-            echo "  --dev-env              Create symlinks instead of copies (for development)"
-            echo "  --prefix               Install prefix (default: /usr/local)"
-            echo "  --skip-presets-update   Skip downloading latest presets from GitHub"
+            echo "  -d <prefix>    Install prefix (default: /usr/local)"
+            echo "  --uninstall    Remove l8k binary and assets"
+            echo ""
+            echo "Environment variables:"
+            echo "  L8K_VERSION    Pin a specific version (e.g. v1.0.0)"
+            echo "  GITHUB_TOKEN   Authenticate GitHub requests"
             exit 0
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: install.sh [--dev-env] [--prefix /path] [--skip-presets-update]"
+            echo "Usage: install-standalone.sh [-d install_prefix] [--uninstall]"
             exit 1
             ;;
     esac
 done
 
-SHARE_DIR="${PREFIX}/share/l8k"
-BIN_DIR="${PREFIX}/bin"
-
-# Verify binary exists
-if [ ! -f "${REPO_ROOT}/build/l8k" ]; then
-    echo "Error: binary not found at ${REPO_ROOT}/build/l8k"
-    echo "Run 'make build' first."
-    exit 1
+# --- Uninstall ---
+if [ "$UNINSTALL" = true ]; then
+    SUDO=""
+    if [ ! -w "${INSTALL_DIR}/bin" ] 2>/dev/null; then
+        SUDO="sudo"
+    fi
+    echo "Removing l8k from ${INSTALL_DIR}..."
+    $SUDO rm -f "${INSTALL_DIR}/bin/l8k"
+    $SUDO rm -rf "${INSTALL_DIR}/share/l8k"
+    echo "l8k uninstalled."
+    exit 0
 fi
 
-if [ "$DEV_ENV" = true ]; then
-    echo "Installing l8k (dev mode — symlinks)..."
-    mkdir -p "${BIN_DIR}"
-    ln -sfn "${REPO_ROOT}/build/l8k" "${BIN_DIR}/l8k"
-    mkdir -p "${SHARE_DIR}"
-    ln -sfn "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
-    ln -sfn "${REPO_ROOT}/presets" "${SHARE_DIR}/presets"
-    ln -sfn "${REPO_ROOT}/l8k-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
+# --- Detect platform ---
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)         ARCH=amd64 ;;
+    aarch64|arm64)  ARCH=arm64 ;;
+    *)
+        echo "Error: unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+
+case "$OS" in
+    linux|darwin) ;;
+    *)
+        echo "Error: unsupported OS: $OS (use Linux or macOS)"
+        exit 1
+        ;;
+esac
+
+echo "Detected platform: ${OS}/${ARCH}"
+
+# --- Resolve version ---
+if [ -n "${L8K_VERSION:-}" ]; then
+    VERSION="$L8K_VERSION"
 else
-    echo "Installing l8k..."
-    mkdir -p "${BIN_DIR}"
-    install -m 755 "${REPO_ROOT}/build/l8k" "${BIN_DIR}/l8k"
-    mkdir -p "${SHARE_DIR}"
-    rm -rf "${SHARE_DIR}/profiles"
-    cp -r "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
-    rm -rf "${SHARE_DIR}/presets"
-    cp -r "${REPO_ROOT}/presets" "${SHARE_DIR}/presets"
-    cp "${REPO_ROOT}/l8k-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
+    # Use redirect trick to avoid GitHub API rate limits.
+    # The /releases/latest endpoint redirects to /releases/tag/vX.Y.Z —
+    # we parse the version from the redirect URL.
+    REDIRECT_URL=$(curl -fsSIo /dev/null -w '%{redirect_url}' \
+        "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)
+    VERSION=$(echo "$REDIRECT_URL" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+[^/]*' || true)
+    if [ -z "$VERSION" ]; then
+        echo "Error: could not determine latest version."
+        echo "Set L8K_VERSION explicitly or check https://github.com/${REPO}/releases"
+        exit 1
+    fi
+fi
+VERSION_NO_V="${VERSION#v}"
+
+echo "Installing l8k ${VERSION}..."
+
+# --- Download ---
+ARCHIVE="l8k_${VERSION_NO_V}_${OS}_${ARCH}.tar.gz"
+BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+AUTH_HEADER=""
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"
 fi
 
+echo "Downloading ${ARCHIVE}..."
+curl -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "${BASE_URL}/${ARCHIVE}" -o "${WORK_DIR}/${ARCHIVE}"
+curl -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "${BASE_URL}/checksums.txt" -o "${WORK_DIR}/checksums.txt"
+
+# --- Verify checksum ---
+cd "$WORK_DIR"
+if command -v sha256sum >/dev/null 2>&1; then
+    grep "${ARCHIVE}" checksums.txt | sha256sum -c --quiet
+    echo "Checksum verified."
+elif command -v shasum >/dev/null 2>&1; then
+    grep "${ARCHIVE}" checksums.txt | shasum -a 256 -c --quiet
+    echo "Checksum verified."
+else
+    echo "Warning: no sha256sum or shasum available, skipping checksum verification"
+fi
+
+# --- Extract ---
+mkdir -p "${WORK_DIR}/extracted"
+tar xzf "${ARCHIVE}" -C "${WORK_DIR}/extracted"
+
+# --- Install ---
+SUDO=""
+if [ ! -w "${INSTALL_DIR}/bin" ] 2>/dev/null; then
+    SUDO="sudo"
+fi
+
+$SUDO mkdir -p "${INSTALL_DIR}/bin"
+$SUDO install -m 755 "${WORK_DIR}/extracted/l8k" "${INSTALL_DIR}/bin/l8k"
+
+$SUDO mkdir -p "${INSTALL_DIR}/share/l8k"
+$SUDO rm -rf "${INSTALL_DIR}/share/l8k/profiles" "${INSTALL_DIR}/share/l8k/presets"
+$SUDO cp -r "${WORK_DIR}/extracted/profiles" "${INSTALL_DIR}/share/l8k/"
+$SUDO cp -r "${WORK_DIR}/extracted/presets" "${INSTALL_DIR}/share/l8k/"
+$SUDO cp "${WORK_DIR}/extracted/l8k-config.yaml" "${INSTALL_DIR}/share/l8k/"
+
+# macOS: remove quarantine attribute
+xattr -d com.apple.quarantine "${INSTALL_DIR}/bin/l8k" 2>/dev/null || true
+
+# --- Verify ---
 echo ""
 echo "Installed successfully:"
-echo "  Binary:   ${BIN_DIR}/l8k"
-echo "  Profiles: ${SHARE_DIR}/profiles"
-echo "  Presets:  ${SHARE_DIR}/presets"
-echo "  Config:   ${SHARE_DIR}/l8k-config.yaml"
+echo "  Binary:   ${INSTALL_DIR}/bin/l8k"
+echo "  Profiles: ${INSTALL_DIR}/share/l8k/profiles"
+echo "  Presets:  ${INSTALL_DIR}/share/l8k/presets"
+echo "  Config:   ${INSTALL_DIR}/share/l8k/l8k-config.yaml"
+echo ""
+"${INSTALL_DIR}/bin/l8k" version
 
-# Try to download latest presets from GitHub (non-fatal on failure)
-if [ "$SKIP_PRESETS_UPDATE" = false ] && [ "$DEV_ENV" = false ]; then
-    echo ""
-    echo "Downloading latest presets from GitHub..."
-    "${BIN_DIR}/l8k" preset update --dir "${SHARE_DIR}/presets" 2>/dev/null \
-        && echo "Presets updated successfully." \
-        || echo "[WARNING] Could not download presets (offline?). Using bundled presets."
-fi
+# --- PATH check ---
+case ":${PATH}:" in
+    *":${INSTALL_DIR}/bin:"*) ;;
+    *)
+        echo ""
+        echo "Warning: ${INSTALL_DIR}/bin is not in your PATH."
+        echo "Add it with: export PATH=\"${INSTALL_DIR}/bin:\$PATH\""
+        ;;
+esac

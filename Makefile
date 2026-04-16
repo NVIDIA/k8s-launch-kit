@@ -25,7 +25,7 @@ GOMOD=$(GOCMD) mod
 SOSREPORT_SCRIPT=scripts/kubectl-netop_sosreport
 SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/master/scripts/sosreport/kubectl-netop_sosreport
 
-.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport help
+.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport release release-snapshot help
 
 ## Build the binary
 build:
@@ -33,11 +33,15 @@ build:
 	$(GOBUILD) $(LDFLAGS) -o $(BINARY_PATH) .
 
 ## Build for all platforms
-build-all: build-linux build-windows build-darwin build-darwin-arm64
+build-all: build-linux build-linux-arm64 build-windows build-darwin build-darwin-arm64
 
 build-linux:
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) .
+
+build-linux-arm64:
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 .
 
 build-windows:
 	@mkdir -p $(BUILD_DIR)
@@ -116,11 +120,11 @@ run: build
 
 ## Install l8k to system paths (copies binary, profiles, config)
 install: build
-	scripts/install.sh
+	scripts/install-local.sh
 
 ## Install l8k with dev symlinks (for development)
 dev-install: build
-	scripts/install.sh --dev-env
+	scripts/install-local.sh --dev-env
 
 ## Development setup
 dev-setup: deps lint-check test
@@ -161,6 +165,14 @@ download-sosreport:
 	@mkdir -p scripts
 	curl -fsSL -o $(SOSREPORT_SCRIPT) $(SOSREPORT_URL)
 	chmod +x $(SOSREPORT_SCRIPT)
+
+## Run GoReleaser (full release, requires GITHUB_TOKEN and HOMEBREW_DEPLOY_KEY)
+release:
+	goreleaser release --clean
+
+## Run GoReleaser snapshot (local testing, no publish)
+release-snapshot:
+	goreleaser release --snapshot --clean --skip=publish,sbom
 
 ## Display help
 help:

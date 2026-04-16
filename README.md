@@ -15,17 +15,41 @@ Based on the discovered/provided configuration, generate a complete set of YAML 
 
 ## Installation
 
+### Quick install (from GitHub Releases)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nvidia/k8s-launch-kit/main/scripts/install.sh | sh
+```
+
+Pin a specific version or install to a custom directory:
+
+```bash
+L8K_VERSION=v1.0.0 sh scripts/install.sh
+curl -fsSL ... | sh -s -- -d ~/local
+```
+
+Uninstall:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nvidia/k8s-launch-kit/main/scripts/install.sh | sh -s -- --uninstall
+```
+
+### Homebrew
+
+```bash
+brew tap nvidia/l8k https://github.com/nvidia/k8s-launch-kit
+brew install l8k
+```
+
 ### Build from source
 
 ```bash
 git clone <repository-url>
-cd launch-kubernetes
+cd k8s-launch-kit
 make build
 ```
 
 The binary will be available at `build/l8k`.
-
-### Install
 
 After building, install the binary, profiles, and config to `/usr/local`:
 
@@ -34,9 +58,10 @@ make install        # Copies binary, profiles, config to /usr/local
 make dev-install    # Symlinks instead of copies (for development)
 ```
 
-This runs `scripts/install.sh`, which places:
+This runs `scripts/install-local.sh`, which places:
 - `<prefix>/bin/l8k`
 - `<prefix>/share/l8k/profiles/`
+- `<prefix>/share/l8k/presets/`
 - `<prefix>/share/l8k/l8k-config.yaml`
 
 Default prefix is `/usr/local`. Override with `PREFIX=/opt/l8k make install`.

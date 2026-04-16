@@ -53,6 +53,9 @@ Thumbs.db
 build/
 dist/
 
+# GoReleaser
+.goreleaser-artifacts/
+
 claude.md
 CLAUDE.md
 licenses.csv
