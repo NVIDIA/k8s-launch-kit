@@ -109,6 +109,32 @@ else
     REDIRECT_URL=$(curl -fsSIo /dev/null -w '%{redirect_url}' \
         "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)
     VERSION=$(echo "$REDIRECT_URL" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+[^/]*' || true)
+
+    # Verify the release has GoReleaser archives (older releases may not).
+    # If not, fall back to the GitHub API to find the most recent release that does.
+    if [ -n "$VERSION" ]; then
+        VERSION_NO_V_CHECK="${VERSION#v}"
+        CHECK_URL="https://github.com/${REPO}/releases/download/${VERSION}/l8k_${VERSION_NO_V_CHECK}_${OS}_${ARCH}.tar.gz"
+        if ! curl -fsSIo /dev/null "$CHECK_URL" 2>/dev/null; then
+            echo "Latest stable release (${VERSION}) has no binary archives."
+            echo "Checking for the most recent release with binaries..."
+            VERSION=""
+        fi
+    fi
+
+    # Fallback: query the GitHub API for the most recent release with archives.
+    if [ -z "$VERSION" ]; then
+        AUTH_FLAG=""
+        if [ -n "${GITHUB_TOKEN:-}" ]; then
+            AUTH_FLAG="-H \"Authorization: token ${GITHUB_TOKEN}\""
+        fi
+        VERSION=$(eval curl -fsSL $AUTH_FLAG \
+            "https://api.github.com/repos/${REPO}/releases?per_page=10" 2>/dev/null \
+            | grep -oE '"tag_name":\s*"v[^"]*"' \
+            | head -1 \
+            | grep -oE 'v[0-9]+[^"]*' || true)
+    fi
+
     if [ -z "$VERSION" ]; then
         echo "Error: could not determine latest version."
         echo "Set L8K_VERSION explicitly or check https://github.com/${REPO}/releases"
