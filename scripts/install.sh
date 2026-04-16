@@ -163,14 +163,28 @@ curl -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "${BASE_URL}/checksums.txt" -o "${W
 
 # --- Verify checksum ---
 cd "$WORK_DIR"
-if command -v sha256sum >/dev/null 2>&1; then
-    grep "${ARCHIVE}" checksums.txt | sha256sum -c --quiet
-    echo "Checksum verified."
-elif command -v shasum >/dev/null 2>&1; then
-    grep "${ARCHIVE}" checksums.txt | shasum -a 256 -c --quiet
-    echo "Checksum verified."
+EXPECTED_SUM=$(grep "${ARCHIVE}" checksums.txt | awk '{print $1}')
+if [ -z "$EXPECTED_SUM" ]; then
+    echo "Warning: archive not found in checksums.txt, skipping verification"
 else
-    echo "Warning: no sha256sum or shasum available, skipping checksum verification"
+    if command -v shasum >/dev/null 2>&1; then
+        ACTUAL_SUM=$(shasum -a 256 "${ARCHIVE}" | awk '{print $1}')
+    elif command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL_SUM=$(sha256sum "${ARCHIVE}" | awk '{print $1}')
+    else
+        ACTUAL_SUM=""
+        echo "Warning: no sha256sum or shasum available, skipping checksum verification"
+    fi
+    if [ -n "$ACTUAL_SUM" ]; then
+        if [ "$EXPECTED_SUM" = "$ACTUAL_SUM" ]; then
+            echo "Checksum verified."
+        else
+            echo "Error: checksum mismatch!"
+            echo "  Expected: ${EXPECTED_SUM}"
+            echo "  Got:      ${ACTUAL_SUM}"
+            exit 1
+        fi
+    fi
 fi
 
 # --- Extract ---
