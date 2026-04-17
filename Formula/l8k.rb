@@ -9,32 +9,51 @@ class L8k < Formula
   license "Apache-2.0"
 
   on_macos do
-    on_intel do
+    if Hardware::CPU.intel?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.4.0-beta.4/l8k_26.4.0-beta.4_darwin_amd64.tar.gz"
-      sha256 "2c38b970fe2d6992d55aa523bc5aa33b1d0be50ca95ad73859f9491687e4244c"
+      sha256 "2f07edbb9d5a752ee3d10a159b7306e327d02b70b2a1285a21ab3488f579c075"
+
+      define_method(:install) do
+        bin.install "l8k"
+        (share/"l8k").install "profiles"
+        (share/"l8k").install "presets"
+        (share/"l8k").install "l8k-config.yaml"
+      end
     end
-    on_arm do
+    if Hardware::CPU.arm?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.4.0-beta.4/l8k_26.4.0-beta.4_darwin_arm64.tar.gz"
-      sha256 "0708612f66fbc485fe5af4bafe79f94eda1f879c3b055e0f77c8e14a0102a504"
+      sha256 "313f49b10b99716990402763bd158e1221fe01c8794bb940a1e7d90eb333a7f1"
+
+      define_method(:install) do
+        bin.install "l8k"
+        (share/"l8k").install "profiles"
+        (share/"l8k").install "presets"
+        (share/"l8k").install "l8k-config.yaml"
+      end
     end
   end
 
   on_linux do
-    on_intel do
+    if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.4.0-beta.4/l8k_26.4.0-beta.4_linux_amd64.tar.gz"
-      sha256 "f08598a781cd8489682a0fc992b10cf70b4cbf8aa0584e635b95b4957128bc58"
+      sha256 "66c692440e8d89a98ff115ea5dfbf91e041cf3f65d9c44594174a0c02f68c646"
+      define_method(:install) do
+        bin.install "l8k"
+        (share/"l8k").install "profiles"
+        (share/"l8k").install "presets"
+        (share/"l8k").install "l8k-config.yaml"
+      end
     end
-    on_arm do
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.4.0-beta.4/l8k_26.4.0-beta.4_linux_arm64.tar.gz"
-      sha256 "ac386d8fc1bf63173e4cecc52e8237717dd7026ed823e111f0b67a83ab40b30c"
+      sha256 "9fb71ebdc8647f1713ed8b715d6363b8949f270ed06c5cc4b841cf3d2c0cbffe"
+      define_method(:install) do
+        bin.install "l8k"
+        (share/"l8k").install "profiles"
+        (share/"l8k").install "presets"
+        (share/"l8k").install "l8k-config.yaml"
+      end
     end
-  end
-
-  def install
-    bin.install "l8k"
-    (share/"l8k").install "profiles"
-    (share/"l8k").install "presets"
-    (share/"l8k").install "l8k-config.yaml"
   end
 
   test do
