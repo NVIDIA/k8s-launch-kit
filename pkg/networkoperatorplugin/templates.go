@@ -524,12 +524,20 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 	}
 	railCount := len(ewPFsByGroup[0])
 
-	// Build RailPciAddresses: for each rail, collect PCI addresses from all groups
+	// Build RailPciAddresses: for each rail, collect unique PCI addresses across groups,
+	// preserving first-occurrence order. Nodes often share a PCI layout, so without dedup
+	// downstream templates (e.g. SriovNetworkNodePolicy rootDevices) would emit duplicates.
 	railPciAddresses := make([][]string, railCount)
 	for rail := 0; rail < railCount; rail++ {
+		seen := map[string]bool{}
 		addrs := make([]string, 0, len(indices))
 		for _, pfs := range ewPFsByGroup {
-			addrs = append(addrs, pfs[rail].PciAddress)
+			addr := pfs[rail].PciAddress
+			if seen[addr] {
+				continue
+			}
+			seen[addr] = true
+			addrs = append(addrs, addr)
 		}
 		railPciAddresses[rail] = addrs
 	}
