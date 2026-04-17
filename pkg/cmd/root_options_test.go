@@ -40,26 +40,8 @@ var (
 			Deployment: "sriov",
 			Multirail:  boolPtr(true),
 			SpectrumX: &profiles.ProfileRequirementsSpectrumX{
-				SPCXVersion:    "RA2.1",
-				MultiplaneMode: []string{"hwplb", "uniplane", "none"},
-			},
-		},
-		NodeCapabilities: profiles.NodeCapabilities{
-			Sriov: boolPtr(true),
-			Rdma:  boolPtr(true),
-		},
-	}
-
-	spectrumXSwplbProfile = profiles.Profile{
-		Name:   "Spectrum-X Multi-Rail SWPLB",
-		Plugin: "network-operator",
-		ProfileRequirements: profiles.ProfileRequirements{
-			Fabric:     "ethernet",
-			Deployment: "sriov",
-			Multirail:  boolPtr(true),
-			SpectrumX: &profiles.ProfileRequirementsSpectrumX{
-				SPCXVersion:    "RA2.1",
-				MultiplaneMode: []string{"swplb"},
+				SPCXVersion:    "RA2.2",
+				MultiplaneMode: []string{"swplb", "hwplb", "uniplane", "none"},
 			},
 		},
 		NodeCapabilities: profiles.NodeCapabilities{
@@ -162,7 +144,7 @@ func TestCLIOnlyProfileResolution(t *testing.T) {
 	t.Run("spectrum-x hwplb matches spectrum-x profile", func(t *testing.T) {
 		opts := options.Options{
 			SpectrumX:      true,
-			SPCXVersion:    "RA2.1",
+			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 2,
 		}
@@ -170,27 +152,15 @@ func TestCLIOnlyProfileResolution(t *testing.T) {
 		assert.True(t, valid, "should match spectrum-x profile; reason: %s", reason)
 	})
 
-	t.Run("spectrum-x swplb matches spectrum-x-swplb profile", func(t *testing.T) {
+	t.Run("spectrum-x swplb matches merged spectrum-x profile", func(t *testing.T) {
 		opts := options.Options{
 			SpectrumX:      true,
-			SPCXVersion:    "RA2.1",
-			MultiplaneMode: "swplb",
-			NumberOfPlanes: 4,
-		}
-		valid, reason := resolveProfile(t, opts, nil, spectrumXSwplbProfile, defaultCapabilities)
-		assert.True(t, valid, "should match spectrum-x-swplb profile; reason: %s", reason)
-	})
-
-	t.Run("spectrum-x swplb does NOT match non-swplb spectrum-x profile", func(t *testing.T) {
-		opts := options.Options{
-			SpectrumX:      true,
-			SPCXVersion:    "RA2.1",
+			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "swplb",
 			NumberOfPlanes: 4,
 		}
 		valid, reason := resolveProfile(t, opts, nil, spectrumXProfile, defaultCapabilities)
-		assert.False(t, valid)
-		assert.Contains(t, reason, "multiplane mode swplb not in profile's allowed modes")
+		assert.True(t, valid, "should match spectrum-x profile (now covers swplb); reason: %s", reason)
 	})
 
 	t.Run("ethernet sriov matches sriov-ethernet-rdma", func(t *testing.T) {
@@ -211,7 +181,7 @@ func TestCLIOnlyProfileResolution(t *testing.T) {
 		assert.True(t, valid, "should match sriov-ib-rdma; reason: %s", reason)
 	})
 
-	t.Run("spectrum-x without version fails RA2.1 profile", func(t *testing.T) {
+	t.Run("spectrum-x without version fails RA2.2 profile", func(t *testing.T) {
 		opts := options.Options{
 			SpectrumX:      true,
 			MultiplaneMode: "hwplb",
@@ -232,7 +202,7 @@ func TestConfigOnlyProfileResolution(t *testing.T) {
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
 			},
@@ -241,20 +211,20 @@ func TestConfigOnlyProfileResolution(t *testing.T) {
 		assert.True(t, valid, "should match spectrum-x profile; reason: %s", reason)
 	})
 
-	t.Run("config with full spectrum-x swplb matches spectrum-x-swplb profile", func(t *testing.T) {
+	t.Run("config with full spectrum-x swplb matches merged spectrum-x profile", func(t *testing.T) {
 		cfgProfile := &config.Profile{
 			Fabric:     "ethernet",
 			Deployment: "sriov",
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
 		}
-		valid, reason := resolveProfile(t, options.Options{}, cfgProfile, spectrumXSwplbProfile, defaultCapabilities)
-		assert.True(t, valid, "should match spectrum-x-swplb profile; reason: %s", reason)
+		valid, reason := resolveProfile(t, options.Options{}, cfgProfile, spectrumXProfile, defaultCapabilities)
+		assert.True(t, valid, "should match spectrum-x profile (now covers swplb); reason: %s", reason)
 	})
 
 	t.Run("config with basic sriov ethernet matches sriov-ethernet-rdma", func(t *testing.T) {
@@ -287,7 +257,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 		}
 		opts := options.Options{
 			SpectrumX:      true,       // CLI adds spectrum-x → multirail becomes true
-			SPCXVersion:    "RA2.1",
+			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 2,
 		}
@@ -303,7 +273,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
 			},
@@ -312,8 +282,8 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			SpectrumX:      true,
 			MultiplaneMode: "swplb", // CLI overrides mode
 		}
-		valid, reason := resolveProfile(t, opts, cfgProfile, spectrumXSwplbProfile, defaultCapabilities)
-		assert.True(t, valid, "CLI --multiplane-mode swplb should switch to swplb profile; reason: %s", reason)
+		valid, reason := resolveProfile(t, opts, cfgProfile, spectrumXProfile, defaultCapabilities)
+		assert.True(t, valid, "CLI --multiplane-mode swplb stays in merged profile; reason: %s", reason)
 	})
 
 	t.Run("config spectrum-x 2 planes + CLI overrides to 4 planes", func(t *testing.T) {
@@ -323,7 +293,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
 			},
@@ -355,7 +325,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
 			},
@@ -388,30 +358,13 @@ func TestMissingInvalidParams(t *testing.T) {
 	t.Run("spectrum-x wrong version fails", func(t *testing.T) {
 		opts := options.Options{
 			SpectrumX:      true,
-			SPCXVersion:    "RA2.0", // wrong version
+			SPCXVersion:    "unsupported", // not the required version
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 2,
 		}
 		valid, reason := resolveProfile(t, opts, nil, spectrumXProfile, defaultCapabilities)
 		assert.False(t, valid)
 		assert.Contains(t, reason, "SPCX version")
-	})
-
-	t.Run("spectrum-x swplb rejected by non-swplb profile", func(t *testing.T) {
-		cfgProfile := &config.Profile{
-			Fabric:     "ethernet",
-			Deployment: "sriov",
-			Multirail:  true,
-			SpectrumX: &config.ProfileSpectrumX{
-				Enable:         true,
-				SPCXVersion:    "RA2.1",
-				MultiplaneMode: "swplb",
-				NumberOfPlanes: 4,
-			},
-		}
-		valid, reason := resolveProfile(t, options.Options{}, cfgProfile, spectrumXProfile, defaultCapabilities)
-		assert.False(t, valid)
-		assert.Contains(t, reason, "multiplane mode swplb not in profile's allowed modes")
 	})
 
 	t.Run("config multirail false fails multirail-required profile", func(t *testing.T) {
@@ -421,7 +374,7 @@ func TestMissingInvalidParams(t *testing.T) {
 			Multirail:  false,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 2,
 			},

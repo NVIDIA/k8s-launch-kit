@@ -1,15 +1,37 @@
-{{- /* Create separate SpectrumXRailPoolConfig per rail */ -}}
-{{- range $i, $pf := .ClusterConfig.PFs}}
-{{- if eq $pf.Traffic "east-west"}}
-apiVersion: spectrumx.net.nvidia.com/v1alpha1
+{{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+{{- $railCount := railCount .ClusterConfig.PFs $planes }}
+{{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+apiVersion: spectrumx.net.nvidia.com/v1alpha2
 kind: SpectrumXRailPoolConfig
 metadata:
-  name: rail-{{$i}}
-  namespace: {{$.NetworkOperator.Namespace}}
+  name: rails{{suffix .ClusterConfig.Identifier}}
+  namespace: {{.NetworkOperator.Namespace}}
 spec:
-  multiplaneMode: {{$.Profile.SpectrumX.MultiplaneMode}}  # swplb, hwplb, uniplane
-  sriovNetworkNodePolicyRef: rail-{{$i}}
-  cidrPoolRef: rail-{{$i}}
-{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
-{{- end -}}
-{{- end -}}
+  withBCM: false
+  draEnabled: true
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := .ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+  networkNamespace: {{.PodNamespace}}
+  numVfs: 1
+  railTopology:
+  {{- range $railIdx := untilStep 0 $railCount 1 }}
+  {{- if $swplb }}
+    {{- range $planeIdx := untilStep 0 $planes 1 }}
+  - name: rail{{$railIdx}}p{{$planeIdx}}
+    nicSelector:
+      pfNames: ["{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"]
+    cidrPoolRef: rail-{{$railIdx}}-plane-{{$planeIdx}}
+    mtu: 9216
+    {{- end }}
+  {{- else }}
+  - name: rail{{$railIdx}}
+    nicSelector:
+      pfNames: [{{- $firstPF := true }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $firstPF }}, {{ end }}{{- $firstPF = false }}"{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"{{- end }}]
+    cidrPoolRef: rail-{{$railIdx}}
+    mtu: 9216
+  {{- end }}
+  {{- end }}

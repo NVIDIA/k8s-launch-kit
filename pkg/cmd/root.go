@@ -112,7 +112,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 
   # Discover + deploy Spectrum-X with JSON output for automation
   l8k --kubeconfig ~/.kube/config --discover-cluster-config \
-    --spectrum-x --spcx-version RA2.1 --deploy --output json --yes
+    --spectrum-x --spcx-version RA2.2 --deploy --output json --yes
 
   # Dry-run: preview what would be deployed
   l8k --user-config cluster-config.yaml --spectrum-x --deploy \

@@ -13,7 +13,10 @@ spec:
       labels:
         app: spectrum-x-test{{suffix .ClusterConfig.Identifier}}
       annotations:
-        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}rail-{{$i}}{{- end}}{{- end}}
+        {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+        {{- $railCount := railCount .ClusterConfig.PFs $planes }}
+        {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}-plane-{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}{{- end }}{{- end }}
     spec:
       containers:
       - name: spectrum-x-test
@@ -23,15 +26,23 @@ spec:
             add: ["IPC_LOCK", "NET_RAW"]
         resources:
           requests:
-            {{- range $i, $pf := .ClusterConfig.PFs}}
-            {{- if eq $pf.Traffic "east-west"}}
-            nvidia.com/rail_{{$i}}: "1"
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+            nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}: "1"
+            {{- end }}
+            {{- else }}
+            nvidia.com/rail_{{$railIdx}}: "1"
             {{- end }}
             {{- end }}
           limits:
-            {{- range $i, $pf := .ClusterConfig.PFs}}
-            {{- if eq $pf.Traffic "east-west"}}
-            nvidia.com/rail_{{$i}}: "1"
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+            nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}: "1"
+            {{- end }}
+            {{- else }}
+            nvidia.com/rail_{{$railIdx}}: "1"
             {{- end }}
             {{- end }}
         command:

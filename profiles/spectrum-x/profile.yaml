@@ -4,23 +4,23 @@ profileRequirements:
   fabric: ethernet
   deployment: sriov
   spectrumX:
-    spcxVersion: "RA2.1"
-    multiplaneMode: ["hwplb", "uniplane", "none"]
+    spcxVersion: "RA2.2"
+    multiplaneMode: ["swplb", "hwplb", "uniplane", "none"]
   multirail: true
 nodeCapabilities:
     sriov: true
     rdma: true
 description: |
-  Spectrum-X profile provides optimized multi-rail networking with OVS hardware offload,
-  DOCA acceleration, and advanced NIC firmware configuration for AI workloads.
-  Supports hwplb, uniplane, and none multiplane modes with RDMA exclusive mode.
+  Spectrum-X profile provides optimized multi-rail networking with the
+  SpectrumXRailPoolConfig CRD, DOCA acceleration, and advanced NIC firmware
+  configuration for AI workloads. Supports swplb, hwplb, uniplane, and none
+  multiplane modes. In swplb the railTopology splits each rail into per-plane
+  entries; in other modes one entry per rail groups all planes together.
 deploymentGuide: spectrum-x.rst
 templates:
   - 10-nicclusterpolicy.yaml
   - 30-nicconfigurationtemplate.yaml
   - 35-nicinterfacenametemplate.yaml
-  - 40-sriovnetworkpoolconfig.yaml
-  - 50-sriovnetworknodepolicy.yaml
-  - 70-ovsnetwork.yaml
+  - 60-cidrpool.yaml
   - 80-spectrumxrailpoolconfig.yaml
   - 90-example-daemonset.yaml

@@ -38,7 +38,7 @@ type ProfileRequirements struct {
 }
 
 type ProfileRequirementsSpectrumX struct {
-	SPCXVersion    string   `yaml:"spcxVersion"`              // Required version, e.g., "RA2.1"
+	SPCXVersion    string   `yaml:"spcxVersion"`              // Required version, e.g., "RA2.2"
 	MultiplaneMode []string `yaml:"multiplaneMode,omitempty"` // Allowed multiplane modes, e.g., ["hwplb", "uniplane", "none"]
 }
 

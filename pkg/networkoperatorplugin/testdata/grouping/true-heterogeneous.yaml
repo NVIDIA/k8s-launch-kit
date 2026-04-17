@@ -1,0 +1,350 @@
+networkOperator:
+  version: v26.1.0
+  componentVersion: network-operator-v26.1.0
+  repository: nvcr.io/nvidia/mellanox
+  namespace: network-operator
+docaDriver:
+  enable: true
+  version: doca3.3.0-26.01-1.0.0.0-0
+  unloadStorageModules: true
+  enableNFSRDMA: false
+  unloadThirdPartyRDMAModules: true
+nvIpam:
+  poolName: nv-ipam-pool
+  startingSubnet: 192.168.0.0
+  mask: 22
+  offset: 1
+sriov:
+  ethernetMtu: 9000
+  infinibandMtu: 4000
+  numVfs: 8
+  priority: 90
+  resourceName: sriov_resource
+  networkName: sriov-network
+hostdev:
+  resourceName: hostdev_resource
+  networkName: hostdev-network
+rdmaShared:
+  resourceName: rdma_shared_resource
+  hcaMax: 63
+ipoib:
+  networkName: ipoib-network
+macvlan:
+  networkName: macvlan-network
+spectrumX:
+  nicType: "1023"
+  overlay: none
+  rdmaPrefix: roce_p%plane_id%_r%rail_id%
+  netdevPrefix: eth_p%plane_id%_r%rail_id%
+nicConfigurationOperator:
+  deployNicInterfaceNameTemplate: true
+  rdmaPrefix: rdma_r%rail_id%
+  netdevPrefix: eth_r%rail_id%
+podNamespace: default
+clusterConfig:
+- identifier: group-0
+  machineType: machine-a
+  productType: gpu-model-y
+  labelSelector:
+    feature.node.kubernetes.io/pci-15b3.present: "true"
+  capabilities:
+    nodes:
+      sriov: true
+      rdma: true
+      ib: true
+  pfs:
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:19:00.0"
+    networkInterface: ""
+    traffic: east-west
+    rail: 0
+    psid: psid-a-rdma
+    partNumber: pn-a-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:2a:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 1
+    psid: psid-a-rdma
+    partNumber: pn-a-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:3b:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 2
+    psid: psid-a-rdma
+    partNumber: pn-a-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:4c:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 3
+    psid: psid-a-rdma
+    partNumber: pn-a-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: 101f
+    rdmaDevice: ""
+    pciAddress: 0000:5a:00.0
+    networkInterface: ""
+    traffic: north-south
+    psid: psid-a-dpu
+    partNumber: pn-a-dpu
+    currentFwVersion: 26.42.1000
+  - deviceID: 101f
+    rdmaDevice: ""
+    pciAddress: 0000:5a:00.1
+    networkInterface: ""
+    traffic: north-south
+    psid: psid-a-dpu
+    partNumber: pn-a-dpu
+    currentFwVersion: 26.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9b:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 4
+    psid: psid-a-rdma
+    partNumber: pn-a-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:ab:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 5
+    psid: psid-a-rdma
+    partNumber: pn-a-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:c1:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 6
+    psid: psid-a-rdma
+    partNumber: pn-a-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:cb:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 7
+    psid: psid-a-rdma
+    partNumber: pn-a-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:d8:00.0
+    networkInterface: ""
+    traffic: north-south
+    psid: psid-a-extra
+    partNumber: pn-a-extra
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:d8:00.1
+    networkInterface: ""
+    traffic: north-south
+    psid: psid-a-extra
+    partNumber: pn-a-extra
+    currentFwVersion: 32.42.1000
+  workerNodes:
+  - worker-lenovo-0
+  - worker-lenovo-1
+  nodeSelector:
+    example.com/vendor: vendor-a
+    mofed: enabled
+    nvidia.com/gpu.count: "8"
+    nvidia.com/gpu.machine: machine-a
+  thirdPartyRDMAModules:
+  - iw_cm
+- identifier: group-1
+  machineType: machine-b
+  productType: gpu-model-y
+  labelSelector:
+    feature.node.kubernetes.io/pci-15b3.present: "true"
+  capabilities:
+    nodes:
+      sriov: true
+      rdma: true
+      ib: true
+  pfs:
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:1a:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 0
+    psid: psid-b-rdma
+    partNumber: pn-b-rdma
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:3c:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 1
+    psid: psid-b-rdma
+    partNumber: pn-b-rdma
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:4d:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 2
+    psid: psid-b-rdma
+    partNumber: pn-b-rdma
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:5e:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 3
+    psid: psid-b-rdma
+    partNumber: pn-b-rdma
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9c:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 4
+    psid: psid-b-rdma
+    partNumber: pn-b-rdma
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9d:00.0
+    networkInterface: ""
+    traffic: north-south
+    psid: psid-b-dpu
+    partNumber: pn-b-dpu
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:9d:00.1
+    networkInterface: ""
+    traffic: north-south
+    psid: psid-b-dpu
+    partNumber: pn-b-dpu
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:bc:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 5
+    psid: psid-b-rdma
+    partNumber: pn-b-rdma
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:cc:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 6
+    psid: psid-b-rdma
+    partNumber: pn-b-rdma
+    currentFwVersion: 32.44.1036
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:dc:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 7
+    psid: psid-b-rdma
+    partNumber: pn-b-rdma
+    currentFwVersion: 32.44.1036
+  workerNodes:
+  - worker-dell-0
+  - worker-dell-1
+  nodeSelector:
+    example.com/vendor: vendor-b
+    mofed: enabled
+    nvidia.com/gpu.machine: machine-b
+    nvidia.com/ofed-driver-upgrade-state: upgrade-done
+  thirdPartyRDMAModules:
+  - iw_cm
+- identifier: group-2
+  machineType: machine-c
+  productType: gpu-model-z
+  labelSelector:
+    feature.node.kubernetes.io/pci-15b3.present: "true"
+  capabilities:
+    nodes:
+      sriov: true
+      rdma: true
+      ib: true
+  pfs:
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:09:00.0"
+    networkInterface: ""
+    traffic: east-west
+    rail: 0
+    psid: psid-c-rdma
+    partNumber: pn-c-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:23:00.0"
+    networkInterface: ""
+    traffic: east-west
+    rail: 1
+    psid: psid-c-rdma
+    partNumber: pn-c-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:35:00.0"
+    networkInterface: ""
+    traffic: north-south
+    psid: psid-c-dpu
+    partNumber: pn-c-dpu
+    currentFwVersion: 32.41.1300
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:35:00.1"
+    networkInterface: ""
+    traffic: north-south
+    psid: psid-c-dpu
+    partNumber: pn-c-dpu
+    currentFwVersion: 32.41.1300
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: "0000:53:00.0"
+    networkInterface: ""
+    traffic: east-west
+    rail: 2
+    psid: psid-c-rdma
+    partNumber: pn-c-rdma
+    currentFwVersion: 32.42.1000
+  - deviceID: a2dc
+    rdmaDevice: ""
+    pciAddress: 0000:69:00.0
+    networkInterface: ""
+    traffic: east-west
+    rail: 3
+    psid: psid-c-rdma
+    partNumber: pn-c-rdma
+    currentFwVersion: 32.42.1000
+  workerNodes:
+  - worker-cisco-0
+  - worker-cisco-1
+  nodeSelector:
+    example.com/vendor: vendor-c
+    nvidia.com/gpu.count: "8"
+    nvidia.com/gpu.machine: machine-c
+  thirdPartyRDMAModules:
+  - iw_cm

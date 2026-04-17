@@ -101,6 +101,7 @@ When Spectrum-X is enabled, determine these sub-parameters:
    - BlueField-3 SuperNIC (BF3, deviceID "a2dc"): The ONLY valid mode is "none".
      No multiplane support. Always set spectrumXMultiplaneMode=none, spectrumXNumberOfPlanes=1.
    - ConnectX-8 (CX8, deviceID "1023"): Supports "swplb", "hwplb", and "uniplane".
+   - ConnectX-9 (CX9, deviceID "1025"): Same as ConnectX-8.
      Choice depends on cluster scale and switch topology.
 
    ConnectX-8 multiplane modes:
@@ -120,7 +121,7 @@ When Spectrum-X is enabled, determine these sub-parameters:
    - 2 planes: Good balance. For medium-scale clusters.
    - Default: 4 (for swplb/hwplb), 1 (for none/uniplane).
 
-3. Version (spectrumXVersion): Always "RA2.1" (currently the only supported version).
+3. Version (spectrumXVersion): Always "RA2.2" (currently the only supported version).
 
 ANALYSIS INSTRUCTIONS:
 
@@ -188,7 +189,7 @@ When spectrumX is "false", omit the spectrumXMultiplaneMode, spectrumXNumberOfPl
   "spectrumX": "true|false",
   "spectrumXMultiplaneMode": "none|swplb|hwplb|uniplane",
   "spectrumXNumberOfPlanes": "1|2|4",
-  "spectrumXVersion": "RA2.1",
+  "spectrumXVersion": "RA2.2",
   "ai": "true|false",
   "findings": ["finding 1", "finding 2"],
   "severity": "critical|warning|info",

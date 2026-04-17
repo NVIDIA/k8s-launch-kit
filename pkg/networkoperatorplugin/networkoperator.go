@@ -182,7 +182,7 @@ func (p *NetworkOperatorPlugin) BuildProfileFromLLMResponse(llmResponse map[stri
 
 		spcxVersion := llmResponse["spectrumXVersion"]
 		if spcxVersion == "" {
-			spcxVersion = "RA2.1"
+			spcxVersion = "RA2.2"
 		}
 
 		multiplaneMode := llmResponse["spectrumXMultiplaneMode"]

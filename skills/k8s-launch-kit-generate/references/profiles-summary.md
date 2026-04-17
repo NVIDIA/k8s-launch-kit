@@ -79,40 +79,25 @@ Summary of all 7 l8k profile definitions from `profiles/*/profile.yaml`.
 - **Directory**: `profiles/spectrum-x/`
 - **Plugin**: network-operator
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
-  `spectrumX.multiplaneMode` in `[hwplb, uniplane, none]`
+  `spectrumX.multiplaneMode` in `[swplb, hwplb, uniplane, none]`
 - **Node Capabilities**: `sriov: true`, `rdma: true`
-- **Description**: Optimized multi-rail networking with OVS hardware offload, DOCA
-  acceleration, and advanced NIC firmware configuration for AI workloads. Supports
-  hwplb, uniplane, and none multiplane modes with RDMA exclusive mode.
+- **Description**: Unified Spectrum-X profile covering all four multiplane modes.
+  Emits a single `SpectrumXRailPoolConfig` (`v1alpha2`) that replaces the
+  legacy SriovNetworkPoolConfig + SriovNetworkNodePolicy + OVSNetwork trio.
+  In `swplb` the `railTopology[]` splits each rail into per-plane entries; in
+  other modes one entry per rail groups all planes. `CIDRPool` manifests are
+  generated with IP-address placeholders for the operator to fill in.
 - **Templates**:
-  - `10-nicclusterpolicy.yaml` -- NicClusterPolicy with Spectrum-X Operator
-  - `30-nicconfigurationtemplate.yaml` -- Spectrum-X firmware settings
-  - `35-nicinterfacenametemplate.yaml` -- Multi-rail interface naming
-  - `40-sriovnetworkpoolconfig.yaml` -- RDMA mode and OVS hardware offload
-  - `50-sriovnetworknodepolicy.yaml` -- SR-IOV policies per rail
-  - `70-ovsnetwork.yaml` -- OVS network attachments per rail
-  - `80-spectrumxrailpoolconfig.yaml` -- Rail-to-CIDR pool mapping
-  - `90-pod.yaml` -- Test pod
-
-## 7. Spectrum-X Multi-Rail SWPLB
-
-- **Directory**: `profiles/spectrum-x-swplb/`
-- **Plugin**: network-operator
-- **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
-  `spectrumX.multiplaneMode` in `[swplb]`
-- **Node Capabilities**: `sriov: true`, `rdma: true`
-- **Description**: Spectrum-X profile for software plane load balancing multiplane
-  mode. Generates separate resources per-rail per-plane for OVS hardware offload,
-  DOCA acceleration, and advanced NIC firmware configuration for AI workloads.
-- **Templates**:
-  - `10-nicclusterpolicy.yaml`
-  - `30-nicconfigurationtemplate.yaml`
-  - `35-nicinterfacenametemplate.yaml`
-  - `40-sriovnetworkpoolconfig.yaml`
-  - `50-sriovnetworknodepolicy.yaml`
-  - `70-ovsnetwork.yaml`
-  - `80-spectrumxrailpoolconfig.yaml`
-  - `90-pod.yaml`
+  - `10-nicclusterpolicy.yaml` -- NicClusterPolicy (with `nicFirmwareStorage`
+    and `spectrumXOperator.xPlane`)
+  - `30-nicconfigurationtemplate.yaml` -- Spectrum-X firmware settings (RA2.2)
+  - `35-nicinterfacenametemplate.yaml` -- Multi-rail interface naming; each
+    inner `railPciAddresses` list groups all planes of one rail
+  - `60-cidrpool.yaml` -- One CIDRPool per rail (non-swplb) or per rail-plane
+    (swplb), with IP placeholders
+  - `80-spectrumxrailpoolconfig.yaml` -- Single SpectrumXRailPoolConfig with
+    `railTopology[]`
+  - `90-example-daemonset.yaml` -- Example workload
 
 ## Profile Matching Logic
 

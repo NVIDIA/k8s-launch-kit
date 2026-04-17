@@ -158,7 +158,7 @@ Spectrum-X sub-section within the profile block.
 | Field            | Type   | Default  | CLI Override            | Description                            |
 |------------------|--------|----------|-------------------------|----------------------------------------|
 | `enable`         | bool   | `false`  | `--spectrum-x`          | Enable Spectrum-X profile              |
-| `spcxVersion`    | string | `RA2.1`  | `--spcx-version`        | Spectrum-X version (always RA2.1)      |
+| `spcxVersion`    | string | `RA2.2`  | `--spcx-version`        | Spectrum-X version (always RA2.2)      |
 | `multiplaneMode` | string | `swplb`  | `--multiplane-mode`     | `swplb`, `hwplb`, `uniplane`, or `none`|
 | `numberOfPlanes` | int    | `4`      | `--number-of-planes`    | 1, 2, or 4 (also used as pfsPerNic)   |
 

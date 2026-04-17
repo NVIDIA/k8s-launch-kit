@@ -75,6 +75,17 @@ var templateFuncs = template.FuncMap{
 	"pfsPerNic": func(pfs []config.PFConfig) int {
 		return pfsPerNic(pfs)
 	},
+	"railPciGroups": func(pfs []config.PFConfig, planes int) [][]string {
+		return railPciGroups(pfs, planes)
+	},
+	// railCount returns the number of rails computed as len(east-west PFs) / planes.
+	// Returns len(ew) when planes is 1 or unset, and treats planes<1 as 1.
+	"railCount": func(pfs []config.PFConfig, planes int) int {
+		if planes < 1 {
+			planes = 1
+		}
+		return len(filterEastWestPFs(pfs)) / planes
+	},
 	// nnpName produces a valid NicNodePolicy name from a group identifier.
 	// Returns "l8k" for empty identifiers, truncates to 30 chars (NNP name limit).
 	"nnpName": func(identifier string) string {
@@ -119,6 +130,47 @@ func pfsPerNic(pfs []config.PFConfig) int {
 		return 1
 	}
 	return len(ewPFs) / len(nicDevices)
+}
+
+// mergedGroupsAgreeOnPci returns true when every group either (a) did not come
+// from a merge (RailPciAddresses nil) or (b) came from a merge where all source
+// groups agreed on the PCI address at each rail. When this is true it is safe
+// to render per-machine-type resources (e.g. NicInterfaceNameTemplate) against
+// the merged config without losing any source group's PCI addresses.
+func mergedGroupsAgreeOnPci(groups []config.ClusterConfig) bool {
+	for _, g := range groups {
+		for _, railAddrs := range g.RailPciAddresses {
+			if len(railAddrs) > 1 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// railPciGroups chunks the east-west PFs into rails of `planes` PCI addresses each,
+// preserving input order. Used to emit NicInterfaceNameTemplate.railPciAddresses as
+// [[pci,pci], [pci,pci], ...] where each inner list holds all PCI addresses of one
+// NIC/rail. If planes <= 0 or the list is not evenly divisible, any trailing PFs
+// form a final shorter group.
+func railPciGroups(pfs []config.PFConfig, planes int) [][]string {
+	ewPFs := filterEastWestPFs(pfs)
+	if planes < 1 {
+		planes = 1
+	}
+	var groups [][]string
+	for i := 0; i < len(ewPFs); i += planes {
+		end := i + planes
+		if end > len(ewPFs) {
+			end = len(ewPFs)
+		}
+		group := make([]string, 0, end-i)
+		for _, pf := range ewPFs[i:end] {
+			group = append(group, pf.PciAddress)
+		}
+		groups = append(groups, group)
+	}
+	return groups
 }
 
 // templateContext wraps the full config but presents a single ClusterConfig group.
@@ -298,16 +350,19 @@ func filterEastWestPFs(pfs []config.PFConfig) []config.PFConfig {
 
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
 func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKubernetesConfig) (map[string]string, error) {
-	// Keep unmerged config for NicInterfaceNameTemplate (needs per-machine-type PCI addresses)
+	// Keep the unmerged config as a fallback for NicInterfaceNameTemplate when
+	// merged source groups disagree on east-west PCI addresses — per-group
+	// rendering preserves each machine's own PCI list in that case.
 	unmrgCfg := cfg
 
-	// Merge compatible groups when: multiple groups, no --group filter, not spectrum-x
+	// Merge compatible groups when multiple groups exist and no --group filter is set.
+	// Spectrum-X participates in merging now that rail selection is by stable netdev
+	// name (SpectrumXRailPoolConfig + NicInterfaceNameTemplate) rather than PCI address.
 	useNameTemplates := cfg.NicConfigurationOperator != nil &&
 		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
 	hadPciConflicts := false
 
-	if p.GroupFilter == "" && cfg.Profile != nil &&
-		len(cfg.ClusterConfig) > 1 && !isSpectrumX(cfg) {
+	if p.GroupFilter == "" && cfg.Profile != nil && len(cfg.ClusterConfig) > 1 {
 		mergedCfg := *cfg
 		mergedCfg.ClusterConfig, hadPciConflicts = mergeCompatibleGroups(cfg.ClusterConfig, useNameTemplates)
 		cfg = &mergedCfg
@@ -328,11 +383,20 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 			overrideCfg := *cfg
 			overrideCfg.NicConfigurationOperator = &overrideNicCfg
 			cfg = &overrideCfg
-			// Also update unmerged config so nicinterfacenametemplate files are skipped.
 			unmrgOverride := *unmrgCfg
 			unmrgOverride.NicConfigurationOperator = &overrideNicCfg
 			unmrgCfg = &unmrgOverride
 		}
+	}
+
+	// If every merged group's source groups agreed on east-west PCI addresses,
+	// the per-unmerged-group NicInterfaceNameTemplate renders would be byte-identical
+	// (modulo the identifier suffix) — so render once against the merged cfg instead.
+	// When source groups differ on PCI, fall back to per-unmerged-group rendering so
+	// each machine's own PCI list lands in its own manifest.
+	nameTemplateCfg := unmrgCfg
+	if mergedGroupsAgreeOnPci(cfg.ClusterConfig) {
+		nameTemplateCfg = cfg
 	}
 
 	results := make(map[string]string)
@@ -344,11 +408,9 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		if skipWorkloadTemplates && isWorkloadTemplate(filepath.Base(templatePath)) {
 			continue
 		}
-		// NicInterfaceNameTemplate must be rendered per original group (not merged)
-		// because each machine type has different PCI addresses for railPciAddresses.
 		renderCfg := cfg
 		if strings.Contains(filepath.Base(templatePath), "nicinterfacenametemplate") {
-			renderCfg = unmrgCfg
+			renderCfg = nameTemplateCfg
 		}
 		rendered, err := ProcessTemplate(templatePath, renderCfg, p.GroupFilter)
 		if err != nil {

@@ -70,26 +70,17 @@ profile's `profileRequirements`.
 
 - **Directory**: `profiles/spectrum-x/`
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
-  `spectrumX.multiplaneMode` in `[hwplb, uniplane, none]`
+  `spectrumX.multiplaneMode` in `[swplb, hwplb, uniplane, none]`
 - **Node capabilities**: `sriov: true`, `rdma: true`
 - **Use cases**: Multi-tenant AI cloud, Spectrum-X ethernet fabric with OVS
-  hardware offload, BF3 SuperNIC deployments, CX8 with hwplb/uniplane
-- **Templates**: NicClusterPolicy, NicConfigurationTemplate,
-  NicInterfaceNameTemplate, SriovNetworkPoolConfig, SriovNetworkNodePolicy,
-  OVSNetwork, SpectrumXRailPoolConfig, test Pod
-- **Keywords**: Spectrum-X, SPCX, multi-rail, AI cloud, OVS, DOCA
-
-### 7. Spectrum-X Multi-Rail SWPLB
-
-- **Directory**: `profiles/spectrum-x-swplb/`
-- **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
-  `spectrumX.multiplaneMode` in `[swplb]`
-- **Node capabilities**: `sriov: true`, `rdma: true`
-- **Use cases**: CX8 deployments with software plane load balancing, smaller
-  Spectrum-X clusters, per-rail-per-plane resource granularity
-- **Templates**: Same as Spectrum-X Multi-Rail (different template content for
-  per-plane resource naming)
-- **Keywords**: Spectrum-X, SPCX, swplb, software plane load balancing
+  hardware offload, BF3 SuperNIC deployments, CX8 with any multiplane mode
+- **Templates**: NicClusterPolicy (with `nicFirmwareStorage` and
+  `spectrumXOperator.xPlane`), NicConfigurationTemplate,
+  NicInterfaceNameTemplate, CIDRPool (one per rail or per rail-plane in swplb
+  with IP placeholders), SpectrumXRailPoolConfig (`v1alpha2`, single resource
+  with `railTopology[]` — per-plane entries in swplb, per-rail entries
+  otherwise), example DaemonSet
+- **Keywords**: Spectrum-X, SPCX, multi-rail, AI cloud, DOCA, swplb, hwplb, uniplane
 
 ## Spectrum-X NIC Type Rules
 
@@ -98,9 +89,9 @@ profile's `profileRequirements`.
 - Multiplane mode: **must be `none`**
 - Number of planes: **must be 1**
 - Single-plane operation only; no multiplane support in BF3 hardware
-- Version: always `RA2.1`
+- Version: always `RA2.2`
 
-### ConnectX-8 (deviceID: 1023)
+### ConnectX-8 (deviceID: 1023) / ConnectX-9 (deviceID: 1025)
 
 - Multiplane modes: `swplb`, `hwplb`, or `uniplane`
 - Number of planes:
@@ -108,7 +99,7 @@ profile's `profileRequirements`.
   - `swplb`: 2 or 4 (default: 4)
   - `hwplb`: 2 or 4 (default: 4)
 - `swplb` is the default mode for CX8 when no explicit mode is given
-- Version: always `RA2.1`
+- Version: always `RA2.2`
 
 ### Multiplane Mode Selection Guide
 
@@ -144,6 +135,7 @@ guide profile selection:
 | shared, multi-tenant, many pods       | `deployment=rdma_shared`      |
 | BlueField, BF3, SuperNIC, DPU        | `spectrumX.nicType=a2dc`      |
 | ConnectX-8, CX8                       | `spectrumX.nicType=1023`      |
+| ConnectX-9, CX9                       | `spectrumX.nicType=1025`      |
 
 ## Decision Flow
 

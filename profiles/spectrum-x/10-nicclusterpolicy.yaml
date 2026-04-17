@@ -19,6 +19,11 @@ spec:
       image: nic-configuration-operator-daemon
       repository: {{.NetworkOperator.Repository}}
       version: {{.NetworkOperator.ComponentVersion}}
+    nicFirmwareStorage:
+      create: true
+      pvcName: nic-fw-storage-pvc
+      storageClassName: nic-fw-storage-class
+      availableStorageSize: 1Gi
     logLevel: info
   nvIpam:
     image: nvidia-k8s-ipam
@@ -29,6 +34,16 @@ spec:
     image: spectrum-x-operator
     repository: {{.NetworkOperator.Repository}}
     version: {{.NetworkOperator.ComponentVersion}}
+    xPlane:
+      image: xplane
+      repository: {{.NetworkOperator.Repository}}
+      version: {{.NetworkOperator.ComponentVersion}}
+      {{- if .NetworkOperator.ImagePullSecrets }}
+      imagePullSecrets:
+      {{- range .NetworkOperator.ImagePullSecrets }}
+        - {{ . }}
+      {{- end }}
+      {{- end }}
   secondaryNetwork:
     cniPlugins:
       image: plugins

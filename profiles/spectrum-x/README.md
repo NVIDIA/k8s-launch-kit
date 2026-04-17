@@ -9,7 +9,7 @@ The Spectrum-X profile provides optimized multi-rail networking with OVS hardwar
 - **Multi-Rail Networking**: Supports multiple network rails for high-bandwidth AI workloads
 - **OVS Hardware Offload**: DOCA-accelerated Open vSwitch with hardware offloading
 - **RDMA Exclusive Mode**: Dedicated RDMA resources per workload
-- **Advanced Firmware Configuration**: Spectrum-X optimized firmware with RA2.1 support
+- **Advanced Firmware Configuration**: Spectrum-X optimized firmware with RA2.2 support
 - **Multiple Plane Modes**: Supports none, swplb, hwplb, and uniplane configurations
 - **Dynamic Interface Naming**: Automatic NIC interface naming based on plane and rail topology
 
@@ -32,8 +32,9 @@ nodeCapabilities:
 
 - **nicType**: NIC device type
   - `"1023"` for ConnectX-8
+  - `"1025"` for ConnectX-9
   - `"a2dc"` for BlueField-3 SuperNIC
-- **firmwareVersion**: Spectrum-X firmware version (e.g., `"RA2.1"`)
+- **firmwareVersion**: Spectrum-X firmware version (e.g., `"RA2.2"`)
 - **multiplaneMode**: Multiplane configuration
   - `none`: Single plane
   - `swplb`: Software plane load balancing
@@ -75,44 +76,36 @@ nodeCapabilities:
 The profile generates the following Kubernetes Custom Resources:
 
 1. **NicClusterPolicy** (`10-nicclusterpolicy.yaml`)
-   - Configures Network Operator, NV-IPAM, and Spectrum-X Operator
+   - Configures Network Operator, NicConfigurationOperator (with `nicFirmwareStorage`),
+     NV-IPAM, Spectrum-X Operator with nested `xPlane` block, and secondary network CNI.
 
-2. **NicFirmwareSource** (`20-nicfirmwaresource.yaml`)
-   - Defines firmware binary and BFB sources
+2. **NicConfigurationTemplate** (`30-nicconfigurationtemplate.yaml`)
+   - Configures Spectrum-X optimized firmware settings (RA2.2).
 
-3. **NicFirmwareTemplate** (`21-nicfirmwaretemplate.yaml`)
-   - Links NIC types to firmware sources
+3. **NICInterfaceNameTemplate** (`35-nicinterfacenametemplate.yaml`)
+   - Defines interface naming conventions for multi-rail (one inner list per rail,
+     all PCI addresses of that rail grouped together).
 
-4. **NicConfigurationTemplate** (`30-nicconfigurationtemplate.yaml`)
-   - Configures Spectrum-X optimized firmware settings
+4. **CIDRPool** (`60-cidrpool.yaml`)
+   - One pool per rail (non-swplb) or per rail-plane (swplb), with IP placeholders
+     the cluster operator must fill in.
 
-5. **NICInterfaceNameTemplate** (`35-nicinterfacenametemplate.yaml`)
-   - Defines interface naming conventions for multi-rail
+5. **SpectrumXRailPoolConfig** (`80-spectrumxrailpoolconfig.yaml`)
+   - Single `v1alpha2` resource with `railTopology[]`. In swplb, one entry per
+     rail-plane; otherwise one entry per rail grouping all planes.
 
-6. **SriovNetworkPoolConfig** (`40-sriovnetworkpoolconfig.yaml`)
-   - Configures RDMA mode and OVS hardware offload
+6. **Example DaemonSet** (`90-example-daemonset.yaml`)
+   - Example workload requesting one VF per rail (non-swplb) or per rail-plane (swplb).
 
-7. **SriovNetworkNodePolicy** (`50-sriovnetworknodepolicy.yaml`)
-   - Creates SR-IOV policies per rail with OVS bridge configuration
-
-8. **CIDRPool** (`60-cidrpool.yaml`)
-   - Defines IP address pools per rail
-
-9. **OVSNetwork** (`70-ovsnetwork.yaml`)
-   - Creates OVS network attachment definitions per rail
-
-10. **SpectrumXRailPoolConfig** (`80-spectrumxrailpoolconfig.yaml`)
-    - Links SR-IOV policies to CIDR pools per rail
-
-11. **Test Pod** (`90-pod.yaml`)
-    - Example pod configuration for testing
+`NicFirmwareSource` and `NicFirmwareTemplate` must be applied separately by the
+operator; l8k does not generate them.
 
 ## Example Configuration
 
 ```yaml
 spectrumX:
   nicType: "1023"
-  firmwareVersion: "RA2.1"
+  firmwareVersion: "RA2.2"
   multiplaneMode: hwplb
   numberOfPlanes: 4
   overlay: "none"
@@ -148,8 +141,8 @@ profile:
 
 1. Kubernetes cluster with SR-IOV capable nodes
 2. NVIDIA Network Operator v26.1.0 or later
-3. ConnectX-8 or BlueField-3 SuperNIC adapters
-4. Firmware compatible with Spectrum-X RA2.1
+3. ConnectX-8, ConnectX-9, or BlueField-3 SuperNIC adapters
+4. Firmware compatible with Spectrum-X RA2.2
 
 ### Installation with Helm
 
@@ -212,7 +205,7 @@ kubectl exec -it spectrum-x-multirail-test-pod -- sh -c "ip addr show && rdma li
 
 ## Multi-Rail Topology Examples
 
-### 4-Rail Configuration (ConnectX-8, Quad Plane)
+### 4-Rail Configuration (ConnectX-8 or ConnectX-9, Quad Plane)
 
 ```yaml
 clusterConfig:

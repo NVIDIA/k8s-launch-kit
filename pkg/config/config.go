@@ -85,7 +85,7 @@ type SriovConfig struct {
 }
 
 type SpectrumXConfig struct {
-	NicType      string `yaml:"nicType"`      // "1023" for ConnectX-8, "a2dc" for BlueField-3 SuperNIC
+	NicType      string `yaml:"nicType"`      // "1023" for ConnectX-8, "1025" for ConnectX-9, "a2dc" for BlueField-3 SuperNIC
 	Overlay      string `yaml:"overlay"`      // "none"
 	RdmaPrefix   string `yaml:"rdmaPrefix"`   // e.g., "roce_p%plane_id%_r%rail_id%"
 	NetdevPrefix string `yaml:"netdevPrefix"` // e.g., "eth_p%plane_id%_r%rail_id%"
@@ -129,7 +129,7 @@ type Profile struct {
 
 type ProfileSpectrumX struct {
 	Enable         bool   `yaml:"enable"`         // must be true for Spectrum-X profiles to match
-	SPCXVersion    string `yaml:"spcxVersion"`    // e.g., "RA2.1"
+	SPCXVersion    string `yaml:"spcxVersion"`    // e.g., "RA2.2"
 	MultiplaneMode string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
 	NumberOfPlanes int    `yaml:"numberOfPlanes"` // 2 or 4
 }
@@ -267,10 +267,10 @@ func validateSpectrumXTemplates(config *LaunchKubernetesConfig) error {
 	netdevPrefix := config.SpectrumX.NetdevPrefix
 	rdmaPrefix := config.SpectrumX.RdmaPrefix
 	
-	// Multiplane modes (swplb, hwplb, uniplane) require RA2.1
+	// Multiplane modes (swplb, hwplb, uniplane) require RA2.2
 	if config.Profile.SpectrumX.MultiplaneMode != "none" && config.Profile.SpectrumX.MultiplaneMode != "" {
-		if config.Profile.SpectrumX.SPCXVersion != "RA2.1" {
-			return fmt.Errorf("multiplane mode %s requires spcxVersion RA2.1, got %s",
+		if config.Profile.SpectrumX.SPCXVersion != "RA2.2" {
+			return fmt.Errorf("multiplane mode %s requires spcxVersion RA2.2, got %s",
 				config.Profile.SpectrumX.MultiplaneMode, config.Profile.SpectrumX.SPCXVersion)
 		}
 	}
