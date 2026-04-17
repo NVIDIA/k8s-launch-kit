@@ -186,7 +186,7 @@ func TestChatSession_ExtractProfile_SpectrumXFields(t *testing.T) {
 	session := &ChatSession{
 		lastResponse: `Based on your Spectrum-X requirements:
 
-{"fabric": "ethernet", "deploymentType": "sriov", "multirail": "true", "spectrumX": "true", "spectrumXMultiplaneMode": "swplb", "spectrumXNumberOfPlanes": "4", "spectrumXVersion": "RA2.1", "ai": "true", "confidence": "high", "reasoning": "Spectrum-X with swplb for AI training"}
+{"fabric": "ethernet", "deploymentType": "sriov", "multirail": "true", "spectrumX": "true", "spectrumXMultiplaneMode": "swplb", "spectrumXNumberOfPlanes": "4", "spectrumXVersion": "RA2.2", "ai": "true", "confidence": "high", "reasoning": "Spectrum-X with swplb for AI training"}
 
 This is the recommended configuration.`,
 	}
@@ -199,13 +199,13 @@ This is the recommended configuration.`,
 	assert.Equal(t, "true", profile["spectrumX"])
 	assert.Equal(t, "swplb", profile["spectrumXMultiplaneMode"])
 	assert.Equal(t, "4", profile["spectrumXNumberOfPlanes"])
-	assert.Equal(t, "RA2.1", profile["spectrumXVersion"])
+	assert.Equal(t, "RA2.2", profile["spectrumXVersion"])
 }
 
 func TestChatSession_ExtractProfile_SpectrumXNumericPlanes(t *testing.T) {
 	// Test that numeric numberOfPlanes (without quotes) is handled correctly
 	session := &ChatSession{
-		lastResponse: `{"fabric": "ethernet", "deploymentType": "sriov", "multirail": true, "spectrumX": true, "spectrumXMultiplaneMode": "hwplb", "spectrumXNumberOfPlanes": 2, "spectrumXVersion": "RA2.1", "ai": true, "confidence": "high", "reasoning": "test"}`,
+		lastResponse: `{"fabric": "ethernet", "deploymentType": "sriov", "multirail": true, "spectrumX": true, "spectrumXMultiplaneMode": "hwplb", "spectrumXNumberOfPlanes": 2, "spectrumXVersion": "RA2.2", "ai": true, "confidence": "high", "reasoning": "test"}`,
 	}
 
 	profile, err := session.ExtractProfile()
@@ -213,7 +213,7 @@ func TestChatSession_ExtractProfile_SpectrumXNumericPlanes(t *testing.T) {
 	assert.Equal(t, "true", profile["spectrumX"])
 	assert.Equal(t, "hwplb", profile["spectrumXMultiplaneMode"])
 	assert.Equal(t, "2", profile["spectrumXNumberOfPlanes"])
-	assert.Equal(t, "RA2.1", profile["spectrumXVersion"])
+	assert.Equal(t, "RA2.2", profile["spectrumXVersion"])
 }
 
 func TestInteractivePromptSuffix(t *testing.T) {

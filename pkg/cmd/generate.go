@@ -43,7 +43,7 @@ Optionally deploy the generated manifests with --deploy.`,
 
   # Spectrum-X with hardware plane load balancing
   l8k generate --user-config cluster-config.yaml \
-    --spectrum-x --spcx-version RA2.1 --multiplane-mode hwplb \
+    --spectrum-x --spcx-version RA2.2 --multiplane-mode hwplb \
     --save-deployment-files ./output
 
   # Generate and deploy in one step

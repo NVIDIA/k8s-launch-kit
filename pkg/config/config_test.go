@@ -319,7 +319,7 @@ profile:
   deployment: sriov
   multirail: true
   spectrumX:
-    spcxVersion: "RA2.1"
+    spcxVersion: "RA2.2"
     multiplaneMode: hwplb
     numberOfPlanes: 4
   ai: true
@@ -342,7 +342,7 @@ profile:
 		// Verify profile flags
 		require.NotNil(t, config.Profile)
 		require.NotNil(t, config.Profile.SpectrumX)
-		assert.Equal(t, "RA2.1", config.Profile.SpectrumX.SPCXVersion)
+		assert.Equal(t, "RA2.2", config.Profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "hwplb", config.Profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 4, config.Profile.SpectrumX.NumberOfPlanes)
 		assert.True(t, config.Profile.Multirail)
@@ -399,7 +399,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 4,
 				},
@@ -424,7 +424,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 4, // Multiplane
 				},
@@ -450,7 +450,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "hwplb",
 					NumberOfPlanes: 2, // Multiplane
 				},
@@ -476,7 +476,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true, // Multirail
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 1,
 				},
@@ -502,7 +502,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true, // Multirail
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "uniplane",
 					NumberOfPlanes: 1,
 				},
@@ -528,7 +528,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 4,
 				},
@@ -553,7 +553,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: false, // Single rail
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "none",
 					NumberOfPlanes: 1, // Single plane
 				},
@@ -589,7 +589,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 		assert.NoError(t, err, "Non-Spectrum-X profiles should not validate template placeholders")
 	})
 
-	t.Run("multiplane mode swplb requires RA2.1", func(t *testing.T) {
+	t.Run("multiplane mode swplb requires RA2.2", func(t *testing.T) {
 		config := &LaunchKubernetesConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
@@ -599,7 +599,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA1.0", // Wrong version for multiplane
+					SPCXVersion:    "unsupported", // not the required version
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 4,
 				},
@@ -612,10 +612,10 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "multiplane mode swplb requires spcxVersion RA2.1")
+		assert.Contains(t, err.Error(), "multiplane mode swplb requires spcxVersion RA2.2")
 	})
 
-	t.Run("multiplane mode hwplb requires RA2.1", func(t *testing.T) {
+	t.Run("multiplane mode hwplb requires RA2.2", func(t *testing.T) {
 		config := &LaunchKubernetesConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
@@ -625,7 +625,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA1.0",
+					SPCXVersion:    "unsupported",
 					MultiplaneMode: "hwplb",
 					NumberOfPlanes: 4,
 				},
@@ -638,10 +638,10 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "multiplane mode hwplb requires spcxVersion RA2.1")
+		assert.Contains(t, err.Error(), "multiplane mode hwplb requires spcxVersion RA2.2")
 	})
 
-	t.Run("multiplane mode none does not require RA2.1", func(t *testing.T) {
+	t.Run("multiplane mode none does not require RA2.2", func(t *testing.T) {
 		config := &LaunchKubernetesConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
@@ -651,7 +651,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: false,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA1.0", // Any version is fine for mode "none"
+					SPCXVersion:    "unsupported", // mode "none" doesn't validate version
 					MultiplaneMode: "none",
 					NumberOfPlanes: 1,
 				},
@@ -663,7 +663,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
-		assert.NoError(t, err, "Mode 'none' should not require RA2.1")
+		assert.NoError(t, err, "Mode 'none' should not require RA2.2")
 	})
 
 	t.Run("multiplane and multirail with missing both placeholders", func(t *testing.T) {
@@ -676,7 +676,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 4,
 				},

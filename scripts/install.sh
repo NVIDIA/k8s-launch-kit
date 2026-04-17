@@ -192,19 +192,27 @@ mkdir -p "${WORK_DIR}/extracted"
 tar xzf "${ARCHIVE}" -C "${WORK_DIR}/extracted"
 
 # --- Install ---
-SUDO=""
+NEED_SUDO=false
 if [ ! -w "${INSTALL_DIR}/bin" ] 2>/dev/null; then
-    SUDO="sudo"
+    NEED_SUDO=true
 fi
 
-$SUDO mkdir -p "${INSTALL_DIR}/bin"
-$SUDO install -m 755 "${WORK_DIR}/extracted/l8k" "${INSTALL_DIR}/bin/l8k"
+install_files() {
+    mkdir -p "${INSTALL_DIR}/bin"
+    install -m 755 "${WORK_DIR}/extracted/l8k" "${INSTALL_DIR}/bin/l8k"
+    mkdir -p "${INSTALL_DIR}/share/l8k"
+    rm -rf "${INSTALL_DIR}/share/l8k/profiles" "${INSTALL_DIR}/share/l8k/presets"
+    cp -r "${WORK_DIR}/extracted/profiles" "${INSTALL_DIR}/share/l8k/"
+    cp -r "${WORK_DIR}/extracted/presets" "${INSTALL_DIR}/share/l8k/"
+    cp "${WORK_DIR}/extracted/l8k-config.yaml" "${INSTALL_DIR}/share/l8k/"
+}
 
-$SUDO mkdir -p "${INSTALL_DIR}/share/l8k"
-$SUDO rm -rf "${INSTALL_DIR}/share/l8k/profiles" "${INSTALL_DIR}/share/l8k/presets"
-$SUDO cp -r "${WORK_DIR}/extracted/profiles" "${INSTALL_DIR}/share/l8k/"
-$SUDO cp -r "${WORK_DIR}/extracted/presets" "${INSTALL_DIR}/share/l8k/"
-$SUDO cp "${WORK_DIR}/extracted/l8k-config.yaml" "${INSTALL_DIR}/share/l8k/"
+if [ "$NEED_SUDO" = true ]; then
+    echo "Installing to ${INSTALL_DIR} (requires sudo)..."
+    sudo sh -c "$(declare -f install_files); WORK_DIR='${WORK_DIR}' INSTALL_DIR='${INSTALL_DIR}' install_files"
+else
+    install_files
+fi
 
 # macOS: remove quarantine attribute
 xattr -d com.apple.quarantine "${INSTALL_DIR}/bin/l8k" 2>/dev/null || true

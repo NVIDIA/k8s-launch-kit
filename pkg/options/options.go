@@ -35,7 +35,7 @@ type Options struct {
 	Multirail           bool   // Whether to deploy with multirail
 	SpectrumX           bool   // Whether to deploy with Spectrum X
 	Ai                  bool   // Whether to deploy with AI
-	SPCXVersion         string // Spectrum-X firmware version (default: RA2.1)
+	SPCXVersion         string // Spectrum-X firmware version (default: RA2.2)
 	MultiplaneMode      string // Spectrum-X multiplane mode (default: swplb)
 	NumberOfPlanes      int    // Number of planes for Spectrum-X (default: 4)
 	Prompt              string // Path to file with a prompt to use for LLM-assisted profile generation

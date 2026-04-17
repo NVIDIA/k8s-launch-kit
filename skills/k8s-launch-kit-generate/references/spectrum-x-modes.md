@@ -33,9 +33,9 @@ ovs-network-rail-1
 
 ## Mode: swplb (Software Plane Load Balancing)
 
-- **NIC type**: ConnectX-8 only (deviceID `1023`)
+- **NIC type**: ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
 - **Number of planes**: 2 or 4 (default: 4)
-- **Profile**: `spectrum-x-swplb` (dedicated SWPLB profile)
+- **Profile**: `spectrum-x` (unified profile, branches on swplb internally)
 - **Resource naming**: Per-rail AND per-plane (finest granularity)
 
 ```
@@ -55,7 +55,7 @@ ovs-network-plane-1-rail-0
 
 ## Mode: hwplb (Hardware Plane Load Balancing)
 
-- **NIC type**: ConnectX-8 only (deviceID `1023`)
+- **NIC type**: ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
 - **Number of planes**: 2 or 4 (default: 4)
 - **Profile**: `spectrum-x` (base Spectrum-X profile)
 - **Resource naming**: Per-rail only (hardware handles plane distribution)
@@ -75,7 +75,7 @@ ovs-network-rail-1
 
 ## Mode: uniplane
 
-- **NIC type**: ConnectX-8 only (deviceID `1023`)
+- **NIC type**: ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
 - **Number of planes**: 1 (fixed, no other value allowed)
 - **Profile**: `spectrum-x` (base Spectrum-X profile)
 - **Resource naming**: Per-rail only
@@ -98,6 +98,7 @@ ovs-network-rail-1
 |-----------------|----------|----------------------------|--------------|
 | BlueField-3     | `a2dc`   | `none`                     | `none`       |
 | ConnectX-8      | `1023`   | `swplb`, `hwplb`, `uniplane` | `swplb`   |
+| ConnectX-9      | `1025`   | `swplb`, `hwplb`, `uniplane` | `swplb`   |
 
 ## Number of Planes Rules
 
@@ -110,7 +111,7 @@ ovs-network-rail-1
 
 ## Version
 
-All Spectrum-X modes use version `RA2.1`. This is set via `--spcx-version` or
+All Spectrum-X modes use version `RA2.2`. This is set via `--spcx-version` or
 `profile.spectrumX.spcxVersion` in the config file. There is currently only one
 supported version.
 
@@ -129,10 +130,10 @@ supported version.
 l8k validates the mode and planes combination at startup:
 
 1. If `nicType=a2dc` (BF3), mode must be `none` and planes must be 1
-2. If `nicType=1023` (CX8), mode must be `swplb`, `hwplb`, or `uniplane`
+2. If `nicType=1023` (CX8) or `1025` (CX9), mode must be `swplb`, `hwplb`, or `uniplane`
 3. If mode is `none` or `uniplane`, planes must be 1
 4. If mode is `swplb` or `hwplb`, planes must be 2 or 4
-5. Version must be `RA2.1`
+5. Version must be `RA2.2`
 
 Validation failures produce exit code 2 (validation error) with a descriptive
 error message.

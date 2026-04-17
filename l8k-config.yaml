@@ -1,7 +1,7 @@
 networkOperator:
-  version: v26.1.4-beta.3
-  componentVersion: network-operator-v26.1.4-beta.3
-  repository: nvcr.io/nvidia/mellanox
+  version: v26.4.0-beta.4
+  componentVersion: network-operator-v26.4.0-beta.4
+  repository: nvcr.io/nvstaging/mellanox
   namespace: nvidia-network-operator
   # imagePullSecrets:
   #   - my-registry-secret
@@ -13,10 +13,10 @@ podNamespace: default
 
 docaDriver:
   enable: true
-  version: doca3.3.0-26.01-1.0.0.0-0
+  version: doca3.4.0-26.04-0.4.2.0-0
   unloadStorageModules: true
   enableNFSRDMA: false
-  unloadThirdPartyRDMAModules: false
+  unloadThirdPartyRDMAModules: true
 
 nvIpam:
   poolName: nv-ipam-pool
@@ -85,7 +85,7 @@ profile:
   multirail: false
   spectrumX: # Spectrum-X configuration (set enable: true or use --spectrum-x CLI flag)
     enable: false # CLI parameter (overrides this value): --spectrum-x
-    spcxVersion: "RA2.1" # CLI parameter (overrides this value): --spcx-version
+    spcxVersion: "RA2.2" # CLI parameter (overrides this value): --spcx-version
     multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
     numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
   ai: false

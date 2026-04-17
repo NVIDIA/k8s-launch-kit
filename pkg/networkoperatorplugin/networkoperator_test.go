@@ -65,7 +65,7 @@ func TestBuildProfileFromOptions(t *testing.T) {
 			DeploymentType: "sriov",
 			Multirail:      true,
 			SpectrumX:      true,
-			SPCXVersion:    "RA2.1",
+			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 2,
 		}
@@ -76,7 +76,7 @@ func TestBuildProfileFromOptions(t *testing.T) {
 		assert.Equal(t, "sriov", profile.Deployment)
 		assert.True(t, profile.Multirail)
 		require.NotNil(t, profile.SpectrumX)
-		assert.Equal(t, "RA2.1", profile.SpectrumX.SPCXVersion)
+		assert.Equal(t, "RA2.2", profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "hwplb", profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 2, profile.SpectrumX.NumberOfPlanes)
 	})
@@ -86,7 +86,7 @@ func TestBuildProfileFromOptions(t *testing.T) {
 			Fabric:         "ethernet",
 			DeploymentType: "sriov",
 			SpectrumX:      false,
-			SPCXVersion:    "RA2.1", // these should be ignored
+			SPCXVersion:    "RA2.2", // these should be ignored
 			MultiplaneMode: "hwplb",
 		}
 		profile := &config.Profile{}
@@ -102,7 +102,7 @@ func TestBuildProfileFromOptions(t *testing.T) {
 			Multirail:      true,
 			Ai:             true,
 			SpectrumX:      true,
-			SPCXVersion:    "RA2.1",
+			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "swplb",
 			NumberOfPlanes: 4,
 		}
@@ -114,7 +114,7 @@ func TestBuildProfileFromOptions(t *testing.T) {
 		assert.True(t, profile.Multirail)
 		assert.True(t, profile.Ai)
 		require.NotNil(t, profile.SpectrumX)
-		assert.Equal(t, "RA2.1", profile.SpectrumX.SPCXVersion)
+		assert.Equal(t, "RA2.2", profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "swplb", profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 4, profile.SpectrumX.NumberOfPlanes)
 	})
@@ -149,7 +149,7 @@ func TestBuildProfileFromLLMResponse(t *testing.T) {
 			"spectrumX":               "true",
 			"spectrumXMultiplaneMode": "hwplb",
 			"spectrumXNumberOfPlanes": "2",
-			"spectrumXVersion":        "RA2.1",
+			"spectrumXVersion":        "RA2.2",
 			"ai":                      "true",
 		}
 		profile := &config.Profile{}
@@ -160,7 +160,7 @@ func TestBuildProfileFromLLMResponse(t *testing.T) {
 		assert.True(t, profile.Multirail)
 		assert.True(t, profile.Ai)
 		require.NotNil(t, profile.SpectrumX)
-		assert.Equal(t, "RA2.1", profile.SpectrumX.SPCXVersion)
+		assert.Equal(t, "RA2.2", profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "hwplb", profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 2, profile.SpectrumX.NumberOfPlanes)
 	})
@@ -177,7 +177,7 @@ func TestBuildProfileFromLLMResponse(t *testing.T) {
 		err := p.BuildProfileFromLLMResponse(llmResponse, profile)
 		require.NoError(t, err)
 		require.NotNil(t, profile.SpectrumX)
-		assert.Equal(t, "RA2.1", profile.SpectrumX.SPCXVersion)
+		assert.Equal(t, "RA2.2", profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "swplb", profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 4, profile.SpectrumX.NumberOfPlanes)
 	})
@@ -190,7 +190,7 @@ func TestBuildProfileFromLLMResponse(t *testing.T) {
 			"spectrumX":               "true",
 			"spectrumXMultiplaneMode": "none",
 			"spectrumXNumberOfPlanes": "4",
-			"spectrumXVersion":        "RA2.1",
+			"spectrumXVersion":        "RA2.2",
 			"ai":                      "true",
 		}
 		profile := &config.Profile{}
@@ -209,7 +209,7 @@ func TestBuildProfileFromLLMResponse(t *testing.T) {
 			"spectrumX":               "true",
 			"spectrumXMultiplaneMode": "uniplane",
 			"spectrumXNumberOfPlanes": "4",
-			"spectrumXVersion":        "RA2.1",
+			"spectrumXVersion":        "RA2.2",
 			"ai":                      "false",
 		}
 		profile := &config.Profile{}
@@ -228,7 +228,7 @@ func TestBuildProfileFromLLMResponse(t *testing.T) {
 			"spectrumX":               "true",
 			"spectrumXMultiplaneMode": "swplb",
 			"spectrumXNumberOfPlanes": "4",
-			"spectrumXVersion":        "RA2.1",
+			"spectrumXVersion":        "RA2.2",
 			"ai":                      "true",
 		}
 		profile := &config.Profile{}
@@ -263,7 +263,7 @@ func TestBuildProfileFromLLMResponse(t *testing.T) {
 			"spectrumX":               "true",
 			"spectrumXMultiplaneMode": "swplb",
 			"spectrumXNumberOfPlanes": "3",
-			"spectrumXVersion":        "RA2.1",
+			"spectrumXVersion":        "RA2.2",
 			"ai":                      "true",
 		}
 		profile := &config.Profile{}
@@ -362,14 +362,14 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		}
 		opts := options.Options{
 			SpectrumX:      true,
-			SPCXVersion:    "RA2.1",
+			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 2,
 		}
 		err := p.ApplyOptionsToConfig(opts, cfg)
 		require.NoError(t, err)
 		require.NotNil(t, cfg.Profile.SpectrumX)
-		assert.Equal(t, "RA2.1", cfg.Profile.SpectrumX.SPCXVersion)
+		assert.Equal(t, "RA2.2", cfg.Profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "hwplb", cfg.Profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 2, cfg.Profile.SpectrumX.NumberOfPlanes)
 	})
@@ -378,7 +378,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		cfg := &config.LaunchKubernetesConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "hwplb",
 					NumberOfPlanes: 2,
 				},
@@ -390,7 +390,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		}
 		err := p.ApplyOptionsToConfig(opts, cfg)
 		require.NoError(t, err)
-		assert.Equal(t, "RA2.1", cfg.Profile.SpectrumX.SPCXVersion)     // preserved
+		assert.Equal(t, "RA2.2", cfg.Profile.SpectrumX.SPCXVersion)     // preserved
 		assert.Equal(t, "swplb", cfg.Profile.SpectrumX.MultiplaneMode)   // overridden
 		assert.Equal(t, 2, cfg.Profile.SpectrumX.NumberOfPlanes)         // preserved
 	})
@@ -419,7 +419,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 				Deployment: "sriov",
 				Multirail:  false,
 				SpectrumX: &config.ProfileSpectrumX{
-					SPCXVersion:    "RA2.0",
+					SPCXVersion:    "",
 					MultiplaneMode: "uniplane",
 					NumberOfPlanes: 1,
 				},
@@ -430,7 +430,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 			DeploymentType: "sriov",
 			Multirail:      true,
 			SpectrumX:      true,
-			SPCXVersion:    "RA2.1",
+			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 2,
 		}
@@ -440,7 +440,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		assert.Equal(t, "sriov", cfg.Profile.Deployment)
 		assert.True(t, cfg.Profile.Multirail)
 		require.NotNil(t, cfg.Profile.SpectrumX)
-		assert.Equal(t, "RA2.1", cfg.Profile.SpectrumX.SPCXVersion)
+		assert.Equal(t, "RA2.2", cfg.Profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "hwplb", cfg.Profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 2, cfg.Profile.SpectrumX.NumberOfPlanes)
 	})

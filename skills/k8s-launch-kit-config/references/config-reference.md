@@ -199,7 +199,7 @@ nicConfigurationOperator:
 # ============================================================================
 spectrumX:
   # string | default: "1023"
-  # PCI device ID of the NIC. "1023" = ConnectX-8, "a2dc" = BlueField-3 SuperNIC.
+  # PCI device ID of the NIC. "1023" = ConnectX-8, "1025" = ConnectX-9, "a2dc" = BlueField-3 SuperNIC.
   nicType: "1023"
 
   # string | default: "none"
@@ -239,9 +239,9 @@ profile:
     # Enable Spectrum-X deployment profile. CLI flag --spectrum-x overrides this.
     enable: false
 
-    # string | default: "RA2.1"
+    # string | default: "RA2.2"
     # Spectrum-X reference architecture version. CLI: --spcx-version
-    spcxVersion: "RA2.1"
+    spcxVersion: "RA2.2"
 
     # string | default: "swplb"
     # Multiplane mode: "swplb" (software PLB), "hwplb" (hardware PLB), "uniplane".

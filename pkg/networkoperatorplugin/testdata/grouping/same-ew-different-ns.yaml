@@ -1,0 +1,360 @@
+networkOperator:
+  version: v26.4.0-beta.3
+  componentVersion: network-operator-v26.4.0-beta.3
+  repository: nvcr.io/nvstaging/mellanox
+  namespace: network-operator
+  imagePullSecrets:
+  - ngc-image-secrets
+docaDriver:
+  enable: true
+  version: doca3.3.0-26.01-1.0.0.0-0
+  unloadStorageModules: true
+  enableNFSRDMA: false
+  unloadThirdPartyRDMAModules: true
+nvIpam:
+  poolName: nv-ipam-pool
+  startingSubnet: 192.168.0.0
+  mask: 22
+  offset: 1
+sriov:
+  ethernetMtu: 9000
+  infinibandMtu: 4000
+  numVfs: 1
+  priority: 90
+  resourceName: sriov_resource
+  networkName: sriov-network
+hostdev:
+  resourceName: hostdev_resource
+  networkName: hostdev-network
+rdmaShared:
+  resourceName: rdma_shared_resource
+  hcaMax: 63
+ipoib:
+  networkName: ipoib-network
+macvlan:
+  networkName: macvlan-network
+spectrumX:
+  nicType: "1023"
+  overlay: none
+  rdmaPrefix: roce_p%plane_id%_r%rail_id%
+  netdevPrefix: eth_p%plane_id%_r%rail_id%
+nicConfigurationOperator:
+  deployNicInterfaceNameTemplate: true
+  rdmaPrefix: rdma_r%rail_id%
+  netdevPrefix: eth_r%rail_id%
+podNamespace: default
+clusterConfig:
+- identifier: group-0
+  machineType: machine-x
+  productType: gpu-model-x
+  capabilities:
+    nodes:
+      sriov: true
+      rdma: true
+      ib: true
+  pfs:
+  - deviceID: "1023"
+    rdmaDevice: mlx5_0
+    pciAddress: "0000:03:00.0"
+    networkInterface: enp3s0f0np0
+    traffic: east-west
+    rail: 0
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_1
+    pciAddress: "0000:03:00.1"
+    networkInterface: enp3s0f1np1
+    traffic: east-west
+    rail: 1
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_2
+    pciAddress: "0000:03:00.2"
+    networkInterface: enp3s0f2np2
+    traffic: east-west
+    rail: 2
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_3
+    pciAddress: "0000:03:00.3"
+    networkInterface: enp3s0f3np3
+    traffic: east-west
+    rail: 3
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_4
+    pciAddress: "0002:03:00.0"
+    networkInterface: enP2p3s0f0np0
+    traffic: east-west
+    rail: 4
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_5
+    pciAddress: "0002:03:00.1"
+    networkInterface: enP2p3s0f1np1
+    traffic: east-west
+    rail: 5
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_6
+    pciAddress: "0002:03:00.2"
+    networkInterface: enP2p3s0f2np2
+    traffic: east-west
+    rail: 6
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_7
+    pciAddress: "0002:03:00.3"
+    networkInterface: enP2p3s0f3np3
+    traffic: east-west
+    rail: 7
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_8
+    pciAddress: "0010:03:00.0"
+    networkInterface: enP16p3s0f0np0
+    traffic: east-west
+    rail: 8
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_9
+    pciAddress: "0010:03:00.1"
+    networkInterface: enP16p3s0f1np1
+    traffic: east-west
+    rail: 9
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_10
+    pciAddress: "0010:03:00.2"
+    networkInterface: enP16p3s0f2np2
+    traffic: east-west
+    rail: 10
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_11
+    pciAddress: "0010:03:00.3"
+    networkInterface: enP16p3s0f3np3
+    traffic: east-west
+    rail: 11
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_12
+    pciAddress: "0012:03:00.0"
+    networkInterface: enP18p3s0f0np0
+    traffic: east-west
+    rail: 12
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_13
+    pciAddress: "0012:03:00.1"
+    networkInterface: enP18p3s0f1np1
+    traffic: east-west
+    rail: 13
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_14
+    pciAddress: "0012:03:00.2"
+    networkInterface: enP18p3s0f2np2
+    traffic: east-west
+    rail: 14
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_15
+    pciAddress: "0012:03:00.3"
+    networkInterface: enP18p3s0f3np3
+    traffic: east-west
+    rail: 15
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: a2dc
+    rdmaDevice: mlx5_16
+    pciAddress: "0016:03:00.0"
+    networkInterface: enP22p3s0f0np0
+    traffic: north-south
+    psid: psid-x-dpu
+    partNumber: pn-x-dpu
+  - deviceID: a2dc
+    rdmaDevice: mlx5_17
+    pciAddress: "0016:03:00.1"
+    networkInterface: enP22p3s0f1np1
+    traffic: north-south
+    psid: psid-x-dpu
+    partNumber: pn-x-dpu
+  workerNodes:
+  - worker-gb300-0
+  nodeSelector:
+    feature.node.kubernetes.io/pci-15b3.present: "true"
+  thirdPartyRDMAModules:
+  - iw_cm
+- identifier: group-1
+  machineType: machine-x
+  productType: gpu-model-x
+  capabilities:
+    nodes:
+      sriov: true
+      rdma: true
+      ib: true
+  pfs:
+  - deviceID: "1023"
+    rdmaDevice: mlx5_0
+    pciAddress: "0000:03:00.0"
+    networkInterface: enp3s0f0np0
+    traffic: east-west
+    rail: 0
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_1
+    pciAddress: "0000:03:00.1"
+    networkInterface: enp3s0f1np1
+    traffic: east-west
+    rail: 1
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_2
+    pciAddress: "0000:03:00.2"
+    networkInterface: enp3s0f2np2
+    traffic: east-west
+    rail: 2
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_3
+    pciAddress: "0000:03:00.3"
+    networkInterface: enp3s0f3np3
+    traffic: east-west
+    rail: 3
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_4
+    pciAddress: "0002:03:00.0"
+    networkInterface: enP2p3s0f0np0
+    traffic: east-west
+    rail: 4
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_5
+    pciAddress: "0002:03:00.1"
+    networkInterface: enP2p3s0f1np1
+    traffic: east-west
+    rail: 5
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_6
+    pciAddress: "0002:03:00.2"
+    networkInterface: enP2p3s0f2np2
+    traffic: east-west
+    rail: 6
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_7
+    pciAddress: "0002:03:00.3"
+    networkInterface: enP2p3s0f3np3
+    traffic: east-west
+    rail: 7
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_8
+    pciAddress: "0010:03:00.0"
+    networkInterface: enP16p3s0f0np0
+    traffic: east-west
+    rail: 8
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_9
+    pciAddress: "0010:03:00.1"
+    networkInterface: enP16p3s0f1np1
+    traffic: east-west
+    rail: 9
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_10
+    pciAddress: "0010:03:00.2"
+    networkInterface: enP16p3s0f2np2
+    traffic: east-west
+    rail: 10
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_11
+    pciAddress: "0010:03:00.3"
+    networkInterface: enP16p3s0f3np3
+    traffic: east-west
+    rail: 11
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_12
+    pciAddress: "0012:03:00.0"
+    networkInterface: enP18p3s0f0np0
+    traffic: east-west
+    rail: 12
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_13
+    pciAddress: "0012:03:00.1"
+    networkInterface: enP18p3s0f1np1
+    traffic: east-west
+    rail: 13
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_14
+    pciAddress: "0012:03:00.2"
+    networkInterface: enP18p3s0f2np2
+    traffic: east-west
+    rail: 14
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: "1023"
+    rdmaDevice: mlx5_15
+    pciAddress: "0012:03:00.3"
+    networkInterface: enP18p3s0f3np3
+    traffic: east-west
+    rail: 15
+    psid: psid-x-rdma
+    partNumber: pn-x-rdma
+  - deviceID: a2dc
+    rdmaDevice: mlx5_16
+    pciAddress: "0016:05:00.0"
+    networkInterface: enP22p5s0f0np0
+    traffic: north-south
+    psid: psid-x-dpu
+    partNumber: pn-x-dpu
+  - deviceID: a2dc
+    rdmaDevice: mlx5_17
+    pciAddress: "0016:05:00.1"
+    networkInterface: enP22p5s0f1np1
+    traffic: north-south
+    psid: psid-x-dpu
+    partNumber: pn-x-dpu
+  workerNodes:
+  - worker-gb300-1
+  nodeSelector:
+    feature.node.kubernetes.io/pci-15b3.present: "true"
+  thirdPartyRDMAModules:
+  - iw_cm

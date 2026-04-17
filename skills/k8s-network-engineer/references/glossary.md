@@ -3,6 +3,7 @@
 ## Hardware
 
 - **ConnectX-8 (CX8)**: NVIDIA network adapter (deviceID `1023`). Supports SR-IOV, RDMA, and Spectrum-X with swplb/hwplb/uniplane multiplane modes.
+- **ConnectX-9 (CX9)**: NVIDIA network adapter (deviceID `1025`). Same Spectrum-X capabilities as ConnectX-8.
 - **BlueField-3 (BF3)**: NVIDIA DPU/SuperNIC (deviceID `a2dc`). When used with Spectrum-X, only supports multiplane mode `none` with 1 plane.
 - **PF (Physical Function)**: A physical NIC port exposed by the hardware. Each PF can be split into multiple VFs via SR-IOV.
 - **VF (Virtual Function)**: A lightweight virtual NIC carved from a PF via SR-IOV. Each VF can be assigned to a pod for hardware-accelerated networking.

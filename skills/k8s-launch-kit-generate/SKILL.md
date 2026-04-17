@@ -27,7 +27,7 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> \
 | `--fabric` | Yes* | `ethernet`, `infiniband` | Network fabric type |
 | `--deployment-type` | Yes* | `sriov`, `rdma_shared`, `host_device` | Deployment type |
 | `--spectrum-x` | — | — | Enable Spectrum-X profile (replaces `--fabric` + `--deployment-type`) |
-| `--spcx-version` | — | `RA2.1` | Spectrum-X reference architecture version |
+| `--spcx-version` | — | `RA2.2` | Spectrum-X reference architecture version |
 | `--multiplane-mode` | — | `none`, `swplb`, `hwplb`, `uniplane` | Multiplane mode (requires `--spectrum-x`) |
 | `--multirail` | — | — | Enable multirail mode |
 | `--save-deployment-files` | Yes | — | Output directory for generated YAMLs |
@@ -45,7 +45,7 @@ l8k generate --user-config cluster-config.yaml \
 
 # Spectrum-X with hardware plane load balancing
 l8k generate --user-config cluster-config.yaml \
-  --spectrum-x --spcx-version RA2.1 --multiplane-mode hwplb \
+  --spectrum-x --spcx-version RA2.2 --multiplane-mode hwplb \
   --save-deployment-files ./output
 
 # Host device RDMA

@@ -727,6 +727,68 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		assert.True(t, hadPciConflicts, "PCI conflicts exist, name templates needed")
 	})
 
+	t.Run("duplicate PCI addresses across groups are deduplicated per rail", func(t *testing.T) {
+		// Two nodes with identical east-west PCI layouts — merged RailPciAddresses
+		// should contain each address once per rail, preserving first-occurrence order.
+		groups := []config.ClusterConfig{
+			{
+				Identifier:  "group-0",
+				ProductType: "NVIDIA-GB300",
+				PFs: []config.PFConfig{
+					ewPF("0000:03:00.0", 0),
+					ewPF("0000:03:00.1", 1),
+				},
+				WorkerNodes: []string{"node-a"},
+			},
+			{
+				Identifier:  "group-1",
+				ProductType: "NVIDIA-GB300",
+				PFs: []config.PFConfig{
+					ewPF("0000:03:00.0", 0),
+					ewPF("0000:03:00.1", 1),
+				},
+				WorkerNodes: []string{"node-b"},
+			},
+		}
+
+		result, _ := mergeCompatibleGroups(groups, false)
+
+		assert.Len(t, result, 1)
+		assert.Len(t, result[0].RailPciAddresses, 2)
+		assert.Equal(t, []string{"0000:03:00.0"}, result[0].RailPciAddresses[0])
+		assert.Equal(t, []string{"0000:03:00.1"}, result[0].RailPciAddresses[1])
+	})
+
+	t.Run("partial PCI overlap across groups deduplicated per rail", func(t *testing.T) {
+		// Three nodes: two share rail 0 PCI, one differs. Merged result keeps both unique
+		// addresses on rail 0 in first-occurrence order.
+		groups := []config.ClusterConfig{
+			{
+				Identifier:  "group-0",
+				ProductType: "NVIDIA-H200",
+				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
+				WorkerNodes: []string{"node-a"},
+			},
+			{
+				Identifier:  "group-1",
+				ProductType: "NVIDIA-H200",
+				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
+				WorkerNodes: []string{"node-b"},
+			},
+			{
+				Identifier:  "group-2",
+				ProductType: "NVIDIA-H200",
+				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0)},
+				WorkerNodes: []string{"node-c"},
+			},
+		}
+
+		result, _ := mergeCompatibleGroups(groups, false)
+
+		assert.Len(t, result, 1)
+		assert.Equal(t, []string{"0000:19:00.0", "0000:1a:00.0"}, result[0].RailPciAddresses[0])
+	})
+
 	t.Run("cross-rail PCI address conflict prevents merge", func(t *testing.T) {
 		// Same PCI address 0000:9c:00.0 at rail 4 in group-1 and rail 5 in group-2.
 		// Merging would cause the device plugin to claim it for the wrong rail.

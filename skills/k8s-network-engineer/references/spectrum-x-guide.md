@@ -21,32 +21,31 @@ organized and how resources are named:
 
 ### swplb (Software Plane Load Balancing)
 
-- ConnectX-8 only (deviceID `1023`)
+- ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
 - Software-based load balancing across planes
 - Number of planes: 2 or 4 (default: 4)
 - Resources are named per-rail AND per-plane (finest granularity)
-- Generates separate SR-IOV policies, OVS networks, and CIDR pools for each
-  rail-plane combination
-- Uses the dedicated `spectrum-x-swplb` profile directory
+- SpectrumXRailPoolConfig emits one `railTopology[]` entry per rail-plane,
+  each with its own `cidrPoolRef: rail-{i}-plane-{p}`
 - Best for small-to-medium Spectrum-X clusters
 
 ### hwplb (Hardware Plane Load Balancing)
 
-- ConnectX-8 only (deviceID `1023`)
+- ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
 - Hardware-based load balancing across planes
 - Number of planes: 2 or 4 (default: 4)
 - Resources are named per-rail only (hardware handles plane distribution)
 - Better for large-scale 2-tier and 3-tier network topologies
-- Uses the `spectrum-x` profile directory
 
 ### uniplane (Unified Plane)
 
-- ConnectX-8 only (deviceID `1023`)
+- ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
 - Single logical plane encompassing all physical connections
 - Number of planes: 1 (fixed)
 - Resources are named per-rail only
 - Simplest CX8 topology
-- Uses the `spectrum-x` profile directory
+
+All four modes share the single `profiles/spectrum-x/` profile directory.
 
 ## OVS Bridge Configuration
 
@@ -139,8 +138,8 @@ Additional CRDs may be generated depending on configuration:
 
 1. Kubernetes cluster with SR-IOV capable nodes
 2. NVIDIA Network Operator v26.1.0 or later
-3. ConnectX-8 or BlueField-3 SuperNIC adapters
-4. Firmware compatible with Spectrum-X RA2.1
+3. ConnectX-8, ConnectX-9, or BlueField-3 SuperNIC adapters
+4. Firmware compatible with Spectrum-X RA2.2
 5. Helm values enabling `sriovNetworkOperator`, `maintenanceOperator`, and
    feature gate `manageSoftwareBridges: true`
 

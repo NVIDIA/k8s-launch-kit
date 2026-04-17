@@ -36,7 +36,7 @@ func TestProfileValidation(t *testing.T) {
 				Deployment: "sriov",
 				Multirail:  boolPtr(true),
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion: "RA2.1",
+					SPCXVersion: "RA2.2",
 				},
 			},
 			NodeCapabilities: NodeCapabilities{
@@ -51,7 +51,7 @@ func TestProfileValidation(t *testing.T) {
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -80,7 +80,7 @@ func TestProfileValidation(t *testing.T) {
 				Deployment: "sriov",
 				Multirail:  boolPtr(true),
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion: "RA2.1",
+					SPCXVersion: "RA2.2",
 				},
 			},
 		}
@@ -112,7 +112,7 @@ func TestProfileValidation(t *testing.T) {
 				Fabric:     "ethernet",
 				Deployment: "sriov",
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion: "RA2.1",
+					SPCXVersion: "RA2.2",
 				},
 			},
 		}
@@ -122,7 +122,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.0", // Wrong version
+				SPCXVersion:    "unsupported", // not the required version
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -137,7 +137,7 @@ func TestProfileValidation(t *testing.T) {
 
 		valid, reason := profile.Validate(requirements, capabilities)
 		assert.False(t, valid, "Profile should not be valid with wrong Spectrum-X version")
-		assert.Contains(t, reason, "profile requires SPCX version RA2.1 but got RA2.0")
+		assert.Contains(t, reason, "profile requires SPCX version RA2.2 but got unsupported")
 	})
 
 	t.Run("validate non-SpectrumX profile without SpectrumX requirements", func(t *testing.T) {
@@ -189,7 +189,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -215,7 +215,7 @@ func TestProfileValidation(t *testing.T) {
 				Fabric:     "ethernet",
 				Deployment: "sriov",
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion: "RA2.1",
+					SPCXVersion: "RA2.2",
 				},
 			},
 		}
@@ -225,7 +225,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -251,7 +251,7 @@ func TestProfileValidation(t *testing.T) {
 				Fabric:     "ethernet",
 				Deployment: "sriov",
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion: "RA2.1",
+					SPCXVersion: "RA2.2",
 				},
 			},
 		}
@@ -261,7 +261,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "rdma_shared", // Wrong deployment type
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -288,7 +288,7 @@ func TestProfileValidation(t *testing.T) {
 				Deployment: "sriov",
 				Multirail:  boolPtr(true),
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion: "RA2.1",
+					SPCXVersion: "RA2.2",
 				},
 			},
 		}
@@ -299,7 +299,7 @@ func TestProfileValidation(t *testing.T) {
 			Multirail:  false, // Wrong multirail setting
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -326,7 +326,7 @@ func TestProfileValidation(t *testing.T) {
 				Deployment: "sriov",
 				Multirail:  boolPtr(true),
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: []string{"hwplb", "uniplane", "none"},
 				},
 			},
@@ -342,7 +342,7 @@ func TestProfileValidation(t *testing.T) {
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 4,
 			},
@@ -369,7 +369,7 @@ func TestProfileValidation(t *testing.T) {
 				Deployment: "sriov",
 				Multirail:  boolPtr(true),
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: []string{"hwplb", "uniplane", "none"},
 				},
 			},
@@ -385,7 +385,7 @@ func TestProfileValidation(t *testing.T) {
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -412,7 +412,7 @@ func TestProfileValidation(t *testing.T) {
 				Deployment: "sriov",
 				Multirail:  boolPtr(true),
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion:    "RA2.1",
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: []string{"swplb"},
 				},
 			},
@@ -428,7 +428,7 @@ func TestProfileValidation(t *testing.T) {
 			Multirail:  true,
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -454,7 +454,7 @@ func TestProfileValidation(t *testing.T) {
 				Fabric:     "ethernet",
 				Deployment: "sriov",
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion: "RA2.1",
+					SPCXVersion: "RA2.2",
 					// MultiplaneMode not set - should accept any mode
 				},
 			},
@@ -465,7 +465,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
@@ -491,7 +491,7 @@ func TestProfileValidation(t *testing.T) {
 				Fabric:     "ethernet",
 				Deployment: "sriov",
 				SpectrumX: &ProfileRequirementsSpectrumX{
-					SPCXVersion: "RA2.1",
+					SPCXVersion: "RA2.2",
 				},
 			},
 			NodeCapabilities: NodeCapabilities{
@@ -505,7 +505,7 @@ func TestProfileValidation(t *testing.T) {
 			Deployment: "sriov",
 			SpectrumX: &config.ProfileSpectrumX{
 				Enable:         true,
-				SPCXVersion:    "RA2.1",
+				SPCXVersion:    "RA2.2",
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
