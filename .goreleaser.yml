@@ -104,7 +104,9 @@ brews:
       git:
         url: "ssh://git@github.com/nvidia/k8s-launch-kit.git"
         private_key: '{{ index .Env "HOMEBREW_DEPLOY_KEY" }}'
-    skip_upload: '{{ if index .Env "HOMEBREW_DEPLOY_KEY" }}auto{{ else }}true{{ end }}'
+    # Push the formula for every tag that has HOMEBREW_DEPLOY_KEY available,
+    # including prereleases (goreleaser's "auto" mode would skip prereleases).
+    skip_upload: '{{ if index .Env "HOMEBREW_DEPLOY_KEY" }}false{{ else }}true{{ end }}'
     commit_author:
       name: github-actions
       email: github-actions@github.com
