@@ -13,6 +13,12 @@ spec:
   ofedDriver:
     image: doca-driver
     repository: {{.NetworkOperator.Repository}}
+    {{- if .NetworkOperator.ImagePullSecrets }}
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - {{ . }}
+    {{- end }}
+    {{- end }}
     version: {{.DOCADriver.Version}}
     env:
       - name: UNLOAD_STORAGE_MODULES
@@ -42,6 +48,12 @@ spec:
   sriovDevicePlugin:
     image: sriov-network-device-plugin
     repository: {{.NetworkOperator.Repository}}
+    {{- if .NetworkOperator.ImagePullSecrets }}
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - {{ . }}
+    {{- end }}
+    {{- end }}
     version: {{.NetworkOperator.ComponentVersion}}
     config: |
       {
