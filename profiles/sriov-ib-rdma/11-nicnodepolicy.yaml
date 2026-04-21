@@ -13,6 +13,12 @@ spec:
   ofedDriver:
     image: doca-driver
     repository: {{.NetworkOperator.Repository}}
+    {{- if .NetworkOperator.ImagePullSecrets }}
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - {{ . }}
+    {{- end }}
+    {{- end }}
     version: {{.DOCADriver.Version}}
     env:
       - name: UNLOAD_STORAGE_MODULES
