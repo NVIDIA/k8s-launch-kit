@@ -20,7 +20,7 @@ spec:
         {{- if ne $value "" }}
         operator: In
         values:
-        - {{ $value }}
+        - "{{ printf "%v" $value }}"
         {{- else }}
         operator: Exists
         {{- end }}
@@ -48,7 +48,7 @@ spec:
         {{- if ne $value "" }}
         operator: In
         values:
-        - {{ $value }}
+        - "{{ printf "%v" $value }}"
         {{- else }}
         operator: Exists
         {{- end }}
