@@ -27,6 +27,8 @@ spec:
         value: "{{.DOCADriver.EnableNFSRDMA}}"
       - name: UNLOAD_THIRD_PARTY_RDMA_MODULES
         value: "{{.DOCADriver.UnloadThirdPartyRDMAModules}}"
+      - name: SKIP_PREFLIGHT_CHECKS
+        value: "{{.DOCADriver.SkipPreflightChecks}}"
     upgradePolicy:
       autoUpgrade: true
       drain:

@@ -20,6 +20,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Mellanox/doca-driver-build/entrypoint/pkg/mofedmodules"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -207,4 +208,72 @@ func TestFindDaemonPod(t *testing.T) {
 		result := findDaemonPod([]string{"node-1"}, []corev1.Pod{})
 		assert.Nil(t, result)
 	})
+}
+
+func TestClassifyDiscoveredModules(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       []string
+		wantRDMA    []string
+		wantStorage []string
+	}{
+		{
+			name:        "empty input returns empty buckets",
+			input:       nil,
+			wantRDMA:    nil,
+			wantStorage: nil,
+		},
+		{
+			name:        "mlx5-prefixed modules silently dropped",
+			input:       []string{"mlx5_vdpa", "mlx5_ib", "mlx5_core"},
+			wantRDMA:    nil,
+			wantStorage: nil,
+		},
+		{
+			name:        "known storage modules routed to storage bucket",
+			input:       []string{"ib_isert", "nvme_rdma", "ib_srpt"},
+			wantRDMA:    nil,
+			wantStorage: []string{"ib_isert", "nvme_rdma", "ib_srpt"},
+		},
+		{
+			name:        "unknown modules routed to third-party RDMA bucket",
+			input:       []string{"bnxt_re", "qedr", "ko2iblnd"},
+			wantRDMA:    []string{"bnxt_re", "qedr", "ko2iblnd"},
+			wantStorage: nil,
+		},
+		{
+			name:        "mixed input splits correctly",
+			input:       []string{"mlx5_core", "ib_srpt", "qedr", "mlx5_vdpa", "nvme_rdma", "siw"},
+			wantRDMA:    []string{"qedr", "siw"},
+			wantStorage: []string{"ib_srpt", "nvme_rdma"},
+		},
+		{
+			name:        "ib_iser and ib_srp (initiator side) classify as storage via mofedmodules",
+			input:       []string{"ib_iser", "ib_srp"},
+			wantRDMA:    nil,
+			wantStorage: []string{"ib_iser", "ib_srp"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRDMA, gotStorage := classifyDiscoveredModules(tt.input)
+			assert.Equal(t, tt.wantRDMA, gotRDMA)
+			assert.Equal(t, tt.wantStorage, gotStorage)
+		})
+	}
+}
+
+// TestKnownStorageModules_MatchesMofedmodules is a regression guard: the
+// classification set MUST be derived exactly from the shared
+// mofedmodules.DefaultStorageModules slice. If this assertion fails, the set
+// built by buildKnownStorageModulesSet() has drifted from the canonical list
+// in doca-driver-build — either because someone added a local override or
+// because the shared list changed and this dep needs a bump.
+func TestKnownStorageModules_MatchesMofedmodules(t *testing.T) {
+	assert.Len(t, knownStorageModules, len(mofedmodules.DefaultStorageModules),
+		"knownStorageModules size should match mofedmodules.DefaultStorageModules")
+	for _, mod := range mofedmodules.DefaultStorageModules {
+		assert.Truef(t, knownStorageModules[mod],
+			"mofedmodules.DefaultStorageModules entry %q missing from knownStorageModules", mod)
+	}
 }

@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mellanox/doca-driver-build/entrypoint/pkg/mofedmodules"
 	netop "github.com/Mellanox/network-operator/api/v1alpha1"
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -960,11 +961,18 @@ var ofedTargetModules = []string{
 }
 
 // knownStorageModules is the set of storage-over-RDMA kernel modules handled by
-// UNLOAD_STORAGE_MODULES in the driver container. Must be kept in sync with
-// doca-driver-build's StorageModules (entrypoint/internal/config/config.go).
-var knownStorageModules = map[string]bool{
-	"ib_isert": true, "nvme_rdma": true, "nvmet_rdma": true,
-	"rpcrdma": true, "xprtrdma": true, "ib_srpt": true,
+// UNLOAD_STORAGE_MODULES in the driver container. The list is sourced from the
+// canonical `mofedmodules.DefaultStorageModules` exported by doca-driver-build
+// (entrypoint/pkg/mofedmodules) so l8k's classification stays in lockstep with
+// what the driver container will actually unload.
+var knownStorageModules = buildKnownStorageModulesSet()
+
+func buildKnownStorageModulesSet() map[string]bool {
+	m := make(map[string]bool, len(mofedmodules.DefaultStorageModules))
+	for _, mod := range mofedmodules.DefaultStorageModules {
+		m[mod] = true
+	}
+	return m
 }
 
 // parseMachineTypeFromDMI extracts and sanitizes a machine type string from
