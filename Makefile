@@ -25,7 +25,10 @@ GOMOD=$(GOCMD) mod
 SOSREPORT_SCRIPT=scripts/kubectl-netop_sosreport
 SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/master/scripts/sosreport/kubectl-netop_sosreport
 
-.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport release release-snapshot help
+PCI_IDS_URL=https://raw.githubusercontent.com/pciutils/pciids/master/pci.ids
+PCI_IDS_NVIDIA=pkg/networkoperatorplugin/internal/pciids/nvidia.ids
+
+.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport update-pci-ids release release-snapshot help
 
 ## Build the binary
 build:
@@ -165,6 +168,15 @@ download-sosreport:
 	@mkdir -p scripts
 	curl -fsSL -o $(SOSREPORT_SCRIPT) $(SOSREPORT_URL)
 	chmod +x $(SOSREPORT_SCRIPT)
+
+## Refresh the embedded NVIDIA pci.ids snapshot from upstream. Run manually
+## before releases; not part of the default build.
+update-pci-ids:
+	@tmp=$$(mktemp) && \
+	curl -fsSL $(PCI_IDS_URL) -o $$tmp && \
+	awk '/^10de /{p=1;print;next} /^[0-9a-f]{4} /{p=0} p' $$tmp > $(PCI_IDS_NVIDIA) && \
+	rm -f $$tmp && \
+	echo "Updated $(PCI_IDS_NVIDIA) ($$(wc -l < $(PCI_IDS_NVIDIA)) lines)"
 
 ## Run GoReleaser (full release, requires GITHUB_TOKEN and HOMEBREW_DEPLOY_KEY)
 release:
