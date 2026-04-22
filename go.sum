@@ -19,6 +19,8 @@ cloud.google.com/go/vertexai v0.12.0/go.mod h1:8u+d0TsvBfAAd2x5R6GMgbYhsLgo3J7lm
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
+github.com/Mellanox/doca-driver-build/entrypoint v0.0.0-20260421090033-dbd12d7e97a7 h1:p+nQuoVlKpXDQAv0V3PY8TIxb7xcIIj63kkE7ttXQTI=
+github.com/Mellanox/doca-driver-build/entrypoint v0.0.0-20260421090033-dbd12d7e97a7/go.mod h1:jX5e/5ZWEEOM7bhPlQFkFw+nEiBAetFRIdbM4LhRyNo=
 github.com/Mellanox/network-operator v1.4.1-0.20260415085747-fd00b67fe97a h1:KXHoF77tfxwwkHNylEXUb8HyNhHiBhYgMMmsHNJuQmc=
 github.com/Mellanox/network-operator v1.4.1-0.20260415085747-fd00b67fe97a/go.mod h1:rteyvmkuYntizMQjgKOKsCRt2//3dPvXsK1PvId5MfM=
 github.com/Mellanox/nic-configuration-operator v1.3.1 h1:oH1BCIVeIilGCAmKB/dQRwVAUiLAxEYj8sGfKAxkXoQ=

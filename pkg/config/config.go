@@ -55,11 +55,19 @@ type NetworkOperatorConfig struct {
 }
 
 type DOCADriverConfig struct {
-	Enable                       bool   `yaml:"enable"`
-	Version                      string `yaml:"version"`
-	UnloadStorageModules         bool   `yaml:"unloadStorageModules"`
-	EnableNFSRDMA                bool   `yaml:"enableNFSRDMA"`
-	UnloadThirdPartyRDMAModules  bool   `yaml:"unloadThirdPartyRDMAModules"`
+	Enable                      bool `yaml:"enable"`
+	Version                     string `yaml:"version"`
+	UnloadStorageModules        bool `yaml:"unloadStorageModules"`
+	EnableNFSRDMA               bool `yaml:"enableNFSRDMA"`
+	UnloadThirdPartyRDMAModules bool `yaml:"unloadThirdPartyRDMAModules"`
+	// SkipPreflightChecks controls the init container's module dependency check.
+	// When false (l8k default), the check runs and any blocking dependency fails
+	// the init container, preventing MOFED load. When true, the check is skipped
+	// entirely and init succeeds immediately. The init container binary's own
+	// default (`envDefault:"true"`) is overridden here because l8k is opinionated:
+	// a deployment tool should surface hardware-compat issues early rather than
+	// letting a broken MOFED reload happen silently downstream.
+	SkipPreflightChecks bool `yaml:"skipPreflightChecks"`
 }
 
 type NvIpamConfig struct {

@@ -17,6 +17,7 @@ docaDriver:
   unloadStorageModules: true
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: true
+  skipPreflightChecks: false
 
 nvIpam:
   poolName: nv-ipam-pool
