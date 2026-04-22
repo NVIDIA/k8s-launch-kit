@@ -176,6 +176,31 @@ GPU 00000000:E2:00.0
 	}
 }
 
+func TestParseGPUProductFromSysfs(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{"H200 SXM", "0x2335\n", "NVIDIA-H200-SXM-141GB"},
+		{"H200 NVL", "0x233b\n", "NVIDIA-H200-NVL"},
+		{"L40S", "0x26b9\n", "NVIDIA-L40S"},
+		{"uppercase hex", "0x233B\n", "NVIDIA-H200-NVL"},
+		{"no 0x prefix", "2335\n", "NVIDIA-H200-SXM-141GB"},
+		{"extra whitespace", "   0x2335   \n\n", "NVIDIA-H200-SXM-141GB"},
+		{"multiple lines, first wins", "0x2335\n0x26b9\n", "NVIDIA-H200-SXM-141GB"},
+		{"empty", "", ""},
+		{"whitespace only", "  \n", ""},
+		{"unknown device", "0xffff\n", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseGPUProductFromSysfs(tt.output))
+		})
+	}
+}
+
 func TestFindDaemonPod(t *testing.T) {
 	pods := []corev1.Pod{
 		{

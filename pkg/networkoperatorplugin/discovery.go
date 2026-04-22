@@ -30,6 +30,7 @@ import (
 	netop "github.com/Mellanox/network-operator/api/v1alpha1"
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
@@ -1039,16 +1040,66 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 	}
 
 	if needProduct {
+		// Wrap nvidia-smi so the shell always exits 0: if the binary is absent
+		// or crashes, stdout is simply empty and we fall through to the sysfs
+		// fallback below instead of surfacing an Error-level exec failure.
+		nvidiaSmiCmd := `if [ -x /host/usr/bin/nvidia-smi ]; then ` +
+			`LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH ` +
+			`/host/usr/bin/nvidia-smi -q 2>/dev/null || true; fi`
 		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", "LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH /host/usr/bin/nvidia-smi -q 2>/dev/null"})
+			[]string{"/bin/sh", "-c", nvidiaSmiCmd})
 		if err != nil {
-			log.Log.Error(err, "failed to read GPU product type from nvidia-smi", "pod", targetPod.Name)
+			log.Log.Error(err, "failed to exec nvidia-smi probe", "pod", targetPod.Name)
 		} else {
 			productType = parseGPUProductFromNvidiaSmi(output)
+		}
+
+		if productType == "" {
+			sysfsOutput, sysfsErr := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
+				[]string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
+			if sysfsErr != nil {
+				log.Log.Error(sysfsErr, "failed to exec sysfs GPU probe", "pod", targetPod.Name)
+			} else {
+				productType = parseGPUProductFromSysfs(sysfsOutput)
+				if productType == "" && strings.TrimSpace(sysfsOutput) != "" {
+					log.Log.Info("GPU product type not resolved from sysfs device ID",
+						"pod", targetPod.Name, "unresolvedID", strings.TrimSpace(sysfsOutput))
+				}
+			}
 		}
 	}
 
 	return machineType, productType
+}
+
+// sysfsNvidiaGPUIDCmd emits the first NVIDIA (vendor 10de) GPU device ID found
+// via sysfs. A node is assumed to be homogeneous across its NVIDIA GPUs, so we
+// break after the first match. Class filter keeps only VGA (0x030000) and 3D
+// controller (0x030200) so NVSwitch / audio / USB-C controllers under vendor
+// 10de don't produce false positives. Output is a single line like "0x2335",
+// or empty when no NVIDIA GPU is present; exit is always 0.
+const sysfsNvidiaGPUIDCmd = `for d in /sys/bus/pci/devices/*; do
+  v=$(cat "$d/vendor" 2>/dev/null)
+  [ "$v" = "0x10de" ] || continue
+  c=$(cat "$d/class" 2>/dev/null)
+  case "$c" in 0x030000|0x030200) ;; *) continue ;; esac
+  cat "$d/device" 2>/dev/null
+  break
+done`
+
+// parseGPUProductFromSysfs resolves a single-line sysfs device-ID output
+// (e.g. "0x2335\n") to a canonical ProductType via the embedded pci.ids table.
+// Returns empty for blank input or an unknown device ID.
+func parseGPUProductFromSysfs(output string) string {
+	id := strings.TrimSpace(output)
+	if id == "" {
+		return ""
+	}
+	// The probe emits at most one ID; take the first line defensively.
+	if nl := strings.IndexByte(id, '\n'); nl >= 0 {
+		id = strings.TrimSpace(id[:nl])
+	}
+	return pciids.LookupNVIDIA(id)
 }
 
 // findDaemonPod returns a nic-configuration-daemon pod running on one of the
