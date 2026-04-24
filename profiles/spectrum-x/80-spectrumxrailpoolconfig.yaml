@@ -5,7 +5,7 @@ apiVersion: spectrumx.net.nvidia.com/v1alpha2
 kind: SpectrumXRailPoolConfig
 metadata:
   name: rails{{suffix .ClusterConfig.Identifier}}
-  namespace: {{.NetworkOperator.Namespace}}
+  namespace: "{{.NetworkOperator.Namespace}}"
 spec:
   withBCM: false
   draEnabled: true
@@ -15,7 +15,7 @@ spec:
     {{ $key }}: "{{ $value }}"
     {{- end }}
   {{- end }}
-  networkNamespace: {{.PodNamespace}}
+  networkNamespace: "{{.PodNamespace}}"
   numVfs: 1
   railTopology:
   {{- range $railIdx := untilStep 0 $railCount 1 }}

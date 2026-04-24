@@ -6,7 +6,7 @@ apiVersion: nv-ipam.nvidia.com/v1alpha1
 kind: IPPool
 metadata:
   name: {{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
-  namespace: {{$.NetworkOperator.Namespace}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
   subnet: {{(index $.NvIpam.Subnets $i).Subnet}}
   perNodeBlockSize: 50
@@ -34,7 +34,7 @@ apiVersion: nv-ipam.nvidia.com/v1alpha1
 kind: IPPool
 metadata:
   name: {{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}
-  namespace: {{.NetworkOperator.Namespace}}
+  namespace: "{{.NetworkOperator.Namespace}}"
 spec:
   subnet: {{(index .NvIpam.Subnets 0).Subnet}}
   perNodeBlockSize: 50

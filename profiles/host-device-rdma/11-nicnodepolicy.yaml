@@ -1,7 +1,7 @@
 apiVersion: mellanox.com/v1alpha1
 kind: NicNodePolicy
 metadata:
-  name: {{.ClusterConfig.Identifier | nnpName}}
+  name: "{{.ClusterConfig.Identifier | nnpName}}"
 spec:
   {{- if .ClusterConfig.NodeSelector }}
   nodeSelector:
@@ -12,14 +12,14 @@ spec:
   {{- if .DOCADriver.Enable }}
   ofedDriver:
     image: doca-driver
-    repository: {{.NetworkOperator.Repository}}
+    repository: "{{.NetworkOperator.Repository}}"
     {{- if .NetworkOperator.ImagePullSecrets }}
     imagePullSecrets:
     {{- range .NetworkOperator.ImagePullSecrets }}
       - {{ . }}
     {{- end }}
     {{- end }}
-    version: {{.DOCADriver.Version}}
+    version: "{{.DOCADriver.Version}}"
     env:
       - name: UNLOAD_STORAGE_MODULES
         value: "{{.DOCADriver.UnloadStorageModules}}"
@@ -49,14 +49,14 @@ spec:
   {{- end }}
   sriovDevicePlugin:
     image: sriov-network-device-plugin
-    repository: {{.NetworkOperator.Repository}}
+    repository: "{{.NetworkOperator.Repository}}"
     {{- if .NetworkOperator.ImagePullSecrets }}
     imagePullSecrets:
     {{- range .NetworkOperator.ImagePullSecrets }}
       - {{ . }}
     {{- end }}
     {{- end }}
-    version: {{.NetworkOperator.ComponentVersion}}
+    version: "{{.NetworkOperator.ComponentVersion}}"
     config: |
       {
         "resourceList": [

@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: macvlan-test{{suffix .ClusterConfig.Identifier}}
-  namespace: {{$.PodNamespace}}
+  namespace: "{{$.PodNamespace}}"
 spec:
   selector:
     matchLabels:
@@ -59,7 +59,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: macvlan-test{{suffix $.ClusterConfig.Identifier}}
-  namespace: {{$.PodNamespace}}
+  namespace: "{{$.PodNamespace}}"
 spec:
   selector:
     matchLabels:
