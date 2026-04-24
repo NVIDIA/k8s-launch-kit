@@ -6,7 +6,7 @@ apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
   name: infiniband-sriov-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
-  namespace: {{$.NetworkOperator.Namespace}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
   deviceType: netdevice
   mtu: {{$.Sriov.InfinibandMtu}}
@@ -44,7 +44,7 @@ apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
   name: infiniband-sriov{{suffix $.ClusterConfig.Identifier}}
-  namespace: {{.NetworkOperator.Namespace}}
+  namespace: "{{.NetworkOperator.Namespace}}"
 spec:
   deviceType: netdevice
   mtu: {{.Sriov.InfinibandMtu}}

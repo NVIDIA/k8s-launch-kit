@@ -2,7 +2,7 @@ apiVersion: configuration.net.nvidia.com/v1alpha1
 kind: NicInterfaceNameTemplate
 metadata:
   name: nic-rename-for-spectrum-x{{suffix .ClusterConfig.Identifier}}
-  namespace: {{.NetworkOperator.Namespace}}
+  namespace: "{{.NetworkOperator.Namespace}}"
 spec:
   {{- if .ClusterConfig.NodeSelector }}
   nodeSelector:

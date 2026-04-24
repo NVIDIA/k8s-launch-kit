@@ -14,30 +14,30 @@ spec:
   nicConfigurationOperator:
     operator:
       image: nic-configuration-operator
-      repository: {{.NetworkOperator.Repository}}
-      version: {{.NetworkOperator.ComponentVersion}}
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
     configurationDaemon:
       image: nic-configuration-operator-daemon
-      repository: {{.NetworkOperator.Repository}}
-      version: {{.NetworkOperator.ComponentVersion}}
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
     logLevel: info
   {{- end }}
   nvIpam:
     image: nvidia-k8s-ipam
-    repository: {{.NetworkOperator.Repository}}
-    version: {{.NetworkOperator.ComponentVersion}}
+    repository: "{{.NetworkOperator.Repository}}"
+    version: "{{.NetworkOperator.ComponentVersion}}"
     imagePullSecrets: []
     enableWebhook: false
   secondaryNetwork:
     cniPlugins:
       image: plugins
-      repository: {{.NetworkOperator.Repository}}
-      version: {{.NetworkOperator.ComponentVersion}}
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
     multus:
       image: multus-cni
-      repository: {{.NetworkOperator.Repository}}
-      version: {{.NetworkOperator.ComponentVersion}}
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
     ipoib:
       image: ipoib-cni
-      repository: {{.NetworkOperator.Repository}}
-      version: {{.NetworkOperator.ComponentVersion}}
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"

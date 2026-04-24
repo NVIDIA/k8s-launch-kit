@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: spectrum-x-test{{suffix .ClusterConfig.Identifier}}
-  namespace: {{$.PodNamespace}}
+  namespace: "{{$.PodNamespace}}"
 spec:
   selector:
     matchLabels:
