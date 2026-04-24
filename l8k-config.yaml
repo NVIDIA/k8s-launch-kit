@@ -1,6 +1,6 @@
 networkOperator:
-  version: v26.4.0-beta.4
-  componentVersion: network-operator-v26.4.0-beta.4
+  version: v26.4.0-beta.5
+  componentVersion: network-operator-v26.4.0-beta.5
   repository: nvcr.io/nvstaging/mellanox
   namespace: nvidia-network-operator
   # imagePullSecrets:

@@ -263,6 +263,14 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 				}
 			}
 
+			// Probe GPU topology from nvidia-smi: populates NumaNode,
+			// ConnectedGPU, GPUProximity per PF; if any PF has PIX to a GPU,
+			// the PIX-gate override rewrites Traffic and re-runs rails.
+			// Failures are non-fatal; when nvidia-smi is absent, today's
+			// part-number classification continues to govern.
+			discoverGPUTopology(ctx, p.RESTConfig,
+				defaultConfig.NetworkOperator.Namespace, group, dsPods)
+
 			// Try to enrich with a predefined topology preset for this machine type.
 			// Presets provide authoritative traffic classification, rail assignments,
 			// and NUMA/GPU topology metadata for known hardware configurations.
@@ -747,15 +755,10 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			return strings.Compare(a.PciAddress, b.PciAddress)
 		})
 
-		// Assign rail numbers sequentially to east-west PFs only (north-south are skipped).
-		railIndex := 0
-		for j := range pfs {
-			if pfs[j].Traffic == "east-west" {
-				r := railIndex
-				pfs[j].Rail = &r
-				railIndex++
-			}
-		}
+		// Assign rail numbers sequentially over the E/W set. No PF has
+		// GPUProximity populated yet at this stage, so the helper's PIX-gate
+		// branch is a no-op here; only the rail loop runs.
+		reclassifyAndReassignRails(pfs)
 
 		slices.Sort(g.nodes)
 
