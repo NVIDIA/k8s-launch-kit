@@ -66,7 +66,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.True(t, valid, "Profile should be valid with matching Spectrum-X requirements")
 		assert.Empty(t, reason, "Should have no validation error")
 	})
@@ -99,7 +99,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.False(t, valid, "Profile should not be valid without Spectrum-X")
 		assert.Contains(t, reason, "profile requires Spectrum-X but it is not enabled")
 	})
@@ -135,7 +135,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.False(t, valid, "Profile should not be valid with wrong Spectrum-X version")
 		assert.Contains(t, reason, "profile requires SPCX version RA2.2 but got unsupported")
 	})
@@ -168,7 +168,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.True(t, valid, "Non-Spectrum-X profile should be valid without Spectrum-X requirements")
 		assert.Empty(t, reason)
 	})
@@ -202,7 +202,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.True(t, valid, "Non-Spectrum-X profile should still be valid even if Spectrum-X is enabled in requirements")
 		assert.Empty(t, reason)
 	})
@@ -238,7 +238,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.False(t, valid, "Profile should not be valid with mismatched fabric")
 		assert.Contains(t, reason, "selected fabric type does not match profile requirements")
 	})
@@ -274,7 +274,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.False(t, valid, "Profile should not be valid with mismatched deployment type")
 		assert.Contains(t, reason, "selected deployment type does not match profile requirements")
 	})
@@ -312,7 +312,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.False(t, valid, "Profile should not be valid with mismatched multirail setting")
 		assert.Contains(t, reason, "selected multirail setting does not match profile requirements")
 	})
@@ -355,7 +355,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.True(t, valid, "Profile should match hwplb mode")
 		assert.Empty(t, reason)
 	})
@@ -398,7 +398,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.False(t, valid, "Profile should reject swplb mode when only hwplb/uniplane/none are allowed")
 		assert.Contains(t, reason, "multiplane mode swplb not in profile's allowed modes")
 	})
@@ -441,7 +441,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.True(t, valid, "SWPLB profile should match swplb mode")
 		assert.Empty(t, reason)
 	})
@@ -478,7 +478,7 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.True(t, valid, "Profile with no mode constraint should accept any multiplane mode")
 		assert.Empty(t, reason)
 	})
@@ -518,8 +518,55 @@ func TestProfileValidation(t *testing.T) {
 			},
 		}
 
-		valid, reason := profile.Validate(requirements, capabilities)
+		valid, reason := profile.Validate(requirements, capabilities, "")
 		assert.False(t, valid, "Profile should not be valid with mismatched node capabilities")
 		assert.Contains(t, reason, "cluster sriov capability does not match profile requirements")
+	})
+
+	t.Run("MinNetworkOperatorRelease rejects older selected release", func(t *testing.T) {
+		profile := &Profile{
+			Name:   "Spectrum-X",
+			Plugin: "network-operator",
+			ProfileRequirements: ProfileRequirements{
+				MinNetworkOperatorRelease: "26.4",
+			},
+		}
+		requirements := &config.Profile{}
+		capabilities := &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{}}
+
+		valid, reason := profile.Validate(requirements, capabilities, "26.1")
+		assert.False(t, valid)
+		assert.Contains(t, reason, "Network Operator >= 26.4")
+	})
+
+	t.Run("MinNetworkOperatorRelease accepts equal release", func(t *testing.T) {
+		profile := &Profile{
+			Name:   "Spectrum-X",
+			Plugin: "network-operator",
+			ProfileRequirements: ProfileRequirements{
+				MinNetworkOperatorRelease: "26.4",
+			},
+		}
+		requirements := &config.Profile{}
+		capabilities := &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{}}
+
+		valid, _ := profile.Validate(requirements, capabilities, "26.4")
+		assert.True(t, valid)
+	})
+
+	t.Run("MinNetworkOperatorRelease ignored when no release pinned", func(t *testing.T) {
+		profile := &Profile{
+			Name:   "Spectrum-X",
+			Plugin: "network-operator",
+			ProfileRequirements: ProfileRequirements{
+				MinNetworkOperatorRelease: "26.4",
+			},
+		}
+		requirements := &config.Profile{}
+		capabilities := &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{}}
+
+		// Empty selectedRelease = "latest" — gate disabled.
+		valid, _ := profile.Validate(requirements, capabilities, "")
+		assert.True(t, valid)
 	})
 }

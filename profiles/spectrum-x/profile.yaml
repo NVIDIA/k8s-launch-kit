@@ -7,6 +7,10 @@ profileRequirements:
     spcxVersion: "RA2.2"
     multiplaneMode: ["swplb", "hwplb", "uniplane", "none"]
   multirail: true
+  # SpectrumXRailPoolConfig (spectrumx.net.nvidia.com/v1alpha2) is only
+  # available in Network Operator 26.4+. Older releases must pick a
+  # different profile.
+  minNetworkOperatorRelease: "26.4"
 nodeCapabilities:
     sriov: true
     rdma: true

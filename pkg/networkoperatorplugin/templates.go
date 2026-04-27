@@ -25,6 +25,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 )
@@ -91,6 +92,193 @@ var templateFuncs = template.FuncMap{
 	"nnpName": func(identifier string) string {
 		return nnpName(identifier)
 	},
+	// versionGE/versionLT/versionEQ compare release identifiers (MAJOR.MINOR
+	// or full semver). An empty `have` means "no release pinned" — treated as
+	// "latest", so versionGE("", X) is always true and versionLT("", X) is
+	// always false. This keeps existing configs (no --network-operator-release
+	// set) rendering the newest gates by default.
+	"versionGE": versionGE,
+	"versionLT": versionLT,
+	"versionEQ": versionEQ,
+	// legacyRdmaSharedConfigList builds the rdmaSharedDevicePlugin.config JSON
+	// (configList array body) used by the 26.1 NicClusterPolicy. NCP is a
+	// cluster singleton in 26.1, so this aggregates east-west PFs across all
+	// groups. In multirail mode each (group, PF) becomes a per-rail entry; in
+	// non-multirail each group becomes one entry that lists all its
+	// east-west netdevs.
+	"legacyRdmaSharedConfigList": legacyRdmaSharedConfigList,
+	// legacySriovDevicePluginConfigList does the same shape for the
+	// sriovDevicePlugin used by the 26.1 host-device profile.
+	"legacySriovDevicePluginConfigList": legacySriovDevicePluginConfigList,
+}
+
+// legacyRdmaSharedConfigList builds the configList array body for
+// rdmaSharedDevicePlugin in a 26.1 NicClusterPolicy. groups carries every
+// cluster group (NCP is a singleton in 26.1), rdmaShared.ResourceName /
+// HcaMax come from l8k-config. multirail switches between per-rail entries
+// (one per east-west PF) and per-group entries (one selector listing all
+// east-west netdev names).
+func legacyRdmaSharedConfigList(groups []config.ClusterConfig, rdmaShared *config.RdmaSharedConfig, multirail bool) string {
+	if rdmaShared == nil {
+		return ""
+	}
+	resourceSuffixForGroup := func(id string) string {
+		if id == "" {
+			return ""
+		}
+		return "_" + strings.ReplaceAll(id, "-", "_")
+	}
+	var entries []string
+	for _, g := range groups {
+		ew := filterEastWestPFs(g.PFs)
+		suf := resourceSuffixForGroup(g.Identifier)
+		if multirail {
+			for _, pf := range ew {
+				rail := 0
+				if pf.Rail != nil {
+					rail = *pf.Rail
+				}
+				entries = append(entries, fmt.Sprintf(`          {
+            "resourceName": "%s_rail_%d%s",
+            "rdmaHcaMax": %d,
+            "selectors": {
+              "ifNames": [%q]
+            }
+          }`, rdmaShared.ResourceName, rail, suf, rdmaShared.HcaMax, pf.NetworkInterface))
+			}
+		} else {
+			names := make([]string, 0, len(ew))
+			for _, pf := range ew {
+				names = append(names, fmt.Sprintf("%q", pf.NetworkInterface))
+			}
+			entries = append(entries, fmt.Sprintf(`          {
+            "resourceName": "%s%s",
+            "rdmaHcaMax": %d,
+            "selectors": {
+              "ifNames": [%s]
+            }
+          }`, rdmaShared.ResourceName, suf, rdmaShared.HcaMax, strings.Join(names, ", ")))
+		}
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(entries, ",\n") + "\n        "
+}
+
+// legacySriovDevicePluginConfigList builds the resourceList array body for
+// sriovDevicePlugin in a 26.1 NicClusterPolicy (used by host-device-rdma).
+// hostdev.ResourceName seeds the K8s extended-resource name.
+func legacySriovDevicePluginConfigList(groups []config.ClusterConfig, hostdev *config.HostdevConfig, multirail bool, useNameTemplates bool) string {
+	if hostdev == nil {
+		return ""
+	}
+	resourceSuffixForGroup := func(id string) string {
+		if id == "" {
+			return ""
+		}
+		return "_" + strings.ReplaceAll(id, "-", "_")
+	}
+	var entries []string
+	for _, g := range groups {
+		ew := filterEastWestPFs(g.PFs)
+		suf := resourceSuffixForGroup(g.Identifier)
+		if multirail {
+			for _, pf := range ew {
+				rail := 0
+				if pf.Rail != nil {
+					rail = *pf.Rail
+				}
+				selector := ""
+				switch {
+				case useNameTemplates && pf.NetworkInterface != "":
+					selector = fmt.Sprintf(`              "pfNames": [%q],`, pf.NetworkInterface)
+				default:
+					selector = fmt.Sprintf(`              "pciAddresses": [%q],`, pf.PciAddress)
+				}
+				entries = append(entries, fmt.Sprintf(`          {
+            "resourcePrefix": "nvidia.com",
+            "resourceName": "%s_rail_%d%s",
+            "selectors": {
+              "vendors": ["15b3"],
+%s
+              "isRdma": true
+            }
+          }`, hostdev.ResourceName, rail, suf, selector))
+			}
+		} else {
+			entries = append(entries, fmt.Sprintf(`          {
+            "resourcePrefix": "nvidia.com",
+            "resourceName": "%s%s",
+            "selectors": {
+              "vendors": ["15b3"],
+              "isRdma": true
+            }
+          }`, hostdev.ResourceName, suf))
+		}
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(entries, ",\n") + "\n        "
+}
+
+// normalizeRelease accepts catalog keys and returns a semver-parseable string.
+// "26.4" -> "26.4.0", "v26.4" -> "26.4.0", "26.4.0" pass-through.
+func normalizeRelease(s string) string {
+	s = strings.TrimPrefix(s, "v")
+	if s == "" {
+		return s
+	}
+	if strings.Count(s, ".") == 1 {
+		return s + ".0"
+	}
+	return s
+}
+
+func versionGE(have, target string) bool {
+	if have == "" {
+		return true
+	}
+	h, err := semver.NewVersion(normalizeRelease(have))
+	if err != nil {
+		return false
+	}
+	t, err := semver.NewVersion(normalizeRelease(target))
+	if err != nil {
+		return false
+	}
+	return h.GreaterThanEqual(t)
+}
+
+func versionLT(have, target string) bool {
+	if have == "" {
+		return false
+	}
+	h, err := semver.NewVersion(normalizeRelease(have))
+	if err != nil {
+		return false
+	}
+	t, err := semver.NewVersion(normalizeRelease(target))
+	if err != nil {
+		return false
+	}
+	return h.LessThan(t)
+}
+
+func versionEQ(have, target string) bool {
+	if have == "" {
+		return false
+	}
+	h, err := semver.NewVersion(normalizeRelease(have))
+	if err != nil {
+		return false
+	}
+	t, err := semver.NewVersion(normalizeRelease(target))
+	if err != nil {
+		return false
+	}
+	return h.Equal(t)
 }
 
 // nnpName produces a valid NicNodePolicy name from a group identifier.
@@ -199,7 +387,11 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, gr
 	}
 
 	baseName := filepath.Base(templatePath)
-	usesClusterConfig := strings.Contains(string(templateContent), ".ClusterConfig")
+	// Per-group rendering is triggered by access to a per-group property
+	// (`.ClusterConfig.PFs`, `.ClusterConfig.Identifier`, etc.). Bare
+	// `.ClusterConfig` — used to iterate the slice in once-render templates
+	// like the 26.1 legacy NCP block — does NOT trigger per-group mode.
+	usesClusterConfig := strings.Contains(string(templateContent), ".ClusterConfig.")
 
 	if !usesClusterConfig || len(cfg.ClusterConfig) == 0 {
 		// Render once — no per-group variation

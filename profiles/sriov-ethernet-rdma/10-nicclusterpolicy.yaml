@@ -36,3 +36,47 @@ spec:
       image: multus-cni
       repository: "{{.NetworkOperator.Repository}}"
       version: "{{.NetworkOperator.ComponentVersion}}"
+  {{- if versionLT .NetworkOperator.SelectedRelease "26.4" }}
+  {{- /* 26.1 model: NicNodePolicy does not exist; OFED driver is configured
+         here in NicClusterPolicy and applies cluster-wide. The SR-IOV device
+         plugin is handled by sriov-network-operator via SriovNetworkNodePolicy
+         (30-sriovnetworknodepolicy.yaml). */}}
+  {{- if .DOCADriver.Enable }}
+  ofedDriver:
+    image: doca-driver
+    repository: "{{.NetworkOperator.Repository}}"
+    {{- if .NetworkOperator.ImagePullSecrets }}
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - {{ . }}
+    {{- end }}
+    {{- end }}
+    version: "{{.DOCADriver.Version}}"
+    env:
+      - name: UNLOAD_STORAGE_MODULES
+        value: "{{.DOCADriver.UnloadStorageModules}}"
+      - name: ENABLE_NFSRDMA
+        value: "{{.DOCADriver.EnableNFSRDMA}}"
+      - name: UNLOAD_THIRD_PARTY_RDMA_MODULES
+        value: "{{.DOCADriver.UnloadThirdPartyRDMAModules}}"
+      - name: SKIP_PREFLIGHT_CHECKS
+        value: "{{.DOCADriver.SkipPreflightChecks}}"
+    upgradePolicy:
+      autoUpgrade: true
+      drain:
+        deleteEmptyDir: true
+        enable: true
+        force: true
+        timeoutSeconds: 300
+      maxParallelUpgrades: 1
+    startupProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    livenessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+    readinessProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 30
+  {{- end }}
+  {{- end }}

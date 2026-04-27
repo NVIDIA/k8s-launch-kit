@@ -21,6 +21,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 )
 
 // commandSchema describes a subcommand for AI agent discovery.
@@ -31,15 +33,16 @@ type commandSchema struct {
 
 // schema represents the tool's capabilities in a machine-readable format.
 type schema struct {
-	Version         string                   `json:"version"`
-	Description     string                   `json:"description"`
-	Commands        map[string]commandSchema `json:"commands"`
-	Phases          []string                 `json:"phases"`
-	Fabrics         []string                 `json:"fabrics"`
-	DeploymentTypes []string                 `json:"deploymentTypes"`
-	OutputFormats   []string                 `json:"outputFormats"`
-	ExitCodes       map[string]string        `json:"exitCodes"`
-	Flags           map[string]flagSchema    `json:"flags"`
+	Version                          string                   `json:"version"`
+	Description                      string                   `json:"description"`
+	Commands                         map[string]commandSchema `json:"commands"`
+	Phases                           []string                 `json:"phases"`
+	Fabrics                          []string                 `json:"fabrics"`
+	DeploymentTypes                  []string                 `json:"deploymentTypes"`
+	OutputFormats                    []string                 `json:"outputFormats"`
+	SupportedNetworkOperatorReleases []string                 `json:"supportedNetworkOperatorReleases"`
+	ExitCodes                        map[string]string        `json:"exitCodes"`
+	Flags                            map[string]flagSchema    `json:"flags"`
 }
 
 type flagSchema struct {
@@ -79,10 +82,11 @@ var schemaCmd = &cobra.Command{
 					Example:     "l8k schema",
 				},
 			},
-			Phases:      []string{"discover", "generate", "deploy"},
-			Fabrics:     []string{"ethernet", "infiniband"},
-			DeploymentTypes: []string{"sriov", "rdma_shared", "host_device"},
-			OutputFormats:   []string{"text", "json"},
+			Phases:                           []string{"discover", "generate", "deploy"},
+			Fabrics:                          []string{"ethernet", "infiniband"},
+			DeploymentTypes:                  []string{"sriov", "rdma_shared", "host_device"},
+			OutputFormats:                    []string{"text", "json"},
+			SupportedNetworkOperatorReleases: networkoperatorplugin.SupportedReleases(),
 			ExitCodes: map[string]string{
 				"0": "success",
 				"1": "general_error",
@@ -177,6 +181,10 @@ var schemaCmd = &cobra.Command{
 				"--image-pull-secrets": {
 					Type:        "[]string",
 					Description: "Image pull secret names for NicClusterPolicy (comma-separated)",
+				},
+				"--network-operator-release": {
+					Type:        "string",
+					Description: "Network Operator release line (MAJOR.MINOR). See supportedNetworkOperatorReleases for valid values; populates component versions and gates version-specific template sections.",
 				},
 			},
 		}

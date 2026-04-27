@@ -117,7 +117,11 @@ func (l *Launcher) executeGeneration(configPath string) error {
 
 	foundProfiles := []profiles.Profile{}
 	for pluginName, plugin := range l.plugins {
-		profile, err := profiles.FindApplicableProfile(fullConfig.Profile, aggregatedCapabilities, pluginName)
+		selectedRelease := ""
+		if fullConfig.NetworkOperator != nil {
+			selectedRelease = fullConfig.NetworkOperator.SelectedRelease
+		}
+		profile, err := profiles.FindApplicableProfile(fullConfig.Profile, aggregatedCapabilities, pluginName, selectedRelease)
 		if err != nil {
 			l.ui.Error("Failed to find profile: %v", err)
 			l.logger.Error(err, "Failed to find applicable profile for the plugin", "plugin", plugin.GetName(), "cluster capabilities", aggregatedCapabilities, "profile requirements", fullConfig.Profile)

@@ -137,7 +137,11 @@ func resolveProfile(
 	require.NoError(t, err)
 
 	// Step 4: Validate against the target profile definition
-	return profileDef.Validate(fullConfig.Profile, capabilities)
+	selectedRelease := ""
+	if fullConfig.NetworkOperator != nil {
+		selectedRelease = fullConfig.NetworkOperator.SelectedRelease
+	}
+	return profileDef.Validate(fullConfig.Profile, capabilities, selectedRelease)
 }
 
 func TestCLIOnlyProfileResolution(t *testing.T) {

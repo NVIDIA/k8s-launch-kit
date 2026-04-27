@@ -62,6 +62,7 @@ var (
 	enableDocaDriver            bool
 	enabledPlugins              string
 	networkOperatorNamespace    string
+	networkOperatorRelease      string
 	group                       string
 	nodeSelector                string
 	imagePullSecrets            []string
@@ -146,6 +147,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			Kubeconfig:            kubeconfig,
 			SaveClusterConfig:        saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
+			NetworkOperatorRelease:   networkOperatorRelease,
 			EnabledPlugins:           enabledPlugins,
 			LLMApiKey:             llmApiKey,
 			LLMApiUrl:             llmApiUrl,
@@ -210,6 +212,9 @@ func init() {
 	rootCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "", "Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)")
 	rootCmd.Flags().StringVar(&userConfig, "user-config", "", "Use provided cluster configuration file (as base config for discovery or as full config without discovery)")
 	rootCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from the config file")
+	rootCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
+		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: %s",
+			strings.Join(networkoperatorplugin.SupportedReleases(), ", ")))
 
 	// Phase 2: Deployment generation flags
 	rootCmd.Flags().StringVar(&fabric, "fabric", "", "Select the fabric type to deploy (infiniband, ethernet)")
@@ -256,6 +261,15 @@ func validateConfig(options *options.Options) error {
 	// Validate --output flag
 	if !slices.Contains([]string{"text", "json"}, options.OutputFormat) {
 		return fmt.Errorf("--output must be one of: text, json")
+	}
+
+	// Validate --network-operator-release against the embedded catalog so the
+	// user sees the supported list immediately, before discovery/render.
+	if options.NetworkOperatorRelease != "" {
+		if _, ok := networkoperatorplugin.LookupRelease(options.NetworkOperatorRelease); !ok {
+			return fmt.Errorf("unknown --network-operator-release %q; supported: %v",
+				options.NetworkOperatorRelease, networkoperatorplugin.SupportedReleases())
+		}
 	}
 
 	// Validate --dry-run requires --deploy
