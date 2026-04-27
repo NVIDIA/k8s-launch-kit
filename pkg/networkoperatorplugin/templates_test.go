@@ -1345,3 +1345,65 @@ spec:
 		assert.Contains(t, content, "ofedDriver")
 	})
 }
+
+func TestVersionGE(t *testing.T) {
+	cases := []struct {
+		have, target string
+		want         bool
+	}{
+		{"", "26.4", true},        // empty = latest, always passes
+		{"26.4", "26.4", true},    // equal
+		{"26.4", "26.1", true},    // higher minor
+		{"26.1", "26.4", false},   // lower minor
+		{"v26.4", "26.4", true},   // v-prefix tolerated
+		{"26.4", "v26.4", true},   // v-prefix on target
+		{"26.4.0", "26.4", true},  // full semver compares to MAJOR.MINOR
+		{"26.4.5", "26.4", true},  // patch >= base
+		{"27.0", "26.4", true},    // higher major
+		{"26.4", "27.0", false},   // lower major
+		{"garbage", "26.4", false}, // unparseable have
+		{"26.4", "garbage", false}, // unparseable target
+	}
+	for _, c := range cases {
+		got := versionGE(c.have, c.target)
+		assert.Equalf(t, c.want, got, "versionGE(%q, %q)", c.have, c.target)
+	}
+}
+
+func TestVersionLT(t *testing.T) {
+	cases := []struct {
+		have, target string
+		want         bool
+	}{
+		{"", "26.4", false},      // empty = latest, never less than
+		{"26.1", "26.4", true},
+		{"26.4", "26.4", false},
+		{"26.4", "26.1", false},
+		{"v26.1", "26.4", true},
+		{"26.4.0", "26.4", false},
+		{"26.3.99", "26.4", true},
+		{"garbage", "26.4", false},
+	}
+	for _, c := range cases {
+		got := versionLT(c.have, c.target)
+		assert.Equalf(t, c.want, got, "versionLT(%q, %q)", c.have, c.target)
+	}
+}
+
+func TestVersionEQ(t *testing.T) {
+	cases := []struct {
+		have, target string
+		want         bool
+	}{
+		{"", "26.4", false},      // empty is not equal to anything
+		{"26.4", "26.4", true},
+		{"v26.4", "26.4", true},
+		{"26.4.0", "26.4", true},
+		{"26.4.1", "26.4", false},
+		{"26.1", "26.4", false},
+	}
+	for _, c := range cases {
+		got := versionEQ(c.have, c.target)
+		assert.Equalf(t, c.want, got, "versionEQ(%q, %q)", c.have, c.target)
+	}
+}

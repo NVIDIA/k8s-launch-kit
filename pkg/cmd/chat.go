@@ -18,11 +18,14 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 )
 
@@ -58,6 +61,7 @@ inspection when a kubeconfig is provided.`,
 			LLMModel:                llmModel,
 			LLMThrottle:             llmThrottle,
 			NetworkOperatorNamespace: networkOperatorNamespace,
+			NetworkOperatorRelease:   networkOperatorRelease,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
 			OutputFormat:             outputFormat,
 			Yes:                      yesFlag,
@@ -103,6 +107,9 @@ func init() {
 	chatCmd.Flags().StringVar(&llmModel, "llm-model", "", "LLM model name")
 	chatCmd.Flags().BoolVar(&llmThrottle, "llm-throttle", false, "Enable rate limit throttling")
 	chatCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace")
+	chatCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
+		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
+			strings.Join(networkoperatorplugin.SupportedReleases(), ", ")))
 	chatCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 
 	_ = chatCmd.MarkFlagRequired("llm-api-key")

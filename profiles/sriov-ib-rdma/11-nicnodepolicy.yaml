@@ -1,3 +1,7 @@
+{{- /* NicNodePolicy was introduced in Network Operator 26.4. For older
+       releases (26.1.x), the OFED driver section is emitted in
+       NicClusterPolicy (10-nicclusterpolicy.yaml) instead. */ -}}
+{{- if versionGE .NetworkOperator.SelectedRelease "26.4" }}
 apiVersion: mellanox.com/v1alpha1
 kind: NicNodePolicy
 metadata:
@@ -47,3 +51,4 @@ spec:
       initialDelaySeconds: 10
       periodSeconds: 30
   {{- end }}
+{{- end }}

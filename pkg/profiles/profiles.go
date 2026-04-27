@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"gopkg.in/yaml.v2"
@@ -35,6 +36,11 @@ type ProfileRequirements struct {
 	Multirail  *bool                           `yaml:"multirail"`
 	SpectrumX  *ProfileRequirementsSpectrumX   `yaml:"spectrumX,omitempty"`
 	Ai         *bool                           `yaml:"ai"`
+	// MinNetworkOperatorRelease is the lowest --network-operator-release this
+	// profile supports (MAJOR.MINOR or full semver, e.g. "26.4"). When non-empty,
+	// Validate rejects the profile if the user has selected a lower release.
+	// An unset selectedRelease ("latest") always satisfies the minimum.
+	MinNetworkOperatorRelease string `yaml:"minNetworkOperatorRelease,omitempty"`
 }
 
 type ProfileRequirementsSpectrumX struct {
@@ -81,7 +87,12 @@ func getprofilesDir() (string, error) {
 		"Run 'scripts/install.sh' to install l8k, or run from the repository root")
 }
 
-func FindApplicableProfile(requirements *config.Profile, capabilities *config.ClusterCapabilities, pluginName string) (*Profile, error) {
+// FindApplicableProfile selects a profile from disk that matches the user's
+// requirements, cluster capabilities, and selected Network Operator release.
+// selectedRelease is the catalog key (MAJOR.MINOR, e.g. "26.4") chosen via
+// --network-operator-release; an empty string means "no release pinned" and
+// disables the minimum-release check.
+func FindApplicableProfile(requirements *config.Profile, capabilities *config.ClusterCapabilities, pluginName, selectedRelease string) (*Profile, error) {
 	log.Log.Info("Finding applicable profile", "requirements", requirements)
 
 	profilesDir, err := getprofilesDir()
@@ -115,7 +126,7 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 			if profile.Plugin != pluginName {
 				continue
 			}
-			valid, reason := profile.Validate(requirements, capabilities)
+			valid, reason := profile.Validate(requirements, capabilities, selectedRelease)
 			if valid {
 				log.Log.V(1).Info("Found applicable profile", "profile", profile)
 				profile.UpdateManifestsPaths(filepath.Join(profilesDir, entry.Name()))
@@ -137,8 +148,19 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 		"Check --fabric, --deployment-type, and --spectrum-x flags")
 }
 
-func (p *Profile) Validate(requirements *config.Profile, capabilities *config.ClusterCapabilities) (bool, string) {
+// Validate reports whether the profile applies for the given requirements,
+// cluster capabilities, and selected Network Operator release. selectedRelease
+// is the catalog key (MAJOR.MINOR, e.g. "26.4"); empty means "no release
+// pinned" and disables the minimum-release gate.
+func (p *Profile) Validate(requirements *config.Profile, capabilities *config.ClusterCapabilities, selectedRelease string) (bool, string) {
 	log.Log.V(1).Info("Validating profile", "profile", p)
+
+	if p.ProfileRequirements.MinNetworkOperatorRelease != "" && selectedRelease != "" {
+		if releaseLessThan(selectedRelease, p.ProfileRequirements.MinNetworkOperatorRelease) {
+			return false, fmt.Sprintf("profile requires Network Operator >= %s, got %s",
+				p.ProfileRequirements.MinNetworkOperatorRelease, selectedRelease)
+		}
+	}
 
 	if p.ProfileRequirements.Fabric != "" && p.ProfileRequirements.Fabric != requirements.Fabric {
 		return false, fmt.Sprintf("selected fabric type does not match profile requirements: %s", p.ProfileRequirements.Fabric)
@@ -202,6 +224,28 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 	}
 
 	return true, ""
+}
+
+// releaseLessThan compares two release identifiers (MAJOR.MINOR or full
+// semver). Returns false on parse failure so a malformed value never silently
+// disqualifies a profile. "26.4" is treated as "26.4.0".
+func releaseLessThan(have, target string) bool {
+	normalize := func(s string) string {
+		s = strings.TrimPrefix(s, "v")
+		if strings.Count(s, ".") == 1 {
+			return s + ".0"
+		}
+		return s
+	}
+	h, err := semver.NewVersion(normalize(have))
+	if err != nil {
+		return false
+	}
+	t, err := semver.NewVersion(normalize(target))
+	if err != nil {
+		return false
+	}
+	return h.LessThan(t)
 }
 
 // UpdateManifestsPaths appends the directory path to the templates and deployment guide

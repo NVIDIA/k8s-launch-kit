@@ -27,6 +27,10 @@ type Options struct {
 	DiscoverClusterConfig   bool   // Whether to discover cluster config
 	SaveClusterConfig       string // Path to save discovered config
 	NetworkOperatorNamespace string   // Override namespace for Network Operator (optional)
+	// NetworkOperatorRelease is a MAJOR.MINOR catalog key (e.g. "26.4"), not
+	// a full semver. Selects component image tags + repository from the
+	// embedded releases catalog and drives version-gated template sections.
+	NetworkOperatorRelease  string
 	ImagePullSecrets        []string // Image pull secret names for NicClusterPolicy
 
 	// Phase 2: Deployment Generation

@@ -20,11 +20,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 )
 
@@ -97,6 +99,7 @@ Optionally deploy the generated manifests with --deploy.`,
 			Deploy:                  deploy,
 			Kubeconfig:              kubeconfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
+			NetworkOperatorRelease:   networkOperatorRelease,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
 			WorkloadManifest:        workloadManifest,
 			OutputFormat:             outputFormat,
@@ -161,6 +164,9 @@ func init() {
 	generateCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment")
 	generateCmd.Flags().StringVar(&workloadManifest, "workload-manifest", "", "Path to a custom workload manifest YAML")
 	generateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace")
+	generateCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
+		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
+			strings.Join(networkoperatorplugin.SupportedReleases(), ", ")))
 	generateCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	generateCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 

@@ -1,4 +1,10 @@
 networkOperator:
+  # selectedRelease pins the Network Operator release line (MAJOR.MINOR).
+  # Equivalent to passing --network-operator-release on the CLI. When set,
+  # version/componentVersion/repository (below) and docaDriver.version are
+  # populated from the embedded catalog; explicit values here are overridden.
+  # Supported: 26.1, 26.4. Leave empty to use the explicit values below as-is.
+  # selectedRelease: "26.4"
   version: v26.4.0-beta.5
   componentVersion: network-operator-v26.4.0-beta.5
   repository: nvcr.io/nvstaging/mellanox

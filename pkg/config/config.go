@@ -49,6 +49,13 @@ type LaunchKubernetesConfig struct {
 type NetworkOperatorConfig struct {
 	Version          string   `yaml:"version"`
 	ComponentVersion string   `yaml:"componentVersion"`
+	// SelectedRelease is the catalog key (MAJOR.MINOR, e.g. "26.4") chosen via
+	// --network-operator-release. Empty means "no release pinned"; templates
+	// treat that as "latest" so existing configs render the newest gates by
+	// default. When non-empty, ApplyOptionsToConfig has already populated
+	// Version/ComponentVersion/Repository and DOCADriver.Version from the
+	// embedded catalog.
+	SelectedRelease  string   `yaml:"selectedRelease,omitempty"`
 	Repository       string   `yaml:"repository"`
 	Namespace        string   `yaml:"namespace"`
 	ImagePullSecrets []string `yaml:"imagePullSecrets,omitempty"`

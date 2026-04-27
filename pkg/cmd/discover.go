@@ -18,11 +18,14 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 )
 
@@ -69,6 +72,7 @@ east-west vs north-south NICs, and probes OFED dependent modules.`,
 			UserConfig:              userConfig,
 			SaveClusterConfig:       saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
+			NetworkOperatorRelease:   networkOperatorRelease,
 			NodeSelector:            nodeSelector,
 			ImagePullSecrets:        imagePullSecrets,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
@@ -95,6 +99,9 @@ func init() {
 	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Base config to merge with discovered hardware")
 	discoverCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "", "Output path for cluster-config.yaml")
 	discoverCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace (default: nvidia-network-operator)")
+	discoverCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
+		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
+			strings.Join(networkoperatorplugin.SupportedReleases(), ", ")))
 	discoverCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes by label")
 	discoverCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	discoverCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
