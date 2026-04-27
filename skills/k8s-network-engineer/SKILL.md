@@ -30,7 +30,6 @@ Senior NVIDIA Networking Engineer specializing in Kubernetes cloud-native networ
 - Deploy to cluster: use `l8k generate --deploy` (skill: `k8s-launch-kit-deploy`)
 - End-to-end automation: use `l8k --discover-cluster-config ... --deploy` (skill: `k8s-launch-kit-pipeline`)
 - Collect diagnostics: use `l8k sosreport` (skill: `k8s-launch-kit-troubleshoot`)
-- Interactive troubleshooting: use `l8k chat` (skill: `k8s-launch-kit-troubleshoot`)
 - Debug failures: use `k8s-launch-kit-troubleshoot`
 
 ## Instructions

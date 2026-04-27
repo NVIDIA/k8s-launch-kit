@@ -23,28 +23,13 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
-	"github.com/nvidia/k8s-launch-kit/pkg/llm"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 )
 
 // executeGeneration handles the profile selection and manifest generation phase.
-// If configPath is empty and interactive mode is requested, it starts an interactive session.
 // Returns nil if no profile is configured and generation is skipped.
 func (l *Launcher) executeGeneration(configPath string) error {
-	// When in interactive mode without a config, go directly to interactive session
-	// (supports troubleshooting via sosreport without needing a cluster config)
-	if configPath == "" && l.options.LLMInteractive {
-		l.ui.Section("Interactive Session (AI-Assisted)")
-		l.logger.Info("Starting interactive session (no cluster config)")
-		_, err := l.runInteractiveSession(nil)
-		if err != nil {
-			l.ui.Error("Interactive session failed: %v", err)
-			return fmt.Errorf("interactive session failed: %w", err)
-		}
-		return nil
-	}
-
 	fullConfig, err := config.LoadFullConfig(configPath, l.logger)
 	if err != nil {
 		return fmt.Errorf("failed to load full config: %w", err)
@@ -59,7 +44,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	}
 
 	profileInConfig := fullConfig.Profile != nil
-	if !profilesConfiguredInCmd && !profileInConfig && l.options.Prompt == "" && !l.options.LLMInteractive {
+	if !profilesConfiguredInCmd && !profileInConfig {
 		l.ui.Info("Profiles not configured, skipping deployment file generation")
 		l.logger.Info("Profiles are not configured for every plugin, skipping deployment files generation")
 		return nil
@@ -74,16 +59,8 @@ func (l *Launcher) executeGeneration(configPath string) error {
 					return fmt.Errorf("failed to build profile for plugin %s: %w", plugin.GetName(), err)
 				}
 			}
-		} else if l.options.LLMInteractive {
-			if err := l.selectProfileInteractive(fullConfig); err != nil {
-				return err
-			}
-		} else if l.options.Prompt != "" {
-			if err := l.selectProfileFromPrompt(fullConfig); err != nil {
-				return err
-			}
 		} else {
-			return fmt.Errorf("no profile configured in the command line and no prompt provided")
+			return fmt.Errorf("no profile configured: provide --fabric/--deployment-type or a profile in --user-config")
 		}
 	}
 
@@ -149,80 +126,6 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	warnStorageModules(fullConfig, "generate", l.ui)
 
 	return nil
-}
-
-// selectProfileInteractive runs an interactive LLM session for profile selection.
-func (l *Launcher) selectProfileInteractive(fullConfig *config.LaunchKubernetesConfig) error {
-	l.ui.Section("Profile Selection (AI-Assisted)")
-	l.logger.Info("Starting interactive LLM session")
-
-	prompt, err := l.runInteractiveSession(fullConfig.ClusterConfig)
-	if err != nil {
-		l.ui.Error("Interactive session failed: %v", err)
-		return fmt.Errorf("interactive session failed: %w", err)
-	}
-
-	for _, plugin := range l.plugins {
-		if err := plugin.BuildProfileFromLLMResponse(prompt, fullConfig.Profile); err != nil {
-			return fmt.Errorf("failed to build profile for plugin %s: %w", plugin.GetName(), err)
-		}
-	}
-
-	l.logProfileSelection(fullConfig, prompt)
-	return nil
-}
-
-// selectProfileFromPrompt uses a one-shot LLM call for profile selection.
-func (l *Launcher) selectProfileFromPrompt(fullConfig *config.LaunchKubernetesConfig) error {
-	l.ui.Section("Profile Selection (AI-Assisted)")
-	l.ui.Info("Analyzing requirements with AI")
-	progress := l.ui.StartProgress("Waiting for AI recommendation")
-
-	l.logger.Info("Selecting a profile using LLM-assisted prompt")
-
-	prompt, err := llm.SelectPromptWithModel(l.options.Prompt, fullConfig.ClusterConfig, l.options.LLMApiKey, l.options.LLMApiUrl, l.options.LLMVendor, l.options.LLMModel)
-	if err != nil {
-		progress.Fail("AI selection failed")
-		l.ui.Error("Failed to get AI recommendation: %v", err)
-		return fmt.Errorf("failed to select prompt: %w", err)
-	}
-	confidence := prompt["confidence"]
-	if confidence == "low" {
-		progress.Fail("Low confidence recommendation")
-		l.ui.Warning("AI has low confidence: %s", prompt["reasoning"])
-		return fmt.Errorf("couldn't select a deployment profile based on the user prompt. Try again with a different prompt or use the cli flags (--fabric, --deployment-type, --multirail) to select the profile manually. Reason: %s", prompt["reasoning"])
-	}
-
-	for _, plugin := range l.plugins {
-		if err := plugin.BuildProfileFromLLMResponse(prompt, fullConfig.Profile); err != nil {
-			progress.Fail("Profile building failed")
-			return fmt.Errorf("failed to build profile for plugin %s: %w", plugin.GetName(), err)
-		}
-	}
-
-	progress.Success("Profile selected")
-	l.logProfileSelection(fullConfig, prompt)
-	return nil
-}
-
-// logProfileSelection logs the selected profile details.
-func (l *Launcher) logProfileSelection(fullConfig *config.LaunchKubernetesConfig, prompt map[string]string) {
-	l.ui.Info("  Fabric: %s", fullConfig.Profile.Fabric)
-	l.ui.Info("  Deployment: %s", fullConfig.Profile.Deployment)
-	l.ui.Info("  Multirail: %v", fullConfig.Profile.Multirail)
-	if fullConfig.Profile.SpectrumX != nil {
-		l.ui.Info("  Spectrum-X: enabled")
-		l.ui.Info("    Multiplane Mode: %s", fullConfig.Profile.SpectrumX.MultiplaneMode)
-		l.ui.Info("    Number of Planes: %d", fullConfig.Profile.SpectrumX.NumberOfPlanes)
-		l.ui.Info("    SPCX Version: %s", fullConfig.Profile.SpectrumX.SPCXVersion)
-	}
-	l.logger.Info("Selected options",
-		"fabric", fullConfig.Profile.Fabric,
-		"deployment", fullConfig.Profile.Deployment,
-		"multirail", fullConfig.Profile.Multirail,
-		"spectrumX", fullConfig.Profile.SpectrumX,
-		"ai", fullConfig.Profile.Ai,
-		"reasoning", prompt["reasoning"])
 }
 
 // generateDeploymentFiles handles deployment file generation for a single profile.

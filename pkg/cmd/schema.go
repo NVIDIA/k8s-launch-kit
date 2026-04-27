@@ -69,10 +69,6 @@ var schemaCmd = &cobra.Command{
 					Description: "Generate deployment manifests for a network profile",
 					Example:     "l8k generate --user-config cluster-config.yaml --fabric ethernet --deployment-type sriov --save-deployment-files ./output",
 				},
-				"chat": {
-					Description: "Interactive AI-assisted networking session",
-					Example:     "l8k chat --llm-api-key $KEY --sosreport-path ./sosreport",
-				},
 				"sosreport": {
 					Description: "Collect diagnostic sosreport from a Kubernetes cluster",
 					Example:     "l8k sosreport --kubeconfig ~/.kube/config --output-dir ./sosreport",

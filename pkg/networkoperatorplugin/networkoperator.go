@@ -18,8 +18,6 @@ package networkoperatorplugin
 
 import (
 	"fmt"
-	"os"
-	"strconv"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
@@ -195,66 +193,6 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 
 	log.Log.V(1).Info("Applied options to config", "plugin", p.GetName())
 	return nil
-}
-
-func (p *NetworkOperatorPlugin) BuildProfileFromLLMResponse(llmResponse map[string]string, profile *config.Profile) error {
-	profile.Fabric = llmResponse["fabric"]
-	profile.Deployment = llmResponse["deploymentType"]
-	profile.Multirail = llmResponse["multirail"] == "true"
-	profile.Ai = llmResponse["ai"] == "true"
-
-	// Build SpectrumX nested struct if enabled
-	if llmResponse["spectrumX"] == "true" {
-		// Enforce Spectrum-X implied settings
-		if profile.Fabric == "" {
-			profile.Fabric = "ethernet"
-		}
-		if profile.Deployment == "" {
-			profile.Deployment = "sriov"
-		}
-		profile.Multirail = true
-
-		spcxVersion := llmResponse["spectrumXVersion"]
-		if spcxVersion == "" {
-			spcxVersion = "RA2.2"
-		}
-
-		multiplaneMode := llmResponse["spectrumXMultiplaneMode"]
-		if multiplaneMode == "" {
-			multiplaneMode = "swplb"
-		}
-
-		numberOfPlanes := 4 // default for swplb/hwplb
-		if np, ok := llmResponse["spectrumXNumberOfPlanes"]; ok && np != "" {
-			if parsed, err := strconv.Atoi(np); err == nil && (parsed == 1 || parsed == 2 || parsed == 4) {
-				numberOfPlanes = parsed
-			}
-		}
-
-		// Enforce: "none" and "uniplane" modes always use 1 plane
-		if multiplaneMode == "none" || multiplaneMode == "uniplane" {
-			numberOfPlanes = 1
-		}
-
-		profile.SpectrumX = &config.ProfileSpectrumX{
-			Enable:         true,
-			SPCXVersion:    spcxVersion,
-			MultiplaneMode: multiplaneMode,
-			NumberOfPlanes: numberOfPlanes,
-		}
-	}
-
-	log.Log.V(1).Info("Built profile for plugin", "plugin", p.GetName(), "profile", profile)
-	return nil
-}
-
-func (p *NetworkOperatorPlugin) GetSystemPromptAddendum() (string, error) {
-	data, err := os.ReadFile("network-operator-system-prompt-addendum")
-	if err != nil {
-		return "", err
-	}
-
-	return string(data), nil
 }
 
 func (p *NetworkOperatorPlugin) SelectProfile(config *config.LaunchKubernetesConfig) (*profiles.Profile, error) {

@@ -43,7 +43,6 @@ After installation, `l8k` is available system-wide.
 |---------|-------------|
 | `l8k discover` | Discover cluster hardware and produce cluster-config.yaml |
 | `l8k generate` | Generate Kubernetes YAML manifests from config + profile |
-| `l8k chat` | Interactive troubleshooting chat |
 | `l8k sosreport` | Collect diagnostic dump from cluster |
 | `l8k schema` | List all capabilities as JSON (profiles, flags, exit codes) |
 | `l8k version` | Print version information |
