@@ -255,43 +255,7 @@ modifying any resources.
 
 ---
 
-## 7. LLM-Assisted Profile Selection Pipeline
-
-Let the user describe their intent in natural language, then use the JSON output to
-drive profile selection:
-
-**Step 1: Discover and save config:**
-
-```bash
-./build/l8k \
-  --discover-cluster-config \
-  --save-cluster-config ./cluster-config.yaml \
-  --kubeconfig ~/.kube/config \
-  --output json --yes 2>/dev/null > discovery-output.json
-```
-
-**Step 2: Feed discovery output to an LLM agent to select fabric and deployment type.**
-
-The agent reads the hardware groups from `discovery-output.json` and recommends
-appropriate flags (e.g., `--fabric ethernet --deployment-type sriov --multirail`).
-
-**Step 3: Generate and deploy with the selected profile:**
-
-```bash
-./build/l8k \
-  --user-config ./cluster-config.yaml \
-  --fabric ethernet \
-  --deployment-type sriov \
-  --multirail \
-  --save-deployment-files ./output \
-  --deploy \
-  --kubeconfig ~/.kube/config \
-  --output json --yes 2>/dev/null | jq .
-```
-
----
-
-## 8. Generate Only (No Deploy, Just Save Files)
+## 7. Generate Only (No Deploy, Just Save Files)
 
 Produce manifests for review or GitOps without touching the cluster:
 

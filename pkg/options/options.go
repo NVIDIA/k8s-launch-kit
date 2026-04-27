@@ -42,18 +42,10 @@ type Options struct {
 	SPCXVersion         string // Spectrum-X firmware version (default: RA2.2)
 	MultiplaneMode      string // Spectrum-X multiplane mode (default: swplb)
 	NumberOfPlanes      int    // Number of planes for Spectrum-X (default: 4)
-	Prompt              string // Path to file with a prompt to use for LLM-assisted profile generation
 	Group               string // Generate templates for a specific group identifier only
 	NodeSelector        string // Filter nodes for discovery and manifests (e.g., "key1=val1,key2=val2")
 	PodNamespace        string // Namespace for pods and network resources (overrides config)
 	SaveDeploymentFiles string // Directory to save generated files
-
-	LLMApiKey      string // API key for the LLM API
-	LLMApiUrl      string // API URL for the LLM API
-	LLMVendor      string // Vendor of the LLM API
-	LLMModel       string // Model name for the LLM API
-	LLMInteractive bool   // Enable interactive chat mode
-	LLMThrottle    bool   // Enable rate limit throttling for API calls
 
 	EnabledPlugins []string // Enabled plugins
 
@@ -62,9 +54,6 @@ type Options struct {
 
 	// DOCA Driver
 	EnableDocaDriver *bool // Override docaDriver.enable from config (nil = use config value)
-
-	// Troubleshooting (used in interactive mode)
-	SosreportPath string // Pre-collected sosreport directory (skip collection)
 
 	// Phase 3: Cluster Deployment
 	Deploy     bool   // Whether to deploy to cluster

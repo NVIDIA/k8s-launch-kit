@@ -41,10 +41,7 @@ and other diagnostic data useful for troubleshooting.`,
   l8k sosreport --kubeconfig ~/.kube/config --output-dir ./sosreport
 
   # Uses $KUBECONFIG if set
-  l8k sosreport --output-dir ./sosreport
-
-  # Then analyze interactively
-  l8k chat --sosreport-path ./sosreport --llm-api-key $KEY`,
+  l8k sosreport --output-dir ./sosreport`,
 	Run: func(cmd *cobra.Command, args []string) {
 		resolved, err := resolveKubeconfig(kubeconfig)
 		if err != nil {
@@ -89,7 +86,6 @@ and other diagnostic data useful for troubleshooting.`,
 		}
 
 		fmt.Printf("\nSosreport collected: %s\n", sosreportOutputDir)
-		fmt.Printf("Analyze with: l8k chat --sosreport-path %s --llm-api-key $KEY\n", sosreportOutputDir)
 	},
 }
 

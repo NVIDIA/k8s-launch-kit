@@ -17,15 +17,10 @@ Debug NVIDIA Network Operator issues on Kubernetes, with or without a sosreport.
 
 ```bash
 # Collect a diagnostic dump from the cluster
-l8k sosreport [--kubeconfig <PATH>]
-
-# Interactive troubleshooting chat
-l8k chat [--kubeconfig <PATH>]
+l8k sosreport [--kubeconfig <PATH>] --output-dir ./sosreport
 ```
 
-`l8k sosreport` gathers cluster state, CRDs, operator logs, and per-node NIC info into a structured directory for offline analysis.
-
-`l8k chat` starts an interactive session to walk through issues with cluster context available.
+`l8k sosreport` gathers cluster state, CRDs, operator logs, and per-node NIC info into a structured directory for offline analysis. Use the diagnostic commands and triage workflow below to interpret the dump.
 
 ## Diagnostic Commands
 

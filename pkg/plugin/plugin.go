@@ -38,10 +38,6 @@ type Plugin interface {
 	ProfileConfiguredInCmd(options options.Options) bool
 	// BuildProfileFromOptions builds the profile for the plugin based on the options.
 	BuildProfileFromOptions(options options.Options, profile *config.Profile) error
-	// BuildProfileFromLLMResponse builds the profile for the plugin based on the LLM response.
-	BuildProfileFromLLMResponse(llmResponse map[string]string, profile *config.Profile) error
-	// GetSystemPromptAddendum returns the addendum to the system prompt, specific to the plugin. The addendum will be used to add additional context to the system prompt.
-	GetSystemPromptAddendum() (string, error)
 	// DiscoverClusterConfig discovers the plugin-specific part of the cluster configuration and populates defaultConfig.ClusterConfig.
 	DiscoverClusterConfig(ctx context.Context, kubeClient client.Client, defaultConfig *config.LaunchKubernetesConfig) error
 	// GenerateProfileDeploymentFiles generates the deployment files for the profile.
