@@ -5,8 +5,8 @@ networkOperator:
   # populated from the embedded catalog; explicit values here are overridden.
   # Supported: 26.1, 26.4. Leave empty to use the explicit values below as-is.
   # selectedRelease: "26.4"
-  version: v26.4.0-beta.5
-  componentVersion: network-operator-v26.4.0-beta.5
+  version: v26.4.0-beta.6
+  componentVersion: network-operator-v26.4.0-beta.6
   repository: nvcr.io/nvstaging/mellanox
   namespace: nvidia-network-operator
   # imagePullSecrets:
