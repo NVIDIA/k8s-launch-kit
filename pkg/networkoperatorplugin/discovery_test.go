@@ -288,6 +288,133 @@ func TestClassifyDiscoveredModules(t *testing.T) {
 	}
 }
 
+func TestIsBlueField3Device(t *testing.T) {
+	cases := []struct {
+		deviceID string
+		want     bool
+	}{
+		{"a2dc", true},
+		{"A2DC", true}, // case-insensitive
+		{"a2d2", false}, // BF2
+		{"a2d6", false}, // hypothetical BF4
+		{"101f", false}, // ConnectX-6 Lx
+		{"1023", false}, // ConnectX-8
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.deviceID, func(t *testing.T) {
+			assert.Equal(t, tc.want, isBlueField3Device(tc.deviceID))
+		})
+	}
+}
+
+// TestClassifyByPartNumberFrequency_BFSuperNICTriggersOOBRule reproduces the
+// cluster-config the user reported: 6 PFs, three part numbers each appearing
+// twice. After Stage 1 (BF3 SuperNIC explicit-EW pin + ns-product-ids DPU
+// match), the heuristic must:
+//   - keep the BF3 DPU PFs north-south,
+//   - keep the BF3 SuperNIC PFs east-west,
+//   - flip the unpinned ConnectX-6 Lx PFs (used as OOB) to north-south.
+func TestClassifyByPartNumberFrequency_BFSuperNICTriggersOOBRule(t *testing.T) {
+	bfDPU := nodePFEntry{
+		pfFingerprint: pfFingerprint{DeviceID: "a2dc", PciAddress: "0000:0d:00.0"},
+		IsNorthSouth:  true, // pinned by ns-product-ids match
+		PartNumber:    "900-9D3B6-00CV-AA0",
+	}
+	bfSuperNIC := nodePFEntry{
+		pfFingerprint:      pfFingerprint{DeviceID: "a2dc", PciAddress: "0000:37:00.0"},
+		IsExplicitEastWest: true, // pinned by BF3 SuperNIC rule
+		PartNumber:         "900-9D3D4-00EN-HA0",
+	}
+	oobNIC := nodePFEntry{
+		pfFingerprint: pfFingerprint{DeviceID: "101f", PciAddress: "0000:22:00.0"},
+		PartNumber:    "0DN78C",
+	}
+
+	ni := &nodeInfo{pfs: []nodePFEntry{
+		bfDPU, bfDPU, bfSuperNIC, bfSuperNIC, oobNIC, oobNIC,
+	}}
+	classifyByPartNumberFrequency(map[string]*nodeInfo{"node-1": ni})
+
+	for i, pf := range ni.pfs {
+		switch pf.PartNumber {
+		case "900-9D3B6-00CV-AA0":
+			assert.True(t, pf.IsNorthSouth, "BF3 DPU PF[%d] should remain north-south", i)
+			assert.False(t, pf.IsExplicitEastWest)
+		case "900-9D3D4-00EN-HA0":
+			assert.False(t, pf.IsNorthSouth, "BF3 SuperNIC PF[%d] must NOT be flipped to north-south", i)
+			assert.True(t, pf.IsExplicitEastWest)
+		case "0DN78C":
+			assert.True(t, pf.IsNorthSouth, "ConnectX-6 Lx OOB PF[%d] should be flipped to north-south", i)
+			assert.False(t, pf.IsExplicitEastWest)
+		}
+	}
+}
+
+// TestClassifyByPartNumberFrequency_NoExplicitEWFallsBackToFrequency verifies
+// the legacy 5+-PF heuristic still runs when no BF3 SuperNIC is present.
+func TestClassifyByPartNumberFrequency_NoExplicitEWFallsBackToFrequency(t *testing.T) {
+	majority := nodePFEntry{
+		pfFingerprint: pfFingerprint{DeviceID: "1023"},
+		PartNumber:    "AAA-major",
+	}
+	minority := nodePFEntry{
+		pfFingerprint: pfFingerprint{DeviceID: "1023"},
+		PartNumber:    "BBB-minor",
+	}
+
+	ni := &nodeInfo{pfs: []nodePFEntry{
+		majority, majority, majority, majority, minority,
+	}}
+	classifyByPartNumberFrequency(map[string]*nodeInfo{"node-1": ni})
+
+	for _, pf := range ni.pfs {
+		if pf.PartNumber == "AAA-major" {
+			assert.False(t, pf.IsNorthSouth, "majority part number stays east-west")
+		} else {
+			assert.True(t, pf.IsNorthSouth, "minority part number flipped to north-south")
+		}
+	}
+}
+
+// TestClassifyByPartNumberFrequency_DPUExcludedFromTiebreak verifies that PFs
+// already pinned north-south (via ns-product-ids) don't poison the alphabetic
+// tiebreak in the legacy heuristic.
+func TestClassifyByPartNumberFrequency_DPUExcludedFromTiebreak(t *testing.T) {
+	// Without exclusion, the DPU part number "AAA-dpu" would win the
+	// alphabetic tiebreak and the real EW NICs would get reclassified as
+	// north-south.
+	dpu := nodePFEntry{
+		pfFingerprint: pfFingerprint{DeviceID: "a2dc"},
+		IsNorthSouth:  true,
+		PartNumber:    "AAA-dpu",
+	}
+	ew := nodePFEntry{
+		pfFingerprint: pfFingerprint{DeviceID: "1023"},
+		PartNumber:    "BBB-ew",
+	}
+	mgmt := nodePFEntry{
+		pfFingerprint: pfFingerprint{DeviceID: "101f"},
+		PartNumber:    "CCC-mgmt",
+	}
+
+	ni := &nodeInfo{pfs: []nodePFEntry{
+		dpu, dpu, ew, ew, ew, ew, mgmt,
+	}}
+	classifyByPartNumberFrequency(map[string]*nodeInfo{"node-1": ni})
+
+	for _, pf := range ni.pfs {
+		switch pf.PartNumber {
+		case "AAA-dpu":
+			assert.True(t, pf.IsNorthSouth)
+		case "BBB-ew":
+			assert.False(t, pf.IsNorthSouth, "EW majority must stay east-west")
+		case "CCC-mgmt":
+			assert.True(t, pf.IsNorthSouth, "minority flipped to north-south")
+		}
+	}
+}
+
 // TestKnownStorageModules_MatchesMofedmodules is a regression guard: the
 // classification set MUST be derived exactly from the shared
 // mofedmodules.DefaultStorageModules slice. If this assertion fails, the set
