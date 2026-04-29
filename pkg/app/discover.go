@@ -24,6 +24,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"gopkg.in/yaml.v2"
 )
@@ -101,6 +102,13 @@ func (l *Launcher) discoverClusterConfig() error {
 	if len(l.options.ImagePullSecrets) > 0 {
 		defaults.NetworkOperator.ImagePullSecrets = l.options.ImagePullSecrets
 		l.logger.Info("Using CLI override for image pull secrets", "secrets", l.options.ImagePullSecrets)
+	}
+
+	// Apply --network-operator-release so the saved cluster-config.yaml
+	// reflects the user's chosen release line, not whatever the default
+	// l8k-config.yaml shipped with.
+	if err := networkoperatorplugin.ApplyNetworkOperatorRelease(l.options, defaults); err != nil {
+		return apperrors.NewValidationError(err.Error(), err, "Run 'l8k --help' for supported releases")
 	}
 
 	defaults.ClusterConfig = nil

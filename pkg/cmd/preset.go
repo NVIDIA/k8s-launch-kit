@@ -116,4 +116,8 @@ func init() {
 	presetUpdateCmd.Flags().StringVar(&presetDir, "dir", "", "Destination directory for downloaded presets (default: auto-resolve)")
 	presetUpdateCmd.Flags().StringVar(&presetRepo, "repo", "nvidia/k8s-launch-kit", "GitHub repository to download presets from")
 	presetUpdateCmd.Flags().StringVar(&presetBranch, "branch", "main", "Git branch to download presets from")
+
+	setFlagGroup(presetUpdateCmd, "dir", GroupCommon)
+	setFlagGroup(presetUpdateCmd, "repo", GroupCommon)
+	setFlagGroup(presetUpdateCmd, "branch", GroupCommon)
 }
