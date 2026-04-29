@@ -114,6 +114,14 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
   # Get tool capabilities as JSON (for AI agents)
   l8k schema`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Bare `l8k` invocation: print help instead of erroring on the
+		// missing-config validation. Any flag or positional argument
+		// signals the user wanted the full-pipeline behaviour.
+		if cmd.Flags().NFlag() == 0 && len(args) == 0 {
+			_ = cmd.Help()
+			return
+		}
+
 		enabledPlugins := parseEnabledPlugins(enabledPlugins)
 		// Create application options from CLI flags
 		opts := options.Options{
@@ -230,6 +238,48 @@ func init() {
 	// Logging flags
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "Enable logging at specified level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "Write logs to file instead of stderr")
+
+	// Group the flags into labelled sections in --help output. The phase
+	// comments above describe the same grouping; this propagates the intent
+	// into the rendered help. installGroupedUsage propagates the template
+	// to every subcommand via cobra's parent lookup.
+	setFlagGroup(rootCmd, "enabled-plugins", GroupCommon)
+	setFlagGroup(rootCmd, "user-config", GroupCommon)
+	setFlagGroup(rootCmd, "kubeconfig", GroupCommon)
+	setFlagGroup(rootCmd, "network-operator-namespace", GroupCommon)
+	setFlagGroup(rootCmd, "network-operator-release", GroupCommon)
+	setFlagGroup(rootCmd, "node-selector", GroupCommon)
+	setFlagGroup(rootCmd, "image-pull-secrets", GroupCommon)
+
+	setFlagGroup(rootCmd, "discover-cluster-config", GroupDiscovery)
+	setFlagGroup(rootCmd, "save-cluster-config", GroupDiscovery)
+
+	setFlagGroup(rootCmd, "fabric", GroupProfile)
+	setFlagGroup(rootCmd, "deployment-type", GroupProfile)
+	setFlagGroup(rootCmd, "multirail", GroupProfile)
+	setFlagGroup(rootCmd, "spectrum-x", GroupProfile)
+	setFlagGroup(rootCmd, "ai", GroupProfile)
+	setFlagGroup(rootCmd, "group", GroupProfile)
+
+	setFlagGroup(rootCmd, "spcx-version", GroupSpectrumX)
+	setFlagGroup(rootCmd, "multiplane-mode", GroupSpectrumX)
+	setFlagGroup(rootCmd, "number-of-planes", GroupSpectrumX)
+
+	setFlagGroup(rootCmd, "save-deployment-files", GroupGeneration)
+	setFlagGroup(rootCmd, "pod-namespace", GroupGeneration)
+	setFlagGroup(rootCmd, "enable-doca-driver", GroupGeneration)
+	setFlagGroup(rootCmd, "workload-manifest", GroupGeneration)
+
+	setFlagGroup(rootCmd, "deploy", GroupDeploy)
+	setFlagGroup(rootCmd, "dry-run", GroupDeploy)
+
+	setFlagGroup(rootCmd, "output", GroupOutputLogging)
+	setFlagGroup(rootCmd, "yes", GroupOutputLogging)
+	setFlagGroup(rootCmd, "quiet", GroupOutputLogging)
+	setFlagGroup(rootCmd, "log-level", GroupOutputLogging)
+	setFlagGroup(rootCmd, "log-file", GroupOutputLogging)
+
+	installGroupedUsage(rootCmd)
 }
 
 // validateConfig validates the CLI flag combinations

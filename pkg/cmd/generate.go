@@ -174,4 +174,30 @@ func init() {
 	generateCmd.Flags().BoolVar(&deploy, "deploy", false, "Also deploy after generating")
 	generateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Kubeconfig (required with --deploy, falls back to $KUBECONFIG)")
 	generateCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview what would be deployed")
+
+	setFlagGroup(generateCmd, "user-config", GroupCommon)
+	setFlagGroup(generateCmd, "kubeconfig", GroupCommon)
+	setFlagGroup(generateCmd, "network-operator-namespace", GroupCommon)
+	setFlagGroup(generateCmd, "network-operator-release", GroupCommon)
+	setFlagGroup(generateCmd, "image-pull-secrets", GroupCommon)
+	setFlagGroup(generateCmd, "enabled-plugins", GroupCommon)
+
+	setFlagGroup(generateCmd, "fabric", GroupProfile)
+	setFlagGroup(generateCmd, "deployment-type", GroupProfile)
+	setFlagGroup(generateCmd, "multirail", GroupProfile)
+	setFlagGroup(generateCmd, "spectrum-x", GroupProfile)
+	setFlagGroup(generateCmd, "ai", GroupProfile)
+	setFlagGroup(generateCmd, "group", GroupProfile)
+
+	setFlagGroup(generateCmd, "spcx-version", GroupSpectrumX)
+	setFlagGroup(generateCmd, "multiplane-mode", GroupSpectrumX)
+	setFlagGroup(generateCmd, "number-of-planes", GroupSpectrumX)
+
+	setFlagGroup(generateCmd, "save-deployment-files", GroupGeneration)
+	setFlagGroup(generateCmd, "pod-namespace", GroupGeneration)
+	setFlagGroup(generateCmd, "enable-doca-driver", GroupGeneration)
+	setFlagGroup(generateCmd, "workload-manifest", GroupGeneration)
+
+	setFlagGroup(generateCmd, "deploy", GroupDeploy)
+	setFlagGroup(generateCmd, "dry-run", GroupDeploy)
 }

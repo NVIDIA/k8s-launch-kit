@@ -70,40 +70,46 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 	return nil
 }
 
-// ApplyOptionsToConfig applies CLI options to the configuration, overriding file values.
-// CLI flags take precedence over config file values for any explicitly set option.
-func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fullConfig *config.LaunchKubernetesConfig) error {
-	// Apply network operator release selection. Source precedence:
-	//   1. --network-operator-release CLI flag
-	//   2. networkOperator.selectedRelease from the config file
-	// When set, looks up the release in the embedded catalog and overwrites
-	// version/componentVersion/repository on NetworkOperator and version on
-	// DOCADriver — explicit values in the config file are intentionally
-	// replaced so the catalog is the single source of truth for the chosen
-	// release. Validation in pkg/cmd/root.go has already rejected unknown
-	// releases supplied via CLI by this point; config-file values are
-	// validated here.
+// ApplyNetworkOperatorRelease resolves the effective Network Operator
+// release (CLI flag > networkOperator.selectedRelease in config) and writes
+// the catalog-derived version, componentVersion, repository, and DOCA
+// driver version onto fullConfig. Shared between the generate flow's
+// ApplyOptionsToConfig and the discover flow that also needs to honour
+// --network-operator-release when emitting cluster-config.yaml. CLI-side
+// validation in pkg/cmd/root.go has already rejected unknown releases
+// supplied via flag; config-file values are validated here.
+func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.LaunchKubernetesConfig) error {
 	effectiveRelease := options.NetworkOperatorRelease
 	if effectiveRelease == "" && fullConfig.NetworkOperator != nil {
 		effectiveRelease = fullConfig.NetworkOperator.SelectedRelease
 	}
-	if effectiveRelease != "" {
-		rel, ok := LookupRelease(effectiveRelease)
-		if !ok {
-			return fmt.Errorf("unsupported network operator release %q; supported: %v",
-				effectiveRelease, SupportedReleases())
-		}
-		if fullConfig.NetworkOperator == nil {
-			fullConfig.NetworkOperator = &config.NetworkOperatorConfig{}
-		}
-		fullConfig.NetworkOperator.SelectedRelease = effectiveRelease
-		fullConfig.NetworkOperator.Version = rel.NetworkOperator.Version
-		fullConfig.NetworkOperator.ComponentVersion = rel.NetworkOperator.ComponentVersion
-		fullConfig.NetworkOperator.Repository = rel.NetworkOperator.Repository
-		if fullConfig.DOCADriver == nil {
-			fullConfig.DOCADriver = &config.DOCADriverConfig{}
-		}
-		fullConfig.DOCADriver.Version = rel.DOCADriver.Version
+	if effectiveRelease == "" {
+		return nil
+	}
+	rel, ok := LookupRelease(effectiveRelease)
+	if !ok {
+		return fmt.Errorf("unsupported network operator release %q; supported: %v",
+			effectiveRelease, SupportedReleases())
+	}
+	if fullConfig.NetworkOperator == nil {
+		fullConfig.NetworkOperator = &config.NetworkOperatorConfig{}
+	}
+	fullConfig.NetworkOperator.SelectedRelease = effectiveRelease
+	fullConfig.NetworkOperator.Version = rel.NetworkOperator.Version
+	fullConfig.NetworkOperator.ComponentVersion = rel.NetworkOperator.ComponentVersion
+	fullConfig.NetworkOperator.Repository = rel.NetworkOperator.Repository
+	if fullConfig.DOCADriver == nil {
+		fullConfig.DOCADriver = &config.DOCADriverConfig{}
+	}
+	fullConfig.DOCADriver.Version = rel.DOCADriver.Version
+	return nil
+}
+
+// ApplyOptionsToConfig applies CLI options to the configuration, overriding file values.
+// CLI flags take precedence over config file values for any explicitly set option.
+func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fullConfig *config.LaunchKubernetesConfig) error {
+	if err := ApplyNetworkOperatorRelease(options, fullConfig); err != nil {
+		return err
 	}
 
 	// Apply network operator namespace override from CLI

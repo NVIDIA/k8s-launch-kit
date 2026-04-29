@@ -105,4 +105,13 @@ func init() {
 	discoverCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes by label")
 	discoverCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	discoverCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
+
+	setFlagGroup(discoverCmd, "kubeconfig", GroupCommon)
+	setFlagGroup(discoverCmd, "user-config", GroupCommon)
+	setFlagGroup(discoverCmd, "network-operator-namespace", GroupCommon)
+	setFlagGroup(discoverCmd, "network-operator-release", GroupCommon)
+	setFlagGroup(discoverCmd, "node-selector", GroupCommon)
+	setFlagGroup(discoverCmd, "image-pull-secrets", GroupCommon)
+	setFlagGroup(discoverCmd, "enabled-plugins", GroupCommon)
+	setFlagGroup(discoverCmd, "save-cluster-config", GroupDiscovery)
 }
