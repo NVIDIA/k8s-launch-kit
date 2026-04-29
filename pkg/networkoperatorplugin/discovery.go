@@ -80,6 +80,17 @@ func isNorthSouthDevice(partNumber string) bool {
 	return nsProductIDs[partNumber]
 }
 
+// isBlueField3Device returns true if the PCI device ID is BlueField-3
+// (Mellanox vendor 15b3, device 0xa2dc). BF3 is the only BlueField
+// generation where both DPU and SuperNIC SKUs share a device ID, so
+// classification has to fall back to part number against ns-product-ids.
+// Older (BF2) and newer (BF4+) generations use distinct device IDs and
+// stay on the default path — DPUs match ns-product-ids and become
+// north-south; anything else flows through the frequency heuristic.
+func isBlueField3Device(deviceID string) bool {
+	return strings.EqualFold(deviceID, "a2dc")
+}
+
 func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, defaultConfig *config.LaunchKubernetesConfig) error {
 	uiOutput := ui.FromContext(ctx)
 
@@ -493,8 +504,14 @@ type nodePFEntry struct {
 	RdmaDevice       string
 	NetworkInterface string
 	IsNorthSouth     bool // true when device is a DPU (not a SuperNIC)
-	PSID             string
-	PartNumber       string
+	// IsExplicitEastWest is true when Stage 1 classified this PF as a
+	// BlueField SuperNIC (BF chip + part number not in ns-product-ids).
+	// The frequency heuristic must not flip it back to north-south, and
+	// its presence triggers the "any non-matching unpinned PF on this
+	// node is OOB / north-south" rule.
+	IsExplicitEastWest bool
+	PSID               string
+	PartNumber         string
 }
 
 // fetchNodeLabels lists all Kubernetes nodes and returns a map of nodeName → labels.
@@ -537,27 +554,62 @@ func isPowerOfTwo(n int) bool {
 	return n >= 2 && (n&(n-1)) == 0
 }
 
-// classifyByPartNumberFrequency applies a heuristic for nodes with 5+ PFs:
-// the most common part number (preferring power-of-2 counts) is east-west,
-// and all other part numbers are reclassified as north-south.
-// PFs already marked north-south by product ID matching are not changed.
+// classifyByPartNumberFrequency refines per-node PF traffic classification
+// after Stage 1's deterministic rules (DPU list, BF SuperNIC). Two paths:
+//
+//  1. If any PF on the node is explicitly east-west (Stage 1 BF SuperNIC
+//     pin), every other PF whose part number doesn't match an explicit-EW
+//     part number is reclassified as north-south (treated as OOB / mgmt).
+//     PFs already pinned north-south or explicit east-west are not touched.
+//     This handles the common case where a node has BF SuperNICs for
+//     east-west GPU traffic and a separate non-BF NIC (e.g. ConnectX-6 Lx)
+//     wired up as the OOB management interface.
+//
+//  2. No explicit-EW pins: fall back to the original 5+-PF frequency
+//     heuristic — the most common part number (preferring power-of-2
+//     counts) is east-west; minority part numbers become north-south.
+//     The tally only considers unpinned PFs, so DPU part numbers don't
+//     skew the tiebreak.
+//
 // Returns warning messages for the caller to display to the user.
 func classifyByPartNumberFrequency(nodeMap map[string]*nodeInfo) []string {
 	var warnings []string
 	for nodeName, ni := range nodeMap {
+		// Path 1: explicit east-west pins exist for this node.
+		ewPartNumbers := map[string]bool{}
+		for _, pf := range ni.pfs {
+			if pf.IsExplicitEastWest && pf.PartNumber != "" {
+				ewPartNumbers[pf.PartNumber] = true
+			}
+		}
+		if len(ewPartNumbers) > 0 {
+			for i := range ni.pfs {
+				if ni.pfs[i].IsNorthSouth || ni.pfs[i].IsExplicitEastWest {
+					continue
+				}
+				if !ewPartNumbers[ni.pfs[i].PartNumber] {
+					ni.pfs[i].IsNorthSouth = true
+				}
+			}
+			continue
+		}
+
+		// Path 2: fall back to the legacy frequency heuristic.
 		if len(ni.pfs) < 5 {
 			continue
 		}
 
-		// Count PFs by part number (skip empty)
+		// Count PFs by part number, ignoring already-pinned ones so DPU
+		// part numbers (Stage 1 north-south) don't poison the tiebreak.
 		partCounts := map[string]int{}
 		for _, pf := range ni.pfs {
-			if pf.PartNumber != "" {
-				partCounts[pf.PartNumber]++
+			if pf.IsNorthSouth || pf.PartNumber == "" {
+				continue
 			}
+			partCounts[pf.PartNumber]++
 		}
 		if len(partCounts) <= 1 {
-			// All PFs have the same (or empty) part number — nothing to classify
+			// All unpinned PFs share a part number — nothing to classify.
 			continue
 		}
 
@@ -631,19 +683,29 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			nodeMap[nodeName] = &nodeInfo{}
 		}
 		ni := nodeMap[nodeName]
-		// Match part number against known DPU product IDs for north-south classification.
-		northSouth := isNorthSouthDevice(d.Status.PartNumber)
+		// Stage 1 classification:
+		//   - Part number in ns-product-ids → BlueField DPU → north-south.
+		//   - BlueField-3 chip (deviceID a2dc) with part number NOT in
+		//     ns-product-ids → BlueField-3 SuperNIC → explicit east-west.
+		//     BF3 is special-cased because DPU and SuperNIC SKUs share the
+		//     same device ID; BF2/BF4 use distinct device IDs and DPUs
+		//     among them are already covered by the ns-product-ids match.
+		//   - Anything else → unclassified (default east-west, may be
+		//     reclassified by the frequency heuristic in Stage 1.5).
+		isDPU := isNorthSouthDevice(d.Status.PartNumber)
+		isBF3SuperNIC := !isDPU && isBlueField3Device(d.Status.Type)
 		for _, p := range d.Status.Ports {
 			entry := nodePFEntry{
 				pfFingerprint: pfFingerprint{
 					DeviceID:   d.Status.Type,
 					PciAddress: p.PCI,
 				},
-				RdmaDevice:       p.RdmaInterface,
-				NetworkInterface: p.NetworkInterface,
-				IsNorthSouth:     northSouth,
-				PSID:             d.Status.PSID,
-				PartNumber:       d.Status.PartNumber,
+				RdmaDevice:         p.RdmaInterface,
+				NetworkInterface:   p.NetworkInterface,
+				IsNorthSouth:       isDPU,
+				IsExplicitEastWest: isBF3SuperNIC,
+				PSID:               d.Status.PSID,
+				PartNumber:         d.Status.PartNumber,
 			}
 			ni.pfs = append(ni.pfs, entry)
 			if p.RdmaInterface != "" {
