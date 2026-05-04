@@ -32,6 +32,8 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> \
 | `--multirail` | — | — | Enable multirail mode |
 | `--save-deployment-files` | Yes | — | Output directory for generated YAMLs |
 | `--group` | — | `group-0` | Filter to a specific hardware group |
+| `--for` | — | preset directory name | Skip discovery: synthesize `clusterConfig` from a topology preset. Requires `--node-selector`. List options with `l8k preset list`. |
+| `--node-selector` | Required with `--for` | `key=val,key2=val2` | Identifies which nodes the synthesized clusterConfig targets at apply time. |
 
 *Not required when `--spectrum-x` is used.
 
@@ -63,7 +65,22 @@ l8k generate --user-config cluster-config.yaml \
   --fabric ethernet --deployment-type sriov \
   --save-deployment-files ./output \
   --output json 2>/dev/null
+
+# Generate from a known server SKU (no cluster discovery required)
+l8k preset list   # see available presets
+l8k generate --user-config cluster-config.yaml \
+  --for ThinkSystem-SR680a-V3 \
+  --node-selector "nvidia.com/gpu.product=NVIDIA-H200" \
+  --fabric ethernet --deployment-type sriov \
+  --save-deployment-files ./output
 ```
+
+## Choosing `l8k discover` vs `--for`
+
+- **`l8k discover` then `l8k generate`** — default flow. Run discovery against a live cluster to learn machine type, GPU type, and NIC topology, then generate from the resulting `cluster-config.yaml`.
+- **`l8k generate --for <preset>`** — skip discovery entirely when the SKU is already known and there is a preset for it. Useful for ahead-of-time generation (CI scaffolding, lab runbooks, demos), or when you don't have `kubectl` access yet. Requires `--node-selector` to identify the target nodes at apply time.
+
+A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in its `topology.yaml`. All bundled presets do.
 
 ## Profile Quick Reference
 

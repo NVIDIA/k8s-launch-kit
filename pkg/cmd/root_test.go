@@ -154,3 +154,42 @@ func TestValidateConfig_DryRunWithDeployPasses(t *testing.T) {
 	err := validateConfig(&opts)
 	assert.NoError(t, err)
 }
+
+func TestValidateConfig_ForRequiresNodeSelector(t *testing.T) {
+	opts := options.Options{
+		UserConfig:     "config.yaml",
+		EnabledPlugins: []string{"network-operator"},
+		OutputFormat:   "text",
+		ForPreset:      "PowerEdge-XE9680",
+		// NodeSelector intentionally empty
+	}
+	err := validateConfig(&opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--for requires --node-selector")
+}
+
+func TestValidateConfig_ForRejectsDiscovery(t *testing.T) {
+	opts := options.Options{
+		UserConfig:            "config.yaml",
+		EnabledPlugins:        []string{"network-operator"},
+		OutputFormat:          "text",
+		ForPreset:             "PowerEdge-XE9680",
+		NodeSelector:          "key=val",
+		DiscoverClusterConfig: true,
+	}
+	err := validateConfig(&opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
+func TestValidateConfig_ForWithNodeSelectorPasses(t *testing.T) {
+	opts := options.Options{
+		UserConfig:     "config.yaml",
+		EnabledPlugins: []string{"network-operator"},
+		OutputFormat:   "text",
+		ForPreset:      "PowerEdge-XE9680",
+		NodeSelector:   "nvidia.com/gpu.product=NVIDIA-H200",
+	}
+	err := validateConfig(&opts)
+	assert.NoError(t, err)
+}

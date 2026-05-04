@@ -30,6 +30,14 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 )
 
+// generateNodeSelector is the per-subcommand node selector value. It must be
+// distinct from the root command's `nodeSelector` package variable: both
+// commands bind a `--node-selector` flag, and StringVar sets the default at
+// init time — so a single shared var would make the root command's default
+// (`feature.node.kubernetes.io/pci-15b3.present=true`) leak into the generate
+// flow and break the `--for` requires `--node-selector` validation.
+var generateNodeSelector string
+
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate deployment manifests for a network profile",
@@ -64,7 +72,14 @@ Optionally deploy the generated manifests with --deploy.`,
   l8k generate --user-config cluster-config.yaml \
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output \
-    --output json --yes 2>/dev/null`,
+    --output json --yes 2>/dev/null
+
+  # Generate from a known server preset (no cluster discovery required)
+  l8k generate --user-config cluster-config.yaml \
+    --for ThinkSystem-SR680a-V3 \
+    --node-selector "feature.node.kubernetes.io/pci-15b3.present=true" \
+    --fabric ethernet --deployment-type sriov \
+    --save-deployment-files ./output`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Resolve user config: explicit flag > ./cluster-config.yaml > default config path
 		if userConfig == "" {
@@ -92,7 +107,8 @@ Optionally deploy the generated manifests with --deploy.`,
 			MultiplaneMode:          multiplaneMode,
 			NumberOfPlanes:          numberOfPlanes,
 			Group:                   group,
-			NodeSelector:            nodeSelector,
+			NodeSelector:            generateNodeSelector,
+			ForPreset:               forPreset,
 			ImagePullSecrets:        imagePullSecrets,
 			PodNamespace:            podNamespace,
 			SaveDeploymentFiles:     saveDeploymentFiles,
@@ -115,6 +131,16 @@ Optionally deploy the generated manifests with --deploy.`,
 
 		if err := applySpectrumXDefaults(&opts); err != nil {
 			exitWithError(apperrors.NewValidationError(err.Error(), err, "Check --spectrum-x flag combinations"), opts.OutputFormat)
+		}
+
+		// --for requires --node-selector since the preset has no live worker-node
+		// list to target.
+		if opts.ForPreset != "" && opts.NodeSelector == "" {
+			exitWithError(apperrors.NewValidationError(
+				"--for requires --node-selector",
+				fmt.Errorf("preset %q has no live worker-node list; supply a node selector to identify target nodes", opts.ForPreset),
+				"Specify --node-selector key1=val1,key2=val2",
+			), opts.OutputFormat)
 		}
 
 		// Resolve kubeconfig if deploy is requested
@@ -157,6 +183,8 @@ func init() {
 	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	generateCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes (requires --spectrum-x)")
 	generateCmd.Flags().StringVar(&group, "group", "", "Generate for a specific group only (e.g., group-0)")
+	generateCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
+	generateCmd.Flags().StringVar(&generateNodeSelector, "node-selector", "", "Node selector for the synthesized clusterConfig when --for is used (e.g., key=value,key2=value2). Required with --for.")
 
 	// Output
 	generateCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "", "Output directory for generated YAMLs")
@@ -188,6 +216,8 @@ func init() {
 	setFlagGroup(generateCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(generateCmd, "ai", GroupProfile)
 	setFlagGroup(generateCmd, "group", GroupProfile)
+	setFlagGroup(generateCmd, "for", GroupProfile)
+	setFlagGroup(generateCmd, "node-selector", GroupProfile)
 
 	setFlagGroup(generateCmd, "spcx-version", GroupSpectrumX)
 	setFlagGroup(generateCmd, "multiplane-mode", GroupSpectrumX)

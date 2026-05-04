@@ -229,7 +229,7 @@ func TestDownloadPresets_OverwritesExisting(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(entries)
 	})
 	mux.HandleFunc("/test/repo/main/presets/MachineA/topology.yaml", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("machineType: MachineA\nproductType: UPDATED\n"))
+		_, _ = w.Write([]byte("machineType: MachineA\ngpuType: UPDATED\n"))
 	})
 
 	server := httptest.NewServer(mux)
@@ -240,7 +240,7 @@ func TestDownloadPresets_OverwritesExisting(t *testing.T) {
 	// Create an existing preset that should be overwritten
 	existingDir := filepath.Join(destDir, "MachineA")
 	_ = os.MkdirAll(existingDir, 0o755)
-	_ = os.WriteFile(filepath.Join(existingDir, "topology.yaml"), []byte("machineType: MachineA\nproductType: OLD\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(existingDir, "topology.yaml"), []byte("machineType: MachineA\ngpuType: OLD\n"), 0o644)
 
 	opts := DownloadOptions{
 		Repo:       "test/repo",

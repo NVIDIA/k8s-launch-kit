@@ -24,6 +24,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 )
 
@@ -73,6 +74,33 @@ func (l *Launcher) executeGeneration(configPath string) error {
 				return fmt.Errorf("failed to apply options to config for plugin %s: %w", plugin.GetName(), err)
 			}
 		}
+	}
+
+	// --for: replace clusterConfig with a synthesized group from a preset.
+	// This is the explicit ahead-of-time generation path that skips live
+	// discovery in favor of a static preset description. The CLI layer has
+	// already enforced --node-selector being set; here we do the substitution
+	// before the rest of the pipeline runs.
+	if l.options.ForPreset != "" {
+		preset, err := presets.LoadPresetByDir(l.options.ForPreset)
+		if err != nil {
+			return apperrors.NewValidationError(
+				fmt.Sprintf("invalid --for value %q", l.options.ForPreset),
+				err,
+				"Run 'l8k preset list' to see available presets",
+			)
+		}
+		selectorMap := parseNodeSelector(l.options.NodeSelector)
+		cc, synthErr := presets.SynthesizeClusterConfig(l.options.ForPreset, preset, selectorMap)
+		if synthErr != nil {
+			return apperrors.NewValidationError(
+				fmt.Sprintf("preset %q cannot be used with --for", l.options.ForPreset),
+				synthErr,
+				"Add a 'capabilities.nodes.{sriov,rdma,ib}' block to the preset's topology.yaml",
+			)
+		}
+		fullConfig.ClusterConfig = []config.ClusterConfig{cc}
+		l.ui.Info("Using preset %q (clusterConfig replaced from preset)", l.options.ForPreset)
 	}
 
 	// Capture profile info for JSON result

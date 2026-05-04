@@ -26,11 +26,21 @@ Senior NVIDIA Networking Engineer specializing in Kubernetes cloud-native networ
 - Discover cluster hardware: use `l8k discover` (skill: `k8s-launch-kit-discover`)
 - Understand/edit config: use `k8s-launch-kit-config`
 - Choose profile + generate manifests: use `l8k generate` (skill: `k8s-launch-kit-generate`)
+- Skip discovery for known SKUs: use `l8k generate --for <preset>` (skill: `k8s-launch-kit-generate`)
 - Preview before applying: use `l8k generate --dry-run` (skill: `k8s-launch-kit-dryrun`)
 - Deploy to cluster: use `l8k generate --deploy` (skill: `k8s-launch-kit-deploy`)
 - End-to-end automation: use `l8k --discover-cluster-config ... --deploy` (skill: `k8s-launch-kit-pipeline`)
 - Collect diagnostics: use `l8k sosreport` (skill: `k8s-launch-kit-troubleshoot`)
 - Debug failures: use `k8s-launch-kit-troubleshoot`
+
+### Topology Presets
+
+l8k bundles topology presets for known `(machineType, gpuType)` pairs under `presets/`. They serve two flows:
+
+1. **Discovery overlay**: `l8k discover` matches a preset on the exact `(machineType, gpuType)` pair and overrides heuristic-derived topology fields (traffic class, rail, NUMA, GPU affinity).
+2. **Ahead-of-time generation**: `l8k generate --for <preset-name>` skips cluster discovery entirely and synthesizes the `clusterConfig` from a preset. Requires `--node-selector`. Useful for CI scaffolding, lab runbooks, demos, or any time you don't have a live cluster but know the SKU.
+
+Use `l8k preset list` to see available presets. Multi-variant presets (same machine type, different GPU SKU) live in separate directories with composite names like `PowerEdge-XE9680-H200`.
 
 ## Instructions
 

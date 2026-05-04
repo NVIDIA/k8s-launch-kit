@@ -98,7 +98,7 @@ func TestLoadPreset_Found(t *testing.T) {
 	}
 
 	topoYAML := `machineType: PowerEdge-XE9680
-productType: NVIDIA-H200
+gpuType: NVIDIA-H200
 nicModel: BlueField-3 SuperNIC
 gpuInterconnect: NV18
 numaNodes: 2
@@ -130,7 +130,7 @@ pfs:
 	defer func() { _ = os.Chdir(origDir) }()
 	_ = os.Chdir(tmpDir)
 
-	topo, err := LoadPreset("PowerEdge-XE9680")
+	topo, err := LoadPreset("PowerEdge-XE9680", "NVIDIA-H200")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,8 +140,8 @@ pfs:
 	if topo.MachineType != "PowerEdge-XE9680" {
 		t.Errorf("expected MachineType=PowerEdge-XE9680, got %q", topo.MachineType)
 	}
-	if topo.ProductType != "NVIDIA-H200" {
-		t.Errorf("expected ProductType=NVIDIA-H200, got %q", topo.ProductType)
+	if topo.GPUType != "NVIDIA-H200" {
+		t.Errorf("expected GPUType=NVIDIA-H200, got %q", topo.GPUType)
 	}
 	if topo.NicModel != "BlueField-3 SuperNIC" {
 		t.Errorf("expected NicModel, got %q", topo.NicModel)
@@ -189,7 +189,7 @@ func TestLoadPreset_NotFound(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 	_ = os.Chdir(tmpDir)
 
-	topo, err := LoadPreset("NonExistent-Machine")
+	topo, err := LoadPreset("NonExistent-Machine", "NVIDIA-H200")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestLoadPreset_NoPresetsDir(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 	_ = os.Chdir(tmpDir)
 
-	topo, err := LoadPreset("PowerEdge-XE9680")
+	topo, err := LoadPreset("PowerEdge-XE9680", "NVIDIA-H200")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,6 +214,10 @@ func TestLoadPreset_NoPresetsDir(t *testing.T) {
 }
 
 func TestLoadPreset_InvalidYAML(t *testing.T) {
+	// Invalid YAML is skipped at load time with a warning rather than
+	// surfaced as a hard error — keeps the lookup robust across mixed
+	// preset directories. The lookup just returns nil because no valid
+	// preset matches.
 	tmpDir := t.TempDir()
 	machineDir := filepath.Join(tmpDir, "presets", "BadMachine")
 	if err := os.MkdirAll(machineDir, 0o755); err != nil {
@@ -227,16 +231,19 @@ func TestLoadPreset_InvalidYAML(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 	_ = os.Chdir(tmpDir)
 
-	topo, err := LoadPreset("BadMachine")
-	if err == nil {
-		t.Fatal("expected error for invalid YAML, got nil")
+	topo, err := LoadPreset("BadMachine", "NVIDIA-H200")
+	if err != nil {
+		t.Fatalf("expected nil error (invalid presets are skipped), got: %v", err)
 	}
 	if topo != nil {
-		t.Errorf("expected nil topology on error, got %+v", topo)
+		t.Errorf("expected nil topology for skipped invalid preset, got %+v", topo)
 	}
 }
 
 func TestLoadPreset_EmptyFile(t *testing.T) {
+	// Empty YAML unmarshals to a zero-value Topology, which has empty
+	// machineType and gpuType — both required fields. The preset is
+	// rejected at load time, so LoadPreset returns nil.
 	tmpDir := t.TempDir()
 	machineDir := filepath.Join(tmpDir, "presets", "EmptyMachine")
 	if err := os.MkdirAll(machineDir, 0o755); err != nil {
@@ -250,16 +257,170 @@ func TestLoadPreset_EmptyFile(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 	_ = os.Chdir(tmpDir)
 
-	topo, err := LoadPreset("EmptyMachine")
+	topo, err := LoadPreset("EmptyMachine", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Empty YAML unmarshals to zero-value struct — not nil
-	if topo == nil {
-		t.Fatal("expected non-nil topology for empty YAML")
+	if topo != nil {
+		t.Errorf("expected nil for empty preset (missing required fields), got %+v", topo)
 	}
-	if len(topo.PFs) != 0 {
-		t.Errorf("expected 0 PFs, got %d", len(topo.PFs))
+}
+
+func TestLoadPreset_ExactGPUTypeMatch(t *testing.T) {
+	// Two presets share the same machineType but declare different
+	// gpuTypes — exact-match lookup should return the right one for each
+	// gpuType, and nil when neither matches (no fallback).
+	tmpDir := t.TempDir()
+	presetsDir := filepath.Join(tmpDir, "presets")
+
+	writePreset := func(dir, machine, gpu string) {
+		full := filepath.Join(presetsDir, dir)
+		if err := os.MkdirAll(full, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "machineType: " + machine + "\ngpuType: " + gpu + "\n"
+		if err := os.WriteFile(filepath.Join(full, "topology.yaml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writePreset("PowerEdge-XE9680-H200", "PowerEdge-XE9680", "NVIDIA-H200")
+	writePreset("PowerEdge-XE9680-B200", "PowerEdge-XE9680", "NVIDIA-B200")
+
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	_ = os.Chdir(tmpDir)
+
+	cases := []struct {
+		machine, gpu string
+		expectFound  bool
+	}{
+		{"PowerEdge-XE9680", "NVIDIA-H200", true},
+		{"PowerEdge-XE9680", "NVIDIA-B200", true},
+		{"PowerEdge-XE9680", "NVIDIA-A100", false}, // exact-match only — no fallback
+		{"Other-Machine", "NVIDIA-H200", false},
+	}
+	for _, tc := range cases {
+		topo, err := LoadPreset(tc.machine, tc.gpu)
+		if err != nil {
+			t.Errorf("LoadPreset(%q, %q): unexpected error: %v", tc.machine, tc.gpu, err)
+			continue
+		}
+		if tc.expectFound && topo == nil {
+			t.Errorf("LoadPreset(%q, %q): expected match, got nil", tc.machine, tc.gpu)
+		}
+		if !tc.expectFound && topo != nil {
+			t.Errorf("LoadPreset(%q, %q): expected nil, got %+v", tc.machine, tc.gpu, topo)
+		}
+		if topo != nil && topo.GPUType != tc.gpu {
+			t.Errorf("LoadPreset(%q, %q): wrong gpuType in result: %q", tc.machine, tc.gpu, topo.GPUType)
+		}
+	}
+}
+
+func TestLoadPreset_RejectsMissingGPUType(t *testing.T) {
+	// A preset directory whose topology.yaml has empty gpuType is
+	// silently dropped from the lookup pool — neither LoadPreset nor
+	// ListPresets should surface it.
+	tmpDir := t.TempDir()
+	presetsDir := filepath.Join(tmpDir, "presets")
+
+	mustMkdir := func(name string) string {
+		full := filepath.Join(presetsDir, name)
+		if err := os.MkdirAll(full, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return full
+	}
+	// Valid: machineType + gpuType both set
+	if err := os.WriteFile(filepath.Join(mustMkdir("Valid"), "topology.yaml"),
+		[]byte("machineType: M\ngpuType: NVIDIA-H200\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid: missing gpuType
+	if err := os.WriteFile(filepath.Join(mustMkdir("NoGPU"), "topology.yaml"),
+		[]byte("machineType: M\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid: missing machineType
+	if err := os.WriteFile(filepath.Join(mustMkdir("NoMachine"), "topology.yaml"),
+		[]byte("gpuType: NVIDIA-H200\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	_ = os.Chdir(tmpDir)
+
+	names, err := ListPresets()
+	if err != nil {
+		t.Fatalf("ListPresets failed: %v", err)
+	}
+	if len(names) != 1 || names[0] != "Valid" {
+		t.Errorf("ListPresets: expected [Valid], got %v", names)
+	}
+
+	// Lookup must return nil for the invalid pair (NoGPU declared
+	// machineType=M with empty gpuType, but it was rejected at load).
+	topo, err := LoadPreset("M", "")
+	if err != nil {
+		t.Fatalf("LoadPreset(M, \"\") unexpected error: %v", err)
+	}
+	if topo != nil {
+		t.Errorf("LoadPreset(M, \"\"): expected nil (NoGPU was rejected), got %+v", topo)
+	}
+}
+
+func TestLoadPresetByDir_Found(t *testing.T) {
+	tmpDir := t.TempDir()
+	presetsDir := filepath.Join(tmpDir, "presets", "MyPreset")
+	if err := os.MkdirAll(presetsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(presetsDir, "topology.yaml"),
+		[]byte("machineType: M\ngpuType: NVIDIA-H200\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	_ = os.Chdir(tmpDir)
+
+	topo, err := LoadPresetByDir("MyPreset")
+	if err != nil {
+		t.Fatalf("LoadPresetByDir failed: %v", err)
+	}
+	if topo == nil || topo.MachineType != "M" || topo.GPUType != "NVIDIA-H200" {
+		t.Errorf("LoadPresetByDir returned wrong topology: %+v", topo)
+	}
+}
+
+func TestLoadPresetByDir_Unknown(t *testing.T) {
+	tmpDir := t.TempDir()
+	presetsDir := filepath.Join(tmpDir, "presets", "Foo")
+	if err := os.MkdirAll(presetsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(presetsDir, "topology.yaml"),
+		[]byte("machineType: M\ngpuType: NVIDIA-H200\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	_ = os.Chdir(tmpDir)
+
+	topo, err := LoadPresetByDir("Bar")
+	if err == nil {
+		t.Fatal("expected error for unknown preset, got nil")
+	}
+	if topo != nil {
+		t.Errorf("expected nil topology on unknown preset, got %+v", topo)
+	}
+	if !containsSubstring(err.Error(), "Bar") {
+		t.Errorf("error should mention requested name 'Bar', got: %v", err)
+	}
+	if !containsSubstring(err.Error(), "Foo") {
+		t.Errorf("error should list available preset 'Foo', got: %v", err)
 	}
 }
 
@@ -275,7 +436,7 @@ func TestLoadPreset_DirectoryWithoutTopologyYAML(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 	_ = os.Chdir(tmpDir)
 
-	topo, err := LoadPreset("NoTopology")
+	topo, err := LoadPreset("NoTopology", "NVIDIA-H200")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -296,7 +457,7 @@ func TestListPresets(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "topology.yaml"), []byte("machineType: "+name), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "topology.yaml"), []byte("machineType: "+name+"\ngpuType: NVIDIA-H200\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -520,7 +681,7 @@ func TestValidatePreset_MultipleMismatches(t *testing.T) {
 
 func TestApplyPreset_OverridesTopologyFields(t *testing.T) {
 	preset := &Topology{
-		ProductType: "NVIDIA-H200",
+		GPUType: "NVIDIA-H200",
 		PFs: []PresetPF{
 			{
 				DeviceID:     "a2dc",
@@ -547,7 +708,7 @@ func TestApplyPreset_OverridesTopologyFields(t *testing.T) {
 	}
 
 	group := &config.ClusterConfig{
-		ProductType: "", // should be filled from preset
+		GPUType: "", // should be filled from preset
 		PFs: []config.PFConfig{
 			{
 				DeviceID:         "a2dc",
@@ -629,9 +790,13 @@ func TestApplyPreset_OverridesTopologyFields(t *testing.T) {
 		t.Errorf("PF[1] PartNumber: expected discovered-ns-part (preserved), got %q", pf1.PartNumber)
 	}
 
-	// Verify product type was filled from preset
-	if group.ProductType != "NVIDIA-H200" {
-		t.Errorf("ProductType: expected NVIDIA-H200, got %q", group.ProductType)
+	// GPUType is no longer filled in from the preset — it's a matching
+	// key, so by the time ApplyPreset runs, the discovered group's
+	// GPUType already equals the preset's. Here we exercise that the
+	// caller passed an empty GPUType and ApplyPreset does not write
+	// over it (since GPUType fill-in was deliberately removed).
+	if group.GPUType != "" {
+		t.Errorf("GPUType: expected unchanged empty (no fill-in), got %q", group.GPUType)
 	}
 
 	// Verify preset applied flag
@@ -640,20 +805,20 @@ func TestApplyPreset_OverridesTopologyFields(t *testing.T) {
 	}
 }
 
-func TestApplyPreset_PreservesExistingProductType(t *testing.T) {
+func TestApplyPreset_PreservesExistingGPUType(t *testing.T) {
 	preset := &Topology{
-		ProductType: "NVIDIA-H200",
+		GPUType: "NVIDIA-H200",
 		PFs:         []PresetPF{},
 	}
 	group := &config.ClusterConfig{
-		ProductType: "NVIDIA-H100-NVL", // already set — should NOT be overwritten
+		GPUType: "NVIDIA-H100-NVL", // already set — should NOT be overwritten
 		PFs:         []config.PFConfig{},
 	}
 
 	ApplyPreset(preset, group)
 
-	if group.ProductType != "NVIDIA-H100-NVL" {
-		t.Errorf("ProductType: expected NVIDIA-H100-NVL (preserved), got %q", group.ProductType)
+	if group.GPUType != "NVIDIA-H100-NVL" {
+		t.Errorf("GPUType: expected NVIDIA-H100-NVL (preserved), got %q", group.GPUType)
 	}
 }
 
@@ -693,7 +858,7 @@ func TestApplyPreset_LargePreset_PowerEdgeXE9680(t *testing.T) {
 	presetsDir := filepath.Join(tmpDir, "presets")
 
 	// Copy the actual preset file from the repo
-	srcPath := filepath.Join("..", "..", "presets", "PowerEdge-XE9680", "topology.yaml")
+	srcPath := filepath.Join("..", "..", "presets", "PowerEdge-XE9680-H200", "topology.yaml")
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		t.Skipf("skipping: cannot read real preset file: %v", err)
@@ -711,7 +876,7 @@ func TestApplyPreset_LargePreset_PowerEdgeXE9680(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 	_ = os.Chdir(tmpDir)
 
-	preset, err := LoadPreset("PowerEdge-XE9680")
+	preset, err := LoadPreset("PowerEdge-XE9680", "NVIDIA-H200")
 	if err != nil {
 		t.Fatalf("LoadPreset failed: %v", err)
 	}

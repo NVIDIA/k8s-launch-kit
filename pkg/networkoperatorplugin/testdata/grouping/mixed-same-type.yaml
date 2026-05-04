@@ -44,7 +44,7 @@ podNamespace: default
 clusterConfig:
 - identifier: group-0
   machineType: machine-a
-  productType: gpu-model-y
+  gpuType: gpu-model-y
   labelSelector:
     feature.node.kubernetes.io/pci-15b3.present: "true"
   capabilities:
@@ -169,7 +169,7 @@ clusterConfig:
   - iw_cm
 - identifier: group-1
   machineType: machine-b
-  productType: gpu-model-y
+  gpuType: gpu-model-y
   labelSelector:
     feature.node.kubernetes.io/pci-15b3.present: "true"
   capabilities:
@@ -278,7 +278,7 @@ clusterConfig:
   - iw_cm
 - identifier: group-2
   machineType: machine-c
-  productType: gpu-model-y
+  gpuType: gpu-model-y
   labelSelector:
     feature.node.kubernetes.io/pci-15b3.present: "true"
   capabilities:

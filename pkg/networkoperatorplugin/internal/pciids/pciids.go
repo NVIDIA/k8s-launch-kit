@@ -15,7 +15,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package pciids resolves NVIDIA PCI device IDs (vendor 10de) to canonical
-// ProductType strings, using a trimmed pci.ids snapshot embedded at build time.
+// GPUType strings, using a trimmed pci.ids snapshot embedded at build time.
 package pciids
 
 import (
@@ -59,7 +59,7 @@ func parseVendorBlock(input string) map[string]string {
 	return out
 }
 
-// LookupNVIDIA returns a canonical ProductType for a given NVIDIA PCI device ID,
+// LookupNVIDIA returns a canonical GPUType for a given NVIDIA PCI device ID,
 // in the same shape as parseGPUProductFromNvidiaSmi output (e.g. "NVIDIA-H200-SXM-141GB").
 // Returns "" for unknown IDs. The input is a hex string, optionally prefixed with
 // "0x", case-insensitive (e.g. "2335", "0x2335", "0X2335").
@@ -73,7 +73,7 @@ func LookupNVIDIA(deviceID string) string {
 	return canonicalize(name)
 }
 
-// canonicalize converts a pci.ids device name into the ProductType shape used
+// canonicalize converts a pci.ids device name into the GPUType shape used
 // elsewhere in k8s-launch-kit (matches parseGPUProductFromNvidiaSmi).
 // When a bracketed marketing name is present (e.g. "GH100 [H200 SXM 141GB]"),
 // the bracket contents are preferred over the chip codename. The final string

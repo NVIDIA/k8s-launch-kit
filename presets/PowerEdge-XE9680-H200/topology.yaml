@@ -1,8 +1,15 @@
 machineType: PowerEdge-XE9680
-productType: NVIDIA-H200
+manufacturer: Dell Inc.
+gpuType: NVIDIA-H200
 nicModel: BlueField-3 B3140H E-series HHHL SuperNIC (ConnectX-7)
 gpuInterconnect: NV18
 numaNodes: 2
+
+capabilities:
+  nodes:
+    sriov: true
+    rdma: true
+    ib: false
 
 pfs:
   # --- NUMA 0: GPUs 0-3, CPUs 0,2,4,6,8,10 ---
@@ -17,6 +24,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000001069
     partNumber: 0KK4NR
+    model: Nvidia BlueField-3 B3140H E-series HHHL SuperNIC, 400GbE(default mode)/NDR IB, Single-port QSFP112, PCIe Gen5.0 x16, 8 Arm cores, 16GB DDR, BMC, Crypto Enabled
   - deviceID: a2dc
     rdmaDevice: rocep60s0f0
     pciAddress: 0000:3c:00.0
@@ -28,6 +36,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000001069
     partNumber: 0KK4NR
+    model: Nvidia BlueField-3 B3140H E-series HHHL SuperNIC, 400GbE(default mode)/NDR IB, Single-port QSFP112, PCIe Gen5.0 x16, 8 Arm cores, 16GB DDR, BMC, Crypto Enabled
   - deviceID: a2dc
     rdmaDevice: rocep77s0f0
     pciAddress: 0000:4d:00.0
@@ -39,6 +48,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000001069
     partNumber: 0KK4NR
+    model: Nvidia BlueField-3 B3140H E-series HHHL SuperNIC, 400GbE(default mode)/NDR IB, Single-port QSFP112, PCIe Gen5.0 x16, 8 Arm cores, 16GB DDR, BMC, Crypto Enabled
   - deviceID: a2dc
     rdmaDevice: rocep94s0f0
     pciAddress: 0000:5e:00.0
@@ -50,6 +60,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000001069
     partNumber: 0KK4NR
+    model: Nvidia BlueField-3 B3140H E-series HHHL SuperNIC, 400GbE(default mode)/NDR IB, Single-port QSFP112, PCIe Gen5.0 x16, 8 Arm cores, 16GB DDR, BMC, Crypto Enabled
 
   # --- NUMA 1: GPUs 4-7, CPUs 1,3,5,7,9,11 ---
   - deviceID: a2dc
@@ -63,6 +74,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000001069
     partNumber: 0KK4NR
+    model: Nvidia BlueField-3 B3140H E-series HHHL SuperNIC, 400GbE(default mode)/NDR IB, Single-port QSFP112, PCIe Gen5.0 x16, 8 Arm cores, 16GB DDR, BMC, Crypto Enabled
   - deviceID: a2dc
     rdmaDevice: rocep157s0f0
     pciAddress: 0000:9d:00.0
@@ -73,6 +85,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000000884
     partNumber: 0HFWRM
+    model: Bluefield-3 Dual Port 200 GbE QSFP Crypto DPU
   - deviceID: a2dc
     rdmaDevice: ""
     pciAddress: 0000:9d:00.1
@@ -83,6 +96,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000000884
     partNumber: 0HFWRM
+    model: Bluefield-3 Dual Port 200 GbE QSFP Crypto DPU
   - deviceID: a2dc
     rdmaDevice: rocep188s0f0
     pciAddress: 0000:bc:00.0
@@ -94,6 +108,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000001069
     partNumber: 0KK4NR
+    model: Nvidia BlueField-3 B3140H E-series HHHL SuperNIC, 400GbE(default mode)/NDR IB, Single-port QSFP112, PCIe Gen5.0 x16, 8 Arm cores, 16GB DDR, BMC, Crypto Enabled
   - deviceID: a2dc
     rdmaDevice: rocep204s0f0
     pciAddress: 0000:cc:00.0
@@ -105,6 +120,7 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000001069
     partNumber: 0KK4NR
+    model: Nvidia BlueField-3 B3140H E-series HHHL SuperNIC, 400GbE(default mode)/NDR IB, Single-port QSFP112, PCIe Gen5.0 x16, 8 Arm cores, 16GB DDR, BMC, Crypto Enabled
   - deviceID: a2dc
     rdmaDevice: rocep220s0f0
     pciAddress: 0000:dc:00.0
@@ -116,3 +132,4 @@ pfs:
     gpuProximity: PIX
     psid: mt_0000001069
     partNumber: 0KK4NR
+    model: Nvidia BlueField-3 B3140H E-series HHHL SuperNIC, 400GbE(default mode)/NDR IB, Single-port QSFP112, PCIe Gen5.0 x16, 8 Arm cores, 16GB DDR, BMC, Crypto Enabled

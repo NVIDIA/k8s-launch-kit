@@ -152,7 +152,7 @@ type ProfileSpectrumX struct {
 type ClusterConfig struct {
 	Identifier           string               `yaml:"identifier"`
 	MachineType          string               `yaml:"machineType,omitempty"`
-	ProductType          string               `yaml:"productType,omitempty"`
+	GPUType          string               `yaml:"gpuType,omitempty"`
 	PresetApplied        bool                 `yaml:"presetApplied,omitempty"`
 	Capabilities         *ClusterCapabilities `yaml:"capabilities"`
 	PFs                  []PFConfig           `yaml:"pfs"`

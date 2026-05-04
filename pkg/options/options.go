@@ -44,6 +44,11 @@ type Options struct {
 	NumberOfPlanes      int    // Number of planes for Spectrum-X (default: 4)
 	Group               string // Generate templates for a specific group identifier only
 	NodeSelector        string // Filter nodes for discovery and manifests (e.g., "key1=val1,key2=val2")
+	// ForPreset is the directory name of a topology preset under presets/. When
+	// set, generate replaces fullConfig.ClusterConfig with a single group
+	// synthesized from the preset (skipping cluster discovery). Requires
+	// NodeSelector since the preset has no live worker-node list.
+	ForPreset           string
 	PodNamespace        string // Namespace for pods and network resources (overrides config)
 	SaveDeploymentFiles string // Directory to save generated files
 

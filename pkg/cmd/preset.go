@@ -49,7 +49,7 @@ var presetListCmd = &cobra.Command{
 	Example: `  l8k preset list
   l8k preset list --output json`,
 	Run: func(cmd *cobra.Command, args []string) {
-		names, err := presets.ListPresets()
+		summaries, skipped, err := presets.ListPresetSummaries()
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
 			return
@@ -61,14 +61,36 @@ var presetListCmd = &cobra.Command{
 			return
 		}
 
-		if len(names) == 0 {
+		if len(summaries) == 0 && len(skipped) == 0 {
 			fmt.Fprintf(cmd.OutOrStdout(), "No presets found in %s\n", dir)
 			return
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Available presets (%s):\n", dir)
-		for _, name := range names {
-			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", name)
+		if len(summaries) > 0 {
+			nameW, machineW := len("NAME"), len("MACHINETYPE")
+			for _, s := range summaries {
+				if len(s.DirName) > nameW {
+					nameW = len(s.DirName)
+				}
+				if len(s.MachineType) > machineW {
+					machineW = len(s.MachineType)
+				}
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Available presets (%s):\n", dir)
+			fmt.Fprintf(cmd.OutOrStdout(), "  %-*s  %-*s  %s\n", nameW, "NAME", machineW, "MACHINETYPE", "GPUTYPE")
+			for _, s := range summaries {
+				fmt.Fprintf(cmd.OutOrStdout(), "  %-*s  %-*s  %s\n", nameW, s.DirName, machineW, s.MachineType, s.GPUType)
+			}
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "No valid presets found in %s\n", dir)
+		}
+
+		if len(skipped) > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "\n%d preset(s) skipped:\n", len(skipped))
+			for _, s := range skipped {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  %s — %s\n", s.DirName, s.Reason)
+			}
 		}
 	},
 }
