@@ -1,7 +1,7 @@
 {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
 {{- $railCount := railCount .ClusterConfig.PFs $planes }}
 {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
-apiVersion: spectrumx.nvidia.com/v1alpha1
+apiVersion: spectrumx.nvidia.com/v1alpha2
 kind: SpectrumXRailPoolConfig
 metadata:
   name: rails{{suffix .ClusterConfig.Identifier}}

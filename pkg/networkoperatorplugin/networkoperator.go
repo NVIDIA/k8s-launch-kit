@@ -54,8 +54,8 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 	profile.Fabric = options.Fabric
 	profile.Deployment = options.DeploymentType
 	profile.Multirail = options.Multirail
-	profile.Ai = options.Ai
-	
+
+
 	// Build SpectrumX nested struct if enabled
 	if options.SpectrumX {
 		profile.SpectrumX = &config.ProfileSpectrumX{
@@ -159,9 +159,6 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 	}
 	if options.Multirail {
 		fullConfig.Profile.Multirail = true
-	}
-	if options.Ai {
-		fullConfig.Profile.Ai = true
 	}
 
 	// Apply workload manifest override from CLI

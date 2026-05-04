@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -79,13 +80,24 @@ var templateFuncs = template.FuncMap{
 	"railPciGroups": func(pfs []config.PFConfig, planes int) [][]string {
 		return railPciGroups(pfs, planes)
 	},
-	// railCount returns the number of rails computed as len(east-west PFs) / planes.
-	// Returns len(ew) when planes is 1 or unset, and treats planes<1 as 1.
+	// railCount returns how many rails are present in the east-west PFs.
+	// Authoritative source is the PFConfig.Rail field — a rail is a logical
+	// group of NICs feeding the same fabric stripe, and the firmware splits
+	// each NIC into the user-supplied numberOfPlanes. When every east-west PF
+	// has Rail set, this is the count of distinct Rail values. When the data
+	// is missing Rail (legacy / unparsed), we fall back to the old chunk
+	// heuristic len(ew)/planes so existing pre-Rail configs still render.
 	"railCount": func(pfs []config.PFConfig, planes int) int {
-		if planes < 1 {
-			planes = 1
-		}
-		return len(filterEastWestPFs(pfs)) / planes
+		return railCount(pfs, planes)
+	},
+	// spectrumXPfsPerNic is the value to render into
+	// NicInterfaceNameTemplate.pfsPerNic for the spectrum-x profiles. It's
+	// derived from the topology, not from the user's --number-of-planes
+	// alone: pfsPerNic = numberOfPlanes / NICsPerRail. The cluster config
+	// only lists master PFs (function 0) per NIC, so NICsPerRail is the
+	// length of the first rail's railPciAddresses inner list.
+	"spectrumXPfsPerNic": func(pfs []config.PFConfig, planes int) int {
+		return spectrumXPfsPerNic(pfs, planes)
 	},
 	// nnpName produces a valid NicNodePolicy name from a group identifier.
 	// Returns "l8k" for empty identifiers, truncates to 30 chars (NNP name limit).
@@ -336,29 +348,146 @@ func mergedGroupsAgreeOnPci(groups []config.ClusterConfig) bool {
 	return true
 }
 
-// railPciGroups chunks the east-west PFs into rails of `planes` PCI addresses each,
-// preserving input order. Used to emit NicInterfaceNameTemplate.railPciAddresses as
-// [[pci,pci], [pci,pci], ...] where each inner list holds all PCI addresses of one
-// NIC/rail. If planes <= 0 or the list is not evenly divisible, any trailing PFs
-// form a final shorter group.
+// railPciGroups returns NicInterfaceNameTemplate.railPciAddresses as one
+// inner list per rail, where each inner list is the master PFs (function 0,
+// or the lowest-function PF if .0 is missing) of the unique NICs assigned
+// to that rail. The Rail field on PFConfig is authoritative. The operator
+// infers any secondary PFs on each NIC from the master + the pfsPerNic
+// hint, so we never list non-master functions here.
+//
+// Worked examples:
+//
+//	1 NIC per rail, 2 PFs per NIC firmware-split (UCSC pattern):
+//	  PFs: [{0:0, rail=0}, {0:23, rail=1}, ...]
+//	  → [["0:0"], ["0:23"], ...]
+//
+//	2 NICs per rail, 2 PFs per NIC:
+//	  PFs (masters only): [{1a:0, rail=0}, {2a:0, rail=0}, {3a:0, rail=1}, {4a:0, rail=1}]
+//	  → [["1a:0", "2a:0"], ["3a:0", "4a:0"]]
+//
+// Fallback (no Rail set): chunk east-west PFs into groups of `planes`,
+// preserving the legacy pre-Rail-field rendering.
 func railPciGroups(pfs []config.PFConfig, planes int) [][]string {
 	ewPFs := filterEastWestPFs(pfs)
 	if planes < 1 {
 		planes = 1
 	}
-	var groups [][]string
-	for i := 0; i < len(ewPFs); i += planes {
-		end := i + planes
-		if end > len(ewPFs) {
-			end = len(ewPFs)
+
+	if !allHaveRail(ewPFs) {
+		// Legacy fallback for configs that predate the Rail field.
+		var groups [][]string
+		for i := 0; i < len(ewPFs); i += planes {
+			end := i + planes
+			if end > len(ewPFs) {
+				end = len(ewPFs)
+			}
+			group := make([]string, 0, end-i)
+			for _, pf := range ewPFs[i:end] {
+				group = append(group, pf.PciAddress)
+			}
+			groups = append(groups, group)
 		}
-		group := make([]string, 0, end-i)
-		for _, pf := range ewPFs[i:end] {
-			group = append(group, pf.PciAddress)
-		}
-		groups = append(groups, group)
+		return groups
+	}
+
+	rails, order := groupPFsByRail(ewPFs)
+	groups := make([][]string, 0, len(order))
+	for _, rail := range order {
+		groups = append(groups, masterPFsByNIC(rails[rail]))
 	}
 	return groups
+}
+
+// railCount returns how many distinct rails are present in the east-west
+// PFs. Falls back to len(ew)/planes when Rail is unset on any PF.
+func railCount(pfs []config.PFConfig, planes int) int {
+	ewPFs := filterEastWestPFs(pfs)
+	if planes < 1 {
+		planes = 1
+	}
+	if !allHaveRail(ewPFs) {
+		return len(ewPFs) / planes
+	}
+	rails, _ := groupPFsByRail(ewPFs)
+	return len(rails)
+}
+
+// spectrumXPfsPerNic is the value to render for the NicInterfaceNameTemplate
+// `pfsPerNic` field: the number of PFs the operator should expect on each
+// NIC. Computed as numberOfPlanes / NICsPerRail because all rails should be
+// uniform (numberOfPlanes total planes per rail = pfsPerNic × NICsPerRail).
+// NICsPerRail is read off the first rail's master-PF list. Falls back to
+// numberOfPlanes (the legacy behaviour) when the rail layout is unknown.
+func spectrumXPfsPerNic(pfs []config.PFConfig, planes int) int {
+	if planes < 1 {
+		planes = 1
+	}
+	groups := railPciGroups(pfs, planes)
+	if len(groups) == 0 || len(groups[0]) == 0 {
+		return planes
+	}
+	pfs_per_nic := planes / len(groups[0])
+	if pfs_per_nic < 1 {
+		return 1
+	}
+	return pfs_per_nic
+}
+
+// allHaveRail reports whether every PF in pfs has its Rail field set.
+func allHaveRail(pfs []config.PFConfig) bool {
+	if len(pfs) == 0 {
+		return false
+	}
+	for _, pf := range pfs {
+		if pf.Rail == nil {
+			return false
+		}
+	}
+	return true
+}
+
+// groupPFsByRail buckets PFs by their Rail value and returns both the
+// bucket map and the rail indices in sorted order so callers can iterate
+// deterministically. Caller must have verified allHaveRail.
+func groupPFsByRail(pfs []config.PFConfig) (map[int][]config.PFConfig, []int) {
+	buckets := map[int][]config.PFConfig{}
+	for _, pf := range pfs {
+		buckets[*pf.Rail] = append(buckets[*pf.Rail], pf)
+	}
+	rails := make([]int, 0, len(buckets))
+	for r := range buckets {
+		rails = append(rails, r)
+	}
+	sort.Ints(rails)
+	return buckets, rails
+}
+
+// masterPFsByNIC dedupes a list of PFs by NIC (PCI bus:device prefix) and
+// returns one PF per NIC in input order. The "master" is the lowest-function
+// PF on that NIC — usually function 0, but we don't assume so the helper
+// stays correct on configs that only list .1 (or any other function) on a
+// given bus:device.
+func masterPFsByNIC(pfs []config.PFConfig) []string {
+	master := map[string]string{} // bus:device → lowest-function PCI address seen
+	order := []string{}           // NIC bus:device prefixes in first-seen order
+	for _, pf := range pfs {
+		idx := strings.LastIndex(pf.PciAddress, ".")
+		if idx <= 0 {
+			continue
+		}
+		prefix := pf.PciAddress[:idx]
+		if existing, ok := master[prefix]; !ok {
+			master[prefix] = pf.PciAddress
+			order = append(order, prefix)
+		} else if pf.PciAddress < existing {
+			master[prefix] = pf.PciAddress
+		}
+	}
+	out := make([]string, 0, len(order))
+	for _, prefix := range order {
+		out = append(out, master[prefix])
+	}
+	return out
 }
 
 // templateContext wraps the full config but presents a single ClusterConfig group.

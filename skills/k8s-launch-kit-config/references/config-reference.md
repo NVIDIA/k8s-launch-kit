@@ -236,26 +236,27 @@ profile:
 
   spectrumX:
     # bool | default: false
-    # Enable Spectrum-X deployment profile. CLI flag --spectrum-x overrides this.
+    # Enable Spectrum-X deployment profile. The CLI flag --spectrum-x takes
+    # the SPC-X RA version as its value (e.g. --spectrum-x RA2.2); when set,
+    # both `enable: true` and `spcxVersion: <value>` are derived from the
+    # same flag.
     enable: false
 
     # string | default: "RA2.2"
-    # Spectrum-X reference architecture version. CLI: --spcx-version
+    # Spectrum-X reference architecture version. Supported: RA2.1 (Network
+    # Operator 26.1 only) or RA2.2 (Network Operator 26.4+). Set via the
+    # value of --spectrum-x on the CLI.
     spcxVersion: "RA2.2"
 
     # string | default: "swplb"
-    # Multiplane mode: "swplb" (software PLB), "hwplb" (hardware PLB), "uniplane".
-    # CLI: --multiplane-mode
+    # Multiplane mode: "none", "swplb" (software PLB), "hwplb" (hardware PLB),
+    # "uniplane". CLI: --multiplane-mode (mandatory under --spectrum-x).
     multiplaneMode: swplb
 
     # int | default: 4
-    # Number of network planes. Also used as pfsPerNic for Spectrum-X.
-    # CLI: --number-of-planes
+    # Number of network planes (1, 2, or 4). Also used as pfsPerNic for
+    # Spectrum-X. CLI: --number-of-planes (mandatory under --spectrum-x).
     numberOfPlanes: 4
-
-  # bool | default: false
-  # Enable AI-optimized settings in generated manifests.
-  ai: false
 
 # ============================================================================
 # Cluster Configuration

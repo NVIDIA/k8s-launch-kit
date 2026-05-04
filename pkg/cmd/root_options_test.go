@@ -147,10 +147,11 @@ func resolveProfile(
 func TestCLIOnlyProfileResolution(t *testing.T) {
 	t.Run("spectrum-x hwplb matches spectrum-x profile", func(t *testing.T) {
 		opts := options.Options{
-			SpectrumX:      true,
-			SPCXVersion:    "RA2.2",
-			MultiplaneMode: "hwplb",
-			NumberOfPlanes: 2,
+			SpectrumX:              true,
+			SPCXVersion:            "RA2.2",
+			MultiplaneMode:         "hwplb",
+			NumberOfPlanes:         2,
+			NetworkOperatorRelease: "26.4",
 		}
 		valid, reason := resolveProfile(t, opts, nil, spectrumXProfile, defaultCapabilities)
 		assert.True(t, valid, "should match spectrum-x profile; reason: %s", reason)
@@ -158,10 +159,11 @@ func TestCLIOnlyProfileResolution(t *testing.T) {
 
 	t.Run("spectrum-x swplb matches merged spectrum-x profile", func(t *testing.T) {
 		opts := options.Options{
-			SpectrumX:      true,
-			SPCXVersion:    "RA2.2",
-			MultiplaneMode: "swplb",
-			NumberOfPlanes: 4,
+			SpectrumX:              true,
+			SPCXVersion:            "RA2.2",
+			MultiplaneMode:         "swplb",
+			NumberOfPlanes:         4,
+			NetworkOperatorRelease: "26.4",
 		}
 		valid, reason := resolveProfile(t, opts, nil, spectrumXProfile, defaultCapabilities)
 		assert.True(t, valid, "should match spectrum-x profile (now covers swplb); reason: %s", reason)
@@ -185,16 +187,19 @@ func TestCLIOnlyProfileResolution(t *testing.T) {
 		assert.True(t, valid, "should match sriov-ib-rdma; reason: %s", reason)
 	})
 
-	t.Run("spectrum-x without version fails RA2.2 profile", func(t *testing.T) {
+	t.Run("spectrum-x without version is rejected at CLI level", func(t *testing.T) {
+		// applySpectrumXDefaults now rejects an empty SPCXVersion outright,
+		// before the matcher ever runs — the user's mistake gets a specific
+		// error rather than an ambiguous "no applicable profile found".
 		opts := options.Options{
 			SpectrumX:      true,
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 2,
 			// SPCXVersion intentionally empty
 		}
-		valid, reason := resolveProfile(t, opts, nil, spectrumXProfile, defaultCapabilities)
-		assert.False(t, valid)
-		assert.Contains(t, reason, "SPCX version")
+		err := applySpectrumXDefaults(&opts)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--spectrum-x requires the SPC-X RA version")
 	})
 }
 
@@ -260,10 +265,11 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			Multirail:  false, // config says false
 		}
 		opts := options.Options{
-			SpectrumX:      true,       // CLI adds spectrum-x → multirail becomes true
-			SPCXVersion:    "RA2.2",
-			MultiplaneMode: "hwplb",
-			NumberOfPlanes: 2,
+			SpectrumX:              true, // CLI adds spectrum-x → multirail becomes true
+			SPCXVersion:            "RA2.2",
+			MultiplaneMode:         "hwplb",
+			NumberOfPlanes:         2,
+			NetworkOperatorRelease: "26.4",
 		}
 		// applySpectrumXDefaults sets Multirail=true, then ApplyOptionsToConfig applies it
 		valid, reason := resolveProfile(t, opts, cfgProfile, spectrumXProfile, defaultCapabilities)
@@ -282,9 +288,16 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 				NumberOfPlanes: 2,
 			},
 		}
+		// applySpectrumXDefaults requires the full cohort whenever --spectrum-x
+		// is set on the CLI, even when overriding only one knob — that's the
+		// price for catching typos like `--spectrum-x 2.1` early. Tests that
+		// override a single flag must restate the rest of the cohort.
 		opts := options.Options{
-			SpectrumX:      true,
-			MultiplaneMode: "swplb", // CLI overrides mode
+			SpectrumX:              true,
+			SPCXVersion:            "RA2.2",
+			MultiplaneMode:         "swplb", // CLI overrides mode
+			NumberOfPlanes:         2,
+			NetworkOperatorRelease: "26.4",
 		}
 		valid, reason := resolveProfile(t, opts, cfgProfile, spectrumXProfile, defaultCapabilities)
 		assert.True(t, valid, "CLI --multiplane-mode swplb stays in merged profile; reason: %s", reason)
@@ -303,8 +316,11 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			},
 		}
 		opts := options.Options{
-			SpectrumX:      true,
-			NumberOfPlanes: 4, // CLI overrides planes
+			SpectrumX:              true,
+			SPCXVersion:            "RA2.2",
+			MultiplaneMode:         "hwplb",
+			NumberOfPlanes:         4, // CLI overrides planes
+			NetworkOperatorRelease: "26.4",
 		}
 
 		// Run the merge manually to check the final value
@@ -359,16 +375,19 @@ func TestMissingInvalidParams(t *testing.T) {
 		assert.Contains(t, reason, "fabric")
 	})
 
-	t.Run("spectrum-x wrong version fails", func(t *testing.T) {
+	t.Run("spectrum-x wrong version is rejected at CLI level", func(t *testing.T) {
+		// Bogus version values like "unsupported" or "2.1" are caught by
+		// applySpectrumXDefaults's value validation against
+		// config.SupportedSPCXVersions, before the matcher runs.
 		opts := options.Options{
 			SpectrumX:      true,
-			SPCXVersion:    "unsupported", // not the required version
+			SPCXVersion:    "unsupported", // not in the supported set
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 2,
 		}
-		valid, reason := resolveProfile(t, opts, nil, spectrumXProfile, defaultCapabilities)
-		assert.False(t, valid)
-		assert.Contains(t, reason, "SPCX version")
+		err := applySpectrumXDefaults(&opts)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid --spectrum-x value")
 	})
 
 	t.Run("config multirail false fails multirail-required profile", func(t *testing.T) {

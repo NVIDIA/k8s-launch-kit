@@ -119,21 +119,16 @@ var schemaCmd = &cobra.Command{
 					Description: "Enable multirail deployment",
 				},
 				"--spectrum-x": {
-					Type:        "bool",
-					Default:     "false",
-					Description: "Enable Spectrum-X deployment (implies --fabric ethernet --deployment-type sriov --multirail)",
-				},
-				"--spcx-version": {
 					Type:        "string",
-					Description: "Spectrum-X firmware version (requires --spectrum-x)",
+					Description: "Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Folds in the legacy --spcx-version. Implies --fabric ethernet --deployment-type sriov --multirail. --multiplane-mode, --number-of-planes, and --network-operator-release are all mandatory under --spectrum-x; the (RA, release) pair is validated against the supported set (RA2.1 → 26.1, RA2.2 → 26.4).",
 				},
 				"--multiplane-mode": {
 					Type:        "string",
-					Description: "Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)",
+					Description: "Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (required with --spectrum-x)",
 				},
 				"--number-of-planes": {
 					Type:        "int",
-					Description: "Number of planes for Spectrum-X (requires --spectrum-x)",
+					Description: "Number of planes for Spectrum-X: 1, 2, or 4 (required with --spectrum-x)",
 				},
 				"--save-deployment-files": {
 					Type:        "string",

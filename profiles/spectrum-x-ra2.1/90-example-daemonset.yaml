@@ -1,0 +1,60 @@
+# Example multi-rail DaemonSet with Spectrum-X networking
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spectrum-x-test{{suffix .ClusterConfig.Identifier}}
+  namespace: "{{$.PodNamespace}}"
+spec:
+  selector:
+    matchLabels:
+      app: spectrum-x-test{{suffix .ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: spectrum-x-test{{suffix .ClusterConfig.Identifier}}
+      annotations:
+        {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+        {{- $railCount := railCount .ClusterConfig.PFs $planes }}
+        {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}-plane-{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}{{- end }}{{- end }}
+    spec:
+      containers:
+      - name: spectrum-x-test
+        image: nvcr.io/nvidia/mellanox/rping-test:latest
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK", "NET_RAW"]
+        resources:
+          requests:
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+            nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}: "1"
+            {{- end }}
+            {{- else }}
+            nvidia.com/rail_{{$railIdx}}: "1"
+            {{- end }}
+            {{- end }}
+          limits:
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+            nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}: "1"
+            {{- end }}
+            {{- else }}
+            nvidia.com/rail_{{$railIdx}}: "1"
+            {{- end }}
+            {{- end }}
+        command:
+        - sh
+        - -c
+        - |
+          echo "Spectrum-X Multi-Rail Test DaemonSet"
+          echo "Available network interfaces:"
+          ip addr show
+          echo ""
+          echo "RDMA devices:"
+          rdma link
+          echo ""
+          echo "Sleeping indefinitely for manual testing..."
+          sleep infinity

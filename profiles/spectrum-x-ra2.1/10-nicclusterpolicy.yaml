@@ -1,0 +1,40 @@
+apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+spec:
+  {{- if .NetworkOperator.ImagePullSecrets }}
+  global:
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - {{ . }}
+    {{- end }}
+  {{- end }}
+  nicConfigurationOperator:
+    operator:
+      image: nic-configuration-operator
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
+    configurationDaemon:
+      image: nic-configuration-operator-daemon
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
+    logLevel: info
+  nvIpam:
+    image: nvidia-k8s-ipam
+    repository: "{{.NetworkOperator.Repository}}"
+    version: "{{.NetworkOperator.ComponentVersion}}"
+    enableWebhook: false
+  spectrumXOperator:
+    image: spectrum-x-operator
+    repository: "{{.NetworkOperator.Repository}}"
+    version: "{{.NetworkOperator.ComponentVersion}}"
+  secondaryNetwork:
+    cniPlugins:
+      image: plugins
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
+    multus:
+      image: multus-cni
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"

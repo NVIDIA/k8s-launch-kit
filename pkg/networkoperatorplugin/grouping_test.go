@@ -51,7 +51,7 @@ func loadSpectrumXProfile(t *testing.T) *profiles.Profile {
 		Templates: []string{
 			"10-nicclusterpolicy.yaml",
 			"30-nicconfigurationtemplate.yaml",
-			"35-nicinterfacenametemplate.yaml",
+			"25-nicinterfacenametemplate.yaml",
 			"60-cidrpool.yaml",
 			"80-spectrumxrailpoolconfig.yaml",
 			"90-example-daemonset.yaml",
@@ -129,7 +129,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 			planes:         1,
 			multiplaneMode: "none",
 			wantRailPools:  []string{"80-spectrumxrailpoolconfig-gpu-model-x.yaml"},
-			wantNameTmpls:  []string{"35-nicinterfacenametemplate-gpu-model-x.yaml"},
+			wantNameTmpls:  []string{"25-nicinterfacenametemplate-gpu-model-x.yaml"},
 			wantCidrPools:  []string{"60-cidrpool-gpu-model-x.yaml"},
 			wantNicCfgTmpls: []string{
 				"30-nicconfigurationtemplate-gpu-model-x.yaml",
@@ -149,9 +149,9 @@ func TestSpectrumXGrouping(t *testing.T) {
 			multiplaneMode: "none",
 			wantRailPools:  []string{"80-spectrumxrailpoolconfig-gpu-model-y.yaml"},
 			wantNameTmpls: []string{
-				"35-nicinterfacenametemplate-group-0.yaml",
-				"35-nicinterfacenametemplate-group-1.yaml",
-				"35-nicinterfacenametemplate-group-2.yaml",
+				"25-nicinterfacenametemplate-group-0.yaml",
+				"25-nicinterfacenametemplate-group-1.yaml",
+				"25-nicinterfacenametemplate-group-2.yaml",
 			},
 			wantCidrPools: []string{"60-cidrpool-gpu-model-y.yaml"},
 			wantNicCfgTmpls: []string{
@@ -175,9 +175,9 @@ func TestSpectrumXGrouping(t *testing.T) {
 				"80-spectrumxrailpoolconfig-group-2.yaml",
 			},
 			wantNameTmpls: []string{
-				"35-nicinterfacenametemplate-group-0.yaml",
-				"35-nicinterfacenametemplate-group-1.yaml",
-				"35-nicinterfacenametemplate-group-2.yaml",
+				"25-nicinterfacenametemplate-group-0.yaml",
+				"25-nicinterfacenametemplate-group-1.yaml",
+				"25-nicinterfacenametemplate-group-2.yaml",
 			},
 			wantCidrPools: []string{
 				"60-cidrpool-gpu-model-y.yaml",
@@ -198,7 +198,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 				fileNamesMatching(rendered, "80-spectrumxrailpoolconfig"),
 				"rail-pool manifests mismatch")
 			require.Equal(t, tc.wantNameTmpls,
-				fileNamesMatching(rendered, "35-nicinterfacenametemplate"),
+				fileNamesMatching(rendered, "25-nicinterfacenametemplate"),
 				"nic-interface-name-template manifests mismatch")
 			require.Equal(t, tc.wantCidrPools,
 				fileNamesMatching(rendered, "60-cidrpool"),
@@ -240,15 +240,150 @@ func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
 		"unmerged z-model rail pool must preserve the source group's full nodeSelector")
 }
 
+// loadSpectrumXRA21Profile resolves the on-disk spectrum-x-ra2.1 profile.
+// This is the 26.1-only sibling of the spectrum-x profile; it renders the
+// SR-IOV-operator CRD chain (SriovNetworkPoolConfig + SriovNetworkNodePolicy
+// + OVSNetwork) plus the v1alpha1 SpectrumXRailPoolConfig glue resource.
+func loadSpectrumXRA21Profile(t *testing.T) *profiles.Profile {
+	t.Helper()
+	profileDir, err := filepath.Abs(filepath.Join("..", "..", "profiles", "spectrum-x-ra2.1"))
+	require.NoError(t, err)
+
+	p := &profiles.Profile{
+		Name:   "Spectrum-X Multi-Rail (RA2.1, Network Operator 26.1)",
+		Plugin: "network-operator",
+		ProfileRequirements: profiles.ProfileRequirements{
+			Fabric:     "ethernet",
+			Deployment: "sriov",
+			SpectrumX: &profiles.ProfileRequirementsSpectrumX{
+				SPCXVersion:    "RA2.1",
+				MultiplaneMode: []string{"swplb", "hwplb", "uniplane", "none"},
+			},
+			MinNetworkOperatorRelease: "26.1",
+			MaxNetworkOperatorRelease: "26.1",
+		},
+		Templates: []string{
+			"10-nicclusterpolicy.yaml",
+			"25-nicinterfacenametemplate.yaml",
+			"30-nicconfigurationtemplate.yaml",
+			"40-sriovnetworkpoolconfig.yaml",
+			"50-sriovnetworknodepolicy.yaml",
+			"55-ovsnetwork.yaml",
+			"60-cidrpool.yaml",
+			"80-spectrumxrailpoolconfig.yaml",
+			"90-example-daemonset.yaml",
+		},
+	}
+	p.UpdateManifestsPaths(profileDir)
+	return p
+}
+
+// renderSpectrumXRA21 mirrors renderSpectrumX but exercises the RA2.1 profile.
+func renderSpectrumXRA21(t *testing.T, configName, multiplaneMode string, numberOfPlanes int) map[string]string {
+	t.Helper()
+	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
+
+	cfg, err := config.LoadFullConfig(
+		filepath.Join("testdata", "grouping", configName),
+		ctrllog.Log,
+	)
+	require.NoError(t, err)
+
+	cfg.Profile = &config.Profile{
+		Fabric:     "ethernet",
+		Deployment: "sriov",
+		Multirail:  true,
+		SpectrumX: &config.ProfileSpectrumX{
+			Enable:         true,
+			SPCXVersion:    "RA2.1",
+			MultiplaneMode: multiplaneMode,
+			NumberOfPlanes: numberOfPlanes,
+		},
+	}
+
+	plugin := &NetworkOperatorPlugin{}
+	rendered, err := plugin.GenerateProfileDeploymentFiles(loadSpectrumXRA21Profile(t), cfg)
+	require.NoError(t, err)
+	return rendered
+}
+
+func TestSpectrumXRA21Grouping_HwplbProducesFullSriovChain(t *testing.T) {
+	// On 26.1 the per-rail wiring spans 4 CRDs instead of the v1alpha2
+	// SpectrumXRailPoolConfig: a SriovNetworkNodePolicy + OVSNetwork + CIDRPool
+	// + glue v1alpha1 SpectrumXRailPoolConfig per rail. The cluster-scoped
+	// SriovNetworkPoolConfig must render exactly once.
+	rendered := renderSpectrumXRA21(t, "mixed-same-type.yaml", "hwplb", 2)
+
+	require.Equal(t, []string{"40-sriovnetworkpoolconfig-gpu-model-y.yaml"},
+		fileNamesMatching(rendered, "40-sriovnetworkpoolconfig"),
+		"SriovNetworkPoolConfig is per merged group so its nodeSelector lines up with the SriovNetworkNodePolicies in 50-")
+
+	require.Equal(t, []string{"50-sriovnetworknodepolicy-gpu-model-y.yaml"},
+		fileNamesMatching(rendered, "50-sriovnetworknodepolicy"),
+		"SriovNetworkNodePolicy is per-merged-group")
+	require.Equal(t, []string{"55-ovsnetwork-gpu-model-y.yaml"},
+		fileNamesMatching(rendered, "55-ovsnetwork"))
+	require.Equal(t, []string{"80-spectrumxrailpoolconfig-gpu-model-y.yaml"},
+		fileNamesMatching(rendered, "80-spectrumxrailpoolconfig"))
+
+	nodePolicy := rendered["50-sriovnetworknodepolicy-gpu-model-y.yaml"]
+	require.NotEmpty(t, nodePolicy)
+	// HWPLB grouping is "all" with devlinkParams.esw_multiport set.
+	require.Contains(t, nodePolicy, "groupingPolicy: all",
+		"hwplb must use groupingPolicy=all")
+	require.Contains(t, nodePolicy, "esw_multiport",
+		"hwplb must enable esw_multiport via devlinkParams")
+	require.NotContains(t, nodePolicy, "groupingPolicy: perPF",
+		"hwplb must not use groupingPolicy=perPF (that's swplb)")
+
+	// OVSNetwork must include both rdma and rail meta-plugins per the design.
+	ovs := rendered["55-ovsnetwork-gpu-model-y.yaml"]
+	require.Contains(t, ovs, `"type": "rdma"`)
+	require.Contains(t, ovs, `"type": "rail"`)
+
+	// SpectrumXRailPoolConfig is the v1alpha1 glue resource referencing the
+	// SriovNetworkNodePolicy by k8s name and the CIDRPool by name.
+	glue := rendered["80-spectrumxrailpoolconfig-gpu-model-y.yaml"]
+	require.Contains(t, glue, "apiVersion: spectrumx.nvidia.com/v1alpha1")
+	require.Contains(t, glue, "sriovNetworkNodePolicyRef: rail-0-gpu-model-y")
+	require.Contains(t, glue, "cidrPoolRef: rail-0")
+}
+
+func TestSpectrumXRA21Grouping_SwplbExplodesPerPlane(t *testing.T) {
+	rendered := renderSpectrumXRA21(t, "mixed-same-type.yaml", "swplb", 2)
+
+	nodePolicy := rendered["50-sriovnetworknodepolicy-gpu-model-y.yaml"]
+	require.NotEmpty(t, nodePolicy)
+	// SWPLB uses perPF and does NOT add devlinkParams.
+	require.Contains(t, nodePolicy, "groupingPolicy: perPF",
+		"swplb must use groupingPolicy=perPF")
+	require.NotContains(t, nodePolicy, "esw_multiport",
+		"swplb must not set devlinkParams.esw_multiport")
+
+	// Each rail explodes into per-plane policies. mixed-same-type.yaml has 8
+	// east-west PFs each on its own rail (rails 0..7), so the merged group
+	// has 8 rails × 2 planes = 16 SriovNetworkNodePolicy entries. The
+	// firmware splits each NIC's single master PF into 2 logical planes;
+	// railPciAddresses lists the master only.
+	require.Equal(t, 16, strings.Count(nodePolicy, "kind: SriovNetworkNodePolicy"),
+		"swplb expected 16 SriovNetworkNodePolicy entries (8 rails × 2 planes)")
+
+	// SpectrumXRailPoolConfig glue must reference plane-suffixed names.
+	glue := rendered["80-spectrumxrailpoolconfig-gpu-model-y.yaml"]
+	require.Contains(t, glue, "name: rail-0-plane-0-gpu-model-y")
+	require.Contains(t, glue, "sriovNetworkNodePolicyRef: rail-0-plane-0-gpu-model-y")
+	require.Contains(t, glue, "cidrPoolRef: rail-0-plane-0")
+}
+
 func TestSpectrumXGrouping_PerGroupNameTemplatesHaveDistinctPciLists(t *testing.T) {
 	// mixed-same-type has three machines with distinct east-west PCI layouts.
 	// Each per-group NicInterfaceNameTemplate must carry that machine's own PCI
 	// list and must not leak another machine's PCIs.
 	rendered := renderSpectrumX(t, "mixed-same-type.yaml", "none", 1)
 
-	g0 := rendered["35-nicinterfacenametemplate-group-0.yaml"]
-	g1 := rendered["35-nicinterfacenametemplate-group-1.yaml"]
-	g2 := rendered["35-nicinterfacenametemplate-group-2.yaml"]
+	g0 := rendered["25-nicinterfacenametemplate-group-0.yaml"]
+	g1 := rendered["25-nicinterfacenametemplate-group-1.yaml"]
+	g2 := rendered["25-nicinterfacenametemplate-group-2.yaml"]
 	require.NotEmpty(t, g0, "group-0 nic-rename manifest expected")
 	require.NotEmpty(t, g1, "group-1 nic-rename manifest expected")
 	require.NotEmpty(t, g2, "group-2 nic-rename manifest expected")

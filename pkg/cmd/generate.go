@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
@@ -101,9 +102,8 @@ Optionally deploy the generated manifests with --deploy.`,
 			Fabric:                  fabric,
 			DeploymentType:          deploymentType,
 			Multirail:               multirail,
-			SpectrumX:               spectrumX,
-			Ai:                      ai,
-			SPCXVersion:             spcxVersion,
+			SpectrumX:               spectrumXVersion != "",
+			SPCXVersion:             spectrumXVersion,
 			MultiplaneMode:          multiplaneMode,
 			NumberOfPlanes:          numberOfPlanes,
 			Group:                   group,
@@ -177,9 +177,9 @@ func init() {
 	generateCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type: ethernet, infiniband")
 	generateCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Deployment type: sriov, rdma_shared, host_device")
 	generateCmd.Flags().BoolVar(&multirail, "multirail", false, "Enable multirail deployment")
-	generateCmd.Flags().BoolVar(&spectrumX, "spectrum-x", false, "Enable Spectrum-X deployment")
-	generateCmd.Flags().BoolVar(&ai, "ai", false, "Enable AI deployment")
-	generateCmd.Flags().StringVar(&spcxVersion, "spcx-version", "", "Spectrum-X version (requires --spectrum-x)")
+	generateCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
+		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Supported: %v",
+			config.SupportedSPCXVersions))
 	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	generateCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes (requires --spectrum-x)")
 	generateCmd.Flags().StringVar(&group, "group", "", "Generate for a specific group only (e.g., group-0)")
@@ -214,7 +214,6 @@ func init() {
 	setFlagGroup(generateCmd, "deployment-type", GroupProfile)
 	setFlagGroup(generateCmd, "multirail", GroupProfile)
 	setFlagGroup(generateCmd, "spectrum-x", GroupProfile)
-	setFlagGroup(generateCmd, "ai", GroupProfile)
 	setFlagGroup(generateCmd, "group", GroupProfile)
 	setFlagGroup(generateCmd, "for", GroupProfile)
 	setFlagGroup(generateCmd, "node-selector", GroupProfile)

@@ -1,0 +1,39 @@
+{{- /* SpectrumXRailPoolConfig (v1alpha1, 26.1 form): one glue resource per
+       rail (hwplb/uniplane/none) or per rail-plane (swplb), referencing the
+       SriovNetworkNodePolicy from 50-… and the CIDRPool from 60-…. The
+       v1alpha2 shape with railTopology[] used by the spectrum-x profile is
+       NOT compatible with 26.1 — keep these templates separate. */ -}}
+{{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+{{- $railCount := railCount .ClusterConfig.PFs $planes }}
+{{- $mode := .Profile.SpectrumX.MultiplaneMode }}
+{{- $swplb := eq $mode "swplb" }}
+{{- $first := true }}
+{{- range $railIdx := untilStep 0 $railCount 1 }}
+{{- if $swplb }}
+{{- range $planeIdx := untilStep 0 $planes 1 }}
+{{- if not $first }}---
+{{ end }}{{- $first = false -}}
+apiVersion: spectrumx.nvidia.com/v1alpha1
+kind: SpectrumXRailPoolConfig
+metadata:
+  name: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.Identifier}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
+spec:
+  multiplaneMode: {{$mode}}
+  sriovNetworkNodePolicyRef: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.Identifier}}
+  cidrPoolRef: rail-{{$railIdx}}-plane-{{$planeIdx}}
+{{ end }}
+{{- else }}
+{{- if not $first }}---
+{{ end }}{{- $first = false -}}
+apiVersion: spectrumx.nvidia.com/v1alpha1
+kind: SpectrumXRailPoolConfig
+metadata:
+  name: rail-{{$railIdx}}{{suffix $.ClusterConfig.Identifier}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
+spec:
+  multiplaneMode: {{$mode}}
+  sriovNetworkNodePolicyRef: rail-{{$railIdx}}{{suffix $.ClusterConfig.Identifier}}
+  cidrPoolRef: rail-{{$railIdx}}
+{{ end }}
+{{- end }}

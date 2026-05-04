@@ -37,9 +37,8 @@ type Options struct {
 	Fabric              string // Fabric type to deploy
 	DeploymentType      string // Deployment type to deploy
 	Multirail           bool   // Whether to deploy with multirail
-	SpectrumX           bool   // Whether to deploy with Spectrum X
-	Ai                  bool   // Whether to deploy with AI
-	SPCXVersion         string // Spectrum-X firmware version (default: RA2.2)
+	SpectrumX           bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
+	SPCXVersion         string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
 	MultiplaneMode      string // Spectrum-X multiplane mode (default: swplb)
 	NumberOfPlanes      int    // Number of planes for Spectrum-X (default: 4)
 	Group               string // Generate templates for a specific group identifier only

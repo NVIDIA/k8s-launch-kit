@@ -45,7 +45,18 @@ organized and how resources are named:
 - Resources are named per-rail only
 - Simplest CX8 topology
 
-All four modes share the single `profiles/spectrum-x/` profile directory.
+All four modes are supported by both Spectrum-X profiles. Pick the profile
+by the value of `--spectrum-x` (the legacy `--spcx-version` has been folded
+into `--spectrum-x`):
+
+- `profiles/spectrum-x/` — RA2.2 on Network Operator 26.4+. Uses the
+  consolidated v1alpha2 `SpectrumXRailPoolConfig` (`railTopology[]`) for
+  rail wiring.
+- `profiles/spectrum-x-ra2.1/` — RA2.1 on Network Operator 26.1 only.
+  Renders the full SR-IOV operator chain (`SriovNetworkPoolConfig` +
+  `SriovNetworkNodePolicy` + `OVSNetwork` + `CIDRPool`) plus a v1alpha1
+  glue `SpectrumXRailPoolConfig`. The 26.1 NCP is also leaner — no
+  `nicFirmwareStorage`, no `spectrumXOperator.xPlane`.
 
 ## OVS Bridge Configuration
 
@@ -139,7 +150,7 @@ Additional CRDs may be generated depending on configuration:
 1. Kubernetes cluster with SR-IOV capable nodes
 2. NVIDIA Network Operator v26.1.0 or later
 3. ConnectX-8, ConnectX-9, or BlueField-3 SuperNIC adapters
-4. Firmware compatible with Spectrum-X RA2.2
+4. Firmware compatible with Spectrum-X RA2.2 (on 26.4+) or RA2.1 (on 26.1)
 5. Helm values enabling `sriovNetworkOperator`, `maintenanceOperator`, and
    feature gate `manageSoftwareBridges: true`
 

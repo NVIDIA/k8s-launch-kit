@@ -111,9 +111,18 @@ ovs-network-rail-1
 
 ## Version
 
-All Spectrum-X modes use version `RA2.2`. This is set via `--spcx-version` or
-`profile.spectrumX.spcxVersion` in the config file. There is currently only one
-supported version.
+Two RA versions are supported, picked by the value of `--spectrum-x` together with
+`--network-operator-release`:
+
+| Version | Network Operator | Profile               | Rail wiring                                                      |
+|---------|------------------|-----------------------|------------------------------------------------------------------|
+| `RA2.2` | 26.4+            | `spectrum-x`          | Single v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]`  |
+| `RA2.1` | 26.1 only        | `spectrum-x-ra2.1`    | Full SR-IOV operator chain + v1alpha1 `SpectrumXRailPoolConfig`  |
+
+Both profiles support all four multiplane modes (`none`, `swplb`, `hwplb`,
+`uniplane`). Selecting a mismatched `(spcxVersion, network-operator-release)`
+pair (e.g. `RA2.1` with `26.4`) causes the matcher to skip both profiles and
+fall through to a non-Spectrum-X profile or error out.
 
 ## Mode Selection Guide
 
@@ -133,7 +142,8 @@ l8k validates the mode and planes combination at startup:
 2. If `nicType=1023` (CX8) or `1025` (CX9), mode must be `swplb`, `hwplb`, or `uniplane`
 3. If mode is `none` or `uniplane`, planes must be 1
 4. If mode is `swplb` or `hwplb`, planes must be 2 or 4
-5. Version must be `RA2.2`
+5. Version must be `RA2.1` (with `--network-operator-release 26.1`) or
+   `RA2.2` (with `--network-operator-release 26.4` or higher / no release pinned)
 
 Validation failures produce exit code 2 (validation error) with a descriptive
 error message.

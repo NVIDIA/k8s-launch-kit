@@ -129,10 +129,12 @@ Examples:
 
   # Discover + deploy Spectrum-X with JSON output for automation
   l8k --kubeconfig ~/.kube/config --discover-cluster-config \
-    --spectrum-x --spcx-version RA2.2 --deploy --output json --yes
+    --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
+    --deploy --output json --yes
 
   # Dry-run: preview what would be deployed
-  l8k --user-config cluster-config.yaml --spectrum-x --deploy \
+  l8k --user-config cluster-config.yaml --spectrum-x RA2.2 \
+    --multiplane-mode hwplb --number-of-planes 4 --deploy \
     --dry-run --output json
 
   # Get tool capabilities as JSON (for AI agents)
@@ -162,18 +164,16 @@ Discovery Flags:
       --save-cluster-config string   Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)
 
 Profile Selection Flags:
-      --ai                       Enable AI deployment
       --deployment-type string   Select the deployment type (sriov, rdma_shared, host_device)
       --fabric string            Select the fabric type to deploy (infiniband, ethernet)
       --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Available: PowerEdge-XE9680, ThinkSystem-SR680a-V3, UCSC-885A-M8-H22
       --group string             Generate templates for a specific group only (e.g., group-0)
       --multirail                Enable multirail deployment
-      --spectrum-x               Enable Spectrum X deployment
+      --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Supported: [RA2.1 RA2.2]
 
 Spectrum-X Flags:
-      --multiplane-mode string   Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)
-      --number-of-planes int     Number of planes for Spectrum-X (requires --spectrum-x)
-      --spcx-version string      Spectrum-X firmware version (requires --spectrum-x)
+      --multiplane-mode string   Spectrum-X multiplane mode: swplb, hwplb, uniplane, none (required with --spectrum-x)
+      --number-of-planes int     Number of planes: 1, 2, or 4 (required with --spectrum-x)
 
 Generation Output Flags:
       --enable-doca-driver             Enable DOCA driver deployment (overrides config file docaDriver.enable)
@@ -427,7 +427,14 @@ l8k generate --user-config cluster-config.yaml \
 l8k schema | jq '.supportedNetworkOperatorReleases'
 ```
 
-The release identifier is also used to gate version-specific template sections. **NicNodePolicy** is rendered only for `26.4+`; under older releases the OFED driver and the appropriate device plugin (`rdmaSharedDevicePlugin` for ipoib/macvlan, `sriovDevicePlugin` for host-device) are emitted in `NicClusterPolicy` instead, matching the legacy 26.1 model. The **spectrum-x** profile requires `26.4+` (it depends on `SpectrumXRailPoolConfig`, which doesn't exist in older releases) and is skipped by the profile matcher otherwise.
+The release identifier is also used to gate version-specific template sections. **NicNodePolicy** is rendered only for `26.4+`; under older releases the OFED driver and the appropriate device plugin (`rdmaSharedDevicePlugin` for ipoib/macvlan, `sriovDevicePlugin` for host-device) are emitted in `NicClusterPolicy` instead, matching the legacy 26.1 model.
+
+There are two **Spectrum-X** profiles, picked by the value of `--spectrum-x`:
+
+- **`spectrum-x`** — RA2.2 on `26.4+`. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` to consolidate rail wiring. Selected for `--spectrum-x RA2.2`.
+- **`spectrum-x-ra2.1`** — RA2.1 on `26.1` only (pinned via `min`/`maxNetworkOperatorRelease: "26.1"`). Renders the full SR-IOV operator chain: per-group `SriovNetworkPoolConfig` + per-rail `SriovNetworkNodePolicy` + `OVSNetwork` + nv-ipam `CIDRPool` + a v1alpha1 glue `SpectrumXRailPoolConfig`. Selected for `--spectrum-x RA2.1`.
+
+`--network-operator-release` must be passed explicitly with `--spectrum-x` — the release line is consequential (it picks the CRD shape and the SR-IOV operator behaviour), so we don't silently fill it in. The pair is then validated: `--spectrum-x RA2.1 --network-operator-release 26.4` errors out with a specific "RA2.1 requires --network-operator-release in [26.1]" message rather than a generic "no applicable profile found".
 
 When neither the flag nor `selectedRelease` is set, behavior is unchanged: explicit values in the config file flow through and templates render the newest gates (treated as "latest").
 

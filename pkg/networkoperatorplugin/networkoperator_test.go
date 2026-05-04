@@ -55,7 +55,6 @@ func TestBuildProfileFromOptions(t *testing.T) {
 		assert.Equal(t, "ethernet", profile.Fabric)
 		assert.Equal(t, "sriov", profile.Deployment)
 		assert.False(t, profile.Multirail)
-		assert.False(t, profile.Ai)
 		assert.Nil(t, profile.SpectrumX)
 	})
 
@@ -100,7 +99,6 @@ func TestBuildProfileFromOptions(t *testing.T) {
 			Fabric:         "ethernet",
 			DeploymentType: "sriov",
 			Multirail:      true,
-			Ai:             true,
 			SpectrumX:      true,
 			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "swplb",
@@ -112,7 +110,6 @@ func TestBuildProfileFromOptions(t *testing.T) {
 		assert.Equal(t, "ethernet", profile.Fabric)
 		assert.Equal(t, "sriov", profile.Deployment)
 		assert.True(t, profile.Multirail)
-		assert.True(t, profile.Ai)
 		require.NotNil(t, profile.SpectrumX)
 		assert.Equal(t, "RA2.2", profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "swplb", profile.SpectrumX.MultiplaneMode)

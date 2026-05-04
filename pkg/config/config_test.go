@@ -83,7 +83,6 @@ profile:
 		assert.Equal(t, "sriov", config.Profile.Deployment)
 		assert.False(t, config.Profile.Multirail)
 		assert.Nil(t, config.Profile.SpectrumX)
-		assert.False(t, config.Profile.Ai)
 	})
 
 	t.Run("load config file that does not exist", func(t *testing.T) {
@@ -346,7 +345,6 @@ profile:
 		assert.Equal(t, "hwplb", config.Profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 4, config.Profile.SpectrumX.NumberOfPlanes)
 		assert.True(t, config.Profile.Multirail)
-		assert.True(t, config.Profile.Ai)
 	})
 
 	t.Run("verify Spectrum-X struct fields", func(t *testing.T) {
@@ -589,7 +587,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 		assert.NoError(t, err, "Non-Spectrum-X profiles should not validate template placeholders")
 	})
 
-	t.Run("multiplane mode swplb requires RA2.2", func(t *testing.T) {
+	t.Run("multiplane mode swplb rejects unsupported version", func(t *testing.T) {
 		config := &LaunchKubernetesConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
@@ -599,7 +597,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 			Profile: &Profile{
 				Multirail: true,
 				SpectrumX: &ProfileSpectrumX{
-					SPCXVersion:    "unsupported", // not the required version
+					SPCXVersion:    "unsupported",
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 4,
 				},
@@ -612,10 +610,12 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "multiplane mode swplb requires spcxVersion RA2.2")
+		assert.Contains(t, err.Error(), "multiplane mode swplb requires spcxVersion in")
+		assert.Contains(t, err.Error(), "RA2.1")
+		assert.Contains(t, err.Error(), "RA2.2")
 	})
 
-	t.Run("multiplane mode hwplb requires RA2.2", func(t *testing.T) {
+	t.Run("multiplane mode hwplb rejects unsupported version", func(t *testing.T) {
 		config := &LaunchKubernetesConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
@@ -638,10 +638,60 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 
 		err := ValidateClusterConfig(config, "spectrum-x")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "multiplane mode hwplb requires spcxVersion RA2.2")
+		assert.Contains(t, err.Error(), "multiplane mode hwplb requires spcxVersion in")
 	})
 
-	t.Run("multiplane mode none does not require RA2.2", func(t *testing.T) {
+	t.Run("multiplane mode swplb accepts RA2.1", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 2,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic_p%plane%_r%rail%",
+				RdmaPrefix:   "roce_p%plane%_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x-ra2.1")
+		assert.NoError(t, err, "RA2.1 should be accepted for swplb")
+	})
+
+	t.Run("multiplane mode hwplb accepts RA2.1", func(t *testing.T) {
+		config := &LaunchKubernetesConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "hwplb",
+					NumberOfPlanes: 2,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{
+				NetdevPrefix: "nic_p%plane%_r%rail%",
+				RdmaPrefix:   "roce_p%plane%_r%rail%",
+			},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x-ra2.1")
+		assert.NoError(t, err, "RA2.1 should be accepted for hwplb")
+	})
+
+	t.Run("multiplane mode none accepts any version", func(t *testing.T) {
 		config := &LaunchKubernetesConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
@@ -663,7 +713,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
-		assert.NoError(t, err, "Mode 'none' should not require RA2.2")
+		assert.NoError(t, err, "Mode 'none' should accept any version")
 	})
 
 	t.Run("multiplane and multirail with missing both placeholders", func(t *testing.T) {

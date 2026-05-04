@@ -1,0 +1,36 @@
+name: Spectrum-X Multi-Rail (RA2.1, Network Operator 26.1)
+plugin: network-operator
+profileRequirements:
+  fabric: ethernet
+  deployment: sriov
+  spectrumX:
+    spcxVersion: "RA2.1"
+    multiplaneMode: ["swplb", "hwplb", "uniplane", "none"]
+  multirail: true
+  # SPC-X RA2.1 only ships on Network Operator 26.1. Pin both bounds to
+  # 26.1 so this profile never matches a 26.4+ deployment (which uses
+  # the v1alpha2 SpectrumXRailPoolConfig path covered by `spectrum-x`).
+  minNetworkOperatorRelease: "26.1"
+  maxNetworkOperatorRelease: "26.1"
+nodeCapabilities:
+  sriov: true
+  rdma: true
+description: |
+  Spectrum-X RA2.1 profile for Network Operator 26.1. Renders the full
+  chain of SR-IOV operator CRDs (SriovNetworkPoolConfig,
+  SriovNetworkNodePolicy, OVSNetwork) plus an nv-ipam CIDRPool, and ties
+  them together with the v1alpha1 SpectrumXRailPoolConfig glue resource.
+  Supports the same multiplane modes as the 26.4+ profile (swplb, hwplb,
+  uniplane, none): in swplb the rail explodes into per-plane policies,
+  otherwise one policy per rail groups all planes together.
+deploymentGuide: spectrum-x-ra2.1.rst
+templates:
+  - 10-nicclusterpolicy.yaml
+  - 25-nicinterfacenametemplate.yaml
+  - 30-nicconfigurationtemplate.yaml
+  - 40-sriovnetworkpoolconfig.yaml
+  - 50-sriovnetworknodepolicy.yaml
+  - 55-ovsnetwork.yaml
+  - 60-cidrpool.yaml
+  - 80-spectrumxrailpoolconfig.yaml
+  - 90-example-daemonset.yaml
