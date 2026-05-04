@@ -55,7 +55,6 @@ func TestProfileValidation(t *testing.T) {
 				MultiplaneMode: "swplb",
 				NumberOfPlanes: 4,
 			},
-			Ai: false,
 		}
 
 		capabilities := &config.ClusterCapabilities{
@@ -173,7 +172,11 @@ func TestProfileValidation(t *testing.T) {
 		assert.Empty(t, reason)
 	})
 
-	t.Run("validate non-SpectrumX profile with SpectrumX enabled", func(t *testing.T) {
+	t.Run("non-SpectrumX profile rejects user requesting Spectrum-X", func(t *testing.T) {
+		// Symmetric to the "profile requires Spectrum-X but it is not enabled"
+		// check: a user who explicitly opted into Spectrum-X must not be
+		// silently routed to a non-Spectrum-X profile (which would render an
+		// SR-IOV-only manifest set without the SpectrumXRailPoolConfig).
 		profile := &Profile{
 			Name:   "SR-IOV Ethernet RDMA",
 			Plugin: "network-operator",
@@ -203,8 +206,8 @@ func TestProfileValidation(t *testing.T) {
 		}
 
 		valid, reason := profile.Validate(requirements, capabilities, "")
-		assert.True(t, valid, "Non-Spectrum-X profile should still be valid even if Spectrum-X is enabled in requirements")
-		assert.Empty(t, reason)
+		assert.False(t, valid, "Non-Spectrum-X profile must be rejected when user enabled Spectrum-X")
+		assert.Contains(t, reason, "user requested Spectrum-X but this profile is not a Spectrum-X profile")
 	})
 
 	t.Run("validate profile with mismatched fabric", func(t *testing.T) {
@@ -568,5 +571,75 @@ func TestProfileValidation(t *testing.T) {
 		// Empty selectedRelease = "latest" — gate disabled.
 		valid, _ := profile.Validate(requirements, capabilities, "")
 		assert.True(t, valid)
+	})
+
+	t.Run("MaxNetworkOperatorRelease rejects newer selected release", func(t *testing.T) {
+		profile := &Profile{
+			Name:   "Spectrum-X RA2.1",
+			Plugin: "network-operator",
+			ProfileRequirements: ProfileRequirements{
+				MaxNetworkOperatorRelease: "26.1",
+			},
+		}
+		requirements := &config.Profile{}
+		capabilities := &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{}}
+
+		valid, reason := profile.Validate(requirements, capabilities, "26.4")
+		assert.False(t, valid)
+		assert.Contains(t, reason, "Network Operator <= 26.1")
+	})
+
+	t.Run("MaxNetworkOperatorRelease accepts equal release", func(t *testing.T) {
+		profile := &Profile{
+			Name:   "Spectrum-X RA2.1",
+			Plugin: "network-operator",
+			ProfileRequirements: ProfileRequirements{
+				MaxNetworkOperatorRelease: "26.1",
+			},
+		}
+		requirements := &config.Profile{}
+		capabilities := &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{}}
+
+		valid, _ := profile.Validate(requirements, capabilities, "26.1")
+		assert.True(t, valid)
+	})
+
+	t.Run("MaxNetworkOperatorRelease ignored when no release pinned", func(t *testing.T) {
+		profile := &Profile{
+			Name:   "Spectrum-X RA2.1",
+			Plugin: "network-operator",
+			ProfileRequirements: ProfileRequirements{
+				MaxNetworkOperatorRelease: "26.1",
+			},
+		}
+		requirements := &config.Profile{}
+		capabilities := &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{}}
+
+		valid, _ := profile.Validate(requirements, capabilities, "")
+		assert.True(t, valid)
+	})
+
+	t.Run("Min and Max together pin a single release", func(t *testing.T) {
+		profile := &Profile{
+			Name:   "Spectrum-X RA2.1",
+			Plugin: "network-operator",
+			ProfileRequirements: ProfileRequirements{
+				MinNetworkOperatorRelease: "26.1",
+				MaxNetworkOperatorRelease: "26.1",
+			},
+		}
+		requirements := &config.Profile{}
+		capabilities := &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{}}
+
+		valid, _ := profile.Validate(requirements, capabilities, "26.1")
+		assert.True(t, valid, "26.1 should match the single-version pin")
+
+		valid, reason := profile.Validate(requirements, capabilities, "25.10")
+		assert.False(t, valid, "25.10 below pin should be rejected")
+		assert.Contains(t, reason, ">= 26.1")
+
+		valid, reason = profile.Validate(requirements, capabilities, "26.4")
+		assert.False(t, valid, "26.4 above pin should be rejected")
+		assert.Contains(t, reason, "<= 26.1")
 	})
 }

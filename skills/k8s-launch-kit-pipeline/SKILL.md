@@ -44,7 +44,7 @@ l8k --discover-cluster-config \
 # Full pipeline: Spectrum-X
 l8k --discover-cluster-config \
   --kubeconfig ~/.kube/config \
-  --spectrum-x --spcx-version RA2.2 \
+  --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
   --save-deployment-files ./output --deploy
 
 # Non-default operator namespace

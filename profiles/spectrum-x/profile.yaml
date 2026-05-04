@@ -23,8 +23,8 @@ description: |
 deploymentGuide: spectrum-x.rst
 templates:
   - 10-nicclusterpolicy.yaml
+  - 25-nicinterfacenametemplate.yaml
   - 30-nicconfigurationtemplate.yaml
-  - 35-nicinterfacenametemplate.yaml
   - 60-cidrpool.yaml
   - 80-spectrumxrailpoolconfig.yaml
   - 90-example-daemonset.yaml

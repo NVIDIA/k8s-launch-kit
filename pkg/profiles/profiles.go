@@ -31,16 +31,22 @@ import (
 )
 
 type ProfileRequirements struct {
-	Fabric     string                          `yaml:"fabric"`
-	Deployment string                          `yaml:"deployment"`
-	Multirail  *bool                           `yaml:"multirail"`
-	SpectrumX  *ProfileRequirementsSpectrumX   `yaml:"spectrumX,omitempty"`
-	Ai         *bool                           `yaml:"ai"`
+	Fabric     string                        `yaml:"fabric"`
+	Deployment string                        `yaml:"deployment"`
+	Multirail  *bool                         `yaml:"multirail"`
+	SpectrumX  *ProfileRequirementsSpectrumX `yaml:"spectrumX,omitempty"`
 	// MinNetworkOperatorRelease is the lowest --network-operator-release this
 	// profile supports (MAJOR.MINOR or full semver, e.g. "26.4"). When non-empty,
 	// Validate rejects the profile if the user has selected a lower release.
 	// An unset selectedRelease ("latest") always satisfies the minimum.
 	MinNetworkOperatorRelease string `yaml:"minNetworkOperatorRelease,omitempty"`
+	// MaxNetworkOperatorRelease is the highest --network-operator-release this
+	// profile supports (MAJOR.MINOR or full semver, e.g. "26.1"). When non-empty,
+	// Validate rejects the profile if the user has selected a higher release.
+	// An unset selectedRelease ("latest") always satisfies the maximum. Use
+	// together with MinNetworkOperatorRelease (set to the same value) to pin a
+	// profile to a single release line.
+	MaxNetworkOperatorRelease string `yaml:"maxNetworkOperatorRelease,omitempty"`
 }
 
 type ProfileRequirementsSpectrumX struct {
@@ -162,6 +168,13 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 		}
 	}
 
+	if p.ProfileRequirements.MaxNetworkOperatorRelease != "" && selectedRelease != "" {
+		if releaseGreaterThan(selectedRelease, p.ProfileRequirements.MaxNetworkOperatorRelease) {
+			return false, fmt.Sprintf("profile requires Network Operator <= %s, got %s",
+				p.ProfileRequirements.MaxNetworkOperatorRelease, selectedRelease)
+		}
+	}
+
 	if p.ProfileRequirements.Fabric != "" && p.ProfileRequirements.Fabric != requirements.Fabric {
 		return false, fmt.Sprintf("selected fabric type does not match profile requirements: %s", p.ProfileRequirements.Fabric)
 	}
@@ -172,6 +185,16 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 
 	if p.ProfileRequirements.Multirail != nil && *p.ProfileRequirements.Multirail != requirements.Multirail {
 		return false, fmt.Sprintf("selected multirail setting does not match profile requirements: %t", *p.ProfileRequirements.Multirail)
+	}
+
+	// Spectrum-X is a strict, explicit opt-in. If the user enabled it, only
+	// profiles whose requirements declare Spectrum-X may match — otherwise we
+	// silently fall through to a non-Spectrum-X profile (e.g. sriov-ethernet-rdma)
+	// and the user gets manifests that don't deploy the SR-IOV operator chain
+	// or the SpectrumXRailPoolConfig they expected.
+	if p.ProfileRequirements.SpectrumX == nil &&
+		requirements.SpectrumX != nil && requirements.SpectrumX.Enable {
+		return false, "user requested Spectrum-X but this profile is not a Spectrum-X profile"
 	}
 
 	if p.ProfileRequirements.SpectrumX != nil {
@@ -204,15 +227,6 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 		}
 	}
 
-	if p.ProfileRequirements.Ai != nil {
-		if !(*p.ProfileRequirements.Ai) && requirements.Ai {
-			return false, fmt.Sprintf("profile is not applicable to AI clusters: %t", *p.ProfileRequirements.Ai)
-		}
-		if *p.ProfileRequirements.Ai && !requirements.Ai {
-			return false, fmt.Sprintf("profile can only be deployed on AI clusters: %t", *p.ProfileRequirements.Ai)
-		}
-	}
-
 	if p.NodeCapabilities.Sriov != nil && *p.NodeCapabilities.Sriov != capabilities.Nodes.Sriov {
 		return false, fmt.Sprintf("cluster sriov capability does not match profile requirements: %t", *p.NodeCapabilities.Sriov)
 	}
@@ -230,6 +244,25 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 // semver). Returns false on parse failure so a malformed value never silently
 // disqualifies a profile. "26.4" is treated as "26.4.0".
 func releaseLessThan(have, target string) bool {
+	h, t, ok := parseReleases(have, target)
+	if !ok {
+		return false
+	}
+	return h.LessThan(t)
+}
+
+// releaseGreaterThan is the symmetric counterpart of releaseLessThan, used
+// for the MaxNetworkOperatorRelease upper bound. Same parse-failure
+// semantics: a malformed value never silently disqualifies a profile.
+func releaseGreaterThan(have, target string) bool {
+	h, t, ok := parseReleases(have, target)
+	if !ok {
+		return false
+	}
+	return h.GreaterThan(t)
+}
+
+func parseReleases(have, target string) (*semver.Version, *semver.Version, bool) {
 	normalize := func(s string) string {
 		s = strings.TrimPrefix(s, "v")
 		if strings.Count(s, ".") == 1 {
@@ -239,13 +272,13 @@ func releaseLessThan(have, target string) bool {
 	}
 	h, err := semver.NewVersion(normalize(have))
 	if err != nil {
-		return false
+		return nil, nil, false
 	}
 	t, err := semver.NewVersion(normalize(target))
 	if err != nil {
-		return false
+		return nil, nil, false
 	}
-	return h.LessThan(t)
+	return h, t, true
 }
 
 // UpdateManifestsPaths appends the directory path to the templates and deployment guide

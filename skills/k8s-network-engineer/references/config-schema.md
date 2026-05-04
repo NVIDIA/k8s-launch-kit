@@ -149,18 +149,19 @@ Top-level profile selection settings. These can be overridden by CLI flags.
 | `fabric`     | string | `ethernet` | `--fabric`             | `ethernet` or `infiniband`         |
 | `deployment` | string | `sriov`    | `--deployment-type`    | `sriov`, `rdma_shared`, `host_device` |
 | `multirail`  | bool   | `false`    | `--multirail`          | Enable multi-rail networking       |
-| `ai`         | bool   | `false`    | `--ai`                 | AI workload optimizations          |
 
 ### profile.spectrumX
 
-Spectrum-X sub-section within the profile block.
+Spectrum-X sub-section within the profile block. `--spectrum-x <RA-version>` is
+the single CLI gateway: a non-empty value sets `enable: true` AND populates
+`spcxVersion` with the value passed.
 
-| Field            | Type   | Default  | CLI Override            | Description                            |
-|------------------|--------|----------|-------------------------|----------------------------------------|
-| `enable`         | bool   | `false`  | `--spectrum-x`          | Enable Spectrum-X profile              |
-| `spcxVersion`    | string | `RA2.2`  | `--spcx-version`        | Spectrum-X version (always RA2.2)      |
-| `multiplaneMode` | string | `swplb`  | `--multiplane-mode`     | `swplb`, `hwplb`, `uniplane`, or `none`|
-| `numberOfPlanes` | int    | `4`      | `--number-of-planes`    | 1, 2, or 4 (also used as pfsPerNic)   |
+| Field            | Type   | Default  | CLI Override                                         | Description                            |
+|------------------|--------|----------|------------------------------------------------------|----------------------------------------|
+| `enable`         | bool   | `false`  | derived from `--spectrum-x` (true when value is set) | Enable Spectrum-X profile              |
+| `spcxVersion`    | string | `RA2.2`  | value of `--spectrum-x`                              | Spectrum-X RA version. `RA2.2` (Network Operator 26.4+) or `RA2.1` (26.1 only). |
+| `multiplaneMode` | string | `swplb`  | `--multiplane-mode`                                  | `swplb`, `hwplb`, `uniplane`, or `none`|
+| `numberOfPlanes` | int    | `4`      | `--number-of-planes`                                 | 1, 2, or 4 (also used as pfsPerNic)   |
 
 CLI flags always override config file values for all profile fields.
 

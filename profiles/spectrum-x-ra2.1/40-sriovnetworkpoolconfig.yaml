@@ -1,0 +1,25 @@
+{{- /* SriovNetworkPoolConfig scopes DOCA OVS hardware-offload to the same
+       set of nodes the user pointed the rest of the profile at. The design
+       doc lists this CR as "1 per cluster", but the resource itself takes a
+       nodeSelector — so we honour the per-group selector here too, matching
+       the SriovNetworkNodePolicies in 50-…. When all groups merge to the
+       same selector this collapses to one rendered file. */ -}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkPoolConfig
+metadata:
+  name: spectrum-x-node-pool-config{{suffix .ClusterConfig.Identifier}}
+  namespace: "{{.NetworkOperator.Namespace}}"
+spec:
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    matchLabels:
+      {{- range $key, $value := .ClusterConfig.NodeSelector }}
+      {{ $key }}: "{{ $value }}"
+      {{- end }}
+  {{- end }}
+  ovsHardwareOffloadConfig:
+    otherConfig:
+      max-idle: "300000"
+      doca-init: "true"
+      hw-offload: "true"
+      hw-offload-ct-size: "0"

@@ -1,0 +1,64 @@
+{{- /* One OVSNetwork per rail (or per rail-plane in swplb). resourceName must
+       match the SriovNetworkNodePolicy emitted in 50-…; the ipam block points
+       at the matching CIDRPool from 60-…. */ -}}
+{{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+{{- $railCount := railCount .ClusterConfig.PFs $planes }}
+{{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+{{- $first := true }}
+{{- range $railIdx := untilStep 0 $railCount 1 }}
+{{- if $swplb }}
+{{- range $planeIdx := untilStep 0 $planes 1 }}
+{{- if not $first }}---
+{{ end }}{{- $first = false -}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: OVSNetwork
+metadata:
+  name: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.Identifier}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
+spec:
+  resourceName: rail_{{$railIdx}}_plane_{{$planeIdx}}
+  interfaceType: dpdk
+  networkNamespace: "{{$.PodNamespace}}"
+  mtu: 9216
+  ipam: |
+    {
+      "type": "nv-ipam",
+      "poolName": "rail-{{$railIdx}}-plane-{{$planeIdx}}",
+      "poolType": "cidrpool"
+    }
+  metaPlugins: |
+    {
+      "type": "rdma"
+    },
+    {
+      "type": "rail"
+    }
+{{ end }}
+{{- else }}
+{{- if not $first }}---
+{{ end }}{{- $first = false -}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: OVSNetwork
+metadata:
+  name: rail-{{$railIdx}}{{suffix $.ClusterConfig.Identifier}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
+spec:
+  resourceName: rail_{{$railIdx}}
+  interfaceType: dpdk
+  networkNamespace: "{{$.PodNamespace}}"
+  mtu: 9216
+  ipam: |
+    {
+      "type": "nv-ipam",
+      "poolName": "rail-{{$railIdx}}",
+      "poolType": "cidrpool"
+    }
+  metaPlugins: |
+    {
+      "type": "rdma"
+    },
+    {
+      "type": "rail"
+    }
+{{ end }}
+{{- end }}

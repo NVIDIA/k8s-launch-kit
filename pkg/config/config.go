@@ -135,11 +135,10 @@ type WorkloadConfig struct {
 }
 
 type Profile struct {
-	Fabric     string           `yaml:"fabric"`
-	Deployment string           `yaml:"deployment"`
-	Multirail  bool             `yaml:"multirail"`
+	Fabric     string            `yaml:"fabric"`
+	Deployment string            `yaml:"deployment"`
+	Multirail  bool              `yaml:"multirail"`
 	SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
-	Ai         bool             `yaml:"ai"`
 }
 
 type ProfileSpectrumX struct {
@@ -277,16 +276,38 @@ func ValidateClusterConfig(config *LaunchKubernetesConfig, profile string) error
 	return nil
 }
 
+// SupportedSPCXVersions lists the Spectrum-X RA versions for which l8k can
+// emit non-`none` multiplane configurations. RA2.1 ships on Network Operator
+// 26.1; RA2.2 on 26.4+. Order is preserved in error messages.
+var SupportedSPCXVersions = []string{"RA2.1", "RA2.2"}
+
+// SupportedMultiplaneModes lists the Spectrum-X multiplane modes the CLI
+// accepts. `none` and `uniplane` collapse to one plane; `swplb` and `hwplb`
+// require numberOfPlanes > 1.
+var SupportedMultiplaneModes = []string{"none", "swplb", "hwplb", "uniplane"}
+
+// SupportedNumberOfPlanes lists the values numberOfPlanes can take.
+var SupportedNumberOfPlanes = []int{1, 2, 4}
+
 // validateSpectrumXTemplates validates that Spectrum-X templates have required placeholders
 func validateSpectrumXTemplates(config *LaunchKubernetesConfig) error {
 	netdevPrefix := config.SpectrumX.NetdevPrefix
 	rdmaPrefix := config.SpectrumX.RdmaPrefix
-	
-	// Multiplane modes (swplb, hwplb, uniplane) require RA2.2
+
+	// Non-`none` multiplane modes (swplb, hwplb, uniplane) require a supported
+	// RA version.
 	if config.Profile.SpectrumX.MultiplaneMode != "none" && config.Profile.SpectrumX.MultiplaneMode != "" {
-		if config.Profile.SpectrumX.SPCXVersion != "RA2.2" {
-			return fmt.Errorf("multiplane mode %s requires spcxVersion RA2.2, got %s",
-				config.Profile.SpectrumX.MultiplaneMode, config.Profile.SpectrumX.SPCXVersion)
+		got := config.Profile.SpectrumX.SPCXVersion
+		supported := false
+		for _, v := range SupportedSPCXVersions {
+			if got == v {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return fmt.Errorf("multiplane mode %s requires spcxVersion in %v, got %q",
+				config.Profile.SpectrumX.MultiplaneMode, SupportedSPCXVersions, got)
 		}
 	}
 

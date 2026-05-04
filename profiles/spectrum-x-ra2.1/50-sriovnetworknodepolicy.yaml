@@ -1,0 +1,88 @@
+{{- /* One SriovNetworkNodePolicy per rail (hwplb/uniplane/none) or per
+       rail-plane (swplb). SWPLB uses groupingPolicy=perPF and a single PF;
+       other modes use groupingPolicy=all with all of a rail's PF netdevs
+       grouped under one bridge plus devlinkParams.esw_multiport=true. */ -}}
+{{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+{{- $railCount := railCount .ClusterConfig.PFs $planes }}
+{{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+{{- $first := true }}
+{{- range $railIdx := untilStep 0 $railCount 1 }}
+{{- if $swplb }}
+{{- range $planeIdx := untilStep 0 $planes 1 }}
+{{- if not $first }}---
+{{ end }}{{- $first = false -}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.Identifier}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
+spec:
+  bridge:
+    groupingPolicy: perPF
+    ovs:
+      bridge:
+        datapathType: netdev
+        failMode: secure
+      uplink:
+        interface:
+          mtuRequest: 9216
+          type: dpdk
+  deviceType: netdevice
+  eSwitchMode: switchdev
+  isRdma: true
+  linkType: ETH
+  mtu: 9216
+  numVfs: 1
+  nicSelector:
+    pfNames:
+      - "{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"
+  resourceName: rail_{{$railIdx}}_plane_{{$planeIdx}}{{resourceSuffix $.ClusterConfig.Identifier}}
+  {{- if $.ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := $.ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+{{ end }}
+{{- else }}
+{{- if not $first }}---
+{{ end }}{{- $first = false -}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: rail-{{$railIdx}}{{suffix $.ClusterConfig.Identifier}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
+spec:
+  bridge:
+    groupingPolicy: all
+    ovs:
+      bridge:
+        datapathType: netdev
+        failMode: secure
+      uplink:
+        interface:
+          mtuRequest: 9216
+          type: dpdk
+  deviceType: netdevice
+  devlinkParams:
+    params:
+      - name: esw_multiport
+        value: "true"
+        cmode: runtime
+        applyOn: PF
+  eSwitchMode: switchdev
+  isRdma: true
+  linkType: ETH
+  mtu: 9216
+  numVfs: 1
+  nicSelector:
+    pfNames: [{{- $firstPF := true }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $firstPF }}, {{ end }}{{- $firstPF = false }}"{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"{{- end }}]
+  resourceName: rail_{{$railIdx}}{{resourceSuffix $.ClusterConfig.Identifier}}
+  {{- if $.ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := $.ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+{{ end }}
+{{- end }}

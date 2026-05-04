@@ -42,7 +42,7 @@ l8k generate --user-config cluster-config.yaml \
 # Discover + generate + deploy Spectrum-X (full pipeline via root command)
 l8k --discover-cluster-config \
   --kubeconfig ~/.kube/config \
-  --spectrum-x --spcx-version RA2.2 \
+  --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
   --save-deployment-files ./output \
   --deploy
 

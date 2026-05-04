@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
@@ -42,9 +43,12 @@ var (
 	fabric                string
 	deploymentType        string
 	multirail             bool
-	spectrumX             bool
-	ai                    bool
-	spcxVersion           string
+	// spectrumXVersion holds the value of --spectrum-x. Empty means
+	// Spectrum-X is disabled; a non-empty value is the SPC-X RA version
+	// (validated against config.SupportedSPCXVersions). The legacy --spcx-version
+	// flag has been folded into --spectrum-x; passing the version is now part
+	// of opting into Spectrum-X.
+	spectrumXVersion      string
 	multiplaneMode        string
 	numberOfPlanes        int
 	saveDeploymentFiles   string
@@ -117,7 +121,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 
   # Discover + deploy Spectrum-X with JSON output for automation
   l8k --kubeconfig ~/.kube/config --discover-cluster-config \
-    --spectrum-x --spcx-version RA2.2 --deploy --output json --yes
+    --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 --network-operator-release 26.4 --deploy --output json --yes
 
   # Dry-run: preview what would be deployed
   l8k --user-config cluster-config.yaml --spectrum-x --deploy \
@@ -144,9 +148,8 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			Fabric:                fabric,
 			DeploymentType:        deploymentType,
 			Multirail:             multirail,
-			SpectrumX:             spectrumX,
-			Ai:                    ai,
-			SPCXVersion:           spcxVersion,
+			SpectrumX:             spectrumXVersion != "",
+			SPCXVersion:           spectrumXVersion,
 			MultiplaneMode:        multiplaneMode,
 			NumberOfPlanes:        numberOfPlanes,
 			Group:                group,
@@ -225,9 +228,9 @@ func init() {
 	rootCmd.Flags().StringVar(&fabric, "fabric", "", "Select the fabric type to deploy (infiniband, ethernet)")
 	rootCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Select the deployment type (sriov, rdma_shared, host_device)")
 	rootCmd.Flags().BoolVar(&multirail, "multirail", false, "Enable multirail deployment")
-	rootCmd.Flags().BoolVar(&spectrumX, "spectrum-x", false, "Enable Spectrum X deployment")
-	rootCmd.Flags().BoolVar(&ai, "ai", false, "Enable AI deployment")
-	rootCmd.Flags().StringVar(&spcxVersion, "spcx-version", "", "Spectrum-X firmware version (requires --spectrum-x)")
+	rootCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
+		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: %v",
+			config.SupportedSPCXVersions))
 	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
 	rootCmd.Flags().StringVar(&group, "group", "", "Generate templates for a specific group only (e.g., group-0)")
@@ -272,11 +275,9 @@ func init() {
 	setFlagGroup(rootCmd, "deployment-type", GroupProfile)
 	setFlagGroup(rootCmd, "multirail", GroupProfile)
 	setFlagGroup(rootCmd, "spectrum-x", GroupProfile)
-	setFlagGroup(rootCmd, "ai", GroupProfile)
 	setFlagGroup(rootCmd, "group", GroupProfile)
 	setFlagGroup(rootCmd, "for", GroupProfile)
 
-	setFlagGroup(rootCmd, "spcx-version", GroupSpectrumX)
 	setFlagGroup(rootCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(rootCmd, "number-of-planes", GroupSpectrumX)
 
@@ -356,16 +357,10 @@ func validateConfig(options *options.Options) error {
 		options.Kubeconfig = resolved
 	}
 
-	// Spectrum-X specific parameter validation
-	if options.SPCXVersion != "" && !options.SpectrumX {
-		return fmt.Errorf("--spcx-version can only be used with --spectrum-x")
-	}
-	if options.MultiplaneMode != "" && !options.SpectrumX {
-		return fmt.Errorf("--multiplane-mode can only be used with --spectrum-x")
-	}
-	if options.NumberOfPlanes != 0 && !options.SpectrumX {
-		return fmt.Errorf("--number-of-planes can only be used with --spectrum-x")
-	}
+	// Spectrum-X cohort + value validation lives in applySpectrumXDefaults so
+	// it runs for both the root command and the `generate` subcommand. Don't
+	// duplicate it here — that function is the single authoritative point of
+	// rejection for malformed --spectrum-x usage.
 
 	// Network Operator plugin rules
 	if slices.Contains(options.EnabledPlugins, networkoperatorplugin.PluginName) {
@@ -395,10 +390,42 @@ func validateConfig(options *options.Options) error {
 	return nil
 }
 
-// applySpectrumXDefaults sets implied defaults when --spectrum-x is used.
-// Spectrum-X always requires ethernet fabric, sriov deployment, and multirail.
+// spcxVersionAllowedReleases is the authoritative mapping from SPC-X RA
+// version to the Network Operator releases that ship that version's CRD set.
+// When a future release line picks up an existing RA version (e.g. 27.0
+// continues to ship the v1alpha2 SpectrumXRailPoolConfig), append it to the
+// matching slice. When a future RA version arrives (RA2.3 etc.), add a new
+// key. This single source of truth fronts the matcher's min/max gates with a
+// clear error so the user gets a specific "RA2.1 needs --network-operator-release
+// 26.1, got 26.4" instead of "no applicable profile found".
+var spcxVersionAllowedReleases = map[string][]string{
+	"RA2.1": {"26.1"},
+	"RA2.2": {"26.4"},
+}
+
+// applySpectrumXDefaults validates --spectrum-x usage and sets implied
+// defaults. --spectrum-x is now a string flag whose value is the SPC-X RA
+// version (folding in the legacy --spcx-version). When set, the user must
+// also pass --multiplane-mode, --number-of-planes, and a matching
+// --network-operator-release; without all four the matcher cannot reliably
+// pick between the RA2.1 and RA2.2 profiles, and a silent fall-through to a
+// non-Spectrum-X profile generates manifests that look superficially correct
+// but lack the SR-IOV operator chain or SpectrumXRailPoolConfig the user
+// expected.
+//
+// Spectrum-X always implies ethernet fabric, sriov deployment, and multirail —
+// these are silently set so the user doesn't have to repeat them.
 func applySpectrumXDefaults(opts *options.Options) error {
 	if !opts.SpectrumX {
+		// Inverse cohort: --multiplane-mode / --number-of-planes are only
+		// meaningful with --spectrum-x. Catch the typo case where the user
+		// set a Spectrum-X param but forgot --spectrum-x itself.
+		if opts.MultiplaneMode != "" {
+			return fmt.Errorf("--multiplane-mode can only be used with --spectrum-x")
+		}
+		if opts.NumberOfPlanes != 0 {
+			return fmt.Errorf("--number-of-planes can only be used with --spectrum-x")
+		}
 		return nil
 	}
 	if opts.Fabric != "" && opts.Fabric != "ethernet" {
@@ -407,6 +434,59 @@ func applySpectrumXDefaults(opts *options.Options) error {
 	if opts.DeploymentType != "" && opts.DeploymentType != "sriov" {
 		return fmt.Errorf("--spectrum-x requires sriov deployment, got --deployment-type %s", opts.DeploymentType)
 	}
+
+	// --spectrum-x is the RA version itself; an empty value means SpectrumX
+	// shouldn't have been set in the first place (defensive — Run() derives
+	// SpectrumX from SPCXVersion != "").
+	if opts.SPCXVersion == "" {
+		return fmt.Errorf("--spectrum-x requires the SPC-X RA version as its value; supported: %v",
+			config.SupportedSPCXVersions)
+	}
+	if !slices.Contains(config.SupportedSPCXVersions, opts.SPCXVersion) {
+		return fmt.Errorf("invalid --spectrum-x value %q; supported: %v",
+			opts.SPCXVersion, config.SupportedSPCXVersions)
+	}
+	if opts.MultiplaneMode == "" {
+		return fmt.Errorf("--multiplane-mode is required when --spectrum-x is set; supported: %v",
+			config.SupportedMultiplaneModes)
+	}
+	if !slices.Contains(config.SupportedMultiplaneModes, opts.MultiplaneMode) {
+		return fmt.Errorf("invalid --multiplane-mode %q; supported: %v",
+			opts.MultiplaneMode, config.SupportedMultiplaneModes)
+	}
+	if opts.NumberOfPlanes == 0 {
+		return fmt.Errorf("--number-of-planes is required when --spectrum-x is set; supported: %v",
+			config.SupportedNumberOfPlanes)
+	}
+	if !slices.Contains(config.SupportedNumberOfPlanes, opts.NumberOfPlanes) {
+		return fmt.Errorf("invalid --number-of-planes %d; supported: %v",
+			opts.NumberOfPlanes, config.SupportedNumberOfPlanes)
+	}
+
+	// Cross-validate mode ↔ planes. The "none" mode disables multiplaning
+	// entirely, so anything other than 1 plane is a contradiction.
+	if opts.MultiplaneMode == "none" && opts.NumberOfPlanes != 1 {
+		return fmt.Errorf("--multiplane-mode none requires --number-of-planes 1, got %d",
+			opts.NumberOfPlanes)
+	}
+
+	// Cross-validate the (RA version, network-operator-release) pair. The user
+	// must pass --network-operator-release explicitly when --spectrum-x is set;
+	// no silent defaulting (the release line is consequential — it picks the
+	// CRD shape and the SR-IOV operator behaviour). Mismatches surface a
+	// specific error so the user knows exactly which release the RA wants
+	// rather than a generic "no applicable profile found".
+	allowed := spcxVersionAllowedReleases[opts.SPCXVersion]
+	if opts.NetworkOperatorRelease == "" {
+		return fmt.Errorf("--network-operator-release is required when --spectrum-x is set; "+
+			"--spectrum-x %s requires --network-operator-release in %v",
+			opts.SPCXVersion, allowed)
+	}
+	if !slices.Contains(allowed, opts.NetworkOperatorRelease) {
+		return fmt.Errorf("--spectrum-x %s requires --network-operator-release in %v, got %s",
+			opts.SPCXVersion, allowed, opts.NetworkOperatorRelease)
+	}
+
 	opts.Fabric = "ethernet"
 	opts.DeploymentType = "sriov"
 	opts.Multirail = true

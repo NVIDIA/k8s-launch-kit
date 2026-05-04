@@ -79,12 +79,14 @@ The profile generates the following Kubernetes Custom Resources:
    - Configures Network Operator, NicConfigurationOperator (with `nicFirmwareStorage`),
      NV-IPAM, Spectrum-X Operator with nested `xPlane` block, and secondary network CNI.
 
-2. **NicConfigurationTemplate** (`30-nicconfigurationtemplate.yaml`)
-   - Configures Spectrum-X optimized firmware settings (RA2.2).
-
-3. **NICInterfaceNameTemplate** (`35-nicinterfacenametemplate.yaml`)
+2. **NICInterfaceNameTemplate** (`25-nicinterfacenametemplate.yaml`)
    - Defines interface naming conventions for multi-rail (one inner list per rail,
-     all PCI addresses of that rail grouped together).
+     all PCI addresses of that rail grouped together). Renaming runs **before** the
+     NIC configuration template so the firmware/optimization template can refer to
+     the renamed PFs.
+
+3. **NicConfigurationTemplate** (`30-nicconfigurationtemplate.yaml`)
+   - Configures Spectrum-X optimized firmware settings (RA2.2).
 
 4. **CIDRPool** (`60-cidrpool.yaml`)
    - One pool per rail (non-swplb) or per rail-plane (swplb), with IP placeholders
@@ -131,8 +133,11 @@ profile:
   fabric: ethernet
   deployment: sriov
   multirail: true
-  spectrumX: true
-  ai: true
+  spectrumX:
+    enable: true
+    spcxVersion: RA2.2
+    multiplaneMode: hwplb
+    numberOfPlanes: 4
 ```
 
 ## Deployment
