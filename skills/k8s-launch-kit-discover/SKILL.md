@@ -96,6 +96,8 @@ clusterConfig:
 
 - If discovery fails with "no pods found for DaemonSet", the error will suggest using `--network-operator-namespace`. Common namespaces are `nvidia-network-operator` and `network-operator`.
 - Discovery uses server-side apply (field owner `l8k-discovery`) — it won't conflict with an existing NicClusterPolicy.
+- After determining each group's `(machineType, gpuType)`, discovery looks up a topology preset under `presets/` using **exact-match** lookup on that pair. A matching preset overrides heuristic-derived topology fields (traffic class, rail, NUMA, GPU affinity). There is no any-GPU fallback — a preset with empty `gpuType:` is rejected at load time. If no preset matches, discovery proceeds with heuristic classification.
+- If you already know the SKU and want to skip cluster discovery entirely, use `l8k generate --for <preset>` (see `k8s-launch-kit-generate`).
 
 ## See Also
 

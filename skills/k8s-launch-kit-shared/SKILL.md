@@ -22,6 +22,7 @@ make build && scripts/install.sh --dev-env
 |------|----------|
 | `/usr/local/bin/l8k` | CLI binary (on PATH) |
 | `/usr/local/share/l8k/profiles/` | Go template profiles |
+| `/usr/local/share/l8k/presets/` | Topology presets (per `(machineType, gpuType)` directories) |
 | `/usr/local/share/l8k/l8k-config.yaml` | Default config |
 
 After installation, `l8k` is available system-wide.
@@ -42,7 +43,9 @@ After installation, `l8k` is available system-wide.
 | Command | Description |
 |---------|-------------|
 | `l8k discover` | Discover cluster hardware and produce cluster-config.yaml |
-| `l8k generate` | Generate Kubernetes YAML manifests from config + profile |
+| `l8k generate` | Generate Kubernetes YAML manifests from config + profile (use `--for <preset>` to skip cluster discovery for known SKUs) |
+| `l8k preset list` | List bundled topology presets (directory + machineType + gpuType) |
+| `l8k preset update` | Download latest topology presets from GitHub |
 | `l8k sosreport` | Collect diagnostic dump from cluster |
 | `l8k schema` | List all capabilities as JSON (profiles, flags, exit codes) |
 | `l8k version` | Print version information |

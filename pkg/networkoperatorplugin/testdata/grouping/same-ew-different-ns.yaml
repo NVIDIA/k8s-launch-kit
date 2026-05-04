@@ -46,7 +46,7 @@ podNamespace: default
 clusterConfig:
 - identifier: group-0
   machineType: machine-x
-  productType: gpu-model-x
+  gpuType: gpu-model-x
   capabilities:
     nodes:
       sriov: true
@@ -203,7 +203,7 @@ clusterConfig:
   - iw_cm
 - identifier: group-1
   machineType: machine-x
-  productType: gpu-model-x
+  gpuType: gpu-model-x
   capabilities:
     nodes:
       sriov: true

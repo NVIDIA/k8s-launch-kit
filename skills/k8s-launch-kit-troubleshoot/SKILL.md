@@ -55,6 +55,11 @@ kubectl get pods -A -o wide | grep -E 'ContainerCreating|Init'
 | RDMA not working | Missing RDMA device plugin or wrong resource name | Check `rdma-shared-dp` pods, verify resource annotations |
 | NIC config daemon not starting | Operator namespace mismatch | Verify `--network-operator-namespace` matches actual namespace |
 | IPPool not allocating | NV-IPAM subnet exhausted or misconfigured | Check `ippools` CR status, verify CIDR ranges |
+| `--for requires --node-selector` | `--for` was passed without `--node-selector` | Add `--node-selector key=val,…`. The synthesized clusterConfig has no live worker-node list; the selector identifies target nodes at apply time. |
+| `--for and --discover-cluster-config are mutually exclusive` | Both flags passed simultaneously | Pick one: `--for` skips discovery, `--discover-cluster-config` runs it. |
+| `unknown preset "X"; available: …` | `--for X` doesn't match any directory under `presets/` | Run `l8k preset list` and re-run with one of those names. |
+| `preset has no capabilities block` | Preset YAML used by `--for` is missing `capabilities.nodes.{sriov,rdma,ib}` | Add the block to the preset's `topology.yaml`. Discovery-time overlay does not require it; only `--for` does. |
+| `unknown field "productType"` in YAML | Hand-authored config still uses the old key name | Rename `productType:` to `gpuType:` (the field was renamed). |
 
 For detailed triage workflow, read `references/troubleshooting-guide.md`.
 

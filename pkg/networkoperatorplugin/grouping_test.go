@@ -119,7 +119,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 	}{
 		{
 			// Two groups that share every east-west PCI address but have different
-			// north-south DPU PCIs. Merge keys on (productType, east-west rail count)
+			// north-south DPU PCIs. Merge keys on (gpuType, east-west rail count)
 			// — both match — and hasRailPciConflict only looks at east-west PFs, so
 			// no conflict. After merging, every rail's RailPciAddresses has a single
 			// address (source groups agreed), so mergedGroupsAgreeOnPci returns true
@@ -136,14 +136,14 @@ func TestSpectrumXGrouping(t *testing.T) {
 			},
 		},
 		{
-			// Three groups with the same productType and east-west rail count but
+			// Three groups with the same gpuType and east-west rail count but
 			// DIFFERENT east-west PCI layouts per machine. mergeCompatibleGroups
 			// still merges them because name templates are enabled (hadPciConflicts
 			// is tolerated). The merged rail pool uses stable renamed pfNames
 			// (eth_p*_r*), so the cross-group PCI differences don't break selection.
 			// Since source groups disagree on PCI, mergedGroupsAgreeOnPci is false
 			// and rendering falls back to per-unmerged-group name templates.
-			name:           "mixed same productType different PCIs: one merged rail pool, three name templates",
+			name:           "mixed same gpuType different PCIs: one merged rail pool, three name templates",
 			configFile:     "mixed-same-type.yaml",
 			planes:         1,
 			multiplaneMode: "none",
@@ -160,13 +160,13 @@ func TestSpectrumXGrouping(t *testing.T) {
 		},
 		{
 			// Two groups of gpu-model-y (8 east-west rails each) + one group of
-			// gpu-model-z (4 east-west rails). Merge key is (productType, rail count):
+			// gpu-model-z (4 east-west rails). Merge key is (gpuType, rail count):
 			//   - (gpu-model-y, 8) pulls the two y-groups together
 			//   - (gpu-model-z, 4) stays alone as group-2
 			// Result: two rail pools (one per merged bucket), three name templates
 			// (two per-machine for the merged y-pair since their PCIs differ, one
 			// for the unmerged z group).
-			name:           "true heterogeneous: two productTypes, only one pair merges",
+			name:           "true heterogeneous: two gpuTypes, only one pair merges",
 			configFile:     "true-heterogeneous.yaml",
 			planes:         1,
 			multiplaneMode: "none",
@@ -216,7 +216,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 }
 
 func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
-	// The merged y-model rail pool must select by productType (covers all y-model
+	// The merged y-model rail pool must select by gpuType (covers all y-model
 	// nodes across machine types) and reference renamed netdev names rather than
 	// raw PCI addresses, since source groups disagree on PCI.
 	rendered := renderSpectrumX(t, "true-heterogeneous.yaml", "none", 1)
@@ -225,7 +225,7 @@ func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
 	require.True(t, ok, "merged y-model rail pool manifest should exist")
 
 	require.Contains(t, merged, `nvidia.com/gpu.product: "gpu-model-y"`,
-		"merged rail pool must select by productType so it covers all y-model machines")
+		"merged rail pool must select by gpuType so it covers all y-model machines")
 	require.Contains(t, merged, `pfNames: ["eth_p0_r0"]`,
 		"merged rail pool must reference the renamed netdev names, not raw PCI")
 	require.NotContains(t, merged, "0000:19:00.0",

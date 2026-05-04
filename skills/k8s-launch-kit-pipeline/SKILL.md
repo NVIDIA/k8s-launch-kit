@@ -73,6 +73,14 @@ l8k discover --kubeconfig ~/.kube/config \
 l8k generate --user-config ./cluster-config.yaml \
   --fabric ethernet --deployment-type sriov \
   --save-deployment-files ./output --deploy
+
+# Skip discovery entirely with --for (known SKU)
+l8k generate --user-config ./cluster-config.yaml \
+  --for ThinkSystem-SR680a-V3 \
+  --node-selector "nvidia.com/gpu.product=NVIDIA-H200" \
+  --fabric ethernet --deployment-type sriov \
+  --save-deployment-files ./output --deploy \
+  --kubeconfig ~/.kube/config
 ```
 
 ## Common Variations

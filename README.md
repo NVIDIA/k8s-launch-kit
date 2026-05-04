@@ -148,37 +148,50 @@ Available Commands:
   sosreport   Collect diagnostic sosreport from a Kubernetes cluster
   version     Print the version number
 
-Flags:
-      --ai                                  Enable AI deployment
-      --deploy                              Deploy the generated files to the Kubernetes cluster
-      --deployment-type string              Select the deployment type (sriov, rdma_shared, host_device)
-      --discover-cluster-config             Deploy a thin Network Operator profile to discover cluster capabilities
-      --dry-run                             Preview what would be deployed without applying changes to the cluster
-      --enable-doca-driver                  Enable DOCA driver deployment (overrides config file docaDriver.enable)
+Common Flags:
       --enabled-plugins string              Comma-separated list of plugins to enable (default "network-operator")
-      --fabric string                       Select the fabric type to deploy (infiniband, ethernet)
-      --group string                        Generate templates for a specific group only (e.g., group-0)
-  -h, --help                                help for l8k
       --image-pull-secrets strings          Image pull secret names for NicClusterPolicy (comma-separated)
       --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy)
-      --log-file string                     Write logs to file instead of stderr
-      --log-level string                    Enable logging at specified level (debug, info, warn, error)
-      --multiplane-mode string              Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)
-      --multirail                           Enable multirail deployment
       --network-operator-namespace string   Override the network operator namespace from the config file
       --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 25.10, 26.1, 26.4
       --node-selector string                Filter nodes for discovery by label (e.g., key=value,key2=value2) (default "feature.node.kubernetes.io/pci-15b3.present=true")
-      --number-of-planes int                Number of planes for Spectrum-X (requires --spectrum-x)
-      --output string                       Output format: text (default, human-readable) or json (structured, for automation and AI agents) (default "text")
-      --pod-namespace string                Namespace for pods and network resources (overrides config podNamespace, default: 'default')
-  -q, --quiet                               Suppress informational output (errors still shown)
-      --save-cluster-config string          Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)
-      --save-deployment-files string        Save generated deployment files to the specified directory (default "./deployment")
-      --spcx-version string                 Spectrum-X firmware version (requires --spectrum-x)
-      --spectrum-x                          Enable Spectrum X deployment
       --user-config string                  Use provided cluster configuration file (as base config for discovery or as full config without discovery)
-      --workload-manifest string            Path to a custom workload manifest YAML (replaces the profile's default example workload)
-  -y, --yes                                 Auto-confirm all prompts without interactive input
+
+Discovery Flags:
+      --discover-cluster-config      Deploy a thin Network Operator profile to discover cluster capabilities
+      --save-cluster-config string   Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)
+
+Profile Selection Flags:
+      --ai                       Enable AI deployment
+      --deployment-type string   Select the deployment type (sriov, rdma_shared, host_device)
+      --fabric string            Select the fabric type to deploy (infiniband, ethernet)
+      --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Available: PowerEdge-XE9680, ThinkSystem-SR680a-V3, UCSC-885A-M8-H22
+      --group string             Generate templates for a specific group only (e.g., group-0)
+      --multirail                Enable multirail deployment
+      --spectrum-x               Enable Spectrum X deployment
+
+Spectrum-X Flags:
+      --multiplane-mode string   Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)
+      --number-of-planes int     Number of planes for Spectrum-X (requires --spectrum-x)
+      --spcx-version string      Spectrum-X firmware version (requires --spectrum-x)
+
+Generation Output Flags:
+      --enable-doca-driver             Enable DOCA driver deployment (overrides config file docaDriver.enable)
+      --pod-namespace string           Namespace for pods and network resources (overrides config podNamespace, default: 'default')
+      --save-deployment-files string   Save generated deployment files to the specified directory (default "./deployment")
+      --workload-manifest string       Path to a custom workload manifest YAML (replaces the profile's default example workload)
+
+Deploy Flags:
+      --deploy    Deploy the generated files to the Kubernetes cluster
+      --dry-run   Preview what would be deployed without applying changes to the cluster
+
+Output & Logging Flags:
+  -h, --help               help for l8k
+      --log-file string    Write logs to file instead of stderr
+      --log-level string   Enable logging at specified level (debug, info, warn, error)
+      --output string      Output format: text (default, human-readable) or json (structured, for automation and AI agents) (default "text")
+  -q, --quiet              Suppress informational output (errors still shown)
+  -y, --yes                Auto-confirm all prompts without interactive input
 
 Use "l8k [command] --help" for more information about a command.
 ```
@@ -293,6 +306,24 @@ l8k generate --user-config ./config.yaml \
     --group group-0 \
     --save-deployment-files ./deployments
 ```
+
+### Generate Deployment Files Without Cluster Access (`--for`)
+
+When you have a known server SKU, use `--for <preset-name>` to skip cluster discovery and synthesize the `clusterConfig` from a topology preset. List available presets with `l8k preset list`. The `--node-selector` flag is required since the synthesized clusterConfig has no live worker-node list:
+
+```bash
+# List available presets (each shows machineType + gpuType)
+l8k preset list
+
+# Generate from a known SKU (no kubeconfig needed)
+l8k generate --user-config ./config.yaml \
+    --for ThinkSystem-SR680a-V3 \
+    --node-selector "nvidia.com/gpu.product=NVIDIA-H200" \
+    --fabric ethernet --deployment-type sriov \
+    --save-deployment-files ./deployments
+```
+
+The preset YAML must declare a `capabilities.nodes.{sriov,rdma,ib}` block to be usable with `--for`; presets shipped with l8k already have one. See [docs/presets.rst](docs/presets.rst) for the full preset format and how to add new ones.
 
 ### Troubleshooting Network Operator Issues
 
@@ -817,7 +848,7 @@ clusterConfig:
 
 ### Machine and GPU Product Type
 
-During discovery, each node group's `machineType` and `productType` are populated from GPU operator node labels (`nvidia.com/gpu.machine` and `nvidia.com/gpu.product`). When these labels are absent — for example, when the GPU operator is not deployed — the tool falls back to probing hardware directly from a `nic-configuration-daemon` pod on one of the group's nodes:
+During discovery, each node group's `machineType` and `gpuType` are populated from GPU operator node labels (`nvidia.com/gpu.machine` and `nvidia.com/gpu.product`). When these labels are absent — for example, when the GPU operator is not deployed — the tool falls back to probing hardware directly from a `nic-configuration-daemon` pod on one of the group's nodes:
 
 - **Machine type**: read from `/sys/class/dmi/id/product_name`
 - **GPU product type**: parsed from `nvidia-smi -q` output (the first `Product Name` field)
@@ -829,7 +860,7 @@ Example of discovered hardware types in the config:
 clusterConfig:
 - identifier: group-0
   machineType: ThinkSystem-SR680a-V3
-  productType: NVIDIA-H100-NVL
+  gpuType: NVIDIA-H100-NVL
   workerNodes:
   - node-1
   - node-2

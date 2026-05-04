@@ -32,6 +32,7 @@ import (
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -66,7 +67,18 @@ var (
 	quietFlag                   bool
 	workloadManifest            string
 	dryRunFlag                  bool
+	forPreset                   string
 )
+
+// forFlagHelp builds the help string for `--for`. Computed at init() time so
+// users see the live list of available preset directories alongside `--help`.
+func forFlagHelp() string {
+	names, _ := presets.ListPresets()
+	if len(names) == 0 {
+		return "Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. No presets installed; run 'l8k preset update' to fetch them."
+	}
+	return fmt.Sprintf("Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Available: %s", strings.Join(names, ", "))
+}
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -139,6 +151,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			NumberOfPlanes:        numberOfPlanes,
 			Group:                group,
 			NodeSelector:         nodeSelector,
+			ForPreset:            forPreset,
 			ImagePullSecrets:     imagePullSecrets,
 			PodNamespace:         podNamespace,
 			SaveDeploymentFiles:   saveDeploymentFiles,
@@ -219,6 +232,7 @@ func init() {
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
 	rootCmd.Flags().StringVar(&group, "group", "", "Generate templates for a specific group only (e.g., group-0)")
 	rootCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes for discovery by label (e.g., key=value,key2=value2)")
+	rootCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "./deployment", "Save generated deployment files to the specified directory")
 	rootCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Namespace for pods and network resources (overrides config podNamespace, default: 'default')")
@@ -260,6 +274,7 @@ func init() {
 	setFlagGroup(rootCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(rootCmd, "ai", GroupProfile)
 	setFlagGroup(rootCmd, "group", GroupProfile)
+	setFlagGroup(rootCmd, "for", GroupProfile)
 
 	setFlagGroup(rootCmd, "spcx-version", GroupSpectrumX)
 	setFlagGroup(rootCmd, "multiplane-mode", GroupSpectrumX)
@@ -318,6 +333,18 @@ func validateConfig(options *options.Options) error {
 	// At least one of user-config or discover-cluster-config should be provided
 	if options.UserConfig == "" && !options.DiscoverClusterConfig {
 		return fmt.Errorf("either --user-config or --discover-cluster-config must be provided")
+	}
+
+	// --for synthesizes clusterConfig from a static preset, so it cannot be
+	// combined with discovery, and it always needs a node selector to identify
+	// which nodes the rendered manifests target.
+	if options.ForPreset != "" {
+		if options.DiscoverClusterConfig {
+			return fmt.Errorf("--for and --discover-cluster-config are mutually exclusive")
+		}
+		if options.NodeSelector == "" {
+			return fmt.Errorf("--for requires --node-selector (specify which nodes the synthesized clusterConfig should target)")
+		}
 	}
 
 	// Resolve kubeconfig from flag or $KUBECONFIG env var for cluster operations

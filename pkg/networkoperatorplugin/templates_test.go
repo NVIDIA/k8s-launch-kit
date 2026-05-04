@@ -466,11 +466,11 @@ func TestSanitizeIdentifier(t *testing.T) {
 }
 
 func TestMergeCompatibleGroups(t *testing.T) {
-	t.Run("all groups same productType and rail count", func(t *testing.T) {
+	t.Run("all groups same gpuType and rail count", func(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:19:00.0", 0),
 					ewPF("0000:2a:00.0", 1),
@@ -480,7 +480,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:1a:00.0", 0),
 					ewPF("0000:3c:00.0", 1),
@@ -490,7 +490,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 			{
 				Identifier:  "group-2",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:09:00.0", 0),
 					ewPF("0000:23:00.0", 1),
@@ -505,7 +505,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		assert.Len(t, result, 1)
 		merged := result[0]
 		assert.Equal(t, "nvidia-h200", merged.Identifier)
-		assert.Equal(t, "NVIDIA-H200", merged.ProductType)
+		assert.Equal(t, "NVIDIA-H200", merged.GPUType)
 		assert.Equal(t, map[string]string{"nvidia.com/gpu.product": "NVIDIA-H200"}, merged.NodeSelector)
 		assert.Equal(t, []string{"node-a", "node-b", "node-c", "node-d", "node-e"}, merged.WorkerNodes)
 
@@ -520,17 +520,17 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		assert.Equal(t, []string{"0000:2a:00.0", "0000:3c:00.0", "0000:23:00.0"}, merged.RailPciAddresses[1])
 	})
 
-	t.Run("different productTypes no merge", func(t *testing.T) {
+	t.Run("different gpuTypes no merge", func(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
 				WorkerNodes: []string{"node-a"},
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-A100",
+				GPUType: "NVIDIA-A100",
 				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0)},
 				WorkerNodes: []string{"node-b"},
 			},
@@ -545,11 +545,11 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		assert.Nil(t, result[1].RailPciAddresses)
 	})
 
-	t.Run("same productType different rail count no merge", func(t *testing.T) {
+	t.Run("same gpuType different rail count no merge", func(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:19:00.0", 0),
 					ewPF("0000:2a:00.0", 1),
@@ -558,7 +558,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0)},
 				WorkerNodes: []string{"node-b"},
 			},
@@ -575,20 +575,20 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
 				WorkerNodes: []string{"node-a"},
 				Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Rdma: true}},
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-A100",
+				GPUType: "NVIDIA-A100",
 				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0)},
 				WorkerNodes: []string{"node-b"},
 			},
 			{
 				Identifier:  "group-2",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:09:00.0", 0)},
 				WorkerNodes: []string{"node-c"},
 				Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Rdma: true}},
@@ -612,7 +612,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
 				WorkerNodes: []string{"node-a"},
 			},
@@ -625,17 +625,17 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		assert.Nil(t, result[0].RailPciAddresses)
 	})
 
-	t.Run("empty productType no merge", func(t *testing.T) {
+	t.Run("empty gpuType no merge", func(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "",
+				GPUType: "",
 				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
 				WorkerNodes: []string{"node-a"},
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "",
+				GPUType: "",
 				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0)},
 				WorkerNodes: []string{"node-b"},
 			},
@@ -653,14 +653,14 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0), nsPF},
 				WorkerNodes: []string{"node-a"},
 				Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Rdma: true}},
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0), nsPF},
 				WorkerNodes: []string{"node-b"},
 				Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Rdma: true}},
@@ -680,13 +680,13 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
 				WorkerNodes: []string{"node-a"},
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0)},
 				WorkerNodes: []string{"node-b"},
 			},
@@ -702,7 +702,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:19:00.0", 0),
 					ewPF("0000:9c:00.0", 1),
@@ -711,7 +711,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:9c:00.0", 0), // same PCI at different rail
 					ewPF("0000:cd:00.0", 1),
@@ -733,7 +733,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-GB300",
+				GPUType: "NVIDIA-GB300",
 				PFs: []config.PFConfig{
 					ewPF("0000:03:00.0", 0),
 					ewPF("0000:03:00.1", 1),
@@ -742,7 +742,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-GB300",
+				GPUType: "NVIDIA-GB300",
 				PFs: []config.PFConfig{
 					ewPF("0000:03:00.0", 0),
 					ewPF("0000:03:00.1", 1),
@@ -765,19 +765,19 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
 				WorkerNodes: []string{"node-a"},
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:19:00.0", 0)},
 				WorkerNodes: []string{"node-b"},
 			},
 			{
 				Identifier:  "group-2",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs:         []config.PFConfig{ewPF("0000:1a:00.0", 0)},
 				WorkerNodes: []string{"node-c"},
 			},
@@ -795,7 +795,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:19:00.0", 0),
 					ewPF("0000:9b:00.0", 1),
@@ -804,7 +804,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:1a:00.0", 0),
 					ewPF("0000:9c:00.0", 1), // this address...
@@ -813,7 +813,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 			},
 			{
 				Identifier:  "group-2",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					ewPF("0000:9c:00.0", 0), // ...appears at a different rail here
 					ewPF("0000:cd:00.0", 1),
@@ -994,7 +994,7 @@ func TestMergeCompatibleGroups_MergesThirdPartyRDMAModules(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0},
 					{DeviceID: "a2dc", PciAddress: "0000:2a:00.0", Traffic: "east-west", Rail: &rail1},
@@ -1004,7 +1004,7 @@ func TestMergeCompatibleGroups_MergesThirdPartyRDMAModules(t *testing.T) {
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: &rail0},
 					{DeviceID: "a2dc", PciAddress: "0000:3c:00.0", Traffic: "east-west", Rail: &rail1},
@@ -1023,7 +1023,7 @@ func TestMergeCompatibleGroups_MergesThirdPartyRDMAModules(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:  "group-0",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0},
 				},
@@ -1031,7 +1031,7 @@ func TestMergeCompatibleGroups_MergesThirdPartyRDMAModules(t *testing.T) {
 			},
 			{
 				Identifier:  "group-1",
-				ProductType: "NVIDIA-H200",
+				GPUType: "NVIDIA-H200",
 				PFs: []config.PFConfig{
 					{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: &rail0},
 				},
@@ -1048,14 +1048,14 @@ func TestMergeCompatibleGroups_MergesThirdPartyRDMAModules(t *testing.T) {
 		groups := []config.ClusterConfig{
 			{
 				Identifier:           "group-0",
-				ProductType:          "NVIDIA-H200",
+				GPUType:          "NVIDIA-H200",
 				PFs:                  []config.PFConfig{{DeviceID: "a2dc", PciAddress: "0000:19:00.0", Traffic: "east-west", Rail: &rail0}},
 				WorkerNodes:          []string{"node-1"},
 				ThirdPartyRDMAModules: []string{"iw_cm"},
 			},
 			{
 				Identifier:           "group-1",
-				ProductType:          "NVIDIA-A100", // different product
+				GPUType:          "NVIDIA-A100", // different product
 				PFs:                  []config.PFConfig{{DeviceID: "1017", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: &rail0}},
 				WorkerNodes:          []string{"node-2"},
 				ThirdPartyRDMAModules: []string{"xprtrdma"},

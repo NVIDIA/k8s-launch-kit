@@ -51,8 +51,49 @@ l8k discover --user-config my-config.yaml \
 | `profile` | Profile selection criteria (fabric, deployment, multirail) |
 | `clusterConfig[]` | Per-group hardware: NICs, nodes, capabilities, selectors |
 
+Each `clusterConfig[]` entry has these key fields:
+
+- `identifier` — group name (used for `NicNodePolicy` naming).
+- `machineType` — server model (e.g. `PowerEdge-XE9680`); populated from `nvidia.com/gpu.machine` label or DMI fallback.
+- `gpuType` — GPU SKU (e.g. `NVIDIA-H200`); populated from `nvidia.com/gpu.product` label or `nvidia-smi` fallback. **Note:** this field used to be called `productType` — the rename happened to disambiguate it from the server model. Old `productType:` keys in hand-authored configs must be renamed to `gpuType:`.
+- `capabilities.nodes.{sriov,rdma,ib}` — what the underlying hardware supports.
+- `pfs[]` — physical function list with PCI address, device ID, RDMA device, network interface, traffic class, rail, NUMA, GPU affinity.
+- `nodeSelector` — Kubernetes node selector for this group.
+- `workerNodes` — explicit hostnames (populated by discovery).
+
 For the full field-by-field reference with types, defaults, and descriptions,
 read `references/config-schema.md`.
+
+## Topology Presets
+
+The `presets/` directory contains pre-recorded topologies for known hardware combinations. A preset is a `topology.yaml` file with the following shape:
+
+```yaml
+machineType: PowerEdge-XE9680   # required
+gpuType: NVIDIA-H200            # required — both keys are matched as a pair
+nicModel: BlueField-3 SuperNIC (ConnectX-7)
+gpuInterconnect: NV18
+numaNodes: 2
+
+# Required if the preset will be used with `l8k generate --for`.
+# Discovery-time overlay does not need this block.
+capabilities:
+  nodes:
+    sriov: true
+    rdma: true
+    ib: false
+
+pfs:
+  - deviceID: a2dc
+    pciAddress: 0000:1a:00.0
+    traffic: east-west
+    rail: 0
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: PIX
+```
+
+**Lookup is exact-match on `(machineType, gpuType)`.** No any-GPU fallback — a preset that doesn't declare `gpuType:` is rejected at load time. Multi-variant presets for the same machine (different GPU SKUs) live in separate directories with composite names like `PowerEdge-XE9680-H200` / `PowerEdge-XE9680-B200`. The directory name is shown by `l8k preset list` and is what `l8k generate --for <name>` accepts.
 
 ## Common Edits
 

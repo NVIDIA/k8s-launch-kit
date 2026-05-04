@@ -259,7 +259,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			// Fill in missing machine/GPU product types by probing hardware
 			// directly when GPU operator node labels are absent.
 			needMachine := group.MachineType == ""
-			needProduct := group.ProductType == ""
+			needProduct := group.GPUType == ""
 			if needMachine || needProduct {
 				machine, product := discoverHardwareTypes(ctx, p.RESTConfig,
 					defaultConfig.NetworkOperator.Namespace, group.WorkerNodes, dsPods,
@@ -269,7 +269,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 					uiOutput.Info("Discovered machine type for group %s: %s", group.Identifier, machine)
 				}
 				if needProduct && product != "" {
-					group.ProductType = product
+					group.GPUType = product
 					uiOutput.Info("Discovered GPU product type for group %s: %s", group.Identifier, product)
 				}
 			}
@@ -282,19 +282,24 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			discoverGPUTopology(ctx, p.RESTConfig,
 				defaultConfig.NetworkOperator.Namespace, group, dsPods)
 
-			// Try to enrich with a predefined topology preset for this machine type.
-			// Presets provide authoritative traffic classification, rail assignments,
-			// and NUMA/GPU topology metadata for known hardware configurations.
-			if group.MachineType != "" {
-				preset, presetErr := presets.LoadPreset(group.MachineType)
+			// Try to enrich with a predefined topology preset for this (machine,
+			// GPU) pair. Presets provide authoritative traffic classification,
+			// rail assignments, and NUMA/GPU topology metadata for known
+			// hardware configurations. Lookup is exact-match on (machineType,
+			// gpuType) — both must be known for a preset to apply.
+			if group.MachineType != "" && group.GPUType != "" {
+				preset, presetErr := presets.LoadPreset(group.MachineType, group.GPUType)
 				if presetErr != nil {
-					log.Log.Error(presetErr, "failed to load preset", "machineType", group.MachineType)
-					uiOutput.Warning("Failed to load preset for %s: %v", group.MachineType, presetErr)
+					log.Log.Error(presetErr, "failed to load preset",
+						"machineType", group.MachineType, "gpuType", group.GPUType)
+					uiOutput.Warning("Failed to load preset for %s/%s: %v",
+						group.MachineType, group.GPUType, presetErr)
 				} else if preset != nil {
 					if presetErr := presets.ValidatePreset(preset, group.PFs); presetErr != nil {
 						log.Log.Info("Preset did not match discovered hardware",
-							"machineType", group.MachineType, "error", presetErr)
-						uiOutput.Info("Preset for %s did not match discovered hardware: %v", group.MachineType, presetErr)
+							"machineType", group.MachineType, "gpuType", group.GPUType, "error", presetErr)
+						uiOutput.Info("Preset for %s/%s did not match discovered hardware: %v",
+							group.MachineType, group.GPUType, presetErr)
 					} else {
 						presets.ApplyPreset(preset, group)
 						uiOutput.Info("Applied preset configuration for %s", group.MachineType)
@@ -827,12 +832,12 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		// Extract machine/product type from common node labels
 		commonLabels := computeCommonLabels(g.nodes, nodeLabels)
 		machineType := commonLabels["nvidia.com/gpu.machine"]
-		productType := commonLabels["nvidia.com/gpu.product"]
+		gpuType := commonLabels["nvidia.com/gpu.product"]
 
 		cc := config.ClusterConfig{
 			Identifier:    identifier,
 			MachineType:   machineType,
-			ProductType:   productType,
+			GPUType:   gpuType,
 			NodeSelector:  nodeSelector,
 			Capabilities: &config.ClusterCapabilities{
 				Nodes: &config.NodesCapabilities{
@@ -1074,14 +1079,14 @@ func parseGPUProductFromNvidiaSmi(output string) string {
 	return ""
 }
 
-// discoverHardwareTypes attempts to discover machineType and productType by
+// discoverHardwareTypes attempts to discover machineType and gpuType by
 // probing hardware directly when label-derived values are empty. It execs into
 // a nic-configuration-daemon pod on one of the group's nodes.
-// Returns (machineType, productType) — either or both may still be empty if
+// Returns (machineType, gpuType) — either or both may still be empty if
 // discovery fails or hardware info is unavailable.
 func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 	namespace string, groupNodes []string, dsPods []corev1.Pod,
-	needMachine, needProduct bool) (machineType, productType string) {
+	needMachine, needProduct bool) (machineType, gpuType string) {
 
 	targetPod := findDaemonPod(groupNodes, dsPods)
 	if targetPod == nil {
@@ -1116,17 +1121,17 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 		if err != nil {
 			log.Log.Error(err, "failed to exec nvidia-smi probe", "pod", targetPod.Name)
 		} else {
-			productType = parseGPUProductFromNvidiaSmi(output)
+			gpuType = parseGPUProductFromNvidiaSmi(output)
 		}
 
-		if productType == "" {
+		if gpuType == "" {
 			sysfsOutput, sysfsErr := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
 				[]string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
 			if sysfsErr != nil {
 				log.Log.Error(sysfsErr, "failed to exec sysfs GPU probe", "pod", targetPod.Name)
 			} else {
-				productType = parseGPUProductFromSysfs(sysfsOutput)
-				if productType == "" && strings.TrimSpace(sysfsOutput) != "" {
+				gpuType = parseGPUProductFromSysfs(sysfsOutput)
+				if gpuType == "" && strings.TrimSpace(sysfsOutput) != "" {
 					log.Log.Info("GPU product type not resolved from sysfs device ID",
 						"pod", targetPod.Name, "unresolvedID", strings.TrimSpace(sysfsOutput))
 				}
@@ -1134,7 +1139,7 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 		}
 	}
 
-	return machineType, productType
+	return machineType, gpuType
 }
 
 // sysfsNvidiaGPUIDCmd emits the first NVIDIA (vendor 10de) GPU device ID found
@@ -1153,7 +1158,7 @@ const sysfsNvidiaGPUIDCmd = `for d in /sys/bus/pci/devices/*; do
 done`
 
 // parseGPUProductFromSysfs resolves a single-line sysfs device-ID output
-// (e.g. "0x2335\n") to a canonical ProductType via the embedded pci.ids table.
+// (e.g. "0x2335\n") to a canonical GPUType via the embedded pci.ids table.
 // Returns empty for blank input or an unknown device ID.
 func parseGPUProductFromSysfs(output string) string {
 	id := strings.TrimSpace(output)

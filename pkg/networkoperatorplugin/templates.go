@@ -677,33 +677,33 @@ func sanitizeIdentifier(s string) string {
 	return s
 }
 
-// mergeCompatibleGroups merges ClusterConfig groups that share the same productType
-// and number of east-west rails into a single group per productType.
+// mergeCompatibleGroups merges ClusterConfig groups that share the same gpuType
+// and number of east-west rails into a single group per gpuType.
 // For each merged group:
-//   - Identifier = sanitized productType (lowercase, spaces→hyphens)
-//   - NodeSelector = {"nvidia.com/gpu.product": productType}
+//   - Identifier = sanitized gpuType (lowercase, spaces→hyphens)
+//   - NodeSelector = {"nvidia.com/gpu.product": gpuType}
 //   - RailPciAddresses = per-rail list of all PCI addresses from source groups
 //   - WorkerNodes = union of all worker nodes
 //   - Capabilities = aggregated (union)
 //
-// Groups with empty productType are never merged.
+// Groups with empty gpuType are never merged.
 // Single-entry buckets are returned as-is.
 func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool) ([]config.ClusterConfig, bool) {
 	type mergeKey struct {
-		productType string
+		gpuType string
 		railCount   int
 	}
 
-	// Group indices by (productType, railCount)
+	// Group indices by (gpuType, railCount)
 	bucketOrder := []mergeKey{}
 	buckets := map[mergeKey][]int{}
 
 	for i, g := range groups {
 		ewCount := len(filterEastWestPFs(g.PFs))
-		key := mergeKey{productType: g.ProductType, railCount: ewCount}
-		if g.ProductType == "" {
-			// Never merge groups without a productType — use a unique key per group
-			key = mergeKey{productType: fmt.Sprintf("__empty_%d", i), railCount: ewCount}
+		key := mergeKey{gpuType: g.GPUType, railCount: ewCount}
+		if g.GPUType == "" {
+			// Never merge groups without a gpuType — use a unique key per group
+			key = mergeKey{gpuType: fmt.Sprintf("__empty_%d", i), railCount: ewCount}
 		}
 		if _, exists := buckets[key]; !exists {
 			bucketOrder = append(bucketOrder, key)
@@ -716,8 +716,8 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 	for _, key := range bucketOrder {
 		indices := buckets[key]
 
-		if len(indices) == 1 || groups[indices[0]].ProductType == "" {
-			// No merge: single group or empty productType
+		if len(indices) == 1 || groups[indices[0]].GPUType == "" {
+			// No merge: single group or empty gpuType
 			result = append(result, groups[indices[0]])
 			continue
 		}
@@ -766,10 +766,10 @@ func hasRailPciConflict(groups []config.ClusterConfig, indices []int) bool {
 }
 
 // buildMergedGroup creates a single ClusterConfig from multiple groups that share
-// the same productType and east-west rail count.
+// the same gpuType and east-west rail count.
 func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.ClusterConfig {
 	first := groups[indices[0]]
-	productType := first.ProductType
+	gpuType := first.GPUType
 
 	// Collect east-west PFs per group (all have the same count)
 	ewPFsByGroup := make([][]config.PFConfig, len(indices))
@@ -849,15 +849,15 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 	}
 
 	return config.ClusterConfig{
-		Identifier:           sanitizeIdentifier(productType),
-		ProductType:          productType,
+		Identifier:           sanitizeIdentifier(gpuType),
+		GPUType:          gpuType,
 		Capabilities:         caps,
 		PFs:                  first.PFs, // Representative PFs from first group
 		WorkerNodes:          allNodes,
 		ThirdPartyRDMAModules: mergedDepMods,
 		StorageModules:        mergedStorageMods,
 		NodeSelector: map[string]string{
-			"nvidia.com/gpu.product": productType,
+			"nvidia.com/gpu.product": gpuType,
 		},
 		RailPciAddresses: railPciAddresses,
 	}
