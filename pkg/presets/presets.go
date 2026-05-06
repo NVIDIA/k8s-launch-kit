@@ -188,6 +188,8 @@ func LoadPreset(machineType, gpuType string) (*Topology, error) {
 	}
 
 	if len(matches) == 0 {
+		log.Log.V(1).Info("Preset lookup miss",
+			"machineType", machineType, "gpuType", gpuType, "candidatesScanned", len(all))
 		return nil, nil
 	}
 	if len(matches) > 1 {
@@ -197,6 +199,9 @@ func LoadPreset(machineType, gpuType string) (*Topology, error) {
 		}
 		log.Log.V(1).Info("Multiple presets match (machineType, gpuType); picking first by directory name",
 			"machineType", machineType, "gpuType", gpuType, "candidates", names, "picked", matches[0].DirName)
+	} else {
+		log.Log.V(1).Info("Preset lookup hit",
+			"machineType", machineType, "gpuType", gpuType, "preset", matches[0].DirName)
 	}
 	t := matches[0].Topology
 	return &t, nil

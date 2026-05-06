@@ -27,6 +27,8 @@ import (
 	"text/template"
 
 	"github.com/Masterminds/semver/v3"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 )
@@ -834,6 +836,12 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 			// Never merge groups without a gpuType — use a unique key per group
 			key = mergeKey{gpuType: fmt.Sprintf("__empty_%d", i), railCount: ewCount}
 		}
+		log.Log.V(1).Info("Computed merge key for source group",
+			"sourceIndex", i,
+			"identifier", g.Identifier,
+			"gpuType", g.GPUType,
+			"eastWestRailCount", ewCount,
+			"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount))
 		if _, exists := buckets[key]; !exists {
 			bucketOrder = append(bucketOrder, key)
 		}
@@ -847,6 +855,14 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 
 		if len(indices) == 1 || groups[indices[0]].GPUType == "" {
 			// No merge: single group or empty gpuType
+			reason := "single source group in bucket"
+			if groups[indices[0]].GPUType == "" {
+				reason = "empty gpuType (groups without gpuType are never merged)"
+			}
+			log.Log.V(1).Info("Bucket kept separate (not merged)",
+				"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
+				"identifier", groups[indices[0]].Identifier,
+				"reason", reason)
 			result = append(result, groups[indices[0]])
 			continue
 		}
@@ -856,18 +872,34 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 		// (renamed pfNames avoid the conflict) and track that it happened.
 		if hasRailPciConflict(groups, indices) {
 			if !useNameTemplates {
+				log.Log.V(1).Info("Bucket kept separate (cross-rail PCI conflict; name templates disabled)",
+					"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
+					"sourceIndices", indices)
 				for _, idx := range indices {
 					result = append(result, groups[idx])
 				}
 				continue
 			}
 			hadPciConflicts = true
+			log.Log.V(1).Info("Bucket merged despite PCI conflict; name templates will resolve it",
+				"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
+				"sourceIndices", indices)
 		}
 
 		// Merge all groups in this bucket
-		result = append(result, buildMergedGroup(groups, indices))
+		merged := buildMergedGroup(groups, indices)
+		log.Log.V(1).Info("Bucket merged into single render group",
+			"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
+			"sourceIndices", indices,
+			"mergedIdentifier", merged.Identifier,
+			"mergedNodeCount", len(merged.WorkerNodes))
+		result = append(result, merged)
 	}
 
+	log.Log.V(1).Info("Group merge complete",
+		"sourceGroups", len(groups),
+		"renderGroups", len(result),
+		"pciConflictResolvedByNameTemplates", hadPciConflicts)
 	return result, hadPciConflicts
 }
 

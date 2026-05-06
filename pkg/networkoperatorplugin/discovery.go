@@ -288,19 +288,35 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			// hardware configurations. Lookup is exact-match on (machineType,
 			// gpuType) — both must be known for a preset to apply.
 			if group.MachineType != "" && group.GPUType != "" {
+				log.Log.V(1).Info("Looking up preset by (machineType, gpuType)",
+					"group", group.Identifier,
+					"machineType", group.MachineType,
+					"gpuType", group.GPUType)
 				preset, presetErr := presets.LoadPreset(group.MachineType, group.GPUType)
 				if presetErr != nil {
 					log.Log.Error(presetErr, "failed to load preset",
 						"machineType", group.MachineType, "gpuType", group.GPUType)
 					uiOutput.Warning("Failed to load preset for %s/%s: %v",
 						group.MachineType, group.GPUType, presetErr)
-				} else if preset != nil {
+				} else if preset == nil {
+					log.Log.V(1).Info("No preset matched (machineType, gpuType)",
+						"group", group.Identifier,
+						"machineType", group.MachineType,
+						"gpuType", group.GPUType)
+				} else {
 					// Always apply the matched preset on a best-effort basis.
 					// Any discrepancies (PF count, PCI address drift,
 					// device-ID drift) are recorded as soft deviations and
 					// re-warned about on every subsequent config load.
 					deviations := presets.ValidatePreset(preset, group.PFs)
 					presets.ApplyPreset(preset, group)
+					log.Log.V(1).Info("Preset matched and applied",
+						"group", group.Identifier,
+						"machineType", group.MachineType,
+						"gpuType", group.GPUType,
+						"presetPFCount", len(preset.PFs),
+						"discoveredPFCount", len(group.PFs),
+						"deviationCount", len(deviations))
 					if len(deviations) > 0 {
 						group.PresetDeviation = deviations
 						log.Log.Info("Preset applied with deviations from matched preset",
@@ -339,6 +355,32 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			}
 		}
 	}
+
+	// Phase summary — counts surfaced at info level so the default UX shows
+	// progress without requiring --log-level=debug.
+	totalEW, totalNS, presetMatches, deviationGroups := 0, 0, 0, 0
+	for _, g := range defaultConfig.ClusterConfig {
+		for _, pf := range g.PFs {
+			switch pf.Traffic {
+			case "east-west":
+				totalEW++
+			case "north-south":
+				totalNS++
+			}
+		}
+		if g.PresetApplied {
+			presetMatches++
+		}
+		if len(g.PresetDeviation) > 0 {
+			deviationGroups++
+		}
+	}
+	log.Log.Info("Discovery summary",
+		"groupCount", len(defaultConfig.ClusterConfig),
+		"eastWestPFs", totalEW,
+		"northSouthPFsFiltered", totalNS,
+		"presetMatches", presetMatches,
+		"presetDeviationGroups", deviationGroups)
 
 	return nil
 }
@@ -709,6 +751,20 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		//     reclassified by the frequency heuristic in Stage 1.5).
 		isDPU := isNorthSouthDevice(d.Status.PartNumber)
 		isBF3SuperNIC := !isDPU && isBlueField3Device(d.Status.Type)
+		var classification string
+		switch {
+		case isDPU:
+			classification = "north-south (matched DPU part-number)"
+		case isBF3SuperNIC:
+			classification = "east-west (BF3 SuperNIC override)"
+		default:
+			classification = "unclassified (default east-west; may be reclassified by frequency heuristic)"
+		}
+		log.Log.V(2).Info("Classified NIC by traffic direction",
+			"node", nodeName,
+			"deviceID", d.Status.Type,
+			"partNumber", d.Status.PartNumber,
+			"classification", classification)
 		for _, p := range d.Status.Ports {
 			entry := nodePFEntry{
 				pfFingerprint: pfFingerprint{
@@ -778,6 +834,8 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 	for _, nodeName := range sortedNodes {
 		ni := nodeMap[nodeName]
 		fp := computeFingerprint(ni.pfs)
+		log.Log.V(1).Info("Bucketing node by PCI fingerprint",
+			"node", nodeName, "pfCount", len(ni.pfs), "fingerprint", string(fp))
 		if g, ok := groupMap[fp]; ok {
 			g.nodes = append(g.nodes, nodeName)
 			g.hasRdma = g.hasRdma || ni.hasRdma
@@ -843,6 +901,12 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		commonLabels := computeCommonLabels(g.nodes, nodeLabels)
 		machineType := commonLabels["nvidia.com/gpu.machine"]
 		gpuType := commonLabels["nvidia.com/gpu.product"]
+		log.Log.V(1).Info("Read GPU operator labels for group",
+			"group", identifier,
+			"nodes", g.nodes,
+			"machineTypeFromLabel", machineType,
+			"gpuTypeFromLabel", gpuType,
+			"willFallBackToHardwareProbe", machineType == "" || gpuType == "")
 
 		cc := config.ClusterConfig{
 			Identifier:    identifier,
@@ -1110,12 +1174,19 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 	}
 
 	if needMachine {
+		const dmiCmd = "cat /sys/class/dmi/id/product_name 2>/dev/null"
+		log.Log.V(1).Info("Probing machine type via DMI",
+			"pod", targetPod.Name, "command", dmiCmd)
 		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", "cat /sys/class/dmi/id/product_name 2>/dev/null"})
+			[]string{"/bin/sh", "-c", dmiCmd})
 		if err != nil {
 			log.Log.Error(err, "failed to read machine type from DMI", "pod", targetPod.Name)
 		} else {
 			machineType = parseMachineTypeFromDMI(output)
+			log.Log.V(1).Info("Probed machine type from DMI",
+				"pod", targetPod.Name,
+				"rawOutput", truncateForLog(output, 200),
+				"parsed", machineType)
 		}
 	}
 
@@ -1126,21 +1197,31 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 		nvidiaSmiCmd := `if [ -x /host/usr/bin/nvidia-smi ]; then ` +
 			`LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH ` +
 			`/host/usr/bin/nvidia-smi -q 2>/dev/null || true; fi`
+		log.Log.V(1).Info("Probing GPU product type via nvidia-smi", "pod", targetPod.Name)
 		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
 			[]string{"/bin/sh", "-c", nvidiaSmiCmd})
 		if err != nil {
 			log.Log.Error(err, "failed to exec nvidia-smi probe", "pod", targetPod.Name)
 		} else {
 			gpuType = parseGPUProductFromNvidiaSmi(output)
+			log.Log.V(1).Info("Probed GPU product type via nvidia-smi",
+				"pod", targetPod.Name,
+				"parsed", gpuType,
+				"willFallBackToSysfs", gpuType == "")
 		}
 
 		if gpuType == "" {
+			log.Log.V(1).Info("Falling back to sysfs/pci.ids for GPU product type", "pod", targetPod.Name)
 			sysfsOutput, sysfsErr := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
 				[]string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
 			if sysfsErr != nil {
 				log.Log.Error(sysfsErr, "failed to exec sysfs GPU probe", "pod", targetPod.Name)
 			} else {
 				gpuType = parseGPUProductFromSysfs(sysfsOutput)
+				log.Log.V(1).Info("Probed GPU product type via sysfs/pci.ids",
+					"pod", targetPod.Name,
+					"sysfsID", strings.TrimSpace(sysfsOutput),
+					"parsed", gpuType)
 				if gpuType == "" && strings.TrimSpace(sysfsOutput) != "" {
 					log.Log.Info("GPU product type not resolved from sysfs device ID",
 						"pod", targetPod.Name, "unresolvedID", strings.TrimSpace(sysfsOutput))
@@ -1150,6 +1231,17 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 	}
 
 	return machineType, gpuType
+}
+
+// truncateForLog clips a string to maxLen characters and appends "…" when
+// the input was longer. Used to keep V(1) probe logs readable for raw
+// command output without overwhelming the log volume.
+func truncateForLog(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
 }
 
 // sysfsNvidiaGPUIDCmd emits the first NVIDIA (vendor 10de) GPU device ID found
@@ -1266,13 +1358,19 @@ done | TARGETS="$targets" awk "$awk_script" | sort -u`, modList)
 		containerName = targetPod.Spec.Containers[0].Name
 	}
 
+	log.Log.V(1).Info("Probing OFED-dependent kernel modules",
+		"pod", targetPod.Name, "ofedTargets", ofedTargetModules)
 	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
 		[]string{"/bin/sh", "-c", script})
 	if err != nil {
 		return nil, fmt.Errorf("exec in pod %q failed: %w", targetPod.Name, err)
 	}
-
-	return parseModuleList(output, ofedTargetModules), nil
+	modules := parseModuleList(output, ofedTargetModules)
+	log.Log.V(1).Info("Discovered OFED-dependent kernel modules",
+		"pod", targetPod.Name,
+		"rawOutput", truncateForLog(output, 200),
+		"parsed", modules)
+	return modules, nil
 }
 
 // parseModuleList splits newline-separated module names, deduplicates, sorts them,
@@ -1304,8 +1402,10 @@ func parseModuleList(output string, exclude []string) []string {
 // third-party RDMA modules and storage modules. mlx5-prefixed modules (NVIDIA's own)
 // are silently dropped.
 func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
+	var dropped []string
 	for _, mod := range modules {
 		if strings.HasPrefix(mod, "mlx5") {
+			dropped = append(dropped, mod)
 			continue // NVIDIA module — always greenlit
 		}
 		if knownStorageModules[mod] {
@@ -1314,6 +1414,11 @@ func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
 			rdma = append(rdma, mod)
 		}
 	}
+	log.Log.V(1).Info("Classified OFED-dependent modules",
+		"total", len(modules),
+		"thirdPartyRDMA", rdma,
+		"storage", storage,
+		"droppedMlx5Prefixed", dropped)
 	return rdma, storage
 }
 
