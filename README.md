@@ -231,6 +231,22 @@ then per-group NicNodePolicy (waits for each), then remaining manifests. It
 auto-prefers `<dir>/network-operator/` (the layout `l8k generate` produces)
 and falls back to `<dir>` itself. `--dry-run` does a server-side dry run.
 
+Verify the deployment matches the selected release:
+
+```bash
+l8k validate --user-config ./cluster-config.yaml \
+    --deployment-files ./deployments \
+    --kubeconfig ~/.kube/config
+```
+
+`l8k validate` runs two checks: (1) the Network Operator Helm chart's
+appVersion matches the version expected by `networkOperator.selectedRelease`
+in `cluster-config.yaml` (looked up in the embedded release catalog),
+and (2) every YAML manifest under `--deployment-files` (excluding example
+workloads) is present in the cluster. Exits non-zero on any missing
+manifest or version mismatch. Both checks soft-skip when prerequisites
+are absent (no user-config, no Helm release Secret).
+
 Collect a diagnostic dump:
 
 ```bash

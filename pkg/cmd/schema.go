@@ -73,6 +73,10 @@ var schemaCmd = &cobra.Command{
 					Description: "Apply previously generated manifests to a Kubernetes cluster (NicClusterPolicy → per-group NicNodePolicy → remaining)",
 					Example:     "l8k deploy --deployment-files ./deployment --kubeconfig ~/.kube/config",
 				},
+				"validate": {
+					Description: "Verify a deployment matches the selected Network Operator release (Helm chart version + manifest presence in cluster)",
+					Example:     "l8k validate --user-config ./cluster-config.yaml --deployment-files ./deployment",
+				},
 				"sosreport": {
 					Description: "Collect diagnostic sosreport from a Kubernetes cluster",
 					Example:     "l8k sosreport --kubeconfig ~/.kube/config --output-dir ./sosreport",
