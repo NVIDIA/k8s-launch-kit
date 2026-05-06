@@ -69,6 +69,10 @@ var schemaCmd = &cobra.Command{
 					Description: "Generate deployment manifests for a network profile",
 					Example:     "l8k generate --user-config cluster-config.yaml --fabric ethernet --deployment-type sriov --save-deployment-files ./output",
 				},
+				"deploy": {
+					Description: "Apply previously generated manifests to a Kubernetes cluster (NicClusterPolicy → per-group NicNodePolicy → remaining)",
+					Example:     "l8k deploy --deployment-files ./deployment --kubeconfig ~/.kube/config",
+				},
 				"sosreport": {
 					Description: "Collect diagnostic sosreport from a Kubernetes cluster",
 					Example:     "l8k sosreport --kubeconfig ~/.kube/config --output-dir ./sosreport",

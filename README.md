@@ -219,6 +219,18 @@ l8k generate --user-config ./cluster-config.yaml \
     --save-deployment-files ./deployments
 ```
 
+Apply the generated manifests to the cluster:
+
+```bash
+l8k deploy --deployment-files ./deployments --kubeconfig ~/.kube/config
+```
+
+`l8k deploy` reads YAML from `--deployment-files` (default `./deployment`)
+and applies it in dependency order: NicClusterPolicy first (waits for ready),
+then per-group NicNodePolicy (waits for each), then remaining manifests. It
+auto-prefers `<dir>/network-operator/` (the layout `l8k generate` produces)
+and falls back to `<dir>` itself. `--dry-run` does a server-side dry run.
+
 Collect a diagnostic dump:
 
 ```bash
