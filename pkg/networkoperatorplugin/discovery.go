@@ -295,13 +295,23 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 					uiOutput.Warning("Failed to load preset for %s/%s: %v",
 						group.MachineType, group.GPUType, presetErr)
 				} else if preset != nil {
-					if presetErr := presets.ValidatePreset(preset, group.PFs); presetErr != nil {
-						log.Log.Info("Preset did not match discovered hardware",
-							"machineType", group.MachineType, "gpuType", group.GPUType, "error", presetErr)
-						uiOutput.Info("Preset for %s/%s did not match discovered hardware: %v",
-							group.MachineType, group.GPUType, presetErr)
+					// Always apply the matched preset on a best-effort basis.
+					// Any discrepancies (PF count, PCI address drift,
+					// device-ID drift) are recorded as soft deviations and
+					// re-warned about on every subsequent config load.
+					deviations := presets.ValidatePreset(preset, group.PFs)
+					presets.ApplyPreset(preset, group)
+					if len(deviations) > 0 {
+						group.PresetDeviation = deviations
+						log.Log.Info("Preset applied with deviations from matched preset",
+							"group", group.Identifier,
+							"machineType", group.MachineType,
+							"gpuType", group.GPUType,
+							"deviationCount", len(deviations))
+						uiOutput.Warning(
+							"Preset for %s/%s applied with %d deviation(s) from the matched preset. The deployment is not certified — see 'presetDeviation' in cluster-config.yaml.",
+							group.MachineType, group.GPUType, len(deviations))
 					} else {
-						presets.ApplyPreset(preset, group)
 						uiOutput.Info("Applied preset configuration for %s", group.MachineType)
 					}
 				}

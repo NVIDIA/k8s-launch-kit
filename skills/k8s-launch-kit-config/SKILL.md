@@ -95,6 +95,8 @@ pfs:
 
 **Lookup is exact-match on `(machineType, gpuType)`.** No any-GPU fallback — a preset that doesn't declare `gpuType:` is rejected at load time. Multi-variant presets for the same machine (different GPU SKUs) live in separate directories with composite names like `PowerEdge-XE9680-H200` / `PowerEdge-XE9680-B200`. The directory name is shown by `l8k preset list` and is what `l8k generate --for <name>` accepts.
 
+**Validation deviations.** When the matched preset's PCI addresses or device IDs don't exactly match discovered hardware, the preset is **still applied** (so rail/NUMA topology fields are populated) and the discrepancies are recorded under `clusterConfig[*].presetDeviation`. Every subsequent config load re-emits a warning listing each deviation. Only a PF count mismatch is fatal (the preset is genuinely incompatible).
+
 ## Common Edits
 
 ```yaml

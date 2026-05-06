@@ -520,8 +520,9 @@ func TestValidatePreset_ExactMatch(t *testing.T) {
 		{DeviceID: "101f", PciAddress: "0000:5a:00.0"},
 	}
 
-	if err := ValidatePreset(preset, discovered); err != nil {
-		t.Errorf("expected no error, got: %v", err)
+	deviations := ValidatePreset(preset, discovered)
+	if len(deviations) != 0 {
+		t.Errorf("expected no deviations, got: %v", deviations)
 	}
 }
 
@@ -537,12 +538,13 @@ func TestValidatePreset_DifferentOrderStillMatches(t *testing.T) {
 		{DeviceID: "a2dc", PciAddress: "0000:3c:00.0"},
 	}
 
-	if err := ValidatePreset(preset, discovered); err != nil {
-		t.Errorf("expected no error for different order, got: %v", err)
+	deviations := ValidatePreset(preset, discovered)
+	if len(deviations) != 0 {
+		t.Errorf("expected no deviations, got: %v", deviations)
 	}
 }
 
-func TestValidatePreset_PFCountMismatch(t *testing.T) {
+func TestValidatePreset_PFCountMismatch_RecordedAsDeviation(t *testing.T) {
 	preset := &Topology{
 		PFs: []PresetPF{
 			{DeviceID: "a2dc", PciAddress: "0000:1a:00.0"},
@@ -553,16 +555,26 @@ func TestValidatePreset_PFCountMismatch(t *testing.T) {
 		{DeviceID: "a2dc", PciAddress: "0000:1a:00.0"},
 	}
 
-	err := ValidatePreset(preset, discovered)
-	if err == nil {
-		t.Fatal("expected PF count mismatch error, got nil")
+	// PF count mismatch is a soft deviation now — the preset is still
+	// applied on a best-effort basis. Expect a pfCount entry plus the
+	// pciAddress entry for the address present in the preset but not
+	// discovered.
+	deviations := ValidatePreset(preset, discovered)
+	var sawPFCount bool
+	for _, d := range deviations {
+		if d.Field == "pfCount" {
+			sawPFCount = true
+			if d.Expected != "2" || d.Got != "1" {
+				t.Errorf("expected pfCount expected=2 got=1, got: %+v", d)
+			}
+		}
 	}
-	if !containsSubstring(err.Error(), "PF count mismatch") {
-		t.Errorf("expected PF count mismatch in error, got: %v", err)
+	if !sawPFCount {
+		t.Errorf("expected a pfCount deviation, got: %v", deviations)
 	}
 }
 
-func TestValidatePreset_PciAddressMismatch_PresetHasExtra(t *testing.T) {
+func TestValidatePreset_PciAddressMismatch_RecordedAsDeviations(t *testing.T) {
 	preset := &Topology{
 		PFs: []PresetPF{
 			{DeviceID: "a2dc", PciAddress: "0000:1a:00.0"},
@@ -574,22 +586,21 @@ func TestValidatePreset_PciAddressMismatch_PresetHasExtra(t *testing.T) {
 		{DeviceID: "a2dc", PciAddress: "0000:3c:00.0"}, // not in preset
 	}
 
-	err := ValidatePreset(preset, discovered)
-	if err == nil {
-		t.Fatal("expected PCI address mismatch error, got nil")
+	deviations := ValidatePreset(preset, discovered)
+	if len(deviations) != 2 {
+		t.Fatalf("expected 2 PCI deviations, got %d: %v", len(deviations), deviations)
 	}
-	if !containsSubstring(err.Error(), "PCI address mismatch") {
-		t.Errorf("expected PCI address mismatch in error, got: %v", err)
+	// Soft check: both addresses surface somewhere in the entries.
+	all := ""
+	for _, d := range deviations {
+		all += d.Field + " " + d.Expected + " " + d.Got + " "
 	}
-	if !containsSubstring(err.Error(), "0000:ff:00.0") {
-		t.Errorf("expected missing preset address in error, got: %v", err)
-	}
-	if !containsSubstring(err.Error(), "0000:3c:00.0") {
-		t.Errorf("expected missing discovered address in error, got: %v", err)
+	if !containsSubstring(all, "0000:ff:00.0") || !containsSubstring(all, "0000:3c:00.0") {
+		t.Errorf("expected both drifted addresses in deviations, got: %v", deviations)
 	}
 }
 
-func TestValidatePreset_DeviceIDMismatch(t *testing.T) {
+func TestValidatePreset_DeviceIDMismatch_RecordedAsDeviation(t *testing.T) {
 	preset := &Topology{
 		PFs: []PresetPF{
 			{DeviceID: "a2dc", PciAddress: "0000:1a:00.0"},
@@ -601,20 +612,21 @@ func TestValidatePreset_DeviceIDMismatch(t *testing.T) {
 		{DeviceID: "101f", PciAddress: "0000:3c:00.0"}, // different device ID
 	}
 
-	err := ValidatePreset(preset, discovered)
-	if err == nil {
-		t.Fatal("expected device ID mismatch error, got nil")
+	deviations := ValidatePreset(preset, discovered)
+	if len(deviations) != 1 {
+		t.Fatalf("expected 1 device-ID deviation, got %d: %v", len(deviations), deviations)
 	}
-	if !containsSubstring(err.Error(), "device ID mismatch") {
-		t.Errorf("expected device ID mismatch in error, got: %v", err)
+	d := deviations[0]
+	if d.Field != "deviceID" {
+		t.Errorf("expected field=deviceID, got %s", d.Field)
 	}
-	if !containsSubstring(err.Error(), "0000:3c:00.0") {
-		t.Errorf("expected PCI address in error, got: %v", err)
+	if !containsSubstring(d.Expected+" "+d.Got, "0000:3c:00.0") {
+		t.Errorf("expected PCI address in deviation expected/got, got: %+v", d)
 	}
 }
 
 func TestValidatePreset_PartNumberDifference_Passes(t *testing.T) {
-	// Part number mismatch should NOT cause validation failure
+	// Part number mismatch should NOT cause a deviation
 	preset := &Topology{
 		PFs: []PresetPF{
 			{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", PartNumber: "DELL-PART-123"},
@@ -624,13 +636,14 @@ func TestValidatePreset_PartNumberDifference_Passes(t *testing.T) {
 		{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", PartNumber: "LENOVO-PART-456"},
 	}
 
-	if err := ValidatePreset(preset, discovered); err != nil {
-		t.Errorf("expected no error for part number difference, got: %v", err)
+	deviations := ValidatePreset(preset, discovered)
+	if len(deviations) != 0 {
+		t.Errorf("part numbers should not produce deviations, got: %v", deviations)
 	}
 }
 
 func TestValidatePreset_PSIDDifference_Passes(t *testing.T) {
-	// PSID mismatch should NOT cause validation failure
+	// PSID mismatch should NOT cause a deviation
 	preset := &Topology{
 		PFs: []PresetPF{
 			{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", PSID: "mt_0000001069"},
@@ -640,8 +653,9 @@ func TestValidatePreset_PSIDDifference_Passes(t *testing.T) {
 		{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", PSID: "mt_0000009999"},
 	}
 
-	if err := ValidatePreset(preset, discovered); err != nil {
-		t.Errorf("expected no error for PSID difference, got: %v", err)
+	deviations := ValidatePreset(preset, discovered)
+	if len(deviations) != 0 {
+		t.Errorf("PSIDs should not produce deviations, got: %v", deviations)
 	}
 }
 
@@ -649,8 +663,9 @@ func TestValidatePreset_EmptyPFs(t *testing.T) {
 	preset := &Topology{PFs: []PresetPF{}}
 	discovered := []config.PFConfig{}
 
-	if err := ValidatePreset(preset, discovered); err != nil {
-		t.Errorf("expected no error for empty PFs, got: %v", err)
+	deviations := ValidatePreset(preset, discovered)
+	if len(deviations) != 0 {
+		t.Errorf("expected no deviations, got: %v", deviations)
 	}
 }
 
@@ -667,13 +682,16 @@ func TestValidatePreset_MultipleMismatches(t *testing.T) {
 		{DeviceID: "1023", PciAddress: "0000:3c:00.0"},
 	}
 
-	err := ValidatePreset(preset, discovered)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	deviations := ValidatePreset(preset, discovered)
+	if len(deviations) != 2 {
+		t.Fatalf("expected 2 device-ID deviations, got %d: %v", len(deviations), deviations)
 	}
-	// Should mention both addresses
-	if !containsSubstring(err.Error(), "0000:1a:00.0") || !containsSubstring(err.Error(), "0000:3c:00.0") {
-		t.Errorf("expected both mismatched addresses in error, got: %v", err)
+	all := ""
+	for _, d := range deviations {
+		all += d.Expected + " " + d.Got + " "
+	}
+	if !containsSubstring(all, "0000:1a:00.0") || !containsSubstring(all, "0000:3c:00.0") {
+		t.Errorf("expected both drifted addresses in deviations, got: %v", deviations)
 	}
 }
 
@@ -898,9 +916,9 @@ func TestApplyPreset_LargePreset_PowerEdgeXE9680(t *testing.T) {
 		}
 	}
 
-	// Validation should pass
-	if err := ValidatePreset(preset, discovered); err != nil {
-		t.Fatalf("validation failed: %v", err)
+	// Validation should pass with no deviations
+	if deviations := ValidatePreset(preset, discovered); len(deviations) != 0 {
+		t.Fatalf("expected no deviations, got: %v", deviations)
 	}
 
 	group := &config.ClusterConfig{

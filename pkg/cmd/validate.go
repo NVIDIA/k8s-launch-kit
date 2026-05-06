@@ -91,12 +91,24 @@ Exits non-zero on any missing manifest or version mismatch.`,
 		// version check to "skipped" but does not fail the manifest check.
 		operatorNamespace := defaultOperatorNamespace
 		selectedRelease := ""
+		var presetDeviations []groupDeviationReport
 		if path := userConfigPath(); path != "" {
 			if cfg, err := config.LoadFullConfig(path, log.Log); err == nil && cfg != nil {
 				if cfg.NetworkOperator.Namespace != "" {
 					operatorNamespace = cfg.NetworkOperator.Namespace
 				}
 				selectedRelease = cfg.NetworkOperator.SelectedRelease
+				for _, g := range cfg.ClusterConfig {
+					if len(g.PresetDeviation) == 0 {
+						continue
+					}
+					presetDeviations = append(presetDeviations, groupDeviationReport{
+						Group:       g.Identifier,
+						MachineType: g.MachineType,
+						GPUType:     g.GPUType,
+						Deviations:  g.PresetDeviation,
+					})
+				}
 			} else if err != nil {
 				log.Log.V(1).Info("user-config not loaded; version check will be skipped",
 					"path", path, "error", err.Error())
@@ -137,7 +149,7 @@ Exits non-zero on any missing manifest or version mismatch.`,
 			), outputFormat)
 		}
 
-		ok := emitValidationReport(versionCheck, results, outputFormat)
+		ok := emitValidationReport(versionCheck, results, presetDeviations, outputFormat)
 		if !ok {
 			os.Exit(apperrors.ExitDeployment)
 		}
@@ -159,9 +171,26 @@ func userConfigPath() string {
 	return path
 }
 
+// groupDeviationReport carries the per-group preset deviations that
+// emitValidationReport surfaces alongside the version + manifest checks.
+// Source: ClusterConfig.PresetDeviation in the user-supplied
+// cluster-config.yaml. The deviations are recorded by `l8k discover` when
+// a matched preset's PFs don't exactly match discovered hardware; validate
+// re-displays them so an operator running against drifted hardware sees
+// the gap every time the deployment is checked.
+type groupDeviationReport struct {
+	Group       string                        `json:"group"`
+	MachineType string                        `json:"machineType,omitempty"`
+	GPUType     string                        `json:"gpuType,omitempty"`
+	Deviations  []config.PresetDeviationEntry `json:"deviations"`
+}
+
 // emitValidationReport prints results in text or JSON; returns true when
 // every manifest is Found and the version check matched (or was skipped).
-func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []networkoperatorplugin.ValidationResult, format string) bool {
+// Preset deviations are surfaced for visibility but do not affect the
+// return value — the deployment can run correctly while diverging from
+// the certified preset.
+func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []networkoperatorplugin.ValidationResult, presetDeviations []groupDeviationReport, format string) bool {
 	missing := 0
 	for _, r := range results {
 		if r.Missing || r.Detail != "" {
@@ -172,12 +201,14 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 
 	if format == "json" {
 		out := map[string]any{
-			"versionCheck": vc,
-			"manifests":    results,
+			"versionCheck":     vc,
+			"manifests":        results,
+			"presetDeviations": presetDeviations,
 			"summary": map[string]any{
-				"totalManifests":  len(results),
+				"totalManifests":   len(results),
 				"missingManifests": missing,
-				"versionMatch":    versionOK,
+				"versionMatch":     versionOK,
+				"deviationGroups":  len(presetDeviations),
 			},
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(out)
@@ -232,9 +263,32 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 		fmt.Println(line)
 	}
 
+	if len(presetDeviations) > 0 {
+		fmt.Println()
+		fmt.Println("Preset deviations (cluster differs from matched preset)")
+		for _, gd := range presetDeviations {
+			label := gd.Group
+			if gd.MachineType != "" || gd.GPUType != "" {
+				label = fmt.Sprintf("%s (%s/%s)", gd.Group, gd.MachineType, gd.GPUType)
+			}
+			fmt.Printf("  %s — %d deviation(s):\n", label, len(gd.Deviations))
+			for _, d := range gd.Deviations {
+				expected := d.Expected
+				if expected == "" {
+					expected = "-"
+				}
+				got := d.Got
+				if got == "" {
+					got = "-"
+				}
+				fmt.Printf("    [%s] expected=%s got=%s — %s\n", d.Field, expected, got, d.Detail)
+			}
+		}
+	}
+
 	fmt.Println()
-	fmt.Printf("Summary: %d manifests, %d missing/error; version: %s\n",
-		len(results), missing, versionStatusText(vc))
+	fmt.Printf("Summary: %d manifests, %d missing/error; version: %s; preset deviations: %d group(s)\n",
+		len(results), missing, versionStatusText(vc), len(presetDeviations))
 	return missing == 0 && versionOK
 }
 

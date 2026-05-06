@@ -153,6 +153,12 @@ type ClusterConfig struct {
 	MachineType          string               `yaml:"machineType,omitempty"`
 	GPUType          string               `yaml:"gpuType,omitempty"`
 	PresetApplied        bool                 `yaml:"presetApplied,omitempty"`
+	// PresetDeviation lists discrepancies between the matched preset and
+	// the cluster's actually-discovered hardware. When non-empty, the
+	// preset was applied (so rail/NUMA topology fields are populated) but
+	// the cluster differs from the certified configuration. l8k re-warns
+	// every time the config is loaded.
+	PresetDeviation []PresetDeviationEntry `yaml:"presetDeviation,omitempty"`
 	Capabilities         *ClusterCapabilities `yaml:"capabilities"`
 	PFs                  []PFConfig           `yaml:"pfs"`
 	WorkerNodes          []string             `yaml:"workerNodes"`
@@ -160,6 +166,16 @@ type ClusterConfig struct {
 	ThirdPartyRDMAModules []string            `yaml:"thirdPartyRDMAModules,omitempty"`
 	StorageModules        []string            `yaml:"storageModules,omitempty"`
 	RailPciAddresses     [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
+}
+
+// PresetDeviationEntry records a single field-level discrepancy between a
+// preset and the cluster's actually-discovered hardware. Field is one of
+// "pciAddress", "deviceID", or "pfCount".
+type PresetDeviationEntry struct {
+	Field    string `yaml:"field"`
+	Expected string `yaml:"expected,omitempty"`
+	Got      string `yaml:"got,omitempty"`
+	Detail   string `yaml:"detail,omitempty"`
 }
 
 type ClusterCapabilities struct {
@@ -230,7 +246,37 @@ func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKubernetesCon
 		"networkOperatorVersion", config.NetworkOperator.Version,
 		"namespace", config.NetworkOperator.Namespace)
 
+	emitPresetDeviationWarnings(&config, logger)
+
 	return &config, nil
+}
+
+// emitPresetDeviationWarnings logs a warning for every group whose config
+// records preset deviations. Designed to fire on every load — operators
+// running against hardware that differs from the matched preset are
+// reminded each run.
+func emitPresetDeviationWarnings(cfg *LaunchKubernetesConfig, logger logr.Logger) {
+	for _, g := range cfg.ClusterConfig {
+		if len(g.PresetDeviation) == 0 {
+			continue
+		}
+		logger.Info(
+			"WARNING: cluster differs from the matched preset — manifests are still produced, but the deployment is not certified",
+			"group", g.Identifier,
+			"machineType", g.MachineType,
+			"gpuType", g.GPUType,
+			"deviationCount", len(g.PresetDeviation),
+		)
+		for _, d := range g.PresetDeviation {
+			logger.Info("  preset deviation",
+				"group", g.Identifier,
+				"field", d.Field,
+				"expected", d.Expected,
+				"got", d.Got,
+				"detail", d.Detail,
+			)
+		}
+	}
 }
 
 // ValidateClusterConfig validates that essential fields are present in the cluster config
