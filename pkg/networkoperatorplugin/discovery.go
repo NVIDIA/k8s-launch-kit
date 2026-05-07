@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -280,6 +281,14 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			// Failures are non-fatal; when nvidia-smi is absent, today's
 			// part-number classification continues to govern.
 			discoverGPUTopology(ctx, p.RESTConfig,
+				defaultConfig.NetworkOperator.Namespace, group, dsPods)
+
+			// Probe per-PF fabric type from active port state + subnet
+			// manager presence (more reliable than firmware link_layer
+			// alone). Populates PFConfig.LinkType / LinkTypeSource. Used by
+			// the declarative defaults in `l8k generate` (Unit 8) to fill
+			// `--fabric` from the discovered group.
+			discoverGroupFabric(ctx, p.RESTConfig,
 				defaultConfig.NetworkOperator.Namespace, group, dsPods)
 
 			// Try to enrich with a predefined topology preset for this (machine,
@@ -1242,6 +1251,185 @@ func truncateForLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "…"
+}
+
+// discoverGroupFabric probes the InfiniBand sysfs entries on a representative
+// daemon pod for every east-west PF in `group` that has an RdmaDevice and,
+// when the per-port verdicts unanimously agree on a confirmed value, sets
+// `group.LinkType`. Otherwise the field is left empty — discovery couldn't
+// prove the cluster is using a specific fabric, and downstream code treats
+// absence as "unknown".
+//
+// "Confirmed" means the port is ACTIVE and (for InfiniBand) a subnet
+// manager is present (sm_lid != 0). Anything else — port down, IB without
+// SM, malformed sysfs output — yields no contribution to the group's
+// verdict. Reading link_layer alone would be unreliable: that file just
+// reflects firmware config and may be a default the cluster doesn't use.
+//
+// Multi-node groups whose RdmaDevice is empty (per the existing
+// per-node-vs-group safety rule) skip the probe — there's no ibdev name
+// to point sysfs at — but other PFs in the group can still contribute.
+func discoverGroupFabric(ctx context.Context, restConfig *rest.Config,
+	namespace string, group *config.ClusterConfig, dsPods []corev1.Pod) {
+
+	if restConfig == nil {
+		return
+	}
+	targetPod := findDaemonPod(group.WorkerNodes, dsPods)
+	if targetPod == nil {
+		log.Log.V(1).Info("Skipping fabric probe: no daemon pod on group nodes",
+			"group", group.Identifier)
+		return
+	}
+	containerName := ""
+	if len(targetPod.Spec.Containers) > 0 {
+		containerName = targetPod.Spec.Containers[0].Name
+	}
+
+	verdicts := map[string]int{} // confirmed linkType -> count
+	probed := 0
+	for _, pf := range group.PFs {
+		if pf.Traffic != "east-west" || pf.RdmaDevice == "" {
+			continue
+		}
+		probed++
+		linkType, raw, err := discoverPortFabric(ctx, restConfig, namespace,
+			targetPod.Name, containerName, pf.RdmaDevice, 1)
+		if err != nil {
+			log.Log.V(1).Info("Fabric probe failed",
+				"group", group.Identifier,
+				"pod", targetPod.Name,
+				"pci", pf.PciAddress,
+				"rdmaDevice", pf.RdmaDevice,
+				"error", err.Error())
+			continue
+		}
+		log.Log.V(1).Info("Fabric port probe",
+			"group", group.Identifier,
+			"pod", targetPod.Name,
+			"pci", pf.PciAddress,
+			"rdmaDevice", pf.RdmaDevice,
+			"linkType", linkType,
+			"raw", raw)
+		if linkType != "" {
+			verdicts[linkType]++
+		}
+	}
+
+	switch {
+	case len(verdicts) == 1:
+		for k := range verdicts {
+			group.LinkType = k
+			log.Log.V(1).Info("Group fabric resolved",
+				"group", group.Identifier,
+				"linkType", k,
+				"probedPFs", probed,
+				"confirmedPFs", verdicts[k])
+		}
+	case len(verdicts) > 1:
+		log.Log.V(1).Info("Group fabric ambiguous (probes disagree); leaving linkType unset",
+			"group", group.Identifier,
+			"probedPFs", probed,
+			"verdicts", verdicts)
+	default:
+		log.Log.V(1).Info("Group fabric unconfirmed (no port produced a confirmed verdict); leaving linkType unset",
+			"group", group.Identifier,
+			"probedPFs", probed)
+	}
+}
+
+// discoverPortFabric reads
+// /sys/class/infiniband/<rdmaDevice>/ports/<port>/{state,phys_state,link_layer,sm_lid}
+// inside the daemon pod via a single shell exec and returns the confirmed
+// fabric for that port (empty when the port could not produce a confirmed
+// verdict). rawSummary is a short human-readable joined version of the
+// four sysfs values for debug logs.
+func discoverPortFabric(ctx context.Context, restConfig *rest.Config,
+	namespace, podName, containerName, rdmaDevice string, port int) (string, string, error) {
+
+	base := fmt.Sprintf("/sys/class/infiniband/%s/ports/%d", rdmaDevice, port)
+	cmd := fmt.Sprintf(
+		"echo state=$(cat %s/state 2>/dev/null); "+
+			"echo phys_state=$(cat %s/phys_state 2>/dev/null); "+
+			"echo link_layer=$(cat %s/link_layer 2>/dev/null); "+
+			"echo sm_lid=$(cat %s/sm_lid 2>/dev/null)",
+		base, base, base, base)
+	output, err := execInPod(ctx, restConfig, namespace, podName, containerName,
+		[]string{"/bin/sh", "-c", cmd})
+	if err != nil {
+		return "", "", err
+	}
+	linkType, raw := parsePortFabricVerdict(output)
+	return linkType, raw, nil
+}
+
+// parsePortFabricVerdict converts the four-line "key=value" output of the
+// sysfs probe into a confirmed fabric verdict (or empty when no
+// confirmation is possible).
+//
+// Confirmation rule:
+//   - Active + InfiniBand + sm_lid != 0  → "InfiniBand".
+//   - Active + Ethernet                  → "Ethernet".
+//   - Anything else                      → "" (no confirmation; caller
+//     leaves group.LinkType unset).
+//
+// Active means the state file matches "ACTIVE" (case-insensitive); the
+// kernel formats it as "4: ACTIVE", "1: DOWN", etc.
+func parsePortFabricVerdict(output string) (linkType, raw string) {
+	fields := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
+		eq := strings.IndexByte(line, '=')
+		if eq < 0 {
+			continue
+		}
+		fields[strings.TrimSpace(line[:eq])] = strings.TrimSpace(line[eq+1:])
+	}
+	state := fields["state"]
+	linkLayer := normalizeLinkLayer(fields["link_layer"])
+	smLid := fields["sm_lid"]
+
+	raw = fmt.Sprintf("state=%q phys_state=%q link_layer=%q sm_lid=%q",
+		state, fields["phys_state"], fields["link_layer"], smLid)
+
+	active := strings.Contains(strings.ToUpper(state), "ACTIVE")
+	hasSM := smLidIsNonZero(smLid)
+
+	switch {
+	case active && linkLayer == "InfiniBand" && hasSM:
+		return "InfiniBand", raw
+	case active && linkLayer == "Ethernet":
+		return "Ethernet", raw
+	default:
+		return "", raw
+	}
+}
+
+// smLidIsNonZero parses a sysfs `sm_lid` value (e.g. "0", "0x0", "0x0000",
+// "0x0001") as an unsigned integer and returns true when the value is
+// strictly greater than zero. Kernel versions disagree on the format —
+// some emit decimal, some emit hex — so we accept both via auto-base
+// (base=0 in strconv.ParseUint).
+func smLidIsNonZero(s string) bool {
+	v, err := strconv.ParseUint(strings.TrimSpace(s), 0, 32)
+	if err != nil {
+		return false
+	}
+	return v != 0
+}
+
+// normalizeLinkLayer canonicalises sysfs link_layer strings to the YAML
+// vocabulary l8k uses elsewhere ("Ethernet" / "InfiniBand"). The kernel
+// emits "Ethernet" and "InfiniBand" already, but accept common variants
+// (case differences, whitespace) to avoid silent misclassification.
+func normalizeLinkLayer(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "ethernet":
+		return "Ethernet"
+	case "infiniband":
+		return "InfiniBand"
+	default:
+		return ""
+	}
 }
 
 // sysfsNvidiaGPUIDCmd emits the first NVIDIA (vendor 10de) GPU device ID found

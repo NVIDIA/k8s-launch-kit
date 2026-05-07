@@ -1407,3 +1407,20 @@ func TestVersionEQ(t *testing.T) {
 		assert.Equalf(t, c.want, got, "versionEQ(%q, %q)", c.have, c.target)
 	}
 }
+
+// --- groupFabric tests ---
+
+func TestGroupFabric_Set(t *testing.T) {
+	g := config.ClusterConfig{LinkType: "Ethernet"}
+	verdict, ok := groupFabric(g)
+	assert.True(t, ok)
+	assert.Equal(t, "Ethernet", verdict)
+}
+
+func TestGroupFabric_Unset(t *testing.T) {
+	// When discovery couldn't confirm a fabric, group.LinkType is empty.
+	g := config.ClusterConfig{}
+	verdict, ok := groupFabric(g)
+	assert.False(t, ok)
+	assert.Equal(t, "", verdict)
+}

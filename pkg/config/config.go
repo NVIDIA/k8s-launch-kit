@@ -152,6 +152,13 @@ type ClusterConfig struct {
 	Identifier           string               `yaml:"identifier"`
 	MachineType          string               `yaml:"machineType,omitempty"`
 	GPUType          string               `yaml:"gpuType,omitempty"`
+	// LinkType is the fabric type discovered for the group's east-west PFs:
+	// "Ethernet" or "InfiniBand". Set only when *every* east-west PF probe
+	// returns a confirmed verdict (port ACTIVE + matching link_layer + for
+	// IB, a non-zero sm_lid) and the verdicts agree. Otherwise omitted —
+	// the discovery couldn't prove the cluster is using a specific fabric,
+	// and downstream code should treat the field's absence as "unknown".
+	LinkType             string               `yaml:"linkType,omitempty"`
 	PresetApplied        bool                 `yaml:"presetApplied,omitempty"`
 	// PresetDeviation lists discrepancies between the matched preset and
 	// the cluster's actually-discovered hardware. When non-empty, the

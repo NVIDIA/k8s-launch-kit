@@ -671,6 +671,19 @@ func filterEastWestPFs(pfs []config.PFConfig) []config.PFConfig {
 	return filtered
 }
 
+// groupFabric returns the discovered fabric ("Ethernet" or "InfiniBand")
+// for a group, plus a bool indicating whether the field is set. Reads
+// directly from `group.LinkType`, which `discoverGroupFabric` populates
+// only when every east-west port produced a confirmed and unanimous
+// verdict — when the field is empty, discovery couldn't prove the
+// cluster's fabric and downstream code should treat it as unknown.
+//
+// Used by Unit 8's declarative defaults to fill `--fabric` when the user
+// doesn't supply it.
+func groupFabric(group config.ClusterConfig) (string, bool) {
+	return group.LinkType, group.LinkType != ""
+}
+
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
 func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKubernetesConfig) (map[string]string, error) {
 	// Keep the unmerged config as a fallback for NicInterfaceNameTemplate when
