@@ -38,10 +38,18 @@ type Options struct {
 	ImagePullSecrets        []string // Image pull secret names for NicClusterPolicy
 
 	// Phase 2: Deployment Generation
-	Fabric              string // Fabric type to deploy
-	DeploymentType      string // Deployment type to deploy
-	Multirail           bool   // Whether to deploy with multirail
-	SpectrumX           bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
+	Fabric         string // Fabric type to deploy
+	DeploymentType string // Deployment type to deploy
+	Multirail      bool   // Whether to deploy with multirail
+	// MultirailSet is true when the user explicitly passed `--multirail`
+	// (regardless of value). Without it, the bool zero value can't be
+	// distinguished from "not passed", which matters once
+	// `pkg/resolve.ApplyHardwareDefaults` defaults Multirail to true:
+	// `ApplyOptionsToConfig` only overrides the HW default when
+	// MultirailSet is true, so a user passing `--multirail=false`
+	// correctly opts out.
+	MultirailSet bool
+	SpectrumX    bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
 	SPCXVersion         string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
 	MultiplaneMode      string // Spectrum-X multiplane mode (default: swplb)
 	NumberOfPlanes      int    // Number of planes for Spectrum-X (default: 4)

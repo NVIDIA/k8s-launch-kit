@@ -165,8 +165,13 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 	if options.DeploymentType != "" {
 		fullConfig.Profile.Deployment = options.DeploymentType
 	}
-	if options.Multirail {
-		fullConfig.Profile.Multirail = true
+	// `MultirailSet` is true only when the user explicitly passed
+	// `--multirail` (regardless of value). Without it, the bool zero
+	// value can't be distinguished from "not passed", so a user who
+	// did NOT pass the flag would clobber the hardware default of
+	// true with `false`. See `pkg/options.Options.MultirailSet`.
+	if options.MultirailSet {
+		fullConfig.Profile.Multirail = options.Multirail
 	}
 
 	// Apply workload manifest override from CLI

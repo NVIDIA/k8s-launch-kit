@@ -24,12 +24,12 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> \
 
 | Flag | Required | Values | Description |
 |------|----------|--------|-------------|
-| `--fabric` | Yes* | `ethernet`, `infiniband` | Network fabric type |
-| `--deployment-type` | Yes* | `sriov`, `rdma_shared`, `host_device` | Deployment type |
-| `--spectrum-x` | — | `RA2.1`, `RA2.2` | Enable Spectrum-X profile by passing the SPC-X RA version (replaces `--fabric` + `--deployment-type`; also folds in the legacy `--spcx-version`) |
-| `--multiplane-mode` | Required with `--spectrum-x` | `none`, `swplb`, `hwplb`, `uniplane` | Multiplane mode |
-| `--number-of-planes` | Required with `--spectrum-x` | `1`, `2`, `4` | Number of planes |
-| `--multirail` | — | — | Enable multirail mode |
+| `--fabric` | Auto-defaulted | `ethernet`, `infiniband` | Network fabric. Auto-defaults from the cluster's unanimous `linkType` when omitted (Unit 5 fabric probe); skipped+warned when groups disagree or any has unverified linkType. |
+| `--deployment-type` | Auto-defaulted | `sriov`, `rdma_shared`, `host_device` | Deployment type. Auto-defaults to `sriov`. |
+| `--spectrum-x` | — | `RA2.1`, `RA2.2` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
+| `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb`, `uniplane` | Auto-defaults from east-west PF deviceID: CX7 / BF3 SuperNIC → `uniplane`, CX8 → `swplb`, CX9 → `hwplb`. Skipped+warned when groups have mixed deviceIDs. |
+| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4` | Auto-defaults from deviceID: CX7 / BF3 → 1, CX8 → 2, CX9 → 4. |
+| `--multirail` | Auto-defaulted | — | Auto-defaults to `true`. Opt out with `--multirail=false` — YAML cannot express explicit-false (a bool zero in config is indistinguishable from "not set"). |
 | `--save-deployment-files` | Yes | — | Output directory for generated YAMLs |
 | `--groups` | — | `dgx-b200-nvidia-h100-nvl,poweredge-xe9680-nvidia-h200` | Restrict output to the named source groups (comma-separated). Mutually exclusive with `--gpu-type`. |
 | `--gpu-type` | — | `NVIDIA-H200` | Restrict output to source groups whose `gpuType` matches (case-insensitive). Mutually exclusive with `--groups`. |

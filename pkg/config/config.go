@@ -19,6 +19,7 @@ package config
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"net"
 	"os"
@@ -46,29 +47,50 @@ const GPULabelKey = "nvidia.kubernetes-launch-kit.gpu"
 // MaxLabelValueLength is the Kubernetes hard limit for label values.
 const MaxLabelValueLength = 63
 
-// MachineLabelValue returns the raw `<machineType>-<gpuType>` label value
-// for the MachineLabelKey, or an empty string if either input is empty
-// or the concatenation would exceed Kubernetes' 63-char label-value
-// limit. Caller logs the skip.
+// MachineLabelValue returns the per-source-group machine label value:
+// `<machineType>-<gpuType>` literal when it fits Kubernetes' 63-char
+// label-value limit, or a deterministic shortened form for long names
+// (truncated prefix + 8-hex FNV-32a suffix). Returns the empty string
+// only when either input is empty.
+//
+// The shortened form looks like
+// `HPE-ProLiant-Compute-DL380a-Gen12-NVIDIA-RTX-PRO-6000-B-7c4d8e91`
+// and is reproducible: identical inputs always produce the same
+// value, so the label discover writes onto nodes always matches what
+// `MachineLabelValue` returns at filter time.
 func MachineLabelValue(machineType, gpuType string) string {
 	if machineType == "" || gpuType == "" {
 		return ""
 	}
-	v := machineType + "-" + gpuType
-	if len(v) > MaxLabelValueLength {
-		return ""
+	raw := machineType + "-" + gpuType
+	if len(raw) <= MaxLabelValueLength {
+		return raw
 	}
-	return v
+	// 63-char budget = prefix + "-" + 8-hex hash. 8 hex digits + dash = 9.
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(raw))
+	suffix := fmt.Sprintf("-%08x", h.Sum32())
+	prefixBudget := MaxLabelValueLength - len(suffix)
+	prefix := strings.TrimRight(raw[:prefixBudget], "-_.")
+	return prefix + suffix
 }
 
-// GPULabelValue returns the raw `<gpuType>` label value for the
-// GPULabelKey, or an empty string if input is empty or exceeds the
-// 63-char limit. Caller logs the skip.
+// GPULabelValue returns the gpu label value, applying the same
+// truncate-with-hash rule as `MachineLabelValue` for long gpuType
+// strings. Returns "" only when input is empty.
 func GPULabelValue(gpuType string) string {
-	if gpuType == "" || len(gpuType) > MaxLabelValueLength {
+	if gpuType == "" {
 		return ""
 	}
-	return gpuType
+	if len(gpuType) <= MaxLabelValueLength {
+		return gpuType
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(gpuType))
+	suffix := fmt.Sprintf("-%08x", h.Sum32())
+	prefixBudget := MaxLabelValueLength - len(suffix)
+	prefix := strings.TrimRight(gpuType[:prefixBudget], "-_.")
+	return prefix + suffix
 }
 
 // LaunchKubernetesConfig represents the l8k-config.yaml structure
@@ -399,6 +421,32 @@ var SupportedMultiplaneModes = []string{"none", "swplb", "hwplb", "uniplane"}
 
 // SupportedNumberOfPlanes lists the values numberOfPlanes can take.
 var SupportedNumberOfPlanes = []int{1, 2, 4}
+
+// SPCXVersionAllowedReleases is the authoritative mapping from SPC-X RA
+// version to the Network Operator releases that ship that version's CRD
+// set. When a future release line picks up an existing RA version (e.g.
+// 27.0 continues to ship the v1alpha2 SpectrumXRailPoolConfig), append
+// it to the matching slice. When a future RA version arrives, add a
+// new key. Lives in pkg/config because it's shared between Phase 1
+// syntax checks (pkg/cmd) and Phase 2 cohort validation +
+// hardware-defaulting (pkg/resolve).
+var SPCXVersionAllowedReleases = map[string][]string{
+	"RA2.1": {"26.1"},
+	"RA2.2": {"26.4"},
+}
+
+// DefaultSPCXReleaseFor returns the canonical (first-listed) Network
+// Operator release for an SPC-X RA version, or "" when the RA is not
+// registered. Used by `pkg/resolve.ApplyHardwareDefaults` to fill
+// `--network-operator-release` when the user passes `--spectrum-x`
+// without an explicit release.
+func DefaultSPCXReleaseFor(ra string) string {
+	releases, ok := SPCXVersionAllowedReleases[ra]
+	if !ok || len(releases) == 0 {
+		return ""
+	}
+	return releases[0]
+}
 
 // validateSpectrumXTemplates validates that Spectrum-X templates have required placeholders
 func validateSpectrumXTemplates(config *LaunchKubernetesConfig) error {

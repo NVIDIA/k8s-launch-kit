@@ -61,21 +61,30 @@ func planRender(originalGroups, filteredGroups []config.ClusterConfig, useNameTe
 		originalSources := originalByKey[key]
 		modeB := !sourceIdentitySetEqual(filteredSources, originalSources)
 
-		merged, hadConflict := buildBucketMerged(filteredSources, useNameTemplates)
+		merged, hadConflict := buildBucketMerged(filteredSources)
 		merged.MergedIdentifier = merged.Identifier
 		if modeB {
-			// Derive each source's machine label from (machineType,
-			// gpuType) — this matches what `l8k discover` writes onto
-			// nodes via `applyMachineLabelToGroups`. Reading from
-			// `src.NodeSelector[MachineLabelKey]` would miss legacy
-			// configs where the differential nodeSelector hasn't been
-			// rewritten. When either input is empty,
-			// `MachineLabelValue` returns "" and the source contributes
-			// no label — empty `SourceMachineLabels` falls back to the
-			// merged group's NodeSelector in templates.
+			// Read each source's machine label from
+			// `src.NodeSelector[MachineLabelKey]` — that's the
+			// authoritative value discover wrote to both the node and
+			// to cluster-config.yaml. Per-source NodePolicies render
+			// from the same `src.NodeSelector` (flat-map), so reading
+			// from there here keeps the aggregate IPPool's `In` list
+			// in lockstep with the per-source NodePolicy selectors.
+			//
+			// Falls back to `MachineLabelValue(machineType, gpuType)`
+			// when the source has no machine label set (legacy configs
+			// from before Unit 6, or groups whose machineType/gpuType
+			// resolution failed at discover time). Empty means the
+			// source contributes no label and the merged group's
+			// NodeSelector path takes over in templates.
 			labels := make([]string, 0, len(filteredSources))
 			for _, src := range filteredSources {
-				if label := config.MachineLabelValue(src.MachineType, src.GPUType); label != "" {
+				label := src.NodeSelector[config.MachineLabelKey]
+				if label == "" {
+					label = config.MachineLabelValue(src.MachineType, src.GPUType)
+				}
+				if label != "" {
 					labels = append(labels, label)
 				}
 			}
@@ -176,8 +185,14 @@ func sourceIdentitySetEqual(a, b []config.ClusterConfig) bool {
 // per-bucket branch, but always produces a single merged ClusterConfig
 // for the bucket regardless of source count. For a single-source
 // bucket, the source group itself becomes the "merged" group (with no
-// rail-PCI aggregation needed).
-func buildBucketMerged(sources []config.ClusterConfig, useNameTemplates bool) (config.ClusterConfig, bool) {
+// rail-PCI aggregation needed). The bool return signals whether the
+// bucket has cross-rail PCI conflicts; the caller (`planRender`) uses
+// it to gate NicInterfaceNameTemplate rendering. Even when conflicts
+// + name-templates-disabled would prevent a clean merge, we still
+// build a merged record so MergedIdentifier exists for shared-resource
+// references — the SimpleSelect renderer falls back to per-source via
+// Mode B in that case anyway.
+func buildBucketMerged(sources []config.ClusterConfig) (config.ClusterConfig, bool) {
 	if len(sources) == 0 {
 		return config.ClusterConfig{}, false
 	}
@@ -190,15 +205,6 @@ func buildBucketMerged(sources []config.ClusterConfig, useNameTemplates bool) (c
 		indices[i] = i
 	}
 	hadConflict := hasRailPciConflict(sources, indices)
-	if hadConflict && !useNameTemplates {
-		// PCI conflict + no name-template support → can't merge into a
-		// single render group. Caller should treat this bucket as
-		// per-source by returning the first source as the merged
-		// representative AND signalling the conflict; ScopeSimpleSelect
-		// rendering will fan out to per-source via ModeB anyway.
-		// We still synthesize a merged record so MergedIdentifier
-		// exists — it just won't be used by the ScopeSimple path.
-	}
 	merged := buildMergedGroup(sources, indices)
 	return merged, hadConflict
 }

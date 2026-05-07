@@ -23,6 +23,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,11 +93,15 @@ var (
 	}
 )
 
-// resolveProfile simulates the full CLI→config→validate chain:
-// 1. applySpectrumXDefaults on CLI options
-// 2. Build or use config profile
-// 3. ApplyOptionsToConfig to merge CLI overrides
-// 4. Validate against a target profile definition
+// resolveProfile simulates the full Unit-8 CLI→config→validate chain:
+// 1. Phase 1 syntax checks on CLI options.
+// 2. Build cfg with config profile (or empty when no source).
+// 3. ApplyHardwareDefaults — fills empty profile fields from cluster
+//    hardware (always-on defaults + Spectrum-X-implied defaults).
+// 4. ApplyOptionsToConfig — CLI overlay; non-zero CLI values override
+//    HW defaults; bool override gated by MultirailSet.
+// 5. Phase 2 cohort validation.
+// 6. Validate against the target profile definition.
 func resolveProfile(
 	t *testing.T,
 	opts options.Options,
@@ -106,35 +111,36 @@ func resolveProfile(
 ) (bool, string) {
 	t.Helper()
 
-	// Step 1: Apply spectrum-x defaults to CLI options
-	err := applySpectrumXDefaults(&opts)
+	// Step 1: Phase 1 syntax checks
+	err := applySpectrumXSyntaxChecks(&opts)
 	require.NoError(t, err)
 
 	plugin := &networkoperatorplugin.NetworkOperatorPlugin{}
 
-	// Step 2: Build profile from config or CLI
+	// Step 2: Build cfg with config-file profile
 	fullConfig := &config.LaunchKubernetesConfig{}
 	if configProfile != nil {
-		// Simulate: config file had a profile section
 		profileCopy := *configProfile
 		if configProfile.SpectrumX != nil {
 			sxCopy := *configProfile.SpectrumX
 			profileCopy.SpectrumX = &sxCopy
 		}
 		fullConfig.Profile = &profileCopy
-	} else if plugin.ProfileConfiguredInCmd(opts) {
-		// Simulate: no config profile, build from CLI flags
-		fullConfig.Profile = &config.Profile{}
-		err := plugin.BuildProfileFromOptions(opts, fullConfig.Profile)
-		require.NoError(t, err)
 	} else {
-		// No profile source at all — validate with empty profile
 		fullConfig.Profile = &config.Profile{}
 	}
 
-	// Step 3: Apply CLI overrides on top of config
+	// Step 3: Hardware defaults fill empty profile fields.
+	resolve.ApplyHardwareDefaults(fullConfig, opts)
+
+	// Step 4: Apply CLI overrides on top of config + hardware defaults.
 	err = plugin.ApplyOptionsToConfig(opts, fullConfig)
 	require.NoError(t, err)
+
+	// Step 5: Phase 2 cohort validation.
+	if err := resolve.ValidateResolvedConfig(fullConfig); err != nil {
+		return false, err.Error()
+	}
 
 	// Step 4: Validate against the target profile definition
 	selectedRelease := ""
@@ -245,13 +251,23 @@ func TestConfigOnlyProfileResolution(t *testing.T) {
 		assert.True(t, valid, "should match sriov-ethernet-rdma; reason: %s", reason)
 	})
 
-	t.Run("config with multirail false does not match multirail-required profile", func(t *testing.T) {
+	t.Run("config with explicit CLI --multirail=false rejects multirail-required profile", func(t *testing.T) {
+		// Unit 8: YAML cannot express "explicit multirail: false" — the
+		// bool zero value is indistinguishable from "not set", so
+		// `ApplyHardwareDefaults` flips it to true. To express explicit
+		// false, the user must pass `--multirail=false` on the CLI,
+		// which sets `Options.MultirailSet=true` and prevents the
+		// default from firing.
 		cfgProfile := &config.Profile{
 			Fabric:     "ethernet",
 			Deployment: "sriov",
 			Multirail:  false,
 		}
-		valid, reason := resolveProfile(t, options.Options{}, cfgProfile, spectrumXProfile, defaultCapabilities)
+		opts := options.Options{
+			Multirail:    false,
+			MultirailSet: true,
+		}
+		valid, reason := resolveProfile(t, opts, cfgProfile, spectrumXProfile, defaultCapabilities)
 		assert.False(t, valid)
 		assert.Contains(t, reason, "multirail")
 	})
@@ -390,7 +406,11 @@ func TestMissingInvalidParams(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid --spectrum-x value")
 	})
 
-	t.Run("config multirail false fails multirail-required profile", func(t *testing.T) {
+	t.Run("explicit CLI --multirail=false fails multirail-required profile", func(t *testing.T) {
+		// See note in `TestConfigOnlyProfileResolution`: YAML cannot
+		// express "explicit multirail: false". To opt out of the
+		// always-on multirail default, the user must pass
+		// `--multirail=false` on the CLI (which sets `MultirailSet`).
 		cfgProfile := &config.Profile{
 			Fabric:     "ethernet",
 			Deployment: "sriov",
@@ -402,8 +422,12 @@ func TestMissingInvalidParams(t *testing.T) {
 				NumberOfPlanes: 2,
 			},
 		}
-		// No CLI flags to override multirail
-		valid, reason := resolveProfile(t, options.Options{}, cfgProfile, spectrumXProfile, defaultCapabilities)
+		opts := options.Options{
+			Multirail:              false,
+			MultirailSet:           true,
+			NetworkOperatorRelease: "26.4",
+		}
+		valid, reason := resolveProfile(t, opts, cfgProfile, spectrumXProfile, defaultCapabilities)
 		assert.False(t, valid)
 		assert.Contains(t, reason, "multirail")
 	})

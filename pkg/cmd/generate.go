@@ -99,11 +99,12 @@ Optionally deploy the generated manifests with --deploy.`,
 		}
 
 		opts := options.Options{
-			UserConfig:              userConfig,
-			Fabric:                  fabric,
-			DeploymentType:          deploymentType,
-			Multirail:               multirail,
-			SpectrumX:               spectrumXVersion != "",
+			UserConfig:     userConfig,
+			Fabric:         fabric,
+			DeploymentType: deploymentType,
+			Multirail:      multirail,
+			MultirailSet:   cmd.Flag("multirail").Changed,
+			SpectrumX:      spectrumXVersion != "",
 			SPCXVersion:             spectrumXVersion,
 			MultiplaneMode:          multiplaneMode,
 			NumberOfPlanes:          numberOfPlanes,
@@ -131,7 +132,7 @@ Optionally deploy the generated manifests with --deploy.`,
 			opts.EnableDocaDriver = &enableDocaDriver
 		}
 
-		if err := applySpectrumXDefaults(&opts); err != nil {
+		if err := applySpectrumXSyntaxChecks(&opts); err != nil {
 			exitWithError(apperrors.NewValidationError(err.Error(), err, "Check --spectrum-x flag combinations"), opts.OutputFormat)
 		}
 

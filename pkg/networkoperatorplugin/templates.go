@@ -334,22 +334,6 @@ func pfsPerNic(pfs []config.PFConfig) int {
 	return len(ewPFs) / len(nicDevices)
 }
 
-// mergedGroupsAgreeOnPci returns true when every group either (a) did not come
-// from a merge (RailPciAddresses nil) or (b) came from a merge where all source
-// groups agreed on the PCI address at each rail. When this is true it is safe
-// to render per-machine-type resources (e.g. NicInterfaceNameTemplate) against
-// the merged config without losing any source group's PCI addresses.
-func mergedGroupsAgreeOnPci(groups []config.ClusterConfig) bool {
-	for _, g := range groups {
-		for _, railAddrs := range g.RailPciAddresses {
-			if len(railAddrs) > 1 {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // railPciGroups returns NicInterfaceNameTemplate.railPciAddresses as one
 // inner list per rail, where each inner list is the master PFs (function 0,
 // or the lowest-function PF if .0 is missing) of the unique NICs assigned

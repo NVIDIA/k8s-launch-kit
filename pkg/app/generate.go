@@ -26,6 +26,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 )
 
 // executeGeneration handles the profile selection and manifest generation phase.
@@ -67,39 +68,19 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		}
 	}
 
-	profileInConfig := fullConfig.Profile != nil
-	if !profilesConfiguredInCmd && !profileInConfig {
-		// When the loaded cfg has discovered groups, the user almost
-		// always intends to generate something — surface this as a
-		// validation error rather than silently exiting 0 with a
-		// misleading "workflow completed" banner.
-		if len(fullConfig.ClusterConfig) > 0 {
-			return apperrors.NewValidationError(
-				"no profile selected: nothing to render against the discovered cluster config",
-				nil,
-				"Pass --fabric <ethernet|infiniband> + --deployment-type <sriov|host_device|rdma_shared> (and --multirail for multi-rail clusters), or --spectrum-x <RA2.1|RA2.2> for Spectrum-X. See `l8k generate --help`.",
-			)
-		}
-		l.ui.Info("Profiles not configured, skipping deployment file generation")
-		l.logger.Info("Profiles are not configured for every plugin, skipping deployment files generation")
-		return nil
+	// Phase 1.5: hardware-derived defaults. Fills empty profile fields
+	// from cluster hardware (linkType, east-west PF deviceID, etc.) so
+	// the user can run `l8k generate` against a discovered config
+	// without repeating obvious flags. CLI overlay (next) overrides
+	// these; config-file values were already loaded into cfg.Profile by
+	// LoadFullConfig and are preserved.
+	decisions := resolve.ApplyHardwareDefaults(fullConfig, l.options)
+	for _, d := range decisions {
+		l.ui.Info("%s", d.String())
+		l.logger.Info("Applied hardware default", "flag", d.Flag, "value", d.Value, "reason", d.Reason)
 	}
 
-	if fullConfig.Profile == nil {
-		fullConfig.Profile = &config.Profile{}
-
-		if profilesConfiguredInCmd {
-			for _, plugin := range l.plugins {
-				if err := plugin.BuildProfileFromOptions(l.options, fullConfig.Profile); err != nil {
-					return fmt.Errorf("failed to build profile for plugin %s: %w", plugin.GetName(), err)
-				}
-			}
-		} else {
-			return fmt.Errorf("no profile configured: provide --fabric/--deployment-type or a profile in --user-config")
-		}
-	}
-
-	// Apply CLI options to override config values
+	// Apply CLI options to override config values + hardware defaults.
 	for _, plugin := range l.plugins {
 		if applier, ok := plugin.(interface {
 			ApplyOptionsToConfig(options.Options, *config.LaunchKubernetesConfig) error
@@ -108,6 +89,35 @@ func (l *Launcher) executeGeneration(configPath string) error {
 				return fmt.Errorf("failed to apply options to config for plugin %s: %w", plugin.GetName(), err)
 			}
 		}
+	}
+
+	// Sufficiency: if defaults + CLI couldn't produce a Fabric, we
+	// have nothing to render. This is the legacy "no profile
+	// configured" path under the new defaults-aware flow — Fabric
+	// is the one field that defaults can fail to fill (depends on
+	// Unit 5's per-port linkType probe being unanimous; if any port
+	// is unverified, defaults skip). Deployment + Multirail always
+	// default.
+	if fullConfig.Profile == nil || fullConfig.Profile.Fabric == "" {
+		if !profilesConfiguredInCmd && len(fullConfig.ClusterConfig) == 0 {
+			l.ui.Info("Profiles not configured, skipping deployment file generation")
+			l.logger.Info("Profiles are not configured for every plugin, skipping deployment files generation")
+			return nil
+		}
+		return apperrors.NewValidationError(
+			"no fabric resolved: hardware defaulting couldn't pick a fabric (groups disagree on linkType, or fabric probe couldn't verify)",
+			nil,
+			"Pass --fabric <ethernet|infiniband> explicitly, or run `l8k discover` again so per-port linkType probes can produce a confirmed verdict.",
+		)
+	}
+
+	// Phase 2 cohort validation — runs against the fully-resolved cfg
+	// so cross-flag rules ("--spectrum-x requires fabric=ethernet",
+	// "RA2.1 requires --network-operator-release 26.1", etc.) see
+	// values that defaults filled, not just user-supplied ones.
+	if err := resolve.ValidateResolvedConfig(fullConfig); err != nil {
+		return apperrors.NewValidationError(err.Error(), nil,
+			"Adjust the conflicting flags or fields in cluster-config.yaml.")
 	}
 
 	// --for: replace clusterConfig with a synthesized group from a preset.
