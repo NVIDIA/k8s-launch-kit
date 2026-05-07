@@ -686,90 +686,70 @@ func groupFabric(group config.ClusterConfig) (string, bool) {
 
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
 func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKubernetesConfig) (map[string]string, error) {
-	// Keep the unmerged config as a fallback for NicInterfaceNameTemplate when
-	// merged source groups disagree on east-west PCI addresses — per-group
-	// rendering preserves each machine's own PCI list in that case.
-	unmrgCfg := cfg
-
-	// Merge compatible groups when multiple groups exist and no --group filter is set.
-	// Spectrum-X participates in merging now that rail selection is by stable netdev
-	// name (SpectrumXRailPoolConfig + NicInterfaceNameTemplate) rather than PCI address.
-	useNameTemplates := cfg.NicConfigurationOperator != nil &&
-		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
-	hadPciConflicts := false
-
-	if p.GroupFilter == "" && cfg.Profile != nil && len(cfg.ClusterConfig) > 1 {
-		mergedCfg := *cfg
-		mergedCfg.ClusterConfig, hadPciConflicts = mergeCompatibleGroups(cfg.ClusterConfig, useNameTemplates)
-		cfg = &mergedCfg
+	// Apply --groups / --gpu-type filter to source groups before merging.
+	// `applyGroupFilter` enforces mutual exclusivity, errors on empty match,
+	// and is a no-op when neither flag is set.
+	filtered, err := applyGroupFilter(cfg.ClusterConfig, p.Groups, p.GpuType)
+	if err != nil {
+		return nil, err
 	}
 
+	// Bucket the filtered set by (gpuType, railCount), build the merged
+	// ClusterConfig per bucket, and decide Mode A vs B per bucket by
+	// comparing to the original (pre-filter) bucket. The plans drive
+	// the per-template scope dispatch below.
+	useNameTemplates := cfg.NicConfigurationOperator != nil &&
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
+
+	plans, hadPciConflicts := planRender(cfg.ClusterConfig, filtered, useNameTemplates)
+
 	// NicInterfaceNameTemplate is only needed when:
-	// 1. Groups were merged AND PCI addresses conflict across rails, OR
-	// 2. Deployment is rdma_shared AND PFs have empty NetworkInterface names
-	//    (rdmaSharedDevicePlugin uses ifNames selectors that require them).
-	// When neither condition holds, disable name templates so the device
-	// plugin uses PCI addresses directly.
+	// 1. Merged groups have cross-rail PCI conflicts, OR
+	// 2. Deployment is rdma_shared AND PFs have empty NetworkInterface
+	//    names (rdmaSharedDevicePlugin uses ifNames selectors that
+	//    require them).
+	// When neither condition holds, disable name templates so the
+	// device plugin uses PCI addresses directly.
 	if useNameTemplates && !isSpectrumX(cfg) {
 		needsNameTemplates := hadPciConflicts ||
-			(isRdmaShared(cfg) && hasEmptyNetworkInterfaceNames(cfg.ClusterConfig))
+			(isRdmaShared(cfg) && plansHaveEmptyNetworkInterfaceNames(plans))
 		if !needsNameTemplates {
 			overrideNicCfg := *cfg.NicConfigurationOperator
 			overrideNicCfg.DeployNicInterfaceNameTemplate = false
 			overrideCfg := *cfg
 			overrideCfg.NicConfigurationOperator = &overrideNicCfg
 			cfg = &overrideCfg
-			unmrgOverride := *unmrgCfg
-			unmrgOverride.NicConfigurationOperator = &overrideNicCfg
-			unmrgCfg = &unmrgOverride
 		}
 	}
 
-	// If every merged group's source groups agreed on east-west PCI addresses,
-	// the per-unmerged-group NicInterfaceNameTemplate renders would be byte-identical
-	// (modulo the identifier suffix) — so render once against the merged cfg instead.
-	// When source groups differ on PCI, fall back to per-unmerged-group rendering so
-	// each machine's own PCI list lands in its own manifest.
-	nameTemplateCfg := unmrgCfg
-	if mergedGroupsAgreeOnPci(cfg.ClusterConfig) {
-		nameTemplateCfg = cfg
+	// Pre-allocate subnets across all plans' merged groups so per-plan
+	// `ProcessTemplate` calls don't independently re-allocate from
+	// offset 0.
+	planSubnets, err := preallocatePlanSubnets(cfg, plans)
+	if err != nil {
+		return nil, err
 	}
 
 	results := make(map[string]string)
-
-	// When a custom workload manifest is provided, skip the default example-daemonset templates
 	skipWorkloadTemplates := cfg.Workload != nil && cfg.Workload.Manifest != ""
 
 	for _, templatePath := range profile.Templates {
 		if skipWorkloadTemplates && isWorkloadTemplate(filepath.Base(templatePath)) {
 			continue
 		}
-		renderCfg := cfg
-		if strings.Contains(filepath.Base(templatePath), "nicinterfacenametemplate") {
-			renderCfg = nameTemplateCfg
-		}
-		rendered, err := ProcessTemplate(templatePath, renderCfg, p.GroupFilter)
+		rendered, err := renderForScope(templatePath, cfg, plans, planSubnets)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process template %s: %w", templatePath, err)
 		}
-
 		for filename, content := range rendered {
 			results[filename] = content
 		}
 	}
 
-	// Render user-provided workload manifest per group
+	// Render user-provided workload manifest per group. Filter has already
+	// been applied to cfg.ClusterConfig above.
 	if skipWorkloadTemplates {
-		groups := cfg.ClusterConfig
-		if p.GroupFilter != "" {
-			for _, g := range cfg.ClusterConfig {
-				if g.Identifier == p.GroupFilter {
-					groups = []config.ClusterConfig{g}
-					break
-				}
-			}
-		}
-		for _, group := range groups {
+		for _, group := range cfg.ClusterConfig {
 			ewGroup := group
 			ewGroup.PFs = filterEastWestPFs(group.PFs)
 			rendered, err := patchWorkloadManifest(cfg.Workload.Manifest, cfg, &ewGroup)

@@ -18,6 +18,32 @@ spec:
         {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
         k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}-plane-{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}{{- end }}{{- end }}
     spec:
+      {{- if or .ClusterConfig.SourceMachineLabels .ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- if .ClusterConfig.SourceMachineLabels }}
+              - key: nvidia.kubernetes-launch-kit.machine
+                operator: In
+                values:
+                {{- range .ClusterConfig.SourceMachineLabels }}
+                - "{{ . }}"
+                {{- end }}
+              {{- else }}
+              {{- range $key, $value := .ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - "{{ printf "%v" $value }}"
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+              {{- end }}
+      {{- end }}
       containers:
       - name: spectrum-x-test
         image: nvcr.io/nvidia/mellanox/rping-test:latest

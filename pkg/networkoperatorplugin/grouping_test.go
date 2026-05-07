@@ -121,16 +121,20 @@ func TestSpectrumXGrouping(t *testing.T) {
 			// Two groups that share every east-west PCI address but have different
 			// north-south DPU PCIs. Merge keys on (gpuType, east-west rail count)
 			// — both match — and hasRailPciConflict only looks at east-west PFs, so
-			// no conflict. After merging, every rail's RailPciAddresses has a single
-			// address (source groups agreed), so mergedGroupsAgreeOnPci returns true
-			// and a single merged NicInterfaceNameTemplate is emitted.
-			name:           "same east-west PCIs different north-south: merges fully, single name template",
+			// no conflict. The merged bucket emits one rail-pool config and one
+			// CIDRPool per bucket. NicInterfaceNameTemplate is ScopePerSource —
+			// always one per source group regardless of whether PCIs agree, so each
+			// node gets its own udev-rule template even when bodies happen to match.
+			name:           "same east-west PCIs different north-south: merges fully, per-source name templates",
 			configFile:     "same-ew-different-ns.yaml",
 			planes:         1,
 			multiplaneMode: "none",
 			wantRailPools:  []string{"80-spectrumxrailpoolconfig-gpu-model-x.yaml"},
-			wantNameTmpls:  []string{"25-nicinterfacenametemplate-gpu-model-x.yaml"},
-			wantCidrPools:  []string{"60-cidrpool-gpu-model-x.yaml"},
+			wantNameTmpls: []string{
+				"25-nicinterfacenametemplate-group-0.yaml",
+				"25-nicinterfacenametemplate-group-1.yaml",
+			},
+			wantCidrPools: []string{"60-cidrpool-gpu-model-x.yaml"},
 			wantNicCfgTmpls: []string{
 				"30-nicconfigurationtemplate-gpu-model-x.yaml",
 			},
@@ -238,6 +242,77 @@ func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
 	require.True(t, ok, "unmerged z-model rail pool manifest should exist")
 	require.Contains(t, z, `nvidia.com/gpu.machine: "machine-c"`,
 		"unmerged z-model rail pool must preserve the source group's full nodeSelector")
+}
+
+// TestSpectrumXModeBSubsetFilter exercises the Mode B path of Unit 7's
+// scope dispatch: `mixed-same-type.yaml` has three sources sharing a
+// gpuType (so they all land in one auto-merge bucket); `--groups
+// group-0,group-1` selects two of three (a strict subset), triggering
+// Mode B for that bucket.
+//
+// Expected output shape:
+//   - ScopeBucketed (CIDRPool): one CR per bucket, named with bucket id
+//   - ScopeAggregate (DaemonSet): one CR per bucket; nodeAffinity
+//     emits an `In` list of source machine labels
+//   - ScopeSimpleSelect (SpectrumXRailPoolConfig, NicConfigurationTemplate):
+//     N CRs per bucket — one per source group
+//   - ScopePerSource (NicInterfaceNameTemplate): N CRs per bucket
+func TestSpectrumXModeBSubsetFilter(t *testing.T) {
+	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
+	cfg, err := config.LoadFullConfig(
+		filepath.Join("testdata", "grouping", "mixed-same-type.yaml"),
+		ctrllog.Log,
+	)
+	require.NoError(t, err)
+	cfg.Profile = &config.Profile{
+		Fabric:     "ethernet",
+		Deployment: "sriov",
+		Multirail:  true,
+		SpectrumX: &config.ProfileSpectrumX{
+			Enable:         true,
+			SPCXVersion:    "RA2.2",
+			MultiplaneMode: "none",
+			NumberOfPlanes: 1,
+		},
+	}
+
+	plugin := &NetworkOperatorPlugin{Groups: []string{"group-0", "group-1"}}
+	rendered, err := plugin.GenerateProfileDeploymentFiles(loadSpectrumXProfile(t), cfg)
+	require.NoError(t, err)
+
+	// SpectrumXRailPoolConfig (SimpleSelect → per-source under Mode B):
+	// one per filtered source.
+	railPools := fileNamesMatching(rendered, "80-spectrumxrailpoolconfig")
+	require.Equal(t, []string{
+		"80-spectrumxrailpoolconfig-group-0.yaml",
+		"80-spectrumxrailpoolconfig-group-1.yaml",
+	}, railPools, "Mode B SpectrumXRailPoolConfig must render per source group")
+
+	// CIDRPool (Bucketed): one CR per bucket, named with the merged
+	// bucket id (gpu-model-y) — both source NodePolicies share it.
+	cidrPools := fileNamesMatching(rendered, "60-cidrpool")
+	require.Equal(t, []string{"60-cidrpool-gpu-model-y.yaml"}, cidrPools,
+		"Mode B CIDRPool must be one per bucket, named by MergedIdentifier")
+
+	// NicInterfaceNameTemplate (PerSource): always one per source.
+	ninTmpls := fileNamesMatching(rendered, "25-nicinterfacenametemplate")
+	require.Equal(t, []string{
+		"25-nicinterfacenametemplate-group-0.yaml",
+		"25-nicinterfacenametemplate-group-1.yaml",
+	}, ninTmpls)
+
+	// Example DaemonSet (Aggregate): one CR per bucket, with In selector
+	// listing source machine labels.
+	dsFiles := fileNamesMatching(rendered, "90-example-daemonset")
+	require.Equal(t, []string{"90-example-daemonset-gpu-model-y.yaml"}, dsFiles)
+	dsBody := rendered["90-example-daemonset-gpu-model-y.yaml"]
+	require.Contains(t, dsBody, "key: nvidia.kubernetes-launch-kit.machine",
+		"Mode B aggregate DaemonSet must select via the machine label")
+	require.Contains(t, dsBody, `"machine-a-gpu-model-y"`,
+		"Mode B aggregate DaemonSet must list every filtered source's machine label")
+	require.Contains(t, dsBody, `"machine-b-gpu-model-y"`)
+	require.NotContains(t, dsBody, `"machine-c-gpu-model-y"`,
+		"Mode B aggregate DaemonSet must NOT include excluded source's label")
 }
 
 // loadSpectrumXRA21Profile resolves the on-disk spectrum-x-ra2.1 profile.

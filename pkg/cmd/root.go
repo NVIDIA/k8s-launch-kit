@@ -62,7 +62,8 @@ var (
 	enabledPlugins              string
 	networkOperatorNamespace    string
 	networkOperatorRelease      string
-	group                       string
+	groups                      []string
+	gpuType                     string
 	nodeSelector                string
 	imagePullSecrets            []string
 	podNamespace                string
@@ -152,7 +153,8 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			SPCXVersion:           spectrumXVersion,
 			MultiplaneMode:        multiplaneMode,
 			NumberOfPlanes:        numberOfPlanes,
-			Group:                group,
+			Groups:               groups,
+			GpuType:              gpuType,
 			NodeSelector:         nodeSelector,
 			ForPreset:            forPreset,
 			ImagePullSecrets:     imagePullSecrets,
@@ -233,7 +235,9 @@ func init() {
 			config.SupportedSPCXVersions))
 	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
-	rootCmd.Flags().StringVar(&group, "group", "", "Generate templates for a specific group only (e.g., group-0)")
+	rootCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
+	rootCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
+	rootCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
 	rootCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes for discovery by label (e.g., key=value,key2=value2)")
 	rootCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
@@ -275,7 +279,8 @@ func init() {
 	setFlagGroup(rootCmd, "deployment-type", GroupProfile)
 	setFlagGroup(rootCmd, "multirail", GroupProfile)
 	setFlagGroup(rootCmd, "spectrum-x", GroupProfile)
-	setFlagGroup(rootCmd, "group", GroupProfile)
+	setFlagGroup(rootCmd, "groups", GroupProfile)
+	setFlagGroup(rootCmd, "gpu-type", GroupProfile)
 	setFlagGroup(rootCmd, "for", GroupProfile)
 
 	setFlagGroup(rootCmd, "multiplane-mode", GroupSpectrumX)

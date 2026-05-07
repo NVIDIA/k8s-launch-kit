@@ -168,9 +168,13 @@ var schemaCmd = &cobra.Command{
 					Default:     "false",
 					Description: "Suppress informational output (errors still shown)",
 				},
-				"--group": {
+				"--groups": {
+					Type:        "[]string",
+					Description: "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.",
+				},
+				"--gpu-type": {
 					Type:        "string",
-					Description: "Generate templates for a specific group only (e.g., group-0)",
+					Description: "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.",
 				},
 				"--node-selector": {
 					Type:        "string",

@@ -13,7 +13,7 @@
 apiVersion: nv-ipam.nvidia.com/v1alpha1
 kind: CIDRPool
 metadata:
-  name: rail-{{$railIdx}}-plane-{{$planeIdx}}
+  name: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
   namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
   # TODO: rail subnet for this plane (/15 for 2-tier, /11 for 3-tier topology)
@@ -39,7 +39,7 @@ spec:
 apiVersion: nv-ipam.nvidia.com/v1alpha1
 kind: CIDRPool
 metadata:
-  name: rail-{{$railIdx}}
+  name: rail-{{$railIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
   namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
   # TODO: rail subnet (/15 for 2-tier, /11 for 3-tier topology)

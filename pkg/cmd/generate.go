@@ -106,7 +106,8 @@ Optionally deploy the generated manifests with --deploy.`,
 			SPCXVersion:             spectrumXVersion,
 			MultiplaneMode:          multiplaneMode,
 			NumberOfPlanes:          numberOfPlanes,
-			Group:                   group,
+			Groups:                  groups,
+			GpuType:                 gpuType,
 			NodeSelector:            generateNodeSelector,
 			ForPreset:               forPreset,
 			ImagePullSecrets:        imagePullSecrets,
@@ -182,7 +183,9 @@ func init() {
 			config.SupportedSPCXVersions))
 	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	generateCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes (requires --spectrum-x)")
-	generateCmd.Flags().StringVar(&group, "group", "", "Generate for a specific group only (e.g., group-0)")
+	generateCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
+	generateCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
+	generateCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
 	generateCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	generateCmd.Flags().StringVar(&generateNodeSelector, "node-selector", "", "Node selector for the synthesized clusterConfig when --for is used (e.g., key=value,key2=value2). Required with --for.")
 
@@ -214,7 +217,8 @@ func init() {
 	setFlagGroup(generateCmd, "deployment-type", GroupProfile)
 	setFlagGroup(generateCmd, "multirail", GroupProfile)
 	setFlagGroup(generateCmd, "spectrum-x", GroupProfile)
-	setFlagGroup(generateCmd, "group", GroupProfile)
+	setFlagGroup(generateCmd, "groups", GroupProfile)
+	setFlagGroup(generateCmd, "gpu-type", GroupProfile)
 	setFlagGroup(generateCmd, "for", GroupProfile)
 	setFlagGroup(generateCmd, "node-selector", GroupProfile)
 

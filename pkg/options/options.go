@@ -41,8 +41,15 @@ type Options struct {
 	SPCXVersion         string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
 	MultiplaneMode      string // Spectrum-X multiplane mode (default: swplb)
 	NumberOfPlanes      int    // Number of planes for Spectrum-X (default: 4)
-	Group               string // Generate templates for a specific group identifier only
-	NodeSelector        string // Filter nodes for discovery and manifests (e.g., "key1=val1,key2=val2")
+	// Groups limits `l8k generate` to the named source groups (matched
+	// case-sensitively against `clusterConfig[].identifier`). Comma-separated
+	// on the CLI (`--groups a,b`). Mutually exclusive with GpuType.
+	Groups []string
+	// GpuType limits `l8k generate` to source groups whose `gpuType` matches.
+	// Single value, case-insensitive (`--gpu-type NVIDIA-H200`). Mutually
+	// exclusive with Groups.
+	GpuType      string
+	NodeSelector string // Filter nodes for discovery and manifests (e.g., "key1=val1,key2=val2")
 	// ForPreset is the directory name of a topology preset under presets/. When
 	// set, generate replaces fullConfig.ClusterConfig with a single group
 	// synthesized from the preset (skipping cluster discovery). Requires

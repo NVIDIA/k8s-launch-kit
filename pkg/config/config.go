@@ -216,6 +216,21 @@ type ClusterConfig struct {
 	ThirdPartyRDMAModules []string            `yaml:"thirdPartyRDMAModules,omitempty"`
 	StorageModules        []string            `yaml:"storageModules,omitempty"`
 	RailPciAddresses     [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
+	// MergedIdentifier is the bucket-level identifier shared by all source
+	// groups that merge together by (gpuType, railCount). Used in templates
+	// for shared-resource references (resourceName, networkName, poolName,
+	// cidrPoolRef) so per-source NodePolicies under Mode B all register the
+	// same kubelet resource. In Mode A this equals Identifier; in Mode B's
+	// per-source render units it differs.
+	MergedIdentifier string `yaml:"-"`
+	// SourceMachineLabels lists the machine-label values
+	// (`<machineType>-<gpuType>`) of every source group represented by the
+	// merged bucket. Populated only when this is a merged render group and
+	// the filtered set is a strict subset of its (gpuType, railCount)
+	// bucket — used by Scope-Aggregate templates to emit a
+	// `matchExpressions In: [...]` selector. Empty in Mode A and for
+	// per-source render units.
+	SourceMachineLabels []string `yaml:"-"`
 }
 
 // PresetDeviationEntry records a single field-level discrepancy between a

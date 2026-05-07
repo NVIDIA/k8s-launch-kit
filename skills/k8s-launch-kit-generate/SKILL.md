@@ -31,7 +31,8 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> \
 | `--number-of-planes` | Required with `--spectrum-x` | `1`, `2`, `4` | Number of planes |
 | `--multirail` | — | — | Enable multirail mode |
 | `--save-deployment-files` | Yes | — | Output directory for generated YAMLs |
-| `--group` | — | `group-0` | Filter to a specific hardware group |
+| `--groups` | — | `dgx-b200-nvidia-h100-nvl,poweredge-xe9680-nvidia-h200` | Restrict output to the named source groups (comma-separated). Mutually exclusive with `--gpu-type`. |
+| `--gpu-type` | — | `NVIDIA-H200` | Restrict output to source groups whose `gpuType` matches (case-insensitive). Mutually exclusive with `--groups`. |
 | `--for` | — | preset directory name | Skip discovery: synthesize `clusterConfig` from a topology preset. Requires `--node-selector`. List options with `l8k preset list`. |
 | `--node-selector` | Required with `--for` | `key=val,key2=val2` | Identifies which nodes the synthesized clusterConfig targets at apply time. |
 
@@ -123,7 +124,7 @@ After discovery, check if any group in cluster-config.yaml has `railNumber > 0` 
 
 - Default to SR-IOV Ethernet for new GPU cluster deployments unless told otherwise.
 - For Spectrum-X, NIC type determines available multiplane modes — read `references/spectrum-x-guide.md`.
-- Use `--group` to generate manifests for a single hardware group in multi-group clusters.
+- Use `--groups <a,b,...>` (case-sensitive identifier list) or `--gpu-type <X>` (case-insensitive) to scope a generate to a subset of source groups in heterogeneous clusters. Mutually exclusive. Empty match is a validation error. Strict-subset filters split per-source rendering: NodePolicies emit one CR per source (each with its own machine-label nodeSelector but a shared bucket-level resourceName); IPPool/example DaemonSet emit one CR per bucket with an `In` list of source machine labels.
 
 > [!CAUTION]
 > Generation does not apply anything to the cluster. Use `--deploy` or `k8s-launch-kit-deploy` to apply.

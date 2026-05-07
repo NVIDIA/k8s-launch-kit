@@ -33,9 +33,17 @@ const (
 )
 
 type NetworkOperatorPlugin struct {
-	GroupFilter   string
+	// Groups is the list of source-group identifiers passed via
+	// `--groups <a,b,...>` (matched case-sensitively against
+	// `cluster-config.yaml`'s `clusterConfig[].identifier`). Empty when
+	// the user didn't supply the flag.
+	Groups []string
+	// GpuType is the value passed via `--gpu-type <X>` (matched
+	// case-insensitively against `gpuType`). Empty when the user didn't
+	// supply the flag. Mutually exclusive with Groups.
+	GpuType      string
 	NodeSelector map[string]string
-	RESTConfig    *rest.Config
+	RESTConfig   *rest.Config
 }
 
 func (p *NetworkOperatorPlugin) GetName() string {

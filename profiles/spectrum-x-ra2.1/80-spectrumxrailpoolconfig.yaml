@@ -21,7 +21,7 @@ metadata:
 spec:
   multiplaneMode: {{$mode}}
   sriovNetworkNodePolicyRef: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.Identifier}}
-  cidrPoolRef: rail-{{$railIdx}}-plane-{{$planeIdx}}
+  cidrPoolRef: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
 {{ end }}
 {{- else }}
 {{- if not $first }}---
@@ -34,6 +34,6 @@ metadata:
 spec:
   multiplaneMode: {{$mode}}
   sriovNetworkNodePolicyRef: rail-{{$railIdx}}{{suffix $.ClusterConfig.Identifier}}
-  cidrPoolRef: rail-{{$railIdx}}
+  cidrPoolRef: rail-{{$railIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
 {{ end }}
 {{- end }}

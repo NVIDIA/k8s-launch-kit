@@ -69,7 +69,7 @@ spec:
         {{- if eq $pf.Traffic "east-west"}}
           {
             "resourcePrefix": "nvidia.com",
-            "resourceName": "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}",
+            "resourceName": "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}",
             "selectors": {
               "vendors": ["15b3"],
               {{- if and $.NicConfigurationOperator $.NicConfigurationOperator.DeployNicInterfaceNameTemplate }}
@@ -87,7 +87,7 @@ spec:
         {{- else}}
           {
             "resourcePrefix": "nvidia.com",
-            "resourceName": "{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}",
+            "resourceName": "{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}",
             "selectors": {
               "vendors": ["15b3"],
               "isRdma": true
