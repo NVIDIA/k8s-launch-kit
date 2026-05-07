@@ -19,10 +19,65 @@ package cmd
 import (
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// applySpectrumXDefaults is a test-only shim that runs the full
+// validation + defaulting pipeline against an Options struct. The
+// production split is:
+//
+//	pkg/cmd.applySpectrumXSyntaxChecks  → Phase 1 (PreRunE)
+//	pkg/resolve.ApplyHardwareDefaults    → fills empty cfg fields
+//	plugin.ApplyOptionsToConfig          → CLI overlay
+//	pkg/resolve.ValidateResolvedConfig   → Phase 2 cohort
+//
+// This helper chains those four steps against a synthesized cfg so
+// pre-Unit-8 tests (which expected a single combined `applySpectrumXDefaults(opts)`)
+// keep asserting the same observable behaviour. After the chain
+// completes, the resolved cfg's profile fields are reflected back onto
+// opts so legacy assertions like `assert.Equal(t, "ethernet", opts.Fabric)`
+// still see the implicit Spectrum-X → ethernet default.
+func applySpectrumXDefaults(opts *options.Options) error {
+	if err := applySpectrumXSyntaxChecks(opts); err != nil {
+		return err
+	}
+	cfg := &config.LaunchKubernetesConfig{
+		Profile: &config.Profile{
+			Fabric:     opts.Fabric,
+			Deployment: opts.DeploymentType,
+			Multirail:  opts.Multirail,
+		},
+	}
+	if opts.SpectrumX {
+		cfg.Profile.SpectrumX = &config.ProfileSpectrumX{
+			Enable:         true,
+			SPCXVersion:    opts.SPCXVersion,
+			MultiplaneMode: opts.MultiplaneMode,
+			NumberOfPlanes: opts.NumberOfPlanes,
+		}
+	}
+	if opts.NetworkOperatorRelease != "" {
+		cfg.NetworkOperator = &config.NetworkOperatorConfig{
+			SelectedRelease: opts.NetworkOperatorRelease,
+		}
+	}
+	resolve.ApplyHardwareDefaults(cfg, *opts)
+	if err := resolve.ValidateResolvedConfig(cfg); err != nil {
+		return err
+	}
+	// Reflect filled-in fields back on opts.
+	opts.Fabric = cfg.Profile.Fabric
+	opts.DeploymentType = cfg.Profile.Deployment
+	opts.Multirail = cfg.Profile.Multirail
+	if cfg.NetworkOperator != nil {
+		opts.NetworkOperatorRelease = cfg.NetworkOperator.SelectedRelease
+	}
+	return nil
+}
 
 // minSpectrumXOpts returns a minimally valid Spectrum-X options struct: all
 // cohort flags satisfied, value-validated, paired correctly with the
@@ -119,20 +174,20 @@ func TestApplySpectrumXDefaults_AcceptsNoneWithSinglePlane(t *testing.T) {
 	require.NoError(t, err, "mode=none with planes=1 must be accepted")
 }
 
-func TestApplySpectrumXDefaults_RequiresExplicitNetworkOperatorRelease(t *testing.T) {
-	// --network-operator-release must be passed explicitly under --spectrum-x.
-	// We deliberately don't auto-default it from the RA version because the
-	// release line is consequential (it picks the CRD shape and the SR-IOV
-	// operator behaviour) and a silent fill-in hides that decision.
-	for _, ra := range []string{"RA2.1", "RA2.2"} {
+func TestApplySpectrumXDefaults_DefaultsNetworkOperatorReleaseFromRA(t *testing.T) {
+	// Unit 8: when --spectrum-x is set without --network-operator-release,
+	// the release auto-defaults from the canonical (RA → release) map in
+	// `config.SPCXVersionAllowedReleases`. The user no longer has to pass
+	// the release explicitly.
+	for ra, release := range map[string]string{"RA2.1": "26.1", "RA2.2": "26.4"} {
 		t.Run(ra, func(t *testing.T) {
 			opts := minSpectrumXOpts()
 			opts.SPCXVersion = ra
 			opts.NetworkOperatorRelease = ""
 			err := applySpectrumXDefaults(opts)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "--network-operator-release is required")
-			assert.Contains(t, err.Error(), ra)
+			require.NoError(t, err, "release should auto-default for %s", ra)
+			assert.Equal(t, release, opts.NetworkOperatorRelease,
+				"release should default to %s for %s", release, ra)
 		})
 	}
 }
@@ -163,15 +218,19 @@ func TestApplySpectrumXDefaults_RejectsCohortFlagsWithoutSpectrumX(t *testing.T)
 	}
 }
 
-func TestApplySpectrumXDefaults_NoOpWhenDisabled(t *testing.T) {
+func TestApplySpectrumXDefaults_AppliesGenericDefaultsWhenSpectrumXDisabled(t *testing.T) {
+	// Unit 8: even without --spectrum-x, ApplyHardwareDefaults sets the
+	// always-on defaults (Deployment=sriov, Multirail=true). Fabric is
+	// only filled when cluster hardware confirms a unanimous linkType
+	// (skipped here — synthetic cfg has no clusterConfig).
 	opts := &options.Options{
 		SpectrumX: false,
 	}
 	err := applySpectrumXDefaults(opts)
 	require.NoError(t, err)
-	assert.Empty(t, opts.Fabric)
-	assert.Empty(t, opts.DeploymentType)
-	assert.False(t, opts.Multirail)
+	assert.Empty(t, opts.Fabric, "fabric stays empty without cluster linkType")
+	assert.Equal(t, "sriov", opts.DeploymentType, "deployment-type defaults to sriov")
+	assert.True(t, opts.Multirail, "multirail defaults to true")
 }
 
 func TestApplySpectrumXDefaults_AcceptsMatchingFabric(t *testing.T) {
@@ -183,10 +242,11 @@ func TestApplySpectrumXDefaults_AcceptsMatchingFabric(t *testing.T) {
 }
 
 func TestApplySpectrumXDefaults_ErrorOnConflictingFabric(t *testing.T) {
-	opts := &options.Options{
-		SpectrumX: true,
-		Fabric:    "infiniband",
-	}
+	// Cohort error: --spectrum-x with explicit --fabric=infiniband
+	// must reject. Phase 2's `validateSpectrumXCohort` catches it
+	// against the resolved cfg.
+	opts := minSpectrumXOpts()
+	opts.Fabric = "infiniband"
 	err := applySpectrumXDefaults(opts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ethernet")
@@ -194,10 +254,8 @@ func TestApplySpectrumXDefaults_ErrorOnConflictingFabric(t *testing.T) {
 }
 
 func TestApplySpectrumXDefaults_ErrorOnConflictingDeploymentType(t *testing.T) {
-	opts := &options.Options{
-		SpectrumX:      true,
-		DeploymentType: "host_device",
-	}
+	opts := minSpectrumXOpts()
+	opts.DeploymentType = "host_device"
 	err := applySpectrumXDefaults(opts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sriov")

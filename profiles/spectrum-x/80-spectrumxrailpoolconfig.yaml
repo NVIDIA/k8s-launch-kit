@@ -24,14 +24,14 @@ spec:
   - name: rail{{$railIdx}}p{{$planeIdx}}
     nicSelector:
       pfNames: ["{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"]
-    cidrPoolRef: rail-{{$railIdx}}-plane-{{$planeIdx}}
+    cidrPoolRef: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
     mtu: 9216
     {{- end }}
   {{- else }}
   - name: rail{{$railIdx}}
     nicSelector:
       pfNames: [{{- $firstPF := true }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $firstPF }}, {{ end }}{{- $firstPF = false }}"{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"{{- end }}]
-    cidrPoolRef: rail-{{$railIdx}}
+    cidrPoolRef: rail-{{$railIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
     mtu: 9216
   {{- end }}
   {{- end }}

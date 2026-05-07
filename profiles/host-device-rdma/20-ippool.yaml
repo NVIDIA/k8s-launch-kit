@@ -11,7 +11,17 @@ spec:
   subnet: {{(index $.NvIpam.Subnets $i).Subnet}}
   perNodeBlockSize: 50
   gateway: {{(index $.NvIpam.Subnets $i).Gateway}}
-  {{- if $.ClusterConfig.NodeSelector }}
+  {{- if $.ClusterConfig.SourceMachineLabels }}
+  nodeSelector:
+    nodeSelectorTerms:
+    - matchExpressions:
+      - key: nvidia.kubernetes-launch-kit.machine
+        operator: In
+        values:
+        {{- range $.ClusterConfig.SourceMachineLabels }}
+        - "{{ . }}"
+        {{- end }}
+  {{- else if $.ClusterConfig.NodeSelector }}
   nodeSelector:
     nodeSelectorTerms:
     - matchExpressions:
@@ -39,7 +49,17 @@ spec:
   subnet: {{(index .NvIpam.Subnets 0).Subnet}}
   perNodeBlockSize: 50
   gateway: {{(index .NvIpam.Subnets 0).Gateway}}
-  {{- if .ClusterConfig.NodeSelector }}
+  {{- if .ClusterConfig.SourceMachineLabels }}
+  nodeSelector:
+    nodeSelectorTerms:
+    - matchExpressions:
+      - key: nvidia.kubernetes-launch-kit.machine
+        operator: In
+        values:
+        {{- range .ClusterConfig.SourceMachineLabels }}
+        - "{{ . }}"
+        {{- end }}
+  {{- else if .ClusterConfig.NodeSelector }}
   nodeSelector:
     nodeSelectorTerms:
     - matchExpressions:

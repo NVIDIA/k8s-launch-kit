@@ -68,6 +68,7 @@ east-west vs north-south NICs, and probes OFED dependent modules.`,
 
 		opts := options.Options{
 			DiscoverClusterConfig:   true,
+			DiscoverOnly:            true,
 			Kubeconfig:              resolved,
 			UserConfig:              userConfig,
 			SaveClusterConfig:       saveClusterConfig,

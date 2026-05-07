@@ -22,6 +22,14 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
+              {{- if .ClusterConfig.SourceMachineLabels }}
+              - key: nvidia.kubernetes-launch-kit.machine
+                operator: In
+                values:
+                {{- range .ClusterConfig.SourceMachineLabels }}
+                - "{{ . }}"
+                {{- end }}
+              {{- else }}
               {{- range $key, $value := .ClusterConfig.NodeSelector }}
               - key: {{ $key }}
                 {{- if ne $value "" }}
@@ -31,6 +39,7 @@ spec:
                 {{- else }}
                 operator: Exists
                 {{- end }}
+              {{- end }}
               {{- end }}
       {{- end }}
       containers:
@@ -44,13 +53,13 @@ spec:
           requests:
             {{- range $i, $pf := .ClusterConfig.PFs}}
             {{- if eq $pf.Traffic "east-west"}}
-            nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
+            nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}: '1'
             {{- end}}
             {{- end}}
           limits:
             {{- range $i, $pf := .ClusterConfig.PFs}}
             {{- if eq $pf.Traffic "east-west"}}
-            nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
+            nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}: '1'
             {{- end}}
             {{- end}}
 {{- else}}
@@ -76,6 +85,14 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
+              {{- if .ClusterConfig.SourceMachineLabels }}
+              - key: nvidia.kubernetes-launch-kit.machine
+                operator: In
+                values:
+                {{- range .ClusterConfig.SourceMachineLabels }}
+                - "{{ . }}"
+                {{- end }}
+              {{- else }}
               {{- range $key, $value := .ClusterConfig.NodeSelector }}
               - key: {{ $key }}
                 {{- if ne $value "" }}
@@ -85,6 +102,7 @@ spec:
                 {{- else }}
                 operator: Exists
                 {{- end }}
+              {{- end }}
               {{- end }}
       {{- end }}
       containers:
@@ -96,7 +114,7 @@ spec:
             add: ["IPC_LOCK"]
         resources:
           requests:
-            nvidia.com/{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
+            nvidia.com/{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}: '1'
           limits:
-            nvidia.com/{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}: '1'
+            nvidia.com/{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}: '1'
 {{- end}}

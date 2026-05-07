@@ -27,6 +27,8 @@ import (
 	"text/template"
 
 	"github.com/Masterminds/semver/v3"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 )
@@ -330,22 +332,6 @@ func pfsPerNic(pfs []config.PFConfig) int {
 		return 1
 	}
 	return len(ewPFs) / len(nicDevices)
-}
-
-// mergedGroupsAgreeOnPci returns true when every group either (a) did not come
-// from a merge (RailPciAddresses nil) or (b) came from a merge where all source
-// groups agreed on the PCI address at each rail. When this is true it is safe
-// to render per-machine-type resources (e.g. NicInterfaceNameTemplate) against
-// the merged config without losing any source group's PCI addresses.
-func mergedGroupsAgreeOnPci(groups []config.ClusterConfig) bool {
-	for _, g := range groups {
-		for _, railAddrs := range g.RailPciAddresses {
-			if len(railAddrs) > 1 {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // railPciGroups returns NicInterfaceNameTemplate.railPciAddresses as one
@@ -669,92 +655,85 @@ func filterEastWestPFs(pfs []config.PFConfig) []config.PFConfig {
 	return filtered
 }
 
+// groupFabric returns the discovered fabric ("Ethernet" or "InfiniBand")
+// for a group, plus a bool indicating whether the field is set. Reads
+// directly from `group.LinkType`, which `discoverGroupFabric` populates
+// only when every east-west port produced a confirmed and unanimous
+// verdict — when the field is empty, discovery couldn't prove the
+// cluster's fabric and downstream code should treat it as unknown.
+//
+// Used by Unit 8's declarative defaults to fill `--fabric` when the user
+// doesn't supply it.
+func groupFabric(group config.ClusterConfig) (string, bool) {
+	return group.LinkType, group.LinkType != ""
+}
+
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
 func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKubernetesConfig) (map[string]string, error) {
-	// Keep the unmerged config as a fallback for NicInterfaceNameTemplate when
-	// merged source groups disagree on east-west PCI addresses — per-group
-	// rendering preserves each machine's own PCI list in that case.
-	unmrgCfg := cfg
-
-	// Merge compatible groups when multiple groups exist and no --group filter is set.
-	// Spectrum-X participates in merging now that rail selection is by stable netdev
-	// name (SpectrumXRailPoolConfig + NicInterfaceNameTemplate) rather than PCI address.
-	useNameTemplates := cfg.NicConfigurationOperator != nil &&
-		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
-	hadPciConflicts := false
-
-	if p.GroupFilter == "" && cfg.Profile != nil && len(cfg.ClusterConfig) > 1 {
-		mergedCfg := *cfg
-		mergedCfg.ClusterConfig, hadPciConflicts = mergeCompatibleGroups(cfg.ClusterConfig, useNameTemplates)
-		cfg = &mergedCfg
+	// Apply --groups / --gpu-type filter to source groups before merging.
+	// `applyGroupFilter` enforces mutual exclusivity, errors on empty match,
+	// and is a no-op when neither flag is set.
+	filtered, err := applyGroupFilter(cfg.ClusterConfig, p.Groups, p.GpuType)
+	if err != nil {
+		return nil, err
 	}
 
+	// Bucket the filtered set by (gpuType, railCount), build the merged
+	// ClusterConfig per bucket, and decide Mode A vs B per bucket by
+	// comparing to the original (pre-filter) bucket. The plans drive
+	// the per-template scope dispatch below.
+	useNameTemplates := cfg.NicConfigurationOperator != nil &&
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
+
+	plans, hadPciConflicts := planRender(cfg.ClusterConfig, filtered, useNameTemplates)
+
 	// NicInterfaceNameTemplate is only needed when:
-	// 1. Groups were merged AND PCI addresses conflict across rails, OR
-	// 2. Deployment is rdma_shared AND PFs have empty NetworkInterface names
-	//    (rdmaSharedDevicePlugin uses ifNames selectors that require them).
-	// When neither condition holds, disable name templates so the device
-	// plugin uses PCI addresses directly.
+	// 1. Merged groups have cross-rail PCI conflicts, OR
+	// 2. Deployment is rdma_shared AND PFs have empty NetworkInterface
+	//    names (rdmaSharedDevicePlugin uses ifNames selectors that
+	//    require them).
+	// When neither condition holds, disable name templates so the
+	// device plugin uses PCI addresses directly.
 	if useNameTemplates && !isSpectrumX(cfg) {
 		needsNameTemplates := hadPciConflicts ||
-			(isRdmaShared(cfg) && hasEmptyNetworkInterfaceNames(cfg.ClusterConfig))
+			(isRdmaShared(cfg) && plansHaveEmptyNetworkInterfaceNames(plans))
 		if !needsNameTemplates {
 			overrideNicCfg := *cfg.NicConfigurationOperator
 			overrideNicCfg.DeployNicInterfaceNameTemplate = false
 			overrideCfg := *cfg
 			overrideCfg.NicConfigurationOperator = &overrideNicCfg
 			cfg = &overrideCfg
-			unmrgOverride := *unmrgCfg
-			unmrgOverride.NicConfigurationOperator = &overrideNicCfg
-			unmrgCfg = &unmrgOverride
 		}
 	}
 
-	// If every merged group's source groups agreed on east-west PCI addresses,
-	// the per-unmerged-group NicInterfaceNameTemplate renders would be byte-identical
-	// (modulo the identifier suffix) — so render once against the merged cfg instead.
-	// When source groups differ on PCI, fall back to per-unmerged-group rendering so
-	// each machine's own PCI list lands in its own manifest.
-	nameTemplateCfg := unmrgCfg
-	if mergedGroupsAgreeOnPci(cfg.ClusterConfig) {
-		nameTemplateCfg = cfg
+	// Pre-allocate subnets across all plans' merged groups so per-plan
+	// `ProcessTemplate` calls don't independently re-allocate from
+	// offset 0.
+	planSubnets, err := preallocatePlanSubnets(cfg, plans)
+	if err != nil {
+		return nil, err
 	}
 
 	results := make(map[string]string)
-
-	// When a custom workload manifest is provided, skip the default example-daemonset templates
 	skipWorkloadTemplates := cfg.Workload != nil && cfg.Workload.Manifest != ""
 
 	for _, templatePath := range profile.Templates {
 		if skipWorkloadTemplates && isWorkloadTemplate(filepath.Base(templatePath)) {
 			continue
 		}
-		renderCfg := cfg
-		if strings.Contains(filepath.Base(templatePath), "nicinterfacenametemplate") {
-			renderCfg = nameTemplateCfg
-		}
-		rendered, err := ProcessTemplate(templatePath, renderCfg, p.GroupFilter)
+		rendered, err := renderForScope(templatePath, cfg, plans, planSubnets)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process template %s: %w", templatePath, err)
 		}
-
 		for filename, content := range rendered {
 			results[filename] = content
 		}
 	}
 
-	// Render user-provided workload manifest per group
+	// Render user-provided workload manifest per group. Filter has already
+	// been applied to cfg.ClusterConfig above.
 	if skipWorkloadTemplates {
-		groups := cfg.ClusterConfig
-		if p.GroupFilter != "" {
-			for _, g := range cfg.ClusterConfig {
-				if g.Identifier == p.GroupFilter {
-					groups = []config.ClusterConfig{g}
-					break
-				}
-			}
-		}
-		for _, group := range groups {
+		for _, group := range cfg.ClusterConfig {
 			ewGroup := group
 			ewGroup.PFs = filterEastWestPFs(group.PFs)
 			rendered, err := patchWorkloadManifest(cfg.Workload.Manifest, cfg, &ewGroup)
@@ -823,7 +802,13 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 		railCount   int
 	}
 
-	// Group indices by (gpuType, railCount)
+	// Group indices by (gpuType, railCount). Source groups carry a
+	// per-(machineType, gpuType) machine-label identifier (set by
+	// `applyMachineLabelToGroups` at discovery time), but auto-merge keys
+	// on gpuType only — two server SKUs with the same GPU type *do*
+	// auto-merge. The machine label still drives the per-source nodeSelector
+	// and identifier; the merged group falls back to the GPU-product label
+	// since the source groups may not share a machine label.
 	bucketOrder := []mergeKey{}
 	buckets := map[mergeKey][]int{}
 
@@ -834,6 +819,13 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 			// Never merge groups without a gpuType — use a unique key per group
 			key = mergeKey{gpuType: fmt.Sprintf("__empty_%d", i), railCount: ewCount}
 		}
+		log.Log.V(1).Info("Computed merge key for source group",
+			"sourceIndex", i,
+			"identifier", g.Identifier,
+			"machineType", g.MachineType,
+			"gpuType", g.GPUType,
+			"eastWestRailCount", ewCount,
+			"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount))
 		if _, exists := buckets[key]; !exists {
 			bucketOrder = append(bucketOrder, key)
 		}
@@ -845,9 +837,17 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 	for _, key := range bucketOrder {
 		indices := buckets[key]
 
-		if len(indices) == 1 || groups[indices[0]].GPUType == "" {
-			// No merge: single group or empty gpuType
-			result = append(result, groups[indices[0]])
+		first := groups[indices[0]]
+		if len(indices) == 1 || first.GPUType == "" {
+			reason := "single source group in bucket"
+			if first.GPUType == "" {
+				reason = "gpuType empty — never merge"
+			}
+			log.Log.V(1).Info("Bucket kept separate (not merged)",
+				"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
+				"identifier", first.Identifier,
+				"reason", reason)
+			result = append(result, first)
 			continue
 		}
 
@@ -856,18 +856,34 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 		// (renamed pfNames avoid the conflict) and track that it happened.
 		if hasRailPciConflict(groups, indices) {
 			if !useNameTemplates {
+				log.Log.V(1).Info("Bucket kept separate (cross-rail PCI conflict; name templates disabled)",
+					"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
+					"sourceIndices", indices)
 				for _, idx := range indices {
 					result = append(result, groups[idx])
 				}
 				continue
 			}
 			hadPciConflicts = true
+			log.Log.V(1).Info("Bucket merged despite PCI conflict; name templates will resolve it",
+				"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
+				"sourceIndices", indices)
 		}
 
 		// Merge all groups in this bucket
-		result = append(result, buildMergedGroup(groups, indices))
+		merged := buildMergedGroup(groups, indices)
+		log.Log.V(1).Info("Bucket merged into single render group",
+			"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
+			"sourceIndices", indices,
+			"mergedIdentifier", merged.Identifier,
+			"mergedNodeCount", len(merged.WorkerNodes))
+		result = append(result, merged)
 	}
 
+	log.Log.V(1).Info("Group merge complete",
+		"sourceGroups", len(groups),
+		"renderGroups", len(result),
+		"pciConflictResolvedByNameTemplates", hadPciConflicts)
 	return result, hadPciConflicts
 }
 
@@ -894,8 +910,11 @@ func hasRailPciConflict(groups []config.ClusterConfig, indices []int) bool {
 	return false
 }
 
-// buildMergedGroup creates a single ClusterConfig from multiple groups that share
-// the same gpuType and east-west rail count.
+// buildMergedGroup creates a single ClusterConfig from multiple groups
+// sharing the same gpuType and east-west rail count. Source groups may
+// span different machineTypes, so the merged group's identifier and
+// NodeSelector fall back to the GPU product (sanitized gpuType /
+// `nvidia.com/gpu.product`) rather than the per-source machine label.
 func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.ClusterConfig {
 	first := groups[indices[0]]
 	gpuType := first.GPUType
@@ -977,17 +996,25 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 		slices.Sort(mergedStorageMods)
 	}
 
+	// Source groups may have different machineTypes (and therefore different
+	// per-source machine labels), so the merged group can't carry a single
+	// MachineLabelKey nodeSelector. Identifier follows the resource-name
+	// convention (lowercase via sanitizeIdentifier); NodeSelector keys on
+	// GPULabelKey, whose raw value matches the GPU operator's
+	// `nvidia.com/gpu.product` value — `l8k discover` wrote it onto every
+	// node alongside the machine label, so it's stable across merged
+	// source machineTypes by construction.
 	return config.ClusterConfig{
 		Identifier:           sanitizeIdentifier(gpuType),
-		GPUType:          gpuType,
+		MachineType:          first.MachineType,
+		GPUType:              gpuType,
+		LinkType:             first.LinkType,
 		Capabilities:         caps,
 		PFs:                  first.PFs, // Representative PFs from first group
 		WorkerNodes:          allNodes,
 		ThirdPartyRDMAModules: mergedDepMods,
 		StorageModules:        mergedStorageMods,
-		NodeSelector: map[string]string{
-			"nvidia.com/gpu.product": gpuType,
-		},
-		RailPciAddresses: railPciAddresses,
+		NodeSelector:         map[string]string{config.GPULabelKey: gpuType},
+		RailPciAddresses:     railPciAddresses,
 	}
 }

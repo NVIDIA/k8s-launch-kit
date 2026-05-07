@@ -54,7 +54,8 @@ Optionally deploy the generated manifests with --deploy.`,
 
   # Spectrum-X with hardware plane load balancing
   l8k generate --user-config cluster-config.yaml \
-    --spectrum-x --spcx-version RA2.2 --multiplane-mode hwplb \
+    --network-operator-release 26.4 \
+    --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
     --save-deployment-files ./output
 
   # Generate and deploy in one step
@@ -98,15 +99,17 @@ Optionally deploy the generated manifests with --deploy.`,
 		}
 
 		opts := options.Options{
-			UserConfig:              userConfig,
-			Fabric:                  fabric,
-			DeploymentType:          deploymentType,
-			Multirail:               multirail,
-			SpectrumX:               spectrumXVersion != "",
+			UserConfig:     userConfig,
+			Fabric:         fabric,
+			DeploymentType: deploymentType,
+			Multirail:      multirail,
+			MultirailSet:   cmd.Flag("multirail").Changed,
+			SpectrumX:      spectrumXVersion != "",
 			SPCXVersion:             spectrumXVersion,
 			MultiplaneMode:          multiplaneMode,
 			NumberOfPlanes:          numberOfPlanes,
-			Group:                   group,
+			Groups:                  groups,
+			GpuType:                 gpuType,
 			NodeSelector:            generateNodeSelector,
 			ForPreset:               forPreset,
 			ImagePullSecrets:        imagePullSecrets,
@@ -129,7 +132,7 @@ Optionally deploy the generated manifests with --deploy.`,
 			opts.EnableDocaDriver = &enableDocaDriver
 		}
 
-		if err := applySpectrumXDefaults(&opts); err != nil {
+		if err := applySpectrumXSyntaxChecks(&opts); err != nil {
 			exitWithError(apperrors.NewValidationError(err.Error(), err, "Check --spectrum-x flag combinations"), opts.OutputFormat)
 		}
 
@@ -182,7 +185,9 @@ func init() {
 			config.SupportedSPCXVersions))
 	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	generateCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes (requires --spectrum-x)")
-	generateCmd.Flags().StringVar(&group, "group", "", "Generate for a specific group only (e.g., group-0)")
+	generateCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
+	generateCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
+	generateCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
 	generateCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	generateCmd.Flags().StringVar(&generateNodeSelector, "node-selector", "", "Node selector for the synthesized clusterConfig when --for is used (e.g., key=value,key2=value2). Required with --for.")
 
@@ -214,11 +219,11 @@ func init() {
 	setFlagGroup(generateCmd, "deployment-type", GroupProfile)
 	setFlagGroup(generateCmd, "multirail", GroupProfile)
 	setFlagGroup(generateCmd, "spectrum-x", GroupProfile)
-	setFlagGroup(generateCmd, "group", GroupProfile)
+	setFlagGroup(generateCmd, "groups", GroupProfile)
+	setFlagGroup(generateCmd, "gpu-type", GroupProfile)
 	setFlagGroup(generateCmd, "for", GroupProfile)
 	setFlagGroup(generateCmd, "node-selector", GroupProfile)
 
-	setFlagGroup(generateCmd, "spcx-version", GroupSpectrumX)
 	setFlagGroup(generateCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(generateCmd, "number-of-planes", GroupSpectrumX)
 

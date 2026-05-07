@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -282,26 +284,60 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			discoverGPUTopology(ctx, p.RESTConfig,
 				defaultConfig.NetworkOperator.Namespace, group, dsPods)
 
+			// Probe per-PF fabric type from active port state + subnet
+			// manager presence (more reliable than firmware link_layer
+			// alone). Populates PFConfig.LinkType / LinkTypeSource. Used by
+			// the declarative defaults in `l8k generate` (Unit 8) to fill
+			// `--fabric` from the discovered group.
+			discoverGroupFabric(ctx, p.RESTConfig,
+				defaultConfig.NetworkOperator.Namespace, group, dsPods)
+
 			// Try to enrich with a predefined topology preset for this (machine,
 			// GPU) pair. Presets provide authoritative traffic classification,
 			// rail assignments, and NUMA/GPU topology metadata for known
 			// hardware configurations. Lookup is exact-match on (machineType,
 			// gpuType) — both must be known for a preset to apply.
 			if group.MachineType != "" && group.GPUType != "" {
+				log.Log.V(1).Info("Looking up preset by (machineType, gpuType)",
+					"group", group.Identifier,
+					"machineType", group.MachineType,
+					"gpuType", group.GPUType)
 				preset, presetErr := presets.LoadPreset(group.MachineType, group.GPUType)
 				if presetErr != nil {
 					log.Log.Error(presetErr, "failed to load preset",
 						"machineType", group.MachineType, "gpuType", group.GPUType)
 					uiOutput.Warning("Failed to load preset for %s/%s: %v",
 						group.MachineType, group.GPUType, presetErr)
-				} else if preset != nil {
-					if presetErr := presets.ValidatePreset(preset, group.PFs); presetErr != nil {
-						log.Log.Info("Preset did not match discovered hardware",
-							"machineType", group.MachineType, "gpuType", group.GPUType, "error", presetErr)
-						uiOutput.Info("Preset for %s/%s did not match discovered hardware: %v",
-							group.MachineType, group.GPUType, presetErr)
+				} else if preset == nil {
+					log.Log.V(1).Info("No preset matched (machineType, gpuType)",
+						"group", group.Identifier,
+						"machineType", group.MachineType,
+						"gpuType", group.GPUType)
+				} else {
+					// Always apply the matched preset on a best-effort basis.
+					// Any discrepancies (PF count, PCI address drift,
+					// device-ID drift) are recorded as soft deviations and
+					// re-warned about on every subsequent config load.
+					deviations := presets.ValidatePreset(preset, group.PFs)
+					presets.ApplyPreset(preset, group)
+					log.Log.V(1).Info("Preset matched and applied",
+						"group", group.Identifier,
+						"machineType", group.MachineType,
+						"gpuType", group.GPUType,
+						"presetPFCount", len(preset.PFs),
+						"discoveredPFCount", len(group.PFs),
+						"deviationCount", len(deviations))
+					if len(deviations) > 0 {
+						group.PresetDeviation = deviations
+						log.Log.Info("Preset applied with deviations from matched preset",
+							"group", group.Identifier,
+							"machineType", group.MachineType,
+							"gpuType", group.GPUType,
+							"deviationCount", len(deviations))
+						uiOutput.Warning(
+							"Preset for %s/%s applied with %d deviation(s) from the matched preset. The deployment is not certified — see 'presetDeviation' in cluster-config.yaml.",
+							group.MachineType, group.GPUType, len(deviations))
 					} else {
-						presets.ApplyPreset(preset, group)
 						uiOutput.Info("Applied preset configuration for %s", group.MachineType)
 					}
 				}
@@ -330,7 +366,127 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		}
 	}
 
+	// Now that machineType and gpuType are settled (either from labels or
+	// from the per-group hardware probes), assign each group a stable
+	// machine label. This replaces the differential-label nodeSelector
+	// algorithm: every node in the group is patched with
+	// `nvidia.kubernetes-launch-kit.machine: <machineType>-<gpuType>` and
+	// the group's Identifier + NodeSelector are aligned with that value.
+	applyMachineLabelToGroups(ctx, c, defaultConfig.ClusterConfig)
+
+	// Phase summary — counts surfaced at info level so the default UX shows
+	// progress without requiring --log-level=debug.
+	totalEW, totalNS, presetMatches, deviationGroups, labelled := 0, 0, 0, 0, 0
+	for _, g := range defaultConfig.ClusterConfig {
+		for _, pf := range g.PFs {
+			switch pf.Traffic {
+			case "east-west":
+				totalEW++
+			case "north-south":
+				totalNS++
+			}
+		}
+		if g.PresetApplied {
+			presetMatches++
+		}
+		if len(g.PresetDeviation) > 0 {
+			deviationGroups++
+		}
+		if g.NodeSelector[config.MachineLabelKey] != "" {
+			labelled++
+		}
+	}
+	log.Log.Info("Discovery summary",
+		"groupCount", len(defaultConfig.ClusterConfig),
+		"eastWestPFs", totalEW,
+		"northSouthPFsFiltered", totalNS,
+		"presetMatches", presetMatches,
+		"presetDeviationGroups", deviationGroups,
+		"machineLabelledGroups", labelled)
+
 	return nil
+}
+
+// applyMachineLabelToGroups walks each group and writes two l8k-specific
+// labels onto every node in the group:
+//
+//   - MachineLabelKey = `<machineType>-<gpuType>` literal — per-source-group
+//     identifier, written when both fields are resolved.
+//   - GPULabelKey = `<gpuType>` literal — written when gpuType is resolved.
+//     Used as the merged-group NodeSelector when source groups span
+//     machineTypes but share a GPU type.
+//
+// Both label values bypass the Kubernetes 63-char limit by skipping the
+// label entirely when the value would overflow (logged at debug). Group
+// `Identifier` follows the resource-name convention (lowercase via
+// `sanitizeIdentifier`); the label values keep their original case to
+// match `nvidia.com/gpu.product`-style values.
+//
+// Groups whose machine label can't be computed (one input missing) keep
+// their fallback identifier ("group-N") and an empty NodeSelector. The
+// GPU label is still written when gpuType alone is resolved, so
+// merged-group selection still works.
+func applyMachineLabelToGroups(ctx context.Context, c client.Client, groups []config.ClusterConfig) {
+	for i := range groups {
+		g := &groups[i]
+		machineLabel := config.MachineLabelValue(g.MachineType, g.GPUType)
+		gpuLabel := config.GPULabelValue(g.GPUType)
+
+		if machineLabel == "" {
+			log.Log.V(1).Info("Skipping machine label: machineType/gpuType unresolved or value > 63 chars",
+				"group", g.Identifier,
+				"machineType", g.MachineType,
+				"gpuType", g.GPUType)
+		} else {
+			log.Log.V(1).Info("Assigning machine label to group",
+				"originalIdentifier", g.Identifier,
+				"machineType", g.MachineType,
+				"gpuType", g.GPUType,
+				"labelValue", machineLabel,
+				"nodes", len(g.WorkerNodes))
+			g.Identifier = sanitizeIdentifier(machineLabel)
+			g.NodeSelector = map[string]string{config.MachineLabelKey: machineLabel}
+		}
+
+		labels := map[string]string{}
+		if machineLabel != "" {
+			labels[config.MachineLabelKey] = machineLabel
+		}
+		if gpuLabel != "" {
+			labels[config.GPULabelKey] = gpuLabel
+		}
+		if len(labels) == 0 {
+			continue
+		}
+		for _, nodeName := range g.WorkerNodes {
+			if err := patchNodeLabels(ctx, c, nodeName, labels); err != nil {
+				log.Log.Error(err, "failed to patch node labels",
+					"node", nodeName, "labels", labels)
+				continue
+			}
+			log.Log.V(1).Info("Wrote labels to node",
+				"node", nodeName, "labels", labels)
+		}
+	}
+}
+
+// patchNodeLabels applies one or more labels to a node via a
+// strategic-merge patch. Idempotent — re-applying the same values is a
+// no-op on the cluster side, and avoids the read-modify-write conflict
+// risk of a full Update.
+func patchNodeLabels(ctx context.Context, c client.Client, nodeName string, labels map[string]string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(labels))
+	for k, v := range labels {
+		parts = append(parts, fmt.Sprintf("%q:%q", k, v))
+	}
+	patch := []byte(fmt.Sprintf(
+		`{"metadata":{"labels":{%s}}}`,
+		strings.Join(parts, ",")))
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
+	return c.Patch(ctx, node, client.RawPatch(k8stypes.StrategicMergePatchType, patch))
 }
 
 // checkDaemonSetPodsReady verifies that all pods owned by the given DaemonSet
@@ -699,6 +855,20 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		//     reclassified by the frequency heuristic in Stage 1.5).
 		isDPU := isNorthSouthDevice(d.Status.PartNumber)
 		isBF3SuperNIC := !isDPU && isBlueField3Device(d.Status.Type)
+		var classification string
+		switch {
+		case isDPU:
+			classification = "north-south (matched DPU part-number)"
+		case isBF3SuperNIC:
+			classification = "east-west (BF3 SuperNIC override)"
+		default:
+			classification = "unclassified (default east-west; may be reclassified by frequency heuristic)"
+		}
+		log.Log.V(2).Info("Classified NIC by traffic direction",
+			"node", nodeName,
+			"deviceID", d.Status.Type,
+			"partNumber", d.Status.PartNumber,
+			"classification", classification)
 		for _, p := range d.Status.Ports {
 			entry := nodePFEntry{
 				pfFingerprint: pfFingerprint{
@@ -768,6 +938,8 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 	for _, nodeName := range sortedNodes {
 		ni := nodeMap[nodeName]
 		fp := computeFingerprint(ni.pfs)
+		log.Log.V(1).Info("Bucketing node by PCI fingerprint",
+			"node", nodeName, "pfCount", len(ni.pfs), "fingerprint", string(fp))
 		if g, ok := groupMap[fp]; ok {
 			g.nodes = append(g.nodes, nodeName)
 			g.hasRdma = g.hasRdma || ni.hasRdma
@@ -833,6 +1005,12 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		commonLabels := computeCommonLabels(g.nodes, nodeLabels)
 		machineType := commonLabels["nvidia.com/gpu.machine"]
 		gpuType := commonLabels["nvidia.com/gpu.product"]
+		log.Log.V(1).Info("Read GPU operator labels for group",
+			"group", identifier,
+			"nodes", g.nodes,
+			"machineTypeFromLabel", machineType,
+			"gpuTypeFromLabel", gpuType,
+			"willFallBackToHardwareProbe", machineType == "" || gpuType == "")
 
 		cc := config.ClusterConfig{
 			Identifier:    identifier,
@@ -1100,12 +1278,19 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 	}
 
 	if needMachine {
+		const dmiCmd = "cat /sys/class/dmi/id/product_name 2>/dev/null"
+		log.Log.V(1).Info("Probing machine type via DMI",
+			"pod", targetPod.Name, "command", dmiCmd)
 		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", "cat /sys/class/dmi/id/product_name 2>/dev/null"})
+			[]string{"/bin/sh", "-c", dmiCmd})
 		if err != nil {
 			log.Log.Error(err, "failed to read machine type from DMI", "pod", targetPod.Name)
 		} else {
 			machineType = parseMachineTypeFromDMI(output)
+			log.Log.V(1).Info("Probed machine type from DMI",
+				"pod", targetPod.Name,
+				"rawOutput", truncateForLog(output, 200),
+				"parsed", machineType)
 		}
 	}
 
@@ -1116,21 +1301,31 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 		nvidiaSmiCmd := `if [ -x /host/usr/bin/nvidia-smi ]; then ` +
 			`LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH ` +
 			`/host/usr/bin/nvidia-smi -q 2>/dev/null || true; fi`
+		log.Log.V(1).Info("Probing GPU product type via nvidia-smi", "pod", targetPod.Name)
 		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
 			[]string{"/bin/sh", "-c", nvidiaSmiCmd})
 		if err != nil {
 			log.Log.Error(err, "failed to exec nvidia-smi probe", "pod", targetPod.Name)
 		} else {
 			gpuType = parseGPUProductFromNvidiaSmi(output)
+			log.Log.V(1).Info("Probed GPU product type via nvidia-smi",
+				"pod", targetPod.Name,
+				"parsed", gpuType,
+				"willFallBackToSysfs", gpuType == "")
 		}
 
 		if gpuType == "" {
+			log.Log.V(1).Info("Falling back to sysfs/pci.ids for GPU product type", "pod", targetPod.Name)
 			sysfsOutput, sysfsErr := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
 				[]string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
 			if sysfsErr != nil {
 				log.Log.Error(sysfsErr, "failed to exec sysfs GPU probe", "pod", targetPod.Name)
 			} else {
 				gpuType = parseGPUProductFromSysfs(sysfsOutput)
+				log.Log.V(1).Info("Probed GPU product type via sysfs/pci.ids",
+					"pod", targetPod.Name,
+					"sysfsID", strings.TrimSpace(sysfsOutput),
+					"parsed", gpuType)
 				if gpuType == "" && strings.TrimSpace(sysfsOutput) != "" {
 					log.Log.Info("GPU product type not resolved from sysfs device ID",
 						"pod", targetPod.Name, "unresolvedID", strings.TrimSpace(sysfsOutput))
@@ -1140,6 +1335,196 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 	}
 
 	return machineType, gpuType
+}
+
+// truncateForLog clips a string to maxLen characters and appends "…" when
+// the input was longer. Used to keep V(1) probe logs readable for raw
+// command output without overwhelming the log volume.
+func truncateForLog(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
+}
+
+// discoverGroupFabric probes the InfiniBand sysfs entries on a representative
+// daemon pod for every east-west PF in `group` that has an RdmaDevice and,
+// when the per-port verdicts unanimously agree on a confirmed value, sets
+// `group.LinkType`. Otherwise the field is left empty — discovery couldn't
+// prove the cluster is using a specific fabric, and downstream code treats
+// absence as "unknown".
+//
+// "Confirmed" means the port is ACTIVE and (for InfiniBand) a subnet
+// manager is present (sm_lid != 0). Anything else — port down, IB without
+// SM, malformed sysfs output — yields no contribution to the group's
+// verdict. Reading link_layer alone would be unreliable: that file just
+// reflects firmware config and may be a default the cluster doesn't use.
+//
+// Multi-node groups whose RdmaDevice is empty (per the existing
+// per-node-vs-group safety rule) skip the probe — there's no ibdev name
+// to point sysfs at — but other PFs in the group can still contribute.
+func discoverGroupFabric(ctx context.Context, restConfig *rest.Config,
+	namespace string, group *config.ClusterConfig, dsPods []corev1.Pod) {
+
+	if restConfig == nil {
+		return
+	}
+	targetPod := findDaemonPod(group.WorkerNodes, dsPods)
+	if targetPod == nil {
+		log.Log.V(1).Info("Skipping fabric probe: no daemon pod on group nodes",
+			"group", group.Identifier)
+		return
+	}
+	containerName := ""
+	if len(targetPod.Spec.Containers) > 0 {
+		containerName = targetPod.Spec.Containers[0].Name
+	}
+
+	verdicts := map[string]int{} // confirmed linkType -> count
+	probed := 0
+	for _, pf := range group.PFs {
+		if pf.Traffic != "east-west" || pf.RdmaDevice == "" {
+			continue
+		}
+		probed++
+		linkType, raw, err := discoverPortFabric(ctx, restConfig, namespace,
+			targetPod.Name, containerName, pf.RdmaDevice, 1)
+		if err != nil {
+			log.Log.V(1).Info("Fabric probe failed",
+				"group", group.Identifier,
+				"pod", targetPod.Name,
+				"pci", pf.PciAddress,
+				"rdmaDevice", pf.RdmaDevice,
+				"error", err.Error())
+			continue
+		}
+		log.Log.V(1).Info("Fabric port probe",
+			"group", group.Identifier,
+			"pod", targetPod.Name,
+			"pci", pf.PciAddress,
+			"rdmaDevice", pf.RdmaDevice,
+			"linkType", linkType,
+			"raw", raw)
+		if linkType != "" {
+			verdicts[linkType]++
+		}
+	}
+
+	switch {
+	case len(verdicts) == 1:
+		for k := range verdicts {
+			group.LinkType = k
+			log.Log.V(1).Info("Group fabric resolved",
+				"group", group.Identifier,
+				"linkType", k,
+				"probedPFs", probed,
+				"confirmedPFs", verdicts[k])
+		}
+	case len(verdicts) > 1:
+		log.Log.V(1).Info("Group fabric ambiguous (probes disagree); leaving linkType unset",
+			"group", group.Identifier,
+			"probedPFs", probed,
+			"verdicts", verdicts)
+	default:
+		log.Log.V(1).Info("Group fabric unconfirmed (no port produced a confirmed verdict); leaving linkType unset",
+			"group", group.Identifier,
+			"probedPFs", probed)
+	}
+}
+
+// discoverPortFabric reads
+// /sys/class/infiniband/<rdmaDevice>/ports/<port>/{state,phys_state,link_layer,sm_lid}
+// inside the daemon pod via a single shell exec and returns the confirmed
+// fabric for that port (empty when the port could not produce a confirmed
+// verdict). rawSummary is a short human-readable joined version of the
+// four sysfs values for debug logs.
+func discoverPortFabric(ctx context.Context, restConfig *rest.Config,
+	namespace, podName, containerName, rdmaDevice string, port int) (string, string, error) {
+
+	base := fmt.Sprintf("/sys/class/infiniband/%s/ports/%d", rdmaDevice, port)
+	cmd := fmt.Sprintf(
+		"echo state=$(cat %s/state 2>/dev/null); "+
+			"echo phys_state=$(cat %s/phys_state 2>/dev/null); "+
+			"echo link_layer=$(cat %s/link_layer 2>/dev/null); "+
+			"echo sm_lid=$(cat %s/sm_lid 2>/dev/null)",
+		base, base, base, base)
+	output, err := execInPod(ctx, restConfig, namespace, podName, containerName,
+		[]string{"/bin/sh", "-c", cmd})
+	if err != nil {
+		return "", "", err
+	}
+	linkType, raw := parsePortFabricVerdict(output)
+	return linkType, raw, nil
+}
+
+// parsePortFabricVerdict converts the four-line "key=value" output of the
+// sysfs probe into a confirmed fabric verdict (or empty when no
+// confirmation is possible).
+//
+// Confirmation rule:
+//   - Active + InfiniBand + sm_lid != 0  → "InfiniBand".
+//   - Active + Ethernet                  → "Ethernet".
+//   - Anything else                      → "" (no confirmation; caller
+//     leaves group.LinkType unset).
+//
+// Active means the state file matches "ACTIVE" (case-insensitive); the
+// kernel formats it as "4: ACTIVE", "1: DOWN", etc.
+func parsePortFabricVerdict(output string) (linkType, raw string) {
+	fields := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
+		eq := strings.IndexByte(line, '=')
+		if eq < 0 {
+			continue
+		}
+		fields[strings.TrimSpace(line[:eq])] = strings.TrimSpace(line[eq+1:])
+	}
+	state := fields["state"]
+	linkLayer := normalizeLinkLayer(fields["link_layer"])
+	smLid := fields["sm_lid"]
+
+	raw = fmt.Sprintf("state=%q phys_state=%q link_layer=%q sm_lid=%q",
+		state, fields["phys_state"], fields["link_layer"], smLid)
+
+	active := strings.Contains(strings.ToUpper(state), "ACTIVE")
+	hasSM := smLidIsNonZero(smLid)
+
+	switch {
+	case active && linkLayer == "InfiniBand" && hasSM:
+		return "InfiniBand", raw
+	case active && linkLayer == "Ethernet":
+		return "Ethernet", raw
+	default:
+		return "", raw
+	}
+}
+
+// smLidIsNonZero parses a sysfs `sm_lid` value (e.g. "0", "0x0", "0x0000",
+// "0x0001") as an unsigned integer and returns true when the value is
+// strictly greater than zero. Kernel versions disagree on the format —
+// some emit decimal, some emit hex — so we accept both via auto-base
+// (base=0 in strconv.ParseUint).
+func smLidIsNonZero(s string) bool {
+	v, err := strconv.ParseUint(strings.TrimSpace(s), 0, 32)
+	if err != nil {
+		return false
+	}
+	return v != 0
+}
+
+// normalizeLinkLayer canonicalises sysfs link_layer strings to the YAML
+// vocabulary l8k uses elsewhere ("Ethernet" / "InfiniBand"). The kernel
+// emits "Ethernet" and "InfiniBand" already, but accept common variants
+// (case differences, whitespace) to avoid silent misclassification.
+func normalizeLinkLayer(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "ethernet":
+		return "Ethernet"
+	case "infiniband":
+		return "InfiniBand"
+	default:
+		return ""
+	}
 }
 
 // sysfsNvidiaGPUIDCmd emits the first NVIDIA (vendor 10de) GPU device ID found
@@ -1256,13 +1641,19 @@ done | TARGETS="$targets" awk "$awk_script" | sort -u`, modList)
 		containerName = targetPod.Spec.Containers[0].Name
 	}
 
+	log.Log.V(1).Info("Probing OFED-dependent kernel modules",
+		"pod", targetPod.Name, "ofedTargets", ofedTargetModules)
 	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
 		[]string{"/bin/sh", "-c", script})
 	if err != nil {
 		return nil, fmt.Errorf("exec in pod %q failed: %w", targetPod.Name, err)
 	}
-
-	return parseModuleList(output, ofedTargetModules), nil
+	modules := parseModuleList(output, ofedTargetModules)
+	log.Log.V(1).Info("Discovered OFED-dependent kernel modules",
+		"pod", targetPod.Name,
+		"rawOutput", truncateForLog(output, 200),
+		"parsed", modules)
+	return modules, nil
 }
 
 // parseModuleList splits newline-separated module names, deduplicates, sorts them,
@@ -1290,13 +1681,38 @@ func parseModuleList(output string, exclude []string) []string {
 	return modules
 }
 
+// coreRdmaInfrastructureModules is the set of kernel-native RDMA core
+// modules that MOFED's openibd unload sequence handles natively. Per
+// upstream guidance in `mofedmodules.DefaultThirdPartyRDMAModules`'s
+// doc comment ("Do NOT add core RDMA infrastructure modules (iw_cm,
+// ib_cm, rdma_cm, rdma_ucm, ib_core, ib_uverbs, etc.)"), these are NOT
+// third-party — they're shared kernel infrastructure that the driver
+// container does not need to unload separately. l8k discovery silently
+// drops them so they never appear as `thirdPartyRDMAModules` in
+// cluster-config.yaml or trigger the `unloadThirdPartyRDMAModules`
+// auto-enable + warning.
+var coreRdmaInfrastructureModules = map[string]bool{
+	"iw_cm":     true,
+	"ib_cm":     true,
+	"rdma_cm":   true,
+	"rdma_ucm":  true,
+	"ib_core":   true,
+	"ib_uverbs": true,
+}
+
 // classifyDiscoveredModules splits a list of discovered OFED-dependent modules into
 // third-party RDMA modules and storage modules. mlx5-prefixed modules (NVIDIA's own)
-// are silently dropped.
+// and kernel-native RDMA core modules are silently dropped.
 func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
+	var droppedMlx, droppedCore []string
 	for _, mod := range modules {
 		if strings.HasPrefix(mod, "mlx5") {
+			droppedMlx = append(droppedMlx, mod)
 			continue // NVIDIA module — always greenlit
+		}
+		if coreRdmaInfrastructureModules[mod] {
+			droppedCore = append(droppedCore, mod)
+			continue // Kernel-native RDMA core — MOFED's openibd handles it
 		}
 		if knownStorageModules[mod] {
 			storage = append(storage, mod)
@@ -1304,6 +1720,12 @@ func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
 			rdma = append(rdma, mod)
 		}
 	}
+	log.Log.V(1).Info("Classified OFED-dependent modules",
+		"total", len(modules),
+		"thirdPartyRDMA", rdma,
+		"storage", storage,
+		"droppedMlx5Prefixed", droppedMlx,
+		"droppedCoreRdma", droppedCore)
 	return rdma, storage
 }
 

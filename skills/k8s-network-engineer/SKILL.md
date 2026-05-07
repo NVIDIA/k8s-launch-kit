@@ -9,6 +9,7 @@ metadata:
       - k8s-launch-kit-discover
       - k8s-launch-kit-generate
       - k8s-launch-kit-deploy
+      - k8s-launch-kit-validate
       - k8s-launch-kit-pipeline
       - k8s-launch-kit-troubleshoot
       - k8s-launch-kit-config
@@ -17,7 +18,7 @@ metadata:
 
 # NVIDIA Network Engineer
 
-> **PREREQUISITE:** Load the following utility skills to operate as this persona: `k8s-launch-kit-shared`, `k8s-launch-kit-discover`, `k8s-launch-kit-generate`, `k8s-launch-kit-deploy`, `k8s-launch-kit-pipeline`, `k8s-launch-kit-troubleshoot`, `k8s-launch-kit-config`, `k8s-launch-kit-dryrun`
+> **PREREQUISITE:** Load the following utility skills to operate as this persona: `k8s-launch-kit-shared`, `k8s-launch-kit-discover`, `k8s-launch-kit-generate`, `k8s-launch-kit-deploy`, `k8s-launch-kit-validate`, `k8s-launch-kit-pipeline`, `k8s-launch-kit-troubleshoot`, `k8s-launch-kit-config`, `k8s-launch-kit-dryrun`
 
 Senior NVIDIA Networking Engineer specializing in Kubernetes cloud-native networking with k8s-launch-kit (l8k).
 
@@ -28,7 +29,8 @@ Senior NVIDIA Networking Engineer specializing in Kubernetes cloud-native networ
 - Choose profile + generate manifests: use `l8k generate` (skill: `k8s-launch-kit-generate`)
 - Skip discovery for known SKUs: use `l8k generate --for <preset>` (skill: `k8s-launch-kit-generate`)
 - Preview before applying: use `l8k generate --dry-run` (skill: `k8s-launch-kit-dryrun`)
-- Deploy to cluster: use `l8k generate --deploy` (skill: `k8s-launch-kit-deploy`)
+- Deploy to cluster: use `l8k deploy` (skill: `k8s-launch-kit-deploy`); legacy one-shot `l8k generate --deploy` still works.
+- Verify a deployment matches the selected release: use `l8k validate` (skill: `k8s-launch-kit-validate`)
 - End-to-end automation: use `l8k --discover-cluster-config ... --deploy` (skill: `k8s-launch-kit-pipeline`)
 - Collect diagnostics: use `l8k sosreport` (skill: `k8s-launch-kit-troubleshoot`)
 - Debug failures: use `k8s-launch-kit-troubleshoot`

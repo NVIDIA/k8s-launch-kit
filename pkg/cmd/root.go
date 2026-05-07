@@ -62,7 +62,8 @@ var (
 	enabledPlugins              string
 	networkOperatorNamespace    string
 	networkOperatorRelease      string
-	group                       string
+	groups                      []string
+	gpuType                     string
 	nodeSelector                string
 	imagePullSecrets            []string
 	podNamespace                string
@@ -148,11 +149,13 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			Fabric:                fabric,
 			DeploymentType:        deploymentType,
 			Multirail:             multirail,
+			MultirailSet:         cmd.Flag("multirail").Changed,
 			SpectrumX:             spectrumXVersion != "",
 			SPCXVersion:           spectrumXVersion,
 			MultiplaneMode:        multiplaneMode,
 			NumberOfPlanes:        numberOfPlanes,
-			Group:                group,
+			Groups:               groups,
+			GpuType:              gpuType,
 			NodeSelector:         nodeSelector,
 			ForPreset:            forPreset,
 			ImagePullSecrets:     imagePullSecrets,
@@ -177,7 +180,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 		}
 
 		// Apply Spectrum-X implied defaults (fabric, deployment, multirail)
-		if err := applySpectrumXDefaults(&opts); err != nil {
+		if err := applySpectrumXSyntaxChecks(&opts); err != nil {
 			exitWithError(apperrors.NewValidationError(err.Error(), err, "Check --spectrum-x flag combinations"), opts.OutputFormat)
 		}
 
@@ -233,7 +236,9 @@ func init() {
 			config.SupportedSPCXVersions))
 	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
-	rootCmd.Flags().StringVar(&group, "group", "", "Generate templates for a specific group only (e.g., group-0)")
+	rootCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
+	rootCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
+	rootCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
 	rootCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes for discovery by label (e.g., key=value,key2=value2)")
 	rootCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
@@ -275,7 +280,8 @@ func init() {
 	setFlagGroup(rootCmd, "deployment-type", GroupProfile)
 	setFlagGroup(rootCmd, "multirail", GroupProfile)
 	setFlagGroup(rootCmd, "spectrum-x", GroupProfile)
-	setFlagGroup(rootCmd, "group", GroupProfile)
+	setFlagGroup(rootCmd, "groups", GroupProfile)
+	setFlagGroup(rootCmd, "gpu-type", GroupProfile)
 	setFlagGroup(rootCmd, "for", GroupProfile)
 
 	setFlagGroup(rootCmd, "multiplane-mode", GroupSpectrumX)
@@ -390,36 +396,23 @@ func validateConfig(options *options.Options) error {
 	return nil
 }
 
-// spcxVersionAllowedReleases is the authoritative mapping from SPC-X RA
-// version to the Network Operator releases that ship that version's CRD set.
-// When a future release line picks up an existing RA version (e.g. 27.0
-// continues to ship the v1alpha2 SpectrumXRailPoolConfig), append it to the
-// matching slice. When a future RA version arrives (RA2.3 etc.), add a new
-// key. This single source of truth fronts the matcher's min/max gates with a
-// clear error so the user gets a specific "RA2.1 needs --network-operator-release
-// 26.1, got 26.4" instead of "no applicable profile found".
-var spcxVersionAllowedReleases = map[string][]string{
-	"RA2.1": {"26.1"},
-	"RA2.2": {"26.4"},
-}
-
-// applySpectrumXDefaults validates --spectrum-x usage and sets implied
-// defaults. --spectrum-x is now a string flag whose value is the SPC-X RA
-// version (folding in the legacy --spcx-version). When set, the user must
-// also pass --multiplane-mode, --number-of-planes, and a matching
-// --network-operator-release; without all four the matcher cannot reliably
-// pick between the RA2.1 and RA2.2 profiles, and a silent fall-through to a
-// non-Spectrum-X profile generates manifests that look superficially correct
-// but lack the SR-IOV operator chain or SpectrumXRailPoolConfig the user
-// expected.
+// applySpectrumXSyntaxChecks is the Phase 1 enum/value validator. It
+// runs in PreRunE BEFORE LoadFullConfig + ApplyHardwareDefaults, so it
+// catches obvious typos (e.g. `--multiplane-mode bogus`) up-front
+// without false positives from values that defaults are about to fill.
 //
-// Spectrum-X always implies ethernet fabric, sriov deployment, and multirail —
-// these are silently set so the user doesn't have to repeat them.
-func applySpectrumXDefaults(opts *options.Options) error {
+// Cohort/cross-flag rules ("RA2.1 requires release 26.1", "spectrum-x
+// requires ethernet fabric", etc.) live in
+// `pkg/resolve.ValidateResolvedConfig` and run AFTER defaults have a
+// chance to fill them in.
+//
+// Implicit defaulting (Spectrum-X → fabric=ethernet etc.) lives in
+// `pkg/resolve.ApplyHardwareDefaults`.
+func applySpectrumXSyntaxChecks(opts *options.Options) error {
+	// Inverse cohort: --multiplane-mode / --number-of-planes are only
+	// meaningful with --spectrum-x. Catch the CLI typo case here so
+	// the user doesn't get a confusing render-time failure.
 	if !opts.SpectrumX {
-		// Inverse cohort: --multiplane-mode / --number-of-planes are only
-		// meaningful with --spectrum-x. Catch the typo case where the user
-		// set a Spectrum-X param but forgot --spectrum-x itself.
 		if opts.MultiplaneMode != "" {
 			return fmt.Errorf("--multiplane-mode can only be used with --spectrum-x")
 		}
@@ -428,16 +421,9 @@ func applySpectrumXDefaults(opts *options.Options) error {
 		}
 		return nil
 	}
-	if opts.Fabric != "" && opts.Fabric != "ethernet" {
-		return fmt.Errorf("--spectrum-x requires ethernet fabric, got --fabric %s", opts.Fabric)
-	}
-	if opts.DeploymentType != "" && opts.DeploymentType != "sriov" {
-		return fmt.Errorf("--spectrum-x requires sriov deployment, got --deployment-type %s", opts.DeploymentType)
-	}
 
-	// --spectrum-x is the RA version itself; an empty value means SpectrumX
-	// shouldn't have been set in the first place (defensive — Run() derives
-	// SpectrumX from SPCXVersion != "").
+	// SPCXVersion enum check — defensive even though Run() should
+	// have set SpectrumX only when SPCXVersion is non-empty.
 	if opts.SPCXVersion == "" {
 		return fmt.Errorf("--spectrum-x requires the SPC-X RA version as its value; supported: %v",
 			config.SupportedSPCXVersions)
@@ -446,50 +432,31 @@ func applySpectrumXDefaults(opts *options.Options) error {
 		return fmt.Errorf("invalid --spectrum-x value %q; supported: %v",
 			opts.SPCXVersion, config.SupportedSPCXVersions)
 	}
-	if opts.MultiplaneMode == "" {
-		return fmt.Errorf("--multiplane-mode is required when --spectrum-x is set; supported: %v",
-			config.SupportedMultiplaneModes)
-	}
-	if !slices.Contains(config.SupportedMultiplaneModes, opts.MultiplaneMode) {
+
+	// Enum checks for --multiplane-mode and --number-of-planes only
+	// fire when the user supplied a value; defaults fill them later.
+	if opts.MultiplaneMode != "" && !slices.Contains(config.SupportedMultiplaneModes, opts.MultiplaneMode) {
 		return fmt.Errorf("invalid --multiplane-mode %q; supported: %v",
 			opts.MultiplaneMode, config.SupportedMultiplaneModes)
 	}
-	if opts.NumberOfPlanes == 0 {
-		return fmt.Errorf("--number-of-planes is required when --spectrum-x is set; supported: %v",
-			config.SupportedNumberOfPlanes)
-	}
-	if !slices.Contains(config.SupportedNumberOfPlanes, opts.NumberOfPlanes) {
+	if opts.NumberOfPlanes != 0 && !slices.Contains(config.SupportedNumberOfPlanes, opts.NumberOfPlanes) {
 		return fmt.Errorf("invalid --number-of-planes %d; supported: %v",
 			opts.NumberOfPlanes, config.SupportedNumberOfPlanes)
 	}
 
-	// Cross-validate mode ↔ planes. The "none" mode disables multiplaning
-	// entirely, so anything other than 1 plane is a contradiction.
-	if opts.MultiplaneMode == "none" && opts.NumberOfPlanes != 1 {
-		return fmt.Errorf("--multiplane-mode none requires --number-of-planes 1, got %d",
-			opts.NumberOfPlanes)
+	// --network-operator-release enum check (when supplied). The
+	// (RA, release) pairing is enforced in Phase 2 against the
+	// resolved cfg, but we can reject obvious typos here — the
+	// release line is consequential (CRD shape + SR-IOV operator
+	// behaviour), so a misspelled release is worth catching early.
+	if opts.NetworkOperatorRelease != "" {
+		allowed := config.SPCXVersionAllowedReleases[opts.SPCXVersion]
+		if !slices.Contains(allowed, opts.NetworkOperatorRelease) {
+			return fmt.Errorf("--spectrum-x %s requires --network-operator-release in %v, got %s",
+				opts.SPCXVersion, allowed, opts.NetworkOperatorRelease)
+		}
 	}
 
-	// Cross-validate the (RA version, network-operator-release) pair. The user
-	// must pass --network-operator-release explicitly when --spectrum-x is set;
-	// no silent defaulting (the release line is consequential — it picks the
-	// CRD shape and the SR-IOV operator behaviour). Mismatches surface a
-	// specific error so the user knows exactly which release the RA wants
-	// rather than a generic "no applicable profile found".
-	allowed := spcxVersionAllowedReleases[opts.SPCXVersion]
-	if opts.NetworkOperatorRelease == "" {
-		return fmt.Errorf("--network-operator-release is required when --spectrum-x is set; "+
-			"--spectrum-x %s requires --network-operator-release in %v",
-			opts.SPCXVersion, allowed)
-	}
-	if !slices.Contains(allowed, opts.NetworkOperatorRelease) {
-		return fmt.Errorf("--spectrum-x %s requires --network-operator-release in %v, got %s",
-			opts.SPCXVersion, allowed, opts.NetworkOperatorRelease)
-	}
-
-	opts.Fabric = "ethernet"
-	opts.DeploymentType = "sriov"
-	opts.Multirail = true
 	return nil
 }
 

@@ -33,9 +33,17 @@ const (
 )
 
 type NetworkOperatorPlugin struct {
-	GroupFilter   string
+	// Groups is the list of source-group identifiers passed via
+	// `--groups <a,b,...>` (matched case-sensitively against
+	// `cluster-config.yaml`'s `clusterConfig[].identifier`). Empty when
+	// the user didn't supply the flag.
+	Groups []string
+	// GpuType is the value passed via `--gpu-type <X>` (matched
+	// case-insensitively against `gpuType`). Empty when the user didn't
+	// supply the flag. Mutually exclusive with Groups.
+	GpuType      string
 	NodeSelector map[string]string
-	RESTConfig    *rest.Config
+	RESTConfig   *rest.Config
 }
 
 func (p *NetworkOperatorPlugin) GetName() string {
@@ -157,8 +165,13 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 	if options.DeploymentType != "" {
 		fullConfig.Profile.Deployment = options.DeploymentType
 	}
-	if options.Multirail {
-		fullConfig.Profile.Multirail = true
+	// `MultirailSet` is true only when the user explicitly passed
+	// `--multirail` (regardless of value). Without it, the bool zero
+	// value can't be distinguished from "not passed", so a user who
+	// did NOT pass the flag would clobber the hardware default of
+	// true with `false`. See `pkg/options.Options.MultirailSet`.
+	if options.MultirailSet {
+		fullConfig.Profile.Multirail = options.Multirail
 	}
 
 	// Apply workload manifest override from CLI

@@ -146,21 +146,34 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("CLI multirail true overrides config false", func(t *testing.T) {
+		// Unit 8: bool override requires `MultirailSet` to distinguish
+		// "explicitly passed" from "not passed" (Go bool zero is false).
 		cfg := &config.LaunchKubernetesConfig{
 			Profile: &config.Profile{Multirail: false},
 		}
-		err := p.ApplyOptionsToConfig(options.Options{Multirail: true}, cfg)
+		err := p.ApplyOptionsToConfig(options.Options{Multirail: true, MultirailSet: true}, cfg)
 		require.NoError(t, err)
 		assert.True(t, cfg.Profile.Multirail)
 	})
 
-	t.Run("CLI multirail false does NOT override config true", func(t *testing.T) {
+	t.Run("CLI multirail not passed does NOT override config true", func(t *testing.T) {
 		cfg := &config.LaunchKubernetesConfig{
 			Profile: &config.Profile{Multirail: true},
 		}
-		err := p.ApplyOptionsToConfig(options.Options{Multirail: false}, cfg)
+		err := p.ApplyOptionsToConfig(options.Options{}, cfg)
 		require.NoError(t, err)
 		assert.True(t, cfg.Profile.Multirail)
+	})
+
+	t.Run("CLI multirail=false explicitly overrides config true", func(t *testing.T) {
+		// User opts out: --multirail=false → MultirailSet=true,
+		// Multirail=false → cfg.Profile.Multirail set to false.
+		cfg := &config.LaunchKubernetesConfig{
+			Profile: &config.Profile{Multirail: true},
+		}
+		err := p.ApplyOptionsToConfig(options.Options{Multirail: false, MultirailSet: true}, cfg)
+		require.NoError(t, err)
+		assert.False(t, cfg.Profile.Multirail)
 	})
 
 	t.Run("empty CLI strings preserve config values", func(t *testing.T) {
@@ -254,6 +267,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 			Fabric:         "ethernet",
 			DeploymentType: "sriov",
 			Multirail:      true,
+			MultirailSet:   true,
 			SpectrumX:      true,
 			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "hwplb",

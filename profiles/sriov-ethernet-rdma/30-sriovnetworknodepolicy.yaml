@@ -35,7 +35,7 @@ spec:
   linkType: ETH
   numVfs: {{$.Sriov.NumVfs}}
   priority: {{$.Sriov.Priority}}
-  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.Identifier}}
+  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
 {{- end -}}
@@ -60,5 +60,5 @@ spec:
   linkType: ETH
   numVfs: {{.Sriov.NumVfs}}
   priority: {{.Sriov.Priority}}
-  resourceName: {{.Sriov.ResourceName}}{{resourceSuffix $.ClusterConfig.Identifier}}
+  resourceName: {{.Sriov.ResourceName}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}
 {{- end}}

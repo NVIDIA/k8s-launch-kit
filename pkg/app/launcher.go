@@ -86,7 +86,8 @@ func (l *Launcher) Run() error {
 		switch pluginName {
 		case networkoperatorplugin.PluginName:
 			l.plugins[pluginName] = &networkoperatorplugin.NetworkOperatorPlugin{
-				GroupFilter:   l.options.Group,
+				Groups:       l.options.Groups,
+				GpuType:      l.options.GpuType,
 				NodeSelector: parseNodeSelector(l.options.NodeSelector),
 			}
 		default:
@@ -162,8 +163,10 @@ func (l *Launcher) executeWorkflow() error {
 		configPath = l.options.UserConfig
 	}
 
-	if err := l.executeGeneration(configPath); err != nil {
-		return err
+	if !l.options.DiscoverOnly {
+		if err := l.executeGeneration(configPath); err != nil {
+			return err
+		}
 	}
 
 	if l.options.Deploy {

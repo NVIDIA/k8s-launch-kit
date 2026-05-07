@@ -19,6 +19,7 @@ package config
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"net"
 	"os"
@@ -27,6 +28,70 @@ import (
 	"github.com/go-logr/logr"
 	"gopkg.in/yaml.v2"
 )
+
+// MachineLabelKey is the node label `l8k discover` writes onto every
+// node whose group has both machineType and gpuType resolved. The value
+// is the literal `<machineType>-<gpuType>` (e.g. `DGX-B200-NVIDIA-H100-NVL`)
+// — upstream discovery already trims whitespace and converts spaces to
+// hyphens to match GPU operator label format. Per-source-group
+// `NodeSelector` keys on this label.
+const MachineLabelKey = "nvidia.kubernetes-launch-kit.machine"
+
+// GPULabelKey is the node label `l8k discover` writes onto every node
+// whose group has gpuType resolved. The value is the literal `<gpuType>`
+// (e.g. `NVIDIA-H100-NVL`) — same shape as `nvidia.com/gpu.product`. Used
+// as the auto-merged-group `NodeSelector` when source groups span
+// machineTypes but share a GPU type.
+const GPULabelKey = "nvidia.kubernetes-launch-kit.gpu"
+
+// MaxLabelValueLength is the Kubernetes hard limit for label values.
+const MaxLabelValueLength = 63
+
+// MachineLabelValue returns the per-source-group machine label value:
+// `<machineType>-<gpuType>` literal when it fits Kubernetes' 63-char
+// label-value limit, or a deterministic shortened form for long names
+// (truncated prefix + 8-hex FNV-32a suffix). Returns the empty string
+// only when either input is empty.
+//
+// The shortened form looks like
+// `HPE-ProLiant-Compute-DL380a-Gen12-NVIDIA-RTX-PRO-6000-B-7c4d8e91`
+// and is reproducible: identical inputs always produce the same
+// value, so the label discover writes onto nodes always matches what
+// `MachineLabelValue` returns at filter time.
+func MachineLabelValue(machineType, gpuType string) string {
+	if machineType == "" || gpuType == "" {
+		return ""
+	}
+	raw := machineType + "-" + gpuType
+	if len(raw) <= MaxLabelValueLength {
+		return raw
+	}
+	// 63-char budget = prefix + "-" + 8-hex hash. 8 hex digits + dash = 9.
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(raw))
+	suffix := fmt.Sprintf("-%08x", h.Sum32())
+	prefixBudget := MaxLabelValueLength - len(suffix)
+	prefix := strings.TrimRight(raw[:prefixBudget], "-_.")
+	return prefix + suffix
+}
+
+// GPULabelValue returns the gpu label value, applying the same
+// truncate-with-hash rule as `MachineLabelValue` for long gpuType
+// strings. Returns "" only when input is empty.
+func GPULabelValue(gpuType string) string {
+	if gpuType == "" {
+		return ""
+	}
+	if len(gpuType) <= MaxLabelValueLength {
+		return gpuType
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(gpuType))
+	suffix := fmt.Sprintf("-%08x", h.Sum32())
+	prefixBudget := MaxLabelValueLength - len(suffix)
+	prefix := strings.TrimRight(gpuType[:prefixBudget], "-_.")
+	return prefix + suffix
+}
 
 // LaunchKubernetesConfig represents the l8k-config.yaml structure
 type LaunchKubernetesConfig struct {
@@ -152,7 +217,20 @@ type ClusterConfig struct {
 	Identifier           string               `yaml:"identifier"`
 	MachineType          string               `yaml:"machineType,omitempty"`
 	GPUType          string               `yaml:"gpuType,omitempty"`
+	// LinkType is the fabric type discovered for the group's east-west PFs:
+	// "Ethernet" or "InfiniBand". Set only when *every* east-west PF probe
+	// returns a confirmed verdict (port ACTIVE + matching link_layer + for
+	// IB, a non-zero sm_lid) and the verdicts agree. Otherwise omitted —
+	// the discovery couldn't prove the cluster is using a specific fabric,
+	// and downstream code should treat the field's absence as "unknown".
+	LinkType             string               `yaml:"linkType,omitempty"`
 	PresetApplied        bool                 `yaml:"presetApplied,omitempty"`
+	// PresetDeviation lists discrepancies between the matched preset and
+	// the cluster's actually-discovered hardware. When non-empty, the
+	// preset was applied (so rail/NUMA topology fields are populated) but
+	// the cluster differs from the certified configuration. l8k re-warns
+	// every time the config is loaded.
+	PresetDeviation []PresetDeviationEntry `yaml:"presetDeviation,omitempty"`
 	Capabilities         *ClusterCapabilities `yaml:"capabilities"`
 	PFs                  []PFConfig           `yaml:"pfs"`
 	WorkerNodes          []string             `yaml:"workerNodes"`
@@ -160,6 +238,31 @@ type ClusterConfig struct {
 	ThirdPartyRDMAModules []string            `yaml:"thirdPartyRDMAModules,omitempty"`
 	StorageModules        []string            `yaml:"storageModules,omitempty"`
 	RailPciAddresses     [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
+	// MergedIdentifier is the bucket-level identifier shared by all source
+	// groups that merge together by (gpuType, railCount). Used in templates
+	// for shared-resource references (resourceName, networkName, poolName,
+	// cidrPoolRef) so per-source NodePolicies under Mode B all register the
+	// same kubelet resource. In Mode A this equals Identifier; in Mode B's
+	// per-source render units it differs.
+	MergedIdentifier string `yaml:"-"`
+	// SourceMachineLabels lists the machine-label values
+	// (`<machineType>-<gpuType>`) of every source group represented by the
+	// merged bucket. Populated only when this is a merged render group and
+	// the filtered set is a strict subset of its (gpuType, railCount)
+	// bucket — used by Scope-Aggregate templates to emit a
+	// `matchExpressions In: [...]` selector. Empty in Mode A and for
+	// per-source render units.
+	SourceMachineLabels []string `yaml:"-"`
+}
+
+// PresetDeviationEntry records a single field-level discrepancy between a
+// preset and the cluster's actually-discovered hardware. Field is one of
+// "pciAddress", "deviceID", or "pfCount".
+type PresetDeviationEntry struct {
+	Field    string `yaml:"field"`
+	Expected string `yaml:"expected,omitempty"`
+	Got      string `yaml:"got,omitempty"`
+	Detail   string `yaml:"detail,omitempty"`
 }
 
 type ClusterCapabilities struct {
@@ -230,7 +333,37 @@ func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKubernetesCon
 		"networkOperatorVersion", config.NetworkOperator.Version,
 		"namespace", config.NetworkOperator.Namespace)
 
+	emitPresetDeviationWarnings(&config, logger)
+
 	return &config, nil
+}
+
+// emitPresetDeviationWarnings logs a warning for every group whose config
+// records preset deviations. Designed to fire on every load — operators
+// running against hardware that differs from the matched preset are
+// reminded each run.
+func emitPresetDeviationWarnings(cfg *LaunchKubernetesConfig, logger logr.Logger) {
+	for _, g := range cfg.ClusterConfig {
+		if len(g.PresetDeviation) == 0 {
+			continue
+		}
+		logger.Info(
+			"WARNING: cluster differs from the matched preset — manifests are still produced, but the deployment is not certified",
+			"group", g.Identifier,
+			"machineType", g.MachineType,
+			"gpuType", g.GPUType,
+			"deviationCount", len(g.PresetDeviation),
+		)
+		for _, d := range g.PresetDeviation {
+			logger.Info("  preset deviation",
+				"group", g.Identifier,
+				"field", d.Field,
+				"expected", d.Expected,
+				"got", d.Got,
+				"detail", d.Detail,
+			)
+		}
+	}
 }
 
 // ValidateClusterConfig validates that essential fields are present in the cluster config
@@ -288,6 +421,32 @@ var SupportedMultiplaneModes = []string{"none", "swplb", "hwplb", "uniplane"}
 
 // SupportedNumberOfPlanes lists the values numberOfPlanes can take.
 var SupportedNumberOfPlanes = []int{1, 2, 4}
+
+// SPCXVersionAllowedReleases is the authoritative mapping from SPC-X RA
+// version to the Network Operator releases that ship that version's CRD
+// set. When a future release line picks up an existing RA version (e.g.
+// 27.0 continues to ship the v1alpha2 SpectrumXRailPoolConfig), append
+// it to the matching slice. When a future RA version arrives, add a
+// new key. Lives in pkg/config because it's shared between Phase 1
+// syntax checks (pkg/cmd) and Phase 2 cohort validation +
+// hardware-defaulting (pkg/resolve).
+var SPCXVersionAllowedReleases = map[string][]string{
+	"RA2.1": {"26.1"},
+	"RA2.2": {"26.4"},
+}
+
+// DefaultSPCXReleaseFor returns the canonical (first-listed) Network
+// Operator release for an SPC-X RA version, or "" when the RA is not
+// registered. Used by `pkg/resolve.ApplyHardwareDefaults` to fill
+// `--network-operator-release` when the user passes `--spectrum-x`
+// without an explicit release.
+func DefaultSPCXReleaseFor(ra string) string {
+	releases, ok := SPCXVersionAllowedReleases[ra]
+	if !ok || len(releases) == 0 {
+		return ""
+	}
+	return releases[0]
+}
 
 // validateSpectrumXTemplates validates that Spectrum-X templates have required placeholders
 func validateSpectrumXTemplates(config *LaunchKubernetesConfig) error {

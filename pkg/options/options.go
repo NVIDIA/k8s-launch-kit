@@ -25,7 +25,11 @@ type Options struct {
 	// Phase 1: Cluster Discovery
 	UserConfig              string // Path to user-provided config (skips discovery)
 	DiscoverClusterConfig   bool   // Whether to discover cluster config
-	SaveClusterConfig       string // Path to save discovered config
+	// DiscoverOnly skips Phase 2 (manifest generation) entirely. Set by
+	// the standalone `l8k discover` subcommand so its run produces only
+	// cluster-config.yaml and never errors on "no profile selected".
+	DiscoverOnly      bool
+	SaveClusterConfig string // Path to save discovered config
 	NetworkOperatorNamespace string   // Override namespace for Network Operator (optional)
 	// NetworkOperatorRelease is a MAJOR.MINOR catalog key (e.g. "26.4"), not
 	// a full semver. Selects component image tags + repository from the
@@ -34,15 +38,30 @@ type Options struct {
 	ImagePullSecrets        []string // Image pull secret names for NicClusterPolicy
 
 	// Phase 2: Deployment Generation
-	Fabric              string // Fabric type to deploy
-	DeploymentType      string // Deployment type to deploy
-	Multirail           bool   // Whether to deploy with multirail
-	SpectrumX           bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
+	Fabric         string // Fabric type to deploy
+	DeploymentType string // Deployment type to deploy
+	Multirail      bool   // Whether to deploy with multirail
+	// MultirailSet is true when the user explicitly passed `--multirail`
+	// (regardless of value). Without it, the bool zero value can't be
+	// distinguished from "not passed", which matters once
+	// `pkg/resolve.ApplyHardwareDefaults` defaults Multirail to true:
+	// `ApplyOptionsToConfig` only overrides the HW default when
+	// MultirailSet is true, so a user passing `--multirail=false`
+	// correctly opts out.
+	MultirailSet bool
+	SpectrumX    bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
 	SPCXVersion         string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
 	MultiplaneMode      string // Spectrum-X multiplane mode (default: swplb)
 	NumberOfPlanes      int    // Number of planes for Spectrum-X (default: 4)
-	Group               string // Generate templates for a specific group identifier only
-	NodeSelector        string // Filter nodes for discovery and manifests (e.g., "key1=val1,key2=val2")
+	// Groups limits `l8k generate` to the named source groups (matched
+	// case-sensitively against `clusterConfig[].identifier`). Comma-separated
+	// on the CLI (`--groups a,b`). Mutually exclusive with GpuType.
+	Groups []string
+	// GpuType limits `l8k generate` to source groups whose `gpuType` matches.
+	// Single value, case-insensitive (`--gpu-type NVIDIA-H200`). Mutually
+	// exclusive with Groups.
+	GpuType      string
+	NodeSelector string // Filter nodes for discovery and manifests (e.g., "key1=val1,key2=val2")
 	// ForPreset is the directory name of a topology preset under presets/. When
 	// set, generate replaces fullConfig.ClusterConfig with a single group
 	// synthesized from the preset (skipping cluster discovery). Requires

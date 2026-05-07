@@ -37,7 +37,21 @@ import (
 // Apply reads Kubernetes manifests from dirPath and applies them to the cluster.
 // If a NicClusterPolicy is present, it is applied first and the function waits
 // for it to become ready before applying the remaining manifests.
+//
+// Thin wrapper that preserves the existing call-site shape (profile arg
+// unused). Delegates to ApplyManifestsFromDir.
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
+	_ = profile
+	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, false)
+}
+
+// ApplyManifestsFromDir reads Kubernetes manifests from manifestsDir and
+// applies them to the cluster in dependency order: NicClusterPolicy first
+// (waits for ready), then per-group NicNodePolicy (waits for each), then
+// remaining manifests. When dryRun is true the apply uses server-side
+// dry-run (client.DryRunAll) so the cluster validates manifests without
+// persisting them.
+func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manifestsDir string, dryRun bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -107,7 +121,7 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 				obj.SetGroupVersionKind(gv.WithKind(kind))
 			}
 		}
-		if err := applyUnstructured(ctx, kubeClient, obj); err != nil {
+		if err := applyUnstructured(ctx, kubeClient, obj, dryRun); err != nil {
 			progress.Fail("Failed to apply policy")
 			return err
 		}
@@ -140,7 +154,7 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 
 		progress := uiOutput.StartProgress(fmt.Sprintf("Applying NIC Node Policy %q (%d/%d)", obj.GetName(), i+1, len(nnpDocs)))
 		log.Log.Info("Applying NicNodePolicy", "name", obj.GetName())
-		if err := applyUnstructured(ctx, kubeClient, obj); err != nil {
+		if err := applyUnstructured(ctx, kubeClient, obj, dryRun); err != nil {
 			progress.Fail(fmt.Sprintf("Failed to apply NicNodePolicy %q", obj.GetName()))
 			return err
 		}
@@ -175,14 +189,14 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 		log.Log.Info("Applying object", "kind", obj.GetKind(), "name", obj.GetName(), "version", obj.GetAPIVersion())
 
 		// Apply with retry for Pod kind
-		applyErr := applyUnstructured(ctx, kubeClient, obj)
+		applyErr := applyUnstructured(ctx, kubeClient, obj, dryRun)
 		if applyErr != nil && strings.EqualFold(obj.GetKind(), "Pod") {
 			const maxAttempts = 3
 			for attempt := 2; attempt <= maxAttempts && applyErr != nil; attempt++ {
 				uiOutput.Warning("    Retrying (%d/%d)...", attempt, maxAttempts)
 				log.Log.Info("Pod apply failed, retrying", "name", obj.GetName(), "attempt", attempt, "delay", "30s", "error", applyErr.Error())
 				time.Sleep(30 * time.Second)
-				applyErr = applyUnstructured(ctx, kubeClient, obj)
+				applyErr = applyUnstructured(ctx, kubeClient, obj, dryRun)
 			}
 		}
 		if applyErr != nil {
@@ -214,9 +228,14 @@ func sniffKind(b []byte) string {
 	return mo.Kind
 }
 
-func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
-	// kubectl-style server-side apply
-	return c.Patch(ctx, obj, client.Apply, client.FieldOwner("l8k"), client.ForceOwnership)
+func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured, dryRun bool) error {
+	// kubectl-style server-side apply. dryRun appends client.DryRunAll so the
+	// cluster validates the object without persisting it.
+	opts := []client.PatchOption{client.FieldOwner("l8k"), client.ForceOwnership}
+	if dryRun {
+		opts = append(opts, client.DryRunAll)
+	}
+	return c.Patch(ctx, obj, client.Apply, opts...)
 }
 
 // splitYAMLDocuments splits a YAML stream by lines that start with '---' (doc separators)

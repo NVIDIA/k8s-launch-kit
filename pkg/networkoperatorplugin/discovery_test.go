@@ -429,3 +429,63 @@ func TestKnownStorageModules_MatchesMofedmodules(t *testing.T) {
 			"mofedmodules.DefaultStorageModules entry %q missing from knownStorageModules", mod)
 	}
 }
+
+// --- parsePortFabricVerdict tests ---
+
+func TestParsePortFabricVerdict_ConfirmedInfiniBand(t *testing.T) {
+	out := "state=4: ACTIVE\nphys_state=5: LinkUp\nlink_layer=InfiniBand\nsm_lid=0x0001\n"
+	linkType, raw := parsePortFabricVerdict(out)
+	assert.Equal(t, "InfiniBand", linkType)
+	assert.Contains(t, raw, "sm_lid=\"0x0001\"")
+}
+
+func TestParsePortFabricVerdict_ConfirmedEthernet(t *testing.T) {
+	// Ethernet ports don't need an SM; ACTIVE + Ethernet alone is enough.
+	out := "state=4: ACTIVE\nphys_state=5: LinkUp\nlink_layer=Ethernet\nsm_lid=0x0000\n"
+	linkType, _ := parsePortFabricVerdict(out)
+	assert.Equal(t, "Ethernet", linkType)
+}
+
+func TestParsePortFabricVerdict_UnverifiedIB_NoSM_ReturnsEmpty(t *testing.T) {
+	// Active IB port without a subnet manager — we can't confirm the
+	// cluster is using IB. Verdict is empty (caller leaves group.LinkType
+	// unset).
+	out := "state=4: ACTIVE\nphys_state=5: LinkUp\nlink_layer=InfiniBand\nsm_lid=0x0000\n"
+	linkType, _ := parsePortFabricVerdict(out)
+	assert.Equal(t, "", linkType)
+}
+
+func TestParsePortFabricVerdict_DownPort_ReturnsEmpty(t *testing.T) {
+	// Port not ACTIVE — no confirmation possible.
+	out := "state=1: DOWN\nphys_state=3: Disabled\nlink_layer=Ethernet\nsm_lid=0x0000\n"
+	linkType, _ := parsePortFabricVerdict(out)
+	assert.Equal(t, "", linkType)
+}
+
+func TestParsePortFabricVerdict_EmptyOutput(t *testing.T) {
+	linkType, _ := parsePortFabricVerdict("")
+	assert.Equal(t, "", linkType)
+}
+
+func TestParsePortFabricVerdict_PartialOutput(t *testing.T) {
+	// link_layer line missing — no verdict.
+	out := "state=4: ACTIVE\nphys_state=5: LinkUp\nsm_lid=0x0001\n"
+	linkType, _ := parsePortFabricVerdict(out)
+	assert.Equal(t, "", linkType)
+}
+
+func TestNormalizeLinkLayer(t *testing.T) {
+	cases := map[string]string{
+		"Ethernet":    "Ethernet",
+		"ethernet":    "Ethernet",
+		"  ETHERNET ": "Ethernet",
+		"InfiniBand":  "InfiniBand",
+		"infiniband":  "InfiniBand",
+		"INFINIBAND":  "InfiniBand",
+		"":            "",
+		"Foo":         "",
+	}
+	for in, want := range cases {
+		assert.Equalf(t, want, normalizeLinkLayer(in), "normalizeLinkLayer(%q)", in)
+	}
+}
