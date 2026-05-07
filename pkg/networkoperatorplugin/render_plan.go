@@ -203,6 +203,19 @@ func buildBucketMerged(sources []config.ClusterConfig, useNameTemplates bool) (c
 	return merged, hadConflict
 }
 
+// ValidateGroupFilter is the launcher-level entry point for `--groups`
+// / `--gpu-type` validation. It runs before profile selection so an
+// unmatched filter errors immediately rather than silently succeeding
+// (the empty-match check inside `GenerateProfileDeploymentFiles` only
+// runs when a profile is configured). No-op when neither flag is set.
+func (p *NetworkOperatorPlugin) ValidateGroupFilter(cfg *config.LaunchKubernetesConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	_, err := applyGroupFilter(cfg.ClusterConfig, p.Groups, p.GpuType)
+	return err
+}
+
 // applyGroupFilter narrows `originalGroups` by `--groups` (identifier
 // list) or `--gpu-type` (single value, case-insensitive). At most one
 // of the two may be non-empty — the caller already enforces mutual
@@ -240,7 +253,11 @@ func applyGroupFilter(originalGroups []config.ClusterConfig, groupIDs []string, 
 		}
 		if len(missing) > 0 {
 			slices.Sort(missing)
-			return nil, fmt.Errorf("--groups: no group with identifier(s): %s", strings.Join(missing, ", "))
+			return nil, fmt.Errorf(
+				"--groups: no group with identifier(s): %s. Available identifiers: %s",
+				strings.Join(missing, ", "),
+				availableIdentifiersList(originalGroups),
+			)
 		}
 		return matched, nil
 	}
@@ -252,9 +269,53 @@ func applyGroupFilter(originalGroups []config.ClusterConfig, groupIDs []string, 
 		}
 	}
 	if len(matched) == 0 {
-		return nil, fmt.Errorf("--gpu-type %q: no group matched", gpuType)
+		return nil, fmt.Errorf(
+			"--gpu-type %q: no group matched. Available gpuTypes: %s",
+			gpuType,
+			availableGpuTypesList(originalGroups),
+		)
 	}
 	return matched, nil
+}
+
+// availableIdentifiersList returns a sorted, comma-separated list of
+// every group's `Identifier`. Used in error messages so the user can
+// pick a valid value without having to grep the config.
+func availableIdentifiersList(groups []config.ClusterConfig) string {
+	if len(groups) == 0 {
+		return "(no groups in cluster-config.yaml)"
+	}
+	ids := make([]string, 0, len(groups))
+	for _, g := range groups {
+		if g.Identifier != "" {
+			ids = append(ids, g.Identifier)
+		}
+	}
+	if len(ids) == 0 {
+		return "(no identifiers set)"
+	}
+	slices.Sort(ids)
+	return strings.Join(ids, ", ")
+}
+
+// availableGpuTypesList returns a sorted, deduplicated, comma-separated
+// list of every group's `GPUType`. Used in `--gpu-type` error messages.
+func availableGpuTypesList(groups []config.ClusterConfig) string {
+	seen := map[string]bool{}
+	for _, g := range groups {
+		if g.GPUType != "" {
+			seen[g.GPUType] = true
+		}
+	}
+	if len(seen) == 0 {
+		return "(no gpuType set on any group)"
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return strings.Join(out, ", ")
 }
 
 // renderForScope dispatches a single template's rendering across the

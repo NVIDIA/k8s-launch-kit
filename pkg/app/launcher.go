@@ -163,8 +163,10 @@ func (l *Launcher) executeWorkflow() error {
 		configPath = l.options.UserConfig
 	}
 
-	if err := l.executeGeneration(configPath); err != nil {
-		return err
+	if !l.options.DiscoverOnly {
+		if err := l.executeGeneration(configPath); err != nil {
+			return err
+		}
 	}
 
 	if l.options.Deploy {

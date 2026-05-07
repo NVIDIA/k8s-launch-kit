@@ -36,6 +36,29 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		return fmt.Errorf("failed to load full config: %w", err)
 	}
 
+	// Validate `--groups` / `--gpu-type` against the loaded config before
+	// the profile-configured check. Without this, a filter that matches
+	// no source group silently succeeds when no profile flags were
+	// supplied (the in-plugin filter validation is skipped along with
+	// the entire generation phase) — a typo produces no error.
+	for _, plugin := range l.plugins {
+		if validator, ok := plugin.(interface {
+			ValidateGroupFilter(*config.LaunchKubernetesConfig) error
+		}); ok {
+			if err := validator.ValidateGroupFilter(fullConfig); err != nil {
+				// Pass nil as the cause — the error message already
+				// includes everything the user needs (mismatched
+				// values + available alternatives). Including err as
+				// the cause would duplicate the text in
+				// StructuredError.Error()'s "msg: cause" formatting.
+				return apperrors.NewValidationError(
+					err.Error(), nil,
+					"Pass identifiers from cluster-config.yaml's clusterConfig[].identifier, or use --gpu-type with a value matching a group's gpuType",
+				)
+			}
+		}
+	}
+
 	profilesConfiguredInCmd := true
 	for _, plugin := range l.plugins {
 		if !plugin.ProfileConfiguredInCmd(l.options) {
@@ -46,6 +69,17 @@ func (l *Launcher) executeGeneration(configPath string) error {
 
 	profileInConfig := fullConfig.Profile != nil
 	if !profilesConfiguredInCmd && !profileInConfig {
+		// When the loaded cfg has discovered groups, the user almost
+		// always intends to generate something — surface this as a
+		// validation error rather than silently exiting 0 with a
+		// misleading "workflow completed" banner.
+		if len(fullConfig.ClusterConfig) > 0 {
+			return apperrors.NewValidationError(
+				"no profile selected: nothing to render against the discovered cluster config",
+				nil,
+				"Pass --fabric <ethernet|infiniband> + --deployment-type <sriov|host_device|rdma_shared> (and --multirail for multi-rail clusters), or --spectrum-x <RA2.1|RA2.2> for Spectrum-X. See `l8k generate --help`.",
+			)
+		}
 		l.ui.Info("Profiles not configured, skipping deployment file generation")
 		l.logger.Info("Profiles are not configured for every plugin, skipping deployment files generation")
 		return nil

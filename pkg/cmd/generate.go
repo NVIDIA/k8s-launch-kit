@@ -54,7 +54,8 @@ Optionally deploy the generated manifests with --deploy.`,
 
   # Spectrum-X with hardware plane load balancing
   l8k generate --user-config cluster-config.yaml \
-    --spectrum-x --spcx-version RA2.2 --multiplane-mode hwplb \
+    --network-operator-release 26.4 \
+    --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
     --save-deployment-files ./output
 
   # Generate and deploy in one step
@@ -222,7 +223,6 @@ func init() {
 	setFlagGroup(generateCmd, "for", GroupProfile)
 	setFlagGroup(generateCmd, "node-selector", GroupProfile)
 
-	setFlagGroup(generateCmd, "spcx-version", GroupSpectrumX)
 	setFlagGroup(generateCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(generateCmd, "number-of-planes", GroupSpectrumX)
 

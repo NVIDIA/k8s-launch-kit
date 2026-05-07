@@ -1681,15 +1681,38 @@ func parseModuleList(output string, exclude []string) []string {
 	return modules
 }
 
+// coreRdmaInfrastructureModules is the set of kernel-native RDMA core
+// modules that MOFED's openibd unload sequence handles natively. Per
+// upstream guidance in `mofedmodules.DefaultThirdPartyRDMAModules`'s
+// doc comment ("Do NOT add core RDMA infrastructure modules (iw_cm,
+// ib_cm, rdma_cm, rdma_ucm, ib_core, ib_uverbs, etc.)"), these are NOT
+// third-party — they're shared kernel infrastructure that the driver
+// container does not need to unload separately. l8k discovery silently
+// drops them so they never appear as `thirdPartyRDMAModules` in
+// cluster-config.yaml or trigger the `unloadThirdPartyRDMAModules`
+// auto-enable + warning.
+var coreRdmaInfrastructureModules = map[string]bool{
+	"iw_cm":     true,
+	"ib_cm":     true,
+	"rdma_cm":   true,
+	"rdma_ucm":  true,
+	"ib_core":   true,
+	"ib_uverbs": true,
+}
+
 // classifyDiscoveredModules splits a list of discovered OFED-dependent modules into
 // third-party RDMA modules and storage modules. mlx5-prefixed modules (NVIDIA's own)
-// are silently dropped.
+// and kernel-native RDMA core modules are silently dropped.
 func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
-	var dropped []string
+	var droppedMlx, droppedCore []string
 	for _, mod := range modules {
 		if strings.HasPrefix(mod, "mlx5") {
-			dropped = append(dropped, mod)
+			droppedMlx = append(droppedMlx, mod)
 			continue // NVIDIA module — always greenlit
+		}
+		if coreRdmaInfrastructureModules[mod] {
+			droppedCore = append(droppedCore, mod)
+			continue // Kernel-native RDMA core — MOFED's openibd handles it
 		}
 		if knownStorageModules[mod] {
 			storage = append(storage, mod)
@@ -1701,7 +1724,8 @@ func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
 		"total", len(modules),
 		"thirdPartyRDMA", rdma,
 		"storage", storage,
-		"droppedMlx5Prefixed", dropped)
+		"droppedMlx5Prefixed", droppedMlx,
+		"droppedCoreRdma", droppedCore)
 	return rdma, storage
 }
 

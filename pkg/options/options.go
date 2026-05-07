@@ -25,7 +25,11 @@ type Options struct {
 	// Phase 1: Cluster Discovery
 	UserConfig              string // Path to user-provided config (skips discovery)
 	DiscoverClusterConfig   bool   // Whether to discover cluster config
-	SaveClusterConfig       string // Path to save discovered config
+	// DiscoverOnly skips Phase 2 (manifest generation) entirely. Set by
+	// the standalone `l8k discover` subcommand so its run produces only
+	// cluster-config.yaml and never errors on "no profile selected".
+	DiscoverOnly      bool
+	SaveClusterConfig string // Path to save discovered config
 	NetworkOperatorNamespace string   // Override namespace for Network Operator (optional)
 	// NetworkOperatorRelease is a MAJOR.MINOR catalog key (e.g. "26.4"), not
 	// a full semver. Selects component image tags + repository from the
