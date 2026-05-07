@@ -28,6 +28,49 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// MachineLabelKey is the node label `l8k discover` writes onto every
+// node whose group has both machineType and gpuType resolved. The value
+// is the literal `<machineType>-<gpuType>` (e.g. `DGX-B200-NVIDIA-H100-NVL`)
+// — upstream discovery already trims whitespace and converts spaces to
+// hyphens to match GPU operator label format. Per-source-group
+// `NodeSelector` keys on this label.
+const MachineLabelKey = "nvidia.kubernetes-launch-kit.machine"
+
+// GPULabelKey is the node label `l8k discover` writes onto every node
+// whose group has gpuType resolved. The value is the literal `<gpuType>`
+// (e.g. `NVIDIA-H100-NVL`) — same shape as `nvidia.com/gpu.product`. Used
+// as the auto-merged-group `NodeSelector` when source groups span
+// machineTypes but share a GPU type.
+const GPULabelKey = "nvidia.kubernetes-launch-kit.gpu"
+
+// MaxLabelValueLength is the Kubernetes hard limit for label values.
+const MaxLabelValueLength = 63
+
+// MachineLabelValue returns the raw `<machineType>-<gpuType>` label value
+// for the MachineLabelKey, or an empty string if either input is empty
+// or the concatenation would exceed Kubernetes' 63-char label-value
+// limit. Caller logs the skip.
+func MachineLabelValue(machineType, gpuType string) string {
+	if machineType == "" || gpuType == "" {
+		return ""
+	}
+	v := machineType + "-" + gpuType
+	if len(v) > MaxLabelValueLength {
+		return ""
+	}
+	return v
+}
+
+// GPULabelValue returns the raw `<gpuType>` label value for the
+// GPULabelKey, or an empty string if input is empty or exceeds the
+// 63-char limit. Caller logs the skip.
+func GPULabelValue(gpuType string) string {
+	if gpuType == "" || len(gpuType) > MaxLabelValueLength {
+		return ""
+	}
+	return gpuType
+}
+
 // LaunchKubernetesConfig represents the l8k-config.yaml structure
 type LaunchKubernetesConfig struct {
 	NetworkOperator *NetworkOperatorConfig `yaml:"networkOperator,omitempty"`

@@ -224,7 +224,7 @@ func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
 	merged, ok := rendered["80-spectrumxrailpoolconfig-gpu-model-y.yaml"]
 	require.True(t, ok, "merged y-model rail pool manifest should exist")
 
-	require.Contains(t, merged, `nvidia.com/gpu.product: "gpu-model-y"`,
+	require.Contains(t, merged, `nvidia.kubernetes-launch-kit.gpu: "gpu-model-y"`,
 		"merged rail pool must select by gpuType so it covers all y-model machines")
 	require.Contains(t, merged, `pfNames: ["eth_p0_r0"]`,
 		"merged rail pool must reference the renamed netdev names, not raw PCI")

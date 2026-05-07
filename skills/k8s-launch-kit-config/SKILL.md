@@ -53,12 +53,12 @@ l8k discover --user-config my-config.yaml \
 
 Each `clusterConfig[]` entry has these key fields:
 
-- `identifier` — group name (used for `NicNodePolicy` naming).
+- `identifier` — group name (used for `NicNodePolicy` naming). For groups with both `machineType` and `gpuType` resolved, this is the sanitised machine label (`<machineType>-<gpuType>`); otherwise a fallback `group-N`.
 - `machineType` — server model (e.g. `PowerEdge-XE9680`); populated from `nvidia.com/gpu.machine` label or DMI fallback.
 - `gpuType` — GPU SKU (e.g. `NVIDIA-H200`); populated from `nvidia.com/gpu.product` label or `nvidia-smi` fallback. **Note:** this field used to be called `productType` — the rename happened to disambiguate it from the server model. Old `productType:` keys in hand-authored configs must be renamed to `gpuType:`.
 - `capabilities.nodes.{sriov,rdma,ib}` — what the underlying hardware supports.
 - `pfs[]` — physical function list with PCI address, device ID, RDMA device, network interface, traffic class, rail, NUMA, GPU affinity.
-- `nodeSelector` — Kubernetes node selector for this group.
+- `nodeSelector` — Kubernetes node selector for this group. Source groups key on the machine label written by `l8k discover`: `nvidia.kubernetes-launch-kit.machine: <machineType>-<gpuType>`. Auto-merged groups (different machineTypes sharing a GPU type) key on `nvidia.kubernetes-launch-kit.gpu: <gpuType>` instead — discovery writes both labels onto every node, so the merged selector binds correctly across source machineTypes.
 - `workerNodes` — explicit hostnames (populated by discovery).
 
 For the full field-by-field reference with types, defaults, and descriptions,

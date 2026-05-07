@@ -838,7 +838,13 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 		railCount   int
 	}
 
-	// Group indices by (gpuType, railCount)
+	// Group indices by (gpuType, railCount). Source groups carry a
+	// per-(machineType, gpuType) machine-label identifier (set by
+	// `applyMachineLabelToGroups` at discovery time), but auto-merge keys
+	// on gpuType only — two server SKUs with the same GPU type *do*
+	// auto-merge. The machine label still drives the per-source nodeSelector
+	// and identifier; the merged group falls back to the GPU-product label
+	// since the source groups may not share a machine label.
 	bucketOrder := []mergeKey{}
 	buckets := map[mergeKey][]int{}
 
@@ -852,6 +858,7 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 		log.Log.V(1).Info("Computed merge key for source group",
 			"sourceIndex", i,
 			"identifier", g.Identifier,
+			"machineType", g.MachineType,
 			"gpuType", g.GPUType,
 			"eastWestRailCount", ewCount,
 			"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount))
@@ -866,17 +873,17 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 	for _, key := range bucketOrder {
 		indices := buckets[key]
 
-		if len(indices) == 1 || groups[indices[0]].GPUType == "" {
-			// No merge: single group or empty gpuType
+		first := groups[indices[0]]
+		if len(indices) == 1 || first.GPUType == "" {
 			reason := "single source group in bucket"
-			if groups[indices[0]].GPUType == "" {
-				reason = "empty gpuType (groups without gpuType are never merged)"
+			if first.GPUType == "" {
+				reason = "gpuType empty — never merge"
 			}
 			log.Log.V(1).Info("Bucket kept separate (not merged)",
 				"mergeKey", fmt.Sprintf("%s/%d", key.gpuType, key.railCount),
-				"identifier", groups[indices[0]].Identifier,
+				"identifier", first.Identifier,
 				"reason", reason)
-			result = append(result, groups[indices[0]])
+			result = append(result, first)
 			continue
 		}
 
@@ -939,8 +946,11 @@ func hasRailPciConflict(groups []config.ClusterConfig, indices []int) bool {
 	return false
 }
 
-// buildMergedGroup creates a single ClusterConfig from multiple groups that share
-// the same gpuType and east-west rail count.
+// buildMergedGroup creates a single ClusterConfig from multiple groups
+// sharing the same gpuType and east-west rail count. Source groups may
+// span different machineTypes, so the merged group's identifier and
+// NodeSelector fall back to the GPU product (sanitized gpuType /
+// `nvidia.com/gpu.product`) rather than the per-source machine label.
 func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.ClusterConfig {
 	first := groups[indices[0]]
 	gpuType := first.GPUType
@@ -1022,17 +1032,25 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 		slices.Sort(mergedStorageMods)
 	}
 
+	// Source groups may have different machineTypes (and therefore different
+	// per-source machine labels), so the merged group can't carry a single
+	// MachineLabelKey nodeSelector. Identifier follows the resource-name
+	// convention (lowercase via sanitizeIdentifier); NodeSelector keys on
+	// GPULabelKey, whose raw value matches the GPU operator's
+	// `nvidia.com/gpu.product` value — `l8k discover` wrote it onto every
+	// node alongside the machine label, so it's stable across merged
+	// source machineTypes by construction.
 	return config.ClusterConfig{
 		Identifier:           sanitizeIdentifier(gpuType),
-		GPUType:          gpuType,
+		MachineType:          first.MachineType,
+		GPUType:              gpuType,
+		LinkType:             first.LinkType,
 		Capabilities:         caps,
 		PFs:                  first.PFs, // Representative PFs from first group
 		WorkerNodes:          allNodes,
 		ThirdPartyRDMAModules: mergedDepMods,
 		StorageModules:        mergedStorageMods,
-		NodeSelector: map[string]string{
-			"nvidia.com/gpu.product": gpuType,
-		},
-		RailPciAddresses: railPciAddresses,
+		NodeSelector:         map[string]string{config.GPULabelKey: gpuType},
+		RailPciAddresses:     railPciAddresses,
 	}
 }

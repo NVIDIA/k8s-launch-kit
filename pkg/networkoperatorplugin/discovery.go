@@ -40,6 +40,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -365,9 +366,17 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		}
 	}
 
+	// Now that machineType and gpuType are settled (either from labels or
+	// from the per-group hardware probes), assign each group a stable
+	// machine label. This replaces the differential-label nodeSelector
+	// algorithm: every node in the group is patched with
+	// `nvidia.kubernetes-launch-kit.machine: <machineType>-<gpuType>` and
+	// the group's Identifier + NodeSelector are aligned with that value.
+	applyMachineLabelToGroups(ctx, c, defaultConfig.ClusterConfig)
+
 	// Phase summary — counts surfaced at info level so the default UX shows
 	// progress without requiring --log-level=debug.
-	totalEW, totalNS, presetMatches, deviationGroups := 0, 0, 0, 0
+	totalEW, totalNS, presetMatches, deviationGroups, labelled := 0, 0, 0, 0, 0
 	for _, g := range defaultConfig.ClusterConfig {
 		for _, pf := range g.PFs {
 			switch pf.Traffic {
@@ -383,15 +392,101 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		if len(g.PresetDeviation) > 0 {
 			deviationGroups++
 		}
+		if g.NodeSelector[config.MachineLabelKey] != "" {
+			labelled++
+		}
 	}
 	log.Log.Info("Discovery summary",
 		"groupCount", len(defaultConfig.ClusterConfig),
 		"eastWestPFs", totalEW,
 		"northSouthPFsFiltered", totalNS,
 		"presetMatches", presetMatches,
-		"presetDeviationGroups", deviationGroups)
+		"presetDeviationGroups", deviationGroups,
+		"machineLabelledGroups", labelled)
 
 	return nil
+}
+
+// applyMachineLabelToGroups walks each group and writes two l8k-specific
+// labels onto every node in the group:
+//
+//   - MachineLabelKey = `<machineType>-<gpuType>` literal — per-source-group
+//     identifier, written when both fields are resolved.
+//   - GPULabelKey = `<gpuType>` literal — written when gpuType is resolved.
+//     Used as the merged-group NodeSelector when source groups span
+//     machineTypes but share a GPU type.
+//
+// Both label values bypass the Kubernetes 63-char limit by skipping the
+// label entirely when the value would overflow (logged at debug). Group
+// `Identifier` follows the resource-name convention (lowercase via
+// `sanitizeIdentifier`); the label values keep their original case to
+// match `nvidia.com/gpu.product`-style values.
+//
+// Groups whose machine label can't be computed (one input missing) keep
+// their fallback identifier ("group-N") and an empty NodeSelector. The
+// GPU label is still written when gpuType alone is resolved, so
+// merged-group selection still works.
+func applyMachineLabelToGroups(ctx context.Context, c client.Client, groups []config.ClusterConfig) {
+	for i := range groups {
+		g := &groups[i]
+		machineLabel := config.MachineLabelValue(g.MachineType, g.GPUType)
+		gpuLabel := config.GPULabelValue(g.GPUType)
+
+		if machineLabel == "" {
+			log.Log.V(1).Info("Skipping machine label: machineType/gpuType unresolved or value > 63 chars",
+				"group", g.Identifier,
+				"machineType", g.MachineType,
+				"gpuType", g.GPUType)
+		} else {
+			log.Log.V(1).Info("Assigning machine label to group",
+				"originalIdentifier", g.Identifier,
+				"machineType", g.MachineType,
+				"gpuType", g.GPUType,
+				"labelValue", machineLabel,
+				"nodes", len(g.WorkerNodes))
+			g.Identifier = sanitizeIdentifier(machineLabel)
+			g.NodeSelector = map[string]string{config.MachineLabelKey: machineLabel}
+		}
+
+		labels := map[string]string{}
+		if machineLabel != "" {
+			labels[config.MachineLabelKey] = machineLabel
+		}
+		if gpuLabel != "" {
+			labels[config.GPULabelKey] = gpuLabel
+		}
+		if len(labels) == 0 {
+			continue
+		}
+		for _, nodeName := range g.WorkerNodes {
+			if err := patchNodeLabels(ctx, c, nodeName, labels); err != nil {
+				log.Log.Error(err, "failed to patch node labels",
+					"node", nodeName, "labels", labels)
+				continue
+			}
+			log.Log.V(1).Info("Wrote labels to node",
+				"node", nodeName, "labels", labels)
+		}
+	}
+}
+
+// patchNodeLabels applies one or more labels to a node via a
+// strategic-merge patch. Idempotent — re-applying the same values is a
+// no-op on the cluster side, and avoids the read-modify-write conflict
+// risk of a full Update.
+func patchNodeLabels(ctx context.Context, c client.Client, nodeName string, labels map[string]string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(labels))
+	for k, v := range labels {
+		parts = append(parts, fmt.Sprintf("%q:%q", k, v))
+	}
+	patch := []byte(fmt.Sprintf(
+		`{"metadata":{"labels":{%s}}}`,
+		strings.Join(parts, ",")))
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
+	return c.Patch(ctx, node, client.RawPatch(k8stypes.StrategicMergePatchType, patch))
 }
 
 // checkDaemonSetPodsReady verifies that all pods owned by the given DaemonSet

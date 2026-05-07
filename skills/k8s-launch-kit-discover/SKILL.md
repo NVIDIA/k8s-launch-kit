@@ -74,17 +74,39 @@ The generated `cluster-config.yaml` contains a `clusterConfig[]` array. Each ele
 
 ```yaml
 clusterConfig:
-  - groupName: "group-0"
-    capabilities: [sriov, multirail]
-    physicalFunctions:
+  - identifier: "dgx-b200-nvidia-h100-nvl"
+    machineType: DGX-B200
+    gpuType: NVIDIA-H100-NVL
+    capabilities:
+      nodes:
+        sriov: true
+        rdma: true
+    pfs:
       - deviceID: "101e"
-        pfName: "eth0"
-        railNumber: 0
+        networkInterface: "eth0"
+        rail: 0
     workerNodes: [node-01, node-02]
     nodeSelector:
-      feature.node.kubernetes.io/pci-15b3.present: "true"
+      nvidia.kubernetes-launch-kit.machine: "DGX-B200-NVIDIA-H100-NVL"
     thirdPartyRDMAModules: [nv_peer_mem]
 ```
+
+Discovery patches every node in the group with two labels:
+
+- `nvidia.kubernetes-launch-kit.machine: <machineType>-<gpuType>` — per-source-group
+  identity, used as the source group's `nodeSelector`.
+- `nvidia.kubernetes-launch-kit.gpu: <gpuType>` — used as the merged-group
+  `nodeSelector` when `l8k generate` auto-merges source groups sharing a GPU type.
+
+Label values keep their original case (matching `nvidia.com/gpu.product` style) since
+upstream discovery already trims whitespace and replaces spaces with hyphens. Values
+that would exceed the Kubernetes 63-char label-value limit are skipped (logged at
+debug). The group's `identifier` is the lowercase resource-name form of the machine
+label (RFC 1123 — required for downstream NicNodePolicy / SriovNetworkNodePolicy
+naming). When `machineType` or `gpuType` couldn't be resolved (GPU operator labels
+absent and hardware probe failed), a fallback `group-N` identifier is used and the
+machine label is not written; the GPU label is still written when `gpuType` alone is
+resolved.
 
 ## Prerequisites
 
