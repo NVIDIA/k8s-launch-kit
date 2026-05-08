@@ -48,8 +48,9 @@ type RenderBucket struct {
 // same input order as `filteredGroups` for deterministic output.
 //
 // The second return value is the OR of `HadPciConflict` across all
-// buckets — used by the legacy NicInterfaceNameTemplate gating.
-func planRender(originalGroups, filteredGroups []config.ClusterConfig, useNameTemplates bool) ([]RenderBucket, bool) {
+// buckets — preserved for diagnostics; the renderer always emits
+// NicInterfaceNameTemplate, so this is informational only.
+func planRender(originalGroups, filteredGroups []config.ClusterConfig) ([]RenderBucket, bool) {
 	originalByKey := bucketize(originalGroups)
 	filteredOrder, filteredByKey := bucketizeOrdered(filteredGroups)
 
@@ -498,20 +499,3 @@ func subnetsAt(planSubnets [][]config.NvIpamSubnetConfig, i int) []config.NvIpam
 	return planSubnets[i]
 }
 
-// plansHaveEmptyNetworkInterfaceNames is the per-plan equivalent of
-// `hasEmptyNetworkInterfaceNames`: returns true when any east-west PF
-// across any plan's source groups has an empty NetworkInterface field.
-// Drives the NicInterfaceNameTemplate-required gating in the
-// rdma_shared deployment path.
-func plansHaveEmptyNetworkInterfaceNames(plans []RenderBucket) bool {
-	for _, plan := range plans {
-		for _, src := range plan.Sources {
-			for _, pf := range filterEastWestPFs(src.PFs) {
-				if pf.NetworkInterface == "" {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}

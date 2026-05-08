@@ -682,29 +682,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	// ClusterConfig per bucket, and decide Mode A vs B per bucket by
 	// comparing to the original (pre-filter) bucket. The plans drive
 	// the per-template scope dispatch below.
-	useNameTemplates := cfg.NicConfigurationOperator != nil &&
-		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate
-
-	plans, hadPciConflicts := planRender(cfg.ClusterConfig, filtered, useNameTemplates)
-
-	// NicInterfaceNameTemplate is only needed when:
-	// 1. Merged groups have cross-rail PCI conflicts, OR
-	// 2. Deployment is rdma_shared AND PFs have empty NetworkInterface
-	//    names (rdmaSharedDevicePlugin uses ifNames selectors that
-	//    require them).
-	// When neither condition holds, disable name templates so the
-	// device plugin uses PCI addresses directly.
-	if useNameTemplates && !isSpectrumX(cfg) {
-		needsNameTemplates := hadPciConflicts ||
-			(isRdmaShared(cfg) && plansHaveEmptyNetworkInterfaceNames(plans))
-		if !needsNameTemplates {
-			overrideNicCfg := *cfg.NicConfigurationOperator
-			overrideNicCfg.DeployNicInterfaceNameTemplate = false
-			overrideCfg := *cfg
-			overrideCfg.NicConfigurationOperator = &overrideNicCfg
-			cfg = &overrideCfg
-		}
-	}
+	plans, _ := planRender(cfg.ClusterConfig, filtered)
 
 	// Pre-allocate subnets across all plans' merged groups so per-plan
 	// `ProcessTemplate` calls don't independently re-allocate from
