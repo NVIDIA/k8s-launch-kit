@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
@@ -249,7 +250,7 @@ func init() {
 
 	// Phase 3: Cluster deployment flags
 	rootCmd.Flags().BoolVar(&deploy, "deploy", false, "Deploy the generated files to the Kubernetes cluster")
-	rootCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file for cluster deployment (required when using --deploy)")
+	rootCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)")
 
 	// Output control flags
 	rootCmd.PersistentFlags().StringVar(&outputFormat, "output", "text", "Output format: text (default, human-readable) or json (structured, for automation and AI agents)")
@@ -482,8 +483,13 @@ func parseEnabledPlugins(enabledPlugins string) []string {
 	return strings.Split(enabledPlugins, ",")
 }
 
+// defaultKubeconfigHomeFile is the kubectl-style default kubeconfig location
+// ($HOME/.kube/config). Overridable in tests.
+var defaultKubeconfigHomeFile = clientcmd.RecommendedHomeFile
+
 // resolveKubeconfig resolves the kubeconfig path from flag or environment.
-// Priority: 1) --kubeconfig flag, 2) $KUBECONFIG env var
+// Priority: 1) --kubeconfig flag, 2) $KUBECONFIG env var, 3) $HOME/.kube/config
+// (the kubectl default — only returned when the file exists).
 func resolveKubeconfig(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -491,7 +497,12 @@ func resolveKubeconfig(flagValue string) (string, error) {
 	if envVal := os.Getenv("KUBECONFIG"); envVal != "" {
 		return envVal, nil
 	}
-	return "", fmt.Errorf("no kubeconfig found: set $KUBECONFIG or pass --kubeconfig <path>")
+	if defaultKubeconfigHomeFile != "" {
+		if _, err := os.Stat(defaultKubeconfigHomeFile); err == nil {
+			return defaultKubeconfigHomeFile, nil
+		}
+	}
+	return "", fmt.Errorf("no kubeconfig found: set $KUBECONFIG, pass --kubeconfig <path>, or create %s", defaultKubeconfigHomeFile)
 }
 
 // initConfig reads in config file and ENV variables if set.

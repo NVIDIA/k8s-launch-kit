@@ -17,6 +17,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -376,4 +378,54 @@ func TestValidateConfig_ForWithNodeSelectorPasses(t *testing.T) {
 	}
 	err := validateConfig(&opts)
 	assert.NoError(t, err)
+}
+
+func TestResolveKubeconfig(t *testing.T) {
+	// Snapshot and restore the package-level defaults so tests don't leak.
+	origHome := defaultKubeconfigHomeFile
+	origEnv, envSet := os.LookupEnv("KUBECONFIG")
+	t.Cleanup(func() {
+		defaultKubeconfigHomeFile = origHome
+		if envSet {
+			_ = os.Setenv("KUBECONFIG", origEnv)
+		} else {
+			_ = os.Unsetenv("KUBECONFIG")
+		}
+	})
+
+	t.Run("flag wins over env and home", func(t *testing.T) {
+		_ = os.Setenv("KUBECONFIG", "/from/env")
+		defaultKubeconfigHomeFile = "/does/not/exist"
+		got, err := resolveKubeconfig("/from/flag")
+		require.NoError(t, err)
+		assert.Equal(t, "/from/flag", got)
+	})
+
+	t.Run("env wins over home", func(t *testing.T) {
+		_ = os.Setenv("KUBECONFIG", "/from/env")
+		defaultKubeconfigHomeFile = "/does/not/exist"
+		got, err := resolveKubeconfig("")
+		require.NoError(t, err)
+		assert.Equal(t, "/from/env", got)
+	})
+
+	t.Run("home file used when it exists and nothing else set", func(t *testing.T) {
+		_ = os.Unsetenv("KUBECONFIG")
+		tmpDir := t.TempDir()
+		homeFile := filepath.Join(tmpDir, "config")
+		require.NoError(t, os.WriteFile(homeFile, []byte("placeholder"), 0o600))
+		defaultKubeconfigHomeFile = homeFile
+		got, err := resolveKubeconfig("")
+		require.NoError(t, err)
+		assert.Equal(t, homeFile, got)
+	})
+
+	t.Run("error when home file missing and nothing else set", func(t *testing.T) {
+		_ = os.Unsetenv("KUBECONFIG")
+		defaultKubeconfigHomeFile = filepath.Join(t.TempDir(), "missing-config")
+		got, err := resolveKubeconfig("")
+		require.Error(t, err)
+		assert.Empty(t, got)
+		assert.Contains(t, err.Error(), "no kubeconfig found")
+	})
 }

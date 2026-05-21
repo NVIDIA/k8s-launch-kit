@@ -109,7 +109,7 @@ func findSosreportScript() (string, error) {
 func init() {
 	rootCmd.AddCommand(sosreportCmd)
 
-	sosreportCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig (falls back to $KUBECONFIG)")
+	sosreportCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig (falls back to $KUBECONFIG, then ~/.kube/config)")
 	sosreportCmd.Flags().StringVar(&sosreportOutputDir, "output-dir", "./sosreport", "Directory to save the sosreport")
 
 	setFlagGroup(sosreportCmd, "kubeconfig", GroupCommon)
