@@ -189,18 +189,24 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	var expectedNodes []string
 	var dsPods []corev1.Pod
 	if reuseExisting {
-		expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon")
+		primaryNS := defaultConfig.NetworkOperator.Namespace
+		uiOutput.Info("Checking for nic-configuration-daemon pods in namespace %q", primaryNS)
+		expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, primaryNS, "nic-configuration-daemon")
 		if err != nil {
-			// Try the other common namespace before giving up
-			alternateNS := alternateNamespace(defaultConfig.NetworkOperator.Namespace)
+			primaryErr := err
+			// Try the other common namespace before giving up (legacy chart-rename fallback)
+			alternateNS := alternateNamespace(primaryNS)
 			if alternateNS != "" {
-				uiOutput.Info("Retrying in namespace %q", alternateNS)
+				uiOutput.Info("Initial probe in namespace %q failed, retrying in fallback namespace %q", primaryNS, alternateNS)
 				expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, alternateNS, "nic-configuration-daemon")
 				if err == nil {
 					defaultConfig.NetworkOperator.Namespace = alternateNS
 				}
 			}
 			if err != nil {
+				if alternateNS != "" {
+					return fmt.Errorf("no nic-configuration-daemon pods found in namespace %q (also checked fallback namespace %q); use --network-operator-namespace to specify the correct namespace: %w", primaryNS, alternateNS, primaryErr)
+				}
 				return err
 			}
 		}
@@ -533,7 +539,12 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 // patching a NicClusterPolicy to add NicConfigurationOperator, because the
 // network operator needs time to reconcile and create the DaemonSet pods.
 func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
-	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s pods (timeout: %s)", daemonSetName, timeout.Truncate(time.Second)))
+	altNS := alternateNamespace(namespace)
+	progressLabel := fmt.Sprintf("Waiting for %s pods in namespace %q (timeout: %s)", daemonSetName, namespace, timeout.Truncate(time.Second))
+	if altNS != "" {
+		progressLabel = fmt.Sprintf("Waiting for %s pods in namespace %q (also polling fallback %q; timeout: %s)", daemonSetName, namespace, altNS, timeout.Truncate(time.Second))
+	}
+	progress := uiOutput.StartProgress(progressLabel)
 
 	ctx := parentCtx
 	if _, hasDeadline := parentCtx.Deadline(); !hasDeadline {
@@ -542,7 +553,6 @@ func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput u
 		defer cancel()
 	}
 
-	altNS := alternateNamespace(namespace)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -560,7 +570,7 @@ func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput u
 		if altNS != "" {
 			nodes, pods, err = checkDaemonSetPodsReady(ctx, c, altNS, daemonSetName)
 			if err == nil {
-				progress.Success(fmt.Sprintf("Found %d pod(s) in namespace %q", len(pods), altNS))
+				progress.Success(fmt.Sprintf("Found %d pod(s) in fallback namespace %q", len(pods), altNS))
 				return nodes, pods, altNS, nil
 			}
 		}
@@ -568,7 +578,10 @@ func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput u
 		select {
 		case <-ctx.Done():
 			progress.Fail("Timeout waiting for daemon pods")
-			return nil, nil, "", fmt.Errorf("timeout waiting for %s pods to start: %w", daemonSetName, lastErr)
+			if altNS != "" {
+				return nil, nil, "", fmt.Errorf("timeout waiting for %s pods to start in namespace %q (also checked fallback namespace %q); use --network-operator-namespace to specify the correct namespace: %w", daemonSetName, namespace, altNS, lastErr)
+			}
+			return nil, nil, "", fmt.Errorf("timeout waiting for %s pods to start in namespace %q: %w", daemonSetName, namespace, lastErr)
 		case <-ticker.C:
 			progress.Update(fmt.Sprintf("Waiting for %s pods...", daemonSetName))
 		}

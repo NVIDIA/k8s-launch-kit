@@ -205,7 +205,7 @@ func init() {
 
 	// Deploy (optional)
 	generateCmd.Flags().BoolVar(&deploy, "deploy", false, "Also deploy after generating")
-	generateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Kubeconfig (required with --deploy, falls back to $KUBECONFIG)")
+	generateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Kubeconfig (required with --deploy, falls back to $KUBECONFIG, then ~/.kube/config)")
 	generateCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview what would be deployed")
 
 	setFlagGroup(generateCmd, "user-config", GroupCommon)
