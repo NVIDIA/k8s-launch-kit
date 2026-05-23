@@ -135,14 +135,26 @@ func sriovNetworkNodePolicyValidator(ctx context.Context, c client.Client, obj *
 			continue
 		}
 
-		// Succeeded — cross-check expected vs actual.
-		issue := crossCheckPFs(state, expectedPFNames, expectedRoot, expectedVendor, expectedDeviceID, expectedNumVfs)
-		if issue != "" {
+		// Succeeded — cross-check expected vs actual. crossCheckPFs
+		// distinguishes hard errors (PF missing from interfaces[],
+		// which won't fix itself — udev rules didn't apply, or the
+		// pfNames selector is wrong) from soft "still working"
+		// signals (PF present but numVfs not at target yet —
+		// SriovNetworkNodeState.status.syncStatus flips to
+		// "Succeeded" before the operator has finished writing
+		// VF count, so this is a normal mid-reconciliation
+		// observation).
+		hardErr, softProgress := crossCheckPFs(state, expectedPFNames, expectedRoot, expectedVendor, expectedDeviceID, expectedNumVfs)
+		switch {
+		case hardErr != "":
 			anyError = true
-			details[node] = issue
-			continue
+			details[node] = hardErr
+		case softProgress != "":
+			anyInProgress = true
+			details[node] = softProgress
+		default:
+			details[node] = "syncStatus=Succeeded; PFs match"
 		}
-		details[node] = "syncStatus=Succeeded; PFs match"
 	}
 
 	switch {
@@ -171,12 +183,34 @@ func sriovNetworkNodePolicyValidator(ctx context.Context, c client.Client, obj *
 }
 
 // crossCheckPFs verifies that every expected PF the policy selects is
-// present in nodeState.status.interfaces[] and has the expected numVfs.
-// Returns "" on success or a human-readable reason on failure.
-func crossCheckPFs(nodeState *unstructured.Unstructured, pfNames, rootDevices []string, vendor, deviceID string, expectedNumVfs int64) string {
+// present in nodeState.status.interfaces[] and has the expected
+// numVfs. The check produces two buckets, returned as separate
+// strings:
+//
+//   - hardErr     — the PF is missing from interfaces[] entirely, OR
+//                   no interfaces are reported at all. The SR-IOV
+//                   operator has nothing to converge on; this won't
+//                   fix itself. Typical causes: NicInterfaceNameTemplate
+//                   udev rules didn't apply (so the policy's pfNames
+//                   never appeared), or the policy's nicSelector
+//                   doesn't match anything on the node.
+//
+//   - softProgress — the PF is present but numVfs doesn't match yet
+//                   (typically 0 vs expected=8). The operator's
+//                   SriovNetworkNodeState.status.syncStatus flips to
+//                   "Succeeded" before it has finished writing the VF
+//                   count, so this is a normal mid-reconciliation
+//                   observation, NOT a failure. The deploy loop
+//                   keeps polling; the value will eventually match.
+//
+// Both empty means everything checks out.
+func crossCheckPFs(nodeState *unstructured.Unstructured, pfNames, rootDevices []string, vendor, deviceID string, expectedNumVfs int64) (hardErr, softProgress string) {
 	interfaces, found, err := unstructured.NestedSlice(nodeState.Object, "status", "interfaces")
 	if err != nil || !found || len(interfaces) == 0 {
-		return "no interfaces reported in SriovNetworkNodeState.status — operator may not have observed any matching NIC yet"
+		// No interfaces yet → soft progress; operator may still be
+		// enumerating. Distinct from "interfaces present but the
+		// expected PF is missing" — that's a hard error.
+		return "", "no interfaces reported in SriovNetworkNodeState.status yet — operator hasn't enumerated"
 	}
 
 	// Index by PCI address and pfName for lookup.
@@ -215,12 +249,12 @@ func crossCheckPFs(nodeState *unstructured.Unstructured, pfNames, rootDevices []
 			}
 		}
 		if len(missing) > 0 {
-			return fmt.Sprintf("policy selected pfNames=%v but missing %v on this node — check NicInterfaceNameTemplate udev rules", pfNames, missing)
+			return fmt.Sprintf("policy selected pfNames=%v but missing %v on this node — check NicInterfaceNameTemplate udev rules", pfNames, missing), ""
 		}
 		if len(vfMismatch) > 0 {
-			return strings.Join(vfMismatch, "; ")
+			return "", strings.Join(vfMismatch, "; ")
 		}
-		return ""
+		return "", ""
 	case len(rootDevices) > 0:
 		var missing []string
 		var vfMismatch []string
@@ -235,12 +269,12 @@ func crossCheckPFs(nodeState *unstructured.Unstructured, pfNames, rootDevices []
 			}
 		}
 		if len(missing) > 0 {
-			return fmt.Sprintf("policy selected rootDevices=%v but missing %v on this node", rootDevices, missing)
+			return fmt.Sprintf("policy selected rootDevices=%v but missing %v on this node", rootDevices, missing), ""
 		}
 		if len(vfMismatch) > 0 {
-			return strings.Join(vfMismatch, "; ")
+			return "", strings.Join(vfMismatch, "; ")
 		}
-		return ""
+		return "", ""
 	default:
 		// vendor/deviceID-only selector — operator does the dynamic
 		// matching, so we can only check that some interfaces match.
@@ -264,15 +298,21 @@ func crossCheckPFs(nodeState *unstructured.Unstructured, pfNames, rootDevices []
 			}
 		}
 		if matched == 0 {
-			return fmt.Sprintf("vendor=%q deviceID=%q selector matched no interfaces on this node", vendor, deviceID)
+			return fmt.Sprintf("vendor=%q deviceID=%q selector matched no interfaces on this node", vendor, deviceID), ""
 		}
 		if len(vfMismatch) > 0 {
-			return strings.Join(vfMismatch, "; ")
+			return "", strings.Join(vfMismatch, "; ")
 		}
-		return ""
+		return "", ""
 	}
 }
 
+// checkNumVfs returns a short message when the interface's VF count
+// doesn't match the policy's spec.numVfs. The caller treats this as
+// "still reconciling", not "permanently broken" — the SR-IOV operator
+// publishes syncStatus=Succeeded before it has finished writing
+// numVfs on every PF, so a non-matching value here is normal during
+// the apply window.
 func checkNumVfs(iface map[string]interface{}, label string, expected int64) string {
 	if expected <= 0 {
 		return ""

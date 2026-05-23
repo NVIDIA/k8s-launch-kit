@@ -131,7 +131,14 @@ func TestSriovValidator_SucceededButPFMissing_SilentFailure(t *testing.T) {
 	assert.Contains(t, res.Reason, "eth_r1")
 }
 
-func TestSriovValidator_SucceededButNumVfsMismatch(t *testing.T) {
+func TestSriovValidator_SucceededButNumVfsMismatch_IsInProgress(t *testing.T) {
+	// The operator publishes SriovNetworkNodeState.status.syncStatus
+	// = "Succeeded" before it has finished writing numVfs on every
+	// PF, so observing actual=0 with expected=8 is a normal
+	// mid-reconciliation snapshot — must be StateInProgress, NOT
+	// StateError, or the deploy state machine fails the apply too
+	// eagerly. The Reason still surfaces the mismatch so an operator
+	// re-reading the log sees what the validator was watching.
 	manifest := sriovPolicyManifest("p", "ns", map[string]string{"role": "worker"}, 8, []string{"eth_r0"})
 	live := manifest.DeepCopy()
 	state := sriovNodeState("worker-1", "ns", sriovSyncStatusSucceeded, "", []map[string]interface{}{
@@ -140,7 +147,7 @@ func TestSriovValidator_SucceededButNumVfsMismatch(t *testing.T) {
 	c := newClient(t, live, state, node("worker-1", map[string]string{"role": "worker"}))
 	res, err := sriovNetworkNodePolicyValidator(context.Background(), c, manifest)
 	require.NoError(t, err)
-	assert.Equal(t, StateError, res.State)
+	assert.Equal(t, StateInProgress, res.State)
 	assert.Contains(t, res.Reason, "numVfs=8")
 	assert.Contains(t, res.Reason, "found 0")
 }
@@ -180,7 +187,9 @@ func TestSriovValidator_PartialProgress(t *testing.T) {
 
 func TestSriovValidator_RootDevicesSelector(t *testing.T) {
 	// When nicSelector uses rootDevices rather than pfNames the
-	// validator cross-checks against PCI addresses.
+	// validator cross-checks against PCI addresses. A missing
+	// rootDevice is a hard error (the operator has nothing to
+	// converge on) — same semantics as a missing pfName.
 	manifest := sriovPolicyManifest("p", "ns", map[string]string{"role": "worker"}, 8, nil)
 	roots := []interface{}{"0000:1a:00.0", "0000:1b:00.0"}
 	_ = unstructured.SetNestedSlice(manifest.Object, roots, "spec", "nicSelector", "rootDevices")
@@ -197,6 +206,20 @@ func TestSriovValidator_RootDevicesSelector(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StateError, res.State)
 	assert.Contains(t, res.Reason, "0000:1b:00.0")
+}
+
+func TestSriovValidator_SucceededButNoInterfacesYet_IsInProgress(t *testing.T) {
+	// status.interfaces[] empty even though syncStatus=Succeeded
+	// happens transiently — the SR-IOV operator updates status in
+	// stages. Treat as in-progress so we keep polling.
+	manifest := sriovPolicyManifest("p", "ns", map[string]string{"role": "worker"}, 8, []string{"eth_r0"})
+	live := manifest.DeepCopy()
+	state := sriovNodeState("worker-1", "ns", sriovSyncStatusSucceeded, "", nil)
+	c := newClient(t, live, state, node("worker-1", map[string]string{"role": "worker"}))
+	res, err := sriovNetworkNodePolicyValidator(context.Background(), c, manifest)
+	require.NoError(t, err)
+	assert.Equal(t, StateInProgress, res.State)
+	assert.Contains(t, res.Reason, "no interfaces")
 }
 
 // Make sure helpers compile even when unused by Go's strictness.
