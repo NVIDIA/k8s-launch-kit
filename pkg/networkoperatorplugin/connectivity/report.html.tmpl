@@ -219,6 +219,31 @@ code {
   border: 1px solid var(--border-soft);
 }
 
+/* Manifest-row + expand-row pairing. The expand row carries the
+   dropdowns (Details, Live YAML) full-width via colspan="6" so the
+   nested table / <pre> have the whole table width to lay out in.
+   When a manifest row has an expand row below, suppress its own
+   bottom border so the pair reads as one visual unit. */
+tr.manifest-row-has-expand > td { border-bottom-color: transparent; }
+tr.manifest-expand > td { background: var(--bg); }
+tr.manifest-expand:hover > td { background: var(--bg); }
+.manifest-expand-cell {
+  padding: 4px 14px 14px 28px !important;
+  border-bottom: 1px solid var(--border);
+}
+.manifest-expand-cell > details {
+  margin-top: 6px;
+  padding-top: 0;
+  border-top: 0;
+}
+.manifest-expand-cell > details:first-child { margin-top: 0; }
+/* Re-apply the per-row state stripe to the expand row's first td
+   so the colored bar runs unbroken from parent to expand row. */
+tr.manifest-expand.state-success    > td { box-shadow: inset 2px 0 0 var(--success); }
+tr.manifest-expand.state-inprogress > td { box-shadow: inset 2px 0 0 var(--warn); }
+tr.manifest-expand.state-error      > td { box-shadow: inset 2px 0 0 var(--error); }
+tr.manifest-expand.state-missing    > td { box-shadow: inset 2px 0 0 var(--missing); }
+
 details {
   margin-top: 10px;
   padding-top: 6px;
@@ -576,15 +601,19 @@ footer strong { color: var(--text-muted); }
       </thead>
       <tbody>
         {{- range .Manifests}}
-        <tr class="{{stateClass .State}}">
+        {{- $details := .Details}}
+        {{- $hasExpand := or $details .LiveYAML}}
+        <tr class="{{stateClass .State}}{{if $hasExpand}} manifest-row-has-expand{{end}}">
           <td><span class="badge {{stateClass .State}}">{{stateLabel .State}}</span></td>
           <td><code>{{.Kind}}</code></td>
           <td>{{or .Namespace "—"}}</td>
           <td><code>{{.Name}}</code></td>
           <td><code>{{.SourceFile}}</code></td>
-          <td>
-            {{or .Reason "—"}}
-            {{- $details := .Details}}
+          <td>{{or .Reason "—"}}</td>
+        </tr>
+        {{- if $hasExpand}}
+        <tr class="manifest-expand {{stateClass .State}}">
+          <td colspan="6" class="manifest-expand-cell">
             {{- if $details}}
             <details>
               <summary>Details ({{len $details}})</summary>
@@ -606,6 +635,7 @@ footer strong { color: var(--text-muted); }
             {{- end}}
           </td>
         </tr>
+        {{- end}}
         {{- end}}
       </tbody>
     </table>

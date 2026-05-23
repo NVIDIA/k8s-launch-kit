@@ -198,6 +198,26 @@ code {
   border: 1px solid var(--border-soft);
 }
 
+ 
+tr.manifest-row-has-expand > td { border-bottom-color: transparent; }
+tr.manifest-expand > td { background: var(--bg); }
+tr.manifest-expand:hover > td { background: var(--bg); }
+.manifest-expand-cell {
+  padding: 4px 14px 14px 28px !important;
+  border-bottom: 1px solid var(--border);
+}
+.manifest-expand-cell > details {
+  margin-top: 6px;
+  padding-top: 0;
+  border-top: 0;
+}
+.manifest-expand-cell > details:first-child { margin-top: 0; }
+ 
+tr.manifest-expand.state-success    > td { box-shadow: inset 2px 0 0 var(--success); }
+tr.manifest-expand.state-inprogress > td { box-shadow: inset 2px 0 0 var(--warn); }
+tr.manifest-expand.state-error      > td { box-shadow: inset 2px 0 0 var(--error); }
+tr.manifest-expand.state-missing    > td { box-shadow: inset 2px 0 0 var(--missing); }
+
 details {
   margin-top: 10px;
   padding-top: 6px;
@@ -494,14 +514,16 @@ footer strong { color: var(--text-muted); }
         </tr>
       </thead>
       <tbody>
-        <tr class="state-success">
+        <tr class="state-success manifest-row-has-expand">
           <td><span class="badge state-success">READY</span></td>
           <td><code>NicClusterPolicy</code></td>
           <td>—</td>
           <td><code>nic-cluster-policy</code></td>
           <td><code>10-nicclusterpolicy.yaml</code></td>
-          <td>
-            ready — ready: 12/12
+          <td>ready — ready: 12/12</td>
+        </tr>
+        <tr class="manifest-expand state-success">
+          <td colspan="6" class="manifest-expand-cell">
             <details>
               <summary>Details (2)</summary>
               <table>
@@ -524,14 +546,16 @@ status:
             </details>
           </td>
         </tr>
-        <tr class="state-inprogress">
+        <tr class="state-inprogress manifest-row-has-expand">
           <td><span class="badge state-inprogress">IN-PROGRESS</span></td>
           <td><code>SriovNetworkNodePolicy</code></td>
           <td>network-operator</td>
           <td><code>ethernet-sriov-rail-0</code></td>
           <td><code>40-sriovnetworknodepolicy.yaml</code></td>
-          <td>
-            node-b: syncStatus=InProgress
+          <td>node-b: syncStatus=InProgress</td>
+        </tr>
+        <tr class="manifest-expand state-inprogress">
+          <td colspan="6" class="manifest-expand-cell">
             <details>
               <summary>Details (2)</summary>
               <table>
@@ -550,9 +574,7 @@ status:
           <td>—</td>
           <td><code>macvlan-net</code></td>
           <td><code>30-macvlannetwork.yaml</code></td>
-          <td>
-            controller reports error: image pull failed
-          </td>
+          <td>controller reports error: image pull failed</td>
         </tr>
         <tr class="state-missing">
           <td><span class="badge state-missing">MISSING</span></td>
@@ -560,9 +582,7 @@ status:
           <td>network-operator</td>
           <td><code>rail-0-pool</code></td>
           <td><code>20-ippool.yaml</code></td>
-          <td>
-            not found in cluster
-          </td>
+          <td>not found in cluster</td>
         </tr>
       </tbody>
     </table>
