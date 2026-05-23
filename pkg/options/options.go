@@ -16,6 +16,8 @@
 
 package options
 
+import "time"
+
 // Options holds all the configuration parameters for the application
 type Options struct {
 	// Logging
@@ -81,6 +83,15 @@ type Options struct {
 	// Phase 3: Cluster Deployment
 	Deploy     bool   // Whether to deploy to cluster
 	Kubeconfig string // Path to kubeconfig for discovery and deployment
+	// DeployTimeout caps the *entire* deploy phase end-to-end (apply +
+	// readiness wait for every manifest). A zero value means no
+	// deadline — appropriate for large SR-IOV clusters where a single
+	// reconciliation can outlast any reasonable per-manifest budget.
+	// Plumbed into ctx via context.WithTimeout before
+	// `networkoperatorplugin.ApplyManifestsFromDir` is invoked, so
+	// every poll inside the deploy state machine observes the same
+	// deadline.
+	DeployTimeout time.Duration
 
 	// Output control
 	OutputFormat string // Output format: "text" (default) or "json"

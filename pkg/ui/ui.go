@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"golang.org/x/term"
 )
@@ -46,6 +47,12 @@ type Output interface {
 	// Returns true if the user confirms, false otherwise.
 	// In non-interactive contexts (e.g., silent output), returns false.
 	Confirm(prompt string) (bool, error)
+	// IsTTY reports whether the underlying writer is an interactive
+	// terminal. Callers that want to drive a spinner *and* log
+	// history use this to skip the spinner-label update in non-TTY
+	// mode (where the spinner's Update would otherwise print a
+	// duplicate line on top of the caller's own Info() output).
+	IsTTY() bool
 }
 
 // Progress represents a long-running operation with progress updates
@@ -58,12 +65,23 @@ type Progress interface {
 	Fail(message string)
 }
 
-// StandardOutput implements Output for standard terminal output
+// StandardOutput implements Output for standard terminal output.
+//
+// `mu` is shared between regular log writers (Info/Success/Warning/Error/
+// Section/Header) and any active spinner goroutine — without that lock
+// the spinner's `\r\033[K<spinner> <message>` writes interleave with
+// log lines, producing the broken "spinner-and-log-glued-together"
+// output we saw on long NicClusterPolicy waits. `activeProgress`
+// tracks the currently animating spinner so log writers can clear its
+// line before printing; the spinner repaints itself on its next tick.
 type StandardOutput struct {
 	writer       io.Writer
 	isTTY        bool
 	colorEnabled bool
 	autoConfirm  bool
+
+	mu             sync.Mutex
+	activeProgress *standardProgress
 }
 
 // OutputOptions configures StandardOutput behavior.
@@ -114,50 +132,92 @@ func NewSilent() Output {
 	return NewWithWriter(io.Discard)
 }
 
+// writeLine emits a complete log line, coordinating with any active
+// spinner so the two don't interleave on the same row. When a spinner
+// is running in TTY mode the line is prefixed with `\r\033[K` to erase
+// the spinner's current paint; the spinner's next tick repaints itself
+// on the new line below.
+//
+// `prefix` (e.g. "✓ ", "⚠ ", "✗ ") is rendered without color when
+// colorEnabled is false; callers wanting color provide an already-ANSI-
+// wrapped prefix.
+func (o *StandardOutput) writeLine(prefix, format string, args ...interface{}) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.activeProgress != nil && o.isTTY {
+		_, _ = fmt.Fprint(o.writer, "\r\033[K")
+	}
+	if prefix != "" {
+		_, _ = fmt.Fprint(o.writer, prefix)
+	}
+	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
+}
+
 // Info displays an informational message
 func (o *StandardOutput) Info(format string, args ...interface{}) {
-	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
+	o.writeLine("", format, args...)
 }
 
 // Success displays a success message
 func (o *StandardOutput) Success(format string, args ...interface{}) {
-	symbol := "✓"
+	prefix := "✓ "
 	if o.colorEnabled {
-		// Green checkmark
-		_, _ = fmt.Fprintf(o.writer, "\033[32m%s\033[0m ", symbol)
-	} else {
-		_, _ = fmt.Fprintf(o.writer, "%s ", symbol)
+		prefix = "\033[32m✓\033[0m "
 	}
-	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
+	o.writeLine(prefix, format, args...)
 }
 
 // Warning displays a warning message
 func (o *StandardOutput) Warning(format string, args ...interface{}) {
-	symbol := "⚠"
+	prefix := "⚠ "
 	if o.colorEnabled {
-		// Yellow warning
-		_, _ = fmt.Fprintf(o.writer, "\033[33m%s\033[0m ", symbol)
-	} else {
-		_, _ = fmt.Fprintf(o.writer, "%s ", symbol)
+		prefix = "\033[33m⚠\033[0m "
 	}
-	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
+	o.writeLine(prefix, format, args...)
 }
 
 // Error displays an error message
 func (o *StandardOutput) Error(format string, args ...interface{}) {
-	symbol := "✗"
+	prefix := "✗ "
 	if o.colorEnabled {
-		// Red X
-		_, _ = fmt.Fprintf(o.writer, "\033[31m%s\033[0m ", symbol)
-	} else {
-		_, _ = fmt.Fprintf(o.writer, "%s ", symbol)
+		prefix = "\033[31m✗\033[0m "
 	}
-	_, _ = fmt.Fprintf(o.writer, format+"\n", args...)
+	o.writeLine(prefix, format, args...)
 }
 
-// StartProgress starts a progress indicator
+// StartProgress starts a progress indicator. Only one spinner runs at a
+// time per output; a new StartProgress preempts the previous one
+// silently (the previous Progress's Success/Fail still work, they just
+// won't drive the spinner anymore).
 func (o *StandardOutput) StartProgress(message string) Progress {
 	return newProgress(o, message)
+}
+
+// IsTTY returns true when the underlying writer is an interactive
+// terminal capable of redrawing the spinner in place.
+func (o *StandardOutput) IsTTY() bool {
+	return o.isTTY
+}
+
+// terminalWidth reports the current terminal width in columns, or 0
+// when it can't be determined (e.g. non-TTY writer, or os.File doesn't
+// back the writer). The spinner uses this to truncate long progress
+// messages before painting, so a wide reason like
+// "ready: 11/12; pending: state-OFED" never wraps onto a second line
+// and accumulates fragments on screen.
+func (o *StandardOutput) terminalWidth() int {
+	if !o.isTTY {
+		return 0
+	}
+	f, ok := o.writer.(*os.File)
+	if !ok {
+		return 0
+	}
+	w, _, err := term.GetSize(int(f.Fd()))
+	if err != nil {
+		return 0
+	}
+	return w
 }
 
 // Header displays a header banner
@@ -170,6 +230,11 @@ func (o *StandardOutput) Header(text string) {
 	border := strings.Repeat("═", width)
 	padding := (width - len(text)) / 2
 
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.activeProgress != nil && o.isTTY {
+		_, _ = fmt.Fprint(o.writer, "\r\033[K")
+	}
 	_, _ = fmt.Fprintf(o.writer, "\n%s\n", border)
 	_, _ = fmt.Fprintf(o.writer, "%s%s\n", strings.Repeat(" ", padding), text)
 	_, _ = fmt.Fprintf(o.writer, "%s\n\n", border)
@@ -196,6 +261,11 @@ func (o *StandardOutput) Confirm(prompt string) (bool, error) {
 
 // Section displays a section header
 func (o *StandardOutput) Section(text string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.activeProgress != nil && o.isTTY {
+		_, _ = fmt.Fprint(o.writer, "\r\033[K")
+	}
 	if o.colorEnabled {
 		// Bold text
 		_, _ = fmt.Fprintf(o.writer, "\n\033[1m%s\033[0m\n", text)

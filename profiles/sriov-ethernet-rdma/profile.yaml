@@ -12,7 +12,7 @@ templates:
   - 10-nicclusterpolicy.yaml
   - 11-nicnodepolicy.yaml
   - 20-ippool.yaml
-  - 35-nicinterfacenametemplate.yaml
-  - 30-sriovnetworknodepolicy.yaml
-  - 40-sriovnetwork.yaml
-  - 50-example-daemonset.yaml
+  - 30-nicinterfacenametemplate.yaml
+  - 40-sriovnetworknodepolicy.yaml
+  - 50-sriovnetwork.yaml
+  - 60-example-daemonset.yaml

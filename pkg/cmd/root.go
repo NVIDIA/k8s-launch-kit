@@ -23,6 +23,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/tools/clientcmd"
@@ -74,6 +75,7 @@ var (
 	workloadManifest            string
 	dryRunFlag                  bool
 	forPreset                   string
+	deployTimeoutRoot           time.Duration
 )
 
 // forFlagHelp builds the help string for `--for`. Computed at init() time so
@@ -164,6 +166,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			SaveDeploymentFiles:   saveDeploymentFiles,
 			Deploy:                deploy,
 			Kubeconfig:            kubeconfig,
+			DeployTimeout:         deployTimeoutRoot,
 			SaveClusterConfig:        saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
@@ -251,6 +254,7 @@ func init() {
 	// Phase 3: Cluster deployment flags
 	rootCmd.Flags().BoolVar(&deploy, "deploy", false, "Deploy the generated files to the Kubernetes cluster")
 	rootCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)")
+	rootCmd.Flags().DurationVar(&deployTimeoutRoot, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state.")
 
 	// Output control flags
 	rootCmd.PersistentFlags().StringVar(&outputFormat, "output", "text", "Output format: text (default, human-readable) or json (structured, for automation and AI agents)")
@@ -294,6 +298,7 @@ func init() {
 	setFlagGroup(rootCmd, "workload-manifest", GroupGeneration)
 
 	setFlagGroup(rootCmd, "deploy", GroupDeploy)
+	setFlagGroup(rootCmd, "deploy-timeout", GroupDeploy)
 	setFlagGroup(rootCmd, "dry-run", GroupDeploy)
 
 	setFlagGroup(rootCmd, "output", GroupOutputLogging)
