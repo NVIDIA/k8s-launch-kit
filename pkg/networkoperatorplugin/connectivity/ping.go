@@ -26,18 +26,28 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// PingResult carries the outcome of one src→dst ping test. PacketLoss
-// (0-100) is parsed from `ping`'s summary line; -1 means the line
-// couldn't be parsed (treated as fail). RTT fields are best-effort —
-// `ping` omits the rtt summary when every packet is lost.
+// PingResult carries the outcome of one src→dst matrix test. Used for
+// every test kind (ICMP / rping / ib_write_bw); fields that don't
+// apply to a kind stay zero.
+//
+//   - ICMP: PacketLoss + RTTAvgMs populated by ping parser
+//   - rping: only OK + Err set (rping output is verbose; binary
+//     pass/fail is enough for the matrix view)
+//   - ib_write_bw: BandwidthGbps + MsgRateMpps populated by the
+//     ib_write_bw parser; PacketLoss stays at -1 (n/a)
+//
+// PacketLoss = -1 means the value was not parseable / not applicable;
+// callers treat that as fail only when OK is also false.
 type PingResult struct {
-	Test       PingTest
-	OK         bool
-	PacketLoss int     // percent, 0-100; -1 when not parseable
-	RTTAvgMs   float64 // 0 when unknown
-	Stdout     string
-	Stderr     string
-	Err        error
+	Test           PingTest
+	OK             bool
+	PacketLoss     int     // ICMP only; 0-100; -1 when n/a
+	RTTAvgMs       float64 // ICMP only; 0 when unknown
+	BandwidthGbps  float64 // ib_write_bw only; 0 when n/a
+	MsgRateMpps    float64 // ib_write_bw only; 0 when n/a
+	Stdout         string
+	Stderr         string
+	Err            error
 }
 
 // pingSummaryRe matches the trailing summary line of `ping -c N` output,
