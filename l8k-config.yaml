@@ -7,6 +7,7 @@ networkOperator:
   # selectedRelease: "26.4"
   version: v26.1.1
   componentVersion: network-operator-v26.1.1
+  selectedRelease: "26.1"
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
   # imagePullSecrets:
