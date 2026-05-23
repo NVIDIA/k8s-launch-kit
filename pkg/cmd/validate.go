@@ -21,14 +21,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+)
+
+// Phase 2 connectivity-test flags. `--connectivity` defaults to ON —
+// every `l8k validate` verifies the data plane (apply example DS,
+// wait Ready, ping matrix, cleanup) unless the caller passes
+// `--connectivity=false`. The other flags tune matrix behaviour
+// (--ping-count, --connectivity-timeout, --keep) or extend the
+// validate semantics (--wait blocks until in-progress manifests reach
+// a terminal state).
+var (
+	validateConnectivity        bool
+	validateKeep                bool
+	validateConnectivityTimeout time.Duration
+	validatePingCount           int
+	validateWait                time.Duration
 )
 
 // defaultUserConfigPath is the path l8k discover writes by default and
@@ -45,25 +65,40 @@ var validateCmd = &cobra.Command{
 	Long: `Validate that a previously generated deployment is correctly applied to
 the cluster.
 
-Two checks are run:
+Three checks are run:
 
   1. Network Operator Helm release version: the chart's appVersion is
      compared against the version expected by the user's
      networkOperator.selectedRelease (looked up in the embedded catalog).
      Skipped when no user-config is found or no Helm release Secret matches.
 
-  2. Manifest presence: every YAML manifest under --deployment-files
-     (excluding example workloads) is fetched from the cluster. Each
-     manifest is reported as Found, Missing, or Error.
+  2. Manifest state: every YAML manifest under --deployment-files
+     (excluding example workloads) is classified against the cluster via
+     the per-Kind validator registry. Each manifest is reported as
+     READY, IN-PROGRESS, ERROR, or MISSING.
 
-Exits non-zero on any missing manifest or version mismatch.`,
-	Example: `  # Validate using defaults (./cluster-config.yaml + ./deployment, $KUBECONFIG)
+  3. Connectivity (default ON, pass --connectivity=false to skip): the
+     example DaemonSet is applied, the rollout is awaited until
+     numberReady == desiredNumberScheduled > 0, and a ping matrix is
+     run between the test pods' rail IPs (same-rail across every pod
+     pair + one cross-rail canary per pair). The DS is deleted on exit
+     unless --keep is set. Skipped when any manifest from step 2 is
+     IN-PROGRESS / ERROR / MISSING (running connectivity against an
+     unready cluster would just produce noise).
+
+Exits non-zero on any missing manifest, version mismatch, or
+connectivity-matrix failure.`,
+	Example: `  # Full validate (manifest state + connectivity matrix)
   l8k validate
 
-  # Specify paths and kubeconfig
-  l8k validate --user-config ./cluster-config.yaml \
-    --deployment-files ./deployment \
-    --kubeconfig ~/.kube/config
+  # Manifest checks only (no DaemonSet apply, no ping matrix)
+  l8k validate --connectivity=false
+
+  # Block up to 10 minutes for in-progress manifests to finish reconciling
+  l8k validate --wait 10m
+
+  # Leave the test DaemonSet running for debugging
+  l8k validate --keep
 
   # Agent mode (JSON output)
   l8k validate --output json --yes 2>/dev/null`,
@@ -121,7 +156,7 @@ Exits non-zero on any missing manifest or version mismatch.`,
 			"operatorNamespace", operatorNamespace,
 			"selectedRelease", selectedRelease)
 
-		k8sClient, _, err := kubeclient.New(resolved)
+		k8sClient, restConfig, err := kubeclient.New(resolved)
 		if err != nil {
 			exitWithError(apperrors.NewClusterError(
 				"failed to create Kubernetes client",
@@ -149,11 +184,105 @@ Exits non-zero on any missing manifest or version mismatch.`,
 			), outputFormat)
 		}
 
-		ok := emitValidationReport(versionCheck, results, presetDeviations, outputFormat)
-		if !ok {
+		// Optional `--wait`: poll until every in-progress manifest
+		// reaches a terminal state (or the deadline elapses). The
+		// loop re-runs the registry-backed validate every 10s. The
+		// final results / verdict are emitted normally below.
+		if validateWait > 0 {
+			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), manifestDir, results, validateWait)
+		}
+
+		verdict := emitValidationReport(versionCheck, results, presetDeviations, outputFormat)
+
+		// `--connectivity` runs the data-plane ping matrix only when
+		// every CR is reconciled — otherwise we'd just produce noise.
+		// In-progress (without errors) prints a warning and exits 0
+		// so CI/operators can re-run later.
+		switch {
+		case verdict.HasError || verdict.HasMissing || !verdict.VersionOK:
 			os.Exit(apperrors.ExitDeployment)
+		case verdict.HasInProgress:
+			if outputFormat != "json" {
+				fmt.Fprintln(os.Stderr, "\nNote: some manifests are still reconciling. Re-run later or use --wait to block.")
+			}
+			if validateConnectivity && outputFormat != "json" {
+				fmt.Fprintln(os.Stderr, "Connectivity matrix skipped — cluster has in-progress manifests.")
+			}
+			return
+		}
+
+		if validateConnectivity {
+			uiOutput, _ := ui.NewOutputForFormat(outputFormat, yesFlag)
+			ctxWithUI := ui.WithOutput(ctx, uiOutput)
+			matrix, err := connectivity.RunMatrix(ctxWithUI, k8sClient, restConfig, uiOutput, connectivity.Options{
+				ManifestDir: manifestDir,
+				Timeout:     validateConnectivityTimeout,
+				PingCount:   validatePingCount,
+				Keep:        validateKeep,
+			})
+			if err != nil {
+				exitWithError(apperrors.NewClusterError(
+					"connectivity matrix failed",
+					err,
+					"See log output for the failing step; re-run with --keep to inspect the test DaemonSet",
+				), outputFormat)
+			}
+			if outputFormat == "json" {
+				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"connectivity": matrix,
+				})
+			}
+			if matrix != nil && (matrix.Summary.Failed > 0 || matrix.Summary.ExecErrors > 0) {
+				os.Exit(apperrors.ExitDeployment)
+			}
 		}
 	},
+}
+
+// waitForReconcile re-runs ValidateManifests at 10s cadence until no
+// manifest is in-progress, an error appears, or the deadline elapses.
+// Returns the most recent results regardless of which terminal
+// condition fired. Emits a one-line update only when the in-progress
+// count changes so we don't flood logs on long waits.
+func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir string, initial []networkoperatorplugin.ValidationResult, budget time.Duration) []networkoperatorplugin.ValidationResult {
+	deadline := time.Now().Add(budget)
+	results := initial
+	lastInProgress := -1
+	for {
+		inProgress := 0
+		for _, r := range results {
+			if r.State == crstate.StateInProgress {
+				inProgress++
+			}
+		}
+		if inProgress == 0 {
+			return results
+		}
+		if inProgress != lastInProgress {
+			fmt.Fprintf(os.Stderr, "Waiting for %d manifest(s) to reconcile (budget: %s remaining)…\n",
+				inProgress, time.Until(deadline).Round(time.Second))
+			lastInProgress = inProgress
+		}
+
+		if time.Now().After(deadline) {
+			fmt.Fprintf(os.Stderr, "--wait deadline reached with %d manifest(s) still in progress; continuing with current snapshot.\n", inProgress)
+			return results
+		}
+		select {
+		case <-ctx.Done():
+			return results
+		case <-time.After(10 * time.Second):
+		}
+
+		fresh, err := networkoperatorplugin.ValidateManifests(ctx, c, manifestDir)
+		if err != nil {
+			// Transient — keep the previous snapshot and try again
+			// on the next tick.
+			log.Log.V(1).Info("ValidateManifests during --wait failed; retrying", "error", err.Error())
+			continue
+		}
+		results = fresh
+	}
 }
 
 // userConfigPath returns the user-config path to read, defaulting to
@@ -185,19 +314,72 @@ type groupDeviationReport struct {
 	Deviations  []config.PresetDeviationEntry `json:"deviations"`
 }
 
-// emitValidationReport prints results in text or JSON; returns true when
-// every manifest is Found and the version check matched (or was skipped).
-// Preset deviations are surfaced for visibility but do not affect the
-// return value — the deployment can run correctly while diverging from
-// the certified preset.
-func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []networkoperatorplugin.ValidationResult, presetDeviations []groupDeviationReport, format string) bool {
-	missing := 0
+// validationVerdict captures the aggregate outcome of a validate run.
+// Phase 2's CLI uses it to decide exit code AND whether to proceed with
+// the optional connectivity tests:
+//
+//	all manifests success                → connectivity may run; exit 0
+//	any in-progress (no errors/missing)  → warning, exit 0, skip connectivity
+//	any error or missing                 → exit ExitDeployment, skip connectivity
+//	version mismatch                     → exit ExitDeployment regardless
+type validationVerdict struct {
+	OK              bool // overall pass (no errors, no missing, version OK)
+	HasError        bool
+	HasMissing      bool
+	HasInProgress   bool
+	VersionOK       bool
+	SuccessCount    int
+	InProgressCount int
+	ErrorCount      int
+	MissingCount    int
+	Total           int
+}
+
+func aggregateVerdict(vc *networkoperatorplugin.VersionCheck, results []networkoperatorplugin.ValidationResult) validationVerdict {
+	v := validationVerdict{
+		Total:     len(results),
+		VersionOK: vc == nil || vc.Skipped || vc.Match,
+	}
 	for _, r := range results {
-		if r.Missing || r.Detail != "" {
-			missing++
+		switch r.State {
+		case crstate.StateSuccess:
+			v.SuccessCount++
+		case crstate.StateInProgress:
+			v.InProgressCount++
+			v.HasInProgress = true
+		case crstate.StateNotDeployed:
+			v.MissingCount++
+			v.HasMissing = true
+		case crstate.StateError:
+			v.ErrorCount++
+			v.HasError = true
+		default:
+			// Older results without State set — fall back to
+			// Found/Missing for the legacy code path.
+			if r.Missing {
+				v.MissingCount++
+				v.HasMissing = true
+			} else if !r.Found {
+				v.ErrorCount++
+				v.HasError = true
+			} else {
+				v.SuccessCount++
+			}
 		}
 	}
-	versionOK := vc == nil || vc.Skipped || vc.Match
+	v.OK = !v.HasError && !v.HasMissing && v.VersionOK
+	return v
+}
+
+// emitValidationReport prints results in text or JSON and returns the
+// aggregate verdict so the caller can decide on exit code and on
+// whether to proceed with optional connectivity testing.
+//
+// Preset deviations are surfaced for visibility but do not affect the
+// verdict — the deployment can run correctly while diverging from the
+// certified preset.
+func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []networkoperatorplugin.ValidationResult, presetDeviations []groupDeviationReport, format string) validationVerdict {
+	verdict := aggregateVerdict(vc, results)
 
 	if format == "json" {
 		out := map[string]any{
@@ -205,14 +387,18 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 			"manifests":        results,
 			"presetDeviations": presetDeviations,
 			"summary": map[string]any{
-				"totalManifests":   len(results),
-				"missingManifests": missing,
-				"versionMatch":     versionOK,
+				"totalManifests":   verdict.Total,
+				"successManifests": verdict.SuccessCount,
+				"inProgress":       verdict.InProgressCount,
+				"errorManifests":   verdict.ErrorCount,
+				"missingManifests": verdict.MissingCount,
+				"versionMatch":     verdict.VersionOK,
 				"deviationGroups":  len(presetDeviations),
+				"success":          verdict.OK,
 			},
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(out)
-		return missing == 0 && versionOK
+		return verdict
 	}
 
 	fmt.Println("Network Operator release")
@@ -246,19 +432,14 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 		fmt.Println("  (no manifests to validate)")
 	}
 	for _, r := range results {
-		status := "FOUND"
-		if r.Missing {
-			status = "MISSING"
-		} else if r.Detail != "" && !r.Found {
-			status = "ERROR"
-		}
+		status := validationStatusLabel(r)
 		ns := r.Namespace
 		if ns == "" {
 			ns = "(cluster-scoped)"
 		}
-		line := fmt.Sprintf("  [%s] %s/%s in %s", status, r.Kind, r.Name, ns)
-		if r.Detail != "" {
-			line = fmt.Sprintf("%s — %s", line, r.Detail)
+		line := fmt.Sprintf("  [%-11s] %s/%s in %s", status, r.Kind, r.Name, ns)
+		if r.Reason != "" {
+			line = fmt.Sprintf("%s — %s", line, r.Reason)
 		}
 		fmt.Println(line)
 	}
@@ -287,9 +468,35 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 	}
 
 	fmt.Println()
-	fmt.Printf("Summary: %d manifests, %d missing/error; version: %s; preset deviations: %d group(s)\n",
-		len(results), missing, versionStatusText(vc), len(presetDeviations))
-	return missing == 0 && versionOK
+	fmt.Printf("Summary: %d/%d ready, %d in-progress, %d error, %d missing; version: %s; preset deviations: %d group(s)\n",
+		verdict.SuccessCount, verdict.Total,
+		verdict.InProgressCount, verdict.ErrorCount, verdict.MissingCount,
+		versionStatusText(vc), len(presetDeviations))
+	return verdict
+}
+
+// validationStatusLabel maps the per-result state to the human-readable
+// label rendered in the text report.
+func validationStatusLabel(r networkoperatorplugin.ValidationResult) string {
+	switch r.State {
+	case crstate.StateSuccess:
+		return "READY"
+	case crstate.StateInProgress:
+		return "IN-PROGRESS"
+	case crstate.StateError:
+		return "ERROR"
+	case crstate.StateNotDeployed:
+		return "MISSING"
+	}
+	// Fallback for results that bypassed the registry (shouldn't
+	// happen in practice).
+	if r.Missing {
+		return "MISSING"
+	}
+	if r.Detail != "" && !r.Found {
+		return "ERROR"
+	}
+	return "READY"
 }
 
 func versionStatusText(vc *networkoperatorplugin.VersionCheck) string {
@@ -308,6 +515,16 @@ func init() {
 	validateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to verify")
 	validateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-detected from ./cluster-config.yaml). Used to read networkOperator.selectedRelease and operator namespace.")
+
+	// Phase 2 flags. `--connectivity` defaults to true — every
+	// `l8k validate` exercises the data plane unless explicitly
+	// disabled. Pass `--connectivity=false` to limit validate to
+	// the static manifest-presence + Helm release-version checks.
+	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a ping matrix between pods of the example DaemonSet to verify the data plane. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
+	validateCmd.Flags().BoolVar(&validateKeep, "keep", false, "Leave the example DaemonSet running after --connectivity completes (useful for debugging).")
+	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 5*time.Minute, "Wall-clock budget for the connectivity matrix (DaemonSet rollout + ping execs).")
+	validateCmd.Flags().IntVar(&validatePingCount, "ping-count", 3, "Number of ICMP echoes per src→dst pair when running --connectivity (ping -c N).")
+	validateCmd.Flags().DurationVar(&validateWait, "wait", 0, "Block validate up to this duration waiting for in-progress manifests to reach a terminal state. 0 (default) returns immediately on the first snapshot.")
 
 	setFlagGroup(validateCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(validateCmd, "user-config", GroupCommon)

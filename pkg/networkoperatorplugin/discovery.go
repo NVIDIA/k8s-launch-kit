@@ -17,7 +17,6 @@
 package networkoperatorplugin
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
@@ -31,16 +30,14 @@ import (
 	netop "github.com/Mellanox/network-operator/api/v1alpha1"
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/remotecommand"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -1743,38 +1740,10 @@ func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
 }
 
 // execInPod runs a command in a pod container and returns stdout.
+// Thin wrapper around the shared kubeclient.ExecStdoutInPod helper —
+// kept under this name so internal call sites in this package stay
+// untouched.
 func execInPod(ctx context.Context, restConfig *rest.Config,
 	namespace, podName, containerName string, command []string) (string, error) {
-
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to create clientset: %w", err)
-	}
-
-	req := clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(podName).
-		Namespace(namespace).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Container: containerName,
-			Command:   command,
-			Stdout:    true,
-			Stderr:    true,
-		}, scheme.ParameterCodec)
-
-	exec, err := remotecommand.NewSPDYExecutor(restConfig, "POST", req.URL())
-	if err != nil {
-		return "", fmt.Errorf("failed to create SPDY executor: %w", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdout: &stdout,
-		Stderr: &stderr,
-	}); err != nil {
-		return "", fmt.Errorf("exec stream failed (stderr: %s): %w", stderr.String(), err)
-	}
-
-	return stdout.String(), nil
+	return kubeclient.ExecStdoutInPod(ctx, restConfig, namespace, podName, containerName, command)
 }

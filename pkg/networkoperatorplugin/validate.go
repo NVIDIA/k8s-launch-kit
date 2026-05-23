@@ -30,27 +30,47 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	yaml "sigs.k8s.io/yaml"
 )
 
 // ValidationResult captures the cluster state of one manifest discovered
-// under the deployment-files directory.
+// under the deployment-files directory. State is the canonical
+// classification produced by the crstate registry; Found/Missing are
+// derived helpers preserved so the existing text/JSON callers don't
+// have to change their summary logic on day one (success/in-progress
+// → Found, not-deployed → Missing, error → ERROR).
 type ValidationResult struct {
 	Kind       string
 	APIVersion string
 	Name       string
 	Namespace  string
 	SourceFile string
-	Found      bool
-	Missing    bool
-	Detail     string
+
+	// State is the four-way classification (not-deployed / error /
+	// in-progress / success). Reason/Details carry the validator's
+	// per-Kind human-readable summary and per-companion-CR breakdown
+	// (e.g. per-node SriovNetworkNodeState states).
+	State   crstate.CRState
+	Reason  string
+	Details map[string]string
+
+	// Legacy derived flags — keep for backwards-compatible JSON
+	// consumers. Found is true for StateSuccess and StateInProgress
+	// (the object exists in the cluster, even if it's still
+	// reconciling). Missing is true only for StateNotDeployed.
+	// Anything else (StateError) is rendered as a third "ERROR"
+	// status by emitValidationReport.
+	Found   bool
+	Missing bool
+	// Detail is a short human-readable summary equivalent to Reason —
+	// retained as the field old JSON consumers parse.
+	Detail string
 }
 
 // HelmReleaseInfo carries the subset of fields we care about from a
@@ -85,8 +105,14 @@ const (
 )
 
 // ValidateManifests reads YAML manifests from manifestDir (skipping example
-// workloads) and looks up each object in the cluster. Returns a slice of
-// per-object results.
+// workloads) and classifies each object in the cluster via the crstate
+// registry. Returns a slice of per-object results.
+//
+// Unlike the old "Get and check NotFound" path, this routes every
+// manifest through the same per-Kind validator the deploy state machine
+// uses, so SriovNetworkNodePolicy's silent-failure cross-check, the
+// NicConfigurationTemplate's condition-Reason classification, and
+// NicClusterPolicy's appliedStates breakdown all surface here too.
 func ValidateManifests(ctx context.Context, c client.Client, manifestDir string) ([]ValidationResult, error) {
 	entries, err := os.ReadDir(manifestDir)
 	if err != nil {
@@ -109,6 +135,7 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 	}
 	sort.Strings(files)
 
+	registry := crstate.NewDefault()
 	var results []ValidationResult
 	for _, name := range files {
 		full := filepath.Join(manifestDir, name)
@@ -136,30 +163,70 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 				SourceFile: name,
 			}
 
-			lookup := &unstructured.Unstructured{}
 			gv, gvErr := schema.ParseGroupVersion(obj.GetAPIVersion())
 			if gvErr != nil {
-				r.Detail = fmt.Sprintf("invalid apiVersion %q: %v", obj.GetAPIVersion(), gvErr)
+				r.State = crstate.StateError
+				r.Reason = fmt.Sprintf("invalid apiVersion %q: %v", obj.GetAPIVersion(), gvErr)
+				r.Detail = r.Reason
 				results = append(results, r)
 				continue
 			}
-			lookup.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
+			// Ensure GVK on the manifest object so the registry can
+			// dispatch to the right validator.
+			obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
 
-			key := types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
-			err := c.Get(ctx, key, lookup)
-			switch {
-			case err == nil:
-				r.Found = true
-			case apierrors.IsNotFound(err):
-				r.Missing = true
-				r.Detail = "not found in cluster"
-			default:
-				r.Detail = fmt.Sprintf("get error: %v", err)
+			res, vErr := registry.Validate(ctx, c, obj)
+			if vErr != nil {
+				// Transport error — treat as error state. Use the
+				// Reason carried by the Result (registry sets it
+				// even on err) so callers still get a useful
+				// summary.
+				r.State = crstate.StateError
+				r.Reason = res.Reason
+				if r.Reason == "" {
+					r.Reason = vErr.Error()
+				}
+			} else {
+				r.State = res.State
+				r.Reason = res.Reason
 			}
+			r.Details = res.Details
+			applyLegacyFlags(&r)
 			results = append(results, r)
 		}
 	}
 	return results, nil
+}
+
+// applyLegacyFlags fills in the backwards-compatible Found / Missing /
+// Detail fields from the canonical State + Reason.
+func applyLegacyFlags(r *ValidationResult) {
+	r.Detail = r.Reason
+	switch r.State {
+	case crstate.StateSuccess, crstate.StateInProgress:
+		r.Found = true
+		r.Missing = false
+	case crstate.StateNotDeployed:
+		r.Found = false
+		r.Missing = true
+		if r.Reason == "" {
+			r.Detail = "not found in cluster"
+			r.Reason = r.Detail
+		}
+	case crstate.StateError:
+		r.Found = false
+		r.Missing = false
+	}
+}
+
+// IsExampleManifest reports whether the given filename matches the
+// example-workload naming pattern (case-insensitive substring
+// "example"). Files matching this pattern are deployed by
+// `l8k validate --connectivity` for the ping matrix and skipped by
+// every other code path. Exported so the connectivity package can
+// find the example DS to apply.
+func IsExampleManifest(name string) bool {
+	return isExampleManifest(name)
 }
 
 // isExampleManifest treats files matching *example* (e.g.
