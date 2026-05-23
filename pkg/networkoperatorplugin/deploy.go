@@ -40,6 +40,20 @@ import (
 // helper cadence so logs feel familiar.
 const deployPollInterval = 3 * time.Second
 
+// appliedManifest pairs an applied "other" manifest with the
+// information phase 4 needs to gate on controller observation:
+// awaitObservationAfterRV holds the resourceVersion the server
+// returned from our Patch when the apply bumped .metadata.generation
+// (spec changed). The verify loop refuses to trust the live status
+// until the live resourceVersion has advanced past that value —
+// otherwise a re-deploy with new config would see the controller's
+// stale `status: ready` from the previous reconcile and declare
+// success before the operator had even noticed the new spec.
+type appliedManifest struct {
+	obj                     *unstructured.Unstructured
+	awaitObservationAfterRV string
+}
+
 // DeployProfile is a thin wrapper that preserves the existing plugin call
 // shape (profile arg unused). Delegates to ApplyManifestsFromDir.
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
@@ -139,7 +153,13 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	}
 
 	// Phase 3 — apply remaining manifests, no per-manifest wait.
-	appliedOthers := make([]*unstructured.Unstructured, 0, len(otherDocs))
+	// Per manifest we capture (a) the pre-apply generation so the
+	// verify phase knows whether the spec actually changed, and
+	// (b) the resourceVersion the server returned from our Patch
+	// — phase 4 then uses the same observation gate as phase 1/2
+	// (don't trust status until live RV moves past the apply's
+	// RV when the spec was new).
+	appliedOthers := make([]appliedManifest, 0, len(otherDocs))
 	if len(otherDocs) > 0 {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Applying %d additional manifest(s)", phases.next(), phases.total, len(otherDocs)))
 		for i, b := range otherDocs {
@@ -148,6 +168,19 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 				return fmt.Errorf("decode manifest: %w", err)
 			}
 			label := manifestLabel(obj, i+1, len(otherDocs))
+
+			// Pre-apply Get: capture the existing object's
+			// generation so we can tell post-apply whether
+			// the spec changed. Failure = brand-new object;
+			// preApplyGen stays 0 and post-apply gen >= 1
+			// will trip the spec-changed branch.
+			var preApplyGen int64
+			pre := &unstructured.Unstructured{}
+			pre.SetGroupVersionKind(obj.GroupVersionKind())
+			if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, pre); err == nil {
+				preApplyGen = pre.GetGeneration()
+			}
+
 			uiOutput.Info("Applying %s", label)
 			log.Log.Info("Applying manifest",
 				"kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace(),
@@ -156,7 +189,12 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 				uiOutput.Error("Failed to apply %s: %v", label, err)
 				return err
 			}
-			appliedOthers = append(appliedOthers, obj)
+
+			am := appliedManifest{obj: obj}
+			if obj.GetGeneration() > preApplyGen {
+				am.awaitObservationAfterRV = obj.GetResourceVersion()
+			}
+			appliedOthers = append(appliedOthers, am)
 		}
 		uiOutput.Success("Applied %d additional manifest(s)", len(appliedOthers))
 	}
@@ -169,8 +207,9 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	}
 	if len(appliedOthers) > 0 {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Verifying %d manifest(s) reconcile", phases.next(), phases.total, len(appliedOthers)))
-		for i, obj := range appliedOthers {
-			if err := pollUntilTerminal(ctx, kubeClient, registry, obj, manifestLabel(obj, i+1, len(appliedOthers))); err != nil {
+		for i, am := range appliedOthers {
+			if err := pollUntilTerminal(ctx, kubeClient, registry, am.obj,
+				manifestLabel(am.obj, i+1, len(appliedOthers)), am.awaitObservationAfterRV); err != nil {
 				return err
 			}
 		}
@@ -253,8 +292,30 @@ func decodeUnstructured(doc []byte) (*unstructured.Unstructured, error) {
 // applyAndWait applies obj and then polls until the registry reports a
 // terminal state, re-applying once if the object goes missing mid-flight.
 // Used for NCP and per-NNP in phases 1 and 2.
+//
+// Captures the object's pre-apply generation and the resourceVersion
+// the server returned from the Patch. When the spec changed (generation
+// bumped), the poll loop won't trust the validator's verdict until the
+// controller has written *something* post-apply (live RV differs from
+// the apply-time RV) — without this gate the controller's stale
+// `status.state: ready` from the previous deploy would make the state
+// machine declare success before reconciliation of the new spec had
+// even started. Network Operator's NicClusterPolicyStatus carries no
+// `observedGeneration`, so this resourceVersion-bump heuristic is the
+// closest signal we have that the controller has reacted.
 func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, dryRun bool, label string) error {
 	uiOutput := ui.FromContext(ctx)
+
+	// Pre-apply observation: capture the object's current
+	// generation so we can detect whether the apply changed the
+	// spec or was idempotent. Failure to read = treat as
+	// "first-time apply" (preApplyGen=0).
+	var preApplyGen int64
+	pre := &unstructured.Unstructured{}
+	pre.SetGroupVersionKind(obj.GroupVersionKind())
+	if err := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, pre); err == nil {
+		preApplyGen = pre.GetGeneration()
+	}
 
 	progress := uiOutput.StartProgress(fmt.Sprintf("Applying %s", label))
 	log.Log.Info("Applying manifest", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
@@ -267,13 +328,38 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 	if dryRun {
 		return nil
 	}
-	return pollUntilTerminal(ctx, c, registry, obj, label)
+
+	// applyUnstructured does an SSA Patch that returns the
+	// server-decided object on `obj`. Its current resourceVersion
+	// is "the version right after our apply". If the spec changed,
+	// any subsequent live RV != this value means the controller
+	// has written status since.
+	awaitObservationAfterRV := ""
+	if obj.GetGeneration() > preApplyGen {
+		awaitObservationAfterRV = obj.GetResourceVersion()
+		log.Log.V(1).Info("Spec changed; gating poll on controller observation",
+			"kind", obj.GetKind(), "name", obj.GetName(),
+			"preApplyGeneration", preApplyGen,
+			"appliedGeneration", obj.GetGeneration(),
+			"appliedResourceVersion", awaitObservationAfterRV)
+	}
+	return pollUntilTerminal(ctx, c, registry, obj, label, awaitObservationAfterRV)
 }
 
 // pollUntilTerminal polls the registry's Validator for obj until it
 // reports StateSuccess or StateError. not-deployed transitions trigger a
 // single re-apply (object vanished between apply and poll); the only
 // exit condition besides terminal state is ctx.Done().
+//
+// awaitObservationAfterRV is the resourceVersion the server returned
+// from the apply Patch. When non-empty, the poll loop refuses to act
+// on any terminal verdict until the live object's resourceVersion
+// has advanced past this value — that's the closest signal we have
+// (without controller observedGeneration support) that the controller
+// has written status since the apply landed. Avoids the deploy state
+// machine declaring success on the previous reconcile's stale
+// status.state=ready before the operator has even noticed the new
+// spec.
 //
 // A spinner shows "Waiting for <label> to reconcile" so operators have
 // a visible heartbeat. Reason transitions are emitted as discrete
@@ -283,7 +369,7 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // onto the same row. The reason is deduped against the previous tick
 // so a noisy 3-second polling loop only emits a fresh line when
 // something actually changed.
-func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label string) error {
+func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string) error {
 	uiOutput := ui.FromContext(ctx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
 	log.Log.Info("Waiting for manifest to reconcile", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
@@ -317,6 +403,39 @@ func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.R
 		if err := ctx.Err(); err != nil {
 			progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
 			return err
+		}
+
+		// Observation gate: when the spec changed during apply,
+		// hold off on trusting the validator until the controller
+		// has written status post-apply. Detection: the live
+		// resourceVersion differs from the one Patch returned.
+		// Once we've seen the controller write, clear the gate
+		// and proceed with normal polling for the rest of the
+		// reconciliation window.
+		if awaitObservationAfterRV != "" {
+			live := &unstructured.Unstructured{}
+			live.SetGroupVersionKind(obj.GroupVersionKind())
+			err := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, live)
+			switch {
+			case err != nil:
+				// Get failure — let the validator handle it
+				// uniformly below.
+			case live.GetResourceVersion() == awaitObservationAfterRV:
+				reportProgress("waiting for controller to observe new spec")
+				select {
+				case <-ctx.Done():
+					progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
+					return ctx.Err()
+				case <-ticker.C:
+				}
+				continue
+			default:
+				log.Log.V(1).Info("Controller observed apply; clearing gate",
+					"kind", obj.GetKind(), "name", obj.GetName(),
+					"appliedResourceVersion", awaitObservationAfterRV,
+					"liveResourceVersion", live.GetResourceVersion())
+				awaitObservationAfterRV = ""
+			}
 		}
 
 		res, err := registry.Validate(ctx, c, obj)
