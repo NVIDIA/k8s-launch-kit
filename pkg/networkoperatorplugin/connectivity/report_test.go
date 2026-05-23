@@ -87,6 +87,19 @@ func fixtureData() ReportData {
 			},
 			Match: true,
 		},
+		ComponentCheck: &networkoperatorplugin.ComponentVersionCheck{
+			ExpectedComponent: "network-operator-v26.4.0-beta.9",
+			ExpectedDOCA:      "doca3.4.0-26.04-0.8.4.0-0",
+			Components: []networkoperatorplugin.ComponentVersionResult{
+				{Source: "NicClusterPolicy/nic-cluster-policy", Section: "nvIpam",
+					Expected: "network-operator-v26.4.0-beta.9", Actual: "network-operator-v26.4.0-beta.9", Match: true, Kind: "component"},
+				{Source: "NicClusterPolicy/nic-cluster-policy", Section: "secondaryNetwork.multus",
+					Expected: "network-operator-v26.4.0-beta.9", Actual: "network-operator-v26.4.0-beta.7", Match: false, Kind: "component"},
+				{Source: "NicNodePolicy/nicnodepolicy-h200", Section: "ofedDriver",
+					Expected: "doca3.4.0-26.04-0.8.4.0-0", Actual: "doca3.4.0-26.04-0.8.4.0-0", Match: true, Kind: "doca"},
+			},
+			AllMatch: false,
+		},
 		Manifests: []networkoperatorplugin.ValidationResult{
 			{
 				Kind: "NicClusterPolicy", APIVersion: "mellanox.com/v1alpha1",

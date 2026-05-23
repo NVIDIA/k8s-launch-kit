@@ -113,6 +113,52 @@ const (
 	helmReleaseSecretPrefix = "sh.helm.release.v1."
 )
 
+// ComponentVersionCheck holds the result of cross-referencing each
+// version-bearing field in the live NicClusterPolicy + NicNodePolicy
+// CRs against the expected versions for the user's selectedRelease.
+//
+// The Helm-chart appVersion check (CheckHelmReleaseVersion) tells us
+// whether the *operator* matches the release line; this check tells
+// us whether the *resources the operator manages* (ofedDriver,
+// nvIpam, multus, device plugins, …) carry the catalog-pinned image
+// tags. Out-of-band kubectl edits, partial upgrades, or
+// hand-rolled chart values are the usual reasons for divergence.
+type ComponentVersionCheck struct {
+	// Skipped is true when the check couldn't run (no
+	// selectedRelease in user-config, no NCP in the cluster, etc.).
+	Skipped bool
+	Reason  string
+	// ExpectedComponent is the catalog's
+	// networkOperator.componentVersion (e.g.
+	// "network-operator-v26.4.0-beta.9"). Used as the expected
+	// value for every operator/device-plugin component.
+	ExpectedComponent string
+	// ExpectedDOCA is the catalog's docaDriver.version (e.g.
+	// "doca3.4.0-26.04-0.8.4.0-0"). Used as the expected value for
+	// every ofedDriver block.
+	ExpectedDOCA string
+	// Components is the per-section result, one entry per
+	// version-bearing block found in the cluster.
+	Components []ComponentVersionResult
+	// AllMatch is true when every component matched. False when at
+	// least one mismatched OR when Components is empty (no CRs in
+	// the cluster — that's already its own signal).
+	AllMatch bool
+}
+
+// ComponentVersionResult is one row of the ComponentVersionCheck.
+type ComponentVersionResult struct {
+	Source   string // "NicClusterPolicy/nic-cluster-policy", "NicNodePolicy/<name>"
+	Section  string // "ofedDriver", "nvIpam", "rdmaSharedDevicePlugin", …
+	Expected string
+	Actual   string
+	Match    bool
+	// Kind is "component" or "doca" — labels which catalog field
+	// supplied the expected value, so a report can group results
+	// or explain mismatches.
+	Kind string
+}
+
 // ValidateManifests reads YAML manifests from manifestDir (skipping example
 // workloads) and classifies each object in the cluster via the crstate
 // registry. Returns a slice of per-object results.
@@ -232,6 +278,133 @@ func applyLegacyFlags(r *ValidationResult) {
 	case crstate.StateError:
 		r.Found = false
 		r.Missing = false
+	}
+}
+
+// CheckComponentVersions reads the live NicClusterPolicy and every
+// NicNodePolicy in the operator namespace, extracts each component
+// section's `version:` field, and compares it against the catalog
+// entry for `selectedRelease`. Returns a ComponentVersionCheck whose
+// Components slice has one entry per version-bearing block found,
+// each tagged with Match / Expected / Actual so a CLI or HTML report
+// can render the per-component status.
+//
+// The check soft-skips (Skipped=true, populated Reason) when:
+//   - selectedRelease is empty
+//   - selectedRelease isn't in the embedded catalog
+//   - the cluster has no NicClusterPolicy at all (nothing to check)
+func CheckComponentVersions(ctx context.Context, c client.Client, namespace, selectedRelease string) (*ComponentVersionCheck, error) {
+	if selectedRelease == "" {
+		return &ComponentVersionCheck{Skipped: true, Reason: "no networkOperator.selectedRelease in user-config"}, nil
+	}
+	rel, ok := LookupRelease(selectedRelease)
+	if !ok {
+		return &ComponentVersionCheck{Skipped: true, Reason: fmt.Sprintf("selectedRelease %q is not in the embedded catalog", selectedRelease)}, nil
+	}
+
+	cv := &ComponentVersionCheck{
+		ExpectedComponent: rel.NetworkOperator.ComponentVersion,
+		ExpectedDOCA:      rel.DOCADriver.Version,
+	}
+
+	// NicClusterPolicy: there's exactly one per cluster (the deploy
+	// path enforces this) — list rather than Get-by-name so we
+	// don't have to guess the name.
+	ncpList := &unstructured.UnstructuredList{}
+	ncpList.SetGroupVersionKind(schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicClusterPolicyList"})
+	if err := c.List(ctx, ncpList); err != nil {
+		return &ComponentVersionCheck{Skipped: true, Reason: fmt.Sprintf("list NicClusterPolicy: %v", err)}, nil
+	}
+	if len(ncpList.Items) == 0 {
+		return &ComponentVersionCheck{Skipped: true, Reason: "no NicClusterPolicy in cluster — run `l8k deploy` first"}, nil
+	}
+
+	for i := range ncpList.Items {
+		ncp := &ncpList.Items[i]
+		source := fmt.Sprintf("NicClusterPolicy/%s", ncp.GetName())
+		// NCP sections that carry .version. Walk them
+		// deterministically rather than ranging over spec —
+		// missing sections (e.g. nicConfigurationOperator not
+		// enabled) are simply skipped, not reported as empty
+		// mismatches.
+		for _, section := range []ncpVersionPath{
+			{Path: []string{"spec", "nicConfigurationOperator", "operator", "version"}, Section: "nicConfigurationOperator.operator", Kind: "component"},
+			{Path: []string{"spec", "nicConfigurationOperator", "configurationDaemon", "version"}, Section: "nicConfigurationOperator.configurationDaemon", Kind: "component"},
+			{Path: []string{"spec", "nvIpam", "version"}, Section: "nvIpam", Kind: "component"},
+			{Path: []string{"spec", "secondaryNetwork", "cniPlugins", "version"}, Section: "secondaryNetwork.cniPlugins", Kind: "component"},
+			{Path: []string{"spec", "secondaryNetwork", "multus", "version"}, Section: "secondaryNetwork.multus", Kind: "component"},
+			{Path: []string{"spec", "ofedDriver", "version"}, Section: "ofedDriver", Kind: "doca"},
+		} {
+			r := compareVersion(ncp, source, section, cv.ExpectedComponent, cv.ExpectedDOCA)
+			if r != nil {
+				cv.Components = append(cv.Components, *r)
+			}
+		}
+	}
+
+	// NicNodePolicy: zero or more per cluster (one per node group
+	// in the 26.4+ model). 26.1 has no NNPs.
+	nnpList := &unstructured.UnstructuredList{}
+	nnpList.SetGroupVersionKind(schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicNodePolicyList"})
+	if err := c.List(ctx, nnpList); err != nil {
+		// Tolerate the list error — the cluster might not have the
+		// NicNodePolicy CRD at all (older release). Just don't add
+		// any NNP rows.
+		log.Log.V(1).Info("List NicNodePolicy failed during component-version check", "error", err.Error())
+	}
+	for i := range nnpList.Items {
+		nnp := &nnpList.Items[i]
+		source := fmt.Sprintf("NicNodePolicy/%s", nnp.GetName())
+		for _, section := range []ncpVersionPath{
+			{Path: []string{"spec", "ofedDriver", "version"}, Section: "ofedDriver", Kind: "doca"},
+			{Path: []string{"spec", "rdmaSharedDevicePlugin", "version"}, Section: "rdmaSharedDevicePlugin", Kind: "component"},
+			{Path: []string{"spec", "sriovDevicePlugin", "version"}, Section: "sriovDevicePlugin", Kind: "component"},
+		} {
+			r := compareVersion(nnp, source, section, cv.ExpectedComponent, cv.ExpectedDOCA)
+			if r != nil {
+				cv.Components = append(cv.Components, *r)
+			}
+		}
+	}
+
+	cv.AllMatch = len(cv.Components) > 0
+	for _, r := range cv.Components {
+		if !r.Match {
+			cv.AllMatch = false
+			break
+		}
+	}
+	return cv, nil
+}
+
+// ncpVersionPath identifies one version-bearing section to inspect.
+type ncpVersionPath struct {
+	Path    []string
+	Section string
+	Kind    string // "component" or "doca"
+}
+
+// compareVersion reads the version field at section.Path on obj and
+// returns a ComponentVersionResult when the section is present.
+// Returns nil when the path is missing — that means the section
+// wasn't rendered (e.g. nicConfigurationOperator disabled), not a
+// mismatch.
+func compareVersion(obj *unstructured.Unstructured, source string, section ncpVersionPath, expectedComponent, expectedDoca string) *ComponentVersionResult {
+	actual, found, _ := unstructured.NestedString(obj.Object, section.Path...)
+	if !found || actual == "" {
+		return nil
+	}
+	expected := expectedComponent
+	if section.Kind == "doca" {
+		expected = expectedDoca
+	}
+	return &ComponentVersionResult{
+		Source:   source,
+		Section:  section.Section,
+		Expected: expected,
+		Actual:   actual,
+		Match:    actual == expected,
+		Kind:     section.Kind,
 	}
 }
 

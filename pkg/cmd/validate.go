@@ -117,30 +117,64 @@ connectivity-matrix failure.`,
   # Agent mode (JSON output)
   l8k validate --output json --yes 2>/dev/null`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// State accumulated during the run. Captured by reference
+		// in exitWithReport so that EVERY error path — including
+		// the ones that go through exitWithError(...).os.Exit —
+		// still emits the HTML report with whatever was observed.
+		// Go's defer doesn't run on os.Exit, so we can't rely on
+		// a deferred report write.
+		var (
+			versionCheck     *networkoperatorplugin.VersionCheck
+			componentCheck   *networkoperatorplugin.ComponentVersionCheck
+			results          []networkoperatorplugin.ValidationResult
+			matrix           *connectivity.MatrixResult
+			warnings         []string
+			presetDeviations []groupDeviationReport
+			reportClient     ctrlclient.Client
+			reportRestConfig *rest.Config
+			reportManifestDir string
+			operatorNamespace = defaultOperatorNamespace
+		)
+
+		// exitWithReport flushes the HTML report (best-effort) and
+		// then calls exitWithError. Use this in place of bare
+		// exitWithError everywhere a validate-level error needs to
+		// terminate the run, so the operator gets a partial report
+		// instead of nothing on failure.
+		exitWithReport := func(err *apperrors.StructuredError) {
+			if err != nil {
+				warnings = append(warnings, err.Error())
+			}
+			writeHTMLReportIfWanted(context.Background(), reportClient, reportRestConfig,
+				reportManifestDir, deploymentFiles,
+				operatorNamespace, versionCheck, componentCheck, results, &matrix, &warnings,
+				userConfigPath(), outputFormat)
+			exitWithError(err, outputFormat)
+		}
+
 		resolved, err := resolveKubeconfig(kubeconfig)
 		if err != nil {
-			exitWithError(apperrors.NewValidationError(
+			exitWithReport(apperrors.NewValidationError(
 				"kubeconfig required for validate",
 				err,
 				"Set $KUBECONFIG or pass --kubeconfig <path>",
-			), outputFormat)
+			))
 		}
 
 		manifestDir, err := resolveDeploymentDir(deploymentFiles)
 		if err != nil {
-			exitWithError(apperrors.NewValidationError(
+			exitWithReport(apperrors.NewValidationError(
 				"deployment files directory not found",
 				err,
 				"Run 'l8k generate' first or pass --deployment-files <path>",
-			), outputFormat)
+			))
 		}
+		reportManifestDir = manifestDir
 
 		// Best-effort load of user-config — only the networkOperator section
 		// is required by validate. Missing or unparseable config softens the
 		// version check to "skipped" but does not fail the manifest check.
-		operatorNamespace := defaultOperatorNamespace
 		selectedRelease := ""
-		var presetDeviations []groupDeviationReport
 		if path := userConfigPath(); path != "" {
 			if cfg, err := config.LoadFullConfig(path, log.Log); err == nil && cfg != nil {
 				if cfg.NetworkOperator.Namespace != "" {
@@ -172,30 +206,47 @@ connectivity-matrix failure.`,
 
 		k8sClient, restConfig, err := kubeclient.New(resolved)
 		if err != nil {
-			exitWithError(apperrors.NewClusterError(
+			exitWithReport(apperrors.NewClusterError(
 				"failed to create Kubernetes client",
 				err,
 				"Check that kubeconfig is valid and the cluster is reachable",
-			), outputFormat)
+			))
 		}
+		reportClient = k8sClient
+		reportRestConfig = restConfig
 
 		ctx := context.Background()
 
-		versionCheck, vcErr := networkoperatorplugin.CheckHelmReleaseVersion(ctx, k8sClient, operatorNamespace, selectedRelease)
+		var vcErr error
+		versionCheck, vcErr = networkoperatorplugin.CheckHelmReleaseVersion(ctx, k8sClient, operatorNamespace, selectedRelease)
 		if vcErr != nil {
-			exitWithError(apperrors.NewClusterError(
+			exitWithReport(apperrors.NewClusterError(
 				"version check failed",
 				vcErr,
 				"Check that the kubeconfig has list-secrets permission in the operator namespace",
-			), outputFormat)
+			))
 		}
 
-		results, valErr := networkoperatorplugin.ValidateManifests(ctx, k8sClient, manifestDir)
+		// Cross-check the NicClusterPolicy + NicNodePolicy
+		// component versions against the catalog. Soft errors only
+		// — a failed lookup turns into ComponentCheck.Skipped, not
+		// a hard exit, because the underlying Helm release check
+		// already covers the dominant "wrong operator version"
+		// case. The per-component breakdown is most useful when
+		// catching out-of-band kubectl edits or partial upgrades.
+		ccCheck, ccErr := networkoperatorplugin.CheckComponentVersions(ctx, k8sClient, operatorNamespace, selectedRelease)
+		if ccErr != nil {
+			log.Log.V(1).Info("component-version check failed", "error", ccErr.Error())
+		}
+		componentCheck = ccCheck
+
+		var valErr error
+		results, valErr = networkoperatorplugin.ValidateManifests(ctx, k8sClient, manifestDir)
 		if valErr != nil {
-			exitWithError(apperrors.NewGeneralError(
+			exitWithReport(apperrors.NewGeneralError(
 				"manifest validation failed",
 				valErr,
-			), outputFormat)
+			))
 		}
 
 		// Optional `--wait`: poll until every in-progress manifest
@@ -207,24 +258,30 @@ connectivity-matrix failure.`,
 		}
 
 		verdict := emitValidationReport(versionCheck, results, presetDeviations, outputFormat)
+		emitComponentVersionReport(componentCheck, outputFormat)
+		warnings = append(warnings, collectVerdictWarnings(verdict)...)
+		if componentCheck != nil && !componentCheck.Skipped && !componentCheck.AllMatch {
+			warnings = append(warnings, "Component versions in NicClusterPolicy / NicNodePolicy diverge from the selectedRelease catalog — see the report's components section.")
+		}
 
-		// The HTML verify-report aggregates manifest state +
-		// (optionally) the connectivity matrix into one file.
-		// Defer its write so that every exit path below — early
-		// error/missing exit, in-progress no-op, full
-		// connectivity-failed exit — still produces the report
-		// for the operator to inspect.
-		var matrix *connectivity.MatrixResult
-		warnings := collectVerdictWarnings(verdict)
-		defer writeHTMLReportIfWanted(ctx, k8sClient, restConfig, manifestDir, deploymentFiles,
-			operatorNamespace, versionCheck, results, &matrix, &warnings, userConfigPath(), outputFormat)
+		// emitReport writes the HTML file synchronously. Called on
+		// every remaining exit path (success, in-progress no-op,
+		// connectivity failure) since Go's defer doesn't run on
+		// os.Exit and exitWithError does os.Exit.
+		emitReport := func() {
+			writeHTMLReportIfWanted(ctx, k8sClient, restConfig, manifestDir, deploymentFiles,
+				operatorNamespace, versionCheck, componentCheck, results, &matrix, &warnings,
+				userConfigPath(), outputFormat)
+		}
 
 		// `--connectivity` runs the data-plane ping matrix only when
 		// every CR is reconciled — otherwise we'd just produce noise.
 		// In-progress (without errors) prints a warning and exits 0
 		// so CI/operators can re-run later.
+		componentMismatch := componentCheck != nil && !componentCheck.Skipped && !componentCheck.AllMatch
 		switch {
-		case verdict.HasError || verdict.HasMissing || !verdict.VersionOK:
+		case verdict.HasError || verdict.HasMissing || !verdict.VersionOK || componentMismatch:
+			emitReport()
 			os.Exit(apperrors.ExitDeployment)
 		case verdict.HasInProgress:
 			if outputFormat != "json" {
@@ -234,6 +291,7 @@ connectivity-matrix failure.`,
 				fmt.Fprintln(os.Stderr, "Connectivity matrix skipped — cluster has in-progress manifests.")
 			}
 			warnings = append(warnings, "Connectivity matrix skipped — cluster has in-progress manifests.")
+			emitReport()
 			return
 		}
 
@@ -246,13 +304,13 @@ connectivity-matrix failure.`,
 				PingCount:   validatePingCount,
 				Keep:        validateKeep,
 			})
-			matrix = m // captured by the deferred report writer
+			matrix = m
 			if err != nil {
-				exitWithError(apperrors.NewClusterError(
+				exitWithReport(apperrors.NewClusterError(
 					"connectivity matrix failed",
 					err,
 					"See log output for the failing step; re-run with --keep to inspect the test DaemonSet",
-				), outputFormat)
+				))
 			}
 			if outputFormat == "json" {
 				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
@@ -263,10 +321,56 @@ connectivity-matrix failure.`,
 				warnings = append(warnings, "Connectivity matrix skipped: "+matrix.Skipped.Reason)
 			}
 			if matrix != nil && (matrix.Summary.Failed > 0 || matrix.Summary.ExecErrors > 0) {
+				emitReport()
 				os.Exit(apperrors.ExitDeployment)
 			}
 		}
+
+		emitReport()
 	},
+}
+
+// emitComponentVersionReport prints the component-version cross-check
+// in text mode (the JSON consumer reads the structured field added by
+// the HTML/JSON writers downstream). Skipped checks are surfaced as a
+// short note so operators understand why the section is absent.
+func emitComponentVersionReport(cv *networkoperatorplugin.ComponentVersionCheck, format string) {
+	if cv == nil || format == "json" {
+		return
+	}
+	fmt.Println()
+	fmt.Println("Component versions (NicClusterPolicy / NicNodePolicy vs. catalog)")
+	if cv.Skipped {
+		reason := cv.Reason
+		if reason == "" {
+			reason = "skipped"
+		}
+		fmt.Printf("  status: SKIPPED (%s)\n", reason)
+		return
+	}
+	if len(cv.Components) == 0 {
+		fmt.Println("  (no version-bearing sections found in cluster)")
+		return
+	}
+	matched := 0
+	for _, c := range cv.Components {
+		status := "MISMATCH"
+		if c.Match {
+			status = "MATCH   "
+			matched++
+		}
+		expected := c.Expected
+		if expected == "" {
+			expected = "(none)"
+		}
+		fmt.Printf("  [%s] %s — %s: expected=%s got=%s\n",
+			status, c.Source, c.Section, expected, c.Actual)
+	}
+	verdict := "MATCH"
+	if !cv.AllMatch {
+		verdict = "MISMATCH"
+	}
+	fmt.Printf("  result: %s (%d/%d match)\n", verdict, matched, len(cv.Components))
 }
 
 // collectVerdictWarnings turns aggregate verdict counts into
@@ -316,6 +420,7 @@ func writeHTMLReportIfWanted(
 	deploymentDir string,
 	operatorNamespace string,
 	versionCheck *networkoperatorplugin.VersionCheck,
+	componentCheck *networkoperatorplugin.ComponentVersionCheck,
 	results []networkoperatorplugin.ValidationResult,
 	matrix **connectivity.MatrixResult,
 	warnings *[]string,
@@ -335,13 +440,14 @@ func writeHTMLReportIfWanted(
 			APIServerVersion:  probeAPIServerVersion(restConfig),
 			OperatorNamespace: operatorNamespace,
 		},
-		Profile:    loadProfileInfo(userCfgPath, manifestDir),
-		NodeGroups: loadNodeGroups(userCfgPath),
-		Nodes:      listNodesForReport(ctx, c),
-		Release:    versionCheck,
-		Manifests:  results,
-		Matrix:     *matrix,
-		Warnings:   *warnings,
+		Profile:         loadProfileInfo(userCfgPath, manifestDir),
+		NodeGroups:      loadNodeGroups(userCfgPath),
+		Nodes:           listNodesForReport(ctx, c),
+		Release:         versionCheck,
+		ComponentCheck:  componentCheck,
+		Manifests:       results,
+		Matrix:          *matrix,
+		Warnings:        *warnings,
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

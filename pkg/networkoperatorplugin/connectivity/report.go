@@ -42,13 +42,18 @@ var reportTemplate string
 // it from values it has already computed (Manifests, Matrix) plus a
 // few small lookups (cluster API version, node labels).
 type ReportData struct {
-	Cluster    ClusterInfo
-	Profile    ProfileInfo
-	NodeGroups []NodeGroupInfo
-	Nodes      []NodeInfo
-	Release    *networkoperatorplugin.VersionCheck
-	Manifests  []networkoperatorplugin.ValidationResult
-	Matrix     *MatrixResult
+	Cluster        ClusterInfo
+	Profile        ProfileInfo
+	NodeGroups     []NodeGroupInfo
+	Nodes          []NodeInfo
+	Release        *networkoperatorplugin.VersionCheck
+	// ComponentCheck cross-references the live NCP+NNP component
+	// versions against the embedded release catalog. Surfaced as a
+	// sub-table under "Network Operator release" in the HTML
+	// report. Nil when the check couldn't run.
+	ComponentCheck *networkoperatorplugin.ComponentVersionCheck
+	Manifests      []networkoperatorplugin.ValidationResult
+	Matrix         *MatrixResult
 	// Warnings is a flat list of one-line strings rendered as a
 	// bulleted rollup at the bottom of the report — typically the
 	// "in-progress manifest re-run later" notes and the matrix

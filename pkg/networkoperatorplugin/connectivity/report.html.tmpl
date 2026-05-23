@@ -581,6 +581,32 @@ footer strong { color: var(--text-muted); }
     {{- else}}
     <p class="empty">No release information available.</p>
     {{- end}}
+
+    {{- if .ComponentCheck}}
+    <div class="matrix-rail">Component versions in cluster CRs</div>
+    {{- if .ComponentCheck.Skipped}}
+    <p class="empty">Component-version check skipped: {{.ComponentCheck.Reason}}</p>
+    {{- else if .ComponentCheck.Components}}
+    <table>
+      <thead>
+        <tr><th>Status</th><th>Source</th><th>Section</th><th>Expected</th><th>Actual</th></tr>
+      </thead>
+      <tbody>
+        {{- range .ComponentCheck.Components}}
+        <tr class="{{if .Match}}state-success{{else}}state-error{{end}}">
+          <td><span class="badge {{if .Match}}state-success{{else}}state-error{{end}}">{{if .Match}}MATCH{{else}}MISMATCH{{end}}</span></td>
+          <td><code>{{.Source}}</code></td>
+          <td><code>{{.Section}}</code></td>
+          <td><code>{{.Expected}}</code></td>
+          <td><code>{{.Actual}}</code></td>
+        </tr>
+        {{- end}}
+      </tbody>
+    </table>
+    {{- else}}
+    <p class="empty">No version-bearing sections found in cluster CRs.</p>
+    {{- end}}
+    {{- end}}
   </div>
 </section>
 
