@@ -226,12 +226,20 @@ l8k deploy --deployment-files ./deployments --kubeconfig ~/.kube/config
 ```
 
 `l8k deploy` reads YAML from `--deployment-files` (default `./deployment`)
-and applies it in dependency order: NicClusterPolicy first (waits for ready),
-then per-group NicNodePolicy (waits for each), then remaining manifests. It
-auto-prefers `<dir>/network-operator/` (the layout `l8k generate` produces)
-and falls back to `<dir>` itself. `--dry-run` does a server-side dry run.
+and applies it in four phases: NicClusterPolicy first (await ready), per-group
+NicNodePolicy (await each), all remaining CRs in one batch (controllers
+reconcile concurrently), then verify every manifest reached a terminal state.
+Example workload manifests (`*example*`) are **not** applied by `l8k deploy` —
+they're fixtures consumed by `l8k validate --connectivity` or
+`l8k deploy --verify` for the data-plane phase. It auto-prefers
+`<dir>/network-operator/` (the layout `l8k generate` produces) and falls back
+to `<dir>` itself. `--dry-run` does a server-side dry run. `--deploy-timeout`
+caps the whole apply+reconcile phase end-to-end (e.g. `--deploy-timeout 90m`);
+without it, deploy polls indefinitely — right for SR-IOV on large clusters
+where reconciliation can take an hour. `--verify` chains the connectivity
+matrix straight after a successful apply.
 
-Verify the deployment matches the selected release:
+Verify the deployment end-to-end:
 
 ```bash
 l8k validate --user-config ./cluster-config.yaml \
@@ -239,13 +247,35 @@ l8k validate --user-config ./cluster-config.yaml \
     --kubeconfig ~/.kube/config
 ```
 
-`l8k validate` runs two checks: (1) the Network Operator Helm chart's
-appVersion matches the version expected by `networkOperator.selectedRelease`
-in `cluster-config.yaml` (looked up in the embedded release catalog),
-and (2) every YAML manifest under `--deployment-files` (excluding example
-workloads) is present in the cluster. Exits non-zero on any missing
-manifest or version mismatch. Both checks soft-skip when prerequisites
-are absent (no user-config, no Helm release Secret).
+`l8k validate` runs three checks back-to-back: (1) the Network Operator Helm
+chart's appVersion matches the version expected by
+`networkOperator.selectedRelease` in `cluster-config.yaml`; (2) every YAML
+manifest under `--deployment-files` is classified against the live cluster
+as `READY` / `IN-PROGRESS` / `ERROR` / `MISSING` via the per-Kind validator
+registry (with SR-IOV silent-failure detection, NicConfigurationTemplate
+condition-Reason classification, NicClusterPolicy appliedStates breakdown,
+etc.); and (3) a data-plane connectivity matrix — apply the example
+DaemonSet, wait for it to roll out completely (`numberReady ==
+desiredNumberScheduled > 0` — a single ContainerCreating-stuck pod fails),
+and run `ping -c N -I <srcIP> <dstIP>` across every rail and pod pair plus
+a per-pair cross-rail canary. The matrix is on by default
+(`--connectivity=false` to skip), runs concurrent pings capped at 16, and
+cleans up the test DaemonSet unless `--keep` is set.
+
+A self-contained HTML report lands at `<deployment-files>/verify-report.html`
+by default (override with `--report-path`, disable with `--report-path=-`).
+The report has: header (l8k version, kubeconfig context, API-server version),
+profile, **Node groups** (per-`clusterConfig[]` entry with east-west / north-
+south PF tables — PCI, deviceID, rail, netdev, RDMA device, PSID, part #,
+NUMA, connected GPU), cluster nodes, Network Operator release, **Manifest
+state** (with expandable Details + **Live YAML** dropdowns per row),
+connectivity matrix (per-rail src×dst grids + cross-rail canary), and a
+warnings rollup. Styled after the NVIDIA AICR documentation light theme;
+no JS, no external assets.
+
+Exits 4 on any missing/error manifest, version mismatch, or connectivity
+failure. `IN-PROGRESS` exits 0 with a warning so CI can re-run later (or
+pass `--wait <duration>` to block).
 
 Collect a diagnostic dump:
 
