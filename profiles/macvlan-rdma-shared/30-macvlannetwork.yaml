@@ -10,7 +10,15 @@ spec:
   networkNamespace: "{{$.PodNamespace}}"
   master: "{{$pf.NetworkInterface}}"
   mode: "bridge"
-  mtu: {{$.Sriov.EthernetMtu}}
+  # mtu: 0 → inherit master PF's MTU. The macvlan CNI enforces
+  # child.MTU <= master.MTU; pinning an explicit jumbo value here fails
+  # container-creation on hosts where the PF is still 1500. Unlike
+  # SR-IOV (SriovNetworkNodePolicy.spec.mtu drives the host PF), the
+  # rdma_shared / macvlan stack has no operator-driven hook to bump
+  # host PF MTU, so inheriting is the only safe default. To run jumbo
+  # frames, set the PF MTU on the host out-of-band (systemd-networkd,
+  # udev rule, NetworkManager) and pods inherit it automatically.
+  mtu: 0
   ipam: |
     {
       "type": "nv-ipam",
@@ -29,7 +37,8 @@ spec:
   networkNamespace: "{{$.PodNamespace}}"
   master: "{{(index .ClusterConfig.PFs 0).NetworkInterface}}"
   mode: "bridge"
-  mtu: {{.Sriov.EthernetMtu}}
+  # mtu: 0 → inherit master PF's MTU (see multirail branch above).
+  mtu: 0
   ipam: |
     {
       "type": "nv-ipam",
