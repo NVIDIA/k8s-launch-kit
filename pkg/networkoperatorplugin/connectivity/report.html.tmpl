@@ -1,0 +1,709 @@
+<!--
+ Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NVIDIA Kubernetes Launch Kit Validation Report — {{.Cluster.KubeContext}}</title>
+  <style>
+/* Styled after the NVIDIA AICR documentation light theme:
+   white background, system-font stack, blue link accent, NVIDIA-green
+   reserved for the small brand mark, status colors used as soft
+   tinted pills rather than solid badges. */
+:root {
+  --bg:           #FFFFFF;
+  --bg-soft:      #F9FAFB;
+  --bg-code:      #F3F4F6;
+  --text:         #111827;
+  --text-muted:   #6B7280;
+  --text-faint:   #9CA3AF;
+  --border:       #E5E7EB;
+  --border-soft:  #F3F4F6;
+  --link:         #1F6FEB;
+  --brand:        #76B900;
+  --brand-dark:   #5A8F00;
+
+  --success:      #047857;
+  --success-bg:   #ECFDF5;
+  --success-bd:   #A7F3D0;
+  --warn:         #B45309;
+  --warn-bg:      #FFFBEB;
+  --warn-bd:      #FDE68A;
+  --error:        #B91C1C;
+  --error-bg:     #FEF2F2;
+  --error-bd:     #FECACA;
+  --missing:      #4B5563;
+  --missing-bg:   #F3F4F6;
+  --missing-bd:   #E5E7EB;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+body {
+  font-family: "Inter", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.55;
+  font-size: 15px;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Header: white with NVIDIA-green accent bar + brand mark.
+   Mirrors the docs.nvidia.com chrome — small green strip top, then a
+   light page header with title + metadata. */
+header {
+  background: var(--bg);
+  color: var(--text);
+  padding: 28px 40px 24px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+header::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--brand);
+}
+
+header .brand {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--brand-dark);
+  margin-bottom: 4px;
+}
+header h1 {
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  margin-bottom: 16px;
+}
+
+header .meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 20px;
+  row-gap: 4px;
+  max-width: 760px;
+}
+
+header .meta dt { font-weight: 500; color: var(--text-muted); }
+header .meta dd {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 40px 48px;
+}
+
+section {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 28px;
+  overflow: hidden;
+}
+
+section > h2 {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+
+section > .body { padding: 20px 24px; }
+
+dl.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 24px;
+  row-gap: 8px;
+}
+dl.kv dt {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
+dl.kv dd {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--text);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table th, table td {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+table th {
+  background: var(--bg-soft);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+table tr:last-child td { border-bottom: none; }
+table tr:hover td { background: var(--bg-soft); }
+
+/* Soft-tinted status pills (docs.nvidia.com style — colored text on a
+   tinted background with a matching border). Replaces the heavier
+   solid badges of the previous theme. */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  border: 1px solid;
+}
+.badge.state-success    { color: var(--success); background: var(--success-bg); border-color: var(--success-bd); }
+.badge.state-inprogress { color: var(--warn);    background: var(--warn-bg);    border-color: var(--warn-bd); }
+.badge.state-error      { color: var(--error);   background: var(--error-bg);   border-color: var(--error-bd); }
+.badge.state-missing    { color: var(--missing); background: var(--missing-bg); border-color: var(--missing-bd); }
+.badge.state-unknown    { color: var(--missing); background: var(--missing-bg); border-color: var(--missing-bd); }
+
+/* Per-row accent stripe on the left to scan a long table fast. */
+tr.state-success    > td:first-child { box-shadow: inset 2px 0 0 var(--success); }
+tr.state-inprogress > td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
+tr.state-error      > td:first-child { box-shadow: inset 2px 0 0 var(--error); }
+tr.state-missing    > td:first-child { box-shadow: inset 2px 0 0 var(--missing); }
+
+code {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--bg-code);
+  color: var(--text);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+}
+
+details {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+details summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--link);
+  user-select: none;
+  list-style: none;
+  padding: 4px 0;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details table {
+  margin-top: 6px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+details table th, details table td { padding: 6px 10px; }
+
+.yaml-block {
+  margin-top: 6px;
+  padding: 12px 14px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+/* Matrix tables — separate styling so they don't share the
+   manifest-table padding. */
+.matrix-table {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 14px 0;
+  overflow: hidden;
+}
+.matrix-table th, .matrix-table td {
+  text-align: center;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  padding: 8px 12px;
+}
+.matrix-table th:first-child, .matrix-table td:first-child {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-soft);
+}
+.matrix-table tr:hover td { background: transparent; }
+.cell-pass    { background: var(--success-bg); color: var(--success); }
+.cell-fail    { background: var(--error-bg);   color: var(--error); font-weight: 600; }
+.cell-missing { background: var(--bg-soft);    color: var(--text-faint); }
+.cell-self    { color: var(--text-faint); }
+
+.matrix-rail {
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.matrix-rail code { font-size: 12px; color: var(--text); }
+
+.summary-line {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.summary-line strong { color: var(--text); font-weight: 600; }
+
+.nodegroup {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.nodegroup:first-child {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+.nodegroup-head {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.nodegroup-head code {
+  font-size: 15px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--link);
+}
+.nodegroup-meta {
+  margin-bottom: 10px;
+}
+.cap-pill {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--brand-dark);
+  background: rgba(118, 185, 0, 0.10);
+  border: 1px solid rgba(118, 185, 0, 0.30);
+  border-radius: 10px;
+}
+.muted { color: var(--text-muted); }
+
+.warning-list {
+  list-style: none;
+  padding-left: 0;
+}
+.warning-list li {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--warn-bd);
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-radius: 6px;
+  font-size: 13.5px;
+}
+
+.empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 13.5px;
+}
+
+footer {
+  text-align: center;
+  padding: 24px 16px 32px;
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+footer strong { color: var(--text-muted); }
+  </style>
+</head>
+<body>
+<header>
+  <div class="brand">NVIDIA · Kubernetes Launch Kit</div>
+  <h1>Validation Report</h1>
+  <dl class="meta">
+    <dt>Generated</dt>           <dd>{{formatTime .Cluster.GeneratedAt}}</dd>
+    <dt>l8k version</dt>         <dd>{{.Cluster.L8kVersion}}</dd>
+    <dt>Kube context</dt>        <dd>{{.Cluster.KubeContext}}</dd>
+    <dt>API server</dt>          <dd>{{.Cluster.APIServerVersion}}</dd>
+    {{- if .Cluster.OperatorNamespace}}
+    <dt>Operator namespace</dt>  <dd>{{.Cluster.OperatorNamespace}}</dd>
+    {{- end}}
+  </dl>
+</header>
+<main>
+
+<section>
+  <h2>Profile</h2>
+  <div class="body">
+    <dl class="kv">
+      <dt>Fabric</dt>          <dd>{{or .Profile.Fabric "—"}}</dd>
+      <dt>Deployment</dt>      <dd>{{or .Profile.DeploymentType "—"}}</dd>
+      <dt>Multirail</dt>       <dd>{{.Profile.Multirail}}</dd>
+      {{- if .Profile.SpectrumX}}
+      <dt>Spectrum-X</dt>      <dd>{{.Profile.SpectrumX.Version}} (mode={{.Profile.SpectrumX.MultiplaneMode}}, planes={{.Profile.SpectrumX.NumberOfPlanes}})</dd>
+      {{- end}}
+    </dl>
+  </div>
+</section>
+
+<section>
+  <h2>Node groups ({{len .NodeGroups}})</h2>
+  <div class="body">
+    {{- if .NodeGroups}}
+    {{- range .NodeGroups}}
+    <div class="nodegroup">
+      <div class="nodegroup-head">
+        <code>{{.Identifier}}</code>
+        {{- if .MachineType}} · <span class="muted">{{.MachineType}}</span>{{end}}
+        {{- if .GPUType}} · <span class="muted">{{.GPUType}}</span>{{end}}
+        {{- if .LinkType}} · <span class="muted">{{.LinkType}}</span>{{end}}
+      </div>
+      <dl class="kv nodegroup-meta">
+        {{- if .NodeSelector}}
+        <dt>Node selector</dt>
+        <dd>
+          {{- range $k, $v := .NodeSelector -}}
+          <code>{{$k}}={{$v}}</code>
+          {{end}}
+        </dd>
+        {{- end}}
+        {{- if .WorkerNodes}}
+        <dt>Worker nodes ({{len .WorkerNodes}})</dt>
+        <dd>{{range $i, $n := .WorkerNodes}}{{if gt $i 0}}, {{end}}<code>{{$n}}</code>{{end}}</dd>
+        {{- end}}
+        <dt>Capabilities</dt>
+        <dd>
+          {{- if .SriovCapable}}<span class="cap-pill">sriov</span>{{end -}}
+          {{- if .RdmaCapable}}<span class="cap-pill">rdma</span>{{end -}}
+          {{- if .IbCapable}}<span class="cap-pill">ib</span>{{end -}}
+          {{- if and (not .SriovCapable) (not .RdmaCapable) (not .IbCapable)}}<span class="muted">none</span>{{end}}
+        </dd>
+        {{- if .PresetApplied}}
+        <dt>Preset</dt><dd>applied</dd>
+        {{- end}}
+      </dl>
+
+      {{- if .EastWestPFs}}
+      <div class="matrix-rail">East-west PFs ({{len .EastWestPFs}})</div>
+      <table>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
+        <tbody>
+          {{- range .EastWestPFs}}
+          <tr>
+            <td><code>{{.PciAddress}}</code></td>
+            <td><code>{{or .DeviceID "—"}}</code></td>
+            <td>{{.Rail}}</td>
+            <td><code>{{or .NetworkInterface "—"}}</code></td>
+            <td><code>{{or .RdmaDevice "—"}}</code></td>
+            <td>{{or .PSID "—"}}</td>
+            <td>{{or .PartNumber "—"}}</td>
+            <td>{{or .NumaNode "—"}}</td>
+            <td>{{or .ConnectedGPU "—"}}{{if .GPUProximity}} ({{.GPUProximity}}){{end}}</td>
+          </tr>
+          {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
+
+      {{- if .NorthSouthPFs}}
+      <div class="matrix-rail">North-south PFs ({{len .NorthSouthPFs}})</div>
+      <table>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th></tr></thead>
+        <tbody>
+          {{- range .NorthSouthPFs}}
+          <tr>
+            <td><code>{{.PciAddress}}</code></td>
+            <td><code>{{or .DeviceID "—"}}</code></td>
+            <td><code>{{or .NetworkInterface "—"}}</code></td>
+            <td><code>{{or .RdmaDevice "—"}}</code></td>
+            <td>{{or .PSID "—"}}</td>
+            <td>{{or .PartNumber "—"}}</td>
+          </tr>
+          {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
+
+      {{- if .PresetDeviations}}
+      <div class="matrix-rail">Preset deviations ({{len .PresetDeviations}})</div>
+      <table>
+        <thead><tr><th>Field</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead>
+        <tbody>
+          {{- range .PresetDeviations}}
+          <tr><td>{{.Field}}</td><td><code>{{or .Expected "—"}}</code></td><td><code>{{or .Got "—"}}</code></td><td>{{.Detail}}</td></tr>
+          {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
+    </div>
+    {{- end}}
+    {{- else}}
+    <p class="empty">No cluster groups discovered. Run <code>l8k discover</code> to populate cluster-config.yaml.</p>
+    {{- end}}
+  </div>
+</section>
+
+<section>
+  <h2>Cluster nodes ({{len .Nodes}})</h2>
+  <div class="body">
+    {{- if .Nodes}}
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Machine label</th><th>GPU label</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        {{- range .Nodes}}
+        <tr>
+          <td><code>{{.Name}}</code></td>
+          <td>{{or .MachineLabel "—"}}</td>
+          <td>{{or .GpuLabel "—"}}</td>
+          <td>{{or .Role "—"}}</td>
+        </tr>
+        {{- end}}
+      </tbody>
+    </table>
+    {{- else}}
+    <p class="empty">No nodes discovered.</p>
+    {{- end}}
+  </div>
+</section>
+
+<section>
+  <h2>Network Operator release</h2>
+  <div class="body">
+    {{- if .Release}}
+      {{- if .Release.Skipped}}
+      <p class="empty">Version check skipped: {{.Release.Reason}}</p>
+      {{- else}}
+      <dl class="kv">
+        <dt>Selected release</dt>     <dd>{{.Release.SelectedRelease}}</dd>
+        <dt>Expected appVersion</dt>  <dd><code>{{.Release.ExpectedVersion}}</code></dd>
+        {{- if .Release.DeployedRelease}}
+        <dt>Deployed</dt>             <dd><code>{{.Release.DeployedRelease.AppVersion}}</code> (chart {{.Release.DeployedRelease.ChartVersion}}, rev {{.Release.DeployedRelease.Revision}}, {{.Release.DeployedRelease.Status}})</dd>
+        {{- end}}
+        <dt>Result</dt>
+        <dd>
+          {{- if .Release.Match}}
+          <span class="badge state-success">MATCH</span>
+          {{- else}}
+          <span class="badge state-error">MISMATCH</span>
+          {{- end}}
+        </dd>
+      </dl>
+      {{- end}}
+    {{- else}}
+    <p class="empty">No release information available.</p>
+    {{- end}}
+  </div>
+</section>
+
+<section>
+  <h2>Manifest state ({{len .Manifests}})</h2>
+  <div class="body">
+    {{- if .Manifests}}
+    <table>
+      <thead>
+        <tr>
+          <th>State</th>
+          <th>Kind</th>
+          <th>Namespace</th>
+          <th>Name</th>
+          <th>Source file</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{- range .Manifests}}
+        <tr class="{{stateClass .State}}">
+          <td><span class="badge {{stateClass .State}}">{{stateLabel .State}}</span></td>
+          <td><code>{{.Kind}}</code></td>
+          <td>{{or .Namespace "—"}}</td>
+          <td><code>{{.Name}}</code></td>
+          <td><code>{{.SourceFile}}</code></td>
+          <td>
+            {{or .Reason "—"}}
+            {{- $details := .Details}}
+            {{- if $details}}
+            <details>
+              <summary>Details ({{len $details}})</summary>
+              <table>
+                <thead><tr><th>Component</th><th>State</th></tr></thead>
+                <tbody>
+                  {{- range $k := sortedKeys $details}}
+                  <tr><td><code>{{$k}}</code></td><td>{{index $details $k}}</td></tr>
+                  {{- end}}
+                </tbody>
+              </table>
+            </details>
+            {{- end}}
+            {{- if .LiveYAML}}
+            <details>
+              <summary>Live YAML</summary>
+              <pre class="yaml-block">{{.LiveYAML}}</pre>
+            </details>
+            {{- end}}
+          </td>
+        </tr>
+        {{- end}}
+      </tbody>
+    </table>
+    {{- else}}
+    <p class="empty">No manifests to validate.</p>
+    {{- end}}
+  </div>
+</section>
+
+<section>
+  <h2>Connectivity matrix</h2>
+  <div class="body">
+    {{- if .Matrix}}
+      {{- if .Matrix.Skipped}}
+      <p class="empty">Connectivity skipped: {{.Matrix.Skipped.Reason}}</p>
+      {{- else if .Matrix.PingResults}}
+      <p class="summary-line">
+        <strong>{{.Matrix.Summary.Passed}}</strong>/{{.Matrix.Summary.TotalTests}} passed
+        {{- if gt .Matrix.Summary.Failed 0}} · <strong>{{.Matrix.Summary.Failed}}</strong> failed{{end}}
+        {{- if gt .Matrix.Summary.ExecErrors 0}} · <strong>{{.Matrix.Summary.ExecErrors}}</strong> exec error(s){{end}}
+      </p>
+
+      {{- $rails := matrixByRail .Matrix.PingResults}}
+      {{- range $rails}}
+        <div class="matrix-rail">Rail <code>{{.Rail}}</code></div>
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>src \ dst</th>
+              {{- range .Nodes}}
+              <th>{{.}}</th>
+              {{- end}}
+            </tr>
+          </thead>
+          <tbody>
+            {{- $rs := .}}
+            {{- range $src := .Nodes}}
+            <tr>
+              <td>{{$src}}</td>
+              {{- range $dst := $rs.Nodes}}
+                {{- if eq $src $dst}}
+                <td class="cell-self">—</td>
+                {{- else}}
+                  {{- $cell := index (index $rs.Table $src) $dst}}
+                  <td class="{{cellClass $cell}}">{{cellText $cell}}</td>
+                {{- end}}
+              {{- end}}
+            </tr>
+            {{- end}}
+          </tbody>
+        </table>
+      {{- end}}
+
+      {{- $cross := matrixCrossRail .Matrix.PingResults}}
+      {{- if $cross}}
+        <div class="matrix-rail">Cross-rail canary</div>
+        <table class="matrix-table">
+          <thead>
+            <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
+          </thead>
+          <tbody>
+            {{- range $cross}}
+            <tr>
+              <td>{{srcLabel .Test}}</td>
+              <td><code>{{.Test.SrcRail}}</code></td>
+              <td>{{dstLabel .Test}}</td>
+              <td><code>{{.Test.DstRail}}</code></td>
+              <td class="{{cellClass .}}">{{cellText .}}</td>
+            </tr>
+            {{- end}}
+          </tbody>
+        </table>
+      {{- end}}
+      {{- else}}
+      <p class="empty">No ping tests executed.</p>
+      {{- end}}
+    {{- else}}
+    <p class="empty">Connectivity testing was not run for this report.</p>
+    {{- end}}
+  </div>
+</section>
+
+{{- if .Warnings}}
+<section>
+  <h2>Warnings ({{len .Warnings}})</h2>
+  <div class="body">
+    <ul class="warning-list">
+      {{- range .Warnings}}
+      <li>{{.}}</li>
+      {{- end}}
+    </ul>
+  </div>
+</section>
+{{- end}}
+
+</main>
+<footer>
+  Generated by <strong>NVIDIA Kubernetes Launch Kit</strong> · {{.Cluster.L8kVersion}} · {{formatTime .Cluster.GeneratedAt}}
+</footer>
+</body>
+</html>

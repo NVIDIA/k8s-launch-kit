@@ -34,6 +34,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	yaml "sigs.k8s.io/yaml"
@@ -59,6 +60,14 @@ type ValidationResult struct {
 	State   crstate.CRState
 	Reason  string
 	Details map[string]string
+
+	// LiveYAML is the cluster's view of the object, marshalled
+	// back to YAML for the verify-report's expandable "Live YAML"
+	// dropdown. Empty when the object isn't present
+	// (StateNotDeployed) or when the post-validate fetch failed.
+	// Managed-fields / status are kept; we want the operator to
+	// see what the controller actually wrote.
+	LiveYAML string `json:"-"`
 
 	// Legacy derived flags — keep for backwards-compatible JSON
 	// consumers. Found is true for StateSuccess and StateInProgress
@@ -191,6 +200,13 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 				r.Reason = res.Reason
 			}
 			r.Details = res.Details
+			// Best-effort capture of the live object for the
+			// HTML report's "Live YAML" dropdown. Skip when the
+			// validator says the object isn't deployed — there's
+			// nothing in the cluster to fetch.
+			if r.State != crstate.StateNotDeployed {
+				r.LiveYAML = fetchLiveYAML(ctx, c, obj)
+			}
 			applyLegacyFlags(&r)
 			results = append(results, r)
 		}
@@ -217,6 +233,33 @@ func applyLegacyFlags(r *ValidationResult) {
 		r.Found = false
 		r.Missing = false
 	}
+}
+
+// fetchLiveYAML grabs the live object for the manifest by GVK +
+// namespace/name and serializes it back to YAML. Returns "" on any
+// fetch / marshal failure — the report just hides the dropdown.
+//
+// Side-effect of routing through the controller-runtime client: we
+// rely on the cluster honouring `kubectl get -o yaml` semantics, so
+// the YAML is faithful to what `kubectl` would show, including the
+// status subresource the operator wrote.
+func fetchLiveYAML(ctx context.Context, c client.Client, manifest *unstructured.Unstructured) string {
+	live := &unstructured.Unstructured{}
+	live.SetGroupVersionKind(manifest.GroupVersionKind())
+	key := types.NamespacedName{Namespace: manifest.GetNamespace(), Name: manifest.GetName()}
+	if err := c.Get(ctx, key, live); err != nil {
+		log.Log.V(1).Info("fetchLiveYAML get failed", "kind", manifest.GetKind(), "name", manifest.GetName(), "error", err.Error())
+		return ""
+	}
+	// Drop verbose metadata that just adds noise to the dropdown
+	// — managedFields can be 80% of the document on an active CR.
+	live.SetManagedFields(nil)
+	data, err := yaml.Marshal(live.Object)
+	if err != nil {
+		log.Log.V(1).Info("fetchLiveYAML marshal failed", "kind", manifest.GetKind(), "name", manifest.GetName(), "error", err.Error())
+		return ""
+	}
+	return string(data)
 }
 
 // IsExampleManifest reports whether the given filename matches the
