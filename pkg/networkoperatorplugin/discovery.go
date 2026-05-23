@@ -17,7 +17,6 @@
 package networkoperatorplugin
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
@@ -31,16 +30,14 @@ import (
 	netop "github.com/Mellanox/network-operator/api/v1alpha1"
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/remotecommand"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -1452,23 +1449,60 @@ func discoverGroupFabric(ctx context.Context, restConfig *rest.Config,
 // fabric for that port (empty when the port could not produce a confirmed
 // verdict). rawSummary is a short human-readable joined version of the
 // four sysfs values for debug logs.
+//
+// Tries `/sys/class/infiniband/...` first (works when the daemon pod
+// shares host pid+net namespace and exposes the host sysfs at /sys),
+// then falls back to `/host/sys/class/infiniband/...` for daemons that
+// mount the host filesystem under /host (matches consts.HostPath =
+// "/host" used by the rest of nic-configuration-operator). Stderr is
+// captured rather than swallowed so a failed read surfaces in the
+// debug log instead of producing a silent empty verdict.
 func discoverPortFabric(ctx context.Context, restConfig *rest.Config,
 	namespace, podName, containerName, rdmaDevice string, port int) (string, string, error) {
-
-	base := fmt.Sprintf("/sys/class/infiniband/%s/ports/%d", rdmaDevice, port)
-	cmd := fmt.Sprintf(
-		"echo state=$(cat %s/state 2>/dev/null); "+
-			"echo phys_state=$(cat %s/phys_state 2>/dev/null); "+
-			"echo link_layer=$(cat %s/link_layer 2>/dev/null); "+
-			"echo sm_lid=$(cat %s/sm_lid 2>/dev/null)",
-		base, base, base, base)
-	output, err := execInPod(ctx, restConfig, namespace, podName, containerName,
-		[]string{"/bin/sh", "-c", cmd})
-	if err != nil {
-		return "", "", err
+	for _, base := range []string{
+		fmt.Sprintf("/sys/class/infiniband/%s/ports/%d", rdmaDevice, port),
+		fmt.Sprintf("/host/sys/class/infiniband/%s/ports/%d", rdmaDevice, port),
+	} {
+		cmd := fmt.Sprintf(
+			"echo state=$(cat %s/state); "+
+				"echo phys_state=$(cat %s/phys_state); "+
+				"echo link_layer=$(cat %s/link_layer); "+
+				"echo sm_lid=$(cat %s/sm_lid)",
+			base, base, base, base)
+		output, err := execInPod(ctx, restConfig, namespace, podName, containerName,
+			[]string{"/bin/sh", "-c", cmd})
+		// Even on exec error we attempt to parse — `cat` returns
+		// non-zero for missing files but the SPDY executor still
+		// captures the stdout from earlier successful echoes.
+		linkType, raw := parsePortFabricVerdict(output)
+		if linkType != "" {
+			return linkType, raw, nil
+		}
+		// First-path miss: log the raw read so an operator can see
+		// what came back, then try the next base path. We only
+		// surface the final error (if any) to the caller.
+		log.Log.V(1).Info("Fabric port probe: empty/unconfirmed at this base",
+			"rdmaDevice", rdmaDevice, "port", port, "base", base,
+			"raw", raw, "execErr", errString(err))
+		if err == nil && raw != "" {
+			// Got a clean read that simply didn't meet the
+			// confirmation criteria (port DOWN, IB without
+			// SM, etc.). No point trying the other base —
+			// the port really isn't in a usable state.
+			return "", raw, nil
+		}
 	}
-	linkType, raw := parsePortFabricVerdict(output)
-	return linkType, raw, nil
+	return "", "", fmt.Errorf("no readable sysfs at either /sys/class/infiniband/%s or /host/sys/class/infiniband/%s",
+		rdmaDevice, rdmaDevice)
+}
+
+// errString returns err.Error() or "" when err is nil — used in the
+// V(1) probe log so we don't get the literal "<nil>" sentinel.
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // parsePortFabricVerdict converts the four-line "key=value" output of the
@@ -1743,38 +1777,10 @@ func classifyDiscoveredModules(modules []string) (rdma, storage []string) {
 }
 
 // execInPod runs a command in a pod container and returns stdout.
+// Thin wrapper around the shared kubeclient.ExecStdoutInPod helper —
+// kept under this name so internal call sites in this package stay
+// untouched.
 func execInPod(ctx context.Context, restConfig *rest.Config,
 	namespace, podName, containerName string, command []string) (string, error) {
-
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to create clientset: %w", err)
-	}
-
-	req := clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(podName).
-		Namespace(namespace).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Container: containerName,
-			Command:   command,
-			Stdout:    true,
-			Stderr:    true,
-		}, scheme.ParameterCodec)
-
-	exec, err := remotecommand.NewSPDYExecutor(restConfig, "POST", req.URL())
-	if err != nil {
-		return "", fmt.Errorf("failed to create SPDY executor: %w", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdout: &stdout,
-		Stderr: &stderr,
-	}); err != nil {
-		return "", fmt.Errorf("exec stream failed (stderr: %s): %w", stderr.String(), err)
-	}
-
-	return stdout.String(), nil
+	return kubeclient.ExecStdoutInPod(ctx, restConfig, namespace, podName, containerName, command)
 }

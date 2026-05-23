@@ -74,6 +74,11 @@ func (l *Launcher) deployConfigurationProfile(profile *profiles.Profile) error {
 	}
 
 	ctx := ui.WithOutput(context.Background(), l.ui)
+	if l.options.DeployTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, l.options.DeployTimeout)
+		defer cancel()
+	}
 	if err := plugin.DeployProfile(ctx, profile, l.kubeClient, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin)); err != nil {
 		l.ui.Error("Deployment failed: %v", err)
 		return fmt.Errorf("failed to deploy profile: %w", err)

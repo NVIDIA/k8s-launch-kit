@@ -30,8 +30,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -41,16 +41,45 @@ import (
 )
 
 // ValidationResult captures the cluster state of one manifest discovered
-// under the deployment-files directory.
+// under the deployment-files directory. State is the canonical
+// classification produced by the crstate registry; Found/Missing are
+// derived helpers preserved so the existing text/JSON callers don't
+// have to change their summary logic on day one (success/in-progress
+// → Found, not-deployed → Missing, error → ERROR).
 type ValidationResult struct {
 	Kind       string
 	APIVersion string
 	Name       string
 	Namespace  string
 	SourceFile string
-	Found      bool
-	Missing    bool
-	Detail     string
+
+	// State is the four-way classification (not-deployed / error /
+	// in-progress / success). Reason/Details carry the validator's
+	// per-Kind human-readable summary and per-companion-CR breakdown
+	// (e.g. per-node SriovNetworkNodeState states).
+	State   crstate.CRState
+	Reason  string
+	Details map[string]string
+
+	// LiveYAML is the cluster's view of the object, marshalled
+	// back to YAML for the verify-report's expandable "Live YAML"
+	// dropdown. Empty when the object isn't present
+	// (StateNotDeployed) or when the post-validate fetch failed.
+	// Managed-fields / status are kept; we want the operator to
+	// see what the controller actually wrote.
+	LiveYAML string `json:"-"`
+
+	// Legacy derived flags — keep for backwards-compatible JSON
+	// consumers. Found is true for StateSuccess and StateInProgress
+	// (the object exists in the cluster, even if it's still
+	// reconciling). Missing is true only for StateNotDeployed.
+	// Anything else (StateError) is rendered as a third "ERROR"
+	// status by emitValidationReport.
+	Found   bool
+	Missing bool
+	// Detail is a short human-readable summary equivalent to Reason —
+	// retained as the field old JSON consumers parse.
+	Detail string
 }
 
 // HelmReleaseInfo carries the subset of fields we care about from a
@@ -84,9 +113,61 @@ const (
 	helmReleaseSecretPrefix = "sh.helm.release.v1."
 )
 
+// ComponentVersionCheck holds the result of cross-referencing each
+// version-bearing field in the live NicClusterPolicy + NicNodePolicy
+// CRs against the expected versions for the user's selectedRelease.
+//
+// The Helm-chart appVersion check (CheckHelmReleaseVersion) tells us
+// whether the *operator* matches the release line; this check tells
+// us whether the *resources the operator manages* (ofedDriver,
+// nvIpam, multus, device plugins, …) carry the catalog-pinned image
+// tags. Out-of-band kubectl edits, partial upgrades, or
+// hand-rolled chart values are the usual reasons for divergence.
+type ComponentVersionCheck struct {
+	// Skipped is true when the check couldn't run (no
+	// selectedRelease in user-config, no NCP in the cluster, etc.).
+	Skipped bool
+	Reason  string
+	// ExpectedComponent is the catalog's
+	// networkOperator.componentVersion (e.g.
+	// "network-operator-v26.4.0-beta.9"). Used as the expected
+	// value for every operator/device-plugin component.
+	ExpectedComponent string
+	// ExpectedDOCA is the catalog's docaDriver.version (e.g.
+	// "doca3.4.0-26.04-0.8.4.0-0"). Used as the expected value for
+	// every ofedDriver block.
+	ExpectedDOCA string
+	// Components is the per-section result, one entry per
+	// version-bearing block found in the cluster.
+	Components []ComponentVersionResult
+	// AllMatch is true when every component matched. False when at
+	// least one mismatched OR when Components is empty (no CRs in
+	// the cluster — that's already its own signal).
+	AllMatch bool
+}
+
+// ComponentVersionResult is one row of the ComponentVersionCheck.
+type ComponentVersionResult struct {
+	Source   string // "NicClusterPolicy/nic-cluster-policy", "NicNodePolicy/<name>"
+	Section  string // "ofedDriver", "nvIpam", "rdmaSharedDevicePlugin", …
+	Expected string
+	Actual   string
+	Match    bool
+	// Kind is "component" or "doca" — labels which catalog field
+	// supplied the expected value, so a report can group results
+	// or explain mismatches.
+	Kind string
+}
+
 // ValidateManifests reads YAML manifests from manifestDir (skipping example
-// workloads) and looks up each object in the cluster. Returns a slice of
-// per-object results.
+// workloads) and classifies each object in the cluster via the crstate
+// registry. Returns a slice of per-object results.
+//
+// Unlike the old "Get and check NotFound" path, this routes every
+// manifest through the same per-Kind validator the deploy state machine
+// uses, so SriovNetworkNodePolicy's silent-failure cross-check, the
+// NicConfigurationTemplate's condition-Reason classification, and
+// NicClusterPolicy's appliedStates breakdown all surface here too.
 func ValidateManifests(ctx context.Context, c client.Client, manifestDir string) ([]ValidationResult, error) {
 	entries, err := os.ReadDir(manifestDir)
 	if err != nil {
@@ -109,6 +190,7 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 	}
 	sort.Strings(files)
 
+	registry := crstate.NewDefault()
 	var results []ValidationResult
 	for _, name := range files {
 		full := filepath.Join(manifestDir, name)
@@ -136,30 +218,231 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 				SourceFile: name,
 			}
 
-			lookup := &unstructured.Unstructured{}
 			gv, gvErr := schema.ParseGroupVersion(obj.GetAPIVersion())
 			if gvErr != nil {
-				r.Detail = fmt.Sprintf("invalid apiVersion %q: %v", obj.GetAPIVersion(), gvErr)
+				r.State = crstate.StateError
+				r.Reason = fmt.Sprintf("invalid apiVersion %q: %v", obj.GetAPIVersion(), gvErr)
+				r.Detail = r.Reason
 				results = append(results, r)
 				continue
 			}
-			lookup.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
+			// Ensure GVK on the manifest object so the registry can
+			// dispatch to the right validator.
+			obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
 
-			key := types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
-			err := c.Get(ctx, key, lookup)
-			switch {
-			case err == nil:
-				r.Found = true
-			case apierrors.IsNotFound(err):
-				r.Missing = true
-				r.Detail = "not found in cluster"
-			default:
-				r.Detail = fmt.Sprintf("get error: %v", err)
+			res, vErr := registry.Validate(ctx, c, obj)
+			if vErr != nil {
+				// Transport error — treat as error state. Use the
+				// Reason carried by the Result (registry sets it
+				// even on err) so callers still get a useful
+				// summary.
+				r.State = crstate.StateError
+				r.Reason = res.Reason
+				if r.Reason == "" {
+					r.Reason = vErr.Error()
+				}
+			} else {
+				r.State = res.State
+				r.Reason = res.Reason
 			}
+			r.Details = res.Details
+			// Best-effort capture of the live object for the
+			// HTML report's "Live YAML" dropdown. Skip when the
+			// validator says the object isn't deployed — there's
+			// nothing in the cluster to fetch.
+			if r.State != crstate.StateNotDeployed {
+				r.LiveYAML = fetchLiveYAML(ctx, c, obj)
+			}
+			applyLegacyFlags(&r)
 			results = append(results, r)
 		}
 	}
 	return results, nil
+}
+
+// applyLegacyFlags fills in the backwards-compatible Found / Missing /
+// Detail fields from the canonical State + Reason.
+func applyLegacyFlags(r *ValidationResult) {
+	r.Detail = r.Reason
+	switch r.State {
+	case crstate.StateSuccess, crstate.StateInProgress:
+		r.Found = true
+		r.Missing = false
+	case crstate.StateNotDeployed:
+		r.Found = false
+		r.Missing = true
+		if r.Reason == "" {
+			r.Detail = "not found in cluster"
+			r.Reason = r.Detail
+		}
+	case crstate.StateError:
+		r.Found = false
+		r.Missing = false
+	}
+}
+
+// CheckComponentVersions reads the live NicClusterPolicy and every
+// NicNodePolicy in the operator namespace, extracts each component
+// section's `version:` field, and compares it against the catalog
+// entry for `selectedRelease`. Returns a ComponentVersionCheck whose
+// Components slice has one entry per version-bearing block found,
+// each tagged with Match / Expected / Actual so a CLI or HTML report
+// can render the per-component status.
+//
+// The check soft-skips (Skipped=true, populated Reason) when:
+//   - selectedRelease is empty
+//   - selectedRelease isn't in the embedded catalog
+//   - the cluster has no NicClusterPolicy at all (nothing to check)
+func CheckComponentVersions(ctx context.Context, c client.Client, namespace, selectedRelease string) (*ComponentVersionCheck, error) {
+	if selectedRelease == "" {
+		return &ComponentVersionCheck{Skipped: true, Reason: "no networkOperator.selectedRelease in user-config"}, nil
+	}
+	rel, ok := LookupRelease(selectedRelease)
+	if !ok {
+		return &ComponentVersionCheck{Skipped: true, Reason: fmt.Sprintf("selectedRelease %q is not in the embedded catalog", selectedRelease)}, nil
+	}
+
+	cv := &ComponentVersionCheck{
+		ExpectedComponent: rel.NetworkOperator.ComponentVersion,
+		ExpectedDOCA:      rel.DOCADriver.Version,
+	}
+
+	// NicClusterPolicy: there's exactly one per cluster (the deploy
+	// path enforces this) — list rather than Get-by-name so we
+	// don't have to guess the name.
+	ncpList := &unstructured.UnstructuredList{}
+	ncpList.SetGroupVersionKind(schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicClusterPolicyList"})
+	if err := c.List(ctx, ncpList); err != nil {
+		return &ComponentVersionCheck{Skipped: true, Reason: fmt.Sprintf("list NicClusterPolicy: %v", err)}, nil
+	}
+	if len(ncpList.Items) == 0 {
+		return &ComponentVersionCheck{Skipped: true, Reason: "no NicClusterPolicy in cluster — run `l8k deploy` first"}, nil
+	}
+
+	for i := range ncpList.Items {
+		ncp := &ncpList.Items[i]
+		source := fmt.Sprintf("NicClusterPolicy/%s", ncp.GetName())
+		// NCP sections that carry .version. Walk them
+		// deterministically rather than ranging over spec —
+		// missing sections (e.g. nicConfigurationOperator not
+		// enabled) are simply skipped, not reported as empty
+		// mismatches.
+		for _, section := range []ncpVersionPath{
+			{Path: []string{"spec", "nicConfigurationOperator", "operator", "version"}, Section: "nicConfigurationOperator.operator", Kind: "component"},
+			{Path: []string{"spec", "nicConfigurationOperator", "configurationDaemon", "version"}, Section: "nicConfigurationOperator.configurationDaemon", Kind: "component"},
+			{Path: []string{"spec", "nvIpam", "version"}, Section: "nvIpam", Kind: "component"},
+			{Path: []string{"spec", "secondaryNetwork", "cniPlugins", "version"}, Section: "secondaryNetwork.cniPlugins", Kind: "component"},
+			{Path: []string{"spec", "secondaryNetwork", "multus", "version"}, Section: "secondaryNetwork.multus", Kind: "component"},
+			{Path: []string{"spec", "ofedDriver", "version"}, Section: "ofedDriver", Kind: "doca"},
+		} {
+			r := compareVersion(ncp, source, section, cv.ExpectedComponent, cv.ExpectedDOCA)
+			if r != nil {
+				cv.Components = append(cv.Components, *r)
+			}
+		}
+	}
+
+	// NicNodePolicy: zero or more per cluster (one per node group
+	// in the 26.4+ model). 26.1 has no NNPs.
+	nnpList := &unstructured.UnstructuredList{}
+	nnpList.SetGroupVersionKind(schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicNodePolicyList"})
+	if err := c.List(ctx, nnpList); err != nil {
+		// Tolerate the list error — the cluster might not have the
+		// NicNodePolicy CRD at all (older release). Just don't add
+		// any NNP rows.
+		log.Log.V(1).Info("List NicNodePolicy failed during component-version check", "error", err.Error())
+	}
+	for i := range nnpList.Items {
+		nnp := &nnpList.Items[i]
+		source := fmt.Sprintf("NicNodePolicy/%s", nnp.GetName())
+		for _, section := range []ncpVersionPath{
+			{Path: []string{"spec", "ofedDriver", "version"}, Section: "ofedDriver", Kind: "doca"},
+			{Path: []string{"spec", "rdmaSharedDevicePlugin", "version"}, Section: "rdmaSharedDevicePlugin", Kind: "component"},
+			{Path: []string{"spec", "sriovDevicePlugin", "version"}, Section: "sriovDevicePlugin", Kind: "component"},
+		} {
+			r := compareVersion(nnp, source, section, cv.ExpectedComponent, cv.ExpectedDOCA)
+			if r != nil {
+				cv.Components = append(cv.Components, *r)
+			}
+		}
+	}
+
+	cv.AllMatch = len(cv.Components) > 0
+	for _, r := range cv.Components {
+		if !r.Match {
+			cv.AllMatch = false
+			break
+		}
+	}
+	return cv, nil
+}
+
+// ncpVersionPath identifies one version-bearing section to inspect.
+type ncpVersionPath struct {
+	Path    []string
+	Section string
+	Kind    string // "component" or "doca"
+}
+
+// compareVersion reads the version field at section.Path on obj and
+// returns a ComponentVersionResult when the section is present.
+// Returns nil when the path is missing — that means the section
+// wasn't rendered (e.g. nicConfigurationOperator disabled), not a
+// mismatch.
+func compareVersion(obj *unstructured.Unstructured, source string, section ncpVersionPath, expectedComponent, expectedDoca string) *ComponentVersionResult {
+	actual, found, _ := unstructured.NestedString(obj.Object, section.Path...)
+	if !found || actual == "" {
+		return nil
+	}
+	expected := expectedComponent
+	if section.Kind == "doca" {
+		expected = expectedDoca
+	}
+	return &ComponentVersionResult{
+		Source:   source,
+		Section:  section.Section,
+		Expected: expected,
+		Actual:   actual,
+		Match:    actual == expected,
+		Kind:     section.Kind,
+	}
+}
+
+// fetchLiveYAML grabs the live object for the manifest by GVK +
+// namespace/name and serializes it back to YAML. Returns "" on any
+// fetch / marshal failure — the report just hides the dropdown.
+//
+// Side-effect of routing through the controller-runtime client: we
+// rely on the cluster honouring `kubectl get -o yaml` semantics, so
+// the YAML is faithful to what `kubectl` would show, including the
+// status subresource the operator wrote.
+func fetchLiveYAML(ctx context.Context, c client.Client, manifest *unstructured.Unstructured) string {
+	live := &unstructured.Unstructured{}
+	live.SetGroupVersionKind(manifest.GroupVersionKind())
+	key := types.NamespacedName{Namespace: manifest.GetNamespace(), Name: manifest.GetName()}
+	if err := c.Get(ctx, key, live); err != nil {
+		log.Log.V(1).Info("fetchLiveYAML get failed", "kind", manifest.GetKind(), "name", manifest.GetName(), "error", err.Error())
+		return ""
+	}
+	// Drop verbose metadata that just adds noise to the dropdown
+	// — managedFields can be 80% of the document on an active CR.
+	live.SetManagedFields(nil)
+	data, err := yaml.Marshal(live.Object)
+	if err != nil {
+		log.Log.V(1).Info("fetchLiveYAML marshal failed", "kind", manifest.GetKind(), "name", manifest.GetName(), "error", err.Error())
+		return ""
+	}
+	return string(data)
+}
+
+// IsExampleManifest reports whether the given filename matches the
+// example-workload naming pattern (case-insensitive substring
+// "example"). Files matching this pattern are deployed by
+// `l8k validate --connectivity` for the ping matrix and skipped by
+// every other code path. Exported so the connectivity package can
+// find the example DS to apply.
+func IsExampleManifest(name string) bool {
+	return isExampleManifest(name)
 }
 
 // isExampleManifest treats files matching *example* (e.g.

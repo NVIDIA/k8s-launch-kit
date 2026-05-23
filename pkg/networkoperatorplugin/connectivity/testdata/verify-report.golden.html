@@ -1,0 +1,703 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NVIDIA Kubernetes Launch Kit Validation Report — kubernetes-admin@kubernetes</title>
+  <style>
+ 
+:root {
+  --bg:           #FFFFFF;
+  --bg-soft:      #F9FAFB;
+  --bg-code:      #F3F4F6;
+  --text:         #111827;
+  --text-muted:   #6B7280;
+  --text-faint:   #9CA3AF;
+  --border:       #E5E7EB;
+  --border-soft:  #F3F4F6;
+  --link:         #1F6FEB;
+  --brand:        #76B900;
+  --brand-dark:   #5A8F00;
+
+  --success:      #047857;
+  --success-bg:   #ECFDF5;
+  --success-bd:   #A7F3D0;
+  --warn:         #B45309;
+  --warn-bg:      #FFFBEB;
+  --warn-bd:      #FDE68A;
+  --error:        #B91C1C;
+  --error-bg:     #FEF2F2;
+  --error-bd:     #FECACA;
+  --missing:      #4B5563;
+  --missing-bg:   #F3F4F6;
+  --missing-bd:   #E5E7EB;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+body {
+  font-family: "Inter", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.55;
+  font-size: 15px;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+ 
+header {
+  background: var(--bg);
+  color: var(--text);
+  padding: 28px 40px 24px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+header::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--brand);
+}
+
+header .brand {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--brand-dark);
+  margin-bottom: 4px;
+}
+header h1 {
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  margin-bottom: 16px;
+}
+
+header .meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 20px;
+  row-gap: 4px;
+  max-width: 760px;
+}
+
+header .meta dt { font-weight: 500; color: var(--text-muted); }
+header .meta dd {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 40px 48px;
+}
+
+section {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 28px;
+  overflow: hidden;
+}
+
+section > h2 {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+
+section > .body { padding: 20px 24px; }
+
+dl.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 24px;
+  row-gap: 8px;
+}
+dl.kv dt {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
+dl.kv dd {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--text);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table th, table td {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+table th {
+  background: var(--bg-soft);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+table tr:last-child td { border-bottom: none; }
+table tr:hover td { background: var(--bg-soft); }
+
+ 
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  border: 1px solid;
+}
+.badge.state-success    { color: var(--success); background: var(--success-bg); border-color: var(--success-bd); }
+.badge.state-inprogress { color: var(--warn);    background: var(--warn-bg);    border-color: var(--warn-bd); }
+.badge.state-error      { color: var(--error);   background: var(--error-bg);   border-color: var(--error-bd); }
+.badge.state-missing    { color: var(--missing); background: var(--missing-bg); border-color: var(--missing-bd); }
+.badge.state-unknown    { color: var(--missing); background: var(--missing-bg); border-color: var(--missing-bd); }
+
+ 
+tr.state-success    > td:first-child { box-shadow: inset 2px 0 0 var(--success); }
+tr.state-inprogress > td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
+tr.state-error      > td:first-child { box-shadow: inset 2px 0 0 var(--error); }
+tr.state-missing    > td:first-child { box-shadow: inset 2px 0 0 var(--missing); }
+
+code {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--bg-code);
+  color: var(--text);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+}
+
+ 
+tr.manifest-row-has-expand > td { border-bottom-color: transparent; }
+tr.manifest-expand > td { background: var(--bg); }
+tr.manifest-expand:hover > td { background: var(--bg); }
+.manifest-expand-cell {
+  padding: 4px 14px 14px 28px !important;
+  border-bottom: 1px solid var(--border);
+}
+.manifest-expand-cell > details {
+  margin-top: 6px;
+  padding-top: 0;
+  border-top: 0;
+}
+.manifest-expand-cell > details:first-child { margin-top: 0; }
+ 
+tr.manifest-expand.state-success    > td { box-shadow: inset 2px 0 0 var(--success); }
+tr.manifest-expand.state-inprogress > td { box-shadow: inset 2px 0 0 var(--warn); }
+tr.manifest-expand.state-error      > td { box-shadow: inset 2px 0 0 var(--error); }
+tr.manifest-expand.state-missing    > td { box-shadow: inset 2px 0 0 var(--missing); }
+
+details {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+details summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--link);
+  user-select: none;
+  list-style: none;
+  padding: 4px 0;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details table {
+  margin-top: 6px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+details table th, details table td { padding: 6px 10px; }
+
+.yaml-block {
+  margin-top: 6px;
+  padding: 12px 14px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+ 
+.matrix-table {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 14px 0;
+  overflow: hidden;
+}
+.matrix-table th, .matrix-table td {
+  text-align: center;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  padding: 8px 12px;
+}
+.matrix-table th:first-child, .matrix-table td:first-child {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-soft);
+}
+.matrix-table tr:hover td { background: transparent; }
+.cell-pass    { background: var(--success-bg); color: var(--success); }
+.cell-fail    { background: var(--error-bg);   color: var(--error); font-weight: 600; }
+.cell-missing { background: var(--bg-soft);    color: var(--text-faint); }
+.cell-self    { color: var(--text-faint); }
+
+.matrix-rail {
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.matrix-rail code { font-size: 12px; color: var(--text); }
+
+.summary-line {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.summary-line strong { color: var(--text); font-weight: 600; }
+
+.nodegroup {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.nodegroup:first-child {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+.nodegroup-head {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.nodegroup-head code {
+  font-size: 15px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--link);
+}
+.nodegroup-meta {
+  margin-bottom: 10px;
+}
+.cap-pill {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--brand-dark);
+  background: rgba(118, 185, 0, 0.10);
+  border: 1px solid rgba(118, 185, 0, 0.30);
+  border-radius: 10px;
+}
+.muted { color: var(--text-muted); }
+
+.warning-list {
+  list-style: none;
+  padding-left: 0;
+}
+.warning-list li {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--warn-bd);
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-radius: 6px;
+  font-size: 13.5px;
+}
+
+.empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 13.5px;
+}
+
+footer {
+  text-align: center;
+  padding: 24px 16px 32px;
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+footer strong { color: var(--text-muted); }
+  </style>
+</head>
+<body>
+<header>
+  <div class="brand">NVIDIA · Kubernetes Launch Kit</div>
+  <h1>Validation Report</h1>
+  <dl class="meta">
+    <dt>Generated</dt>           <dd>2026-05-23 11:30:00 UTC</dd>
+    <dt>l8k version</dt>         <dd>v0.0.0-test</dd>
+    <dt>Kube context</dt>        <dd>kubernetes-admin@kubernetes</dd>
+    <dt>API server</dt>          <dd>v1.35.0</dd>
+    <dt>Operator namespace</dt>  <dd>network-operator</dd>
+  </dl>
+</header>
+<main>
+
+<section>
+  <h2>Profile</h2>
+  <div class="body">
+    <dl class="kv">
+      <dt>Fabric</dt>          <dd>ethernet</dd>
+      <dt>Deployment</dt>      <dd>sriov</dd>
+      <dt>Multirail</dt>       <dd>true</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <h2>Node groups (1)</h2>
+  <div class="body">
+    <div class="nodegroup">
+      <div class="nodegroup-head">
+        <code>vendor-a-h200</code> · <span class="muted">vendor-a</span> · <span class="muted">h200</span> · <span class="muted">Ethernet</span>
+      </div>
+      <dl class="kv nodegroup-meta">
+        <dt>Node selector</dt>
+        <dd><code>nvidia.kubernetes-launch-kit.machine=vendor-a-h200</code>
+          
+        </dd>
+        <dt>Worker nodes (2)</dt>
+        <dd><code>node-a</code>, <code>node-b</code></dd>
+        <dt>Capabilities</dt>
+        <dd><span class="cap-pill">sriov</span><span class="cap-pill">rdma</span>
+        </dd>
+        <dt>Preset</dt><dd>applied</dd>
+      </dl>
+      <div class="matrix-rail">East-west PFs (2)</div>
+      <table>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>0000:08:00.0</code></td>
+            <td><code>1021</code></td>
+            <td>0</td>
+            <td><code>eth_r0</code></td>
+            <td><code>rdma_r0</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>0</td>
+          </tr>
+          <tr>
+            <td><code>0000:08:00.1</code></td>
+            <td><code>1021</code></td>
+            <td>1</td>
+            <td><code>eth_r1</code></td>
+            <td><code>rdma_r1</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>1</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="matrix-rail">Preset deviations (1)</div>
+      <table>
+        <thead><tr><th>Field</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td>deviceID</td><td><code>1023</code></td><td><code>1021</code></td><td>expected ConnectX-8 (1023), found ConnectX-7 (1021)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Cluster nodes (2)</h2>
+  <div class="body">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Machine label</th><th>GPU label</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>node-a</code></td>
+          <td>vendor-a-h200</td>
+          <td>h200</td>
+          <td>control-plane,worker</td>
+        </tr>
+        <tr>
+          <td><code>node-b</code></td>
+          <td>vendor-a-h200</td>
+          <td>h200</td>
+          <td>worker</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Network Operator release</h2>
+  <div class="body">
+      <dl class="kv">
+        <dt>Selected release</dt>     <dd>26.4</dd>
+        <dt>Expected appVersion</dt>  <dd><code>v26.4.0-beta.9</code></dd>
+        <dt>Deployed</dt>             <dd><code>v26.4.0-beta.9</code> (chart 26.4.0-beta.9, rev 1, deployed)</dd>
+        <dt>Result</dt>
+        <dd>
+          <span class="badge state-success">MATCH</span>
+        </dd>
+      </dl>
+    <div class="matrix-rail">Component versions in cluster CRs</div>
+    <table>
+      <thead>
+        <tr><th>Status</th><th>Source</th><th>Section</th><th>Expected</th><th>Actual</th></tr>
+      </thead>
+      <tbody>
+        <tr class="state-success">
+          <td><span class="badge state-success">MATCH</span></td>
+          <td><code>NicClusterPolicy/nic-cluster-policy</code></td>
+          <td><code>nvIpam</code></td>
+          <td><code>network-operator-v26.4.0-beta.9</code></td>
+          <td><code>network-operator-v26.4.0-beta.9</code></td>
+        </tr>
+        <tr class="state-error">
+          <td><span class="badge state-error">MISMATCH</span></td>
+          <td><code>NicClusterPolicy/nic-cluster-policy</code></td>
+          <td><code>secondaryNetwork.multus</code></td>
+          <td><code>network-operator-v26.4.0-beta.9</code></td>
+          <td><code>network-operator-v26.4.0-beta.7</code></td>
+        </tr>
+        <tr class="state-success">
+          <td><span class="badge state-success">MATCH</span></td>
+          <td><code>NicNodePolicy/nicnodepolicy-h200</code></td>
+          <td><code>ofedDriver</code></td>
+          <td><code>doca3.4.0-26.04-0.8.4.0-0</code></td>
+          <td><code>doca3.4.0-26.04-0.8.4.0-0</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Manifest state (4)</h2>
+  <div class="body">
+    <table>
+      <thead>
+        <tr>
+          <th>State</th>
+          <th>Kind</th>
+          <th>Namespace</th>
+          <th>Name</th>
+          <th>Source file</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="state-success manifest-row-has-expand">
+          <td><span class="badge state-success">READY</span></td>
+          <td><code>NicClusterPolicy</code></td>
+          <td>—</td>
+          <td><code>nic-cluster-policy</code></td>
+          <td><code>10-nicclusterpolicy.yaml</code></td>
+          <td>ready — ready: 12/12</td>
+        </tr>
+        <tr class="manifest-expand state-success">
+          <td colspan="6" class="manifest-expand-cell">
+            <details>
+              <summary>Details (2)</summary>
+              <table>
+                <thead><tr><th>Component</th><th>State</th></tr></thead>
+                <tbody>
+                  <tr><td><code>multus</code></td><td>ready</td></tr>
+                  <tr><td><code>ofed-driver</code></td><td>ready</td></tr>
+                </tbody>
+              </table>
+            </details>
+            <details>
+              <summary>Live YAML</summary>
+              <pre class="yaml-block">apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+status:
+  state: ready
+</pre>
+            </details>
+          </td>
+        </tr>
+        <tr class="state-inprogress manifest-row-has-expand">
+          <td><span class="badge state-inprogress">IN-PROGRESS</span></td>
+          <td><code>SriovNetworkNodePolicy</code></td>
+          <td>network-operator</td>
+          <td><code>ethernet-sriov-rail-0</code></td>
+          <td><code>40-sriovnetworknodepolicy.yaml</code></td>
+          <td>node-b: syncStatus=InProgress</td>
+        </tr>
+        <tr class="manifest-expand state-inprogress">
+          <td colspan="6" class="manifest-expand-cell">
+            <details>
+              <summary>Details (2)</summary>
+              <table>
+                <thead><tr><th>Component</th><th>State</th></tr></thead>
+                <tbody>
+                  <tr><td><code>node-a</code></td><td>Succeeded</td></tr>
+                  <tr><td><code>node-b</code></td><td>InProgress</td></tr>
+                </tbody>
+              </table>
+            </details>
+          </td>
+        </tr>
+        <tr class="state-error">
+          <td><span class="badge state-error">ERROR</span></td>
+          <td><code>MacvlanNetwork</code></td>
+          <td>—</td>
+          <td><code>macvlan-net</code></td>
+          <td><code>30-macvlannetwork.yaml</code></td>
+          <td>controller reports error: image pull failed</td>
+        </tr>
+        <tr class="state-missing">
+          <td><span class="badge state-missing">MISSING</span></td>
+          <td><code>IPPool</code></td>
+          <td>network-operator</td>
+          <td><code>rail-0-pool</code></td>
+          <td><code>20-ippool.yaml</code></td>
+          <td>not found in cluster</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Connectivity matrix</h2>
+  <div class="body">
+      <p class="summary-line">
+        <strong>4</strong>/5 passed · <strong>1</strong> failed
+      </p>
+        <div class="matrix-rail">Rail <code>rail-0</code></div>
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>src \ dst</th>
+              <th>node-a</th>
+              <th>node-b</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>node-a</td>
+                <td class="cell-self">—</td>
+                  <td class="cell-pass">✓ 0% 0.12ms</td>
+            </tr>
+            <tr>
+              <td>node-b</td>
+                  <td class="cell-pass">✓ 0% 0.15ms</td>
+                <td class="cell-self">—</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="matrix-rail">Rail <code>rail-1</code></div>
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>src \ dst</th>
+              <th>node-a</th>
+              <th>node-b</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>node-a</td>
+                <td class="cell-self">—</td>
+                  <td class="cell-pass">✓ 0% 0.18ms</td>
+            </tr>
+            <tr>
+              <td>node-b</td>
+                  <td class="cell-fail">✗ 100%</td>
+                <td class="cell-self">—</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="matrix-rail">Cross-rail canary</div>
+        <table class="matrix-table">
+          <thead>
+            <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>node-a</td>
+              <td><code>rail-0</code></td>
+              <td>node-b</td>
+              <td><code>rail-1</code></td>
+              <td class="cell-pass">✓ 0% 0.20ms</td>
+            </tr>
+          </tbody>
+        </table>
+  </div>
+</section>
+<section>
+  <h2>Warnings (2)</h2>
+  <div class="body">
+    <ul class="warning-list">
+      <li>SriovNetworkNodePolicy/ethernet-sriov-rail-0 is in-progress on 1/2 nodes — re-run later.</li>
+      <li>IPPool/rail-0-pool not found — l8k generate was not run before validate.</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+<footer>
+  Generated by <strong>NVIDIA Kubernetes Launch Kit</strong> · v0.0.0-test · 2026-05-23 11:30:00 UTC
+</footer>
+</body>
+</html>

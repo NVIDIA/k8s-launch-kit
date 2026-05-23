@@ -40,6 +40,7 @@ func (t *testOutput) StartProgress(message string) ui.Progress      { return &no
 func (t *testOutput) Header(text string)                             {}
 func (t *testOutput) Section(text string)                            {}
 func (t *testOutput) Confirm(prompt string) (bool, error)            { return false, nil }
+func (t *testOutput) IsTTY() bool                                    { return false }
 
 type noopProgress struct{}
 

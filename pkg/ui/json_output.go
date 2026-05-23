@@ -110,6 +110,10 @@ func (o *JSONOutput) Confirm(_ string) (bool, error) {
 	return true, nil
 }
 
+// IsTTY is always false in JSON mode — there is no interactive
+// terminal to drive a spinner against.
+func (o *JSONOutput) IsTTY() bool { return false }
+
 // Messages returns a copy of collected messages.
 func (o *JSONOutput) Messages() []LogEntry {
 	o.mu.Lock()

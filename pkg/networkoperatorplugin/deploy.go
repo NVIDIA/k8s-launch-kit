@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,23 +35,60 @@ import (
 	yaml "sigs.k8s.io/yaml"
 )
 
-// Apply reads Kubernetes manifests from dirPath and applies them to the cluster.
-// If a NicClusterPolicy is present, it is applied first and the function waits
-// for it to become ready before applying the remaining manifests.
-//
-// Thin wrapper that preserves the existing call-site shape (profile arg
-// unused). Delegates to ApplyManifestsFromDir.
+// deployPollInterval is the cadence of the state-machine deploy loop's
+// polling between Validate calls. Matches the historical 3-second wait
+// helper cadence so logs feel familiar.
+const deployPollInterval = 3 * time.Second
+
+// appliedManifest pairs an applied "other" manifest with the
+// information phase 4 needs to gate on controller observation:
+// awaitObservationAfterRV holds the resourceVersion the server
+// returned from our Patch when the apply bumped .metadata.generation
+// (spec changed). The verify loop refuses to trust the live status
+// until the live resourceVersion has advanced past that value —
+// otherwise a re-deploy with new config would see the controller's
+// stale `status: ready` from the previous reconcile and declare
+// success before the operator had even noticed the new spec.
+type appliedManifest struct {
+	obj                     *unstructured.Unstructured
+	awaitObservationAfterRV string
+}
+
+// DeployProfile is a thin wrapper that preserves the existing plugin call
+// shape (profile arg unused). Delegates to ApplyManifestsFromDir.
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
 	_ = profile
 	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, false)
 }
 
 // ApplyManifestsFromDir reads Kubernetes manifests from manifestsDir and
-// applies them to the cluster in dependency order: NicClusterPolicy first
-// (waits for ready), then per-group NicNodePolicy (waits for each), then
-// remaining manifests. When dryRun is true the apply uses server-side
-// dry-run (client.DryRunAll) so the cluster validates manifests without
-// persisting them.
+// applies them to the cluster in four phases:
+//
+//  1. NicClusterPolicy — apply, then wait until the registry reports
+//     success or error. NCP is upstream of every per-node component and
+//     gates the rest of the deploy.
+//  2. NicNodePolicy — apply each NNP and wait until it reports success
+//     or error before moving on (preserves historical sequential
+//     behavior since NNP-per-group manifests carry orthogonal node
+//     selectors but downstream device plugins depend on each landing).
+//  3. Remaining manifests — apply ALL in one pass without waiting.
+//     Networks, IP pools, OVS configs, example DaemonSets and the
+//     SR-IOV / Spectrum-X CRs all reconcile concurrently in the cluster,
+//     so launching them back-to-back lets the wall-clock budget overlap.
+//  4. Verify — poll the registry for every manifest applied in phase 3
+//     until each reaches a terminal state (success/error) or the deploy
+//     context is cancelled. Skipped in dry-run mode.
+//
+// Per-manifest deadlines have been removed: the only timeout that applies
+// is whatever the caller threads into ctx (typically wrapped via
+// context.WithTimeout for a maintenance-window-sized budget). When ctx
+// has no deadline, the deploy waits indefinitely for reconciliation —
+// which is the right default for SR-IOV configuration on large clusters,
+// where a single policy can easily exceed any small per-manifest budget.
+//
+// When dryRun is true the apply path uses server-side dry-run
+// (client.DryRunAll) so the cluster validates manifests without
+// persisting them; phase 4 is skipped entirely.
 func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manifestsDir string, dryRun bool) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -58,10 +96,139 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 
 	uiOutput := ui.FromContext(ctx)
 
-	// List files in directory (non-recursive) and sort
-	entries, err := os.ReadDir(manifestsDir)
+	// Read & triage manifest docs from the deployment directory.
+	nicDoc, nnpDocs, otherDocs, err := readManifestDir(manifestsDir)
 	if err != nil {
 		return err
+	}
+
+	// Pre-decode NCP / NNP so any YAML error surfaces before we start
+	// touching the cluster. The "other" docs are decoded lazily inside
+	// phase 3 so a Pod retry can re-use the same Unstructured object.
+	var ncpObj *unstructured.Unstructured
+	if len(nicDoc) != 0 {
+		ncpObj, err = decodeUnstructured(nicDoc)
+		if err != nil {
+			return fmt.Errorf("decode NicClusterPolicy: %w", err)
+		}
+	}
+	nnpObjs := make([]*unstructured.Unstructured, 0, len(nnpDocs))
+	for i, b := range nnpDocs {
+		obj, err := decodeUnstructured(b)
+		if err != nil {
+			return fmt.Errorf("decode NicNodePolicy manifest %d: %w", i+1, err)
+		}
+		nnpObjs = append(nnpObjs, obj)
+	}
+
+	registry := crstate.NewDefault()
+
+	// Compute total phase count for the headers — skip empty phases so
+	// users don't see "Phase 2/4" when there are no NNPs.
+	phases := computePhases(ncpObj, nnpObjs, otherDocs, dryRun)
+	uiOutput.Info("Deploying %d manifest(s): %d NicClusterPolicy, %d NicNodePolicy, %d other%s",
+		phases.totalManifests, btoi(ncpObj != nil), len(nnpObjs), len(otherDocs), phases.dryRunSuffix)
+	if deadline, ok := ctx.Deadline(); ok {
+		uiOutput.Info("Deploy budget: %s (until %s)", time.Until(deadline).Round(time.Second), deadline.Format(time.RFC3339))
+	} else {
+		uiOutput.Info("Deploy budget: unbounded (no --deploy-timeout set)")
+	}
+
+	// Phase 1 — NicClusterPolicy.
+	if ncpObj != nil {
+		uiOutput.Section(fmt.Sprintf("Phase %d/%d — NicClusterPolicy", phases.next(), phases.total))
+		if err := applyAndWait(ctx, kubeClient, registry, ncpObj, dryRun, manifestLabel(ncpObj, 0, 0)); err != nil {
+			return err
+		}
+	}
+
+	// Phase 2 — NicNodePolicies (sequential apply + wait per policy).
+	if len(nnpObjs) > 0 {
+		uiOutput.Section(fmt.Sprintf("Phase %d/%d — NicNodePolicies (%d)", phases.next(), phases.total, len(nnpObjs)))
+		for i, obj := range nnpObjs {
+			if err := applyAndWait(ctx, kubeClient, registry, obj, dryRun, manifestLabel(obj, i+1, len(nnpObjs))); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Phase 3 — apply remaining manifests, no per-manifest wait.
+	// Per manifest we capture (a) the pre-apply generation so the
+	// verify phase knows whether the spec actually changed, and
+	// (b) the resourceVersion the server returned from our Patch
+	// — phase 4 then uses the same observation gate as phase 1/2
+	// (don't trust status until live RV moves past the apply's
+	// RV when the spec was new).
+	appliedOthers := make([]appliedManifest, 0, len(otherDocs))
+	if len(otherDocs) > 0 {
+		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Applying %d additional manifest(s)", phases.next(), phases.total, len(otherDocs)))
+		for i, b := range otherDocs {
+			obj, err := decodeUnstructured(b)
+			if err != nil {
+				return fmt.Errorf("decode manifest: %w", err)
+			}
+			label := manifestLabel(obj, i+1, len(otherDocs))
+
+			// Pre-apply Get: capture the existing object's
+			// generation so we can tell post-apply whether
+			// the spec changed. Failure = brand-new object;
+			// preApplyGen stays 0 and post-apply gen >= 1
+			// will trip the spec-changed branch.
+			var preApplyGen int64
+			pre := &unstructured.Unstructured{}
+			pre.SetGroupVersionKind(obj.GroupVersionKind())
+			if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, pre); err == nil {
+				preApplyGen = pre.GetGeneration()
+			}
+
+			uiOutput.Info("Applying %s", label)
+			log.Log.Info("Applying manifest",
+				"kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace(),
+				"index", i+1, "total", len(otherDocs))
+			if err := applyUnstructuredWithRetry(ctx, kubeClient, obj, dryRun); err != nil {
+				uiOutput.Error("Failed to apply %s: %v", label, err)
+				return err
+			}
+
+			am := appliedManifest{obj: obj}
+			if obj.GetGeneration() > preApplyGen {
+				am.awaitObservationAfterRV = obj.GetResourceVersion()
+			}
+			appliedOthers = append(appliedOthers, am)
+		}
+		uiOutput.Success("Applied %d additional manifest(s)", len(appliedOthers))
+	}
+
+	// Phase 4 — verify remaining manifests reach a terminal state.
+	// Dry-run skips this; nothing was actually persisted.
+	if dryRun {
+		uiOutput.Info("Dry-run mode: skipping reconciliation verification")
+		return nil
+	}
+	if len(appliedOthers) > 0 {
+		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Verifying %d manifest(s) reconcile", phases.next(), phases.total, len(appliedOthers)))
+		for i, am := range appliedOthers {
+			if err := pollUntilTerminal(ctx, kubeClient, registry, am.obj,
+				manifestLabel(am.obj, i+1, len(appliedOthers)), am.awaitObservationAfterRV); err != nil {
+				return err
+			}
+		}
+		uiOutput.Success("All %d additional manifest(s) reconciled", len(appliedOthers))
+	}
+
+	return nil
+}
+
+// readManifestDir reads every YAML doc under manifestsDir (non-recursive)
+// and triages them into the three deploy buckets. Files matching the
+// example-manifest naming pattern (see isExampleManifest) are skipped —
+// they're test fixtures consumed by `l8k validate --connectivity` to
+// stand up a temporary ping-matrix DaemonSet, not part of the actual
+// network-operator surface that `l8k deploy` should apply.
+func readManifestDir(manifestsDir string) (nicDoc []byte, nnpDocs [][]byte, otherDocs [][]byte, err error) {
+	entries, err := os.ReadDir(manifestsDir)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	filePaths := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -72,140 +239,327 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 		if ext != ".yaml" && ext != ".yml" {
 			continue
 		}
+		if isExampleManifest(e.Name()) {
+			log.Log.V(1).Info("Skipping example manifest at deploy time", "file", e.Name())
+			continue
+		}
 		filePaths = append(filePaths, filepath.Join(manifestsDir, e.Name()))
 	}
 	sort.Strings(filePaths)
 
-	// Collect manifests from all files (support multi-doc YAML using '---')
-	var nicDoc []byte
-	var nnpDocs [][]byte
-	var otherDocs [][]byte
 	for _, p := range filePaths {
 		content, rErr := os.ReadFile(p)
 		if rErr != nil {
-			return rErr
+			return nil, nil, nil, rErr
 		}
-		docs := splitYAMLDocuments(string(content))
-		for _, doc := range docs {
-			if len(strings.TrimSpace(doc)) == 0 {
+		for _, doc := range splitYAMLDocuments(string(content)) {
+			if strings.TrimSpace(doc) == "" {
 				continue
 			}
 			b := []byte(doc)
-			if containsNicClusterPolicyKind(b) {
+			switch {
+			case containsNicClusterPolicyKind(b):
 				if len(nicDoc) != 0 {
-					return fmt.Errorf("multiple NicClusterPolicy manifests found; only one is allowed")
+					return nil, nil, nil, fmt.Errorf("multiple NicClusterPolicy manifests found; only one is allowed")
 				}
 				nicDoc = b
-			} else if containsNicNodePolicyKind(b) {
+			case containsNicNodePolicyKind(b):
 				nnpDocs = append(nnpDocs, b)
-			} else {
+			default:
 				otherDocs = append(otherDocs, b)
 			}
 		}
 	}
+	return nicDoc, nnpDocs, otherDocs, nil
+}
 
-	// Apply NicClusterPolicy first if present
-	if len(nicDoc) != 0 {
-		progress := uiOutput.StartProgress("Applying NIC Cluster Policy")
-		log.Log.Info("Applying NicClusterPolicy for selected profile")
-		obj := &unstructured.Unstructured{}
-		if err := yaml.Unmarshal(nicDoc, obj); err != nil {
-			progress.Fail("Failed to decode manifest")
-			return fmt.Errorf("failed to decode NicClusterPolicy: %w", err)
+// decodeUnstructured parses a YAML document into an Unstructured object
+// and ensures its GroupVersionKind is set so server-side apply works.
+func decodeUnstructured(doc []byte) (*unstructured.Unstructured, error) {
+	obj := &unstructured.Unstructured{}
+	if err := yaml.Unmarshal(doc, obj); err != nil {
+		return nil, err
+	}
+	if apiv, kind := obj.GetAPIVersion(), obj.GetKind(); apiv != "" && kind != "" {
+		gv, err := schema.ParseGroupVersion(apiv)
+		if err == nil {
+			obj.SetGroupVersionKind(gv.WithKind(kind))
 		}
-		// Ensure GVK set for server-side apply
-		apiv, kind := obj.GetAPIVersion(), obj.GetKind()
-		if apiv != "" && kind != "" {
-			gv, err := schema.ParseGroupVersion(apiv)
-			if err == nil {
-				obj.SetGroupVersionKind(gv.WithKind(kind))
-			}
+	}
+	return obj, nil
+}
+
+// applyAndWait applies obj and then polls until the registry reports a
+// terminal state, re-applying once if the object goes missing mid-flight.
+// Used for NCP and per-NNP in phases 1 and 2.
+//
+// Captures the object's pre-apply generation and the resourceVersion
+// the server returned from the Patch. When the spec changed (generation
+// bumped), the poll loop won't trust the validator's verdict until the
+// controller has written *something* post-apply (live RV differs from
+// the apply-time RV) — without this gate the controller's stale
+// `status.state: ready` from the previous deploy would make the state
+// machine declare success before reconciliation of the new spec had
+// even started. Network Operator's NicClusterPolicyStatus carries no
+// `observedGeneration`, so this resourceVersion-bump heuristic is the
+// closest signal we have that the controller has reacted.
+func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, dryRun bool, label string) error {
+	uiOutput := ui.FromContext(ctx)
+
+	// Pre-apply observation: capture the object's current
+	// generation so we can detect whether the apply changed the
+	// spec or was idempotent. Failure to read = treat as
+	// "first-time apply" (preApplyGen=0).
+	var preApplyGen int64
+	pre := &unstructured.Unstructured{}
+	pre.SetGroupVersionKind(obj.GroupVersionKind())
+	if err := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, pre); err == nil {
+		preApplyGen = pre.GetGeneration()
+	}
+
+	progress := uiOutput.StartProgress(fmt.Sprintf("Applying %s", label))
+	log.Log.Info("Applying manifest", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+	if err := applyUnstructured(ctx, c, obj, dryRun); err != nil {
+		progress.Fail(fmt.Sprintf("Failed to apply %s: %v", label, err))
+		return err
+	}
+	progress.Success(fmt.Sprintf("Applied %s", label))
+
+	if dryRun {
+		return nil
+	}
+
+	// applyUnstructured does an SSA Patch that returns the
+	// server-decided object on `obj`. Its current resourceVersion
+	// is "the version right after our apply". If the spec changed,
+	// any subsequent live RV != this value means the controller
+	// has written status since.
+	awaitObservationAfterRV := ""
+	if obj.GetGeneration() > preApplyGen {
+		awaitObservationAfterRV = obj.GetResourceVersion()
+		log.Log.V(1).Info("Spec changed; gating poll on controller observation",
+			"kind", obj.GetKind(), "name", obj.GetName(),
+			"preApplyGeneration", preApplyGen,
+			"appliedGeneration", obj.GetGeneration(),
+			"appliedResourceVersion", awaitObservationAfterRV)
+	}
+	return pollUntilTerminal(ctx, c, registry, obj, label, awaitObservationAfterRV)
+}
+
+// pollUntilTerminal polls the registry's Validator for obj until it
+// reports StateSuccess or StateError. not-deployed transitions trigger a
+// single re-apply (object vanished between apply and poll); the only
+// exit condition besides terminal state is ctx.Done().
+//
+// awaitObservationAfterRV is the resourceVersion the server returned
+// from the apply Patch. When non-empty, the poll loop refuses to act
+// on any terminal verdict until the live object's resourceVersion
+// has advanced past this value — that's the closest signal we have
+// (without controller observedGeneration support) that the controller
+// has written status since the apply landed. Avoids the deploy state
+// machine declaring success on the previous reconcile's stale
+// status.state=ready before the operator has even noticed the new
+// spec.
+//
+// A spinner shows "Waiting for <label> to reconcile" so operators have
+// a visible heartbeat. Reason transitions are emitted as discrete
+// uiOutput.Info() lines — the StandardOutput now shares a mutex with
+// the spinner goroutine and clears the spinner row before printing, so
+// log lines land cleanly *above* the spinner instead of being glued
+// onto the same row. The reason is deduped against the previous tick
+// so a noisy 3-second polling loop only emits a fresh line when
+// something actually changed.
+func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string) error {
+	uiOutput := ui.FromContext(ctx)
+	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
+	log.Log.Info("Waiting for manifest to reconcile", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+
+	ticker := time.NewTicker(deployPollInterval)
+	defer ticker.Stop()
+
+	var lastReason string
+	reportProgress := func(reason string) {
+		if reason == lastReason || reason == "" {
+			return
 		}
-		if err := applyUnstructured(ctx, kubeClient, obj, dryRun); err != nil {
-			progress.Fail("Failed to apply policy")
+		lastReason = reason
+		// History line — scrollback record of every distinct
+		// state transition. Always emitted.
+		uiOutput.Info("  %s: %s", label, reason)
+		log.Log.V(1).Info("manifest in-progress", "kind", obj.GetKind(), "name", obj.GetName(), "reason", reason)
+		// Spinner-label update — TTY only. The spinner's paint
+		// truncates the line to terminal width so long reasons
+		// (e.g. "ready: 11/12; pending: state-OFED, …") render
+		// on a single, in-place-redrawn line above which the
+		// history scrolls. In non-TTY mode, progress.Update would
+		// print a *duplicate* of the Info line above, so we skip
+		// it here and rely on the history line alone.
+		if uiOutput.IsTTY() {
+			progress.Update(fmt.Sprintf("%s: %s", label, reason))
+		}
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
 			return err
 		}
 
-		progress.Success("NIC Cluster Policy applied")
-		log.Log.Info("Waiting for NicClusterPolicy to be ready")
-		if err := WaitNicClusterPolicyReady(ctx, kubeClient, obj.GetName()); err != nil {
-			return err
-		}
-	}
-
-	// Apply NicNodePolicies after NicClusterPolicy, wait for each to become ready
-	if len(nnpDocs) > 0 {
-		uiOutput.Info("Applying %d NIC Node Policy manifest(s)", len(nnpDocs))
-		log.Log.Info("Applying NicNodePolicy manifests", "count", len(nnpDocs))
-	}
-	for i, b := range nnpDocs {
-		obj := &unstructured.Unstructured{}
-		if err := yaml.Unmarshal(b, obj); err != nil {
-			uiOutput.Error("Failed to decode NicNodePolicy manifest: %v", err)
-			return fmt.Errorf("failed to decode NicNodePolicy manifest: %w", err)
-		}
-		apiv, kind := obj.GetAPIVersion(), obj.GetKind()
-		if apiv != "" && kind != "" {
-			gv, err := schema.ParseGroupVersion(apiv)
-			if err == nil {
-				obj.SetGroupVersionKind(gv.WithKind(kind))
+		// Observation gate: when the spec changed during apply,
+		// hold off on trusting the validator until the controller
+		// has written status post-apply. Detection: the live
+		// resourceVersion differs from the one Patch returned.
+		// Once we've seen the controller write, clear the gate
+		// and proceed with normal polling for the rest of the
+		// reconciliation window.
+		if awaitObservationAfterRV != "" {
+			live := &unstructured.Unstructured{}
+			live.SetGroupVersionKind(obj.GroupVersionKind())
+			err := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, live)
+			switch {
+			case err != nil:
+				// Get failure — let the validator handle it
+				// uniformly below.
+			case live.GetResourceVersion() == awaitObservationAfterRV:
+				reportProgress("waiting for controller to observe new spec")
+				select {
+				case <-ctx.Done():
+					progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
+					return ctx.Err()
+				case <-ticker.C:
+				}
+				continue
+			default:
+				log.Log.V(1).Info("Controller observed apply; clearing gate",
+					"kind", obj.GetKind(), "name", obj.GetName(),
+					"appliedResourceVersion", awaitObservationAfterRV,
+					"liveResourceVersion", live.GetResourceVersion())
+				awaitObservationAfterRV = ""
 			}
 		}
 
-		progress := uiOutput.StartProgress(fmt.Sprintf("Applying NIC Node Policy %q (%d/%d)", obj.GetName(), i+1, len(nnpDocs)))
-		log.Log.Info("Applying NicNodePolicy", "name", obj.GetName())
-		if err := applyUnstructured(ctx, kubeClient, obj, dryRun); err != nil {
-			progress.Fail(fmt.Sprintf("Failed to apply NicNodePolicy %q", obj.GetName()))
-			return err
-		}
-		progress.Success(fmt.Sprintf("NIC Node Policy %q applied", obj.GetName()))
-
-		log.Log.Info("Waiting for NicNodePolicy to be ready", "name", obj.GetName())
-		if err := WaitNicNodePolicyReady(ctx, kubeClient, obj.GetName()); err != nil {
-			return err
-		}
-	}
-
-	// Apply remaining manifests
-	if len(otherDocs) > 0 {
-		uiOutput.Info("Applying %d additional manifest(s)", len(otherDocs))
-	}
-	log.Log.Info("Applying remaining profile manifests", "count", len(otherDocs))
-	for i, b := range otherDocs {
-		obj := &unstructured.Unstructured{}
-		if err := yaml.Unmarshal(b, obj); err != nil {
-			uiOutput.Error("Failed to decode manifest: %v", err)
-			return fmt.Errorf("failed to decode manifest: %w", err)
-		}
-		// Ensure GVK set for server-side apply
-		apiv, kind := obj.GetAPIVersion(), obj.GetKind()
-		if apiv != "" && kind != "" {
-			gv, err := schema.ParseGroupVersion(apiv)
-			if err == nil {
-				obj.SetGroupVersionKind(gv.WithKind(kind))
+		res, err := registry.Validate(ctx, c, obj)
+		if err != nil {
+			log.Log.V(1).Info("Validate transient failure",
+				"kind", obj.GetKind(), "name", obj.GetName(), "error", err.Error())
+			reportProgress(fmt.Sprintf("transient validate error: %v", err))
+		} else {
+			switch res.State {
+			case crstate.StateSuccess:
+				progress.Success(fmt.Sprintf("%s reconciled (%s)", label, res.Reason))
+				log.Log.Info("Manifest reconciled",
+					"kind", obj.GetKind(), "name", obj.GetName(), "reason", res.Reason)
+				return nil
+			case crstate.StateError:
+				progress.Fail(fmt.Sprintf("%s error: %s", label, res.Reason))
+				log.Log.Error(nil, "Manifest reported error",
+					"kind", obj.GetKind(), "name", obj.GetName(), "reason", res.Reason)
+				return fmt.Errorf("%s/%s: %s", obj.GetKind(), obj.GetName(), res.Reason)
+			case crstate.StateNotDeployed:
+				// Object vanished between apply and poll (admission
+				// webhook race, manual kubectl delete). Re-apply once
+				// and continue polling.
+				uiOutput.Warning("%s went missing mid-flight; re-applying", label)
+				log.Log.Info("Manifest reported not-deployed; re-applying",
+					"kind", obj.GetKind(), "name", obj.GetName())
+				if err := applyUnstructured(ctx, c, obj, false); err != nil {
+					progress.Fail(fmt.Sprintf("Re-apply of %s failed: %v", label, err))
+					return err
+				}
+				reportProgress("re-applied after disappearance")
+			case crstate.StateInProgress:
+				reportProgress(res.Reason)
 			}
 		}
-		uiOutput.Info("  [%d/%d] Applying %s/%s", i+1, len(otherDocs), obj.GetKind(), obj.GetName())
-		log.Log.Info("Applying object", "kind", obj.GetKind(), "name", obj.GetName(), "version", obj.GetAPIVersion())
 
-		// Apply with retry for Pod kind
-		applyErr := applyUnstructured(ctx, kubeClient, obj, dryRun)
-		if applyErr != nil && strings.EqualFold(obj.GetKind(), "Pod") {
-			const maxAttempts = 3
-			for attempt := 2; attempt <= maxAttempts && applyErr != nil; attempt++ {
-				uiOutput.Warning("    Retrying (%d/%d)...", attempt, maxAttempts)
-				log.Log.Info("Pod apply failed, retrying", "name", obj.GetName(), "attempt", attempt, "delay", "30s", "error", applyErr.Error())
-				time.Sleep(30 * time.Second)
-				applyErr = applyUnstructured(ctx, kubeClient, obj, dryRun)
-			}
-		}
-		if applyErr != nil {
-			uiOutput.Error("    Failed: %v", applyErr)
-			return applyErr
+		select {
+		case <-ctx.Done():
+			progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
+			return ctx.Err()
+		case <-ticker.C:
 		}
 	}
+}
 
-	return nil
+// applyUnstructuredWithRetry wraps applyUnstructured with the legacy
+// Pod-specific retry path (up to 3 attempts, 30s apart). Non-Pod kinds
+// surface the first apply error unmodified.
+func applyUnstructuredWithRetry(ctx context.Context, c client.Client, obj *unstructured.Unstructured, dryRun bool) error {
+	uiOutput := ui.FromContext(ctx)
+	err := applyUnstructured(ctx, c, obj, dryRun)
+	if err == nil || !strings.EqualFold(obj.GetKind(), "Pod") {
+		return err
+	}
+	const maxAttempts = 3
+	for attempt := 2; attempt <= maxAttempts && err != nil; attempt++ {
+		uiOutput.Warning("    Retrying %s/%s (%d/%d)...", obj.GetKind(), obj.GetName(), attempt, maxAttempts)
+		log.Log.Info("Pod apply failed, retrying",
+			"name", obj.GetName(), "attempt", attempt, "delay", "30s", "error", err.Error())
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(30 * time.Second):
+		}
+		err = applyUnstructured(ctx, c, obj, dryRun)
+	}
+	return err
+}
+
+// phaseCounter tracks the active phase number for human-readable
+// "Phase X/Y" headers, skipping phases with no manifests.
+type phaseCounter struct {
+	total          int
+	current        int
+	totalManifests int
+	dryRunSuffix   string
+}
+
+func (p *phaseCounter) next() int {
+	p.current++
+	return p.current
+}
+
+func computePhases(ncp *unstructured.Unstructured, nnps []*unstructured.Unstructured, others [][]byte, dryRun bool) *phaseCounter {
+	pc := &phaseCounter{}
+	if ncp != nil {
+		pc.total++
+		pc.totalManifests++
+	}
+	if len(nnps) > 0 {
+		pc.total++
+		pc.totalManifests += len(nnps)
+	}
+	if len(others) > 0 {
+		pc.total++ // apply phase
+		pc.totalManifests += len(others)
+		if !dryRun {
+			pc.total++ // verify phase
+		}
+	}
+	if dryRun {
+		pc.dryRunSuffix = " (dry-run)"
+	}
+	return pc
+}
+
+// manifestLabel formats a manifest identifier for log lines. When n > 0,
+// "[i/n]" is appended so users can see batch progress at a glance.
+func manifestLabel(obj *unstructured.Unstructured, i, n int) string {
+	kindName := fmt.Sprintf("%s/%s", obj.GetKind(), obj.GetName())
+	if ns := obj.GetNamespace(); ns != "" {
+		kindName = fmt.Sprintf("%s/%s in %s", obj.GetKind(), obj.GetName(), ns)
+	}
+	if n > 0 {
+		return fmt.Sprintf("%s [%d/%d]", kindName, i, n)
+	}
+	return kindName
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func containsNicClusterPolicyKind(b []byte) bool {

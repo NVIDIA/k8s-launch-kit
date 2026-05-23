@@ -905,6 +905,98 @@ func TestIsRdmaShared(t *testing.T) {
 	})
 }
 
+func TestMaybeDisableInterfaceNameTemplate(t *testing.T) {
+	mkCfg := func(deployment string, deploy bool, spectrumX bool) *config.LaunchKubernetesConfig {
+		c := &config.LaunchKubernetesConfig{
+			Profile: &config.Profile{Deployment: deployment},
+			NicConfigurationOperator: &config.NicConfigurationOperatorConfig{
+				DeployNicInterfaceNameTemplate: deploy,
+			},
+		}
+		if spectrumX {
+			c.Profile.SpectrumX = &config.ProfileSpectrumX{Enable: true}
+		}
+		return c
+	}
+	oneGroup := []config.ClusterConfig{{Identifier: "g1"}}
+	twoGroups := []config.ClusterConfig{{Identifier: "g1"}, {Identifier: "g2"}}
+
+	t.Run("single source group + sriov → disabled", func(t *testing.T) {
+		cfg := mkCfg("sriov", true, false)
+		out := maybeDisableInterfaceNameTemplate(cfg, oneGroup)
+		assert.False(t, out.NicConfigurationOperator.DeployNicInterfaceNameTemplate)
+		// original cfg must NOT be mutated
+		assert.True(t, cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate)
+	})
+
+	t.Run("multiple source groups → left enabled", func(t *testing.T) {
+		cfg := mkCfg("sriov", true, false)
+		out := maybeDisableInterfaceNameTemplate(cfg, twoGroups)
+		assert.True(t, out.NicConfigurationOperator.DeployNicInterfaceNameTemplate)
+		assert.Same(t, cfg, out)
+	})
+
+	t.Run("flag already false → left as-is", func(t *testing.T) {
+		cfg := mkCfg("sriov", false, false)
+		out := maybeDisableInterfaceNameTemplate(cfg, oneGroup)
+		assert.False(t, out.NicConfigurationOperator.DeployNicInterfaceNameTemplate)
+		assert.Same(t, cfg, out)
+	})
+
+	t.Run("spectrum-x single group → left enabled (distinct render path)", func(t *testing.T) {
+		cfg := mkCfg("sriov", true, true)
+		out := maybeDisableInterfaceNameTemplate(cfg, oneGroup)
+		assert.True(t, out.NicConfigurationOperator.DeployNicInterfaceNameTemplate)
+		assert.Same(t, cfg, out)
+	})
+
+	t.Run("rdma_shared with empty interface names → left enabled (no PCI fallback)", func(t *testing.T) {
+		cfg := mkCfg("rdma_shared", true, false)
+		// One source group with one east-west PF whose NetworkInterface
+		// is empty — discovery left it blank for multi-node safety.
+		ewRail := 0
+		groups := []config.ClusterConfig{
+			{
+				Identifier: "g1",
+				PFs: []config.PFConfig{{
+					PciAddress: "0000:08:00.0",
+					Traffic:    "east-west",
+					Rail:       &ewRail,
+				}},
+			},
+		}
+		out := maybeDisableInterfaceNameTemplate(cfg, groups)
+		assert.True(t, out.NicConfigurationOperator.DeployNicInterfaceNameTemplate)
+		assert.Same(t, cfg, out)
+	})
+
+	t.Run("rdma_shared with populated names → disabled (single-node case)", func(t *testing.T) {
+		cfg := mkCfg("rdma_shared", true, false)
+		ewRail := 0
+		groups := []config.ClusterConfig{
+			{
+				Identifier: "g1",
+				PFs: []config.PFConfig{{
+					PciAddress:       "0000:08:00.0",
+					Traffic:          "east-west",
+					Rail:             &ewRail,
+					NetworkInterface: "ens1f0",
+				}},
+			},
+		}
+		out := maybeDisableInterfaceNameTemplate(cfg, groups)
+		assert.False(t, out.NicConfigurationOperator.DeployNicInterfaceNameTemplate)
+	})
+
+	t.Run("nil NicConfigurationOperator → no-op", func(t *testing.T) {
+		cfg := &config.LaunchKubernetesConfig{
+			Profile: &config.Profile{Deployment: "sriov"},
+		}
+		out := maybeDisableInterfaceNameTemplate(cfg, oneGroup)
+		assert.Same(t, cfg, out)
+	})
+}
+
 // Helper function to check if a template contains a placeholder
 func containsPlaceholder(template, placeholder string) bool {
 	return len(template) > 0 && len(placeholder) > 0 && 
