@@ -15,11 +15,11 @@ releases:
       componentVersion: network-operator-v26.1.1
       repository: nvcr.io/nvidia/mellanox
     docaDriver:
-      version: doca3.3.0-26.01-1.0.0.0-4
+      version: doca3.3.0-26.01-1.0.0.0-0
   "26.4":
     networkOperator:
-      version: v26.4.0
-      componentVersion: network-operator-v26.4.0
-      repository: nvcr.io/nvidia/mellanox
+      version: v26.4.0-beta.9
+      componentVersion: network-operator-v26.4.0-beta.9
+      repository: nvcr.io/nvstaging/mellanox
     docaDriver:
-      version: doca3.4.0-26.04-1.0.0.0-0
+      version: doca3.4.0-26.04-0.8.4.0-0
