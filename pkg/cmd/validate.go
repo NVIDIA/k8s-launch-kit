@@ -41,6 +41,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -130,6 +131,7 @@ connectivity-matrix failure.`,
 			matrix           *connectivity.MatrixResult
 			warnings         []string
 			presetDeviations []groupDeviationReport
+			presetResults    []presetmatch.Result
 			reportClient     ctrlclient.Client
 			reportRestConfig *rest.Config
 			reportManifestDir string
@@ -145,10 +147,19 @@ connectivity-matrix failure.`,
 			if err != nil {
 				warnings = append(warnings, err.Error())
 			}
+			// Compute the overall verdict from whatever inputs we
+			// have at this exit point — verdict may not have been
+			// computed yet on an early-error path, so build a
+			// pessimistic FAIL with the error as the reason.
+			overall := connectivity.OverallVerdict{Pass: false}
+			if err != nil {
+				overall.Reasons = append(overall.Reasons, err.Error())
+			}
+			emitVerdictBanner(overall, outputFormat)
 			writeHTMLReportIfWanted(context.Background(), reportClient, reportRestConfig,
 				reportManifestDir, deploymentFiles,
 				operatorNamespace, versionCheck, componentCheck, results, &matrix, &warnings,
-				userConfigPath(), outputFormat)
+				presetResults, overall, userConfigPath(), outputFormat)
 			exitWithError(err, outputFormat)
 		}
 
@@ -192,6 +203,14 @@ connectivity-matrix failure.`,
 						Deviations:  g.PresetDeviation,
 					})
 				}
+				// Re-run preset matching at validate-time. This
+				// catches drift between the cluster-config.yaml's
+				// stored hardware view and the certified preset
+				// even when discover wasn't re-run. Results stay
+				// informational — a deviation doesn't fail
+				// validate (matches the historical behaviour of
+				// presetDeviation), so the exit code is unchanged.
+				presetResults = presetmatch.MatchAll(cfg)
 			} else if err != nil {
 				log.Log.V(1).Info("user-config not loaded; version check will be skipped",
 					"path", path, "error", err.Error())
@@ -259,6 +278,7 @@ connectivity-matrix failure.`,
 
 		verdict := emitValidationReport(versionCheck, results, presetDeviations, outputFormat)
 		emitComponentVersionReport(componentCheck, outputFormat)
+		emitPresetMatchReport(presetResults, outputFormat)
 		warnings = append(warnings, collectVerdictWarnings(verdict)...)
 		if componentCheck != nil && !componentCheck.Skipped && !componentCheck.AllMatch {
 			warnings = append(warnings, "Component versions in NicClusterPolicy / NicNodePolicy diverge from the selectedRelease catalog — see the report's components section.")
@@ -269,9 +289,11 @@ connectivity-matrix failure.`,
 		// connectivity failure) since Go's defer doesn't run on
 		// os.Exit and exitWithError does os.Exit.
 		emitReport := func() {
+			overall := computeOverallVerdict(verdict, componentCheck, matrix, presetResults)
+			emitVerdictBanner(overall, outputFormat)
 			writeHTMLReportIfWanted(ctx, k8sClient, restConfig, manifestDir, deploymentFiles,
 				operatorNamespace, versionCheck, componentCheck, results, &matrix, &warnings,
-				userConfigPath(), outputFormat)
+				presetResults, overall, userConfigPath(), outputFormat)
 		}
 
 		// `--connectivity` runs the data-plane ping matrix only when
@@ -328,6 +350,130 @@ connectivity-matrix failure.`,
 
 		emitReport()
 	},
+}
+
+// computeOverallVerdict folds every input from the validate run into
+// a single pass/fail outcome — the same logic used to decide the
+// process exit code, expressed as structured Reasons / Notes so the
+// banner can list what failed (and what was merely informational).
+func computeOverallVerdict(
+	verdict validationVerdict,
+	componentCheck *networkoperatorplugin.ComponentVersionCheck,
+	matrix *connectivity.MatrixResult,
+	presetResults []presetmatch.Result,
+) connectivity.OverallVerdict {
+	out := connectivity.OverallVerdict{Pass: true}
+	if !verdict.VersionOK {
+		out.Pass = false
+		out.Reasons = append(out.Reasons, "Network Operator Helm release version does not match the selectedRelease in cluster-config.yaml")
+	}
+	if verdict.HasMissing {
+		out.Pass = false
+		out.Reasons = append(out.Reasons, fmt.Sprintf("%d manifest(s) not found in the cluster — `l8k deploy` not run or partial", verdict.MissingCount))
+	}
+	if verdict.HasError {
+		out.Pass = false
+		out.Reasons = append(out.Reasons, fmt.Sprintf("%d manifest(s) reported an error state", verdict.ErrorCount))
+	}
+	if componentCheck != nil && !componentCheck.Skipped && !componentCheck.AllMatch {
+		mismatches := 0
+		for _, c := range componentCheck.Components {
+			if !c.Match {
+				mismatches++
+			}
+		}
+		out.Pass = false
+		out.Reasons = append(out.Reasons, fmt.Sprintf("%d component version(s) in NicClusterPolicy/NicNodePolicy diverge from the selectedRelease catalog", mismatches))
+	}
+	if matrix != nil {
+		if matrix.Summary.Failed > 0 {
+			out.Pass = false
+			out.Reasons = append(out.Reasons, fmt.Sprintf("%d ping test(s) failed in the connectivity matrix", matrix.Summary.Failed))
+		}
+		if matrix.Summary.ExecErrors > 0 {
+			out.Pass = false
+			out.Reasons = append(out.Reasons, fmt.Sprintf("%d ping test(s) hit exec errors (RBAC, kubelet timeout, …)", matrix.Summary.ExecErrors))
+		}
+		if matrix.Skipped != nil {
+			out.Notes = append(out.Notes, "Connectivity matrix skipped: "+matrix.Skipped.Reason)
+		}
+	}
+	if verdict.HasInProgress {
+		out.Notes = append(out.Notes, fmt.Sprintf("%d manifest(s) still reconciling — re-run later or use --wait to block (does not gate the verdict)", verdict.InProgressCount))
+	}
+	// Preset deviations are informational only. Surface them as a
+	// note so the operator notices, but don't downgrade PASS.
+	deviationGroups := 0
+	for _, r := range presetResults {
+		if r.Status == presetmatch.StatusDeviation {
+			deviationGroups++
+		}
+	}
+	if deviationGroups > 0 {
+		out.Notes = append(out.Notes, fmt.Sprintf("%d node group(s) deviate from their matched preset (informational — see Node groups section)", deviationGroups))
+	}
+	return out
+}
+
+// emitVerdictBanner prints the PASS/FAIL banner at the top of text
+// output (above the per-check details that follow). JSON mode skips
+// this — the structured Verdict field travels with the report data.
+func emitVerdictBanner(v connectivity.OverallVerdict, format string) {
+	if format == "json" {
+		return
+	}
+	if v.Pass {
+		fmt.Println("\n══════════════════════════════════════════════════════════")
+		fmt.Println("                  ✓ VALIDATION PASSED")
+		fmt.Println("══════════════════════════════════════════════════════════")
+	} else {
+		fmt.Println("\n══════════════════════════════════════════════════════════")
+		fmt.Println("                  ✗ VALIDATION FAILED")
+		fmt.Println("══════════════════════════════════════════════════════════")
+		for _, r := range v.Reasons {
+			fmt.Printf("  • %s\n", r)
+		}
+	}
+	for _, n := range v.Notes {
+		fmt.Printf("  ⓘ %s\n", n)
+	}
+}
+
+// emitPresetMatchReport prints the per-group preset comparison in
+// text mode. JSON mode skips this — the structured field rides
+// downstream on the HTML/JSON envelope.
+func emitPresetMatchReport(results []presetmatch.Result, format string) {
+	if len(results) == 0 || format == "json" {
+		return
+	}
+	fmt.Println()
+	fmt.Println("Preset match (cluster groups vs. topology preset catalog)")
+	for _, r := range results {
+		var status string
+		switch r.Status {
+		case presetmatch.StatusMatch:
+			status = "MATCH    "
+		case presetmatch.StatusDeviation:
+			status = "DEVIATION"
+		case presetmatch.StatusNotFound:
+			status = "NO PRESET"
+		case presetmatch.StatusSkipped:
+			status = "SKIPPED  "
+		default:
+			status = "UNKNOWN  "
+		}
+		label := r.Group
+		if r.MachineType != "" || r.GPUType != "" {
+			label = fmt.Sprintf("%s (%s/%s)", r.Group, r.MachineType, r.GPUType)
+		}
+		detail := r.Reason
+		if r.Status == presetmatch.StatusMatch {
+			detail = fmt.Sprintf("preset %q matches", r.PresetName)
+		} else if r.Status == presetmatch.StatusDeviation {
+			detail = fmt.Sprintf("preset %q · %s", r.PresetName, r.Reason)
+		}
+		fmt.Printf("  [%s] %s — %s\n", status, label, detail)
+	}
 }
 
 // emitComponentVersionReport prints the component-version cross-check
@@ -424,6 +570,8 @@ func writeHTMLReportIfWanted(
 	results []networkoperatorplugin.ValidationResult,
 	matrix **connectivity.MatrixResult,
 	warnings *[]string,
+	presetResults []presetmatch.Result,
+	overall connectivity.OverallVerdict,
 	userCfgPath string,
 	outputFormat string,
 ) {
@@ -433,6 +581,7 @@ func writeHTMLReportIfWanted(
 	}
 
 	data := connectivity.ReportData{
+		Verdict: overall,
 		Cluster: connectivity.ClusterInfo{
 			L8kVersion:        Version,
 			GeneratedAt:       time.Now().UTC(),
@@ -445,6 +594,7 @@ func writeHTMLReportIfWanted(
 		Nodes:           listNodesForReport(ctx, c),
 		Release:         versionCheck,
 		ComponentCheck:  componentCheck,
+		PresetMatches:   presetResults,
 		Manifests:       results,
 		Matrix:          *matrix,
 		Warnings:        *warnings,

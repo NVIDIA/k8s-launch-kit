@@ -104,6 +104,36 @@ main {
   padding: 32px 40px 48px;
 }
 
+.verdict-banner {
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-bottom: 28px;
+  border: 1px solid;
+}
+.verdict-banner.verdict-pass {
+  background: var(--success-bg);
+  border-color: var(--success-bd);
+  color: var(--success);
+}
+.verdict-banner.verdict-fail {
+  background: var(--error-bg);
+  border-color: var(--error-bd);
+  color: var(--error);
+}
+.verdict-headline {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.verdict-list {
+  margin-top: 10px;
+  padding-left: 20px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.verdict-list li { margin-top: 2px; }
+.verdict-notes { color: var(--text-muted); }
+
 section {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -390,6 +420,18 @@ footer strong { color: var(--text-muted); }
 </header>
 <main>
 
+<div class="verdict-banner verdict-fail">
+  <div class="verdict-headline">
+    ✗ VALIDATION FAILED
+  </div>
+  <ul class="verdict-list verdict-reasons">
+    <li>1 ping test(s) failed in the connectivity matrix</li>
+  </ul>
+  <ul class="verdict-list verdict-notes">
+    <li>1 node group(s) deviate from their matched preset (informational — see Node groups section)</li>
+  </ul>
+</div>
+
 <section>
   <h2>Profile</h2>
   <div class="body">
@@ -404,6 +446,23 @@ footer strong { color: var(--text-muted); }
 <section>
   <h2>Node groups (1)</h2>
   <div class="body">
+    <div class="matrix-rail">Preset validation</div>
+    <table>
+      <thead>
+        <tr><th>Group</th><th>Machine</th><th>GPU</th><th>Status</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        <tr class="state-inprogress">
+          <td><code>vendor-a-h200</code></td>
+          <td>vendor-a</td>
+          <td>h200</td>
+          <td><span class="badge state-inprogress">DEVIATION</span></td>
+          <td>
+            preset <code>vendor-a/h200</code> applied · 1 deviation(s) from matched preset
+          </td>
+        </tr>
+      </tbody>
+    </table>
     <div class="nodegroup">
       <div class="nodegroup-head">
         <code>vendor-a-h200</code> · <span class="muted">vendor-a</span> · <span class="muted">h200</span> · <span class="muted">Ethernet</span>

@@ -26,6 +26,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 )
 
 // reportTemplate is the embedded HTML body the validate CLI's
@@ -38,10 +39,33 @@ import (
 //go:embed report.html.tmpl
 var reportTemplate string
 
+// OverallVerdict captures the high-level pass/fail outcome rendered
+// as a prominent banner at the top of the report. PASS means every
+// gating check succeeded (Helm release version, component versions,
+// manifest state, connectivity matrix). Preset deviations are
+// informational and do NOT downgrade PASS — they're surfaced
+// separately in the Node groups section.
+type OverallVerdict struct {
+	// Pass is true when every gating check succeeded.
+	Pass bool
+	// Reasons lists each individual gating check that failed (one
+	// short line per failure). Empty when Pass.
+	Reasons []string
+	// Notes lists informational items that don't gate (preset
+	// deviations, in-progress manifests when --wait wasn't used,
+	// matrix soft-skip). Surfaced in the banner subtitle when
+	// non-empty.
+	Notes []string
+}
+
 // ReportData is the input to RenderHTML. The validate CLI populates
 // it from values it has already computed (Manifests, Matrix) plus a
 // few small lookups (cluster API version, node labels).
 type ReportData struct {
+	// Verdict is the overall pass/fail outcome rendered as a
+	// prominent banner at the top of the report. Computed by the
+	// caller (CLI) from the same inputs that drive the exit code.
+	Verdict OverallVerdict
 	Cluster        ClusterInfo
 	Profile        ProfileInfo
 	NodeGroups     []NodeGroupInfo
@@ -52,8 +76,12 @@ type ReportData struct {
 	// sub-table under "Network Operator release" in the HTML
 	// report. Nil when the check couldn't run.
 	ComponentCheck *networkoperatorplugin.ComponentVersionCheck
-	Manifests      []networkoperatorplugin.ValidationResult
-	Matrix         *MatrixResult
+	// PresetMatches carries one Result per cluster group from
+	// pkg/presetmatch — surfaced under the "Node groups" section.
+	// Empty when validate ran without a usable cluster-config.yaml.
+	PresetMatches []presetmatch.Result
+	Manifests     []networkoperatorplugin.ValidationResult
+	Matrix        *MatrixResult
 	// Warnings is a flat list of one-line strings rendered as a
 	// bulleted rollup at the bottom of the report — typically the
 	// "in-progress manifest re-run later" notes and the matrix
@@ -183,6 +211,37 @@ func reportFuncMap() template.FuncMap {
 				return "state-missing"
 			}
 			return "state-unknown"
+		},
+		// presetStatusClass maps presetmatch.Status to the same
+		// state-color CSS classes manifest rows use, so the visual
+		// language is consistent across the report.
+		"presetStatusClass": func(s presetmatch.Status) string {
+			switch s {
+			case presetmatch.StatusMatch:
+				return "state-success"
+			case presetmatch.StatusDeviation:
+				return "state-inprogress"
+			case presetmatch.StatusNotFound:
+				return "state-missing"
+			case presetmatch.StatusSkipped:
+				return "state-missing"
+			}
+			return "state-unknown"
+		},
+		// presetStatusLabel renders the human-facing label for the
+		// per-group preset row's status badge.
+		"presetStatusLabel": func(s presetmatch.Status) string {
+			switch s {
+			case presetmatch.StatusMatch:
+				return "MATCH"
+			case presetmatch.StatusDeviation:
+				return "DEVIATION"
+			case presetmatch.StatusNotFound:
+				return "NO PRESET"
+			case presetmatch.StatusSkipped:
+				return "SKIPPED"
+			}
+			return "UNKNOWN"
 		},
 		// stateLabel renders the human-facing state name.
 		"stateLabel": func(s crstate.CRState) string {

@@ -32,6 +32,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
+	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
@@ -295,55 +296,44 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			discoverGroupFabric(ctx, p.RESTConfig,
 				defaultConfig.NetworkOperator.Namespace, group, dsPods)
 
-			// Try to enrich with a predefined topology preset for this (machine,
-			// GPU) pair. Presets provide authoritative traffic classification,
-			// rail assignments, and NUMA/GPU topology metadata for known
-			// hardware configurations. Lookup is exact-match on (machineType,
+			// Try to enrich with a predefined topology preset for this
+			// (machine, GPU) pair. presetmatch.MatchGroup runs the
+			// shared lookup + deviation comparison (also used by
+			// `l8k validate`); the discovery path then additionally
+			// applies the preset onto the group so rail/NUMA topology
+			// fields populate. Lookup is exact-match on (machineType,
 			// gpuType) — both must be known for a preset to apply.
-			if group.MachineType != "" && group.GPUType != "" {
-				log.Log.V(1).Info("Looking up preset by (machineType, gpuType)",
-					"group", group.Identifier,
-					"machineType", group.MachineType,
-					"gpuType", group.GPUType)
-				preset, presetErr := presets.LoadPreset(group.MachineType, group.GPUType)
-				if presetErr != nil {
-					log.Log.Error(presetErr, "failed to load preset",
-						"machineType", group.MachineType, "gpuType", group.GPUType)
-					uiOutput.Warning("Failed to load preset for %s/%s: %v",
-						group.MachineType, group.GPUType, presetErr)
-				} else if preset == nil {
-					log.Log.V(1).Info("No preset matched (machineType, gpuType)",
-						"group", group.Identifier,
-						"machineType", group.MachineType,
-						"gpuType", group.GPUType)
-				} else {
-					// Always apply the matched preset on a best-effort basis.
-					// Any discrepancies (PF count, PCI address drift,
-					// device-ID drift) are recorded as soft deviations and
-					// re-warned about on every subsequent config load.
-					deviations := presets.ValidatePreset(preset, group.PFs)
+			matchResult := presetmatch.MatchGroup(*group)
+			log.Log.V(1).Info("Preset match",
+				"group", group.Identifier,
+				"machineType", group.MachineType,
+				"gpuType", group.GPUType,
+				"status", string(matchResult.Status),
+				"presetName", matchResult.PresetName,
+				"deviationCount", len(matchResult.Deviations))
+			switch matchResult.Status {
+			case presetmatch.StatusMatch, presetmatch.StatusDeviation:
+				// LoadPreset was successful — load it again to get
+				// the Topology so ApplyPreset can enrich the group.
+				// (MatchGroup intentionally doesn't mutate.)
+				if preset, err := presets.LoadPreset(group.MachineType, group.GPUType); err == nil && preset != nil {
 					presets.ApplyPreset(preset, group)
-					log.Log.V(1).Info("Preset matched and applied",
-						"group", group.Identifier,
-						"machineType", group.MachineType,
-						"gpuType", group.GPUType,
-						"presetPFCount", len(preset.PFs),
-						"discoveredPFCount", len(group.PFs),
-						"deviationCount", len(deviations))
-					if len(deviations) > 0 {
-						group.PresetDeviation = deviations
-						log.Log.Info("Preset applied with deviations from matched preset",
-							"group", group.Identifier,
-							"machineType", group.MachineType,
-							"gpuType", group.GPUType,
-							"deviationCount", len(deviations))
-						uiOutput.Warning(
-							"Preset for %s/%s applied with %d deviation(s) from the matched preset. The deployment is not certified — see 'presetDeviation' in cluster-config.yaml.",
-							group.MachineType, group.GPUType, len(deviations))
-					} else {
-						uiOutput.Info("Applied preset configuration for %s", group.MachineType)
-					}
 				}
+				if matchResult.Status == presetmatch.StatusDeviation {
+					group.PresetDeviation = matchResult.Deviations
+					uiOutput.Warning(
+						"Preset for %s/%s applied with %d deviation(s) from the matched preset. The deployment is not certified — see 'presetDeviation' in cluster-config.yaml.",
+						group.MachineType, group.GPUType, len(matchResult.Deviations))
+				} else {
+					uiOutput.Info("Applied preset configuration for %s", group.MachineType)
+				}
+			case presetmatch.StatusNotFound:
+				// No catalog entry — discovery continues without
+				// preset enrichment. Logged at V(1) only; not a
+				// user-actionable warning.
+			case presetmatch.StatusSkipped:
+				// machineType / gpuType wasn't discovered. Discovery
+				// already logs this via the hardware-type probes.
 			}
 
 			modules, err := discoverThirdPartyRDMAModules(ctx, p.RESTConfig,

@@ -24,8 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +44,15 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/verify-re
 // surface.
 func fixtureData() ReportData {
 	return ReportData{
+		Verdict: OverallVerdict{
+			Pass: false,
+			Reasons: []string{
+				"1 ping test(s) failed in the connectivity matrix",
+			},
+			Notes: []string{
+				"1 node group(s) deviate from their matched preset (informational — see Node groups section)",
+			},
+		},
 		Cluster: ClusterInfo{
 			L8kVersion:        "v0.0.0-test",
 			GeneratedAt:       time.Date(2026, 5, 23, 11, 30, 0, 0, time.UTC),
@@ -178,6 +189,19 @@ func fixtureData() ReportData {
 		Warnings: []string{
 			"SriovNetworkNodePolicy/ethernet-sriov-rail-0 is in-progress on 1/2 nodes — re-run later.",
 			"IPPool/rail-0-pool not found — l8k generate was not run before validate.",
+		},
+		PresetMatches: []presetmatch.Result{
+			{
+				Group:       "vendor-a-h200",
+				MachineType: "vendor-a",
+				GPUType:     "h200",
+				Status:      presetmatch.StatusDeviation,
+				PresetName:  "vendor-a/h200",
+				Reason:      "1 deviation(s) from matched preset",
+				Deviations: []config.PresetDeviationEntry{
+					{Field: "deviceID", Expected: "1023", Got: "1021", Detail: "expected ConnectX-8 (1023), found ConnectX-7 (1021)"},
+				},
+			},
 		},
 	}
 }

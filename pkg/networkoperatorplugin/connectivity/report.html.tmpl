@@ -123,6 +123,36 @@ main {
   padding: 32px 40px 48px;
 }
 
+.verdict-banner {
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-bottom: 28px;
+  border: 1px solid;
+}
+.verdict-banner.verdict-pass {
+  background: var(--success-bg);
+  border-color: var(--success-bd);
+  color: var(--success);
+}
+.verdict-banner.verdict-fail {
+  background: var(--error-bg);
+  border-color: var(--error-bd);
+  color: var(--error);
+}
+.verdict-headline {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.verdict-list {
+  margin-top: 10px;
+  padding-left: 20px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.verdict-list li { margin-top: 2px; }
+.verdict-notes { color: var(--text-muted); }
+
 section {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -419,6 +449,26 @@ footer strong { color: var(--text-muted); }
 </header>
 <main>
 
+<div class="verdict-banner verdict-{{if .Verdict.Pass}}pass{{else}}fail{{end}}">
+  <div class="verdict-headline">
+    {{if .Verdict.Pass}}✓ VALIDATION PASSED{{else}}✗ VALIDATION FAILED{{end}}
+  </div>
+  {{- if .Verdict.Reasons}}
+  <ul class="verdict-list verdict-reasons">
+    {{- range .Verdict.Reasons}}
+    <li>{{.}}</li>
+    {{- end}}
+  </ul>
+  {{- end}}
+  {{- if .Verdict.Notes}}
+  <ul class="verdict-list verdict-notes">
+    {{- range .Verdict.Notes}}
+    <li>{{.}}</li>
+    {{- end}}
+  </ul>
+  {{- end}}
+</div>
+
 <section>
   <h2>Profile</h2>
   <div class="body">
@@ -436,6 +486,34 @@ footer strong { color: var(--text-muted); }
 <section>
   <h2>Node groups ({{len .NodeGroups}})</h2>
   <div class="body">
+    {{- if .PresetMatches}}
+    <div class="matrix-rail">Preset validation</div>
+    <table>
+      <thead>
+        <tr><th>Group</th><th>Machine</th><th>GPU</th><th>Status</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {{- range .PresetMatches}}
+        <tr class="{{presetStatusClass .Status}}">
+          <td><code>{{or .Group "—"}}</code></td>
+          <td>{{or .MachineType "—"}}</td>
+          <td>{{or .GPUType "—"}}</td>
+          <td><span class="badge {{presetStatusClass .Status}}">{{presetStatusLabel .Status}}</span></td>
+          <td>
+            {{- if eq (printf "%s" .Status) "match"}}
+            preset <code>{{.PresetName}}</code> matches
+            {{- else if eq (printf "%s" .Status) "deviation"}}
+            preset <code>{{.PresetName}}</code> applied · {{.Reason}}
+            {{- else}}
+            {{.Reason}}
+            {{- end}}
+          </td>
+        </tr>
+        {{- end}}
+      </tbody>
+    </table>
+    {{- end}}
+
     {{- if .NodeGroups}}
     {{- range .NodeGroups}}
     <div class="nodegroup">
