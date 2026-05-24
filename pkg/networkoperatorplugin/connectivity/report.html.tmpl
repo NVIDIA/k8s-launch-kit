@@ -600,7 +600,7 @@ footer strong { color: var(--text-muted); }
       </dl>
 
       {{- if .EastWestPFs}}
-      <div class="matrix-rail pf-section-actual">East-west PFs — Actual ({{if .PFCountMismatch}}{{.PFCountMismatch.Got}} <span class="mismatch-inline">certified topology expects {{.PFCountMismatch.Expected}}</span>{{else}}{{len .EastWestPFs}}{{end}})</div>
+      <div class="matrix-rail{{if or .PFCountMismatch (pfsHaveMismatch .EastWestPFs)}} pf-section-actual{{end}}">East-west PFs — Actual ({{if .PFCountMismatch}}{{.PFCountMismatch.Got}} <span class="mismatch-inline">certified topology expects {{.PFCountMismatch.Expected}}</span>{{else}}{{len .EastWestPFs}}{{end}})</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
         <tbody>
@@ -622,7 +622,7 @@ footer strong { color: var(--text-muted); }
       {{- end}}
 
       {{- if .ExpectedEastWestPFs}}
-      <div class="matrix-rail pf-section-expected">East-west PFs — Expected by certified topology ({{len .ExpectedEastWestPFs}})</div>
+      <div class="matrix-rail{{if pfsHaveMismatch .ExpectedEastWestPFs}} pf-section-expected{{end}}">East-west PFs — Expected by certified topology ({{len .ExpectedEastWestPFs}})</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
         <tbody>
@@ -644,7 +644,7 @@ footer strong { color: var(--text-muted); }
       {{- end}}
 
       {{- if .NorthSouthPFs}}
-      <div class="matrix-rail pf-section-actual">North-south PFs — Actual ({{len .NorthSouthPFs}})</div>
+      <div class="matrix-rail{{if pfsHaveMismatch .NorthSouthPFs}} pf-section-actual{{end}}">North-south PFs — Actual ({{len .NorthSouthPFs}})</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th></tr></thead>
         <tbody>
@@ -663,7 +663,7 @@ footer strong { color: var(--text-muted); }
       {{- end}}
 
       {{- if .ExpectedNorthSouthPFs}}
-      <div class="matrix-rail pf-section-expected">North-south PFs — Expected by certified topology ({{len .ExpectedNorthSouthPFs}})</div>
+      <div class="matrix-rail{{if pfsHaveMismatch .ExpectedNorthSouthPFs}} pf-section-expected{{end}}">North-south PFs — Expected by certified topology ({{len .ExpectedNorthSouthPFs}})</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th></tr></thead>
         <tbody>
