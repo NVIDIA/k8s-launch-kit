@@ -42,6 +42,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -421,31 +422,33 @@ func computeOverallVerdict(
 	// the other stages (same pattern as version mismatch): when the
 	// discovered hardware drifts from the certified topology for the
 	// server type, it's a real validation failure, but the data
-	// plane is still testable. Surface one reason per deviating
-	// group naming the server type and which fields drifted — the
-	// HTML report has the full per-field expected/got table.
+	// plane is still testable. The HTML report's Node groups section
+	// shows the in-place diff per PF row — the banner just names the
+	// affected server type so operators know where to look.
 	for _, r := range presetResults {
 		if r.Status != presetmatch.StatusDeviation {
 			continue
 		}
 		out.Pass = false
 		out.Reasons = append(out.Reasons,
-			fmt.Sprintf("The detected platform topology does not match the certified topology for %s server type: %s",
-				platformLabel(r), summarizePlatformDeviations(r.Deviations)))
+			fmt.Sprintf("The detected platform topology does not match the certified topology for %s server type (see Node groups section for the per-device diff)",
+				platformLabel(r)))
 	}
 	return out
 }
 
 // platformLabel renders the server-type identifier used in user
-// messages: the certified-topology directory name when known (e.g.
-// "PowerEdge-XE9680-H200"), otherwise the discovered
-// <machineType>-<gpuType> pair. Either form follows the
-// `<manufacturer>-<machine-type>-<gpu-type>` convention.
+// messages as `<manufacturer>-<machineType>-<gpuType>`, dropping any
+// empty segments. The manufacturer is the leading segment when the
+// matched preset's topology.yaml declares it (e.g. "Dell-PowerEdge-
+// XE9680-H200"); on a not-found match it's omitted because we have
+// no manufacturer signal outside the catalog. Falls back to the
+// group identifier if nothing useful is set.
 func platformLabel(r presetmatch.Result) string {
-	if r.PresetName != "" {
-		return r.PresetName
+	parts := make([]string, 0, 3)
+	if r.Manufacturer != "" {
+		parts = append(parts, r.Manufacturer)
 	}
-	parts := make([]string, 0, 2)
 	if r.MachineType != "" {
 		parts = append(parts, r.MachineType)
 	}
@@ -458,21 +461,6 @@ func platformLabel(r presetmatch.Result) string {
 	return strings.Join(parts, "-")
 }
 
-// summarizePlatformDeviations renders a one-line summary of the
-// per-field deviations on a group: "deviceID (got=1021 want=1023);
-// pfCount (got=4 want=8)". Used in the PASS/FAIL banner where a full
-// table would be unreadable — the HTML report keeps the verbose
-// expected/got/detail breakdown in the Node groups section.
-func summarizePlatformDeviations(deviations []config.PresetDeviationEntry) string {
-	if len(deviations) == 0 {
-		return "no field-level details available"
-	}
-	parts := make([]string, 0, len(deviations))
-	for _, d := range deviations {
-		parts = append(parts, fmt.Sprintf("%s (got=%s want=%s)", d.Field, d.Got, d.Expected))
-	}
-	return strings.Join(parts, "; ")
-}
 
 // emitVerdictBanner prints the PASS/FAIL banner at the top of text
 // output (above the per-check details that follow). JSON mode skips
@@ -653,7 +641,7 @@ func writeHTMLReportIfWanted(
 			OperatorNamespace: operatorNamespace,
 		},
 		Profile:         loadProfileInfo(userCfgPath, manifestDir),
-		NodeGroups:      loadNodeGroups(userCfgPath),
+		NodeGroups:      loadNodeGroups(userCfgPath, presetResults),
 		Nodes:           listNodesForReport(ctx, c),
 		Release:         versionCheck,
 		ComponentCheck:  componentCheck,
@@ -885,13 +873,37 @@ func splitYAMLDocs(s string) []string {
 // loadNodeGroups projects every cluster-config.yaml `clusterConfig[]`
 // entry into a NodeGroupInfo for the report. Empty result when the
 // config wasn't found / parsed — the section just renders empty.
-func loadNodeGroups(userCfgPath string) []connectivity.NodeGroupInfo {
+//
+// presetResults carries the runtime-fresh per-group preset match
+// (computed by presetmatch.MatchAll at validate-time). Its
+// Deviations are preferred over the snapshot stored in
+// `cluster-config.yaml.clusterConfig[].presetDeviation`, which only
+// gets populated by `l8k discover` and goes stale as soon as the
+// catalog changes or the hardware is swapped. Falling back to the
+// stored snapshot when the runtime entry is absent keeps the older
+// flow working (e.g. validate run without l8k discover access to
+// the cluster).
+func loadNodeGroups(userCfgPath string, presetResults []presetmatch.Result) []connectivity.NodeGroupInfo {
 	if userCfgPath == "" {
 		return nil
 	}
 	cfg, err := config.LoadFullConfig(userCfgPath, log.Log)
 	if err != nil || cfg == nil {
 		return nil
+	}
+	// Build a per-group index of fresh match results so the
+	// PF-table markers reflect what the banner is currently
+	// complaining about. The full Result is indexed (not just
+	// Deviations) because the marker pass also needs Preset.PFs
+	// to enrich "missing PCI" rows with the expected
+	// deviceID / rail / netdev that the certified topology
+	// declares for those addresses.
+	freshResultsByGroup := map[string]*presetmatch.Result{}
+	for i := range presetResults {
+		r := &presetResults[i]
+		if r.Status == presetmatch.StatusDeviation {
+			freshResultsByGroup[r.Group] = r
+		}
 	}
 	out := make([]connectivity.NodeGroupInfo, 0, len(cfg.ClusterConfig))
 	for _, g := range cfg.ClusterConfig {
@@ -909,7 +921,19 @@ func loadNodeGroups(userCfgPath string) []connectivity.NodeGroupInfo {
 			ng.RdmaCapable = g.Capabilities.Nodes.Rdma
 			ng.IbCapable = g.Capabilities.Nodes.Ib
 		}
-		for _, d := range g.PresetDeviation {
+		// Pick the runtime-fresh result when available, falling back
+		// to whatever `l8k discover` stamped into cluster-config.
+		// The runtime path also carries the matched Preset (used to
+		// enrich missing-PCI rows below); the fallback only has
+		// stored deviations so missing rows there can't be enriched.
+		freshResult := freshResultsByGroup[g.Identifier]
+		var deviations []config.PresetDeviationEntry
+		if freshResult != nil {
+			deviations = freshResult.Deviations
+		} else {
+			deviations = g.PresetDeviation
+		}
+		for _, d := range deviations {
 			ng.PresetDeviations = append(ng.PresetDeviations, connectivity.PresetDeviation{
 				Field: d.Field, Expected: d.Expected, Got: d.Got, Detail: d.Detail,
 			})
@@ -944,9 +968,147 @@ func loadNodeGroups(userCfgPath string) []connectivity.NodeGroupInfo {
 				ng.EastWestPFs = append(ng.EastWestPFs, row)
 			}
 		}
+		applyPlatformTopologyMarkers(&ng, deviations, freshResult)
 		out = append(out, ng)
 	}
 	return out
+}
+
+// applyPlatformTopologyMarkers populates the report's two paired
+// PF views (Actual = discovered hardware, Expected = certified
+// topology) and flags mismatched rows in each.
+//
+//   - Actual row is Mismatched when its (PCI, deviceID) pair has no
+//     matching entry in the preset.
+//   - Expected row is Mismatched when its (PCI, deviceID) pair has
+//     no matching entry on the cluster.
+//   - PFCountMismatch is set from the pfCount deviation.
+//
+// matchResult may be nil when we're falling back to stored
+// cluster-config deviations (no preset object available); in that
+// case only Mismatched markers based on raw deviations are applied
+// and the Expected tables stay empty.
+func applyPlatformTopologyMarkers(ng *connectivity.NodeGroupInfo, deviations []config.PresetDeviationEntry, matchResult *presetmatch.Result) {
+	for _, d := range deviations {
+		if d.Field == "pfCount" {
+			var got, want int
+			_, _ = fmt.Sscanf(d.Got, "%d", &got)
+			_, _ = fmt.Sscanf(d.Expected, "%d", &want)
+			ng.PFCountMismatch = &connectivity.PFCountMismatch{Expected: want, Got: got}
+		}
+	}
+
+	if matchResult == nil || matchResult.Preset == nil {
+		// No live preset to compare against — fall back to flagging
+		// Actual rows whose PCI appears in any pciAddress/deviceID
+		// deviation from the stored snapshot. Expected tables stay
+		// empty.
+		flagged := map[string]bool{}
+		for _, d := range deviations {
+			switch d.Field {
+			case "deviceID":
+				if _, pci := splitDeviceIDAtPCI(d.Got); pci != "" {
+					flagged[pci] = true
+				}
+			case "pciAddress":
+				if d.Got != "" {
+					flagged[d.Got] = true
+				}
+			}
+		}
+		markActualMismatched(ng.EastWestPFs, flagged)
+		markActualMismatched(ng.NorthSouthPFs, flagged)
+		return
+	}
+
+	// Index actuals by PCI so the Expected pass can quickly check
+	// whether a preset PF has a matching cluster PF (same PCI +
+	// same deviceID).
+	type actualEntry struct{ deviceID string }
+	actualByPCI := map[string]actualEntry{}
+	for _, pf := range ng.EastWestPFs {
+		actualByPCI[pf.PciAddress] = actualEntry{deviceID: pf.DeviceID}
+	}
+	for _, pf := range ng.NorthSouthPFs {
+		actualByPCI[pf.PciAddress] = actualEntry{deviceID: pf.DeviceID}
+	}
+	// Index preset by PCI for the Actual pass.
+	presetByPCI := map[string]presets.PresetPF{}
+	for _, pf := range matchResult.Preset.PFs {
+		presetByPCI[pf.PciAddress] = pf
+	}
+
+	// Actual: flag rows whose PCI isn't in the preset, or whose
+	// deviceID at that PCI doesn't match the preset.
+	for i := range ng.EastWestPFs {
+		pf := &ng.EastWestPFs[i]
+		expected, ok := presetByPCI[pf.PciAddress]
+		if !ok || expected.DeviceID != pf.DeviceID {
+			pf.Mismatched = true
+		}
+	}
+	for i := range ng.NorthSouthPFs {
+		pf := &ng.NorthSouthPFs[i]
+		expected, ok := presetByPCI[pf.PciAddress]
+		if !ok || expected.DeviceID != pf.DeviceID {
+			pf.Mismatched = true
+		}
+	}
+
+	// Expected: project the preset's PFs into the same PFInfo
+	// shape, bucketed by traffic type. Flag rows whose (PCI,
+	// deviceID) pair isn't present on the cluster.
+	for _, pf := range matchResult.Preset.PFs {
+		row := connectivity.PFInfo{
+			PciAddress:       pf.PciAddress,
+			DeviceID:         pf.DeviceID,
+			Rail:             "—",
+			Traffic:          pf.Traffic,
+			NetworkInterface: pf.NetworkInterface,
+			RdmaDevice:       pf.RdmaDevice,
+			PSID:             pf.PSID,
+			PartNumber:       pf.PartNumber,
+			ConnectedGPU:     pf.ConnectedGPU,
+			GPUProximity:     pf.GPUProximity,
+		}
+		if pf.Rail != nil {
+			row.Rail = fmt.Sprintf("%d", *pf.Rail)
+		}
+		if pf.NumaNode != nil {
+			row.NumaNode = fmt.Sprintf("%d", *pf.NumaNode)
+		}
+		if actual, ok := actualByPCI[pf.PciAddress]; !ok || actual.deviceID != pf.DeviceID {
+			row.Mismatched = true
+		}
+		switch pf.Traffic {
+		case "north-south":
+			ng.ExpectedNorthSouthPFs = append(ng.ExpectedNorthSouthPFs, row)
+		default:
+			ng.ExpectedEastWestPFs = append(ng.ExpectedEastWestPFs, row)
+		}
+	}
+}
+
+// markActualMismatched flags any Actual PFInfo whose PCI is in the
+// flagged set. Used as the fallback path when we don't have a live
+// preset object to drive the full Actual/Expected pairing.
+func markActualMismatched(pfs []connectivity.PFInfo, flagged map[string]bool) {
+	for i := range pfs {
+		if flagged[pfs[i].PciAddress] {
+			pfs[i].Mismatched = true
+		}
+	}
+}
+
+// splitDeviceIDAtPCI splits a "<deviceID>@<pciAddr>" composite (the
+// format ValidatePreset emits for deviceID deviations) back into its
+// two parts. Returns ("", "") on malformed input.
+func splitDeviceIDAtPCI(s string) (deviceID, pci string) {
+	at := strings.IndexByte(s, '@')
+	if at < 0 {
+		return "", ""
+	}
+	return s[:at], s[at+1:]
 }
 
 // listNodesForReport pulls the cluster's node list and projects each

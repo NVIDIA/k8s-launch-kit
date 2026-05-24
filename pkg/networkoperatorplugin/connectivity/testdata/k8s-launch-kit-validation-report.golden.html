@@ -327,6 +327,22 @@ details table th, details table td { padding: 6px 10px; }
 }
 .matrix-rail code { font-size: 12px; color: var(--text); }
 
+ 
+.matrix-rail.pf-section-actual {
+  color: #991B1B;                             
+  background: rgba(220, 38, 38, 0.10);
+  border-left: 3px solid #DC2626;             
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.matrix-rail.pf-section-expected {
+  color: #9A3412;                             
+  background: rgba(234, 88, 12, 0.10);
+  border-left: 3px solid #EA580C;             
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
 .summary-line {
   font-size: 14px;
   color: var(--text);
@@ -374,6 +390,28 @@ details table th, details table td { padding: 6px 10px; }
   border-radius: 10px;
 }
 .muted { color: var(--text-muted); }
+
+ 
+.mismatch-inline {
+  color: #B45309;        
+  font-size: 11px;
+  margin-left: 6px;
+}
+ 
+.matrix-rail.pf-section-actual + table tr.pf-mismatched {
+  background: rgba(220, 38, 38, 0.12);
+}
+.matrix-rail.pf-section-actual + table tr.pf-mismatched td {
+  border-top: 1px solid rgba(220, 38, 38, 0.32);
+  border-bottom: 1px solid rgba(220, 38, 38, 0.32);
+}
+.matrix-rail.pf-section-expected + table tr.pf-mismatched {
+  background: rgba(234, 88, 12, 0.12);
+}
+.matrix-rail.pf-section-expected + table tr.pf-mismatched td {
+  border-top: 1px solid rgba(234, 88, 12, 0.32);
+  border-bottom: 1px solid rgba(234, 88, 12, 0.32);
+}
 
 .warning-list {
   list-style: none;
@@ -426,7 +464,7 @@ footer strong { color: var(--text-muted); }
   </div>
   <ul class="verdict-list verdict-reasons">
     <li>1 RDMA test(s) failed in the connectivity matrix</li>
-    <li>The detected platform topology does not match the certified topology for vendor-a/h200 server type: deviceID (got=1021 want=1023)</li>
+    <li>The detected platform topology does not match the certified topology for ACME-vendor-a-h200 server type (see Node groups section for the per-device diff)</li>
   </ul>
 </div>
 
@@ -477,11 +515,11 @@ footer strong { color: var(--text-muted); }
         </dd>
         <dt>Certified topology</dt><dd>applied</dd>
       </dl>
-      <div class="matrix-rail">East-west PFs (2)</div>
+      <div class="matrix-rail pf-section-actual">East-west PFs — Actual (3)</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
         <tbody>
-          <tr>
+          <tr class="pf-mismatched">
             <td><code>0000:08:00.0</code></td>
             <td><code>1021</code></td>
             <td>0</td>
@@ -494,7 +532,7 @@ footer strong { color: var(--text-muted); }
           </tr>
           <tr>
             <td><code>0000:08:00.1</code></td>
-            <td><code>1021</code></td>
+            <td><code>1023</code></td>
             <td>1</td>
             <td><code>eth_r1</code></td>
             <td><code>rdma_r1</code></td>
@@ -503,13 +541,56 @@ footer strong { color: var(--text-muted); }
             <td>0</td>
             <td>1</td>
           </tr>
+          <tr class="pf-mismatched">
+            <td><code>0000:08:00.2</code></td>
+            <td><code>1023</code></td>
+            <td>2</td>
+            <td><code>eth_r2</code></td>
+            <td><code>rdma_r2</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>2</td>
+          </tr>
         </tbody>
       </table>
-      <div class="matrix-rail">Platform topology mismatches (1)</div>
+      <div class="matrix-rail pf-section-expected">East-west PFs — Expected by certified topology (3)</div>
       <table>
-        <thead><tr><th>Field</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
         <tbody>
-          <tr><td>deviceID</td><td><code>1023</code></td><td><code>1021</code></td><td>expected ConnectX-8 (1023), found ConnectX-7 (1021)</td></tr>
+          <tr class="pf-mismatched">
+            <td><code>0000:08:00.0</code></td>
+            <td><code>1023</code></td>
+            <td>0</td>
+            <td><code>eth_r0</code></td>
+            <td><code>rdma_r0</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>0</td>
+          </tr>
+          <tr>
+            <td><code>0000:08:00.1</code></td>
+            <td><code>1023</code></td>
+            <td>1</td>
+            <td><code>eth_r1</code></td>
+            <td><code>rdma_r1</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>1</td>
+          </tr>
+          <tr class="pf-mismatched">
+            <td><code>0000:08:00.3</code></td>
+            <td><code>1023</code></td>
+            <td>3</td>
+            <td><code>eth_r3</code></td>
+            <td><code>rdma_r3</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>3</td>
+          </tr>
         </tbody>
       </table>
     </div>

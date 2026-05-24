@@ -48,7 +48,7 @@ func fixtureData() ReportData {
 			Pass: false,
 			Reasons: []string{
 				"1 RDMA test(s) failed in the connectivity matrix",
-				`The detected platform topology does not match the certified topology for vendor-a/h200 server type: deviceID (got=1021 want=1023)`,
+				`The detected platform topology does not match the certified topology for ACME-vendor-a-h200 server type (see Node groups section for the per-device diff)`,
 			},
 		},
 		Cluster: ClusterInfo{
@@ -74,14 +74,43 @@ func fixtureData() ReportData {
 				NodeSelector: map[string]string{"nvidia.kubernetes-launch-kit.machine": "vendor-a-h200"},
 				WorkerNodes:  []string{"node-a", "node-b"},
 				SriovCapable: true, RdmaCapable: true,
+				// Actual = discovered hardware.
 				EastWestPFs: []PFInfo{
+					// deviceID drift from the certified topology
+					// at this PCI — row tinted.
 					{PciAddress: "0000:08:00.0", DeviceID: "1021", Rail: "0", Traffic: "east-west",
-						NetworkInterface: "eth_r0", RdmaDevice: "rdma_r0", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "0"},
-					{PciAddress: "0000:08:00.1", DeviceID: "1021", Rail: "1", Traffic: "east-west",
+						NetworkInterface: "eth_r0", RdmaDevice: "rdma_r0", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "0",
+						Mismatched: true},
+					// Matches the certified topology — clean row.
+					{PciAddress: "0000:08:00.1", DeviceID: "1023", Rail: "1", Traffic: "east-west",
 						NetworkInterface: "eth_r1", RdmaDevice: "rdma_r1", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "1"},
+					// Cluster has this PCI but the certified
+					// topology doesn't — row tinted.
+					{PciAddress: "0000:08:00.2", DeviceID: "1023", Rail: "2", Traffic: "east-west",
+						NetworkInterface: "eth_r2", RdmaDevice: "rdma_r2", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "2",
+						Mismatched: true},
+				},
+				// Expected = certified topology from the matched preset.
+				ExpectedEastWestPFs: []PFInfo{
+					// Same PCI as Actual[0] but the expected
+					// deviceID — tinted in this table too because
+					// the actual deviceID drifts.
+					{PciAddress: "0000:08:00.0", DeviceID: "1023", Rail: "0", Traffic: "east-west",
+						NetworkInterface: "eth_r0", RdmaDevice: "rdma_r0", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "0",
+						Mismatched: true},
+					// Matches the cluster — clean row.
+					{PciAddress: "0000:08:00.1", DeviceID: "1023", Rail: "1", Traffic: "east-west",
+						NetworkInterface: "eth_r1", RdmaDevice: "rdma_r1", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "1"},
+					// Certified topology expects this PCI but the
+					// cluster doesn't have it — tinted.
+					{PciAddress: "0000:08:00.3", DeviceID: "1023", Rail: "3", Traffic: "east-west",
+						NetworkInterface: "eth_r3", RdmaDevice: "rdma_r3", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "3",
+						Mismatched: true},
 				},
 				PresetDeviations: []PresetDeviation{
-					{Field: "deviceID", Expected: "1023", Got: "1021", Detail: "expected ConnectX-8 (1023), found ConnectX-7 (1021)"},
+					{Field: "deviceID", Expected: "1023@0000:08:00.0", Got: "1021@0000:08:00.0", Detail: "device ID at PCI address differs from preset"},
+					{Field: "pciAddress", Got: "0000:08:00.2", Detail: "discovered PCI address not present in preset"},
+					{Field: "pciAddress", Expected: "0000:08:00.3", Detail: "preset PCI address not present on discovered hardware"},
 				},
 				PresetApplied: true,
 			},
@@ -213,12 +242,13 @@ func fixtureData() ReportData {
 		},
 		PresetMatches: []presetmatch.Result{
 			{
-				Group:       "vendor-a-h200",
-				MachineType: "vendor-a",
-				GPUType:     "h200",
-				Status:      presetmatch.StatusDeviation,
-				PresetName:  "vendor-a/h200",
-				Reason:      "1 deviation(s) from matched preset",
+				Group:        "vendor-a-h200",
+				MachineType:  "vendor-a",
+				GPUType:      "h200",
+				Manufacturer: "ACME",
+				Status:       presetmatch.StatusDeviation,
+				PresetName:   "vendor-a/h200",
+				Reason:       "1 deviation(s) from matched preset",
 				Deviations: []config.PresetDeviationEntry{
 					{Field: "deviceID", Expected: "1023", Got: "1021", Detail: "expected ConnectX-8 (1023), found ConnectX-7 (1021)"},
 				},

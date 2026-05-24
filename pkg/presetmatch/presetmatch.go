@@ -73,7 +73,13 @@ type Result struct {
 	Group       string
 	MachineType string
 	GPUType     string
-	Status      Status
+	// Manufacturer is propagated from the matched preset's
+	// topology.yaml when a preset was found (StatusMatch /
+	// StatusDeviation). Empty otherwise. Surfaced in the user-
+	// facing "server type" label as the leading segment of
+	// <manufacturer>-<machineType>-<gpuType>.
+	Manufacturer string
+	Status       Status
 	// PresetName is the catalog directory name (what `l8k preset
 	// list` prints) when a preset was found. Empty otherwise.
 	PresetName string
@@ -83,6 +89,12 @@ type Result struct {
 	// pciAddress, deviceID"). Empty when StatusMatch.
 	Reason     string
 	Deviations []config.PresetDeviationEntry
+	// Preset is the loaded topology that produced the match. Used
+	// downstream to enrich "missing PCI" rows in the validation
+	// report with the expected deviceID / rail / netdev when the
+	// cluster doesn't have a device the certified topology
+	// expects. nil when Status is NotFound or Skipped.
+	Preset *presets.Topology
 }
 
 // MatchGroup runs the preset lookup + comparison for one group.
@@ -125,7 +137,9 @@ func MatchGroup(group config.ClusterConfig) Result {
 	}
 	deviations := presets.ValidatePreset(preset, group.PFs)
 	res.PresetName = preset.MachineType + "/" + preset.GPUType
+	res.Manufacturer = preset.Manufacturer
 	res.Deviations = deviations
+	res.Preset = preset
 	if len(deviations) == 0 {
 		res.Status = StatusMatch
 		return res

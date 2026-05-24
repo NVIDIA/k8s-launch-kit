@@ -107,13 +107,33 @@ type NodeGroupInfo struct {
 	IbCapable        bool
 	PresetApplied    bool
 	PresetDeviations []PresetDeviation
-	EastWestPFs      []PFInfo
-	NorthSouthPFs    []PFInfo
+	// EastWestPFs / NorthSouthPFs are the *actual* (discovered)
+	// PFs on the cluster. ExpectedEastWestPFs / ExpectedNorthSouthPFs
+	// mirror the layout but carry the certified topology's PFs from
+	// the matched preset (nil when no preset matched). When both are
+	// populated the report renders them as paired Actual / Expected
+	// sub-tables with mismatched rows highlighted in each.
+	EastWestPFs           []PFInfo
+	NorthSouthPFs         []PFInfo
+	ExpectedEastWestPFs   []PFInfo
+	ExpectedNorthSouthPFs []PFInfo
+	// PFCountMismatch is non-nil when the discovered PF count
+	// differs from the certified topology. Surfaced inline in the
+	// East-west PFs Actual header.
+	PFCountMismatch *PFCountMismatch
 }
 
 // PFInfo is one row in a node group's PF table. The fields mirror
 // PFConfig but as strings so the template doesn't need helpers for
 // "—" fallbacks on nil pointers.
+//
+// Mismatched is true when this row diverges from its counterpart in
+// the other table (the Actual table flags PCIs whose deviceID drifts
+// from the certified topology or PCIs the certified topology
+// doesn't list; the Expected table flags PCIs whose deviceID drifts
+// or PCIs the cluster doesn't actually have). Rendered as a tinted
+// row in both tables — the operator scans down and the diff is
+// obvious without inline annotations.
 type PFInfo struct {
 	PciAddress       string
 	DeviceID         string
@@ -125,7 +145,16 @@ type PFInfo struct {
 	PartNumber       string
 	NumaNode         string
 	ConnectedGPU     string
-	GPUProximity    string
+	GPUProximity     string
+	Mismatched       bool
+}
+
+// PFCountMismatch is set on NodeGroupInfo when the discovered PF
+// count differs from the certified topology — rendered next to the
+// "East-west PFs (N)" header rather than as a separate row.
+type PFCountMismatch struct {
+	Expected int
+	Got      int
 }
 
 // PresetDeviation is one row in a node group's deviation list —

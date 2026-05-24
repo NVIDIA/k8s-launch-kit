@@ -354,6 +354,26 @@ details table th, details table td { padding: 6px 10px; }
 }
 .matrix-rail code { font-size: 12px; color: var(--text); }
 
+/* Colour-coded headers for the paired Actual / Expected PF
+ * sub-tables. Actual = red ("this is what the cluster has;
+ * the highlighted rows are wrong"). Expected = orange ("this
+ * is what the certified topology says; the highlighted rows
+ * are what's missing or mismatched"). */
+.matrix-rail.pf-section-actual {
+  color: #991B1B;                            /* red-800 */
+  background: rgba(220, 38, 38, 0.10);
+  border-left: 3px solid #DC2626;            /* red-600 */
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.matrix-rail.pf-section-expected {
+  color: #9A3412;                            /* orange-800 */
+  background: rgba(234, 88, 12, 0.10);
+  border-left: 3px solid #EA580C;            /* orange-600 */
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
 .summary-line {
   font-size: 14px;
   color: var(--text);
@@ -401,6 +421,35 @@ details table th, details table td { padding: 6px 10px; }
   border-radius: 10px;
 }
 .muted { color: var(--text-muted); }
+
+/* Platform-topology diff styling. The PF section renders paired
+ * Actual / Expected sub-tables; rows that don't match their
+ * counterpart in the other table are tinted amber. The reader
+ * scans down both tables and the divergence is obvious without
+ * inline annotations. */
+.mismatch-inline {
+  color: #B45309;       /* amber-700, contrast against the row */
+  font-size: 11px;
+  margin-left: 6px;
+}
+/* Mismatched rows take their tint from the table they're in,
+ * matching the section header: red in Actual, orange in
+ * Expected. The adjacent-sibling combinator targets the <table>
+ * that immediately follows each section header div. */
+.matrix-rail.pf-section-actual + table tr.pf-mismatched {
+  background: rgba(220, 38, 38, 0.12);
+}
+.matrix-rail.pf-section-actual + table tr.pf-mismatched td {
+  border-top: 1px solid rgba(220, 38, 38, 0.32);
+  border-bottom: 1px solid rgba(220, 38, 38, 0.32);
+}
+.matrix-rail.pf-section-expected + table tr.pf-mismatched {
+  background: rgba(234, 88, 12, 0.12);
+}
+.matrix-rail.pf-section-expected + table tr.pf-mismatched td {
+  border-top: 1px solid rgba(234, 88, 12, 0.32);
+  border-bottom: 1px solid rgba(234, 88, 12, 0.32);
+}
 
 .warning-list {
   list-style: none;
@@ -551,12 +600,34 @@ footer strong { color: var(--text-muted); }
       </dl>
 
       {{- if .EastWestPFs}}
-      <div class="matrix-rail">East-west PFs ({{len .EastWestPFs}})</div>
+      <div class="matrix-rail pf-section-actual">East-west PFs — Actual ({{if .PFCountMismatch}}{{.PFCountMismatch.Got}} <span class="mismatch-inline">certified topology expects {{.PFCountMismatch.Expected}}</span>{{else}}{{len .EastWestPFs}}{{end}})</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
         <tbody>
           {{- range .EastWestPFs}}
-          <tr>
+          <tr{{if .Mismatched}} class="pf-mismatched"{{end}}>
+            <td><code>{{.PciAddress}}</code></td>
+            <td><code>{{or .DeviceID "—"}}</code></td>
+            <td>{{.Rail}}</td>
+            <td><code>{{or .NetworkInterface "—"}}</code></td>
+            <td><code>{{or .RdmaDevice "—"}}</code></td>
+            <td>{{or .PSID "—"}}</td>
+            <td>{{or .PartNumber "—"}}</td>
+            <td>{{or .NumaNode "—"}}</td>
+            <td>{{or .ConnectedGPU "—"}}{{if .GPUProximity}} ({{.GPUProximity}}){{end}}</td>
+          </tr>
+          {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
+
+      {{- if .ExpectedEastWestPFs}}
+      <div class="matrix-rail pf-section-expected">East-west PFs — Expected by certified topology ({{len .ExpectedEastWestPFs}})</div>
+      <table>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
+        <tbody>
+          {{- range .ExpectedEastWestPFs}}
+          <tr{{if .Mismatched}} class="pf-mismatched"{{end}}>
             <td><code>{{.PciAddress}}</code></td>
             <td><code>{{or .DeviceID "—"}}</code></td>
             <td>{{.Rail}}</td>
@@ -573,12 +644,12 @@ footer strong { color: var(--text-muted); }
       {{- end}}
 
       {{- if .NorthSouthPFs}}
-      <div class="matrix-rail">North-south PFs ({{len .NorthSouthPFs}})</div>
+      <div class="matrix-rail pf-section-actual">North-south PFs — Actual ({{len .NorthSouthPFs}})</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th></tr></thead>
         <tbody>
           {{- range .NorthSouthPFs}}
-          <tr>
+          <tr{{if .Mismatched}} class="pf-mismatched"{{end}}>
             <td><code>{{.PciAddress}}</code></td>
             <td><code>{{or .DeviceID "—"}}</code></td>
             <td><code>{{or .NetworkInterface "—"}}</code></td>
@@ -591,13 +662,20 @@ footer strong { color: var(--text-muted); }
       </table>
       {{- end}}
 
-      {{- if .PresetDeviations}}
-      <div class="matrix-rail">Platform topology mismatches ({{len .PresetDeviations}})</div>
+      {{- if .ExpectedNorthSouthPFs}}
+      <div class="matrix-rail pf-section-expected">North-south PFs — Expected by certified topology ({{len .ExpectedNorthSouthPFs}})</div>
       <table>
-        <thead><tr><th>Field</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th></tr></thead>
         <tbody>
-          {{- range .PresetDeviations}}
-          <tr><td>{{.Field}}</td><td><code>{{or .Expected "—"}}</code></td><td><code>{{or .Got "—"}}</code></td><td>{{.Detail}}</td></tr>
+          {{- range .ExpectedNorthSouthPFs}}
+          <tr{{if .Mismatched}} class="pf-mismatched"{{end}}>
+            <td><code>{{.PciAddress}}</code></td>
+            <td><code>{{or .DeviceID "—"}}</code></td>
+            <td><code>{{or .NetworkInterface "—"}}</code></td>
+            <td><code>{{or .RdmaDevice "—"}}</code></td>
+            <td>{{or .PSID "—"}}</td>
+            <td>{{or .PartNumber "—"}}</td>
+          </tr>
           {{- end}}
         </tbody>
       </table>
