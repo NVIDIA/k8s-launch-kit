@@ -104,6 +104,36 @@ main {
   padding: 32px 40px 48px;
 }
 
+.verdict-banner {
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-bottom: 28px;
+  border: 1px solid;
+}
+.verdict-banner.verdict-pass {
+  background: var(--success-bg);
+  border-color: var(--success-bd);
+  color: var(--success);
+}
+.verdict-banner.verdict-fail {
+  background: var(--error-bg);
+  border-color: var(--error-bd);
+  color: var(--error);
+}
+.verdict-headline {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.verdict-list {
+  margin-top: 10px;
+  padding-left: 20px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.verdict-list li { margin-top: 2px; }
+.verdict-notes { color: var(--text-muted); }
+
 section {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -297,6 +327,22 @@ details table th, details table td { padding: 6px 10px; }
 }
 .matrix-rail code { font-size: 12px; color: var(--text); }
 
+ 
+.matrix-rail.pf-section-actual {
+  color: #991B1B;                             
+  background: rgba(220, 38, 38, 0.10);
+  border-left: 3px solid #DC2626;             
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.matrix-rail.pf-section-expected {
+  color: #9A3412;                             
+  background: rgba(234, 88, 12, 0.10);
+  border-left: 3px solid #EA580C;             
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
 .summary-line {
   font-size: 14px;
   color: var(--text);
@@ -345,6 +391,28 @@ details table th, details table td { padding: 6px 10px; }
 }
 .muted { color: var(--text-muted); }
 
+ 
+.mismatch-inline {
+  color: #B45309;        
+  font-size: 11px;
+  margin-left: 6px;
+}
+ 
+.matrix-rail.pf-section-actual + table tr.pf-mismatched {
+  background: rgba(220, 38, 38, 0.12);
+}
+.matrix-rail.pf-section-actual + table tr.pf-mismatched td {
+  border-top: 1px solid rgba(220, 38, 38, 0.32);
+  border-bottom: 1px solid rgba(220, 38, 38, 0.32);
+}
+.matrix-rail.pf-section-expected + table tr.pf-mismatched {
+  background: rgba(234, 88, 12, 0.12);
+}
+.matrix-rail.pf-section-expected + table tr.pf-mismatched td {
+  border-top: 1px solid rgba(234, 88, 12, 0.32);
+  border-bottom: 1px solid rgba(234, 88, 12, 0.32);
+}
+
 .warning-list {
   list-style: none;
   padding-left: 0;
@@ -390,6 +458,16 @@ footer strong { color: var(--text-muted); }
 </header>
 <main>
 
+<div class="verdict-banner verdict-fail">
+  <div class="verdict-headline">
+    ✗ VALIDATION FAILED
+  </div>
+  <ul class="verdict-list verdict-reasons">
+    <li>1 RDMA test(s) failed in the connectivity matrix</li>
+    <li>The detected platform topology does not match the certified topology for ACME-vendor-a-h200 server type (see Node groups section for the per-device diff)</li>
+  </ul>
+</div>
+
 <section>
   <h2>Profile</h2>
   <div class="body">
@@ -404,6 +482,23 @@ footer strong { color: var(--text-muted); }
 <section>
   <h2>Node groups (1)</h2>
   <div class="body">
+    <div class="matrix-rail">Platform topology validation</div>
+    <table>
+      <thead>
+        <tr><th>Group</th><th>Machine</th><th>GPU</th><th>Status</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        <tr class="state-inprogress">
+          <td><code>vendor-a-h200</code></td>
+          <td>vendor-a</td>
+          <td>h200</td>
+          <td><span class="badge state-inprogress">MISMATCH</span></td>
+          <td>
+            does not match certified topology for <code>vendor-a/h200</code> server type · 1 deviation(s) from matched preset
+          </td>
+        </tr>
+      </tbody>
+    </table>
     <div class="nodegroup">
       <div class="nodegroup-head">
         <code>vendor-a-h200</code> · <span class="muted">vendor-a</span> · <span class="muted">h200</span> · <span class="muted">Ethernet</span>
@@ -418,13 +513,13 @@ footer strong { color: var(--text-muted); }
         <dt>Capabilities</dt>
         <dd><span class="cap-pill">sriov</span><span class="cap-pill">rdma</span>
         </dd>
-        <dt>Preset</dt><dd>applied</dd>
+        <dt>Certified topology</dt><dd>applied</dd>
       </dl>
-      <div class="matrix-rail">East-west PFs (2)</div>
+      <div class="matrix-rail pf-section-actual">East-west PFs — Actual (3)</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
         <tbody>
-          <tr>
+          <tr class="pf-mismatched">
             <td><code>0000:08:00.0</code></td>
             <td><code>1021</code></td>
             <td>0</td>
@@ -437,7 +532,7 @@ footer strong { color: var(--text-muted); }
           </tr>
           <tr>
             <td><code>0000:08:00.1</code></td>
-            <td><code>1021</code></td>
+            <td><code>1023</code></td>
             <td>1</td>
             <td><code>eth_r1</code></td>
             <td><code>rdma_r1</code></td>
@@ -446,13 +541,56 @@ footer strong { color: var(--text-muted); }
             <td>0</td>
             <td>1</td>
           </tr>
+          <tr class="pf-mismatched">
+            <td><code>0000:08:00.2</code></td>
+            <td><code>1023</code></td>
+            <td>2</td>
+            <td><code>eth_r2</code></td>
+            <td><code>rdma_r2</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>2</td>
+          </tr>
         </tbody>
       </table>
-      <div class="matrix-rail">Preset deviations (1)</div>
+      <div class="matrix-rail pf-section-expected">East-west PFs — Expected by certified topology (3)</div>
       <table>
-        <thead><tr><th>Field</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
         <tbody>
-          <tr><td>deviceID</td><td><code>1023</code></td><td><code>1021</code></td><td>expected ConnectX-8 (1023), found ConnectX-7 (1021)</td></tr>
+          <tr class="pf-mismatched">
+            <td><code>0000:08:00.0</code></td>
+            <td><code>1023</code></td>
+            <td>0</td>
+            <td><code>eth_r0</code></td>
+            <td><code>rdma_r0</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>0</td>
+          </tr>
+          <tr>
+            <td><code>0000:08:00.1</code></td>
+            <td><code>1023</code></td>
+            <td>1</td>
+            <td><code>eth_r1</code></td>
+            <td><code>rdma_r1</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>1</td>
+          </tr>
+          <tr class="pf-mismatched">
+            <td><code>0000:08:00.3</code></td>
+            <td><code>1023</code></td>
+            <td>3</td>
+            <td><code>eth_r3</code></td>
+            <td><code>rdma_r3</code></td>
+            <td>—</td>
+            <td>MCX713106AE</td>
+            <td>0</td>
+            <td>3</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -622,9 +760,9 @@ status:
   <h2>Connectivity matrix</h2>
   <div class="body">
       <p class="summary-line">
-        <strong>4</strong>/5 passed · <strong>1</strong> failed
+        <strong>7</strong>/8 passed · <strong>1</strong> failed
       </p>
-        <div class="matrix-rail">Rail <code>rail-0</code></div>
+        <div class="matrix-rail">Rail <code>rail-0</code> — RDMA ping (rping)</div>
         <table class="matrix-table">
           <thead>
             <tr>
@@ -637,16 +775,16 @@ status:
             <tr>
               <td>node-a</td>
                 <td class="cell-self">—</td>
-                  <td class="cell-pass">✓ 0% 0.12ms</td>
+                  <td class="cell-pass">✓</td>
             </tr>
             <tr>
               <td>node-b</td>
-                  <td class="cell-pass">✓ 0% 0.15ms</td>
+                  <td class="cell-pass">✓</td>
                 <td class="cell-self">—</td>
             </tr>
           </tbody>
         </table>
-        <div class="matrix-rail">Rail <code>rail-1</code></div>
+        <div class="matrix-rail">Rail <code>rail-0</code> — RDMA bandwidth (ib_write_bw)</div>
         <table class="matrix-table">
           <thead>
             <tr>
@@ -659,16 +797,38 @@ status:
             <tr>
               <td>node-a</td>
                 <td class="cell-self">—</td>
-                  <td class="cell-pass">✓ 0% 0.18ms</td>
+                  <td class="cell-pass">✓ 194.4 Gbps</td>
             </tr>
             <tr>
               <td>node-b</td>
-                  <td class="cell-fail">✗ 100%</td>
+                  <td class="cell-pass">✓ 193.8 Gbps</td>
                 <td class="cell-self">—</td>
             </tr>
           </tbody>
         </table>
-        <div class="matrix-rail">Cross-rail canary</div>
+        <div class="matrix-rail">Rail <code>rail-1</code> — RDMA ping (rping)</div>
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>src \ dst</th>
+              <th>node-a</th>
+              <th>node-b</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>node-a</td>
+                <td class="cell-self">—</td>
+                  <td class="cell-pass">✓</td>
+            </tr>
+            <tr>
+              <td>node-b</td>
+                  <td class="cell-fail">✗</td>
+                <td class="cell-self">—</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="matrix-rail">Cross-rail canary — RDMA ping (rping)</div>
         <table class="matrix-table">
           <thead>
             <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
@@ -679,7 +839,22 @@ status:
               <td><code>rail-0</code></td>
               <td>node-b</td>
               <td><code>rail-1</code></td>
-              <td class="cell-pass">✓ 0% 0.20ms</td>
+              <td class="cell-pass">✓</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="matrix-rail">Cross-rail canary — RDMA bandwidth (ib_write_bw)</div>
+        <table class="matrix-table">
+          <thead>
+            <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>node-a</td>
+              <td><code>rail-0</code></td>
+              <td>node-b</td>
+              <td><code>rail-1</code></td>
+              <td class="cell-pass">✓ 187.6 Gbps</td>
             </tr>
           </tbody>
         </table>

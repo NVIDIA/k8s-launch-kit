@@ -24,8 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +35,7 @@ import (
 // updateGolden re-writes the checked-in golden file when set. Run with
 // `go test ./pkg/networkoperatorplugin/connectivity/ -update-golden`
 // after intentional template changes.
-var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/verify-report.golden.html with the current renderer output")
+var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/k8s-launch-kit-validation-report.golden.html with the current renderer output")
 
 // fixtureData is the deterministic input the renderer is exercised
 // against. Includes one of every state badge, an IN-PROGRESS row with
@@ -42,6 +44,13 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/verify-re
 // surface.
 func fixtureData() ReportData {
 	return ReportData{
+		Verdict: OverallVerdict{
+			Pass: false,
+			Reasons: []string{
+				"1 RDMA test(s) failed in the connectivity matrix",
+				`The detected platform topology does not match the certified topology for ACME-vendor-a-h200 server type (see Node groups section for the per-device diff)`,
+			},
+		},
 		Cluster: ClusterInfo{
 			L8kVersion:        "v0.0.0-test",
 			GeneratedAt:       time.Date(2026, 5, 23, 11, 30, 0, 0, time.UTC),
@@ -65,14 +74,43 @@ func fixtureData() ReportData {
 				NodeSelector: map[string]string{"nvidia.kubernetes-launch-kit.machine": "vendor-a-h200"},
 				WorkerNodes:  []string{"node-a", "node-b"},
 				SriovCapable: true, RdmaCapable: true,
+				// Actual = discovered hardware.
 				EastWestPFs: []PFInfo{
+					// deviceID drift from the certified topology
+					// at this PCI — row tinted.
 					{PciAddress: "0000:08:00.0", DeviceID: "1021", Rail: "0", Traffic: "east-west",
-						NetworkInterface: "eth_r0", RdmaDevice: "rdma_r0", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "0"},
-					{PciAddress: "0000:08:00.1", DeviceID: "1021", Rail: "1", Traffic: "east-west",
+						NetworkInterface: "eth_r0", RdmaDevice: "rdma_r0", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "0",
+						Mismatched: true},
+					// Matches the certified topology — clean row.
+					{PciAddress: "0000:08:00.1", DeviceID: "1023", Rail: "1", Traffic: "east-west",
 						NetworkInterface: "eth_r1", RdmaDevice: "rdma_r1", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "1"},
+					// Cluster has this PCI but the certified
+					// topology doesn't — row tinted.
+					{PciAddress: "0000:08:00.2", DeviceID: "1023", Rail: "2", Traffic: "east-west",
+						NetworkInterface: "eth_r2", RdmaDevice: "rdma_r2", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "2",
+						Mismatched: true},
+				},
+				// Expected = certified topology from the matched preset.
+				ExpectedEastWestPFs: []PFInfo{
+					// Same PCI as Actual[0] but the expected
+					// deviceID — tinted in this table too because
+					// the actual deviceID drifts.
+					{PciAddress: "0000:08:00.0", DeviceID: "1023", Rail: "0", Traffic: "east-west",
+						NetworkInterface: "eth_r0", RdmaDevice: "rdma_r0", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "0",
+						Mismatched: true},
+					// Matches the cluster — clean row.
+					{PciAddress: "0000:08:00.1", DeviceID: "1023", Rail: "1", Traffic: "east-west",
+						NetworkInterface: "eth_r1", RdmaDevice: "rdma_r1", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "1"},
+					// Certified topology expects this PCI but the
+					// cluster doesn't have it — tinted.
+					{PciAddress: "0000:08:00.3", DeviceID: "1023", Rail: "3", Traffic: "east-west",
+						NetworkInterface: "eth_r3", RdmaDevice: "rdma_r3", PartNumber: "MCX713106AE", NumaNode: "0", ConnectedGPU: "3",
+						Mismatched: true},
 				},
 				PresetDeviations: []PresetDeviation{
-					{Field: "deviceID", Expected: "1023", Got: "1021", Detail: "expected ConnectX-8 (1023), found ConnectX-7 (1021)"},
+					{Field: "deviceID", Expected: "1023@0000:08:00.0", Got: "1021@0000:08:00.0", Detail: "device ID at PCI address differs from preset"},
+					{Field: "pciAddress", Got: "0000:08:00.2", Detail: "discovered PCI address not present in preset"},
+					{Field: "pciAddress", Expected: "0000:08:00.3", Detail: "preset PCI address not present on discovered hardware"},
 				},
 				PresetApplied: true,
 			},
@@ -142,47 +180,84 @@ func fixtureData() ReportData {
 		},
 		Matrix: &MatrixResult{
 			PingResults: []PingResult{
+				// rping: same-rail, both directions, rail-0 (both pass)
 				{
-					Test: PingTest{Kind: PingSameRail,
+					Test: PingTest{Kind: RDMAPingSameRail,
 						SrcNode: "node-a", DstNode: "node-b",
 						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
-					OK: true, PacketLoss: 0, RTTAvgMs: 0.12,
+					OK: true,
 				},
 				{
-					Test: PingTest{Kind: PingSameRail,
+					Test: PingTest{Kind: RDMAPingSameRail,
 						SrcNode: "node-b", DstNode: "node-a",
 						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
-					OK: true, PacketLoss: 0, RTTAvgMs: 0.15,
+					OK: true,
 				},
+				// rping: same-rail, rail-1 (one direction fails)
 				{
-					Test: PingTest{Kind: PingSameRail,
+					Test: PingTest{Kind: RDMAPingSameRail,
 						SrcNode: "node-a", DstNode: "node-b",
 						Rail: "rail-1", SrcRail: "rail-1", DstRail: "rail-1"},
-					OK: true, PacketLoss: 0, RTTAvgMs: 0.18,
+					OK: true,
 				},
 				{
-					Test: PingTest{Kind: PingSameRail,
+					Test: PingTest{Kind: RDMAPingSameRail,
 						SrcNode: "node-b", DstNode: "node-a",
 						Rail: "rail-1", SrcRail: "rail-1", DstRail: "rail-1"},
-					OK: false, PacketLoss: 100,
+					OK: false,
 				},
+				// rping: cross-rail canary
 				{
-					Test: PingTest{Kind: PingCrossRail,
+					Test: PingTest{Kind: RDMAPingCrossRail,
 						SrcNode: "node-a", DstNode: "node-b",
 						Rail: "rail-0→rail-1", SrcRail: "rail-0", DstRail: "rail-1"},
-					OK: true, PacketLoss: 0, RTTAvgMs: 0.20,
+					OK: true,
+				},
+				// ib_write_bw: same-rail rail-0 both directions pass with bandwidth
+				{
+					Test: PingTest{Kind: RDMABwSameRail,
+						SrcNode: "node-a", DstNode: "node-b",
+						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
+					OK: true, BandwidthGbps: 194.4,
+				},
+				{
+					Test: PingTest{Kind: RDMABwSameRail,
+						SrcNode: "node-b", DstNode: "node-a",
+						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
+					OK: true, BandwidthGbps: 193.8,
+				},
+				// ib_write_bw: cross-rail canary passes with bandwidth
+				{
+					Test: PingTest{Kind: RDMABwCrossRail,
+						SrcNode: "node-a", DstNode: "node-b",
+						Rail: "rail-0→rail-1", SrcRail: "rail-0", DstRail: "rail-1"},
+					OK: true, BandwidthGbps: 187.6,
 				},
 			},
-			Summary: MatrixSummary{TotalTests: 5, Passed: 4, Failed: 1},
+			Summary: MatrixSummary{TotalTests: 8, Passed: 7, Failed: 1},
 		},
 		Warnings: []string{
 			"SriovNetworkNodePolicy/ethernet-sriov-rail-0 is in-progress on 1/2 nodes — re-run later.",
 			"IPPool/rail-0-pool not found — l8k generate was not run before validate.",
 		},
+		PresetMatches: []presetmatch.Result{
+			{
+				Group:        "vendor-a-h200",
+				MachineType:  "vendor-a",
+				GPUType:      "h200",
+				Manufacturer: "ACME",
+				Status:       presetmatch.StatusDeviation,
+				PresetName:   "vendor-a/h200",
+				Reason:       "1 deviation(s) from matched preset",
+				Deviations: []config.PresetDeviationEntry{
+					{Field: "deviceID", Expected: "1023", Got: "1021", Detail: "expected ConnectX-8 (1023), found ConnectX-7 (1021)"},
+				},
+			},
+		},
 	}
 }
 
-const goldenPath = "testdata/verify-report.golden.html"
+const goldenPath = "testdata/k8s-launch-kit-validation-report.golden.html"
 
 func TestRenderHTML_Golden(t *testing.T) {
 	var buf bytes.Buffer

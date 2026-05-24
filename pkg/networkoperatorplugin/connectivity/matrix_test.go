@@ -23,16 +23,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mkPod builds a TestPod fixture with synthetic IPs *and* an RDMA
+// device per rail. Plan() now requires both sides of a pair to have an
+// RDMA device for the rail in order to emit tests (since the matrix
+// is RDMA-only), so the test fixture must populate RDMADevsByRail to
+// produce non-empty plans.
 func mkPod(name string, rails ...string) TestPod {
 	tp := TestPod{
-		Name:      name,
-		IPsByRail: map[string]string{},
+		Name:           name,
+		IPsByRail:      map[string]string{},
+		RDMADevsByRail: map[string]string{},
 	}
-	for i, rail := range rails {
-		// Synthesize an IP deterministic per (pod, rail) so failed
-		// assertions are readable: pod-A rail-0 → "10.0.<podIdx>.<railIdx>"
-		_ = i
+	for _, rail := range rails {
 		tp.IPsByRail[rail] = fakeIP(name, rail)
+		tp.RDMADevsByRail[rail] = fakeRDMADev(name, rail)
 		tp.RailOrder = append(tp.RailOrder, rail)
 	}
 	return tp
@@ -70,12 +74,19 @@ func fakeIP(pod, rail string) string {
 	return "0.0.0.0"
 }
 
+// fakeRDMADev returns a stable mlx5-style device name per (pod, rail).
+// The test only needs the strings to be non-empty for Plan() to emit
+// tests; the actual device names are never opened.
+func fakeRDMADev(pod, rail string) string {
+	return "mlx5_" + pod + "_" + rail
+}
+
 func TestPlan_SoftSkipOnFewerThan2Pods(t *testing.T) {
 	t.Run("zero pods", func(t *testing.T) {
 		plan := Plan(nil)
 		require.NotNil(t, plan.Skip)
 		assert.Contains(t, plan.Skip.Reason, "0 schedulable")
-		assert.Empty(t, plan.SameRail)
+		assert.Empty(t, plan.RDMASameRail)
 	})
 	t.Run("one pod", func(t *testing.T) {
 		plan := Plan([]TestPod{mkPod("pod-a", "rail-0", "rail-1")})
@@ -91,18 +102,28 @@ func TestPlan_TwoPodsOneRail(t *testing.T) {
 	})
 	require.Nil(t, plan.Skip)
 
-	// Same-rail: 2 pods × 1 ordered pair each direction × 1 rail = 2 tests.
-	assert.Len(t, plan.SameRail, 2)
+	// Same-rail: 2 pods × 1 ordered pair each direction × 1 rail = 2
+	// rping tests and 2 ib_write_bw tests.
+	assert.Len(t, plan.RDMASameRail, 2)
+	assert.Len(t, plan.RDMABwSameRail, 2)
 	// Cross-rail canary requires ≥2 rails per pod — skipped here.
-	assert.Empty(t, plan.CrossRail)
+	assert.Empty(t, plan.RDMACrossRail)
+	assert.Empty(t, plan.RDMABwCrossRail)
 
-	// Check direction coverage: both A→B and B→A appear.
+	// Check direction coverage: both A→B and B→A appear in the rping
+	// slice.
 	dirs := map[string]bool{}
-	for _, t := range plan.SameRail {
+	for _, t := range plan.RDMASameRail {
 		dirs[t.SrcPod+"→"+t.DstPod] = true
 	}
 	assert.True(t, dirs["pod-a→pod-b"])
 	assert.True(t, dirs["pod-b→pod-a"])
+	// Every emitted test carries the per-side RDMA device name so
+	// ib_write_bw can pass `-d <dev>`.
+	for _, tt := range plan.RDMABwSameRail {
+		assert.NotEmpty(t, tt.SrcRDMADev, "%+v", tt)
+		assert.NotEmpty(t, tt.DstRDMADev, "%+v", tt)
+	}
 }
 
 func TestPlan_TwoPodsTwoRails_IncludesCrossRailCanary(t *testing.T) {
@@ -112,15 +133,18 @@ func TestPlan_TwoPodsTwoRails_IncludesCrossRailCanary(t *testing.T) {
 	})
 	require.Nil(t, plan.Skip)
 
-	// Same-rail: 2 pods × 1 ordered pair each direction × 2 rails = 4.
-	assert.Len(t, plan.SameRail, 4)
-	// Cross-rail canary: one per ordered pod pair = 2.
-	assert.Len(t, plan.CrossRail, 2)
+	// Same-rail: 2 pods × 1 ordered pair each direction × 2 rails = 4
+	// per family.
+	assert.Len(t, plan.RDMASameRail, 4)
+	assert.Len(t, plan.RDMABwSameRail, 4)
+	// Cross-rail canary: one per ordered pod pair = 2 per family.
+	assert.Len(t, plan.RDMACrossRail, 2)
+	assert.Len(t, plan.RDMABwCrossRail, 2)
 
 	// Each cross-rail test should ping rail-0 → rail-1 (the first two
 	// rails by sorted order). Concrete IP assertions catch
 	// off-by-one in railOrder indexing.
-	for _, c := range plan.CrossRail {
+	for _, c := range plan.RDMACrossRail {
 		assert.Equal(t, "rail-0", c.SrcRail)
 		assert.Equal(t, "rail-1", c.DstRail)
 		assert.Equal(t, "rail-0→rail-1", c.Rail)
@@ -141,13 +165,15 @@ func TestPlan_ThreePodsThreeRails_FullMatrix(t *testing.T) {
 	//   - pod-a ↔ pod-b: 3 rails × 2 dirs = 6
 	//   - pod-a ↔ pod-c: 2 rails × 2 dirs = 4
 	//   - pod-b ↔ pod-c: 2 rails × 2 dirs = 4
-	// Total = 14.
-	assert.Len(t, plan.SameRail, 14)
+	// Total = 14 per family (rping + ib_write_bw each).
+	assert.Len(t, plan.RDMASameRail, 14)
+	assert.Len(t, plan.RDMABwSameRail, 14)
 
 	// Cross-rail canary requires ≥2 rails on both endpoints. All
 	// three pods qualify (pod-c has 2), so every ordered pair gets
-	// one canary: 3 × 2 = 6.
-	assert.Len(t, plan.CrossRail, 6)
+	// one canary: 3 × 2 = 6 per family.
+	assert.Len(t, plan.RDMACrossRail, 6)
+	assert.Len(t, plan.RDMABwCrossRail, 6)
 }
 
 func TestPlan_StableOrderingAcrossRuns(t *testing.T) {
@@ -158,10 +184,12 @@ func TestPlan_StableOrderingAcrossRuns(t *testing.T) {
 	}
 	plan1 := Plan(pods)
 	plan2 := Plan(pods)
-	require.Equal(t, plan1.SameRail, plan2.SameRail)
-	require.Equal(t, plan1.CrossRail, plan2.CrossRail)
+	require.Equal(t, plan1.RDMASameRail, plan2.RDMASameRail)
+	require.Equal(t, plan1.RDMACrossRail, plan2.RDMACrossRail)
+	require.Equal(t, plan1.RDMABwSameRail, plan2.RDMABwSameRail)
+	require.Equal(t, plan1.RDMABwCrossRail, plan2.RDMABwCrossRail)
 	// First test should always be from pod-a (sorted-by-name).
-	assert.Equal(t, "pod-a", plan1.SameRail[0].SrcPod)
+	assert.Equal(t, "pod-a", plan1.RDMASameRail[0].SrcPod)
 }
 
 func TestPlan_SkipsPairsWithoutSharedRail(t *testing.T) {
@@ -171,7 +199,21 @@ func TestPlan_SkipsPairsWithoutSharedRail(t *testing.T) {
 	})
 	require.Nil(t, plan.Skip)
 	// No shared rail → zero same-rail tests.
-	assert.Empty(t, plan.SameRail)
+	assert.Empty(t, plan.RDMASameRail)
+	assert.Empty(t, plan.RDMABwSameRail)
 	// Each pod only has 1 rail → no cross-rail canary either.
-	assert.Empty(t, plan.CrossRail)
+	assert.Empty(t, plan.RDMACrossRail)
+	assert.Empty(t, plan.RDMABwCrossRail)
+}
+
+func TestPlan_SkipsPairsWithoutRDMADevices(t *testing.T) {
+	// Pod with an IP but no RDMA device for the shared rail —
+	// Plan() drops those silently since RunIbWriteBw needs -d <dev>.
+	a := mkPod("pod-a", "rail-0")
+	b := mkPod("pod-b", "rail-0")
+	delete(b.RDMADevsByRail, "rail-0")
+	plan := Plan([]TestPod{a, b})
+	require.Nil(t, plan.Skip)
+	assert.Empty(t, plan.RDMASameRail, "no test should be emitted for the missing-device pair")
+	assert.Empty(t, plan.RDMABwSameRail)
 }

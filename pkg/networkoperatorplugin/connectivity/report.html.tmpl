@@ -123,6 +123,36 @@ main {
   padding: 32px 40px 48px;
 }
 
+.verdict-banner {
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-bottom: 28px;
+  border: 1px solid;
+}
+.verdict-banner.verdict-pass {
+  background: var(--success-bg);
+  border-color: var(--success-bd);
+  color: var(--success);
+}
+.verdict-banner.verdict-fail {
+  background: var(--error-bg);
+  border-color: var(--error-bd);
+  color: var(--error);
+}
+.verdict-headline {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.verdict-list {
+  margin-top: 10px;
+  padding-left: 20px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.verdict-list li { margin-top: 2px; }
+.verdict-notes { color: var(--text-muted); }
+
 section {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -324,6 +354,26 @@ details table th, details table td { padding: 6px 10px; }
 }
 .matrix-rail code { font-size: 12px; color: var(--text); }
 
+/* Colour-coded headers for the paired Actual / Expected PF
+ * sub-tables. Actual = red ("this is what the cluster has;
+ * the highlighted rows are wrong"). Expected = orange ("this
+ * is what the certified topology says; the highlighted rows
+ * are what's missing or mismatched"). */
+.matrix-rail.pf-section-actual {
+  color: #991B1B;                            /* red-800 */
+  background: rgba(220, 38, 38, 0.10);
+  border-left: 3px solid #DC2626;            /* red-600 */
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.matrix-rail.pf-section-expected {
+  color: #9A3412;                            /* orange-800 */
+  background: rgba(234, 88, 12, 0.10);
+  border-left: 3px solid #EA580C;            /* orange-600 */
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
 .summary-line {
   font-size: 14px;
   color: var(--text);
@@ -372,6 +422,35 @@ details table th, details table td { padding: 6px 10px; }
 }
 .muted { color: var(--text-muted); }
 
+/* Platform-topology diff styling. The PF section renders paired
+ * Actual / Expected sub-tables; rows that don't match their
+ * counterpart in the other table are tinted amber. The reader
+ * scans down both tables and the divergence is obvious without
+ * inline annotations. */
+.mismatch-inline {
+  color: #B45309;       /* amber-700, contrast against the row */
+  font-size: 11px;
+  margin-left: 6px;
+}
+/* Mismatched rows take their tint from the table they're in,
+ * matching the section header: red in Actual, orange in
+ * Expected. The adjacent-sibling combinator targets the <table>
+ * that immediately follows each section header div. */
+.matrix-rail.pf-section-actual + table tr.pf-mismatched {
+  background: rgba(220, 38, 38, 0.12);
+}
+.matrix-rail.pf-section-actual + table tr.pf-mismatched td {
+  border-top: 1px solid rgba(220, 38, 38, 0.32);
+  border-bottom: 1px solid rgba(220, 38, 38, 0.32);
+}
+.matrix-rail.pf-section-expected + table tr.pf-mismatched {
+  background: rgba(234, 88, 12, 0.12);
+}
+.matrix-rail.pf-section-expected + table tr.pf-mismatched td {
+  border-top: 1px solid rgba(234, 88, 12, 0.32);
+  border-bottom: 1px solid rgba(234, 88, 12, 0.32);
+}
+
 .warning-list {
   list-style: none;
   padding-left: 0;
@@ -419,6 +498,26 @@ footer strong { color: var(--text-muted); }
 </header>
 <main>
 
+<div class="verdict-banner verdict-{{if .Verdict.Pass}}pass{{else}}fail{{end}}">
+  <div class="verdict-headline">
+    {{if .Verdict.Pass}}✓ VALIDATION PASSED{{else}}✗ VALIDATION FAILED{{end}}
+  </div>
+  {{- if .Verdict.Reasons}}
+  <ul class="verdict-list verdict-reasons">
+    {{- range .Verdict.Reasons}}
+    <li>{{.}}</li>
+    {{- end}}
+  </ul>
+  {{- end}}
+  {{- if .Verdict.Notes}}
+  <ul class="verdict-list verdict-notes">
+    {{- range .Verdict.Notes}}
+    <li>{{.}}</li>
+    {{- end}}
+  </ul>
+  {{- end}}
+</div>
+
 <section>
   <h2>Profile</h2>
   <div class="body">
@@ -436,6 +535,36 @@ footer strong { color: var(--text-muted); }
 <section>
   <h2>Node groups ({{len .NodeGroups}})</h2>
   <div class="body">
+    {{- if .PresetMatches}}
+    <div class="matrix-rail">Platform topology validation</div>
+    <table>
+      <thead>
+        <tr><th>Group</th><th>Machine</th><th>GPU</th><th>Status</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {{- range .PresetMatches}}
+        <tr class="{{presetStatusClass .Status}}">
+          <td><code>{{or .Group "—"}}</code></td>
+          <td>{{or .MachineType "—"}}</td>
+          <td>{{or .GPUType "—"}}</td>
+          <td><span class="badge {{presetStatusClass .Status}}">{{presetStatusLabel .Status}}</span></td>
+          <td>
+            {{- if eq (printf "%s" .Status) "match"}}
+            matches certified topology for <code>{{.PresetName}}</code> server type
+            {{- else if eq (printf "%s" .Status) "deviation"}}
+            does not match certified topology for <code>{{.PresetName}}</code> server type · {{.Reason}}
+            {{- else if eq (printf "%s" .Status) "not-found"}}
+            no certified topology available for this server type · {{.Reason}}
+            {{- else}}
+            {{.Reason}}
+            {{- end}}
+          </td>
+        </tr>
+        {{- end}}
+      </tbody>
+    </table>
+    {{- end}}
+
     {{- if .NodeGroups}}
     {{- range .NodeGroups}}
     <div class="nodegroup">
@@ -466,17 +595,39 @@ footer strong { color: var(--text-muted); }
           {{- if and (not .SriovCapable) (not .RdmaCapable) (not .IbCapable)}}<span class="muted">none</span>{{end}}
         </dd>
         {{- if .PresetApplied}}
-        <dt>Preset</dt><dd>applied</dd>
+        <dt>Certified topology</dt><dd>applied</dd>
         {{- end}}
       </dl>
 
       {{- if .EastWestPFs}}
-      <div class="matrix-rail">East-west PFs ({{len .EastWestPFs}})</div>
+      <div class="matrix-rail pf-section-actual">East-west PFs — Actual ({{if .PFCountMismatch}}{{.PFCountMismatch.Got}} <span class="mismatch-inline">certified topology expects {{.PFCountMismatch.Expected}}</span>{{else}}{{len .EastWestPFs}}{{end}})</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
         <tbody>
           {{- range .EastWestPFs}}
-          <tr>
+          <tr{{if .Mismatched}} class="pf-mismatched"{{end}}>
+            <td><code>{{.PciAddress}}</code></td>
+            <td><code>{{or .DeviceID "—"}}</code></td>
+            <td>{{.Rail}}</td>
+            <td><code>{{or .NetworkInterface "—"}}</code></td>
+            <td><code>{{or .RdmaDevice "—"}}</code></td>
+            <td>{{or .PSID "—"}}</td>
+            <td>{{or .PartNumber "—"}}</td>
+            <td>{{or .NumaNode "—"}}</td>
+            <td>{{or .ConnectedGPU "—"}}{{if .GPUProximity}} ({{.GPUProximity}}){{end}}</td>
+          </tr>
+          {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
+
+      {{- if .ExpectedEastWestPFs}}
+      <div class="matrix-rail pf-section-expected">East-west PFs — Expected by certified topology ({{len .ExpectedEastWestPFs}})</div>
+      <table>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Rail</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th><th>NUMA</th><th>GPU</th></tr></thead>
+        <tbody>
+          {{- range .ExpectedEastWestPFs}}
+          <tr{{if .Mismatched}} class="pf-mismatched"{{end}}>
             <td><code>{{.PciAddress}}</code></td>
             <td><code>{{or .DeviceID "—"}}</code></td>
             <td>{{.Rail}}</td>
@@ -493,12 +644,12 @@ footer strong { color: var(--text-muted); }
       {{- end}}
 
       {{- if .NorthSouthPFs}}
-      <div class="matrix-rail">North-south PFs ({{len .NorthSouthPFs}})</div>
+      <div class="matrix-rail pf-section-actual">North-south PFs — Actual ({{len .NorthSouthPFs}})</div>
       <table>
         <thead><tr><th>PCI</th><th>Device ID</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th></tr></thead>
         <tbody>
           {{- range .NorthSouthPFs}}
-          <tr>
+          <tr{{if .Mismatched}} class="pf-mismatched"{{end}}>
             <td><code>{{.PciAddress}}</code></td>
             <td><code>{{or .DeviceID "—"}}</code></td>
             <td><code>{{or .NetworkInterface "—"}}</code></td>
@@ -511,13 +662,20 @@ footer strong { color: var(--text-muted); }
       </table>
       {{- end}}
 
-      {{- if .PresetDeviations}}
-      <div class="matrix-rail">Preset deviations ({{len .PresetDeviations}})</div>
+      {{- if .ExpectedNorthSouthPFs}}
+      <div class="matrix-rail pf-section-expected">North-south PFs — Expected by certified topology ({{len .ExpectedNorthSouthPFs}})</div>
       <table>
-        <thead><tr><th>Field</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead>
+        <thead><tr><th>PCI</th><th>Device ID</th><th>Netdev</th><th>RDMA</th><th>PSID</th><th>Part #</th></tr></thead>
         <tbody>
-          {{- range .PresetDeviations}}
-          <tr><td>{{.Field}}</td><td><code>{{or .Expected "—"}}</code></td><td><code>{{or .Got "—"}}</code></td><td>{{.Detail}}</td></tr>
+          {{- range .ExpectedNorthSouthPFs}}
+          <tr{{if .Mismatched}} class="pf-mismatched"{{end}}>
+            <td><code>{{.PciAddress}}</code></td>
+            <td><code>{{or .DeviceID "—"}}</code></td>
+            <td><code>{{or .NetworkInterface "—"}}</code></td>
+            <td><code>{{or .RdmaDevice "—"}}</code></td>
+            <td>{{or .PSID "—"}}</td>
+            <td>{{or .PartNumber "—"}}</td>
+          </tr>
           {{- end}}
         </tbody>
       </table>
@@ -681,12 +839,12 @@ footer strong { color: var(--text-muted); }
       <p class="summary-line">
         <strong>{{.Matrix.Summary.Passed}}</strong>/{{.Matrix.Summary.TotalTests}} passed
         {{- if gt .Matrix.Summary.Failed 0}} · <strong>{{.Matrix.Summary.Failed}}</strong> failed{{end}}
-        {{- if gt .Matrix.Summary.ExecErrors 0}} · <strong>{{.Matrix.Summary.ExecErrors}}</strong> exec error(s){{end}}
       </p>
 
       {{- $rails := matrixByRail .Matrix.PingResults}}
       {{- range $rails}}
-        <div class="matrix-rail">Rail <code>{{.Rail}}</code></div>
+        {{- $fam := .Family}}
+        <div class="matrix-rail">Rail <code>{{.Rail}}</code> — {{familyTitle $fam}}</div>
         <table class="matrix-table">
           <thead>
             <tr>
@@ -706,7 +864,7 @@ footer strong { color: var(--text-muted); }
                 <td class="cell-self">—</td>
                 {{- else}}
                   {{- $cell := index (index $rs.Table $src) $dst}}
-                  <td class="{{cellClass $cell}}">{{cellText $cell}}</td>
+                  <td class="{{cellClass $cell}}">{{cellText $cell $fam}}</td>
                 {{- end}}
               {{- end}}
             </tr>
@@ -715,21 +873,22 @@ footer strong { color: var(--text-muted); }
         </table>
       {{- end}}
 
-      {{- $cross := matrixCrossRail .Matrix.PingResults}}
-      {{- if $cross}}
-        <div class="matrix-rail">Cross-rail canary</div>
+      {{- $crossSections := matrixCrossRail .Matrix.PingResults}}
+      {{- range $crossSections}}
+        {{- $fam := .Family}}
+        <div class="matrix-rail">Cross-rail canary — {{familyTitle $fam}}</div>
         <table class="matrix-table">
           <thead>
             <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
           </thead>
           <tbody>
-            {{- range $cross}}
+            {{- range .Results}}
             <tr>
               <td>{{srcLabel .Test}}</td>
               <td><code>{{.Test.SrcRail}}</code></td>
               <td>{{dstLabel .Test}}</td>
               <td><code>{{.Test.DstRail}}</code></td>
-              <td class="{{cellClass .}}">{{cellText .}}</td>
+              <td class="{{cellClass .}}">{{cellText . $fam}}</td>
             </tr>
             {{- end}}
           </tbody>

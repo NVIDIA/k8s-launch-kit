@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
+	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
@@ -295,55 +295,44 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			discoverGroupFabric(ctx, p.RESTConfig,
 				defaultConfig.NetworkOperator.Namespace, group, dsPods)
 
-			// Try to enrich with a predefined topology preset for this (machine,
-			// GPU) pair. Presets provide authoritative traffic classification,
-			// rail assignments, and NUMA/GPU topology metadata for known
-			// hardware configurations. Lookup is exact-match on (machineType,
+			// Try to enrich with a predefined topology preset for this
+			// (machine, GPU) pair. presetmatch.MatchGroup runs the
+			// shared lookup + deviation comparison (also used by
+			// `l8k validate`); the discovery path then additionally
+			// applies the preset onto the group so rail/NUMA topology
+			// fields populate. Lookup is exact-match on (machineType,
 			// gpuType) — both must be known for a preset to apply.
-			if group.MachineType != "" && group.GPUType != "" {
-				log.Log.V(1).Info("Looking up preset by (machineType, gpuType)",
-					"group", group.Identifier,
-					"machineType", group.MachineType,
-					"gpuType", group.GPUType)
-				preset, presetErr := presets.LoadPreset(group.MachineType, group.GPUType)
-				if presetErr != nil {
-					log.Log.Error(presetErr, "failed to load preset",
-						"machineType", group.MachineType, "gpuType", group.GPUType)
-					uiOutput.Warning("Failed to load preset for %s/%s: %v",
-						group.MachineType, group.GPUType, presetErr)
-				} else if preset == nil {
-					log.Log.V(1).Info("No preset matched (machineType, gpuType)",
-						"group", group.Identifier,
-						"machineType", group.MachineType,
-						"gpuType", group.GPUType)
-				} else {
-					// Always apply the matched preset on a best-effort basis.
-					// Any discrepancies (PF count, PCI address drift,
-					// device-ID drift) are recorded as soft deviations and
-					// re-warned about on every subsequent config load.
-					deviations := presets.ValidatePreset(preset, group.PFs)
+			matchResult := presetmatch.MatchGroup(*group)
+			log.Log.V(1).Info("Preset match",
+				"group", group.Identifier,
+				"machineType", group.MachineType,
+				"gpuType", group.GPUType,
+				"status", string(matchResult.Status),
+				"presetName", matchResult.PresetName,
+				"deviationCount", len(matchResult.Deviations))
+			switch matchResult.Status {
+			case presetmatch.StatusMatch, presetmatch.StatusDeviation:
+				// LoadPreset was successful — load it again to get
+				// the Topology so ApplyPreset can enrich the group.
+				// (MatchGroup intentionally doesn't mutate.)
+				if preset, err := presets.LoadPreset(group.MachineType, group.GPUType); err == nil && preset != nil {
 					presets.ApplyPreset(preset, group)
-					log.Log.V(1).Info("Preset matched and applied",
-						"group", group.Identifier,
-						"machineType", group.MachineType,
-						"gpuType", group.GPUType,
-						"presetPFCount", len(preset.PFs),
-						"discoveredPFCount", len(group.PFs),
-						"deviationCount", len(deviations))
-					if len(deviations) > 0 {
-						group.PresetDeviation = deviations
-						log.Log.Info("Preset applied with deviations from matched preset",
-							"group", group.Identifier,
-							"machineType", group.MachineType,
-							"gpuType", group.GPUType,
-							"deviationCount", len(deviations))
-						uiOutput.Warning(
-							"Preset for %s/%s applied with %d deviation(s) from the matched preset. The deployment is not certified — see 'presetDeviation' in cluster-config.yaml.",
-							group.MachineType, group.GPUType, len(deviations))
-					} else {
-						uiOutput.Info("Applied preset configuration for %s", group.MachineType)
-					}
 				}
+				if matchResult.Status == presetmatch.StatusDeviation {
+					group.PresetDeviation = matchResult.Deviations
+					uiOutput.Warning(
+						"Preset for %s/%s applied with %d deviation(s) from the matched preset. The deployment is not certified — see 'presetDeviation' in cluster-config.yaml.",
+						group.MachineType, group.GPUType, len(matchResult.Deviations))
+				} else {
+					uiOutput.Info("Applied preset configuration for %s", group.MachineType)
+				}
+			case presetmatch.StatusNotFound:
+				// No catalog entry — discovery continues without
+				// preset enrichment. Logged at V(1) only; not a
+				// user-actionable warning.
+			case presetmatch.StatusSkipped:
+				// machineType / gpuType wasn't discovered. Discovery
+				// already logs this via the hardware-type probes.
 			}
 
 			modules, err := discoverThirdPartyRDMAModules(ctx, p.RESTConfig,
@@ -1360,16 +1349,21 @@ func truncateForLog(s string, maxLen int) string {
 
 // discoverGroupFabric probes the InfiniBand sysfs entries on a representative
 // daemon pod for every east-west PF in `group` that has an RdmaDevice and,
-// when the per-port verdicts unanimously agree on a confirmed value, sets
+// when the per-port verdicts unanimously agree on a value, sets
 // `group.LinkType`. Otherwise the field is left empty — discovery couldn't
-// prove the cluster is using a specific fabric, and downstream code treats
-// absence as "unknown".
+// determine the fabric type, and downstream code treats absence as
+// "unknown".
 //
-// "Confirmed" means the port is ACTIVE and (for InfiniBand) a subnet
-// manager is present (sm_lid != 0). Anything else — port down, IB without
-// SM, malformed sysfs output — yields no contribution to the group's
-// verdict. Reading link_layer alone would be unreliable: that file just
-// reflects firmware config and may be a default the cluster doesn't use.
+// The verdict is the port's configured `link_layer` (sysfs file) — what
+// the firmware says the port is wired for, regardless of whether the
+// netdev is currently up. We deliberately ignore `state` (ACTIVE vs
+// DOWN) and `sm_lid` (IB subnet manager presence) here: requiring an
+// active link broke discovery on freshly-provisioned clusters where
+// the switch wasn't yet plugged in, and the configured link_layer is
+// what every downstream template needs anyway. An operator who
+// reflashes a card to a different fabric needs to re-run discover, but
+// that's the only failure mode we accept in exchange for the
+// "discover before the cluster is wired up" win.
 //
 // Multi-node groups whose RdmaDevice is empty (per the existing
 // per-node-vs-group safety rule) skip the probe — there's no ibdev name
@@ -1391,7 +1385,7 @@ func discoverGroupFabric(ctx context.Context, restConfig *rest.Config,
 		containerName = targetPod.Spec.Containers[0].Name
 	}
 
-	verdicts := map[string]int{} // confirmed linkType -> count
+	verdicts := map[string]int{} // linkType -> count of contributing PFs
 	probed := 0
 	for _, pf := range group.PFs {
 		if pf.Traffic != "east-west" || pf.RdmaDevice == "" {
@@ -1429,7 +1423,7 @@ func discoverGroupFabric(ctx context.Context, restConfig *rest.Config,
 				"group", group.Identifier,
 				"linkType", k,
 				"probedPFs", probed,
-				"confirmedPFs", verdicts[k])
+				"contributingPFs", verdicts[k])
 		}
 	case len(verdicts) > 1:
 		log.Log.V(1).Info("Group fabric ambiguous (probes disagree); leaving linkType unset",
@@ -1437,126 +1431,65 @@ func discoverGroupFabric(ctx context.Context, restConfig *rest.Config,
 			"probedPFs", probed,
 			"verdicts", verdicts)
 	default:
-		log.Log.V(1).Info("Group fabric unconfirmed (no port produced a confirmed verdict); leaving linkType unset",
+		log.Log.V(1).Info("Group fabric unresolved (no port reported a recognised link_layer); leaving linkType unset",
 			"group", group.Identifier,
 			"probedPFs", probed)
 	}
 }
 
 // discoverPortFabric reads
-// /sys/class/infiniband/<rdmaDevice>/ports/<port>/{state,phys_state,link_layer,sm_lid}
-// inside the daemon pod via a single shell exec and returns the confirmed
-// fabric for that port (empty when the port could not produce a confirmed
-// verdict). rawSummary is a short human-readable joined version of the
-// four sysfs values for debug logs.
+// /sys/class/infiniband/<rdmaDevice>/ports/<port>/link_layer inside the
+// daemon pod and returns the configured fabric for that port —
+// "Ethernet", "InfiniBand", or "" when the file is empty / unreadable /
+// unrecognised. The port's runtime state (ACTIVE / DOWN) is
+// intentionally NOT consulted: discovery has to work on freshly
+// provisioned clusters where the switch isn't yet plugged in.
 //
 // Tries `/sys/class/infiniband/...` first (works when the daemon pod
 // shares host pid+net namespace and exposes the host sysfs at /sys),
 // then falls back to `/host/sys/class/infiniband/...` for daemons that
 // mount the host filesystem under /host (matches consts.HostPath =
-// "/host" used by the rest of nic-configuration-operator). Stderr is
-// captured rather than swallowed so a failed read surfaces in the
-// debug log instead of producing a silent empty verdict.
+// "/host" used by the rest of nic-configuration-operator). The first
+// path that yields a recognised link_layer wins.
 func discoverPortFabric(ctx context.Context, restConfig *rest.Config,
 	namespace, podName, containerName, rdmaDevice string, port int) (string, string, error) {
+	var lastErr error
 	for _, base := range []string{
-		fmt.Sprintf("/sys/class/infiniband/%s/ports/%d", rdmaDevice, port),
-		fmt.Sprintf("/host/sys/class/infiniband/%s/ports/%d", rdmaDevice, port),
+		fmt.Sprintf("/sys/class/infiniband/%s/ports/%d/link_layer", rdmaDevice, port),
+		fmt.Sprintf("/host/sys/class/infiniband/%s/ports/%d/link_layer", rdmaDevice, port),
 	} {
-		cmd := fmt.Sprintf(
-			"echo state=$(cat %s/state); "+
-				"echo phys_state=$(cat %s/phys_state); "+
-				"echo link_layer=$(cat %s/link_layer); "+
-				"echo sm_lid=$(cat %s/sm_lid)",
-			base, base, base, base)
+		cmd := fmt.Sprintf("cat %s", base)
 		output, err := execInPod(ctx, restConfig, namespace, podName, containerName,
 			[]string{"/bin/sh", "-c", cmd})
-		// Even on exec error we attempt to parse — `cat` returns
-		// non-zero for missing files but the SPDY executor still
-		// captures the stdout from earlier successful echoes.
+		if err != nil {
+			lastErr = err
+			log.Log.V(1).Info("Fabric port probe: read failed at this base",
+				"rdmaDevice", rdmaDevice, "port", port, "base", base,
+				"execErr", err.Error())
+			continue
+		}
 		linkType, raw := parsePortFabricVerdict(output)
 		if linkType != "" {
 			return linkType, raw, nil
 		}
-		// First-path miss: log the raw read so an operator can see
-		// what came back, then try the next base path. We only
-		// surface the final error (if any) to the caller.
-		log.Log.V(1).Info("Fabric port probe: empty/unconfirmed at this base",
+		log.Log.V(1).Info("Fabric port probe: link_layer at this base not recognised",
 			"rdmaDevice", rdmaDevice, "port", port, "base", base,
-			"raw", raw, "execErr", errString(err))
-		if err == nil && raw != "" {
-			// Got a clean read that simply didn't meet the
-			// confirmation criteria (port DOWN, IB without
-			// SM, etc.). No point trying the other base —
-			// the port really isn't in a usable state.
-			return "", raw, nil
-		}
+			"raw", raw)
 	}
-	return "", "", fmt.Errorf("no readable sysfs at either /sys/class/infiniband/%s or /host/sys/class/infiniband/%s",
-		rdmaDevice, rdmaDevice)
+	if lastErr != nil {
+		return "", "", lastErr
+	}
+	return "", "", nil
 }
 
-// errString returns err.Error() or "" when err is nil — used in the
-// V(1) probe log so we don't get the literal "<nil>" sentinel.
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
-// parsePortFabricVerdict converts the four-line "key=value" output of the
-// sysfs probe into a confirmed fabric verdict (or empty when no
-// confirmation is possible).
-//
-// Confirmation rule:
-//   - Active + InfiniBand + sm_lid != 0  → "InfiniBand".
-//   - Active + Ethernet                  → "Ethernet".
-//   - Anything else                      → "" (no confirmation; caller
-//     leaves group.LinkType unset).
-//
-// Active means the state file matches "ACTIVE" (case-insensitive); the
-// kernel formats it as "4: ACTIVE", "1: DOWN", etc.
+// parsePortFabricVerdict normalises a sysfs `link_layer` read into the
+// l8k vocabulary ("Ethernet" / "InfiniBand"). The output may be the
+// raw file content ("Ethernet\n"), a `cat`'s output with possible
+// trailing newline, or empty when the file didn't exist. raw is the
+// trimmed input echoed back for debug-log breadcrumbs.
 func parsePortFabricVerdict(output string) (linkType, raw string) {
-	fields := map[string]string{}
-	for _, line := range strings.Split(output, "\n") {
-		eq := strings.IndexByte(line, '=')
-		if eq < 0 {
-			continue
-		}
-		fields[strings.TrimSpace(line[:eq])] = strings.TrimSpace(line[eq+1:])
-	}
-	state := fields["state"]
-	linkLayer := normalizeLinkLayer(fields["link_layer"])
-	smLid := fields["sm_lid"]
-
-	raw = fmt.Sprintf("state=%q phys_state=%q link_layer=%q sm_lid=%q",
-		state, fields["phys_state"], fields["link_layer"], smLid)
-
-	active := strings.Contains(strings.ToUpper(state), "ACTIVE")
-	hasSM := smLidIsNonZero(smLid)
-
-	switch {
-	case active && linkLayer == "InfiniBand" && hasSM:
-		return "InfiniBand", raw
-	case active && linkLayer == "Ethernet":
-		return "Ethernet", raw
-	default:
-		return "", raw
-	}
-}
-
-// smLidIsNonZero parses a sysfs `sm_lid` value (e.g. "0", "0x0", "0x0000",
-// "0x0001") as an unsigned integer and returns true when the value is
-// strictly greater than zero. Kernel versions disagree on the format —
-// some emit decimal, some emit hex — so we accept both via auto-base
-// (base=0 in strconv.ParseUint).
-func smLidIsNonZero(s string) bool {
-	v, err := strconv.ParseUint(strings.TrimSpace(s), 0, 32)
-	if err != nil {
-		return false
-	}
-	return v != 0
+	raw = strings.TrimSpace(output)
+	return normalizeLinkLayer(raw), raw
 }
 
 // normalizeLinkLayer canonicalises sysfs link_layer strings to the YAML

@@ -44,7 +44,7 @@ spec:
       {{- end }}
       containers:
       - name: test-container
-        image: mellanox/rping-test
+        image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
         command: ["/bin/bash", "-c", "sleep infinity"]
         securityContext:
           capabilities:
@@ -108,7 +108,7 @@ spec:
       {{- end }}
       containers:
       - name: test-container
-        image: mellanox/rping-test
+        image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
         command: ["/bin/bash", "-c", "sleep infinity"]
         securityContext:
           capabilities:

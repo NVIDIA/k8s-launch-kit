@@ -191,7 +191,7 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 			}
 
 			am := appliedManifest{obj: obj}
-			if obj.GetGeneration() > preApplyGen {
+			if obj.GetGeneration() > preApplyGen && crstate.NeedsObservationGate(obj.GroupVersionKind()) {
 				am.awaitObservationAfterRV = obj.GetResourceVersion()
 			}
 			appliedOthers = append(appliedOthers, am)
@@ -331,11 +331,12 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 
 	// applyUnstructured does an SSA Patch that returns the
 	// server-decided object on `obj`. Its current resourceVersion
-	// is "the version right after our apply". If the spec changed,
-	// any subsequent live RV != this value means the controller
-	// has written status since.
+	// is "the version right after our apply". If the spec changed
+	// AND this Kind's validator reads .status from the CR itself
+	// (vs from companion CRs), any subsequent live RV != this
+	// value means the controller has written status since.
 	awaitObservationAfterRV := ""
-	if obj.GetGeneration() > preApplyGen {
+	if obj.GetGeneration() > preApplyGen && crstate.NeedsObservationGate(obj.GroupVersionKind()) {
 		awaitObservationAfterRV = obj.GetResourceVersion()
 		log.Log.V(1).Info("Spec changed; gating poll on controller observation",
 			"kind", obj.GetKind(), "name", obj.GetName(),

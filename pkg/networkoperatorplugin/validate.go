@@ -62,7 +62,7 @@ type ValidationResult struct {
 	Details map[string]string
 
 	// LiveYAML is the cluster's view of the object, marshalled
-	// back to YAML for the verify-report's expandable "Live YAML"
+	// back to YAML for the validation report's expandable "Live YAML"
 	// dropdown. Empty when the object isn't present
 	// (StateNotDeployed) or when the post-validate fetch failed.
 	// Managed-fields / status are kept; we want the operator to

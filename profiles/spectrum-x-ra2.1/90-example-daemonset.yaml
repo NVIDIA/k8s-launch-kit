@@ -46,7 +46,8 @@ spec:
       {{- end }}
       containers:
       - name: spectrum-x-test
-        image: nvcr.io/nvidia/mellanox/rping-test:latest
+        image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
+        command: ["/bin/bash", "-c", "sleep infinity"]
         securityContext:
           capabilities:
             add: ["IPC_LOCK", "NET_RAW"]

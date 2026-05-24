@@ -190,6 +190,42 @@ func TestStatusStringValidator_RegisteredKinds(t *testing.T) {
 	}
 }
 
+func TestNeedsObservationGate(t *testing.T) {
+	cases := []struct {
+		gvk  schema.GroupVersionKind
+		want bool
+		name string
+	}{
+		// Kinds whose validators read .status on the CR itself —
+		// gate is meaningful, controller's RV bump is the signal.
+		{schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicClusterPolicy"}, true, "NicClusterPolicy"},
+		{schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicNodePolicy"}, true, "NicNodePolicy"},
+		{schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "HostDeviceNetwork"}, true, "HostDeviceNetwork"},
+		{schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "IPoIBNetwork"}, true, "IPoIBNetwork"},
+		{schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "MacvlanNetwork"}, true, "MacvlanNetwork"},
+		{schema.GroupVersionKind{Group: "spectrumx.nvidia.com", Version: "v1alpha2", Kind: "SpectrumXRailPoolConfig"}, true, "SpectrumXRailPoolConfig"},
+
+		// Kinds whose validators read companion CRs — gate would
+		// block forever waiting for an RV bump that never lands.
+		{schema.GroupVersionKind{Group: "sriovnetwork.openshift.io", Version: "v1", Kind: "SriovNetworkNodePolicy"}, false, "SriovNetworkNodePolicy (companion = SriovNetworkNodeState)"},
+		{schema.GroupVersionKind{Group: "configuration.net.nvidia.com", Version: "v1alpha1", Kind: "NicInterfaceNameTemplate"}, false, "NicInterfaceNameTemplate (companion = NicDevice)"},
+		{schema.GroupVersionKind{Group: "configuration.net.nvidia.com", Version: "v1alpha1", Kind: "NicConfigurationTemplate"}, false, "NicConfigurationTemplate (companion = NicDevice)"},
+
+		// Existence-only Kinds — no status at all, gate irrelevant.
+		{schema.GroupVersionKind{Group: "nv-ipam.nvidia.com", Version: "v1alpha1", Kind: "IPPool"}, false, "IPPool"},
+		{schema.GroupVersionKind{Group: "sriovnetwork.openshift.io", Version: "v1", Kind: "SriovNetwork"}, false, "SriovNetwork"},
+
+		// Wrong group / version — never gate.
+		{schema.GroupVersionKind{Group: "mellanox.com", Version: "v1beta1", Kind: "NicClusterPolicy"}, false, "wrong version"},
+		{schema.GroupVersionKind{Group: "other.example.com", Version: "v1", Kind: "NicClusterPolicy"}, false, "wrong group"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, NeedsObservationGate(tc.gvk))
+		})
+	}
+}
+
 // node returns a labelled *corev1.Node for fake-client seeding.
 func node(name string, labels map[string]string) *corev1.Node {
 	n := &corev1.Node{}

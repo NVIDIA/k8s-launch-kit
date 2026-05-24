@@ -66,3 +66,45 @@ func (r *Registry) Validate(ctx context.Context, c client.Client, obj *unstructu
 	}
 	return DefaultExistenceValidator(ctx, c, obj)
 }
+
+// NeedsObservationGate reports whether a CR's authoritative status
+// lives on the object itself (vs on a companion CR). The deploy
+// state machine uses this to decide whether the post-apply
+// resourceVersion bump is a meaningful "controller has reacted"
+// signal:
+//
+//   - true  — validator reads `obj.status.*` directly (NCP/NNP/the
+//     three Mellanox Network Kinds, SpectrumXRailPoolConfig
+//     v1alpha2). Until the controller writes status back the RV
+//     stays at the apply-time value, and the validator would return
+//     stale data from the previous reconcile. Gate the verdict
+//     until live RV moves past apply-time RV.
+//
+//   - false — validator reads companion CRs whose lifecycle is
+//     independent of the apply (SriovNetworkNodePolicy →
+//     SriovNetworkNodeState per node; NicInterfaceNameTemplate /
+//     NicConfigurationTemplate → NicDevice per device). The
+//     companion's RV evolves on its own schedule and the
+//     SriovNetworkNodePolicy itself never gets a status write, so
+//     gating on its RV would block forever. Validators in this
+//     bucket get to give an immediate verdict — staleness is their
+//     own problem to detect (and the SR-IOV validator does, by
+//     bucketing the "Succeeded but numVfs not at target" case as
+//     in-progress per the SR-IOV soft-progress rule).
+//
+// IPPool / CIDRPool / SriovNetwork / SriovIBNetwork / OVSNetwork
+// fall through to the default existence-only validator and also
+// don't need the gate — there's no status to read at all.
+func NeedsObservationGate(gvk schema.GroupVersionKind) bool {
+	if gvk.Group == "mellanox.com" && gvk.Version == "v1alpha1" {
+		switch gvk.Kind {
+		case "NicClusterPolicy", "NicNodePolicy",
+			"HostDeviceNetwork", "IPoIBNetwork", "MacvlanNetwork":
+			return true
+		}
+	}
+	if gvk.Group == spcxGroup && gvk.Version == spcxVersionAlpha2 && gvk.Kind == spcxKindRailPoolConfig {
+		return true
+	}
+	return false
+}

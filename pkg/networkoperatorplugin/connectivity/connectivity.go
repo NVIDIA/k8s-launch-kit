@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -39,18 +38,11 @@ type Options struct {
 	// validated).
 	ManifestDir string
 	// Timeout caps the whole connectivity phase: apply + DS rollout
-	// + ping execs + cleanup. 0 falls back to 5 minutes.
+	// + RDMA test execs + cleanup. 0 falls back to 5 minutes.
 	Timeout time.Duration
-	// PingCount is the number of ICMP echoes per src→dst pair
-	// (`ping -c N`). 0 falls back to 3.
-	PingCount int
 	// Keep leaves the test DaemonSets running after the matrix
 	// completes, for follow-up debugging. Default is to delete.
 	Keep bool
-	// MaxConcurrentPings caps the number of in-flight `ping` execs.
-	// 0 falls back to 16 — enough to keep a 4-rail × 16-pod matrix
-	// busy without overwhelming the apiserver.
-	MaxConcurrentPings int
 }
 
 // MatrixResult is the aggregate output of one connectivity run. It's
@@ -59,9 +51,8 @@ type MatrixResult struct {
 	// DaemonSets is one entry per applied example DS — typically
 	// one per merged group.
 	DaemonSets []DaemonSetReport
-	// PingResults is the flat list of every executed ping test.
-	// SameRail and CrossRail are derived views (filtered by Kind)
-	// for the report layer.
+	// PingResults is the flat list of every executed RDMA test
+	// (rping + ib_write_bw, same-rail + cross-rail).
 	PingResults []PingResult
 	// Skipped is non-nil when fewer than 2 schedulable test pods
 	// were available across all DaemonSets. The matrix is treated
@@ -72,11 +63,12 @@ type MatrixResult struct {
 }
 
 // MatrixSummary is the rolled-up counts validate prints under "summary".
+// Passed counts tests that exited cleanly; Failed counts tests that
+// ran but exited non-zero or produced unparseable output.
 type MatrixSummary struct {
 	TotalTests int
 	Passed     int
 	Failed     int
-	ExecErrors int
 }
 
 // DaemonSetReport captures one DS's rollout state and the test pods it
@@ -94,22 +86,20 @@ type DaemonSetReport struct {
 //  3. Waits for the DS rollout (desired > 0 AND ready == desired).
 //  4. Lists Running+Ready pods, parses each pod's multus annotation,
 //     filters to secondary networks, picks the first IPv4 per rail.
-//  5. Builds a test plan via Plan() — same-rail across pods + per-pod
-//     cross-rail canary; soft-skip if <2 schedulable pods.
-//  6. Runs every ping in parallel up to opts.MaxConcurrentPings.
-//  7. Deletes the DaemonSets unless opts.Keep.
+//  5. Discovers the RDMA device backing each multus interface per pod.
+//  6. Builds a test plan via Plan() — same-rail rping + ib_write_bw
+//     across pods plus per-pair cross-rail canaries; soft-skip if <2
+//     schedulable pods.
+//  7. Runs rping then ib_write_bw stages sequentially per the
+//     "spawn fresh server per test" lifecycle (concurrent runs would
+//     fight over the listener port).
+//  8. Deletes the DaemonSets unless opts.Keep.
 //
 // All UI output flows through `uiOutput` (caller passes
 // ui.FromContext(ctx)). Logs go to controller-runtime's logr.
 func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, uiOutput ui.Output, opts Options) (*MatrixResult, error) {
 	if opts.Timeout <= 0 {
 		opts.Timeout = 5 * time.Minute
-	}
-	if opts.PingCount <= 0 {
-		opts.PingCount = 3
-	}
-	if opts.MaxConcurrentPings <= 0 {
-		opts.MaxConcurrentPings = 16
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
@@ -187,10 +177,14 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		}
 	}
 
-	// Parse multus annotations and build the TestPod list.
+	// Parse multus annotations and build the TestPod list. Each
+	// pod's RDMA-device-by-rail map is filled in from a single
+	// in-pod shell exec that reads
+	// /sys/class/net/<iface>/device/infiniband/ per multus iface,
+	// so the rping + ib_write_bw stages can pass `-d <dev>`.
 	testPods := make([]TestPod, 0, len(allPods))
 	for _, p := range allPods {
-		tp, err := buildTestPod(p.pod)
+		tp, ifaceByRail, err := buildTestPod(p.pod)
 		if err != nil {
 			uiOutput.Warning("Pod %s/%s: %v — excluded from matrix", p.pod.Namespace, p.pod.Name, err)
 			log.Log.V(1).Info("buildTestPod failed", "pod", p.pod.Name, "error", err.Error())
@@ -200,6 +194,10 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			uiOutput.Warning("Pod %s/%s has no secondary network IPs — excluded from matrix", p.pod.Namespace, p.pod.Name)
 			continue
 		}
+		tp.RDMADevsByRail = DiscoverRDMADevices(ctx, restConfig, p.pod.Namespace, p.pod.Name, p.ref.Container, ifaceByRail)
+		log.Log.V(1).Info("RDMA device discovery",
+			"pod", p.pod.Name, "rails", tp.RailOrder,
+			"rdmaDevsByRail", tp.RDMADevsByRail)
 		testPods = append(testPods, tp)
 	}
 
@@ -210,56 +208,74 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		return result, nil
 	}
 
-	uiOutput.Info("Plan: %d same-rail tests, %d cross-rail canary tests", len(plan.SameRail), len(plan.CrossRail))
+	totalSameRail := len(plan.RDMASameRail)
+	totalCrossRail := len(plan.RDMACrossRail)
+	uiOutput.Info("Plan: %d same-rail rping + %d cross-rail rping; %d same-rail ib_write_bw + %d cross-rail ib_write_bw",
+		totalSameRail, totalCrossRail, len(plan.RDMABwSameRail), len(plan.RDMABwCrossRail))
 
-	// Build a pod-name → container name map so RunPing knows which
-	// container to exec in (test DSes have a single container today,
-	// but the orchestrator stays general).
+	// Build a pod-name → container name map so the test runners
+	// know which container to exec in (test DSes have a single
+	// container today, but the orchestrator stays general).
 	containerByPod := map[string]string{}
 	namespaceByPod := map[string]string{}
 	for _, p := range allPods {
-		// We use the DS's resolved container name for every pod it
-		// owns — pods of the same DS share the template.
 		containerByPod[p.pod.Name] = p.ref.Container
 		namespaceByPod[p.pod.Name] = p.pod.Namespace
 	}
 
-	tests := append([]PingTest{}, plan.SameRail...)
-	tests = append(tests, plan.CrossRail...)
-	result.PingResults = make([]PingResult, len(tests))
-
-	// Bounded concurrency: a semaphore of size MaxConcurrentPings.
-	sem := make(chan struct{}, opts.MaxConcurrentPings)
-	var wg sync.WaitGroup
-	for i := range tests {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(idx int, t PingTest) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			ns := namespaceByPod[t.SrcPod]
-			cn := containerByPod[t.SrcPod]
-			if ns == "" || cn == "" {
-				result.PingResults[idx] = PingResult{
-					Test: t,
-					Err:  fmt.Errorf("no namespace/container lookup for src pod %q", t.SrcPod),
-				}
-				return
-			}
-			result.PingResults[idx] = RunPing(ctx, restConfig, ns, cn, t, opts.PingCount)
-		}(i, tests[i])
+	// Two stages, each running sequentially per the "spawn fresh
+	// server per test" decision: every test starts its own server,
+	// runs the client, kills the server. Concurrent runs would
+	// fight over the listener port.
+	stages := []struct {
+		label string
+		tests []PingTest
+		run   func(t PingTest) PingResult
+	}{
+		{
+			label: "RDMA ping (rping)",
+			tests: append(append([]PingTest{}, plan.RDMASameRail...), plan.RDMACrossRail...),
+			run: func(t PingTest) PingResult {
+				return RunRPing(ctx, restConfig, namespaceByPod[t.DstPod],
+					t.DstPod, containerByPod[t.DstPod], // server side
+					t.SrcPod, containerByPod[t.SrcPod], // client side
+					t, 5)
+			},
+		},
+		{
+			label: "RDMA bandwidth (ib_write_bw)",
+			tests: append(append([]PingTest{}, plan.RDMABwSameRail...), plan.RDMABwCrossRail...),
+			run: func(t PingTest) PingResult {
+				return RunIbWriteBw(ctx, restConfig, namespaceByPod[t.DstPod],
+					t.DstPod, containerByPod[t.DstPod],
+					t.SrcPod, containerByPod[t.SrcPod],
+					t, 0)
+			},
+		},
 	}
-	wg.Wait()
+	for _, stage := range stages {
+		if len(stage.tests) == 0 {
+			continue
+		}
+		uiOutput.Info("Stage: %s — %d test(s)", stage.label, len(stage.tests))
+		for _, t := range stage.tests {
+			if namespaceByPod[t.SrcPod] == "" || namespaceByPod[t.DstPod] == "" {
+				result.PingResults = append(result.PingResults, PingResult{
+					Test: t,
+					Err:  fmt.Errorf("no namespace lookup for pod pair (%s, %s)", t.SrcPod, t.DstPod),
+				})
+				continue
+			}
+			result.PingResults = append(result.PingResults, stage.run(t))
+		}
+	}
 
 	// Summary.
 	for _, r := range result.PingResults {
 		result.Summary.TotalTests++
-		switch {
-		case r.OK:
+		if r.OK {
 			result.Summary.Passed++
-		case r.Err != nil && r.PacketLoss < 0:
-			result.Summary.ExecErrors++
-		default:
+		} else {
 			result.Summary.Failed++
 		}
 	}
@@ -273,7 +289,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 
 // testPodWithDS pairs a Running+Ready pod with the DaemonSetRef that
 // owns it so the orchestrator can later find the right container to
-// `ping` from.
+// exec into.
 type testPodWithDS struct {
 	pod *corev1.Pod
 	ref DaemonSetRef
@@ -281,12 +297,14 @@ type testPodWithDS struct {
 
 // buildTestPod converts a corev1.Pod into a TestPod by parsing the
 // multus `network-status` annotation. The first IPv4 per rail is used;
-// IPv6 is currently ignored.
-func buildTestPod(p *corev1.Pod) (TestPod, error) {
+// IPv6 is currently ignored. Also returns the rail→multus interface
+// name mapping (e.g. "rail-0" → "net1") so the caller can hand it to
+// DiscoverRDMADevices to populate RDMADevsByRail for the RDMA stages.
+func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
 	ann := p.Annotations[MultusAnnotation]
 	nets, err := ParseNetworkStatus(ann)
 	if err != nil {
-		return TestPod{}, err
+		return TestPod{}, nil, err
 	}
 	tp := TestPod{
 		Name:      p.Name,
@@ -294,6 +312,7 @@ func buildTestPod(p *corev1.Pod) (TestPod, error) {
 		Node:      p.Spec.NodeName,
 		IPsByRail: map[string]string{},
 	}
+	ifaceByRail := map[string]string{}
 	for _, n := range SecondaryNetworks(nets) {
 		ip := pickIPv4(n.IPs)
 		if ip == "" {
@@ -311,13 +330,16 @@ func buildTestPod(p *corev1.Pod) (TestPod, error) {
 		}
 		tp.IPsByRail[rail] = ip
 		tp.RailOrder = append(tp.RailOrder, rail)
+		if n.Interface != "" {
+			ifaceByRail[rail] = n.Interface
+		}
 	}
 	sort.Strings(tp.RailOrder)
-	return tp, nil
+	return tp, ifaceByRail, nil
 }
 
 // pickIPv4 returns the first IPv4 address from the multus IP list, or
-// "" if none. IPv6 entries are ignored (matrix uses ping, not ping6).
+// "" if none. IPv6 entries are ignored.
 func pickIPv4(ips []string) string {
 	for _, ip := range ips {
 		if strings.Count(ip, ".") == 3 && !strings.Contains(ip, ":") {
@@ -339,10 +361,10 @@ func railKey(name string) string {
 
 func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 	s := result.Summary
-	uiOutput.Info("Matrix complete: %d/%d passed, %d failed, %d exec error(s)",
-		s.Passed, s.TotalTests, s.Failed, s.ExecErrors)
-	if s.Failed == 0 && s.ExecErrors == 0 && s.TotalTests > 0 {
-		uiOutput.Success("All %d ping test(s) passed", s.TotalTests)
+	uiOutput.Info("Matrix complete: %d/%d passed, %d failed",
+		s.Passed, s.TotalTests, s.Failed)
+	if s.Failed == 0 && s.TotalTests > 0 {
+		uiOutput.Success("All %d RDMA test(s) passed", s.TotalTests)
 		return
 	}
 	// Render up to 5 failures so operators see what broke without
@@ -362,13 +384,23 @@ func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 		}
 		src := failureLabel(f.Test.SrcNode, f.Test.SrcPod)
 		dst := failureLabel(f.Test.DstNode, f.Test.DstPod)
-		switch {
-		case f.Err != nil:
-			uiOutput.Error("ping %s→%s (%s): %v", src, dst, f.Test.Rail, f.Err)
-		default:
-			uiOutput.Error("ping %s→%s (%s): %d%% packet loss", src, dst, f.Test.Rail, f.PacketLoss)
+		label := stageLabelOf(f.Test.Kind)
+		if f.Err != nil {
+			uiOutput.Error("%s %s→%s (%s): %v", label, src, dst, f.Test.Rail, f.Err)
+		} else {
+			uiOutput.Error("%s %s→%s (%s): test failed (no result row parsed or non-zero exit)",
+				label, src, dst, f.Test.Rail)
 		}
 	}
+}
+
+// stageLabelOf returns the human-friendly label for a test kind used
+// in failure-line prefixes ("rping", "ib_write_bw").
+func stageLabelOf(k PingTestKind) string {
+	if k.IsRDMABw() {
+		return "ib_write_bw"
+	}
+	return "rping"
 }
 
 // failureLabel mirrors axisLabel from text_report.go — duplicated here
