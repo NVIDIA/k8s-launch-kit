@@ -44,6 +44,11 @@ type NetworkOperatorPlugin struct {
 	GpuType      string
 	NodeSelector map[string]string
 	RESTConfig   *rest.Config
+
+	// KeepNamespace, when true, suppresses teardown of the
+	// nicconfigdaemon.Namespace at the end of DiscoverClusterConfig — useful
+	// for debugging a failed discovery.
+	KeepNamespace bool
 }
 
 func (p *NetworkOperatorPlugin) GetName() string {

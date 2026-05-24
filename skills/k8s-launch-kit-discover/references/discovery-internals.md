@@ -6,21 +6,46 @@ are made.
 
 ---
 
-## Non-Disruptive Discovery
+## Self-Contained Bootstrap (no Network Operator required)
 
-Discovery must be safe to run on production clusters. To achieve this, l8k never
-deletes or recreates the NicClusterPolicy. Instead it uses **server-side apply** with
-field owner `l8k-discovery`.
+Discovery does not depend on a pre-installed Network Operator. On every `l8k discover`
+run, the CLI bootstraps just the NIC Configuration Daemon (and its CRDs, if missing)
+into a private namespace, reads the resulting `NicDevice` CRs, then tears the
+namespace down.
 
-- If no NicClusterPolicy exists, discovery creates a minimal one that enables only the
-  NIC configuration daemon.
-- If a NicClusterPolicy already exists (e.g., managed by Helm or another controller),
-  discovery patches only the fields it owns (`l8k-discovery`). Fields owned by other
-  managers are left untouched.
-- On conflict (another manager owns a field discovery needs to set), discovery reports
-  the conflict and exits with code 3 rather than forcing an overwrite.
+The objects created by `Ensure(ctx, c, opts)` (`pkg/nicconfigdaemon/`) on every run:
 
-This approach ensures discovery never disrupts an existing Network Operator deployment.
+| Kind | Name | Scope | Lifecycle |
+|------|------|-------|-----------|
+| `Namespace` | `nvidia-k8s-launch-kit` | cluster | created on `Ensure`, deleted on `Cleanup` (cascade) |
+| `CustomResourceDefinition` | `nicdevices.configuration.net.nvidia.com` and 4 others | cluster | applied **only when absent** — never overwritten; persist after cleanup |
+| `ServiceAccount` | `k8s-launch-kit-nic-config-daemon` | namespaced | created on `Ensure`, deleted by namespace cascade |
+| `ClusterRole` | `k8s-launch-kit-nic-config-daemon` | cluster | created on `Ensure`, deleted explicitly on `Cleanup` |
+| `ClusterRoleBinding` | `k8s-launch-kit-nic-config-daemon` | cluster | created on `Ensure`, deleted explicitly on `Cleanup` |
+| `ConfigMap` | `nic-configuration-operator-supported-nic-firmware` (empty `data: {}`) | namespaced | empty stand-in so the daemon's startup Get succeeds; deleted by namespace cascade |
+| `DaemonSet` | `nic-configuration-daemon` | namespaced | image = `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`; pinned to `feature.node.kubernetes.io/pci-15b3.present=true`; deleted by namespace cascade |
+
+### Why renamed RBAC
+
+The upstream nic-configuration-operator Helm chart uses cluster-scoped names
+`controller-manager`, `manager-role`, `manager-rolebinding`. Discovery uses
+`k8s-launch-kit-nic-config-daemon` for all three so it can coexist with a Network
+Operator install without collision.
+
+### Why CRDs persist
+
+Cleanup deletes the namespace and the cluster RBAC but **not** the CRDs. If the
+discover run was the thing that installed them, removing them would orphan any
+`NicDevice` CRs other tools or future runs may rely on — and CRD deletion would
+require also removing every CR. The cost of leaving them: 5 schema definitions in
+the API server, no controllers, no consumed resources.
+
+### `--keep-namespace`
+
+Adds a single skip to the `defer Cleanup(...)` call so the bootstrap survives the
+exit. Use for `kubectl describe pod -n nvidia-k8s-launch-kit` post-mortems when
+daemon pods don't go Ready (ImagePullBackOff, missing pull secret, no
+`pci-15b3.present` nodes).
 
 ---
 

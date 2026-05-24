@@ -32,7 +32,11 @@ type Options struct {
 	// cluster-config.yaml and never errors on "no profile selected".
 	DiscoverOnly      bool
 	SaveClusterConfig string // Path to save discovered config
-	NetworkOperatorNamespace string   // Override namespace for Network Operator (optional)
+	NetworkOperatorNamespace string // Override namespace for Network Operator (optional; ignored by `discover`)
+	// KeepNamespace, when true, suppresses teardown of the
+	// nvidia-k8s-launch-kit bootstrap namespace at the end of `discover` —
+	// useful for debugging a failed run.
+	KeepNamespace bool
 	// NetworkOperatorRelease is a MAJOR.MINOR catalog key (e.g. "26.4"), not
 	// a full semver. Selects component image tags + repository from the
 	// embedded releases catalog and drives version-gated template sections.

@@ -47,7 +47,8 @@ l8k --discover-cluster-config \
   --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
   --save-deployment-files ./output --deploy
 
-# Non-default operator namespace
+# Non-default operator namespace (applies to generate/deploy only — discover
+# always uses its own nvidia-k8s-launch-kit namespace)
 l8k --discover-cluster-config \
   --kubeconfig ~/.kube/config \
   --network-operator-namespace network-operator \

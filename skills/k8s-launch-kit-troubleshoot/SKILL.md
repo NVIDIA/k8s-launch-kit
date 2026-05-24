@@ -53,7 +53,8 @@ kubectl get pods -A -o wide | grep -E 'ContainerCreating|Init'
 | `CrashLoopBackOff` on mofed pods | Kernel module conflict | Check `thirdPartyRDMAModules`, enable `unloadThirdPartyRDMAModules` |
 | No VFs on node | SriovNetworkNodePolicy not matching | Verify `nodeSelector` labels match worker nodes |
 | RDMA not working | Missing RDMA device plugin or wrong resource name | Check `rdma-shared-dp` pods, verify resource annotations |
-| NIC config daemon not starting | Operator namespace mismatch | Verify `--network-operator-namespace` matches actual namespace |
+| `l8k discover` daemon pods stuck (ImagePullBackOff / Pending) | Bad image tag, missing pull secret, or no `feature.node.kubernetes.io/pci-15b3.present=true` nodes | Re-run with `--keep-namespace` then `kubectl describe pod -n nvidia-k8s-launch-kit`. Fix `networkOperator.componentVersion` / pass `--image-pull-secrets` / verify NFD is running. |
+| `l8k validate` / `deploy` can't find Network Operator pods | Operator namespace mismatch | Verify `--network-operator-namespace` matches actual namespace (does NOT apply to `l8k discover` — it ignores the flag and uses its own `nvidia-k8s-launch-kit` namespace) |
 | IPPool not allocating | NV-IPAM subnet exhausted or misconfigured | Check `ippools` CR status, verify CIDR ranges |
 | `--for requires --node-selector` | `--for` was passed without `--node-selector` | Add `--node-selector key=val,…`. The synthesized clusterConfig has no live worker-node list; the selector identifies target nodes at apply time. |
 | `--for and --discover-cluster-config are mutually exclusive` | Both flags passed simultaneously | Pick one: `--for` skips discovery, `--discover-cluster-config` runs it. |

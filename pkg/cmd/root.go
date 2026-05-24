@@ -76,6 +76,7 @@ var (
 	dryRunFlag                  bool
 	forPreset                   string
 	deployTimeoutRoot           time.Duration
+	keepNamespace               bool
 )
 
 // forFlagHelp builds the help string for `--for`. Computed at init() time so
