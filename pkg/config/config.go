@@ -122,8 +122,21 @@ type NetworkOperatorConfig struct {
 	// embedded catalog.
 	SelectedRelease  string   `yaml:"selectedRelease,omitempty"`
 	Repository       string   `yaml:"repository"`
-	Namespace        string   `yaml:"namespace"`
-	ImagePullSecrets []string `yaml:"imagePullSecrets,omitempty"`
+	// OperatorRepository is the registry path for the network-operator
+	// BINARY image itself, distinct from Repository (which is the
+	// COMPONENT-images registry rendered into NicClusterPolicy /
+	// NicNodePolicy). Populated by ApplyNetworkOperatorRelease from
+	// the embedded catalog. Stable releases publish the operator
+	// under `nvcr.io/nvidia/cloud-native`; staging keeps both at the
+	// same path under `nvcr.io/nvstaging/mellanox`.
+	OperatorRepository string   `yaml:"operatorRepository,omitempty"`
+	Namespace          string   `yaml:"namespace"`
+	ImagePullSecrets   []string `yaml:"imagePullSecrets,omitempty"`
+	// HelmRepoURL is the Helm chart repository URL for the network-operator
+	// chart. Populated by ApplyNetworkOperatorRelease from the embedded catalog;
+	// users may override it in l8k-config.yaml. Empty means "no helm install"
+	// — `l8k deploy` falls back to assuming the operator is managed out-of-band.
+	HelmRepoURL string `yaml:"helmRepoURL,omitempty"`
 }
 
 type DOCADriverConfig struct {

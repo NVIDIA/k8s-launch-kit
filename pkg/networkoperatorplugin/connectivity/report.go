@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 )
@@ -76,6 +77,19 @@ type ReportData struct {
 	// sub-table under "Network Operator release" in the HTML
 	// report. Nil when the check couldn't run.
 	ComponentCheck *networkoperatorplugin.ComponentVersionCheck
+	// HelmValues compares the user-supplied values of the deployed
+	// network-operator release against the freshly rendered
+	// values.yaml. Surfaced as a sub-section under "Network Operator
+	// release" in the HTML report. Skipped (and the section
+	// hidden) when no values.yaml is present in the deployment dir
+	// or no release exists in the cluster.
+	HelmValues *networkoperatorplugin.HelmValuesCheck
+	// StrayCRs lists Network-Operator-managed CRs in the operator
+	// namespace (or cluster-scoped for cluster-scoped Kinds) that
+	// `l8k generate` did NOT render. Soft-fails the verdict and
+	// renders a per-row table in the HTML report. Skipped (and the
+	// section hidden) when no kube client / namespace is available.
+	StrayCRs *preflight.Result
 	// PresetMatches carries one Result per cluster group from
 	// pkg/presetmatch — surfaced under the "Node groups" section.
 	// Empty when validate ran without a usable cluster-config.yaml.

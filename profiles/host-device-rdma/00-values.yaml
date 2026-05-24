@@ -1,0 +1,31 @@
+{{- /*
+00-values.yaml — Helm values for the nvidia/network-operator chart.
+Rendered by `l8k generate` next to the post-install CR manifests.
+`l8k deploy` reads this file and invokes the Helm Go SDK to install
+or upgrade the network-operator release in the configured namespace
+(Phase 0) before applying the CRs (Phases 1-4).
+*/ -}}
+nfd:
+  enabled: true
+
+upgradeCRDs: true
+
+operator:
+  repository: {{ .NetworkOperator.OperatorRepository }}
+  image: network-operator
+{{- if .NetworkOperator.Version }}
+  tag: {{ .NetworkOperator.Version }}
+{{- end }}
+{{- if .NetworkOperator.ImagePullSecrets }}
+
+imagePullSecrets:
+{{- range .NetworkOperator.ImagePullSecrets }}
+  - name: {{ . }}
+{{- end }}
+{{- end }}
+
+maintenanceOperator:
+  enabled: {{ if .NicConfigurationOperator }}true{{ else }}false{{ end }}
+
+sriovNetworkOperator:
+  enabled: false

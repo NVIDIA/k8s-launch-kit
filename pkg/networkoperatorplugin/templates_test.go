@@ -18,10 +18,12 @@ package networkoperatorplugin
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReplaceVars(t *testing.T) {
@@ -1427,4 +1429,43 @@ func TestGroupFabric_Unset(t *testing.T) {
 	verdict, ok := groupFabric(g)
 	assert.False(t, ok)
 	assert.Equal(t, "", verdict)
+}
+
+func TestIsHelmValuesTemplate(t *testing.T) {
+	assert.True(t, isHelmValuesTemplate("00-values.yaml"))
+	assert.False(t, isHelmValuesTemplate("values.yaml"))
+	assert.False(t, isHelmValuesTemplate("10-nicclusterpolicy.yaml"))
+	assert.False(t, isHelmValuesTemplate(""))
+}
+
+// TestRenderForScope_HelmValues exercises the renderer's special case for
+// the 00-values.yaml template: it must be rendered once (no per-group
+// iteration, no Kind-based dispatch) and emitted under the on-disk filename
+// `values.yaml` so it matches the helm convention.
+func TestRenderForScope_HelmValues(t *testing.T) {
+	dir := t.TempDir()
+	templatePath := filepath.Join(dir, helmValuesTemplateName)
+	content := `nfd:
+  enabled: true
+operator:
+  repository: {{ .NetworkOperator.Repository }}
+sriovNetworkOperator:
+  enabled: true
+`
+	require.NoError(t, os.WriteFile(templatePath, []byte(content), 0o644))
+
+	cfg := &config.LaunchKubernetesConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{
+			Repository: "nvcr.io/nvidia/mellanox",
+		},
+		Profile: &config.Profile{},
+	}
+	rendered, err := renderForScope(templatePath, cfg, nil, nil)
+	require.NoError(t, err)
+
+	// Output key must be `values.yaml`, NOT `00-values.yaml`.
+	require.Contains(t, rendered, helmValuesOutputName)
+	assert.NotContains(t, rendered, helmValuesTemplateName)
+	assert.Contains(t, rendered[helmValuesOutputName], "nvcr.io/nvidia/mellanox")
+	assert.Contains(t, rendered[helmValuesOutputName], "sriovNetworkOperator:")
 }

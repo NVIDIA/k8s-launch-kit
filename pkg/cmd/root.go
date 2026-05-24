@@ -468,7 +468,11 @@ func applySpectrumXSyntaxChecks(opts *options.Options) error {
 }
 
 // exitWithError prints the error and exits with the appropriate code.
-// In JSON mode, emits a structured JSON error to stdout.
+// In JSON mode, emits a structured JSON error to stdout. In text mode,
+// prints `Error: <message>` followed by `Suggestion: <suggestion>` on
+// a separate line when the structured error carries one — surfaces the
+// remediation hint without redundancy when the message already mentions
+// the wrong state.
 func exitWithError(se *apperrors.StructuredError, outputFormat string) {
 	if outputFormat == "json" {
 		errJSON, _ := json.Marshal(se)
@@ -481,6 +485,9 @@ func exitWithError(se *apperrors.StructuredError, outputFormat string) {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", se.Error())
 	} else {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", se.Error())
+		if se.Suggestion != "" {
+			fmt.Fprintf(os.Stderr, "Suggestion: %s\n", se.Suggestion)
+		}
 	}
 	os.Exit(se.ExitCode)
 }

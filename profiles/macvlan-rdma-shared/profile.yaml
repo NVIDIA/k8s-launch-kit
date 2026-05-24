@@ -9,6 +9,7 @@ description: |
   Macvlan with RDMA shared device profile offers Ethernet networking with shared RDMA resources.
 deploymentGuide: ipoib-rdma-shared.rst
 templates:
+  - 00-values.yaml
   - 10-nicclusterpolicy.yaml
   - 11-nicnodepolicy.yaml
   - 20-ippool.yaml

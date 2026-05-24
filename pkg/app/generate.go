@@ -23,6 +23,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
@@ -87,6 +88,21 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		}); ok {
 			if err := applier.ApplyOptionsToConfig(l.options, fullConfig); err != nil {
 				return fmt.Errorf("failed to apply options to config for plugin %s: %w", plugin.GetName(), err)
+			}
+		}
+	}
+
+	// Now that fullConfig.NetworkOperator is fully resolved (catalog
+	// values + CLI overrides + l8k-config.yaml), expose it to the plugin
+	// so DeployProfile can drive Phase 0 helm install from the same
+	// metadata that drove `00-values.yaml` rendering.
+	if nop, ok := l.plugins[networkoperatorplugin.PluginName]; ok {
+		if p, ok := nop.(*networkoperatorplugin.NetworkOperatorPlugin); ok {
+			p.NetworkOperator = fullConfig.NetworkOperator
+			p.OverwriteExisting = l.options.OverwriteExisting
+			p.DryRun = l.options.DryRun
+			if fullConfig.DOCADriver != nil {
+				p.DOCAVersion = fullConfig.DOCADriver.Version
 			}
 		}
 	}

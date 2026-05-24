@@ -10,6 +10,7 @@ description: |
   SR-IOV Infiniband RDMA profile offers high-performance virtualized Infiniband networking with hardware acceleration
 deploymentGuide: sriov-ib-rdma.rst
 templates:
+  - 00-values.yaml
   - 10-nicclusterpolicy.yaml
   - 11-nicnodepolicy.yaml
   - 20-ippool.yaml

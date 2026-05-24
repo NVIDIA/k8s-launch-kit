@@ -49,6 +49,23 @@ type NetworkOperatorPlugin struct {
 	// nicconfigdaemon.Namespace at the end of DiscoverClusterConfig — useful
 	// for debugging a failed discovery.
 	KeepNamespace bool
+
+	// NetworkOperator is the resolved NetworkOperator config used by
+	// DeployProfile to drive the helm install in Phase 0. Populated by
+	// the launcher after ApplyOptionsToConfig has merged the catalog with
+	// the user's l8k-config.yaml.
+	NetworkOperator *config.NetworkOperatorConfig
+	// DOCAVersion is the catalog-resolved docaDriver.version. Passed
+	// through DeployProfile into preflight so the NCP component-versions
+	// check can compare against ofedDriver.version on the live CR.
+	DOCAVersion string
+	// OverwriteExisting forwards the `--overwrite-existing` flag through
+	// DeployProfile so helm install can promote to `helm upgrade --install`
+	// when a release already exists with different values.
+	OverwriteExisting bool
+	// DryRun forwards the `--dry-run` flag through DeployProfile so
+	// helm install can run in server-side dry-run mode.
+	DryRun bool
 }
 
 func (p *NetworkOperatorPlugin) GetName() string {
@@ -111,6 +128,8 @@ func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.Lau
 	fullConfig.NetworkOperator.Version = rel.NetworkOperator.Version
 	fullConfig.NetworkOperator.ComponentVersion = rel.NetworkOperator.ComponentVersion
 	fullConfig.NetworkOperator.Repository = rel.NetworkOperator.Repository
+	fullConfig.NetworkOperator.OperatorRepository = rel.NetworkOperator.OperatorRepository
+	fullConfig.NetworkOperator.HelmRepoURL = rel.NetworkOperator.HelmRepoURL
 	if fullConfig.DOCADriver == nil {
 		fullConfig.DOCADriver = &config.DOCADriverConfig{}
 	}

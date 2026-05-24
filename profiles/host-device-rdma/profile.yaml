@@ -8,6 +8,7 @@ description: |
   Host device RDMA profile offers direct hardware access to the NIC devices with minimal CPU overhead.
 deploymentGuide: host-device-rdma.md
 templates:
+  - 00-values.yaml
   - 10-nicclusterpolicy.yaml
   - 11-nicnodepolicy.yaml
   - 20-ippool.yaml

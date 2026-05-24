@@ -7,12 +7,31 @@ package networkoperatorplugin
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// helmValuesTemplateName is the conventional filename for the per-profile
+// Helm values template. The renderer special-cases this template: it is
+// always cluster-scoped (no per-group iteration, no Kind-based scope
+// dispatch) and is emitted on disk as `values.yaml` so it matches the
+// helm convention. `l8k deploy` reads `values.yaml` from the deployment
+// directory to install or upgrade the network-operator chart in Phase 0,
+// before applying the post-install CR manifests.
+const helmValuesTemplateName = "00-values.yaml"
+
+// helmValuesOutputName is the on-disk filename for the rendered helm values.
+const helmValuesOutputName = "values.yaml"
+
+// isHelmValuesTemplate reports whether a template file is the per-profile
+// helm values file (see `helmValuesTemplateName`).
+func isHelmValuesTemplate(name string) bool {
+	return name == helmValuesTemplateName
+}
 
 // RenderBucket is the unit of work the rendering pipeline iterates over.
 // One bucket per (gpuType, railCount) tuple that survived `--groups` /
@@ -345,6 +364,25 @@ func renderForScope(
 	plans []RenderBucket,
 	planSubnets [][]config.NvIpamSubnetConfig,
 ) (map[string]string, error) {
+	// Helm values template: cluster-scoped (no per-group iteration, no
+	// Kind-based dispatch since the file isn't a K8s manifest). Render
+	// once against the merged ClusterConfig — same context as
+	// ScopeClusterWide CR manifests — and emit under the helm-convention
+	// filename `values.yaml`.
+	if isHelmValuesTemplate(filepath.Base(templatePath)) {
+		merged := mergedClusterConfigs(plans)
+		renderCfg := withClusterConfig(cfg, merged, allSubnets(planSubnets))
+		rendered, err := ProcessTemplate(templatePath, renderCfg, "")
+		if err != nil {
+			return nil, err
+		}
+		out := map[string]string{}
+		for _, content := range rendered {
+			out[helmValuesOutputName] = content
+		}
+		return out, nil
+	}
+
 	body, err := os.ReadFile(templatePath)
 	if err != nil {
 		return nil, fmt.Errorf("read template %s: %w", templatePath, err)

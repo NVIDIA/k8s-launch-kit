@@ -23,6 +23,8 @@ import (
 	"github.com/go-logr/zapr"
 	zzap "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
@@ -80,6 +82,8 @@ func IsEnabled() bool {
 // this should be called once Options have been initialized
 // either by parsing flags or directly modifying Options.
 func InitLog() {
+	defer routeNoiseToControllerRuntimeLogger()
+
 	if !loggingEnabled {
 		// Disable logging by setting level to panic (effectively disables all logs)
 		Options.Level = zzap.NewAtomicLevelAt(zapcore.PanicLevel)
@@ -151,4 +155,36 @@ func SetLogLevel(lvl string) error {
 // GetLogLevel returns the current logging level
 func GetLogLevel() string {
 	return Options.Level.(zzap.AtomicLevel).Level().String()
+}
+
+// routeNoiseToControllerRuntimeLogger silences two upstream sources of
+// chatter that would otherwise leak to stderr at info level:
+//
+//   - k8s.io/client-go's HTTP-299 warning handler (kube API
+//     deprecations like "node-role.kubernetes.io/master is deprecated").
+//     The default handler prints to klog; we route it through our
+//     logr.Logger at V(2) so the warnings stay visible under
+//     --log-level=debug but disappear otherwise.
+//   - klog itself, which client-go and the helm SDK both initialise.
+//     Without this, klog still prints `I0524 18:40:18.932 warnings.go:110]`
+//     to stderr even when our zap logger is configured to be quiet.
+//
+// Must be called AFTER log.SetLogger so the controller-runtime logger
+// is already installed.
+func routeNoiseToControllerRuntimeLogger() {
+	rest.SetDefaultWarningHandler(&restWarningRouter{})
+	klog.SetLogger(log.Log.V(2))
+}
+
+// restWarningRouter forwards client-go HTTP-299 warning headers to the
+// controller-runtime logger at V(2). At info-level the calls are no-ops
+// (zap filters them); at debug-level they surface alongside the rest of
+// our structured logs.
+type restWarningRouter struct{}
+
+func (restWarningRouter) HandleWarningHeader(code int, agent string, text string) {
+	if code != 299 || text == "" {
+		return
+	}
+	log.Log.V(2).Info("kube API warning", "agent", agent, "text", text)
 }

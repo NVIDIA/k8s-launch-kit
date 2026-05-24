@@ -99,17 +99,20 @@ read `references/profile-decision-tree.md`.
 
 ## Output
 
-Generated YAMLs are written to the output directory, organized by group:
+Generated YAMLs are written to the output directory under `network-operator/`. Each profile also emits a `values.yaml` (Helm values for the `nvidia/network-operator` chart) alongside the CR manifests:
 
 ```
 output/
-├── group-0/
-│   ├── nicclusterpolicy.yaml
-│   ├── ippool.yaml
-│   ├── sriovnetworknodepolicy.yaml
-│   ├── sriovnetwork.yaml
-│   └── test-pod.yaml
+└── network-operator/
+    ├── values.yaml                       # Phase 0 helm-install input for `l8k deploy`
+    ├── 10-nicclusterpolicy.yaml
+    ├── 11-nicnodepolicy-<group>.yaml
+    ├── 20-ippool-<group>.yaml
+    ├── 40-sriovnetworknodepolicy-<group>.yaml
+    └── 50-sriovnetwork-<group>.yaml
 ```
+
+`values.yaml` is rendered from the profile's `00-values.yaml` template. `--network-operator-release <MAJOR.MINOR>` populates the chart repository URL and image tag from the embedded catalog. To install or upgrade the chart alongside the CRs, pass `--deploy` (and `--overwrite-existing` when the release already exists with different values).
 
 ## Auto-Detecting Multirail
 
