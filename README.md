@@ -5,7 +5,12 @@ K8s Launch Kit (l8k) is a CLI tool for deploying and managing NVIDIA cloud-nativ
 ## Operation Phases
 
 ### Discover Cluster Configuration
-Deploy a minimal Network Operator profile to automatically discover your cluster's network capabilities and hardware configuration. This phase can be skipped if you provide your own configuration file.
+Bootstrap a private NIC Configuration Daemon into the `nvidia-k8s-launch-kit`
+namespace to discover your cluster's network capabilities and hardware
+configuration. Discovery does **not** require a pre-installed Network Operator —
+the daemon and its CRDs are created in a dedicated namespace, used to publish
+`NicDevice` CRs, and torn down when discovery finishes. This phase can be
+skipped if you provide your own configuration file.
 
 ### Select the Deployment Profile
 Specify the desired deployment profile via CLI flags (`--fabric`, `--deployment-type`, `--multirail`, `--spectrum-x`) or via a `profile` section in the user-config file. AI-driven profile selection now lives in the `k8s-launch-kit-*` Claude Code skills, which wrap the deterministic CLI commands.
@@ -129,12 +134,10 @@ Examples:
 
   # Discover + deploy Spectrum-X with JSON output for automation
   l8k --kubeconfig ~/.kube/config --discover-cluster-config \
-    --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
-    --deploy --output json --yes
+    --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 --network-operator-release 26.4 --deploy --output json --yes
 
   # Dry-run: preview what would be deployed
-  l8k --user-config cluster-config.yaml --spectrum-x RA2.2 \
-    --multiplane-mode hwplb --number-of-planes 4 --deploy \
+  l8k --user-config cluster-config.yaml --spectrum-x --deploy \
     --dry-run --output json
 
   # Get tool capabilities as JSON (for AI agents)
@@ -142,18 +145,20 @@ Examples:
 
 Available Commands:
   completion  Generate the autocompletion script for the specified shell
+  deploy      Apply previously generated manifests to a Kubernetes cluster
   discover    Discover cluster network hardware capabilities
   generate    Generate deployment manifests for a network profile
   help        Help about any command
   preset      Manage predefined cluster configuration presets
   schema      Print tool capabilities as JSON (for AI agents and automation)
   sosreport   Collect diagnostic sosreport from a Kubernetes cluster
+  validate    Verify a deployment matches the selected Network Operator release
   version     Print the version number
 
 Common Flags:
       --enabled-plugins string              Comma-separated list of plugins to enable (default "network-operator")
       --image-pull-secrets strings          Image pull secret names for NicClusterPolicy (comma-separated)
-      --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy)
+      --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)
       --network-operator-namespace string   Override the network operator namespace from the config file
       --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 25.10, 26.1, 26.4
       --node-selector string                Filter nodes for discovery by label (e.g., key=value,key2=value2) (default "feature.node.kubernetes.io/pci-15b3.present=true")
@@ -166,14 +171,15 @@ Discovery Flags:
 Profile Selection Flags:
       --deployment-type string   Select the deployment type (sriov, rdma_shared, host_device)
       --fabric string            Select the fabric type to deploy (infiniband, ethernet)
-      --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Available: PowerEdge-XE9680, ThinkSystem-SR680a-V3, UCSC-885A-M8-H22
-      --group string             Generate templates for a specific group only (e.g., group-0)
+      --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Available: PowerEdge-R760xa-H100-NVL, PowerEdge-XE7745-RTX-PRO-4500, PowerEdge-XE9680-H200, ThinkSystem-SR650-V4-RTX-PRO-6000, ThinkSystem-SR675-V3-H200-NVL, ThinkSystem-SR675-V3-RTX-PRO-6000, ThinkSystem-SR680a-V3-H200, UCSC-885A-M8-H22-H200
+      --gpu-type string          Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.
+      --groups strings           Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.
       --multirail                Enable multirail deployment
-      --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Supported: [RA2.1 RA2.2]
+      --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: [RA2.1 RA2.2]
 
 Spectrum-X Flags:
-      --multiplane-mode string   Spectrum-X multiplane mode: swplb, hwplb, uniplane, none (required with --spectrum-x)
-      --number-of-planes int     Number of planes: 1, 2, or 4 (required with --spectrum-x)
+      --multiplane-mode string   Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)
+      --number-of-planes int     Number of planes for Spectrum-X (requires --spectrum-x)
 
 Generation Output Flags:
       --enable-doca-driver             Enable DOCA driver deployment (overrides config file docaDriver.enable)
@@ -182,8 +188,9 @@ Generation Output Flags:
       --workload-manifest string       Path to a custom workload manifest YAML (replaces the profile's default example workload)
 
 Deploy Flags:
-      --deploy    Deploy the generated files to the Kubernetes cluster
-      --dry-run   Preview what would be deployed without applying changes to the cluster
+      --deploy                    Deploy the generated files to the Kubernetes cluster
+      --deploy-timeout duration   Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state.
+      --dry-run                   Preview what would be deployed without applying changes to the cluster
 
 Output & Logging Flags:
   -h, --help               help for l8k

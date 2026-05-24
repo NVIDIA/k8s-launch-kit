@@ -61,7 +61,7 @@ The root command `l8k --discover-cluster-config ...` still works for backward-co
 | `--output <FORMAT>` | Output format: `text` (default), `json` |
 | `--yes` / `-y` | Auto-confirm all prompts (root command only — **not available on subcommands**; `--output json` auto-confirms) |
 | `--quiet` / `-q` | Suppress informational output (errors still shown) |
-| `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`) |
+| `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`). **No-op for `l8k discover`** — discover always bootstraps into `nvidia-k8s-launch-kit`; the flag still applies to `l8k generate` / `l8k deploy` / `l8k validate`. |
 | `--pod-namespace <NS>` | Namespace for pods and network resources (default: `default`) |
 | `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
 | `--image-pull-secrets <NAMES>` | Image pull secret names for NicClusterPolicy (comma-separated) |
@@ -135,8 +135,10 @@ deployment types, flags, exit codes, and output formats.
 
 ## Network Operator Namespace Resolution
 
-Both `nvidia-network-operator` and `network-operator` are common default namespaces. If l8k fails with "no pods found", the error message will suggest using `--network-operator-namespace` to specify the correct namespace.
+Applies to `l8k generate` / `l8k deploy` / `l8k validate` only. `l8k discover`
+manages its own private namespace (`nvidia-k8s-launch-kit`) and ignores this flag.
 
-When the user does not specify a namespace and discovery fails:
-1. Check the error message for the namespace hint
-2. Retry with `--network-operator-namespace <correct-namespace>`
+Both `nvidia-network-operator` and `network-operator` are common default namespaces
+for an existing Network Operator install. If `l8k generate` / `l8k deploy` /
+`l8k validate` can't find Network Operator resources, retry with
+`--network-operator-namespace <correct-namespace>`.

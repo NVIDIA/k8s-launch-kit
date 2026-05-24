@@ -26,11 +26,11 @@ import (
 	"time"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/pkg/mofedmodules"
-	netop "github.com/Mellanox/network-operator/api/v1alpha1"
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
+	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -93,129 +93,41 @@ func isBlueField3Device(deviceID string) bool {
 func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, defaultConfig *config.LaunchKubernetesConfig) error {
 	uiOutput := ui.FromContext(ctx)
 
-	// Ensure a NicClusterPolicy exists (error if any already exists, else create one)
-	policy := &netop.NicClusterPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "nic-cluster-policy",
-			Namespace: defaultConfig.NetworkOperator.Namespace,
-		},
-		Spec: netop.NicClusterPolicySpec{
-			NicConfigurationOperator: &netop.NicConfigurationOperatorSpec{
-				Operator: &netop.ImageSpec{
-					Repository:       defaultConfig.NetworkOperator.Repository,
-					Image:            "nic-configuration-operator",
-					Version:          defaultConfig.NetworkOperator.ComponentVersion,
-					ImagePullSecrets: defaultConfig.NetworkOperator.ImagePullSecrets,
-				},
-				ConfigurationDaemon: &netop.ImageSpec{
-					Repository:       defaultConfig.NetworkOperator.Repository,
-					Image:            "nic-configuration-operator-daemon",
-					Version:          defaultConfig.NetworkOperator.ComponentVersion,
-					ImagePullSecrets: defaultConfig.NetworkOperator.ImagePullSecrets,
-				},
-			},
-		},
+	if defaultConfig.NetworkOperator == nil {
+		return fmt.Errorf("networkOperator section is required in config for discovery")
 	}
 
-	log.Log.Info("Deploying a thin NicClusterPolicy for cluster config discovery")
+	bootstrapOpts := nicconfigdaemon.Options{
+		Repository:       defaultConfig.NetworkOperator.Repository,
+		Version:          defaultConfig.NetworkOperator.ComponentVersion,
+		ImagePullSecrets: defaultConfig.NetworkOperator.ImagePullSecrets,
+	}
 
-	// Check if an existing NicClusterPolicy already has NicConfigurationOperator.
-	// If so, we can reuse it without redeploying.
-	existingPolicies, err := EnsureNicClusterPolicy(ctx, c, policy)
+	uiOutput.Info("Bootstrapping NIC configuration daemon in namespace %q", nicconfigdaemon.Namespace)
+	log.Log.Info("Bootstrapping NIC configuration daemon for discovery",
+		"namespace", nicconfigdaemon.Namespace, "image", bootstrapOpts.Image())
+	if err := nicconfigdaemon.Ensure(ctx, c, bootstrapOpts); err != nil {
+		return fmt.Errorf("failed to bootstrap NIC configuration daemon: %w", err)
+	}
+
+	if !p.KeepNamespace {
+		defer func() {
+			uiOutput.Info("Tearing down namespace %q", nicconfigdaemon.Namespace)
+			if cleanupErr := nicconfigdaemon.Cleanup(context.Background(), c); cleanupErr != nil {
+				log.Log.Error(cleanupErr, "failed to tear down discover bootstrap namespace",
+					"namespace", nicconfigdaemon.Namespace)
+				uiOutput.Warning("Failed to delete namespace %q: %v", nicconfigdaemon.Namespace, cleanupErr)
+			}
+		}()
+	} else {
+		uiOutput.Info("--keep-namespace set, leaving namespace %q in place after discovery", nicconfigdaemon.Namespace)
+	}
+
+	// Wait for daemon pods to become Ready in the bootstrap namespace.
+	expectedNodes, dsPods, _, err := waitForDaemonSetPods(ctx, c, uiOutput,
+		nicconfigdaemon.Namespace, nicconfigdaemon.DaemonSetName, 5*time.Minute)
 	if err != nil {
 		return err
-	}
-
-	reuseExisting := false
-	patchedPolicyName := ""
-	if len(existingPolicies) > 0 {
-		// Check if any existing policy already has the nic-configuration daemon with the required version
-		requiredVersion := defaultConfig.NetworkOperator.ComponentVersion
-		for _, ep := range existingPolicies {
-			if ep.Spec.NicConfigurationOperator != nil &&
-				ep.Spec.NicConfigurationOperator.ConfigurationDaemon != nil &&
-				ep.Spec.NicConfigurationOperator.ConfigurationDaemon.Version == requiredVersion {
-				reuseExisting = true
-				uiOutput.Info("Existing NicClusterPolicy already includes nic-configuration-daemon %s, reusing", requiredVersion)
-				log.Log.Info("Reusing existing NicClusterPolicy with NicConfigurationOperator",
-					"name", ep.Name, "version", requiredVersion)
-				break
-			}
-		}
-
-		if !reuseExisting {
-			// Patch existing policy to add NicConfigurationOperator (non-disruptive)
-			targetPolicy := existingPolicies[0]
-			uiOutput.Info("Patching existing NicClusterPolicy %q to add NicConfigurationOperator for discovery", targetPolicy.Name)
-
-			if err := PatchNicConfigOperatorIntoPolicy(ctx, c, targetPolicy.Name, policy.Spec.NicConfigurationOperator); err != nil {
-				return fmt.Errorf("failed to patch NicClusterPolicy with NicConfigurationOperator: %w", err)
-			}
-			if err := WaitNicClusterPolicyReady(ctx, c, targetPolicy.Name); err != nil {
-				return err
-			}
-			patchedPolicyName = targetPolicy.Name
-		}
-	} else {
-		uiOutput.Info("Deploying discovery profile")
-	}
-
-	// Cleanup: remove NicConfigurationOperator we patched in, or delete the thin policy we created
-	if patchedPolicyName != "" {
-		defer func() {
-			uiOutput.Info("Removing discovery NicConfigurationOperator from NicClusterPolicy %q", patchedPolicyName)
-			if err := RemoveNicConfigOperatorFromPolicy(ctx, c, patchedPolicyName); err != nil {
-				log.Log.Error(err, "failed to remove NicConfigurationOperator after discovery")
-				uiOutput.Error("Failed to remove NicConfigurationOperator: %v", err)
-			}
-		}()
-	} else if !reuseExisting {
-		defer func() {
-			if err := DeleteNicClusterPolicy(ctx, c, "nic-cluster-policy"); err != nil {
-				log.Log.Error(err, "failed to delete NicClusterPolicy after discovery")
-			} else {
-				log.Log.Info("NicClusterPolicy deleted after discovery")
-			}
-		}()
-	}
-
-	// After creation/patching, wait for nic-configuration-daemon pods to be Ready.
-	// If we just patched the policy, pods need time to start — poll with timeout.
-	// If we're reusing an existing policy, pods should already be running — try once,
-	// then fall back to the alternate namespace.
-	var expectedNodes []string
-	var dsPods []corev1.Pod
-	if reuseExisting {
-		primaryNS := defaultConfig.NetworkOperator.Namespace
-		uiOutput.Info("Checking for nic-configuration-daemon pods in namespace %q", primaryNS)
-		expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, primaryNS, "nic-configuration-daemon")
-		if err != nil {
-			primaryErr := err
-			// Try the other common namespace before giving up (legacy chart-rename fallback)
-			alternateNS := alternateNamespace(primaryNS)
-			if alternateNS != "" {
-				uiOutput.Info("Initial probe in namespace %q failed, retrying in fallback namespace %q", primaryNS, alternateNS)
-				expectedNodes, dsPods, err = checkDaemonSetPodsReady(ctx, c, alternateNS, "nic-configuration-daemon")
-				if err == nil {
-					defaultConfig.NetworkOperator.Namespace = alternateNS
-				}
-			}
-			if err != nil {
-				if alternateNS != "" {
-					return fmt.Errorf("no nic-configuration-daemon pods found in namespace %q (also checked fallback namespace %q); use --network-operator-namespace to specify the correct namespace: %w", primaryNS, alternateNS, primaryErr)
-				}
-				return err
-			}
-		}
-	} else {
-		// We just patched/created the policy — pods need time to start.
-		// Poll both the configured namespace and alternate namespace.
-		var foundNS string
-		expectedNodes, dsPods, foundNS, err = waitForDaemonSetPods(ctx, c, uiOutput, defaultConfig.NetworkOperator.Namespace, "nic-configuration-daemon", 10*time.Minute)
-		if err != nil {
-			return err
-		}
-		defaultConfig.NetworkOperator.Namespace = foundNS
 	}
 
 	// Fetch node labels early — needed both for filtering and nodeSelector computation
@@ -236,13 +148,13 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	}
 
 	// Wait for all expected nodes to report their NicDevice resources
-	if err := waitNicDevicesDiscovered(ctx, c, defaultConfig.NetworkOperator.Namespace, expectedNodes); err != nil {
+	if err := waitNicDevicesDiscovered(ctx, c, nicconfigdaemon.Namespace, expectedNodes); err != nil {
 		return err
 	}
 
 	// Get NicDevice resources and build ClusterConfig from their statuses
 	devices := &nicop.NicDeviceList{}
-	if err := c.List(ctx, devices, client.InNamespace(defaultConfig.NetworkOperator.Namespace)); err != nil {
+	if err := c.List(ctx, devices, client.InNamespace(nicconfigdaemon.Namespace)); err != nil {
 		return err
 	}
 
@@ -267,7 +179,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			needProduct := group.GPUType == ""
 			if needMachine || needProduct {
 				machine, product := discoverHardwareTypes(ctx, p.RESTConfig,
-					defaultConfig.NetworkOperator.Namespace, group.WorkerNodes, dsPods,
+					nicconfigdaemon.Namespace, group.WorkerNodes, dsPods,
 					needMachine, needProduct)
 				if needMachine && machine != "" {
 					group.MachineType = machine
@@ -285,7 +197,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			// Failures are non-fatal; when nvidia-smi is absent, today's
 			// part-number classification continues to govern.
 			discoverGPUTopology(ctx, p.RESTConfig,
-				defaultConfig.NetworkOperator.Namespace, group, dsPods)
+				nicconfigdaemon.Namespace, group, dsPods)
 
 			// Probe per-PF fabric type from active port state + subnet
 			// manager presence (more reliable than firmware link_layer
@@ -293,7 +205,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			// the declarative defaults in `l8k generate` (Unit 8) to fill
 			// `--fabric` from the discovered group.
 			discoverGroupFabric(ctx, p.RESTConfig,
-				defaultConfig.NetworkOperator.Namespace, group, dsPods)
+				nicconfigdaemon.Namespace, group, dsPods)
 
 			// Try to enrich with a predefined topology preset for this
 			// (machine, GPU) pair. presetmatch.MatchGroup runs the
@@ -336,7 +248,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			}
 
 			modules, err := discoverThirdPartyRDMAModules(ctx, p.RESTConfig,
-				defaultConfig.NetworkOperator.Namespace, group.WorkerNodes, dsPods)
+				nicconfigdaemon.Namespace, group.WorkerNodes, dsPods)
 			if err != nil {
 				log.Log.Error(err, "failed to discover OFED-dependent modules", "group", group.Identifier)
 				uiOutput.Warning("Could not discover OFED-dependent modules for group %s: %v", group.Identifier, err)
@@ -520,10 +432,11 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 	return nodes, dsPods, nil
 }
 
-// waitForDaemonSetPods polls for daemon pods to become ready, checking both the
-// configured namespace and the alternate common namespace. This is needed after
-// patching a NicClusterPolicy to add NicConfigurationOperator, because the
-// network operator needs time to reconcile and create the DaemonSet pods.
+// waitForDaemonSetPods polls until the given DaemonSet has all its pods Ready in
+// the supplied namespace, or the timeout fires. Returns the node names the pods
+// landed on, the pods themselves, the namespace they were found in (always the
+// input namespace — the third return is preserved for callers that previously
+// distinguished between candidate namespaces), and an error.
 func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
 	altNS := alternateNamespace(namespace)
 	progressLabel := fmt.Sprintf("Waiting for %s pods in namespace %q (timeout: %s)", daemonSetName, namespace, timeout.Truncate(time.Second))
@@ -544,7 +457,6 @@ func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput u
 
 	var lastErr error
 	for {
-		// Try the configured namespace first
 		nodes, pods, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName)
 		if err == nil {
 			progress.Success(fmt.Sprintf("Found %d pod(s) in namespace %q", len(pods), namespace))
@@ -574,8 +486,20 @@ func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput u
 	}
 }
 
+func isPodReady(pod *corev1.Pod) bool {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
 // alternateNamespace returns the other common network operator namespace,
 // or empty string if the current namespace isn't one of the two known defaults.
+// Used by waitForDaemonSetPods as a legacy chart-rename fallback; for the
+// self-contained discover bootstrap (namespace nicconfigdaemon.Namespace),
+// it returns "" and the fallback path is a no-op.
 func alternateNamespace(current string) string {
 	switch current {
 	case "nvidia-network-operator":
@@ -585,15 +509,6 @@ func alternateNamespace(current string) string {
 	default:
 		return ""
 	}
-}
-
-func isPodReady(pod *corev1.Pod) bool {
-	for _, cond := range pod.Status.Conditions {
-		if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
 }
 
 // waitNicDevicesDiscovered polls until NicDevice objects exist for all expected nodes in the given namespace.

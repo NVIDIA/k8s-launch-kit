@@ -32,11 +32,16 @@ import (
 var discoverCmd = &cobra.Command{
 	Use:   "discover",
 	Short: "Discover cluster network hardware capabilities",
-	Long: `Deploy a minimal Network Operator profile to discover cluster network
-hardware capabilities and produce a cluster-config.yaml file.
+	Long: `Bootstrap a private NIC Configuration Daemon into the
+nvidia-k8s-launch-kit namespace and use it to discover cluster network
+hardware capabilities, producing a cluster-config.yaml file.
 
-Discovery inspects NodeFeature CRDs, groups nodes by hardware, detects
-east-west vs north-south NICs, and probes OFED dependent modules.`,
+Discovery does not require a pre-installed Network Operator: the daemon
+and its CRDs are created in a dedicated namespace, used to publish
+NicDevice CRs, and torn down when discovery finishes.
+
+Discovery groups nodes by hardware, detects east-west vs north-south
+NICs, and probes OFED-dependent modules.`,
 	Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
@@ -44,13 +49,13 @@ east-west vs north-south NICs, and probes OFED dependent modules.`,
   # Uses $KUBECONFIG if set
   l8k discover --save-cluster-config ./cluster-config.yaml
 
-  # Non-default operator namespace
-  l8k discover --kubeconfig ~/.kube/config \
-    --network-operator-namespace network-operator \
-    --save-cluster-config ./cluster-config.yaml
-
   # Merge with existing config
   l8k discover --user-config my-config.yaml \
+    --save-cluster-config ./cluster-config.yaml
+
+  # Keep the bootstrap namespace for debugging
+  l8k discover --kubeconfig ~/.kube/config \
+    --keep-namespace \
     --save-cluster-config ./cluster-config.yaml
 
   # Agent mode (JSON output)
@@ -74,6 +79,7 @@ east-west vs north-south NICs, and probes OFED dependent modules.`,
 			SaveClusterConfig:       saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
+			KeepNamespace:            keepNamespace,
 			NodeSelector:            nodeSelector,
 			ImagePullSecrets:        imagePullSecrets,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
@@ -99,13 +105,14 @@ func init() {
 	discoverCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Base config to merge with discovered hardware")
 	discoverCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "", "Output path for cluster-config.yaml")
-	discoverCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace (default: nvidia-network-operator)")
+	discoverCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "(deprecated, no-op for discover) Network Operator namespace override")
 	discoverCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
 		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
 			strings.Join(networkoperatorplugin.SupportedReleases(), ", ")))
 	discoverCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes by label")
 	discoverCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	discoverCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
+	discoverCmd.Flags().BoolVar(&keepNamespace, "keep-namespace", false, "Skip teardown of the nvidia-k8s-launch-kit namespace (for debugging)")
 
 	setFlagGroup(discoverCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(discoverCmd, "user-config", GroupCommon)
@@ -115,4 +122,5 @@ func init() {
 	setFlagGroup(discoverCmd, "image-pull-secrets", GroupCommon)
 	setFlagGroup(discoverCmd, "enabled-plugins", GroupCommon)
 	setFlagGroup(discoverCmd, "save-cluster-config", GroupDiscovery)
+	setFlagGroup(discoverCmd, "keep-namespace", GroupDiscovery)
 }

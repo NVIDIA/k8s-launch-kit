@@ -86,9 +86,10 @@ func (l *Launcher) Run() error {
 		switch pluginName {
 		case networkoperatorplugin.PluginName:
 			l.plugins[pluginName] = &networkoperatorplugin.NetworkOperatorPlugin{
-				Groups:       l.options.Groups,
-				GpuType:      l.options.GpuType,
-				NodeSelector: parseNodeSelector(l.options.NodeSelector),
+				Groups:        l.options.Groups,
+				GpuType:       l.options.GpuType,
+				NodeSelector:  parseNodeSelector(l.options.NodeSelector),
+				KeepNamespace: l.options.KeepNamespace,
 			}
 		default:
 			err := fmt.Errorf("unknown plugin: %s", pluginName)

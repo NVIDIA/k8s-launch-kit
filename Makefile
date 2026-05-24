@@ -28,7 +28,11 @@ SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/master
 PCI_IDS_URL=https://raw.githubusercontent.com/pciutils/pciids/master/pci.ids
 PCI_IDS_NVIDIA=pkg/networkoperatorplugin/internal/pciids/nvidia.ids
 
-.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport update-pci-ids release release-snapshot help
+# Where the vendored NIC Configuration Operator CRDs live (embedded by pkg/nicconfigdaemon).
+NIC_CONFIG_CRDS_DIR=pkg/nicconfigdaemon/assets/crds
+NIC_CONFIG_OPERATOR_MODULE=github.com/Mellanox/nic-configuration-operator
+
+.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport update-pci-ids sync-nic-config-crds release release-snapshot help
 
 ## Build the binary
 build:
@@ -162,6 +166,19 @@ update-readme: build
 	@mv /tmp/README_new.md README.md
 	@rm -f /tmp/l8k_help.txt
 	@echo "README.md updated successfully"
+
+## Sync vendored NIC Configuration Operator CRDs from go.mod pin into pkg/nicconfigdaemon/assets/crds.
+## Run manually after bumping the nic-configuration-operator version in go.mod.
+sync-nic-config-crds:
+	@mod_dir="$$($(GOCMD) list -m -f '{{.Dir}}' $(NIC_CONFIG_OPERATOR_MODULE))"; \
+	if [ -z "$$mod_dir" ]; then \
+		echo "ERROR: could not locate module $(NIC_CONFIG_OPERATOR_MODULE)"; \
+		exit 1; \
+	fi; \
+	echo "Syncing CRDs from $$mod_dir/config/crd/bases"; \
+	mkdir -p $(NIC_CONFIG_CRDS_DIR); \
+	cp "$$mod_dir"/config/crd/bases/*.yaml $(NIC_CONFIG_CRDS_DIR)/; \
+	chmod u+w $(NIC_CONFIG_CRDS_DIR)/*.yaml
 
 ## Download sosreport script
 download-sosreport:

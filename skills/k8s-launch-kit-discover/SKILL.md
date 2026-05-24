@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-discover
-version: 1.1.0
+version: 1.2.0
 description: "Use this skill when the user wants to discover their Kubernetes cluster's network hardware capabilities using k8s-launch-kit (l8k). Activate for: cluster discovery, hardware detection, NIC detection, finding what GPUs or NICs are in a cluster, creating a cluster config file, or when the user says 'discover' in the context of l8k or NVIDIA networking."
 metadata:
   requires:
@@ -12,6 +12,15 @@ metadata:
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
 Discover cluster hardware and produce a `cluster-config.yaml` describing NICs, GPUs, rails, and node groups.
+
+**l8k discover is self-contained.** It does NOT require a pre-installed
+Network Operator. On every run it bootstraps the NIC Configuration Daemon
+(and the 5 nic-configuration-operator CRDs, only if missing) into a private
+namespace `nvidia-k8s-launch-kit`, reads `NicDevice` CRs published by the
+daemon, then tears the namespace down on exit (unless `--keep-namespace`
+is set). The daemon image is pulled from `<networkOperator.repository>/
+nic-configuration-operator-daemon:<networkOperator.componentVersion>` (both
+fields come from `l8k-config.yaml`).
 
 ## Usage (from AI agent)
 
@@ -34,10 +43,11 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 |------|----------|---------|-------------|
 | `--kubeconfig` | — | `$KUBECONFIG` env var | Path to kubeconfig (optional — falls back to env var) |
 | `--save-cluster-config` | Yes | — | Output path for cluster-config.yaml |
-| `--network-operator-namespace` | — | `nvidia-network-operator` | Override operator namespace |
+| `--keep-namespace` | — | `false` | Skip teardown of the `nvidia-k8s-launch-kit` bootstrap namespace (for debugging) |
+| `--network-operator-namespace` | — | — | **Deprecated for `discover`**: accepted but ignored. The daemon always runs in `nvidia-k8s-launch-kit`. Still used by `l8k generate` / `l8k deploy`. |
 | `--user-config` | — | — | Base config to merge with discovered hardware |
-| `--node-selector` | — | — | Restrict to matching nodes |
-| `--image-pull-secrets` | — | — | Image pull secret names for NicClusterPolicy (comma-separated) |
+| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Restrict daemon scheduling + NicDevice wait to matching nodes |
+| `--image-pull-secrets` | — | — | Image pull secret names (comma-separated). Forwarded onto the bootstrapped DaemonSet pod spec. |
 
 ## Examples
 
@@ -50,10 +60,10 @@ l8k discover \
 # Using $KUBECONFIG env var (no --kubeconfig needed)
 l8k discover --save-cluster-config ./cluster-config.yaml
 
-# Non-default operator namespace
+# Keep the bootstrap namespace for debugging
 l8k discover \
   --kubeconfig ~/.kube/config \
-  --network-operator-namespace network-operator \
+  --keep-namespace \
   --save-cluster-config ./cluster-config.yaml
 
 # Merge with existing config
@@ -110,14 +120,34 @@ resolved.
 
 ## Prerequisites
 
-- NVIDIA Network Operator Helm chart installed in the cluster
-- Node Feature Discovery (NFD) active with `NodeFeature` CRDs populated
-- Worker nodes with label `feature.node.kubernetes.io/pci-15b3.present=true`
+- Node Feature Discovery (NFD) active on the cluster so worker nodes
+  carry `feature.node.kubernetes.io/pci-15b3.present=true` (the daemon's
+  nodeSelector — without it, no daemon pods schedule and discovery times
+  out)
+- Image-pull access from every worker node to
+  `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`.
+  Use `--image-pull-secrets <name>` (or `networkOperator.imagePullSecrets`
+  in the config file) for private registries.
+- Network Operator does **NOT** need to be pre-installed.
 
 ## Tips
 
-- If discovery fails with "no pods found for DaemonSet", the error will suggest using `--network-operator-namespace`. Common namespaces are `nvidia-network-operator` and `network-operator`.
-- Discovery uses server-side apply (field owner `l8k-discovery`) — it won't conflict with an existing NicClusterPolicy.
+- The bootstrap namespace is **always** `nvidia-k8s-launch-kit` — not configurable. The
+  daemon's SA / ClusterRole / ClusterRoleBinding are renamed to
+  `k8s-launch-kit-nic-config-daemon` so they don't collide with the cluster-scoped
+  names a coexisting Network Operator install would create.
+- CRDs (`nicdevices`, `nicconfigurationtemplates`, etc.) are applied **only when missing**.
+  If they already exist (because Network Operator or a prior l8k discover run created
+  them), they're left alone — discovery never overwrites a different version.
+- After discovery finishes the namespace is torn down (cascade-delete handles SA /
+  RoleBinding / DaemonSet / pods / NicDevice CRs); the CRDs intentionally persist so
+  any external NicDevice consumers survive. Cluster-scoped ClusterRole /
+  ClusterRoleBinding are deleted explicitly.
+- Pass `--keep-namespace` to leave the namespace in place — useful when debugging
+  daemon pod start-up failures (`kubectl describe pod -n nvidia-k8s-launch-kit`).
+- If daemon pods don't go Ready within 5 minutes, discovery aborts. Common causes:
+  ImagePullBackOff (check the image tag exists in your registry), no nodes match
+  `pci-15b3.present=true` (NFD not running or no Mellanox NICs), pull-secret missing.
 - After determining each group's `(machineType, gpuType)`, discovery looks up a topology preset under `presets/` using **exact-match** lookup on that pair. A matching preset overrides heuristic-derived topology fields (traffic class, rail, NUMA, GPU affinity). There is no any-GPU fallback — a preset with empty `gpuType:` is rejected at load time. If no preset matches, discovery proceeds with heuristic classification.
 - If you already know the SKU and want to skip cluster discovery entirely, use `l8k generate --for <preset>` (see `k8s-launch-kit-generate`).
 
