@@ -328,6 +328,8 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		assert.NotEmpty(t, cfg.NetworkOperator.Version)
 		assert.NotEmpty(t, cfg.NetworkOperator.ComponentVersion)
 		assert.NotEmpty(t, cfg.NetworkOperator.Repository)
+		assert.NotEmpty(t, cfg.NetworkOperator.OperatorRepository)
+		assert.NotEmpty(t, cfg.NetworkOperator.HelmRepoURL)
 		require.NotNil(t, cfg.DOCADriver)
 		assert.NotEmpty(t, cfg.DOCADriver.Version)
 	})
@@ -335,9 +337,11 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	t.Run("network operator release overrides config-file values", func(t *testing.T) {
 		cfg := &config.LaunchKubernetesConfig{
 			NetworkOperator: &config.NetworkOperatorConfig{
-				Version:          "v0.0.0-stale",
-				ComponentVersion: "stale-tag",
-				Repository:       "stale.example.com",
+				Version:            "v0.0.0-stale",
+				ComponentVersion:   "stale-tag",
+				Repository:         "stale.example.com",
+				OperatorRepository: "stale-operator.example.com",
+				HelmRepoURL:        "https://stale.example.com/charts",
 			},
 			DOCADriver: &config.DOCADriverConfig{Version: "stale-doca"},
 			Profile:    &config.Profile{},
@@ -348,6 +352,8 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		assert.NotEqual(t, "v0.0.0-stale", cfg.NetworkOperator.Version)
 		assert.NotEqual(t, "stale-tag", cfg.NetworkOperator.ComponentVersion)
 		assert.NotEqual(t, "stale.example.com", cfg.NetworkOperator.Repository)
+		assert.NotEqual(t, "stale-operator.example.com", cfg.NetworkOperator.OperatorRepository)
+		assert.NotEqual(t, "https://stale.example.com/charts", cfg.NetworkOperator.HelmRepoURL)
 		assert.NotEqual(t, "stale-doca", cfg.DOCADriver.Version)
 	})
 

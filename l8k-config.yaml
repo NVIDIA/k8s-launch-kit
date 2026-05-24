@@ -1,14 +1,29 @@
 networkOperator:
   # selectedRelease pins the Network Operator release line (MAJOR.MINOR).
   # Equivalent to passing --network-operator-release on the CLI. When set,
-  # version/componentVersion/repository (below) and docaDriver.version are
-  # populated from the embedded catalog; explicit values here are overridden.
-  # Supported: 26.1, 26.4. Leave empty to use the explicit values below as-is.
+  # version/componentVersion/repository/operatorRepository/helmRepoURL (below)
+  # and docaDriver.version are populated from the embedded catalog;
+  # explicit values here are overridden.
+  # Supported: 25.10, 26.1, 26.4. Leave empty to use the explicit values
+  # below as-is.
   # selectedRelease: "26.4"
   version: v26.1.1
   componentVersion: network-operator-v26.1.1
   selectedRelease: "26.1"
+  # repository — registry path for COMPONENT images managed by the operator
+  # (ofedDriver, nvIpam, multus, device plugins, …). Rendered into
+  # NicClusterPolicy / NicNodePolicy.
   repository: nvcr.io/nvidia/mellanox
+  # operatorRepository — registry path for the network-operator BINARY
+  # image itself. Distinct from `repository` because stable releases ship
+  # the operator at `nvcr.io/nvidia/cloud-native` while components live at
+  # `nvcr.io/nvidia/mellanox`. Rendered into the helm chart's
+  # `operator.repository` value.
+  operatorRepository: nvcr.io/nvidia/cloud-native
+  # helmRepoURL — Helm chart repository URL the `l8k deploy` Phase 0 fetches
+  # the network-operator chart from. Stable releases publish under
+  # `helm.ngc.nvidia.com/nvidia`; staging under `helm.ngc.nvidia.com/nvstaging/mellanox`.
+  helmRepoURL: https://helm.ngc.nvidia.com/nvidia
   namespace: nvidia-network-operator
   # imagePullSecrets:
   #   - my-registry-secret

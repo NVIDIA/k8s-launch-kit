@@ -25,6 +25,7 @@ description: |
   otherwise one policy per rail groups all planes together.
 deploymentGuide: spectrum-x-ra2.1.rst
 templates:
+  - 00-values.yaml
   - 10-nicclusterpolicy.yaml
   - 25-nicinterfacenametemplate.yaml
   - 30-nicconfigurationtemplate.yaml

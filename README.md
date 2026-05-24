@@ -114,6 +114,8 @@ or via a profile section in the user-config file.
 ### Deploy to Cluster
 Apply the generated deployment files to your Kubernetes cluster by using --deploy. This phase requires --kubeconfig and can be skipped if --deploy is not specified.
 
+The deploy step installs (or upgrades) the `nvidia/network-operator` Helm chart in-process before applying the post-install CRs. The chart version and Helm repository URL are taken from the embedded release catalog and can be selected via `--network-operator-release <MAJOR.MINOR>`. Each profile renders a per-profile `values.yaml` next to the CR manifests; `l8k deploy` reads that file and runs the install. When a release already exists with different values, deploy fails fast — pass `--overwrite-existing` to promote to `helm upgrade --install`.
+
 ### AI Agent / Automation Support
 Use --output json for structured machine-readable output (single JSON object to stdout).
 Use --yes to auto-confirm prompts, --quiet to suppress informational output, and --dry-run to preview deployments.

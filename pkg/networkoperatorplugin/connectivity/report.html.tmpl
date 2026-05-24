@@ -765,6 +765,51 @@ footer strong { color: var(--text-muted); }
     <p class="empty">No version-bearing sections found in cluster CRs.</p>
     {{- end}}
     {{- end}}
+
+    {{- if and .HelmValues (not .HelmValues.Skipped)}}
+    <div class="matrix-rail">Helm values (deployed vs. generated)</div>
+    {{- if .HelmValues.AllMatch}}
+    <p>Deployed helm values match the generated <code>values.yaml</code>. Release <code>{{.HelmValues.ReleaseName}}</code> in <code>{{.HelmValues.Namespace}}</code>.</p>
+    {{- else}}
+    <p>Deployed helm values diverge from the generated <code>values.yaml</code>. Run <code>l8k deploy --overwrite-existing</code> to converge.</p>
+    <table>
+      <thead>
+        <tr><th>Path</th><th>Deployed</th><th>Generated</th></tr>
+      </thead>
+      <tbody>
+        {{- range .HelmValues.Diff}}
+        <tr class="state-error">
+          <td><code>{{.Path}}</code></td>
+          <td><code>{{.Deployed}}</code></td>
+          <td><code>{{.Generated}}</code></td>
+        </tr>
+        {{- end}}
+      </tbody>
+    </table>
+    {{- end}}
+    {{- end}}
+
+    {{- if and .StrayCRs (not .StrayCRs.Skipped)}}
+    <div class="matrix-rail">Conflicting Network Operator resources</div>
+    {{- if .StrayCRs.Mismatches}}
+    <p>The operator namespace already contains Network Operator resources that <code>l8k generate</code> did not produce — a previously-deployed configuration that conflicts with the rendered manifests. Run <code>l8k deploy --overwrite-existing</code> to delete them.</p>
+    <table>
+      <thead>
+        <tr><th>Object</th><th>Kind / Scope</th></tr>
+      </thead>
+      <tbody>
+        {{- range .StrayCRs.Mismatches}}
+        <tr class="state-error">
+          <td><code>{{.Path}}</code></td>
+          <td>{{.Detail}}</td>
+        </tr>
+        {{- end}}
+      </tbody>
+    </table>
+    {{- else}}
+    <p>No conflicting Network Operator resources in the operator namespace.</p>
+    {{- end}}
+    {{- end}}
   </div>
 </section>
 

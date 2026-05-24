@@ -19,7 +19,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -83,11 +82,14 @@ Optionally deploy the generated manifests with --deploy.`,
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Resolve user config: explicit flag > ./cluster-config.yaml > default config path
+		// Resolve user-config via the shared lookup chain (deploy +
+		// validate use the same one). When --user-config wasn't passed,
+		// userConfigPath() will probe ./cluster-config.yaml,
+		// ./l8k-config.yaml, and the installed share-dir fallback in
+		// turn — none of those resolving is a hard error here since
+		// `l8k generate` needs a config to render against.
 		if userConfig == "" {
-			if _, err := os.Stat("cluster-config.yaml"); err == nil {
-				userConfig = "cluster-config.yaml"
-			} else if resolved := app.DefaultConfigPath(); resolved != "" {
+			if resolved := userConfigPath(); resolved != "" {
 				userConfig = resolved
 			} else {
 				exitWithError(apperrors.NewValidationError(
@@ -116,6 +118,7 @@ Optionally deploy the generated manifests with --deploy.`,
 			PodNamespace:            podNamespace,
 			SaveDeploymentFiles:     saveDeploymentFiles,
 			Deploy:                  deploy,
+			OverwriteExisting:       overwriteExistingFlag,
 			Kubeconfig:              kubeconfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
@@ -207,6 +210,7 @@ func init() {
 	generateCmd.Flags().BoolVar(&deploy, "deploy", false, "Also deploy after generating")
 	generateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Kubeconfig (required with --deploy, falls back to $KUBECONFIG, then ~/.kube/config)")
 	generateCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview what would be deployed")
+	generateCmd.Flags().BoolVar(&overwriteExistingFlag, "overwrite-existing", false, "Converge the cluster to the rendered manifests when preflight detects drift: helm upgrade the chart on chart-version/values mismatch, delete stray Network Operator CRs in the operator namespace, and rewrite NicClusterPolicy component versions via SSA. Off by default — preflight fails fast and lists what would change.")
 
 	setFlagGroup(generateCmd, "user-config", GroupCommon)
 	setFlagGroup(generateCmd, "kubeconfig", GroupCommon)
@@ -234,4 +238,5 @@ func init() {
 
 	setFlagGroup(generateCmd, "deploy", GroupDeploy)
 	setFlagGroup(generateCmd, "dry-run", GroupDeploy)
+	setFlagGroup(generateCmd, "overwrite-existing", GroupDeploy)
 }

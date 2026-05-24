@@ -40,6 +40,8 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
+	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
@@ -64,10 +66,6 @@ var (
 	validateWait                time.Duration
 	validateReportPath          string
 )
-
-// defaultUserConfigPath is the path l8k discover writes by default and
-// validate looks for if --user-config is not specified.
-const defaultUserConfigPath = "./cluster-config.yaml"
 
 // defaultOperatorNamespace is the default Network Operator namespace used
 // when no user-config is supplied to validate.
@@ -126,6 +124,8 @@ connectivity-matrix failure.`,
 		var (
 			versionCheck     *networkoperatorplugin.VersionCheck
 			componentCheck   *networkoperatorplugin.ComponentVersionCheck
+			helmValuesCheck  *networkoperatorplugin.HelmValuesCheck
+			strayCheck       *preflight.Result
 			results          []networkoperatorplugin.ValidationResult
 			matrix           *connectivity.MatrixResult
 			warnings         []string
@@ -157,7 +157,7 @@ connectivity-matrix failure.`,
 			emitVerdictBanner(overall, outputFormat)
 			writeHTMLReportIfWanted(context.Background(), reportClient, reportRestConfig,
 				reportManifestDir, deploymentFiles,
-				operatorNamespace, versionCheck, componentCheck, results, &matrix, &warnings,
+				operatorNamespace, versionCheck, componentCheck, helmValuesCheck, strayCheck, results, &matrix, &warnings,
 				presetResults, overall, userConfigPath(), outputFormat)
 			exitWithError(err, outputFormat)
 		}
@@ -185,35 +185,36 @@ connectivity-matrix failure.`,
 		// is required by validate. Missing or unparseable config softens the
 		// version check to "skipped" but does not fail the manifest check.
 		selectedRelease := ""
-		if path := userConfigPath(); path != "" {
-			if cfg, err := config.LoadFullConfig(path, log.Log); err == nil && cfg != nil {
-				if cfg.NetworkOperator.Namespace != "" {
-					operatorNamespace = cfg.NetworkOperator.Namespace
-				}
-				selectedRelease = cfg.NetworkOperator.SelectedRelease
-				for _, g := range cfg.ClusterConfig {
-					if len(g.PresetDeviation) == 0 {
-						continue
-					}
-					presetDeviations = append(presetDeviations, groupDeviationReport{
-						Group:       g.Identifier,
-						MachineType: g.MachineType,
-						GPUType:     g.GPUType,
-						Deviations:  g.PresetDeviation,
-					})
-				}
-				// Re-run preset matching at validate-time. This
-				// catches drift between the cluster-config.yaml's
-				// stored hardware view and the certified preset
-				// even when discover wasn't re-run. Results stay
-				// informational — a deviation doesn't fail
-				// validate (matches the historical behaviour of
-				// presetDeviation), so the exit code is unchanged.
-				presetResults = presetmatch.MatchAll(cfg)
-			} else if err != nil {
-				log.Log.V(1).Info("user-config not loaded; version check will be skipped",
-					"path", path, "error", err.Error())
+		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{})
+		if cfgErr != nil {
+			log.Log.V(1).Info("user-config not loaded; version check will be skipped",
+				"path", cfgPath, "error", cfgErr.Error())
+		} else if cfg != nil {
+			if cfg.NetworkOperator != nil && cfg.NetworkOperator.Namespace != "" {
+				operatorNamespace = cfg.NetworkOperator.Namespace
 			}
+			if cfg.NetworkOperator != nil {
+				selectedRelease = cfg.NetworkOperator.SelectedRelease
+			}
+			for _, g := range cfg.ClusterConfig {
+				if len(g.PresetDeviation) == 0 {
+					continue
+				}
+				presetDeviations = append(presetDeviations, groupDeviationReport{
+					Group:       g.Identifier,
+					MachineType: g.MachineType,
+					GPUType:     g.GPUType,
+					Deviations:  g.PresetDeviation,
+				})
+			}
+			// Re-run preset matching at validate-time. This
+			// catches drift between the cluster-config.yaml's
+			// stored hardware view and the certified preset
+			// even when discover wasn't re-run. Results stay
+			// informational — a deviation doesn't fail
+			// validate (matches the historical behaviour of
+			// presetDeviation), so the exit code is unchanged.
+			presetResults = presetmatch.MatchAll(cfg)
 		}
 
 		log.Log.Info("Validating deployment",
@@ -258,6 +259,38 @@ connectivity-matrix failure.`,
 		}
 		componentCheck = ccCheck
 
+		// Helm values drift: compare the deployed release's
+		// user-supplied values against the values.yaml that
+		// `l8k generate` produced. Mismatches mean re-running
+		// `l8k deploy` would change the chart configuration —
+		// exit code 4, same as a version mismatch.
+		valuesPath := filepath.Join(manifestDir, "values.yaml")
+		var generatedValuesYAML []byte
+		if b, err := os.ReadFile(valuesPath); err == nil {
+			generatedValuesYAML = b
+		}
+		hvCheck, hvErr := networkoperatorplugin.CheckHelmReleaseValues(ctx, restConfig, operatorNamespace, generatedValuesYAML)
+		if hvErr != nil {
+			log.Log.V(1).Info("helm-values check failed", "error", hvErr.Error())
+		}
+		helmValuesCheck = hvCheck
+
+		// Stray-CRs: any Network Operator-managed CR in the operator
+		// namespace (or cluster-scoped Kinds cluster-wide) that l8k did
+		// NOT render. Surfaces as a soft fail — the verdict picks it up,
+		// the HTML report lists every offender, and the user can sweep
+		// them with `l8k deploy --overwrite-existing`.
+		genRefs, scanErr := preflight.ScanGeneratedManifests(manifestDir)
+		if scanErr != nil {
+			log.Log.V(1).Info("stray-CR scan failed", "error", scanErr.Error())
+		}
+		stray := preflight.CheckStrayCRs(ctx, preflight.Inputs{
+			KubeClient:         k8sClient,
+			OperatorNamespace:  operatorNamespace,
+			GeneratedManifests: genRefs,
+		})
+		strayCheck = &stray
+
 		var valErr error
 		results, valErr = networkoperatorplugin.ValidateManifests(ctx, k8sClient, manifestDir)
 		if valErr != nil {
@@ -288,10 +321,10 @@ connectivity-matrix failure.`,
 		// connectivity failure) since Go's defer doesn't run on
 		// os.Exit and exitWithError does os.Exit.
 		emitReport := func() {
-			overall := computeOverallVerdict(verdict, componentCheck, matrix, presetResults)
+			overall := computeOverallVerdict(verdict, componentCheck, helmValuesCheck, strayCheck, matrix, presetResults)
 			emitVerdictBanner(overall, outputFormat)
 			writeHTMLReportIfWanted(ctx, k8sClient, restConfig, manifestDir, deploymentFiles,
-				operatorNamespace, versionCheck, componentCheck, results, &matrix, &warnings,
+				operatorNamespace, versionCheck, componentCheck, helmValuesCheck, strayCheck, results, &matrix, &warnings,
 				presetResults, overall, userConfigPath(), outputFormat)
 		}
 
@@ -303,6 +336,8 @@ connectivity-matrix failure.`,
 		// In-progress (without errors) prints a warning and exits 0
 		// so CI/operators can re-run later.
 		componentMismatch := componentCheck != nil && !componentCheck.Skipped && !componentCheck.AllMatch
+		helmValuesMismatch := helmValuesCheck != nil && !helmValuesCheck.Skipped && !helmValuesCheck.AllMatch
+		strayMismatch := strayCheck != nil && strayCheck.Failed()
 		switch {
 		case verdict.HasError || verdict.HasMissing:
 			emitReport()
@@ -316,7 +351,7 @@ connectivity-matrix failure.`,
 			}
 			warnings = append(warnings, "Connectivity matrix skipped — cluster has in-progress manifests.")
 			emitReport()
-			if !verdict.VersionOK || componentMismatch {
+			if !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch {
 				os.Exit(apperrors.ExitDeployment)
 			}
 			return
@@ -355,7 +390,7 @@ connectivity-matrix failure.`,
 		// the only problem is a stale Helm release / catalog mismatch
 		// / hardware drift from the catalog preset.
 		matrixFailed := matrix != nil && matrix.Summary.Failed > 0
-		if matrixFailed || !verdict.VersionOK || componentMismatch || hasPresetDeviation(presetResults) {
+		if matrixFailed || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch || hasPresetDeviation(presetResults) {
 			os.Exit(apperrors.ExitDeployment)
 		}
 	},
@@ -380,6 +415,8 @@ func hasPresetDeviation(results []presetmatch.Result) bool {
 func computeOverallVerdict(
 	verdict validationVerdict,
 	componentCheck *networkoperatorplugin.ComponentVersionCheck,
+	helmValuesCheck *networkoperatorplugin.HelmValuesCheck,
+	strayCheck *preflight.Result,
 	matrix *connectivity.MatrixResult,
 	presetResults []presetmatch.Result,
 ) connectivity.OverallVerdict {
@@ -405,6 +442,16 @@ func computeOverallVerdict(
 		}
 		out.Pass = false
 		out.Reasons = append(out.Reasons, fmt.Sprintf("%d component version(s) in NicClusterPolicy/NicNodePolicy diverge from the selectedRelease catalog", mismatches))
+	}
+	if helmValuesCheck != nil && !helmValuesCheck.Skipped && !helmValuesCheck.AllMatch {
+		out.Pass = false
+		out.Reasons = append(out.Reasons,
+			fmt.Sprintf("%d helm value(s) on the deployed release diverge from the generated values.yaml — re-run `l8k deploy --overwrite-existing` to converge", len(helmValuesCheck.Diff)))
+	}
+	if strayCheck != nil && strayCheck.Failed() {
+		out.Pass = false
+		out.Reasons = append(out.Reasons,
+			fmt.Sprintf("%d existing Network Operator resource(s) in the operator namespace conflict with the rendered manifests — re-run `l8k deploy --overwrite-existing` to delete them", len(strayCheck.Mismatches)))
 	}
 	if matrix != nil {
 		if matrix.Summary.Failed > 0 {
@@ -618,6 +665,8 @@ func writeHTMLReportIfWanted(
 	operatorNamespace string,
 	versionCheck *networkoperatorplugin.VersionCheck,
 	componentCheck *networkoperatorplugin.ComponentVersionCheck,
+	helmValuesCheck *networkoperatorplugin.HelmValuesCheck,
+	strayCheck *preflight.Result,
 	results []networkoperatorplugin.ValidationResult,
 	matrix **connectivity.MatrixResult,
 	warnings *[]string,
@@ -645,6 +694,8 @@ func writeHTMLReportIfWanted(
 		Nodes:           listNodesForReport(ctx, c),
 		Release:         versionCheck,
 		ComponentCheck:  componentCheck,
+		HelmValues:      helmValuesCheck,
+		StrayCRs:        strayCheck,
 		PresetMatches:   presetResults,
 		Manifests:       results,
 		Matrix:          *matrix,
@@ -1194,46 +1245,6 @@ func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir stri
 		}
 		results = fresh
 	}
-}
-
-// userConfigPath returns the user-config path to read. Lookup order:
-//
-//   1. The explicit --user-config when set.
-//   2. ./cluster-config.yaml in the current working directory (the
-//      historical default — `l8k discover` writes here when no path
-//      is given).
-//   3. <deployment-files>/../cluster-config.yaml — the convention
-//      `l8k discover --save-cluster-config <dir>/cluster-config.yaml
-//      --save-deployment-files <dir>/deployment` produces, so an
-//      operator running `l8k validate --deployment-files
-//      <dir>/deployment` from anywhere finds the matching config.
-//   4. <deployment-files>/cluster-config.yaml — fallback for users
-//      who keep the config inside the deployment dir.
-//
-// Returns "" when none of these resolve to a readable file; the
-// caller (validate) softens its version check to "skipped" in that
-// case.
-func userConfigPath() string {
-	candidates := []string{}
-	if userConfig != "" {
-		candidates = append(candidates, userConfig)
-	}
-	candidates = append(candidates, defaultUserConfigPath)
-	if deploymentFiles != "" {
-		candidates = append(candidates,
-			filepath.Join(deploymentFiles, "..", "cluster-config.yaml"),
-			filepath.Join(deploymentFiles, "cluster-config.yaml"),
-		)
-	}
-	for _, p := range candidates {
-		if p == "" {
-			continue
-		}
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
-		}
-	}
-	return ""
 }
 
 // groupDeviationReport carries the per-group preset deviations that

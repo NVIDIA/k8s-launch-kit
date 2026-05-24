@@ -39,7 +39,20 @@ type Release struct {
 type ReleaseNetworkOperator struct {
 	Version          string `yaml:"version"`
 	ComponentVersion string `yaml:"componentVersion"`
-	Repository       string `yaml:"repository"`
+	// Repository is the registry path for COMPONENT images managed by
+	// the operator (ofedDriver, nvIpam, multus, device plugins, …).
+	// Rendered into NicClusterPolicy / NicNodePolicy templates.
+	Repository string `yaml:"repository"`
+	// OperatorRepository is the registry path for the network-operator
+	// BINARY image itself. Distinct from Repository because stable
+	// releases publish the operator under `nvcr.io/nvidia/cloud-native`
+	// while components live under `nvcr.io/nvidia/mellanox`. Rendered
+	// into the helm chart's `operator.repository` value.
+	OperatorRepository string `yaml:"operatorRepository"`
+	// HelmRepoURL is the Helm chart repository URL for the network-operator
+	// chart. Per-release because stable releases publish to .../nvidia while
+	// beta/staging releases publish to .../nvstaging/mellanox.
+	HelmRepoURL string `yaml:"helmRepoURL"`
 }
 
 type ReleaseDOCADriver struct {

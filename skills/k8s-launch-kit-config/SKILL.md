@@ -38,7 +38,7 @@ l8k discover --user-config my-config.yaml \
 
 | Section | What It Controls |
 |---------|-----------------|
-| `networkOperator` | Operator namespace, version, image repository |
+| `networkOperator` | Operator namespace, version, image repository, helm chart repository (`helmRepoURL`) |
 | `docaDriver` | OFED/DOCA driver image, version, blacklist settings |
 | `nvIpam` | NV-IPAM IP pool ranges and subnet generation |
 | `sriov` | VF count, resource prefix, MTU, link type |
@@ -111,6 +111,12 @@ sriov:
 # Set DOCA driver version
 docaDriver:
   version: "doca3.2.0-25.10-1.2.8.0-2"
+
+# Override the helm chart repository URL (rarely needed — the embedded
+# release catalog supplies the right URL for each MAJOR.MINOR release).
+# Useful only for mirrors or private chart hosts.
+networkOperator:
+  helmRepoURL: "https://my-mirror.example.com/charts"
 
 # Configure NV-IPAM subnets manually
 nvIpam:

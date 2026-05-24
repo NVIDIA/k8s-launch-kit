@@ -97,6 +97,15 @@ type Options struct {
 	// deadline.
 	DeployTimeout time.Duration
 
+	// OverwriteExisting forwards the `--overwrite-existing` flag through
+	// to Phase 0 of `networkoperatorplugin.ApplyManifestsFromDir`. When
+	// true and a network-operator helm release already exists in the
+	// target namespace with values that differ from the freshly rendered
+	// `values.yaml`, the install is promoted to `helm upgrade --install`.
+	// When false (default), a value-conflict surfaces as a deployment
+	// error pointing at this flag.
+	OverwriteExisting bool
+
 	// Output control
 	OutputFormat string // Output format: "text" (default) or "json"
 	Yes          bool   // Auto-confirm all prompts (--yes)

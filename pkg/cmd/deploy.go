@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,10 +27,12 @@ import (
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
+	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -45,6 +48,11 @@ var (
 	// right after a successful deploy. Off by default; opt-in for
 	// pipelines that want end-to-end verification in one command.
 	deployTestConnectivity bool
+	// overwriteExistingFlag promotes Phase 0 helm install to
+	// `helm upgrade --install` when a release already exists with
+	// values that differ from the rendered values.yaml. Off by default
+	// so accidental re-runs don't clobber a user's hand-tuned install.
+	overwriteExistingFlag bool
 )
 
 // DefaultDeploymentDir is the default directory `l8k generate` writes
@@ -135,11 +143,47 @@ is used as the manifest directory.`,
 			uiOutput.Info("Applying manifests from %s", manifestDir)
 		}
 
-		if err := networkoperatorplugin.ApplyManifestsFromDir(ctx, k8sClient, manifestDir, dryRunFlag); err != nil {
+		// Load cluster-config.yaml when present (auto-discovered next
+		// to --deployment-files or in CWD) so Phase 0 helm install and
+		// the Phase 0.5 preflight checks have catalog-resolved chart
+		// version, helm repo URL, operator namespace, and component /
+		// DOCA versions to compare against. Without this, every check
+		// soft-skips with "no expected version" — useless.
+		deployOpts := networkoperatorplugin.DeployOptions{
+			DryRun:            dryRunFlag,
+			OverwriteExisting: overwriteExistingFlag,
+			RestConfig:        restConfig,
+		}
+		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{})
+		if cfgErr != nil {
+			exitWithError(apperrors.NewValidationError(
+				"failed to load user config",
+				cfgErr,
+				"Verify the YAML is parseable and networkOperator.selectedRelease is set to a supported MAJOR.MINOR (e.g. 26.4), or re-run `l8k discover`",
+			), outputFormat)
+		}
+		if cfg != nil {
+			deployOpts.NetworkOperator = cfg.NetworkOperator
+			if cfg.DOCADriver != nil {
+				deployOpts.DOCAVersion = cfg.DOCADriver.Version
+			}
+			log.Log.V(1).Info("Loaded user config for deploy",
+				"path", cfgPath,
+				"selectedRelease", selectedReleaseFromCfg(cfg))
+		}
+		if err := networkoperatorplugin.ApplyManifestsFromDir(ctx, k8sClient, manifestDir, deployOpts); err != nil {
+			// Pass StructuredError through as-is — the deploy
+			// internals build them with actionable Message +
+			// Suggestion text. Re-wrapping would clobber the
+			// suggestion and duplicate the message.
+			var se *apperrors.StructuredError
+			if errors.As(err, &se) {
+				exitWithError(se, outputFormat)
+			}
 			exitWithError(apperrors.NewDeploymentError(
 				"deployment failed",
 				err,
-				"Check cluster connectivity, RBAC, and manifest validity",
+				"Check cluster connectivity, RBAC, and manifest validity.",
 			), outputFormat)
 		}
 
@@ -199,13 +243,25 @@ func init() {
 
 	deployCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	deployCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to apply")
+	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-discovered from ./cluster-config.yaml or <deployment-files>/../cluster-config.yaml). Used to resolve the network-operator release for Phase 0 helm install and Phase 0.5 preflight checks.")
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
 	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state. Useful for matching a maintenance window when SR-IOV reconciliation on a large cluster can take an hour or more.")
 	deployCmd.Flags().BoolVar(&deployTestConnectivity, "test-connectivity", false, "After a successful deploy, run the connectivity matrix (apply example DaemonSet → wait Ready → RDMA matrix → cleanup) to verify the data plane end-to-end.")
+	deployCmd.Flags().BoolVar(&overwriteExistingFlag, "overwrite-existing", false, "Converge the cluster to the rendered manifests when preflight detects drift: helm upgrade the chart on chart-version/values mismatch, delete stray Network Operator CRs in the operator namespace, and rewrite NicClusterPolicy component versions via SSA. Off by default — preflight fails fast and lists what would change.")
 
 	setFlagGroup(deployCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(deployCmd, "deployment-files", GroupGeneration)
 	setFlagGroup(deployCmd, "deploy-timeout", GroupDeploy)
 	setFlagGroup(deployCmd, "dry-run", GroupDeploy)
 	setFlagGroup(deployCmd, "test-connectivity", GroupDeploy)
+	setFlagGroup(deployCmd, "overwrite-existing", GroupDeploy)
+}
+
+// selectedReleaseFromCfg returns the catalog key the user-config pinned, or
+// "" when the file didn't carry a networkOperator block.
+func selectedReleaseFromCfg(cfg *config.LaunchKubernetesConfig) string {
+	if cfg == nil || cfg.NetworkOperator == nil {
+		return ""
+	}
+	return cfg.NetworkOperator.SelectedRelease
 }

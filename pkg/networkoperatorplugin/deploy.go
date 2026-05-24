@@ -18,6 +18,7 @@ package networkoperatorplugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,15 +26,64 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	pkgerrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	yaml "sigs.k8s.io/yaml"
 )
+
+// helmValuesFile is the on-disk filename `l8k generate` writes per profile
+// (when a 00-values.yaml template is present). `ApplyManifestsFromDir`
+// looks for this exact filename in the deployment directory to drive the
+// Phase 0 helm install. The filename matches the helm convention so users
+// can also `helm install -f values.yaml` by hand if needed.
+const helmValuesFile = "values.yaml"
+
+// defaultHelmInstallTimeout caps the helm install/upgrade wait when the
+// caller doesn't supply a budget via DeployOptions.HelmTimeout. Kept on the
+// higher side because the upstream chart's Wait covers the operator pod
+// rollout, which on slow networks can take a few minutes.
+const defaultHelmInstallTimeout = 10 * time.Minute
+
+// DeployOptions bundles the knobs that `ApplyManifestsFromDir` needs beyond
+// the manifest directory itself. Keeping them in one struct keeps the
+// callsite readable as Phase 0 (helm install) and the existing four phases
+// grow more parameters over time.
+type DeployOptions struct {
+	// DryRun threads through to server-side dry-run for apply and to
+	// action.Install.DryRun / action.Upgrade.DryRun for helm.
+	DryRun bool
+	// OverwriteExisting, when true, promotes the helm install path to
+	// `helm upgrade --install` when a release already exists in the target
+	// namespace with different user-supplied values. When false (default),
+	// a value-conflict surfaces as an error pointing at this flag.
+	OverwriteExisting bool
+	// RestConfig is required for Phase 0. When nil, Phase 0 is skipped
+	// (backward-compatible: lets users keep managing the chart out-of-band).
+	RestConfig *rest.Config
+	// NetworkOperator carries the helm-install metadata: chart version
+	// (from Version, "v" prefix stripped), repo URL, and namespace. When
+	// nil or HelmRepoURL is empty, Phase 0 is skipped.
+	NetworkOperator *config.NetworkOperatorConfig
+	// DOCAVersion is the catalog's docaDriver.version, used by the
+	// preflight component-versions check to compare against the
+	// ofedDriver section of NicClusterPolicy / NicNodePolicy. Empty when
+	// no release is pinned; the component check soft-skips its DOCA rows
+	// in that case.
+	DOCAVersion string
+	// HelmTimeout caps the helm install/upgrade Wait. Zero means use
+	// defaultHelmInstallTimeout. The deploy-wide timeout (set on ctx by
+	// the caller) is the absolute ceiling for the entire run.
+	HelmTimeout time.Duration
+}
 
 // deployPollInterval is the cadence of the state-machine deploy loop's
 // polling between Validate calls. Matches the historical 3-second wait
@@ -55,15 +105,31 @@ type appliedManifest struct {
 }
 
 // DeployProfile is a thin wrapper that preserves the existing plugin call
-// shape (profile arg unused). Delegates to ApplyManifestsFromDir.
+// shape (profile arg unused). Delegates to ApplyManifestsFromDir, supplying
+// the Phase 0 helm-install metadata from the plugin's own fields (populated
+// by the launcher after ApplyOptionsToConfig has settled the config).
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
 	_ = profile
-	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, false)
+	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, DeployOptions{
+		DryRun:            p.DryRun,
+		OverwriteExisting: p.OverwriteExisting,
+		RestConfig:        p.RESTConfig,
+		NetworkOperator:   p.NetworkOperator,
+		DOCAVersion:       p.DOCAVersion,
+	})
 }
 
 // ApplyManifestsFromDir reads Kubernetes manifests from manifestsDir and
-// applies them to the cluster in four phases:
+// applies them to the cluster in five phases:
 //
+//  0. Helm install — if `values.yaml` is present in manifestsDir AND opts
+//     supplies a NetworkOperator config with HelmRepoURL, install or
+//     upgrade the network-operator helm release into opts.NetworkOperator.
+//     Namespace via the Helm Go SDK. Skipped silently when values.yaml is
+//     absent, or when opts.RestConfig / opts.NetworkOperator are nil —
+//     backward compatible with users managing the chart out of band.
+//     A value-conflict against an existing release surfaces as an error
+//     pointing at --overwrite-existing.
 //  1. NicClusterPolicy — apply, then wait until the registry reports
 //     success or error. NCP is upstream of every per-node component and
 //     gates the rest of the deploy.
@@ -86,21 +152,41 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 // which is the right default for SR-IOV configuration on large clusters,
 // where a single policy can easily exceed any small per-manifest budget.
 //
-// When dryRun is true the apply path uses server-side dry-run
+// When opts.DryRun is true the apply path uses server-side dry-run
 // (client.DryRunAll) so the cluster validates manifests without
-// persisting them; phase 4 is skipped entirely.
-func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manifestsDir string, dryRun bool) error {
+// persisting them; phase 4 is skipped entirely. Phase 0's helm install
+// also runs in dry-run mode (action.Install.DryRun).
+func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manifestsDir string, opts DeployOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	uiOutput := ui.FromContext(ctx)
 
+	// Phase 0 — helm install/upgrade the network-operator chart when
+	// values.yaml is present and the caller supplied the helm-install
+	// metadata. Skipped silently otherwise so users managing the chart
+	// out of band can keep using the standalone `l8k deploy`.
+	if err := runHelmInstallPhase(ctx, manifestsDir, opts, uiOutput); err != nil {
+		return err
+	}
+
+	// Phase 0.5 — preflight checks (chart version, values, stray CRs,
+	// NCP component versions). Surfaces every mismatch in one pass.
+	// Without --overwrite-existing: fail fast with all failures listed.
+	// With it: log + remediate strays (helm + NCP drift are resolved by
+	// the Phase 0 install and the Phase 1 SSA apply respectively).
+	if err := runPreflightPhase(ctx, kubeClient, manifestsDir, opts, uiOutput); err != nil {
+		return err
+	}
+
 	// Read & triage manifest docs from the deployment directory.
 	nicDoc, nnpDocs, otherDocs, err := readManifestDir(manifestsDir)
 	if err != nil {
 		return err
 	}
+
+	dryRun := opts.DryRun
 
 	// Pre-decode NCP / NNP so any YAML error surfaces before we start
 	// touching the cluster. The "other" docs are decoded lazily inside
@@ -241,6 +327,12 @@ func readManifestDir(manifestsDir string) (nicDoc []byte, nnpDocs [][]byte, othe
 		}
 		if isExampleManifest(e.Name()) {
 			log.Log.V(1).Info("Skipping example manifest at deploy time", "file", e.Name())
+			continue
+		}
+		// values.yaml is consumed by Phase 0 (helm install) — not a K8s
+		// manifest, must not flow into Phase 1/2/3 apply.
+		if e.Name() == helmValuesFile {
+			log.Log.V(1).Info("Skipping helm values file at apply phase", "file", e.Name())
 			continue
 		}
 		filePaths = append(filePaths, filepath.Join(manifestsDir, e.Name()))
@@ -613,3 +705,194 @@ func splitYAMLDocuments(s string) []string {
 	}
 	return docs
 }
+
+// runHelmInstallPhase performs Phase 0: install (or upgrade) the
+// network-operator helm chart from values.yaml in the deployment dir. The
+// phase is a no-op when:
+//   - values.yaml is absent (user manages the chart out of band),
+//   - opts.RestConfig is nil (no cluster wiring available),
+//   - opts.NetworkOperator is nil or HelmRepoURL/Version are empty (no
+//     catalog metadata to drive the install).
+//
+// A value-conflict against an existing release surfaces as a
+// DeploymentError pointing at --overwrite-existing.
+func runHelmInstallPhase(ctx context.Context, manifestsDir string, opts DeployOptions, uiOutput ui.Output) error {
+	valuesPath := filepath.Join(manifestsDir, helmValuesFile)
+	valuesYAML, err := os.ReadFile(valuesPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Log.V(1).Info("No helm values file found; skipping operator install",
+				"path", valuesPath)
+			return nil
+		}
+		return fmt.Errorf("read helm values file %s: %w", valuesPath, err)
+	}
+
+	if opts.RestConfig == nil || opts.NetworkOperator == nil ||
+		opts.NetworkOperator.HelmRepoURL == "" || opts.NetworkOperator.Version == "" {
+		uiOutput.Warning("values.yaml is present but helm-install metadata is missing — skipping operator install.")
+		uiOutput.Info("To install the network-operator chart, re-run with `l8k generate --deploy` (or pass --network-operator-release).")
+		log.Log.Info("Skipping helm install phase",
+			"hasRestConfig", opts.RestConfig != nil,
+			"hasNetworkOperator", opts.NetworkOperator != nil)
+		return nil
+	}
+
+	uiOutput.Section("Phase 0 — Helm install (network-operator chart)")
+	uiOutput.Info("Installing network-operator chart from %s (version %s)",
+		opts.NetworkOperator.HelmRepoURL, strings.TrimPrefix(opts.NetworkOperator.Version, "v"))
+
+	timeout := opts.HelmTimeout
+	if timeout == 0 {
+		timeout = defaultHelmInstallTimeout
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
+			timeout = remaining
+		}
+	}
+
+	err = InstallOrUpgrade(ctx, opts.RestConfig, opts.NetworkOperator, valuesYAML, opts.OverwriteExisting, timeout, opts.DryRun)
+	if err == nil {
+		if opts.DryRun {
+			uiOutput.Success("Dry-run: helm install would create network-operator release in namespace %s",
+				opts.NetworkOperator.Namespace)
+		} else {
+			uiOutput.Success("network-operator release ready in namespace %s", opts.NetworkOperator.Namespace)
+		}
+		return nil
+	}
+	if errors.Is(err, ErrReleaseStuckInPendingState) {
+		return pkgerrors.NewDeploymentError(
+			fmt.Sprintf("helm release %q in namespace %s is stuck in a pending state (a previous install/upgrade/rollback was interrupted)",
+				"network-operator", opts.NetworkOperator.Namespace),
+			nil,
+			fmt.Sprintf("Unstick the release before re-running deploy. If a previous deployed revision exists: `helm rollback network-operator -n %[1]s`. Otherwise: `helm uninstall network-operator -n %[1]s`. Both commands require the helm CLI.",
+				opts.NetworkOperator.Namespace),
+		)
+	}
+	if errors.Is(err, ErrReleaseExistsWithDifferentValues) {
+		// nil cause: the sentinel's message duplicates the user-facing
+		// Message text we just wrote, and StructuredError.Error()
+		// would append it as redundant tail noise. Callers don't
+		// `errors.Is` against the sentinel through this wrap.
+		return pkgerrors.NewDeploymentError(
+			fmt.Sprintf("helm release %q in namespace %s has different values than the rendered values.yaml",
+				"network-operator", opts.NetworkOperator.Namespace),
+			nil,
+			"Re-run with --overwrite-existing to upgrade the release to the new values, or align cluster-config.yaml with the deployed release.",
+		)
+	}
+	if errors.Is(err, ErrReleaseExistsWithDifferentChartVersion) {
+		return pkgerrors.NewDeploymentError(
+			fmt.Sprintf("helm release %q in namespace %s is at a different chart version than %s",
+				"network-operator", opts.NetworkOperator.Namespace, strings.TrimPrefix(opts.NetworkOperator.Version, "v")),
+			nil,
+			"Re-run with --overwrite-existing to upgrade the chart, or set --network-operator-release to the currently deployed version.",
+		)
+	}
+	return err
+}
+
+// runPreflightPhase runs the preflight checks (chart version, values, NCP
+// component versions, stray CRs) and either fails fast or remediates strays.
+//
+//   - Without --overwrite-existing, any non-skipped failure aborts the deploy
+//     with a structured error listing every failed check. The user sees ALL
+//     mismatches in one pass instead of fixing them one re-run at a time.
+//   - With --overwrite-existing, the helm phase (already run above) takes
+//     care of chart-version + values drift, the Phase 1 NCP/NNP apply with
+//     ForceOwnership replaces component versions, and we delete every
+//     stray CR here so the cluster state matches what l8k just rendered.
+//
+// Phase 0.5 is a no-op when no preflight check is actionable — typically a
+// standalone `l8k deploy` with no l8k-config.yaml and no helm release in
+// the namespace yet.
+func runPreflightPhase(ctx context.Context, kubeClient client.Client, manifestsDir string, opts DeployOptions, uiOutput ui.Output) error {
+	in, err := buildPreflightInputs(kubeClient, manifestsDir, opts)
+	if err != nil {
+		return err
+	}
+
+	results := preflight.RunAll(ctx, in)
+	failedCount := 0
+	for _, r := range results {
+		switch {
+		case r.Skipped:
+			log.Log.V(1).Info("preflight check skipped", "code", r.Code, "reason", r.Reason)
+		case r.Failed():
+			failedCount++
+			log.Log.Info("preflight check failed", "code", r.Code, "reason", r.Reason, "mismatches", len(r.Mismatches))
+		default:
+			log.Log.V(1).Info("preflight check passed", "code", r.Code)
+		}
+	}
+	if failedCount == 0 {
+		return nil
+	}
+
+	uiOutput.Section(fmt.Sprintf("Phase 0.5 — Preflight checks (%d issue(s) found)", failedCount))
+	for _, r := range results {
+		if !r.Failed() {
+			continue
+		}
+		uiOutput.Warning("  %s — %s", r.Name, r.Reason)
+		for _, m := range r.Mismatches {
+			uiOutput.Info("    • %s", m.String())
+		}
+	}
+
+	if !opts.OverwriteExisting {
+		return pkgerrors.NewDeploymentError(
+			fmt.Sprintf("preflight found %d issue(s): %s",
+				failedCount, strings.Join(preflight.FailedNames(results), "; ")),
+			nil,
+			"Re-run with --overwrite-existing to converge: upgrade the helm release, delete the conflicting Network Operator resources, and rewrite mismatched NicClusterPolicy fields. Or address each issue individually and re-run.",
+		)
+	}
+
+	// Remediate strays. Chart-version / values drift was already handled
+	// by Phase 0's `helm upgrade --install`; NCP component versions get
+	// rewritten by Phase 1's SSA + ForceOwnership.
+	if err := preflight.Remediate(ctx, in, results, preflight.RemediationOptions{DryRun: opts.DryRun}); err != nil {
+		return fmt.Errorf("preflight remediation: %w", err)
+	}
+	uiOutput.Success("Preflight remediation applied")
+	return nil
+}
+
+// buildPreflightInputs assembles the Inputs the four checks need from the
+// deploy-level opts + manifestsDir. Unresolvable fields are left empty —
+// individual checks soft-skip when an input is missing.
+func buildPreflightInputs(kubeClient client.Client, manifestsDir string, opts DeployOptions) (preflight.Inputs, error) {
+	in := preflight.Inputs{
+		KubeClient: kubeClient,
+		RestConfig: opts.RestConfig,
+	}
+	if opts.NetworkOperator != nil {
+		in.OperatorNamespace = opts.NetworkOperator.Namespace
+		in.SelectedRelease = opts.NetworkOperator.SelectedRelease
+		in.ExpectedAppVersion = opts.NetworkOperator.Version
+		in.ExpectedComponentVersion = opts.NetworkOperator.ComponentVersion
+		in.ExpectedChartVersion = strings.TrimPrefix(opts.NetworkOperator.Version, "v")
+	}
+	if opts.DOCAVersion != "" {
+		in.ExpectedDOCAVersion = opts.DOCAVersion
+	}
+
+	// Best-effort: read values.yaml (helm checks soft-skip if absent).
+	if b, err := os.ReadFile(filepath.Join(manifestsDir, helmValuesFile)); err == nil {
+		in.GeneratedValuesYAML = b
+	}
+
+	// Best-effort: scan manifests dir for rendered object refs (stray
+	// check needs this — an unreadable dir is a hard error since the
+	// rest of deploy wouldn't survive it either).
+	refs, err := preflight.ScanGeneratedManifests(manifestsDir)
+	if err != nil {
+		return in, fmt.Errorf("scan generated manifests for preflight: %w", err)
+	}
+	in.GeneratedManifests = refs
+	return in, nil
+}
+

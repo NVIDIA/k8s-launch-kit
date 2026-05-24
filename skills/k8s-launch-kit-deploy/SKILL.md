@@ -23,6 +23,8 @@ l8k deploy [--deployment-files <DIR>] [--kubeconfig <PATH>] [--dry-run]
 
 `l8k deploy` reads YAML files from `--deployment-files` (default `./deployment`) and applies them in dependency order. It auto-prefers `<DIR>/network-operator/` (the layout `l8k generate` produces) and falls back to `<DIR>` itself.
 
+When the deployment directory contains a `values.yaml` (the `l8k generate` profile renderer emits one per profile), Phase 0 runs first: the Helm Go SDK installs (or upgrades, with `--overwrite-existing`) the `nvidia/network-operator` chart in the namespace from `networkOperator.namespace`. The chart version and Helm repo URL come from the embedded release catalog selected via `--network-operator-release`. Phase 0 is skipped silently when `values.yaml` is absent — backward compatible with users managing the chart out of band.
+
 The legacy one-shot form (still supported, useful when you want to generate and apply in a single step):
 
 ```bash
@@ -36,6 +38,7 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> -
 | `--deployment-files` | — | Directory with manifests to apply (default `./deployment`) |
 | `--kubeconfig` | — | Path to kubeconfig with cluster-admin access (falls back to `$KUBECONFIG`) |
 | `--dry-run` | — | Server-side dry-run (`client.DryRunAll`) — cluster validates without persisting |
+| `--overwrite-existing` | — | When a `network-operator` helm release already exists with values that differ from the freshly rendered `values.yaml`, promote Phase 0 to `helm upgrade --install`. Off by default to avoid clobbering an out-of-band install. |
 
 ## Examples
 

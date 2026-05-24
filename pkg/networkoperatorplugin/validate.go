@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,11 +31,17 @@ import (
 	"strconv"
 	"strings"
 
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/storage/driver"
+
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	yaml "sigs.k8s.io/yaml"
@@ -488,6 +495,124 @@ func CheckHelmReleaseVersion(ctx context.Context, c client.Client, namespace, se
 		DeployedRelease: deployed,
 		Match:           deployed.AppVersion == rel.NetworkOperator.Version,
 	}, nil
+}
+
+// HelmValuesCheck captures the comparison between the user-supplied values
+// of the deployed network-operator helm release and the values l8k would
+// install now from the freshly rendered values.yaml. Surfaced in the
+// validate HTML report under "Network Operator release" and gates exit
+// code 4 when AllMatch=false (same as version-mismatch).
+//
+// The check is intentionally narrow: it compares user-supplied values
+// (action.GetValues without --all), not the merged chart defaults, so the
+// validator only flags drift that re-running `l8k deploy` would actually
+// converge.
+type HelmValuesCheck struct {
+	// Skipped is true when the check could not be performed: no
+	// selectedRelease in user-config, no values.yaml on disk, no release
+	// in the target namespace, or a transient kube-API failure.
+	Skipped bool
+	Reason  string
+	// Namespace and ReleaseName describe what the check examined.
+	Namespace   string
+	ReleaseName string
+	// Diff lists the paths that differ between the deployed values and
+	// the generated values. Empty when AllMatch=true.
+	Diff []ValueDiff
+	// AllMatch is true when the deployed values are deep-equal to the
+	// generated values. Combined with Skipped=false, this is the
+	// "validate green" condition for the helm-values check.
+	AllMatch bool
+}
+
+// ValueDiff records a single differing path between two helm values trees.
+// Used by the validate flow's HTML report to render a per-path table. The
+// underlying comparison logic lives in pkg/networkoperatorplugin/preflight
+// (DeepEqualValues); ValueDiff is the projection consumed by report.html.tmpl.
+type ValueDiff struct {
+	Path      string
+	Deployed  interface{}
+	Generated interface{}
+}
+
+// CheckHelmReleaseValues compares the user-supplied values of the deployed
+// network-operator release in `namespace` against `generatedValuesYAML` (the
+// rendered values.yaml from `l8k generate`). Same equality logic as the
+// deploy-time conflict check in InstallOrUpgrade, so the validator and
+// deploy can't disagree about whether the deployed release matches what
+// `l8k deploy` would install now.
+//
+// When `generatedValuesYAML` is empty, restConfig is nil, or no release
+// exists in the target namespace, returns Skipped=true with a Reason.
+func CheckHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namespace string, generatedValuesYAML []byte) (*HelmValuesCheck, error) {
+	if restConfig == nil {
+		return &HelmValuesCheck{Skipped: true, Reason: "no kube REST config available for helm values check"}, nil
+	}
+	if len(generatedValuesYAML) == 0 {
+		return &HelmValuesCheck{Skipped: true, Reason: "no values.yaml in deployment dir — chart managed out of band"}, nil
+	}
+	if namespace == "" {
+		namespace = "nvidia-network-operator"
+	}
+
+	actionCfg, err := helmclient.NewActionConfig(restConfig, namespace, helmclient.StorageDriver)
+	if err != nil {
+		return &HelmValuesCheck{
+			Skipped:   true,
+			Reason:    fmt.Sprintf("helm action config init failed: %v", err),
+			Namespace: namespace,
+		}, nil
+	}
+
+	// GetValues without --all returns only the user-supplied values,
+	// matching what helm.go writes during install. Comparing against the
+	// merged chart defaults would be noisy (sub-chart defaults change
+	// release-over-release) and out of scope for this check.
+	getValues := action.NewGetValues(actionCfg)
+	getValues.AllValues = false
+	deployed, err := getValues.Run(helmclient.DefaultReleaseName)
+	if err != nil {
+		if errors.Is(err, driver.ErrReleaseNotFound) {
+			return &HelmValuesCheck{
+				Skipped:     true,
+				Reason:      fmt.Sprintf("no helm release %q in namespace %s — run `l8k deploy` first", helmclient.DefaultReleaseName, namespace),
+				Namespace:   namespace,
+				ReleaseName: helmclient.DefaultReleaseName,
+			}, nil
+		}
+		return &HelmValuesCheck{
+			Skipped:     true,
+			Reason:      fmt.Sprintf("helm get values failed: %v", err),
+			Namespace:   namespace,
+			ReleaseName: helmclient.DefaultReleaseName,
+		}, nil
+	}
+
+	generated, err := helmclient.UnmarshalValues(generatedValuesYAML)
+	if err != nil {
+		return &HelmValuesCheck{
+			Skipped:     true,
+			Reason:      fmt.Sprintf("parse generated values.yaml: %v", err),
+			Namespace:   namespace,
+			ReleaseName: helmclient.DefaultReleaseName,
+		}, nil
+	}
+
+	// Use the shared preflight diff so deploy + validate can't disagree.
+	mismatches := preflight.DeepEqualValues(deployed, generated)
+	out := &HelmValuesCheck{
+		Namespace:   namespace,
+		ReleaseName: helmclient.DefaultReleaseName,
+		AllMatch:    len(mismatches) == 0,
+	}
+	for _, m := range mismatches {
+		out.Diff = append(out.Diff, ValueDiff{
+			Path:      m.Path,
+			Deployed:  m.Actual,
+			Generated: m.Expected,
+		})
+	}
+	return out, nil
 }
 
 func findNetworkOperatorHelmRelease(ctx context.Context, c client.Client, namespace string) (*HelmReleaseInfo, error) {
