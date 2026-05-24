@@ -110,7 +110,7 @@ func RunRPing(ctx context.Context, restConfig *rest.Config, namespace string, se
 	if iterations <= 0 {
 		iterations = 5
 	}
-	r := PingResult{Test: test, PacketLoss: -1}
+	r := PingResult{Test: test}
 
 	tctx, cancel := context.WithTimeout(ctx, rdmaTestTimeout)
 	defer cancel()
@@ -153,7 +153,7 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string
 	if port <= 0 {
 		port = 18515
 	}
-	r := PingResult{Test: test, PacketLoss: -1}
+	r := PingResult{Test: test}
 	if test.SrcRDMADev == "" || test.DstRDMADev == "" {
 		r.Err = fmt.Errorf("ib_write_bw needs RDMA device names; got src=%q dst=%q", test.SrcRDMADev, test.DstRDMADev)
 		return r

@@ -30,58 +30,75 @@ import (
 // the order it was emitted so tests can assert on exact lines.
 type captureOutput struct{ lines []string }
 
-func (c *captureOutput) Info(format string, args ...interface{})    { c.lines = append(c.lines, fmt.Sprintf(format, args...)) }
-func (c *captureOutput) Success(format string, args ...interface{}) { c.lines = append(c.lines, "SUCCESS: "+fmt.Sprintf(format, args...)) }
-func (c *captureOutput) Warning(format string, args ...interface{}) { c.lines = append(c.lines, "WARNING: "+fmt.Sprintf(format, args...)) }
-func (c *captureOutput) Error(format string, args ...interface{})   { c.lines = append(c.lines, "ERROR: "+fmt.Sprintf(format, args...)) }
-func (c *captureOutput) StartProgress(message string) ui.Progress   { return &captureProgress{out: c, msg: message} }
-func (c *captureOutput) Header(text string)                         {}
-func (c *captureOutput) Section(text string)                        { c.lines = append(c.lines, "SECTION: "+text) }
-func (c *captureOutput) Confirm(string) (bool, error)               { return true, nil }
-func (c *captureOutput) IsTTY() bool                                { return false }
+func (c *captureOutput) Info(format string, args ...interface{}) {
+	c.lines = append(c.lines, fmt.Sprintf(format, args...))
+}
+func (c *captureOutput) Success(format string, args ...interface{}) {
+	c.lines = append(c.lines, "SUCCESS: "+fmt.Sprintf(format, args...))
+}
+func (c *captureOutput) Warning(format string, args ...interface{}) {
+	c.lines = append(c.lines, "WARNING: "+fmt.Sprintf(format, args...))
+}
+func (c *captureOutput) Error(format string, args ...interface{}) {
+	c.lines = append(c.lines, "ERROR: "+fmt.Sprintf(format, args...))
+}
+func (c *captureOutput) StartProgress(message string) ui.Progress {
+	return &captureProgress{out: c, msg: message}
+}
+func (c *captureOutput) Header(text string)            {}
+func (c *captureOutput) Section(text string)           { c.lines = append(c.lines, "SECTION: "+text) }
+func (c *captureOutput) Confirm(string) (bool, error)  { return true, nil }
+func (c *captureOutput) IsTTY() bool                   { return false }
 
 type captureProgress struct {
 	out *captureOutput
 	msg string
 }
 
-func (p *captureProgress) Update(string)         {}
-func (p *captureProgress) Success(m string)      { p.out.lines = append(p.out.lines, "PROGRESS_OK: "+m) }
-func (p *captureProgress) Fail(m string)         { p.out.lines = append(p.out.lines, "PROGRESS_FAIL: "+m) }
+func (p *captureProgress) Update(string)    {}
+func (p *captureProgress) Success(m string) { p.out.lines = append(p.out.lines, "PROGRESS_OK: "+m) }
+func (p *captureProgress) Fail(m string)    { p.out.lines = append(p.out.lines, "PROGRESS_FAIL: "+m) }
 
-// Helpers synthesize results with both pod and node names so the
-// renderer's node-label preference is exercised.
+// Helpers synthesize RDMA results so the renderer's per-(rail, family)
+// grouping and node-label fallback are exercised.
 
-func successResult(src, dst, rail, srcIP, dstIP string, lossPercent int, rttMs float64) PingResult {
+func rpingResult(src, dst, rail string, ok bool) PingResult {
 	return PingResult{
 		Test: PingTest{
-			Kind:    PingSameRail,
+			Kind:    RDMAPingSameRail,
 			SrcPod:  src + "-pod",
 			DstPod:  dst + "-pod",
 			SrcNode: src,
 			DstNode: dst,
 			Rail:    rail,
-			SrcIP:   srcIP,
-			DstIP:   dstIP,
 			SrcRail: rail,
 			DstRail: rail,
 		},
-		OK:         lossPercent < 100,
-		PacketLoss: lossPercent,
-		RTTAvgMs:   rttMs,
+		OK: ok,
 	}
 }
 
-func failResult(src, dst, rail string, lossPercent int) PingResult {
-	r := successResult(src, dst, rail, "", "", lossPercent, 0)
-	r.OK = false
-	return r
-}
-
-func crossResult(src, dst, srcRail, dstRail string, ok bool) PingResult {
+func ibBwResult(src, dst, rail string, ok bool, bwGbps float64) PingResult {
 	return PingResult{
 		Test: PingTest{
-			Kind:    PingCrossRail,
+			Kind:    RDMABwSameRail,
+			SrcPod:  src + "-pod",
+			DstPod:  dst + "-pod",
+			SrcNode: src,
+			DstNode: dst,
+			Rail:    rail,
+			SrcRail: rail,
+			DstRail: rail,
+		},
+		OK:            ok,
+		BandwidthGbps: bwGbps,
+	}
+}
+
+func crossRpingResult(src, dst, srcRail, dstRail string, ok bool) PingResult {
+	return PingResult{
+		Test: PingTest{
+			Kind:    RDMAPingCrossRail,
 			SrcPod:  src + "-pod",
 			DstPod:  dst + "-pod",
 			SrcNode: src,
@@ -90,23 +107,24 @@ func crossResult(src, dst, srcRail, dstRail string, ok bool) PingResult {
 			SrcRail: srcRail,
 			DstRail: dstRail,
 		},
-		OK:         ok,
-		PacketLoss: 0,
+		OK: ok,
 	}
 }
 
 func TestRenderMatrixText_RailGridAndCrossRail(t *testing.T) {
 	result := &MatrixResult{
 		PingResults: []PingResult{
-			// Rail rail-0: 2 nodes, all green
-			successResult("worker-1", "worker-2", "rail-0", "10.0.0.1", "10.0.0.2", 0, 0.5),
-			successResult("worker-2", "worker-1", "rail-0", "10.0.0.2", "10.0.0.1", 0, 0.6),
-			// Rail rail-1: one direction fails
-			successResult("worker-1", "worker-2", "rail-1", "10.0.1.1", "10.0.1.2", 0, 0.7),
-			failResult("worker-2", "worker-1", "rail-1", 100),
+			// Rail rail-0: 2 nodes, both rping pass
+			rpingResult("worker-1", "worker-2", "rail-0", true),
+			rpingResult("worker-2", "worker-1", "rail-0", true),
+			ibBwResult("worker-1", "worker-2", "rail-0", true, 194.4),
+			ibBwResult("worker-2", "worker-1", "rail-0", true, 193.8),
+			// Rail rail-1: one rping direction fails
+			rpingResult("worker-1", "worker-2", "rail-1", true),
+			rpingResult("worker-2", "worker-1", "rail-1", false),
 			// Cross-rail canaries
-			crossResult("worker-1", "worker-2", "rail-0", "rail-1", true),
-			crossResult("worker-2", "worker-1", "rail-0", "rail-1", false),
+			crossRpingResult("worker-1", "worker-2", "rail-0", "rail-1", true),
+			crossRpingResult("worker-2", "worker-1", "rail-0", "rail-1", false),
 		},
 	}
 
@@ -116,21 +134,24 @@ func TestRenderMatrixText_RailGridAndCrossRail(t *testing.T) {
 	joined := strings.Join(out.lines, "\n")
 
 	// Sanity: both rails rendered. The kind family appears in the
-	// header so we look for the "Rail <name> — ICMP ping" prefix.
-	assert.Contains(t, joined, "Rail rail-0 — ICMP ping:")
-	assert.Contains(t, joined, "Rail rail-1 — ICMP ping:")
+	// header so we look for the "Rail <name> — RDMA ping" prefix.
+	assert.Contains(t, joined, "Rail rail-0 — RDMA ping (rping):")
+	assert.Contains(t, joined, "Rail rail-1 — RDMA ping (rping):")
+	assert.Contains(t, joined, "Rail rail-0 — RDMA bandwidth (ib_write_bw):")
 	// Cross-rail section rendered.
-	assert.Contains(t, joined, "Cross-rail canary — ICMP ping:")
+	assert.Contains(t, joined, "Cross-rail canary — RDMA ping (rping):")
 	// Header row of the grid.
 	assert.Contains(t, joined, "src \\ dst")
 	// Axis labels must be node names, NOT pod names.
 	assert.Contains(t, joined, "worker-1")
 	assert.Contains(t, joined, "worker-2")
 	assert.NotContains(t, joined, "worker-1-pod")
-	// Sample cells: green ✓ in non-TTY mode is just plain text.
-	assert.Contains(t, joined, "✓ 0% 0.5ms")
-	// Failure cell shows ✗ with packet loss.
-	assert.Contains(t, joined, "✗ 100%")
+	// Sample cells: rping ✓ in non-TTY mode is just plain text.
+	assert.Contains(t, joined, "✓")
+	// ib_write_bw cell shows formatted Gbps.
+	assert.Contains(t, joined, "194.4 Gbps")
+	// Failure cell shows ✗ for rping.
+	assert.Contains(t, joined, "✗")
 	// Self-pairs are dashes.
 	selfDash := 0
 	for _, l := range out.lines {
@@ -170,37 +191,25 @@ func TestShortPodName(t *testing.T) {
 
 func TestCellFor(t *testing.T) {
 	t.Run("self pair is dash", func(t *testing.T) {
-		assert.Equal(t, "—", cellFor("pod-a", "pod-a", nil, familyICMP, false))
+		assert.Equal(t, "—", cellFor("pod-a", "pod-a", nil, familyRPing, false))
 	})
 	t.Run("missing result is bullet", func(t *testing.T) {
-		assert.Equal(t, "·", cellFor("pod-a", "pod-b", nil, familyICMP, false))
-	})
-	t.Run("ICMP OK result formats with loss + rtt", func(t *testing.T) {
-		r := PingResult{OK: true, PacketLoss: 0, RTTAvgMs: 1.23}
-		assert.Equal(t, "✓ 0% 1.2ms", cellFor("a", "b", &r, familyICMP, false))
-	})
-	t.Run("ICMP partial loss is failure", func(t *testing.T) {
-		r := PingResult{OK: false, PacketLoss: 33}
-		assert.Equal(t, "✗ 33%", cellFor("a", "b", &r, familyICMP, false))
-	})
-	t.Run("ICMP exec error has no loss reading", func(t *testing.T) {
-		r := PingResult{OK: false, PacketLoss: -1}
-		assert.Equal(t, "✗ ERR", cellFor("a", "b", &r, familyICMP, false))
+		assert.Equal(t, "·", cellFor("pod-a", "pod-b", nil, familyRPing, false))
 	})
 	t.Run("rping OK is bare checkmark", func(t *testing.T) {
-		r := PingResult{OK: true, PacketLoss: -1}
+		r := PingResult{OK: true}
 		assert.Equal(t, "✓", cellFor("a", "b", &r, familyRPing, false))
 	})
 	t.Run("rping fail is bare X", func(t *testing.T) {
-		r := PingResult{OK: false, PacketLoss: -1}
+		r := PingResult{OK: false}
 		assert.Equal(t, "✗", cellFor("a", "b", &r, familyRPing, false))
 	})
 	t.Run("ib_write_bw OK shows Gbps", func(t *testing.T) {
-		r := PingResult{OK: true, PacketLoss: -1, BandwidthGbps: 194.39}
+		r := PingResult{OK: true, BandwidthGbps: 194.39}
 		assert.Equal(t, "✓ 194.4 Gbps", cellFor("a", "b", &r, familyIbBw, false))
 	})
 	t.Run("ib_write_bw fail with no bandwidth is ERR", func(t *testing.T) {
-		r := PingResult{OK: false, PacketLoss: -1}
+		r := PingResult{OK: false}
 		assert.Equal(t, "✗ ERR", cellFor("a", "b", &r, familyIbBw, false))
 	})
 	t.Run("ib_write_bw OK but zero bandwidth is ERR", func(t *testing.T) {
@@ -208,20 +217,18 @@ func TestCellFor(t *testing.T) {
 		// in practice, but if it does the cell renders as ERR
 		// since a "0 Gbps" link is broken even if perftest exited
 		// cleanly.
-		r := PingResult{OK: true, PacketLoss: -1, BandwidthGbps: 0}
+		r := PingResult{OK: true, BandwidthGbps: 0}
 		assert.Equal(t, "✗ ERR", cellFor("a", "b", &r, familyIbBw, false))
 	})
 	t.Run("TTY mode wraps in ANSI green for OK", func(t *testing.T) {
-		r := PingResult{OK: true, PacketLoss: 0}
-		got := cellFor("a", "b", &r, familyICMP, true)
+		r := PingResult{OK: true}
+		got := cellFor("a", "b", &r, familyRPing, true)
 		assert.Contains(t, got, "\033[32m")
 		assert.Contains(t, got, "\033[0m")
 	})
 }
 
 func TestKindFamilyOf(t *testing.T) {
-	assert.Equal(t, familyICMP, kindFamilyOf(PingSameRail))
-	assert.Equal(t, familyICMP, kindFamilyOf(PingCrossRail))
 	assert.Equal(t, familyRPing, kindFamilyOf(RDMAPingSameRail))
 	assert.Equal(t, familyRPing, kindFamilyOf(RDMAPingCrossRail))
 	assert.Equal(t, familyIbBw, kindFamilyOf(RDMABwSameRail))

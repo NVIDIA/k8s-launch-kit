@@ -35,7 +35,7 @@ import (
 // updateGolden re-writes the checked-in golden file when set. Run with
 // `go test ./pkg/networkoperatorplugin/connectivity/ -update-golden`
 // after intentional template changes.
-var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/verify-report.golden.html with the current renderer output")
+var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/k8s-launch-kit-validation-report.golden.html with the current renderer output")
 
 // fixtureData is the deterministic input the renderer is exercised
 // against. Includes one of every state badge, an IN-PROGRESS row with
@@ -47,10 +47,8 @@ func fixtureData() ReportData {
 		Verdict: OverallVerdict{
 			Pass: false,
 			Reasons: []string{
-				"1 ping test(s) failed in the connectivity matrix",
-			},
-			Notes: []string{
-				"1 node group(s) deviate from their matched preset (informational — see Node groups section)",
+				"1 RDMA test(s) failed in the connectivity matrix",
+				`The detected platform topology does not match the certified topology for vendor-a/h200 server type: deviceID (got=1021 want=1023)`,
 			},
 		},
 		Cluster: ClusterInfo{
@@ -153,38 +151,61 @@ func fixtureData() ReportData {
 		},
 		Matrix: &MatrixResult{
 			PingResults: []PingResult{
+				// rping: same-rail, both directions, rail-0 (both pass)
 				{
-					Test: PingTest{Kind: PingSameRail,
+					Test: PingTest{Kind: RDMAPingSameRail,
 						SrcNode: "node-a", DstNode: "node-b",
 						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
-					OK: true, PacketLoss: 0, RTTAvgMs: 0.12,
+					OK: true,
 				},
 				{
-					Test: PingTest{Kind: PingSameRail,
+					Test: PingTest{Kind: RDMAPingSameRail,
 						SrcNode: "node-b", DstNode: "node-a",
 						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
-					OK: true, PacketLoss: 0, RTTAvgMs: 0.15,
+					OK: true,
 				},
+				// rping: same-rail, rail-1 (one direction fails)
 				{
-					Test: PingTest{Kind: PingSameRail,
+					Test: PingTest{Kind: RDMAPingSameRail,
 						SrcNode: "node-a", DstNode: "node-b",
 						Rail: "rail-1", SrcRail: "rail-1", DstRail: "rail-1"},
-					OK: true, PacketLoss: 0, RTTAvgMs: 0.18,
+					OK: true,
 				},
 				{
-					Test: PingTest{Kind: PingSameRail,
+					Test: PingTest{Kind: RDMAPingSameRail,
 						SrcNode: "node-b", DstNode: "node-a",
 						Rail: "rail-1", SrcRail: "rail-1", DstRail: "rail-1"},
-					OK: false, PacketLoss: 100,
+					OK: false,
 				},
+				// rping: cross-rail canary
 				{
-					Test: PingTest{Kind: PingCrossRail,
+					Test: PingTest{Kind: RDMAPingCrossRail,
 						SrcNode: "node-a", DstNode: "node-b",
 						Rail: "rail-0→rail-1", SrcRail: "rail-0", DstRail: "rail-1"},
-					OK: true, PacketLoss: 0, RTTAvgMs: 0.20,
+					OK: true,
+				},
+				// ib_write_bw: same-rail rail-0 both directions pass with bandwidth
+				{
+					Test: PingTest{Kind: RDMABwSameRail,
+						SrcNode: "node-a", DstNode: "node-b",
+						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
+					OK: true, BandwidthGbps: 194.4,
+				},
+				{
+					Test: PingTest{Kind: RDMABwSameRail,
+						SrcNode: "node-b", DstNode: "node-a",
+						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
+					OK: true, BandwidthGbps: 193.8,
+				},
+				// ib_write_bw: cross-rail canary passes with bandwidth
+				{
+					Test: PingTest{Kind: RDMABwCrossRail,
+						SrcNode: "node-a", DstNode: "node-b",
+						Rail: "rail-0→rail-1", SrcRail: "rail-0", DstRail: "rail-1"},
+					OK: true, BandwidthGbps: 187.6,
 				},
 			},
-			Summary: MatrixSummary{TotalTests: 5, Passed: 4, Failed: 1},
+			Summary: MatrixSummary{TotalTests: 8, Passed: 7, Failed: 1},
 		},
 		Warnings: []string{
 			"SriovNetworkNodePolicy/ethernet-sriov-rail-0 is in-progress on 1/2 nodes — re-run later.",
@@ -206,7 +227,7 @@ func fixtureData() ReportData {
 	}
 }
 
-const goldenPath = "testdata/verify-report.golden.html"
+const goldenPath = "testdata/k8s-launch-kit-validation-report.golden.html"
 
 func TestRenderHTML_Golden(t *testing.T) {
 	var buf bytes.Buffer

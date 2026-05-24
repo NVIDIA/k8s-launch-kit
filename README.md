@@ -231,12 +231,12 @@ NicNodePolicy (await each), all remaining CRs in one batch (controllers
 reconcile concurrently), then verify every manifest reached a terminal state.
 Example workload manifests (`*example*`) are **not** applied by `l8k deploy` —
 they're fixtures consumed by `l8k validate --connectivity` or
-`l8k deploy --verify` for the data-plane phase. It auto-prefers
+`l8k deploy --validate` for the data-plane phase. It auto-prefers
 `<dir>/network-operator/` (the layout `l8k generate` produces) and falls back
 to `<dir>` itself. `--dry-run` does a server-side dry run. `--deploy-timeout`
 caps the whole apply+reconcile phase end-to-end (e.g. `--deploy-timeout 90m`);
 without it, deploy polls indefinitely — right for SR-IOV on large clusters
-where reconciliation can take an hour. `--verify` chains the connectivity
+where reconciliation can take an hour. `--validate` chains the connectivity
 matrix straight after a successful apply.
 
 Verify the deployment end-to-end:
@@ -262,7 +262,7 @@ a per-pair cross-rail canary. The matrix is on by default
 (`--connectivity=false` to skip), runs concurrent pings capped at 16, and
 cleans up the test DaemonSet unless `--keep` is set.
 
-A self-contained HTML report lands at `<deployment-files>/verify-report.html`
+A self-contained HTML report lands at `<deployment-files>/k8s-launch-kit-validation-report.html`
 by default (override with `--report-path`, disable with `--report-path=-`).
 The report has: header (l8k version, kubeconfig context, API-server version),
 profile, **Node groups** (per-`clusterConfig[]` entry with east-west / north-

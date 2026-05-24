@@ -47,21 +47,19 @@ import (
 
 // Phase 2 connectivity-test flags. `--connectivity` defaults to ON —
 // every `l8k validate` verifies the data plane (apply example DS,
-// wait Ready, ping matrix, cleanup) unless the caller passes
+// wait Ready, RDMA matrix, cleanup) unless the caller passes
 // `--connectivity=false`. The other flags tune matrix behaviour
-// (--ping-count, --connectivity-timeout, --keep) or extend the
-// validate semantics (--wait blocks until in-progress manifests reach
-// a terminal state).
+// (--connectivity-timeout, --keep) or extend the validate semantics
+// (--wait blocks until in-progress manifests reach a terminal state).
 //
-// Phase 3 adds --report-path: emit an HTML verify-report alongside
+// Phase 3 adds --report-path: emit an HTML validation report alongside
 // the text/JSON output. Empty default means "auto-place at
-// <deployment-files>/verify-report.html"; the literal "-" disables
-// report writing.
+// <deployment-files>/k8s-launch-kit-validation-report.html"; the
+// literal "-" disables report writing.
 var (
 	validateConnectivity        bool
 	validateKeep                bool
 	validateConnectivityTimeout time.Duration
-	validatePingCount           int
 	validateWait                time.Duration
 	validateReportPath          string
 )
@@ -296,13 +294,16 @@ connectivity-matrix failure.`,
 				presetResults, overall, userConfigPath(), outputFormat)
 		}
 
-		// `--connectivity` runs the data-plane ping matrix only when
-		// every CR is reconciled — otherwise we'd just produce noise.
+		// `--connectivity` runs the data-plane matrix when no manifest
+		// is broken (error or missing). Version mismatches (Helm
+		// release or per-component) are *not* fatal here — the cluster
+		// is still up, so the connectivity tests are still meaningful;
+		// the final verdict picks up the mismatch as a fail reason.
 		// In-progress (without errors) prints a warning and exits 0
 		// so CI/operators can re-run later.
 		componentMismatch := componentCheck != nil && !componentCheck.Skipped && !componentCheck.AllMatch
 		switch {
-		case verdict.HasError || verdict.HasMissing || !verdict.VersionOK || componentMismatch:
+		case verdict.HasError || verdict.HasMissing:
 			emitReport()
 			os.Exit(apperrors.ExitDeployment)
 		case verdict.HasInProgress:
@@ -314,6 +315,9 @@ connectivity-matrix failure.`,
 			}
 			warnings = append(warnings, "Connectivity matrix skipped — cluster has in-progress manifests.")
 			emitReport()
+			if !verdict.VersionOK || componentMismatch {
+				os.Exit(apperrors.ExitDeployment)
+			}
 			return
 		}
 
@@ -323,7 +327,6 @@ connectivity-matrix failure.`,
 			m, err := connectivity.RunMatrix(ctxWithUI, k8sClient, restConfig, uiOutput, connectivity.Options{
 				ManifestDir: manifestDir,
 				Timeout:     validateConnectivityTimeout,
-				PingCount:   validatePingCount,
 				Keep:        validateKeep,
 			})
 			matrix = m
@@ -342,14 +345,31 @@ connectivity-matrix failure.`,
 			if matrix != nil && matrix.Skipped != nil {
 				warnings = append(warnings, "Connectivity matrix skipped: "+matrix.Skipped.Reason)
 			}
-			if matrix != nil && (matrix.Summary.Failed > 0 || matrix.Summary.ExecErrors > 0) {
-				emitReport()
-				os.Exit(apperrors.ExitDeployment)
-			}
 		}
 
 		emitReport()
+		// Final exit code unifies every gating signal: matrix failures,
+		// version/component mismatches, AND preset deviations all fail
+		// the verdict, but the matrix still gets a chance to run when
+		// the only problem is a stale Helm release / catalog mismatch
+		// / hardware drift from the catalog preset.
+		matrixFailed := matrix != nil && matrix.Summary.Failed > 0
+		if matrixFailed || !verdict.VersionOK || componentMismatch || hasPresetDeviation(presetResults) {
+			os.Exit(apperrors.ExitDeployment)
+		}
 	},
+}
+
+// hasPresetDeviation reports whether any group deviated from its
+// matched preset. Drives the non-zero exit code in addition to the
+// PASS/FAIL banner.
+func hasPresetDeviation(results []presetmatch.Result) bool {
+	for _, r := range results {
+		if r.Status == presetmatch.StatusDeviation {
+			return true
+		}
+	}
+	return false
 }
 
 // computeOverallVerdict folds every input from the validate run into
@@ -388,11 +408,7 @@ func computeOverallVerdict(
 	if matrix != nil {
 		if matrix.Summary.Failed > 0 {
 			out.Pass = false
-			out.Reasons = append(out.Reasons, fmt.Sprintf("%d ping test(s) failed in the connectivity matrix", matrix.Summary.Failed))
-		}
-		if matrix.Summary.ExecErrors > 0 {
-			out.Pass = false
-			out.Reasons = append(out.Reasons, fmt.Sprintf("%d ping test(s) hit exec errors (RBAC, kubelet timeout, …)", matrix.Summary.ExecErrors))
+			out.Reasons = append(out.Reasons, fmt.Sprintf("%d RDMA test(s) failed in the connectivity matrix", matrix.Summary.Failed))
 		}
 		if matrix.Skipped != nil {
 			out.Notes = append(out.Notes, "Connectivity matrix skipped: "+matrix.Skipped.Reason)
@@ -401,18 +417,61 @@ func computeOverallVerdict(
 	if verdict.HasInProgress {
 		out.Notes = append(out.Notes, fmt.Sprintf("%d manifest(s) still reconciling — re-run later or use --wait to block (does not gate the verdict)", verdict.InProgressCount))
 	}
-	// Preset deviations are informational only. Surface them as a
-	// note so the operator notices, but don't downgrade PASS.
-	deviationGroups := 0
+	// Platform topology mismatches fail the verdict but do NOT block
+	// the other stages (same pattern as version mismatch): when the
+	// discovered hardware drifts from the certified topology for the
+	// server type, it's a real validation failure, but the data
+	// plane is still testable. Surface one reason per deviating
+	// group naming the server type and which fields drifted — the
+	// HTML report has the full per-field expected/got table.
 	for _, r := range presetResults {
-		if r.Status == presetmatch.StatusDeviation {
-			deviationGroups++
+		if r.Status != presetmatch.StatusDeviation {
+			continue
 		}
-	}
-	if deviationGroups > 0 {
-		out.Notes = append(out.Notes, fmt.Sprintf("%d node group(s) deviate from their matched preset (informational — see Node groups section)", deviationGroups))
+		out.Pass = false
+		out.Reasons = append(out.Reasons,
+			fmt.Sprintf("The detected platform topology does not match the certified topology for %s server type: %s",
+				platformLabel(r), summarizePlatformDeviations(r.Deviations)))
 	}
 	return out
+}
+
+// platformLabel renders the server-type identifier used in user
+// messages: the certified-topology directory name when known (e.g.
+// "PowerEdge-XE9680-H200"), otherwise the discovered
+// <machineType>-<gpuType> pair. Either form follows the
+// `<manufacturer>-<machine-type>-<gpu-type>` convention.
+func platformLabel(r presetmatch.Result) string {
+	if r.PresetName != "" {
+		return r.PresetName
+	}
+	parts := make([]string, 0, 2)
+	if r.MachineType != "" {
+		parts = append(parts, r.MachineType)
+	}
+	if r.GPUType != "" {
+		parts = append(parts, r.GPUType)
+	}
+	if len(parts) == 0 {
+		return r.Group
+	}
+	return strings.Join(parts, "-")
+}
+
+// summarizePlatformDeviations renders a one-line summary of the
+// per-field deviations on a group: "deviceID (got=1021 want=1023);
+// pfCount (got=4 want=8)". Used in the PASS/FAIL banner where a full
+// table would be unreadable — the HTML report keeps the verbose
+// expected/got/detail breakdown in the Node groups section.
+func summarizePlatformDeviations(deviations []config.PresetDeviationEntry) string {
+	if len(deviations) == 0 {
+		return "no field-level details available"
+	}
+	parts := make([]string, 0, len(deviations))
+	for _, d := range deviations {
+		parts = append(parts, fmt.Sprintf("%s (got=%s want=%s)", d.Field, d.Got, d.Expected))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // emitVerdictBanner prints the PASS/FAIL banner at the top of text
@@ -439,38 +498,42 @@ func emitVerdictBanner(v connectivity.OverallVerdict, format string) {
 	}
 }
 
-// emitPresetMatchReport prints the per-group preset comparison in
-// text mode. JSON mode skips this — the structured field rides
+// emitPresetMatchReport prints the per-group platform-topology check
+// in text mode. JSON mode skips this — the structured field rides
 // downstream on the HTML/JSON envelope.
 func emitPresetMatchReport(results []presetmatch.Result, format string) {
 	if len(results) == 0 || format == "json" {
 		return
 	}
 	fmt.Println()
-	fmt.Println("Preset match (cluster groups vs. topology preset catalog)")
+	fmt.Println("Platform topology validation")
 	for _, r := range results {
 		var status string
 		switch r.Status {
 		case presetmatch.StatusMatch:
-			status = "MATCH    "
+			status = "MATCH        "
 		case presetmatch.StatusDeviation:
-			status = "DEVIATION"
+			status = "MISMATCH     "
 		case presetmatch.StatusNotFound:
-			status = "NO PRESET"
+			status = "NOT CERTIFIED"
 		case presetmatch.StatusSkipped:
-			status = "SKIPPED  "
+			status = "SKIPPED      "
 		default:
-			status = "UNKNOWN  "
+			status = "UNKNOWN      "
 		}
 		label := r.Group
 		if r.MachineType != "" || r.GPUType != "" {
 			label = fmt.Sprintf("%s (%s/%s)", r.Group, r.MachineType, r.GPUType)
 		}
 		detail := r.Reason
-		if r.Status == presetmatch.StatusMatch {
-			detail = fmt.Sprintf("preset %q matches", r.PresetName)
-		} else if r.Status == presetmatch.StatusDeviation {
-			detail = fmt.Sprintf("preset %q · %s", r.PresetName, r.Reason)
+		switch r.Status {
+		case presetmatch.StatusMatch:
+			detail = fmt.Sprintf("matches certified topology for %s server type", platformLabel(r))
+		case presetmatch.StatusDeviation:
+			detail = fmt.Sprintf("does not match certified topology for %s server type · %s",
+				platformLabel(r), r.Reason)
+		case presetmatch.StatusNotFound:
+			detail = fmt.Sprintf("no certified topology available for %s server type", platformLabel(r))
 		}
 		fmt.Printf("  [%s] %s — %s\n", status, label, detail)
 	}
@@ -548,7 +611,7 @@ func resolveReportPath(flag, deploymentDir string) string {
 	case "-":
 		return ""
 	case "":
-		return filepath.Join(deploymentDir, "verify-report.html")
+		return filepath.Join(deploymentDir, "k8s-launch-kit-validation-report.html")
 	default:
 		return flag
 	}
@@ -1157,13 +1220,13 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 
 	if len(presetDeviations) > 0 {
 		fmt.Println()
-		fmt.Println("Preset deviations (cluster differs from matched preset)")
+		fmt.Println("Platform topology mismatches (detected hardware differs from the certified topology)")
 		for _, gd := range presetDeviations {
 			label := gd.Group
 			if gd.MachineType != "" || gd.GPUType != "" {
 				label = fmt.Sprintf("%s (%s/%s)", gd.Group, gd.MachineType, gd.GPUType)
 			}
-			fmt.Printf("  %s — %d deviation(s):\n", label, len(gd.Deviations))
+			fmt.Printf("  %s — %d mismatch(es):\n", label, len(gd.Deviations))
 			for _, d := range gd.Deviations {
 				expected := d.Expected
 				if expected == "" {
@@ -1179,7 +1242,7 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 	}
 
 	fmt.Println()
-	fmt.Printf("Summary: %d/%d ready, %d in-progress, %d error, %d missing; version: %s; preset deviations: %d group(s)\n",
+	fmt.Printf("Summary: %d/%d ready, %d in-progress, %d error, %d missing; version: %s; topology mismatches: %d group(s)\n",
 		verdict.SuccessCount, verdict.Total,
 		verdict.InProgressCount, verdict.ErrorCount, verdict.MissingCount,
 		versionStatusText(vc), len(presetDeviations))
@@ -1231,12 +1294,11 @@ func init() {
 	// `l8k validate` exercises the data plane unless explicitly
 	// disabled. Pass `--connectivity=false` to limit validate to
 	// the static manifest-presence + Helm release-version checks.
-	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a ping matrix between pods of the example DaemonSet to verify the data plane. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
+	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run an RDMA matrix (rping + ib_write_bw) between pods of the example DaemonSet to verify the data plane. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
 	validateCmd.Flags().BoolVar(&validateKeep, "keep", false, "Leave the example DaemonSet running after --connectivity completes (useful for debugging).")
-	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 5*time.Minute, "Wall-clock budget for the connectivity matrix (DaemonSet rollout + ping execs).")
-	validateCmd.Flags().IntVar(&validatePingCount, "ping-count", 3, "Number of ICMP echoes per src→dst pair when running --connectivity (ping -c N).")
+	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 5*time.Minute, "Wall-clock budget for the connectivity matrix (DaemonSet rollout + rping + ib_write_bw execs).")
 	validateCmd.Flags().DurationVar(&validateWait, "wait", 0, "Block validate up to this duration waiting for in-progress manifests to reach a terminal state. 0 (default) returns immediately on the first snapshot.")
-	validateCmd.Flags().StringVar(&validateReportPath, "report-path", "", "Write an HTML verify-report to this path. When empty (default), writes to <deployment-files>/verify-report.html. Pass '-' to skip the report file entirely.")
+	validateCmd.Flags().StringVar(&validateReportPath, "report-path", "", "Write the HTML validation report to this path. When empty (default), writes to <deployment-files>/k8s-launch-kit-validation-report.html. Pass '-' to skip the report file entirely.")
 
 	setFlagGroup(validateCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(validateCmd, "user-config", GroupCommon)

@@ -33,12 +33,11 @@ import (
 // structured MatrixResult that the validate CLI marshals to stdout.
 //
 // Cells:
-//   - "—"      src equals dst (self-ping, not run)
+//   - "—"      src equals dst (self-test, not run)
 //   - "·"      no test for this (src,dst,rail) — shared-rail set
 //     didn't include both endpoints
-//   - "✓ 0%"   ping passed; packet loss percentage when non-zero,
-//     RTT when present (e.g. "✓ 0% 0.5ms")
-//   - "✗ 100%" ping failed; "✗ ERR" if the exec itself errored
+//   - rping       — "✓" / "✗" / "✗ ERR"
+//   - ib_write_bw — "✓ 194.4 Gbps" / "✗ ERR"
 //
 // ANSI color is applied only when uiOutput.IsTTY() — keeps log files
 // and CI pipelines free of escape sequences.
@@ -53,12 +52,11 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 	tty := uiOutput.IsTTY()
 	// Group per (rail, kind family). One grid is rendered for
 	// every (rail, family) bucket that has at least one result, in
-	// the test-execution order so the reader sees ICMP first
-	// (gating signal), then rping (QP-establishment), then
-	// ib_write_bw (bandwidth).
+	// the test-execution order so the reader sees rping
+	// (QP-establishment canary) before ib_write_bw (bandwidth).
 	byRail, byCross, nodes, rails := groupResultsByKind(result.PingResults)
 
-	families := []kindFamily{familyICMP, familyRPing, familyIbBw}
+	families := []kindFamily{familyRPing, familyIbBw}
 	for _, rail := range rails {
 		for _, fam := range families {
 			grid, ok := byRail[rail][fam]
@@ -86,37 +84,29 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 	}
 }
 
-// kindFamily collapses the six PingTestKind values down to the three
-// families the renderer cares about: ICMP, rping, ib_write_bw. The
+// kindFamily collapses the four PingTestKind values down to the two
+// families the renderer cares about: rping and ib_write_bw. The
 // same-rail / cross-rail axis is handled separately (per-rail grid vs
 // cross-rail list).
 type kindFamily int
 
 const (
-	familyICMP kindFamily = iota
-	familyRPing
+	familyRPing kindFamily = iota
 	familyIbBw
 )
 
 func kindFamilyOf(k PingTestKind) kindFamily {
-	switch {
-	case k.IsRDMAPing():
-		return familyRPing
-	case k.IsRDMABw():
+	if k.IsRDMABw() {
 		return familyIbBw
-	default:
-		return familyICMP
 	}
+	return familyRPing
 }
 
 func familyTitle(f kindFamily) string {
-	switch f {
-	case familyRPing:
-		return "RDMA ping (rping)"
-	case familyIbBw:
+	if f == familyIbBw {
 		return "RDMA bandwidth (ib_write_bw)"
 	}
-	return "ICMP ping"
+	return "RDMA ping (rping)"
 }
 
 // groupResultsByKind indexes results by (rail, family, src) → dst →
@@ -263,8 +253,7 @@ func cellFor(src, dst string, r *PingResult, fam kindFamily, tty bool) string {
 // + optional ANSI color when TTY. The body shape depends on the
 // kind family:
 //
-//   - ICMP:        ✓ 0% 0.1ms / ✗ 100% / ✗ ERR
-//   - rping:       ✓ / ✗ / ✗ ERR
+//   - rping:       ✓ / ✗
 //   - ib_write_bw: ✓ 194.4 Gbps / ✗ ERR
 func cellDetail(r *PingResult, fam kindFamily, tty bool) string {
 	body := cellBody(r, fam)
@@ -278,32 +267,17 @@ func cellDetail(r *PingResult, fam kindFamily, tty bool) string {
 }
 
 func cellBody(r *PingResult, fam kindFamily) string {
-	switch fam {
-	case familyRPing:
-		if r.OK {
-			return "✓"
-		}
-		return "✗"
-	case familyIbBw:
+	if fam == familyIbBw {
 		if r.OK && r.BandwidthGbps > 0 {
 			return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
 		}
 		return "✗ ERR"
-	default:
-		// ICMP
-		switch {
-		case r.OK:
-			body := fmt.Sprintf("✓ %d%%", r.PacketLoss)
-			if r.RTTAvgMs > 0 {
-				body = fmt.Sprintf("%s %.1fms", body, r.RTTAvgMs)
-			}
-			return body
-		case r.PacketLoss >= 0:
-			return fmt.Sprintf("✗ %d%%", r.PacketLoss)
-		default:
-			return "✗ ERR"
-		}
 	}
+	// rping
+	if r.OK {
+		return "✓"
+	}
+	return "✗"
 }
 
 // shortPodName trims a long pod name to keep grid columns from blowing

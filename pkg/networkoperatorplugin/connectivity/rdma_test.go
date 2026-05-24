@@ -95,99 +95,17 @@ func TestParseIbWriteBwOutput(t *testing.T) {
 	})
 }
 
-func TestRDMAPlan(t *testing.T) {
-	mk := func(name string, rails ...string) TestPod {
-		tp := mkPod(name, rails...)
-		tp.RDMADevsByRail = map[string]string{}
-		for _, r := range rails {
-			tp.RDMADevsByRail[r] = "mlx5_" + r // stub dev name
-		}
-		return tp
-	}
-
-	t.Run("emits rping and ib_write_bw variants per ICMP pair", func(t *testing.T) {
-		plan := Plan([]TestPod{
-			mk("pod-a", "rail-0", "rail-1"),
-			mk("pod-b", "rail-0", "rail-1"),
-		})
-		require.Nil(t, plan.Skip)
-		RDMAPlan([]TestPod{
-			mk("pod-a", "rail-0", "rail-1"),
-			mk("pod-b", "rail-0", "rail-1"),
-		}, &plan)
-
-		// 2 pods × 1 ordered pair each dir × 2 rails = 4
-		assert.Len(t, plan.RDMASameRail, 4)
-		assert.Len(t, plan.RDMABwSameRail, 4)
-		// Cross-rail canaries: 2 ordered pod pairs = 2 each.
-		assert.Len(t, plan.RDMACrossRail, 2)
-		assert.Len(t, plan.RDMABwCrossRail, 2)
-
-		// Every emitted test must carry both RDMA device names —
-		// the runner needs them for `-d <dev>`.
-		for _, set := range [][]PingTest{plan.RDMASameRail, plan.RDMABwSameRail, plan.RDMACrossRail, plan.RDMABwCrossRail} {
-			for _, tst := range set {
-				assert.NotEmpty(t, tst.SrcRDMADev, "src device must be set on %+v", tst)
-				assert.NotEmpty(t, tst.DstRDMADev, "dst device must be set on %+v", tst)
-			}
-		}
-	})
-
-	t.Run("pods missing RDMA device on a rail get that rail skipped", func(t *testing.T) {
-		pods := []TestPod{
-			mk("pod-a", "rail-0", "rail-1"),
-			mk("pod-b", "rail-0", "rail-1"),
-		}
-		// Drop pod-b's rail-1 device — the matrix should still
-		// produce rail-0 RDMA tests but skip rail-1.
-		delete(pods[1].RDMADevsByRail, "rail-1")
-
-		plan := Plan(pods)
-		require.Nil(t, plan.Skip)
-		RDMAPlan(pods, &plan)
-
-		// rail-0 only: 2 ordered pairs = 2 same-rail tests
-		// per kind.
-		assert.Len(t, plan.RDMASameRail, 2)
-		assert.Len(t, plan.RDMABwSameRail, 2)
-		// Cross-rail canary uses src.rail[0] → dst.rail[1].
-		// pod-a→pod-b skipped (pod-b missing rail-1 device);
-		// pod-b→pod-a still works (pod-b has rail-0,
-		// pod-a has rail-1). One direction only.
-		assert.Len(t, plan.RDMACrossRail, 1)
-		assert.Len(t, plan.RDMABwCrossRail, 1)
-		assert.Equal(t, "pod-b", plan.RDMACrossRail[0].SrcPod)
-		assert.Equal(t, "pod-a", plan.RDMACrossRail[0].DstPod)
-	})
-
-	t.Run("skip block from ICMP plan is preserved", func(t *testing.T) {
-		plan := Plan([]TestPod{mk("solo", "rail-0")})
-		require.NotNil(t, plan.Skip)
-		RDMAPlan([]TestPod{mk("solo", "rail-0")}, &plan)
-		// Soft-skipped ICMP plan stays soft-skipped — no RDMA
-		// tests scheduled.
-		assert.Empty(t, plan.RDMASameRail)
-		assert.Empty(t, plan.RDMABwSameRail)
-	})
-}
-
 func TestPingTestKind_Predicates(t *testing.T) {
-	assert.True(t, PingSameRail.IsICMP())
-	assert.True(t, PingCrossRail.IsICMP())
-	assert.False(t, RDMAPingSameRail.IsICMP())
-	assert.False(t, RDMABwSameRail.IsICMP())
-
 	assert.True(t, RDMAPingSameRail.IsRDMAPing())
 	assert.True(t, RDMAPingCrossRail.IsRDMAPing())
 	assert.False(t, RDMABwSameRail.IsRDMAPing())
 
 	assert.True(t, RDMABwSameRail.IsRDMABw())
 	assert.True(t, RDMABwCrossRail.IsRDMABw())
+	assert.False(t, RDMAPingSameRail.IsRDMABw())
 
-	assert.True(t, PingCrossRail.IsCrossRail())
 	assert.True(t, RDMAPingCrossRail.IsCrossRail())
 	assert.True(t, RDMABwCrossRail.IsCrossRail())
-	assert.False(t, PingSameRail.IsCrossRail())
 	assert.False(t, RDMAPingSameRail.IsCrossRail())
 	assert.False(t, RDMABwSameRail.IsCrossRail())
 }

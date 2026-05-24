@@ -425,10 +425,8 @@ footer strong { color: var(--text-muted); }
     ✗ VALIDATION FAILED
   </div>
   <ul class="verdict-list verdict-reasons">
-    <li>1 ping test(s) failed in the connectivity matrix</li>
-  </ul>
-  <ul class="verdict-list verdict-notes">
-    <li>1 node group(s) deviate from their matched preset (informational — see Node groups section)</li>
+    <li>1 RDMA test(s) failed in the connectivity matrix</li>
+    <li>The detected platform topology does not match the certified topology for vendor-a/h200 server type: deviceID (got=1021 want=1023)</li>
   </ul>
 </div>
 
@@ -446,7 +444,7 @@ footer strong { color: var(--text-muted); }
 <section>
   <h2>Node groups (1)</h2>
   <div class="body">
-    <div class="matrix-rail">Preset validation</div>
+    <div class="matrix-rail">Platform topology validation</div>
     <table>
       <thead>
         <tr><th>Group</th><th>Machine</th><th>GPU</th><th>Status</th><th>Detail</th></tr>
@@ -456,9 +454,9 @@ footer strong { color: var(--text-muted); }
           <td><code>vendor-a-h200</code></td>
           <td>vendor-a</td>
           <td>h200</td>
-          <td><span class="badge state-inprogress">DEVIATION</span></td>
+          <td><span class="badge state-inprogress">MISMATCH</span></td>
           <td>
-            preset <code>vendor-a/h200</code> applied · 1 deviation(s) from matched preset
+            does not match certified topology for <code>vendor-a/h200</code> server type · 1 deviation(s) from matched preset
           </td>
         </tr>
       </tbody>
@@ -477,7 +475,7 @@ footer strong { color: var(--text-muted); }
         <dt>Capabilities</dt>
         <dd><span class="cap-pill">sriov</span><span class="cap-pill">rdma</span>
         </dd>
-        <dt>Preset</dt><dd>applied</dd>
+        <dt>Certified topology</dt><dd>applied</dd>
       </dl>
       <div class="matrix-rail">East-west PFs (2)</div>
       <table>
@@ -507,7 +505,7 @@ footer strong { color: var(--text-muted); }
           </tr>
         </tbody>
       </table>
-      <div class="matrix-rail">Preset deviations (1)</div>
+      <div class="matrix-rail">Platform topology mismatches (1)</div>
       <table>
         <thead><tr><th>Field</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead>
         <tbody>
@@ -681,9 +679,9 @@ status:
   <h2>Connectivity matrix</h2>
   <div class="body">
       <p class="summary-line">
-        <strong>4</strong>/5 passed · <strong>1</strong> failed
+        <strong>7</strong>/8 passed · <strong>1</strong> failed
       </p>
-        <div class="matrix-rail">Rail <code>rail-0</code> — ICMP ping</div>
+        <div class="matrix-rail">Rail <code>rail-0</code> — RDMA ping (rping)</div>
         <table class="matrix-table">
           <thead>
             <tr>
@@ -696,16 +694,16 @@ status:
             <tr>
               <td>node-a</td>
                 <td class="cell-self">—</td>
-                  <td class="cell-pass">✓ 0% 0.12ms</td>
+                  <td class="cell-pass">✓</td>
             </tr>
             <tr>
               <td>node-b</td>
-                  <td class="cell-pass">✓ 0% 0.15ms</td>
+                  <td class="cell-pass">✓</td>
                 <td class="cell-self">—</td>
             </tr>
           </tbody>
         </table>
-        <div class="matrix-rail">Rail <code>rail-1</code> — ICMP ping</div>
+        <div class="matrix-rail">Rail <code>rail-0</code> — RDMA bandwidth (ib_write_bw)</div>
         <table class="matrix-table">
           <thead>
             <tr>
@@ -718,16 +716,38 @@ status:
             <tr>
               <td>node-a</td>
                 <td class="cell-self">—</td>
-                  <td class="cell-pass">✓ 0% 0.18ms</td>
+                  <td class="cell-pass">✓ 194.4 Gbps</td>
             </tr>
             <tr>
               <td>node-b</td>
-                  <td class="cell-fail">✗ 100%</td>
+                  <td class="cell-pass">✓ 193.8 Gbps</td>
                 <td class="cell-self">—</td>
             </tr>
           </tbody>
         </table>
-        <div class="matrix-rail">Cross-rail canary — ICMP ping</div>
+        <div class="matrix-rail">Rail <code>rail-1</code> — RDMA ping (rping)</div>
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>src \ dst</th>
+              <th>node-a</th>
+              <th>node-b</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>node-a</td>
+                <td class="cell-self">—</td>
+                  <td class="cell-pass">✓</td>
+            </tr>
+            <tr>
+              <td>node-b</td>
+                  <td class="cell-fail">✗</td>
+                <td class="cell-self">—</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="matrix-rail">Cross-rail canary — RDMA ping (rping)</div>
         <table class="matrix-table">
           <thead>
             <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
@@ -738,7 +758,22 @@ status:
               <td><code>rail-0</code></td>
               <td>node-b</td>
               <td><code>rail-1</code></td>
-              <td class="cell-pass">✓ 0% 0.20ms</td>
+              <td class="cell-pass">✓</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="matrix-rail">Cross-rail canary — RDMA bandwidth (ib_write_bw)</div>
+        <table class="matrix-table">
+          <thead>
+            <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>node-a</td>
+              <td><code>rail-0</code></td>
+              <td>node-b</td>
+              <td><code>rail-1</code></td>
+              <td class="cell-pass">✓ 187.6 Gbps</td>
             </tr>
           </tbody>
         </table>

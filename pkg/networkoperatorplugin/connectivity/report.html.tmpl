@@ -487,7 +487,7 @@ footer strong { color: var(--text-muted); }
   <h2>Node groups ({{len .NodeGroups}})</h2>
   <div class="body">
     {{- if .PresetMatches}}
-    <div class="matrix-rail">Preset validation</div>
+    <div class="matrix-rail">Platform topology validation</div>
     <table>
       <thead>
         <tr><th>Group</th><th>Machine</th><th>GPU</th><th>Status</th><th>Detail</th></tr>
@@ -501,9 +501,11 @@ footer strong { color: var(--text-muted); }
           <td><span class="badge {{presetStatusClass .Status}}">{{presetStatusLabel .Status}}</span></td>
           <td>
             {{- if eq (printf "%s" .Status) "match"}}
-            preset <code>{{.PresetName}}</code> matches
+            matches certified topology for <code>{{.PresetName}}</code> server type
             {{- else if eq (printf "%s" .Status) "deviation"}}
-            preset <code>{{.PresetName}}</code> applied · {{.Reason}}
+            does not match certified topology for <code>{{.PresetName}}</code> server type · {{.Reason}}
+            {{- else if eq (printf "%s" .Status) "not-found"}}
+            no certified topology available for this server type · {{.Reason}}
             {{- else}}
             {{.Reason}}
             {{- end}}
@@ -544,7 +546,7 @@ footer strong { color: var(--text-muted); }
           {{- if and (not .SriovCapable) (not .RdmaCapable) (not .IbCapable)}}<span class="muted">none</span>{{end}}
         </dd>
         {{- if .PresetApplied}}
-        <dt>Preset</dt><dd>applied</dd>
+        <dt>Certified topology</dt><dd>applied</dd>
         {{- end}}
       </dl>
 
@@ -590,7 +592,7 @@ footer strong { color: var(--text-muted); }
       {{- end}}
 
       {{- if .PresetDeviations}}
-      <div class="matrix-rail">Preset deviations ({{len .PresetDeviations}})</div>
+      <div class="matrix-rail">Platform topology mismatches ({{len .PresetDeviations}})</div>
       <table>
         <thead><tr><th>Field</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead>
         <tbody>
@@ -759,7 +761,6 @@ footer strong { color: var(--text-muted); }
       <p class="summary-line">
         <strong>{{.Matrix.Summary.Passed}}</strong>/{{.Matrix.Summary.TotalTests}} passed
         {{- if gt .Matrix.Summary.Failed 0}} · <strong>{{.Matrix.Summary.Failed}}</strong> failed{{end}}
-        {{- if gt .Matrix.Summary.ExecErrors 0}} · <strong>{{.Matrix.Summary.ExecErrors}}</strong> exec error(s){{end}}
       </p>
 
       {{- $rails := matrixByRail .Matrix.PingResults}}
