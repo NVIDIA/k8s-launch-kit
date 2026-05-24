@@ -231,13 +231,13 @@ NicNodePolicy (await each), all remaining CRs in one batch (controllers
 reconcile concurrently), then verify every manifest reached a terminal state.
 Example workload manifests (`*example*`) are **not** applied by `l8k deploy` —
 they're fixtures consumed by `l8k validate --connectivity` or
-`l8k deploy --validate` for the data-plane phase. It auto-prefers
+`l8k deploy --test-connectivity` for the data-plane phase. It auto-prefers
 `<dir>/network-operator/` (the layout `l8k generate` produces) and falls back
 to `<dir>` itself. `--dry-run` does a server-side dry run. `--deploy-timeout`
 caps the whole apply+reconcile phase end-to-end (e.g. `--deploy-timeout 90m`);
 without it, deploy polls indefinitely — right for SR-IOV on large clusters
-where reconciliation can take an hour. `--validate` chains the connectivity
-matrix straight after a successful apply.
+where reconciliation can take an hour. `--test-connectivity` chains the
+connectivity matrix straight after a successful apply.
 
 Verify the deployment end-to-end:
 

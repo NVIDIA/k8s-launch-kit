@@ -40,10 +40,11 @@ var (
 	// until every manifest reaches a terminal state or the user
 	// cancels.
 	deployTimeout time.Duration
-	// deployValidate chains a `l8k validate --connectivity` run right
-	// after a successful deploy. Off by default; opt-in for
+	// deployTestConnectivity chains the data-plane connectivity
+	// matrix (the same one `l8k validate --connectivity` runs)
+	// right after a successful deploy. Off by default; opt-in for
 	// pipelines that want end-to-end verification in one command.
-	deployValidate bool
+	deployTestConnectivity bool
 )
 
 // DefaultDeploymentDir is the default directory `l8k generate` writes
@@ -148,7 +149,7 @@ is used as the manifest directory.`,
 			uiOutput.Success("Deployment completed")
 		}
 
-		if deployValidate && !dryRunFlag {
+		if deployTestConnectivity && !dryRunFlag {
 			// Pipeline the connectivity matrix straight after a
 			// successful apply. We deliberately do NOT re-run the
 			// version check here — deploy just landed manifests
@@ -160,7 +161,7 @@ is used as the manifest directory.`,
 			})
 			if err != nil {
 				exitWithError(apperrors.NewClusterError(
-					"deploy succeeded but --validate failed",
+					"deploy succeeded but --test-connectivity failed",
 					err,
 					"Inspect the test DaemonSet via --keep + kubectl get pods",
 				), outputFormat)
@@ -200,11 +201,11 @@ func init() {
 	deployCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to apply")
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
 	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state. Useful for matching a maintenance window when SR-IOV reconciliation on a large cluster can take an hour or more.")
-	deployCmd.Flags().BoolVar(&deployValidate, "validate", false, "After a successful deploy, run the connectivity matrix (apply example DaemonSet → wait Ready → RDMA matrix → cleanup) to validate the data plane end-to-end.")
+	deployCmd.Flags().BoolVar(&deployTestConnectivity, "test-connectivity", false, "After a successful deploy, run the connectivity matrix (apply example DaemonSet → wait Ready → RDMA matrix → cleanup) to verify the data plane end-to-end.")
 
 	setFlagGroup(deployCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(deployCmd, "deployment-files", GroupGeneration)
 	setFlagGroup(deployCmd, "deploy-timeout", GroupDeploy)
 	setFlagGroup(deployCmd, "dry-run", GroupDeploy)
-	setFlagGroup(deployCmd, "validate", GroupDeploy)
+	setFlagGroup(deployCmd, "test-connectivity", GroupDeploy)
 }
