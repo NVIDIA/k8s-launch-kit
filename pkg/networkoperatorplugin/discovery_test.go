@@ -432,46 +432,43 @@ func TestKnownStorageModules_MatchesMofedmodules(t *testing.T) {
 
 // --- parsePortFabricVerdict tests ---
 
-func TestParsePortFabricVerdict_ConfirmedInfiniBand(t *testing.T) {
-	out := "state=4: ACTIVE\nphys_state=5: LinkUp\nlink_layer=InfiniBand\nsm_lid=0x0001\n"
-	linkType, raw := parsePortFabricVerdict(out)
+func TestParsePortFabricVerdict_InfiniBand(t *testing.T) {
+	linkType, raw := parsePortFabricVerdict("InfiniBand\n")
 	assert.Equal(t, "InfiniBand", linkType)
-	assert.Contains(t, raw, "sm_lid=\"0x0001\"")
+	assert.Equal(t, "InfiniBand", raw)
 }
 
-func TestParsePortFabricVerdict_ConfirmedEthernet(t *testing.T) {
-	// Ethernet ports don't need an SM; ACTIVE + Ethernet alone is enough.
-	out := "state=4: ACTIVE\nphys_state=5: LinkUp\nlink_layer=Ethernet\nsm_lid=0x0000\n"
-	linkType, _ := parsePortFabricVerdict(out)
+func TestParsePortFabricVerdict_Ethernet(t *testing.T) {
+	linkType, raw := parsePortFabricVerdict("Ethernet\n")
+	assert.Equal(t, "Ethernet", linkType)
+	assert.Equal(t, "Ethernet", raw)
+}
+
+func TestParsePortFabricVerdict_DownPortStillResolvesByLinkLayer(t *testing.T) {
+	// Old behaviour required ACTIVE state; the new probe reads
+	// only the configured link_layer file, which gives a verdict
+	// regardless of runtime state. This is what unblocks
+	// discovery on freshly provisioned clusters where the switch
+	// isn't plugged in yet.
+	linkType, _ := parsePortFabricVerdict("Ethernet\n")
 	assert.Equal(t, "Ethernet", linkType)
 }
 
-func TestParsePortFabricVerdict_UnverifiedIB_NoSM_ReturnsEmpty(t *testing.T) {
-	// Active IB port without a subnet manager — we can't confirm the
-	// cluster is using IB. Verdict is empty (caller leaves group.LinkType
-	// unset).
-	out := "state=4: ACTIVE\nphys_state=5: LinkUp\nlink_layer=InfiniBand\nsm_lid=0x0000\n"
-	linkType, _ := parsePortFabricVerdict(out)
-	assert.Equal(t, "", linkType)
-}
-
-func TestParsePortFabricVerdict_DownPort_ReturnsEmpty(t *testing.T) {
-	// Port not ACTIVE — no confirmation possible.
-	out := "state=1: DOWN\nphys_state=3: Disabled\nlink_layer=Ethernet\nsm_lid=0x0000\n"
-	linkType, _ := parsePortFabricVerdict(out)
-	assert.Equal(t, "", linkType)
-}
-
 func TestParsePortFabricVerdict_EmptyOutput(t *testing.T) {
-	linkType, _ := parsePortFabricVerdict("")
+	linkType, raw := parsePortFabricVerdict("")
 	assert.Equal(t, "", linkType)
+	assert.Equal(t, "", raw)
 }
 
-func TestParsePortFabricVerdict_PartialOutput(t *testing.T) {
-	// link_layer line missing — no verdict.
-	out := "state=4: ACTIVE\nphys_state=5: LinkUp\nsm_lid=0x0001\n"
-	linkType, _ := parsePortFabricVerdict(out)
+func TestParsePortFabricVerdict_UnrecognisedValue(t *testing.T) {
+	linkType, raw := parsePortFabricVerdict("Foo\n")
 	assert.Equal(t, "", linkType)
+	assert.Equal(t, "Foo", raw)
+}
+
+func TestParsePortFabricVerdict_TrimsWhitespace(t *testing.T) {
+	linkType, _ := parsePortFabricVerdict("  Ethernet  \n")
+	assert.Equal(t, "Ethernet", linkType)
 }
 
 func TestNormalizeLinkLayer(t *testing.T) {
