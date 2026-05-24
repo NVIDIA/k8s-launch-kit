@@ -51,34 +51,84 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 	}
 
 	tty := uiOutput.IsTTY()
-	byRail, crossRail, nodesSorted, railsSorted := groupResults(result.PingResults)
+	// Group per (rail, kind family). One grid is rendered for
+	// every (rail, family) bucket that has at least one result, in
+	// the test-execution order so the reader sees ICMP first
+	// (gating signal), then rping (QP-establishment), then
+	// ib_write_bw (bandwidth).
+	byRail, byCross, nodes, rails := groupResultsByKind(result.PingResults)
 
-	for _, rail := range railsSorted {
-		uiOutput.Info("")
-		uiOutput.Info("Rail %s:", rail)
-		for _, line := range renderRailGrid(nodesSorted, byRail[rail], tty) {
-			uiOutput.Info("%s", line)
+	families := []kindFamily{familyICMP, familyRPing, familyIbBw}
+	for _, rail := range rails {
+		for _, fam := range families {
+			grid, ok := byRail[rail][fam]
+			if !ok {
+				continue
+			}
+			uiOutput.Info("")
+			uiOutput.Info("Rail %s — %s:", rail, familyTitle(fam))
+			for _, line := range renderRailGrid(nodes, grid, fam, tty) {
+				uiOutput.Info("%s", line)
+			}
 		}
 	}
 
-	if len(crossRail) > 0 {
+	for _, fam := range families {
+		cross, ok := byCross[fam]
+		if !ok || len(cross) == 0 {
+			continue
+		}
 		uiOutput.Info("")
-		uiOutput.Info("Cross-rail canary:")
-		for _, line := range renderCrossRailList(crossRail, tty) {
+		uiOutput.Info("Cross-rail canary — %s:", familyTitle(fam))
+		for _, line := range renderCrossRailList(cross, fam, tty) {
 			uiOutput.Info("%s", line)
 		}
 	}
 }
 
-// groupResults indexes ping results by rail and source node for the
-// per-rail grid, plus a flat slice for the cross-rail canary. Returns
-// the deterministic node and rail orderings so callers don't have to
-// sort again. Node names are used as the axis labels because they're
-// what operators recognize ("worker-03" vs the DaemonSet-generated
-// pod suffix like "sriov-test-7t8h9"); the underlying pod name is
-// still carried on the PingTest for the SPDY exec path.
-func groupResults(results []PingResult) (byRail map[string]map[string]map[string]*PingResult, crossRail []*PingResult, nodes []string, rails []string) {
-	byRail = map[string]map[string]map[string]*PingResult{}
+// kindFamily collapses the six PingTestKind values down to the three
+// families the renderer cares about: ICMP, rping, ib_write_bw. The
+// same-rail / cross-rail axis is handled separately (per-rail grid vs
+// cross-rail list).
+type kindFamily int
+
+const (
+	familyICMP kindFamily = iota
+	familyRPing
+	familyIbBw
+)
+
+func kindFamilyOf(k PingTestKind) kindFamily {
+	switch {
+	case k.IsRDMAPing():
+		return familyRPing
+	case k.IsRDMABw():
+		return familyIbBw
+	default:
+		return familyICMP
+	}
+}
+
+func familyTitle(f kindFamily) string {
+	switch f {
+	case familyRPing:
+		return "RDMA ping (rping)"
+	case familyIbBw:
+		return "RDMA bandwidth (ib_write_bw)"
+	}
+	return "ICMP ping"
+}
+
+// groupResultsByKind indexes results by (rail, family, src) → dst →
+// result for the per-rail grids, and by family → []result for the
+// cross-rail canary lists. Returns the deterministic node and rail
+// orderings so callers don't have to sort again. Node names are used
+// as the axis labels because they're what operators recognize
+// ("worker-03" vs the DaemonSet-generated pod suffix); the underlying
+// pod name is still carried on the PingTest for the SPDY exec path.
+func groupResultsByKind(results []PingResult) (byRail map[string]map[kindFamily]map[string]map[string]*PingResult, byCross map[kindFamily][]*PingResult, nodes []string, rails []string) {
+	byRail = map[string]map[kindFamily]map[string]map[string]*PingResult{}
+	byCross = map[kindFamily][]*PingResult{}
 	nodeSet := map[string]struct{}{}
 	railSet := map[string]struct{}{}
 
@@ -88,18 +138,22 @@ func groupResults(results []PingResult) (byRail map[string]map[string]map[string
 		dst := axisLabel(r.Test.DstNode, r.Test.DstPod)
 		nodeSet[src] = struct{}{}
 		nodeSet[dst] = struct{}{}
-		if r.Test.Kind == PingCrossRail {
-			crossRail = append(crossRail, r)
+		fam := kindFamilyOf(r.Test.Kind)
+		if r.Test.Kind.IsCrossRail() {
+			byCross[fam] = append(byCross[fam], r)
 			continue
 		}
 		if _, ok := byRail[r.Test.Rail]; !ok {
-			byRail[r.Test.Rail] = map[string]map[string]*PingResult{}
+			byRail[r.Test.Rail] = map[kindFamily]map[string]map[string]*PingResult{}
 			railSet[r.Test.Rail] = struct{}{}
 		}
-		if _, ok := byRail[r.Test.Rail][src]; !ok {
-			byRail[r.Test.Rail][src] = map[string]*PingResult{}
+		if _, ok := byRail[r.Test.Rail][fam]; !ok {
+			byRail[r.Test.Rail][fam] = map[string]map[string]*PingResult{}
 		}
-		byRail[r.Test.Rail][src][dst] = r
+		if _, ok := byRail[r.Test.Rail][fam][src]; !ok {
+			byRail[r.Test.Rail][fam][src] = map[string]*PingResult{}
+		}
+		byRail[r.Test.Rail][fam][src][dst] = r
 	}
 
 	nodes = make([]string, 0, len(nodeSet))
@@ -130,7 +184,9 @@ func axisLabel(node, pod string) string {
 // renderRailGrid produces the lines for one rail's src×dst grid, with
 // columns aligned via text/tabwriter. Axis labels are node names
 // (with pod-name fallback for endpoints whose NodeName wasn't set).
-func renderRailGrid(nodes []string, table map[string]map[string]*PingResult, tty bool) []string {
+// fam selects per-kind cell formatting (ICMP shows loss + RTT,
+// rping shows ✓/✗, ib_write_bw shows ✓ N Gbps).
+func renderRailGrid(nodes []string, table map[string]map[string]*PingResult, fam kindFamily, tty bool) []string {
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 
@@ -144,7 +200,7 @@ func renderRailGrid(nodes []string, table map[string]map[string]*PingResult, tty
 	for _, src := range nodes {
 		fmt.Fprintf(tw, "  %s\t", shortPodName(src))
 		for _, dst := range nodes {
-			fmt.Fprintf(tw, "%s\t", cellFor(src, dst, table[src][dst], tty))
+			fmt.Fprintf(tw, "%s\t", cellFor(src, dst, table[src][dst], fam, tty))
 		}
 		fmt.Fprintln(tw)
 	}
@@ -158,7 +214,7 @@ func renderRailGrid(nodes []string, table map[string]map[string]*PingResult, tty
 // asymmetric (srcRail, dstRail) shape neatly. Same node-name fallback
 // as the per-rail grid: prefer Pod.Spec.NodeName, fall back to the
 // pod name.
-func renderCrossRailList(results []*PingResult, tty bool) []string {
+func renderCrossRailList(results []*PingResult, fam kindFamily, tty bool) []string {
 	type row struct {
 		src, dst string
 		r        *PingResult
@@ -184,7 +240,7 @@ func renderCrossRailList(results []*PingResult, tty bool) []string {
 		left := fmt.Sprintf("  %s [%s]\t→ %s [%s]\t",
 			shortPodName(row.src), row.r.Test.SrcRail,
 			shortPodName(row.dst), row.r.Test.DstRail)
-		fmt.Fprintf(tw, "%s%s\n", left, cellDetail(row.r, tty))
+		fmt.Fprintf(tw, "%s%s\n", left, cellDetail(row.r, fam, tty))
 	}
 	tw.Flush()
 	return trailingTrim(strings.Split(buf.String(), "\n"))
@@ -193,31 +249,25 @@ func renderCrossRailList(results []*PingResult, tty bool) []string {
 // cellFor renders one src×dst grid cell. self-pairs render as "—",
 // missing pairs as "·" (the rail set didn't pair these two pods —
 // rare; e.g. one pod's multus annotation was missing this rail).
-func cellFor(src, dst string, r *PingResult, tty bool) string {
+func cellFor(src, dst string, r *PingResult, fam kindFamily, tty bool) string {
 	if src == dst {
 		return "—"
 	}
 	if r == nil {
 		return "·"
 	}
-	return cellDetail(r, tty)
+	return cellDetail(r, fam, tty)
 }
 
 // cellDetail formats a single result into its terse cell representation
-// + optional ANSI color when TTY.
-func cellDetail(r *PingResult, tty bool) string {
-	var body string
-	switch {
-	case r.OK:
-		body = fmt.Sprintf("✓ %d%%", r.PacketLoss)
-		if r.RTTAvgMs > 0 {
-			body = fmt.Sprintf("%s %.1fms", body, r.RTTAvgMs)
-		}
-	case r.PacketLoss >= 0:
-		body = fmt.Sprintf("✗ %d%%", r.PacketLoss)
-	default:
-		body = "✗ ERR"
-	}
+// + optional ANSI color when TTY. The body shape depends on the
+// kind family:
+//
+//   - ICMP:        ✓ 0% 0.1ms / ✗ 100% / ✗ ERR
+//   - rping:       ✓ / ✗ / ✗ ERR
+//   - ib_write_bw: ✓ 194.4 Gbps / ✗ ERR
+func cellDetail(r *PingResult, fam kindFamily, tty bool) string {
+	body := cellBody(r, fam)
 	if tty {
 		if r.OK {
 			return "\033[32m" + body + "\033[0m"
@@ -225,6 +275,35 @@ func cellDetail(r *PingResult, tty bool) string {
 		return "\033[31m" + body + "\033[0m"
 	}
 	return body
+}
+
+func cellBody(r *PingResult, fam kindFamily) string {
+	switch fam {
+	case familyRPing:
+		if r.OK {
+			return "✓"
+		}
+		return "✗"
+	case familyIbBw:
+		if r.OK && r.BandwidthGbps > 0 {
+			return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
+		}
+		return "✗ ERR"
+	default:
+		// ICMP
+		switch {
+		case r.OK:
+			body := fmt.Sprintf("✓ %d%%", r.PacketLoss)
+			if r.RTTAvgMs > 0 {
+				body = fmt.Sprintf("%s %.1fms", body, r.RTTAvgMs)
+			}
+			return body
+		case r.PacketLoss >= 0:
+			return fmt.Sprintf("✗ %d%%", r.PacketLoss)
+		default:
+			return "✗ ERR"
+		}
+	}
 }
 
 // shortPodName trims a long pod name to keep grid columns from blowing

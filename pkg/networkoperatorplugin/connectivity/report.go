@@ -272,48 +272,89 @@ func reportFuncMap() template.FuncMap {
 			sort.Strings(out)
 			return out
 		},
-		// matrixByRail groups same-rail PingResults by rail name so
-		// the template can render one sub-table per rail.
+		// matrixByRail groups same-rail PingResults by (rail, kind
+		// family) so the template can render one sub-table per
+		// (rail, family) bucket. Families are ICMP, RDMA-ping,
+		// RDMA-bandwidth — see PingTestKind.IsICMP / IsRDMAPing /
+		// IsRDMABw.
 		"matrixByRail": func(results []PingResult) []railSection {
-			byRail := map[string][]PingResult{}
-			rails := []string{}
+			type key struct {
+				rail string
+				fam  string
+			}
+			byKey := map[key][]PingResult{}
+			order := []key{}
 			for _, r := range results {
-				if r.Test.Kind != PingSameRail {
+				if r.Test.Kind.IsCrossRail() {
 					continue
 				}
-				if _, seen := byRail[r.Test.Rail]; !seen {
-					rails = append(rails, r.Test.Rail)
+				k := key{r.Test.Rail, htmlFamilyOf(r.Test.Kind)}
+				if _, seen := byKey[k]; !seen {
+					order = append(order, k)
 				}
-				byRail[r.Test.Rail] = append(byRail[r.Test.Rail], r)
+				byKey[k] = append(byKey[k], r)
 			}
-			sort.Strings(rails)
-			out := make([]railSection, 0, len(rails))
-			for _, rail := range rails {
-				rs := railSection{Rail: rail}
-				rs.Nodes, rs.Table = buildRailTable(byRail[rail])
+			// Sort deterministically: rail name, then a fixed
+			// family order so ICMP → rping → ib_write_bw appear
+			// in execution order in the rendered report.
+			sort.Slice(order, func(i, j int) bool {
+				if order[i].rail != order[j].rail {
+					return order[i].rail < order[j].rail
+				}
+				return htmlFamilyRank(order[i].fam) < htmlFamilyRank(order[j].fam)
+			})
+			out := make([]railSection, 0, len(order))
+			for _, k := range order {
+				rs := railSection{Rail: k.rail, Family: k.fam}
+				rs.Nodes, rs.Table = buildRailTable(byKey[k])
 				out = append(out, rs)
 			}
 			return out
 		},
 		// matrixCrossRail filters down to the cross-rail canaries
-		// and sorts them deterministically.
-		"matrixCrossRail": func(results []PingResult) []PingResult {
-			cross := make([]PingResult, 0)
+		// and groups them by family. Sorted by family rank, then
+		// src/dst node within each family.
+		"matrixCrossRail": func(results []PingResult) []crossRailSection {
+			byFam := map[string][]PingResult{}
+			fams := []string{}
 			for _, r := range results {
-				if r.Test.Kind == PingCrossRail {
-					cross = append(cross, r)
+				if !r.Test.Kind.IsCrossRail() {
+					continue
 				}
+				fam := htmlFamilyOf(r.Test.Kind)
+				if _, seen := byFam[fam]; !seen {
+					fams = append(fams, fam)
+				}
+				byFam[fam] = append(byFam[fam], r)
 			}
-			sort.Slice(cross, func(i, j int) bool {
-				if cross[i].Test.SrcNode != cross[j].Test.SrcNode {
-					return cross[i].Test.SrcNode < cross[j].Test.SrcNode
-				}
-				return cross[i].Test.DstNode < cross[j].Test.DstNode
-			})
-			return cross
+			sort.Slice(fams, func(i, j int) bool { return htmlFamilyRank(fams[i]) < htmlFamilyRank(fams[j]) })
+			out := make([]crossRailSection, 0, len(fams))
+			for _, fam := range fams {
+				rows := byFam[fam]
+				sort.Slice(rows, func(i, j int) bool {
+					if rows[i].Test.SrcNode != rows[j].Test.SrcNode {
+						return rows[i].Test.SrcNode < rows[j].Test.SrcNode
+					}
+					return rows[i].Test.DstNode < rows[j].Test.DstNode
+				})
+				out = append(out, crossRailSection{Family: fam, Results: rows})
+			}
+			return out
+		},
+		// familyTitle is the human-friendly section header for a
+		// given kind family.
+		"familyTitle": func(fam string) string {
+			switch fam {
+			case "rping":
+				return "RDMA ping (rping)"
+			case "ibbw":
+				return "RDMA bandwidth (ib_write_bw)"
+			}
+			return "ICMP ping"
 		},
 		// cellClass returns the CSS class for a matrix cell based
-		// on the ping outcome.
+		// on the result outcome (family-agnostic — color depends
+		// only on pass/fail/missing).
 		"cellClass": func(r *PingResult) string {
 			if r == nil {
 				return "cell-missing"
@@ -323,10 +364,24 @@ func reportFuncMap() template.FuncMap {
 			}
 			return "cell-fail"
 		},
-		// cellText renders the cell's body (loss%/rtt or "ERR").
-		"cellText": func(r *PingResult) string {
+		// cellText renders the cell's body. Family-specific
+		// formatting: ICMP shows loss + RTT, rping shows ✓/✗,
+		// ib_write_bw shows ✓ N Gbps.
+		"cellText": func(r *PingResult, fam string) string {
 			if r == nil {
 				return "·"
+			}
+			switch fam {
+			case "rping":
+				if r.OK {
+					return "✓"
+				}
+				return "✗"
+			case "ibbw":
+				if r.OK && r.BandwidthGbps > 0 {
+					return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
+				}
+				return "✗ ERR"
 			}
 			if r.OK {
 				if r.RTTAvgMs > 0 {
@@ -357,13 +412,52 @@ func reportFuncMap() template.FuncMap {
 	}
 }
 
-// railSection feeds the per-rail sub-table in the report. Nodes is
-// the deterministic axis ordering; Table is a flat node→node→*result
-// map (the template indexes by string keys for cells).
+// railSection feeds the per-(rail, kind family) sub-table in the
+// report. Nodes is the deterministic axis ordering; Table is a flat
+// node→node→*result map (the template indexes by string keys for
+// cells). Family is one of "icmp" / "rping" / "ibbw" — drives the
+// section header and the cell-formatter dispatch.
 type railSection struct {
-	Rail  string
-	Nodes []string
-	Table map[string]map[string]*PingResult
+	Rail   string
+	Family string
+	Nodes  []string
+	Table  map[string]map[string]*PingResult
+}
+
+// crossRailSection groups cross-rail canary results by kind family
+// for the cross-rail list at the bottom of the matrix section.
+type crossRailSection struct {
+	Family  string
+	Results []PingResult
+}
+
+// htmlFamilyOf maps a PingTestKind to the family identifier used by
+// the HTML template's funcs (kept as a separate string from
+// text_report.go's kindFamily enum to keep package boundaries clean).
+func htmlFamilyOf(k PingTestKind) string {
+	switch {
+	case k.IsRDMAPing():
+		return "rping"
+	case k.IsRDMABw():
+		return "ibbw"
+	default:
+		return "icmp"
+	}
+}
+
+// htmlFamilyRank gives a stable ordering of families in the rendered
+// report — ICMP first (gating signal), then rping (QP establishment),
+// then ib_write_bw (bandwidth).
+func htmlFamilyRank(fam string) int {
+	switch fam {
+	case "icmp":
+		return 0
+	case "rping":
+		return 1
+	case "ibbw":
+		return 2
+	}
+	return 3
 }
 
 // buildRailTable indexes a slice of same-rail PingResults by source

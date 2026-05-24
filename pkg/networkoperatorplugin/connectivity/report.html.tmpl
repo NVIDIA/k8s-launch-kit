@@ -764,7 +764,8 @@ footer strong { color: var(--text-muted); }
 
       {{- $rails := matrixByRail .Matrix.PingResults}}
       {{- range $rails}}
-        <div class="matrix-rail">Rail <code>{{.Rail}}</code></div>
+        {{- $fam := .Family}}
+        <div class="matrix-rail">Rail <code>{{.Rail}}</code> — {{familyTitle $fam}}</div>
         <table class="matrix-table">
           <thead>
             <tr>
@@ -784,7 +785,7 @@ footer strong { color: var(--text-muted); }
                 <td class="cell-self">—</td>
                 {{- else}}
                   {{- $cell := index (index $rs.Table $src) $dst}}
-                  <td class="{{cellClass $cell}}">{{cellText $cell}}</td>
+                  <td class="{{cellClass $cell}}">{{cellText $cell $fam}}</td>
                 {{- end}}
               {{- end}}
             </tr>
@@ -793,21 +794,22 @@ footer strong { color: var(--text-muted); }
         </table>
       {{- end}}
 
-      {{- $cross := matrixCrossRail .Matrix.PingResults}}
-      {{- if $cross}}
-        <div class="matrix-rail">Cross-rail canary</div>
+      {{- $crossSections := matrixCrossRail .Matrix.PingResults}}
+      {{- range $crossSections}}
+        {{- $fam := .Family}}
+        <div class="matrix-rail">Cross-rail canary — {{familyTitle $fam}}</div>
         <table class="matrix-table">
           <thead>
             <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
           </thead>
           <tbody>
-            {{- range $cross}}
+            {{- range .Results}}
             <tr>
               <td>{{srcLabel .Test}}</td>
               <td><code>{{.Test.SrcRail}}</code></td>
               <td>{{dstLabel .Test}}</td>
               <td><code>{{.Test.DstRail}}</code></td>
-              <td class="{{cellClass .}}">{{cellText .}}</td>
+              <td class="{{cellClass .}}">{{cellText . $fam}}</td>
             </tr>
             {{- end}}
           </tbody>

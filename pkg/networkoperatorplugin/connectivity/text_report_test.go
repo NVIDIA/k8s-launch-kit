@@ -115,11 +115,12 @@ func TestRenderMatrixText_RailGridAndCrossRail(t *testing.T) {
 
 	joined := strings.Join(out.lines, "\n")
 
-	// Sanity: both rails rendered.
-	assert.Contains(t, joined, "Rail rail-0:")
-	assert.Contains(t, joined, "Rail rail-1:")
+	// Sanity: both rails rendered. The kind family appears in the
+	// header so we look for the "Rail <name> — ICMP ping" prefix.
+	assert.Contains(t, joined, "Rail rail-0 — ICMP ping:")
+	assert.Contains(t, joined, "Rail rail-1 — ICMP ping:")
 	// Cross-rail section rendered.
-	assert.Contains(t, joined, "Cross-rail canary:")
+	assert.Contains(t, joined, "Cross-rail canary — ICMP ping:")
 	// Header row of the grid.
 	assert.Contains(t, joined, "src \\ dst")
 	// Axis labels must be node names, NOT pod names.
@@ -169,27 +170,60 @@ func TestShortPodName(t *testing.T) {
 
 func TestCellFor(t *testing.T) {
 	t.Run("self pair is dash", func(t *testing.T) {
-		assert.Equal(t, "—", cellFor("pod-a", "pod-a", nil, false))
+		assert.Equal(t, "—", cellFor("pod-a", "pod-a", nil, familyICMP, false))
 	})
 	t.Run("missing result is bullet", func(t *testing.T) {
-		assert.Equal(t, "·", cellFor("pod-a", "pod-b", nil, false))
+		assert.Equal(t, "·", cellFor("pod-a", "pod-b", nil, familyICMP, false))
 	})
-	t.Run("OK result formats with loss + rtt", func(t *testing.T) {
+	t.Run("ICMP OK result formats with loss + rtt", func(t *testing.T) {
 		r := PingResult{OK: true, PacketLoss: 0, RTTAvgMs: 1.23}
-		assert.Equal(t, "✓ 0% 1.2ms", cellFor("a", "b", &r, false))
+		assert.Equal(t, "✓ 0% 1.2ms", cellFor("a", "b", &r, familyICMP, false))
 	})
-	t.Run("partial loss is failure", func(t *testing.T) {
+	t.Run("ICMP partial loss is failure", func(t *testing.T) {
 		r := PingResult{OK: false, PacketLoss: 33}
-		assert.Equal(t, "✗ 33%", cellFor("a", "b", &r, false))
+		assert.Equal(t, "✗ 33%", cellFor("a", "b", &r, familyICMP, false))
 	})
-	t.Run("exec error has no loss reading", func(t *testing.T) {
+	t.Run("ICMP exec error has no loss reading", func(t *testing.T) {
 		r := PingResult{OK: false, PacketLoss: -1}
-		assert.Equal(t, "✗ ERR", cellFor("a", "b", &r, false))
+		assert.Equal(t, "✗ ERR", cellFor("a", "b", &r, familyICMP, false))
 	})
-	t.Run("TTY mode wraps in ANSI green", func(t *testing.T) {
+	t.Run("rping OK is bare checkmark", func(t *testing.T) {
+		r := PingResult{OK: true, PacketLoss: -1}
+		assert.Equal(t, "✓", cellFor("a", "b", &r, familyRPing, false))
+	})
+	t.Run("rping fail is bare X", func(t *testing.T) {
+		r := PingResult{OK: false, PacketLoss: -1}
+		assert.Equal(t, "✗", cellFor("a", "b", &r, familyRPing, false))
+	})
+	t.Run("ib_write_bw OK shows Gbps", func(t *testing.T) {
+		r := PingResult{OK: true, PacketLoss: -1, BandwidthGbps: 194.39}
+		assert.Equal(t, "✓ 194.4 Gbps", cellFor("a", "b", &r, familyIbBw, false))
+	})
+	t.Run("ib_write_bw fail with no bandwidth is ERR", func(t *testing.T) {
+		r := PingResult{OK: false, PacketLoss: -1}
+		assert.Equal(t, "✗ ERR", cellFor("a", "b", &r, familyIbBw, false))
+	})
+	t.Run("ib_write_bw OK but zero bandwidth is ERR", func(t *testing.T) {
+		// Defensive: OK=true with zero bandwidth shouldn't happen
+		// in practice, but if it does the cell renders as ERR
+		// since a "0 Gbps" link is broken even if perftest exited
+		// cleanly.
+		r := PingResult{OK: true, PacketLoss: -1, BandwidthGbps: 0}
+		assert.Equal(t, "✗ ERR", cellFor("a", "b", &r, familyIbBw, false))
+	})
+	t.Run("TTY mode wraps in ANSI green for OK", func(t *testing.T) {
 		r := PingResult{OK: true, PacketLoss: 0}
-		got := cellFor("a", "b", &r, true)
+		got := cellFor("a", "b", &r, familyICMP, true)
 		assert.Contains(t, got, "\033[32m")
 		assert.Contains(t, got, "\033[0m")
 	})
+}
+
+func TestKindFamilyOf(t *testing.T) {
+	assert.Equal(t, familyICMP, kindFamilyOf(PingSameRail))
+	assert.Equal(t, familyICMP, kindFamilyOf(PingCrossRail))
+	assert.Equal(t, familyRPing, kindFamilyOf(RDMAPingSameRail))
+	assert.Equal(t, familyRPing, kindFamilyOf(RDMAPingCrossRail))
+	assert.Equal(t, familyIbBw, kindFamilyOf(RDMABwSameRail))
+	assert.Equal(t, familyIbBw, kindFamilyOf(RDMABwCrossRail))
 }

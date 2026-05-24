@@ -187,10 +187,14 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		}
 	}
 
-	// Parse multus annotations and build the TestPod list.
+	// Parse multus annotations and build the TestPod list. Each
+	// pod's RDMA-device-by-rail map is filled in from a single
+	// in-pod shell exec that reads
+	// /sys/class/net/<iface>/device/infiniband/ per multus iface,
+	// so the rping + ib_write_bw stages can pass `-d <dev>`.
 	testPods := make([]TestPod, 0, len(allPods))
 	for _, p := range allPods {
-		tp, err := buildTestPod(p.pod)
+		tp, ifaceByRail, err := buildTestPod(p.pod)
 		if err != nil {
 			uiOutput.Warning("Pod %s/%s: %v — excluded from matrix", p.pod.Namespace, p.pod.Name, err)
 			log.Log.V(1).Info("buildTestPod failed", "pod", p.pod.Name, "error", err.Error())
@@ -200,6 +204,10 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			uiOutput.Warning("Pod %s/%s has no secondary network IPs — excluded from matrix", p.pod.Namespace, p.pod.Name)
 			continue
 		}
+		tp.RDMADevsByRail = DiscoverRDMADevices(ctx, restConfig, p.pod.Namespace, p.pod.Name, p.ref.Container, ifaceByRail)
+		log.Log.V(1).Info("RDMA device discovery",
+			"pod", p.pod.Name, "rails", tp.RailOrder,
+			"rdmaDevsByRail", tp.RDMADevsByRail)
 		testPods = append(testPods, tp)
 	}
 
@@ -251,6 +259,82 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	}
 	wg.Wait()
 
+	// Build the set of (srcPod, dstPod, rail) triples that passed
+	// ICMP. The RDMA stages skip pairs that failed ICMP — pinging
+	// a broken rail with rping/ib_write_bw just produces noise on
+	// top of an already-failed cell.
+	passedSameRail := map[string]struct{}{}
+	for _, r := range result.PingResults {
+		if r.OK && r.Test.Kind == PingSameRail {
+			passedSameRail[icmpPairKey(r.Test)] = struct{}{}
+		}
+	}
+
+	// Stage 2 + 3 — RDMA ping and bandwidth. Append to PingResults
+	// so the renderer + summary uniformly walk one slice; the
+	// per-kind grouping in text_report / report.html.tmpl
+	// partitions them back out.
+	RDMAPlan(testPods, &plan)
+	rdmaStages := []struct {
+		label string
+		tests []PingTest
+		run   func(t PingTest) PingResult
+	}{
+		{
+			label: "RDMA ping (rping)",
+			tests: append(append([]PingTest{}, plan.RDMASameRail...), plan.RDMACrossRail...),
+			run: func(t PingTest) PingResult {
+				return RunRPing(ctx, restConfig, namespaceByPod[t.DstPod],
+					t.DstPod, containerByPod[t.DstPod], // server side
+					t.SrcPod, containerByPod[t.SrcPod], // client side
+					t, 5)
+			},
+		},
+		{
+			label: "RDMA bandwidth (ib_write_bw)",
+			tests: append(append([]PingTest{}, plan.RDMABwSameRail...), plan.RDMABwCrossRail...),
+			run: func(t PingTest) PingResult {
+				return RunIbWriteBw(ctx, restConfig, namespaceByPod[t.DstPod],
+					t.DstPod, containerByPod[t.DstPod],
+					t.SrcPod, containerByPod[t.SrcPod],
+					t, 0)
+			},
+		},
+	}
+	for _, stage := range rdmaStages {
+		if len(stage.tests) == 0 {
+			continue
+		}
+		uiOutput.Info("Stage: %s — %d test(s)", stage.label, len(stage.tests))
+		// Sequential (per the "Spawn fresh server per test"
+		// decision): every test starts its own server, runs the
+		// client, kills the server. Concurrent runs would
+		// fight over the listener port.
+		for _, t := range stage.tests {
+			// Filter: same-rail RDMA tests only run when the
+			// ICMP pair passed on the same rail; cross-rail
+			// canaries always run (they probe a different
+			// path than ICMP).
+			if !t.Kind.IsCrossRail() {
+				if _, ok := passedSameRail[icmpPairKey(t)]; !ok {
+					result.PingResults = append(result.PingResults, PingResult{
+						Test: t, PacketLoss: -1,
+						Err: fmt.Errorf("skipped — corresponding ICMP test did not pass on this rail"),
+					})
+					continue
+				}
+			}
+			if namespaceByPod[t.SrcPod] == "" || namespaceByPod[t.DstPod] == "" {
+				result.PingResults = append(result.PingResults, PingResult{
+					Test: t, PacketLoss: -1,
+					Err: fmt.Errorf("no namespace lookup for pod pair (%s, %s)", t.SrcPod, t.DstPod),
+				})
+				continue
+			}
+			result.PingResults = append(result.PingResults, stage.run(t))
+		}
+	}
+
 	// Summary.
 	for _, r := range result.PingResults {
 		result.Summary.TotalTests++
@@ -271,6 +355,13 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	return result, nil
 }
 
+// icmpPairKey returns a stable string key identifying one
+// (src, dst, rail) triple — used to look up whether the ICMP stage
+// passed for the same triple before running the RDMA stages on it.
+func icmpPairKey(t PingTest) string {
+	return t.SrcPod + "→" + t.DstPod + "@" + t.SrcRail
+}
+
 // testPodWithDS pairs a Running+Ready pod with the DaemonSetRef that
 // owns it so the orchestrator can later find the right container to
 // `ping` from.
@@ -281,12 +372,14 @@ type testPodWithDS struct {
 
 // buildTestPod converts a corev1.Pod into a TestPod by parsing the
 // multus `network-status` annotation. The first IPv4 per rail is used;
-// IPv6 is currently ignored.
-func buildTestPod(p *corev1.Pod) (TestPod, error) {
+// IPv6 is currently ignored. Also returns the rail→multus interface
+// name mapping (e.g. "rail-0" → "net1") so the caller can hand it to
+// DiscoverRDMADevices to populate RDMADevsByRail for the RDMA stages.
+func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
 	ann := p.Annotations[MultusAnnotation]
 	nets, err := ParseNetworkStatus(ann)
 	if err != nil {
-		return TestPod{}, err
+		return TestPod{}, nil, err
 	}
 	tp := TestPod{
 		Name:      p.Name,
@@ -294,6 +387,7 @@ func buildTestPod(p *corev1.Pod) (TestPod, error) {
 		Node:      p.Spec.NodeName,
 		IPsByRail: map[string]string{},
 	}
+	ifaceByRail := map[string]string{}
 	for _, n := range SecondaryNetworks(nets) {
 		ip := pickIPv4(n.IPs)
 		if ip == "" {
@@ -311,9 +405,12 @@ func buildTestPod(p *corev1.Pod) (TestPod, error) {
 		}
 		tp.IPsByRail[rail] = ip
 		tp.RailOrder = append(tp.RailOrder, rail)
+		if n.Interface != "" {
+			ifaceByRail[rail] = n.Interface
+		}
 	}
 	sort.Strings(tp.RailOrder)
-	return tp, nil
+	return tp, ifaceByRail, nil
 }
 
 // pickIPv4 returns the first IPv4 address from the multus IP list, or
