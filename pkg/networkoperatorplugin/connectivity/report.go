@@ -257,6 +257,19 @@ func reportFuncMap() template.FuncMap {
 			}
 			return "state-unknown"
 		},
+		// pfsHaveMismatch reports whether any row in the given PF
+		// list has Mismatched=true. Used in the template to gate
+		// the red/orange section-header tint on whether there's
+		// actually a conflict to surface — groups whose Actual and
+		// Expected line up render with a plain muted header.
+		"pfsHaveMismatch": func(pfs []PFInfo) bool {
+			for _, pf := range pfs {
+				if pf.Mismatched {
+					return true
+				}
+			}
+			return false
+		},
 		// presetStatusLabel renders the human-facing label for the
 		// per-group platform-topology row's status badge.
 		"presetStatusLabel": func(s presetmatch.Status) string {
