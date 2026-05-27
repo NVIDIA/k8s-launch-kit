@@ -197,21 +197,21 @@ if [ ! -w "${INSTALL_DIR}/bin" ] 2>/dev/null; then
     NEED_SUDO=true
 fi
 
-install_files() {
-    mkdir -p "${INSTALL_DIR}/bin"
-    install -m 755 "${WORK_DIR}/extracted/l8k" "${INSTALL_DIR}/bin/l8k"
-    mkdir -p "${INSTALL_DIR}/share/l8k"
-    rm -rf "${INSTALL_DIR}/share/l8k/profiles" "${INSTALL_DIR}/share/l8k/presets"
-    cp -r "${WORK_DIR}/extracted/profiles" "${INSTALL_DIR}/share/l8k/"
-    cp -r "${WORK_DIR}/extracted/presets" "${INSTALL_DIR}/share/l8k/"
-    cp "${WORK_DIR}/extracted/l8k-config.yaml" "${INSTALL_DIR}/share/l8k/"
-}
+INSTALL_CMDS="
+    mkdir -p '${INSTALL_DIR}/bin'
+    install -m 755 '${WORK_DIR}/extracted/l8k' '${INSTALL_DIR}/bin/l8k'
+    mkdir -p '${INSTALL_DIR}/share/l8k'
+    rm -rf '${INSTALL_DIR}/share/l8k/profiles' '${INSTALL_DIR}/share/l8k/presets'
+    cp -r '${WORK_DIR}/extracted/profiles' '${INSTALL_DIR}/share/l8k/'
+    cp -r '${WORK_DIR}/extracted/presets' '${INSTALL_DIR}/share/l8k/'
+    cp '${WORK_DIR}/extracted/l8k-config.yaml' '${INSTALL_DIR}/share/l8k/'
+"
 
 if [ "$NEED_SUDO" = true ]; then
     echo "Installing to ${INSTALL_DIR} (requires sudo)..."
-    sudo sh -c "$(declare -f install_files); WORK_DIR='${WORK_DIR}' INSTALL_DIR='${INSTALL_DIR}' install_files"
+    sudo sh -c "$INSTALL_CMDS"
 else
-    install_files
+    sh -c "$INSTALL_CMDS"
 fi
 
 # macOS: remove quarantine attribute
