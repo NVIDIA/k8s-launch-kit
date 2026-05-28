@@ -36,8 +36,7 @@ spec:
   nicSelector:
     pfNames:
       - "{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"
-  resourceName: rail_{{$railIdx}}_plane_{{$planeIdx}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}
-  {{- if $.ClusterConfig.NodeSelector }}
+  resourceName: rail_{{$railIdx}}_plane_{{$planeIdx}}  {{- if $.ClusterConfig.NodeSelector }}
   nodeSelector:
     {{- range $key, $value := $.ClusterConfig.NodeSelector }}
     {{ $key }}: "{{ $value }}"
@@ -77,8 +76,7 @@ spec:
   numVfs: 1
   nicSelector:
     pfNames: [{{- $firstPF := true }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $firstPF }}, {{ end }}{{- $firstPF = false }}"{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"{{- end }}]
-  resourceName: rail_{{$railIdx}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}
-  {{- if $.ClusterConfig.NodeSelector }}
+  resourceName: rail_{{$railIdx}}  {{- if $.ClusterConfig.NodeSelector }}
   nodeSelector:
     {{- range $key, $value := $.ClusterConfig.NodeSelector }}
     {{ $key }}: "{{ $value }}"
