@@ -2,16 +2,16 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: spectrum-x-test{{suffix .ClusterConfig.Identifier}}
+  name: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
   namespace: "{{$.PodNamespace}}"
 spec:
   selector:
     matchLabels:
-      app: spectrum-x-test{{suffix .ClusterConfig.Identifier}}
+      app: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
   template:
     metadata:
       labels:
-        app: spectrum-x-test{{suffix .ClusterConfig.Identifier}}
+        app: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
       annotations:
         {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
         {{- $railCount := railCount .ClusterConfig.PFs $planes }}

@@ -180,10 +180,6 @@ func buildNetworkResources(cfg *config.LaunchKubernetesConfig, group *config.Clu
 
 	ewPFs := filterEastWestPFs(group.PFs)
 	isMultirail := cfg.Profile.Multirail
-	resSuffix := ""
-	if group.Identifier != "" {
-		resSuffix = "_" + strings.ReplaceAll(group.Identifier, "-", "_")
-	}
 
 	resources := map[string]string{}
 
@@ -230,12 +226,12 @@ func buildNetworkResources(cfg *config.LaunchKubernetesConfig, group *config.Clu
 	if isMultirail {
 		for _, pf := range ewPFs {
 			if pf.Rail != nil {
-				key := fmt.Sprintf("%s/%s_rail_%d%s", resourcePrefix, resourceName, *pf.Rail, resSuffix)
+				key := fmt.Sprintf("%s/%s_rail_%d", resourcePrefix, resourceName, *pf.Rail)
 				resources[key] = "1"
 			}
 		}
 	} else {
-		key := fmt.Sprintf("%s/%s%s", resourcePrefix, resourceName, resSuffix)
+		key := fmt.Sprintf("%s/%s", resourcePrefix, resourceName)
 		resources[key] = "1"
 	}
 

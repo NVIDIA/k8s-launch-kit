@@ -13,8 +13,7 @@ spec:
       "type": "nv-ipam",
       "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }
-  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}
-  linkState: enable
+  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}  linkState: enable
   networkNamespace: "{{$.PodNamespace}}"
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
@@ -31,7 +30,6 @@ spec:
       "type": "nv-ipam",
       "poolName": "{{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}"
     }
-  resourceName: {{.Sriov.ResourceName}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}
-  linkState: enable
+  resourceName: {{.Sriov.ResourceName}}  linkState: enable
   networkNamespace: "{{$.PodNamespace}}"
 {{- end}}

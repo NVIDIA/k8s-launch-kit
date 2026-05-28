@@ -3,16 +3,16 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: ipoib-test{{suffix .ClusterConfig.Identifier}}
+  name: ipoib-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
   namespace: "{{$.PodNamespace}}"
 spec:
   selector:
     matchLabels:
-      app: ipoib-test{{suffix .ClusterConfig.Identifier}}
+      app: ipoib-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
   template:
     metadata:
       labels:
-        app: ipoib-test{{suffix .ClusterConfig.Identifier}}
+        app: ipoib-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
       annotations:
         k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{- end}}{{- end}}
     spec:
@@ -53,13 +53,13 @@ spec:
           requests:
             {{- range $i, $pf := .ClusterConfig.PFs}}
             {{- if eq $pf.Traffic "east-west"}}
-            rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}: 1
+            rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}: 1
             {{- end}}
             {{- end}}
           limits:
             {{- range $i, $pf := .ClusterConfig.PFs}}
             {{- if eq $pf.Traffic "east-west"}}
-            rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}: 1
+            rdma/{{$.RdmaShared.ResourceName}}_rail_{{$pf.Rail}}: 1
             {{- end}}
             {{- end}}
 {{- else}}
@@ -67,16 +67,16 @@ spec:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: ipoib-test{{suffix $.ClusterConfig.Identifier}}
+  name: ipoib-test{{boundedSuffix 48 $.ClusterConfig.Identifier}}
   namespace: "{{$.PodNamespace}}"
 spec:
   selector:
     matchLabels:
-      app: ipoib-test{{suffix $.ClusterConfig.Identifier}}
+      app: ipoib-test{{boundedSuffix 48 $.ClusterConfig.Identifier}}
   template:
     metadata:
       labels:
-        app: ipoib-test{{suffix $.ClusterConfig.Identifier}}
+        app: ipoib-test{{boundedSuffix 48 $.ClusterConfig.Identifier}}
       annotations:
         k8s.v1.cni.cncf.io/networks: {{.Ipoib.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
     spec:
@@ -115,7 +115,7 @@ spec:
             add: ["IPC_LOCK"]
         resources:
           requests:
-            rdma/{{.RdmaShared.ResourceName}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}: 1
+            rdma/{{.RdmaShared.ResourceName}}: 1
           limits:
-            rdma/{{.RdmaShared.ResourceName}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}: 1
+            rdma/{{.RdmaShared.ResourceName}}: 1
 {{end}}

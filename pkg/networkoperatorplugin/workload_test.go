@@ -95,8 +95,8 @@ spec:
 	c0 := containers[0].(map[string]interface{})
 	res := c0["resources"].(map[string]interface{})
 	requests := res["requests"].(map[string]interface{})
-	assert.Equal(t, "1", requests["nvidia.com/sriov_net_rail_0_a100"])
-	assert.Equal(t, "1", requests["nvidia.com/sriov_net_rail_1_a100"])
+	assert.Equal(t, "1", requests["nvidia.com/sriov_net_rail_0"])
+	assert.Equal(t, "1", requests["nvidia.com/sriov_net_rail_1"])
 
 	// Node affinity injected
 	affinity := spec["affinity"].(map[string]interface{})
@@ -144,8 +144,8 @@ spec:
 	c0 := containers[0].(map[string]interface{})
 	res := c0["resources"].(map[string]interface{})
 	limits := res["limits"].(map[string]interface{})
-	assert.Equal(t, "1", limits["nvidia.com/sriov_net_rail_0_a100"])
-	assert.Equal(t, "1", limits["nvidia.com/sriov_net_rail_1_a100"])
+	assert.Equal(t, "1", limits["nvidia.com/sriov_net_rail_0"])
+	assert.Equal(t, "1", limits["nvidia.com/sriov_net_rail_1"])
 }
 
 func TestPatchWorkloadManifest_DaemonSet(t *testing.T) {
@@ -299,8 +299,8 @@ func TestBuildNetworkResources(t *testing.T) {
 		cfg, group := multirailSriovConfig()
 		got := buildNetworkResources(cfg, group)
 		assert.Equal(t, map[string]string{
-			"nvidia.com/sriov_net_rail_0_a100": "1",
-			"nvidia.com/sriov_net_rail_1_a100": "1",
+			"nvidia.com/sriov_net_rail_0": "1",
+			"nvidia.com/sriov_net_rail_1": "1",
 		}, got)
 	})
 

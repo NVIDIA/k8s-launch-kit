@@ -19,6 +19,7 @@ package networkoperatorplugin
 import (
 	"bytes"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"slices"
@@ -64,15 +65,15 @@ var templateFuncs = template.FuncMap{
 		}
 		return "-" + s
 	},
-	// resourceSuffix prepends a "_" and replaces all "-" with "_", producing a
-	// suffix suitable for K8s extended resource names (which use underscores).
-	// e.g., resourceSuffix("group-0") → "_group_0", resourceSuffix("") → ""
-	"resourceSuffix": func(s string) string {
-		if s == "" {
-			return ""
-		}
-		return "_" + strings.ReplaceAll(s, "-", "_")
-	},
+	// boundedSuffix returns "-<value>" suitable for appending to a name or label
+	// value such that the combined string never exceeds the k8s 63-char label-value
+	// limit. Callers pass the maximum allowed length of the returned suffix —
+	// typically 63 minus the length of the prefix the suffix is appended to.
+	// Empty input returns "". Inputs whose natural "-<s>" form fits within maxLen
+	// are used verbatim. Longer inputs are truncated and combined with an FNV-32a
+	// hash of the original (same algorithm as MachineLabelValue), so the result
+	// is deterministic across calls but never breaches maxLen.
+	"boundedSuffix": boundedSuffix,
 	// pfsPerNic computes how many PFs share the same physical NIC by grouping
 	// east-west PFs by PCI bus:device prefix (everything before the last ".").
 	// E.g., 8 PFs across 8 NICs → 1; 8 PFs across 4 NICs → 2.
@@ -136,16 +137,9 @@ func legacyRdmaSharedConfigList(groups []config.ClusterConfig, rdmaShared *confi
 	if rdmaShared == nil {
 		return ""
 	}
-	resourceSuffixForGroup := func(id string) string {
-		if id == "" {
-			return ""
-		}
-		return "_" + strings.ReplaceAll(id, "-", "_")
-	}
 	var entries []string
 	for _, g := range groups {
 		ew := filterEastWestPFs(g.PFs)
-		suf := resourceSuffixForGroup(g.Identifier)
 		if multirail {
 			for _, pf := range ew {
 				rail := 0
@@ -153,12 +147,12 @@ func legacyRdmaSharedConfigList(groups []config.ClusterConfig, rdmaShared *confi
 					rail = *pf.Rail
 				}
 				entries = append(entries, fmt.Sprintf(`          {
-            "resourceName": "%s_rail_%d%s",
+            "resourceName": "%s_rail_%d",
             "rdmaHcaMax": %d,
             "selectors": {
               "ifNames": [%q]
             }
-          }`, rdmaShared.ResourceName, rail, suf, rdmaShared.HcaMax, pf.NetworkInterface))
+          }`, rdmaShared.ResourceName, rail, rdmaShared.HcaMax, pf.NetworkInterface))
 			}
 		} else {
 			names := make([]string, 0, len(ew))
@@ -166,12 +160,12 @@ func legacyRdmaSharedConfigList(groups []config.ClusterConfig, rdmaShared *confi
 				names = append(names, fmt.Sprintf("%q", pf.NetworkInterface))
 			}
 			entries = append(entries, fmt.Sprintf(`          {
-            "resourceName": "%s%s",
+            "resourceName": "%s",
             "rdmaHcaMax": %d,
             "selectors": {
               "ifNames": [%s]
             }
-          }`, rdmaShared.ResourceName, suf, rdmaShared.HcaMax, strings.Join(names, ", ")))
+          }`, rdmaShared.ResourceName, rdmaShared.HcaMax, strings.Join(names, ", ")))
 		}
 	}
 	if len(entries) == 0 {
@@ -187,16 +181,9 @@ func legacySriovDevicePluginConfigList(groups []config.ClusterConfig, hostdev *c
 	if hostdev == nil {
 		return ""
 	}
-	resourceSuffixForGroup := func(id string) string {
-		if id == "" {
-			return ""
-		}
-		return "_" + strings.ReplaceAll(id, "-", "_")
-	}
 	var entries []string
 	for _, g := range groups {
 		ew := filterEastWestPFs(g.PFs)
-		suf := resourceSuffixForGroup(g.Identifier)
 		if multirail {
 			for _, pf := range ew {
 				rail := 0
@@ -212,23 +199,23 @@ func legacySriovDevicePluginConfigList(groups []config.ClusterConfig, hostdev *c
 				}
 				entries = append(entries, fmt.Sprintf(`          {
             "resourcePrefix": "nvidia.com",
-            "resourceName": "%s_rail_%d%s",
+            "resourceName": "%s_rail_%d",
             "selectors": {
               "vendors": ["15b3"],
 %s
               "isRdma": true
             }
-          }`, hostdev.ResourceName, rail, suf, selector))
+          }`, hostdev.ResourceName, rail, selector))
 			}
 		} else {
 			entries = append(entries, fmt.Sprintf(`          {
             "resourcePrefix": "nvidia.com",
-            "resourceName": "%s%s",
+            "resourceName": "%s",
             "selectors": {
               "vendors": ["15b3"],
               "isRdma": true
             }
-          }`, hostdev.ResourceName, suf))
+          }`, hostdev.ResourceName))
 		}
 	}
 	if len(entries) == 0 {
@@ -823,6 +810,35 @@ func sanitizeIdentifier(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "-")
 	return s
+}
+
+// boundedSuffix returns "-<value>" bounded to at most maxLen chars (including
+// the leading "-"). When the natural "-<s>" form fits, it is returned as-is;
+// otherwise the prefix is truncated and an 8-hex FNV-32a hash of the original
+// is appended, matching MachineLabelValue's algorithm. Empty input returns "".
+//
+// Used by templates that compose label values from ClusterConfig.Identifier:
+// the rendered "<prefix><boundedSuffix>" combination must respect k8s'
+// 63-char label-value limit. Callers pass `63 - len(prefix)` as maxLen.
+func boundedSuffix(maxLen int, s string) string {
+	if s == "" {
+		return ""
+	}
+	natural := "-" + s
+	if len(natural) <= maxLen {
+		return natural
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	hashTail := fmt.Sprintf("-%08x", h.Sum32())
+	// 1 (leading "-") + prefixBudget + len(hashTail) == maxLen
+	prefixBudget := maxLen - 1 - len(hashTail)
+	if prefixBudget < 1 {
+		// Degenerate budget — return the hash alone with its leading "-".
+		return hashTail
+	}
+	prefix := strings.TrimRight(s[:prefixBudget], "-_.")
+	return "-" + prefix + hashTail
 }
 
 // mergeCompatibleGroups merges ClusterConfig groups that share the same gpuType

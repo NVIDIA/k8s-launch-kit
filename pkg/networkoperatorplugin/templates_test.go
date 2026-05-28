@@ -450,6 +450,31 @@ func ewPF(pciAddr string, rail int) config.PFConfig {
 	}
 }
 
+func TestBoundedSuffix(t *testing.T) {
+	tests := []struct {
+		name   string
+		maxLen int
+		input  string
+		want   string
+	}{
+		{"empty input returns empty", 48, "", ""},
+		{"short input fits verbatim", 48, "nvidia-h200", "-nvidia-h200"},
+		{"input exactly at limit fits", 12, "nvidia-h200", "-nvidia-h200"},
+		{"long input truncates with hash", 20,
+			"thinksystem-sr675-v3-system-board-nvidia-rtx-pro-6000-ef08f5e8",
+			// 20-char total: "-" + prefixBudget(10) + "-" + 8 hex = 20
+			"-thinksyste-13f4b849"},
+		{"deterministic across calls", 16, "deterministic-test-input", "-determ-432b6939"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := boundedSuffix(tc.maxLen, tc.input)
+			assert.Equal(t, tc.want, got)
+			assert.LessOrEqual(t, len(got), tc.maxLen, "result exceeds maxLen")
+		})
+	}
+}
+
 func TestSanitizeIdentifier(t *testing.T) {
 	tests := []struct {
 		input    string

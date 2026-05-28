@@ -8,7 +8,7 @@ metadata:
   name: {{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
 spec:
   networkNamespace: "{{$.PodNamespace}}"
-  resourceName: "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}"
+  resourceName: "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}"
   ipam: |
     {
       "type": "nv-ipam",
@@ -24,7 +24,7 @@ metadata:
   name: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
 spec:
   networkNamespace: "{{$.PodNamespace}}"
-  resourceName: "{{.Hostdev.ResourceName}}{{resourceSuffix $.ClusterConfig.MergedIdentifier}}"
+  resourceName: "{{.Hostdev.ResourceName}}"
   ipam: |
     {
       "type": "nv-ipam",
