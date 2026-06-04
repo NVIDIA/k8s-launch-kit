@@ -7,9 +7,9 @@ networkOperator:
   # Supported: 25.10, 26.1, 26.4. Leave empty to use the explicit values
   # below as-is.
   # selectedRelease: "26.4"
-  version: v26.1.1
-  componentVersion: network-operator-v26.1.1
-  selectedRelease: "26.1"
+  version: v26.4.0
+  componentVersion: network-operator-v26.4.0
+  selectedRelease: "26.4"
   # repository — registry path for COMPONENT images managed by the operator
   # (ofedDriver, nvIpam, multus, device plugins, …). Rendered into
   # NicClusterPolicy / NicNodePolicy.
@@ -35,7 +35,7 @@ podNamespace: default
 
 docaDriver:
   enable: true
-  version: doca3.3.0-26.01-1.0.0.0-0
+  version: doca3.4.0-26.04-0.8.6.0-0
   unloadStorageModules: true
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: true
