@@ -34,7 +34,7 @@ jobs:
         with:
           images: nvcr.io/nvstaging/mellanox/k8s-launch-kit
       - name: Build and push container image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         env:
           GOPROXY: ${{ steps.setup-go-proxy.outputs.goproxy-url || 'direct' }}
         with:
