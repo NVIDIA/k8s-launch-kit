@@ -19,7 +19,7 @@ jobs:
         id: setup-go-proxy
         uses: nv-gha-runners/setup-artifactory-go-proxy@main
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Login to nvstaging container registry
