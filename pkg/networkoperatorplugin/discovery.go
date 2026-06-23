@@ -103,6 +103,29 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		ImagePullSecrets: defaultConfig.NetworkOperator.ImagePullSecrets,
 	}
 
+	// Pre-clean any leftover bootstrap from a prior crashed/killed run (the
+	// teardown defer below only fires on a clean exit). Deleting the namespace
+	// cascades the DaemonSet, pods, SA, ConfigMap, and any stale NicDevice CRs
+	// in it; CRDs are intentionally preserved by Cleanup. Wait for the
+	// namespace to fully clear before re-applying so we never deploy on top of
+	// a Terminating namespace. Best-effort: a stuck namespace surfaces a
+	// warning and Ensure's Create will fail with a clearer message if needed.
+	uiOutput.Info("Cleaning up any leftover discovery bootstrap in namespace %q", nicconfigdaemon.Namespace)
+	if cleanupErr := nicconfigdaemon.Cleanup(ctx, c); cleanupErr != nil {
+		// Surface the root cause now, so the WaitForNamespaceDeleted timeout
+		// below (if the delete never took) reads as a consequence, not a
+		// mystery.
+		log.Log.Error(cleanupErr, "pre-clean of discovery bootstrap reported an error; continuing",
+			"namespace", nicconfigdaemon.Namespace)
+		uiOutput.Warning("Pre-clean of namespace %q reported an error: %v", nicconfigdaemon.Namespace, cleanupErr)
+	}
+	if waitErr := nicconfigdaemon.WaitForNamespaceDeleted(ctx, c, 2*time.Minute); waitErr != nil {
+		log.Log.Error(waitErr, "leftover bootstrap namespace did not clear before timeout",
+			"namespace", nicconfigdaemon.Namespace)
+		uiOutput.Warning("Leftover namespace %q is still terminating; bootstrap may fail: %v",
+			nicconfigdaemon.Namespace, waitErr)
+	}
+
 	uiOutput.Info("Bootstrapping NIC configuration daemon in namespace %q", nicconfigdaemon.Namespace)
 	log.Log.Info("Bootstrapping NIC configuration daemon for discovery",
 		"namespace", nicconfigdaemon.Namespace, "image", bootstrapOpts.Image())
@@ -137,10 +160,22 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		nodeLabels = map[string]map[string]string{}
 	}
 
-	// Filter expected nodes using the node selector.
-	// Nodes not matching will never report NicDevices, so waiting for them
-	// would cause a timeout.
-	if len(p.NodeSelector) > 0 {
+	// Filter the wait set to nodes that actually have an NVIDIA NIC. The daemon
+	// runs on every node (no nodeSelector), but only NIC-bearing nodes will
+	// ever report NicDevice CRs — waiting for the rest would time out. We
+	// detect NICs by probing each pod's sysfs for PCI vendor 0x15b3 rather than
+	// the NFD label, which may not exist yet at discover time. The
+	// `--node-selector` value is deliberately NOT used here; it only flows into
+	// the saved cluster-config nodeSelector (for deploy time, when NFD exists).
+	if p.RESTConfig != nil {
+		expectedNodes = filterNodesWithNICs(ctx, p.RESTConfig, nicconfigdaemon.Namespace, expectedNodes, dsPods)
+		if len(expectedNodes) == 0 {
+			return fmt.Errorf("no nodes with an NVIDIA NIC (PCI vendor 15b3) were found")
+		}
+	} else if len(p.NodeSelector) > 0 {
+		// Fallback when pod exec is unavailable (no REST config): keep the
+		// historical label-based filter so callers without a REST config don't
+		// regress.
 		expectedNodes = filterNodesByLabels(expectedNodes, nodeLabels, p.NodeSelector)
 		if len(expectedNodes) == 0 {
 			return fmt.Errorf("no nodes match the node selector %v", p.NodeSelector)
@@ -393,13 +428,59 @@ func patchNodeLabels(ctx context.Context, c client.Client, nodeName string, labe
 	return c.Patch(ctx, node, client.RawPatch(k8stypes.StrategicMergePatchType, patch))
 }
 
-// checkDaemonSetPodsReady verifies that all pods owned by the given DaemonSet
-// in the provided namespace are Ready. Returns the list of node names running
-// those pods and the pods themselves (for later use in pod exec).
-func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, daemonSetName string) ([]string, []corev1.Pod, error) {
+// dsReadiness summarizes the readiness of a DaemonSet's pods.
+type dsReadiness struct {
+	// readyNodes / readyPods are the nodes and pods whose pod is Ready (only
+	// these can be exec'd into for the sysfs NIC probe and later hardware
+	// probes).
+	readyNodes []string
+	readyPods  []corev1.Pod
+	total      int // total DS pods found (Ready or not)
+	ready      int // Ready pod count
+	// stuck counts not-Ready pods in a waiting state that won't clear on its
+	// own within our window (ImagePullBackOff, CrashLoopBackOff, …). Used to
+	// stop waiting on unrelated nodes that will never become Ready.
+	stuck int
+}
+
+// stuckWaitingReasons are container waiting reasons that won't resolve without
+// operator intervention, so there's no point blocking discovery on them.
+var stuckWaitingReasons = map[string]bool{
+	"ImagePullBackOff":           true,
+	"ErrImagePull":               true,
+	"InvalidImageName":           true,
+	"CreateContainerConfigError": true,
+	"CreateContainerError":       true,
+	"CrashLoopBackOff":           true,
+}
+
+// podStuck reports whether any container (init or regular) is in a waiting
+// state that won't recover on its own.
+func podStuck(pod *corev1.Pod) bool {
+	statuses := append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...)
+	statuses = append(statuses, pod.Status.ContainerStatuses...)
+	for _, cs := range statuses {
+		if cs.State.Waiting != nil && stuckWaitingReasons[cs.State.Waiting.Reason] {
+			return true
+		}
+	}
+	return false
+}
+
+// checkDaemonSetPodsReady lists pods owned by the given DaemonSet in the
+// provided namespace and summarizes their readiness. The returned error is
+// non-nil only when the pod list can't be obtained or no DS pods exist yet
+// (so callers can keep polling / fall back to an alternate namespace). Pods
+// that are not Ready do NOT produce an error — the caller decides whether to
+// keep waiting based on the dsReadiness counts. Since the discovery DaemonSet
+// now runs on every node (no nodeSelector), requiring *all* pods Ready would
+// let a single unrelated stuck node (e.g. ImagePullBackOff) block discovery
+// for the whole timeout; readyNodes/readyPods therefore carry only the Ready
+// subset, which is all we can probe anyway.
+func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, daemonSetName string) (dsReadiness, error) {
 	podList := &corev1.PodList{}
 	if err := c.List(ctx, podList, client.InNamespace(namespace)); err != nil {
-		return nil, nil, err
+		return dsReadiness{}, err
 	}
 
 	var dsPods []corev1.Pod
@@ -413,30 +494,37 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 	}
 
 	if len(dsPods) == 0 {
-		return nil, nil, fmt.Errorf(
+		return dsReadiness{}, fmt.Errorf(
 			"no pods found for DaemonSet %q in namespace %q; "+
 				"use --network-operator-namespace to specify the correct namespace",
 			daemonSetName, namespace)
 	}
 
-	nodes := make([]string, 0, len(dsPods))
-	for _, pod := range dsPods {
-		if !isPodReady(&pod) {
-			return nil, nil, fmt.Errorf("pod %q from DaemonSet %q is not Ready", pod.Name, daemonSetName)
-		}
-		if pod.Spec.NodeName != "" {
-			nodes = append(nodes, pod.Spec.NodeName)
+	st := dsReadiness{total: len(dsPods)}
+	for i := range dsPods {
+		pod := dsPods[i]
+		if isPodReady(&pod) {
+			st.ready++
+			st.readyPods = append(st.readyPods, pod)
+			if pod.Spec.NodeName != "" {
+				st.readyNodes = append(st.readyNodes, pod.Spec.NodeName)
+			}
+		} else if podStuck(&pod) {
+			st.stuck++
 		}
 	}
 
-	return nodes, dsPods, nil
+	return st, nil
 }
 
-// waitForDaemonSetPods polls until the given DaemonSet has all its pods Ready in
-// the supplied namespace, or the timeout fires. Returns the node names the pods
-// landed on, the pods themselves, the namespace they were found in (always the
-// input namespace — the third return is preserved for callers that previously
-// distinguished between candidate namespaces), and an error.
+// waitForDaemonSetPods polls until the given DaemonSet's pods are ready enough
+// to proceed, or the timeout fires. "Ready enough" means either every pod is
+// Ready, or every not-Ready pod is stuck (won't recover) and at least one pod
+// is Ready — so an unrelated node that can't start the daemon doesn't block
+// discovery. On timeout it still proceeds with whatever Ready pods exist
+// (warning), and only hard-fails when no pod ever became Ready. Returns the
+// Ready node names, the Ready pods (for pod exec), the namespace they were
+// found in, and an error.
 func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
 	altNS := alternateNamespace(namespace)
 	progressLabel := fmt.Sprintf("Waiting for %s pods in namespace %q (timeout: %s)", daemonSetName, namespace, timeout.Truncate(time.Second))
@@ -456,25 +544,52 @@ func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput u
 	defer ticker.Stop()
 
 	var lastErr error
+	var last dsReadiness
+	var lastNS string
 	for {
-		nodes, pods, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName)
-		if err == nil {
-			progress.Success(fmt.Sprintf("Found %d pod(s) in namespace %q", len(pods), namespace))
-			return nodes, pods, namespace, nil
-		}
-		lastErr = err
-
-		// Try alternate namespace
-		if altNS != "" {
-			nodes, pods, err = checkDaemonSetPodsReady(ctx, c, altNS, daemonSetName)
-			if err == nil {
-				progress.Success(fmt.Sprintf("Found %d pod(s) in fallback namespace %q", len(pods), altNS))
-				return nodes, pods, altNS, nil
+		// Probe the primary namespace; fall back to the legacy alternate
+		// namespace only when the primary has no DS pods at all.
+		st, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName)
+		foundNS := namespace
+		if err != nil && altNS != "" {
+			if altSt, altErr := checkDaemonSetPodsReady(ctx, c, altNS, daemonSetName); altErr == nil {
+				st, err, foundNS = altSt, nil, altNS
 			}
+		}
+
+		if err == nil {
+			allReady := st.total > 0 && st.ready == st.total
+			// Every remaining not-Ready pod is stuck and we already have a
+			// node to probe — no point waiting out the timeout.
+			blockedByStuck := st.ready >= 1 && st.ready+st.stuck == st.total
+			switch {
+			case allReady:
+				progress.Success(fmt.Sprintf("Found %d ready pod(s) in namespace %q", st.ready, foundNS))
+				return st.readyNodes, st.readyPods, foundNS, nil
+			case blockedByStuck:
+				progress.Success(fmt.Sprintf("Proceeding with %d ready pod(s) in namespace %q", st.ready, foundNS))
+				uiOutput.Warning("%d %s pod(s) are stuck (e.g. ImagePullBackOff) and excluded from discovery; proceeding with %d ready node(s)",
+					st.stuck, daemonSetName, st.ready)
+				return st.readyNodes, st.readyPods, foundNS, nil
+			default:
+				last, lastNS = st, foundNS
+				lastErr = fmt.Errorf("%d/%d %s pods ready", st.ready, st.total, daemonSetName)
+			}
+		} else {
+			lastErr = err
 		}
 
 		select {
 		case <-ctx.Done():
+			// Don't fail outright if some pods are Ready — a slow or stuck
+			// unrelated node shouldn't abort discovery. NicDevice CRs are
+			// awaited separately (10 min) downstream.
+			if last.ready >= 1 {
+				progress.Success(fmt.Sprintf("Proceeding with %d ready pod(s) in namespace %q", last.ready, lastNS))
+				uiOutput.Warning("Timed out waiting for all %s pods to be Ready; proceeding with %d ready node(s)",
+					daemonSetName, last.ready)
+				return last.readyNodes, last.readyPods, lastNS, nil
+			}
 			progress.Fail("Timeout waiting for daemon pods")
 			if altNS != "" {
 				return nil, nil, "", fmt.Errorf("timeout waiting for %s pods to start in namespace %q (also checked fallback namespace %q); use --network-operator-namespace to specify the correct namespace: %w", daemonSetName, namespace, altNS, lastErr)
@@ -1436,6 +1551,62 @@ const sysfsNvidiaGPUIDCmd = `for d in /sys/bus/pci/devices/*; do
   cat "$d/device" 2>/dev/null
   break
 done`
+
+// sysfsMellanoxNICPresentCmd echoes "present" if any PCI device under
+// /sys/bus/pci/devices has vendor 0x15b3 (Mellanox / NVIDIA networking). Unlike
+// the NVIDIA GPU vendor (0x10de, shared by audio/NVSwitch controllers), every
+// 0x15b3 device is a NIC or DPU, so no PCI-class filter is needed. Breaks on
+// the first match; output is empty when no NVIDIA NIC is present; exit is
+// always 0. This replaces the NFD-label filter for deciding which nodes to
+// wait on — NFD may not be installed yet at discover time.
+const sysfsMellanoxNICPresentCmd = `for d in /sys/bus/pci/devices/*; do
+  v=$(cat "$d/vendor" 2>/dev/null)
+  if [ "$v" = "0x15b3" ]; then echo present; break; fi
+done`
+
+// mellanoxNICPresent reports whether the sysfs probe found an NVIDIA NIC.
+// Kept as a tiny pure helper so the decision is unit-testable without a cluster.
+func mellanoxNICPresent(output string) bool {
+	return strings.TrimSpace(output) != ""
+}
+
+// filterNodesWithNICs returns the subset of candidateNodes that have an NVIDIA
+// NIC (PCI vendor 0x15b3), determined by execing the sysfs probe in each node's
+// daemon pod. Nodes without a daemon pod, or whose probe errors or reports no
+// NIC, are dropped. Replaces the NFD-label filter (filterNodesByLabels) so
+// discovery works on clusters where NFD is not yet installed.
+func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
+	namespace string, candidateNodes []string, dsPods []corev1.Pod) []string {
+
+	var withNICs []string
+	for _, node := range candidateNodes {
+		pod := findDaemonPod([]string{node}, dsPods)
+		if pod == nil {
+			log.Log.V(1).Info("No daemon pod on node; excluding from NIC wait set", "node", node)
+			continue
+		}
+		containerName := ""
+		if len(pod.Spec.Containers) > 0 {
+			containerName = pod.Spec.Containers[0].Name
+		}
+		output, err := execInPod(ctx, restConfig, namespace, pod.Name, containerName,
+			[]string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd})
+		if err != nil {
+			log.Log.Error(err, "failed to probe node for NVIDIA NIC; excluding from wait set",
+				"node", node, "pod", pod.Name)
+			continue
+		}
+		present := mellanoxNICPresent(output)
+		log.Log.V(1).Info("Probed node for NVIDIA NIC via sysfs vendor 0x15b3",
+			"node", node, "pod", pod.Name, "present", present)
+		if present {
+			withNICs = append(withNICs, node)
+		}
+	}
+	log.Log.Info("Filtered nodes by NVIDIA NIC presence",
+		"candidates", len(candidateNodes), "withNICs", len(withNICs))
+	return withNICs
+}
 
 // parseGPUProductFromSysfs resolves a single-line sysfs device-ID output
 // (e.g. "0x2335\n") to a canonical GPUType via the embedded pci.ids table.

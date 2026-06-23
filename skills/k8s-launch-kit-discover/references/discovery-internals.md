@@ -23,7 +23,7 @@ The objects created by `Ensure(ctx, c, opts)` (`pkg/nicconfigdaemon/`) on every 
 | `ClusterRole` | `k8s-launch-kit-nic-config-daemon` | cluster | created on `Ensure`, deleted explicitly on `Cleanup` |
 | `ClusterRoleBinding` | `k8s-launch-kit-nic-config-daemon` | cluster | created on `Ensure`, deleted explicitly on `Cleanup` |
 | `ConfigMap` | `nic-configuration-operator-supported-nic-firmware` (empty `data: {}`) | namespaced | empty stand-in so the daemon's startup Get succeeds; deleted by namespace cascade |
-| `DaemonSet` | `nic-configuration-daemon` | namespaced | image = `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`; pinned to `feature.node.kubernetes.io/pci-15b3.present=true`; deleted by namespace cascade |
+| `DaemonSet` | `nic-configuration-daemon` | namespaced | image = `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`; **no `nodeSelector`** + tolerates all taints — runs on every node incl. control-plane (NFD-independent); deleted by namespace cascade |
 
 ### Why renamed RBAC
 
@@ -44,8 +44,36 @@ the API server, no controllers, no consumed resources.
 
 Adds a single skip to the `defer Cleanup(...)` call so the bootstrap survives the
 exit. Use for `kubectl describe pod -n nvidia-k8s-launch-kit` post-mortems when
-daemon pods don't go Ready (ImagePullBackOff, missing pull secret, no
-`pci-15b3.present` nodes).
+daemon pods don't go Ready (ImagePullBackOff, missing pull secret).
+
+### Node scheduling + NIC wait set (NFD-independent)
+
+The DaemonSet has **no `nodeSelector`** and tolerates all taints
+(`tolerations: [{operator: Exists}]`), so it schedules on every node —
+including control-plane/tainted nodes, which on small or single-node clusters
+may carry the data-plane NICs. It does not depend on the NFD label
+`feature.node.kubernetes.io/pci-15b3.present` (often absent at discover time).
+Because the DaemonSet now runs everywhere, `waitForDaemonSetPods` no longer
+requires **every** pod Ready (that would let one wedged unrelated node block the
+whole 5-min window). It proceeds when all pods are Ready, or when every
+not-Ready pod is *stuck* (`ImagePullBackOff` / `CrashLoopBackOff` / etc., via
+`podStuck`) and at least one pod is Ready; on timeout it still proceeds with the
+Ready set, and only hard-fails when no pod ever became Ready.
+
+To pick which nodes to wait on for `NicDevice` CRs, `filterNodesWithNICs` execs a
+sysfs probe (`sysfsMellanoxNICPresentCmd`) into each daemon pod that scans
+`/sys/bus/pci/devices/*/vendor` for `0x15b3`; only NIC-bearing nodes enter the
+wait set. The `--node-selector` flag is **not** used for scheduling or the wait —
+it only populates the **saved** `cluster-config.yaml` `nodeSelector` for deploy
+time. (Fallback: when no REST config is available for pod exec, the legacy
+`--node-selector` label filter is used instead.)
+
+### Leftover pre-clean
+
+Teardown runs in a `defer`, so a crashed/killed run can leave the namespace
+behind. Before bootstrapping, discovery calls `Cleanup` + `WaitForNamespaceDeleted`
+(2-min bound) to fully clear `nvidia-k8s-launch-kit` (cascades DaemonSet/pods/SA/
+ConfigMap/stale `NicDevice` CRs; CRDs preserved), then `Ensure` deploys fresh.
 
 ---
 
