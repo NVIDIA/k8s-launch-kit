@@ -30,7 +30,7 @@ jobs:
           password: ${{ secrets.NVCR_TOKEN }}
       - name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: nvcr.io/nvstaging/mellanox/k8s-launch-kit
       - name: Build and push container image
