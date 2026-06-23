@@ -141,8 +141,17 @@ spec:
       priorityClassName: system-node-critical
       serviceAccountName: {{ .SAName }}
       terminationGracePeriodSeconds: 10
-      nodeSelector:
-        feature.node.kubernetes.io/pci-15b3.present: "true"
+      # No nodeSelector: discovery runs on every node. The NFD label
+      # feature.node.kubernetes.io/pci-15b3.present may not exist yet at
+      # discover time (NFD not installed), so the daemon must not be pinned to
+      # it. The discovery flow probes each pod's sysfs for an NVIDIA NIC
+      # (PCI vendor 0x15b3) to decide which nodes to wait on instead.
+      # Tolerate every taint so the daemon also lands on control-plane (and
+      # other tainted) nodes — on small/single-node clusters the control-plane
+      # node may carry the data-plane NICs. This is a short-lived, privileged
+      # discovery daemon that is torn down afterwards.
+      tolerations:
+        - operator: Exists
 {{- if .ImagePullSecrets }}
       imagePullSecrets:
 {{- range .ImagePullSecrets }}

@@ -198,9 +198,16 @@ func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	require.Len(t, ds.Spec.Template.Spec.ImagePullSecrets, 1)
 	assert.Equal(t, "my-registry-creds", ds.Spec.Template.Spec.ImagePullSecrets[0].Name)
 
-	// nodeSelector pins to Mellanox-NIC nodes
-	assert.Equal(t, "true",
-		ds.Spec.Template.Spec.NodeSelector["feature.node.kubernetes.io/pci-15b3.present"])
+	// No nodeSelector: discovery runs on every node (the NFD
+	// pci-15b3.present label may not exist yet at discover time). NIC-bearing
+	// nodes are selected later via a sysfs probe, not a label.
+	assert.Empty(t, ds.Spec.Template.Spec.NodeSelector)
+
+	// Tolerate every taint so the daemon also lands on control-plane / tainted
+	// nodes (small clusters may carry NICs there).
+	require.Len(t, ds.Spec.Template.Spec.Tolerations, 1)
+	assert.Equal(t, corev1.TolerationOpExists, ds.Spec.Template.Spec.Tolerations[0].Operator)
+	assert.Empty(t, ds.Spec.Template.Spec.Tolerations[0].Key)
 
 	// Privileged + hostPID required for the daemon to read /sys
 	assert.True(t, ds.Spec.Template.Spec.HostPID)

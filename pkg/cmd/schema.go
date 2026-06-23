@@ -179,7 +179,7 @@ var schemaCmd = &cobra.Command{
 				"--node-selector": {
 					Type:        "string",
 					Default:     "feature.node.kubernetes.io/pci-15b3.present=true",
-					Description: "Filter nodes for discovery by label (e.g., key=value,key2=value2)",
+					Description: "Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and NIC nodes are detected via a sysfs PCI-vendor probe",
 				},
 				"--image-pull-secrets": {
 					Type:        "[]string",

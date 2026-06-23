@@ -35,7 +35,7 @@ func TestCheckDaemonSetPodsReady_NoPodsFound(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	_, _, err := checkDaemonSetPodsReady(context.Background(), c, "custom-namespace", "nic-configuration-daemon")
+	_, err := checkDaemonSetPodsReady(context.Background(), c, "custom-namespace", "nic-configuration-daemon")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no pods found for DaemonSet")
 	assert.Contains(t, err.Error(), "custom-namespace")
@@ -64,10 +64,13 @@ func TestCheckDaemonSetPodsReady_PodsInCorrectNamespace(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 
-	nodes, pods, err := checkDaemonSetPodsReady(context.Background(), c, "network-operator", "nic-configuration-daemon")
+	st, err := checkDaemonSetPodsReady(context.Background(), c, "network-operator", "nic-configuration-daemon")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"node-1"}, nodes)
-	assert.Len(t, pods, 1)
+	assert.Equal(t, []string{"node-1"}, st.readyNodes)
+	assert.Len(t, st.readyPods, 1)
+	assert.Equal(t, 1, st.total)
+	assert.Equal(t, 1, st.ready)
+	assert.Equal(t, 0, st.stuck)
 }
 
 func TestCheckDaemonSetPodsReady_PodNotReady(t *testing.T) {
@@ -92,9 +95,88 @@ func TestCheckDaemonSetPodsReady_PodNotReady(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 
-	_, _, err := checkDaemonSetPodsReady(context.Background(), c, "nvidia-network-operator", "nic-configuration-daemon")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not Ready")
+	// A not-Ready pod no longer errors — the pod exists, so the caller keeps
+	// polling based on the counts. It's counted as neither ready nor stuck
+	// (no terminal waiting reason).
+	st, err := checkDaemonSetPodsReady(context.Background(), c, "nvidia-network-operator", "nic-configuration-daemon")
+	require.NoError(t, err)
+	assert.Equal(t, 1, st.total)
+	assert.Equal(t, 0, st.ready)
+	assert.Equal(t, 0, st.stuck)
+	assert.Empty(t, st.readyNodes)
+}
+
+func TestCheckDaemonSetPodsReady_StuckPodCounted(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	readyPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nic-configuration-daemon-ready",
+			Namespace: "nvidia-k8s-launch-kit",
+			OwnerReferences: []metav1.OwnerReference{
+				{Kind: "DaemonSet", Name: "nic-configuration-daemon"},
+			},
+		},
+		Spec: corev1.PodSpec{NodeName: "node-ready"},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+	// A pod stuck on ImagePullBackOff on an unrelated node — must be counted
+	// as stuck so the wait can proceed instead of blocking until timeout.
+	stuckPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nic-configuration-daemon-stuck",
+			Namespace: "nvidia-k8s-launch-kit",
+			OwnerReferences: []metav1.OwnerReference{
+				{Kind: "DaemonSet", Name: "nic-configuration-daemon"},
+			},
+		},
+		Spec: corev1.PodSpec{NodeName: "node-stuck"},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionFalse},
+			},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(readyPod, stuckPod).Build()
+
+	st, err := checkDaemonSetPodsReady(context.Background(), c, "nvidia-k8s-launch-kit", "nic-configuration-daemon")
+	require.NoError(t, err)
+	assert.Equal(t, 2, st.total)
+	assert.Equal(t, 1, st.ready)
+	assert.Equal(t, 1, st.stuck)
+	assert.Equal(t, []string{"node-ready"}, st.readyNodes)
+}
+
+func TestPodStuck(t *testing.T) {
+	stuck := &corev1.Pod{Status: corev1.PodStatus{
+		ContainerStatuses: []corev1.ContainerStatus{
+			{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}},
+		},
+	}}
+	assert.True(t, podStuck(stuck))
+
+	progressing := &corev1.Pod{Status: corev1.PodStatus{
+		ContainerStatuses: []corev1.ContainerStatus{
+			{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}},
+		},
+	}}
+	assert.False(t, podStuck(progressing))
+
+	running := &corev1.Pod{Status: corev1.PodStatus{
+		ContainerStatuses: []corev1.ContainerStatus{
+			{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+		},
+	}}
+	assert.False(t, podStuck(running))
 }
 
 func TestAlternateNamespace(t *testing.T) {
@@ -197,6 +279,25 @@ func TestParseGPUProductFromSysfs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, parseGPUProductFromSysfs(tt.output))
+		})
+	}
+}
+
+func TestMellanoxNICPresent(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"present marker", "present\n", true},
+		{"present with whitespace", "  present  \n", true},
+		{"empty", "", false},
+		{"whitespace only", "  \n\t", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, mellanoxNICPresent(tt.output))
 		})
 	}
 }

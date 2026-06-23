@@ -46,7 +46,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--keep-namespace` | — | `false` | Skip teardown of the `nvidia-k8s-launch-kit` bootstrap namespace (for debugging) |
 | `--network-operator-namespace` | — | — | **Deprecated for `discover`**: accepted but ignored. The daemon always runs in `nvidia-k8s-launch-kit`. Still used by `l8k generate` / `l8k deploy`. |
 | `--user-config` | — | — | Base config to merge with discovered hardware |
-| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Restrict daemon scheduling + NicDevice wait to matching nodes |
+| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Value written into the **saved** `cluster-config.yaml` `nodeSelector` (for deploy time). It does **not** gate discovery scheduling or the NicDevice wait set — the daemon runs on all nodes and NIC-bearing nodes are detected via a sysfs `0x15b3` probe. |
 | `--image-pull-secrets` | — | — | Image pull secret names (comma-separated). Forwarded onto the bootstrapped DaemonSet pod spec. |
 
 ## Examples
@@ -120,10 +120,12 @@ resolved.
 
 ## Prerequisites
 
-- Node Feature Discovery (NFD) active on the cluster so worker nodes
-  carry `feature.node.kubernetes.io/pci-15b3.present=true` (the daemon's
-  nodeSelector — without it, no daemon pods schedule and discovery times
-  out)
+- Node Feature Discovery (NFD) is **not** required. The bootstrap daemon
+  runs on every node — no `nodeSelector`, and it tolerates all taints so it
+  also lands on control-plane nodes (small/single-node clusters may carry
+  NICs there). NIC-bearing nodes are detected by a sysfs probe for PCI vendor
+  `0x15b3` rather than the NFD `feature.node.kubernetes.io/pci-15b3.present`
+  label.
 - Image-pull access from every worker node to
   `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`.
   Use `--image-pull-secrets <name>` (or `networkOperator.imagePullSecrets`
@@ -145,9 +147,17 @@ resolved.
   ClusterRoleBinding are deleted explicitly.
 - Pass `--keep-namespace` to leave the namespace in place — useful when debugging
   daemon pod start-up failures (`kubectl describe pod -n nvidia-k8s-launch-kit`).
-- If daemon pods don't go Ready within 5 minutes, discovery aborts. Common causes:
-  ImagePullBackOff (check the image tag exists in your registry), no nodes match
-  `pci-15b3.present=true` (NFD not running or no Mellanox NICs), pull-secret missing.
+- Before bootstrapping, discovery pre-cleans the `nvidia-k8s-launch-kit` namespace
+  (deletes any leftover DaemonSet/pods/NicDevice CRs from a crashed prior run and
+  waits up to 2 min for it to clear) so a fresh daemon is never layered on stale state.
+- Discovery waits up to 5 minutes for daemon pods to be Ready, but tolerates
+  stuck pods: if some pods are wedged (e.g. ImagePullBackOff/CrashLoopBackOff on
+  an unrelated node) it proceeds with the Ready ones rather than blocking the
+  whole window, and only aborts if **no** pod ever becomes Ready. Common causes
+  of a total failure: image tag missing in your registry, pull-secret missing.
+- If discovery reports "no nodes with an NVIDIA NIC (PCI vendor 15b3) were found",
+  the daemon ran but no node's sysfs exposed a `0x15b3` device (no Mellanox/NVIDIA
+  NICs, or `/sys` not mounted/readable in the pod).
 - After determining each group's `(machineType, gpuType)`, discovery looks up a topology preset under `presets/` using **exact-match** lookup on that pair. A matching preset overrides heuristic-derived topology fields (traffic class, rail, NUMA, GPU affinity). There is no any-GPU fallback — a preset with empty `gpuType:` is rejected at load time. If no preset matches, discovery proceeds with heuristic classification.
 - If you already know the SKU and want to skip cluster discovery entirely, use `l8k generate --for <preset>` (see `k8s-launch-kit-generate`).
 
