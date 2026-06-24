@@ -286,6 +286,11 @@ clusterConfig:
         networkInterface: "net1" # Network interface name (single-node groups only)
         traffic: east-west       # "east-west" (fabric) or "north-south" (DPU)
         rail: 0                  # Sequential rail number (east-west PFs only)
+        model: "ConnectX-8 ..."  # VPD model string (NicDevice.Status.modelName).
+                                 # Drives rail collapsing: a "2-port"/"Dual-port"
+                                 # model keeps a rail per port; other multi-PF
+                                 # NICs collapse to one rail (the master PF).
+                                 # See `l8k discover --collapse-nic-rails`.
 
     # map[string]string — Labels that uniquely select nodes in this group
     nodeSelector:

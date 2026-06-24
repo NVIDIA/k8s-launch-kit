@@ -57,7 +57,8 @@ Each `clusterConfig[]` entry has these key fields:
 - `machineType` — server model (e.g. `PowerEdge-XE9680`); populated from `nvidia.com/gpu.machine` label or DMI fallback.
 - `gpuType` — GPU SKU (e.g. `NVIDIA-H200`); populated from `nvidia.com/gpu.product` label or `nvidia-smi` fallback. **Note:** this field used to be called `productType` — the rename happened to disambiguate it from the server model. Old `productType:` keys in hand-authored configs must be renamed to `gpuType:`.
 - `capabilities.nodes.{sriov,rdma,ib}` — what the underlying hardware supports.
-- `pfs[]` — physical function list with PCI address, device ID, RDMA device, network interface, traffic class, rail, NUMA, GPU affinity.
+- `pfs[]` — physical function list with PCI address, device ID, RDMA device, network interface, traffic class, rail, NUMA, GPU affinity, and `model` (the VPD model/description string read from `NicDevice.Status.modelName`).
+  - **One rail per NIC (default).** Discovery advertises one rail per physical NIC: a NIC's multi-plane east-west PFs (planes of one port, e.g. Spectrum-X ConnectX-8/9) collapse to the master PF, so an 8-PF node lists 4 east-west PFs / 4 rails. A NIC whose `model` is genuinely dual-port (`2-port`/`Dual-port`) keeps a rail per port. Run `l8k discover --collapse-nic-rails=false` to emit one rail per PF (legacy/dev behaviour).
 - `nodeSelector` — Kubernetes node selector for this group. Source groups key on the machine label written by `l8k discover`: `nvidia.kubernetes-launch-kit.machine: <machineType>-<gpuType>`. Auto-merged groups (different machineTypes sharing a GPU type) key on `nvidia.kubernetes-launch-kit.gpu: <gpuType>` instead — discovery writes both labels onto every node, so the merged selector binds correctly across source machineTypes.
 - `workerNodes` — explicit hostnames (populated by discovery).
 

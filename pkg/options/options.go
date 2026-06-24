@@ -37,6 +37,11 @@ type Options struct {
 	// nvidia-k8s-launch-kit bootstrap namespace at the end of `discover` —
 	// useful for debugging a failed run.
 	KeepNamespace bool
+	// CollapseNicRails (default true; --collapse-nic-rails) makes discovery
+	// advertise one rail per NIC — multi-plane NICs collapse to their master
+	// PF, while genuinely dual-port NIC models keep a rail per port. False
+	// restores the legacy one-rail-per-PF behaviour for dev setups.
+	CollapseNicRails bool
 	// NetworkOperatorRelease is a MAJOR.MINOR catalog key (e.g. "26.4"), not
 	// a full semver. Selects component image tags + repository from the
 	// embedded releases catalog and drives version-gated template sections.

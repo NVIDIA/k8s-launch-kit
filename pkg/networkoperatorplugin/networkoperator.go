@@ -50,6 +50,12 @@ type NetworkOperatorPlugin struct {
 	// for debugging a failed discovery.
 	KeepNamespace bool
 
+	// CollapseNicRails (default true, set from --collapse-nic-rails) makes
+	// discovery advertise one rail per NIC: multi-plane NICs collapse to their
+	// master PF while genuinely dual-port NICs keep a rail per port. False
+	// restores the legacy one-rail-per-PF behaviour (handy on dev setups).
+	CollapseNicRails bool
+
 	// NetworkOperator is the resolved NetworkOperator config used by
 	// DeployProfile to drive the helm install in Phase 0. Populated by
 	// the launcher after ApplyOptionsToConfig has merged the catalog with

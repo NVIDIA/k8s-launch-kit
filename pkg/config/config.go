@@ -297,6 +297,14 @@ type PFConfig struct {
 	Rail             *int   `yaml:"rail,omitempty"`
 	PSID             string `yaml:"psid,omitempty"`
 	PartNumber       string `yaml:"partNumber,omitempty"`
+	// Model is the human-readable NIC model/description string read from the
+	// device VPD (e.g. "Nvidia ConnectX-7 NDR200/HDR QSFP112 2-port PCIe Gen5
+	// x16 InfiniBand Adapter"). Populated during discovery from
+	// NicDevice.Status.ModelName. It records why the rail-collapse decision was
+	// made (a "2-port"/"Dual-port" model keeps one rail per port; anything else
+	// collapses to one rail per NIC) and is empty when the daemon couldn't read
+	// VPD.
+	Model string `yaml:"model,omitempty"`
 	// Topology fields (populated from presets when available)
 	NumaNode     *int   `yaml:"numaNode,omitempty"`
 	ConnectedGPU string `yaml:"connectedGPU,omitempty"`
