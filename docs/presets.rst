@@ -35,9 +35,9 @@ How Discovery Uses Presets
 During ``l8k discover``, after determining a node group's ``machineType`` and ``gpuType`` (from GPU operator labels or DMI/``nvidia-smi`` fallback), l8k:
 
 1. **Looks up** a preset whose YAML declares the exact same ``(machineType, gpuType)`` pair.
-2. **Validates** PCI addresses and device IDs between the preset and discovered NicDevices.
-3. **Applies** the preset's authoritative topology fields, preserving live state (RDMA device, network interface, PSID, part number).
-4. **Falls back** to heuristic discovery if no preset matches or validation fails.
+2. **Validates** PF count, PCI addresses, and device IDs between the preset and discovered NicDevices.
+3. **Applies** the preset's authoritative topology fields — **only when the hardware matches exactly** (no PF-count / PCI-address / device-ID deviation), preserving live state (RDMA device, network interface, PSID, part number).
+4. **Falls back** to heuristic discovery when no preset matches *or* when the matched preset deviates from the discovered hardware. In the deviation case the discrepancies are still recorded under ``clusterConfig[*].presetDeviation`` and a warning is emitted on every config load, but the preset's topology is **not** overlaid — overlaying a preset onto a different PCI layout would corrupt the live-discovered traffic/rail classification.
 
 Generating From a Preset (``--for``)
 ------------------------------------
@@ -76,13 +76,13 @@ Preset validation during ``l8k discover`` ensures the preset matches the actual 
      - On Mismatch
    * - PF count
      - Number of PFs in preset must match discovered count
-     - Preset rejected
+     - Preset not applied; deviation recorded
    * - PCI addresses
      - Every PCI address must match between preset and discovered hardware
-     - Preset rejected
+     - Preset not applied; deviation recorded
    * - Device IDs
      - Device ID at each PCI address must match
-     - Preset rejected
+     - Preset not applied; deviation recorded
    * - Part numbers
      - Part numbers may differ across vendor SKUs
      - Warning logged, discovered value used

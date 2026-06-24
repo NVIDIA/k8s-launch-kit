@@ -224,19 +224,52 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 				"deviationCount", len(matchResult.Deviations))
 			switch matchResult.Status {
 			case presetmatch.StatusMatch, presetmatch.StatusDeviation:
-				// LoadPreset was successful — load it again to get
-				// the Topology so ApplyPreset can enrich the group.
-				// (MatchGroup intentionally doesn't mutate.)
-				if preset, err := presets.LoadPreset(group.MachineType, group.GPUType); err == nil && preset != nil {
-					presets.ApplyPreset(preset, group)
-				}
-				if matchResult.Status == presetmatch.StatusDeviation {
-					group.PresetDeviation = matchResult.Deviations
+				// Record any deviations regardless of whether we enrich,
+				// so `l8k validate` and every config load keep surfacing
+				// the drift.
+				group.PresetDeviation = matchResult.Deviations
+				if presets.HasTopologyDeviation(matchResult.Deviations) {
+					// Hardware drifts from the preset on PF count, PCI
+					// address, or device ID (NIC model). Applying the
+					// preset would clobber the live-discovered traffic/rail
+					// classification: ApplyPreset matches PFs by PCI
+					// address, so any address that coincidentally overlaps
+					// inherits the preset's unrelated traffic/rail/GPU
+					// fields (and rails are left non-contiguous because
+					// ApplyPreset doesn't renumber). Skip enrichment and
+					// keep the live results.
 					uiOutput.Warning(
-						"Preset for %s/%s applied with %d deviation(s) from the matched preset. The deployment is not certified — see 'presetDeviation' in cluster-config.yaml.",
+						"Preset for %s/%s NOT applied — discovered hardware deviates from the preset on %d field(s) (PF count / PCI address / device ID). Using live discovery results; see 'presetDeviation' in cluster-config.yaml.",
 						group.MachineType, group.GPUType, len(matchResult.Deviations))
-				} else {
+					break
+				}
+				// Exact topology match (or only benign deviations) — load
+				// the Topology again and enrich rail/NUMA/GPU fields.
+				// (MatchGroup intentionally doesn't mutate.)
+				preset, err := presets.LoadPreset(group.MachineType, group.GPUType)
+				switch {
+				case err != nil:
+					// MatchGroup already loaded this preset to produce the
+					// match, so a reload failure here is unexpected — surface
+					// it rather than silently falling back to live discovery.
+					uiOutput.Warning(
+						"Preset for %s/%s matched but could not be re-loaded to apply (%v). Using live discovery results.",
+						group.MachineType, group.GPUType, err)
+				case preset == nil:
+					uiOutput.Warning(
+						"Preset for %s/%s matched but was not found on re-load. Using live discovery results.",
+						group.MachineType, group.GPUType)
+				case presets.ApplyPreset(preset, group):
 					uiOutput.Info("Applied preset configuration for %s", group.MachineType)
+				default:
+					// Loaded fine but the all-or-nothing apply declined (PCI
+					// bijection not satisfied) — shouldn't happen given the
+					// HasTopologyDeviation gate above, but don't claim a
+					// preset we didn't actually apply.
+					log.Log.V(1).Info("Preset matched but not applied",
+						"group", group.Identifier,
+						"machineType", group.MachineType,
+						"gpuType", group.GPUType)
 				}
 			case presetmatch.StatusNotFound:
 				// No catalog entry — discovery continues without
@@ -927,10 +960,10 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			"willFallBackToHardwareProbe", machineType == "" || gpuType == "")
 
 		cc := config.ClusterConfig{
-			Identifier:    identifier,
-			MachineType:   machineType,
-			GPUType:   gpuType,
-			NodeSelector:  nodeSelector,
+			Identifier:   identifier,
+			MachineType:  machineType,
+			GPUType:      gpuType,
+			NodeSelector: nodeSelector,
 			Capabilities: &config.ClusterCapabilities{
 				Nodes: &config.NodesCapabilities{
 					Rdma:  g.hasRdma,

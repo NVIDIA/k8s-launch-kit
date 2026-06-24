@@ -301,22 +301,53 @@ func ListPresetSummaries() ([]PresetSummary, []SkippedPreset, error) {
 // validated preset. It matches PFs by PCI address and overrides topology-
 // derived fields (traffic, rail, NUMA, GPU affinity) while preserving
 // live-state fields (RDMA device, network interface, PSID, part number).
+// It returns true when the preset was applied.
+//
+// ApplyPreset is ALL-OR-NOTHING: it applies only when the group and the preset
+// describe the same set of PCI addresses (equal PF count and every group PF
+// present in the preset). On any partial match it makes NO changes and returns
+// false. A partial application is incoherent: a preset's rail numbers are
+// authored as one self-consistent set for the whole board, so overlaying them
+// onto a subset — or mixing preset-numbered PFs with PFs still carrying their
+// live, sequentially-assigned rails — produces gaps or duplicate rail indices,
+// and clobbers the correct live traffic classification for whichever PCI
+// addresses happen to overlap. The discovery path already gates on
+// presets.HasTopologyDeviation, but ApplyPreset enforces the invariant itself
+// so it is safe to call from any context.
+//
+// On a full match the preset's authoritative rail values are copied VERBATIM,
+// never renumbered: presets may legitimately number rails out of PCI-address
+// order (e.g. multi-PCI-domain layouts where rail 0 lives on domain 0001), and
+// that mapping is the certified intent.
 //
 // GPUType is no longer filled in from the preset: by the time ApplyPreset
 // runs, the discovered group's GPUType is what was passed to LoadPreset, so
 // it already matches the preset's GPUType exactly.
-func ApplyPreset(preset *Topology, group *config.ClusterConfig) {
+func ApplyPreset(preset *Topology, group *config.ClusterConfig) bool {
 	presetMap := make(map[string]*PresetPF, len(preset.PFs))
 	for i := range preset.PFs {
 		presetMap[preset.PFs[i].PciAddress] = &preset.PFs[i]
 	}
 
+	// Precondition: full PCI bijection between group and preset. Anything
+	// short of that can't be applied coherently (see doc comment), so make
+	// no changes and report that nothing was applied.
+	if len(group.PFs) != len(preset.PFs) {
+		log.Log.V(1).Info("Preset not applied — PF count differs from group",
+			"groupPFs", len(group.PFs), "presetPFs", len(preset.PFs))
+		return false
+	}
+	for i := range group.PFs {
+		if _, ok := presetMap[group.PFs[i].PciAddress]; !ok {
+			log.Log.V(1).Info("Preset not applied — group PF absent from preset",
+				"pciAddress", group.PFs[i].PciAddress)
+			return false
+		}
+	}
+
 	for i := range group.PFs {
 		pf := &group.PFs[i]
-		pp, ok := presetMap[pf.PciAddress]
-		if !ok {
-			continue
-		}
+		pp := presetMap[pf.PciAddress] // guaranteed present by the check above
 
 		pf.Traffic = pp.Traffic
 		pf.Rail = pp.Rail
@@ -335,4 +366,5 @@ func ApplyPreset(preset *Topology, group *config.ClusterConfig) {
 	}
 
 	group.PresetApplied = true
+	return true
 }
