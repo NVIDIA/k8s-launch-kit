@@ -47,7 +47,7 @@ func applySpectrumXDefaults(opts *options.Options) error {
 	if err := applySpectrumXSyntaxChecks(opts); err != nil {
 		return err
 	}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		Profile: &config.Profile{
 			Fabric:     opts.Fabric,
 			Deployment: opts.DeploymentType,

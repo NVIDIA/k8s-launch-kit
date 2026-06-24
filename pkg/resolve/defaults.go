@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package resolve fills profile-related fields on a loaded
-// `LaunchKubernetesConfig` from discovered hardware (defaults) and then
+// `LaunchKitConfig` from discovered hardware (defaults) and then
 // validates the fully-resolved configuration's cohort rules. The two
 // halves are intentionally separate functions so the launcher can wire
 // them in around `ApplyOptionsToConfig`:
@@ -67,7 +67,7 @@ func (d DefaultDecision) String() string {
 //
 // `--spectrum-x` itself is NOT defaulted — the user always specifies the
 // RA version (per design discussion).
-func ApplyHardwareDefaults(cfg *config.LaunchKubernetesConfig, opts options.Options) []DefaultDecision {
+func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []DefaultDecision {
 	if cfg.Profile == nil {
 		cfg.Profile = &config.Profile{}
 	}
@@ -131,7 +131,7 @@ func ApplyHardwareDefaults(cfg *config.LaunchKubernetesConfig, opts options.Opti
 // implicit fabric/deployment/multirail (forced by Spectrum-X),
 // --multiplane-mode, --number-of-planes (from east-west PF deviceID),
 // and --network-operator-release (matched to the chosen RA version).
-func applySpectrumXHardwareDefaults(cfg *config.LaunchKubernetesConfig, opts options.Options, decisions *[]DefaultDecision) {
+func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options, decisions *[]DefaultDecision) {
 	if cfg.Profile.SpectrumX == nil {
 		cfg.Profile.SpectrumX = &config.ProfileSpectrumX{}
 	}

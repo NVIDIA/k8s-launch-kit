@@ -151,7 +151,7 @@ func MatchGroup(group config.ClusterConfig) Result {
 
 // MatchAll runs MatchGroup over every entry in cfg.ClusterConfig and
 // returns the results in the same order. cfg is never mutated.
-func MatchAll(cfg *config.LaunchKubernetesConfig) []Result {
+func MatchAll(cfg *config.LaunchKitConfig) []Result {
 	if cfg == nil {
 		return nil
 	}

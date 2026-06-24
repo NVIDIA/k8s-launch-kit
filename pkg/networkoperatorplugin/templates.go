@@ -570,10 +570,10 @@ func collapsePFsToOnePerNIC(pfs []config.PFConfig) (kept []config.PFConfig, drop
 }
 
 // templateContext wraps the full config but presents a single ClusterConfig group.
-// The ClusterConfig field shadows the slice field in LaunchKubernetesConfig,
+// The ClusterConfig field shadows the slice field in LaunchKitConfig,
 // so templates can use .ClusterConfig.PFs, .ClusterConfig.NodeSelector, etc.
 type templateContext struct {
-	*config.LaunchKubernetesConfig
+	*config.LaunchKitConfig
 	ClusterConfig *config.ClusterConfig
 }
 
@@ -581,7 +581,7 @@ type templateContext struct {
 // Returns a map of filename → rendered content. Templates that reference
 // .ClusterConfig are rendered once per group (producing separate files),
 // while other templates are rendered once.
-func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, groupFilter string) (map[string]string, error) {
+func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilter string) (map[string]string, error) {
 	// Read the template file
 	templateContent, err := os.ReadFile(templatePath)
 	if err != nil {
@@ -719,7 +719,7 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, gr
 		}
 
 		ctx := &templateContext{
-			LaunchKubernetesConfig: cfgForGroup,
+			LaunchKitConfig: cfgForGroup,
 			ClusterConfig:          &renderGroup,
 		}
 		var buf bytes.Buffer
@@ -766,7 +766,7 @@ func groupFabric(group config.ClusterConfig) (string, bool) {
 }
 
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
-func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKubernetesConfig) (map[string]string, error) {
+func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKitConfig) (map[string]string, error) {
 	// Apply --groups / --gpu-type filter to source groups before merging.
 	// `applyGroupFilter` enforces mutual exclusivity, errors on empty match,
 	// and is a no-op when neither flag is set.
@@ -858,7 +858,7 @@ func hasEmptyNetworkInterfaceNames(groups []config.ClusterConfig) bool {
 }
 
 // isRdmaShared returns true if the config targets an rdma_shared deployment.
-func isRdmaShared(cfg *config.LaunchKubernetesConfig) bool {
+func isRdmaShared(cfg *config.LaunchKitConfig) bool {
 	return cfg.Profile != nil && cfg.Profile.Deployment == "rdma_shared"
 }
 
@@ -868,7 +868,7 @@ func isRdmaShared(cfg *config.LaunchKubernetesConfig) bool {
 // profile can fall back to PCI-based selectors. See the long comment at
 // the call site for the rationale. Returns the original cfg unmodified
 // when the workaround doesn't apply.
-func maybeDisableInterfaceNameTemplate(cfg *config.LaunchKubernetesConfig, filteredGroups []config.ClusterConfig) *config.LaunchKubernetesConfig {
+func maybeDisableInterfaceNameTemplate(cfg *config.LaunchKitConfig, filteredGroups []config.ClusterConfig) *config.LaunchKitConfig {
 	if cfg.NicConfigurationOperator == nil || !cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate {
 		return cfg
 	}
@@ -902,7 +902,7 @@ func maybeDisableInterfaceNameTemplate(cfg *config.LaunchKubernetesConfig, filte
 	return &cfgCopy
 }
 
-func profileDeploymentName(cfg *config.LaunchKubernetesConfig) string {
+func profileDeploymentName(cfg *config.LaunchKitConfig) string {
 	if cfg == nil || cfg.Profile == nil {
 		return ""
 	}
@@ -910,7 +910,7 @@ func profileDeploymentName(cfg *config.LaunchKubernetesConfig) string {
 }
 
 // isSpectrumX returns true if the config targets a Spectrum-X profile.
-func isSpectrumX(cfg *config.LaunchKubernetesConfig) bool {
+func isSpectrumX(cfg *config.LaunchKitConfig) bool {
 	return cfg.Profile != nil && cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable
 }
 

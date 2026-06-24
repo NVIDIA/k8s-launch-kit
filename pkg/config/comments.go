@@ -34,7 +34,7 @@ import (
 // non-empty it is emitted as the document's head comment. If srcYAML is empty or
 // unparseable, cfg is marshaled without transplanted comments (banner still
 // applied). Output uses 2-space indentation to match l8k's config style.
-func MarshalConfigWithComments(cfg *LaunchKubernetesConfig, srcYAML []byte, banner string) ([]byte, error) {
+func MarshalConfigWithComments(cfg *LaunchKitConfig, srcYAML []byte, banner string) ([]byte, error) {
 	// Render cfg to a fresh node tree via a marshal/unmarshal round-trip.
 	raw, err := yaml3.Marshal(cfg)
 	if err != nil {

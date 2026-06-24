@@ -30,8 +30,8 @@ import (
 func intPtr(i int) *int { return &i }
 
 // multirailSriovConfig returns a simple sriov config with 2 east-west PFs for testing.
-func multirailSriovConfig() (*config.LaunchKubernetesConfig, *config.ClusterConfig) {
-	cfg := &config.LaunchKubernetesConfig{
+func multirailSriovConfig() (*config.LaunchKitConfig, *config.ClusterConfig) {
+	cfg := &config.LaunchKitConfig{
 		PodNamespace: "gpu-workloads",
 		Profile: &config.Profile{
 			Fabric:     "ethernet",
@@ -209,7 +209,7 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 	})
 
 	t.Run("sriov single-rail", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: "sriov", Multirail: false},
 			Sriov:   &config.SriovConfig{NetworkName: "sriov-net"},
 		}
@@ -222,7 +222,7 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 	})
 
 	t.Run("hostdev", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: "host_device", Multirail: false},
 			Hostdev: &config.HostdevConfig{NetworkName: "hostdev-net"},
 		}
@@ -234,7 +234,7 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 	})
 
 	t.Run("rdma_shared ipoib", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: "rdma_shared", Fabric: "infiniband", Multirail: false},
 			Ipoib:   &config.IpoibConfig{NetworkName: "ipoib-net"},
 		}
@@ -246,7 +246,7 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 	})
 
 	t.Run("spectrum-x swplb", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
@@ -266,7 +266,7 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 	})
 
 	t.Run("spectrum-x uniplane", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
@@ -285,7 +285,7 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 	})
 
 	t.Run("nil profile returns empty", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{}
+		cfg := &config.LaunchKitConfig{}
 		group := &config.ClusterConfig{}
 		got := buildNetworkAnnotation(cfg, group)
 		assert.Equal(t, "", got)
@@ -305,7 +305,7 @@ func TestBuildNetworkResources(t *testing.T) {
 	})
 
 	t.Run("sriov single-rail", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: "sriov", Multirail: false},
 			Sriov:   &config.SriovConfig{ResourceName: "sriov_res"},
 		}
@@ -317,7 +317,7 @@ func TestBuildNetworkResources(t *testing.T) {
 	})
 
 	t.Run("rdma_shared", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile:    &config.Profile{Deployment: "rdma_shared", Multirail: false},
 			RdmaShared: &config.RdmaSharedConfig{ResourceName: "shared_rdma"},
 		}
@@ -329,7 +329,7 @@ func TestBuildNetworkResources(t *testing.T) {
 	})
 
 	t.Run("spectrum-x swplb", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
@@ -354,7 +354,7 @@ func TestBuildNetworkResources(t *testing.T) {
 	})
 
 	t.Run("spectrum-x uniplane", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
@@ -376,7 +376,7 @@ func TestBuildNetworkResources(t *testing.T) {
 	})
 
 	t.Run("nil profile returns nil", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{}
+		cfg := &config.LaunchKitConfig{}
 		group := &config.ClusterConfig{}
 		got := buildNetworkResources(cfg, group)
 		assert.Nil(t, got)

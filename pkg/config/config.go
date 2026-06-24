@@ -17,6 +17,7 @@
 package config
 
 import (
+	_ "embed"
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
@@ -28,6 +29,29 @@ import (
 	"github.com/go-logr/logr"
 	"gopkg.in/yaml.v2"
 )
+
+// defaultConfigYAML is the canonical baseline l8k configuration baked into the
+// binary. Library callers (and CLI invocations without a checked-out repo or
+// installed share dir) start from these defaults; an explicit configPath
+// overlays / replaces them. See DefaultLaunchKitConfig and LoadFullConfig.
+//
+//go:embed default-config.yaml
+var defaultConfigYAML []byte
+
+// DefaultLaunchKitConfig returns a freshly-parsed copy of the binary's
+// embedded default configuration. Returned value is safe to mutate; each call
+// re-parses to avoid sharing pointers between callers.
+//
+// This is the library-mode entry point: a Go caller that does not want to
+// rely on any filesystem layout can construct a LaunchKitConfig with sensible
+// defaults via this function alone, then optionally override fields in code.
+func DefaultLaunchKitConfig() (*LaunchKitConfig, error) {
+	var cfg LaunchKitConfig
+	if err := yaml.Unmarshal(defaultConfigYAML, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse embedded default l8k-config: %w", err)
+	}
+	return &cfg, nil
+}
 
 // MachineLabelKey is the node label `l8k discover` writes onto every
 // node whose group has both machineType and gpuType resolved. The value
@@ -93,8 +117,8 @@ func GPULabelValue(gpuType string) string {
 	return prefix + suffix
 }
 
-// LaunchKubernetesConfig represents the l8k-config.yaml structure
-type LaunchKubernetesConfig struct {
+// LaunchKitConfig represents the l8k-config.yaml structure
+type LaunchKitConfig struct {
 	NetworkOperator *NetworkOperatorConfig `yaml:"networkOperator,omitempty"`
 	DOCADriver      *DOCADriverConfig      `yaml:"docaDriver,omitempty"`
 	NvIpam          *NvIpamConfig          `yaml:"nvIpam,omitempty"`
@@ -353,10 +377,23 @@ func AggregateCapabilities(groups []ClusterConfig) *ClusterCapabilities {
 	return result
 }
 
-// LoadFullConfig loads and parses the cluster configuration from the specified path
-func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKubernetesConfig, error) {
+// LoadFullConfig loads and parses the cluster configuration from the specified
+// path. When configPath is empty, returns the embedded default configuration
+// — the library-mode entry point that lets a caller produce a working
+// LaunchKitConfig without any filesystem layout on the host. A non-empty path
+// that does not exist remains an error (a typo'd --user-config should NOT
+// silently fall back to defaults).
+func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKitConfig, error) {
 	if configPath == "" {
-		return nil, fmt.Errorf("no cluster configuration path provided")
+		logger.Info("Loading embedded default l8k-config (no path provided)")
+		cfg, err := DefaultLaunchKitConfig()
+		if err != nil {
+			return nil, err
+		}
+		// emitPresetDeviationWarnings is a no-op for defaults (no
+		// ClusterConfig entries yet) but kept for shape parity.
+		emitPresetDeviationWarnings(cfg, logger)
+		return cfg, nil
 	}
 
 	logger.Info("Loading cluster configuration", "path", configPath)
@@ -373,7 +410,7 @@ func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKubernetesCon
 	}
 
 	// Parse the YAML configuration
-	var config LaunchKubernetesConfig
+	var config LaunchKitConfig
 	if err := yaml.Unmarshal(configData, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse cluster config YAML %s: %w", configPath, err)
 	}
@@ -405,7 +442,7 @@ func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKubernetesCon
 // records preset deviations. Designed to fire on every load — operators
 // running against hardware that differs from the matched preset are
 // reminded each run.
-func emitPresetDeviationWarnings(cfg *LaunchKubernetesConfig, logger logr.Logger) {
+func emitPresetDeviationWarnings(cfg *LaunchKitConfig, logger logr.Logger) {
 	for _, g := range cfg.ClusterConfig {
 		if len(g.PresetDeviation) == 0 {
 			continue
@@ -430,7 +467,7 @@ func emitPresetDeviationWarnings(cfg *LaunchKubernetesConfig, logger logr.Logger
 }
 
 // ValidateClusterConfig validates that essential fields are present in the cluster config
-func ValidateClusterConfig(config *LaunchKubernetesConfig, profile string) error {
+func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
 	if config.NetworkOperator.Repository == "" {
 		return fmt.Errorf("networkOperator.repository is required")
 	}
@@ -512,7 +549,7 @@ func DefaultSPCXReleaseFor(ra string) string {
 }
 
 // validateSpectrumXTemplates validates that Spectrum-X templates have required placeholders
-func validateSpectrumXTemplates(config *LaunchKubernetesConfig) error {
+func validateSpectrumXTemplates(config *LaunchKitConfig) error {
 	netdevPrefix := config.SpectrumX.NetdevPrefix
 	rdmaPrefix := config.SpectrumX.RdmaPrefix
 

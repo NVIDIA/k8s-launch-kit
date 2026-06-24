@@ -50,7 +50,7 @@ func (p *noopProgress) Fail(message string)    {}
 
 func TestWarnThirdPartyRDMAModules_DriverDisabled(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: false, UnloadThirdPartyRDMAModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
@@ -62,7 +62,7 @@ func TestWarnThirdPartyRDMAModules_DriverDisabled(t *testing.T) {
 
 func TestWarnThirdPartyRDMAModules_NilDriver(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: nil,
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
@@ -74,7 +74,7 @@ func TestWarnThirdPartyRDMAModules_NilDriver(t *testing.T) {
 
 func TestWarnThirdPartyRDMAModules_FlagFalse_NoWarning(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: false},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
@@ -86,7 +86,7 @@ func TestWarnThirdPartyRDMAModules_FlagFalse_NoWarning(t *testing.T) {
 
 func TestWarnThirdPartyRDMAModules_AutoEnabled_Discover(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
@@ -102,7 +102,7 @@ func TestWarnThirdPartyRDMAModules_AutoEnabled_Discover(t *testing.T) {
 
 func TestWarnThirdPartyRDMAModules_AutoEnabled_Generate(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
@@ -116,7 +116,7 @@ func TestWarnThirdPartyRDMAModules_AutoEnabled_Generate(t *testing.T) {
 
 func TestWarnThirdPartyRDMAModules_NoModules(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", ThirdPartyRDMAModules: nil},
@@ -129,7 +129,7 @@ func TestWarnThirdPartyRDMAModules_NoModules(t *testing.T) {
 
 func TestWarnThirdPartyRDMAModules_MultipleGroups(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadThirdPartyRDMAModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "group-a", ThirdPartyRDMAModules: []string{"rdma_rxe"}},
@@ -146,7 +146,7 @@ func TestWarnThirdPartyRDMAModules_MultipleGroups(t *testing.T) {
 
 func TestWarnStorageModules_FlagFalse_NoWarning(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadStorageModules: false},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", StorageModules: []string{"nvme_rdma", "ib_isert"}},
@@ -158,7 +158,7 @@ func TestWarnStorageModules_FlagFalse_NoWarning(t *testing.T) {
 
 func TestWarnStorageModules_AutoEnabled_Discover(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadStorageModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", StorageModules: []string{"nvme_rdma"}},
@@ -173,7 +173,7 @@ func TestWarnStorageModules_AutoEnabled_Discover(t *testing.T) {
 
 func TestWarnStorageModules_AutoEnabled_Generate(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadStorageModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", StorageModules: []string{"nvme_rdma"}},
@@ -187,7 +187,7 @@ func TestWarnStorageModules_AutoEnabled_Generate(t *testing.T) {
 
 func TestWarnStorageModules_NoModules(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: true, UnloadStorageModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", StorageModules: nil},
@@ -199,7 +199,7 @@ func TestWarnStorageModules_NoModules(t *testing.T) {
 
 func TestWarnStorageModules_DriverDisabled(t *testing.T) {
 	out := &testOutput{}
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		DOCADriver: &config.DOCADriverConfig{Enable: false, UnloadStorageModules: true},
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "g1", StorageModules: []string{"nvme_rdma"}},

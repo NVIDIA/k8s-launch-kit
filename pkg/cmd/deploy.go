@@ -259,7 +259,7 @@ func init() {
 
 // selectedReleaseFromCfg returns the catalog key the user-config pinned, or
 // "" when the file didn't carry a networkOperator block.
-func selectedReleaseFromCfg(cfg *config.LaunchKubernetesConfig) string {
+func selectedReleaseFromCfg(cfg *config.LaunchKitConfig) string {
 	if cfg == nil || cfg.NetworkOperator == nil {
 		return ""
 	}

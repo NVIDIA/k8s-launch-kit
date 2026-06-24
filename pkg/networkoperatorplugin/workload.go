@@ -28,7 +28,7 @@ import (
 // patchWorkloadManifest reads a user-provided workload manifest, patches it with
 // network annotations, resources, namespace, and node affinity, then serializes
 // it back to YAML.
-func patchWorkloadManifest(manifestPath string, cfg *config.LaunchKubernetesConfig, group *config.ClusterConfig) (string, error) {
+func patchWorkloadManifest(manifestPath string, cfg *config.LaunchKitConfig, group *config.ClusterConfig) (string, error) {
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read workload manifest %s: %w", manifestPath, err)
@@ -105,7 +105,7 @@ func patchWorkloadManifest(manifestPath string, cfg *config.LaunchKubernetesConf
 
 // buildNetworkAnnotation builds the k8s.v1.cni.cncf.io/networks annotation
 // value based on the profile type and cluster config group.
-func buildNetworkAnnotation(cfg *config.LaunchKubernetesConfig, group *config.ClusterConfig) string {
+func buildNetworkAnnotation(cfg *config.LaunchKitConfig, group *config.ClusterConfig) string {
 	if cfg.Profile == nil {
 		return ""
 	}
@@ -173,7 +173,7 @@ func buildNetworkAnnotation(cfg *config.LaunchKubernetesConfig, group *config.Cl
 
 // buildNetworkResources builds the resource requests/limits map based on the
 // profile type and cluster config group.
-func buildNetworkResources(cfg *config.LaunchKubernetesConfig, group *config.ClusterConfig) map[string]string {
+func buildNetworkResources(cfg *config.LaunchKitConfig, group *config.ClusterConfig) map[string]string {
 	if cfg.Profile == nil {
 		return nil
 	}

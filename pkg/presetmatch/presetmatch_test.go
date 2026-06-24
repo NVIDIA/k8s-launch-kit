@@ -61,7 +61,7 @@ func TestMatchGroup_NotFoundWhenNoCatalog(t *testing.T) {
 }
 
 func TestMatchAll(t *testing.T) {
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		ClusterConfig: []config.ClusterConfig{
 			{Identifier: "a"},
 			{Identifier: "b", MachineType: "vendor-x", GPUType: "h200"},

@@ -45,7 +45,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	// the entire generation phase) — a typo produces no error.
 	for _, plugin := range l.plugins {
 		if validator, ok := plugin.(interface {
-			ValidateGroupFilter(*config.LaunchKubernetesConfig) error
+			ValidateGroupFilter(*config.LaunchKitConfig) error
 		}); ok {
 			if err := validator.ValidateGroupFilter(fullConfig); err != nil {
 				// Pass nil as the cause — the error message already
@@ -84,7 +84,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	// Apply CLI options to override config values + hardware defaults.
 	for _, plugin := range l.plugins {
 		if applier, ok := plugin.(interface {
-			ApplyOptionsToConfig(options.Options, *config.LaunchKubernetesConfig) error
+			ApplyOptionsToConfig(options.Options, *config.LaunchKitConfig) error
 		}); ok {
 			if err := applier.ApplyOptionsToConfig(l.options, fullConfig); err != nil {
 				return fmt.Errorf("failed to apply options to config for plugin %s: %w", plugin.GetName(), err)
@@ -217,7 +217,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 }
 
 // generateDeploymentFiles handles deployment file generation for a single profile.
-func (l *Launcher) generateDeploymentFiles(profile *profiles.Profile, clusterConfig *config.LaunchKubernetesConfig) error {
+func (l *Launcher) generateDeploymentFiles(profile *profiles.Profile, clusterConfig *config.LaunchKitConfig) error {
 	l.logger.Info("Generating deployment files", "profile", profile.Name)
 	l.logger.Info("Generating deployment files", "config", clusterConfig)
 

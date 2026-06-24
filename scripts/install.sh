@@ -203,8 +203,8 @@ INSTALL_CMDS="
     mkdir -p '${INSTALL_DIR}/share/l8k'
     rm -rf '${INSTALL_DIR}/share/l8k/profiles' '${INSTALL_DIR}/share/l8k/presets'
     cp -r '${WORK_DIR}/extracted/profiles' '${INSTALL_DIR}/share/l8k/'
-    cp -r '${WORK_DIR}/extracted/presets' '${INSTALL_DIR}/share/l8k/'
-    cp '${WORK_DIR}/extracted/l8k-config.yaml' '${INSTALL_DIR}/share/l8k/'
+    cp -r '${WORK_DIR}/extracted/pkg/presets/data' '${INSTALL_DIR}/share/l8k/presets'
+    cp '${WORK_DIR}/extracted/pkg/config/default-config.yaml' '${INSTALL_DIR}/share/l8k/l8k-config.yaml'
 "
 
 if [ "$NEED_SUDO" = true ]; then

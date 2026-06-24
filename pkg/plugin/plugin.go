@@ -39,9 +39,9 @@ type Plugin interface {
 	// BuildProfileFromOptions builds the profile for the plugin based on the options.
 	BuildProfileFromOptions(options options.Options, profile *config.Profile) error
 	// DiscoverClusterConfig discovers the plugin-specific part of the cluster configuration and populates defaultConfig.ClusterConfig.
-	DiscoverClusterConfig(ctx context.Context, kubeClient client.Client, defaultConfig *config.LaunchKubernetesConfig) error
+	DiscoverClusterConfig(ctx context.Context, kubeClient client.Client, defaultConfig *config.LaunchKitConfig) error
 	// GenerateProfileDeploymentFiles generates the deployment files for the profile.
-	GenerateProfileDeploymentFiles(profile *profiles.Profile, config *config.LaunchKubernetesConfig) (map[string]string, error)
+	GenerateProfileDeploymentFiles(profile *profiles.Profile, config *config.LaunchKitConfig) (map[string]string, error)
 	// DeployProfile deploys the profile to the cluster.
 	DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error
 }

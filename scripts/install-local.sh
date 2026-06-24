@@ -79,8 +79,8 @@ if [ "$DEV_ENV" = true ]; then
     ln -sfn "${REPO_ROOT}/build/l8k" "${BIN_DIR}/l8k"
     mkdir -p "${SHARE_DIR}"
     ln -sfn "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
-    ln -sfn "${REPO_ROOT}/presets" "${SHARE_DIR}/presets"
-    ln -sfn "${REPO_ROOT}/l8k-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
+    ln -sfn "${REPO_ROOT}/pkg/presets/data" "${SHARE_DIR}/presets"
+    ln -sfn "${REPO_ROOT}/pkg/config/default-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
 else
     echo "Installing l8k..."
     mkdir -p "${BIN_DIR}"
@@ -89,8 +89,8 @@ else
     rm -rf "${SHARE_DIR}/profiles"
     cp -r "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
     rm -rf "${SHARE_DIR}/presets"
-    cp -r "${REPO_ROOT}/presets" "${SHARE_DIR}/presets"
-    cp "${REPO_ROOT}/l8k-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
+    cp -r "${REPO_ROOT}/pkg/presets/data" "${SHARE_DIR}/presets"
+    cp "${REPO_ROOT}/pkg/config/default-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
 fi
 
 echo ""
