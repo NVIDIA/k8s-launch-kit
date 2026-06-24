@@ -750,7 +750,9 @@ func TestApplyPreset_OverridesTopologyFields(t *testing.T) {
 		},
 	}
 
-	ApplyPreset(preset, group)
+	if !ApplyPreset(preset, group) {
+		t.Fatal("expected ApplyPreset to apply on a full match")
+	}
 
 	// Verify preset-authoritative fields were overridden
 	pf0 := group.PFs[0]
@@ -826,22 +828,37 @@ func TestApplyPreset_OverridesTopologyFields(t *testing.T) {
 func TestApplyPreset_PreservesExistingGPUType(t *testing.T) {
 	preset := &Topology{
 		GPUType: "NVIDIA-H200",
-		PFs:         []PresetPF{},
+		PFs:     []PresetPF{},
 	}
 	group := &config.ClusterConfig{
 		GPUType: "NVIDIA-H100-NVL", // already set — should NOT be overwritten
-		PFs:         []config.PFConfig{},
+		PFs:     []config.PFConfig{},
 	}
 
-	ApplyPreset(preset, group)
+	applied := ApplyPreset(preset, group)
+
+	// Both PF slices are empty, so the bijection check passes vacuously:
+	// the preset "applies" (there are no PFs to mutate) and PresetApplied is
+	// set. Pin this degenerate zero-PF behaviour explicitly.
+	if !applied {
+		t.Error("expected ApplyPreset to return true for the empty-PF (vacuous) bijection")
+	}
+	if !group.PresetApplied {
+		t.Error("expected PresetApplied=true for the empty-PF (vacuous) bijection")
+	}
 
 	if group.GPUType != "NVIDIA-H100-NVL" {
 		t.Errorf("GPUType: expected NVIDIA-H100-NVL (preserved), got %q", group.GPUType)
 	}
 }
 
-func TestApplyPreset_UnmatchedPCIAddress(t *testing.T) {
-	// PF in group has no match in preset — should be left unchanged
+func TestApplyPreset_PartialMatch_NoOp(t *testing.T) {
+	// Group has a PF (0000:99:00.0) absent from the preset — a partial
+	// match. ApplyPreset is all-or-nothing: it must change nothing and
+	// return false, so the live-discovered classification is preserved
+	// intact rather than half-overwritten (half-overwriting would leave the
+	// overlapping PF reclassified while the rest keep live rails, producing
+	// gaps/duplicate rail indices).
 	preset := &Topology{
 		PFs: []PresetPF{
 			{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: intPtr(0)},
@@ -854,19 +871,79 @@ func TestApplyPreset_UnmatchedPCIAddress(t *testing.T) {
 		},
 	}
 
-	ApplyPreset(preset, group)
-
-	// First PF should be updated
-	if group.PFs[0].Traffic != "east-west" {
-		t.Errorf("PF[0] Traffic: expected east-west, got %q", group.PFs[0].Traffic)
+	if ApplyPreset(preset, group) {
+		t.Error("expected ApplyPreset to return false on a partial match")
+	}
+	if group.PresetApplied {
+		t.Error("expected PresetApplied=false on a partial match")
 	}
 
-	// Second PF should remain unchanged (no match in preset)
+	// The overlapping PF must NOT have been touched.
+	if group.PFs[0].Traffic != "north-south" {
+		t.Errorf("PF[0] Traffic: expected north-south (untouched), got %q", group.PFs[0].Traffic)
+	}
+	if group.PFs[0].Rail != nil {
+		t.Errorf("PF[0] Rail: expected nil (untouched), got %v", group.PFs[0].Rail)
+	}
+	// The unmatched PF must be unchanged too.
 	if group.PFs[1].Traffic != "east-west" {
-		t.Errorf("PF[1] Traffic: expected east-west (unchanged), got %q", group.PFs[1].Traffic)
+		t.Errorf("PF[1] Traffic: expected east-west (untouched), got %q", group.PFs[1].Traffic)
 	}
 	if group.PFs[1].Rail == nil || *group.PFs[1].Rail != 5 {
-		t.Errorf("PF[1] Rail: expected 5 (unchanged), got %v", group.PFs[1].Rail)
+		t.Errorf("PF[1] Rail: expected 5 (untouched), got %v", group.PFs[1].Rail)
+	}
+}
+
+func TestApplyPreset_GroupSubsetOfPreset_NoOp(t *testing.T) {
+	// Group has fewer PFs than the preset (preset describes a device the
+	// hardware lacks). Applying would leave a rail gap where the missing PF
+	// would have been, so ApplyPreset must no-op and return false.
+	preset := &Topology{
+		PFs: []PresetPF{
+			{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: intPtr(0)},
+			{DeviceID: "a2dc", PciAddress: "0000:3c:00.0", Traffic: "east-west", Rail: intPtr(1)},
+		},
+	}
+	group := &config.ClusterConfig{
+		PFs: []config.PFConfig{
+			{DeviceID: "a2dc", PciAddress: "0000:1a:00.0", Traffic: "east-west", Rail: intPtr(0)},
+		},
+	}
+
+	if ApplyPreset(preset, group) {
+		t.Error("expected ApplyPreset to return false when group is a subset of the preset")
+	}
+	if group.PresetApplied {
+		t.Error("expected PresetApplied=false when group is a subset of the preset")
+	}
+}
+
+func TestApplyPreset_PreservesOutOfOrderRails(t *testing.T) {
+	// Presets may number rails out of PCI-address order — real example:
+	// PowerEdge-XE7745 assigns rail 0 to a PCI-domain-0001 device. A full
+	// match must copy those rail values VERBATIM, never renumber them into
+	// PCI order.
+	preset := &Topology{
+		PFs: []PresetPF{
+			{PciAddress: "0000:44:00.0", Traffic: "east-west", Rail: intPtr(1)},
+			{PciAddress: "0001:05:00.0", Traffic: "east-west", Rail: intPtr(0)},
+		},
+	}
+	group := &config.ClusterConfig{
+		PFs: []config.PFConfig{
+			{PciAddress: "0000:44:00.0", Traffic: "east-west"},
+			{PciAddress: "0001:05:00.0", Traffic: "east-west"},
+		},
+	}
+
+	if !ApplyPreset(preset, group) {
+		t.Fatal("expected ApplyPreset to apply on a full match")
+	}
+	if group.PFs[0].Rail == nil || *group.PFs[0].Rail != 1 {
+		t.Errorf("PF[0] (0000:44:00.0) Rail: expected 1 (verbatim), got %v", group.PFs[0].Rail)
+	}
+	if group.PFs[1].Rail == nil || *group.PFs[1].Rail != 0 {
+		t.Errorf("PF[1] (0001:05:00.0) Rail: expected 0 (verbatim), got %v", group.PFs[1].Rail)
 	}
 }
 
@@ -909,8 +986,8 @@ func TestApplyPreset_LargePreset_PowerEdgeXE9680(t *testing.T) {
 			DeviceID:         pp.DeviceID,
 			PciAddress:       pp.PciAddress,
 			RdmaDevice:       "mlx5_" + pp.PciAddress, // synthetic
-			NetworkInterface: "eth" + pp.PciAddress,    // synthetic
-			Traffic:          "east-west",              // deliberately wrong for some
+			NetworkInterface: "eth" + pp.PciAddress,   // synthetic
+			Traffic:          "east-west",             // deliberately wrong for some
 			PSID:             "discovered-psid-" + pp.PciAddress,
 			PartNumber:       "discovered-part-" + pp.PciAddress,
 		}

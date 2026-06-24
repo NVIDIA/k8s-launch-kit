@@ -23,17 +23,48 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 )
 
+// Deviation field names, shared between ValidatePreset (which produces them)
+// and HasTopologyDeviation (which consumes them) so the two can't drift.
+const (
+	deviationFieldPFCount    = "pfCount"
+	deviationFieldPCIAddress = "pciAddress"
+	deviationFieldDeviceID   = "deviceID"
+)
+
+// HasTopologyDeviation reports whether any deviation reflects a hardware-shape
+// mismatch — PF count, PCI address, or device ID (NIC model). These are the
+// fields that make a preset unsafe to apply: overlaying a preset's
+// authoritative topology (traffic / rail / NUMA / GPU affinity) onto hardware
+// whose PCI layout differs corrupts the live-discovered classification, because
+// ApplyPreset matches PFs by PCI address — a single coincidentally-overlapping
+// address inherits the preset's unrelated fields. The discovery path uses this
+// to skip enrichment entirely when the hardware drifts from the preset.
+//
+// Part numbers and PSIDs are intentionally not deviation fields (firmware/SKU
+// variants are expected), so they never block application.
+func HasTopologyDeviation(deviations []config.PresetDeviationEntry) bool {
+	for _, d := range deviations {
+		switch d.Field {
+		case deviationFieldPFCount, deviationFieldPCIAddress, deviationFieldDeviceID:
+			return true
+		}
+	}
+	return false
+}
+
 // ValidatePreset compares a topology preset against the discovered hardware
 // for a single group and returns the field-level deviations (empty when
 // the preset matches exactly).
 //
 // Every discrepancy — PF count mismatch, PCI address drift, device-ID
-// drift — is a soft deviation rather than a hard rejection. The discovery
-// pipeline always applies the matched preset on a best-effort basis (so
-// rail/NUMA/topology fields populate for whichever PFs do line up),
-// records the deviations on ClusterConfig.PresetDeviation, and warns on
-// every subsequent config load. The operator gets a working deployment
-// plus a loud reminder that the cluster diverges from the matched preset.
+// drift — is recorded as a deviation. The discovery pipeline treats any of
+// these as a hard block on enrichment: when HasTopologyDeviation reports a
+// drift it does NOT call ApplyPreset (overlaying a preset onto hardware with
+// a different PCI layout corrupts the live-discovered traffic/rail
+// classification), records the deviations on ClusterConfig.PresetDeviation,
+// and warns on every subsequent config load. The operator keeps the live
+// discovery results plus a loud reminder that the cluster diverges from the
+// matched preset.
 //
 // Part numbers and PSIDs are not strict criteria (firmware variants are
 // expected) so they're not checked here.
@@ -42,7 +73,7 @@ func ValidatePreset(preset *Topology, discoveredPFs []config.PFConfig) []config.
 
 	if len(preset.PFs) != len(discoveredPFs) {
 		deviations = append(deviations, config.PresetDeviationEntry{
-			Field:    "pfCount",
+			Field:    deviationFieldPFCount,
 			Expected: fmt.Sprintf("%d", len(preset.PFs)),
 			Got:      fmt.Sprintf("%d", len(discoveredPFs)),
 			Detail:   "PF count differs from preset",
@@ -62,7 +93,7 @@ func ValidatePreset(preset *Topology, discoveredPFs []config.PFConfig) []config.
 	for addr := range presetAddrs {
 		if _, ok := discoveredAddrs[addr]; !ok {
 			deviations = append(deviations, config.PresetDeviationEntry{
-				Field:    "pciAddress",
+				Field:    deviationFieldPCIAddress,
 				Expected: addr,
 				Detail:   "preset PCI address not present on discovered hardware",
 			})
@@ -72,7 +103,7 @@ func ValidatePreset(preset *Topology, discoveredPFs []config.PFConfig) []config.
 	for addr := range discoveredAddrs {
 		if _, ok := presetAddrs[addr]; !ok {
 			deviations = append(deviations, config.PresetDeviationEntry{
-				Field:  "pciAddress",
+				Field:  deviationFieldPCIAddress,
 				Got:    addr,
 				Detail: "discovered PCI address not present in preset",
 			})
@@ -87,7 +118,7 @@ func ValidatePreset(preset *Topology, discoveredPFs []config.PFConfig) []config.
 		}
 		if presetDevID != discoveredDevID {
 			deviations = append(deviations, config.PresetDeviationEntry{
-				Field:    "deviceID",
+				Field:    deviationFieldDeviceID,
 				Expected: fmt.Sprintf("%s@%s", presetDevID, addr),
 				Got:      fmt.Sprintf("%s@%s", discoveredDevID, addr),
 				Detail:   "device ID at PCI address differs from preset",
