@@ -67,13 +67,13 @@ SHARE_DIR="${PREFIX}/share/l8k"
 BIN_DIR="${PREFIX}/bin"
 
 # Verify binary exists
-if [ ! -f "${REPO_ROOT}/build/l8k" ]; then
-    echo "Error: binary not found at ${REPO_ROOT}/build/l8k"
-    echo "Run 'make build' first."
+if [[ ! -f "${REPO_ROOT}/build/l8k" ]]; then
+    echo "Error: binary not found at ${REPO_ROOT}/build/l8k" >&2
+    echo "Run 'make build' first." >&2
     exit 1
 fi
 
-if [ "$DEV_ENV" = true ]; then
+if [[ "$DEV_ENV" == true ]]; then
     echo "Installing l8k (dev mode — symlinks)..."
     mkdir -p "${BIN_DIR}"
     ln -sfn "${REPO_ROOT}/build/l8k" "${BIN_DIR}/l8k"

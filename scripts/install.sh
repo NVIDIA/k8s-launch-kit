@@ -84,7 +84,7 @@ case "$ARCH" in
     x86_64)         ARCH=amd64 ;;
     aarch64|arm64)  ARCH=arm64 ;;
     *)
-        echo "Error: unsupported architecture: $ARCH"
+        echo "Error: unsupported architecture: $ARCH" >&2
         exit 1
         ;;
 esac
@@ -92,7 +92,7 @@ esac
 case "$OS" in
     linux|darwin) ;;
     *)
-        echo "Error: unsupported OS: $OS (use Linux or macOS)"
+        echo "Error: unsupported OS: $OS (use Linux or macOS)" >&2
         exit 1
         ;;
 esac
@@ -106,7 +106,7 @@ else
     # Use redirect trick to avoid GitHub API rate limits.
     # The /releases/latest endpoint redirects to /releases/tag/vX.Y.Z —
     # we parse the version from the redirect URL.
-    REDIRECT_URL=$(curl -fsSIo /dev/null -w '%{redirect_url}' \
+    REDIRECT_URL=$(curl --proto '=https' --tlsv1.2 -fsSIo /dev/null -w '%{redirect_url}' \
         "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)
     VERSION=$(echo "$REDIRECT_URL" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+[^/]*' || true)
 
@@ -115,7 +115,7 @@ else
     if [ -n "$VERSION" ]; then
         VERSION_NO_V_CHECK="${VERSION#v}"
         CHECK_URL="https://github.com/${REPO}/releases/download/${VERSION}/l8k_${VERSION_NO_V_CHECK}_${OS}_${ARCH}.tar.gz"
-        if ! curl -fsSIo /dev/null "$CHECK_URL" 2>/dev/null; then
+        if ! curl --proto '=https' --tlsv1.2 -fsSIo /dev/null "$CHECK_URL" 2>/dev/null; then
             echo "Latest stable release (${VERSION}) has no binary archives."
             echo "Checking for the most recent release with binaries..."
             VERSION=""
@@ -128,7 +128,9 @@ else
         if [ -n "${GITHUB_TOKEN:-}" ]; then
             AUTH_FLAG="-H \"Authorization: token ${GITHUB_TOKEN}\""
         fi
-        VERSION=$(eval curl -fsSL $AUTH_FLAG \
+        # eval expands the optional, header-bearing $AUTH_FLAG as separate
+        # arguments; all input here is constructed by this script, not the user.
+        VERSION=$(eval curl --proto "'=https'" --tlsv1.2 -fsSL $AUTH_FLAG \
             "https://api.github.com/repos/${REPO}/releases?per_page=10" 2>/dev/null \
             | grep -oE '"tag_name":\s*"v[^"]*"' \
             | head -1 \
@@ -136,8 +138,8 @@ else
     fi
 
     if [ -z "$VERSION" ]; then
-        echo "Error: could not determine latest version."
-        echo "Set L8K_VERSION explicitly or check https://github.com/${REPO}/releases"
+        echo "Error: could not determine latest version." >&2
+        echo "Set L8K_VERSION explicitly or check https://github.com/${REPO}/releases" >&2
         exit 1
     fi
 fi
@@ -158,8 +160,9 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
 fi
 
 echo "Downloading ${ARCHIVE}..."
-curl -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "${BASE_URL}/${ARCHIVE}" -o "${WORK_DIR}/${ARCHIVE}"
-curl -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "${BASE_URL}/checksums.txt" -o "${WORK_DIR}/checksums.txt"
+# --proto '=https' refuses any redirect that downgrades to a clear-text protocol.
+curl --proto '=https' --tlsv1.2 -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "${BASE_URL}/${ARCHIVE}" -o "${WORK_DIR}/${ARCHIVE}"
+curl --proto '=https' --tlsv1.2 -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "${BASE_URL}/checksums.txt" -o "${WORK_DIR}/checksums.txt"
 
 # --- Verify checksum ---
 cd "$WORK_DIR"
@@ -179,9 +182,9 @@ else
         if [ "$EXPECTED_SUM" = "$ACTUAL_SUM" ]; then
             echo "Checksum verified."
         else
-            echo "Error: checksum mismatch!"
-            echo "  Expected: ${EXPECTED_SUM}"
-            echo "  Got:      ${ACTUAL_SUM}"
+            echo "Error: checksum mismatch!" >&2
+            echo "  Expected: ${EXPECTED_SUM}" >&2
+            echo "  Got:      ${ACTUAL_SUM}" >&2
             exit 1
         fi
     fi
