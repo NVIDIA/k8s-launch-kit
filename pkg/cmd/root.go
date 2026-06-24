@@ -68,7 +68,8 @@ var (
 	gpuType                     string
 	nodeSelector                string
 	imagePullSecrets            []string
-	podNamespace                string
+	networkNamespaces           []string
+	podNamespace                string // deprecated alias for --network-namespaces
 	outputFormat                string
 	yesFlag                     bool
 	quietFlag                   bool
@@ -83,6 +84,18 @@ var (
 // collapseNicRailsFlagHelp is the shared help text for --collapse-nic-rails on
 // both the root pipeline and the `discover` subcommand.
 const collapseNicRailsFlagHelp = "Advertise one rail per NIC: collapse a NIC's multi-plane PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port (\"2-port\"/\"Dual-port\"). Set to false to keep the legacy one-rail-per-PF behaviour (dev setups)."
+
+// resolveNetworkNamespaces folds the deprecated --pod-namespace flag into the
+// --network-namespaces list. --network-namespaces wins when both are given;
+// otherwise a non-empty --pod-namespace becomes the sole network namespace,
+// mirroring the config-file back-compat in ApplyOptionsToConfig. Returns nil
+// when neither is set, leaving the default ("default") to be applied downstream.
+func resolveNetworkNamespaces(networkNamespaces []string, podNamespace string) []string {
+	if len(networkNamespaces) == 0 && podNamespace != "" {
+		return []string{podNamespace}
+	}
+	return networkNamespaces
+}
 
 // forFlagHelp builds the help string for `--for`. Computed at init() time so
 // users see the live list of available preset directories alongside `--help`.
@@ -169,7 +182,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			CollapseNicRails:     collapseNicRails,
 			ForPreset:            forPreset,
 			ImagePullSecrets:     imagePullSecrets,
-			PodNamespace:         podNamespace,
+			NetworkNamespaces:    resolveNetworkNamespaces(networkNamespaces, podNamespace),
 			SaveDeploymentFiles:   saveDeploymentFiles,
 			Deploy:                deploy,
 			Kubeconfig:            kubeconfig,
@@ -255,7 +268,9 @@ func init() {
 	rootCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "./deployment", "Save generated deployment files to the specified directory")
-	rootCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Namespace for pods and network resources (overrides config podNamespace, default: 'default')")
+	rootCmd.Flags().StringSliceVar(&networkNamespaces, "network-namespaces", nil, "Comma-separated namespaces for the secondary-network CRs and example test DaemonSets. One independent copy is rendered per namespace (shared resources like IPPools and NodePolicies are NOT duplicated). Overrides config networkNamespaces; default: 'default'.")
+	rootCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Deprecated: use --network-namespaces. Kept as a single-namespace alias for back-compat.")
+	_ = rootCmd.Flags().MarkDeprecated("pod-namespace", "use --network-namespaces instead")
 	rootCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment (overrides config file docaDriver.enable)")
 	rootCmd.Flags().StringVar(&workloadManifest, "workload-manifest", "", "Path to a custom workload manifest YAML (replaces the profile's default example workload)")
 
@@ -301,7 +316,7 @@ func init() {
 	setFlagGroup(rootCmd, "number-of-planes", GroupSpectrumX)
 
 	setFlagGroup(rootCmd, "save-deployment-files", GroupGeneration)
-	setFlagGroup(rootCmd, "pod-namespace", GroupGeneration)
+	setFlagGroup(rootCmd, "network-namespaces", GroupGeneration)
 	setFlagGroup(rootCmd, "enable-doca-driver", GroupGeneration)
 	setFlagGroup(rootCmd, "workload-manifest", GroupGeneration)
 

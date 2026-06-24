@@ -78,7 +78,10 @@ type Options struct {
 	// synthesized from the preset (skipping cluster discovery). Requires
 	// NodeSelector since the preset has no live worker-node list.
 	ForPreset           string
-	PodNamespace        string // Namespace for pods and network resources (overrides config)
+	// NetworkNamespaces is the comma-separated list from --network-namespaces:
+	// the namespaces the secondary-network CRs + example test DaemonSets are
+	// rendered into (one copy per namespace). Empty defaults to "default".
+	NetworkNamespaces   []string
 	SaveDeploymentFiles string // Directory to save generated files
 
 	EnabledPlugins []string // Enabled plugins

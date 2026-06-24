@@ -62,7 +62,7 @@ The root command `l8k --discover-cluster-config ...` still works for backward-co
 | `--yes` / `-y` | Auto-confirm all prompts (root command only — **not available on subcommands**; `--output json` auto-confirms) |
 | `--quiet` / `-q` | Suppress informational output (errors still shown) |
 | `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`). **No-op for `l8k discover`** — discover always bootstraps into `nvidia-k8s-launch-kit`; the flag still applies to `l8k generate` / `l8k deploy` / `l8k validate`. |
-| `--pod-namespace <NS>` | Namespace for pods and network resources (default: `default`) |
+| `--network-namespaces <NS,...>` | Comma-separated namespaces for the secondary-network CRs + example test DaemonSets; one copy rendered per namespace (shared resources like IPPools/NodePolicies are NOT duplicated). Default: `default` |
 | `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
 | `--image-pull-secrets <NAMES>` | Image pull secret names for NicClusterPolicy (comma-separated) |
 

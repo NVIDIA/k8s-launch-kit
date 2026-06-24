@@ -57,7 +57,7 @@ Behaviour:
 - ``--for`` takes the **directory name** (one of the values shown by ``l8k preset list``).
 - ``--node-selector`` is **required**: the synthesized clusterConfig has no live worker-node list, so the selector is the only way to identify which nodes the manifests should target at apply time.
 - ``--for`` and ``--discover-cluster-config`` are mutually exclusive.
-- The preset's topology becomes the **entire** ``clusterConfig`` section (replacing whatever was in the user config). The rest of the user config (``networkOperator``, ``podNamespace``, etc.) is preserved.
+- The preset's topology becomes the **entire** ``clusterConfig`` section (replacing whatever was in the user config). The rest of the user config (``networkOperator``, ``networkNamespaces``, etc.) is preserved.
 - Profile selection (``FindApplicableProfile``) reads the preset's declared ``capabilities`` block to match a profile — so a preset used with ``--for`` must declare it (see below).
 
 The synthesized ``ClusterConfig`` group has its ``Identifier`` set to the preset directory name. This guarantees that two variants of the same machine type produce distinct ``NicNodePolicy`` names.

@@ -106,6 +106,16 @@ type LaunchKubernetesConfig struct {
 	SpectrumX                *SpectrumXConfig                `yaml:"spectrumX,omitempty"`
 	NicConfigurationOperator *NicConfigurationOperatorConfig `yaml:"nicConfigurationOperator,omitempty"`
 	PodNamespace             string                          `yaml:"podNamespace,omitempty"`
+	// NetworkNamespaces is the set of namespaces the secondary-network CRs
+	// (SriovNetwork, SriovIBNetwork, HostDeviceNetwork, MacvlanNetwork,
+	// IPoIBNetwork) and their example test DaemonSets are rendered into —
+	// one independent copy per namespace. Shared resources (IPPool,
+	// NicNodePolicy, SriovNetworkNodePolicy, NicClusterPolicy, …) are NOT
+	// duplicated. Empty defaults to a single "default" namespace; a legacy
+	// scalar podNamespace is folded in as the sole entry. PodNamespace stays
+	// the "current" namespace scalar the templates read — the renderer
+	// overrides it per entry while fanning out.
+	NetworkNamespaces        []string                        `yaml:"networkNamespaces,omitempty"`
 	Workload                 *WorkloadConfig                 `yaml:"workload,omitempty"`
 	Profile         *Profile               `yaml:"profile,omitempty"`
 	ClusterConfig   []ClusterConfig        `yaml:"clusterConfig,omitempty"`

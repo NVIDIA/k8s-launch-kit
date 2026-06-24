@@ -5,7 +5,7 @@
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetwork
 metadata:
-  name: {{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
+  name: {{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
   namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
   ipam: |
@@ -14,14 +14,15 @@ spec:
       "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }
   networkNamespace: "{{$.PodNamespace}}"
-  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
+  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
+{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
 {{- end -}}
 {{- else -}}
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetwork
 metadata:
-  name: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
+  name: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
   namespace: "{{.NetworkOperator.Namespace}}"
 spec:
   ipam: |

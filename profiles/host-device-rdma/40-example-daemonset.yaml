@@ -14,7 +14,7 @@ spec:
       labels:
         app: hostdev-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
       annotations:
-        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{- end}}{{- end}}
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}{{- end}}{{- end}}
     spec:
       {{- if .ClusterConfig.NodeSelector }}
       affinity:
@@ -77,7 +77,7 @@ spec:
       labels:
         app: hostdev-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
       annotations:
-        k8s.v1.cni.cncf.io/networks: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
+        k8s.v1.cni.cncf.io/networks: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
     spec:
       {{- if .ClusterConfig.NodeSelector }}
       affinity:

@@ -196,7 +196,7 @@ Spectrum-X Flags:
 
 Generation Output Flags:
       --enable-doca-driver             Enable DOCA driver deployment (overrides config file docaDriver.enable)
-      --pod-namespace string           Namespace for pods and network resources (overrides config podNamespace, default: 'default')
+      --network-namespaces strings     Comma-separated namespaces for the secondary-network CRs and example test DaemonSets; one copy is rendered per namespace (shared resources like IPPools/NodePolicies are NOT duplicated). Overrides config networkNamespaces; default: 'default'.
       --save-deployment-files string   Save generated deployment files to the specified directory (default "./deployment")
       --workload-manifest string       Path to a custom workload manifest YAML (replaces the profile's default example workload)
 

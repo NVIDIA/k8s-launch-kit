@@ -412,13 +412,22 @@ func renderForScope(
 		merge(rendered)
 
 	case ScopeAggregate, ScopeBucketed:
-		for i, plan := range plans {
-			renderCfg := withClusterConfig(cfg, []config.ClusterConfig{plan.Merged}, subnetsAt(planSubnets, i))
-			rendered, err := ProcessTemplate(templatePath, renderCfg, "")
-			if err != nil {
-				return nil, err
+		// Secondary-network CRs and their example test DaemonSets are fanned
+		// out across cfg.NetworkNamespaces — one independent copy per
+		// namespace. Every other Kind (IPPool, CIDRPool, …) renders once into
+		// the current namespace, so shared resources are never duplicated.
+		nsList := networkNamespacesForKind(cfg, kind)
+		multiNS := len(nsList) > 1
+		for _, ns := range nsList {
+			nsCfg := withRenderNamespaces(cfg, ns, nsList)
+			for i, plan := range plans {
+				renderCfg := withClusterConfig(nsCfg, []config.ClusterConfig{plan.Merged}, subnetsAt(planSubnets, i))
+				rendered, err := ProcessTemplate(templatePath, renderCfg, "")
+				if err != nil {
+					return nil, err
+				}
+				merge(suffixFilenamesWithNamespace(rendered, ns, multiNS))
 			}
-			merge(rendered)
 		}
 
 	case ScopeSimpleSelect:
@@ -456,6 +465,67 @@ func renderForScope(
 	}
 
 	return results, nil
+}
+
+// networkNSReplicatedKinds is the set of Kinds rendered once per
+// cfg.NetworkNamespaces entry — the secondary-network attachment CRs plus the
+// example test DaemonSet. Every other Kind renders once. CIDRPool and IPPool
+// are deliberately absent: they are shared, never duplicated. OVSNetwork is a
+// network CR but only Spectrum-X emits it, and Spectrum-X is excluded from
+// namespace fan-out wholesale (see networkNamespacesForKind), so it isn't
+// listed here.
+var networkNSReplicatedKinds = map[string]bool{
+	"SriovNetwork":      true,
+	"SriovIBNetwork":    true,
+	"HostDeviceNetwork": true,
+	"MacvlanNetwork":    true,
+	"IPoIBNetwork":      true,
+	"DaemonSet":         true,
+}
+
+// networkNamespacesForKind returns the namespaces a Kind should be rendered
+// into. Replicated network Kinds fan out across cfg.NetworkNamespaces;
+// everything else (and every Spectrum-X Kind, which uses a distinct combined-CR
+// rendering path not amenable to independent per-namespace copies) renders once
+// into the current namespace (cfg.PodNamespace).
+func networkNamespacesForKind(cfg *config.LaunchKubernetesConfig, kind string) []string {
+	if !isSpectrumX(cfg) && networkNSReplicatedKinds[kind] && len(cfg.NetworkNamespaces) > 0 {
+		return cfg.NetworkNamespaces
+	}
+	return []string{cfg.PodNamespace}
+}
+
+// withRenderNamespaces returns a shallow copy of cfg scoped to a single
+// render: PodNamespace is the "current" namespace the templates read, and
+// NetworkNamespaces is narrowed to nsList — the exact set being rendered for
+// this Kind. For a replicated Kind nsList is the full cfg.NetworkNamespaces
+// (so `nsSuffix` sees len>1 and suffixes); for a shared Kind nsList is the
+// single current namespace (so `nsSuffix` returns "" even if a template author
+// adds it). This makes the nsSuffix contract — "suffix iff this render is one
+// of several namespace copies" — correct by construction rather than relying
+// on shared templates simply never calling the helper.
+func withRenderNamespaces(cfg *config.LaunchKubernetesConfig, ns string, nsList []string) *config.LaunchKubernetesConfig {
+	out := *cfg
+	out.PodNamespace = ns
+	out.NetworkNamespaces = nsList
+	return &out
+}
+
+// suffixFilenamesWithNamespace appends "-<ns>" before the extension of every
+// rendered filename when multiNS is true, so the per-namespace copies of a
+// network Kind don't collide in the output map. A single namespace leaves
+// filenames (and thus the on-disk output) byte-identical to the pre-feature
+// behaviour.
+func suffixFilenamesWithNamespace(rendered map[string]string, ns string, multiNS bool) map[string]string {
+	if !multiNS {
+		return rendered
+	}
+	out := make(map[string]string, len(rendered))
+	for name, content := range rendered {
+		ext := filepath.Ext(name)
+		out[fmt.Sprintf("%s-%s%s", strings.TrimSuffix(name, ext), ns, ext)] = content
+	}
+	return out
 }
 
 // withClusterConfig returns a shallow copy of cfg with ClusterConfig

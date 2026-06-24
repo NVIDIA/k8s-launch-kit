@@ -5,7 +5,7 @@
 apiVersion: mellanox.com/v1alpha1
 kind: HostDeviceNetwork
 metadata:
-  name: {{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
+  name: {{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
 spec:
   networkNamespace: "{{$.PodNamespace}}"
   resourceName: "{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}"
@@ -21,7 +21,7 @@ spec:
 apiVersion: mellanox.com/v1alpha1
 kind: HostDeviceNetwork
 metadata:
-  name: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
+  name: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
 spec:
   networkNamespace: "{{$.PodNamespace}}"
   resourceName: "{{.Hostdev.ResourceName}}"
