@@ -5,7 +5,7 @@
 apiVersion: mellanox.com/v1alpha1
 kind: IPoIBNetwork
 metadata:
-  name: {{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
+  name: {{$.Ipoib.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
 spec:
   networkNamespace: "{{$.PodNamespace}}"
   master: "{{$pf.NetworkInterface}}"
@@ -22,7 +22,7 @@ spec:
 apiVersion: mellanox.com/v1alpha1
 kind: IPoIBNetwork
 metadata:
-  name: {{.Ipoib.NetworkName}}{{suffix $.ClusterConfig.Identifier}}
+  name: {{.Ipoib.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
 spec:
   networkNamespace: "{{$.PodNamespace}}"
   master: "{{(index .ClusterConfig.PFs 0).NetworkInterface}}"

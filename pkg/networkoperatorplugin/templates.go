@@ -66,6 +66,26 @@ var templateFuncs = template.FuncMap{
 		}
 		return "-" + s
 	},
+	// nsSuffix appends "-<current>" only when more than one network namespace
+	// is being rendered, disambiguating the per-namespace copies of a
+	// secondary-network CR (and the network name the example DaemonSet
+	// references). With a single namespace it returns "" so the common case
+	// keeps its existing names unchanged. Called as
+	// `{{nsSuffix $.NetworkNamespaces $.PodNamespace}}` — type-agnostic so it
+	// works whether the template root is the bare config or a per-group ctx.
+	//
+	// The `namespaces` it reads is the *per-render* set: the renderer
+	// (`withRenderNamespaces`) narrows cfg.NetworkNamespaces to exactly the
+	// namespaces a Kind is rendered into, so a shared (non-replicated) Kind
+	// sees a single-entry slice and gets no suffix even if a template author
+	// adds this helper — the "suffix iff this is one of several copies"
+	// contract holds by construction, not by templates avoiding the call.
+	"nsSuffix": func(namespaces []string, current string) string {
+		if len(namespaces) > 1 && current != "" {
+			return "-" + current
+		}
+		return ""
+	},
 	// boundedSuffix returns "-<value>" suitable for appending to a name or label
 	// value such that the combined string never exceeds the k8s 63-char label-value
 	// limit. Callers pass the maximum allowed length of the returned suffix —

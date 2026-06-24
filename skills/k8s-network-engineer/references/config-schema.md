@@ -14,11 +14,11 @@ Controls the NVIDIA Network Operator deployment settings.
 | `repository`       | string | `nvcr.io/nvidia/mellanox`            | Container image registry/repository            |
 | `namespace`        | string | `nvidia-network-operator`            | Kubernetes namespace for operator resources     |
 
-## podNamespace
+## networkNamespaces
 
-| Field          | Type   | Default   | Description                                       |
-|----------------|--------|-----------|---------------------------------------------------|
-| `podNamespace` | string | `default` | Namespace for generated pods and network resources |
+| Field               | Type     | Default       | Description                                       |
+|---------------------|----------|---------------|---------------------------------------------------|
+| `networkNamespaces` | []string | `["default"]` | Namespaces the secondary-network CRs (SriovNetwork, SriovIBNetwork, HostDeviceNetwork, MacvlanNetwork, IPoIBNetwork) and their example test DaemonSets are rendered into — one independent copy per namespace. Shared resources (IPPool, NicNodePolicy, SriovNetworkNodePolicy, NicClusterPolicy) are NOT duplicated. With >1 namespace, per-namespace CR copies get a `-<namespace>` name suffix. CLI: `--network-namespaces ns1,ns2`. A legacy scalar `podNamespace` is still accepted and folded in as the sole entry. |
 
 ## docaDriver
 

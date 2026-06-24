@@ -126,8 +126,11 @@ nvIpam:
       cidr: "10.10.0.0/16"
       gateway: "10.10.0.1"
 
-# Override pod namespace
-podNamespace: "my-namespace"
+# Namespaces for the secondary-network CRs + example test DaemonSets.
+# One independent copy is rendered per namespace (shared resources like
+# IPPools and NodePolicies are NOT duplicated). Defaults to ["default"].
+# A legacy scalar `podNamespace:` is still honored as the sole entry.
+networkNamespaces: ["my-namespace"]
 ```
 
 ## Tips

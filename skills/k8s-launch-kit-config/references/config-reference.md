@@ -26,10 +26,17 @@ networkOperator:
   # Kubernetes namespace where the operator and all its components are deployed.
   namespace: nvidia-network-operator
 
-# string | default: "default"
-# Namespace where workload pods run. NetworkAttachmentDefinitions are created here
-# so that pods in this namespace can reference secondary networks.
-podNamespace: default
+# []string | default: ["default"]
+# Namespaces the secondary-network CRs (SriovNetwork, SriovIBNetwork,
+# HostDeviceNetwork, MacvlanNetwork, IPoIBNetwork) and their example test
+# DaemonSets are rendered into — one independent copy per namespace, each with
+# its NetworkAttachmentDefinitions created there so pods in that namespace can
+# reference the secondary networks. Shared resources (IPPool, NicNodePolicy,
+# SriovNetworkNodePolicy, NicClusterPolicy, ...) are NOT duplicated. With more
+# than one namespace, the per-namespace CR copies get a "-<namespace>" name
+# suffix so they don't collide. A legacy scalar `podNamespace:` is still
+# accepted and folded in as the sole entry.
+networkNamespaces: ["default"]
 
 # ============================================================================
 # DOCA / OFED Driver
