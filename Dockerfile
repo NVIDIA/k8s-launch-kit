@@ -39,15 +39,21 @@ ARG TARGETOS
 ARG TARGETARCH
 
 # Build with make to apply all build logic defined in Makefile
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-$(go env GOOS)} GOARCH=${TARGETARCH:-$(go env GOARCH)} make build
+RUN CGO_ENABLED=0 GOOS="${TARGETOS:-$(go env GOOS)}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" make build
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM nvcr.io/nvidia/distroless/go:v4.0.4
 
 
-COPY . /src
+# Copy only the runtime assets l8k resolves relative to its working directory
+# (profiles, presets, l8k-config.yaml). Everything else — Go source, releases.yaml,
+# etc. — is either build-only or embedded via go:embed, so it must not leak into
+# the final image.
 WORKDIR /src
+COPY profiles /src/profiles
+COPY presets /src/presets
+COPY l8k-config.yaml /src/l8k-config.yaml
 COPY --from=builder /workspace/build/l8k /src/l8k
 
 ENTRYPOINT ["/src/l8k"]
