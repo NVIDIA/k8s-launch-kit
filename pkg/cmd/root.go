@@ -77,7 +77,12 @@ var (
 	forPreset                   string
 	deployTimeoutRoot           time.Duration
 	keepNamespace               bool
+	collapseNicRails            bool
 )
+
+// collapseNicRailsFlagHelp is the shared help text for --collapse-nic-rails on
+// both the root pipeline and the `discover` subcommand.
+const collapseNicRailsFlagHelp = "Advertise one rail per NIC: collapse a NIC's multi-plane PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port (\"2-port\"/\"Dual-port\"). Set to false to keep the legacy one-rail-per-PF behaviour (dev setups)."
 
 // forFlagHelp builds the help string for `--for`. Computed at init() time so
 // users see the live list of available preset directories alongside `--help`.
@@ -161,6 +166,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			Groups:               groups,
 			GpuType:              gpuType,
 			NodeSelector:         nodeSelector,
+			CollapseNicRails:     collapseNicRails,
 			ForPreset:            forPreset,
 			ImagePullSecrets:     imagePullSecrets,
 			PodNamespace:         podNamespace,
@@ -245,6 +251,7 @@ func init() {
 	rootCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
 	rootCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
 	rootCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and NIC nodes are detected via a sysfs PCI-vendor probe")
+	rootCmd.Flags().BoolVar(&collapseNicRails, "collapse-nic-rails", true, collapseNicRailsFlagHelp)
 	rootCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "./deployment", "Save generated deployment files to the specified directory")

@@ -104,6 +104,16 @@ network capabilities and hardware configuration by using --discover-cluster-conf
 This phase can be skipped if you provide your own configuration file by using --user-config.
 This phase requires --kubeconfig to be specified.
 
+By default discovery advertises **one rail per NIC**. When a NIC exposes several
+east-west PFs that are planes of a single physical port (e.g. Spectrum-X
+multi-plane ConnectX-8/9), only the master PF is written to `cluster-config.yaml`
+so the rail count reflects physical NICs, not PFs. A NIC whose VPD model name is
+genuinely dual-port (e.g. "... QSFP112 **2-port** ...", "... **Dual-port** ...")
+keeps a rail per port. Pass `--collapse-nic-rails=false` to restore the legacy
+behaviour of one rail per PF (useful on dev setups). The model string is read
+from `NicDevice.Status.modelName`; when it is empty the NIC is collapsed by
+default.
+
 ### Generate Deployment Files
 Based on the discovered or provided configuration,
 generate a complete set of YAML deployment files for the selected network profile.
@@ -167,6 +177,7 @@ Common Flags:
       --user-config string                  Use provided cluster configuration file (as base config for discovery or as full config without discovery)
 
 Discovery Flags:
+      --collapse-nic-rails           Advertise one rail per NIC: collapse a NIC's multi-plane PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set to false to keep the legacy one-rail-per-PF behaviour (dev setups). (default true)
       --discover-cluster-config      Deploy a thin Network Operator profile to discover cluster capabilities
       --save-cluster-config string   Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)
 

@@ -193,7 +193,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		return err
 	}
 
-	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, p.NodeSelector)
+	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, p.NodeSelector, p.CollapseNicRails)
 	defaultConfig.ClusterConfig = clusterConfig
 
 	for _, w := range nsWarnings {
@@ -735,6 +735,12 @@ type nodePFEntry struct {
 	IsExplicitEastWest bool
 	PSID               string
 	PartNumber         string
+	// ModelName is NicDevice.Status.ModelName — the VPD model/description
+	// string, which carries the physical port count ("2-port"/"Dual-port"/"1P").
+	// Used to decide whether a multi-PF NIC is genuinely dual-port (keep a rail
+	// per port) or multi-plane (collapse to one rail per NIC). Empty when VPD
+	// couldn't be read.
+	ModelName string
 }
 
 // fetchNodeLabels lists all Kubernetes nodes and returns a map of nodeName → labels.
@@ -893,7 +899,32 @@ type nodeInfo struct {
 	hasPCI  bool
 }
 
-func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, nodeSelector map[string]string) ([]config.ClusterConfig, []string) {
+// collapseGroupRails reduces a group's east-west PFs to one per NIC (one rail
+// per NIC) via collapsePFsToOnePerNIC, while preserving every dual-port NIC's
+// per-port PFs and leaving north-south PFs untouched. It returns the re-sorted
+// PF slice and the number of PFs dropped; when nothing is collapsed it returns
+// the input unchanged.
+func collapseGroupRails(pfs []config.PFConfig) ([]config.PFConfig, int) {
+	var ew, ns []config.PFConfig
+	for _, pf := range pfs {
+		if pf.Traffic == "east-west" {
+			ew = append(ew, pf)
+		} else {
+			ns = append(ns, pf)
+		}
+	}
+	collapsedEW, dropped := collapsePFsToOnePerNIC(ew)
+	if dropped == 0 {
+		return pfs, 0
+	}
+	out := append(collapsedEW, ns...)
+	slices.SortFunc(out, func(a, b config.PFConfig) int {
+		return strings.Compare(a.PciAddress, b.PciAddress)
+	})
+	return out, dropped
+}
+
+func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, nodeSelector map[string]string, collapseNicRails bool) ([]config.ClusterConfig, []string) {
 	// Step 1: Build per-node PF map and track capabilities per node
 	nodeMap := map[string]*nodeInfo{}
 
@@ -943,6 +974,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 				IsExplicitEastWest: isBF3SuperNIC,
 				PSID:               d.Status.PSID,
 				PartNumber:         d.Status.PartNumber,
+				ModelName:          d.Status.ModelName,
 			}
 			ni.pfs = append(ni.pfs, entry)
 			if p.RdmaInterface != "" {
@@ -1044,6 +1076,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 				Traffic:    traffic,
 				PSID:       entry.PSID,
 				PartNumber: entry.PartNumber,
+				Model:      entry.ModelName,
 			}
 			if singleGroup || len(g.nodes) == 1 {
 				// Safe to include RDMA/net device names when only one node in group
@@ -1055,6 +1088,21 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		slices.SortFunc(pfs, func(a, b config.PFConfig) int {
 			return strings.Compare(a.PciAddress, b.PciAddress)
 		})
+
+		// Collapse multi-plane NICs to one rail per NIC (the default). A NIC
+		// whose VPD model is genuinely dual-port keeps a rail per port; every
+		// other NIC drops all but its master PF, since its sibling PFs are
+		// planes of a single rail. North-south PFs are left untouched.
+		// --collapse-nic-rails=false skips this and keeps one rail per PF.
+		if collapseNicRails {
+			collapsed, dropped := collapseGroupRails(pfs)
+			if dropped > 0 {
+				pfs = collapsed
+				log.Log.Info("Collapsed multi-plane PFs to one rail per NIC; pass --collapse-nic-rails=false to keep one rail per PF",
+					"groupIndex", i, "identifier", identifier,
+					"droppedPFs", dropped, "eastWestRails", len(filterEastWestPFs(pfs)))
+			}
+		}
 
 		// Assign rail numbers sequentially over the E/W set. No PF has
 		// GPUProximity populated yet at this stage, so the helper's PIX-gate

@@ -80,6 +80,7 @@ NICs, and probes OFED-dependent modules.`,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
 			KeepNamespace:            keepNamespace,
+			CollapseNicRails:         collapseNicRails,
 			NodeSelector:            nodeSelector,
 			ImagePullSecrets:        imagePullSecrets,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
@@ -113,6 +114,7 @@ func init() {
 	discoverCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	discoverCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 	discoverCmd.Flags().BoolVar(&keepNamespace, "keep-namespace", false, "Skip teardown of the nvidia-k8s-launch-kit namespace (for debugging)")
+	discoverCmd.Flags().BoolVar(&collapseNicRails, "collapse-nic-rails", true, collapseNicRailsFlagHelp)
 
 	setFlagGroup(discoverCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(discoverCmd, "user-config", GroupCommon)
@@ -123,4 +125,5 @@ func init() {
 	setFlagGroup(discoverCmd, "enabled-plugins", GroupCommon)
 	setFlagGroup(discoverCmd, "save-cluster-config", GroupDiscovery)
 	setFlagGroup(discoverCmd, "keep-namespace", GroupDiscovery)
+	setFlagGroup(discoverCmd, "collapse-nic-rails", GroupDiscovery)
 }

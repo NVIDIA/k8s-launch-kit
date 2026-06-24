@@ -44,6 +44,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--kubeconfig` | — | `$KUBECONFIG` env var | Path to kubeconfig (optional — falls back to env var) |
 | `--save-cluster-config` | Yes | — | Output path for cluster-config.yaml |
 | `--keep-namespace` | — | `false` | Skip teardown of the `nvidia-k8s-launch-kit` bootstrap namespace (for debugging) |
+| `--collapse-nic-rails` | — | `true` | Advertise one rail per NIC: collapse a NIC's multi-plane east-west PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set `=false` to keep one rail per PF (dev setups). See "Rail collapsing" below. |
 | `--network-operator-namespace` | — | — | **Deprecated for `discover`**: accepted but ignored. The daemon always runs in `nvidia-k8s-launch-kit`. Still used by `l8k generate` / `l8k deploy`. |
 | `--user-config` | — | — | Base config to merge with discovered hardware |
 | `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Value written into the **saved** `cluster-config.yaml` `nodeSelector` (for deploy time). It does **not** gate discovery scheduling or the NicDevice wait set — the daemon runs on all nodes and NIC-bearing nodes are detected via a sysfs `0x15b3` probe. |
@@ -160,6 +161,27 @@ resolved.
   NICs, or `/sys` not mounted/readable in the pod).
 - After determining each group's `(machineType, gpuType)`, discovery looks up a topology preset under `presets/` using **exact-match** lookup on that pair. A matching preset overrides heuristic-derived topology fields (traffic class, rail, NUMA, GPU affinity). There is no any-GPU fallback — a preset with empty `gpuType:` is rejected at load time. If no preset matches, discovery proceeds with heuristic classification.
 - If you already know the SKU and want to skip cluster discovery entirely, use `l8k generate --for <preset>` (see `k8s-launch-kit-generate`).
+
+## Rail collapsing (one rail per NIC)
+
+By default (`--collapse-nic-rails`, default `true`) discovery advertises **one
+rail per NIC**, not one per PF. A single NIC can expose several east-west PFs
+that are *planes* of one physical port (Spectrum-X multi-plane ConnectX-8/9). For
+those, only the **master PF** (lowest PCI function) is written to
+`cluster-config.yaml`, so the rail count reflects physical NICs — e.g. an 8-PF
+ConnectX-8 node yields 4 rails, not 8. The per-PF planes are reconstructed at
+generate time from the multiplane mode + `numberOfPlanes`.
+
+The exception is a **genuinely dual-port NIC**: when the NIC's VPD model name
+(read from `NicDevice.Status.modelName`, surfaced as the `model` field on each
+PF) contains a port-count keyword like `2-port`/`Dual-port`, each port is kept as
+its own rail. Single-port (`1P`) and multi-plane models (no port-count keyword)
+collapse. An empty/unreadable model collapses by default.
+
+Pass `--collapse-nic-rails=false` to restore the legacy one-rail-per-PF behaviour
+(handy on dev setups). Note: a collapsed group no longer has the same PF count as
+a full-PF topology preset, so such presets won't apply by exact match and the
+live (collapsed) classification is kept (a preset-deviation warning is emitted).
 
 ## See Also
 
