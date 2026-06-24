@@ -19,7 +19,7 @@
 package pciids
 
 import (
-	_ "embed"
+	_ "embed" // required for the //go:embed directive that loads the pci.ids snapshot
 	"strings"
 )
 

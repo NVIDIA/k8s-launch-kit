@@ -101,29 +101,29 @@ Optionally deploy the generated manifests with --deploy.`,
 		}
 
 		opts := options.Options{
-			UserConfig:     userConfig,
-			Fabric:         fabric,
-			DeploymentType: deploymentType,
-			Multirail:      multirail,
-			MultirailSet:   cmd.Flag("multirail").Changed,
-			SpectrumX:      spectrumXVersion != "",
-			SPCXVersion:             spectrumXVersion,
-			MultiplaneMode:          multiplaneMode,
-			NumberOfPlanes:          numberOfPlanes,
-			Groups:                  groups,
-			GpuType:                 gpuType,
-			NodeSelector:            generateNodeSelector,
-			ForPreset:               forPreset,
-			ImagePullSecrets:        imagePullSecrets,
-			PodNamespace:            podNamespace,
-			SaveDeploymentFiles:     saveDeploymentFiles,
-			Deploy:                  deploy,
-			OverwriteExisting:       overwriteExistingFlag,
-			Kubeconfig:              kubeconfig,
+			UserConfig:               userConfig,
+			Fabric:                   fabric,
+			DeploymentType:           deploymentType,
+			Multirail:                multirail,
+			MultirailSet:             cmd.Flag("multirail").Changed,
+			SpectrumX:                spectrumXVersion != "",
+			SPCXVersion:              spectrumXVersion,
+			MultiplaneMode:           multiplaneMode,
+			NumberOfPlanes:           numberOfPlanes,
+			Groups:                   groups,
+			GpuType:                  gpuType,
+			NodeSelector:             generateNodeSelector,
+			ForPreset:                forPreset,
+			ImagePullSecrets:         imagePullSecrets,
+			PodNamespace:             podNamespace,
+			SaveDeploymentFiles:      saveDeploymentFiles,
+			Deploy:                   deploy,
+			OverwriteExisting:        overwriteExistingFlag,
+			Kubeconfig:               kubeconfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
-			WorkloadManifest:        workloadManifest,
+			WorkloadManifest:         workloadManifest,
 			OutputFormat:             outputFormat,
 			Yes:                      yesFlag,
 			Quiet:                    quietFlag,
@@ -131,7 +131,7 @@ Optionally deploy the generated manifests with --deploy.`,
 		}
 
 		// Set EnableDocaDriver only if the flag was explicitly provided
-		if cmd.Flags().Lookup("enable-doca-driver").Changed {
+		if cmd.Flags().Lookup(flagEnableDocaDriver).Changed {
 			opts.EnableDocaDriver = &enableDocaDriver
 		}
 
@@ -189,15 +189,15 @@ func init() {
 	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	generateCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes (requires --spectrum-x)")
 	generateCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
-	generateCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
-	generateCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
+	generateCmd.Flags().StringVar(&gpuType, flagGPUType, "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
+	generateCmd.MarkFlagsMutuallyExclusive("groups", flagGPUType)
 	generateCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	generateCmd.Flags().StringVar(&generateNodeSelector, "node-selector", "", "Node selector for the synthesized clusterConfig when --for is used (e.g., key=value,key2=value2). Required with --for.")
 
 	// Output
 	generateCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "", "Output directory for generated YAMLs")
 	generateCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Namespace for pods and network resources")
-	generateCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment")
+	generateCmd.Flags().BoolVar(&enableDocaDriver, flagEnableDocaDriver, false, "Enable DOCA driver deployment")
 	generateCmd.Flags().StringVar(&workloadManifest, "workload-manifest", "", "Path to a custom workload manifest YAML")
 	generateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace")
 	generateCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
@@ -224,7 +224,7 @@ func init() {
 	setFlagGroup(generateCmd, "multirail", GroupProfile)
 	setFlagGroup(generateCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(generateCmd, "groups", GroupProfile)
-	setFlagGroup(generateCmd, "gpu-type", GroupProfile)
+	setFlagGroup(generateCmd, flagGPUType, GroupProfile)
 	setFlagGroup(generateCmd, "for", GroupProfile)
 	setFlagGroup(generateCmd, "node-selector", GroupProfile)
 
@@ -233,7 +233,7 @@ func init() {
 
 	setFlagGroup(generateCmd, "save-deployment-files", GroupGeneration)
 	setFlagGroup(generateCmd, "pod-namespace", GroupGeneration)
-	setFlagGroup(generateCmd, "enable-doca-driver", GroupGeneration)
+	setFlagGroup(generateCmd, flagEnableDocaDriver, GroupGeneration)
 	setFlagGroup(generateCmd, "workload-manifest", GroupGeneration)
 
 	setFlagGroup(generateCmd, "deploy", GroupDeploy)

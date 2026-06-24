@@ -19,6 +19,13 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
+// API groups referenced repeatedly by managedKinds. Defined once so a typo in
+// one entry can't silently change which CRs the stray check enumerates.
+const (
+	groupMellanox     = "mellanox.com"
+	groupSriovNetwork = "sriovnetwork.openshift.io"
+)
+
 // kindInfo describes one Kind the stray-CRs check enumerates.
 // ClusterScoped=true means the check lists cluster-wide; otherwise it
 // lists only in Inputs.OperatorNamespace.
@@ -40,22 +47,22 @@ type kindInfo struct {
 // counterpart to compare against.
 var managedKinds = []kindInfo{
 	// Cluster-scoped — singletons or per-group resources.
-	{GVK: gvk("mellanox.com", "v1alpha1", "NicClusterPolicy"), ClusterScoped: true},
-	{GVK: gvk("mellanox.com", "v1alpha1", "NicNodePolicy"), ClusterScoped: true},
+	{GVK: gvk(groupMellanox, "v1alpha1", "NicClusterPolicy"), ClusterScoped: true},
+	{GVK: gvk(groupMellanox, "v1alpha1", "NicNodePolicy"), ClusterScoped: true},
 	{GVK: gvk("configuration.net.nvidia.com", "v1alpha1", "NicConfigurationTemplate"), ClusterScoped: true},
 	{GVK: gvk("configuration.net.nvidia.com", "v1alpha1", "NicInterfaceNameTemplate"), ClusterScoped: true},
 
 	// Namespaced — enumerated in the operator namespace.
-	{GVK: gvk("sriovnetwork.openshift.io", "v1", "SriovNetworkNodePolicy")},
-	{GVK: gvk("sriovnetwork.openshift.io", "v1", "SriovNetwork")},
-	{GVK: gvk("sriovnetwork.openshift.io", "v1", "SriovIBNetwork")},
-	{GVK: gvk("sriovnetwork.openshift.io", "v1", "SriovNetworkPoolConfig")},
-	{GVK: gvk("sriovnetwork.openshift.io", "v1", "OVSNetwork")},
+	{GVK: gvk(groupSriovNetwork, "v1", "SriovNetworkNodePolicy")},
+	{GVK: gvk(groupSriovNetwork, "v1", "SriovNetwork")},
+	{GVK: gvk(groupSriovNetwork, "v1", "SriovIBNetwork")},
+	{GVK: gvk(groupSriovNetwork, "v1", "SriovNetworkPoolConfig")},
+	{GVK: gvk(groupSriovNetwork, "v1", "OVSNetwork")},
 	{GVK: gvk("nv-ipam.nvidia.com", "v1alpha1", "IPPool")},
 	{GVK: gvk("nv-ipam.nvidia.com", "v1alpha1", "CIDRPool")},
-	{GVK: gvk("mellanox.com", "v1alpha1", "MacvlanNetwork")},
-	{GVK: gvk("mellanox.com", "v1alpha1", "IPoIBNetwork")},
-	{GVK: gvk("mellanox.com", "v1alpha1", "HostDeviceNetwork")},
+	{GVK: gvk(groupMellanox, "v1alpha1", "MacvlanNetwork")},
+	{GVK: gvk(groupMellanox, "v1alpha1", "IPoIBNetwork")},
+	{GVK: gvk(groupMellanox, "v1alpha1", "HostDeviceNetwork")},
 	{GVK: gvk("spectrumx.nvidia.com", "v1alpha1", "SpectrumXRailPoolConfig")},
 	{GVK: gvk("spectrumx.nvidia.com", "v1alpha2", "SpectrumXRailPoolConfig")},
 }

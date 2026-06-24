@@ -99,6 +99,8 @@ func (o *JSONOutput) StartProgress(message string) Progress {
 	return &noopProgress{output: o}
 }
 
+// Header is a no-op in JSON mode: headers are presentational and have no place
+// in structured machine-readable output.
 func (o *JSONOutput) Header(_ string) {}
 
 func (o *JSONOutput) Section(text string) {

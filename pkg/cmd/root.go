@@ -40,43 +40,43 @@ import (
 )
 
 var (
-	logLevel              string
-	logFile               string
-	fabric                string
-	deploymentType        string
-	multirail             bool
+	logLevel       string
+	logFile        string
+	fabric         string
+	deploymentType string
+	multirail      bool
 	// spectrumXVersion holds the value of --spectrum-x. Empty means
 	// Spectrum-X is disabled; a non-empty value is the SPC-X RA version
 	// (validated against config.SupportedSPCXVersions). The legacy --spcx-version
 	// flag has been folded into --spectrum-x; passing the version is now part
 	// of opting into Spectrum-X.
-	spectrumXVersion      string
-	multiplaneMode        string
-	numberOfPlanes        int
-	saveDeploymentFiles   string
-	deploy                bool
-	kubeconfig            string
-	userConfig            string
-	discoverClusterConfig bool
-	saveClusterConfig     string
-	logger                = log.Log.WithName("l8k")
-	enableDocaDriver            bool
-	enabledPlugins              string
-	networkOperatorNamespace    string
-	networkOperatorRelease      string
-	groups                      []string
-	gpuType                     string
-	nodeSelector                string
-	imagePullSecrets            []string
-	podNamespace                string
-	outputFormat                string
-	yesFlag                     bool
-	quietFlag                   bool
-	workloadManifest            string
-	dryRunFlag                  bool
-	forPreset                   string
-	deployTimeoutRoot           time.Duration
-	keepNamespace               bool
+	spectrumXVersion         string
+	multiplaneMode           string
+	numberOfPlanes           int
+	saveDeploymentFiles      string
+	deploy                   bool
+	kubeconfig               string
+	userConfig               string
+	discoverClusterConfig    bool
+	saveClusterConfig        string
+	logger                   = log.Log.WithName("l8k")
+	enableDocaDriver         bool
+	enabledPlugins           string
+	networkOperatorNamespace string
+	networkOperatorRelease   string
+	groups                   []string
+	gpuType                  string
+	nodeSelector             string
+	imagePullSecrets         []string
+	podNamespace             string
+	outputFormat             string
+	yesFlag                  bool
+	quietFlag                bool
+	workloadManifest         string
+	dryRunFlag               bool
+	forPreset                string
+	deployTimeoutRoot        time.Duration
+	keepNamespace            bool
 )
 
 // forFlagHelp builds the help string for `--for`. Computed at init() time so
@@ -146,41 +146,41 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 		enabledPlugins := parseEnabledPlugins(enabledPlugins)
 		// Create application options from CLI flags
 		opts := options.Options{
-			LogLevel:              logLevel,
-			LogFile:               logFile,
-			UserConfig:            userConfig,
-			DiscoverClusterConfig: discoverClusterConfig,
-			Fabric:                fabric,
-			DeploymentType:        deploymentType,
-			Multirail:             multirail,
-			MultirailSet:         cmd.Flag("multirail").Changed,
-			SpectrumX:             spectrumXVersion != "",
-			SPCXVersion:           spectrumXVersion,
-			MultiplaneMode:        multiplaneMode,
-			NumberOfPlanes:        numberOfPlanes,
-			Groups:               groups,
-			GpuType:              gpuType,
-			NodeSelector:         nodeSelector,
-			ForPreset:            forPreset,
-			ImagePullSecrets:     imagePullSecrets,
-			PodNamespace:         podNamespace,
-			SaveDeploymentFiles:   saveDeploymentFiles,
-			Deploy:                deploy,
-			Kubeconfig:            kubeconfig,
-			DeployTimeout:         deployTimeoutRoot,
+			LogLevel:                 logLevel,
+			LogFile:                  logFile,
+			UserConfig:               userConfig,
+			DiscoverClusterConfig:    discoverClusterConfig,
+			Fabric:                   fabric,
+			DeploymentType:           deploymentType,
+			Multirail:                multirail,
+			MultirailSet:             cmd.Flag("multirail").Changed,
+			SpectrumX:                spectrumXVersion != "",
+			SPCXVersion:              spectrumXVersion,
+			MultiplaneMode:           multiplaneMode,
+			NumberOfPlanes:           numberOfPlanes,
+			Groups:                   groups,
+			GpuType:                  gpuType,
+			NodeSelector:             nodeSelector,
+			ForPreset:                forPreset,
+			ImagePullSecrets:         imagePullSecrets,
+			PodNamespace:             podNamespace,
+			SaveDeploymentFiles:      saveDeploymentFiles,
+			Deploy:                   deploy,
+			Kubeconfig:               kubeconfig,
+			DeployTimeout:            deployTimeoutRoot,
 			SaveClusterConfig:        saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
 			EnabledPlugins:           enabledPlugins,
-			WorkloadManifest:      workloadManifest,
-			OutputFormat:           outputFormat,
-			Yes:                    yesFlag,
-			Quiet:                  quietFlag,
-			DryRun:                 dryRunFlag,
+			WorkloadManifest:         workloadManifest,
+			OutputFormat:             outputFormat,
+			Yes:                      yesFlag,
+			Quiet:                    quietFlag,
+			DryRun:                   dryRunFlag,
 		}
 
 		// Set EnableDocaDriver only if the flag was explicitly provided
-		if cmd.Flags().Lookup("enable-doca-driver").Changed {
+		if cmd.Flags().Lookup(flagEnableDocaDriver).Changed {
 			opts.EnableDocaDriver = &enableDocaDriver
 		}
 
@@ -242,14 +242,14 @@ func init() {
 	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
 	rootCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
-	rootCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
-	rootCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
+	rootCmd.Flags().StringVar(&gpuType, flagGPUType, "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
+	rootCmd.MarkFlagsMutuallyExclusive("groups", flagGPUType)
 	rootCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Filter nodes for discovery by label (e.g., key=value,key2=value2)")
 	rootCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
 	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "./deployment", "Save generated deployment files to the specified directory")
 	rootCmd.Flags().StringVar(&podNamespace, "pod-namespace", "", "Namespace for pods and network resources (overrides config podNamespace, default: 'default')")
-	rootCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment (overrides config file docaDriver.enable)")
+	rootCmd.Flags().BoolVar(&enableDocaDriver, flagEnableDocaDriver, false, "Enable DOCA driver deployment (overrides config file docaDriver.enable)")
 	rootCmd.Flags().StringVar(&workloadManifest, "workload-manifest", "", "Path to a custom workload manifest YAML (replaces the profile's default example workload)")
 
 	// Phase 3: Cluster deployment flags
@@ -264,7 +264,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview what would be deployed without applying changes to the cluster")
 
 	// Logging flags
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "Enable logging at specified level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, flagLogLevel, "", "Enable logging at specified level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "Write logs to file instead of stderr")
 
 	// Group the flags into labelled sections in --help output. The phase
@@ -287,7 +287,7 @@ func init() {
 	setFlagGroup(rootCmd, "multirail", GroupProfile)
 	setFlagGroup(rootCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(rootCmd, "groups", GroupProfile)
-	setFlagGroup(rootCmd, "gpu-type", GroupProfile)
+	setFlagGroup(rootCmd, flagGPUType, GroupProfile)
 	setFlagGroup(rootCmd, "for", GroupProfile)
 
 	setFlagGroup(rootCmd, "multiplane-mode", GroupSpectrumX)
@@ -295,7 +295,7 @@ func init() {
 
 	setFlagGroup(rootCmd, "save-deployment-files", GroupGeneration)
 	setFlagGroup(rootCmd, "pod-namespace", GroupGeneration)
-	setFlagGroup(rootCmd, "enable-doca-driver", GroupGeneration)
+	setFlagGroup(rootCmd, flagEnableDocaDriver, GroupGeneration)
 	setFlagGroup(rootCmd, "workload-manifest", GroupGeneration)
 
 	setFlagGroup(rootCmd, "deploy", GroupDeploy)
@@ -305,7 +305,7 @@ func init() {
 	setFlagGroup(rootCmd, "output", GroupOutputLogging)
 	setFlagGroup(rootCmd, "yes", GroupOutputLogging)
 	setFlagGroup(rootCmd, "quiet", GroupOutputLogging)
-	setFlagGroup(rootCmd, "log-level", GroupOutputLogging)
+	setFlagGroup(rootCmd, flagLogLevel, GroupOutputLogging)
 	setFlagGroup(rootCmd, "log-file", GroupOutputLogging)
 
 	installGroupedUsage(rootCmd)
@@ -521,7 +521,7 @@ func resolveKubeconfig(flagValue string) (string, error) {
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
 	// Detect if --log-level was explicitly set
-	logLevelFlag := rootCmd.PersistentFlags().Lookup("log-level")
+	logLevelFlag := rootCmd.PersistentFlags().Lookup(flagLogLevel)
 	loggingEnabled := logLevelFlag.Changed
 
 	if loggingEnabled {

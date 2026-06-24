@@ -41,6 +41,9 @@ const rdmaServerSettleDelay = 2 * time.Second
 // Options.Timeout.
 const rdmaTestTimeout = 90 * time.Second
 
+// shellExec is the in-pod shell used to run connectivity test commands.
+const shellExec = "/bin/sh"
+
 // DiscoverRDMADevices runs once per test pod to map each multus
 // secondary-network interface to its RDMA device. Reads
 // /sys/class/net/<iface>/device/infiniband/ inside the pod — that
@@ -74,7 +77,7 @@ func DiscoverRDMADevices(ctx context.Context, restConfig *rest.Config, namespace
 	if b.Len() == 0 {
 		return out
 	}
-	res, err := kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", b.String()})
+	res, err := kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{shellExec, "-c", b.String()})
 	if err != nil {
 		return out
 	}
@@ -116,7 +119,7 @@ func RunRPing(ctx context.Context, restConfig *rest.Config, namespace string, se
 	defer cancel()
 
 	serverCmd := fmt.Sprintf("nohup rping -s -a %s -p 9999 -v >/tmp/rping-server.log 2>&1 & echo $!", test.DstIP)
-	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, namespace, serverPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
+	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, namespace, serverPod, serverContainer, []string{shellExec, "-c", serverCmd})
 	if err != nil {
 		r.Err = fmt.Errorf("rping server start: %w (stderr: %s)", err, srvRes.Stderr)
 		return r
@@ -133,7 +136,7 @@ func RunRPing(ctx context.Context, restConfig *rest.Config, namespace string, se
 	}
 
 	clientCmd := fmt.Sprintf("rping -c -a %s -p 9999 -C %d -v", test.DstIP, iterations)
-	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, namespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
+	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, namespace, clientPod, clientContainer, []string{shellExec, "-c", clientCmd})
 	r.Stdout, r.Stderr = cliRes.Stdout, cliRes.Stderr
 	r.Err = cliErr
 	// rping exits 0 only on a clean run; non-zero exit propagates
@@ -169,7 +172,7 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string
 	// sides print the summary table.
 	serverCmd := fmt.Sprintf("nohup ib_write_bw -d %s -R -s 65536 --report_gbits -p %d >/tmp/ibwritebw-server.log 2>&1 & echo $!",
 		test.DstRDMADev, port)
-	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, namespace, serverPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
+	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, namespace, serverPod, serverContainer, []string{shellExec, "-c", serverCmd})
 	if err != nil {
 		r.Err = fmt.Errorf("ib_write_bw server start: %w (stderr: %s)", err, srvRes.Stderr)
 		return r
@@ -186,7 +189,7 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string
 
 	clientCmd := fmt.Sprintf("ib_write_bw -d %s -R -s 65536 --report_gbits -p %d %s",
 		test.SrcRDMADev, port, test.DstIP)
-	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, namespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
+	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, namespace, clientPod, clientContainer, []string{shellExec, "-c", clientCmd})
 	r.Stdout, r.Stderr = cliRes.Stdout, cliRes.Stderr
 
 	bw, msgRate, parseOK := parseIbWriteBwOutput(cliRes.Stdout)
@@ -220,7 +223,7 @@ func killRDMAServer(restConfig *rest.Config, namespace, pod, container, prog, pi
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := fmt.Sprintf("kill %s 2>/dev/null; pkill -f %q 2>/dev/null; true", pid, prog)
-	_, _ = kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", cmd})
+	_, _ = kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{shellExec, "-c", cmd})
 }
 
 // ibWriteBwSummaryRe matches the single-row summary line that

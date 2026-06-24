@@ -17,7 +17,7 @@
 package connectivity
 
 import (
-	_ "embed"
+	_ "embed" // required for the //go:embed directive that loads the HTML report template
 	"fmt"
 	"html/template"
 	"io"
@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 )
 
@@ -66,12 +66,12 @@ type ReportData struct {
 	// Verdict is the overall pass/fail outcome rendered as a
 	// prominent banner at the top of the report. Computed by the
 	// caller (CLI) from the same inputs that drive the exit code.
-	Verdict OverallVerdict
-	Cluster        ClusterInfo
-	Profile        ProfileInfo
-	NodeGroups     []NodeGroupInfo
-	Nodes          []NodeInfo
-	Release        *networkoperatorplugin.VersionCheck
+	Verdict    OverallVerdict
+	Cluster    ClusterInfo
+	Profile    ProfileInfo
+	NodeGroups []NodeGroupInfo
+	Nodes      []NodeInfo
+	Release    *networkoperatorplugin.VersionCheck
 	// ComponentCheck cross-references the live NCP+NNP component
 	// versions against the embedded release catalog. Surfaced as a
 	// sub-table under "Network Operator release" in the HTML

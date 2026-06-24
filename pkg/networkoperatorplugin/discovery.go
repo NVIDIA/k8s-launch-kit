@@ -18,7 +18,7 @@ package networkoperatorplugin
 
 import (
 	"context"
-	_ "embed"
+	_ "embed" // required for the //go:embed directive that loads ns-product-ids
 	"fmt"
 	"slices"
 	"sort"
@@ -41,6 +41,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// shellExec is the in-pod shell used to run discovery commands.
+const shellExec = "/bin/sh"
 
 //go:embed ns-product-ids
 var nsProductIDsData string
@@ -113,6 +116,8 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	if !p.KeepNamespace {
 		defer func() {
 			uiOutput.Info("Tearing down namespace %q", nicconfigdaemon.Namespace)
+			// Use a fresh context for teardown: the discovery ctx may already be
+			// cancelled/timed out, but cleanup must still run.
 			if cleanupErr := nicconfigdaemon.Cleanup(context.Background(), c); cleanupErr != nil {
 				log.Log.Error(cleanupErr, "failed to tear down discover bootstrap namespace",
 					"namespace", nicconfigdaemon.Namespace)
@@ -1229,7 +1234,7 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 		log.Log.V(1).Info("Probing machine type via DMI",
 			"pod", targetPod.Name, "command", dmiCmd)
 		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", dmiCmd})
+			[]string{shellExec, "-c", dmiCmd})
 		if err != nil {
 			log.Log.Error(err, "failed to read machine type from DMI", "pod", targetPod.Name)
 		} else {
@@ -1250,7 +1255,7 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 			`/host/usr/bin/nvidia-smi -q 2>/dev/null || true; fi`
 		log.Log.V(1).Info("Probing GPU product type via nvidia-smi", "pod", targetPod.Name)
 		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", nvidiaSmiCmd})
+			[]string{shellExec, "-c", nvidiaSmiCmd})
 		if err != nil {
 			log.Log.Error(err, "failed to exec nvidia-smi probe", "pod", targetPod.Name)
 		} else {
@@ -1264,7 +1269,7 @@ func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
 		if gpuType == "" {
 			log.Log.V(1).Info("Falling back to sysfs/pci.ids for GPU product type", "pod", targetPod.Name)
 			sysfsOutput, sysfsErr := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-				[]string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
+				[]string{shellExec, "-c", sysfsNvidiaGPUIDCmd})
 			if sysfsErr != nil {
 				log.Log.Error(sysfsErr, "failed to exec sysfs GPU probe", "pod", targetPod.Name)
 			} else {
@@ -1408,7 +1413,7 @@ func discoverPortFabric(ctx context.Context, restConfig *rest.Config,
 	} {
 		cmd := fmt.Sprintf("cat %s", base)
 		output, err := execInPod(ctx, restConfig, namespace, podName, containerName,
-			[]string{"/bin/sh", "-c", cmd})
+			[]string{shellExec, "-c", cmd})
 		if err != nil {
 			lastErr = err
 			log.Log.V(1).Info("Fabric port probe: read failed at this base",
@@ -1572,7 +1577,7 @@ done | TARGETS="$targets" awk "$awk_script" | sort -u`, modList)
 	log.Log.V(1).Info("Probing OFED-dependent kernel modules",
 		"pod", targetPod.Name, "ofedTargets", ofedTargetModules)
 	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-		[]string{"/bin/sh", "-c", script})
+		[]string{shellExec, "-c", script})
 	if err != nil {
 		return nil, fmt.Errorf("exec in pod %q failed: %w", targetPod.Name, err)
 	}

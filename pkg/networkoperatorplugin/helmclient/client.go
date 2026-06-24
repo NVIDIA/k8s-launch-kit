@@ -115,7 +115,9 @@ func (r *restClientGetter) ToRESTMapper() (meta.RESTMapper, error) {
 		return nil, err
 	}
 	mapper := restmapper.NewDeferredDiscoveryRESTMapper(dc)
-	return restmapper.NewShortcutExpander(mapper, dc, func(s string) {}), nil
+	// The warning handler is intentionally a no-op: we suppress shortcut-expander
+	// deprecation warnings rather than surfacing them to l8k users.
+	return restmapper.NewShortcutExpander(mapper, dc, func(_ string) {}), nil
 }
 
 func (r *restClientGetter) ToRawKubeConfigLoader() clientcmd.ClientConfig {

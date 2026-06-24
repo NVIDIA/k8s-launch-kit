@@ -305,7 +305,7 @@ func runUpgrade(
 func pullChart(_ context.Context, repoURL, chartName, chartVersion string) (string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "l8k-helm-chart-*")
 	if err != nil {
-		return "", func() {}, fmt.Errorf("create temp dir for chart pull: %w", err)
+		return "", func() { /* nothing to clean up on this error path */ }, fmt.Errorf("create temp dir for chart pull: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(tmpDir) }
 
@@ -327,7 +327,7 @@ func pullChart(_ context.Context, repoURL, chartName, chartVersion string) (stri
 	)
 	if err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("resolve %s@%s in %s: %w", chartName, chartVersion, repoURL, err)
+		return "", func() { /* nothing to clean up on this error path */ }, fmt.Errorf("resolve %s@%s in %s: %w", chartName, chartVersion, repoURL, err)
 	}
 
 	dl := downloader.ChartDownloader{
@@ -340,7 +340,7 @@ func pullChart(_ context.Context, repoURL, chartName, chartVersion string) (stri
 	saved, _, err := dl.DownloadTo(chartURL, chartVersion, tmpDir)
 	if err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("download %s: %w", chartURL, err)
+		return "", func() { /* nothing to clean up on this error path */ }, fmt.Errorf("download %s: %w", chartURL, err)
 	}
 	return saved, cleanup, nil
 }

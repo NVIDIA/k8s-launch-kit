@@ -17,7 +17,7 @@
 package networkoperatorplugin
 
 import (
-	_ "embed"
+	_ "embed" // required for the //go:embed directive that loads releases.yaml
 	"fmt"
 	"sort"
 	"sync"
