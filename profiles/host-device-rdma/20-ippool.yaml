@@ -11,6 +11,13 @@ spec:
   subnet: {{(index $.NvIpam.Subnets $i).Subnet}}
   perNodeBlockSize: 50
   gateway: {{(index $.NvIpam.Subnets $i).Gateway}}
+  {{- with (index $.NvIpam.Subnets $i).Exclusions }}
+  exclusions:
+  {{- range . }}
+  - startIP: {{ .StartIP }}
+    endIP: {{ .EndIP }}
+  {{- end }}
+  {{- end }}
   {{- if $.ClusterConfig.SourceMachineLabels }}
   nodeSelector:
     nodeSelectorTerms:
@@ -49,6 +56,13 @@ spec:
   subnet: {{(index .NvIpam.Subnets 0).Subnet}}
   perNodeBlockSize: 50
   gateway: {{(index .NvIpam.Subnets 0).Gateway}}
+  {{- with (index .NvIpam.Subnets 0).Exclusions }}
+  exclusions:
+  {{- range . }}
+  - startIP: {{ .StartIP }}
+    endIP: {{ .EndIP }}
+  {{- end }}
+  {{- end }}
   {{- if .ClusterConfig.SourceMachineLabels }}
   nodeSelector:
     nodeSelectorTerms:

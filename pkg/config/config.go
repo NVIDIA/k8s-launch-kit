@@ -171,11 +171,29 @@ type NvIpamConfig struct {
 	StartingSubnet string               `yaml:"startingSubnet,omitempty"`
 	Mask           int                  `yaml:"mask,omitempty"`
 	Offset         int                  `yaml:"offset,omitempty"`
+	// ReserveFirstIPs excludes the first N host addresses of EVERY subnet
+	// (network address upward, e.g. 10 → .0–.9 on a /24). Applied to both
+	// auto-generated and manually-listed subnets. Mask-agnostic.
+	ReserveFirstIPs int `yaml:"reserveFirstIPs,omitempty"`
+	// ReserveLastIPs excludes the last N host addresses of EVERY subnet
+	// (broadcast address downward, e.g. 6 → .250–.255 on a /24).
+	ReserveLastIPs int `yaml:"reserveLastIPs,omitempty"`
 }
 
 type NvIpamSubnetConfig struct {
 	Subnet  string `yaml:"subnet"`
 	Gateway string `yaml:"gateway"`
+	// Exclusions are IP ranges removed from the pool's allocatable set. The
+	// computed ReserveFirstIPs/ReserveLastIPs ranges are prepended to any
+	// ranges listed here (reserve first, then explicit).
+	Exclusions []NvIpamExclusion `yaml:"exclusions,omitempty"`
+}
+
+// NvIpamExclusion is a contiguous [StartIP, EndIP] range (inclusive) excluded
+// from an IPPool. Mirrors the NV-IPAM IPPool CRD's spec.exclusions[] shape.
+type NvIpamExclusion struct {
+	StartIP string `yaml:"startIP"`
+	EndIP   string `yaml:"endIP"`
 }
 
 type SriovConfig struct {
@@ -363,6 +381,20 @@ func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKubernetesCon
 	logger.Info("Cluster configuration loaded successfully",
 		"networkOperatorVersion", config.NetworkOperator.Version,
 		"namespace", config.NetworkOperator.Namespace)
+
+	if err := validateNvIpam(config.NvIpam); err != nil {
+		return nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
+	}
+
+	// Finalize exclusions for explicitly-listed (manual) subnets. Auto-generated
+	// subnets are finalized in the render path after GenerateSubnets. l8k never
+	// rewrites nvIpam back to disk, so this runs exactly once per load.
+	if config.NvIpam != nil && len(config.NvIpam.Subnets) > 0 {
+		if err := ApplyReservedExclusions(
+			config.NvIpam.Subnets, config.NvIpam.ReserveFirstIPs, config.NvIpam.ReserveLastIPs); err != nil {
+			return nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
+		}
+	}
 
 	emitPresetDeviationWarnings(&config, logger)
 
@@ -593,4 +625,137 @@ func GenerateSubnets(startingSubnet string, mask, offset, count int) ([]NvIpamSu
 	}
 
 	return subnets, nil
+}
+
+// uint32ToIP renders a big-endian uint32 as a dotted-quad IPv4 string.
+func uint32ToIP(v uint32) string {
+	ip := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ip, v)
+	return ip.String()
+}
+
+// reservedExclusions computes the low/high reserved IP ranges for a subnet CIDR.
+// reserveFirst host addresses from the network address upward and reserveLast
+// from the broadcast address downward are returned as inclusive ranges. Returns
+// nil when both counts are <= 0.
+func reservedExclusions(subnetCIDR string, reserveFirst, reserveLast int) ([]NvIpamExclusion, error) {
+	if reserveFirst <= 0 && reserveLast <= 0 {
+		return nil, nil
+	}
+
+	_, ipnet, err := net.ParseCIDR(subnetCIDR)
+	if err != nil {
+		return nil, fmt.Errorf("invalid subnet %q: %w", subnetCIDR, err)
+	}
+	ip4 := ipnet.IP.To4()
+	if ip4 == nil {
+		return nil, fmt.Errorf("subnet %q must be IPv4", subnetCIDR)
+	}
+
+	network := binary.BigEndian.Uint32(ip4)
+	ones, bits := ipnet.Mask.Size()
+	blockSize := uint32(1) << uint(bits-ones)
+	broadcast := network + blockSize - 1
+
+	if uint64(reserveFirst)+uint64(reserveLast) >= uint64(blockSize) {
+		return nil, fmt.Errorf(
+			"reserveFirstIPs (%d) + reserveLastIPs (%d) leaves no usable addresses in %s (block size %d)",
+			reserveFirst, reserveLast, subnetCIDR, blockSize)
+	}
+
+	var out []NvIpamExclusion
+	if reserveFirst > 0 {
+		out = append(out, NvIpamExclusion{
+			StartIP: uint32ToIP(network),
+			EndIP:   uint32ToIP(network + uint32(reserveFirst) - 1),
+		})
+	}
+	if reserveLast > 0 {
+		out = append(out, NvIpamExclusion{
+			StartIP: uint32ToIP(broadcast - uint32(reserveLast) + 1),
+			EndIP:   uint32ToIP(broadcast),
+		})
+	}
+	return out, nil
+}
+
+// ApplyReservedExclusions finalizes each subnet's Exclusions list by prepending
+// the computed reserve ranges (ReserveFirstIPs/ReserveLastIPs) to any explicit
+// exclusions already present. It is a no-op when both reserve counts are <= 0.
+// Call exactly once per subnet slice (slices built by GenerateSubnets are fresh
+// per render path; manual subnets are finalized once at load time).
+func ApplyReservedExclusions(subnets []NvIpamSubnetConfig, reserveFirst, reserveLast int) error {
+	if reserveFirst <= 0 && reserveLast <= 0 {
+		return nil
+	}
+	for i := range subnets {
+		reserved, err := reservedExclusions(subnets[i].Subnet, reserveFirst, reserveLast)
+		if err != nil {
+			return err
+		}
+		if len(reserved) > 0 {
+			subnets[i].Exclusions = append(reserved, subnets[i].Exclusions...)
+		}
+	}
+	return nil
+}
+
+// validateNvIpam checks the nvIpam exclusion settings before any rendering.
+// It validates the reserve counts and any explicit per-subnet exclusion ranges.
+func validateNvIpam(nv *NvIpamConfig) error {
+	if nv == nil {
+		return nil
+	}
+	if nv.ReserveFirstIPs < 0 {
+		return fmt.Errorf("nvIpam.reserveFirstIPs must be >= 0, got %d", nv.ReserveFirstIPs)
+	}
+	if nv.ReserveLastIPs < 0 {
+		return fmt.Errorf("nvIpam.reserveLastIPs must be >= 0, got %d", nv.ReserveLastIPs)
+	}
+
+	// For auto-generated subnets there are no entries to iterate at load time,
+	// so verify the reserve counts are feasible against the configured mask up
+	// front rather than failing mid-render.
+	if len(nv.Subnets) == 0 && nv.StartingSubnet != "" && nv.Mask > 0 &&
+		(nv.ReserveFirstIPs > 0 || nv.ReserveLastIPs > 0) {
+		cidr := fmt.Sprintf("%s/%d", nv.StartingSubnet, nv.Mask)
+		if _, err := reservedExclusions(cidr, nv.ReserveFirstIPs, nv.ReserveLastIPs); err != nil {
+			return err
+		}
+	}
+
+	for _, s := range nv.Subnets {
+		var ipnet *net.IPNet
+		if s.Subnet != "" {
+			var err error
+			if _, ipnet, err = net.ParseCIDR(s.Subnet); err != nil {
+				return fmt.Errorf("nvIpam subnet %q is not valid CIDR: %w", s.Subnet, err)
+			}
+		}
+		// Reserve counts must leave usable addresses in each manual subnet.
+		if ipnet != nil && (nv.ReserveFirstIPs > 0 || nv.ReserveLastIPs > 0) {
+			if _, err := reservedExclusions(s.Subnet, nv.ReserveFirstIPs, nv.ReserveLastIPs); err != nil {
+				return err
+			}
+		}
+		for _, ex := range s.Exclusions {
+			start := net.ParseIP(ex.StartIP)
+			end := net.ParseIP(ex.EndIP)
+			if start == nil || start.To4() == nil {
+				return fmt.Errorf("nvIpam exclusion has invalid IPv4 startIP %q", ex.StartIP)
+			}
+			if end == nil || end.To4() == nil {
+				return fmt.Errorf("nvIpam exclusion has invalid IPv4 endIP %q", ex.EndIP)
+			}
+			if binary.BigEndian.Uint32(start.To4()) > binary.BigEndian.Uint32(end.To4()) {
+				return fmt.Errorf("nvIpam exclusion startIP %q must be <= endIP %q", ex.StartIP, ex.EndIP)
+			}
+			// Explicit ranges must fall within their own subnet, else NV-IPAM
+			// rejects the IPPool at apply time — surface it at config load.
+			if ipnet != nil && (!ipnet.Contains(start) || !ipnet.Contains(end)) {
+				return fmt.Errorf("nvIpam exclusion %s-%s is outside subnet %s", ex.StartIP, ex.EndIP, s.Subnet)
+			}
+		}
+	}
+	return nil
 }

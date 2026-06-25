@@ -597,6 +597,50 @@ With the auto-generation example above, a cluster with 2 groups (4 east-west PFs
 
 The `offset` parameter controls how many subnet blocks to skip between consecutive subnets (offset=1 is contiguous, offset=2 skips every other).
 
+**IP exclusions** — l8k can populate the IPPool `spec.exclusions` so addresses
+reserved for infrastructure (gateways, EVPN endpoints) are never handed to pods.
+Two mechanisms combine:
+
+- `reserveFirstIPs` / `reserveLastIPs` — a global, mask-agnostic pattern applied
+  to **every** subnet (including each auto-generated per-rail subnet). They
+  reserve the first N host addresses (from the network address upward) and the
+  last N (down from the broadcast address).
+- per-subnet `exclusions` — optional explicit `startIP`/`endIP` ranges on a
+  manually-listed subnet, for anything the reserve pattern doesn't cover.
+
+The computed reserve ranges are prepended to any explicit `exclusions`. The
+gateway is not excluded automatically — it is covered by the low reserve block.
+
+```yaml
+nvIpam:
+  poolName: nv-ipam-pool
+  startingSubnet: "192.168.0.0"
+  mask: 24
+  offset: 1
+  reserveFirstIPs: 10   # reserve .0–.9 on every /24
+  reserveLastIPs: 6     # reserve .250–.255 on every /24
+  # Optional explicit ranges on a manual subnet, merged on top of the reserve pattern:
+  # subnets:
+  # - subnet: 192.168.0.0/24
+  #   gateway: 192.168.0.1
+  #   exclusions:
+  #   - {startIP: 192.168.0.2, endIP: 192.168.0.3}
+```
+
+For a `/24` this reserves `.0–.9` and `.250–.255`, leaving a usable range of
+`.10–.249`. The rendered IPPool then carries:
+
+```yaml
+spec:
+  subnet: 192.168.0.0/24
+  gateway: 192.168.0.1
+  exclusions:
+  - startIP: 192.168.0.0
+    endIP: 192.168.0.9
+  - startIP: 192.168.0.250
+    endIP: 192.168.0.255
+```
+
 Example of the configuration file discovered from the cluster:
 
 ```yaml

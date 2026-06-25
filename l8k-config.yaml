@@ -48,10 +48,18 @@ nvIpam:
   startingSubnet: "192.168.0.0"
   mask: 22
   offset: 1
+  # IP exclusions (optional). reserveFirstIPs/reserveLastIPs apply to EVERY
+  # subnet, including each auto-generated per-rail subnet — they reserve the
+  # first N and last N host addresses (gateway is covered by the low block).
+  # reserveFirstIPs: 10   # e.g. .0–.9 on a /24
+  # reserveLastIPs: 6     # e.g. .250–.255 on a /24
   # Option 2: Manually list subnets (takes precedence if non-empty)
   # subnets:
   # - subnet: 192.168.2.0/24
   #   gateway: 192.168.2.1
+  #   # explicit per-subnet exclusions are merged on top of the reserve pattern:
+  #   exclusions:
+  #   - {startIP: 192.168.2.2, endIP: 192.168.2.3}
   # - subnet: 192.168.3.0/24
   #   gateway: 192.168.3.1
   # - subnet: 192.168.4.0/24

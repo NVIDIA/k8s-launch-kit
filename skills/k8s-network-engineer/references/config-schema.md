@@ -46,6 +46,8 @@ Controls NV-IPAM (NVIDIA IP Address Management) pool generation.
 | `startingSubnet` | string   | `192.168.0.0`    | Base subnet for auto-generation                      |
 | `mask`           | int      | `22`             | Subnet mask length for auto-generated subnets        |
 | `offset`         | int      | `1`              | Offset from network address for gateway (gateway = network + offset) |
+| `reserveFirstIPs`| int      | `0`              | Exclude the first N host addresses of every subnet (network upward) |
+| `reserveLastIPs` | int      | `0`              | Exclude the last N host addresses of every subnet (broadcast downward) |
 | `subnets`        | list     | `[]` (empty)     | Manual subnet list; takes precedence over auto-generation |
 
 ### Auto-Generation (Option 1)
@@ -67,6 +69,31 @@ subnets:
 ```
 
 Manual subnets take precedence over auto-generation.
+
+### IP Exclusions
+
+l8k can populate the IPPool's `spec.exclusions` so reserved addresses (floating
+gateway, EVPN endpoints, etc.) are never allocated to pods:
+
+- `reserveFirstIPs` / `reserveLastIPs` — a mask-agnostic pattern applied to
+  **every** subnet (auto-generated and manual). On a `/24`, `reserveFirstIPs: 10`
+  and `reserveLastIPs: 6` reserve `.0–.9` and `.250–.255`, leaving `.10–.249`.
+- Each manual subnet may also carry explicit `exclusions` (`startIP`/`endIP`)
+  ranges; the computed reserve ranges are prepended to them.
+
+The gateway is not excluded automatically — it falls inside the low reserve
+block. Each auto-generated per-rail subnet gets the reserve ranges computed
+relative to its own network address.
+
+```yaml
+nvIpam:
+  poolName: nv-ipam-pool
+  startingSubnet: "192.168.0.0"
+  mask: 24
+  offset: 1
+  reserveFirstIPs: 10
+  reserveLastIPs: 6
+```
 
 ## sriov
 

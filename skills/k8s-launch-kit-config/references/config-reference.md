@@ -94,13 +94,31 @@ nvIpam:
   # offset=1 means gateway = network_address + 1 (e.g., 192.168.0.1).
   offset: 1
 
+  # --- IP exclusions (optional) ---
+
+  # int | default: 0
+  # Reserve the first N host addresses of EVERY subnet (network address upward),
+  # applied to both auto-generated and manual subnets. Mask-agnostic.
+  # Renders into the IPPool spec.exclusions[]. e.g. 10 → .0–.9 on a /24.
+  # reserveFirstIPs: 10
+
+  # int | default: 0
+  # Reserve the last N host addresses of EVERY subnet (broadcast downward).
+  # e.g. 6 → .250–.255 on a /24. The gateway is NOT auto-excluded — it is
+  # covered by the low reserve block.
+  # reserveLastIPs: 6
+
   # --- Manual mode (takes precedence if non-empty) ---
 
   # list | default: [] (empty, triggers auto-generation)
   # Explicit subnet definitions. Provide one entry per rail across all groups.
+  # Each subnet may carry its own `exclusions` (startIP/endIP) ranges; the
+  # computed reserveFirstIPs/reserveLastIPs ranges are prepended to them.
   # subnets:
   #   - subnet: 192.168.2.0/24     # CIDR notation
   #     gateway: 192.168.2.1       # Gateway IP within the subnet
+  #     exclusions:                # optional, merged on top of the reserve pattern
+  #       - {startIP: 192.168.2.2, endIP: 192.168.2.3}
   #   - subnet: 192.168.3.0/24
   #     gateway: 192.168.3.1
 
