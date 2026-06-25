@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
 	sigyaml "sigs.k8s.io/yaml"
 )
 
@@ -110,7 +111,7 @@ func buildNetworkAnnotation(cfg *config.LaunchKitConfig, group *config.ClusterCo
 		return ""
 	}
 
-	ewPFs := filterEastWestPFs(group.PFs)
+	ewPFs := pfutil.FilterEastWestPFs(group.PFs)
 	isMultirail := cfg.Profile.Multirail
 
 	// Spectrum-X profiles
@@ -178,7 +179,7 @@ func buildNetworkResources(cfg *config.LaunchKitConfig, group *config.ClusterCon
 		return nil
 	}
 
-	ewPFs := filterEastWestPFs(group.PFs)
+	ewPFs := pfutil.FilterEastWestPFs(group.PFs)
 	isMultirail := cfg.Profile.Multirail
 
 	resources := map[string]string{}

@@ -17,13 +17,17 @@
 package networkoperatorplugin
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/plugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -122,10 +126,10 @@ func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.Lau
 	if effectiveRelease == "" {
 		return nil
 	}
-	rel, ok := LookupRelease(effectiveRelease)
+	rel, ok := releases.LookupRelease(effectiveRelease)
 	if !ok {
 		return fmt.Errorf("unsupported network operator release %q; supported: %v",
-			effectiveRelease, SupportedReleases())
+			effectiveRelease, releases.SupportedReleases())
 	}
 	if fullConfig.NetworkOperator == nil {
 		fullConfig.NetworkOperator = &config.NetworkOperatorConfig{}
@@ -252,6 +256,19 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 
 func (p *NetworkOperatorPlugin) SelectProfile(config *config.LaunchKitConfig) (*profiles.Profile, error) {
 	return nil, nil
+}
+
+// DiscoverClusterConfig satisfies plugin.Plugin by delegating to the
+// helm-free discovery sub-package. The plugin struct's configuration knobs
+// (NodeSelector, KeepNamespace, CollapseNicRails) plus the REST config are
+// forwarded as discovery.Options so library callers can invoke the same
+// flow via discovery.Discover without constructing a NetworkOperatorPlugin.
+func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig) error {
+	return discovery.DiscoverClusterConfig(ctx, c, p.RESTConfig, cfg, discovery.Options{
+		NodeSelector:     p.NodeSelector,
+		KeepNamespace:    p.KeepNamespace,
+		CollapseNicRails: p.CollapseNicRails,
+	})
 }
 
 var _ plugin.Plugin = &NetworkOperatorPlugin{}

@@ -26,7 +26,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 )
 
@@ -204,7 +204,7 @@ func init() {
 	generateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace")
 	generateCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
 		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
-			strings.Join(networkoperatorplugin.SupportedReleases(), ", ")))
+			strings.Join(releases.SupportedReleases(), ", ")))
 	generateCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
 	generateCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 

@@ -487,7 +487,7 @@ func TestSanitizeIdentifier(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
-			assert.Equal(t, tc.expected, sanitizeIdentifier(tc.input))
+			assert.Equal(t, tc.expected, config.SanitizeIdentifier(tc.input))
 		})
 	}
 }
@@ -500,7 +500,7 @@ func labelledGroup(machineType, gpuType string, pfs []config.PFConfig, nodes []s
 	caps *config.ClusterCapabilities) config.ClusterConfig {
 	labelValue := config.MachineLabelValue(machineType, gpuType)
 	return config.ClusterConfig{
-		Identifier:   sanitizeIdentifier(labelValue),
+		Identifier:   config.SanitizeIdentifier(labelValue),
 		MachineType:  machineType,
 		GPUType:      gpuType,
 		PFs:          pfs,
@@ -567,8 +567,8 @@ func TestMergeCompatibleGroups(t *testing.T) {
 
 		assert.Len(t, result, 2)
 		// Single-source buckets keep the source group's machine-label identifier.
-		assert.Equal(t, sanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200")), result[0].Identifier)
-		assert.Equal(t, sanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-A100")), result[1].Identifier)
+		assert.Equal(t, config.SanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200")), result[0].Identifier)
+		assert.Equal(t, config.SanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-A100")), result[1].Identifier)
 		assert.Nil(t, result[0].RailPciAddresses)
 		assert.Nil(t, result[1].RailPciAddresses)
 	})
@@ -633,7 +633,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		assert.Len(t, result[0].RailPciAddresses, 1)
 		assert.Equal(t, []string{"0000:19:00.0", "0000:09:00.0"}, result[0].RailPciAddresses[0])
 		// Second: unmerged DGX-A100/A100 group keeps its machine-label identifier
-		assert.Equal(t, sanitizeIdentifier(config.MachineLabelValue("DGX-A100", "NVIDIA-A100")), result[1].Identifier)
+		assert.Equal(t, config.SanitizeIdentifier(config.MachineLabelValue("DGX-A100", "NVIDIA-A100")), result[1].Identifier)
 		assert.Nil(t, result[1].RailPciAddresses)
 	})
 
@@ -647,7 +647,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 1)
-		assert.Equal(t, sanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200")), result[0].Identifier)
+		assert.Equal(t, config.SanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200")), result[0].Identifier)
 		assert.Nil(t, result[0].RailPciAddresses)
 	})
 
@@ -771,7 +771,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 	t.Run("cross-rail PCI address conflict prevents merge", func(t *testing.T) {
 		// Same PCI address 0000:9c:00.0 at rail 4 in group-1 and rail 5 in group-2.
 		// Merging would cause the device plugin to claim it for the wrong rail.
-		expectedID := sanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200"))
+		expectedID := config.SanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200"))
 		groups := []config.ClusterConfig{
 			labelledGroup("DGX-B200", "NVIDIA-H200",
 				[]config.PFConfig{ewPF("0000:19:00.0", 0), ewPF("0000:9b:00.0", 1)},
@@ -1097,38 +1097,6 @@ func TestMergeCompatibleGroups_MergesThirdPartyRDMAModules(t *testing.T) {
 		assert.Len(t, merged, 2)
 		assert.Equal(t, []string{"iw_cm"}, merged[0].ThirdPartyRDMAModules)
 		assert.Equal(t, []string{"xprtrdma"}, merged[1].ThirdPartyRDMAModules)
-	})
-}
-
-func TestParseModuleList(t *testing.T) {
-	exclude := []string{"mlx5_core", "mlx5_ib", "ib_umad", "ib_uverbs", "ib_ipoib", "rdma_cm", "rdma_ucm", "ib_core", "ib_cm"}
-
-	t.Run("filters out target modules", func(t *testing.T) {
-		output := "iw_cm\nmlx5_core\nib_core\nnfsrdma\n"
-		result := parseModuleList(output, exclude)
-		assert.Equal(t, []string{"iw_cm", "nfsrdma"}, result)
-	})
-
-	t.Run("empty output returns nil", func(t *testing.T) {
-		result := parseModuleList("", exclude)
-		assert.Nil(t, result)
-	})
-
-	t.Run("only target modules returns nil", func(t *testing.T) {
-		result := parseModuleList("mlx5_core\nib_core\n", exclude)
-		assert.Nil(t, result)
-	})
-
-	t.Run("handles whitespace and blank lines", func(t *testing.T) {
-		output := "  iw_cm  \n\n  xprtrdma\n  \n"
-		result := parseModuleList(output, exclude)
-		assert.Equal(t, []string{"iw_cm", "xprtrdma"}, result)
-	})
-
-	t.Run("deduplicates", func(t *testing.T) {
-		output := "iw_cm\niw_cm\niw_cm\n"
-		result := parseModuleList(output, exclude)
-		assert.Equal(t, []string{"iw_cm"}, result)
 	})
 }
 

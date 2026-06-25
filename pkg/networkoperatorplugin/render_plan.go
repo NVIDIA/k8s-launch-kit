@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -171,7 +172,7 @@ func bucketizeOrdered(groups []config.ClusterConfig) ([]bucketKey, map[bucketKey
 }
 
 func keyFor(g config.ClusterConfig, idx int) bucketKey {
-	ewCount := len(filterEastWestPFs(g.PFs))
+	ewCount := len(pfutil.FilterEastWestPFs(g.PFs))
 	if g.GPUType == "" {
 		return bucketKey{gpuType: fmt.Sprintf("__empty_%d", idx), railCount: ewCount}
 	}
@@ -557,7 +558,7 @@ func preallocatePlanSubnets(cfg *config.LaunchKitConfig, plans []RenderBucket) (
 	counts := make([]int, len(plans))
 	total := 0
 	for i, plan := range plans {
-		ewPFs := filterEastWestPFs(plan.Merged.PFs)
+		ewPFs := pfutil.FilterEastWestPFs(plan.Merged.PFs)
 		if multirail && len(ewPFs) > 0 {
 			counts[i] = len(ewPFs)
 		} else {

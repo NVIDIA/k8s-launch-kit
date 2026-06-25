@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package networkoperatorplugin
+package discovery
 
 import (
 	"context"
@@ -89,50 +89,63 @@ func TestParseClusterConfig_InvalidYAML(t *testing.T) {
 // TestDiscover_NilClientRejected anchors the input-validation contract.
 // Library callers that pass nil get an error before any state is touched.
 func TestDiscover_NilClientRejected(t *testing.T) {
-	_, err := Discover(context.Background(), nil, nil)
+	cfg, err := config.DefaultLaunchKitConfig()
+	require.NoError(t, err)
+	_, err = Discover(context.Background(), nil, nil, cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "kubeClient must not be nil")
 }
 
-// TestDiscover_WithBaseConfigPreservesUserFields checks that
-// WithBaseConfig hands the user's config to the underlying plugin instead
-// of replacing it with the embedded defaults. We can't run the full
-// discovery loop without a real cluster, so we exercise the entry point
-// only as far as the base-config selection logic; the actual
-// DiscoverClusterConfig call short-circuits cleanly when the supplied
-// base config lacks a NetworkOperator section.
-func TestDiscover_WithBaseConfigPreservesUserFields(t *testing.T) {
+// TestDiscover_NilCfgRejected pins the cfg-required contract introduced
+// when WithBaseConfig was replaced by the positional cfg argument.
+func TestDiscover_NilCfgRejected(t *testing.T) {
+	c := fake.NewClientBuilder().Build()
+	_, err := Discover(context.Background(), c, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cfg must not be nil")
+}
+
+// TestDiscover_PreservesUserFields checks that Discover hands the
+// caller's cfg to the underlying discovery flow instead of substituting
+// the embedded default. We can't run the full discovery loop without a
+// real cluster, so we exercise the entry point only as far as the
+// pre-discovery wiring; DiscoverClusterConfig short-circuits cleanly when
+// the supplied cfg lacks a NetworkOperator section.
+func TestDiscover_PreservesUserFields(t *testing.T) {
 	base := &config.LaunchKitConfig{
 		PodNamespace: "library-test-ns",
 		// Deliberately no NetworkOperator: DiscoverClusterConfig requires
 		// it and will return early with a descriptive error. That gets
-		// us past the base-config selection step (which is what this
-		// test pins down) without needing a fake DaemonSet rollout.
+		// us past the wiring step (which is what this test pins down)
+		// without needing a fake DaemonSet rollout.
 	}
 	c := fake.NewClientBuilder().Build()
 
-	_, err := Discover(context.Background(), c, nil, WithBaseConfig(base))
+	_, err := Discover(context.Background(), c, nil, base)
 	require.Error(t, err, "expected DiscoverClusterConfig to surface its missing-NetworkOperator error")
 	assert.Contains(t, err.Error(), "networkOperator section is required")
 }
 
-// TestDiscover_DefaultsToEmbeddedConfig checks the converse of the
-// prior test: with no WithBaseConfig option, Discover constructs a fresh
-// base from the embedded default. The embedded default carries a
-// NetworkOperator section, so the missing-section error from the prior
-// test should NOT fire — instead Discover progresses past the base-config
-// step and into the cluster-contact phase, which we bound with a tight
-// context timeout to keep the test cheap. Any non-nil error other than
-// "networkOperator section is required" is acceptable for this wiring
-// check; we never want the test to actually wait on DaemonSet rollout.
-func TestDiscover_DefaultsToEmbeddedConfig(t *testing.T) {
+// TestDiscover_DefaultConfigPath checks the converse: when the caller
+// passes a freshly-loaded DefaultLaunchKitConfig (the canonical "I want
+// l8k's defaults" entry point), the embedded NetworkOperator section is
+// present and the missing-section error from the prior test does NOT
+// fire. Instead Discover progresses past the wiring step into the
+// cluster-contact phase, which we bound with a tight context timeout to
+// keep the test cheap. Any non-nil error other than "networkOperator
+// section is required" is acceptable for this wiring check; we never
+// want the test to actually wait on DaemonSet rollout.
+func TestDiscover_DefaultConfigPath(t *testing.T) {
+	cfg, err := config.DefaultLaunchKitConfig()
+	require.NoError(t, err)
+
 	c := fake.NewClientBuilder().Build()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	_, err := Discover(ctx, c, nil)
+	_, err = Discover(ctx, c, nil, cfg)
 	require.Error(t, err, "expected a downstream error since the fake client has no NIC daemons")
 	assert.NotContains(t, err.Error(), "networkOperator section is required",
-		"embedded default config must populate NetworkOperator")
+		"DefaultLaunchKitConfig must populate NetworkOperator")
 }

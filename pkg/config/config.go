@@ -117,6 +117,19 @@ func GPULabelValue(gpuType string) string {
 	return prefix + suffix
 }
 
+// SanitizeIdentifier converts a product-type or label-value string into a
+// valid K8s name component: lowercases the input and replaces spaces with
+// hyphens. Used by discovery to derive `ClusterConfig.Identifier` from the
+// machine label, and by the renderer when an identifier needs to land in a
+// resource name. Both call sites must agree on the rule so a config produced
+// by discovery renders the same names downstream — single function here
+// guarantees that.
+func SanitizeIdentifier(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	return s
+}
+
 // LaunchKitConfig represents the l8k-config.yaml structure
 type LaunchKitConfig struct {
 	NetworkOperator *NetworkOperatorConfig `yaml:"networkOperator,omitempty"`
