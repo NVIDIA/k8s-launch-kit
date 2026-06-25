@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package networkoperatorplugin
+package discovery
 
 import (
 	"context"
@@ -30,6 +30,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
@@ -90,17 +91,27 @@ func isBlueField3Device(deviceID string) bool {
 	return strings.EqualFold(deviceID, "a2dc")
 }
 
-func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, defaultConfig *config.LaunchKitConfig) error {
+// DiscoverClusterConfig walks the cluster and populates cfg with the
+// discovered hardware topology. Library callers typically invoke it via
+// Discover, which wraps it with default-options handling. The parent
+// networkoperatorplugin package's NetworkOperatorPlugin.DiscoverClusterConfig
+// method is a thin shim that delegates here.
+//
+// See Discover's doc for input/output semantics; the only difference here
+// is that the configuration knobs (RESTConfig, NodeSelector,
+// KeepNamespace, CollapseNicRails) come in via Options instead of as
+// functional DiscoverOptions.
+func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *rest.Config, cfg *config.LaunchKitConfig, opts Options) error {
 	uiOutput := ui.FromContext(ctx)
 
-	if defaultConfig.NetworkOperator == nil {
+	if cfg.NetworkOperator == nil {
 		return fmt.Errorf("networkOperator section is required in config for discovery")
 	}
 
 	bootstrapOpts := nicconfigdaemon.Options{
-		Repository:       defaultConfig.NetworkOperator.Repository,
-		Version:          defaultConfig.NetworkOperator.ComponentVersion,
-		ImagePullSecrets: defaultConfig.NetworkOperator.ImagePullSecrets,
+		Repository:       cfg.NetworkOperator.Repository,
+		Version:          cfg.NetworkOperator.ComponentVersion,
+		ImagePullSecrets: cfg.NetworkOperator.ImagePullSecrets,
 	}
 
 	// Pre-clean any leftover bootstrap from a prior crashed/killed run (the
@@ -133,7 +144,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		return fmt.Errorf("failed to bootstrap NIC configuration daemon: %w", err)
 	}
 
-	if !p.KeepNamespace {
+	if !opts.KeepNamespace {
 		defer func() {
 			uiOutput.Info("Tearing down namespace %q", nicconfigdaemon.Namespace)
 			if cleanupErr := nicconfigdaemon.Cleanup(context.Background(), c); cleanupErr != nil {
@@ -167,18 +178,18 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	// the NFD label, which may not exist yet at discover time. The
 	// `--node-selector` value is deliberately NOT used here; it only flows into
 	// the saved cluster-config nodeSelector (for deploy time, when NFD exists).
-	if p.RESTConfig != nil {
-		expectedNodes = filterNodesWithNICs(ctx, p.RESTConfig, nicconfigdaemon.Namespace, expectedNodes, dsPods)
+	if restConfig != nil {
+		expectedNodes = filterNodesWithNICs(ctx, restConfig, nicconfigdaemon.Namespace, expectedNodes, dsPods)
 		if len(expectedNodes) == 0 {
 			return fmt.Errorf("no nodes with an NVIDIA NIC (PCI vendor 15b3) were found")
 		}
-	} else if len(p.NodeSelector) > 0 {
+	} else if len(opts.NodeSelector) > 0 {
 		// Fallback when pod exec is unavailable (no REST config): keep the
 		// historical label-based filter so callers without a REST config don't
 		// regress.
-		expectedNodes = filterNodesByLabels(expectedNodes, nodeLabels, p.NodeSelector)
+		expectedNodes = filterNodesByLabels(expectedNodes, nodeLabels, opts.NodeSelector)
 		if len(expectedNodes) == 0 {
-			return fmt.Errorf("no nodes match the node selector %v", p.NodeSelector)
+			return fmt.Errorf("no nodes match the node selector %v", opts.NodeSelector)
 		}
 	}
 
@@ -193,8 +204,8 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		return err
 	}
 
-	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, p.NodeSelector, p.CollapseNicRails)
-	defaultConfig.ClusterConfig = clusterConfig
+	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, opts.NodeSelector, opts.CollapseNicRails)
+	cfg.ClusterConfig = clusterConfig
 
 	for _, w := range nsWarnings {
 		uiOutput.Warning("%s", w)
@@ -204,16 +215,16 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	// Results are classified into third-party RDMA vs storage modules and
 	// saved to config for user inspection. mlx5-prefixed modules (NVIDIA's own)
 	// are silently filtered out.
-	if p.RESTConfig != nil {
-		for i := range defaultConfig.ClusterConfig {
-			group := &defaultConfig.ClusterConfig[i]
+	if restConfig != nil {
+		for i := range cfg.ClusterConfig {
+			group := &cfg.ClusterConfig[i]
 
 			// Fill in missing machine/GPU product types by probing hardware
 			// directly when GPU operator node labels are absent.
 			needMachine := group.MachineType == ""
 			needProduct := group.GPUType == ""
 			if needMachine || needProduct {
-				machine, product := discoverHardwareTypes(ctx, p.RESTConfig,
+				machine, product := discoverHardwareTypes(ctx, restConfig,
 					nicconfigdaemon.Namespace, group.WorkerNodes, dsPods,
 					needMachine, needProduct)
 				if needMachine && machine != "" {
@@ -231,7 +242,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			// the PIX-gate override rewrites Traffic and re-runs rails.
 			// Failures are non-fatal; when nvidia-smi is absent, today's
 			// part-number classification continues to govern.
-			discoverGPUTopology(ctx, p.RESTConfig,
+			discoverGPUTopology(ctx, restConfig,
 				nicconfigdaemon.Namespace, group, dsPods)
 
 			// Probe per-PF fabric type from active port state + subnet
@@ -239,7 +250,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			// alone). Populates PFConfig.LinkType / LinkTypeSource. Used by
 			// the declarative defaults in `l8k generate` (Unit 8) to fill
 			// `--fabric` from the discovered group.
-			discoverGroupFabric(ctx, p.RESTConfig,
+			discoverGroupFabric(ctx, restConfig,
 				nicconfigdaemon.Namespace, group, dsPods)
 
 			// Try to enrich with a predefined topology preset for this
@@ -315,7 +326,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 				// already logs this via the hardware-type probes.
 			}
 
-			modules, err := discoverThirdPartyRDMAModules(ctx, p.RESTConfig,
+			modules, err := discoverThirdPartyRDMAModules(ctx, restConfig,
 				nicconfigdaemon.Namespace, group.WorkerNodes, dsPods)
 			if err != nil {
 				log.Log.Error(err, "failed to discover OFED-dependent modules", "group", group.Identifier)
@@ -325,13 +336,13 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 			rdma, storage := classifyDiscoveredModules(modules)
 			if len(rdma) > 0 {
 				group.ThirdPartyRDMAModules = rdma
-				defaultConfig.DOCADriver.UnloadThirdPartyRDMAModules = true
+				cfg.DOCADriver.UnloadThirdPartyRDMAModules = true
 				uiOutput.Info("Discovered %d third-party RDMA module(s) for group %s — enabled unloadThirdPartyRDMAModules",
 					len(rdma), group.Identifier)
 			}
 			if len(storage) > 0 {
 				group.StorageModules = storage
-				defaultConfig.DOCADriver.UnloadStorageModules = true
+				cfg.DOCADriver.UnloadStorageModules = true
 				uiOutput.Info("Discovered %d storage module(s) for group %s — enabled unloadStorageModules",
 					len(storage), group.Identifier)
 			}
@@ -344,12 +355,12 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 	// algorithm: every node in the group is patched with
 	// `nvidia.kubernetes-launch-kit.machine: <machineType>-<gpuType>` and
 	// the group's Identifier + NodeSelector are aligned with that value.
-	applyMachineLabelToGroups(ctx, c, defaultConfig.ClusterConfig)
+	applyMachineLabelToGroups(ctx, c, cfg.ClusterConfig)
 
 	// Phase summary — counts surfaced at info level so the default UX shows
 	// progress without requiring --log-level=debug.
 	totalEW, totalNS, presetMatches, deviationGroups, labelled := 0, 0, 0, 0, 0
-	for _, g := range defaultConfig.ClusterConfig {
+	for _, g := range cfg.ClusterConfig {
 		for _, pf := range g.PFs {
 			switch pf.Traffic {
 			case "east-west":
@@ -369,7 +380,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		}
 	}
 	log.Log.Info("Discovery summary",
-		"groupCount", len(defaultConfig.ClusterConfig),
+		"groupCount", len(cfg.ClusterConfig),
 		"eastWestPFs", totalEW,
 		"northSouthPFsFiltered", totalNS,
 		"presetMatches", presetMatches,
@@ -416,7 +427,7 @@ func applyMachineLabelToGroups(ctx context.Context, c client.Client, groups []co
 				"gpuType", g.GPUType,
 				"labelValue", machineLabel,
 				"nodes", len(g.WorkerNodes))
-			g.Identifier = sanitizeIdentifier(machineLabel)
+			g.Identifier = config.SanitizeIdentifier(machineLabel)
 			g.NodeSelector = map[string]string{config.MachineLabelKey: machineLabel}
 		}
 
@@ -913,7 +924,7 @@ func collapseGroupRails(pfs []config.PFConfig) ([]config.PFConfig, int) {
 			ns = append(ns, pf)
 		}
 	}
-	collapsedEW, dropped := collapsePFsToOnePerNIC(ew)
+	collapsedEW, dropped := pfutil.CollapsePFsToOnePerNIC(ew)
 	if dropped == 0 {
 		return pfs, 0
 	}
@@ -1126,7 +1137,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 				pfs = collapsed
 				log.Log.Info("Collapsed multi-plane PFs to one rail per NIC; pass --collapse-nic-rails=false to keep one rail per PF",
 					"groupIndex", i, "identifier", identifier,
-					"droppedPFs", dropped, "eastWestRails", len(filterEastWestPFs(pfs)))
+					"droppedPFs", dropped, "eastWestRails", len(pfutil.FilterEastWestPFs(pfs)))
 			}
 		}
 
@@ -1910,3 +1921,4 @@ func execInPod(ctx context.Context, restConfig *rest.Config,
 	namespace, podName, containerName string, command []string) (string, error) {
 	return kubeclient.ExecStdoutInPod(ctx, restConfig, namespace, podName, containerName, command)
 }
+

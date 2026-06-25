@@ -22,7 +22,6 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -32,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 )
 
@@ -160,7 +160,7 @@ func legacyRdmaSharedConfigList(groups []config.ClusterConfig, rdmaShared *confi
 	}
 	var entries []string
 	for _, g := range groups {
-		ew := filterEastWestPFs(g.PFs)
+		ew := pfutil.FilterEastWestPFs(g.PFs)
 		if multirail {
 			for _, pf := range ew {
 				rail := 0
@@ -204,7 +204,7 @@ func legacySriovDevicePluginConfigList(groups []config.ClusterConfig, hostdev *c
 	}
 	var entries []string
 	for _, g := range groups {
-		ew := filterEastWestPFs(g.PFs)
+		ew := pfutil.FilterEastWestPFs(g.PFs)
 		if multirail {
 			for _, pf := range ew {
 				rail := 0
@@ -329,7 +329,7 @@ func applyPrefix(prefix string, nicID, plane, rail int) string {
 
 // pfsPerNic computes PFs-per-NIC by grouping east-west PFs by PCI bus:device prefix.
 func pfsPerNic(pfs []config.PFConfig) int {
-	ewPFs := filterEastWestPFs(pfs)
+	ewPFs := pfutil.FilterEastWestPFs(pfs)
 	nicDevices := map[string]bool{}
 	for _, pf := range ewPFs {
 		if idx := strings.LastIndex(pf.PciAddress, "."); idx > 0 {
@@ -362,7 +362,7 @@ func pfsPerNic(pfs []config.PFConfig) int {
 // Fallback (no Rail set): chunk east-west PFs into groups of `planes`,
 // preserving the legacy pre-Rail-field rendering.
 func railPciGroups(pfs []config.PFConfig, planes int) [][]string {
-	ewPFs := filterEastWestPFs(pfs)
+	ewPFs := pfutil.FilterEastWestPFs(pfs)
 	if planes < 1 {
 		planes = 1
 	}
@@ -395,7 +395,7 @@ func railPciGroups(pfs []config.PFConfig, planes int) [][]string {
 // railCount returns how many distinct rails are present in the east-west
 // PFs. Falls back to len(ew)/planes when Rail is unset on any PF.
 func railCount(pfs []config.PFConfig, planes int) int {
-	ewPFs := filterEastWestPFs(pfs)
+	ewPFs := pfutil.FilterEastWestPFs(pfs)
 	if planes < 1 {
 		planes = 1
 	}
@@ -465,7 +465,7 @@ func masterPFsByNIC(pfs []config.PFConfig) []string {
 	master := map[string]string{} // bus:device → lowest-function PCI address seen
 	order := []string{}           // NIC bus:device prefixes in first-seen order
 	for _, pf := range pfs {
-		prefix, ok := pciBusDevicePrefix(pf.PciAddress)
+		prefix, ok := pfutil.PciBusDevicePrefix(pf.PciAddress)
 		if !ok {
 			continue
 		}
@@ -481,92 +481,6 @@ func masterPFsByNIC(pfs []config.PFConfig) []string {
 		out = append(out, master[prefix])
 	}
 	return out
-}
-
-// pciBusDevicePrefix returns the "domain:bus:device" portion of a PCI address
-// — everything before the final ".<function>" — which is shared by all PFs that
-// live on the same physical NIC. Returns ok=false for a malformed address that
-// has no function suffix.
-func pciBusDevicePrefix(pciAddress string) (string, bool) {
-	idx := strings.LastIndex(pciAddress, ".")
-	if idx <= 0 {
-		return "", false
-	}
-	return pciAddress[:idx], true
-}
-
-// dualPortModelRe matches a port-count keyword that designates a genuinely
-// dual-port adapter. "dual-port"/"dual port" are matched directly. The numeric
-// form requires the "2" to sit on a word boundary (`\b`) so digit-adjacent
-// tokens like "QSFP112" or "Gen2" cannot trigger a false positive; the
-// separator may be a hyphen or a space ("2-port", "2 port"). Case-insensitive.
-var dualPortModelRe = regexp.MustCompile(`(?i)(dual[- ]port|\b2[- ]port)`)
-
-// isDualPortModel reports whether a NIC VPD model/description string indicates a
-// genuinely dual-port adapter — two physical ports that each terminate a
-// separate fabric and therefore each deserve their own rail. NVIDIA VPD strings
-// spell this as "2-port"/"Dual-port" (e.g. "... QSFP112 2-port PCIe ...",
-// "... Dual-port QSFP112 ..."). Single-port adapters say "1P"/"single-port" and
-// multi-plane adapters — whose extra PFs are planes of one physical port — carry
-// no port-count keyword at all. Matching is deliberately conservative: the
-// numeric "2" must stand on a word boundary, so substrings like "QSFP112" or
-// "Gen2" cannot trigger a false positive that would leave a multi-plane NIC
-// uncollapsed. An empty/unknown string returns false, which makes the caller
-// collapse to one rail per NIC by default.
-func isDualPortModel(model string) bool {
-	return dualPortModelRe.MatchString(model)
-}
-
-// collapsePFsToOnePerNIC reduces a set of PFs to one per NIC (PCI bus:device
-// prefix): for a NIC whose VPD model is dual-port (isDualPortModel) every PF is
-// kept — each physical port is its own rail — while for any other NIC only the
-// master (lowest-function) PF survives, since its sibling PFs are planes of a
-// single rail rather than independent rails. Input order is preserved among the
-// kept PFs, and the count of dropped PFs is returned so the caller can log a
-// summary.
-//
-// It is intended to run on the east-west subset only; north-south PFs should be
-// filtered out by the caller (they are excluded from rails and manifests
-// anyway). A PF with a malformed PCI address (no function suffix) is always
-// kept, never silently dropped.
-func collapsePFsToOnePerNIC(pfs []config.PFConfig) (kept []config.PFConfig, dropped int) {
-	type nicInfo struct {
-		dualPort bool
-		master   string
-	}
-	nics := map[string]*nicInfo{}
-	for i := range pfs {
-		prefix, ok := pciBusDevicePrefix(pfs[i].PciAddress)
-		if !ok {
-			continue
-		}
-		info := nics[prefix]
-		if info == nil {
-			info = &nicInfo{master: pfs[i].PciAddress}
-			nics[prefix] = info
-		} else if pfs[i].PciAddress < info.master {
-			info.master = pfs[i].PciAddress
-		}
-		if isDualPortModel(pfs[i].Model) {
-			info.dualPort = true
-		}
-	}
-
-	kept = make([]config.PFConfig, 0, len(pfs))
-	for i := range pfs {
-		prefix, ok := pciBusDevicePrefix(pfs[i].PciAddress)
-		if !ok {
-			kept = append(kept, pfs[i])
-			continue
-		}
-		info := nics[prefix]
-		if info.dualPort || pfs[i].PciAddress == info.master {
-			kept = append(kept, pfs[i])
-		} else {
-			dropped++
-		}
-	}
-	return kept, dropped
 }
 
 // templateContext wraps the full config but presents a single ClusterConfig group.
@@ -652,7 +566,7 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilt
 		totalSubnets := 0
 		groupCounts := make([]int, len(groups))
 		for gi := range groups {
-			ewPFs := filterEastWestPFs(groups[gi].PFs)
+			ewPFs := pfutil.FilterEastWestPFs(groups[gi].PFs)
 			if multirail && len(ewPFs) > 0 {
 				groupCounts[gi] = len(ewPFs)
 			} else {
@@ -688,7 +602,7 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilt
 		}
 		// Filter out north-south PFs so templates only see east-west devices.
 		// This keeps indices sequential for naming (a, b, c, d instead of a, d, e, f).
-		renderGroup.PFs = filterEastWestPFs(renderGroup.PFs)
+		renderGroup.PFs = pfutil.FilterEastWestPFs(renderGroup.PFs)
 
 		// For non-Spectrum-X profiles with NicInterfaceNameTemplate enabled,
 		// pre-compute NetworkInterface and RdmaDevice names on each PF.
@@ -738,18 +652,6 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilt
 	}
 
 	return results, nil
-}
-
-// filterEastWestPFs returns only PFs with traffic == "east-west",
-// so that template indices stay sequential for naming (a, b, c, d).
-func filterEastWestPFs(pfs []config.PFConfig) []config.PFConfig {
-	var filtered []config.PFConfig
-	for _, pf := range pfs {
-		if pf.Traffic == "east-west" {
-			filtered = append(filtered, pf)
-		}
-	}
-	return filtered
 }
 
 // groupFabric returns the discovered fabric ("Ethernet" or "InfiniBand")
@@ -825,7 +727,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	if skipWorkloadTemplates {
 		for _, group := range cfg.ClusterConfig {
 			ewGroup := group
-			ewGroup.PFs = filterEastWestPFs(group.PFs)
+			ewGroup.PFs = pfutil.FilterEastWestPFs(group.PFs)
 			rendered, err := patchWorkloadManifest(cfg.Workload.Manifest, cfg, &ewGroup)
 			if err != nil {
 				return nil, fmt.Errorf("failed to patch workload manifest for group %s: %w", group.Identifier, err)
@@ -848,7 +750,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 // selector), so NicInterfaceNameTemplate must be enabled to provide them.
 func hasEmptyNetworkInterfaceNames(groups []config.ClusterConfig) bool {
 	for i := range groups {
-		for _, pf := range filterEastWestPFs(groups[i].PFs) {
+		for _, pf := range pfutil.FilterEastWestPFs(groups[i].PFs) {
 			if pf.NetworkInterface == "" {
 				return true
 			}
@@ -914,14 +816,6 @@ func isSpectrumX(cfg *config.LaunchKitConfig) bool {
 	return cfg.Profile != nil && cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable
 }
 
-// sanitizeIdentifier converts a product type string to a valid K8s name component.
-// Lowercases the string and replaces spaces with hyphens.
-func sanitizeIdentifier(s string) string {
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, " ", "-")
-	return s
-}
-
 // boundedSuffix returns "-<value>" bounded to at most maxLen chars (including
 // the leading "-"). When the natural "-<s>" form fits, it is returned as-is;
 // otherwise the prefix is truncated and an 8-hex FNV-32a hash of the original
@@ -979,7 +873,7 @@ func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool)
 	buckets := map[mergeKey][]int{}
 
 	for i, g := range groups {
-		ewCount := len(filterEastWestPFs(g.PFs))
+		ewCount := len(pfutil.FilterEastWestPFs(g.PFs))
 		key := mergeKey{gpuType: g.GPUType, railCount: ewCount}
 		if g.GPUType == "" {
 			// Never merge groups without a gpuType — use a unique key per group
@@ -1060,7 +954,7 @@ func hasRailPciConflict(groups []config.ClusterConfig, indices []int) bool {
 	// Map each PCI address to the rail index where it first appears
 	addrToRail := map[string]int{}
 	for _, idx := range indices {
-		for _, pf := range filterEastWestPFs(groups[idx].PFs) {
+		for _, pf := range pfutil.FilterEastWestPFs(groups[idx].PFs) {
 			if pf.Rail == nil {
 				continue
 			}
@@ -1088,7 +982,7 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 	// Collect east-west PFs per group (all have the same count)
 	ewPFsByGroup := make([][]config.PFConfig, len(indices))
 	for i, idx := range indices {
-		ewPFsByGroup[i] = filterEastWestPFs(groups[idx].PFs)
+		ewPFsByGroup[i] = pfutil.FilterEastWestPFs(groups[idx].PFs)
 	}
 	railCount := len(ewPFsByGroup[0])
 
@@ -1171,7 +1065,7 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 	// node alongside the machine label, so it's stable across merged
 	// source machineTypes by construction.
 	return config.ClusterConfig{
-		Identifier:           sanitizeIdentifier(gpuType),
+		Identifier:           config.SanitizeIdentifier(gpuType),
 		MachineType:          first.MachineType,
 		GPUType:              gpuType,
 		LinkType:             first.LinkType,

@@ -34,6 +34,7 @@ import (
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -249,7 +250,7 @@ func init() {
 	rootCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from the config file")
 	rootCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
 		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: %s",
-			strings.Join(networkoperatorplugin.SupportedReleases(), ", ")))
+			strings.Join(releases.SupportedReleases(), ", ")))
 
 	// Phase 2: Deployment generation flags
 	rootCmd.Flags().StringVar(&fabric, "fabric", "", "Select the fabric type to deploy (infiniband, ethernet)")
@@ -343,9 +344,9 @@ func validateConfig(options *options.Options) error {
 	// Validate --network-operator-release against the embedded catalog so the
 	// user sees the supported list immediately, before discovery/render.
 	if options.NetworkOperatorRelease != "" {
-		if _, ok := networkoperatorplugin.LookupRelease(options.NetworkOperatorRelease); !ok {
+		if _, ok := releases.LookupRelease(options.NetworkOperatorRelease); !ok {
 			return fmt.Errorf("unknown --network-operator-release %q; supported: %v",
-				options.NetworkOperatorRelease, networkoperatorplugin.SupportedReleases())
+				options.NetworkOperatorRelease, releases.SupportedReleases())
 		}
 	}
 

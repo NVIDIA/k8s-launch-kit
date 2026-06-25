@@ -37,6 +37,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -304,7 +305,7 @@ func CheckComponentVersions(ctx context.Context, c client.Client, namespace, sel
 	if selectedRelease == "" {
 		return &ComponentVersionCheck{Skipped: true, Reason: "no networkOperator.selectedRelease in user-config"}, nil
 	}
-	rel, ok := LookupRelease(selectedRelease)
+	rel, ok := releases.LookupRelease(selectedRelease)
 	if !ok {
 		return &ComponentVersionCheck{Skipped: true, Reason: fmt.Sprintf("selectedRelease %q is not in the embedded catalog", selectedRelease)}, nil
 	}
@@ -470,7 +471,7 @@ func CheckHelmReleaseVersion(ctx context.Context, c client.Client, namespace, se
 		return &VersionCheck{Skipped: true, Reason: "no networkOperator.selectedRelease in user-config"}, nil
 	}
 
-	rel, ok := LookupRelease(selectedRelease)
+	rel, ok := releases.LookupRelease(selectedRelease)
 	if !ok {
 		return &VersionCheck{
 			Skipped:         true,

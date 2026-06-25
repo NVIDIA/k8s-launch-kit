@@ -498,7 +498,7 @@ The tool resolves configuration and profile paths in order: local directory firs
 
 ### Network Operator release selection
 
-Use `--network-operator-release <MAJOR.MINOR>` (or `networkOperator.selectedRelease` in the config file) to pick a Network Operator release line by name instead of hand-editing image tags. Supported releases live in an embedded catalog ([pkg/networkoperatorplugin/releases.yaml](pkg/networkoperatorplugin/releases.yaml)); each entry maps a release key to image tags + repository for the operator and DOCA driver. Selecting a release populates `networkOperator.{version,componentVersion,repository}` and `docaDriver.version` from the catalog — explicit values in `l8k-config.yaml` are overridden when a release is set.
+Use `--network-operator-release <MAJOR.MINOR>` (or `networkOperator.selectedRelease` in the config file) to pick a Network Operator release line by name instead of hand-editing image tags. Supported releases live in an embedded catalog ([pkg/networkoperatorplugin/releases/releases.yaml](pkg/networkoperatorplugin/releases/releases.yaml)); each entry maps a release key to image tags + repository for the operator and DOCA driver. Selecting a release populates `networkOperator.{version,componentVersion,repository}` and `docaDriver.version` from the catalog — explicit values in `l8k-config.yaml` are overridden when a release is set.
 
 ```bash
 # Pick a release on the CLI
@@ -963,7 +963,7 @@ clusterConfig:
 
 ### North-South Traffic Detection
 
-During cluster discovery, the tool automatically identifies BlueField DPU devices (as opposed to SuperNICs or ConnectX NICs) by matching each device's `partNumber` against a known list of DPU product codes in [pkg/networkoperatorplugin/ns-product-ids](pkg/networkoperatorplugin/ns-product-ids). Devices matching a DPU product code are classified as **north-south** traffic (management/external), while all other devices are classified as **east-west** traffic (GPU interconnect).
+During cluster discovery, the tool automatically identifies BlueField DPU devices (as opposed to SuperNICs or ConnectX NICs) by matching each device's `partNumber` against a known list of DPU product codes in [pkg/networkoperatorplugin/discovery/ns-product-ids](pkg/networkoperatorplugin/discovery/ns-product-ids). Devices matching a DPU product code are classified as **north-south** traffic (management/external), while all other devices are classified as **east-west** traffic (GPU interconnect).
 
 North-south PFs are included in the saved cluster configuration for visibility, but are **automatically filtered out** during template rendering so that only east-west PFs appear in the generated manifests. Each east-west PF is assigned a sequential rail number (rail-0, rail-1, rail-2, ...) used for naming resources like SriovNetworkNodePolicy and IPPool entries.
 
@@ -1065,6 +1065,39 @@ make coverage     # Run tests with coverage
 make lint         # Run linter
 make lint-check   # Install and run linter
 ```
+
+### Library API
+
+l8k exposes a helm-free Go library for in-process cluster discovery at
+`github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery`. The
+package is the public entry point for embedders (e.g. NVIDIA AICR's
+network-topology snapshotter): it walks the cluster, bootstraps the
+nic-configuration daemon, populates a `*config.LaunchKitConfig` with the
+discovered hardware topology, and writes the
+`nvidia.kubernetes-launch-kit.machine` / `.gpu` node labels.
+
+```go
+import (
+    l8kconfig "github.com/nvidia/k8s-launch-kit/pkg/config"
+    l8kdisc   "github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery"
+)
+
+cfg, err := l8kconfig.DefaultLaunchKitConfig()  // baked-in NO release + repos
+if err != nil { return err }
+
+cfg, err = l8kdisc.Discover(ctx, kubeClient, restConfig, cfg,
+    l8kdisc.WithLogger(logr.FromSlogHandler(slog.Default().Handler())),
+    // l8kdisc.WithRelease("26.1"),  // optional override
+)
+```
+
+The discovery package is deliberately Helm-free — importing it does NOT
+pull `helm.sh/helm/v3` or its transitive deps into the consumer's binary.
+The deploy/validate paths (network-operator install/upgrade, manifest
+state checks) live in the parent `pkg/networkoperatorplugin` package and
+are reachable from there for callers that need them. The release catalog
+that powers `WithRelease` is exposed separately at
+`pkg/networkoperatorplugin/releases` (`LookupRelease`, `SupportedReleases`).
 
 ### Docker
 

@@ -22,7 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 )
 
 // commandSchema describes a subcommand for AI agent discovery.
@@ -90,7 +90,7 @@ var schemaCmd = &cobra.Command{
 			Fabrics:                          []string{"ethernet", "infiniband"},
 			DeploymentTypes:                  []string{"sriov", "rdma_shared", "host_device"},
 			OutputFormats:                    []string{"text", "json"},
-			SupportedNetworkOperatorReleases: networkoperatorplugin.SupportedReleases(),
+			SupportedNetworkOperatorReleases: releases.SupportedReleases(),
 			ExitCodes: map[string]string{
 				"0": "success",
 				"1": "general_error",

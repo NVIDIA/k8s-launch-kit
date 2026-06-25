@@ -14,7 +14,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package networkoperatorplugin
+// Package releases is the embedded catalog of supported Network Operator
+// release lines. It is consumed by:
+//
+//   - pkg/networkoperatorplugin (ApplyNetworkOperatorRelease, validate.go)
+//     to populate per-line versions / repositories / helm-repo URLs on a
+//     LaunchKitConfig.
+//   - pkg/networkoperatorplugin/discovery (WithRelease option) to let
+//     library callers pick a release without manually constructing the
+//     config fields.
+//   - pkg/cmd (flag validation and help text).
+//
+// The catalog is the single source of truth for what "26.4" / "26.1" /
+// "25.10" actually resolve to. Bump entries here when a patch release
+// ships; add a new key for a new minor.
+package releases
 
 import (
 	_ "embed"
