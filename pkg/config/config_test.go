@@ -859,3 +859,190 @@ func TestGenerateSubnets(t *testing.T) {
 	})
 }
 
+func TestReservedExclusions(t *testing.T) {
+	t.Run("user case: /24 reserve 10 low and 6 high", func(t *testing.T) {
+		ex, err := reservedExclusions("192.168.0.0/24", 10, 6)
+		require.NoError(t, err)
+		require.Len(t, ex, 2)
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.0.0", EndIP: "192.168.0.9"}, ex[0])
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.0.250", EndIP: "192.168.0.255"}, ex[1])
+	})
+
+	t.Run("non-zero base subnet keeps ranges relative to its own network", func(t *testing.T) {
+		ex, err := reservedExclusions("192.168.5.0/24", 10, 6)
+		require.NoError(t, err)
+		require.Len(t, ex, 2)
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.5.0", EndIP: "192.168.5.9"}, ex[0])
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.5.250", EndIP: "192.168.5.255"}, ex[1])
+	})
+
+	t.Run("/16 subnet", func(t *testing.T) {
+		ex, err := reservedExclusions("10.1.0.0/16", 10, 6)
+		require.NoError(t, err)
+		require.Len(t, ex, 2)
+		assert.Equal(t, NvIpamExclusion{StartIP: "10.1.0.0", EndIP: "10.1.0.9"}, ex[0])
+		assert.Equal(t, NvIpamExclusion{StartIP: "10.1.255.250", EndIP: "10.1.255.255"}, ex[1])
+	})
+
+	t.Run("reserve first only", func(t *testing.T) {
+		ex, err := reservedExclusions("192.168.0.0/24", 5, 0)
+		require.NoError(t, err)
+		require.Len(t, ex, 1)
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.0.0", EndIP: "192.168.0.4"}, ex[0])
+	})
+
+	t.Run("reserve last only", func(t *testing.T) {
+		ex, err := reservedExclusions("192.168.0.0/24", 0, 5)
+		require.NoError(t, err)
+		require.Len(t, ex, 1)
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.0.251", EndIP: "192.168.0.255"}, ex[0])
+	})
+
+	t.Run("both zero returns nil", func(t *testing.T) {
+		ex, err := reservedExclusions("192.168.0.0/24", 0, 0)
+		require.NoError(t, err)
+		assert.Nil(t, ex)
+	})
+
+	t.Run("reserve exceeding block size errors", func(t *testing.T) {
+		_, err := reservedExclusions("192.168.0.0/24", 200, 200)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no usable addresses")
+	})
+
+	t.Run("invalid CIDR errors", func(t *testing.T) {
+		_, err := reservedExclusions("not-a-cidr", 1, 1)
+		require.Error(t, err)
+	})
+}
+
+func TestApplyReservedExclusions(t *testing.T) {
+	t.Run("prepends reserve before explicit exclusions", func(t *testing.T) {
+		subnets := []NvIpamSubnetConfig{{
+			Subnet:  "192.168.0.0/24",
+			Gateway: "192.168.0.1",
+			Exclusions: []NvIpamExclusion{
+				{StartIP: "192.168.0.100", EndIP: "192.168.0.100"},
+			},
+		}}
+		require.NoError(t, ApplyReservedExclusions(subnets, 10, 6))
+		require.Len(t, subnets[0].Exclusions, 3)
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.0.0", EndIP: "192.168.0.9"}, subnets[0].Exclusions[0])
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.0.250", EndIP: "192.168.0.255"}, subnets[0].Exclusions[1])
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.0.100", EndIP: "192.168.0.100"}, subnets[0].Exclusions[2])
+	})
+
+	t.Run("no-op when both counts zero, explicit preserved", func(t *testing.T) {
+		subnets := []NvIpamSubnetConfig{{
+			Subnet:     "192.168.0.0/24",
+			Exclusions: []NvIpamExclusion{{StartIP: "192.168.0.5", EndIP: "192.168.0.5"}},
+		}}
+		require.NoError(t, ApplyReservedExclusions(subnets, 0, 0))
+		require.Len(t, subnets[0].Exclusions, 1)
+		assert.Equal(t, NvIpamExclusion{StartIP: "192.168.0.5", EndIP: "192.168.0.5"}, subnets[0].Exclusions[0])
+	})
+
+	t.Run("applies across every subnet in the slice", func(t *testing.T) {
+		subnets := []NvIpamSubnetConfig{
+			{Subnet: "192.168.0.0/24"},
+			{Subnet: "192.168.1.0/24"},
+		}
+		require.NoError(t, ApplyReservedExclusions(subnets, 10, 6))
+		require.Len(t, subnets[0].Exclusions, 2)
+		require.Len(t, subnets[1].Exclusions, 2)
+		assert.Equal(t, "192.168.1.250", subnets[1].Exclusions[1].StartIP)
+		assert.Equal(t, "192.168.1.255", subnets[1].Exclusions[1].EndIP)
+	})
+}
+
+func TestValidateNvIpam(t *testing.T) {
+	t.Run("nil is valid", func(t *testing.T) {
+		assert.NoError(t, validateNvIpam(nil))
+	})
+
+	t.Run("negative reserveFirstIPs", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{ReserveFirstIPs: -1})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reserveFirstIPs must be >= 0")
+	})
+
+	t.Run("negative reserveLastIPs", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{ReserveLastIPs: -1})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reserveLastIPs must be >= 0")
+	})
+
+	t.Run("oversized reserve against manual subnet", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{
+			ReserveFirstIPs: 200,
+			ReserveLastIPs:  200,
+			Subnets:         []NvIpamSubnetConfig{{Subnet: "192.168.0.0/24"}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no usable addresses")
+	})
+
+	t.Run("oversized reserve against auto-gen subnet caught at load time", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{
+			StartingSubnet:  "192.168.0.0",
+			Mask:            24,
+			ReserveFirstIPs: 300,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no usable addresses")
+	})
+
+	t.Run("invalid manual subnet CIDR", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{
+			Subnets: []NvIpamSubnetConfig{{Subnet: "not-a-cidr"}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not valid CIDR")
+	})
+
+	t.Run("explicit exclusion outside its subnet", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{
+			Subnets: []NvIpamSubnetConfig{{
+				Subnet:     "192.168.0.0/24",
+				Exclusions: []NvIpamExclusion{{StartIP: "192.168.5.2", EndIP: "192.168.5.3"}},
+			}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "outside subnet")
+	})
+
+	t.Run("invalid explicit startIP", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{
+			Subnets: []NvIpamSubnetConfig{{
+				Subnet:     "192.168.0.0/24",
+				Exclusions: []NvIpamExclusion{{StartIP: "nope", EndIP: "192.168.0.9"}},
+			}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid IPv4 startIP")
+	})
+
+	t.Run("inverted explicit range", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{
+			Subnets: []NvIpamSubnetConfig{{
+				Subnet:     "192.168.0.0/24",
+				Exclusions: []NvIpamExclusion{{StartIP: "192.168.0.9", EndIP: "192.168.0.1"}},
+			}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be <= endIP")
+	})
+
+	t.Run("valid reserve + explicit", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{
+			ReserveFirstIPs: 10,
+			ReserveLastIPs:  6,
+			Subnets: []NvIpamSubnetConfig{{
+				Subnet:     "192.168.0.0/24",
+				Exclusions: []NvIpamExclusion{{StartIP: "192.168.0.2", EndIP: "192.168.0.3"}},
+			}},
+		})
+		assert.NoError(t, err)
+	})
+}
+

@@ -572,6 +572,9 @@ func preallocatePlanSubnets(cfg *config.LaunchKubernetesConfig, plans []RenderBu
 	if err != nil {
 		return nil, fmt.Errorf("auto-generate subnets: %w", err)
 	}
+	if err := config.ApplyReservedExclusions(all, cfg.NvIpam.ReserveFirstIPs, cfg.NvIpam.ReserveLastIPs); err != nil {
+		return nil, fmt.Errorf("auto-generate subnets: %w", err)
+	}
 	out := make([][]config.NvIpamSubnetConfig, len(plans))
 	off := 0
 	for i, n := range counts {

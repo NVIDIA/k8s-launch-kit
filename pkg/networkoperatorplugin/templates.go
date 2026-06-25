@@ -666,6 +666,10 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKubernetesConfig, gr
 		if err != nil {
 			return nil, fmt.Errorf("failed to auto-generate subnets: %w", err)
 		}
+		if err := config.ApplyReservedExclusions(
+			allSubnets, cfg.NvIpam.ReserveFirstIPs, cfg.NvIpam.ReserveLastIPs); err != nil {
+			return nil, fmt.Errorf("failed to auto-generate subnets: %w", err)
+		}
 
 		groupSubnets = make([][]config.NvIpamSubnetConfig, len(groups))
 		subnetOffset := 0
