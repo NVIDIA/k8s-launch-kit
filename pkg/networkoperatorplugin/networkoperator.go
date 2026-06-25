@@ -114,7 +114,7 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 // --network-operator-release when emitting cluster-config.yaml. CLI-side
 // validation in pkg/cmd/root.go has already rejected unknown releases
 // supplied via flag; config-file values are validated here.
-func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.LaunchKubernetesConfig) error {
+func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.LaunchKitConfig) error {
 	effectiveRelease := options.NetworkOperatorRelease
 	if effectiveRelease == "" && fullConfig.NetworkOperator != nil {
 		effectiveRelease = fullConfig.NetworkOperator.SelectedRelease
@@ -145,7 +145,7 @@ func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.Lau
 
 // ApplyOptionsToConfig applies CLI options to the configuration, overriding file values.
 // CLI flags take precedence over config file values for any explicitly set option.
-func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fullConfig *config.LaunchKubernetesConfig) error {
+func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fullConfig *config.LaunchKitConfig) error {
 	if err := ApplyNetworkOperatorRelease(options, fullConfig); err != nil {
 		return err
 	}
@@ -250,7 +250,7 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 	return nil
 }
 
-func (p *NetworkOperatorPlugin) SelectProfile(config *config.LaunchKubernetesConfig) (*profiles.Profile, error) {
+func (p *NetworkOperatorPlugin) SelectProfile(config *config.LaunchKitConfig) (*profiles.Profile, error) {
 	return nil, nil
 }
 

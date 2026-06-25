@@ -95,7 +95,7 @@ func userConfigPath() string {
 // existed but couldn't be parsed (or the release lookup failed); the
 // caller should bail since downstream code would be making decisions
 // from incomplete state.
-func loadUserConfig(opts options.Options) (*config.LaunchKubernetesConfig, string, error) {
+func loadUserConfig(opts options.Options) (*config.LaunchKitConfig, string, error) {
 	path := userConfigPath()
 	if path == "" {
 		return nil, "", nil

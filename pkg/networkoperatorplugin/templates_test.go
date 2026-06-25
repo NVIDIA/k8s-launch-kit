@@ -913,28 +913,28 @@ func TestHasEmptyNetworkInterfaceNames(t *testing.T) {
 
 func TestIsRdmaShared(t *testing.T) {
 	t.Run("rdma_shared deployment", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: "rdma_shared"},
 		}
 		assert.True(t, isRdmaShared(cfg))
 	})
 
 	t.Run("sriov deployment", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: "sriov"},
 		}
 		assert.False(t, isRdmaShared(cfg))
 	})
 
 	t.Run("nil profile", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{}
+		cfg := &config.LaunchKitConfig{}
 		assert.False(t, isRdmaShared(cfg))
 	})
 }
 
 func TestMaybeDisableInterfaceNameTemplate(t *testing.T) {
-	mkCfg := func(deployment string, deploy bool, spectrumX bool) *config.LaunchKubernetesConfig {
-		c := &config.LaunchKubernetesConfig{
+	mkCfg := func(deployment string, deploy bool, spectrumX bool) *config.LaunchKitConfig {
+		c := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: deployment},
 			NicConfigurationOperator: &config.NicConfigurationOperatorConfig{
 				DeployNicInterfaceNameTemplate: deploy,
@@ -1016,7 +1016,7 @@ func TestMaybeDisableInterfaceNameTemplate(t *testing.T) {
 	})
 
 	t.Run("nil NicConfigurationOperator → no-op", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: "sriov"},
 		}
 		out := maybeDisableInterfaceNameTemplate(cfg, oneGroup)
@@ -1168,7 +1168,7 @@ func TestProcessTemplate_NicNodePolicy(t *testing.T) {
 	rail0 := 0
 	rail1 := 1
 
-	baseCfg := &config.LaunchKubernetesConfig{
+	baseCfg := &config.LaunchKitConfig{
 		NetworkOperator: &config.NetworkOperatorConfig{
 			Repository:       "nvcr.io/nvidia/mellanox",
 			ComponentVersion: "v1.0.0",
@@ -1479,7 +1479,7 @@ sriovNetworkOperator:
 `
 	require.NoError(t, os.WriteFile(templatePath, []byte(content), 0o644))
 
-	cfg := &config.LaunchKubernetesConfig{
+	cfg := &config.LaunchKitConfig{
 		NetworkOperator: &config.NetworkOperatorConfig{
 			Repository: "nvcr.io/nvidia/mellanox",
 		},

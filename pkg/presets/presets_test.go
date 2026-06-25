@@ -198,7 +198,12 @@ func TestLoadPreset_NotFound(t *testing.T) {
 	}
 }
 
-func TestLoadPreset_NoPresetsDir(t *testing.T) {
+func TestLoadPreset_NoPresetsDir_FallsBackToEmbedded(t *testing.T) {
+	// Without an on-disk presets/ in CWD or the install share dir, LoadPreset
+	// falls back to the embedded preset tree baked into the binary. This is
+	// the library-mode contract: callers get a working preset catalog with no
+	// filesystem layout. The lookup is exact-match — picking a key that the
+	// embedded tree ships ensures the fallback path is exercised.
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	defer func() { _ = os.Chdir(origDir) }()
@@ -208,8 +213,30 @@ func TestLoadPreset_NoPresetsDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if topo == nil {
+		t.Fatalf("expected embedded preset for (PowerEdge-XE9680, NVIDIA-H200), got nil")
+	}
+	if topo.MachineType != "PowerEdge-XE9680" || topo.GPUType != "NVIDIA-H200" {
+		t.Errorf("unexpected preset returned: (%q, %q)", topo.MachineType, topo.GPUType)
+	}
+}
+
+func TestLoadPreset_NoPresetsDir_UnknownKeyStillMissing(t *testing.T) {
+	// The embedded-fallback path must still respect exact-match semantics:
+	// a (machineType, gpuType) the embedded tree doesn't carry returns nil,
+	// not a stray hit. Without this, the fallback would silently widen the
+	// match set the way a glob would.
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	_ = os.Chdir(tmpDir)
+
+	topo, err := LoadPreset("definitely-not-a-real-machine", "definitely-not-a-real-gpu")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if topo != nil {
-		t.Errorf("expected nil when no presets dir, got %+v", topo)
+		t.Errorf("expected nil for an unknown (machineType, gpuType), got %+v", topo)
 	}
 }
 
@@ -489,7 +516,14 @@ func TestListPresets(t *testing.T) {
 	}
 }
 
-func TestListPresets_NoPresetsDir(t *testing.T) {
+func TestListPresets_NoPresetsDir_FallsBackToEmbedded(t *testing.T) {
+	// Without an on-disk presets/ directory, ListPresets falls back to the
+	// embedded preset tree and returns every directory it carries. This is
+	// the library-mode contract that lets a Go caller enumerate available
+	// presets without any host filesystem layout. The exact list is what
+	// happens to ship in the binary at build time; we assert non-empty plus
+	// presence of one well-known canonical preset rather than coupling the
+	// test to the full ship list.
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	defer func() { _ = os.Chdir(origDir) }()
@@ -499,8 +533,18 @@ func TestListPresets_NoPresetsDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if names != nil {
-		t.Errorf("expected nil for missing presets dir, got %v", names)
+	if len(names) == 0 {
+		t.Fatal("expected at least one embedded preset, got empty list")
+	}
+	found := false
+	for _, n := range names {
+		if n == "PowerEdge-XE9680-H200" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected canonical preset PowerEdge-XE9680-H200 in embedded list, got %v", names)
 	}
 }
 
@@ -952,8 +996,10 @@ func TestApplyPreset_LargePreset_PowerEdgeXE9680(t *testing.T) {
 	tmpDir := t.TempDir()
 	presetsDir := filepath.Join(tmpDir, "presets")
 
-	// Copy the actual preset file from the repo
-	srcPath := filepath.Join("..", "..", "presets", "PowerEdge-XE9680-H200", "topology.yaml")
+	// Copy the actual preset file from the package-local data tree (which is
+	// also the source of the embedded FS). Path is relative to this test
+	// file's directory: pkg/presets/data/PowerEdge-XE9680-H200/topology.yaml.
+	srcPath := filepath.Join("data", "PowerEdge-XE9680-H200", "topology.yaml")
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		t.Skipf("skipping: cannot read real preset file: %v", err)

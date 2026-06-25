@@ -54,10 +54,14 @@ archives:
       - goos: windows
         formats:
           - zip
+    # In-repo layout: presets and the default l8k-config live under pkg/
+    # so they can be //go:embed'ed by their consuming packages. The archive
+    # preserves those paths; install scripts copy them out to the canonical
+    # share/l8k locations on the host so existing user workflows are unchanged.
     files:
       - profiles/**/*
-      - presets/**/*
-      - l8k-config.yaml
+      - pkg/presets/data/**/*
+      - pkg/config/default-config.yaml
       - LICENSE
     name_template: "l8k_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 

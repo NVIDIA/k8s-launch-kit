@@ -90,7 +90,7 @@ func isBlueField3Device(deviceID string) bool {
 	return strings.EqualFold(deviceID, "a2dc")
 }
 
-func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, defaultConfig *config.LaunchKubernetesConfig) error {
+func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, defaultConfig *config.LaunchKitConfig) error {
 	uiOutput := ui.FromContext(ctx)
 
 	if defaultConfig.NetworkOperator == nil {

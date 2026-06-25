@@ -41,7 +41,7 @@ rdmaShared:
 clusterConfig:
   - identifier: example   # this comment must NOT be carried over
 `
-	cfg := &LaunchKubernetesConfig{
+	cfg := &LaunchKitConfig{
 		NetworkOperator: &NetworkOperatorConfig{
 			Repository: "nvcr.io/nvidia/mellanox",
 			Namespace:  "nvidia-network-operator",
@@ -82,7 +82,7 @@ clusterConfig:
 	t.Run("output is valid and reloads to the same values", func(t *testing.T) {
 		// Indent is 2 spaces, matching l8k's config style.
 		assert.Contains(t, got, "\n  poolName: nv-ipam-pool")
-		var reloaded LaunchKubernetesConfig
+		var reloaded LaunchKitConfig
 		require.NoError(t, yaml.Unmarshal(out, &reloaded))
 		require.NotNil(t, reloaded.NvIpam)
 		assert.Equal(t, 10, reloaded.NvIpam.ReserveFirstIPs)
@@ -107,7 +107,7 @@ func TestMarshalConfigWithComments_RealExampleConfig(t *testing.T) {
 	if err != nil {
 		t.Skipf("repo l8k-config.yaml not reachable: %v", err)
 	}
-	var cfg LaunchKubernetesConfig
+	var cfg LaunchKitConfig
 	require.NoError(t, yaml.Unmarshal(srcBytes, &cfg))
 	// Simulate discovery replacing clusterConfig.
 	cfg.ClusterConfig = []ClusterConfig{{Identifier: "discovered"}}
@@ -134,7 +134,7 @@ func TestMarshalConfigWithComments_RealExampleConfig(t *testing.T) {
 		"most source comments should survive (%d/%d)", preserved, len(srcComments))
 
 	// Output must still parse back into the config struct.
-	var reloaded LaunchKubernetesConfig
+	var reloaded LaunchKitConfig
 	require.NoError(t, yaml.Unmarshal(out, &reloaded))
 	require.Len(t, reloaded.ClusterConfig, 1)
 	assert.Equal(t, "discovered", reloaded.ClusterConfig[0].Identifier)
@@ -158,7 +158,7 @@ func fullLineCommentsBeforeClusterConfig(src []byte) []string {
 }
 
 func TestMarshalConfigWithComments_NoComments(t *testing.T) {
-	cfg := &LaunchKubernetesConfig{
+	cfg := &LaunchKitConfig{
 		NetworkOperator: &NetworkOperatorConfig{Namespace: "ns"},
 	}
 	out, err := MarshalConfigWithComments(cfg, nil, "")

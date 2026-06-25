@@ -26,7 +26,7 @@ import (
 // warnThirdPartyRDMAModules warns about third-party RDMA modules that will be
 // unloaded. Discovery auto-enables the flag when modules are found, so this only
 // emits the "verify safety" warning when the flag is true and modules are present.
-func warnThirdPartyRDMAModules(cfg *config.LaunchKubernetesConfig, _ string, output ui.Output) {
+func warnThirdPartyRDMAModules(cfg *config.LaunchKitConfig, _ string, output ui.Output) {
 	if cfg.DOCADriver == nil || !cfg.DOCADriver.Enable || !cfg.DOCADriver.UnloadThirdPartyRDMAModules {
 		return
 	}
@@ -47,7 +47,7 @@ func warnThirdPartyRDMAModules(cfg *config.LaunchKubernetesConfig, _ string, out
 // warnStorageModules warns about storage-over-RDMA modules that will be unloaded.
 // Discovery auto-enables the flag when modules are found, so this only emits the
 // "verify safety" warning when the flag is true and modules are present.
-func warnStorageModules(cfg *config.LaunchKubernetesConfig, _ string, output ui.Output) {
+func warnStorageModules(cfg *config.LaunchKitConfig, _ string, output ui.Output) {
 	if cfg.DOCADriver == nil || !cfg.DOCADriver.Enable || !cfg.DOCADriver.UnloadStorageModules {
 		return
 	}

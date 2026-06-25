@@ -17,8 +17,12 @@
 package presets
 
 import (
+	"embed"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 
@@ -26,6 +30,14 @@ import (
 	"gopkg.in/yaml.v2"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// embeddedPresets is the in-binary copy of the preset tree, rooted at "data/".
+// Library callers (and the CLI without a checked-out repo) get a working
+// preset catalog without any filesystem layout on the host. A disk override
+// is honored when present — see resolvePresetsFS.
+//
+//go:embed all:data
+var embeddedPresets embed.FS
 
 // Topology represents a predefined cluster topology preset loaded from a
 // topology.yaml file. It is intentionally separate from config.ClusterConfig
@@ -70,12 +82,14 @@ type presetEntry struct {
 	Topology Topology
 }
 
-// GetPresetsDir resolves the presets directory using a lookup chain:
+// GetPresetsDir resolves an on-disk presets directory using the lookup chain:
 // 1. ./presets (CWD — container/repo root)
 // 2. /usr/local/share/l8k/presets (default install)
 // 3. <binary-dir>/../share/l8k/presets (custom prefix install)
 //
-// Returns ("", nil) if no presets directory is found — presets are optional.
+// Returns ("", nil) if no on-disk presets directory is found. Callers do NOT
+// need an on-disk directory to use this package — see resolvePresetsFS for
+// the embedded-FS fallback that powers library callers.
 func GetPresetsDir() (string, error) {
 	candidates := []string{
 		"presets",
@@ -92,6 +106,41 @@ func GetPresetsDir() (string, error) {
 	return "", nil
 }
 
+// presetsSource describes the FS-rooted preset tree loadAllPresets walks. It
+// carries enough metadata for diagnostics to point operators at the right
+// place ("./presets" vs "embedded") when a preset is rejected.
+type presetsSource struct {
+	fs.FS
+	// label is how this source is referenced in user-facing log lines —
+	// either a filesystem path ("./presets", "/usr/local/share/l8k/presets")
+	// or the sentinel "embedded".
+	label string
+	// embedded is true when this source is the in-binary copy; only used to
+	// gate path-shaped diagnostics (skipped entries record a relative path
+	// rather than an absolute one).
+	embedded bool
+}
+
+// resolvePresetsFS chooses the preset tree to load against. Disk wins over
+// embedded — an on-disk presets directory found via GetPresetsDir is the
+// user's override, kept ahead of the binary's baked-in copy so `l8k preset
+// update` and curated per-machine trees keep working. With no on-disk dir,
+// the embedded copy is used.
+func resolvePresetsFS() (*presetsSource, error) {
+	dir, err := GetPresetsDir()
+	if err != nil {
+		return nil, err
+	}
+	if dir != "" {
+		return &presetsSource{FS: os.DirFS(dir), label: dir}, nil
+	}
+	sub, err := fs.Sub(embeddedPresets, "data")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open embedded presets FS: %w", err)
+	}
+	return &presetsSource{FS: sub, label: "embedded", embedded: true}, nil
+}
+
 // SkippedPreset describes a preset directory that loadAllPresets rejected.
 // It is surfaced by l8k preset list so the user can see WHY a preset they
 // expect to find isn't appearing — silent skipping would otherwise look
@@ -102,24 +151,25 @@ type SkippedPreset struct {
 	Reason  string
 }
 
-// loadAllPresets returns every valid preset under the resolved presets dir,
-// sorted by directory name, plus a list of skipped entries with reasons.
-// Invalid entries (parse error, missing machineType, missing gpuType) are
-// skipped rather than failing the whole load — keeps the lookup robust to
-// stale or partial preset directories. Returns (nil, nil, nil) if no
-// presets dir exists.
+// loadAllPresets returns every valid preset under the resolved preset source
+// (disk if present, embedded otherwise), sorted by directory name, plus a
+// list of skipped entries with reasons. Invalid entries (parse error,
+// missing machineType, missing gpuType) are skipped rather than failing the
+// whole load — keeps the lookup robust to stale or partial preset
+// directories. Returns (nil, nil, nil) when neither a disk presets dir nor
+// the embedded FS yields any entries (only happens in a misconfigured build).
 func loadAllPresets() ([]presetEntry, []SkippedPreset, error) {
-	dir, err := GetPresetsDir()
+	src, err := resolvePresetsFS()
 	if err != nil {
 		return nil, nil, err
 	}
-	if dir == "" {
+	if src == nil {
 		return nil, nil, nil
 	}
 
-	entries, err := os.ReadDir(dir)
+	entries, err := fs.ReadDir(src, ".")
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read presets directory %s: %w", dir, err)
+		return nil, nil, fmt.Errorf("failed to read presets source %s: %w", src.label, err)
 	}
 
 	var out []presetEntry
@@ -133,32 +183,39 @@ func loadAllPresets() ([]presetEntry, []SkippedPreset, error) {
 		if !e.IsDir() {
 			continue
 		}
-		topoPath := filepath.Join(dir, e.Name(), "topology.yaml")
-		data, err := os.ReadFile(topoPath)
+		// path.Join (not filepath.Join) because fs.FS contract requires
+		// forward-slash separators regardless of host OS. Harmless on
+		// Linux where filepath.Separator == '/', but the right helper.
+		topoPath := path.Join(e.Name(), "topology.yaml")
+		data, err := fs.ReadFile(src, topoPath)
 		if err != nil {
-			if os.IsNotExist(err) {
+			// errors.Is(err, fs.ErrNotExist) is the fs-style predicate
+			// that mirrors how we read (fs.ReadFile). Equivalent to
+			// os.IsNotExist on disk-backed sources, but stylistically
+			// consistent with the embedded-FS path.
+			if errors.Is(err, fs.ErrNotExist) {
 				// No topology.yaml — silent skip; the directory just
 				// isn't a preset and that's expected (e.g. README).
 				continue
 			}
-			skip(e.Name(), topoPath, fmt.Sprintf("read failed: %v", err))
+			skip(e.Name(), src.diagPath(topoPath), fmt.Sprintf("read failed: %v", err))
 			continue
 		}
 
 		var t Topology
 		if err := yaml.Unmarshal(data, &t); err != nil {
-			skip(e.Name(), topoPath, fmt.Sprintf("parse failed: %v", err))
+			skip(e.Name(), src.diagPath(topoPath), fmt.Sprintf("parse failed: %v", err))
 			continue
 		}
 		if t.MachineType == "" {
-			skip(e.Name(), topoPath, "missing required field 'machineType'")
+			skip(e.Name(), src.diagPath(topoPath), "missing required field 'machineType'")
 			continue
 		}
 		if t.GPUType == "" {
 			// The most common reason today: the YAML still has the old
 			// 'productType:' key from before the rename. Mention it
 			// explicitly so users know how to fix without reading code.
-			skip(e.Name(), topoPath,
+			skip(e.Name(), src.diagPath(topoPath),
 				"missing required field 'gpuType' (old 'productType' key was renamed to 'gpuType' — reinstall presets or rename the key)")
 			continue
 		}
@@ -168,6 +225,17 @@ func loadAllPresets() ([]presetEntry, []SkippedPreset, error) {
 
 	sort.Slice(out, func(i, j int) bool { return out[i].DirName < out[j].DirName })
 	return out, skipped, nil
+}
+
+// diagPath returns a user-facing path for an entry inside this source. For
+// disk sources it joins the source dir with the relative path; for the
+// embedded source it prefixes "embedded:" so log readers can tell which copy
+// produced a skip reason.
+func (s *presetsSource) diagPath(rel string) string {
+	if s.embedded {
+		return "embedded:" + rel
+	}
+	return filepath.Join(s.label, rel)
 }
 
 // LoadPreset returns the topology preset whose YAML declares both machineType

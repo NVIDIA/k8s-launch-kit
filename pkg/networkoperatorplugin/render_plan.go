@@ -234,7 +234,7 @@ func buildBucketMerged(sources []config.ClusterConfig) (config.ClusterConfig, bo
 // unmatched filter errors immediately rather than silently succeeding
 // (the empty-match check inside `GenerateProfileDeploymentFiles` only
 // runs when a profile is configured). No-op when neither flag is set.
-func (p *NetworkOperatorPlugin) ValidateGroupFilter(cfg *config.LaunchKubernetesConfig) error {
+func (p *NetworkOperatorPlugin) ValidateGroupFilter(cfg *config.LaunchKitConfig) error {
 	if cfg == nil {
 		return nil
 	}
@@ -360,7 +360,7 @@ func availableGpuTypesList(groups []config.ClusterConfig) string {
 //   - ScopePerSource: render once per source group, regardless of mode.
 func renderForScope(
 	templatePath string,
-	cfg *config.LaunchKubernetesConfig,
+	cfg *config.LaunchKitConfig,
 	plans []RenderBucket,
 	planSubnets [][]config.NvIpamSubnetConfig,
 ) (map[string]string, error) {
@@ -488,7 +488,7 @@ var networkNSReplicatedKinds = map[string]bool{
 // everything else (and every Spectrum-X Kind, which uses a distinct combined-CR
 // rendering path not amenable to independent per-namespace copies) renders once
 // into the current namespace (cfg.PodNamespace).
-func networkNamespacesForKind(cfg *config.LaunchKubernetesConfig, kind string) []string {
+func networkNamespacesForKind(cfg *config.LaunchKitConfig, kind string) []string {
 	if !isSpectrumX(cfg) && networkNSReplicatedKinds[kind] && len(cfg.NetworkNamespaces) > 0 {
 		return cfg.NetworkNamespaces
 	}
@@ -504,7 +504,7 @@ func networkNamespacesForKind(cfg *config.LaunchKubernetesConfig, kind string) [
 // adds it). This makes the nsSuffix contract — "suffix iff this render is one
 // of several namespace copies" — correct by construction rather than relying
 // on shared templates simply never calling the helper.
-func withRenderNamespaces(cfg *config.LaunchKubernetesConfig, ns string, nsList []string) *config.LaunchKubernetesConfig {
+func withRenderNamespaces(cfg *config.LaunchKitConfig, ns string, nsList []string) *config.LaunchKitConfig {
 	out := *cfg
 	out.PodNamespace = ns
 	out.NetworkNamespaces = nsList
@@ -530,7 +530,7 @@ func suffixFilenamesWithNamespace(rendered map[string]string, ns string, multiNS
 
 // withClusterConfig returns a shallow copy of cfg with ClusterConfig
 // overridden and (when subnets is non-nil) NvIpam.Subnets replaced.
-func withClusterConfig(cfg *config.LaunchKubernetesConfig, groups []config.ClusterConfig, subnets []config.NvIpamSubnetConfig) *config.LaunchKubernetesConfig {
+func withClusterConfig(cfg *config.LaunchKitConfig, groups []config.ClusterConfig, subnets []config.NvIpamSubnetConfig) *config.LaunchKitConfig {
 	out := *cfg
 	out.ClusterConfig = groups
 	if subnets != nil && cfg.NvIpam != nil {
@@ -545,7 +545,7 @@ func withClusterConfig(cfg *config.LaunchKubernetesConfig, groups []config.Clust
 // auto-gen criteria are met (StartingSubnet+Mask+Offset set, no
 // explicit Subnets). Returns nil to leave cfg.NvIpam untouched in the
 // non-auto-gen case.
-func preallocatePlanSubnets(cfg *config.LaunchKubernetesConfig, plans []RenderBucket) ([][]config.NvIpamSubnetConfig, error) {
+func preallocatePlanSubnets(cfg *config.LaunchKitConfig, plans []RenderBucket) ([][]config.NvIpamSubnetConfig, error) {
 	if cfg.NvIpam == nil ||
 		cfg.NvIpam.StartingSubnet == "" ||
 		cfg.NvIpam.Mask == 0 ||

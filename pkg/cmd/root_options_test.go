@@ -118,7 +118,7 @@ func resolveProfile(
 	plugin := &networkoperatorplugin.NetworkOperatorPlugin{}
 
 	// Step 2: Build cfg with config-file profile
-	fullConfig := &config.LaunchKubernetesConfig{}
+	fullConfig := &config.LaunchKitConfig{}
 	if configProfile != nil {
 		profileCopy := *configProfile
 		if configProfile.SpectrumX != nil {
@@ -347,7 +347,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 		profileCopy := *cfgProfile
 		sxCopy := *cfgProfile.SpectrumX
 		profileCopy.SpectrumX = &sxCopy
-		fullConfig := &config.LaunchKubernetesConfig{Profile: &profileCopy}
+		fullConfig := &config.LaunchKitConfig{Profile: &profileCopy}
 
 		err = plugin.ApplyOptionsToConfig(opts, fullConfig)
 		require.NoError(t, err)
@@ -437,7 +437,7 @@ func TestImagePullSecretsOptionFlow(t *testing.T) {
 	plugin := &networkoperatorplugin.NetworkOperatorPlugin{}
 
 	t.Run("CLI image-pull-secrets flows through to config", func(t *testing.T) {
-		fullConfig := &config.LaunchKubernetesConfig{
+		fullConfig := &config.LaunchKitConfig{
 			NetworkOperator: &config.NetworkOperatorConfig{
 				Repository: "nvcr.io/nvidia/mellanox",
 			},
@@ -455,7 +455,7 @@ func TestImagePullSecretsOptionFlow(t *testing.T) {
 	})
 
 	t.Run("empty CLI preserves config image-pull-secrets", func(t *testing.T) {
-		fullConfig := &config.LaunchKubernetesConfig{
+		fullConfig := &config.LaunchKitConfig{
 			NetworkOperator: &config.NetworkOperatorConfig{
 				ImagePullSecrets: []string{"existing-secret"},
 			},

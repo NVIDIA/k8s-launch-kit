@@ -91,10 +91,16 @@ profile:
 		assert.Contains(t, err.Error(), "does not exist")
 	})
 
-	t.Run("load config with empty path", func(t *testing.T) {
-		_, err := LoadFullConfig("", logger)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no cluster configuration path provided")
+	t.Run("load config with empty path returns embedded defaults", func(t *testing.T) {
+		// Library-mode contract: an empty configPath yields the binary's
+		// embedded default config, not an error. A caller without a
+		// filesystem-resolved cluster-config still gets a populated
+		// LaunchKitConfig with NetworkOperator + nv-ipam etc. defaults set.
+		cfg, err := LoadFullConfig("", logger)
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		require.NotNil(t, cfg.NetworkOperator, "embedded default must populate NetworkOperator")
+		assert.NotEmpty(t, cfg.NetworkOperator.Version, "embedded default must carry a NetworkOperator version")
 	})
 
 	t.Run("load invalid YAML config", func(t *testing.T) {
@@ -116,9 +122,40 @@ networkOperator:
 	})
 }
 
+func TestDefaultLaunchKitConfig(t *testing.T) {
+	// The embedded default config powers library-mode discovery — Go callers
+	// must get a populated LaunchKitConfig with no filesystem layout on the
+	// host. The key invariant is that the canonical sections (NetworkOperator,
+	// DOCADriver, NvIpam) come back populated; subsequent test logic then
+	// relies on those being safe to read without nil-checks.
+	cfg, err := DefaultLaunchKitConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.NotNil(t, cfg.NetworkOperator, "DefaultLaunchKitConfig must populate NetworkOperator")
+	assert.NotEmpty(t, cfg.NetworkOperator.Version, "default NetworkOperator must carry a version")
+	require.NotNil(t, cfg.DOCADriver, "DefaultLaunchKitConfig must populate DOCADriver")
+	require.NotNil(t, cfg.NvIpam, "DefaultLaunchKitConfig must populate NvIpam")
+}
+
+func TestDefaultLaunchKitConfig_FreshCopy(t *testing.T) {
+	// Each call to DefaultLaunchKitConfig must return an independently
+	// mutable copy — a library caller mutating one copy must not affect a
+	// later caller. Mutating the version field on one copy and reading the
+	// other catches the obvious shared-pointer bug.
+	a, err := DefaultLaunchKitConfig()
+	require.NoError(t, err)
+	originalVersion := a.NetworkOperator.Version
+	a.NetworkOperator.Version = "mutated-by-test"
+
+	b, err := DefaultLaunchKitConfig()
+	require.NoError(t, err)
+	assert.Equal(t, originalVersion, b.NetworkOperator.Version,
+		"second DefaultLaunchKitConfig() saw mutation made to the first — copies are not independent")
+}
+
 func TestValidateClusterConfig(t *testing.T) {
 	t.Run("validate config with missing network operator repository", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Version:          "v25.10.0",
 				ComponentVersion: "network-operator-v25.10.0",
@@ -133,7 +170,7 @@ func TestValidateClusterConfig(t *testing.T) {
 	})
 
 	t.Run("validate config with missing network operator component version", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Version:          "v25.10.0",
 				ComponentVersion: "", // Missing
@@ -148,7 +185,7 @@ func TestValidateClusterConfig(t *testing.T) {
 	})
 
 	t.Run("validate config with missing network operator namespace", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Version:          "v25.10.0",
 				ComponentVersion: "network-operator-v25.10.0",
@@ -163,7 +200,7 @@ func TestValidateClusterConfig(t *testing.T) {
 	})
 
 	t.Run("validate sriov profile with missing resource name", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Version:          "v25.10.0",
 				ComponentVersion: "network-operator-v25.10.0",
@@ -186,7 +223,7 @@ func TestValidateClusterConfig(t *testing.T) {
 	})
 
 	t.Run("validate sriov profile with missing network name", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Version:          "v25.10.0",
 				ComponentVersion: "network-operator-v25.10.0",
@@ -209,7 +246,7 @@ func TestValidateClusterConfig(t *testing.T) {
 	})
 
 	t.Run("validate hostdev profile with missing resource name", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Version:          "v25.10.0",
 				ComponentVersion: "network-operator-v25.10.0",
@@ -228,7 +265,7 @@ func TestValidateClusterConfig(t *testing.T) {
 	})
 
 	t.Run("validate valid sriov config", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Version:          "v25.10.0",
 				ComponentVersion: "network-operator-v25.10.0",
@@ -388,7 +425,7 @@ profile:
 
 func TestValidateSpectrumXTemplates(t *testing.T) {
 	t.Run("valid multiplane and multirail templates", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -413,7 +450,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multiplane without plane placeholder in netdevPrefix", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -439,7 +476,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multiplane without plane placeholder in rdmaPrefix", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -465,7 +502,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multirail without rail placeholder in netdevPrefix", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -491,7 +528,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multirail without rail placeholder in rdmaPrefix", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -517,7 +554,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("valid template with plane and rail only", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -542,7 +579,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("non-multiplane with single rail", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -567,7 +604,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("non-SpectrumX config should not validate templates", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -588,7 +625,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multiplane mode swplb rejects unsupported version", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -616,7 +653,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multiplane mode hwplb rejects unsupported version", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -642,7 +679,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multiplane mode swplb accepts RA2.1", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -667,7 +704,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multiplane mode hwplb accepts RA2.1", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -692,7 +729,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multiplane mode none accepts any version", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",
@@ -717,7 +754,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 	})
 
 	t.Run("multiplane and multirail with missing both placeholders", func(t *testing.T) {
-		config := &LaunchKubernetesConfig{
+		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
 				ComponentVersion: "v26.1.0",

@@ -29,7 +29,7 @@ import (
 //
 // Returns a single error describing the first violation. Caller wraps
 // this in a structured ValidationError for the user.
-func ValidateResolvedConfig(cfg *config.LaunchKubernetesConfig) error {
+func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 	if cfg == nil || cfg.Profile == nil {
 		return nil
 	}
@@ -58,7 +58,7 @@ func ValidateResolvedConfig(cfg *config.LaunchKubernetesConfig) error {
 // profiles after hardware defaults + CLI overlay. Same checks that
 // `pkg/cmd/applySpectrumXDefaults` ran, just sourced from cfg
 // (resolved values) rather than opts (raw CLI input).
-func validateSpectrumXCohort(cfg *config.LaunchKubernetesConfig) error {
+func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 	spcx := cfg.Profile.SpectrumX
 
 	// Spectrum-X always implies ethernet fabric + sriov deployment.

@@ -121,14 +121,14 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	p := &NetworkOperatorPlugin{}
 
 	t.Run("nil profile is no-op", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{Profile: nil}
+		cfg := &config.LaunchKitConfig{Profile: nil}
 		err := p.ApplyOptionsToConfig(options.Options{Fabric: "ethernet"}, cfg)
 		require.NoError(t, err)
 		assert.Nil(t, cfg.Profile)
 	})
 
 	t.Run("CLI fabric overrides config fabric", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Fabric: "infiniband"},
 		}
 		err := p.ApplyOptionsToConfig(options.Options{Fabric: "ethernet"}, cfg)
@@ -137,7 +137,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("CLI deployment type overrides config deployment", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Deployment: "rdma_shared"},
 		}
 		err := p.ApplyOptionsToConfig(options.Options{DeploymentType: "sriov"}, cfg)
@@ -148,7 +148,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	t.Run("CLI multirail true overrides config false", func(t *testing.T) {
 		// Unit 8: bool override requires `MultirailSet` to distinguish
 		// "explicitly passed" from "not passed" (Go bool zero is false).
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Multirail: false},
 		}
 		err := p.ApplyOptionsToConfig(options.Options{Multirail: true, MultirailSet: true}, cfg)
@@ -157,7 +157,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("CLI multirail not passed does NOT override config true", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Multirail: true},
 		}
 		err := p.ApplyOptionsToConfig(options.Options{}, cfg)
@@ -168,7 +168,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	t.Run("CLI multirail=false explicitly overrides config true", func(t *testing.T) {
 		// User opts out: --multirail=false → MultirailSet=true,
 		// Multirail=false → cfg.Profile.Multirail set to false.
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{Multirail: true},
 		}
 		err := p.ApplyOptionsToConfig(options.Options{Multirail: false, MultirailSet: true}, cfg)
@@ -177,7 +177,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("empty CLI strings preserve config values", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				Fabric:     "ethernet",
 				Deployment: "sriov",
@@ -192,7 +192,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("spectrum-x CLI creates sub-struct when config has none", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				Fabric:    "ethernet",
 				SpectrumX: nil,
@@ -213,7 +213,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("spectrum-x CLI overrides specific fields preserves others", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					SPCXVersion:    "RA2.2",
@@ -234,7 +234,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("CLI number-of-planes zero does NOT override config", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					NumberOfPlanes: 4,
@@ -251,7 +251,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("full spectrum-x overlay merges all fields", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				Fabric:     "ethernet",
 				Deployment: "sriov",
@@ -285,7 +285,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("CLI image-pull-secrets overrides config", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			NetworkOperator: &config.NetworkOperatorConfig{
 				ImagePullSecrets: []string{"old-secret"},
 			},
@@ -297,7 +297,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("empty CLI image-pull-secrets preserves config", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			NetworkOperator: &config.NetworkOperatorConfig{
 				ImagePullSecrets: []string{"existing"},
 			},
@@ -309,7 +309,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("CLI image-pull-secrets creates NetworkOperator if nil", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			NetworkOperator: nil,
 			Profile:         &config.Profile{},
 		}
@@ -320,7 +320,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("network operator release populates catalog values", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{Profile: &config.Profile{}}
+		cfg := &config.LaunchKitConfig{Profile: &config.Profile{}}
 		err := p.ApplyOptionsToConfig(options.Options{NetworkOperatorRelease: "26.4"}, cfg)
 		require.NoError(t, err)
 		require.NotNil(t, cfg.NetworkOperator)
@@ -335,7 +335,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("network operator release overrides config-file values", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			NetworkOperator: &config.NetworkOperatorConfig{
 				Version:            "v0.0.0-stale",
 				ComponentVersion:   "stale-tag",
@@ -358,14 +358,14 @@ func TestApplyOptionsToConfig(t *testing.T) {
 	})
 
 	t.Run("unknown release is rejected", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{Profile: &config.Profile{}}
+		cfg := &config.LaunchKitConfig{Profile: &config.Profile{}}
 		err := p.ApplyOptionsToConfig(options.Options{NetworkOperatorRelease: "99.0"}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported network operator release")
 	})
 
 	t.Run("empty release leaves SelectedRelease empty (no-op)", func(t *testing.T) {
-		cfg := &config.LaunchKubernetesConfig{
+		cfg := &config.LaunchKitConfig{
 			NetworkOperator: &config.NetworkOperatorConfig{
 				Version:          "user-supplied",
 				ComponentVersion: "user-tag",
