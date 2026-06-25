@@ -1050,6 +1050,32 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		}
 	}
 
+	// Drop groups that have no east-west PFs. Such groups carry only
+	// north-south interfaces (e.g. BlueField DPUs / OOB NICs), are excluded
+	// from every generated manifest anyway, and would otherwise clutter
+	// cluster-config.yaml and consume an NV-IPAM subnet slice during
+	// pre-allocation — shifting the real per-rail pools. Filtering here (before
+	// the singleGroup decision and group-N numbering) keeps identifiers
+	// contiguous over the kept groups.
+	keptFingerprints := make([]fingerprintKey, 0, len(fingerprintOrder))
+	for _, fp := range fingerprintOrder {
+		g := groupMap[fp]
+		hasEastWest := false
+		for _, e := range g.pfs {
+			if !e.IsNorthSouth {
+				hasEastWest = true
+				break
+			}
+		}
+		if hasEastWest {
+			keptFingerprints = append(keptFingerprints, fp)
+		} else {
+			log.Log.Info("Skipping discovered group with no east-west NICs (north-south only); not added to cluster-config",
+				"nodes", g.nodes, "pfCount", len(g.pfs))
+		}
+	}
+	fingerprintOrder = keptFingerprints
+
 	// Step 3: Build ClusterConfig per group
 	singleGroup := len(fingerprintOrder) == 1
 	groups := make([]config.ClusterConfig, 0, len(fingerprintOrder))

@@ -216,3 +216,61 @@ func TestBuildClusterConfig_CollapseNicRails(t *testing.T) {
 		assert.Equal(t, 1, *ew[1].Rail)
 	})
 }
+
+// nsBF4PartNumber is a BlueField-4 DPU product code present in ns-product-ids,
+// so its PFs classify as north-south.
+const nsBF4PartNumber = "900-9D4B4-00CV-SA0"
+
+func TestBuildClusterConfig_DropsNorthSouthOnlyGroups(t *testing.T) {
+	t.Run("north-south-only group dropped, east-west group kept", func(t *testing.T) {
+		devices := []nicop.NicDevice{
+			// BlueField-4 DPU on its own node → both PFs north-south → group dropped.
+			nicDeviceWithPorts("worker-ns", "a2d6", nsBF4PartNumber, "BlueField-4 DPU", "0000:0d:00"),
+			// ConnectX-8 SuperNIC on another node → east-west → group kept.
+			nicDeviceWithPorts("worker-ew", "1023", "pn-test-rdma", "ConnectX-8 SuperNIC", "0000:18:00"),
+		}
+		groups, _ := buildClusterConfig(devices, nil, nil, true)
+		require.Len(t, groups, 1, "the north-south-only group must be dropped")
+		require.NotEmpty(t, eastWestPFsOf(groups[0]))
+		// Single remaining group → empty identifier (numbering recomputed after drop).
+		assert.Equal(t, "", groups[0].Identifier)
+		// No PF from the dropped DPU group leaked into the kept group.
+		for _, g := range groups {
+			for _, pf := range g.PFs {
+				assert.NotEqual(t, nsBF4PartNumber, pf.PartNumber)
+			}
+		}
+	})
+
+	t.Run("cluster with only north-south NICs yields no groups", func(t *testing.T) {
+		devices := []nicop.NicDevice{
+			nicDeviceWithPorts("worker-ns", "a2d6", nsBF4PartNumber, "BlueField-4 DPU", "0000:0d:00"),
+		}
+		groups, _ := buildClusterConfig(devices, nil, nil, true)
+		assert.Empty(t, groups, "a cluster with only north-south NICs yields no groups")
+	})
+
+	t.Run("mixed group is kept and its north-south PFs are recorded", func(t *testing.T) {
+		// One node with both an east-west SuperNIC and a north-south DPU. The
+		// group has east-west PFs, so it is kept — and the DPU's north-south
+		// PFs must still appear in the saved PFs slice.
+		devices := []nicop.NicDevice{
+			nicDeviceWithPorts("worker-mixed", "1023", "pn-test-rdma", "ConnectX-8 SuperNIC", "0000:18:00"),
+			nicDeviceWithPorts("worker-mixed", "a2d6", nsBF4PartNumber, "BlueField-4 DPU", "0000:0d:00"),
+		}
+		groups, _ := buildClusterConfig(devices, nil, nil, true)
+		require.Len(t, groups, 1, "the mixed group must be kept")
+
+		var ew, ns int
+		for _, pf := range groups[0].PFs {
+			switch pf.Traffic {
+			case "east-west":
+				ew++
+			case "north-south":
+				ns++
+			}
+		}
+		assert.Positive(t, ew, "mixed group must keep its east-west PFs")
+		assert.Positive(t, ns, "mixed group must still record its north-south PFs")
+	})
+}

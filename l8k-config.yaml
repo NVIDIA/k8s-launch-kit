@@ -43,7 +43,7 @@ docaDriver:
 
 nvIpam:
   poolName: nv-ipam-pool
-  # Option 1: Auto-generate subnets (used when subnets list is empty).
+  # --- Option 1: Auto-generate subnets (used when subnets list is empty) --- 
   # Each group gets its own unique subnet slice; gateway = network address + 1.
   startingSubnet: "192.168.0.0"
   mask: 22
@@ -53,7 +53,8 @@ nvIpam:
   # first N and last N host addresses (gateway is covered by the low block).
   # reserveFirstIPs: 10   # e.g. .0–.9 on a /24
   # reserveLastIPs: 6     # e.g. .250–.255 on a /24
-  # Option 2: Manually list subnets (takes precedence if non-empty)
+  # 
+  # --- Option 2: Manually list subnets (takes precedence if non-empty) ---
   # subnets:
   # - subnet: 192.168.2.0/24
   #   gateway: 192.168.2.1

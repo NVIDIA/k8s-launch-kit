@@ -114,6 +114,16 @@ behaviour of one rail per PF (useful on dev setups). The model string is read
 from `NicDevice.Status.modelName`; when it is empty the NIC is collapsed by
 default.
 
+Node groups whose NICs are **all north-south** (e.g. BlueField-DPU-only or
+out-of-band-NIC-only nodes) are **not written** to `cluster-config.yaml` — they
+produce no networking manifests and would otherwise consume an NV-IPAM subnet
+slice. North-south NICs that sit alongside east-west NICs in the same group are
+still recorded.
+
+The saved `cluster-config.yaml` also **keeps the documentation comments** from
+the config you started from (the default `l8k-config.yaml` or your
+`--user-config`), so the field reference travels with the generated file.
+
 ### Generate Deployment Files
 Based on the discovered or provided configuration,
 generate a complete set of YAML deployment files for the selected network profile.
