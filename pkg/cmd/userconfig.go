@@ -110,5 +110,16 @@ func loadUserConfig(opts options.Options) (*config.LaunchKitConfig, string, erro
 	if err := networkoperatorplugin.ApplyNetworkOperatorRelease(opts, cfg); err != nil {
 		return nil, path, fmt.Errorf("apply release catalog: %w", err)
 	}
+	// Apply CLI namespace override. Mirror of the same branch in
+	// NetworkOperatorPlugin.ApplyOptionsToConfig so the standalone
+	// `l8k deploy` / `l8k validate` paths honour --network-operator-namespace
+	// the same way the root-pipeline generate path does (which goes through
+	// the launcher's plugin.ApplyOptionsToConfig instead of this helper).
+	if opts.NetworkOperatorNamespace != "" {
+		if cfg.NetworkOperator == nil {
+			cfg.NetworkOperator = &config.NetworkOperatorConfig{}
+		}
+		cfg.NetworkOperator.Namespace = opts.NetworkOperatorNamespace
+	}
 	return cfg, path, nil
 }

@@ -184,8 +184,13 @@ connectivity-matrix failure.`,
 		// Best-effort load of user-config — only the networkOperator section
 		// is required by validate. Missing or unparseable config softens the
 		// version check to "skipped" but does not fail the manifest check.
+		// The --network-operator-namespace override is threaded through so a
+		// validate run against a namespace not recorded in cluster-config.yaml
+		// can still target the right Helm release / live CRs.
 		selectedRelease := ""
-		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{})
+		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{
+			NetworkOperatorNamespace: networkOperatorNamespace,
+		})
 		if cfgErr != nil {
 			log.Log.V(1).Info("user-config not loaded; version check will be skipped",
 				"path", cfgPath, "error", cfgErr.Error())
@@ -1462,6 +1467,10 @@ func init() {
 	validateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to verify")
 	validateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-detected from ./cluster-config.yaml). Used to read networkOperator.selectedRelease and operator namespace.")
+	// --network-operator-namespace overrides cfg.NetworkOperator.Namespace at
+	// load time (via loadUserConfig). Used by the Helm-release version check
+	// and the manifest state validators to target the right namespace.
+	validateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
 
 	// Phase 2 flags. `--connectivity` defaults to true — every
 	// `l8k validate` exercises the data plane unless explicitly
@@ -1476,4 +1485,5 @@ func init() {
 	setFlagGroup(validateCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(validateCmd, "user-config", GroupCommon)
 	setFlagGroup(validateCmd, "deployment-files", GroupGeneration)
+	setFlagGroup(validateCmd, "network-operator-namespace", GroupCommon)
 }

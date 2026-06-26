@@ -4,7 +4,6 @@ go 1.26.2
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/Mellanox/doca-driver-build/entrypoint v0.0.0-20260421090033-dbd12d7e97a7
 	github.com/Mellanox/network-operator v1.4.1-0.20260415085747-fd00b67fe97a
 	github.com/Mellanox/nic-configuration-operator v1.3.1
 	github.com/go-logr/logr v1.4.3
