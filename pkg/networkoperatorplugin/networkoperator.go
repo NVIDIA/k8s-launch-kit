@@ -141,7 +141,28 @@ func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.Lau
 	fullConfig.NetworkOperator.OperatorRepository = rel.NetworkOperator.OperatorRepository
 	fullConfig.NetworkOperator.HelmRepoURL = rel.NetworkOperator.HelmRepoURL
 	if fullConfig.DOCADriver == nil {
-		fullConfig.DOCADriver = &config.DOCADriverConfig{}
+		fullConfig.DOCADriver = &config.DOCADriverConfig{
+			// Default-on unloads: the DOCA driver container is opinionated about
+			// needing a clean MOFED module set, so we unload by default. Users
+			// who know their workload depends on a specific module set can set
+			// either flag false in cluster-config.yaml to opt out.
+			//
+			// Migration note: these defaults apply only when the cluster-config
+			// has no `docaDriver:` block at all. A pre-existing config that
+			// carries `docaDriver:` but omits `unloadStorageModules` /
+			// `unloadThirdPartyRDMAModules` will land with Go bool zero-value
+			// (false). Distinguishing "absent" from "explicit false" requires a
+			// schema change (pointer-bool) we deliberately defer to a separate
+			// PR; the rendered default-config.yaml ships both fields at true,
+			// and a fresh `l8k discover` (without --user-config) picks them up.
+			UnloadStorageModules:        true,
+			UnloadThirdPartyRDMAModules: true,
+			// Pre-flight checks default ON (opinionatedly opposite to the
+			// init container's binary envDefault of true-skip): we want the
+			// init container to surface hardware-incompat early rather than
+			// let a broken MOFED reload happen silently.
+			SkipPreflightChecks: false,
+		}
 	}
 	fullConfig.DOCADriver.Version = rel.DOCADriver.Version
 	return nil
@@ -228,7 +249,11 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 	// Apply DOCA driver enable override from CLI
 	if options.EnableDocaDriver != nil {
 		if fullConfig.DOCADriver == nil {
-			fullConfig.DOCADriver = &config.DOCADriverConfig{}
+			fullConfig.DOCADriver = &config.DOCADriverConfig{
+				UnloadStorageModules:        true,
+				UnloadThirdPartyRDMAModules: true,
+				SkipPreflightChecks:         false,
+			}
 		}
 		fullConfig.DOCADriver.Enable = *options.EnableDocaDriver
 	}

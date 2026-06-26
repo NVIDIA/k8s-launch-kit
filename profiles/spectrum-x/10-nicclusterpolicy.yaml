@@ -19,11 +19,13 @@ spec:
       image: nic-configuration-operator-daemon
       repository: "{{.NetworkOperator.Repository}}"
       version: "{{.NetworkOperator.ComponentVersion}}"
+    {{- if .NicConfigurationOperator.UpdateFW }}
     nicFirmwareStorage:
       create: true
       pvcName: nic-fw-storage-pvc
       storageClassName: nic-fw-storage-class
       availableStorageSize: 1Gi
+    {{- end }}
     logLevel: info
   nvIpam:
     image: nvidia-k8s-ipam

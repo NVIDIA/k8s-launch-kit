@@ -10,7 +10,7 @@ spec:
       - {{ . }}
     {{- end }}
   {{- end }}
-  {{- if and .NicConfigurationOperator .NicConfigurationOperator.DeployNicInterfaceNameTemplate }}
+  {{- if and .NicConfigurationOperator (or .NicConfigurationOperator.DeployNicInterfaceNameTemplate .NicConfigurationOperator.UpdateFW) }}
   nicConfigurationOperator:
     operator:
       image: nic-configuration-operator
@@ -20,6 +20,13 @@ spec:
       image: nic-configuration-operator-daemon
       repository: "{{.NetworkOperator.Repository}}"
       version: "{{.NetworkOperator.ComponentVersion}}"
+    {{- if .NicConfigurationOperator.UpdateFW }}
+    nicFirmwareStorage:
+      create: true
+      pvcName: nic-fw-storage-pvc
+      storageClassName: nic-fw-storage-class
+      availableStorageSize: 1Gi
+    {{- end }}
     logLevel: info
   {{- end }}
   nvIpam:

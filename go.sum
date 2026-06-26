@@ -20,8 +20,6 @@ github.com/Masterminds/sprig/v3 v3.3.0 h1:mQh0Yrg1XPo6vjYXgtf5OtijNAKJRNcTdOOGZe
 github.com/Masterminds/sprig/v3 v3.3.0/go.mod h1:Zy1iXRYNqNLUolqCpL4uhk6SHUMAOSCzdgBfDb35Lz0=
 github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8afzqM=
 github.com/Masterminds/squirrel v1.5.4/go.mod h1:NNaOrjSoIDfDA40n7sr2tPNZRfjzjA400rg+riTZj10=
-github.com/Mellanox/doca-driver-build/entrypoint v0.0.0-20260421090033-dbd12d7e97a7 h1:p+nQuoVlKpXDQAv0V3PY8TIxb7xcIIj63kkE7ttXQTI=
-github.com/Mellanox/doca-driver-build/entrypoint v0.0.0-20260421090033-dbd12d7e97a7/go.mod h1:jX5e/5ZWEEOM7bhPlQFkFw+nEiBAetFRIdbM4LhRyNo=
 github.com/Mellanox/network-operator v1.4.1-0.20260415085747-fd00b67fe97a h1:KXHoF77tfxwwkHNylEXUb8HyNhHiBhYgMMmsHNJuQmc=
 github.com/Mellanox/network-operator v1.4.1-0.20260415085747-fd00b67fe97a/go.mod h1:rteyvmkuYntizMQjgKOKsCRt2//3dPvXsK1PvId5MfM=
 github.com/Mellanox/nic-configuration-operator v1.3.1 h1:oH1BCIVeIilGCAmKB/dQRwVAUiLAxEYj8sGfKAxkXoQ=

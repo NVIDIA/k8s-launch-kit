@@ -154,7 +154,9 @@ is used as the manifest directory.`,
 			OverwriteExisting: overwriteExistingFlag,
 			RestConfig:        restConfig,
 		}
-		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{})
+		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{
+			NetworkOperatorNamespace: networkOperatorNamespace,
+		})
 		if cfgErr != nil {
 			exitWithError(apperrors.NewValidationError(
 				"failed to load user config",
@@ -243,6 +245,11 @@ func init() {
 
 	deployCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	deployCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to apply")
+	// --network-operator-namespace overrides cfg.NetworkOperator.Namespace at
+	// load time (via loadUserConfig). Drives Phase 0 helm install target,
+	// Phase 0.5 preflight stray-CR scope, and any other downstream code that
+	// reads opts.NetworkOperator.Namespace.
+	deployCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
 	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-discovered from ./cluster-config.yaml or <deployment-files>/../cluster-config.yaml). Used to resolve the network-operator release for Phase 0 helm install and Phase 0.5 preflight checks.")
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
 	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state. Useful for matching a maintenance window when SR-IOV reconciliation on a large cluster can take an hour or more.")
@@ -251,6 +258,7 @@ func init() {
 
 	setFlagGroup(deployCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(deployCmd, "deployment-files", GroupGeneration)
+	setFlagGroup(deployCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(deployCmd, "deploy-timeout", GroupDeploy)
 	setFlagGroup(deployCmd, "dry-run", GroupDeploy)
 	setFlagGroup(deployCmd, "test-connectivity", GroupDeploy)
