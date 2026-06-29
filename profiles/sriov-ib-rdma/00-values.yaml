@@ -42,6 +42,15 @@ sriovNetworkOperator:
 sriov-network-operator:
   sriovOperatorConfig:
     deploy: true
+    # See sriov-ethernet-rdma's 00-values.yaml for the rationale: both
+    # optional helpers (auto-resource injector + validating webhook)
+    # require TLS secrets that the subchart's post-install Job creates,
+    # which doesn't always re-run on cross-profile upgrades and leaves
+    # the operator stuck reconciling against a `<nil>` secretName.
+    # l8k renders resource requests explicitly and pre-validates
+    # NodePolicies via the crstate registry, so both helpers are unused.
+    enableInjector: false
+    enableOperatorWebhook: false
 {{- if .NicConfigurationOperator }}
     configDaemonNodeSelector:
       network.nvidia.com/operator.nic-configuration.wait: "false"

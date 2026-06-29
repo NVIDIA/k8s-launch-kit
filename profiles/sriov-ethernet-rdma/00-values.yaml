@@ -42,6 +42,19 @@ sriovNetworkOperator:
 sriov-network-operator:
   sriovOperatorConfig:
     deploy: true
+    # Both optional helpers are turned off:
+    #   - network-resources-injector: rewrites pod specs to add resource
+    #     requests from net-attach-def annotations. l8k renders resource
+    #     requests explicitly in its example DaemonSets, so the injector
+    #     is unused — and its admission webhook requires a TLS secret the
+    #     subchart's post-install Job creates, which doesn't always re-run
+    #     across cross-profile upgrades (e.g. macvlan→sriov), leading to a
+    #     stuck Reconcile loop with a `<nil>` secretName error.
+    #   - operator validating webhook: validates SriovNetworkNodePolicy on
+    #     admission. l8k pre-validates via the crstate registry, so this is
+    #     redundant and brings the same TLS-secret fragility.
+    enableInjector: false
+    enableOperatorWebhook: false
 {{- if .NicConfigurationOperator }}
     configDaemonNodeSelector:
       network.nvidia.com/operator.nic-configuration.wait: "false"
