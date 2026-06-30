@@ -669,6 +669,10 @@ func groupFabric(group config.ClusterConfig) (string, bool) {
 
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
 func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKitConfig) (map[string]string, error) {
+	if err := config.NormalizeMaintenance(cfg); err != nil {
+		return nil, fmt.Errorf("normalize maintenance configuration: %w", err)
+	}
+
 	// Apply --groups / --gpu-type filter to source groups before merging.
 	// `applyGroupFilter` enforces mutual exclusivity, errors on empty match,
 	// and is a no-op when neither flag is set.

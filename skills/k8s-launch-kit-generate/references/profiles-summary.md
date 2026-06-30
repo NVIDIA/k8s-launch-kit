@@ -2,6 +2,13 @@
 
 Summary of all 7 l8k profile definitions from `profiles/*/profile.yaml`.
 
+Every profile renders the top-level `maintenance` settings into Helm values.
+For Network Operator 26.1+, those values enable Maintenance Operator, deploy a
+`MaintenanceOperatorConfig`, enable the OFED requestor in profiles with an OFED
+driver, and enable both the external drainer and Network Operator drain
+requestor in profiles with SR-IOV Operator. Older releases retain the legacy
+direct-drain controllers.
+
 ## 1. SR-IOV Ethernet RDMA
 
 - **Directory**: `profiles/sriov-ethernet-rdma/`
