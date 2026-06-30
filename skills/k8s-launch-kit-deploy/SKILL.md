@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-deploy
-version: 1.2.0
+version: 1.3.0
 description: "Use this skill when the user wants to deploy generated NVIDIA networking manifests to a Kubernetes cluster using k8s-launch-kit (l8k). Activate for: applying manifests, deploying to cluster, the `l8k deploy` subcommand or the legacy --deploy flag on `l8k generate`, applying generated files, or any mention of pushing l8k output to a live cluster. Even if the user just says 'apply these' or 'push to cluster' after generating manifests, use this skill."
 metadata:
   requires:
@@ -24,6 +24,13 @@ l8k deploy [--deployment-files <DIR>] [--kubeconfig <PATH>] [--dry-run]
 `l8k deploy` reads YAML files from `--deployment-files` (default `./deployment`) and applies them in dependency order. It auto-prefers `<DIR>/network-operator/` (the layout `l8k generate` produces) and falls back to `<DIR>` itself.
 
 When the deployment directory contains a `values.yaml` (the `l8k generate` profile renderer emits one per profile), Phase 0 runs first: the Helm Go SDK installs (or upgrades, with `--overwrite-existing`) the `nvidia/network-operator` chart in the namespace from `networkOperator.namespace`. The chart version and Helm repo URL come from the embedded release catalog selected via `--network-operator-release`. Phase 0 is skipped silently when `values.yaml` is absent — backward compatible with users managing the chart out of band.
+
+Network Operator 26.1+ requestor mode is a Helm-level change: the generated
+values add Network Operator Deployment environment variables and enable the
+SR-IOV external drainer where applicable. Applying only the generated CRs
+cannot enable requestor mode. When upgrading an existing release whose values
+differ, pass `--overwrite-existing`; otherwise l8k intentionally stops at the
+values conflict.
 
 The legacy one-shot form (still supported, useful when you want to generate and apply in a single step):
 
@@ -51,6 +58,10 @@ l8k deploy --deployment-files /tmp/my-output --kubeconfig ~/.kube/config
 
 # Server-side dry-run before a production apply
 l8k deploy --dry-run
+
+# Apply newly generated requestor-mode values to an existing release
+l8k deploy --deployment-files ./output --kubeconfig ~/.kube/config \
+  --overwrite-existing
 
 # Agent mode
 l8k deploy --output json --yes 2>/dev/null
@@ -80,7 +91,15 @@ kubectl get nicclusterpolicy -o yaml          # Check policy state
 kubectl get nicnodepolicy                     # Per-group state
 kubectl get pods -n <operator-ns>             # Verify all pods Running
 kubectl get sriovnetworknodestates -A         # Check SR-IOV VF allocation
+kubectl get maintenanceoperatorconfigs -A -o yaml # Check global concurrency
+kubectl get nodemaintenances -A                # Check active requests
 ```
+
+For SR-IOV on release 26.1+, verify that the generated Helm values contain both
+`operator.maintenanceOperator.useDrainControllerRequestor: true` and
+`sriov-network-operator.operator.externalDrainer.enabled: true`. For OFED,
+verify `operator.maintenanceOperator.useRequestor: true`. Do not try to enable
+these by applying `MaintenanceOperatorConfig` alone.
 
 > [!CAUTION]
 > This is a **write** command — confirm with the user before executing on production clusters.

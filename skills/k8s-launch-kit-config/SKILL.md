@@ -1,7 +1,7 @@
 ---
 name: k8s-launch-kit-config
-version: 1.1.0
-description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
+version: 1.2.0
+description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
     skills: ["k8s-launch-kit-shared"]
@@ -40,6 +40,7 @@ l8k discover --user-config my-config.yaml \
 |---------|-----------------|
 | `networkOperator` | Operator namespace, version, image repository, helm chart repository (`helmRepoURL`) |
 | `docaDriver` | OFED/DOCA driver image, version, blacklist settings |
+| `maintenance` | Maintenance Operator, SR-IOV drain, and legacy OFED upgrade concurrency |
 | `nvIpam` | NV-IPAM IP pool ranges and subnet generation |
 | `sriov` | VF count, resource prefix, MTU, link type |
 | `hostdev` | Host device resource name |
@@ -63,7 +64,7 @@ Each `clusterConfig[]` entry has these key fields:
 - `workerNodes` — explicit hostnames (populated by discovery).
 
 For the full field-by-field reference with types, defaults, and descriptions,
-read `references/config-schema.md`.
+read `references/config-reference.md`.
 
 ## Topology Presets
 
@@ -113,6 +114,15 @@ sriov:
 docaDriver:
   version: "doca3.2.0-25.10-1.2.8.0-2"
 
+# Allow four simultaneous maintenance operations. Network Operator 26.1+
+# uses the global Maintenance Operator limits; older releases use the legacy
+# SR-IOV/OFED limits where applicable.
+maintenance:
+  maxParallelOperations: 4
+  maxUnavailable: 4
+  maxNodeMaintenanceTimeSeconds: 3600
+  maxParallelUpgrades: 4
+
 # Override the helm chart repository URL (rarely needed — the embedded
 # release catalog supplies the right URL for each MAJOR.MINOR release).
 # Useful only for mirrors or private chart hosts.
@@ -138,9 +148,11 @@ networkNamespaces: ["my-namespace"]
 - Start by running discovery (`l8k discover`) to generate a baseline, then edit it.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
+- For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.
+- Updating an existing release to the generated requestor-mode Helm values requires `--overwrite-existing`.
 
 ## See Also
 
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — Global flags
 - [k8s-launch-kit-discover](../k8s-launch-kit-discover/SKILL.md) — Generate a config from live cluster
-- `references/config-schema.md` — Full field reference
+- `references/config-reference.md` — Complete annotated YAML, including maintenance value restrictions

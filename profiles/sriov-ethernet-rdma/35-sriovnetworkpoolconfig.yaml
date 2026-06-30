@@ -1,0 +1,18 @@
+{{- if versionLT .NetworkOperator.SelectedRelease "26.1" }}
+# Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkPoolConfig
+metadata:
+  name: sriov-node-pool-config{{suffix .ClusterConfig.Identifier}}
+  namespace: "{{.NetworkOperator.Namespace}}"
+spec:
+  maxUnavailable: {{ .Maintenance.MaxUnavailable.String }}
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    matchLabels:
+      {{- range $key, $value := .ClusterConfig.NodeSelector }}
+      {{ $key }}: "{{ $value }}"
+      {{- end }}
+  {{- end }}
+{{- end }}

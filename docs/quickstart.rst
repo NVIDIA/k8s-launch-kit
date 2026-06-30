@@ -1,4 +1,6 @@
-This quick start guide covers five essential networking configurations for different computational requirements:
+This quick start guide covers five essential networking configurations for
+different computational requirements. See :doc:`maintenance` when sizing node
+disruption and upgrade concurrency for larger clusters.
 
 .. toctree::
    :hidden:
@@ -10,6 +12,7 @@ This quick start guide covers five essential networking configurations for diffe
    IP over InfiniBand with RDMA Shared Device <ipoib-rdma-shared>
    MacVLAN Network with RDMA Shared Device <macvlan-rdma-shared>
    SR-IOV InfiniBand Network with RDMA <sriov-ib-rdma>
+   Maintenance and upgrade concurrency <maintenance>
 
 .. list-table::
    :widths: 20 25 20 30
@@ -59,3 +62,9 @@ This quick start guide covers five essential networking configurations for diffe
      - Large-scale HPC clusters, AI/ML training, research computing
        
        *Keywords: SR-IOV, InfiniBand, hardware-acceleration, ultra-high-bandwidth*
+
+.. seealso::
+
+   Large clusters can tune simultaneous SR-IOV configuration and DOCA/OFED
+   upgrades through the ``maintenance`` section. See :doc:`maintenance` for
+   the defaults, release gates, and disruption-budget restrictions.

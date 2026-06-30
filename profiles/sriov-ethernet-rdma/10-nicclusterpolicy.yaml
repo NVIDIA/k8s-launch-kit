@@ -75,7 +75,7 @@ spec:
         enable: true
         force: true
         timeoutSeconds: 300
-      maxParallelUpgrades: 1
+      maxParallelUpgrades: {{ .Maintenance.MaxParallelUpgrades }}
     startupProbe:
       initialDelaySeconds: 10
       periodSeconds: 10

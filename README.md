@@ -528,6 +528,35 @@ When neither the flag nor `selectedRelease` is set, behavior is unchanged: expli
 
 Adding a new release is a YAML-only change in `releases.yaml` — patch bumps update an existing entry in place; new minor lines add a new top-level key.
 
+### Maintenance and node upgrade concurrency
+
+The top-level `maintenance` section controls how many nodes can be disrupted at
+once by SR-IOV configuration and DOCA/OFED upgrades. The defaults allow four
+concurrent operations instead of the operators' single-node defaults:
+
+```yaml
+maintenance:
+  maxParallelOperations: 4
+  maxUnavailable: 4
+  maxNodeMaintenanceTimeSeconds: 3600
+  maxParallelUpgrades: 4
+```
+
+For Network Operator 26.1 and newer, l8k enables Maintenance Operator requestor
+mode in the generated Helm values. OFED upgrades use
+`operator.maintenanceOperator.useRequestor`; SR-IOV additionally requires both
+the Network Operator drain requestor and the SR-IOV external drainer. In this
+mode, `maxParallelOperations` and `maxUnavailable` are global Maintenance
+Operator limits. For older releases, `maxParallelUpgrades` controls OFED and
+`SriovNetworkPoolConfig.spec.maxUnavailable` controls the SR-IOV internal
+drainer.
+
+Changing to requestor mode modifies Helm values and operator Deployment
+environment variables. Upgrade an existing release with
+`--overwrite-existing`; applying only the generated custom resources cannot
+enable requestor mode. See [Maintenance and upgrade concurrency](docs/maintenance.rst)
+for value restrictions, zero-value behavior, and release-specific details.
+
 ### DOCA Driver
 
 The `docaDriver` section controls the OFED driver deployment in the NicClusterPolicy. Set `enable: true` to include the `ofedDriver` section in generated manifests, or `enable: false` to omit it. This can also be overridden via the `--enable-doca-driver` CLI flag.
@@ -666,6 +695,11 @@ docaDriver:
   unloadStorageModules: false
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: false
+maintenance:
+  maxParallelOperations: 4
+  maxUnavailable: 4
+  maxNodeMaintenanceTimeSeconds: 3600
+  maxParallelUpgrades: 4
 nvIpam:
   poolName: nv-ipam-pool
   subnets:

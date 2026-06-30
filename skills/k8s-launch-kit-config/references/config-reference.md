@@ -69,6 +69,43 @@ docaDriver:
   unloadThirdPartyRDMAModules: true
 
 # ============================================================================
+# Maintenance and Upgrade Concurrency
+# Controls Maintenance Operator request scheduling and legacy drain limits.
+# ============================================================================
+maintenance:
+  # int-or-percent | default: 4
+  # Global Maintenance Operator work limit. Use a positive integer or a
+  # percentage string from "1%" through "100%". Integer 0 is rejected because
+  # the current scheduler calculates zero available slots. Percentages use all
+  # cluster nodes and round up.
+  maxParallelOperations: 4
+
+  # int-or-percent | default: 4
+  # Global unavailable-node limit under requestor mode (Network Operator 26.1+).
+  # Before 26.1, this is wired to SriovNetworkPoolConfig for SR-IOV's internal
+  # drainer. A non-negative integer or "1%"-"100%" is accepted. Integer 0
+  # pauses new work. In requestor mode, already cordoned or NotReady nodes
+  # consume this budget. Requestor-mode percentages use all cluster nodes and
+  # round down; legacy SR-IOV percentages use the selected pool and round down.
+  maxUnavailable: 4
+
+  # int | default: 3600
+  # Non-negative delay before a Ready NodeMaintenance request can be garbage
+  # collected. 0 makes it immediately eligible; this is not an operation timeout.
+  # Keep it below any cluster-autoscaler idle interval.
+  maxNodeMaintenanceTimeSeconds: 3600
+
+  # int | default: 4
+  # Non-negative OFED upgrade limit used only before Network Operator 26.1.
+  # 0 means unlimited on the legacy path. Requestor mode ignores this field.
+  maxParallelUpgrades: 4
+
+# Network Operator 26.1+ enables OFED and SR-IOV requestors in generated Helm
+# values. SR-IOV needs both the Network Operator drain requestor and the SR-IOV
+# external drainer. Applying CRs alone cannot enable these Deployment settings;
+# upgrade an existing Helm release with --overwrite-existing.
+
+# ============================================================================
 # NV-IPAM (IP Address Management)
 # Controls IP allocation for secondary networks.
 # ============================================================================

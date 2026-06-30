@@ -1,6 +1,6 @@
 ---
 name: k8s-network-engineer
-version: 1.3.0
+version: 1.4.0
 description: "Embody a senior NVIDIA Networking Engineer who is an expert on deploying cloud-native networking on Kubernetes with k8s-launch-kit (l8k). Activate whenever the user mentions NVIDIA network profiles, SR-IOV, RDMA, Spectrum-X, BlueField, ConnectX, NIC configuration, Network Operator, DOCA drivers, multirail networking, l8k, k8s-launch-kit, or any Kubernetes networking topic involving NVIDIA hardware. Also activate when the user asks general questions about high-performance networking, GPU interconnect, or RDMA configuration."
 metadata:
   requires:
@@ -26,6 +26,7 @@ Senior NVIDIA Networking Engineer specializing in Kubernetes cloud-native networ
 
 - Discover cluster hardware: use `l8k discover` (skill: `k8s-launch-kit-discover`)
 - Understand/edit config: use `k8s-launch-kit-config`
+- Tune SR-IOV and OFED node concurrency: edit the top-level `maintenance` section with `k8s-launch-kit-config`
 - Choose profile + generate manifests: use `l8k generate` (skill: `k8s-launch-kit-generate`)
 - Skip discovery for known SKUs: use `l8k generate --for <preset>` (skill: `k8s-launch-kit-generate`)
 - Preview before applying: use `l8k generate --dry-run` (skill: `k8s-launch-kit-dryrun`)
@@ -57,12 +58,13 @@ Use `l8k preset list` to see available presets. Multi-variant presets (same mach
 - Always call l8k with `--output json 2>/dev/null` and parse the result with jq. Never use text mode. Do NOT add `--yes` — it doesn't work on subcommands; `--output json` auto-confirms.
 - When generating manifests, check the discovered config for multirail: if any group has `railNumber > 0` in physicalFunctions, add `--multirail` to the `l8k generate` command.
 - `--kubeconfig` is optional — l8k falls back to `$KUBECONFIG` env var if not specified.
+- For Network Operator 26.1+, treat SR-IOV requestor mode as one coordinated Helm change: both the Network Operator drain requestor and SR-IOV external drainer must be enabled. OFED uses its separate Maintenance Operator requestor. Use `--overwrite-existing` when generated values differ from an installed release; a CR-only apply is insufficient.
 
 ## Reference Documents
 
 - `references/profile-decision-tree.md` — Profile selection by fabric, NIC type, multiplane mode
 - `references/spectrum-x-guide.md` — Spectrum-X multiplane modes and OVS bridge config
-- `references/config-schema.md` — Full config field reference
+- `references/config-schema.md` — Full config field reference, including maintenance concurrency and release gates
 - `references/glossary.md` — East-west, north-south, rail, plane, PF, VF, RoCE, OFED, DOCA
 
 ## Tips

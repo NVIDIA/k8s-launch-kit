@@ -45,6 +45,13 @@
 - **DOCA**: NVIDIA's Data Center Infrastructure-on-a-Chip Architecture. The DOCA driver is the containerized OFED driver deployed by the Network Operator.
 - **Third-party RDMA module handling**: Before loading DOCA/OFED drivers, kernel modules that depend on inbox MLX modules (e.g., `iw_cm`, `nfsrdma`) must be unloaded. Discovery detects these automatically (including transitive dependencies) and saves them as `thirdPartyRDMAModules` per group for visibility and warnings. `unloadThirdPartyRDMAModules: true` renders `UNLOAD_THIRD_PARTY_RDMA_MODULES: "true"` (a boolean flag) in generated manifests; the driver container has the 24 known third-party modules hardcoded.
 
+## Maintenance
+
+- **NodeMaintenance**: A request for the Maintenance Operator to make one node safe for disruptive work and return it to service afterward.
+- **Requestor mode**: Network Operator 26.1+ mode where OFED and SR-IOV ask the Maintenance Operator to coordinate drains instead of draining directly. SR-IOV requires both its external drainer and the Network Operator drain requestor.
+- **MaintenanceOperatorConfig**: Cluster policy that limits global active operations and unavailable nodes. Nodes already cordoned or NotReady consume the unavailable-node budget.
+- **Internal drainer**: The legacy SR-IOV drain controller used before Network Operator 26.1; its concurrency comes from `SriovNetworkPoolConfig.spec.maxUnavailable` rather than the global Maintenance Operator budget.
+
 ## l8k Concepts
 
 - **Group**: A set of worker nodes with identical NIC hardware layouts (same device IDs, same rail count). Discovery creates groups automatically. Multiple groups with compatible hardware may be merged.

@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.1.0
+version: 1.2.0
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -113,6 +113,21 @@ output/
 ```
 
 `values.yaml` is rendered from the profile's `00-values.yaml` template. `--network-operator-release <MAJOR.MINOR>` populates the chart repository URL and image tag from the embedded catalog. To install or upgrade the chart alongside the CRs, pass `--deploy` (and `--overwrite-existing` when the release already exists with different values).
+
+For Network Operator 26.1 and newer, the rendered values enable Maintenance
+Operator requestor mode. Profiles with DOCA/OFED enable
+`operator.maintenanceOperator.useRequestor`. Profiles that deploy the SR-IOV
+Operator enable both the Network Operator drain requestor and
+`sriov-network-operator.operator.externalDrainer`; the two SR-IOV switches are
+a coordinated handoff and must not be separated. The generated
+`MaintenanceOperatorConfig` gets the global limits from the config's
+`maintenance` section.
+
+Before release 26.1, OFED uses `maintenance.maxParallelUpgrades` and the SR-IOV
+internal drainer uses `maintenance.maxUnavailable` through
+`SriovNetworkPoolConfig`. Starting with 26.1, the global Maintenance Operator
+limits are effective for both flows; the legacy OFED and SR-IOV pool limits do
+not control requestor-mode concurrency.
 
 ## Auto-Detecting Multirail
 

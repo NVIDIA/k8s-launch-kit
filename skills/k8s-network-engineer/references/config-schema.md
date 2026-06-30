@@ -36,6 +36,36 @@ When `unloadThirdPartyRDMAModules` is true and dependent modules are discovered,
 the generated NicClusterPolicy includes `UNLOAD_THIRD_PARTY_RDMA_MODULES` env var
 (space-separated module names) in the ofedDriver section.
 
+## maintenance
+
+Controls disruptive node-operation concurrency. Defaults are chosen for larger
+clusters; tune them to the cluster's actual availability budget.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxParallelOperations` | int or percent | `4` | Global Maintenance Operator work limit. Positive integer or `"1%"`-`"100%"`; integer `0` is rejected because the current scheduler yields zero slots. Percentages use all cluster nodes and round up. |
+| `maxUnavailable` | int or percent | `4` | Global unavailable-node budget in requestor mode; legacy SR-IOV pool limit before 26.1. Non-negative integer or `"1%"`-`"100%"`; integer `0` pauses new work. In requestor mode, already cordoned or NotReady nodes count toward it. Requestor-mode percentages use all cluster nodes; legacy percentages use the selected pool. Both round down. |
+| `maxNodeMaintenanceTimeSeconds` | int | `3600` | Non-negative cleanup delay after a NodeMaintenance request reaches Ready. `0` means immediately garbage-collection eligible, not disabled. Keep below the cluster-autoscaler idle interval. |
+| `maxParallelUpgrades` | int | `4` | OFED concurrency before Network Operator 26.1. Non-negative; `0` means unlimited on the legacy path. Ignored by OFED requestor mode in 26.1+. |
+
+Releases 26.1 and newer render these requestor settings in Helm values:
+
+- OFED: `operator.maintenanceOperator.useRequestor: true`.
+- SR-IOV: both
+  `operator.maintenanceOperator.useDrainControllerRequestor: true` and
+  `sriov-network-operator.operator.externalDrainer.enabled: true`.
+
+The two SR-IOV switches are required together. In requestor mode,
+`MaintenanceOperatorConfig.spec.maxParallelOperations` and
+`spec.maxUnavailable` are global and authoritative;
+`SriovNetworkPoolConfig.spec.maxUnavailable` no longer controls draining.
+Before 26.1, the SR-IOV internal drainer uses that pool field and OFED uses
+`maxParallelUpgrades`.
+
+These requestor switches become Deployment environment variables. Applying
+only generated CRs cannot enable them; use `--overwrite-existing` to upgrade an
+installed Helm release to changed generated values.
+
 ## nvIpam
 
 Controls NV-IPAM (NVIDIA IP Address Management) pool generation.

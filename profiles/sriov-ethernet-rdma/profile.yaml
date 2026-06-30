@@ -14,6 +14,7 @@ templates:
   - 11-nicnodepolicy.yaml
   - 20-ippool.yaml
   - 30-nicinterfacenametemplate.yaml
+  - 35-sriovnetworkpoolconfig.yaml
   - 40-sriovnetworknodepolicy.yaml
   - 50-sriovnetwork.yaml
   - 60-example-daemonset.yaml
