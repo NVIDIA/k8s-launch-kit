@@ -212,6 +212,28 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	totalCrossRail := len(plan.RDMACrossRail)
 	uiOutput.Info("Plan: %d same-rail rping + %d cross-rail rping; %d same-rail ib_write_bw + %d cross-rail ib_write_bw",
 		totalSameRail, totalCrossRail, len(plan.RDMABwSameRail), len(plan.RDMABwCrossRail))
+	// Defensive: Plan() can return a zero-test plan without setting
+	// Skip (e.g. ≥2 schedulable pods but Plan's same-rail loop emits
+	// nothing). Two possible causes, both surface here:
+	//
+	//   (a) Every rail had at least one endpoint with no resolvable
+	//       RDMA device. Common on macvlan/ipoib-rdma-shared profiles
+	//       where the in-pod RDMA device probe returns empty.
+	//   (b) No rail key was shared across pods. Can't happen with
+	//       any current l8k-rendered example DaemonSet (single group
+	//       per render → identical multus annotations), but mentioned
+	//       so the diagnostic doesn't misattribute on a future
+	//       multi-group setup.
+	//
+	// Without surfacing this, validate prints "Matrix complete: 0/0
+	// passed" and exits success, hiding a real coverage gap.
+	if totalSameRail+totalCrossRail+len(plan.RDMABwSameRail)+len(plan.RDMABwCrossRail) == 0 {
+		uiOutput.Warning(
+			"Matrix produced 0 tests despite %d schedulable pod(s) — either every rail had at least one endpoint with no resolvable RDMA device, or no rail key was shared across pods. "+
+				"Most common cause: macvlan or IPoIB secondary networks, where the in-pod iface has no PCI-direct mlx5 sysfs entry. "+
+				"Verify with: `kubectl exec <pod> -- ls /sys/class/net/<iface>/device/infiniband/` (empty on every pod = the fallback path needs the host master mapping).",
+			len(testPods))
+	}
 
 	// Build a pod-name → container name map so the test runners
 	// know which container to exec in (test DSes have a single

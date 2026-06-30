@@ -41,16 +41,54 @@ const rdmaServerSettleDelay = 2 * time.Second
 // Options.Timeout.
 const rdmaTestTimeout = 90 * time.Second
 
+// railNameIndex extracts the numeric rail index from a rail key like
+// "macvlan-network-rail-3-some-suffix" → 3. Matches the rendered
+// NetworkAttachmentDefinition / MacvlanNetwork names every l8k profile
+// emits (always shaped `<base>-rail-<N>-<identifier>`). Returns -1 when
+// the pattern doesn't match (e.g. shared-network profiles where rail
+// indexing isn't part of the network name) so the caller skips the
+// rail-index fallback for that key.
+var railNameIndex = regexp.MustCompile(`(?:^|-)rail-(\d+)(?:-|$)`)
+
+func railIndex(rail string) int {
+	m := railNameIndex.FindStringSubmatch(rail)
+	if len(m) < 2 {
+		return -1
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
 // DiscoverRDMADevices runs once per test pod to map each multus
-// secondary-network interface to its RDMA device. Reads
-// /sys/class/net/<iface>/device/infiniband/ inside the pod — that
-// directory exists for any mlx5 VF and contains exactly one entry
-// (the device name, e.g. "mlx5_4").
+// secondary-network interface to its RDMA device. Two probes are
+// tried in order, per interface:
 //
-// nets is the parsed multus annotation; ifaceByRail tells the
-// mapping which net interface (e.g. "net1") backs each rail.
-// Returns map[rail]→<rdmaDev>; rails whose interface couldn't be
-// resolved are absent from the map.
+//  1. /sys/class/net/<iface>/device/infiniband/ — this exists for any
+//     PCI-direct mlx5 device, including SR-IOV VFs moved into the pod
+//     netns (host-device-rdma, sriov-*-rdma profiles). Contains
+//     exactly one entry: the RDMA device name (e.g. "mlx5_4").
+//
+//  2. Fallback for non-PCI-direct attachments — macvlan slaves,
+//     IPoIB child interfaces, and anything else that's a kernel
+//     netdev layered on top of a master mlx5 device. Those netdevs
+//     don't have a `device/` symlink to a PCI function inside the
+//     pod, so probe (1) returns empty. The rdmaSharedDevicePlugin
+//     mounts the host's `/sys/class/infiniband/<mlx5_X>` entries
+//     into the pod for each rail-resource the pod requested, so we
+//     enumerate that directory. When exactly one entry is present
+//     (single-NIC nodes — the common case), use it. When multiple
+//     entries are present (multi-rail rdmaShared on a multi-NIC
+//     node) we can't disambiguate purely pod-side and fall back to
+//     "no device for this rail"; an orchestrator-side host probe
+//     reading the rendered MacvlanNetwork master fields would be the
+//     fix and is tracked as a follow-up.
+//
+// ifaceByRail tells which net interface (e.g. "net1") backs each
+// rail. Returns map[rail]→<rdmaDev>; rails whose interface couldn't
+// be resolved are absent from the map.
 func DiscoverRDMADevices(ctx context.Context, restConfig *rest.Config, namespace, pod, container string, ifaceByRail map[string]string) map[string]string {
 	out := map[string]string{}
 	if len(ifaceByRail) == 0 {
@@ -64,11 +102,41 @@ func DiscoverRDMADevices(ctx context.Context, restConfig *rest.Config, namespace
 		if iface == "" {
 			continue
 		}
-		// `ls -1` prints one filename per line. Capture the
-		// first line — the mlx5 VF directory always contains
-		// exactly one entry, but `head -n 1` is a cheap safety
-		// belt against future kernel changes.
+		// Primary probe: PCI-direct mlx5 netdev (SR-IOV VF, host-device).
 		fmt.Fprintf(&b, "dev=$(ls -1 /sys/class/net/%s/device/infiniband/ 2>/dev/null | head -n 1); ", iface)
+
+		// Fallback A (single-NIC): non-PCI-direct netdev (macvlan, ipoib).
+		// rdmaSharedDevicePlugin injects /sys/class/infiniband/<mlx5_X>
+		// for each rail-resource the pod requested. When the pod
+		// requested exactly one rail, there's exactly one mlx5 — pick it.
+		fmt.Fprintf(&b, "if [ -z \"$dev\" ] && [ -d /sys/class/net/%s ]; then "+
+			"count=$(ls -1 /sys/class/infiniband/ 2>/dev/null | wc -l); "+
+			"if [ \"$count\" = \"1\" ]; then dev=$(ls -1 /sys/class/infiniband/ 2>/dev/null); fi; "+
+			"fi; ", iface)
+
+		// Fallback B (multi-rail): when the pod was granted multiple
+		// rail-resources, /sys/class/infiniband has one entry per rail,
+		// sorted by mlx5 index. Use the rail INDEX (extracted from the
+		// rail name `rail-N`) to pick the Nth entry. Sort is `sort -t_
+		// -k2,2n` (POSIX, works on busybox) rather than `ls -1v` (GNU
+		// only) so the probe doesn't silently regress to alphabetic
+		// order — which would mis-pick for rails ≥ 10 — if the test
+		// container image ever changes from DOCA to a busybox-based
+		// distro.
+		//
+		// Caveats: assumes (a) one rail = one mlx5, (b) mlx5 numbering
+		// follows PCI enumeration (kernel default), and (c) rail indexing
+		// is contiguous from 0 in the same order. All three hold for
+		// every l8k-generated profile today. When false (e.g. extra
+		// non-rail mlx5 devices exposed), the heuristic picks wrong;
+		// the orchestrator-side master→mlx5 mapping is the real fix and
+		// is tracked separately.
+		if idx := railIndex(rail); idx >= 0 {
+			fmt.Fprintf(&b, "if [ -z \"$dev\" ]; then "+
+				"dev=$(ls -1 /sys/class/infiniband/ 2>/dev/null | sort -t_ -k2,2n | sed -n %dp); "+
+				"fi; ", idx+1)
+		}
+
 		fmt.Fprintf(&b, "if [ -n \"$dev\" ]; then echo %q=$dev; fi; ", rail)
 	}
 	if b.Len() == 0 {
