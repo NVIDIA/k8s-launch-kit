@@ -41,7 +41,7 @@ type ExecResult struct {
 // stdout/stderr.
 //
 // Used by both the discovery probes (sysfs reads, nvidia-smi parse) and
-// the Phase-2 connectivity ping matrix. The helper builds its own
+// the validate connectivity RDMA matrix. The helper builds its own
 // clientset from the supplied REST config so callers don't need to
 // thread two clients around — there's a one-time TLS/transport cost per
 // call that's negligible against the cost of an exec round-trip.

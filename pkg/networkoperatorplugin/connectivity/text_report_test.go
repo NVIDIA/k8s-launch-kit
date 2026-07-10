@@ -45,10 +45,10 @@ func (c *captureOutput) Error(format string, args ...interface{}) {
 func (c *captureOutput) StartProgress(message string) ui.Progress {
 	return &captureProgress{out: c, msg: message}
 }
-func (c *captureOutput) Header(text string)            {}
-func (c *captureOutput) Section(text string)           { c.lines = append(c.lines, "SECTION: "+text) }
-func (c *captureOutput) Confirm(string) (bool, error)  { return true, nil }
-func (c *captureOutput) IsTTY() bool                   { return false }
+func (c *captureOutput) Header(text string)           {}
+func (c *captureOutput) Section(text string)          { c.lines = append(c.lines, "SECTION: "+text) }
+func (c *captureOutput) Confirm(string) (bool, error) { return true, nil }
+func (c *captureOutput) IsTTY() bool                  { return false }
 
 type captureProgress struct {
 	out *captureOutput
@@ -211,6 +211,10 @@ func TestCellFor(t *testing.T) {
 	t.Run("ib_write_bw fail with no bandwidth is ERR", func(t *testing.T) {
 		r := PingResult{OK: false}
 		assert.Equal(t, "✗ ERR", cellFor("a", "b", &r, familyIbBw, false))
+	})
+	t.Run("ib_write_bw fail below threshold shows observed bandwidth", func(t *testing.T) {
+		r := PingResult{OK: false, BandwidthGbps: 194.39, MinBandwidthGbps: 800}
+		assert.Equal(t, "✗ 194.4 Gbps (< 800.0)", cellFor("a", "b", &r, familyIbBw, false))
 	})
 	t.Run("ib_write_bw OK but zero bandwidth is ERR", func(t *testing.T) {
 		// Defensive: OK=true with zero bandwidth shouldn't happen

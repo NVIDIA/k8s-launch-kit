@@ -217,11 +217,14 @@ func RunRPing(ctx context.Context, restConfig *rest.Config, namespace string, se
 // parse for a matrix cell. Each test allocates a fresh TCP listener
 // port (default 18515 + an orchestrator-supplied offset) to avoid
 // collisions with concurrent runs against unrelated rails.
-func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string, serverPod, serverContainer string, clientPod, clientContainer string, test PingTest, port int) PingResult {
+func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string, serverPod, serverContainer string, clientPod, clientContainer string, test PingTest, port, size int, minBandwidthGbps float64) PingResult {
 	if port <= 0 {
 		port = 18515
 	}
-	r := PingResult{Test: test}
+	if size <= 0 {
+		size = 65536
+	}
+	r := PingResult{Test: test, MinBandwidthGbps: minBandwidthGbps}
 	if test.SrcRDMADev == "" || test.DstRDMADev == "" {
 		r.Err = fmt.Errorf("ib_write_bw needs RDMA device names; got src=%q dst=%q", test.SrcRDMADev, test.DstRDMADev)
 		return r
@@ -230,13 +233,13 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string
 	tctx, cancel := context.WithTimeout(ctx, rdmaTestTimeout)
 	defer cancel()
 
-	// `ib_write_bw -d <dev> -R -s 65536 --report_gbits -p <port>`
+	// `ib_write_bw -d <dev> -R -s <size> --report_gbits -p <port>`
 	// runs as the server when invoked without a peer IP, as the
 	// client when invoked with one. The server prints a banner and
 	// then waits; the client connects, runs the test, and both
 	// sides print the summary table.
-	serverCmd := fmt.Sprintf("nohup ib_write_bw -d %s -R -s 65536 --report_gbits -p %d >/tmp/ibwritebw-server.log 2>&1 & echo $!",
-		test.DstRDMADev, port)
+	serverCmd := fmt.Sprintf("nohup ib_write_bw -d %s -R -s %d --report_gbits -p %d >/tmp/ibwritebw-server.log 2>&1 & echo $!",
+		test.DstRDMADev, size, port)
 	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, namespace, serverPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
 	if err != nil {
 		r.Err = fmt.Errorf("ib_write_bw server start: %w (stderr: %s)", err, srvRes.Stderr)
@@ -252,8 +255,8 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string
 	case <-time.After(rdmaServerSettleDelay):
 	}
 
-	clientCmd := fmt.Sprintf("ib_write_bw -d %s -R -s 65536 --report_gbits -p %d %s",
-		test.SrcRDMADev, port, test.DstIP)
+	clientCmd := fmt.Sprintf("ib_write_bw -d %s -R -s %d --report_gbits -p %d %s",
+		test.SrcRDMADev, size, port, test.DstIP)
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, namespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	r.Stdout, r.Stderr = cliRes.Stdout, cliRes.Stderr
 
@@ -268,10 +271,15 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string
 		r.Err = fmt.Errorf("ib_write_bw output missing summary row")
 		r.OK = false
 	default:
-		// Treat any non-zero bandwidth as success — partial-bw
-		// numbers are still informative (slow rail, MTU
-		// mismatch, etc.) and the cell value tells the story.
-		r.OK = bw > 0
+		switch {
+		case bw <= 0:
+			r.OK = false
+		case minBandwidthGbps > 0 && bw < minBandwidthGbps:
+			r.Err = fmt.Errorf("observed bandwidth %.1f Gbps below minimum %.1f Gbps", bw, minBandwidthGbps)
+			r.OK = false
+		default:
+			r.OK = true
+		}
 	}
 	return r
 }

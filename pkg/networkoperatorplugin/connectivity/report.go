@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 )
 
@@ -66,12 +66,12 @@ type ReportData struct {
 	// Verdict is the overall pass/fail outcome rendered as a
 	// prominent banner at the top of the report. Computed by the
 	// caller (CLI) from the same inputs that drive the exit code.
-	Verdict OverallVerdict
-	Cluster        ClusterInfo
-	Profile        ProfileInfo
-	NodeGroups     []NodeGroupInfo
-	Nodes          []NodeInfo
-	Release        *networkoperatorplugin.VersionCheck
+	Verdict    OverallVerdict
+	Cluster    ClusterInfo
+	Profile    ProfileInfo
+	NodeGroups []NodeGroupInfo
+	Nodes      []NodeInfo
+	Release    *networkoperatorplugin.VersionCheck
 	// ComponentCheck cross-references the live NCP+NNP component
 	// versions against the embedded release catalog. Surfaced as a
 	// sub-table under "Network Operator release" in the HTML
@@ -426,6 +426,12 @@ func reportFuncMap() template.FuncMap {
 			if fam == "ibbw" {
 				if r.OK && r.BandwidthGbps > 0 {
 					return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
+				}
+				if r.BandwidthGbps > 0 && r.MinBandwidthGbps > 0 {
+					return fmt.Sprintf("✗ %.1f Gbps (< %.1f)", r.BandwidthGbps, r.MinBandwidthGbps)
+				}
+				if r.BandwidthGbps > 0 {
+					return fmt.Sprintf("✗ %.1f Gbps", r.BandwidthGbps)
 				}
 				return "✗ ERR"
 			}

@@ -95,6 +95,13 @@ func TestPlan_SoftSkipOnFewerThan2Pods(t *testing.T) {
 	})
 }
 
+func TestNormalizeChecks(t *testing.T) {
+	assert.Equal(t, []Check{CheckRPing, CheckIBWriteBW}, normalizeChecks(nil))
+	assert.Empty(t, normalizeChecks([]Check{}))
+	assert.Equal(t, []Check{CheckIBWriteBW, CheckRPing},
+		normalizeChecks([]Check{CheckIBWriteBW, "", CheckRPing, CheckIBWriteBW}))
+}
+
 func TestPlan_TwoPodsOneRail(t *testing.T) {
 	plan := Plan([]TestPod{
 		mkPod("pod-a", "rail-0"),

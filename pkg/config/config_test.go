@@ -87,6 +87,16 @@ profile:
 		_, source, err := LoadFullConfigWithSource(configPath, logger)
 		require.NoError(t, err)
 		assert.Equal(t, configContent, string(source))
+
+		require.NotNil(t, config.Validation)
+		require.NotNil(t, config.Validation.Connectivity)
+		assert.True(t, *config.Validation.Connectivity)
+		assert.Equal(t, []string{ValidationCheckRPing, ValidationCheckIBWriteBW}, config.Validation.Checks)
+		require.NotNil(t, config.Validation.RDMA)
+		assert.Equal(t, DefaultValidationRPingIterations, config.Validation.RDMA.RPingIterations)
+		assert.Equal(t, DefaultValidationIBWriteSize, config.Validation.RDMA.IBWriteSize)
+		require.NotNil(t, config.Validation.RDMA.IBWriteMinBandwidthGbps)
+		assert.Equal(t, float64(DefaultValidationIBWriteMinGbps), *config.Validation.RDMA.IBWriteMinBandwidthGbps)
 	})
 
 	t.Run("load config file that does not exist", func(t *testing.T) {
@@ -139,6 +149,40 @@ func TestDefaultLaunchKitConfig(t *testing.T) {
 	assert.NotEmpty(t, cfg.NetworkOperator.Version, "default NetworkOperator must carry a version")
 	require.NotNil(t, cfg.DOCADriver, "DefaultLaunchKitConfig must populate DOCADriver")
 	require.NotNil(t, cfg.NvIpam, "DefaultLaunchKitConfig must populate NvIpam")
+	require.NotNil(t, cfg.Validation, "DefaultLaunchKitConfig must populate Validation")
+	assert.Equal(t, []string{ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
+	require.NotNil(t, cfg.Validation.RDMA)
+	assert.Equal(t, DefaultValidationRPingIterations, cfg.Validation.RDMA.RPingIterations)
+	assert.Equal(t, DefaultValidationIBWriteSize, cfg.Validation.RDMA.IBWriteSize)
+	require.NotNil(t, cfg.Validation.RDMA.IBWriteMinBandwidthGbps)
+	assert.Equal(t, float64(DefaultValidationIBWriteMinGbps), *cfg.Validation.RDMA.IBWriteMinBandwidthGbps)
+}
+
+func TestValidationConfig(t *testing.T) {
+	t.Run("explicit empty checks stays empty", func(t *testing.T) {
+		cfg := NormalizeValidationConfig(&ValidationConfig{Checks: []string{}})
+		require.NotNil(t, cfg)
+		assert.Empty(t, cfg.Checks)
+	})
+
+	t.Run("normalizes duplicates and blanks", func(t *testing.T) {
+		checks := NormalizeValidationChecks([]string{" rping ", "", "ib_write_bw", "rping"})
+		assert.Equal(t, []string{ValidationCheckRPing, ValidationCheckIBWriteBW}, checks)
+	})
+
+	t.Run("rejects unknown checks", func(t *testing.T) {
+		cfg := NormalizeValidationConfig(&ValidationConfig{Checks: []string{"rping", "icmp"}})
+		err := ValidateValidationConfig(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported check")
+	})
+
+	t.Run("preserves explicit zero minimum bandwidth", func(t *testing.T) {
+		zero := 0.0
+		cfg := NormalizeValidationConfig(&ValidationConfig{RDMA: &ValidationRDMAConfig{IBWriteMinBandwidthGbps: &zero}})
+		require.NotNil(t, cfg.RDMA.IBWriteMinBandwidthGbps)
+		assert.Equal(t, 0.0, *cfg.RDMA.IBWriteMinBandwidthGbps)
+	})
 }
 
 func TestDefaultLaunchKitConfig_FreshCopy(t *testing.T) {
