@@ -4,7 +4,7 @@ networkOperator:
   # version/componentVersion/repository/operatorRepository/helmRepoURL (below)
   # and docaDriver.version are populated from the embedded catalog;
   # explicit values here are overridden.
-  # Supported: 25.10, 26.1, 26.4. Leave empty to use the explicit values
+  # Supported: 25.10, 26.1, 26.4, 26.7. Leave empty to use the explicit values
   # below as-is.
   # selectedRelease: "26.4"
   version: v26.4.0
