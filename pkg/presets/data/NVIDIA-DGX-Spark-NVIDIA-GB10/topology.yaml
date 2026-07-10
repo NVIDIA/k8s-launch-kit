@@ -1,0 +1,78 @@
+machineType: NVIDIA_DGX_Spark
+manufacturer: NVIDIA
+gpuType: NVIDIA-GB10
+nicModel: NVIDIA DGX Spark, P4242-0000, 2-port QSFP up to 200G, Ethernet, PCIe5 (ConnectX-7)
+gpuInterconnect: ""
+numaNodes: 1
+
+capabilities:
+  nodes:
+    sriov: true
+    rdma: true
+    ib: false
+
+# NVIDIA DGX Spark (P4242), single-GB10 workstation:
+#   - 1x NVIDIA GB10 GPU (no GPU-to-GPU interconnect).
+#   - 2x ConnectX-7 NICs, each exposing two Ethernet ports.
+#   - nvidia-smi reports every GPU-to-NIC relationship as NODE, so the
+#     single-NUMA-node fallback assigns all four ports to GPU0.
+#
+# The kernel reports numa_node=-1 for the integrated NICs. Because the system
+# exposes only NUMA node 0 and GPU0 has NUMA affinity 0, all PFs are assigned
+# to NUMA 0. Both ports are retained because the VPD model is explicitly
+# dual-port, matching l8k discovery's default rail-collapse behavior.
+# Each PF advertises 4 total VFs; use sriov.numVfs <= 4 for SR-IOV generation.
+
+pfs:
+  # --- NUMA 0: GPU0, CPUs 0-19 ---
+  - deviceID: "1021"
+    rdmaDevice: rocep1s0f0
+    pciAddress: "0000:01:00.0"
+    networkInterface: enp1s0f0np0
+    traffic: east-west
+    rail: 0
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: NODE
+    psid: nvd0000000087
+    partNumber: P4242-0000
+    model: NVIDIA DGX Spark, P4242-0000, 2-port QSFP up to 200G, Ethernet, PCIe5
+
+  - deviceID: "1021"
+    rdmaDevice: rocep1s0f1
+    pciAddress: "0000:01:00.1"
+    networkInterface: enp1s0f1np1
+    traffic: east-west
+    rail: 1
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: NODE
+    psid: nvd0000000087
+    partNumber: P4242-0000
+    model: NVIDIA DGX Spark, P4242-0000, 2-port QSFP up to 200G, Ethernet, PCIe5
+
+  - deviceID: "1021"
+    rdmaDevice: roceP2p1s0f0
+    pciAddress: "0002:01:00.0"
+    networkInterface: enP2p1s0f0np0
+    traffic: east-west
+    rail: 2
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: NODE
+    psid: nvd0000000087
+    partNumber: P4242-0000
+    model: NVIDIA DGX Spark, P4242-0000, 2-port QSFP up to 200G, Ethernet, PCIe5
+
+  - deviceID: "1021"
+    rdmaDevice: roceP2p1s0f1
+    pciAddress: "0002:01:00.1"
+    networkInterface: enP2p1s0f1np1
+    traffic: east-west
+    rail: 3
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: NODE
+    psid: nvd0000000087
+    partNumber: P4242-0000
+    model: NVIDIA DGX Spark, P4242-0000, 2-port QSFP up to 200G, Ethernet, PCIe5
