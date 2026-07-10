@@ -1,3 +1,4 @@
+{{- $metaPlugins := secondaryNetworkMetaPlugins .Profile -}}
 {{- if .Profile.Multirail -}}
 {{- /* Create separate SR-IOV Ethernet networks for each PF interface */ -}}
 {{- range $i, $pf := .ClusterConfig.PFs}}
@@ -13,6 +14,10 @@ spec:
       "type": "nv-ipam",
       "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }
+{{- if $metaPlugins }}
+  metaPlugins: |
+{{ $metaPlugins }}
+{{- end }}
   networkNamespace: "{{$.CurrentNetworkNamespace}}"
   resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
@@ -30,5 +35,9 @@ spec:
       "type": "nv-ipam",
       "poolName": "{{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}"
     }
+{{- if $metaPlugins }}
+  metaPlugins: |
+{{ $metaPlugins }}
+{{- end }}
   networkNamespace: "{{$.CurrentNetworkNamespace}}"
   resourceName: {{.Sriov.ResourceName}}{{- end}}

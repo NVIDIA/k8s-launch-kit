@@ -22,6 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 )
 
@@ -129,6 +130,16 @@ var schemaCmd = &cobra.Command{
 					Type:        "bool",
 					Default:     "true when absent",
 					Description: "Override multirail deployment. Explicit false values from YAML or --multirail=false are preserved.",
+				},
+				"--routing": {
+					Type:        "string",
+					Default:     config.RoutingDestinationBased,
+					Description: "Secondary-network routing mode: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin. Not applied to Spectrum-X profiles.",
+				},
+				"--ignore-arp": {
+					Type:        "bool",
+					Default:     "false",
+					Description: "Chain the tuning CNI meta-plugin to make ARP ownership interface-local and prevent ARP flux across pod rails. Not applied to Spectrum-X profiles.",
 				},
 				"--spectrum-x": {
 					Type:        "string",

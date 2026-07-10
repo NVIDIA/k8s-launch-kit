@@ -73,6 +73,8 @@ func (l *Launcher) recordResolvedProfile(fullConfig *config.LaunchKitConfig) {
 		"fabric":     fullConfig.Profile.Fabric,
 		"deployment": fullConfig.Profile.Deployment,
 		"multirail":  fmt.Sprintf("%v", fullConfig.Profile.Multirail),
+		"routing":    fullConfig.Profile.Routing,
+		"ignoreARP":  fmt.Sprintf("%v", fullConfig.Profile.IgnoreARP),
 	}
 	if spectrumX := fullConfig.Profile.SpectrumX; spectrumX != nil && spectrumX.Enable {
 		l.result.Profile["spectrumX"] = "true"

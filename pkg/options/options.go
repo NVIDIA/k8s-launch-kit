@@ -27,14 +27,14 @@ type Options struct {
 	// Phase 1: Cluster Discovery
 	// ConfigDir is an optional root containing l8k-config.yaml and/or presets/.
 	// Explicit --user-config still has higher precedence for the config file.
-	ConfigDir               string
-	UserConfig              string // Path to user-provided config (skips discovery)
-	DiscoverClusterConfig   bool   // Whether to discover cluster config
+	ConfigDir             string
+	UserConfig            string // Path to user-provided config (skips discovery)
+	DiscoverClusterConfig bool   // Whether to discover cluster config
 	// DiscoverOnly skips Phase 2 (manifest generation) entirely. Set by
 	// the standalone `l8k discover` subcommand so its run produces only
 	// cluster-config.yaml and never errors on "no profile selected".
-	DiscoverOnly      bool
-	SaveClusterConfig string // Path to save discovered config
+	DiscoverOnly             bool
+	SaveClusterConfig        string // Path to save discovered config
 	NetworkOperatorNamespace string // Override namespace for Network Operator (optional; ignored by `discover`)
 	// KeepNamespace, when true, suppresses teardown of the
 	// nvidia-k8s-launch-kit bootstrap namespace at the end of `discover` —
@@ -48,8 +48,8 @@ type Options struct {
 	// NetworkOperatorRelease is a MAJOR.MINOR catalog key (e.g. "26.4"), not
 	// a full semver. Selects component image tags + repository from the
 	// embedded releases catalog and drives version-gated template sections.
-	NetworkOperatorRelease  string
-	ImagePullSecrets        []string // Image pull secret names for NicClusterPolicy
+	NetworkOperatorRelease string
+	ImagePullSecrets       []string // Image pull secret names for NicClusterPolicy
 
 	// Phase 2: Deployment Generation
 	Fabric         string // Fabric type to deploy
@@ -64,10 +64,16 @@ type Options struct {
 	// correctly opts out. YAML presence is tracked separately by
 	// `config.Profile.MultirailSet`.
 	MultirailSet bool
-	SpectrumX    bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
-	SPCXVersion         string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
-	MultiplaneMode      string // Spectrum-X multiplane mode (default: swplb)
-	NumberOfPlanes      int    // Number of planes for Spectrum-X (default: 4)
+	Routing      string // destination-based or source-based routing for generated secondary networks
+	IgnoreARP    bool   // Whether to add ARP ownership tuning to generated secondary networks
+	// IgnoreARPSet is true when the user explicitly passed `--ignore-arp`
+	// (including `--ignore-arp=false`). This prevents the bool zero value from
+	// clobbering profile.ignoreARP from the config when the flag is omitted.
+	IgnoreARPSet   bool
+	SpectrumX      bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
+	SPCXVersion    string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
+	MultiplaneMode string // Spectrum-X multiplane mode (default: swplb)
+	NumberOfPlanes int    // Number of planes for Spectrum-X (default: 4)
 	// Groups limits `l8k generate` to the named source groups (matched
 	// case-sensitively against `clusterConfig[].identifier`). Comma-separated
 	// on the CLI (`--groups a,b`). Mutually exclusive with GpuType.
@@ -81,7 +87,7 @@ type Options struct {
 	// set, generate replaces fullConfig.ClusterConfig with a single group
 	// synthesized from the preset (skipping cluster discovery). Requires
 	// NodeSelector since the preset has no live worker-node list.
-	ForPreset           string
+	ForPreset string
 	// NetworkNamespaces is the comma-separated list from --network-namespaces:
 	// the namespaces the secondary-network CRs + example test DaemonSets are
 	// rendered into (one copy per namespace). Empty defaults to "default".

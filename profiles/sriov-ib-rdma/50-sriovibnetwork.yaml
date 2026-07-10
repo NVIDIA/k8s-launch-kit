@@ -1,3 +1,4 @@
+{{- $metaPlugins := secondaryNetworkMetaPlugins .Profile -}}
 {{- if .Profile.Multirail -}}
 {{- /* Create separate SR-IOV IB networks for each PF interface */ -}}
 {{- range $i, $pf := .ClusterConfig.PFs}}
@@ -13,6 +14,10 @@ spec:
       "type": "nv-ipam",
       "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }
+{{- if $metaPlugins }}
+  metaPlugins: |
+{{ $metaPlugins }}
+{{- end }}
   resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
   linkState: enable
   networkNamespace: "{{$.CurrentNetworkNamespace}}"
@@ -31,6 +36,10 @@ spec:
       "type": "nv-ipam",
       "poolName": "{{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}"
     }
+{{- if $metaPlugins }}
+  metaPlugins: |
+{{ $metaPlugins }}
+{{- end }}
   resourceName: {{.Sriov.ResourceName}}
   linkState: enable
   networkNamespace: "{{$.CurrentNetworkNamespace}}"

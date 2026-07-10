@@ -95,6 +95,11 @@ var templateFuncs = template.FuncMap{
 	// hash of the original (same algorithm as MachineLabelValue), so the result
 	// is deterministic across calls but never breaches maxLen.
 	"boundedSuffix": boundedSuffix,
+	// secondaryNetworkMetaPlugins renders the metaPlugins literal-block body
+	// shared by non-Spectrum-X secondary-network CRs. Keep tuning before sbr:
+	// tuning fixes per-interface ARP ownership before sbr installs
+	// source-selected route tables.
+	"secondaryNetworkMetaPlugins": secondaryNetworkMetaPlugins,
 	// pfsPerNic computes how many PFs share the same physical NIC by grouping
 	// east-west PFs by PCI bus:device prefix (everything before the last ".").
 	// E.g., 8 PFs across 8 NICs → 1; 8 PFs across 4 NICs → 2.
@@ -146,6 +151,48 @@ var templateFuncs = template.FuncMap{
 	// legacySriovDevicePluginConfigList does the same shape for the
 	// sriovDevicePlugin used by the 26.1 host-device profile.
 	"legacySriovDevicePluginConfigList": legacySriovDevicePluginConfigList,
+}
+
+func secondaryNetworkMetaPlugins(profile *config.Profile) string {
+	if profile == nil || (profile.SpectrumX != nil && profile.SpectrumX.Enable) {
+		return ""
+	}
+
+	plugins := make([]string, 0, 2)
+	if profile.IgnoreARP {
+		plugins = append(plugins, `{
+  "type": "tuning",
+  "sysctl": {
+    "net.ipv4.conf.all.arp_ignore": "1",
+    "net.ipv4.conf.all.arp_announce": "2",
+    "net.ipv4.conf.all.rp_filter": "0",
+    "net.ipv4.conf.IFNAME.arp_ignore": "1",
+    "net.ipv4.conf.IFNAME.arp_announce": "2",
+    "net.ipv4.conf.IFNAME.rp_filter": "0"
+  }
+}`)
+	}
+	if profile.Routing == config.RoutingSourceBased {
+		plugins = append(plugins, `{
+  "type": "sbr"
+}`)
+	}
+	if len(plugins) == 0 {
+		return ""
+	}
+	return indentBlock(strings.Join(plugins, ",\n"), 4)
+}
+
+func indentBlock(s string, spaces int) string {
+	if s == "" {
+		return ""
+	}
+	prefix := strings.Repeat(" ", spaces)
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // legacyRdmaSharedConfigList builds the configList array body for
@@ -634,7 +681,7 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilt
 
 		ctx := &templateContext{
 			LaunchKitConfig: cfgForGroup,
-			ClusterConfig:          &renderGroup,
+			ClusterConfig:   &renderGroup,
 		}
 		var buf bytes.Buffer
 		if err := tmpl.Execute(&buf, ctx); err != nil {
@@ -866,8 +913,8 @@ func boundedSuffix(maxLen int, s string) string {
 // Single-entry buckets are returned as-is.
 func mergeCompatibleGroups(groups []config.ClusterConfig, useNameTemplates bool) ([]config.ClusterConfig, bool) {
 	type mergeKey struct {
-		gpuType string
-		railCount   int
+		gpuType   string
+		railCount int
 	}
 
 	// Group indices by (gpuType, railCount). Source groups carry a
@@ -1073,16 +1120,16 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 	// node alongside the machine label, so it's stable across merged
 	// source machineTypes by construction.
 	return config.ClusterConfig{
-		Identifier:           config.SanitizeIdentifier(gpuType),
-		MachineType:          first.MachineType,
-		GPUType:              gpuType,
-		LinkType:             first.LinkType,
-		Capabilities:         caps,
-		PFs:                  first.PFs, // Representative PFs from first group
-		WorkerNodes:          allNodes,
+		Identifier:            config.SanitizeIdentifier(gpuType),
+		MachineType:           first.MachineType,
+		GPUType:               gpuType,
+		LinkType:              first.LinkType,
+		Capabilities:          caps,
+		PFs:                   first.PFs, // Representative PFs from first group
+		WorkerNodes:           allNodes,
 		ThirdPartyRDMAModules: mergedDepMods,
 		StorageModules:        mergedStorageMods,
-		NodeSelector:         map[string]string{config.GPULabelKey: gpuType},
-		RailPciAddresses:     railPciAddresses,
+		NodeSelector:          map[string]string{config.GPULabelKey: gpuType},
+		RailPciAddresses:      railPciAddresses,
 	}
 }

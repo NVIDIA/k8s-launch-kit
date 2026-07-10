@@ -1,3 +1,4 @@
+{{- $metaPlugins := secondaryNetworkMetaPlugins .Profile -}}
 {{- if .Profile.Multirail -}}
 {{- /* Create separate HostDeviceNetwork per PF */ -}}
 {{- range $i, $pf := .ClusterConfig.PFs}}
@@ -14,6 +15,10 @@ spec:
       "type": "nv-ipam",
       "poolName": "{{$.NvIpam.PoolName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}"
     }
+{{- if $metaPlugins }}
+  metaPlugins: |
+{{ $metaPlugins }}
+{{- end }}
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
 {{- end -}}
@@ -30,4 +35,8 @@ spec:
       "type": "nv-ipam",
       "poolName": "{{.NvIpam.PoolName}}{{suffix $.ClusterConfig.Identifier}}"
     }
+{{- if $metaPlugins }}
+  metaPlugins: |
+{{ $metaPlugins }}
+{{- end }}
 {{- end}}

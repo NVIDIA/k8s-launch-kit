@@ -25,10 +25,24 @@ confirmed link type. If the fabric cannot be confirmed, discovery still saves
 the config with an empty fabric so it can be supplied explicitly later.
 
 All profile flags accepted by ``generate`` are also accepted by ``discover``:
-``--fabric``, ``--deployment-type``, ``--multirail``, ``--spectrum-x``,
-``--multiplane-mode``, and ``--number-of-planes``. Explicit false is supported
-for both YAML (``multirail: false``) and CLI (``--multirail=false``) and remains
-stable when discovery rewrites the file.
+``--fabric``, ``--deployment-type``, ``--multirail``, ``--routing``,
+``--ignore-arp``, ``--spectrum-x``, ``--multiplane-mode``, and
+``--number-of-planes``. Explicit false is supported for YAML
+(``multirail: false``, ``ignoreARP: false``) and CLI
+(``--multirail=false``, ``--ignore-arp=false``) and remains stable when
+discovery rewrites the file.
+
+For routed multi-rail IPv4/RoCE deployments, ``--routing source-based`` chains
+the automatic ``sbr`` CNI meta-plugin on generated non-Spectrum-X secondary
+networks so traffic sourced from a rail IP exits through that rail's interface
+and gateway. ``--ignore-arp`` chains the ``tuning`` CNI meta-plugin before
+``sbr`` and sets ``arp_ignore=1``, ``arp_announce=2``, and ``rp_filter=0`` at
+both ``all`` and ``IFNAME`` scopes. This is useful when pod rails can observe
+ARP for each other: Linux can otherwise answer ARP for a rail-0 IP from a
+rail-3 VF MAC inside the same network namespace, sending RoCE traffic to the
+wrong HCA even though the IP destination is correct. These settings apply to
+SR-IOV, SR-IOV IB, host-device, Macvlan RDMA-shared, and IPoIB RDMA-shared
+profiles; they do not apply to Spectrum-X profiles.
 
 .. code-block:: bash
 

@@ -32,6 +32,9 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 	if cfg == nil || cfg.Profile == nil {
 		return nil
 	}
+	if err := validateRouting(cfg.Profile); err != nil {
+		return err
+	}
 
 	if cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable {
 		return validateSpectrumXCohort(cfg)
@@ -53,6 +56,16 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 	return nil
 }
 
+func validateRouting(profile *config.Profile) error {
+	switch profile.Routing {
+	case "", config.RoutingDestinationBased, config.RoutingSourceBased:
+	default:
+		return fmt.Errorf("profile.routing must be one of: %s, %s",
+			config.RoutingDestinationBased, config.RoutingSourceBased)
+	}
+	return nil
+}
+
 // validateSpectrumXCohort enforces cross-flag rules for Spectrum-X
 // profiles after hardware defaults + CLI overlay. Same checks that
 // `pkg/cmd/applySpectrumXDefaults` ran, just sourced from cfg
@@ -69,6 +82,13 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 	}
 	if !cfg.Profile.Multirail {
 		return fmt.Errorf("--spectrum-x requires multirail=true")
+	}
+	if cfg.Profile.Routing != "" && cfg.Profile.Routing != config.RoutingDestinationBased {
+		return fmt.Errorf("--routing does not apply to Spectrum-X profiles; use %s or remove the field",
+			config.RoutingDestinationBased)
+	}
+	if cfg.Profile.IgnoreARP {
+		return fmt.Errorf("--ignore-arp does not apply to Spectrum-X profiles; remove the flag or set ignoreARP: false")
 	}
 
 	// SPCXVersion must be set and registered (Phase 1 enforces the

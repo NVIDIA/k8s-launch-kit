@@ -82,6 +82,11 @@ const GPULabelKey = "nvidia.kubernetes-launch-kit.gpu"
 // MaxLabelValueLength is the Kubernetes hard limit for label values.
 const MaxLabelValueLength = 63
 
+const (
+	RoutingDestinationBased = "destination-based"
+	RoutingSourceBased      = "source-based"
+)
+
 // MachineLabelValue returns the per-source-group machine label value:
 // `<machineType>-<gpuType>` literal when it fits Kubernetes' 63-char
 // label-value limit, or a deterministic shortened form for long names
@@ -143,15 +148,15 @@ func SanitizeIdentifier(s string) string {
 
 // LaunchKitConfig represents the l8k-config.yaml structure
 type LaunchKitConfig struct {
-	NetworkOperator *NetworkOperatorConfig `yaml:"networkOperator,omitempty"`
-	DOCADriver      *DOCADriverConfig      `yaml:"docaDriver,omitempty"`
-	Maintenance     *MaintenanceConfig     `yaml:"maintenance,omitempty"`
-	NvIpam          *NvIpamConfig          `yaml:"nvIpam,omitempty"`
-	Sriov           *SriovConfig           `yaml:"sriov,omitempty"`
-	Hostdev         *HostdevConfig         `yaml:"hostdev,omitempty"`
-	RdmaShared      *RdmaSharedConfig      `yaml:"rdmaShared,omitempty"`
-	Ipoib           *IpoibConfig           `yaml:"ipoib,omitempty"`
-	Macvlan         *MacvlanConfig         `yaml:"macvlan,omitempty"`
+	NetworkOperator          *NetworkOperatorConfig          `yaml:"networkOperator,omitempty"`
+	DOCADriver               *DOCADriverConfig               `yaml:"docaDriver,omitempty"`
+	Maintenance              *MaintenanceConfig              `yaml:"maintenance,omitempty"`
+	NvIpam                   *NvIpamConfig                   `yaml:"nvIpam,omitempty"`
+	Sriov                    *SriovConfig                    `yaml:"sriov,omitempty"`
+	Hostdev                  *HostdevConfig                  `yaml:"hostdev,omitempty"`
+	RdmaShared               *RdmaSharedConfig               `yaml:"rdmaShared,omitempty"`
+	Ipoib                    *IpoibConfig                    `yaml:"ipoib,omitempty"`
+	Macvlan                  *MacvlanConfig                  `yaml:"macvlan,omitempty"`
 	SpectrumX                *SpectrumXConfig                `yaml:"spectrumX,omitempty"`
 	NicConfigurationOperator *NicConfigurationOperatorConfig `yaml:"nicConfigurationOperator,omitempty"`
 	// NetworkNamespaces is the set of namespaces the secondary-network CRs
@@ -160,27 +165,27 @@ type LaunchKitConfig struct {
 	// one independent copy per namespace. Shared resources (IPPool,
 	// NicNodePolicy, SriovNetworkNodePolicy, NicClusterPolicy, …) are NOT
 	// duplicated. Empty defaults to a single "default" namespace.
-	NetworkNamespaces        []string                        `yaml:"networkNamespaces,omitempty"`
+	NetworkNamespaces []string `yaml:"networkNamespaces,omitempty"`
 	// CurrentNetworkNamespace is transient render state. The renderer sets it
 	// to one NetworkNamespaces entry while producing that namespace's copy;
 	// it is never part of the persisted configuration schema.
-	CurrentNetworkNamespace  string                          `yaml:"-"`
-	Workload                 *WorkloadConfig                 `yaml:"workload,omitempty"`
-	Profile         *Profile               `yaml:"profile,omitempty"`
-	ClusterConfig   []ClusterConfig        `yaml:"clusterConfig,omitempty"`
+	CurrentNetworkNamespace string          `yaml:"-"`
+	Workload                *WorkloadConfig `yaml:"workload,omitempty"`
+	Profile                 *Profile        `yaml:"profile,omitempty"`
+	ClusterConfig           []ClusterConfig `yaml:"clusterConfig,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
-	Version          string   `yaml:"version"`
-	ComponentVersion string   `yaml:"componentVersion"`
+	Version          string `yaml:"version"`
+	ComponentVersion string `yaml:"componentVersion"`
 	// SelectedRelease is the catalog key (MAJOR.MINOR, e.g. "26.4") chosen via
 	// --network-operator-release. Empty means "no release pinned"; templates
 	// treat that as "latest" so existing configs render the newest gates by
 	// default. When non-empty, ApplyOptionsToConfig has already populated
 	// Version/ComponentVersion/Repository and DOCADriver.Version from the
 	// embedded catalog.
-	SelectedRelease  string   `yaml:"selectedRelease,omitempty"`
-	Repository       string   `yaml:"repository"`
+	SelectedRelease string `yaml:"selectedRelease,omitempty"`
+	Repository      string `yaml:"repository"`
 	// OperatorRepository is the registry path for the network-operator
 	// BINARY image itself, distinct from Repository (which is the
 	// COMPONENT-images registry rendered into NicClusterPolicy /
@@ -199,11 +204,11 @@ type NetworkOperatorConfig struct {
 }
 
 type DOCADriverConfig struct {
-	Enable                      bool `yaml:"enable"`
+	Enable                      bool   `yaml:"enable"`
 	Version                     string `yaml:"version"`
-	UnloadStorageModules        bool `yaml:"unloadStorageModules"`
-	EnableNFSRDMA               bool `yaml:"enableNFSRDMA"`
-	UnloadThirdPartyRDMAModules bool `yaml:"unloadThirdPartyRDMAModules"`
+	UnloadStorageModules        bool   `yaml:"unloadStorageModules"`
+	EnableNFSRDMA               bool   `yaml:"enableNFSRDMA"`
+	UnloadThirdPartyRDMAModules bool   `yaml:"unloadThirdPartyRDMAModules"`
 	// SkipPreflightChecks controls the init container's module dependency check.
 	// When false (l8k default), the check runs and any blocking dependency fails
 	// the init container, preventing MOFED load. When true, the check is skipped
@@ -299,6 +304,18 @@ type Profile struct {
 	Fabric     string `yaml:"fabric"`
 	Deployment string `yaml:"deployment"`
 	Multirail  bool   `yaml:"multirail"`
+	// Routing controls whether generated secondary-network CRs chain the CNI
+	// source-based routing meta-plugin. destination-based preserves the kernel's
+	// normal destination route lookup. source-based adds the automatic sbr plugin
+	// after IPAM/tuning so each pod source address selects its matching rail.
+	Routing string `yaml:"routing,omitempty"`
+	// IgnoreARP controls whether generated secondary-network CRs chain the tuning
+	// meta-plugin to make ARP ownership interface-local. This prevents a pod rail
+	// from answering ARP for an IP that belongs to another rail.
+	IgnoreARP bool `yaml:"ignoreARP,omitempty"`
+	// IgnoreARPSet records whether ignoreARP was present in the source YAML.
+	// This lets config rewrites preserve an explicit `ignoreARP: false`.
+	IgnoreARPSet bool `yaml:"-"`
 	// MultirailSet records whether multirail was present in the source YAML.
 	// It is transient so the public YAML shape stays unchanged. The resolver
 	// needs this bit to distinguish an omitted value (eligible for the true
@@ -316,6 +333,8 @@ func (p *Profile) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		Fabric     string            `yaml:"fabric"`
 		Deployment string            `yaml:"deployment"`
 		Multirail  *bool             `yaml:"multirail"`
+		Routing    string            `yaml:"routing,omitempty"`
+		IgnoreARP  *bool             `yaml:"ignoreARP,omitempty"`
 		SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
 	}
 	if err := unmarshal(&raw); err != nil {
@@ -325,13 +344,39 @@ func (p *Profile) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	*p = Profile{
 		Fabric:     raw.Fabric,
 		Deployment: raw.Deployment,
+		Routing:    raw.Routing,
 		SpectrumX:  raw.SpectrumX,
 	}
 	if raw.Multirail != nil {
 		p.Multirail = *raw.Multirail
 		p.MultirailSet = true
 	}
+	if raw.IgnoreARP != nil {
+		p.IgnoreARP = *raw.IgnoreARP
+		p.IgnoreARPSet = true
+	}
 	return nil
+}
+
+func (p Profile) MarshalYAML() (interface{}, error) {
+	var raw struct {
+		Fabric     string            `yaml:"fabric"`
+		Deployment string            `yaml:"deployment"`
+		Multirail  bool              `yaml:"multirail"`
+		Routing    string            `yaml:"routing,omitempty"`
+		IgnoreARP  *bool             `yaml:"ignoreARP,omitempty"`
+		SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+	}
+	raw.Fabric = p.Fabric
+	raw.Deployment = p.Deployment
+	raw.Multirail = p.Multirail
+	raw.Routing = p.Routing
+	raw.SpectrumX = p.SpectrumX
+	if p.IgnoreARP || p.IgnoreARPSet {
+		ignoreARP := p.IgnoreARP
+		raw.IgnoreARP = &ignoreARP
+	}
+	return raw, nil
 }
 
 type ProfileSpectrumX struct {
@@ -342,30 +387,30 @@ type ProfileSpectrumX struct {
 }
 
 type ClusterConfig struct {
-	Identifier           string               `yaml:"identifier"`
-	MachineType          string               `yaml:"machineType,omitempty"`
-	GPUType          string               `yaml:"gpuType,omitempty"`
+	Identifier  string `yaml:"identifier"`
+	MachineType string `yaml:"machineType,omitempty"`
+	GPUType     string `yaml:"gpuType,omitempty"`
 	// LinkType is the fabric type discovered for the group's east-west PFs:
 	// "Ethernet" or "InfiniBand". Set only when *every* east-west PF probe
 	// returns a confirmed verdict (port ACTIVE + matching link_layer + for
 	// IB, a non-zero sm_lid) and the verdicts agree. Otherwise omitted —
 	// the discovery couldn't prove the cluster is using a specific fabric,
 	// and downstream code should treat the field's absence as "unknown".
-	LinkType             string               `yaml:"linkType,omitempty"`
-	PresetApplied        bool                 `yaml:"presetApplied,omitempty"`
+	LinkType      string `yaml:"linkType,omitempty"`
+	PresetApplied bool   `yaml:"presetApplied,omitempty"`
 	// PresetDeviation lists discrepancies between the matched preset and
 	// the cluster's actually-discovered hardware. When non-empty, the
 	// preset was applied (so rail/NUMA topology fields are populated) but
 	// the cluster differs from the certified configuration. l8k re-warns
 	// every time the config is loaded.
-	PresetDeviation []PresetDeviationEntry `yaml:"presetDeviation,omitempty"`
-	Capabilities         *ClusterCapabilities `yaml:"capabilities"`
-	PFs                  []PFConfig           `yaml:"pfs"`
-	WorkerNodes          []string             `yaml:"workerNodes"`
-	NodeSelector         map[string]string    `yaml:"nodeSelector,omitempty"`
-	ThirdPartyRDMAModules []string            `yaml:"thirdPartyRDMAModules,omitempty"`
-	StorageModules        []string            `yaml:"storageModules,omitempty"`
-	RailPciAddresses     [][]string           `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
+	PresetDeviation       []PresetDeviationEntry `yaml:"presetDeviation,omitempty"`
+	Capabilities          *ClusterCapabilities   `yaml:"capabilities"`
+	PFs                   []PFConfig             `yaml:"pfs"`
+	WorkerNodes           []string               `yaml:"workerNodes"`
+	NodeSelector          map[string]string      `yaml:"nodeSelector,omitempty"`
+	ThirdPartyRDMAModules []string               `yaml:"thirdPartyRDMAModules,omitempty"`
+	StorageModules        []string               `yaml:"storageModules,omitempty"`
+	RailPciAddresses      [][]string             `yaml:"-"` // Transient: per-rail merged PCI addresses (not serialized)
 	// MergedIdentifier is the bucket-level identifier shared by all source
 	// groups that merge together by (gpuType, railCount). Used in templates
 	// for shared-resource references (resourceName, networkName, poolName,

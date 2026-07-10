@@ -28,3 +28,62 @@ func TestEmbeddedDefaultIsResolvedConfigValid(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ValidateResolvedConfig(cfg))
 }
+
+func TestValidateResolvedConfigAllowsEmptyRoutingWithoutDefaulting(t *testing.T) {
+	cfg := &config.LaunchKitConfig{Profile: &config.Profile{}}
+
+	require.NoError(t, ValidateResolvedConfig(cfg))
+	require.Empty(t, cfg.Profile.Routing)
+}
+
+func TestValidateResolvedConfigRejectsInvalidRouting(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		Profile: &config.Profile{Routing: "gateway-based"},
+	}
+
+	err := ValidateResolvedConfig(cfg)
+	require.ErrorContains(t, err, "profile.routing must be one of")
+}
+
+func TestValidateResolvedConfigRejectsRoutingForSpectrumX(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.4"},
+		Profile: &config.Profile{
+			Fabric:     "ethernet",
+			Deployment: "sriov",
+			Multirail:  true,
+			Routing:    config.RoutingSourceBased,
+			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
+				SPCXVersion:    "RA2.2",
+				MultiplaneMode: "hwplb",
+				NumberOfPlanes: 4,
+			},
+		},
+	}
+
+	err := ValidateResolvedConfig(cfg)
+	require.ErrorContains(t, err, "--routing does not apply to Spectrum-X profiles")
+}
+
+func TestValidateResolvedConfigRejectsIgnoreARPForSpectrumX(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.4"},
+		Profile: &config.Profile{
+			Fabric:     "ethernet",
+			Deployment: "sriov",
+			Multirail:  true,
+			Routing:    config.RoutingDestinationBased,
+			IgnoreARP:  true,
+			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
+				SPCXVersion:    "RA2.2",
+				MultiplaneMode: "hwplb",
+				NumberOfPlanes: 4,
+			},
+		},
+	}
+
+	err := ValidateResolvedConfig(cfg)
+	require.ErrorContains(t, err, "--ignore-arp does not apply to Spectrum-X profiles")
+}

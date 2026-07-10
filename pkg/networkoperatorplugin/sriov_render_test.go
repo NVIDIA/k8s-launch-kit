@@ -141,6 +141,14 @@ func specString(t *testing.T, doc map[string]any, key string) string {
 	return v
 }
 
+func optionalSpecString(t *testing.T, doc map[string]any, key string) (string, bool) {
+	t.Helper()
+	spec, ok := doc["spec"].(map[string]any)
+	require.True(t, ok, "doc has no spec map")
+	v, ok := spec[key].(string)
+	return v, ok
+}
+
 // loadProfileFromDir reads a profile's real on-disk profile.yaml (including its
 // template list) so the test renders exactly what `l8k generate` would.
 func loadProfileFromDir(t *testing.T, dir string) *profiles.Profile {
@@ -158,12 +166,16 @@ func loadProfileFromDir(t *testing.T, dir string) *profiles.Profile {
 // renderProfile renders a whole profile (its real template set) against the
 // mixed-same-type grouping config in multirail mode.
 func renderProfile(t *testing.T, dir, fabric, deployment string) map[string]string {
+	return renderProfileWithProfile(t, dir, &config.Profile{Fabric: fabric, Deployment: deployment, Multirail: true})
+}
+
+func renderProfileWithProfile(t *testing.T, dir string, profile *config.Profile) map[string]string {
 	t.Helper()
 	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
 	cfg, err := config.LoadFullConfig(
 		filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
 	require.NoError(t, err)
-	cfg.Profile = &config.Profile{Fabric: fabric, Deployment: deployment, Multirail: true}
+	cfg.Profile = profile
 	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, dir), cfg)
 	require.NoError(t, err)
 	return rendered
@@ -230,6 +242,96 @@ func TestProfileManifestsAreValidMultiDocYAML(t *testing.T) {
 			}
 			require.True(t, sawIPPool, "expected an IPPool manifest in profile %s", p.dir)
 		})
+	}
+}
+
+func TestSecondaryNetworkMetaPluginsHelper(t *testing.T) {
+	t.Run("default empty", func(t *testing.T) {
+		require.Empty(t, secondaryNetworkMetaPlugins(&config.Profile{}))
+	})
+
+	t.Run("source based routing only", func(t *testing.T) {
+		meta := secondaryNetworkMetaPlugins(&config.Profile{Routing: config.RoutingSourceBased})
+		require.Contains(t, meta, `"type": "sbr"`)
+		require.NotContains(t, meta, `"type": "tuning"`)
+	})
+
+	t.Run("ignore arp only", func(t *testing.T) {
+		meta := secondaryNetworkMetaPlugins(&config.Profile{IgnoreARP: true})
+		require.Contains(t, meta, `"type": "tuning"`)
+		require.Contains(t, meta, `"net.ipv4.conf.IFNAME.arp_ignore": "1"`)
+		require.NotContains(t, meta, `"type": "sbr"`)
+	})
+
+	t.Run("tuning before sbr", func(t *testing.T) {
+		meta := secondaryNetworkMetaPlugins(&config.Profile{
+			Routing:   config.RoutingSourceBased,
+			IgnoreARP: true,
+		})
+		tuningIdx := strings.Index(meta, `"type": "tuning"`)
+		sbrIdx := strings.Index(meta, `"type": "sbr"`)
+		require.NotEqual(t, -1, tuningIdx)
+		require.NotEqual(t, -1, sbrIdx)
+		require.Less(t, tuningIdx, sbrIdx)
+	})
+
+	t.Run("spectrum x ignored", func(t *testing.T) {
+		meta := secondaryNetworkMetaPlugins(&config.Profile{
+			Routing:   config.RoutingSourceBased,
+			IgnoreARP: true,
+			SpectrumX: &config.ProfileSpectrumX{Enable: true},
+		})
+		require.Empty(t, meta)
+	})
+}
+
+func TestNonSpectrumXProfilesRenderMetaPlugins(t *testing.T) {
+	profilesUnderTest := []struct {
+		dir        string
+		fabric     string
+		deployment string
+		fileSubstr string
+	}{
+		{"sriov-ethernet-rdma", "ethernet", "sriov", "50-sriovnetwork"},
+		{"sriov-ib-rdma", "infiniband", "sriov", "50-sriovibnetwork"},
+		{"host-device-rdma", "ethernet", "host_device", "30-hostdevicenetwork"},
+		{"macvlan-rdma-shared", "ethernet", "rdma_shared", "30-macvlannetwork"},
+		{"ipoib-rdma-shared", "infiniband", "rdma_shared", "30-ipoibnetwork"},
+	}
+
+	for _, p := range profilesUnderTest {
+		t.Run(p.dir, func(t *testing.T) {
+			rendered := renderProfileWithProfile(t, p.dir, &config.Profile{
+				Fabric:     p.fabric,
+				Deployment: p.deployment,
+				Multirail:  true,
+				Routing:    config.RoutingSourceBased,
+				IgnoreARP:  true,
+			})
+			name, content := fileMatching(t, rendered, p.fileSubstr)
+			docs := parseDocs(t, name, content)
+			require.NotEmpty(t, docs)
+			for _, doc := range docs {
+				metaPlugins := specString(t, doc, "metaPlugins")
+				require.Contains(t, metaPlugins, `"type": "tuning"`)
+				require.Contains(t, metaPlugins, `"net.ipv4.conf.all.arp_ignore": "1"`)
+				require.Contains(t, metaPlugins, `"net.ipv4.conf.IFNAME.arp_announce": "2"`)
+				require.Contains(t, metaPlugins, `"type": "sbr"`)
+				require.Less(t,
+					strings.Index(metaPlugins, `"type": "tuning"`),
+					strings.Index(metaPlugins, `"type": "sbr"`),
+					"tuning must precede sbr")
+			}
+		})
+	}
+}
+
+func TestDefaultProfilesDoNotRenderMetaPlugins(t *testing.T) {
+	rendered := renderProfile(t, "sriov-ethernet-rdma", "ethernet", "sriov")
+	name, content := fileMatching(t, rendered, "50-sriovnetwork")
+	for _, doc := range parseDocs(t, name, content) {
+		_, ok := optionalSpecString(t, doc, "metaPlugins")
+		require.False(t, ok, "default destination-based routing with ignoreARP=false must not render metaPlugins")
 	}
 }
 

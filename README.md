@@ -16,7 +16,8 @@ missing profile settings and stores the final values in `cluster-config.yaml`.
 ### Select the Deployment Profile
 Discovery fills missing profile values from hardware and built-in defaults.
 Values already present under `profile` are preserved, while explicit CLI flags
-(`--fabric`, `--deployment-type`, `--multirail`, `--spectrum-x`) take precedence.
+(`--fabric`, `--deployment-type`, `--multirail`, `--routing`, `--ignore-arp`,
+`--spectrum-x`) take precedence.
 AI-driven profile selection now lives in the `k8s-launch-kit-*` Claude Code
 skills, which wrap the deterministic CLI commands.
 
@@ -393,6 +394,23 @@ l8k discover --kubeconfig ~/.kube/config \
     --multirail=false \
     --save-cluster-config ./my-cluster-config.yaml
 ```
+
+For routed multi-rail IPv4/RoCE deployments, `--routing source-based` chains
+the automatic `sbr` CNI meta-plugin on generated non-Spectrum-X secondary
+networks. This creates source-selected routing tables so traffic sourced from a
+rail IP exits through that rail's interface and gateway.
+
+Use `--ignore-arp` when pod rails can observe ARP for each other, or when the
+fabric/VLAN isolation is not enough to prove that a rail IP can only be claimed
+by its own VF. Linux normally treats IPv4 addresses as local to the network
+namespace, so one pod interface can answer ARP for an address configured on
+another interface. In routed multi-rail RoCE this can teach a remote peer that a
+rail-0 IP lives behind a rail-3 VF MAC, sending traffic to the wrong HCA. The
+flag chains the `tuning` CNI meta-plugin before `sbr` and sets `arp_ignore=1`,
+`arp_announce=2`, and `rp_filter=0` at both `all` and `IFNAME` scopes.
+
+These settings apply to SR-IOV, SR-IOV IB, host-device, Macvlan RDMA-shared,
+and IPoIB RDMA-shared profiles. They do not apply to Spectrum-X profiles.
 
 Filter discovery to specific nodes using a label selector:
 
@@ -845,6 +863,8 @@ profile:
   fabric: ethernet
   deployment: sriov
   multirail: true
+  routing: destination-based
+  ignoreARP: false
 clusterConfig:
 - identifier: group-0
   capabilities:
