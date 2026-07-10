@@ -54,7 +54,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--collapse-nic-rails` | — | `true` | Advertise one rail per NIC: collapse a NIC's multi-plane east-west PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set `=false` to keep one rail per PF (dev setups). See "Rail collapsing" below. |
 | `--network-operator-namespace` | — | — | **Deprecated for `discover`**: accepted but ignored. The daemon always runs in `nvidia-k8s-launch-kit`. Still used by `l8k generate` / `l8k deploy`. |
 | `--user-config` | — | — | Base config to merge with discovered hardware |
-| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Value written into the **saved** `cluster-config.yaml` `nodeSelector` (for deploy time). It does **not** gate discovery scheduling or the NicDevice wait set — the daemon runs on all nodes and NIC-bearing nodes are detected via a sysfs `0x15b3` probe. |
+| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Value written into the **saved** `cluster-config.yaml` `nodeSelector` (for deploy time). It does **not** gate discovery scheduling or the NicDevice wait set — the daemon is restricted to Ready schedulable nodes and NIC-bearing nodes are detected via a sysfs `0x15b3` probe. |
 | `--image-pull-secrets` | — | — | Image pull secret names (comma-separated). Forwarded onto the bootstrapped DaemonSet pod spec. |
 | `--fabric` | — | discovered unanimous link type | Fabric override: `ethernet` or `infiniband`. |
 | `--deployment-type` | — | `sriov` | Deployment override: `sriov`, `rdma_shared`, or `host_device`. |
@@ -146,12 +146,13 @@ resolved.
 
 ## Prerequisites
 
-- Node Feature Discovery (NFD) is **not** required. The bootstrap daemon
-  runs on every node — no `nodeSelector`, and it tolerates all taints so it
-  also lands on control-plane nodes (small/single-node clusters may carry
-  NICs there). NIC-bearing nodes are detected by a sysfs probe for PCI vendor
-  `0x15b3` rather than the NFD `feature.node.kubernetes.io/pci-15b3.present`
-  label.
+- Node Feature Discovery (NFD) is **not** required. Before bootstrapping the
+  daemon, discovery lists Nodes and renders node-name affinity for nodes that
+  are `Ready=True` and not `spec.unschedulable`. The DaemonSet still has no
+  NFD `nodeSelector` and tolerates taints, so eligible control-plane/tainted
+  nodes are included. NIC-bearing nodes are detected by a sysfs probe for PCI
+  vendor `0x15b3` rather than the NFD
+  `feature.node.kubernetes.io/pci-15b3.present` label.
 - Image-pull access from every worker node to
   `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`.
   Use `--image-pull-secrets <name>` (or `networkOperator.imagePullSecrets`

@@ -155,6 +155,60 @@ func TestCheckDaemonSetPodsReady_StuckPodCounted(t *testing.T) {
 	assert.Equal(t, []string{"node-ready"}, st.readyNodes)
 }
 
+func TestEligibleDiscoveryNodeNamesFiltersNotReadyAndUnschedulable(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		testNode("ready-b", corev1.ConditionTrue, false),
+		testNode("ready-a", corev1.ConditionTrue, false),
+		testNode("not-ready", corev1.ConditionFalse, false),
+		testNode("cordoned", corev1.ConditionTrue, true),
+		testNode("not-ready-cordoned", corev1.ConditionFalse, true),
+		testNodeWithoutReadyCondition("missing-ready-condition", false),
+	).Build()
+
+	got, excluded, err := eligibleDiscoveryNodeNames(context.Background(), c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ready-a", "ready-b"}, got)
+	assert.Equal(t, 3, excluded.notReady)
+	assert.Equal(t, 1, excluded.unschedulable)
+}
+
+func TestEligibleDiscoveryNodeNamesNoEligibleNodes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		testNode("not-ready", corev1.ConditionFalse, false),
+		testNode("cordoned", corev1.ConditionTrue, true),
+	).Build()
+
+	got, excluded, err := eligibleDiscoveryNodeNames(context.Background(), c)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+	assert.Equal(t, 1, excluded.notReady)
+	assert.Equal(t, 1, excluded.unschedulable)
+}
+
+func testNode(name string, ready corev1.ConditionStatus, unschedulable bool) *corev1.Node {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       corev1.NodeSpec{Unschedulable: unschedulable},
+	}
+	node.Status.Conditions = []corev1.NodeCondition{
+		{Type: corev1.NodeReady, Status: ready},
+	}
+	return node
+}
+
+func testNodeWithoutReadyCondition(name string, unschedulable bool) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       corev1.NodeSpec{Unschedulable: unschedulable},
+	}
+}
+
 func TestPodStuck(t *testing.T) {
 	stuck := &corev1.Pod{Status: corev1.PodStatus{
 		ContainerStatuses: []corev1.ContainerStatus{
