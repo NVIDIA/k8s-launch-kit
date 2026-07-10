@@ -421,7 +421,7 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 		return nil
 	}
 
-	// applyUnstructured does an SSA Patch that returns the
+	// applyUnstructured does a server-side apply that returns the
 	// server-decided object on `obj`. Its current resourceVersion
 	// is "the version right after our apply". If the spec changed
 	// AND this Kind's validator reads .status from the CR itself

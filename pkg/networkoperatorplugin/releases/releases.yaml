@@ -40,3 +40,12 @@ releases:
       helmRepoURL: https://helm.ngc.nvidia.com/nvidia
     docaDriver:
       version: doca3.4.0-26.04-0.8.6.0-0
+  "26.7":
+    networkOperator:
+      version: v26.7.0-beta.2
+      componentVersion: network-operator-v26.7.0-beta.2
+      repository: nvcr.io/nvstaging/mellanox
+      operatorRepository: nvcr.io/nvstaging/mellanox
+      helmRepoURL: https://helm.ngc.nvidia.com/nvstaging/mellanox
+    docaDriver:
+      version: doca3.5.0-26.07-0.3.4.0-0

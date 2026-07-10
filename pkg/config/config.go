@@ -661,7 +661,7 @@ var SupportedNumberOfPlanes = []int{1, 2, 4}
 // hardware-defaulting (pkg/resolve).
 var SPCXVersionAllowedReleases = map[string][]string{
 	"RA2.1": {"26.1"},
-	"RA2.2": {"26.4"},
+	"RA2.2": {"26.4", "26.7"},
 }
 
 // DefaultSPCXReleaseFor returns the canonical (first-listed) Network
