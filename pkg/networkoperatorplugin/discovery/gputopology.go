@@ -566,6 +566,7 @@ func discoverGPUTopology(ctx context.Context, restConfig *rest.Config,
 		usage[chosen]++
 
 		pf.ConnectedGPU = fmt.Sprintf("GPU%d", chosen)
+		pf.ConnectedGPUPCIAddress = data.gpuPCI[chosen]
 		pf.GPUProximity = best.String()
 
 		numaStr := "unknown"

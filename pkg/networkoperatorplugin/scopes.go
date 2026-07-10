@@ -92,13 +92,14 @@ var crScopeByKind = map[string]CRScope{
 	"DaemonSet": ScopeAggregate,
 
 	// Bucketed (no node selector; names reference shared bucket id)
-	"SriovNetwork":      ScopeBucketed,
-	"SriovIBNetwork":    ScopeBucketed,
-	"HostDeviceNetwork": ScopeBucketed,
-	"IPoIBNetwork":      ScopeBucketed,
-	"MacvlanNetwork":    ScopeBucketed,
-	"OVSNetwork":        ScopeBucketed,
-	"CIDRPool":          ScopeBucketed,
+	"SriovNetwork":          ScopeBucketed,
+	"SriovIBNetwork":        ScopeBucketed,
+	"HostDeviceNetwork":     ScopeBucketed,
+	"IPoIBNetwork":          ScopeBucketed,
+	"MacvlanNetwork":        ScopeBucketed,
+	"OVSNetwork":            ScopeBucketed,
+	"CIDRPool":              ScopeBucketed,
+	"ResourceClaimTemplate": ScopeBucketed,
 
 	// Simple flat-map nodeSelector — render once per bucket in Mode A,
 	// once per source under Mode B. Shared resources (resourceName,

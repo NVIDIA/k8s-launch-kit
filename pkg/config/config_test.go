@@ -372,6 +372,7 @@ profile:
     spcxVersion: "RA2.2"
     multiplaneMode: hwplb
     numberOfPlanes: 4
+    useDRA: true
   ai: true
 `
 		err := os.WriteFile(configPath, []byte(configContent), 0644)
@@ -395,6 +396,7 @@ profile:
 		assert.Equal(t, "RA2.2", config.Profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "hwplb", config.Profile.SpectrumX.MultiplaneMode)
 		assert.Equal(t, 4, config.Profile.SpectrumX.NumberOfPlanes)
+		assert.True(t, config.Profile.SpectrumX.UseDRA)
 		assert.True(t, config.Profile.Multirail)
 	})
 

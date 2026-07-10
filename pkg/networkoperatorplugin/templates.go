@@ -109,6 +109,13 @@ var templateFuncs = template.FuncMap{
 	"railPciGroups": func(pfs []config.PFConfig, planes int) [][]string {
 		return railPciGroups(pfs, planes)
 	},
+	"spectrumXPFForRailPlane": func(pfs []config.PFConfig, rail, plane, planes int) config.PFConfig {
+		return spectrumXPFForRailPlane(pfs, rail, plane, planes)
+	},
+	"spectrumXUseDRA": func(profile *config.Profile) bool {
+		return profile != nil && profile.SpectrumX != nil && profile.SpectrumX.UseDRA
+	},
+	"pcieRoot": pcieRoot,
 	// railCount returns how many rails are present in the east-west PFs.
 	// Authoritative source is the PFConfig.Rail field — a rail is a logical
 	// group of NICs feeding the same fabric stripe, and the firmware splits
@@ -437,6 +444,60 @@ func railPciGroups(pfs []config.PFConfig, planes int) [][]string {
 		groups = append(groups, masterPFsByNIC(rails[rail]))
 	}
 	return groups
+}
+
+func spectrumXPFForRailPlane(pfs []config.PFConfig, rail, plane, planes int) config.PFConfig {
+	ewPFs := pfutil.FilterEastWestPFs(pfs)
+	if len(ewPFs) == 0 {
+		return config.PFConfig{}
+	}
+
+	if allHaveRail(ewPFs) {
+		rails, _ := groupPFsByRail(ewPFs)
+		railPFs := append([]config.PFConfig(nil), rails[rail]...)
+		sort.Slice(railPFs, func(i, j int) bool {
+			return railPFs[i].PciAddress < railPFs[j].PciAddress
+		})
+		if plane >= 0 && plane < len(railPFs) {
+			return railPFs[plane]
+		}
+		if len(railPFs) > 0 {
+			return railPFs[0]
+		}
+		return config.PFConfig{}
+	}
+
+	if planes < 1 {
+		planes = 1
+	}
+	idx := rail*planes + plane
+	if idx < len(ewPFs) {
+		return ewPFs[idx]
+	}
+	idx = rail * planes
+	if idx < len(ewPFs) {
+		return ewPFs[idx]
+	}
+	return config.PFConfig{}
+}
+
+func pcieRoot(pciAddress string) string {
+	parts := strings.Split(strings.TrimSpace(pciAddress), ":")
+	if len(parts) < 2 {
+		return ""
+	}
+	domainPart := "0000"
+	if len(parts) >= 3 {
+		domainPart = parts[0]
+	}
+	domain := strings.ToLower(strings.TrimLeft(domainPart, "0"))
+	if domain == "" {
+		domain = "0"
+	}
+	if len(domain) < 4 {
+		domain = strings.Repeat("0", 4-len(domain)) + domain
+	}
+	return "pci" + domain + ":00"
 }
 
 // railCount returns how many distinct rails are present in the east-west
