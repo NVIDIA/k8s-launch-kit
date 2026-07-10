@@ -143,7 +143,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--spectrum-x": {
 					Type:        "string",
-					Description: "Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Implies ethernet, sriov, and multirail; hardware-derived mode and plane defaults are persisted by discover.",
+					Description: "Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2, RA2.3). Implies ethernet, sriov, and multirail; hardware-derived mode and plane defaults are persisted by discover.",
 				},
 				"--multiplane-mode": {
 					Type:        "string",
@@ -152,6 +152,14 @@ var schemaCmd = &cobra.Command{
 				"--number-of-planes": {
 					Type:        "int",
 					Description: "Spectrum-X plane count override: 1, 2, or 4. Auto-derived from NIC device ID when omitted.",
+				},
+				"--spectrum-x-config": {
+					Type:        "string",
+					Description: "Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML. Required for SPC-X RA versions newer than RA2.2.",
+				},
+				"--spectrum-x-configmap-name": {
+					Type:        "string",
+					Description: "Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML.",
 				},
 				"--save-deployment-files": {
 					Type:        "string",

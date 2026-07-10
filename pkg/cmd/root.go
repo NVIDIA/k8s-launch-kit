@@ -56,6 +56,8 @@ var (
 	spectrumXVersion         string
 	multiplaneMode           string
 	numberOfPlanes           int
+	spectrumXConfig          string
+	spectrumXConfigMapName   string
 	saveDeploymentFiles      string
 	deploy                   bool
 	kubeconfig               string
@@ -134,7 +136,9 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 
   # Discover + deploy Spectrum-X with JSON output for automation
   l8k --kubeconfig ~/.kube/config --discover-cluster-config \
-    --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 --network-operator-release 26.4 --deploy --output json --yes
+    --spectrum-x RA2.3 --multiplane-mode hwplb --number-of-planes 4 \
+    --spectrum-x-config ./spectrum-x-profile-configmap.yaml \
+    --network-operator-release 26.7 --deploy --output json --yes
 
   # Dry-run: preview what would be deployed
   l8k --user-config cluster-config.yaml --spectrum-x --deploy \
@@ -170,6 +174,8 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			SPCXVersion:              spectrumXVersion,
 			MultiplaneMode:           multiplaneMode,
 			NumberOfPlanes:           numberOfPlanes,
+			SpectrumXConfig:          spectrumXConfig,
+			SpectrumXConfigMapName:   spectrumXConfigMapName,
 			Groups:                   groups,
 			GpuType:                  gpuType,
 			NodeSelector:             nodeSelector,
@@ -255,6 +261,8 @@ func init() {
 			config.SupportedSPCXVersions))
 	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)")
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
+	rootCmd.Flags().StringVar(&spectrumXConfig, "spectrum-x-config", "", "Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)")
+	rootCmd.Flags().StringVar(&spectrumXConfigMapName, "spectrum-x-configmap-name", "", "Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML")
 	rootCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
 	rootCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
 	rootCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
@@ -311,6 +319,8 @@ func init() {
 
 	setFlagGroup(rootCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(rootCmd, "number-of-planes", GroupSpectrumX)
+	setFlagGroup(rootCmd, "spectrum-x-config", GroupSpectrumX)
+	setFlagGroup(rootCmd, "spectrum-x-configmap-name", GroupSpectrumX)
 
 	setFlagGroup(rootCmd, "save-deployment-files", GroupGeneration)
 	setFlagGroup(rootCmd, "network-namespaces", GroupGeneration)
@@ -452,7 +462,8 @@ func validateProfileFlagValues(opts *options.Options) error {
 // Implicit defaulting (Spectrum-X → fabric=ethernet etc.) lives in
 // `pkg/resolve.ApplyHardwareDefaults`.
 func applySpectrumXSyntaxChecks(opts *options.Options) error {
-	// Inverse cohort: --multiplane-mode / --number-of-planes are only
+	// Inverse cohort: --multiplane-mode / --number-of-planes and
+	// ConfigMap-backed Spectrum-X profile inputs are only
 	// meaningful with --spectrum-x. Catch the CLI typo case here so
 	// the user doesn't get a confusing render-time failure.
 	if !opts.SpectrumX {
@@ -461,6 +472,12 @@ func applySpectrumXSyntaxChecks(opts *options.Options) error {
 		}
 		if opts.NumberOfPlanes != 0 {
 			return fmt.Errorf("--number-of-planes can only be used with --spectrum-x")
+		}
+		if opts.SpectrumXConfig != "" {
+			return fmt.Errorf("--spectrum-x-config can only be used with --spectrum-x")
+		}
+		if opts.SpectrumXConfigMapName != "" {
+			return fmt.Errorf("--spectrum-x-configmap-name can only be used with --spectrum-x")
 		}
 		return nil
 	}

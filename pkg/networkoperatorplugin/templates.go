@@ -115,6 +115,20 @@ var templateFuncs = template.FuncMap{
 	"spectrumXUseDRA": func(profile *config.Profile) bool {
 		return profile != nil && profile.SpectrumX != nil && profile.SpectrumX.UseDRA
 	},
+	"spectrumXProfileConfigRequired": config.SpectrumXProfileConfigRequired,
+	"spectrumXVersionRef": func(spcx *config.ProfileSpectrumX) string {
+		if spcx == nil {
+			return ""
+		}
+		if config.SpectrumXProfileConfigRequired(spcx.SPCXVersion) {
+			return spcx.ConfigMapName
+		}
+		return spcx.SPCXVersion
+	},
+	"indent": func(s string, spaces int) string {
+		pad := strings.Repeat(" ", spaces)
+		return pad + strings.ReplaceAll(strings.TrimRight(s, "\n"), "\n", "\n"+pad)
+	},
 	"pcieRoot": pcieRoot,
 	// railCount returns how many rails are present in the east-west PFs.
 	// Authoritative source is the PFConfig.Rail field — a rail is a logical

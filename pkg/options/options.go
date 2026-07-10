@@ -74,6 +74,11 @@ type Options struct {
 	SPCXVersion    string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
 	MultiplaneMode string // Spectrum-X multiplane mode (default: swplb)
 	NumberOfPlanes int    // Number of planes for Spectrum-X (default: 4)
+	// SpectrumXConfig is a path to either a full Spectrum-X profile ConfigMap
+	// YAML or the raw data.profile YAML body. SpectrumXConfigMapName is required
+	// only when SpectrumXConfig contains the raw profile body.
+	SpectrumXConfig        string
+	SpectrumXConfigMapName string
 	// Groups limits `l8k generate` to the named source groups (matched
 	// case-sensitively against `clusterConfig[].identifier`). Comma-separated
 	// on the CLI (`--groups a,b`). Mutually exclusive with GpuType.

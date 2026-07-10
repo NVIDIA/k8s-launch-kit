@@ -132,9 +132,12 @@ profile:
   ignoreARP: false # true chains tuning CNI sysctls to prevent ARP flux across pod rails. Not applied to Spectrum-X.
   spectrumX: # Spectrum-X configuration (set enable: true or use --spectrum-x CLI flag)
     enable: false # CLI parameter (overrides this value): --spectrum-x
-    # spcxVersion: "RA2.2" # CLI parameter (overrides this value): --spectrum-x
+    # spcxVersion: "RA2.3" # CLI parameter (overrides this value): --spectrum-x
     # multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
     # numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
+    # configMapName: "site-ra23-profile" # Required for RA2.3 when profile is raw data.profile YAML; CLI: --spectrum-x-configmap-name
+    # profile: | # Required for RA2.3; accepts raw data.profile YAML or a full ConfigMap YAML. CLI: --spectrum-x-config
+    #   useSoftwareCCAlgorithm: true
     useDRA: false # Enables DRA ResourceClaimTemplate-based Spectrum-X workload allocation
   ai: false
 

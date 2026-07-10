@@ -1,0 +1,115 @@
+# Example multi-rail DaemonSet with Spectrum-X networking
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+  namespace: "{{$.CurrentNetworkNamespace}}"
+spec:
+  selector:
+    matchLabels:
+      app: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+      annotations:
+        {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+        {{- $railCount := railCount .ClusterConfig.PFs $planes }}
+        {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}-plane-{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}{{- end }}{{- end }}
+    spec:
+      {{- if or .ClusterConfig.SourceMachineLabels .ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- if .ClusterConfig.SourceMachineLabels }}
+              - key: nvidia.kubernetes-launch-kit.machine
+                operator: In
+                values:
+                {{- range .ClusterConfig.SourceMachineLabels }}
+                - "{{ . }}"
+                {{- end }}
+              {{- else }}
+              {{- range $key, $value := .ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - "{{ printf "%v" $value }}"
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+              {{- end }}
+      {{- end }}
+      containers:
+      - name: spectrum-x-test
+        image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
+        command: ["/bin/bash", "-c", "sleep infinity"]
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK", "NET_RAW"]
+        {{- if spectrumXUseDRA .Profile }}
+        resources:
+          claims:
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+          - name: rail-{{$railIdx}}-plane-{{$planeIdx}}
+            {{- end }}
+            {{- else }}
+          - name: rail-{{$railIdx}}
+            {{- end }}
+            {{- end }}
+        {{- else }}
+        resources:
+          requests:
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+            nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}: "1"
+            {{- end }}
+            {{- else }}
+            nvidia.com/rail_{{$railIdx}}: "1"
+            {{- end }}
+            {{- end }}
+          limits:
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+            nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}: "1"
+            {{- end }}
+            {{- else }}
+            nvidia.com/rail_{{$railIdx}}: "1"
+            {{- end }}
+            {{- end }}
+        {{- end }}
+        command:
+        - sh
+        - -c
+        - |
+          echo "Spectrum-X Multi-Rail Test DaemonSet"
+          echo "Available network interfaces:"
+          ip addr show
+          echo ""
+          echo "RDMA devices:"
+          rdma link
+          echo ""
+          echo "Sleeping indefinitely for manual testing..."
+          sleep infinity
+      {{- if spectrumXUseDRA .Profile }}
+      resourceClaims:
+        {{- range $railIdx := untilStep 0 $railCount 1 }}
+        {{- if $swplb }}
+        {{- range $planeIdx := untilStep 0 $planes 1 }}
+      - name: rail-{{$railIdx}}-plane-{{$planeIdx}}
+        resourceClaimTemplateName: rail-{{$railIdx}}-plane-{{$planeIdx}}-template{{boundedSuffix 32 $.ClusterConfig.MergedIdentifier}}
+        {{- end }}
+        {{- else }}
+      - name: rail-{{$railIdx}}
+        resourceClaimTemplateName: rail-{{$railIdx}}-template{{boundedSuffix 38 $.ClusterConfig.MergedIdentifier}}
+        {{- end }}
+        {{- end }}
+      {{- end }}

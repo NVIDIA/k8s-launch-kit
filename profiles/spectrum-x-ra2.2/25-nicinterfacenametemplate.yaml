@@ -1,0 +1,16 @@
+apiVersion: configuration.net.nvidia.com/v1alpha1
+kind: NicInterfaceNameTemplate
+metadata:
+  name: nic-rename-for-spectrum-x{{suffix .ClusterConfig.Identifier}}
+  namespace: "{{.NetworkOperator.Namespace}}"
+spec:
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := .ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+  rdmaDevicePrefix: "{{.SpectrumX.RdmaPrefix}}"
+  netDevicePrefix: "{{.SpectrumX.NetdevPrefix}}"
+  pfsPerNic: {{spectrumXPfsPerNic .ClusterConfig.PFs .Profile.SpectrumX.NumberOfPlanes}}
+  railPciAddresses: [{{- $first := true }}{{- range $group := railPciGroups .ClusterConfig.PFs .Profile.SpectrumX.NumberOfPlanes }}{{- if not $first }}, {{ end }}{{- $first = false }}[{{- $firstInner := true }}{{- range $addr := $group }}{{- if not $firstInner }}, {{ end }}{{- $firstInner = false }}"{{$addr}}"{{- end }}]{{- end }}]

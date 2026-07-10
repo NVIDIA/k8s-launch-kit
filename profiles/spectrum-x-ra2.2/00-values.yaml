@@ -1,0 +1,87 @@
+{{- /*
+00-values.yaml — Helm values for the nvidia/network-operator chart.
+Rendered by `l8k generate` next to the post-install CR manifests.
+`l8k deploy` reads this file and invokes the Helm Go SDK to install
+or upgrade the network-operator release in the configured namespace
+(Phase 0) before applying the CRs (Phases 1-4).
+*/ -}}
+nfd:
+  enabled: true
+
+upgradeCRDs: true
+
+operator:
+  repository: {{ .NetworkOperator.OperatorRepository }}
+  image: network-operator
+{{- if .NetworkOperator.Version }}
+  tag: {{ .NetworkOperator.Version }}
+{{- end }}
+{{- if versionGE .NetworkOperator.SelectedRelease "26.1" }}
+  maintenanceOperator:
+    useDrainControllerRequestor: true
+{{- end }}
+{{- if .NetworkOperator.ImagePullSecrets }}
+
+imagePullSecrets:
+{{- range .NetworkOperator.ImagePullSecrets }}
+  - name: {{ . }}
+{{- end }}
+{{- end }}
+
+maintenanceOperator:
+  enabled: {{ if or .NicConfigurationOperator (versionGE .NetworkOperator.SelectedRelease "26.1") }}true{{ else }}false{{ end }}
+
+maintenance-operator-chart:
+  operatorConfig:
+    deploy: true
+    # Keep scalar overrides quoted: upstream truthiness guards omit numeric 0.
+    maxParallelOperations: "{{ .Maintenance.MaxParallelOperations.String }}"
+    maxUnavailable: "{{ .Maintenance.MaxUnavailable.String }}"
+    maxNodeMaintenanceTimeSeconds: "{{ .Maintenance.MaxNodeMaintenanceTimeSeconds }}"
+
+sriovNetworkOperator:
+  enabled: true
+
+# Subchart overrides for sriov-network-operator. `sriovOperatorConfig.deploy`
+# defaults to FALSE in the upstream subchart — without this, the operator
+# logs `default SriovOperatorConfig object not found, cannot reconcile
+# SriovNetworkNodePolicies` and never reconciles any policies.
+#
+# Spectrum-X specifics:
+#   - manageSoftwareBridges: lets sriov-network-operator manage the OVS
+#     software bridges the Spectrum-X data path needs (sriov-network-operator
+#     watches OVSNetwork CRs and provisions per-rail bridges).
+#   - disablePlugins=[mellanox]: NicConfigurationOperator owns NIC firmware /
+#     NV config / SR-IOV enablement for Spectrum-X. Letting the operator's
+#     own mellanox plugin run too would mutate the same state twice and
+#     produce flapping configurations.
+#
+# When NicConfigurationOperator is also deployed, gate the daemon's
+# nodeSelector on `network.nvidia.com/operator.nic-configuration.wait=false`
+# so the sriov daemon waits for NCO to finish per-node firmware/NIC config
+# before mutating VFs.
+sriov-network-operator:
+{{- if versionGE .NetworkOperator.SelectedRelease "26.1" }}
+  operator:
+    externalDrainer:
+      enabled: true
+{{- end }}
+  sriovOperatorConfig:
+    deploy: true
+    # See sriov-ethernet-rdma's 00-values.yaml for the rationale: both
+    # optional helpers (auto-resource injector + validating webhook)
+    # depend on TLS secrets the subchart's post-install Job creates,
+    # which doesn't always re-run on cross-profile upgrades.
+    enableInjector: false
+    enableOperatorWebhook: false
+{{- if .NicConfigurationOperator }}
+    configDaemonNodeSelector:
+      network.nvidia.com/operator.nic-configuration.wait: "false"
+{{- end }}
+    featureGates:
+      manageSoftwareBridges: true
+{{- if spectrumXUseDRA .Profile }}
+      dynamicResourceAllocation: true
+{{- end }}
+    disablePlugins:
+      - mellanox

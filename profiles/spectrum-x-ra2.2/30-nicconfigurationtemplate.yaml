@@ -17,7 +17,7 @@ spec:
     linkType: Ethernet
     spectrumXOptimized:
       enabled: true
-      version: "{{ spectrumXVersionRef .Profile.SpectrumX }}"
+      version: "{{.Profile.SpectrumX.SPCXVersion}}"
       multiplaneMode: "{{.Profile.SpectrumX.MultiplaneMode}}"  # swplb, hwplb, uniplane
       numberOfPlanes: {{.Profile.SpectrumX.NumberOfPlanes}}
       overlay: "{{.SpectrumX.Overlay}}"

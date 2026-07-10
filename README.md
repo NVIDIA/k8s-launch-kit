@@ -197,7 +197,9 @@ Examples:
 
   # Discover + deploy Spectrum-X with JSON output for automation
   l8k --kubeconfig ~/.kube/config --discover-cluster-config \
-    --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 --network-operator-release 26.4 --deploy --output json --yes
+    --spectrum-x RA2.3 --multiplane-mode hwplb --number-of-planes 4 \
+    --spectrum-x-config ./spectrum-x-profile-configmap.yaml \
+    --network-operator-release 26.7 --deploy --output json --yes
 
   # Dry-run: preview what would be deployed
   l8k --user-config cluster-config.yaml --spectrum-x --deploy \
@@ -240,11 +242,13 @@ Profile Selection Flags:
       --gpu-type string          Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.
       --groups strings           Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.
       --multirail                Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)
-      --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: [RA2.1 RA2.2]
+      --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: [RA2.1 RA2.2 RA2.3]
 
 Spectrum-X Flags:
-      --multiplane-mode string   Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)
-      --number-of-planes int     Number of planes for Spectrum-X (requires --spectrum-x)
+      --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)
+      --number-of-planes int               Number of planes for Spectrum-X (requires --spectrum-x)
+      --spectrum-x-config string           Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)
+      --spectrum-x-configmap-name string   Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML
 
 Generation Output Flags:
       --enable-doca-driver             Enable DOCA driver deployment (overrides config file docaDriver.enable)
@@ -612,19 +616,47 @@ l8k schema | jq '.supportedNetworkOperatorReleases'
 
 The release identifier is also used to gate version-specific template sections. **NicNodePolicy** is rendered only for `26.4+`; under older releases the OFED driver and the appropriate device plugin (`rdmaSharedDevicePlugin` for ipoib/macvlan, `sriovDevicePlugin` for host-device) are emitted in `NicClusterPolicy` instead, matching the legacy 26.1 model.
 
-There are two **Spectrum-X** profiles, picked by the value of `--spectrum-x`:
+There are three **Spectrum-X** profiles, picked by the value of `--spectrum-x`:
 
-- **`spectrum-x`** — RA2.2 on `26.4+`. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` to consolidate rail wiring. Selected for `--spectrum-x RA2.2`.
+- **`spectrum-x`** — RA2.3 on `26.7+`. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` and deploys the Spectrum-X profile through a ConfigMap consumed by NIC Configuration Operator. Selected for `--spectrum-x RA2.3`.
+- **`spectrum-x-ra2.2`** — RA2.2 on `26.4` only. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` to consolidate rail wiring. Selected for `--spectrum-x RA2.2`.
 - **`spectrum-x-ra2.1`** — RA2.1 on `26.1` only (pinned via `min`/`maxNetworkOperatorRelease: "26.1"`). Renders the full SR-IOV operator chain: per-group `SriovNetworkPoolConfig` + per-rail `SriovNetworkNodePolicy` + `OVSNetwork` + nv-ipam `CIDRPool` + a v1alpha1 glue `SpectrumXRailPoolConfig`. Selected for `--spectrum-x RA2.1`.
 
 When Spectrum-X is enabled and no release is already set, profile resolution
-selects its compatible default release (`RA2.1` → `26.1`, `RA2.2` → `26.4`).
+selects its compatible default release (`RA2.1` → `26.1`, `RA2.2` → `26.4`,
+`RA2.3` → `26.7`).
 An explicit CLI or config value is preserved and the pair is validated:
 `--spectrum-x RA2.1 --network-operator-release 26.4` errors with a specific
 "RA2.1 requires --network-operator-release in [26.1]" message rather than a
 generic "no applicable profile found".
 
-For the RA2.2 `spectrum-x` profile, `profile.spectrumX.useDRA` defaults to `false`.
+RA2.3 requires a Spectrum-X profile ConfigMap input. Pass either a full
+ConfigMap YAML:
+
+```bash
+l8k generate --user-config cluster-config.yaml \
+  --spectrum-x RA2.3 --network-operator-release 26.7 \
+  --spectrum-x-config ./spectrum-x-profile-configmap.yaml
+```
+
+or pass only the raw YAML that belongs under `data.profile` and provide the
+ConfigMap name:
+
+```bash
+l8k generate --user-config cluster-config.yaml \
+  --spectrum-x RA2.3 --network-operator-release 26.7 \
+  --spectrum-x-config ./profile.yaml \
+  --spectrum-x-configmap-name site-ra23-profile
+```
+
+l8k stores the raw Spectrum-X profile text in
+`profile.spectrumX.profile`, renders the deployed ConfigMap into the Network
+Operator namespace with the
+`network.nvidia.com/operator.nic-configuration.spectrum-x-profile` label, and
+sets `NicConfigurationTemplate.spec.template.spectrumXOptimized.version` to
+the rendered ConfigMap name.
+
+For the RA2.2 and RA2.3 Spectrum-X profiles, `profile.spectrumX.useDRA` defaults to `false`.
 When set to `true`, l8k enables the SR-IOV operator `dynamicResourceAllocation`
 feature gate, sets `SpectrumXRailPoolConfig.spec.draEnabled: true`, emits
 `ResourceClaimTemplate` manifests, and renders the example workload with DRA
@@ -878,6 +910,13 @@ profile:
   routing: destination-based
   ignoreARP: false
   spectrumX:
+    enable: true
+    spcxVersion: RA2.3
+    multiplaneMode: hwplb
+    numberOfPlanes: 4
+    configMapName: site-ra23-profile
+    profile: |
+      useSoftwareCCAlgorithm: true
     useDRA: false                       # Set true to generate Spectrum-X DRA ResourceClaimTemplates
 clusterConfig:
 - identifier: group-0

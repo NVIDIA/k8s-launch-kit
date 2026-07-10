@@ -19,6 +19,7 @@ package networkoperatorplugin
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery"
@@ -280,6 +281,19 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		}
 		if options.NumberOfPlanes != 0 {
 			fullConfig.Profile.SpectrumX.NumberOfPlanes = options.NumberOfPlanes
+		}
+		if options.SpectrumXConfigMapName != "" {
+			fullConfig.Profile.SpectrumX.ConfigMapName = options.SpectrumXConfigMapName
+		}
+		if options.SpectrumXConfig != "" {
+			profileConfig, err := os.ReadFile(options.SpectrumXConfig)
+			if err != nil {
+				return fmt.Errorf("failed to read --spectrum-x-config %s: %w", options.SpectrumXConfig, err)
+			}
+			fullConfig.Profile.SpectrumX.Profile = string(profileConfig)
+		}
+		if err := config.NormalizeSpectrumXProfileConfig(fullConfig.Profile.SpectrumX); err != nil {
+			return fmt.Errorf("invalid Spectrum-X profile config: %w", err)
 		}
 	}
 
