@@ -678,11 +678,11 @@ func sniffKind(b []byte) string {
 func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured, dryRun bool) error {
 	// kubectl-style server-side apply. dryRun appends client.DryRunAll so the
 	// cluster validates the object without persisting it.
-	opts := []client.PatchOption{client.FieldOwner("l8k"), client.ForceOwnership}
+	opts := []client.ApplyOption{client.FieldOwner("l8k"), client.ForceOwnership}
 	if dryRun {
 		opts = append(opts, client.DryRunAll)
 	}
-	return c.Patch(ctx, obj, client.Apply, opts...)
+	return c.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj), opts...)
 }
 
 // splitYAMLDocuments splits a YAML stream by lines that start with '---' (doc separators)
@@ -895,4 +895,3 @@ func buildPreflightInputs(kubeClient client.Client, manifestsDir string, opts De
 	in.GeneratedManifests = refs
 	return in, nil
 }
-
