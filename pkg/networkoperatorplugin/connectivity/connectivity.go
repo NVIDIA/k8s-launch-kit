@@ -25,6 +25,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -33,6 +34,7 @@ import (
 type Check string
 
 const (
+	CheckICMP      Check = "icmp"
 	CheckRPing     Check = "rping"
 	CheckIBWriteBW Check = "ib_write_bw"
 )
@@ -45,13 +47,18 @@ type Options struct {
 	// validated).
 	ManifestDir string
 	// Timeout caps the whole connectivity phase: apply + DS rollout
-	// + RDMA test execs + cleanup. 0 falls back to 5 minutes.
+	// + connectivity test execs + cleanup. 0 falls back to 5 minutes.
 	Timeout time.Duration
 	// Keep leaves the test DaemonSets running after the matrix
 	// completes, for follow-up debugging. Default is to delete.
 	Keep bool
-	// Checks selects which RDMA test families to run. Nil means the
-	// default set (rping + ib_write_bw); an empty slice means skip all
+	// Mode controls rail-matrix coverage and cross-rail gating.
+	Mode Mode
+	// Routing is the profile routing mode used to decide strict
+	// cross-rail expectations.
+	Routing string
+	// Checks selects which connectivity test families to run. Nil means
+	// the default set (icmp + rping + ib_write_bw); an empty slice means skip all
 	// connectivity tests without applying the example DaemonSets.
 	Checks []Check
 	// RPingIterations maps to `rping -C`. 0 defaults to 5, matching the
@@ -71,8 +78,8 @@ type MatrixResult struct {
 	// DaemonSets is one entry per applied example DS — typically
 	// one per merged group.
 	DaemonSets []DaemonSetReport
-	// PingResults is the flat list of every executed RDMA test
-	// (rping + ib_write_bw, same-rail + cross-rail).
+	// PingResults is the flat list of every executed connectivity test
+	// (icmp + rping + ib_write_bw, same-rail + cross-rail).
 	PingResults []PingResult
 	// Skipped is non-nil when fewer than 2 schedulable test pods
 	// were available across all DaemonSets. The matrix is treated
@@ -107,11 +114,10 @@ type DaemonSetReport struct {
 //  4. Lists Running+Ready pods, parses each pod's multus annotation,
 //     filters to secondary networks, picks the first IPv4 per rail.
 //  5. Discovers the RDMA device backing each multus interface per pod.
-//  6. Builds a test plan via Plan() — same-rail plus per-pair cross-rail
-//     canaries; soft-skip if <2 schedulable pods.
-//  7. Runs the configured RDMA stages sequentially per the "spawn fresh
-//     server per test" lifecycle (concurrent runs would fight over the
-//     listener port).
+//  6. Builds a test plan via PlanWithOptions().
+//  7. Runs the configured connectivity stages sequentially. RDMA stages use the
+//     "spawn fresh server per test" lifecycle (concurrent runs would fight over
+//     the listener port).
 //  8. Deletes the DaemonSets unless opts.Keep.
 //
 // All UI output flows through `uiOutput` (caller passes
@@ -121,6 +127,9 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		opts.Timeout = 5 * time.Minute
 	}
 	opts.Checks = normalizeChecks(opts.Checks)
+	if opts.Mode == "" {
+		opts.Mode = ModeStrict
+	}
 	if opts.RPingIterations <= 0 {
 		opts.RPingIterations = 5
 	}
@@ -139,7 +148,11 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	}
 	uiOutput.Info("Loading example DaemonSet manifests from %s", opts.ManifestDir)
 
-	objs, refs, err := LoadExampleDaemonSets(opts.ManifestDir)
+	hasICMP := checksContain(opts.Checks, CheckICMP)
+	hasRDMA := checksContain(opts.Checks, CheckRPing) || checksContain(opts.Checks, CheckIBWriteBW)
+	deferICMPSidecar := hasICMP && hasRDMA
+	includeICMP := hasICMP && !deferICMPSidecar
+	objs, refs, err := LoadExampleDaemonSets(opts.ManifestDir, includeICMP)
 	if err != nil {
 		return nil, err
 	}
@@ -169,70 +182,97 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		}
 	}()
 
-	for i, obj := range objs {
-		ref := refs[i]
-		uiOutput.Info("Applying %s/%s (from %s)", ref.Namespace, ref.Name, ref.SourceFile)
-		if err := ApplyDaemonSet(ctx, c, obj); err != nil {
-			return result, fmt.Errorf("apply daemonset %s/%s: %w", ref.Namespace, ref.Name, err)
+	applyAndCollectPods := func(objs []*unstructured.Unstructured, refs []DaemonSetRef) ([]testPodWithDS, error) {
+		for i, obj := range objs {
+			ref := refs[i]
+			uiOutput.Info("Applying %s/%s (from %s)", ref.Namespace, ref.Name, ref.SourceFile)
+			if err := ApplyDaemonSet(ctx, c, obj); err != nil {
+				return nil, fmt.Errorf("apply daemonset %s/%s: %w", ref.Namespace, ref.Name, err)
+			}
 		}
+
+		// Wait for each DS to roll out, then enumerate its pods.
+		out := make([]testPodWithDS, 0)
+		for _, ref := range refs {
+			uiOutput.Info("Waiting for DaemonSet %s/%s to roll out", ref.Namespace, ref.Name)
+			rollout, err := WaitForRollout(ctx, c, ref, opts.Timeout)
+			if err != nil {
+				return out, err
+			}
+			uiOutput.Success("DaemonSet %s/%s ready (%d/%d pods)", ref.Namespace, ref.Name, rollout.Ready, rollout.Desired)
+			pods, err := ListPods(ctx, c, ref)
+			if err != nil {
+				return out, err
+			}
+			// Sanity check that every desired pod is also in the
+			// Running+Ready list. ListPods filters by phase+condition,
+			// so a mismatch here means we're racing — happen on rare
+			// occasions, surface as warning.
+			if int32(len(pods)) != rollout.Desired {
+				uiOutput.Warning("DaemonSet %s/%s reports %d ready but only %d pods are Running+Ready — racing reconciliation?",
+					ref.Namespace, ref.Name, rollout.Desired, len(pods))
+			}
+			result.DaemonSets = append(result.DaemonSets, DaemonSetReport{
+				Ref:      ref,
+				Rollout:  rollout,
+				PodCount: len(pods),
+			})
+			for i := range pods {
+				out = append(out, testPodWithDS{pod: &pods[i], ref: ref})
+			}
+		}
+		return out, nil
 	}
 
-	// Wait for each DS to roll out, then enumerate its pods.
-	allPods := make([]testPodWithDS, 0)
-	for _, ref := range refs {
-		uiOutput.Info("Waiting for DaemonSet %s/%s to roll out", ref.Namespace, ref.Name)
-		rollout, err := WaitForRollout(ctx, c, ref, opts.Timeout)
-		if err != nil {
-			return result, err
+	buildMatrixPods := func(allPods []testPodWithDS, discoverRDMA bool) []TestPod {
+		// Parse multus annotations and build the TestPod list. Each
+		// pod's RDMA-device-by-rail map is filled in from a single
+		// in-pod shell exec that reads
+		// /sys/class/net/<iface>/device/infiniband/ per multus iface,
+		// so the rping + ib_write_bw stages can pass `-d <dev>`.
+		testPods := make([]TestPod, 0, len(allPods))
+		for _, p := range allPods {
+			tp, ifaceByRail, err := buildTestPod(p.pod)
+			if err != nil {
+				uiOutput.Warning("Pod %s/%s: %v — excluded from matrix", p.pod.Namespace, p.pod.Name, err)
+				log.Log.V(1).Info("buildTestPod failed", "pod", p.pod.Name, "error", err.Error())
+				continue
+			}
+			if len(tp.RailOrder) == 0 {
+				uiOutput.Warning("Pod %s/%s has no secondary network IPs — excluded from matrix", p.pod.Namespace, p.pod.Name)
+				continue
+			}
+			if discoverRDMA {
+				tp.RDMADevsByRail = DiscoverRDMADevices(ctx, restConfig, p.pod.Namespace, p.pod.Name, p.ref.RDMAContainer, ifaceByRail)
+				log.Log.V(1).Info("RDMA device discovery",
+					"pod", p.pod.Name, "rails", tp.RailOrder,
+					"rdmaDevsByRail", tp.RDMADevsByRail)
+			}
+			tp.InterfacesByRail = ifaceByRail
+			testPods = append(testPods, tp)
 		}
-		uiOutput.Success("DaemonSet %s/%s ready (%d/%d pods)", ref.Namespace, ref.Name, rollout.Ready, rollout.Desired)
-		pods, err := ListPods(ctx, c, ref)
-		if err != nil {
-			return result, err
-		}
-		// Sanity check that every desired pod is also in the
-		// Running+Ready list. ListPods filters by phase+condition,
-		// so a mismatch here means we're racing — happen on rare
-		// occasions, surface as warning.
-		if int32(len(pods)) != rollout.Desired {
-			uiOutput.Warning("DaemonSet %s/%s reports %d ready but only %d pods are Running+Ready — racing reconciliation?",
-				ref.Namespace, ref.Name, rollout.Desired, len(pods))
-		}
-		result.DaemonSets = append(result.DaemonSets, DaemonSetReport{
-			Ref:      ref,
-			Rollout:  rollout,
-			PodCount: len(pods),
-		})
-		for i := range pods {
-			allPods = append(allPods, testPodWithDS{pod: &pods[i], ref: ref})
-		}
+		return testPods
 	}
 
-	// Parse multus annotations and build the TestPod list. Each
-	// pod's RDMA-device-by-rail map is filled in from a single
-	// in-pod shell exec that reads
-	// /sys/class/net/<iface>/device/infiniband/ per multus iface,
-	// so the rping + ib_write_bw stages can pass `-d <dev>`.
-	testPods := make([]TestPod, 0, len(allPods))
-	for _, p := range allPods {
-		tp, ifaceByRail, err := buildTestPod(p.pod)
-		if err != nil {
-			uiOutput.Warning("Pod %s/%s: %v — excluded from matrix", p.pod.Namespace, p.pod.Name, err)
-			log.Log.V(1).Info("buildTestPod failed", "pod", p.pod.Name, "error", err.Error())
-			continue
+	containerMaps := func(allPods []testPodWithDS) (map[string]string, map[string]string, map[string]string) {
+		rdmaContainerByPod := map[string]string{}
+		icmpContainerByPod := map[string]string{}
+		namespaceByPod := map[string]string{}
+		for _, p := range allPods {
+			rdmaContainerByPod[p.pod.Name] = p.ref.RDMAContainer
+			icmpContainerByPod[p.pod.Name] = p.ref.ICMPContainer
+			namespaceByPod[p.pod.Name] = p.pod.Namespace
 		}
-		if len(tp.RailOrder) == 0 {
-			uiOutput.Warning("Pod %s/%s has no secondary network IPs — excluded from matrix", p.pod.Namespace, p.pod.Name)
-			continue
-		}
-		tp.RDMADevsByRail = DiscoverRDMADevices(ctx, restConfig, p.pod.Namespace, p.pod.Name, p.ref.Container, ifaceByRail)
-		log.Log.V(1).Info("RDMA device discovery",
-			"pod", p.pod.Name, "rails", tp.RailOrder,
-			"rdmaDevsByRail", tp.RDMADevsByRail)
-		testPods = append(testPods, tp)
+		return rdmaContainerByPod, icmpContainerByPod, namespaceByPod
 	}
 
-	plan := Plan(testPods)
+	allPods, err := applyAndCollectPods(objs, refs)
+	if err != nil {
+		return result, err
+	}
+	testPods := buildMatrixPods(allPods, hasRDMA)
+
+	plan := PlanWithOptions(testPods, opts.Mode, opts.Routing)
 	if plan.Skip != nil {
 		uiOutput.Warning("Matrix skipped: %s", plan.Skip.Reason)
 		result.Skipped = plan.Skip
@@ -242,6 +282,11 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	totalSameRail := len(plan.RDMASameRail)
 	totalCrossRail := len(plan.RDMACrossRail)
 	plannedTests := 0
+	if checksContain(opts.Checks, CheckICMP) {
+		uiOutput.Info("Plan: %d same-rail ICMP + %d cross-rail ICMP",
+			len(plan.ICMPSameRail), len(plan.ICMPCrossRail))
+		plannedTests += len(plan.ICMPSameRail) + len(plan.ICMPCrossRail)
+	}
 	if checksContain(opts.Checks, CheckRPing) {
 		uiOutput.Info("Plan: %d same-rail rping + %d cross-rail rping",
 			totalSameRail, totalCrossRail)
@@ -275,20 +320,14 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			len(testPods))
 	}
 
-	// Build a pod-name → container name map so the test runners
-	// know which container to exec in (test DSes have a single
-	// container today, but the orchestrator stays general).
-	containerByPod := map[string]string{}
-	namespaceByPod := map[string]string{}
-	for _, p := range allPods {
-		containerByPod[p.pod.Name] = p.ref.Container
-		namespaceByPod[p.pod.Name] = p.pod.Namespace
-	}
+	// Build pod-name → container maps so ICMP can run in netshoot while RDMA
+	// tooling stays in the DOCA container that owns the RDMA resources.
+	rdmaContainerByPod, icmpContainerByPod, namespaceByPod := containerMaps(allPods)
 
-	// Two stages, each running sequentially per the "spawn fresh
-	// server per test" decision: every test starts its own server,
-	// runs the client, kills the server. Concurrent runs would
-	// fight over the listener port.
+	// Stages run RDMA first when ICMP and RDMA are both enabled. In that case
+	// the initial DaemonSet rollout stays DOCA-only; the netshoot sidecar is
+	// patched in only before the ICMP stage so a restricted cluster can still
+	// produce RDMA results if the helper image cannot be pulled.
 	stages := []struct {
 		check Check
 		label string
@@ -299,22 +338,19 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			check: CheckRPing,
 			label: "RDMA ping (rping)",
 			tests: append(append([]PingTest{}, plan.RDMASameRail...), plan.RDMACrossRail...),
-			run: func(t PingTest) PingResult {
-				return RunRPing(ctx, restConfig, namespaceByPod[t.DstPod],
-					t.DstPod, containerByPod[t.DstPod], // server side
-					t.SrcPod, containerByPod[t.SrcPod], // client side
-					t, opts.RPingIterations)
-			},
 		},
 		{
 			check: CheckIBWriteBW,
 			label: "RDMA bandwidth (ib_write_bw)",
 			tests: append(append([]PingTest{}, plan.RDMABwSameRail...), plan.RDMABwCrossRail...),
+		},
+		{
+			check: CheckICMP,
+			label: "Layer 3 ping (ICMP)",
+			tests: append(append([]PingTest{}, plan.ICMPSameRail...), plan.ICMPCrossRail...),
 			run: func(t PingTest) PingResult {
-				return RunIbWriteBw(ctx, restConfig, namespaceByPod[t.DstPod],
-					t.DstPod, containerByPod[t.DstPod],
-					t.SrcPod, containerByPod[t.SrcPod],
-					t, 0, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)
+				return RunICMP(ctx, restConfig, namespaceByPod[t.SrcPod],
+					t.SrcPod, icmpContainerByPod[t.SrcPod], t)
 			},
 		},
 	}
@@ -322,15 +358,46 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		if !checksContain(opts.Checks, stage.check) {
 			continue
 		}
-		if len(stage.tests) == 0 {
+		tests := stage.tests
+		if stage.check == CheckICMP && deferICMPSidecar {
+			uiOutput.Info("Adding ICMP helper sidecar before ICMP stage")
+			icmpObjs, icmpRefs, err := LoadExampleDaemonSets(opts.ManifestDir, true)
+			if err != nil {
+				return result, err
+			}
+			icmpPods, err := applyAndCollectPods(icmpObjs, icmpRefs)
+			if err != nil {
+				uiOutput.Warning("ICMP helper rollout failed: %v — skipping ICMP stage", err)
+				log.Log.V(1).Info("skipping ICMP stage after helper rollout failure", "error", err.Error())
+				continue
+			}
+			_, icmpContainerByPod, namespaceByPod = containerMaps(icmpPods)
+			icmpPlan := PlanWithOptions(buildMatrixPods(icmpPods, false), opts.Mode, opts.Routing)
+			if icmpPlan.Skip != nil {
+				uiOutput.Warning("ICMP matrix skipped: %s", icmpPlan.Skip.Reason)
+				continue
+			}
+			tests = append(append([]PingTest{}, icmpPlan.ICMPSameRail...), icmpPlan.ICMPCrossRail...)
+		}
+		if len(tests) == 0 {
 			continue
 		}
-		uiOutput.Info("Stage: %s — %d test(s)", stage.label, len(stage.tests))
-		for _, t := range stage.tests {
-			if namespaceByPod[t.SrcPod] == "" || namespaceByPod[t.DstPod] == "" {
+		uiOutput.Info("Stage: %s — %d test(s)", stage.label, len(tests))
+		if stage.check == CheckRPing {
+			result.PingResults = append(result.PingResults,
+				RunRPingBatches(ctx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.RPingIterations)...)
+			continue
+		}
+		if stage.check == CheckIBWriteBW {
+			result.PingResults = append(result.PingResults,
+				RunIbWriteBwBatches(ctx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)...)
+			continue
+		}
+		for _, t := range tests {
+			if namespaceByPod[t.SrcPod] == "" || namespaceByPod[t.DstPod] == "" || icmpContainerByPod[t.SrcPod] == "" {
 				result.PingResults = append(result.PingResults, PingResult{
 					Test: t,
-					Err:  fmt.Errorf("no namespace lookup for pod pair (%s, %s)", t.SrcPod, t.DstPod),
+					Err:  fmt.Errorf("no namespace/container lookup for pod pair (%s, %s)", t.SrcPod, t.DstPod),
 				})
 				continue
 			}
@@ -357,7 +424,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 
 func normalizeChecks(checks []Check) []Check {
 	if checks == nil {
-		return []Check{CheckRPing, CheckIBWriteBW}
+		return []Check{CheckICMP, CheckRPing, CheckIBWriteBW}
 	}
 	out := make([]Check, 0, len(checks))
 	seen := map[Check]bool{}
@@ -400,10 +467,11 @@ func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
 		return TestPod{}, nil, err
 	}
 	tp := TestPod{
-		Name:      p.Name,
-		Namespace: p.Namespace,
-		Node:      p.Spec.NodeName,
-		IPsByRail: map[string]string{},
+		Name:             p.Name,
+		Namespace:        p.Namespace,
+		Node:             p.Spec.NodeName,
+		IPsByRail:        map[string]string{},
+		InterfacesByRail: map[string]string{},
 	}
 	ifaceByRail := map[string]string{}
 	for _, n := range SecondaryNetworks(nets) {
@@ -425,6 +493,7 @@ func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
 		tp.RailOrder = append(tp.RailOrder, rail)
 		if n.Interface != "" {
 			ifaceByRail[rail] = n.Interface
+			tp.InterfacesByRail[rail] = n.Interface
 		}
 	}
 	sort.Strings(tp.RailOrder)
@@ -457,7 +526,7 @@ func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 	uiOutput.Info("Matrix complete: %d/%d passed, %d failed",
 		s.Passed, s.TotalTests, s.Failed)
 	if s.Failed == 0 && s.TotalTests > 0 {
-		uiOutput.Success("All %d RDMA test(s) passed", s.TotalTests)
+		uiOutput.Success("All %d connectivity test(s) passed", s.TotalTests)
 		return
 	}
 	// Render up to 5 failures so operators see what broke without
@@ -488,8 +557,11 @@ func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 }
 
 // stageLabelOf returns the human-friendly label for a test kind used
-// in failure-line prefixes ("rping", "ib_write_bw").
+// in failure-line prefixes ("icmp", "rping", "ib_write_bw").
 func stageLabelOf(k PingTestKind) string {
+	if k.IsICMP() {
+		return "icmp"
+	}
 	if k.IsRDMABw() {
 		return "ib_write_bw"
 	}

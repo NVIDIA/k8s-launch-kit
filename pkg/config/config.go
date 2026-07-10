@@ -311,6 +311,11 @@ type WorkloadConfig struct {
 }
 
 const (
+	ValidationModeQuick  = "quick"
+	ValidationModeFull   = "full"
+	ValidationModeStrict = "strict"
+
+	ValidationCheckICMP      = "icmp"
 	ValidationCheckRPing     = "rping"
 	ValidationCheckIBWriteBW = "ib_write_bw"
 
@@ -324,6 +329,7 @@ const (
 // matrix. Checks selects which RDMA families to run.
 type ValidationConfig struct {
 	Connectivity *bool                 `yaml:"connectivity,omitempty"`
+	Mode         string                `yaml:"mode,omitempty"`
 	Checks       []string              `yaml:"checks,omitempty"`
 	RDMA         *ValidationRDMAConfig `yaml:"rdma,omitempty"`
 }
@@ -345,7 +351,8 @@ func defaultFloat64(v float64) *float64 {
 func DefaultValidationConfig() *ValidationConfig {
 	return &ValidationConfig{
 		Connectivity: defaultBool(true),
-		Checks:       []string{ValidationCheckRPing, ValidationCheckIBWriteBW},
+		Mode:         ValidationModeStrict,
+		Checks:       []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW},
 		RDMA: &ValidationRDMAConfig{
 			RPingIterations:         DefaultValidationRPingIterations,
 			IBWriteSize:             DefaultValidationIBWriteSize,
@@ -361,8 +368,12 @@ func NormalizeValidationConfig(v *ValidationConfig) *ValidationConfig {
 	if v.Connectivity == nil {
 		v.Connectivity = defaultBool(true)
 	}
+	v.Mode = strings.TrimSpace(v.Mode)
+	if v.Mode == "" {
+		v.Mode = ValidationModeStrict
+	}
 	if v.Checks == nil {
-		v.Checks = []string{ValidationCheckRPing, ValidationCheckIBWriteBW}
+		v.Checks = []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}
 	} else {
 		v.Checks = NormalizeValidationChecks(v.Checks)
 	}
@@ -402,15 +413,21 @@ func ValidateValidationConfig(v *ValidationConfig) error {
 	if v == nil {
 		return nil
 	}
+	switch v.Mode {
+	case "", ValidationModeQuick, ValidationModeFull, ValidationModeStrict:
+	default:
+		return fmt.Errorf("validation.mode must be one of: %s, %s, %s",
+			ValidationModeQuick, ValidationModeFull, ValidationModeStrict)
+	}
 	if v.RDMA != nil && v.RDMA.IBWriteMinBandwidthGbps != nil && *v.RDMA.IBWriteMinBandwidthGbps < 0 {
 		return fmt.Errorf("validation.rdma.ibWriteMinBandwidthGbps must be greater than or equal to 0")
 	}
 	for _, check := range v.Checks {
 		switch check {
-		case ValidationCheckRPing, ValidationCheckIBWriteBW:
+		case ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW:
 		default:
-			return fmt.Errorf("validation.checks contains unsupported check %q (supported: %s, %s)",
-				check, ValidationCheckRPing, ValidationCheckIBWriteBW)
+			return fmt.Errorf("validation.checks contains unsupported check %q (supported: %s, %s, %s)",
+				check, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW)
 		}
 	}
 	return nil

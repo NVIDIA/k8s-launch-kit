@@ -41,6 +41,18 @@ const rdmaServerSettleDelay = 2 * time.Second
 // Options.Timeout.
 const rdmaTestTimeout = 90 * time.Second
 
+const (
+	rpingBatchResultMarker     = "__L8K_RPING_RESULT__"
+	rdmaBatchRouteResultMarker = "__L8K_ROUTE_RESULT__"
+	rdmaBatchRouteEndMarker    = "__L8K_ROUTE_END__"
+	rdmaBatchRouteFailCode     = 201
+)
+
+const (
+	ibWriteBwBatchResultMarker = "__L8K_IBWRITEBW_RESULT__"
+	ibWriteBwBatchEndMarker    = "__L8K_IBWRITEBW_END__"
+)
+
 // railNameIndex extracts the numeric rail index from a rail key like
 // "macvlan-network-rail-3-some-suffix" → 3. Matches the rendered
 // NetworkAttachmentDefinition / MacvlanNetwork names every l8k profile
@@ -174,40 +186,314 @@ func DiscoverRDMADevices(ctx context.Context, restConfig *rest.Config, namespace
 // output for any structured value — the binary OK is enough for
 // matrix display. rping verifies the QP pair establishes
 // end-to-end; ib_write_bw additionally measures throughput.
-func RunRPing(ctx context.Context, restConfig *rest.Config, namespace string, serverPod, serverContainer string, clientPod, clientContainer string, test PingTest, iterations int) PingResult {
+func RunRPing(ctx context.Context, restConfig *rest.Config, serverNamespace string, serverPod, serverContainer string, clientNamespace string, clientPod, clientContainer string, test PingTest, iterations int) PingResult {
 	if iterations <= 0 {
 		iterations = 5
 	}
-	r := PingResult{Test: test}
+	r := initResult(test)
 
 	tctx, cancel := context.WithTimeout(ctx, rdmaTestTimeout)
 	defer cancel()
 
-	serverCmd := fmt.Sprintf("nohup rping -s -a %s -p 9999 -v >/tmp/rping-server.log 2>&1 & echo $!", test.DstIP)
-	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, namespace, serverPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
+	if r.Expectation == ExpectRequired {
+		r.Route = checkRoute(tctx, restConfig, clientNamespace, clientPod, clientContainer, test)
+		if routeMismatch(r.Route, test) {
+			r.Err = fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
+				r.Route.Dev, test.SrcIface, r.Route.Output)
+			finalizeExpectedResult(&r, false, r.Err)
+			return r
+		}
+	}
+
+	serverCmd := fmt.Sprintf("nohup rping -s -a %s -p 9999 -v >/tmp/rping-server.log 2>&1 & echo $!", shellArg(test.DstIP))
+	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, serverNamespace, serverPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
 	if err != nil {
 		r.Err = fmt.Errorf("rping server start: %w (stderr: %s)", err, srvRes.Stderr)
 		return r
 	}
 	serverPID := strings.TrimSpace(srvRes.Stdout)
-	defer killRDMAServer(restConfig, namespace, serverPod, serverContainer, "rping", serverPID)
+	defer killRDMAServer(restConfig, serverNamespace, serverPod, serverContainer, "rping", serverPID)
 
 	// Settle window — give the server time to bind.
 	select {
 	case <-tctx.Done():
 		r.Err = fmt.Errorf("rping settle wait: %w", tctx.Err())
 		return r
-	case <-time.After(rdmaServerSettleDelay):
+	case <-time.After(rdmaSettleDelayFor(test)):
 	}
 
-	clientCmd := fmt.Sprintf("rping -c -a %s -p 9999 -C %d -v", test.DstIP, iterations)
-	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, namespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
+	clientCmd := shellWithTimeout(
+		fmt.Sprintf("rping -c -I %s -a %s -p 9999 -C %d -v", shellArg(test.SrcIP), shellArg(test.DstIP), iterations),
+		commandTimeoutFor(test, 30*time.Second))
+	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	r.Stdout, r.Stderr = cliRes.Stdout, cliRes.Stderr
-	r.Err = cliErr
-	// rping exits 0 only on a clean run; non-zero exit propagates
-	// to cliErr.
-	r.OK = cliErr == nil
+	finalizeExpectedResult(&r, cliErr == nil, cliErr)
 	return r
+}
+
+// RunRPingBatches executes rping tests grouped by ordered pod pair. This keeps
+// the matrix result per test, but collapses the API exec traffic from
+// start/client/cleanup per cell to start/client/cleanup per pod pair.
+func RunRPingBatches(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, iterations int) []PingResult {
+	if iterations <= 0 {
+		iterations = 5
+	}
+	groups := groupRPingTests(tests)
+	out := make([]PingResult, 0, len(tests))
+	for _, group := range groups {
+		out = append(out, runRPingBatch(ctx, restConfig, namespaceByPod, containerByPod, group, iterations)...)
+	}
+	return out
+}
+
+func runRPingBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, iterations int) []PingResult {
+	results := make([]PingResult, len(tests))
+	for i, test := range tests {
+		results[i] = initResult(test)
+	}
+	if len(tests) == 0 {
+		return results
+	}
+
+	first := tests[0]
+	serverNamespace, serverContainer := namespaceByPod[first.DstPod], containerByPod[first.DstPod]
+	clientNamespace, clientContainer := namespaceByPod[first.SrcPod], containerByPod[first.SrcPod]
+	if serverNamespace == "" || serverContainer == "" || clientNamespace == "" || clientContainer == "" {
+		err := fmt.Errorf("no namespace/container lookup for rping pod pair (%s, %s)", first.SrcPod, first.DstPod)
+		for i := range results {
+			results[i].Err = err
+		}
+		return results
+	}
+
+	tctx, cancel := context.WithTimeout(ctx, rdmaBatchTimeoutFor(tests))
+	defer cancel()
+
+	serverCmd := rpingBatchServerCommand(tests)
+	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, serverNamespace, first.DstPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
+	if err != nil {
+		batchErr := fmt.Errorf("rping batch server start: %w (stderr: %s)", err, srvRes.Stderr)
+		for i := range results {
+			results[i].Err = batchErr
+		}
+		return results
+	}
+	defer killRDMAServer(restConfig, serverNamespace, first.DstPod, serverContainer, "rping", "")
+
+	select {
+	case <-tctx.Done():
+		batchErr := fmt.Errorf("rping batch settle wait: %w", tctx.Err())
+		for i := range results {
+			results[i].Err = batchErr
+		}
+		return results
+	case <-time.After(rdmaBatchSettleDelayFor(tests)):
+	}
+
+	clientCmd := rpingBatchClientCommand(tests, iterations)
+	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, first.SrcPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
+	rcByIndex := parseRPingBatchResults(cliRes.Stdout)
+	routeByIndex := parseRDMABatchRouteResults(cliRes.Stdout, tests)
+	for i := range results {
+		results[i].Stdout = cliRes.Stdout
+		results[i].Stderr = cliRes.Stderr
+		if results[i].Expectation == ExpectRequired {
+			route, ok := routeByIndex[i]
+			if !ok {
+				err := fmt.Errorf("rping batch missing source-route check for test %d", i)
+				finalizeExpectedResult(&results[i], false, err)
+				continue
+			}
+			results[i].Route = route
+			if routeMismatch(route, tests[i]) {
+				err := fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
+					route.Dev, tests[i].SrcIface, route.Output)
+				finalizeExpectedResult(&results[i], false, err)
+				continue
+			}
+		}
+		rc, ok := rcByIndex[i]
+		if !ok {
+			err := cliErr
+			if err == nil {
+				err = fmt.Errorf("rping batch missing result for test %d", i)
+			}
+			finalizeExpectedResult(&results[i], false, err)
+			continue
+		}
+		if rc == 0 {
+			finalizeExpectedResult(&results[i], true, nil)
+			continue
+		}
+		finalizeExpectedResult(&results[i], false, fmt.Errorf("rping exited with code %d", rc))
+	}
+	return results
+}
+
+func groupRPingTests(tests []PingTest) [][]PingTest {
+	type key struct {
+		srcPod string
+		dstPod string
+	}
+	var order []key
+	byKey := map[key][]PingTest{}
+	for _, test := range tests {
+		k := key{srcPod: test.SrcPod, dstPod: test.DstPod}
+		if _, ok := byKey[k]; !ok {
+			order = append(order, k)
+		}
+		byKey[k] = append(byKey[k], test)
+	}
+	out := make([][]PingTest, 0, len(order))
+	for _, k := range order {
+		out = append(out, byKey[k])
+	}
+	return out
+}
+
+func rpingBatchServerCommand(tests []PingTest) string {
+	seen := map[string]bool{}
+	var b strings.Builder
+	b.WriteString("pkill rping 2>/dev/null || true; rm -f /tmp/l8k-rping-server-*.log; ")
+	idx := 0
+	for _, test := range tests {
+		if test.DstIP == "" || seen[test.DstIP] {
+			continue
+		}
+		seen[test.DstIP] = true
+		fmt.Fprintf(&b, "nohup rping -s -a %s -p 9999 -v >/tmp/l8k-rping-server-%d.log 2>&1 & ", shellArg(test.DstIP), idx)
+		idx++
+	}
+	b.WriteString("echo ready")
+	return b.String()
+}
+
+func rpingBatchClientCommand(tests []PingTest, iterations int) string {
+	var b strings.Builder
+	b.WriteString(`run_with_timeout() { seconds="$1"; shift; if command -v timeout >/dev/null 2>&1; then timeout --kill-after=2s "${seconds}s" "$@"; else "$@" & pid=$!; (sleep "$seconds"; kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null) & watchdog=$!; wait "$pid"; rc=$?; kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null; return "$rc"; fi; }; `)
+	for i, test := range tests {
+		timeoutSeconds := int(commandTimeoutFor(test, 30*time.Second).Seconds())
+		if timeoutSeconds <= 0 {
+			timeoutSeconds = 1
+		}
+		appendRDMABatchRouteGuard(&b, i, test,
+			fmt.Sprintf("echo %s %d %d", rpingBatchResultMarker, i, rdmaBatchRouteFailCode))
+		fmt.Fprintf(&b,
+			`if [ "$route_ok" = "1" ]; then `+
+				"run_with_timeout %d rping -c -I %s -a %s -p 9999 -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; echo %s %d $rc; "+
+				`fi; `,
+			timeoutSeconds, shellArg(test.SrcIP), shellArg(test.DstIP), iterations, i, i, rpingBatchResultMarker, i)
+	}
+	b.WriteString("exit 0")
+	return b.String()
+}
+
+func parseRPingBatchResults(stdout string) map[int]int {
+	out := map[int]int{}
+	for _, line := range strings.Split(stdout, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) != 3 || fields[0] != rpingBatchResultMarker {
+			continue
+		}
+		idx, err1 := strconv.Atoi(fields[1])
+		rc, err2 := strconv.Atoi(fields[2])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		out[idx] = rc
+	}
+	return out
+}
+
+func appendRDMABatchRouteGuard(b *strings.Builder, index int, test PingTest, failCommand string) {
+	b.WriteString("route_ok=1; ")
+	if test.Expectation != ExpectRequired {
+		return
+	}
+	routeFile := fmt.Sprintf("/tmp/l8k-route-%d.out", index)
+	fmt.Fprintf(b,
+		`route_file=%s; ipcmd=""; for p in ip /sbin/ip /usr/sbin/ip /bin/ip /usr/bin/ip; do `+
+			`if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then ipcmd="$p"; break; fi; `+
+			`done; `+
+			`if [ -z "$ipcmd" ]; then echo %s >"$route_file"; route_rc=127; `+
+			`else "$ipcmd" -o route get %s from %s >"$route_file" 2>&1; route_rc=$?; fi; `+
+			`route_dev=$(sed -n 's/.* dev \([^ ]*\).*/\1/p' "$route_file" | head -n1); `+
+			`echo %s %d $route_rc; cat "$route_file" 2>/dev/null; echo %s %d; `+
+			`if [ "$route_rc" != "0" ] || [ "$route_dev" != %s ]; then route_ok=0; %s; fi; `,
+		shellArg(routeFile), shellArg(routeSkipMarker), shellArg(test.DstIP), shellArg(test.SrcIP),
+		rdmaBatchRouteResultMarker, index, rdmaBatchRouteEndMarker, index, shellArg(test.SrcIface), failCommand)
+}
+
+func parseRDMABatchRouteResults(stdout string, tests []PingTest) map[int]RouteCheck {
+	out := map[int]RouteCheck{}
+	var current *int
+	var b strings.Builder
+	rcByIndex := map[int]int{}
+	for _, line := range strings.Split(stdout, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 3 && fields[0] == rdmaBatchRouteResultMarker {
+			idx, idxErr := strconv.Atoi(fields[1])
+			rc, rcErr := strconv.Atoi(fields[2])
+			if idxErr != nil || rcErr != nil {
+				current = nil
+				b.Reset()
+				continue
+			}
+			current = &idx
+			rcByIndex[idx] = rc
+			b.Reset()
+			continue
+		}
+		if len(fields) == 2 && fields[0] == rdmaBatchRouteEndMarker {
+			idx, err := strconv.Atoi(fields[1])
+			if err == nil && current != nil && idx == *current {
+				output := strings.TrimSpace(b.String())
+				route := RouteCheck{
+					Output: output,
+					OK:     rcByIndex[idx] == 0,
+				}
+				if idx >= 0 && idx < len(tests) {
+					route.Command = fmt.Sprintf("ip -o route get %s from %s", tests[idx].DstIP, tests[idx].SrcIP)
+				}
+				if strings.Contains(output, routeSkipMarker) {
+					route.Err = "ip command not found in validation container"
+					route.OK = false
+				}
+				if m := routeDevRe.FindStringSubmatch(output); len(m) == 2 {
+					route.Dev = m[1]
+				}
+				if route.Dev == "" {
+					route.OK = false
+				}
+				out[idx] = route
+			}
+			current = nil
+			b.Reset()
+			continue
+		}
+		if current != nil {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return out
+}
+
+func rdmaBatchTimeoutFor(tests []PingTest) time.Duration {
+	timeout := 15 * time.Second
+	for _, test := range tests {
+		timeout += commandTimeoutFor(test, 30*time.Second) + rdmaBatchSettleDelayFor([]PingTest{test})
+	}
+	return timeout
+}
+
+func rdmaBatchSettleDelayFor(tests []PingTest) time.Duration {
+	for _, test := range tests {
+		if test.Expectation == ExpectRequired {
+			return rdmaServerSettleDelay
+		}
+	}
+	return rdmaSettleDelayFor(PingTest{Expectation: ExpectObserve})
 }
 
 // RunIbWriteBw runs an ib_write_bw bandwidth test for one src→dst pair.
@@ -217,14 +503,15 @@ func RunRPing(ctx context.Context, restConfig *rest.Config, namespace string, se
 // parse for a matrix cell. Each test allocates a fresh TCP listener
 // port (default 18515 + an orchestrator-supplied offset) to avoid
 // collisions with concurrent runs against unrelated rails.
-func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string, serverPod, serverContainer string, clientPod, clientContainer string, test PingTest, port, size int, minBandwidthGbps float64) PingResult {
+func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, serverNamespace string, serverPod, serverContainer string, clientNamespace string, clientPod, clientContainer string, test PingTest, port, size int, minBandwidthGbps float64) PingResult {
 	if port <= 0 {
 		port = 18515
 	}
 	if size <= 0 {
 		size = 65536
 	}
-	r := PingResult{Test: test, MinBandwidthGbps: minBandwidthGbps}
+	r := initResult(test)
+	r.MinBandwidthGbps = minBandwidthGbps
 	if test.SrcRDMADev == "" || test.DstRDMADev == "" {
 		r.Err = fmt.Errorf("ib_write_bw needs RDMA device names; got src=%q dst=%q", test.SrcRDMADev, test.DstRDMADev)
 		return r
@@ -233,31 +520,43 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string
 	tctx, cancel := context.WithTimeout(ctx, rdmaTestTimeout)
 	defer cancel()
 
+	if r.Expectation == ExpectRequired {
+		r.Route = checkRoute(tctx, restConfig, clientNamespace, clientPod, clientContainer, test)
+		if routeMismatch(r.Route, test) {
+			r.Err = fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
+				r.Route.Dev, test.SrcIface, r.Route.Output)
+			finalizeExpectedResult(&r, false, r.Err)
+			return r
+		}
+	}
+
 	// `ib_write_bw -d <dev> -R -s <size> --report_gbits -p <port>`
 	// runs as the server when invoked without a peer IP, as the
 	// client when invoked with one. The server prints a banner and
 	// then waits; the client connects, runs the test, and both
 	// sides print the summary table.
-	serverCmd := fmt.Sprintf("nohup ib_write_bw -d %s -R -s %d --report_gbits -p %d >/tmp/ibwritebw-server.log 2>&1 & echo $!",
-		test.DstRDMADev, size, port)
-	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, namespace, serverPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
+	serverCmd := fmt.Sprintf("nohup ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s >/tmp/ibwritebw-server.log 2>&1 & echo $!",
+		shellArg(test.DstRDMADev), size, port, shellArg(test.DstIP))
+	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, serverNamespace, serverPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
 	if err != nil {
 		r.Err = fmt.Errorf("ib_write_bw server start: %w (stderr: %s)", err, srvRes.Stderr)
 		return r
 	}
 	serverPID := strings.TrimSpace(srvRes.Stdout)
-	defer killRDMAServer(restConfig, namespace, serverPod, serverContainer, "ib_write_bw", serverPID)
+	defer killRDMAServer(restConfig, serverNamespace, serverPod, serverContainer, "ib_write_bw", serverPID)
 
 	select {
 	case <-tctx.Done():
 		r.Err = fmt.Errorf("ib_write_bw settle wait: %w", tctx.Err())
 		return r
-	case <-time.After(rdmaServerSettleDelay):
+	case <-time.After(rdmaSettleDelayFor(test)):
 	}
 
-	clientCmd := fmt.Sprintf("ib_write_bw -d %s -R -s %d --report_gbits -p %d %s",
-		test.SrcRDMADev, size, port, test.DstIP)
-	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, namespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
+	clientCmd := shellWithTimeout(
+		fmt.Sprintf("ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s %s",
+			shellArg(test.SrcRDMADev), size, port, shellArg(test.SrcIP), shellArg(test.DstIP)),
+		commandTimeoutFor(test, 45*time.Second))
+	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	r.Stdout, r.Stderr = cliRes.Stdout, cliRes.Stderr
 
 	bw, msgRate, parseOK := parseIbWriteBwOutput(cliRes.Stdout)
@@ -265,37 +564,243 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, namespace string
 	r.MsgRateMpps = msgRate
 	switch {
 	case cliErr != nil && !parseOK:
-		r.Err = cliErr
-		r.OK = false
+		finalizeExpectedResult(&r, false, cliErr)
 	case !parseOK:
-		r.Err = fmt.Errorf("ib_write_bw output missing summary row")
-		r.OK = false
+		finalizeExpectedResult(&r, false, fmt.Errorf("ib_write_bw output missing summary row"))
 	default:
-		switch {
-		case bw <= 0:
-			r.OK = false
-		case minBandwidthGbps > 0 && bw < minBandwidthGbps:
-			r.Err = fmt.Errorf("observed bandwidth %.1f Gbps below minimum %.1f Gbps", bw, minBandwidthGbps)
-			r.OK = false
-		default:
-			r.OK = true
-		}
+		observedOK, observedErr := bandwidthVerdict(bw, minBandwidthGbps)
+		finalizeExpectedResult(&r, observedOK, observedErr)
 	}
 	return r
 }
 
+// RunIbWriteBwBatches executes ib_write_bw tests grouped by ordered pod pair.
+// Each test in a group gets a unique TCP listener port so all destination
+// listeners can be started with one server-side exec before the client pod runs
+// the tests sequentially in one client-side exec.
+func RunIbWriteBwBatches(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, size int, minBandwidthGbps float64) []PingResult {
+	if size <= 0 {
+		size = 65536
+	}
+	groups := groupRPingTests(tests)
+	out := make([]PingResult, 0, len(tests))
+	for _, group := range groups {
+		out = append(out, runIbWriteBwBatch(ctx, restConfig, namespaceByPod, containerByPod, group, size, minBandwidthGbps)...)
+	}
+	return out
+}
+
+func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, size int, minBandwidthGbps float64) []PingResult {
+	results := make([]PingResult, len(tests))
+	for i, test := range tests {
+		results[i] = initResult(test)
+		results[i].MinBandwidthGbps = minBandwidthGbps
+		if test.SrcRDMADev == "" || test.DstRDMADev == "" {
+			results[i].Err = fmt.Errorf("ib_write_bw needs RDMA device names; got src=%q dst=%q", test.SrcRDMADev, test.DstRDMADev)
+		}
+	}
+	if len(tests) == 0 {
+		return results
+	}
+	first := tests[0]
+	serverNamespace, serverContainer := namespaceByPod[first.DstPod], containerByPod[first.DstPod]
+	clientNamespace, clientContainer := namespaceByPod[first.SrcPod], containerByPod[first.SrcPod]
+	if serverNamespace == "" || serverContainer == "" || clientNamespace == "" || clientContainer == "" {
+		err := fmt.Errorf("no namespace/container lookup for ib_write_bw pod pair (%s, %s)", first.SrcPod, first.DstPod)
+		for i := range results {
+			results[i].Err = err
+		}
+		return results
+	}
+
+	tctx, cancel := context.WithTimeout(ctx, ibWriteBwBatchTimeoutFor(tests))
+	defer cancel()
+
+	serverCmd := ibWriteBwBatchServerCommand(tests, size)
+	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, serverNamespace, first.DstPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
+	if err != nil {
+		batchErr := fmt.Errorf("ib_write_bw batch server start: %w (stderr: %s)", err, srvRes.Stderr)
+		for i := range results {
+			results[i].Err = batchErr
+		}
+		return results
+	}
+	defer killRDMAServer(restConfig, serverNamespace, first.DstPod, serverContainer, "ib_write_bw", "")
+
+	select {
+	case <-tctx.Done():
+		batchErr := fmt.Errorf("ib_write_bw batch settle wait: %w", tctx.Err())
+		for i := range results {
+			results[i].Err = batchErr
+		}
+		return results
+	case <-time.After(rdmaBatchSettleDelayFor(tests)):
+	}
+
+	clientCmd := ibWriteBwBatchClientCommand(tests, size)
+	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, first.SrcPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
+	parsed := parseIbWriteBwBatchResults(cliRes.Stdout)
+	routeByIndex := parseRDMABatchRouteResults(cliRes.Stdout, tests)
+	for i := range results {
+		results[i].Stderr = cliRes.Stderr
+		if results[i].Err != nil {
+			continue
+		}
+		if results[i].Expectation == ExpectRequired {
+			route, ok := routeByIndex[i]
+			if !ok {
+				err := fmt.Errorf("ib_write_bw batch missing source-route check for test %d", i)
+				finalizeExpectedResult(&results[i], false, err)
+				continue
+			}
+			results[i].Route = route
+			if routeMismatch(route, tests[i]) {
+				err := fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
+					route.Dev, tests[i].SrcIface, route.Output)
+				finalizeExpectedResult(&results[i], false, err)
+				continue
+			}
+		}
+		cell, ok := parsed[i]
+		if !ok {
+			err := cliErr
+			if err == nil {
+				err = fmt.Errorf("ib_write_bw batch missing result for test %d", i)
+			}
+			finalizeExpectedResult(&results[i], false, err)
+			continue
+		}
+		results[i].Stdout = cell.stdout
+		bw, msgRate, parseOK := parseIbWriteBwOutput(cell.stdout)
+		results[i].BandwidthGbps = bw
+		results[i].MsgRateMpps = msgRate
+		switch {
+		case cell.rc != 0 && !parseOK:
+			finalizeExpectedResult(&results[i], false, fmt.Errorf("ib_write_bw exited with code %d", cell.rc))
+		case !parseOK:
+			finalizeExpectedResult(&results[i], false, fmt.Errorf("ib_write_bw output missing summary row"))
+		default:
+			observedOK, observedErr := bandwidthVerdict(bw, minBandwidthGbps)
+			finalizeExpectedResult(&results[i], observedOK, observedErr)
+		}
+	}
+	return results
+}
+
+func ibWriteBwBatchServerCommand(tests []PingTest, size int) string {
+	var b strings.Builder
+	b.WriteString("pkill ib_write_bw 2>/dev/null || true; rm -f /tmp/l8k-ibwritebw-server-*.log; ")
+	for i, test := range tests {
+		if test.DstRDMADev == "" || test.DstIP == "" {
+			continue
+		}
+		port := ibWriteBwBatchPort(i)
+		fmt.Fprintf(&b,
+			"nohup ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s >/tmp/l8k-ibwritebw-server-%d.log 2>&1 & ",
+			shellArg(test.DstRDMADev), size, port, shellArg(test.DstIP), i)
+	}
+	b.WriteString("echo ready")
+	return b.String()
+}
+
+func ibWriteBwBatchClientCommand(tests []PingTest, size int) string {
+	var b strings.Builder
+	b.WriteString(`run_with_timeout() { seconds="$1"; shift; if command -v timeout >/dev/null 2>&1; then timeout --kill-after=2s "${seconds}s" "$@"; else "$@" & pid=$!; (sleep "$seconds"; kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null) & watchdog=$!; wait "$pid"; rc=$?; kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null; return "$rc"; fi; }; `)
+	for i, test := range tests {
+		timeoutSeconds := int(commandTimeoutFor(test, 45*time.Second).Seconds())
+		if timeoutSeconds <= 0 {
+			timeoutSeconds = 1
+		}
+		outFile := fmt.Sprintf("/tmp/l8k-ibwritebw-client-%d.out", i)
+		errFile := fmt.Sprintf("/tmp/l8k-ibwritebw-client-%d.err", i)
+		appendRDMABatchRouteGuard(&b, i, test,
+			fmt.Sprintf("echo %s %d %d; echo %s %d", ibWriteBwBatchResultMarker, i, rdmaBatchRouteFailCode, ibWriteBwBatchEndMarker, i))
+		fmt.Fprintf(&b,
+			`if [ "$route_ok" = "1" ]; then `+
+				"run_with_timeout %d ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s %s >%s 2>%s; rc=$?; echo %s %d $rc; cat %s 2>/dev/null; echo %s %d; "+
+				`fi; `,
+			timeoutSeconds, shellArg(test.SrcRDMADev), size, ibWriteBwBatchPort(i), shellArg(test.SrcIP), shellArg(test.DstIP),
+			outFile, errFile, ibWriteBwBatchResultMarker, i, outFile, ibWriteBwBatchEndMarker, i)
+	}
+	b.WriteString("exit 0")
+	return b.String()
+}
+
+type ibWriteBwBatchCell struct {
+	rc     int
+	stdout string
+}
+
+func parseIbWriteBwBatchResults(stdout string) map[int]ibWriteBwBatchCell {
+	out := map[int]ibWriteBwBatchCell{}
+	var current *int
+	var b strings.Builder
+	for _, line := range strings.Split(stdout, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 3 && fields[0] == ibWriteBwBatchResultMarker {
+			idx, err1 := strconv.Atoi(fields[1])
+			rc, err2 := strconv.Atoi(fields[2])
+			if err1 == nil && err2 == nil {
+				out[idx] = ibWriteBwBatchCell{rc: rc}
+				current = &idx
+				b.Reset()
+			}
+			continue
+		}
+		if len(fields) == 2 && fields[0] == ibWriteBwBatchEndMarker {
+			idx, err := strconv.Atoi(fields[1])
+			if err == nil {
+				if cell, ok := out[idx]; ok {
+					cell.stdout = strings.TrimSpace(b.String())
+					out[idx] = cell
+				}
+			}
+			current = nil
+			b.Reset()
+			continue
+		}
+		if current != nil {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return out
+}
+
+func ibWriteBwBatchPort(index int) int {
+	return 18515 + index
+}
+
+func ibWriteBwBatchTimeoutFor(tests []PingTest) time.Duration {
+	timeout := 20 * time.Second
+	for _, test := range tests {
+		timeout += commandTimeoutFor(test, 45*time.Second) + rdmaBatchSettleDelayFor([]PingTest{test})
+	}
+	return timeout
+}
+
+func bandwidthVerdict(bw, minBandwidthGbps float64) (bool, error) {
+	switch {
+	case bw <= 0:
+		return false, fmt.Errorf("observed bandwidth %.1f Gbps is not positive", bw)
+	case minBandwidthGbps > 0 && bw < minBandwidthGbps:
+		return false, fmt.Errorf("observed bandwidth %.1f Gbps below minimum %.1f Gbps", bw, minBandwidthGbps)
+	default:
+		return true, nil
+	}
+}
+
 // killRDMAServer is best-effort cleanup. We try the captured PID
-// first (precise) and fall back to a wildcard `pkill -f <prog>` for
-// the cases where the PID didn't survive the exec round-trip.
+// first (precise) and fall back to an exact process-name `pkill`.
 // Errors are swallowed because by this point we've already recorded
 // the client's result — leaking a stale server is preferable to
 // failing the test on a cleanup hiccup.
 func killRDMAServer(restConfig *rest.Config, namespace, pod, container, prog, pid string) {
 	// Use a fresh background context so the cleanup runs even if
 	// the test's deadline already fired.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := fmt.Sprintf("kill %s 2>/dev/null; pkill -f %q 2>/dev/null; true", pid, prog)
+	cmd := fmt.Sprintf("kill %s 2>/dev/null; pkill %s 2>/dev/null; true", pid, shellArg(prog))
 	_, _ = kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", cmd})
 }
 

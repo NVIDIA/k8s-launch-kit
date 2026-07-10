@@ -50,7 +50,7 @@ import (
 
 // Phase 2 connectivity-test flags. `--connectivity` defaults to ON —
 // every `l8k validate` verifies the data plane (apply example DS,
-// wait Ready, RDMA matrix, cleanup) unless the caller passes
+// wait Ready, source-bound connectivity matrix, cleanup) unless the caller passes
 // `--connectivity=false`. The other flags tune matrix behaviour
 // (--connectivity-timeout, --keep) or extend the validate semantics
 // (--wait blocks until in-progress manifests reach a terminal state).
@@ -65,6 +65,7 @@ var (
 	validateConnectivityTimeout time.Duration
 	validateWait                time.Duration
 	validateReportPath          string
+	validateMode                string
 	validateChecks              []string
 	validateRDMAIterations      int
 	validateRDMAIBWriteSize     int
@@ -96,9 +97,10 @@ Three checks are run:
   3. Connectivity (default ON, pass --connectivity=false to skip): the
      example DaemonSet is applied, the rollout is awaited until
      numberReady == desiredNumberScheduled > 0, and the configured
-     RDMA checks (rping and/or ib_write_bw) run between the test pods'
-     rail IPs (same-rail across every pod pair + one cross-rail canary
-     per pair). The DS is deleted on exit unless --keep is set. Skipped
+     source-bound checks (icmp, rping, and/or ib_write_bw) run between
+     the test pods' rail IPs. validation.mode controls coverage and
+     cross-rail gating: quick, full, or strict. The DS is deleted on exit
+     unless --keep is set. Skipped
      when any manifest from step 2 is IN-PROGRESS / ERROR / MISSING
      (running connectivity against an unready cluster would just
      produce noise).
@@ -108,11 +110,11 @@ connectivity-matrix failure.`,
 	Example: `  # Full validate (manifest state + connectivity matrix)
   l8k validate
 
-  # Manifest checks only (no DaemonSet apply, no RDMA matrix)
+  # Manifest checks only (no DaemonSet apply, no connectivity matrix)
   l8k validate --connectivity=false
 
-  # Only run rping, with more iterations
-  l8k validate --validation-checks rping --rdma-rping-iterations 100
+  # Only run rping, with more iterations, in full coverage mode
+  l8k validate --validation-mode full --validation-checks rping --rdma-rping-iterations 100
 
   # Block up to 10 minutes for in-progress manifests to finish reconciling
   l8k validate --wait 10m
@@ -206,6 +208,7 @@ connectivity-matrix failure.`,
 		// validate run against a namespace not recorded in cluster-config.yaml
 		// can still target the right Helm release / live CRs.
 		selectedRelease := ""
+		profileRouting := config.RoutingDestinationBased
 		validationCfg := config.DefaultValidationConfig()
 		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{
 			ConfigDir:                configDir,
@@ -220,6 +223,9 @@ connectivity-matrix failure.`,
 			}
 			if cfg.NetworkOperator != nil {
 				selectedRelease = cfg.NetworkOperator.SelectedRelease
+			}
+			if cfg.Profile != nil && cfg.Profile.Routing != "" {
+				profileRouting = cfg.Profile.Routing
 			}
 			validationCfg = config.NormalizeValidationConfig(cfg.Validation)
 			for _, g := range cfg.ClusterConfig {
@@ -246,7 +252,7 @@ connectivity-matrix failure.`,
 			exitWithReport(apperrors.NewValidationError(
 				"invalid validation configuration",
 				err,
-				"Use --validation-checks rping,ib_write_bw and positive RDMA parameter values",
+				"Use --validation-mode quick|full|strict, --validation-checks icmp,rping,ib_write_bw, and positive RDMA parameter values",
 			))
 		}
 
@@ -397,6 +403,8 @@ connectivity-matrix failure.`,
 				ManifestDir:             manifestDir,
 				Timeout:                 validateConnectivityTimeout,
 				Keep:                    validateKeep,
+				Mode:                    connectivity.Mode(validationCfg.Mode),
+				Routing:                 profileRouting,
 				Checks:                  connectivityChecksFromConfig(validationCfg),
 				RPingIterations:         validationCfg.RDMA.RPingIterations,
 				IBWriteSize:             validationCfg.RDMA.IBWriteSize,
@@ -441,6 +449,9 @@ func applyValidateFlagOverrides(cmd *cobra.Command, validationCfg *config.Valida
 		v := validateConnectivity
 		validationCfg.Connectivity = &v
 	}
+	if cmd.Flags().Changed("validation-mode") {
+		validationCfg.Mode = strings.TrimSpace(validateMode)
+	}
 	if cmd.Flags().Changed("validation-checks") {
 		validationCfg.Checks = config.NormalizeValidationChecks(validateChecks)
 	}
@@ -483,6 +494,8 @@ func connectivityChecksFromConfig(validationCfg *config.ValidationConfig) []conn
 	checks := make([]connectivity.Check, 0, len(validationCfg.Checks))
 	for _, check := range validationCfg.Checks {
 		switch check {
+		case config.ValidationCheckICMP:
+			checks = append(checks, connectivity.CheckICMP)
 		case config.ValidationCheckRPing:
 			checks = append(checks, connectivity.CheckRPing)
 		case config.ValidationCheckIBWriteBW:
@@ -552,7 +565,7 @@ func computeOverallVerdict(
 	if matrix != nil {
 		if matrix.Summary.Failed > 0 {
 			out.Pass = false
-			out.Reasons = append(out.Reasons, fmt.Sprintf("%d RDMA test(s) failed in the connectivity matrix", matrix.Summary.Failed))
+			out.Reasons = append(out.Reasons, fmt.Sprintf("%d connectivity test(s) failed in the connectivity matrix", matrix.Summary.Failed))
 		}
 		if matrix.Skipped != nil {
 			out.Notes = append(out.Notes, "Connectivity matrix skipped: "+matrix.Skipped.Reason)
@@ -1566,10 +1579,11 @@ func init() {
 	// `l8k validate` exercises the data plane unless explicitly
 	// disabled. Pass `--connectivity=false` to limit validate to
 	// the static manifest-presence + Helm release-version checks.
-	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run an RDMA matrix (rping + ib_write_bw) between pods of the example DaemonSet to verify the data plane. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
+	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a source-bound connectivity matrix (icmp + rping + ib_write_bw) between pods of the example DaemonSet. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
 	validateCmd.Flags().BoolVar(&validateKeep, "keep", false, "Leave the example DaemonSet running after --connectivity completes (useful for debugging).")
-	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 5*time.Minute, "Wall-clock budget for the connectivity matrix (DaemonSet rollout + rping + ib_write_bw execs).")
-	validateCmd.Flags().StringSliceVar(&validateChecks, "validation-checks", nil, "Comma-separated RDMA checks to run during connectivity validation. Supported: rping, ib_write_bw. Overrides validation.checks from cluster-config.yaml.")
+	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 5*time.Minute, "Wall-clock budget for the connectivity matrix (DaemonSet rollout + icmp + rping + ib_write_bw execs).")
+	validateCmd.Flags().StringVar(&validateMode, "validation-mode", "", "Connectivity validation mode: quick, full, or strict. Overrides validation.mode from cluster-config.yaml.")
+	validateCmd.Flags().StringSliceVar(&validateChecks, "validation-checks", nil, "Comma-separated checks to run during connectivity validation. Supported: icmp, rping, ib_write_bw. Overrides validation.checks from cluster-config.yaml.")
 	validateCmd.Flags().IntVar(&validateRDMAIterations, "rdma-rping-iterations", 0, "Number of rping client iterations. Overrides validation.rdma.rpingIterations from cluster-config.yaml.")
 	validateCmd.Flags().IntVar(&validateRDMAIBWriteSize, "rdma-ib-write-size", 0, "Message size for ib_write_bw -s. Overrides validation.rdma.ibWriteSize from cluster-config.yaml.")
 	validateCmd.Flags().Float64Var(&validateRDMAIBWriteMinGbps, "rdma-ib-write-min-bandwidth-gbps", 0, "Minimum observed ib_write_bw peak bandwidth in Gbps required for a test to pass. Use 0 to disable bandwidth gating. Overrides validation.rdma.ibWriteMinBandwidthGbps from cluster-config.yaml.")
@@ -1583,6 +1597,7 @@ func init() {
 	setFlagGroup(validateCmd, "connectivity", GroupValidation)
 	setFlagGroup(validateCmd, "connectivity-timeout", GroupValidation)
 	setFlagGroup(validateCmd, "keep", GroupValidation)
+	setFlagGroup(validateCmd, "validation-mode", GroupValidation)
 	setFlagGroup(validateCmd, "validation-checks", GroupValidation)
 	setFlagGroup(validateCmd, "rdma-rping-iterations", GroupValidation)
 	setFlagGroup(validateCmd, "rdma-ib-write-size", GroupValidation)

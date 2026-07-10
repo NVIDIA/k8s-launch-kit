@@ -52,11 +52,11 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 	tty := uiOutput.IsTTY()
 	// Group per (rail, kind family). One grid is rendered for
 	// every (rail, family) bucket that has at least one result, in
-	// the test-execution order so the reader sees rping
+	// the test-execution order so the reader sees ICMP, then rping
 	// (QP-establishment canary) before ib_write_bw (bandwidth).
 	byRail, byCross, nodes, rails := groupResultsByKind(result.PingResults)
 
-	families := []kindFamily{familyRPing, familyIbBw}
+	families := []kindFamily{familyICMP, familyRPing, familyIbBw}
 	for _, rail := range rails {
 		for _, fam := range families {
 			grid, ok := byRail[rail][fam]
@@ -91,11 +91,15 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 type kindFamily int
 
 const (
-	familyRPing kindFamily = iota
+	familyICMP kindFamily = iota
+	familyRPing
 	familyIbBw
 )
 
 func kindFamilyOf(k PingTestKind) kindFamily {
+	if k.IsICMP() {
+		return familyICMP
+	}
 	if k.IsRDMABw() {
 		return familyIbBw
 	}
@@ -105,6 +109,9 @@ func kindFamilyOf(k PingTestKind) kindFamily {
 func familyTitle(f kindFamily) string {
 	if f == familyIbBw {
 		return "RDMA bandwidth (ib_write_bw)"
+	}
+	if f == familyICMP {
+		return "Layer 3 ping (ICMP)"
 	}
 	return "RDMA ping (rping)"
 }
@@ -253,12 +260,16 @@ func cellFor(src, dst string, r *PingResult, fam kindFamily, tty bool) string {
 // + optional ANSI color when TTY. The body shape depends on the
 // kind family:
 //
-//   - rping:       ✓ / ✗
+//   - ICMP/rping:  ✓ / ✗
 //   - ib_write_bw: ✓ 194.4 Gbps / ✗ ERR
 func cellDetail(r *PingResult, fam kindFamily, tty bool) string {
 	body := cellBody(r, fam)
+	if r.Expectation == ExpectObserve {
+		return body
+	}
+	ok := r.OK
 	if tty {
-		if r.OK {
+		if ok {
 			return "\033[32m" + body + "\033[0m"
 		}
 		return "\033[31m" + body + "\033[0m"
@@ -267,8 +278,26 @@ func cellDetail(r *PingResult, fam kindFamily, tty bool) string {
 }
 
 func cellBody(r *PingResult, fam kindFamily) string {
+	if r.Expectation == ExpectObserve {
+		if observedOK(r) {
+			return "connected"
+		}
+		return "not connected"
+	}
+	if r.Expectation == ExpectForbidden {
+		if r.OK {
+			return "✓ blocked"
+		}
+		if !r.ObservedOK && r.Err != nil {
+			return "✗ ERR"
+		}
+		if !r.ObservedOK {
+			return "✗ unknown"
+		}
+		return "✗ connected"
+	}
 	if fam == familyIbBw {
-		if r.OK && r.BandwidthGbps > 0 {
+		if observedOK(r) && r.BandwidthGbps > 0 {
 			return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
 		}
 		if r.BandwidthGbps > 0 && r.MinBandwidthGbps > 0 {
@@ -279,11 +308,17 @@ func cellBody(r *PingResult, fam kindFamily) string {
 		}
 		return "✗ ERR"
 	}
-	// rping
-	if r.OK {
+	if observedOK(r) {
 		return "✓"
 	}
 	return "✗"
+}
+
+func observedOK(r *PingResult) bool {
+	if r.ObservedOK {
+		return true
+	}
+	return r.Expectation == "" && r.OK
 }
 
 // shortPodName trims a long pod name to keep grid columns from blowing

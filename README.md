@@ -334,16 +334,20 @@ condition-Reason classification, NicClusterPolicy appliedStates breakdown,
 etc.); and (3) a data-plane connectivity matrix — apply the example
 DaemonSet, wait for it to roll out completely (`numberReady ==
 desiredNumberScheduled > 0` — a single ContainerCreating-stuck pod fails),
-and run the configured RDMA checks (`rping` and/or `ib_write_bw`) across
-every same-rail pod pair plus a per-pair cross-rail canary. The matrix is on
-by default (`--connectivity=false` to skip) and cleans up the test DaemonSet
-unless `--keep` is set. Fresh `l8k discover` output includes the default
-validation block:
+and run the configured checks (`icmp`, `rping`, and/or `ib_write_bw`) with
+source-bound rail identity. ICMP uses `ping -I <src-iface>`, `rping` uses
+`-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`; every test
+also records a source-qualified `ip route get <dst> from <src>` lookup. The
+matrix is on by default (`--connectivity=false` to skip) and cleans up the
+test DaemonSet unless `--keep` is set. Fresh `l8k discover` output includes
+the default validation block:
 
 ```yaml
 validation:
   connectivity: true
+  mode: strict
   checks:
+    - icmp
     - rping
     - ib_write_bw
   rdma:
@@ -352,9 +356,20 @@ validation:
     ibWriteMinBandwidthGbps: 100
 ```
 
+Validation modes control cross-rail coverage and gating:
+
+- `quick` runs all same-rail node pairs plus one non-gating cross-rail canary
+  for every source-rail/destination-rail mapping.
+- `full` runs every source rail × every destination rail × every ordered pod
+  pair; cross-rail results are reported but do not decide pass/fail.
+- `strict` is the default. It runs the full matrix and gates cross-rail by the
+  generated profile routing mode: `profile.routing: source-based` requires
+  cross-rail success, while `destination-based` requires cross-rail isolation.
+
 `l8k validate` can override that config for a single run:
+`--validation-mode quick|full|strict`, `--validation-checks icmp`,
 `--validation-checks rping`, `--validation-checks ib_write_bw`,
-`--validation-checks ""`, `--rdma-rping-iterations <N>`, and
+`--validation-checks ""`, `--rdma-rping-iterations <N>`,
 `--rdma-ib-write-size <BYTES>`, and
 `--rdma-ib-write-min-bandwidth-gbps <GBPS>` (`0` disables bandwidth gating).
 
@@ -365,7 +380,7 @@ profile, **Node groups** (per-`clusterConfig[]` entry with east-west / north-
 south PF tables — PCI, deviceID, rail, netdev, RDMA device, PSID, part #,
 NUMA, connected GPU), cluster nodes, Network Operator release, **Manifest
 state** (with expandable Details + **Live YAML** dropdowns per row),
-connectivity matrix (per-rail src×dst grids + cross-rail canary), and a
+connectivity matrix (per-rail src×dst grids + cross-rail results), and a
 warnings rollup. Styled after the NVIDIA AICR documentation light theme;
 no JS, no external assets.
 

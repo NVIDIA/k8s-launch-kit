@@ -111,6 +111,33 @@ func crossRpingResult(src, dst, srcRail, dstRail string, ok bool) PingResult {
 	}
 }
 
+func TestCellBodyExpectationLabels(t *testing.T) {
+	assert.Equal(t, "connected", cellBody(&PingResult{
+		Expectation: ExpectObserve,
+		ObservedOK:  true,
+	}, familyRPing))
+	assert.Equal(t, "not connected", cellBody(&PingResult{
+		Expectation: ExpectObserve,
+		ObservedOK:  false,
+	}, familyRPing))
+	assert.Equal(t, "✓ blocked", cellBody(&PingResult{
+		Expectation: ExpectForbidden,
+		OK:          true,
+		ObservedOK:  false,
+	}, familyRPing))
+	assert.Equal(t, "✗ connected", cellBody(&PingResult{
+		Expectation: ExpectForbidden,
+		OK:          false,
+		ObservedOK:  true,
+	}, familyRPing))
+	assert.Equal(t, "✗ ERR", cellBody(&PingResult{
+		Expectation: ExpectForbidden,
+		OK:          false,
+		ObservedOK:  false,
+		Err:         fmt.Errorf("api exec failed"),
+	}, familyRPing))
+}
+
 func TestRenderMatrixText_RailGridAndCrossRail(t *testing.T) {
 	result := &MatrixResult{
 		PingResults: []PingResult{

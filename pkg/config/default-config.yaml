@@ -37,9 +37,15 @@ validation:
   # connectivity gates the data-plane validation stage. Static manifest,
   # Helm release, component-version, and preflight checks always run.
   connectivity: true
-  # checks selects which RDMA test families l8k validate runs.
-  # Supported: rping, ib_write_bw. Use [] to disable all connectivity checks.
+  # mode controls matrix coverage and gating.
+  # quick: same-rail all nodes plus one non-gating cross-rail canary per rail pair.
+  # full: every source rail x every destination rail per ordered pod pair; cross-rail is non-gating.
+  # strict: full matrix; cross-rail gates according to profile.routing.
+  mode: strict
+  # checks selects which data-plane test families l8k validate runs.
+  # Supported: icmp, rping, ib_write_bw. Use [] to disable all connectivity checks.
   checks:
+    - icmp
     - rping
     - ib_write_bw
   rdma:

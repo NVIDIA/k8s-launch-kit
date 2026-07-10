@@ -95,6 +95,69 @@ func TestParseIbWriteBwOutput(t *testing.T) {
 	})
 }
 
+func TestParseIbWriteBwBatchResults(t *testing.T) {
+	stdout := ibWriteBwBatchResultMarker + ` 0 0
+banner
+ 65536      5000             194.39             193.21		   0.368459
+` + ibWriteBwBatchEndMarker + ` 0
+` + ibWriteBwBatchResultMarker + ` 1 124
+timeout text
+` + ibWriteBwBatchEndMarker + ` 1
+`
+	got := parseIbWriteBwBatchResults(stdout)
+	require.Len(t, got, 2)
+	assert.Equal(t, 0, got[0].rc)
+	assert.Contains(t, got[0].stdout, "194.39")
+	assert.Equal(t, 124, got[1].rc)
+	assert.Contains(t, got[1].stdout, "timeout text")
+}
+
+func TestParseRDMABatchRouteResults(t *testing.T) {
+	tests := []PingTest{
+		{SrcIP: "192.168.0.10", DstIP: "192.168.0.20"},
+		{SrcIP: "192.168.4.10", DstIP: "192.168.0.20"},
+	}
+	stdout := rdmaBatchRouteResultMarker + ` 0 0
+192.168.0.20 from 192.168.0.10 dev net1 src 192.168.0.10
+` + rdmaBatchRouteEndMarker + ` 0
+` + rdmaBatchRouteResultMarker + ` 1 127
+` + routeSkipMarker + `
+` + rdmaBatchRouteEndMarker + ` 1
+`
+	got := parseRDMABatchRouteResults(stdout, tests)
+	require.Len(t, got, 2)
+	assert.True(t, got[0].OK)
+	assert.Equal(t, "net1", got[0].Dev)
+	assert.Equal(t, "ip -o route get 192.168.0.20 from 192.168.0.10", got[0].Command)
+	assert.False(t, got[1].OK)
+	assert.Equal(t, "ip command not found in validation container", got[1].Err)
+}
+
+func TestRDMABatchClientCommandsIncludeSourceRouteGuard(t *testing.T) {
+	test := PingTest{
+		SrcIP:       "192.168.0.10",
+		DstIP:       "192.168.0.20",
+		SrcIface:    "net1",
+		SrcRDMADev:  "mlx5_1",
+		Expectation: ExpectRequired,
+	}
+
+	rpingCmd := rpingBatchClientCommand([]PingTest{test}, 5)
+	assert.Contains(t, rpingCmd, rdmaBatchRouteResultMarker)
+	assert.Contains(t, rpingCmd, "ipcmd")
+	assert.Contains(t, rpingCmd, "route get")
+	assert.Contains(t, rpingCmd, rpingBatchResultMarker+" 0 201")
+	assert.Contains(t, rpingCmd, `if [ "$route_ok" = "1" ]; then run_with_timeout`)
+	assert.NotContains(t, rpingCmd, "continue")
+
+	ibCmd := ibWriteBwBatchClientCommand([]PingTest{test}, 65536)
+	assert.Contains(t, ibCmd, rdmaBatchRouteResultMarker)
+	assert.Contains(t, ibCmd, "route get")
+	assert.Contains(t, ibCmd, ibWriteBwBatchResultMarker+" 0 201")
+	assert.Contains(t, ibCmd, `if [ "$route_ok" = "1" ]; then run_with_timeout`)
+	assert.NotContains(t, ibCmd, "continue")
+}
+
 func TestPingTestKind_Predicates(t *testing.T) {
 	assert.True(t, RDMAPingSameRail.IsRDMAPing())
 	assert.True(t, RDMAPingCrossRail.IsRDMAPing())

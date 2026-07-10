@@ -19,6 +19,26 @@ package connectivity
 import (
 	"fmt"
 	"sort"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
+)
+
+// Mode controls matrix coverage and cross-rail gating.
+type Mode string
+
+const (
+	ModeQuick  Mode = "quick"
+	ModeFull   Mode = "full"
+	ModeStrict Mode = "strict"
+)
+
+// Expectation controls how a test result contributes to the verdict.
+type Expectation string
+
+const (
+	ExpectRequired  Expectation = "required"
+	ExpectForbidden Expectation = "forbidden"
+	ExpectObserve   Expectation = "observe"
 )
 
 // TestPod is one entry in the matrix's source set — a pod with its
@@ -40,6 +60,9 @@ type TestPod struct {
 	// RDMA-capable device or where the lookup failed are absent.
 	// Used by RunIbWriteBw / RunRPing to pass `-d <dev>`.
 	RDMADevsByRail map[string]string
+	// InterfacesByRail is "<rail>" → pod netdev name (e.g. "net1").
+	// Every runner uses this to pin or verify the source interface.
+	InterfacesByRail map[string]string
 	// RailOrder is the deterministic iteration order over IPsByRail
 	// — needed because Go map iteration is randomized and the cross
 	// -rail canary picks "rail 0" vs "rail 1" by position.
@@ -47,7 +70,7 @@ type TestPod struct {
 }
 
 // PingTest is one src→dst test the matrix will execute. Kind tags the
-// test bucket. Two RDMA test families are scheduled in stages by the
+// test bucket. ICMP and two RDMA test families are scheduled in stages by the
 // orchestrator:
 //
 //   - Kind = RDMAPingSameRail / RDMAPingCrossRail — `rping -c -a
@@ -67,18 +90,21 @@ type TestPod struct {
 // SrcRDMADev / DstRDMADev carry the per-pod RDMA device names so the
 // test runner can pass `-d <dev>` for ib_write_bw.
 type PingTest struct {
-	Kind       PingTestKind
-	SrcPod     string
-	DstPod     string
-	SrcNode    string
-	DstNode    string
-	Rail       string // for same-rail tests; "<srcRail>→<dstRail>" for cross
-	SrcIP      string
-	DstIP      string
-	SrcRail    string
-	DstRail    string
-	SrcRDMADev string
-	DstRDMADev string
+	Kind        PingTestKind
+	SrcPod      string
+	DstPod      string
+	SrcNode     string
+	DstNode     string
+	Rail        string // for same-rail tests; "<srcRail>→<dstRail>" for cross
+	SrcIP       string
+	DstIP       string
+	SrcRail     string
+	DstRail     string
+	SrcIface    string
+	DstIface    string
+	SrcRDMADev  string
+	DstRDMADev  string
+	Expectation Expectation
 }
 
 // PingTestKind enumerates the buckets the matrix renders into. Order
@@ -87,11 +113,17 @@ type PingTest struct {
 type PingTestKind int
 
 const (
-	RDMAPingSameRail PingTestKind = iota
+	ICMPSameRail PingTestKind = iota
+	ICMPCrossRail
+	RDMAPingSameRail
 	RDMAPingCrossRail
 	RDMABwSameRail
 	RDMABwCrossRail
 )
+
+func (k PingTestKind) IsICMP() bool {
+	return k == ICMPSameRail || k == ICMPCrossRail
+}
 
 // IsRDMAPing reports whether the test kind is an rping (RDMA-CM QP)
 // test.
@@ -108,7 +140,7 @@ func (k PingTestKind) IsRDMABw() bool {
 // IsCrossRail reports whether the test kind is one of the cross-rail
 // canary variants (regardless of family).
 func (k PingTestKind) IsCrossRail() bool {
-	return k == RDMAPingCrossRail || k == RDMABwCrossRail
+	return k == ICMPCrossRail || k == RDMAPingCrossRail || k == RDMABwCrossRail
 }
 
 // MatrixSkip captures the soft-skip case where fewer than 2 schedulable
@@ -127,6 +159,8 @@ type MatrixSkip struct {
 // silently dropped: there's no `-d <dev>` to pass and the test
 // would fail with a confusing error.
 type MatrixPlan struct {
+	ICMPSameRail    []PingTest
+	ICMPCrossRail   []PingTest
 	RDMASameRail    []PingTest
 	RDMACrossRail   []PingTest
 	RDMABwSameRail  []PingTest
@@ -150,6 +184,10 @@ type MatrixPlan struct {
 //     the caller can render "matrix skipped: only N schedulable test
 //     pod(s)".
 func Plan(pods []TestPod) MatrixPlan {
+	return PlanWithOptions(pods, ModeQuick, config.RoutingDestinationBased)
+}
+
+func PlanWithOptions(pods []TestPod, mode Mode, routing string) MatrixPlan {
 	if len(pods) < 2 {
 		return MatrixPlan{Skip: &MatrixSkip{
 			Reason: fmt.Sprintf("only %d schedulable test pod(s) — need ≥2 for a matrix", len(pods)),
@@ -162,6 +200,7 @@ func Plan(pods []TestPod) MatrixPlan {
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 
 	var plan MatrixPlan
+	crossExpectation := crossRailExpectation(mode, routing)
 	for i, src := range sorted {
 		for j, dst := range sorted {
 			if i == j {
@@ -176,9 +215,9 @@ func Plan(pods []TestPod) MatrixPlan {
 				if !ok1 || !ok2 || srcIP == "" || dstIP == "" {
 					continue
 				}
-				srcDev, hasSrcDev := src.RDMADevsByRail[rail]
-				dstDev, hasDstDev := dst.RDMADevsByRail[rail]
-				if !hasSrcDev || !hasDstDev || srcDev == "" || dstDev == "" {
+				srcIface := src.InterfacesByRail[rail]
+				dstIface := dst.InterfacesByRail[rail]
+				if srcIface == "" || dstIface == "" {
 					continue
 				}
 				base := PingTest{
@@ -186,8 +225,19 @@ func Plan(pods []TestPod) MatrixPlan {
 					SrcNode: src.Node, DstNode: dst.Node,
 					Rail: rail, SrcIP: srcIP, DstIP: dstIP,
 					SrcRail: rail, DstRail: rail,
-					SrcRDMADev: srcDev, DstRDMADev: dstDev,
+					SrcIface: srcIface, DstIface: dstIface,
+					Expectation: ExpectRequired,
 				}
+				icmpT := base
+				icmpT.Kind = ICMPSameRail
+				plan.ICMPSameRail = append(plan.ICMPSameRail, icmpT)
+				srcDev, hasSrcDev := src.RDMADevsByRail[rail]
+				dstDev, hasDstDev := dst.RDMADevsByRail[rail]
+				if !hasSrcDev || !hasDstDev || srcDev == "" || dstDev == "" {
+					continue
+				}
+				base.SrcRDMADev = srcDev
+				base.DstRDMADev = dstDev
 				rpingT := base
 				rpingT.Kind = RDMAPingSameRail
 				plan.RDMASameRail = append(plan.RDMASameRail, rpingT)
@@ -195,25 +245,34 @@ func Plan(pods []TestPod) MatrixPlan {
 				bwT.Kind = RDMABwSameRail
 				plan.RDMABwSameRail = append(plan.RDMABwSameRail, bwT)
 			}
-			// Cross-rail canary: src.rail[0] → dst.rail[1] when
-			// both pods have ≥2 rails. Skipped otherwise.
-			if len(src.RailOrder) >= 2 && len(dst.RailOrder) >= 2 {
-				srcRail, dstRail := src.RailOrder[0], dst.RailOrder[1]
+			for _, pair := range crossRailPairs(src, dst, mode, i, j) {
+				srcRail, dstRail := pair.srcRail, pair.dstRail
 				srcIP, ok1 := src.IPsByRail[srcRail]
 				dstIP, ok2 := dst.IPsByRail[dstRail]
-				srcDev, hasSrcDev := src.RDMADevsByRail[srcRail]
-				dstDev, hasDstDev := dst.RDMADevsByRail[dstRail]
-				if !ok1 || !ok2 || srcIP == "" || dstIP == "" || !hasSrcDev || !hasDstDev {
+				srcIface := src.InterfacesByRail[srcRail]
+				dstIface := dst.InterfacesByRail[dstRail]
+				if !ok1 || !ok2 || srcIP == "" || dstIP == "" || srcIface == "" || dstIface == "" {
 					continue
 				}
 				base := PingTest{
 					SrcPod: src.Name, DstPod: dst.Name,
 					SrcNode: src.Node, DstNode: dst.Node,
-					Rail:    fmt.Sprintf("%s→%s", srcRail, dstRail),
-					SrcIP:   srcIP, DstIP: dstIP,
+					Rail:  fmt.Sprintf("%s→%s", srcRail, dstRail),
+					SrcIP: srcIP, DstIP: dstIP,
 					SrcRail: srcRail, DstRail: dstRail,
-					SrcRDMADev: srcDev, DstRDMADev: dstDev,
+					SrcIface: srcIface, DstIface: dstIface,
+					Expectation: crossExpectation,
 				}
+				icmpC := base
+				icmpC.Kind = ICMPCrossRail
+				plan.ICMPCrossRail = append(plan.ICMPCrossRail, icmpC)
+				srcDev, hasSrcDev := src.RDMADevsByRail[srcRail]
+				dstDev, hasDstDev := dst.RDMADevsByRail[dstRail]
+				if !hasSrcDev || !hasDstDev || srcDev == "" || dstDev == "" {
+					continue
+				}
+				base.SrcRDMADev = srcDev
+				base.DstRDMADev = dstDev
 				rpingC := base
 				rpingC.Kind = RDMAPingCrossRail
 				plan.RDMACrossRail = append(plan.RDMACrossRail, rpingC)
@@ -225,4 +284,54 @@ func Plan(pods []TestPod) MatrixPlan {
 	}
 
 	return plan
+}
+
+type railPair struct {
+	srcRail string
+	dstRail string
+}
+
+func crossRailPairs(src, dst TestPod, mode Mode, srcIdx, dstIdx int) []railPair {
+	if len(src.RailOrder) < 2 || len(dst.RailOrder) < 2 {
+		return nil
+	}
+	switch mode {
+	case ModeFull, ModeStrict:
+		var out []railPair
+		for _, srcRail := range src.RailOrder {
+			for _, dstRail := range dst.RailOrder {
+				if srcRail == dstRail {
+					continue
+				}
+				out = append(out, railPair{srcRail: srcRail, dstRail: dstRail})
+			}
+		}
+		return out
+	default:
+		// Quick mode runs one non-gating canary per rail mapping, not per
+		// pod pair. Deterministically use the first ordered pod pair.
+		if srcIdx != 0 || dstIdx != 1 {
+			return nil
+		}
+		var out []railPair
+		for _, srcRail := range src.RailOrder {
+			for _, dstRail := range dst.RailOrder {
+				if srcRail == dstRail {
+					continue
+				}
+				out = append(out, railPair{srcRail: srcRail, dstRail: dstRail})
+			}
+		}
+		return out
+	}
+}
+
+func crossRailExpectation(mode Mode, routing string) Expectation {
+	if mode != ModeStrict {
+		return ExpectObserve
+	}
+	if routing == config.RoutingSourceBased {
+		return ExpectRequired
+	}
+	return ExpectForbidden
 }

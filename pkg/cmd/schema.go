@@ -75,7 +75,7 @@ var schemaCmd = &cobra.Command{
 					Example:     "l8k deploy --deployment-files ./deployment --kubeconfig ~/.kube/config",
 				},
 				"validate": {
-					Description: "Verify a deployment matches the selected Network Operator release (Helm chart version + manifest state + configurable RDMA connectivity checks)",
+					Description: "Verify a deployment matches the selected Network Operator release (Helm chart version + manifest state + configurable ICMP/RDMA connectivity checks)",
 					Example:     "l8k validate --user-config ./cluster-config.yaml --deployment-files ./deployment",
 				},
 				"sosreport": {
@@ -215,7 +215,12 @@ var schemaCmd = &cobra.Command{
 				"--validation-checks": {
 					Type:        "[]string",
 					Default:     "inherit from validation.checks",
-					Description: "Comma-separated RDMA checks to run during validate connectivity: rping, ib_write_bw.",
+					Description: "Comma-separated checks to run during validate connectivity: icmp, rping, ib_write_bw.",
+				},
+				"--validation-mode": {
+					Type:        "string",
+					Default:     "inherit from validation.mode",
+					Description: "Connectivity validation mode: quick, full, or strict.",
 				},
 				"--rdma-rping-iterations": {
 					Type:        "int",

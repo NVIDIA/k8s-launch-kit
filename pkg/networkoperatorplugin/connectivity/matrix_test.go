@@ -17,6 +17,7 @@
 package connectivity
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,19 +25,20 @@ import (
 )
 
 // mkPod builds a TestPod fixture with synthetic IPs *and* an RDMA
-// device per rail. Plan() now requires both sides of a pair to have an
-// RDMA device for the rail in order to emit tests (since the matrix
-// is RDMA-only), so the test fixture must populate RDMADevsByRail to
-// produce non-empty plans.
+// device per rail. RDMA stages require both sides of a pair to have an RDMA
+// device for the rail, so the test fixture populates RDMADevsByRail alongside
+// IP/interface data.
 func mkPod(name string, rails ...string) TestPod {
 	tp := TestPod{
-		Name:           name,
-		IPsByRail:      map[string]string{},
-		RDMADevsByRail: map[string]string{},
+		Name:             name,
+		IPsByRail:        map[string]string{},
+		RDMADevsByRail:   map[string]string{},
+		InterfacesByRail: map[string]string{},
 	}
-	for _, rail := range rails {
+	for i, rail := range rails {
 		tp.IPsByRail[rail] = fakeIP(name, rail)
 		tp.RDMADevsByRail[rail] = fakeRDMADev(name, rail)
+		tp.InterfacesByRail[rail] = fakeIface(i)
 		tp.RailOrder = append(tp.RailOrder, rail)
 	}
 	return tp
@@ -81,6 +83,10 @@ func fakeRDMADev(pod, rail string) string {
 	return "mlx5_" + pod + "_" + rail
 }
 
+func fakeIface(idx int) string {
+	return fmt.Sprintf("net%d", idx+1)
+}
+
 func TestPlan_SoftSkipOnFewerThan2Pods(t *testing.T) {
 	t.Run("zero pods", func(t *testing.T) {
 		plan := Plan(nil)
@@ -96,7 +102,7 @@ func TestPlan_SoftSkipOnFewerThan2Pods(t *testing.T) {
 }
 
 func TestNormalizeChecks(t *testing.T) {
-	assert.Equal(t, []Check{CheckRPing, CheckIBWriteBW}, normalizeChecks(nil))
+	assert.Equal(t, []Check{CheckICMP, CheckRPing, CheckIBWriteBW}, normalizeChecks(nil))
 	assert.Empty(t, normalizeChecks([]Check{}))
 	assert.Equal(t, []Check{CheckIBWriteBW, CheckRPing},
 		normalizeChecks([]Check{CheckIBWriteBW, "", CheckRPing, CheckIBWriteBW}))
@@ -113,9 +119,11 @@ func TestPlan_TwoPodsOneRail(t *testing.T) {
 	// rping tests and 2 ib_write_bw tests.
 	assert.Len(t, plan.RDMASameRail, 2)
 	assert.Len(t, plan.RDMABwSameRail, 2)
+	assert.Len(t, plan.ICMPSameRail, 2)
 	// Cross-rail canary requires ≥2 rails per pod — skipped here.
 	assert.Empty(t, plan.RDMACrossRail)
 	assert.Empty(t, plan.RDMABwCrossRail)
+	assert.Empty(t, plan.ICMPCrossRail)
 
 	// Check direction coverage: both A→B and B→A appear in the rping
 	// slice.
@@ -130,6 +138,8 @@ func TestPlan_TwoPodsOneRail(t *testing.T) {
 	for _, tt := range plan.RDMABwSameRail {
 		assert.NotEmpty(t, tt.SrcRDMADev, "%+v", tt)
 		assert.NotEmpty(t, tt.DstRDMADev, "%+v", tt)
+		assert.NotEmpty(t, tt.SrcIface, "%+v", tt)
+		assert.NotEmpty(t, tt.DstIface, "%+v", tt)
 	}
 }
 
@@ -144,26 +154,28 @@ func TestPlan_TwoPodsTwoRails_IncludesCrossRailCanary(t *testing.T) {
 	// per family.
 	assert.Len(t, plan.RDMASameRail, 4)
 	assert.Len(t, plan.RDMABwSameRail, 4)
-	// Cross-rail canary: one per ordered pod pair = 2 per family.
+	assert.Len(t, plan.ICMPSameRail, 4)
+	// Quick cross-rail canary: one deterministic pod pair for every
+	// ordered rail mapping = 2 per family for two rails.
 	assert.Len(t, plan.RDMACrossRail, 2)
 	assert.Len(t, plan.RDMABwCrossRail, 2)
+	assert.Len(t, plan.ICMPCrossRail, 2)
 
 	// Each cross-rail test should ping rail-0 → rail-1 (the first two
 	// rails by sorted order). Concrete IP assertions catch
 	// off-by-one in railOrder indexing.
 	for _, c := range plan.RDMACrossRail {
-		assert.Equal(t, "rail-0", c.SrcRail)
-		assert.Equal(t, "rail-1", c.DstRail)
-		assert.Equal(t, "rail-0→rail-1", c.Rail)
+		assert.Equal(t, ExpectObserve, c.Expectation)
+		assert.NotEqual(t, c.SrcRail, c.DstRail)
 	}
 }
 
 func TestPlan_ThreePodsThreeRails_FullMatrix(t *testing.T) {
-	plan := Plan([]TestPod{
+	plan := PlanWithOptions([]TestPod{
 		mkPod("pod-a", "rail-0", "rail-1", "rail-2"),
 		mkPod("pod-b", "rail-0", "rail-1", "rail-2"),
 		mkPod("pod-c", "rail-0", "rail-1"), // shorter rail list — exercise asymmetric case
-	})
+	}, ModeFull, "")
 
 	require.Nil(t, plan.Skip)
 
@@ -175,12 +187,30 @@ func TestPlan_ThreePodsThreeRails_FullMatrix(t *testing.T) {
 	// Total = 14 per family (rping + ib_write_bw each).
 	assert.Len(t, plan.RDMASameRail, 14)
 	assert.Len(t, plan.RDMABwSameRail, 14)
+	assert.Len(t, plan.ICMPSameRail, 14)
 
-	// Cross-rail canary requires ≥2 rails on both endpoints. All
-	// three pods qualify (pod-c has 2), so every ordered pair gets
-	// one canary: 3 × 2 = 6 per family.
-	assert.Len(t, plan.RDMACrossRail, 6)
-	assert.Len(t, plan.RDMABwCrossRail, 6)
+	// Full cross-rail: every ordered pod pair x every source rail x
+	// every destination rail, excluding same rail.
+	assert.Len(t, plan.RDMACrossRail, 28)
+	assert.Len(t, plan.RDMABwCrossRail, 28)
+	assert.Len(t, plan.ICMPCrossRail, 28)
+	for _, c := range plan.RDMACrossRail {
+		assert.Equal(t, ExpectObserve, c.Expectation)
+	}
+}
+
+func TestPlan_StrictCrossRailExpectationFollowsRouting(t *testing.T) {
+	pods := []TestPod{
+		mkPod("pod-a", "rail-0", "rail-1"),
+		mkPod("pod-b", "rail-0", "rail-1"),
+	}
+	source := PlanWithOptions(pods, ModeStrict, "source-based")
+	require.NotEmpty(t, source.RDMACrossRail)
+	assert.Equal(t, ExpectRequired, source.RDMACrossRail[0].Expectation)
+
+	destination := PlanWithOptions(pods, ModeStrict, "destination-based")
+	require.NotEmpty(t, destination.RDMACrossRail)
+	assert.Equal(t, ExpectForbidden, destination.RDMACrossRail[0].Expectation)
 }
 
 func TestPlan_StableOrderingAcrossRuns(t *testing.T) {
@@ -221,6 +251,7 @@ func TestPlan_SkipsPairsWithoutRDMADevices(t *testing.T) {
 	delete(b.RDMADevsByRail, "rail-0")
 	plan := Plan([]TestPod{a, b})
 	require.Nil(t, plan.Skip)
-	assert.Empty(t, plan.RDMASameRail, "no test should be emitted for the missing-device pair")
+	assert.Empty(t, plan.RDMASameRail, "no RDMA test should be emitted for the missing-device pair")
 	assert.Empty(t, plan.RDMABwSameRail)
+	assert.Len(t, plan.ICMPSameRail, 2, "ICMP still only needs IP and interface")
 }

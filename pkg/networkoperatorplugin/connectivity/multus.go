@@ -16,8 +16,8 @@
 
 // Package connectivity drives the Phase-2 data-plane verification flow:
 // apply the example DaemonSet, wait for it to reach Ready, parse each
-// pod's multus network-status annotation, and run an RDMA matrix between
-// the secondary-network IPs.
+// pod's multus network-status annotation, and run source-bound connectivity
+// checks between the secondary-network IPs.
 package connectivity
 
 import (
@@ -33,7 +33,7 @@ const MultusAnnotation = "k8s.v1.cni.cncf.io/network-status"
 // NetworkStatus mirrors the upstream multus
 // `k8s.v1.cni.cncf.io/network-status` annotation entry shape. We only
 // model the fields we read; the upstream struct carries a few more
-// (gateway, dns, mtu) that aren't relevant to the RDMA matrix.
+// (gateway, dns, mtu) that aren't relevant to the connectivity matrix.
 type NetworkStatus struct {
 	// Name is the NetworkAttachmentDefinition name in
 	// `<namespace>/<name>` form (or just the name when in the pod's
@@ -74,7 +74,7 @@ func ParseNetworkStatus(annotation string) ([]NetworkStatus, error) {
 
 // SecondaryNetworks filters out the cluster's default-CNI attachment
 // (e.g. Calico/Flannel/Cilium), leaving only the secondary networks
-// the deployment under test put on the pod. The RDMA matrix runs over
+// the deployment under test put on the pod. The connectivity matrix runs over
 // these.
 func SecondaryNetworks(all []NetworkStatus) []NetworkStatus {
 	out := make([]NetworkStatus, 0, len(all))
