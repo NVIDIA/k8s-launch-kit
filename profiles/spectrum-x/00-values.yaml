@@ -80,5 +80,8 @@ sriov-network-operator:
 {{- end }}
     featureGates:
       manageSoftwareBridges: true
+{{- if spectrumXUseDRA .Profile }}
+      dynamicResourceAllocation: true
+{{- end }}
     disablePlugins:
       - mellanox

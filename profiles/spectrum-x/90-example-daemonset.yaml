@@ -51,6 +51,19 @@ spec:
         securityContext:
           capabilities:
             add: ["IPC_LOCK", "NET_RAW"]
+        {{- if spectrumXUseDRA .Profile }}
+        resources:
+          claims:
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+          - name: rail-{{$railIdx}}-plane-{{$planeIdx}}
+            {{- end }}
+            {{- else }}
+          - name: rail-{{$railIdx}}
+            {{- end }}
+            {{- end }}
+        {{- else }}
         resources:
           requests:
             {{- range $railIdx := untilStep 0 $railCount 1 }}
@@ -72,6 +85,7 @@ spec:
             nvidia.com/rail_{{$railIdx}}: "1"
             {{- end }}
             {{- end }}
+        {{- end }}
         command:
         - sh
         - -c
@@ -85,3 +99,17 @@ spec:
           echo ""
           echo "Sleeping indefinitely for manual testing..."
           sleep infinity
+      {{- if spectrumXUseDRA .Profile }}
+      resourceClaims:
+        {{- range $railIdx := untilStep 0 $railCount 1 }}
+        {{- if $swplb }}
+        {{- range $planeIdx := untilStep 0 $planes 1 }}
+      - name: rail-{{$railIdx}}-plane-{{$planeIdx}}
+        resourceClaimTemplateName: rail-{{$railIdx}}-plane-{{$planeIdx}}-template{{boundedSuffix 32 $.ClusterConfig.MergedIdentifier}}
+        {{- end }}
+        {{- else }}
+      - name: rail-{{$railIdx}}
+        resourceClaimTemplateName: rail-{{$railIdx}}-template{{boundedSuffix 38 $.ClusterConfig.MergedIdentifier}}
+        {{- end }}
+        {{- end }}
+      {{- end }}

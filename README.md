@@ -618,6 +618,12 @@ An explicit CLI or config value is preserved and the pair is validated:
 "RA2.1 requires --network-operator-release in [26.1]" message rather than a
 generic "no applicable profile found".
 
+For the RA2.2 `spectrum-x` profile, `profile.spectrumX.useDRA` defaults to `false`.
+When set to `true`, l8k enables the SR-IOV operator `dynamicResourceAllocation`
+feature gate, sets `SpectrumXRailPoolConfig.spec.draEnabled: true`, emits
+`ResourceClaimTemplate` manifests, and renders the example workload with DRA
+claims instead of `nvidia.com/rail_*` device-plugin resource requests.
+
 For non-Spectrum-X profiles, leaving both the flag and `selectedRelease` empty
 continues to render the newest gates (treated as "latest").
 
@@ -865,6 +871,8 @@ profile:
   multirail: true
   routing: destination-based
   ignoreARP: false
+  spectrumX:
+    useDRA: false                       # Set true to generate Spectrum-X DRA ResourceClaimTemplates
 clusterConfig:
 - identifier: group-0
   capabilities:

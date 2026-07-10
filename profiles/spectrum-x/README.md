@@ -12,6 +12,7 @@ The Spectrum-X profile provides optimized multi-rail networking with OVS hardwar
 - **Advanced Firmware Configuration**: Spectrum-X optimized firmware with RA2.2 support
 - **Multiple Plane Modes**: Supports none, swplb, hwplb, and uniplane configurations
 - **Dynamic Interface Naming**: Automatic NIC interface naming based on plane and rail topology
+- **Optional DRA Workload Allocation**: `profile.spectrumX.useDRA` enables ResourceClaimTemplate-based GPU/VF allocation
 
 ## Profile Requirements
 
@@ -41,6 +42,13 @@ nodeCapabilities:
   - `hwplb`: Hardware plane load balancing
   - `uniplane`: Unified plane mode
 - **numberOfPlanes**: Number of planes (1, 2, or 4)
+
+### Spectrum-X Profile Options
+
+- **useDRA**: `false` by default. When `true`, l8k enables the SR-IOV operator
+  `dynamicResourceAllocation` feature gate, sets `SpectrumXRailPoolConfig.spec.draEnabled`
+  to `true`, emits `ResourceClaimTemplate` manifests, and renders the example workload
+  with DRA claims instead of device-plugin resource requests.
 
 ### OVS Configuration
 
@@ -94,10 +102,16 @@ The profile generates the following Kubernetes Custom Resources:
 
 5. **SpectrumXRailPoolConfig** (`80-spectrumxrailpoolconfig.yaml`)
    - Single `v1alpha2` resource with `railTopology[]`. In swplb, one entry per
-     rail-plane; otherwise one entry per rail grouping all planes.
+     rail-plane; otherwise one entry per rail grouping all planes. `draEnabled`
+     is rendered from `profile.spectrumX.useDRA`; the default is explicit `false`.
 
-6. **Example DaemonSet** (`90-example-daemonset.yaml`)
+6. **ResourceClaimTemplate** (`85-resourceclaimtemplate.yaml`)
+   - Rendered only when `profile.spectrumX.useDRA: true`. Each template requests
+     a GPU and matching SR-IOV VF resources using DRA device classes.
+
+7. **Example DaemonSet** (`90-example-daemonset.yaml`)
    - Example workload requesting one VF per rail (non-swplb) or per rail-plane (swplb).
+     In DRA mode, it references the generated `ResourceClaimTemplate` resources instead.
 
 `NicFirmwareSource` and `NicFirmwareTemplate` must be applied separately by the
 operator; l8k does not generate them.
@@ -138,6 +152,7 @@ profile:
     spcxVersion: RA2.2
     multiplaneMode: hwplb
     numberOfPlanes: 4
+    useDRA: false
 ```
 
 ## Deployment

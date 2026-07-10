@@ -135,6 +135,7 @@ profile:
     # spcxVersion: "RA2.2" # CLI parameter (overrides this value): --spectrum-x
     # multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
     # numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
+    useDRA: false # Enables DRA ResourceClaimTemplate-based Spectrum-X workload allocation
   ai: false
 
 clusterConfig:

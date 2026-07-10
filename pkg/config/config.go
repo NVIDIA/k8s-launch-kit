@@ -384,6 +384,7 @@ type ProfileSpectrumX struct {
 	SPCXVersion    string `yaml:"spcxVersion"`    // e.g., "RA2.2"
 	MultiplaneMode string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
 	NumberOfPlanes int    `yaml:"numberOfPlanes"` // 2 or 4
+	UseDRA         bool   `yaml:"useDRA"`         // enable DRA ResourceClaimTemplate-based workload allocation
 }
 
 type ClusterConfig struct {
@@ -466,9 +467,10 @@ type PFConfig struct {
 	// VPD.
 	Model string `yaml:"model,omitempty"`
 	// Topology fields (populated from presets when available)
-	NumaNode     *int   `yaml:"numaNode,omitempty"`
-	ConnectedGPU string `yaml:"connectedGPU,omitempty"`
-	GPUProximity string `yaml:"gpuProximity,omitempty"`
+	NumaNode               *int   `yaml:"numaNode,omitempty"`
+	ConnectedGPU           string `yaml:"connectedGPU,omitempty"`
+	ConnectedGPUPCIAddress string `yaml:"connectedGPUPCIAddress,omitempty"`
+	GPUProximity           string `yaml:"gpuProximity,omitempty"`
 }
 
 // AggregateCapabilities computes the union of capabilities across all cluster config groups.

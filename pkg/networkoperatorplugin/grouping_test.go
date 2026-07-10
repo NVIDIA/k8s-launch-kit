@@ -49,11 +49,13 @@ func loadSpectrumXProfile(t *testing.T) *profiles.Profile {
 			},
 		},
 		Templates: []string{
+			"00-values.yaml",
 			"10-nicclusterpolicy.yaml",
 			"30-nicconfigurationtemplate.yaml",
 			"25-nicinterfacenametemplate.yaml",
 			"60-cidrpool.yaml",
 			"80-spectrumxrailpoolconfig.yaml",
+			"85-resourceclaimtemplate.yaml",
 			"90-example-daemonset.yaml",
 		},
 	}
@@ -65,6 +67,10 @@ func loadSpectrumXProfile(t *testing.T) *profiles.Profile {
 // profile metadata the CLI would normally attach via ApplyOptionsToConfig, and
 // runs GenerateProfileDeploymentFiles exactly as the generate pipeline does.
 func renderSpectrumX(t *testing.T, configName, multiplaneMode string, numberOfPlanes int) map[string]string {
+	return renderSpectrumXWithDRA(t, configName, multiplaneMode, numberOfPlanes, false)
+}
+
+func renderSpectrumXWithDRA(t *testing.T, configName, multiplaneMode string, numberOfPlanes int, useDRA bool) map[string]string {
 	t.Helper()
 	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
 
@@ -84,6 +90,7 @@ func renderSpectrumX(t *testing.T, configName, multiplaneMode string, numberOfPl
 			SPCXVersion:    "RA2.2",
 			MultiplaneMode: multiplaneMode,
 			NumberOfPlanes: numberOfPlanes,
+			UseDRA:         useDRA,
 		},
 	}
 
@@ -230,6 +237,8 @@ func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
 
 	require.Contains(t, merged, `nvidia.kubernetes-launch-kit.gpu: "gpu-model-y"`,
 		"merged rail pool must select by gpuType so it covers all y-model machines")
+	require.Contains(t, merged, "draEnabled: false",
+		"Spectrum-X DRA must stay disabled unless profile.spectrumX.useDRA is true")
 	require.Contains(t, merged, `pfNames: ["eth_p0_r0"]`,
 		"merged rail pool must reference the renamed netdev names, not raw PCI")
 	require.NotContains(t, merged, "0000:19:00.0",
@@ -242,6 +251,85 @@ func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
 	require.True(t, ok, "unmerged z-model rail pool manifest should exist")
 	require.Contains(t, z, `nvidia.com/gpu.machine: "machine-c"`,
 		"unmerged z-model rail pool must preserve the source group's full nodeSelector")
+}
+
+func TestSpectrumXDRAOptInRendering(t *testing.T) {
+	rendered := renderSpectrumXWithDRA(t, "mixed-same-type.yaml", "none", 1, true)
+
+	values := rendered["values.yaml"]
+	require.Contains(t, values, "dynamicResourceAllocation: true",
+		"DRA mode must enable the SR-IOV operator DRA feature gate")
+
+	railPool := rendered["80-spectrumxrailpoolconfig-gpu-model-y.yaml"]
+	require.Contains(t, railPool, "draEnabled: true",
+		"SpectrumXRailPoolConfig must opt into DRA when useDRA is true")
+
+	claimTemplates := fileNamesMatching(rendered, "85-resourceclaimtemplate")
+	require.Equal(t, []string{"85-resourceclaimtemplate-gpu-model-y.yaml"}, claimTemplates)
+	claims := rendered["85-resourceclaimtemplate-gpu-model-y.yaml"]
+	require.Contains(t, claims, "kind: ResourceClaimTemplate")
+	require.Contains(t, claims, "deviceClassName: gpu.nvidia.com")
+	require.Contains(t, claims, "deviceClassName: sriovnetwork.k8snetworkplumbingwg.io")
+	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_0"`)
+	require.Contains(t, claims, `device.attributes["resource.kubernetes.io"].pcieRoot == "pci0000:00"`)
+
+	workload := rendered["90-example-daemonset-gpu-model-y.yaml"]
+	require.Contains(t, workload, "resourceClaims:")
+	require.Contains(t, workload, "resourceClaimTemplateName: rail-0-template-gpu-model-y")
+	require.Contains(t, workload, "claims:")
+	require.NotContains(t, workload, "nvidia.com/rail_0: \"1\"",
+		"DRA workload must use resource claims instead of device-plugin resource requests")
+}
+
+func TestSpectrumXDRAOptInRenderingSWPLB(t *testing.T) {
+	rendered := renderSpectrumXWithDRA(t, "mixed-same-type.yaml", "swplb", 2, true)
+
+	claimTemplates := fileNamesMatching(rendered, "85-resourceclaimtemplate")
+	require.Equal(t, []string{"85-resourceclaimtemplate-gpu-model-y.yaml"}, claimTemplates)
+
+	claims := rendered["85-resourceclaimtemplate-gpu-model-y.yaml"]
+	require.Contains(t, claims, "name: rail-0-plane-0-template-gpu-model-y")
+	require.Contains(t, claims, "name: rail-0-plane-1-template-gpu-model-y")
+	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_0_plane_0"`)
+	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_0_plane_1"`)
+	require.NotContains(t, claims, "count: 2",
+		"swplb DRA must request one VF per rail-plane claim")
+
+	workload := rendered["90-example-daemonset-gpu-model-y.yaml"]
+	require.Contains(t, workload, "- name: rail-0-plane-0")
+	require.Contains(t, workload, "- name: rail-0-plane-1")
+	require.Contains(t, workload, "resourceClaimTemplateName: rail-0-plane-0-template-gpu-model-y")
+	require.Contains(t, workload, "resourceClaimTemplateName: rail-0-plane-1-template-gpu-model-y")
+	require.NotContains(t, workload, "nvidia.com/rail_0_plane_0: \"1\"",
+		"swplb DRA workload must use resource claims instead of device-plugin resource requests")
+}
+
+func TestSpectrumXDRADisabledByDefault(t *testing.T) {
+	rendered := renderSpectrumX(t, "mixed-same-type.yaml", "none", 1)
+
+	values := rendered["values.yaml"]
+	require.NotContains(t, values, "dynamicResourceAllocation",
+		"non-DRA mode must not enable SR-IOV operator DRA")
+
+	railPool := rendered["80-spectrumxrailpoolconfig-gpu-model-y.yaml"]
+	require.Contains(t, railPool, "draEnabled: false",
+		"SpectrumXRailPoolConfig must explicitly disable DRA by default")
+
+	require.Empty(t, fileNamesMatching(rendered, "85-resourceclaimtemplate"),
+		"non-DRA mode must not generate ResourceClaimTemplate manifests")
+
+	workload := rendered["90-example-daemonset-gpu-model-y.yaml"]
+	require.NotContains(t, workload, "resourceClaims:")
+	require.Contains(t, workload, "nvidia.com/rail_0: \"1\"",
+		"non-DRA mode must keep device-plugin resource requests")
+}
+
+func TestPCIeRoot(t *testing.T) {
+	require.Equal(t, "pci0000:00", pcieRoot("0000:3b:00.0"))
+	require.Equal(t, "pci0000:00", pcieRoot("3b:00.0"))
+	require.Equal(t, "pci0001:00", pcieRoot("0001:3b:00.0"))
+	require.Empty(t, pcieRoot(""))
+	require.Empty(t, pcieRoot("3b"))
 }
 
 // TestSpectrumXModeBSubsetFilter exercises the Mode B path of Unit 7's

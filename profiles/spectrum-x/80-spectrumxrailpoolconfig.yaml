@@ -8,7 +8,7 @@ metadata:
   namespace: "{{.NetworkOperator.Namespace}}"
 spec:
   withBCM: false
-  draEnabled: true
+  draEnabled: {{ spectrumXUseDRA .Profile }}
   {{- if .ClusterConfig.NodeSelector }}
   nodeSelector:
     {{- range $key, $value := .ClusterConfig.NodeSelector }}

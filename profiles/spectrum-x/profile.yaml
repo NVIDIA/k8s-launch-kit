@@ -28,4 +28,5 @@ templates:
   - 30-nicconfigurationtemplate.yaml
   - 60-cidrpool.yaml
   - 80-spectrumxrailpoolconfig.yaml
+  - 85-resourceclaimtemplate.yaml
   - 90-example-daemonset.yaml

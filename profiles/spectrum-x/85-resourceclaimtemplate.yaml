@@ -1,0 +1,87 @@
+{{- if spectrumXUseDRA .Profile }}
+{{- /* DRA ResourceClaimTemplates for Spectrum-X workloads.
+       The SR-IOV operator owns DeviceClass/SriovResourcePolicy/DeviceAttributes
+       generation when dynamicResourceAllocation is enabled. These templates
+       follow the Spectrum-X DRA guidance: each claim requests a GPU and the
+       matching SR-IOV VF(s), using resource.kubernetes.io/pcieRoot selectors
+       when launch-kit has discovered the corresponding PCI roots. */ -}}
+{{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+{{- $railCount := railCount .ClusterConfig.PFs $planes }}
+{{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+{{- $first := true }}
+{{- range $railIdx := untilStep 0 $railCount 1 }}
+{{- if $swplb }}
+{{- range $planeIdx := untilStep 0 $planes 1 }}
+{{- $pf := spectrumXPFForRailPlane $.ClusterConfig.PFs $railIdx $planeIdx $planes }}
+{{- $gpuRoot := pcieRoot $pf.ConnectedGPUPCIAddress }}
+{{- $vfRoot := pcieRoot $pf.PciAddress }}
+{{- if not $first }}---
+{{ end }}{{- $first = false -}}
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: rail-{{$railIdx}}-plane-{{$planeIdx}}-template{{boundedSuffix 32 $.ClusterConfig.MergedIdentifier}}
+  namespace: "{{$.CurrentNetworkNamespace}}"
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          count: 1
+          {{- if $gpuRoot }}
+          selectors:
+          - cel:
+              expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "{{$gpuRoot}}"'
+          {{- end }}
+      - name: vf
+        exactly:
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
+          count: 1
+          selectors:
+          - cel:
+              expression: 'device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}"'
+          {{- if $vfRoot }}
+          - cel:
+              expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "{{$vfRoot}}"'
+          {{- end }}
+{{ end }}
+{{- else }}
+{{- $pf := spectrumXPFForRailPlane $.ClusterConfig.PFs $railIdx 0 $planes }}
+{{- $gpuRoot := pcieRoot $pf.ConnectedGPUPCIAddress }}
+{{- $vfRoot := pcieRoot $pf.PciAddress }}
+{{- if not $first }}---
+{{ end }}{{- $first = false -}}
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: rail-{{$railIdx}}-template{{boundedSuffix 38 $.ClusterConfig.MergedIdentifier}}
+  namespace: "{{$.CurrentNetworkNamespace}}"
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          count: 1
+          {{- if $gpuRoot }}
+          selectors:
+          - cel:
+              expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "{{$gpuRoot}}"'
+          {{- end }}
+      - name: vf
+        exactly:
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
+          count: {{$planes}}
+          selectors:
+          - cel:
+              expression: 'device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_{{$railIdx}}"'
+          {{- if $vfRoot }}
+          - cel:
+              expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "{{$vfRoot}}"'
+          {{- end }}
+{{ end }}
+{{- end }}
+{{- end }}
