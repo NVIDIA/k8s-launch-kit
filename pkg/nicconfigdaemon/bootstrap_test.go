@@ -216,6 +216,35 @@ func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	assert.True(t, *container.SecurityContext.Privileged)
 }
 
+func TestEnsure_AppliesDaemonSetWithNodeNameAffinity(t *testing.T) {
+	c := newFakeClient(t)
+
+	require.NoError(t, Ensure(context.Background(), c, Options{
+		Repository: testRepo,
+		Version:    testVersion,
+		NodeNames:  []string{"node-a", "node-b"},
+	}))
+
+	ds := &appsv1.DaemonSet{}
+	require.NoError(t, c.Get(context.Background(),
+		types.NamespacedName{Namespace: Namespace, Name: DaemonSetName}, ds))
+
+	affinity := ds.Spec.Template.Spec.Affinity
+	require.NotNil(t, affinity)
+	require.NotNil(t, affinity.NodeAffinity)
+	required := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	require.NotNil(t, required)
+	require.Len(t, required.NodeSelectorTerms, 2)
+
+	for i, nodeName := range []string{"node-a", "node-b"} {
+		require.Len(t, required.NodeSelectorTerms[i].MatchFields, 1)
+		field := required.NodeSelectorTerms[i].MatchFields[0]
+		assert.Equal(t, "metadata.name", field.Key)
+		assert.Equal(t, corev1.NodeSelectorOpIn, field.Operator)
+		assert.Equal(t, []string{nodeName}, field.Values)
+	}
+}
+
 func TestEnsure_Idempotent(t *testing.T) {
 	c := newFakeClient(t)
 	opts := Options{Repository: testRepo, Version: testVersion}

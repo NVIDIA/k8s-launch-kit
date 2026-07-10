@@ -133,6 +133,22 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 			nicconfigdaemon.Namespace, waitErr)
 	}
 
+	eligibleNodes, excluded, err := eligibleDiscoveryNodeNames(ctx, c)
+	if err != nil {
+		return fmt.Errorf("failed to determine nodes eligible for discovery daemon scheduling: %w", err)
+	}
+	if len(eligibleNodes) == 0 {
+		return fmt.Errorf("no Ready schedulable nodes available for discovery")
+	}
+	bootstrapOpts.NodeNames = eligibleNodes
+	uiOutput.Info("Restricting discovery daemon to %d Ready schedulable node(s)", len(eligibleNodes))
+	if excluded.notReady > 0 {
+		uiOutput.Warning("Excluding %d NotReady node(s) from discovery daemon scheduling", excluded.notReady)
+	}
+	if excluded.unschedulable > 0 {
+		uiOutput.Warning("Excluding %d Ready unschedulable node(s) from discovery daemon scheduling", excluded.unschedulable)
+	}
+
 	uiOutput.Info("Bootstrapping NIC configuration daemon in namespace %q", nicconfigdaemon.Namespace)
 	log.Log.Info("Bootstrapping NIC configuration daemon for discovery",
 		"namespace", nicconfigdaemon.Namespace, "image", bootstrapOpts.Image())
@@ -463,6 +479,49 @@ func patchNodeLabels(ctx context.Context, c client.Client, nodeName string, labe
 		strings.Join(parts, ",")))
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 	return c.Patch(ctx, node, client.RawPatch(k8stypes.StrategicMergePatchType, patch))
+}
+
+type excludedDiscoveryNodes struct {
+	notReady      int
+	unschedulable int
+}
+
+// eligibleDiscoveryNodeNames returns node names where the short-lived discovery
+// daemon can usefully run. Kubernetes has no spec.notready field: readiness is
+// reported as status.conditions[Ready]. Cordoned nodes are represented by
+// spec.unschedulable.
+func eligibleDiscoveryNodeNames(ctx context.Context, c client.Client) ([]string, excludedDiscoveryNodes, error) {
+	nodeList := &corev1.NodeList{}
+	if err := c.List(ctx, nodeList); err != nil {
+		return nil, excludedDiscoveryNodes{}, err
+	}
+
+	out := make([]string, 0, len(nodeList.Items))
+	excluded := excludedDiscoveryNodes{}
+	for i := range nodeList.Items {
+		node := &nodeList.Items[i]
+		ready := nodeReady(node)
+		if !ready {
+			excluded.notReady++
+			continue
+		}
+		if node.Spec.Unschedulable {
+			excluded.unschedulable++
+			continue
+		}
+		out = append(out, node.Name)
+	}
+	slices.Sort(out)
+	return out, excluded, nil
+}
+
+func nodeReady(node *corev1.Node) bool {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // dsReadiness summarizes the readiness of a DaemonSet's pods.

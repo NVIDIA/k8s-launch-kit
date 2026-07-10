@@ -23,7 +23,7 @@ The objects created by `Ensure(ctx, c, opts)` (`pkg/nicconfigdaemon/`) on every 
 | `ClusterRole` | `k8s-launch-kit-nic-config-daemon` | cluster | created on `Ensure`, deleted explicitly on `Cleanup` |
 | `ClusterRoleBinding` | `k8s-launch-kit-nic-config-daemon` | cluster | created on `Ensure`, deleted explicitly on `Cleanup` |
 | `ConfigMap` | `nic-configuration-operator-supported-nic-firmware` (empty `data: {}`) | namespaced | empty stand-in so the daemon's startup Get succeeds; deleted by namespace cascade |
-| `DaemonSet` | `nic-configuration-daemon` | namespaced | image = `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`; **no `nodeSelector`** + tolerates all taints — runs on every node incl. control-plane (NFD-independent); deleted by namespace cascade |
+| `DaemonSet` | `nic-configuration-daemon` | namespaced | image = `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`; **no NFD `nodeSelector`** + tolerates all taints + node-name affinity for nodes that are Ready and schedulable; deleted by namespace cascade |
 
 ### Why renamed RBAC
 
@@ -48,17 +48,19 @@ daemon pods don't go Ready (ImagePullBackOff, missing pull secret).
 
 ### Node scheduling + NIC wait set (NFD-independent)
 
-The DaemonSet has **no `nodeSelector`** and tolerates all taints
-(`tolerations: [{operator: Exists}]`), so it schedules on every node —
-including control-plane/tainted nodes, which on small or single-node clusters
-may carry the data-plane NICs. It does not depend on the NFD label
-`feature.node.kubernetes.io/pci-15b3.present` (often absent at discover time).
-Because the DaemonSet now runs everywhere, `waitForDaemonSetPods` no longer
-requires **every** pod Ready (that would let one wedged unrelated node block the
-whole 5-min window). It proceeds when all pods are Ready, or when every
-not-Ready pod is *stuck* (`ImagePullBackOff` / `CrashLoopBackOff` / etc., via
-`podStuck`) and at least one pod is Ready; on timeout it still proceeds with the
-Ready set, and only hard-fails when no pod ever became Ready.
+Before bootstrapping, discovery lists Nodes and builds a deterministic allow-list
+of nodes with `status.conditions[Ready] == True` and `spec.unschedulable ==
+false`. The DaemonSet has **no NFD `nodeSelector`** and tolerates all taints
+(`tolerations: [{operator: Exists}]`), but it also renders required node-name
+affinity with one `metadata.name In [node]` selector term per allowed node. This
+keeps discovery NFD-independent while avoiding DaemonSet pods on NotReady or
+cordoned nodes. Eligible control-plane/tainted nodes are still included, which
+matters on small or single-node clusters that carry data-plane NICs there.
+`waitForDaemonSetPods`
+proceeds when all targeted pods are Ready, or when every not-Ready targeted pod
+is *stuck* (`ImagePullBackOff` / `CrashLoopBackOff` / etc., via `podStuck`) and
+at least one pod is Ready; on timeout it still proceeds with the Ready set, and
+only hard-fails when no pod ever became Ready.
 
 To pick which nodes to wait on for `NicDevice` CRs, `filterNodesWithNICs` execs a
 sysfs probe (`sysfsMellanoxNICPresentCmd`) into each daemon pod that scans

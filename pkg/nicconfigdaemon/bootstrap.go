@@ -79,6 +79,10 @@ type Options struct {
 	// ImagePullSecrets is forwarded onto the DaemonSet pod spec.
 	ImagePullSecrets []string
 
+	// NodeNames restricts the DaemonSet to the named nodes via node affinity.
+	// Empty means the DaemonSet can run on every node.
+	NodeNames []string
+
 	// LogLevel sets the LOG_LEVEL env var on the daemon container. Defaults
 	// to DefaultLogLevel when empty.
 	LogLevel string
@@ -189,6 +193,7 @@ func renderDaemonManifests(opts Options) ([]*unstructured.Unstructured, error) {
 		"DaemonSetName":          DaemonSetName,
 		"Image":                  opts.Image(),
 		"ImagePullSecrets":       opts.ImagePullSecrets,
+		"NodeNames":              opts.NodeNames,
 		"LogLevel":               opts.LogLevel,
 	}
 

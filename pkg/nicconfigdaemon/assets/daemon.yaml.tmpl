@@ -141,17 +141,34 @@ spec:
       priorityClassName: system-node-critical
       serviceAccountName: {{ .SAName }}
       terminationGracePeriodSeconds: 10
-      # No nodeSelector: discovery runs on every node. The NFD label
-      # feature.node.kubernetes.io/pci-15b3.present may not exist yet at
-      # discover time (NFD not installed), so the daemon must not be pinned to
-      # it. The discovery flow probes each pod's sysfs for an NVIDIA NIC
-      # (PCI vendor 0x15b3) to decide which nodes to wait on instead.
+      # No NFD nodeSelector: feature.node.kubernetes.io/pci-15b3.present may
+      # not exist yet at discover time (NFD not installed), so the daemon must
+      # not be pinned to it. Discovery can still provide node-name affinity for
+      # the current Ready schedulable nodes, then probes each pod's sysfs for an
+      # NVIDIA NIC (PCI vendor 0x15b3) to decide which nodes to wait on.
       # Tolerate every taint so the daemon also lands on control-plane (and
       # other tainted) nodes — on small/single-node clusters the control-plane
       # node may carry the data-plane NICs. This is a short-lived, privileged
       # discovery daemon that is torn down afterwards.
       tolerations:
         - operator: Exists
+{{- if .NodeNames }}
+      # Restrict discovery to nodes that were Ready and schedulable when l8k
+      # bootstrapped the daemon. DaemonSet pods get Kubernetes-managed
+      # tolerations for NotReady/unschedulable nodes, so this node-name
+      # affinity is what prevents pods from being created for those nodes.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+{{- range .NodeNames }}
+              - matchFields:
+                  - key: metadata.name
+                    operator: In
+                    values:
+                      - {{ . }}
+{{- end }}
+{{- end }}
 {{- if .ImagePullSecrets }}
       imagePullSecrets:
 {{- range .ImagePullSecrets }}
