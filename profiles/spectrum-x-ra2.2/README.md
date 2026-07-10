@@ -2,14 +2,14 @@
 
 ## Overview
 
-The Spectrum-X RA2.3 profile provides optimized multi-rail networking with OVS hardware offload, DOCA acceleration, and advanced NIC firmware configuration specifically designed for AI workloads.
+The Spectrum-X profile provides optimized multi-rail networking with OVS hardware offload, DOCA acceleration, and advanced NIC firmware configuration specifically designed for AI workloads.
 
 ## Features
 
 - **Multi-Rail Networking**: Supports multiple network rails for high-bandwidth AI workloads
 - **OVS Hardware Offload**: DOCA-accelerated Open vSwitch with hardware offloading
 - **RDMA Exclusive Mode**: Dedicated RDMA resources per workload
-- **Advanced Firmware Configuration**: Spectrum-X optimized firmware with RA2.3 support
+- **Advanced Firmware Configuration**: Spectrum-X optimized firmware with RA2.2 support
 - **Multiple Plane Modes**: Supports none, swplb, hwplb, and uniplane configurations
 - **Dynamic Interface Naming**: Automatic NIC interface naming based on plane and rail topology
 - **Optional DRA Workload Allocation**: `profile.spectrumX.useDRA` enables ResourceClaimTemplate-based GPU/VF allocation
@@ -35,7 +35,7 @@ nodeCapabilities:
   - `"1023"` for ConnectX-8
   - `"1025"` for ConnectX-9
   - `"a2dc"` for BlueField-3 SuperNIC
-- **firmwareVersion**: Spectrum-X firmware version (e.g., `"RA2.3"`)
+- **firmwareVersion**: Spectrum-X firmware version (e.g., `"RA2.2"`)
 - **multiplaneMode**: Multiplane configuration
   - `none`: Single plane
   - `swplb`: Software plane load balancing
@@ -49,14 +49,6 @@ nodeCapabilities:
   `dynamicResourceAllocation` feature gate, sets `SpectrumXRailPoolConfig.spec.draEnabled`
   to `true`, emits `ResourceClaimTemplate` manifests, and renders the example workload
   with DRA claims instead of device-plugin resource requests.
-- **configMapName**: Required for RA2.3 when `profile` contains only raw
-  `data.profile` YAML. When `profile` contains a full ConfigMap manifest, l8k
-  extracts `metadata.name`.
-- **profile**: Required for RA2.3. Accepts either the raw Spectrum-X profile
-  YAML that belongs under ConfigMap `data.profile`, or a full ConfigMap YAML.
-  l8k renders the deployed ConfigMap into the Network Operator namespace with
-  the required `network.nvidia.com/operator.nic-configuration.spectrum-x-profile`
-  label.
 
 ### OVS Configuration
 
@@ -101,28 +93,23 @@ The profile generates the following Kubernetes Custom Resources:
      NIC configuration template so the firmware/optimization template can refer to
      the renamed PFs.
 
-3. **Spectrum-X profile ConfigMap** (`28-spectrumxprofile-configmap.yaml`)
-   - Stores the RA2.3 Spectrum-X profile under `data.profile`, in the Network
-     Operator namespace, with the label watched by NIC Configuration Operator.
+3. **NicConfigurationTemplate** (`30-nicconfigurationtemplate.yaml`)
+   - Configures Spectrum-X optimized firmware settings (RA2.2).
 
-4. **NicConfigurationTemplate** (`30-nicconfigurationtemplate.yaml`)
-   - Configures Spectrum-X optimized firmware settings. For RA2.3,
-     `spectrumXOptimized.version` is the generated profile ConfigMap name.
-
-5. **CIDRPool** (`60-cidrpool.yaml`)
+4. **CIDRPool** (`60-cidrpool.yaml`)
    - One pool per rail (non-swplb) or per rail-plane (swplb), with IP placeholders
      the cluster operator must fill in.
 
-6. **SpectrumXRailPoolConfig** (`80-spectrumxrailpoolconfig.yaml`)
+5. **SpectrumXRailPoolConfig** (`80-spectrumxrailpoolconfig.yaml`)
    - Single `v1alpha2` resource with `railTopology[]`. In swplb, one entry per
      rail-plane; otherwise one entry per rail grouping all planes. `draEnabled`
      is rendered from `profile.spectrumX.useDRA`; the default is explicit `false`.
 
-7. **ResourceClaimTemplate** (`85-resourceclaimtemplate.yaml`)
+6. **ResourceClaimTemplate** (`85-resourceclaimtemplate.yaml`)
    - Rendered only when `profile.spectrumX.useDRA: true`. Each template requests
      a GPU and matching SR-IOV VF resources using DRA device classes.
 
-8. **Example DaemonSet** (`90-example-daemonset.yaml`)
+7. **Example DaemonSet** (`90-example-daemonset.yaml`)
    - Example workload requesting one VF per rail (non-swplb) or per rail-plane (swplb).
      In DRA mode, it references the generated `ResourceClaimTemplate` resources instead.
 
@@ -134,7 +121,7 @@ operator; l8k does not generate them.
 ```yaml
 spectrumX:
   nicType: "1023"
-  firmwareVersion: "RA2.3"
+  firmwareVersion: "RA2.2"
   multiplaneMode: hwplb
   numberOfPlanes: 4
   overlay: "none"
@@ -162,13 +149,9 @@ profile:
   multirail: true
   spectrumX:
     enable: true
-    spcxVersion: RA2.3
+    spcxVersion: RA2.2
     multiplaneMode: hwplb
     numberOfPlanes: 4
-    configMapName: site-ra23-profile
-    profile: |
-      useSoftwareCCAlgorithm: true
-      docaCCVersion: "example"
     useDRA: false
 ```
 
@@ -177,9 +160,9 @@ profile:
 ### Prerequisites
 
 1. Kubernetes cluster with SR-IOV capable nodes
-2. NVIDIA Network Operator v26.7.0 or later
+2. NVIDIA Network Operator v26.1.0 or later
 3. ConnectX-8, ConnectX-9, or BlueField-3 SuperNIC adapters
-4. Firmware compatible with Spectrum-X RA2.3
+4. Firmware compatible with Spectrum-X RA2.2
 
 ### Installation with Helm
 
@@ -192,7 +175,7 @@ helm repo update
 helm install network-operator nvidia/network-operator \
   --namespace nvidia-network-operator \
   --create-namespace \
-  --version v26.7.0 \
+  --version v26.1.0 \
   -f myValues.yaml \
   --wait
 ```

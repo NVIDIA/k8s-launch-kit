@@ -1,32 +1,31 @@
-name: Spectrum-X Multi-Rail (RA2.3)
+name: Spectrum-X Multi-Rail (RA2.2)
 plugin: network-operator
 profileRequirements:
   fabric: ethernet
   deployment: sriov
   spectrumX:
-    spcxVersion: "RA2.3"
+    spcxVersion: "RA2.2"
     multiplaneMode: ["swplb", "hwplb", "uniplane", "none"]
   multirail: true
   # SpectrumXRailPoolConfig (spectrumx.net.nvidia.com/v1alpha2) is only
-  # available in Network Operator 26.4+. RA2.3 also requires the
-  # ConfigMap-backed Spectrum-X profile support shipped in 26.7+.
-  minNetworkOperatorRelease: "26.7"
+  # available in Network Operator 26.4+. Older releases must pick a
+  # different profile.
+  minNetworkOperatorRelease: "26.4"
+  maxNetworkOperatorRelease: "26.4"
 nodeCapabilities:
     sriov: true
     rdma: true
 description: |
-  Spectrum-X RA2.3 profile provides optimized multi-rail networking with the
+  Spectrum-X RA2.2 profile provides optimized multi-rail networking with the
   SpectrumXRailPoolConfig CRD, DOCA acceleration, and advanced NIC firmware
-  configuration supplied via a Spectrum-X profile ConfigMap. Supports swplb,
-  hwplb, uniplane, and none multiplane modes. In swplb the railTopology splits
-  each rail into per-plane entries; in other modes one entry per rail groups
-  all planes together.
+  configuration for AI workloads. Supports swplb, hwplb, uniplane, and none
+  multiplane modes. In swplb the railTopology splits each rail into per-plane
+  entries; in other modes one entry per rail groups all planes together.
 deploymentGuide: spectrum-x.rst
 templates:
   - 00-values.yaml
   - 10-nicclusterpolicy.yaml
   - 25-nicinterfacenametemplate.yaml
-  - 28-spectrumxprofile-configmap.yaml
   - 30-nicconfigurationtemplate.yaml
   - 60-cidrpool.yaml
   - 80-spectrumxrailpoolconfig.yaml

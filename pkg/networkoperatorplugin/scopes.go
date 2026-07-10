@@ -86,6 +86,7 @@ var crScopeByKind = map[string]CRScope{
 	// Cluster-wide singleton — multus, CNI plugins, NV-IPAM, etc. live
 	// inside a single NicClusterPolicy.
 	"NicClusterPolicy": ScopeClusterWide,
+	"ConfigMap":        ScopeClusterWide,
 
 	// Aggregate (extended selector — `In: [machine-labels]` under Mode B)
 	"IPPool":    ScopeAggregate,

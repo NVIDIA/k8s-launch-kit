@@ -1,0 +1,12 @@
+{{- if spectrumXProfileConfigRequired .Profile.SpectrumX.SPCXVersion }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Profile.SpectrumX.ConfigMapName }}"
+  namespace: "{{ .NetworkOperator.Namespace }}"
+  labels:
+    network.nvidia.com/operator.nic-configuration.spectrum-x-profile: ""
+data:
+  profile: |
+{{ indent .Profile.SpectrumX.Profile 4 }}
+{{- end }}

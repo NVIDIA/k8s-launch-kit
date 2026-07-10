@@ -1,0 +1,37 @@
+{{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+{{- $railCount := railCount .ClusterConfig.PFs $planes }}
+{{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+apiVersion: spectrumx.nvidia.com/v1alpha2
+kind: SpectrumXRailPoolConfig
+metadata:
+  name: rails{{suffix .ClusterConfig.Identifier}}
+  namespace: "{{.NetworkOperator.Namespace}}"
+spec:
+  withBCM: false
+  draEnabled: {{ spectrumXUseDRA .Profile }}
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := .ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+  networkNamespace: "{{.CurrentNetworkNamespace}}"
+  numVfs: 1
+  railTopology:
+  {{- range $railIdx := untilStep 0 $railCount 1 }}
+  {{- if $swplb }}
+    {{- range $planeIdx := untilStep 0 $planes 1 }}
+  - name: rail{{$railIdx}}p{{$planeIdx}}
+    nicSelector:
+      pfNames: ["{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"]
+    cidrPoolRef: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
+    mtu: 9216
+    {{- end }}
+  {{- else }}
+  - name: rail{{$railIdx}}
+    nicSelector:
+      pfNames: [{{- $firstPF := true }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $firstPF }}, {{ end }}{{- $firstPF = false }}"{{ replaceVars $.SpectrumX.NetdevPrefix $railIdx $planeIdx $railIdx }}"{{- end }}]
+    cidrPoolRef: rail-{{$railIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
+    mtu: 9216
+  {{- end }}
+  {{- end }}

@@ -211,6 +211,54 @@ func TestDefaultConfigYAMLReturnsFreshCopy(t *testing.T) {
 	assert.NotEqual(t, byte('X'), b[0])
 }
 
+func TestNormalizeSpectrumXProfileConfigFromFullConfigMap(t *testing.T) {
+	spcx := &ProfileSpectrumX{
+		Profile: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site-ra23-profile
+  namespace: ignored
+data:
+  profile: |
+    useSoftwareCCAlgorithm: true
+    docaCCVersion: "example"
+`,
+	}
+
+	require.NoError(t, NormalizeSpectrumXProfileConfig(spcx))
+	assert.Equal(t, "site-ra23-profile", spcx.ConfigMapName)
+	assert.Contains(t, spcx.Profile, "useSoftwareCCAlgorithm: true")
+	assert.Contains(t, spcx.Profile, `docaCCVersion: "example"`)
+	assert.NotContains(t, spcx.Profile, "kind: ConfigMap")
+}
+
+func TestNormalizeSpectrumXProfileConfigPreservesRawProfile(t *testing.T) {
+	spcx := &ProfileSpectrumX{
+		ConfigMapName: "site-ra23-profile",
+		Profile: `useSoftwareCCAlgorithm: true
+docaCCVersion: "example"
+`,
+	}
+
+	require.NoError(t, NormalizeSpectrumXProfileConfig(spcx))
+	assert.Equal(t, "site-ra23-profile", spcx.ConfigMapName)
+	assert.Contains(t, spcx.Profile, `docaCCVersion: "example"`)
+}
+
+func TestNormalizeSpectrumXProfileConfigDoesNotMisclassifyRawDataProfile(t *testing.T) {
+	raw := `data:
+  profile: raw profile field owned by Spectrum-X
+`
+	spcx := &ProfileSpectrumX{
+		ConfigMapName: "site-ra23-profile",
+		Profile:       raw,
+	}
+
+	require.NoError(t, NormalizeSpectrumXProfileConfig(spcx))
+	assert.Equal(t, "site-ra23-profile", spcx.ConfigMapName)
+	assert.Equal(t, raw, spcx.Profile)
+}
+
 func TestValidateClusterConfig(t *testing.T) {
 	t.Run("validate config with missing network operator repository", func(t *testing.T) {
 		config := &LaunchKitConfig{

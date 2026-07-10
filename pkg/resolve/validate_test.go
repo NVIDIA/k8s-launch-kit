@@ -87,3 +87,44 @@ func TestValidateResolvedConfigRejectsIgnoreARPForSpectrumX(t *testing.T) {
 	err := ValidateResolvedConfig(cfg)
 	require.ErrorContains(t, err, "--ignore-arp does not apply to Spectrum-X profiles")
 }
+
+func TestValidateResolvedConfigRequiresConfigMapProfileForRA23(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.7"},
+		Profile: &config.Profile{
+			Fabric:     "ethernet",
+			Deployment: "sriov",
+			Multirail:  true,
+			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
+				SPCXVersion:    "RA2.3",
+				MultiplaneMode: "hwplb",
+				NumberOfPlanes: 4,
+			},
+		},
+	}
+
+	err := ValidateResolvedConfig(cfg)
+	require.ErrorContains(t, err, "requires a Spectrum-X profile ConfigMap input")
+}
+
+func TestValidateResolvedConfigAcceptsConfigMapProfileForRA23(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.7"},
+		Profile: &config.Profile{
+			Fabric:     "ethernet",
+			Deployment: "sriov",
+			Multirail:  true,
+			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
+				SPCXVersion:    "RA2.3",
+				MultiplaneMode: "hwplb",
+				NumberOfPlanes: 4,
+				ConfigMapName:  "site-ra23",
+				Profile:        "useSoftwareCCAlgorithm: true\n",
+			},
+		},
+	}
+
+	require.NoError(t, ValidateResolvedConfig(cfg))
+}

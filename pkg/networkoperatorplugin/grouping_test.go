@@ -226,6 +226,69 @@ func TestSpectrumXGrouping(t *testing.T) {
 	}
 }
 
+func TestSpectrumXRA23RendersProfileConfigMap(t *testing.T) {
+	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
+
+	cfg, err := config.LoadFullConfig(
+		filepath.Join("testdata", "grouping", "mixed-same-type.yaml"),
+		ctrllog.Log,
+	)
+	require.NoError(t, err)
+
+	cfg.NetworkOperator.SelectedRelease = "26.7"
+	cfg.NetworkOperator.Namespace = "nvidia-network-operator"
+	cfg.Profile = &config.Profile{
+		Fabric:     "ethernet",
+		Deployment: "sriov",
+		Multirail:  true,
+		SpectrumX: &config.ProfileSpectrumX{
+			Enable:         true,
+			SPCXVersion:    "RA2.3",
+			MultiplaneMode: "hwplb",
+			NumberOfPlanes: 4,
+			ConfigMapName:  "site-ra23-profile",
+			Profile:        "useSoftwareCCAlgorithm: true\r\ndocaCCVersion: \"example\"\r\n",
+		},
+	}
+
+	profileDir, err := filepath.Abs(filepath.Join("..", "..", "profiles", "spectrum-x"))
+	require.NoError(t, err)
+	p := &profiles.Profile{
+		Name:   "Spectrum-X Multi-Rail (RA2.3)",
+		Plugin: "network-operator",
+		Templates: []string{
+			"00-values.yaml",
+			"10-nicclusterpolicy.yaml",
+			"25-nicinterfacenametemplate.yaml",
+			"28-spectrumxprofile-configmap.yaml",
+			"30-nicconfigurationtemplate.yaml",
+			"60-cidrpool.yaml",
+			"80-spectrumxrailpoolconfig.yaml",
+			"85-resourceclaimtemplate.yaml",
+			"90-example-daemonset.yaml",
+		},
+	}
+	p.UpdateManifestsPaths(profileDir)
+
+	plugin := &NetworkOperatorPlugin{}
+	rendered, err := plugin.GenerateProfileDeploymentFiles(p, cfg)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"28-spectrumxprofile-configmap.yaml"},
+		fileNamesMatching(rendered, "28-spectrumxprofile-configmap"))
+
+	cm := rendered["28-spectrumxprofile-configmap.yaml"]
+	require.Contains(t, cm, "kind: ConfigMap")
+	require.Contains(t, cm, "name: \"site-ra23-profile\"")
+	require.Contains(t, cm, "namespace: \"nvidia-network-operator\"")
+	require.Contains(t, cm, config.SpectrumXProfileLabel+": \"\"")
+	require.Contains(t, cm, `docaCCVersion: "example"`)
+	require.NotContains(t, cm, "\r")
+
+	nct := rendered["30-nicconfigurationtemplate-gpu-model-y.yaml"]
+	require.Contains(t, nct, `version: "site-ra23-profile"`)
+}
+
 func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
 	// The merged y-model rail pool must select by gpuType (covers all y-model
 	// nodes across machine types) and reference renamed netdev names rather than

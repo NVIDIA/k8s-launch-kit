@@ -7,6 +7,7 @@ package resolve
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 )
@@ -98,6 +99,16 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 	}
 	if !slices.Contains(config.SupportedSPCXVersions, spcx.SPCXVersion) {
 		return fmt.Errorf("invalid SPC-X RA version %q; supported: %v", spcx.SPCXVersion, config.SupportedSPCXVersions)
+	}
+	if config.SpectrumXProfileConfigRequired(spcx.SPCXVersion) {
+		if strings.TrimSpace(spcx.Profile) == "" {
+			return fmt.Errorf("--spectrum-x %s requires a Spectrum-X profile ConfigMap input via --spectrum-x-config or profile.spectrumX.profile",
+				spcx.SPCXVersion)
+		}
+		if strings.TrimSpace(spcx.ConfigMapName) == "" {
+			return fmt.Errorf("--spectrum-x %s requires a Spectrum-X profile ConfigMap name via --spectrum-x-configmap-name or profile.spectrumX.configMapName when the input is raw data.profile YAML",
+				spcx.SPCXVersion)
+		}
 	}
 
 	// MultiplaneMode + NumberOfPlanes — these can come from

@@ -58,6 +58,11 @@ func DefaultLaunchKitConfig() (*LaunchKitConfig, error) {
 	if err := yaml.Unmarshal(defaultConfigYAML, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse embedded default l8k-config: %w", err)
 	}
+	if cfg.Profile != nil && cfg.Profile.SpectrumX != nil {
+		if err := NormalizeSpectrumXProfileConfig(cfg.Profile.SpectrumX); err != nil {
+			return nil, fmt.Errorf("invalid embedded spectrum-x profile config: %w", err)
+		}
+	}
 	if err := NormalizeMaintenance(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid embedded maintenance config: %w", err)
 	}
@@ -496,6 +501,8 @@ type ProfileSpectrumX struct {
 	MultiplaneMode string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
 	NumberOfPlanes int    `yaml:"numberOfPlanes"` // 2 or 4
 	UseDRA         bool   `yaml:"useDRA"`         // enable DRA ResourceClaimTemplate-based workload allocation
+	ConfigMapName  string `yaml:"configMapName,omitempty"`
+	Profile        string `yaml:"profile,omitempty"`
 }
 
 type ClusterConfig struct {
@@ -644,6 +651,11 @@ func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKit
 	if err := yaml.Unmarshal(configData, &config); err != nil {
 		return nil, nil, fmt.Errorf("failed to parse cluster config YAML %s: %w", configPath, err)
 	}
+	if config.Profile != nil && config.Profile.SpectrumX != nil {
+		if err := NormalizeSpectrumXProfileConfig(config.Profile.SpectrumX); err != nil {
+			return nil, nil, fmt.Errorf("invalid spectrum-x profile config in %s: %w", configPath, err)
+		}
+	}
 	if err := NormalizeMaintenance(&config); err != nil {
 		return nil, nil, fmt.Errorf("invalid maintenance config in %s: %w", configPath, err)
 	}
@@ -756,7 +768,7 @@ func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
 // SupportedSPCXVersions lists the Spectrum-X RA versions for which l8k can
 // emit non-`none` multiplane configurations. RA2.1 ships on Network Operator
 // 26.1; RA2.2 on 26.4+. Order is preserved in error messages.
-var SupportedSPCXVersions = []string{"RA2.1", "RA2.2"}
+var SupportedSPCXVersions = []string{"RA2.1", "RA2.2", "RA2.3"}
 
 // SupportedMultiplaneModes lists the Spectrum-X multiplane modes the CLI
 // accepts. `none` and `uniplane` collapse to one plane; `swplb` and `hwplb`
@@ -776,7 +788,8 @@ var SupportedNumberOfPlanes = []int{1, 2, 4}
 // hardware-defaulting (pkg/resolve).
 var SPCXVersionAllowedReleases = map[string][]string{
 	"RA2.1": {"26.1"},
-	"RA2.2": {"26.4", "26.7"},
+	"RA2.2": {"26.4"},
+	"RA2.3": {"26.7"},
 }
 
 // DefaultSPCXReleaseFor returns the canonical (first-listed) Network
