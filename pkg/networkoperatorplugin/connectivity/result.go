@@ -16,6 +16,14 @@
 
 package connectivity
 
+type RouteCheck struct {
+	Command string
+	Output  string
+	Dev     string
+	OK      bool
+	Err     string
+}
+
 // PingResult carries the outcome of one src→dst matrix test. The
 // matrix currently runs rping and ib_write_bw — fields specific to a
 // kind stay zero for tests of the other kind:
@@ -26,11 +34,14 @@ package connectivity
 //     records the configured passing threshold when set.
 //
 // The struct name is kept for backwards compatibility with the
-// historical ICMP-first pipeline; the matrix is RDMA-only now but
-// callers and the JSON schema continue to reference PingResult.
+// historical ICMP-first pipeline; callers and the JSON schema continue
+// to reference PingResult.
 type PingResult struct {
 	Test             PingTest
 	OK               bool
+	ObservedOK       bool
+	Expectation      Expectation
+	Route            RouteCheck
 	BandwidthGbps    float64 // ib_write_bw only; 0 when n/a
 	MsgRateMpps      float64 // ib_write_bw only; 0 when n/a
 	MinBandwidthGbps float64 // ib_write_bw only; 0 when no threshold was applied

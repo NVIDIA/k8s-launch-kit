@@ -316,6 +316,7 @@ details table th, details table td { padding: 6px 10px; }
 .matrix-table tr:hover td { background: transparent; }
 .cell-pass    { background: var(--success-bg); color: var(--success); }
 .cell-fail    { background: var(--error-bg);   color: var(--error); font-weight: 600; }
+.cell-observe { background: var(--bg-soft);    color: var(--text-muted); font-weight: 500; }
 .cell-missing { background: var(--bg-soft);    color: var(--text-faint); }
 .cell-self    { color: var(--text-faint); }
 
@@ -463,7 +464,7 @@ footer strong { color: var(--text-muted); }
     ✗ VALIDATION FAILED
   </div>
   <ul class="verdict-list verdict-reasons">
-    <li>1 RDMA test(s) failed in the connectivity matrix</li>
+    <li>1 connectivity test(s) failed in the connectivity matrix</li>
     <li>The detected platform topology does not match the certified topology for ACME-vendor-a-h200 server type (see Node groups section for the per-device diff)</li>
   </ul>
 </div>
@@ -831,30 +832,34 @@ status:
         <div class="matrix-rail">Cross-rail canary — RDMA ping (rping)</div>
         <table class="matrix-table">
           <thead>
-            <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
+            <tr><th>Source</th><th>Src rail</th><th>Src iface</th><th>Destination</th><th>Dst rail</th><th>Dst iface</th><th>Result</th></tr>
           </thead>
           <tbody>
             <tr>
               <td>node-a</td>
               <td><code>rail-0</code></td>
+              <td><code>net1</code></td>
               <td>node-b</td>
               <td><code>rail-1</code></td>
-              <td class="cell-pass">✓</td>
+              <td><code>net2</code></td>
+              <td class="cell-observe">connected</td>
             </tr>
           </tbody>
         </table>
         <div class="matrix-rail">Cross-rail canary — RDMA bandwidth (ib_write_bw)</div>
         <table class="matrix-table">
           <thead>
-            <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
+            <tr><th>Source</th><th>Src rail</th><th>Src iface</th><th>Destination</th><th>Dst rail</th><th>Dst iface</th><th>Result</th></tr>
           </thead>
           <tbody>
             <tr>
               <td>node-a</td>
               <td><code>rail-0</code></td>
+              <td><code>net1</code></td>
               <td>node-b</td>
               <td><code>rail-1</code></td>
-              <td class="cell-pass">✓ 187.6 Gbps</td>
+              <td><code>net2</code></td>
+              <td class="cell-observe">connected</td>
             </tr>
           </tbody>
         </table>

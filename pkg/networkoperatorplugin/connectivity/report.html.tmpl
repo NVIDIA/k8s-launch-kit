@@ -343,6 +343,7 @@ details table th, details table td { padding: 6px 10px; }
 .matrix-table tr:hover td { background: transparent; }
 .cell-pass    { background: var(--success-bg); color: var(--success); }
 .cell-fail    { background: var(--error-bg);   color: var(--error); font-weight: 600; }
+.cell-observe { background: var(--bg-soft);    color: var(--text-muted); font-weight: 500; }
 .cell-missing { background: var(--bg-soft);    color: var(--text-faint); }
 .cell-self    { color: var(--text-faint); }
 
@@ -924,15 +925,17 @@ footer strong { color: var(--text-muted); }
         <div class="matrix-rail">Cross-rail canary — {{familyTitle $fam}}</div>
         <table class="matrix-table">
           <thead>
-            <tr><th>Source</th><th>Src rail</th><th>Destination</th><th>Dst rail</th><th>Result</th></tr>
+            <tr><th>Source</th><th>Src rail</th><th>Src iface</th><th>Destination</th><th>Dst rail</th><th>Dst iface</th><th>Result</th></tr>
           </thead>
           <tbody>
             {{- range .Results}}
             <tr>
               <td>{{srcLabel .Test}}</td>
               <td><code>{{.Test.SrcRail}}</code></td>
+              <td><code>{{.Test.SrcIface}}</code></td>
               <td>{{dstLabel .Test}}</td>
               <td><code>{{.Test.DstRail}}</code></td>
+              <td><code>{{.Test.DstIface}}</code></td>
               <td class="{{cellClass .}}">{{cellText . $fam}}</td>
             </tr>
             {{- end}}

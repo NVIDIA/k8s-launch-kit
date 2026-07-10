@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const exampleDaemonSetManifest = `apiVersion: apps/v1
@@ -67,4 +68,10 @@ func TestLoadExampleDaemonSetsUsesManifestNamespace(t *testing.T) {
 	require.Len(t, refs, 1)
 	require.Equal(t, "nvidia-network-operator", objs[0].GetNamespace())
 	require.Equal(t, "nvidia-network-operator", refs[0].Namespace)
+	require.Equal(t, "test-container", refs[0].RDMAContainer)
+	require.Equal(t, "netshoot", refs[0].ICMPContainer)
+	containers, ok, err := unstructured.NestedSlice(objs[0].Object, "spec", "template", "spec", "containers")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, containers, 2)
 }

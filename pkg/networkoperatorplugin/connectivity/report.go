@@ -330,9 +330,8 @@ func reportFuncMap() template.FuncMap {
 		},
 		// matrixByRail groups same-rail PingResults by (rail, kind
 		// family) so the template can render one sub-table per
-		// (rail, family) bucket. Families are RDMA-ping and
-		// RDMA-bandwidth — see PingTestKind.IsRDMAPing /
-		// IsRDMABw.
+		// (rail, family) bucket. Families are ICMP, RDMA-ping,
+		// and RDMA-bandwidth.
 		"matrixByRail": func(results []PingResult) []railSection {
 			type key struct {
 				rail string
@@ -351,7 +350,7 @@ func reportFuncMap() template.FuncMap {
 				byKey[k] = append(byKey[k], r)
 			}
 			// Sort deterministically: rail name, then a fixed
-			// family order so rping → ib_write_bw appear in
+			// family order so ICMP → rping → ib_write_bw appear in
 			// execution order in the rendered report.
 			sort.Slice(order, func(i, j int) bool {
 				if order[i].rail != order[j].rail {
@@ -403,6 +402,9 @@ func reportFuncMap() template.FuncMap {
 			if fam == "ibbw" {
 				return "RDMA bandwidth (ib_write_bw)"
 			}
+			if fam == "icmp" {
+				return "Layer 3 ping (ICMP)"
+			}
 			return "RDMA ping (rping)"
 		},
 		// cellClass returns the CSS class for a matrix cell based
@@ -412,7 +414,11 @@ func reportFuncMap() template.FuncMap {
 			if r == nil {
 				return "cell-missing"
 			}
-			if r.OK {
+			if r.Expectation == ExpectObserve {
+				return "cell-observe"
+			}
+			ok := r.OK
+			if ok {
 				return "cell-pass"
 			}
 			return "cell-fail"
@@ -423,8 +429,26 @@ func reportFuncMap() template.FuncMap {
 			if r == nil {
 				return "·"
 			}
+			if r.Expectation == ExpectObserve {
+				if observedOK(r) {
+					return "connected"
+				}
+				return "not connected"
+			}
+			if r.Expectation == ExpectForbidden {
+				if r.OK {
+					return "✓ blocked"
+				}
+				if !r.ObservedOK && r.Err != nil {
+					return "✗ ERR"
+				}
+				if !r.ObservedOK {
+					return "✗ unknown"
+				}
+				return "✗ connected"
+			}
 			if fam == "ibbw" {
-				if r.OK && r.BandwidthGbps > 0 {
+				if observedOK(r) && r.BandwidthGbps > 0 {
 					return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
 				}
 				if r.BandwidthGbps > 0 && r.MinBandwidthGbps > 0 {
@@ -435,7 +459,7 @@ func reportFuncMap() template.FuncMap {
 				}
 				return "✗ ERR"
 			}
-			if r.OK {
+			if observedOK(r) {
 				return "✓"
 			}
 			return "✗"
@@ -461,7 +485,7 @@ func reportFuncMap() template.FuncMap {
 // railSection feeds the per-(rail, kind family) sub-table in the
 // report. Nodes is the deterministic axis ordering; Table is a flat
 // node→node→*result map (the template indexes by string keys for
-// cells). Family is one of "rping" / "ibbw" — drives the section
+// cells). Family is one of "icmp" / "rping" / "ibbw" — drives the section
 // header and the cell-formatter dispatch.
 type railSection struct {
 	Rail   string
@@ -481,6 +505,9 @@ type crossRailSection struct {
 // the HTML template's funcs (kept as a separate string from
 // text_report.go's kindFamily enum to keep package boundaries clean).
 func htmlFamilyOf(k PingTestKind) string {
+	if k.IsICMP() {
+		return "icmp"
+	}
 	if k.IsRDMABw() {
 		return "ibbw"
 	}
@@ -488,12 +515,16 @@ func htmlFamilyOf(k PingTestKind) string {
 }
 
 // htmlFamilyRank gives a stable ordering of families in the rendered
-// report — rping (QP establishment) before ib_write_bw (bandwidth).
+// report — ICMP before rping (QP establishment) before ib_write_bw (bandwidth).
 func htmlFamilyRank(fam string) int {
-	if fam == "ibbw" {
+	switch fam {
+	case "icmp":
+		return 0
+	case "ibbw":
+		return 2
+	default:
 		return 1
 	}
-	return 0
 }
 
 // buildRailTable indexes a slice of same-rail PingResults by source

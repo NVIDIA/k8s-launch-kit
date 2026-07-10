@@ -48,6 +48,23 @@ wrong HCA even though the IP destination is correct. These settings apply to
 SR-IOV, SR-IOV IB, host-device, Macvlan RDMA-shared, and IPoIB RDMA-shared
 profiles; they do not apply to Spectrum-X profiles.
 
+Validation
+----------
+
+``l8k validate`` verifies the generated deployment against the live cluster and
+runs a source-bound connectivity matrix by default. Fresh discovery writes
+``validation.mode: strict`` and enables ``icmp``, ``rping``, and
+``ib_write_bw`` checks. Use ``--validation-mode quick`` for a smoke test,
+``--validation-mode full`` for non-gating full cross-rail observation, or keep
+``strict`` to gate cross-rail behavior according to ``profile.routing``:
+``source-based`` must pass and ``destination-based`` must stay isolated.
+
+.. code-block:: bash
+
+   l8k validate --user-config ./cluster-config.yaml \
+     --deployment-files ./deployment \
+     --kubeconfig ~/.kube/config
+
 .. code-block:: bash
 
    l8k discover --user-config ./cluster-config.yaml \

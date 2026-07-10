@@ -27,10 +27,13 @@ Operator release.
    `--deployment-files` (skipping any file with "example" in its name)
    is fetched from the cluster via `client.Get`. Each manifest is
    reported `FOUND`, `MISSING`, or `ERROR`.
+3. **Connectivity matrix.** By default, `l8k validate` applies the generated
+   example DaemonSet, waits for ready pods, and runs source-bound `icmp`,
+   `rping`, and `ib_write_bw` tests. The default mode is `strict`.
 
-Exit code is non-zero (4) on any missing manifest or version mismatch.
-Both checks soft-skip when prerequisites are absent — no
-`cluster-config.yaml`, no Helm release Secret, etc.
+Exit code is non-zero (4) on any missing manifest, version mismatch, or
+gating connectivity failure. Version checks soft-skip when prerequisites are
+absent — no `cluster-config.yaml`, no Helm release Secret, etc.
 
 ## Usage
 
@@ -45,6 +48,23 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 | `--kubeconfig` | `$KUBECONFIG` | Path to kubeconfig with read access to the cluster |
 | `--user-config` | `./cluster-config.yaml` | Cluster config YAML; used for `networkOperator.selectedRelease` and the operator namespace |
 | `--deployment-files` | `./deployment` | Directory containing the manifests to verify |
+| `--validation-mode` | `validation.mode` (`strict`) | Connectivity mode: `quick`, `full`, or `strict` |
+| `--validation-checks` | `validation.checks` (`icmp,rping,ib_write_bw`) | Comma-separated connectivity checks; `""` disables all |
+| `--rdma-rping-iterations` | `validation.rdma.rpingIterations` | rping client iteration count |
+| `--rdma-ib-write-size` | `validation.rdma.ibWriteSize` | ib_write_bw message size |
+| `--rdma-ib-write-min-bandwidth-gbps` | `validation.rdma.ibWriteMinBandwidthGbps` | Minimum peak Gbps; `0` disables bandwidth gating |
+
+## Connectivity Modes
+
+- `quick`: all same-rail node pairs plus one non-gating cross-rail canary per
+  source-rail/destination-rail mapping.
+- `full`: every source rail × every destination rail × every ordered pod pair;
+  cross-rail results are reported but do not gate pass/fail.
+- `strict`: full matrix. Cross-rail gates by `profile.routing`: `source-based`
+  must succeed, `destination-based` must stay isolated.
+
+All checks are source-bound. ICMP uses `ping -I <src-iface>`, `rping` uses
+`-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`.
 
 ## Examples
 
@@ -58,7 +78,7 @@ l8k validate --user-config ./cluster-config.yaml \
   --kubeconfig ~/.kube/config
 
 # Agent mode (single JSON object on stdout, logs on stderr)
-l8k validate --output json --yes 2>/dev/null | jq '.summary'
+l8k validate --output json 2>/dev/null | jq '.summary'
 ```
 
 ## Output

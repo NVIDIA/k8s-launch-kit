@@ -95,6 +95,23 @@ func TestParseIbWriteBwOutput(t *testing.T) {
 	})
 }
 
+func TestParseIbWriteBwBatchResults(t *testing.T) {
+	stdout := ibWriteBwBatchResultMarker + ` 0 0
+banner
+ 65536      5000             194.39             193.21		   0.368459
+` + ibWriteBwBatchEndMarker + ` 0
+` + ibWriteBwBatchResultMarker + ` 1 124
+timeout text
+` + ibWriteBwBatchEndMarker + ` 1
+`
+	got := parseIbWriteBwBatchResults(stdout)
+	require.Len(t, got, 2)
+	assert.Equal(t, 0, got[0].rc)
+	assert.Contains(t, got[0].stdout, "194.39")
+	assert.Equal(t, 124, got[1].rc)
+	assert.Contains(t, got[1].stdout, "timeout text")
+}
+
 func TestPingTestKind_Predicates(t *testing.T) {
 	assert.True(t, RDMAPingSameRail.IsRDMAPing())
 	assert.True(t, RDMAPingCrossRail.IsRDMAPing())

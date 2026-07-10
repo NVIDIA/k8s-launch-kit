@@ -91,7 +91,8 @@ profile:
 		require.NotNil(t, config.Validation)
 		require.NotNil(t, config.Validation.Connectivity)
 		assert.True(t, *config.Validation.Connectivity)
-		assert.Equal(t, []string{ValidationCheckRPing, ValidationCheckIBWriteBW}, config.Validation.Checks)
+		assert.Equal(t, ValidationModeStrict, config.Validation.Mode)
+		assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, config.Validation.Checks)
 		require.NotNil(t, config.Validation.RDMA)
 		assert.Equal(t, DefaultValidationRPingIterations, config.Validation.RDMA.RPingIterations)
 		assert.Equal(t, DefaultValidationIBWriteSize, config.Validation.RDMA.IBWriteSize)
@@ -150,7 +151,8 @@ func TestDefaultLaunchKitConfig(t *testing.T) {
 	require.NotNil(t, cfg.DOCADriver, "DefaultLaunchKitConfig must populate DOCADriver")
 	require.NotNil(t, cfg.NvIpam, "DefaultLaunchKitConfig must populate NvIpam")
 	require.NotNil(t, cfg.Validation, "DefaultLaunchKitConfig must populate Validation")
-	assert.Equal(t, []string{ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
+	assert.Equal(t, ValidationModeStrict, cfg.Validation.Mode)
+	assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
 	require.NotNil(t, cfg.Validation.RDMA)
 	assert.Equal(t, DefaultValidationRPingIterations, cfg.Validation.RDMA.RPingIterations)
 	assert.Equal(t, DefaultValidationIBWriteSize, cfg.Validation.RDMA.IBWriteSize)
@@ -166,15 +168,22 @@ func TestValidationConfig(t *testing.T) {
 	})
 
 	t.Run("normalizes duplicates and blanks", func(t *testing.T) {
-		checks := NormalizeValidationChecks([]string{" rping ", "", "ib_write_bw", "rping"})
-		assert.Equal(t, []string{ValidationCheckRPing, ValidationCheckIBWriteBW}, checks)
+		checks := NormalizeValidationChecks([]string{" icmp ", " rping ", "", "ib_write_bw", "rping"})
+		assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, checks)
 	})
 
 	t.Run("rejects unknown checks", func(t *testing.T) {
-		cfg := NormalizeValidationConfig(&ValidationConfig{Checks: []string{"rping", "icmp"}})
+		cfg := NormalizeValidationConfig(&ValidationConfig{Checks: []string{"rping", "tcp"}})
 		err := ValidateValidationConfig(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported check")
+	})
+
+	t.Run("rejects unknown mode", func(t *testing.T) {
+		cfg := NormalizeValidationConfig(&ValidationConfig{Mode: "deep"})
+		err := ValidateValidationConfig(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "validation.mode")
 	})
 
 	t.Run("preserves explicit zero minimum bandwidth", func(t *testing.T) {

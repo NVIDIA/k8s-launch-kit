@@ -40,14 +40,14 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/k8s-launc
 // fixtureData is the deterministic input the renderer is exercised
 // against. Includes one of every state badge, an IN-PROGRESS row with
 // expandable Details, a passing rail and a failing rail in the matrix,
-// and one cross-rail canary, so the golden covers the whole template
+// and one cross-rail result, so the golden covers the whole template
 // surface.
 func fixtureData() ReportData {
 	return ReportData{
 		Verdict: OverallVerdict{
 			Pass: false,
 			Reasons: []string{
-				"1 RDMA test(s) failed in the connectivity matrix",
+				"1 connectivity test(s) failed in the connectivity matrix",
 				`The detected platform topology does not match the certified topology for ACME-vendor-a-h200 server type (see Node groups section for the per-device diff)`,
 			},
 		},
@@ -206,12 +206,14 @@ func fixtureData() ReportData {
 						Rail: "rail-1", SrcRail: "rail-1", DstRail: "rail-1"},
 					OK: false,
 				},
-				// rping: cross-rail canary
+				// rping: cross-rail observation
 				{
 					Test: PingTest{Kind: RDMAPingCrossRail,
 						SrcNode: "node-a", DstNode: "node-b",
-						Rail: "rail-0→rail-1", SrcRail: "rail-0", DstRail: "rail-1"},
-					OK: true,
+						Rail: "rail-0→rail-1", SrcRail: "rail-0", DstRail: "rail-1",
+						SrcIface: "net1", DstIface: "net2",
+						Expectation: ExpectObserve},
+					OK: true, ObservedOK: true, Expectation: ExpectObserve,
 				},
 				// ib_write_bw: same-rail rail-0 both directions pass with bandwidth
 				{
@@ -226,12 +228,14 @@ func fixtureData() ReportData {
 						Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0"},
 					OK: true, BandwidthGbps: 193.8,
 				},
-				// ib_write_bw: cross-rail canary passes with bandwidth
+				// ib_write_bw: cross-rail observation passes with bandwidth
 				{
 					Test: PingTest{Kind: RDMABwCrossRail,
 						SrcNode: "node-a", DstNode: "node-b",
-						Rail: "rail-0→rail-1", SrcRail: "rail-0", DstRail: "rail-1"},
-					OK: true, BandwidthGbps: 187.6,
+						Rail: "rail-0→rail-1", SrcRail: "rail-0", DstRail: "rail-1",
+						SrcIface: "net1", DstIface: "net2",
+						Expectation: ExpectObserve},
+					OK: true, ObservedOK: true, Expectation: ExpectObserve, BandwidthGbps: 187.6,
 				},
 			},
 			Summary: MatrixSummary{TotalTests: 8, Passed: 7, Failed: 1},

@@ -324,6 +324,38 @@ profile:
     numberOfPlanes: 4
 
 # ============================================================================
+# Validation Configuration
+# Controls l8k validate data-plane checks.
+# ============================================================================
+validation:
+  # bool | default: true
+  # Run the example DaemonSet connectivity matrix.
+  connectivity: true
+
+  # string | default: strict
+  # quick: same-rail all nodes + one non-gating cross-rail canary per rail pair.
+  # full: every source rail x every destination rail x every ordered pod pair;
+  #       cross-rail is non-gating.
+  # strict: full matrix; cross-rail gates according to profile.routing.
+  mode: strict
+
+  # list[string] | default: [icmp, rping, ib_write_bw]
+  # Supported checks. Use [] to disable all connectivity checks.
+  checks:
+    - icmp
+    - rping
+    - ib_write_bw
+
+  rdma:
+    # int | default: 5
+    rpingIterations: 5
+    # int | default: 65536
+    ibWriteSize: 65536
+    # float | default: 100
+    # 0 disables bandwidth threshold gating.
+    ibWriteMinBandwidthGbps: 100
+
+# ============================================================================
 # Cluster Configuration
 # Array of hardware groups. Typically populated by --discover-cluster-config.
 # ============================================================================

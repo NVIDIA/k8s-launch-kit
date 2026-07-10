@@ -34,13 +34,21 @@ import (
 	yaml "sigs.k8s.io/yaml"
 )
 
+const (
+	rdmaTestContainerName = "test-container"
+	icmpTestContainerName = "netshoot"
+	icmpTestImage         = "nicolaka/netshoot:latest"
+)
+
 // DaemonSetRef identifies an applied test DaemonSet so the orchestrator
 // can later list its pods and (optionally) delete it.
 type DaemonSetRef struct {
-	Namespace  string
-	Name       string
-	Container  string // primary container name to ping from
-	SourceFile string // file the DS was loaded from (for log breadcrumbs)
+	Namespace     string
+	Name          string
+	Container     string // RDMA container, kept as the primary container for reports
+	RDMAContainer string // DOCA container used for rping and ib_write_bw
+	ICMPContainer string // netshoot container used for ping and route checks
+	SourceFile    string // file the DS was loaded from (for log breadcrumbs)
 }
 
 // LoadExampleDaemonSets reads every `*example*.yaml` manifest under
@@ -87,13 +95,16 @@ func LoadExampleDaemonSets(manifestDir string) ([]*unstructured.Unstructured, []
 					obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
 				}
 			}
-			container := firstContainerName(obj)
+			ensureICMPContainer(obj)
+			rdmaContainer, icmpContainer := testContainerNames(obj)
 			objs = append(objs, obj)
 			refs = append(refs, DaemonSetRef{
-				Namespace:  obj.GetNamespace(),
-				Name:       obj.GetName(),
-				Container:  container,
-				SourceFile: e.Name(),
+				Namespace:     obj.GetNamespace(),
+				Name:          obj.GetName(),
+				Container:     rdmaContainer,
+				RDMAContainer: rdmaContainer,
+				ICMPContainer: icmpContainer,
+				SourceFile:    e.Name(),
 			})
 		}
 	}
@@ -125,6 +136,7 @@ func DeleteDaemonSet(ctx context.Context, c client.Client, ref DaemonSetRef) err
 // while it waits.
 type RolloutStatus struct {
 	Desired   int32
+	Updated   int32
 	Available int32
 	Ready     int32
 	NotReady  int32 // desired - ready, never negative
@@ -136,7 +148,7 @@ type RolloutStatus struct {
 // nodes — silently passing that as "ready" would let an empty matrix
 // claim success.
 func (s RolloutStatus) IsRolledOut() bool {
-	return s.Desired > 0 && s.Ready == s.Desired
+	return s.Desired > 0 && s.Updated == s.Desired && s.Ready == s.Desired
 }
 
 // WaitForRollout polls the DaemonSet's status until it satisfies
@@ -157,6 +169,7 @@ func WaitForRollout(ctx context.Context, c client.Client, ref DaemonSetRef, poll
 		if err == nil {
 			last = RolloutStatus{
 				Desired:   ds.Status.DesiredNumberScheduled,
+				Updated:   ds.Status.UpdatedNumberScheduled,
 				Available: ds.Status.NumberAvailable,
 				Ready:     ds.Status.NumberReady,
 			}
@@ -241,21 +254,60 @@ func podRunningReady(p corev1.Pod) bool {
 	return false
 }
 
-// firstContainerName returns the first container name from a
-// DaemonSet's pod template — that's the container the orchestrator
-// execs `ping` in. Returns "" if the spec is malformed (caller
-// surfaces a useful error).
-func firstContainerName(ds *unstructured.Unstructured) string {
+// testContainerNames returns the DOCA container used for RDMA checks and the
+// netshoot container used for ICMP checks.
+func testContainerNames(ds *unstructured.Unstructured) (rdmaContainer, icmpContainer string) {
 	containers, _, _ := unstructured.NestedSlice(ds.Object, "spec", "template", "spec", "containers")
-	if len(containers) == 0 {
-		return ""
+	for i, raw := range containers {
+		c, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _, _ := unstructured.NestedString(c, "name")
+		image, _, _ := unstructured.NestedString(c, "image")
+		if i == 0 && rdmaContainer == "" {
+			rdmaContainer = name
+		}
+		if rdmaContainer == "" || name == rdmaTestContainerName || strings.Contains(image, "/doca/") {
+			rdmaContainer = name
+		}
+		if icmpContainer == "" || name == icmpTestContainerName || strings.Contains(image, "netshoot") {
+			icmpContainer = name
+		}
 	}
-	c, ok := containers[0].(map[string]interface{})
-	if !ok {
-		return ""
+	if icmpContainer == "" {
+		icmpContainer = rdmaContainer
 	}
-	name, _, _ := unstructured.NestedString(c, "name")
-	return name
+	return rdmaContainer, icmpContainer
+}
+
+func ensureICMPContainer(ds *unstructured.Unstructured) {
+	containers, found, _ := unstructured.NestedSlice(ds.Object, "spec", "template", "spec", "containers")
+	if !found {
+		return
+	}
+	for _, raw := range containers {
+		c, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _, _ := unstructured.NestedString(c, "name")
+		image, _, _ := unstructured.NestedString(c, "image")
+		if name == icmpTestContainerName || strings.Contains(image, "netshoot") {
+			return
+		}
+	}
+	containers = append(containers, map[string]interface{}{
+		"name":    icmpTestContainerName,
+		"image":   icmpTestImage,
+		"command": []interface{}{"/bin/sh", "-c", "sleep infinity"},
+		"securityContext": map[string]interface{}{
+			"capabilities": map[string]interface{}{
+				"add": []interface{}{"NET_RAW"},
+			},
+		},
+	})
+	_ = unstructured.SetNestedSlice(ds.Object, containers, "spec", "template", "spec", "containers")
 }
 
 // splitYAMLDocs is a minimal local copy of the YAML doc splitter in
