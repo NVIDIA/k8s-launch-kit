@@ -63,6 +63,7 @@ func TestBuildProfileFromOptions(t *testing.T) {
 			Fabric:         "ethernet",
 			DeploymentType: "sriov",
 			Multirail:      true,
+			MultirailSet:   true,
 			SpectrumX:      true,
 			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "hwplb",
@@ -74,6 +75,7 @@ func TestBuildProfileFromOptions(t *testing.T) {
 		assert.Equal(t, "ethernet", profile.Fabric)
 		assert.Equal(t, "sriov", profile.Deployment)
 		assert.True(t, profile.Multirail)
+		assert.True(t, profile.MultirailSet)
 		require.NotNil(t, profile.SpectrumX)
 		assert.Equal(t, "RA2.2", profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "hwplb", profile.SpectrumX.MultiplaneMode)
@@ -154,6 +156,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		err := p.ApplyOptionsToConfig(options.Options{Multirail: true, MultirailSet: true}, cfg)
 		require.NoError(t, err)
 		assert.True(t, cfg.Profile.Multirail)
+		assert.True(t, cfg.Profile.MultirailSet)
 	})
 
 	t.Run("CLI multirail not passed does NOT override config true", func(t *testing.T) {
@@ -174,6 +177,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		err := p.ApplyOptionsToConfig(options.Options{Multirail: false, MultirailSet: true}, cfg)
 		require.NoError(t, err)
 		assert.False(t, cfg.Profile.Multirail)
+		assert.True(t, cfg.Profile.MultirailSet)
 	})
 
 	t.Run("empty CLI strings preserve config values", func(t *testing.T) {

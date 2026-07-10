@@ -16,8 +16,8 @@
 // Precedence (lowest to highest): hardware default < config-file <
 // CLI flag. `ApplyHardwareDefaults` checks "is cfg.X already set?"
 // before writing, so config-file values survive. Bool flags use
-// `Options.MultirailSet` to distinguish "not passed" from
-// "passed=false".
+// `Profile.MultirailSet` and `Options.MultirailSet` to distinguish
+// omitted values from explicit false values in YAML and on the CLI.
 package resolve
 
 import (
@@ -54,7 +54,7 @@ func (d DefaultDecision) String() string {
 //	--fabric              ← unanimous group LinkType (Unit 5). Skipped+warned
 //	                       when groups disagree or any group has empty LinkType.
 //	--deployment-type     ← "sriov" (always).
-//	--multirail           ← true (always, unless Options.MultirailSet=true).
+//	--multirail           ← true (unless config or CLI explicitly sets it).
 //	--multiplane-mode     ← per east-west PF deviceID (only when --spectrum-x):
 //	                       1021 (CX7) / a2dc (BF3 SuperNIC) → "uniplane"
 //	                       1023 (CX8) → "swplb"
@@ -72,6 +72,7 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 		cfg.Profile = &config.Profile{}
 	}
 	var decisions []DefaultDecision
+	cfgHasSpectrumX := cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable
 
 	// --fabric ----------------------------------------------------------
 	if cfg.Profile.Fabric == "" && opts.Fabric == "" {
@@ -101,17 +102,25 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 	}
 
 	// --multirail -------------------------------------------------------
-	// Bool: skip default only when user explicitly set the flag (either
-	// to true or false). MultirailSet captures `cmd.Flag.Changed`.
-	if !cfg.Profile.Multirail && !opts.MultirailSet {
+	// Bool: skip the default when either the YAML field or CLI flag was
+	// explicitly set (to true or false). The two presence markers keep an
+	// explicit false stable across discover/generate round trips.
+	if !cfg.Profile.Multirail && !cfg.Profile.MultirailSet && !opts.MultirailSet {
+		reason := "default"
+		if opts.SpectrumX || cfgHasSpectrumX {
+			reason = "implied by --spectrum-x"
+		}
 		cfg.Profile.Multirail = true
+		cfg.Profile.MultirailSet = true
 		decisions = append(decisions, DefaultDecision{
-			Flag: "--multirail", Value: "true", Reason: "default",
+			Flag: "--multirail", Value: "true", Reason: reason,
 		})
-		log.Log.V(1).Info("HW default: --multirail=true (default)")
+		log.Log.V(1).Info("HW default: --multirail=true", "reason", reason)
 	} else {
 		log.Log.V(1).Info("HW default: --multirail skipped",
-			"current", cfg.Profile.Multirail, "userSet", opts.MultirailSet)
+			"current", cfg.Profile.Multirail,
+			"configSet", cfg.Profile.MultirailSet,
+			"cliSet", opts.MultirailSet)
 	}
 
 	// Spectrum-X-specific defaults --------------------------------------
@@ -119,7 +128,6 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 	// loaded cfg already has spectrumX.enable=true (config-only path).
 	// Without one of those signals, multiplane-mode/planes/release
 	// defaults are meaningless.
-	cfgHasSpectrumX := cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable
 	if opts.SpectrumX || cfgHasSpectrumX {
 		applySpectrumXHardwareDefaults(cfg, opts, &decisions)
 	}
@@ -136,13 +144,11 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 		cfg.Profile.SpectrumX = &config.ProfileSpectrumX{}
 	}
 	cfg.Profile.SpectrumX.Enable = true
-	if cfg.Profile.SpectrumX.SPCXVersion == "" && opts.SPCXVersion != "" {
-		cfg.Profile.SpectrumX.SPCXVersion = opts.SPCXVersion
-	}
 
-	// Implicit defaults: --spectrum-x forces ethernet fabric, sriov
-	// deployment, and multirail. Phase 2 cohort validation rejects
-	// contradictory user values; here we just fill the empty defaults.
+	// Implicit defaults: --spectrum-x forces ethernet fabric and sriov
+	// deployment. Multirail is handled by ApplyHardwareDefaults so its
+	// presence markers are evaluated in one place. Phase 2 cohort validation
+	// rejects contradictory user values; here we just fill empty defaults.
 	if cfg.Profile.Fabric == "" {
 		cfg.Profile.Fabric = "ethernet"
 		*decisions = append(*decisions, DefaultDecision{
@@ -155,13 +161,6 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 			Flag: "--deployment-type", Value: "sriov", Reason: "implied by --spectrum-x",
 		})
 	}
-	if !cfg.Profile.Multirail && !opts.MultirailSet {
-		cfg.Profile.Multirail = true
-		*decisions = append(*decisions, DefaultDecision{
-			Flag: "--multirail", Value: "true", Reason: "implied by --spectrum-x",
-		})
-	}
-
 	// --multiplane-mode + --number-of-planes (paired — both come from
 	// the same deviceID).
 	modeUnset := cfg.Profile.SpectrumX.MultiplaneMode == "" && opts.MultiplaneMode == ""
@@ -193,12 +192,11 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 	}
 
 	// --network-operator-release ----------------------------------------
-	// SPCXVersion may come from either CLI (opts.SPCXVersion) or
-	// config-file (cfg.Profile.SpectrumX.SPCXVersion). Prefer the
-	// resolved cfg value since CLI may not have been set in the
-	// config-only Spectrum-X path.
+	// SPCXVersion may come from either CLI (opts.SPCXVersion) or the config
+	// file. Read the effective value here without applying the CLI option to
+	// cfg; ApplyOptionsToConfig remains the single writer for CLI overrides.
 	ra := cfg.Profile.SpectrumX.SPCXVersion
-	if ra == "" {
+	if opts.SPCXVersion != "" {
 		ra = opts.SPCXVersion
 	}
 	currentRelease := ""

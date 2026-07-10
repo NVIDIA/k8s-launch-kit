@@ -23,9 +23,8 @@ import (
 //   - "Spectrum-X requires deployment=sriov"
 //   - "Spectrum-X RA2.1 requires --network-operator-release in [26.1]"
 //   - "multiplane-mode=none requires number-of-planes=1"
-//   - "Spectrum-X needs all of --multiplane-mode + --number-of-planes
-//     + --network-operator-release set" (after defaults filled what
-//     hardware could)
+//   - "Spectrum-X needs --multiplane-mode, --number-of-planes, and
+//     --network-operator-release set" (after defaults filled what hardware could)
 //
 // Returns a single error describing the first violation. Caller wraps
 // this in a structured ValidationError for the user.
@@ -67,6 +66,9 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 	}
 	if cfg.Profile.Deployment != "" && cfg.Profile.Deployment != "sriov" {
 		return fmt.Errorf("--spectrum-x requires sriov deployment, got %q", cfg.Profile.Deployment)
+	}
+	if !cfg.Profile.Multirail {
+		return fmt.Errorf("--spectrum-x requires multirail=true")
 	}
 
 	// SPCXVersion must be set and registered (Phase 1 enforces the

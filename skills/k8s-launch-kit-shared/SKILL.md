@@ -66,6 +66,11 @@ The root command `l8k --discover-cluster-config ...` still works for backward-co
 | `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
 | `--image-pull-secrets <NAMES>` | Image pull secret names for NicClusterPolicy (comma-separated) |
 
+`l8k discover` and `l8k generate` both accept the profile flags `--fabric`,
+`--deployment-type`, `--multirail`, `--spectrum-x`, `--multiplane-mode`, and
+`--number-of-planes`. Discovery persists the resolved values; later generation
+reuses them unless another explicit CLI override is supplied.
+
 ## Agent / JSON Mode
 
 **RULE: AI agents MUST always use `--output json 2>/dev/null` when calling any l8k subcommand.** Never use text mode — it produces unstructured output with spinners and ANSI codes that is hard to parse.

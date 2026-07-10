@@ -135,7 +135,7 @@ Optionally deploy the generated manifests with --deploy.`,
 			opts.EnableDocaDriver = &enableDocaDriver
 		}
 
-		if err := applySpectrumXSyntaxChecks(&opts); err != nil {
+		if err := validateProfileFlagValues(&opts); err != nil {
 			exitWithError(apperrors.NewValidationError(err.Error(), err, "Check --spectrum-x flag combinations"), opts.OutputFormat)
 		}
 
@@ -182,11 +182,11 @@ func init() {
 	// Profile selection
 	generateCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type: ethernet, infiniband")
 	generateCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Deployment type: sriov, rdma_shared, host_device")
-	generateCmd.Flags().BoolVar(&multirail, "multirail", false, "Enable multirail deployment")
+	generateCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")
 	generateCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
 		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Supported: %v",
 			config.SupportedSPCXVersions))
-	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
+	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)")
 	generateCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes (requires --spectrum-x)")
 	generateCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
 	generateCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")

@@ -24,10 +24,8 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
-	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
-	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 )
 
 // executeGeneration handles the profile selection and manifest generation phase.
@@ -69,27 +67,10 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		}
 	}
 
-	// Phase 1.5: hardware-derived defaults. Fills empty profile fields
-	// from cluster hardware (linkType, east-west PF deviceID, etc.) so
-	// the user can run `l8k generate` against a discovered config
-	// without repeating obvious flags. CLI overlay (next) overrides
-	// these; config-file values were already loaded into cfg.Profile by
-	// LoadFullConfig and are preserved.
-	decisions := resolve.ApplyHardwareDefaults(fullConfig, l.options)
-	for _, d := range decisions {
-		l.ui.Info("%s", d.String())
-		l.logger.Info("Applied hardware default", "flag", d.Flag, "value", d.Value, "reason", d.Reason)
-	}
-
-	// Apply CLI options to override config values + hardware defaults.
-	for _, plugin := range l.plugins {
-		if applier, ok := plugin.(interface {
-			ApplyOptionsToConfig(options.Options, *config.LaunchKitConfig) error
-		}); ok {
-			if err := applier.ApplyOptionsToConfig(l.options, fullConfig); err != nil {
-				return fmt.Errorf("failed to apply options to config for plugin %s: %w", plugin.GetName(), err)
-			}
-		}
+	// Resolve the same defaults/config/CLI precedence that discovery uses
+	// before either flow persists or consumes the final profile.
+	if err := l.resolveProfileSettings(fullConfig); err != nil {
+		return err
 	}
 
 	// Now that fullConfig.NetworkOperator is fully resolved (catalog
@@ -127,15 +108,6 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		)
 	}
 
-	// Phase 2 cohort validation — runs against the fully-resolved cfg
-	// so cross-flag rules ("--spectrum-x requires fabric=ethernet",
-	// "RA2.1 requires --network-operator-release 26.1", etc.) see
-	// values that defaults filled, not just user-supplied ones.
-	if err := resolve.ValidateResolvedConfig(fullConfig); err != nil {
-		return apperrors.NewValidationError(err.Error(), nil,
-			"Adjust the conflicting flags or fields in cluster-config.yaml.")
-	}
-
 	// --for: replace clusterConfig with a synthesized group from a preset.
 	// This is the explicit ahead-of-time generation path that skips live
 	// discovery in favor of a static preset description. The CLI layer has
@@ -161,21 +133,6 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		}
 		fullConfig.ClusterConfig = []config.ClusterConfig{cc}
 		l.ui.Info("Using preset %q (clusterConfig replaced from preset)", l.options.ForPreset)
-	}
-
-	// Capture profile info for JSON result
-	if fullConfig.Profile != nil {
-		l.result.Profile = map[string]string{
-			"fabric":     fullConfig.Profile.Fabric,
-			"deployment": fullConfig.Profile.Deployment,
-			"multirail":  fmt.Sprintf("%v", fullConfig.Profile.Multirail),
-		}
-		if fullConfig.Profile.SpectrumX != nil {
-			l.result.Profile["spectrumX"] = "true"
-			l.result.Profile["multiplaneMode"] = fullConfig.Profile.SpectrumX.MultiplaneMode
-			l.result.Profile["numberOfPlanes"] = fmt.Sprintf("%d", fullConfig.Profile.SpectrumX.NumberOfPlanes)
-			l.result.Profile["spcxVersion"] = fullConfig.Profile.SpectrumX.SPCXVersion
-		}
 	}
 
 	aggregatedCapabilities := config.AggregateCapabilities(fullConfig.ClusterConfig)

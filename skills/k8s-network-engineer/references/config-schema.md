@@ -203,9 +203,9 @@ Top-level profile selection settings. These can be overridden by CLI flags.
 
 | Field        | Type   | Default    | CLI Override           | Description                        |
 |--------------|--------|------------|------------------------|------------------------------------|
-| `fabric`     | string | `ethernet` | `--fabric`             | `ethernet` or `infiniband`         |
+| `fabric`     | string | unanimous discovered link type | `--fabric` | `ethernet` or `infiniband`         |
 | `deployment` | string | `sriov`    | `--deployment-type`    | `sriov`, `rdma_shared`, `host_device` |
-| `multirail`  | bool   | `false`    | `--multirail`          | Enable multi-rail networking       |
+| `multirail`  | bool   | `true` when absent | `--multirail`    | Enable multi-rail networking; explicit false is preserved |
 
 ### profile.spectrumX
 

@@ -121,10 +121,13 @@ spectrumX:
   rdmaPrefix: "roce_p%plane_id%_r%rail_id%"
   netdevPrefix: "eth_p%plane_id%_r%rail_id%"
 
+# This reference profile is used as-is when the file is passed explicitly via
+# --user-config. A fresh `l8k discover` ignores these example values, derives
+# missing settings from discovered hardware, and writes the resolved profile.
 profile:
   fabric: ethernet # infiniband, ethernet TODO consider ETH/IB
   deployment: sriov # rdma_shared, sriov, host_device
-  multirail: false
+  multirail: false # explicit false is preserved; omit the key to use the true default
   spectrumX: # Spectrum-X configuration (set enable: true or use --spectrum-x CLI flag)
     enable: false # CLI parameter (overrides this value): --spectrum-x
     # spcxVersion: "RA2.2" # CLI parameter (overrides this value): --spectrum-x

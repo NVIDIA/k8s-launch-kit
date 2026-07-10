@@ -10,10 +10,15 @@ namespace to discover your cluster's network capabilities and hardware
 configuration. Discovery does **not** require a pre-installed Network Operator —
 the daemon and its CRDs are created in a dedicated namespace, used to publish
 `NicDevice` CRs, and torn down when discovery finishes. This phase can be
-skipped if you provide your own configuration file.
+skipped if you provide your own configuration file. Discovery also resolves
+missing profile settings and stores the final values in `cluster-config.yaml`.
 
 ### Select the Deployment Profile
-Specify the desired deployment profile via CLI flags (`--fabric`, `--deployment-type`, `--multirail`, `--spectrum-x`) or via a `profile` section in the user-config file. AI-driven profile selection now lives in the `k8s-launch-kit-*` Claude Code skills, which wrap the deterministic CLI commands.
+Discovery fills missing profile values from hardware and built-in defaults.
+Values already present under `profile` are preserved, while explicit CLI flags
+(`--fabric`, `--deployment-type`, `--multirail`, `--spectrum-x`) take precedence.
+AI-driven profile selection now lives in the `k8s-launch-kit-*` Claude Code
+skills, which wrap the deterministic CLI commands.
 
 ### Generate Deployment Files
 Based on the discovered/provided configuration, generate a complete set of YAML deployment files tailored to your selected network profile.
@@ -133,6 +138,10 @@ network capabilities and hardware configuration by using --discover-cluster-conf
 This phase can be skipped if you provide your own configuration file by using --user-config.
 This phase requires --kubeconfig to be specified.
 
+Discovery fills missing profile settings from the detected hardware and built-in
+defaults, applies explicit CLI overrides, and saves the final profile with the
+hardware inventory in cluster-config.yaml.
+
 By default discovery advertises **one rail per NIC**. When a NIC exposes several
 east-west PFs that are planes of a single physical port (e.g. Spectrum-X
 multi-plane ConnectX-8/9), only the master PF is written to `cluster-config.yaml`
@@ -227,11 +236,11 @@ Profile Selection Flags:
       --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Run 'l8k preset list' with the same --config-dir to list available names.
       --gpu-type string          Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.
       --groups strings           Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.
-      --multirail                Enable multirail deployment
+      --multirail                Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)
       --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: [RA2.1 RA2.2]
 
 Spectrum-X Flags:
-      --multiplane-mode string   Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)
+      --multiplane-mode string   Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)
       --number-of-planes int     Number of planes for Spectrum-X (requires --spectrum-x)
 
 Generation Output Flags:
@@ -275,9 +284,11 @@ Generate deployment manifests:
 
 ```bash
 l8k generate --user-config ./cluster-config.yaml \
-    --fabric ethernet --deployment-type sriov --multirail \
     --save-deployment-files ./deployments
 ```
+
+The generated config already contains the resolved profile. Pass profile flags
+to `generate` only when you want to override the saved values.
 
 Apply the generated manifests to the cluster:
 
@@ -367,6 +378,22 @@ When `--user-config` and a filesystem default are both absent, discovery uses
 the default configuration embedded in the binary. Pass `--config-dir` to use
 an external default and/or preset catalog instead.
 
+The saved file contains the final `profile` section. Resolution order is:
+
+1. Hardware and built-in defaults fill missing fields.
+2. Existing values from `--user-config` are preserved.
+3. Explicit `discover` CLI flags override both and are written back.
+
+For example, force a shared-RDMA InfiniBand profile and explicitly opt out of
+multirail:
+
+```bash
+l8k discover --kubeconfig ~/.kube/config \
+    --fabric infiniband --deployment-type rdma_shared \
+    --multirail=false \
+    --save-cluster-config ./my-cluster-config.yaml
+```
+
 Filter discovery to specific nodes using a label selector:
 
 ```bash
@@ -384,7 +411,10 @@ l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml \
 
 ### Discovery with User-Provided Base Config
 
-Use your own config file (with custom network operator version, subnets, etc.) as the base for discovery. Without `--save-cluster-config`, the file is rewritten in place with discovery results:
+Use your own config file (with custom network operator version, subnets, or a
+partial profile) as the base for discovery. Missing profile values are resolved;
+existing values are retained unless a CLI flag overrides them. Without
+`--save-cluster-config`, the file is rewritten in place with the final results:
 
 ```bash
 l8k discover --user-config ./my-config.yaml \
@@ -526,7 +556,14 @@ In JSON mode, errors include structured fields (`code`, `category`, `transient`,
 
 ## Configuration file
 
-During cluster discovery stage, Kubernetes Launch Kit creates a configuration file, which it later uses to generate deployment manifests from the templates. This config file can be edited by the user to customize their deployment configuration. The user can provide the custom config file to the tool using the `--user-config` cli flag — either as a standalone config (skipping discovery) or as a base config combined with `l8k discover` / `--discover-cluster-config` (discovery takes network operator parameters from the file and adds discovered cluster config).
+During cluster discovery, Kubernetes Launch Kit creates a configuration file
+that contains both hardware inventory and the resolved deployment profile. The
+profile precedence is hardware/built-in defaults, then existing YAML values,
+then explicit CLI flags. The config can be edited and supplied through
+`--user-config` either as a standalone generation input or as a base for a
+later discovery refresh. Refreshing replaces `clusterConfig`, fills only
+missing profile fields, applies CLI overrides, and writes the final profile
+back to YAML.
 
 The tool resolves configuration and profile paths in order: local directory first (`./l8k-config.yaml`, `./profiles`), then installed location (`/usr/local/share/l8k/`), then binary-relative.
 
@@ -556,9 +593,15 @@ There are two **Spectrum-X** profiles, picked by the value of `--spectrum-x`:
 - **`spectrum-x`** — RA2.2 on `26.4+`. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` to consolidate rail wiring. Selected for `--spectrum-x RA2.2`.
 - **`spectrum-x-ra2.1`** — RA2.1 on `26.1` only (pinned via `min`/`maxNetworkOperatorRelease: "26.1"`). Renders the full SR-IOV operator chain: per-group `SriovNetworkPoolConfig` + per-rail `SriovNetworkNodePolicy` + `OVSNetwork` + nv-ipam `CIDRPool` + a v1alpha1 glue `SpectrumXRailPoolConfig`. Selected for `--spectrum-x RA2.1`.
 
-`--network-operator-release` must be passed explicitly with `--spectrum-x` — the release line is consequential (it picks the CRD shape and the SR-IOV operator behaviour), so we don't silently fill it in. The pair is then validated: `--spectrum-x RA2.1 --network-operator-release 26.4` errors out with a specific "RA2.1 requires --network-operator-release in [26.1]" message rather than a generic "no applicable profile found".
+When Spectrum-X is enabled and no release is already set, profile resolution
+selects its compatible default release (`RA2.1` → `26.1`, `RA2.2` → `26.4`).
+An explicit CLI or config value is preserved and the pair is validated:
+`--spectrum-x RA2.1 --network-operator-release 26.4` errors with a specific
+"RA2.1 requires --network-operator-release in [26.1]" message rather than a
+generic "no applicable profile found".
 
-When neither the flag nor `selectedRelease` is set, behavior is unchanged: explicit values in the config file flow through and templates render the newest gates (treated as "latest").
+For non-Spectrum-X profiles, leaving both the flag and `selectedRelease` empty
+continues to render the newest gates (treated as "latest").
 
 Adding a new release is a YAML-only change in `releases.yaml` — patch bumps update an existing entry in place; new minor lines add a new top-level key.
 
@@ -798,6 +841,10 @@ spectrumX:
   overlay: none
   rdmaPrefix: roce_p%plane%_r%rail%    # Spectrum-X uses its own prefixes (with %plane%)
   netdevPrefix: eth_p%plane%_r%rail%
+profile:
+  fabric: ethernet
+  deployment: sriov
+  multirail: true
 clusterConfig:
 - identifier: group-0
   capabilities:

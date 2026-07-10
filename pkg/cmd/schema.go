@@ -62,8 +62,8 @@ var schemaCmd = &cobra.Command{
 			Description: "CLI tool for deploying NVIDIA cloud-native networking solutions on Kubernetes",
 			Commands: map[string]commandSchema{
 				"discover": {
-					Description: "Discover cluster network hardware capabilities",
-					Example:     "l8k discover --kubeconfig ~/.kube/config --save-cluster-config ./cluster-config.yaml",
+					Description: "Discover cluster network hardware, resolve profile settings, and persist both to cluster-config.yaml",
+					Example:     "l8k discover --kubeconfig ~/.kube/config --fabric ethernet --save-cluster-config ./cluster-config.yaml",
 				},
 				"generate": {
 					Description: "Generate deployment manifests for a network profile",
@@ -119,28 +119,28 @@ var schemaCmd = &cobra.Command{
 				},
 				"--fabric": {
 					Type:        "string",
-					Description: "Select the fabric type: infiniband, ethernet",
+					Description: "Override the resolved fabric type: infiniband, ethernet. Accepted by discover and generate.",
 				},
 				"--deployment-type": {
 					Type:        "string",
-					Description: "Select the deployment type: sriov, rdma_shared, host_device",
+					Description: "Override the resolved deployment type: sriov, rdma_shared, host_device. Accepted by discover and generate.",
 				},
 				"--multirail": {
 					Type:        "bool",
-					Default:     "false",
-					Description: "Enable multirail deployment",
+					Default:     "true when absent",
+					Description: "Override multirail deployment. Explicit false values from YAML or --multirail=false are preserved.",
 				},
 				"--spectrum-x": {
 					Type:        "string",
-					Description: "Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Folds in the legacy --spcx-version. Implies --fabric ethernet --deployment-type sriov --multirail. --multiplane-mode, --number-of-planes, and --network-operator-release are all mandatory under --spectrum-x; the (RA, release) pair is validated against the supported set (RA2.1 → 26.1, RA2.2 → 26.4).",
+					Description: "Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Implies ethernet, sriov, and multirail; hardware-derived mode and plane defaults are persisted by discover.",
 				},
 				"--multiplane-mode": {
 					Type:        "string",
-					Description: "Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (required with --spectrum-x)",
+					Description: "Spectrum-X multiplane mode override: none, swplb, hwplb, uniplane. Auto-derived from NIC device ID when omitted.",
 				},
 				"--number-of-planes": {
 					Type:        "int",
-					Description: "Number of planes for Spectrum-X: 1, 2, or 4 (required with --spectrum-x)",
+					Description: "Spectrum-X plane count override: 1, 2, or 4. Auto-derived from NIC device ID when omitted.",
 				},
 				"--save-deployment-files": {
 					Type:        "string",

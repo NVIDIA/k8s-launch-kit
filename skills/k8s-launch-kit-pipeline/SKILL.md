@@ -28,9 +28,12 @@ Or use subcommands for a two-step approach:
 ```bash
 l8k discover --save-cluster-config ./cluster-config.yaml && \
 l8k generate --user-config ./cluster-config.yaml \
-  --fabric <FABRIC> --deployment-type <TYPE> \
   --save-deployment-files <DIR> --deploy
 ```
+
+The subcommand flow does not need to repeat profile flags: discovery resolves
+and persists them. Pass profile flags to either command only as explicit
+overrides.
 
 ## Examples
 
@@ -70,9 +73,9 @@ l8k --discover-cluster-config \
 
 # Subcommand alternative: discover then generate+deploy separately
 l8k discover --kubeconfig ~/.kube/config \
+  --fabric ethernet --deployment-type sriov \
   --save-cluster-config ./cluster-config.yaml && \
 l8k generate --user-config ./cluster-config.yaml \
-  --fabric ethernet --deployment-type sriov \
   --save-deployment-files ./output --deploy
 
 # Skip discovery entirely with --for (known SKU)
@@ -89,7 +92,7 @@ l8k generate --user-config ./cluster-config.yaml \
 | Use Case | Command |
 |----------|---------|
 | Discovery only | `l8k discover --save-cluster-config <PATH>` |
-| Generate only | `l8k generate --user-config <CONFIG> --fabric ... --save-deployment-files <DIR>` |
+| Generate only | `l8k generate --user-config <CONFIG> --save-deployment-files <DIR>` |
 | Generate + deploy | `l8k generate ... --deploy` |
 | Full pipeline (root) | `l8k --discover-cluster-config ... --deploy` |
 | Full pipeline (subcommands) | `l8k discover ... && l8k generate ... --deploy` |
@@ -99,7 +102,7 @@ Note: The root command's strength is chaining all phases — it runs discover, g
 
 ## Phase Order
 
-1. **Discover** — Deploy minimal NicClusterPolicy, read NodeFeature CRDs, group nodes
+1. **Discover** — Probe hardware, resolve profile settings, and persist both
 2. **Generate** — Match profile, render templates, write YAMLs
 3. **Deploy** — Apply resources in dependency order
 

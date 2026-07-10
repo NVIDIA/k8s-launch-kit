@@ -296,10 +296,42 @@ type WorkloadConfig struct {
 }
 
 type Profile struct {
-	Fabric     string            `yaml:"fabric"`
-	Deployment string            `yaml:"deployment"`
-	Multirail  bool              `yaml:"multirail"`
-	SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+	Fabric     string `yaml:"fabric"`
+	Deployment string `yaml:"deployment"`
+	Multirail  bool   `yaml:"multirail"`
+	// MultirailSet records whether multirail was present in the source YAML.
+	// It is transient so the public YAML shape stays unchanged. The resolver
+	// needs this bit to distinguish an omitted value (eligible for the true
+	// default) from an explicit `multirail: false` (which must be preserved).
+	// Programmatic callers that need an explicit false can set both fields.
+	MultirailSet bool              `yaml:"-"`
+	SpectrumX    *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+}
+
+// UnmarshalYAML preserves whether the multirail key was present. A plain bool
+// cannot otherwise distinguish an omitted value from an explicit false, which
+// would make a discover -> save -> discover round trip change user intent.
+func (p *Profile) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var raw struct {
+		Fabric     string            `yaml:"fabric"`
+		Deployment string            `yaml:"deployment"`
+		Multirail  *bool             `yaml:"multirail"`
+		SpectrumX  *ProfileSpectrumX `yaml:"spectrumX,omitempty"`
+	}
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+
+	*p = Profile{
+		Fabric:     raw.Fabric,
+		Deployment: raw.Deployment,
+		SpectrumX:  raw.SpectrumX,
+	}
+	if raw.Multirail != nil {
+		p.Multirail = *raw.Multirail
+		p.MultirailSet = true
+	}
+	return nil
 }
 
 type ProfileSpectrumX struct {
@@ -612,7 +644,7 @@ func validateSpectrumXTemplates(config *LaunchKitConfig) error {
 
 	isMultiplane := config.Profile.SpectrumX.NumberOfPlanes > 1
 	isMultirail := config.Profile.Multirail
-	
+
 	// Check netdevPrefix (accept both %plane%/%rail% and %plane_id%/%rail_id%)
 	hasPlaneInNetdev := containsPlaceholder(netdevPrefix, "%plane%") || containsPlaceholder(netdevPrefix, "%plane_id%")
 	hasRailInNetdev := containsPlaceholder(netdevPrefix, "%rail%") || containsPlaceholder(netdevPrefix, "%rail_id%")
@@ -636,7 +668,7 @@ func validateSpectrumXTemplates(config *LaunchKitConfig) error {
 	if isMultirail && !hasRailInRdma {
 		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%rail_id%% placeholder when multirail is enabled")
 	}
-	
+
 	return nil
 }
 

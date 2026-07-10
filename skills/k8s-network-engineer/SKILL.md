@@ -56,7 +56,9 @@ Use `l8k preset list` to see available presets. Multi-variant presets (same mach
 - For Spectrum-X, confirm NIC type (ConnectX-8 vs BlueField-3) before selecting multiplane mode.
 - Before recommending Spectrum-X, always ask the user if they have Spectrum-X switch fabric (Spectrum-4 switches) configured. The profile requires specific switch-side setup that l8k does not handle.
 - Always call l8k with `--output json 2>/dev/null` and parse the result with jq. Never use text mode. Do NOT add `--yes` — it doesn't work on subcommands; `--output json` auto-confirms.
-- When generating manifests, check the discovered config for multirail: if any group has `railNumber > 0` in physicalFunctions, add `--multirail` to the `l8k generate` command.
+- Discovery resolves and persists the profile, including multirail. Reuse the
+  saved values during generation; pass profile flags only for explicit
+  overrides. An explicit `multirail: false` remains false across rewrites.
 - `--kubeconfig` is optional — l8k falls back to `$KUBECONFIG` env var if not specified.
 - For Network Operator 26.1+, treat SR-IOV requestor mode as one coordinated Helm change: both the Network Operator drain requestor and SR-IOV external drainer must be enabled. OFED uses its separate Maintenance Operator requestor. Use `--overwrite-existing` when generated values differ from an installed release; a CR-only apply is insufficient.
 
