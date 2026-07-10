@@ -92,6 +92,9 @@ and writes the final profile back to cluster-config.yaml.`,
 			DeploymentType:           deploymentType,
 			Multirail:                multirail,
 			MultirailSet:             cmd.Flag("multirail").Changed,
+			Routing:                  routing,
+			IgnoreARP:                ignoreARP,
+			IgnoreARPSet:             cmd.Flag("ignore-arp").Changed,
 			SpectrumX:                spectrumXVersion != "",
 			SPCXVersion:              spectrumXVersion,
 			MultiplaneMode:           multiplaneMode,
@@ -143,6 +146,8 @@ func init() {
 	discoverCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type override: ethernet, infiniband")
 	discoverCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Deployment type override: sriov, rdma_shared, host_device")
 	discoverCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")
+	discoverCmd.Flags().StringVar(&routing, "routing", "", "Secondary-network routing mode override: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin.")
+	discoverCmd.Flags().BoolVar(&ignoreARP, "ignore-arp", false, "Chain the tuning CNI meta-plugin to prevent ARP flux across pod rails")
 	discoverCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
 		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version. Supported: %v",
 			config.SupportedSPCXVersions))
@@ -162,6 +167,8 @@ func init() {
 	setFlagGroup(discoverCmd, "fabric", GroupProfile)
 	setFlagGroup(discoverCmd, "deployment-type", GroupProfile)
 	setFlagGroup(discoverCmd, "multirail", GroupProfile)
+	setFlagGroup(discoverCmd, "routing", GroupProfile)
+	setFlagGroup(discoverCmd, "ignore-arp", GroupProfile)
 	setFlagGroup(discoverCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(discoverCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(discoverCmd, "number-of-planes", GroupSpectrumX)

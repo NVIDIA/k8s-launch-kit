@@ -55,6 +55,7 @@ func (d DefaultDecision) String() string {
 //	                       when groups disagree or any group has empty LinkType.
 //	--deployment-type     ← "sriov" (always).
 //	--multirail           ← true (unless config or CLI explicitly sets it).
+//	--routing             ← "destination-based" (unless config or CLI sets it).
 //	--multiplane-mode     ← per east-west PF deviceID (only when --spectrum-x):
 //	                       1021 (CX7) / a2dc (BF3 SuperNIC) → "uniplane"
 //	                       1023 (CX8) → "swplb"
@@ -121,6 +122,19 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 			"current", cfg.Profile.Multirail,
 			"configSet", cfg.Profile.MultirailSet,
 			"cliSet", opts.MultirailSet)
+	}
+
+	// --routing ---------------------------------------------------------
+	if cfg.Profile.Routing == "" && opts.Routing == "" {
+		cfg.Profile.Routing = config.RoutingDestinationBased
+		decisions = append(decisions, DefaultDecision{
+			Flag: "--routing", Value: config.RoutingDestinationBased, Reason: "default",
+		})
+		log.Log.V(1).Info("HW default: --routing=destination-based (default)")
+	} else {
+		log.Log.V(1).Info("HW default: --routing skipped",
+			"current", cfg.Profile.Routing,
+			"cliValue", opts.Routing)
 	}
 
 	// Spectrum-X-specific defaults --------------------------------------

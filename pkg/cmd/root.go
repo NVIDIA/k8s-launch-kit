@@ -40,45 +40,47 @@ import (
 )
 
 var (
-	logLevel              string
-	logFile               string
-	configDir             string
-	fabric                string
-	deploymentType        string
-	multirail             bool
+	logLevel       string
+	logFile        string
+	configDir      string
+	fabric         string
+	deploymentType string
+	multirail      bool
+	routing        string
+	ignoreARP      bool
 	// spectrumXVersion holds the value of --spectrum-x. Empty means
 	// Spectrum-X is disabled; a non-empty value is the SPC-X RA version
 	// (validated against config.SupportedSPCXVersions). The legacy --spcx-version
 	// flag has been folded into --spectrum-x; passing the version is now part
 	// of opting into Spectrum-X.
-	spectrumXVersion      string
-	multiplaneMode        string
-	numberOfPlanes        int
-	saveDeploymentFiles   string
-	deploy                bool
-	kubeconfig            string
-	userConfig            string
-	discoverClusterConfig bool
-	saveClusterConfig     string
-	logger                = log.Log.WithName("l8k")
-	enableDocaDriver            bool
-	enabledPlugins              string
-	networkOperatorNamespace    string
-	networkOperatorRelease      string
-	groups                      []string
-	gpuType                     string
-	nodeSelector                string
-	imagePullSecrets            []string
-	networkNamespaces           []string
-	outputFormat                string
-	yesFlag                     bool
-	quietFlag                   bool
-	workloadManifest            string
-	dryRunFlag                  bool
-	forPreset                   string
-	deployTimeoutRoot           time.Duration
-	keepNamespace               bool
-	collapseNicRails            bool
+	spectrumXVersion         string
+	multiplaneMode           string
+	numberOfPlanes           int
+	saveDeploymentFiles      string
+	deploy                   bool
+	kubeconfig               string
+	userConfig               string
+	discoverClusterConfig    bool
+	saveClusterConfig        string
+	logger                   = log.Log.WithName("l8k")
+	enableDocaDriver         bool
+	enabledPlugins           string
+	networkOperatorNamespace string
+	networkOperatorRelease   string
+	groups                   []string
+	gpuType                  string
+	nodeSelector             string
+	imagePullSecrets         []string
+	networkNamespaces        []string
+	outputFormat             string
+	yesFlag                  bool
+	quietFlag                bool
+	workloadManifest         string
+	dryRunFlag               bool
+	forPreset                string
+	deployTimeoutRoot        time.Duration
+	keepNamespace            bool
+	collapseNicRails         bool
 )
 
 // collapseNicRailsFlagHelp is the shared help text for --collapse-nic-rails on
@@ -152,39 +154,42 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 		enabledPlugins := parseEnabledPlugins(enabledPlugins)
 		// Create application options from CLI flags
 		opts := options.Options{
-			LogLevel:              logLevel,
-			LogFile:               logFile,
-			ConfigDir:             configDir,
-			UserConfig:            userConfig,
-			DiscoverClusterConfig: discoverClusterConfig,
-			Fabric:                fabric,
-			DeploymentType:        deploymentType,
-			Multirail:             multirail,
-			MultirailSet:         cmd.Flag("multirail").Changed,
-			SpectrumX:             spectrumXVersion != "",
-			SPCXVersion:           spectrumXVersion,
-			MultiplaneMode:        multiplaneMode,
-			NumberOfPlanes:        numberOfPlanes,
-			Groups:               groups,
-			GpuType:              gpuType,
-			NodeSelector:         nodeSelector,
-			CollapseNicRails:     collapseNicRails,
-			ForPreset:            forPreset,
-			ImagePullSecrets:     imagePullSecrets,
-			NetworkNamespaces:    networkNamespaces,
-			SaveDeploymentFiles:   saveDeploymentFiles,
-			Deploy:                deploy,
-			Kubeconfig:            kubeconfig,
-			DeployTimeout:         deployTimeoutRoot,
+			LogLevel:                 logLevel,
+			LogFile:                  logFile,
+			ConfigDir:                configDir,
+			UserConfig:               userConfig,
+			DiscoverClusterConfig:    discoverClusterConfig,
+			Fabric:                   fabric,
+			DeploymentType:           deploymentType,
+			Multirail:                multirail,
+			MultirailSet:             cmd.Flag("multirail").Changed,
+			Routing:                  routing,
+			IgnoreARP:                ignoreARP,
+			IgnoreARPSet:             cmd.Flag("ignore-arp").Changed,
+			SpectrumX:                spectrumXVersion != "",
+			SPCXVersion:              spectrumXVersion,
+			MultiplaneMode:           multiplaneMode,
+			NumberOfPlanes:           numberOfPlanes,
+			Groups:                   groups,
+			GpuType:                  gpuType,
+			NodeSelector:             nodeSelector,
+			CollapseNicRails:         collapseNicRails,
+			ForPreset:                forPreset,
+			ImagePullSecrets:         imagePullSecrets,
+			NetworkNamespaces:        networkNamespaces,
+			SaveDeploymentFiles:      saveDeploymentFiles,
+			Deploy:                   deploy,
+			Kubeconfig:               kubeconfig,
+			DeployTimeout:            deployTimeoutRoot,
 			SaveClusterConfig:        saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
 			EnabledPlugins:           enabledPlugins,
-			WorkloadManifest:      workloadManifest,
-			OutputFormat:           outputFormat,
-			Yes:                    yesFlag,
-			Quiet:                  quietFlag,
-			DryRun:                 dryRunFlag,
+			WorkloadManifest:         workloadManifest,
+			OutputFormat:             outputFormat,
+			Yes:                      yesFlag,
+			Quiet:                    quietFlag,
+			DryRun:                   dryRunFlag,
 		}
 
 		// Set EnableDocaDriver only if the flag was explicitly provided
@@ -243,6 +248,8 @@ func init() {
 	rootCmd.Flags().StringVar(&fabric, "fabric", "", "Select the fabric type to deploy (infiniband, ethernet)")
 	rootCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Select the deployment type (sriov, rdma_shared, host_device)")
 	rootCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")
+	rootCmd.Flags().StringVar(&routing, "routing", "", "Secondary-network routing mode: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin.")
+	rootCmd.Flags().BoolVar(&ignoreARP, "ignore-arp", false, "Chain the tuning CNI meta-plugin to prevent ARP flux across pod rails")
 	rootCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
 		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: %v",
 			config.SupportedSPCXVersions))
@@ -295,6 +302,8 @@ func init() {
 	setFlagGroup(rootCmd, "fabric", GroupProfile)
 	setFlagGroup(rootCmd, "deployment-type", GroupProfile)
 	setFlagGroup(rootCmd, "multirail", GroupProfile)
+	setFlagGroup(rootCmd, "routing", GroupProfile)
+	setFlagGroup(rootCmd, "ignore-arp", GroupProfile)
 	setFlagGroup(rootCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(rootCmd, "groups", GroupProfile)
 	setFlagGroup(rootCmd, "gpu-type", GroupProfile)
@@ -423,6 +432,9 @@ func validateProfileFlagValues(opts *options.Options) error {
 	}
 	if opts.DeploymentType != "" && !slices.Contains([]string{"sriov", "rdma_shared", "host_device"}, opts.DeploymentType) {
 		return fmt.Errorf("--deployment-type must be one of: sriov, rdma_shared, host_device")
+	}
+	if opts.Routing != "" && !slices.Contains([]string{config.RoutingDestinationBased, config.RoutingSourceBased}, opts.Routing) {
+		return fmt.Errorf("--routing must be one of: %s, %s", config.RoutingDestinationBased, config.RoutingSourceBased)
 	}
 	return applySpectrumXSyntaxChecks(opts)
 }

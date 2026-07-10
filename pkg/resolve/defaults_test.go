@@ -46,7 +46,21 @@ func TestApplyHardwareDefaultsFillsMissingProfileSettings(t *testing.T) {
 	assert.Equal(t, "host_device", cfg.Profile.Deployment)
 	assert.True(t, cfg.Profile.Multirail)
 	assert.True(t, cfg.Profile.MultirailSet)
-	assert.Len(t, decisions, 2)
+	assert.Equal(t, config.RoutingDestinationBased, cfg.Profile.Routing)
+	assert.Len(t, decisions, 3)
+}
+
+func TestApplyHardwareDefaultsPreservesConfiguredRouting(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		Profile: &config.Profile{Routing: config.RoutingSourceBased},
+	}
+
+	decisions := ApplyHardwareDefaults(cfg, options.Options{})
+
+	assert.Equal(t, config.RoutingSourceBased, cfg.Profile.Routing)
+	for _, decision := range decisions {
+		assert.NotEqual(t, "--routing", decision.Flag)
+	}
 }
 
 func TestApplyHardwareDefaultsHonorsExplicitCLIMultirailFalse(t *testing.T) {

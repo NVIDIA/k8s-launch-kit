@@ -36,6 +36,14 @@ func TestProfileConfiguredInCmd(t *testing.T) {
 		assert.True(t, p.ProfileConfiguredInCmd(options.Options{DeploymentType: "sriov"}))
 	})
 
+	t.Run("routing set", func(t *testing.T) {
+		assert.True(t, p.ProfileConfiguredInCmd(options.Options{Routing: config.RoutingSourceBased}))
+	})
+
+	t.Run("ignore arp set", func(t *testing.T) {
+		assert.True(t, p.ProfileConfiguredInCmd(options.Options{IgnoreARPSet: true}))
+	})
+
 	t.Run("neither set", func(t *testing.T) {
 		assert.False(t, p.ProfileConfiguredInCmd(options.Options{}))
 	})
@@ -101,6 +109,9 @@ func TestBuildProfileFromOptions(t *testing.T) {
 			Fabric:         "ethernet",
 			DeploymentType: "sriov",
 			Multirail:      true,
+			Routing:        config.RoutingSourceBased,
+			IgnoreARP:      true,
+			IgnoreARPSet:   true,
 			SpectrumX:      true,
 			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "swplb",
@@ -112,6 +123,9 @@ func TestBuildProfileFromOptions(t *testing.T) {
 		assert.Equal(t, "ethernet", profile.Fabric)
 		assert.Equal(t, "sriov", profile.Deployment)
 		assert.True(t, profile.Multirail)
+		assert.Equal(t, config.RoutingSourceBased, profile.Routing)
+		assert.True(t, profile.IgnoreARP)
+		assert.True(t, profile.IgnoreARPSet)
 		require.NotNil(t, profile.SpectrumX)
 		assert.Equal(t, "RA2.2", profile.SpectrumX.SPCXVersion)
 		assert.Equal(t, "swplb", profile.SpectrumX.MultiplaneMode)
@@ -190,6 +204,34 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		assert.True(t, cfg.Profile.MultirailSet)
 	})
 
+	t.Run("CLI routing overrides config routing", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{
+			Profile: &config.Profile{Routing: config.RoutingDestinationBased},
+		}
+		err := p.ApplyOptionsToConfig(options.Options{Routing: config.RoutingSourceBased}, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, config.RoutingSourceBased, cfg.Profile.Routing)
+	})
+
+	t.Run("CLI ignore-arp not passed does NOT override config true", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{
+			Profile: &config.Profile{IgnoreARP: true},
+		}
+		err := p.ApplyOptionsToConfig(options.Options{}, cfg)
+		require.NoError(t, err)
+		assert.True(t, cfg.Profile.IgnoreARP)
+	})
+
+	t.Run("CLI ignore-arp=false explicitly overrides config true", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{
+			Profile: &config.Profile{IgnoreARP: true},
+		}
+		err := p.ApplyOptionsToConfig(options.Options{IgnoreARP: false, IgnoreARPSet: true}, cfg)
+		require.NoError(t, err)
+		assert.False(t, cfg.Profile.IgnoreARP)
+		assert.True(t, cfg.Profile.IgnoreARPSet)
+	})
+
 	t.Run("empty CLI strings preserve config values", func(t *testing.T) {
 		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
@@ -242,9 +284,9 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		}
 		err := p.ApplyOptionsToConfig(opts, cfg)
 		require.NoError(t, err)
-		assert.Equal(t, "RA2.2", cfg.Profile.SpectrumX.SPCXVersion)     // preserved
-		assert.Equal(t, "swplb", cfg.Profile.SpectrumX.MultiplaneMode)   // overridden
-		assert.Equal(t, 2, cfg.Profile.SpectrumX.NumberOfPlanes)         // preserved
+		assert.Equal(t, "RA2.2", cfg.Profile.SpectrumX.SPCXVersion)    // preserved
+		assert.Equal(t, "swplb", cfg.Profile.SpectrumX.MultiplaneMode) // overridden
+		assert.Equal(t, 2, cfg.Profile.SpectrumX.NumberOfPlanes)       // preserved
 	})
 
 	t.Run("CLI number-of-planes zero does NOT override config", func(t *testing.T) {

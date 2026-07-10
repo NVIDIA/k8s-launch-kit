@@ -92,7 +92,8 @@ func (p *NetworkOperatorPlugin) GetVersion() string {
 }
 
 func (p *NetworkOperatorPlugin) ProfileConfiguredInCmd(options options.Options) bool {
-	return options.Fabric != "" || options.DeploymentType != ""
+	return options.Fabric != "" || options.DeploymentType != "" ||
+		options.Routing != "" || options.IgnoreARPSet
 }
 
 func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options, profile *config.Profile) error {
@@ -100,6 +101,9 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 	profile.Deployment = options.DeploymentType
 	profile.Multirail = options.Multirail
 	profile.MultirailSet = options.MultirailSet
+	profile.Routing = options.Routing
+	profile.IgnoreARP = options.IgnoreARP
+	profile.IgnoreARPSet = options.IgnoreARPSet
 
 	// Build SpectrumX nested struct if enabled
 	if options.SpectrumX {
@@ -233,6 +237,13 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 	if options.MultirailSet {
 		fullConfig.Profile.Multirail = options.Multirail
 		fullConfig.Profile.MultirailSet = true
+	}
+	if options.Routing != "" {
+		fullConfig.Profile.Routing = options.Routing
+	}
+	if options.IgnoreARPSet {
+		fullConfig.Profile.IgnoreARP = options.IgnoreARP
+		fullConfig.Profile.IgnoreARPSet = true
 	}
 
 	// Apply workload manifest override from CLI

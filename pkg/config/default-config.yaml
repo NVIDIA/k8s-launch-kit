@@ -128,6 +128,8 @@ profile:
   fabric: ethernet # infiniband, ethernet TODO consider ETH/IB
   deployment: sriov # rdma_shared, sriov, host_device
   multirail: false # explicit false is preserved; omit the key to use the true default
+  routing: destination-based # destination-based, source-based. source-based chains the automatic sbr CNI meta-plugin. Not applied to Spectrum-X.
+  ignoreARP: false # true chains tuning CNI sysctls to prevent ARP flux across pod rails. Not applied to Spectrum-X.
   spectrumX: # Spectrum-X configuration (set enable: true or use --spectrum-x CLI flag)
     enable: false # CLI parameter (overrides this value): --spectrum-x
     # spcxVersion: "RA2.2" # CLI parameter (overrides this value): --spectrum-x

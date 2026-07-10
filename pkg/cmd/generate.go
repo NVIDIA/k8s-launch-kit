@@ -100,30 +100,33 @@ Optionally deploy the generated manifests with --deploy.`,
 		}
 
 		opts := options.Options{
-			ConfigDir:     configDir,
-			UserConfig:     userConfig,
-			Fabric:         fabric,
-			DeploymentType: deploymentType,
-			Multirail:      multirail,
-			MultirailSet:   cmd.Flag("multirail").Changed,
-			SpectrumX:      spectrumXVersion != "",
-			SPCXVersion:             spectrumXVersion,
-			MultiplaneMode:          multiplaneMode,
-			NumberOfPlanes:          numberOfPlanes,
-			Groups:                  groups,
-			GpuType:                 gpuType,
-			NodeSelector:            generateNodeSelector,
-			ForPreset:               forPreset,
-			ImagePullSecrets:        imagePullSecrets,
-			NetworkNamespaces:       networkNamespaces,
-			SaveDeploymentFiles:     saveDeploymentFiles,
-			Deploy:                  deploy,
-			OverwriteExisting:       overwriteExistingFlag,
-			Kubeconfig:              kubeconfig,
+			ConfigDir:                configDir,
+			UserConfig:               userConfig,
+			Fabric:                   fabric,
+			DeploymentType:           deploymentType,
+			Multirail:                multirail,
+			MultirailSet:             cmd.Flag("multirail").Changed,
+			Routing:                  routing,
+			IgnoreARP:                ignoreARP,
+			IgnoreARPSet:             cmd.Flag("ignore-arp").Changed,
+			SpectrumX:                spectrumXVersion != "",
+			SPCXVersion:              spectrumXVersion,
+			MultiplaneMode:           multiplaneMode,
+			NumberOfPlanes:           numberOfPlanes,
+			Groups:                   groups,
+			GpuType:                  gpuType,
+			NodeSelector:             generateNodeSelector,
+			ForPreset:                forPreset,
+			ImagePullSecrets:         imagePullSecrets,
+			NetworkNamespaces:        networkNamespaces,
+			SaveDeploymentFiles:      saveDeploymentFiles,
+			Deploy:                   deploy,
+			OverwriteExisting:        overwriteExistingFlag,
+			Kubeconfig:               kubeconfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
-			WorkloadManifest:        workloadManifest,
+			WorkloadManifest:         workloadManifest,
 			OutputFormat:             outputFormat,
 			Yes:                      yesFlag,
 			Quiet:                    quietFlag,
@@ -183,6 +186,8 @@ func init() {
 	generateCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type: ethernet, infiniband")
 	generateCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Deployment type: sriov, rdma_shared, host_device")
 	generateCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")
+	generateCmd.Flags().StringVar(&routing, "routing", "", "Secondary-network routing mode: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin.")
+	generateCmd.Flags().BoolVar(&ignoreARP, "ignore-arp", false, "Chain the tuning CNI meta-plugin to prevent ARP flux across pod rails")
 	generateCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
 		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Supported: %v",
 			config.SupportedSPCXVersions))
@@ -222,6 +227,8 @@ func init() {
 	setFlagGroup(generateCmd, "fabric", GroupProfile)
 	setFlagGroup(generateCmd, "deployment-type", GroupProfile)
 	setFlagGroup(generateCmd, "multirail", GroupProfile)
+	setFlagGroup(generateCmd, "routing", GroupProfile)
+	setFlagGroup(generateCmd, "ignore-arp", GroupProfile)
 	setFlagGroup(generateCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(generateCmd, "groups", GroupProfile)
 	setFlagGroup(generateCmd, "gpu-type", GroupProfile)
