@@ -40,9 +40,9 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -65,6 +65,10 @@ var (
 	validateConnectivityTimeout time.Duration
 	validateWait                time.Duration
 	validateReportPath          string
+	validateChecks              []string
+	validateRDMAIterations      int
+	validateRDMAIBWriteSize     int
+	validateRDMAIBWriteMinGbps  float64
 )
 
 // defaultOperatorNamespace is the default Network Operator namespace used
@@ -91,20 +95,24 @@ Three checks are run:
 
   3. Connectivity (default ON, pass --connectivity=false to skip): the
      example DaemonSet is applied, the rollout is awaited until
-     numberReady == desiredNumberScheduled > 0, and a ping matrix is
-     run between the test pods' rail IPs (same-rail across every pod
-     pair + one cross-rail canary per pair). The DS is deleted on exit
-     unless --keep is set. Skipped when any manifest from step 2 is
-     IN-PROGRESS / ERROR / MISSING (running connectivity against an
-     unready cluster would just produce noise).
+     numberReady == desiredNumberScheduled > 0, and the configured
+     RDMA checks (rping and/or ib_write_bw) run between the test pods'
+     rail IPs (same-rail across every pod pair + one cross-rail canary
+     per pair). The DS is deleted on exit unless --keep is set. Skipped
+     when any manifest from step 2 is IN-PROGRESS / ERROR / MISSING
+     (running connectivity against an unready cluster would just
+     produce noise).
 
 Exits non-zero on any missing manifest, version mismatch, or
 connectivity-matrix failure.`,
 	Example: `  # Full validate (manifest state + connectivity matrix)
   l8k validate
 
-  # Manifest checks only (no DaemonSet apply, no ping matrix)
+  # Manifest checks only (no DaemonSet apply, no RDMA matrix)
   l8k validate --connectivity=false
+
+  # Only run rping, with more iterations
+  l8k validate --validation-checks rping --rdma-rping-iterations 100
 
   # Block up to 10 minutes for in-progress manifests to finish reconciling
   l8k validate --wait 10m
@@ -113,7 +121,7 @@ connectivity-matrix failure.`,
   l8k validate --keep
 
   # Agent mode (JSON output)
-  l8k validate --output json --yes 2>/dev/null`,
+  l8k validate --output json 2>/dev/null`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// State accumulated during the run. Captured by reference
 		// in exitWithReport so that EVERY error path — including
@@ -122,17 +130,17 @@ connectivity-matrix failure.`,
 		// Go's defer doesn't run on os.Exit, so we can't rely on
 		// a deferred report write.
 		var (
-			versionCheck     *networkoperatorplugin.VersionCheck
-			componentCheck   *networkoperatorplugin.ComponentVersionCheck
-			helmValuesCheck  *networkoperatorplugin.HelmValuesCheck
-			strayCheck       *preflight.Result
-			results          []networkoperatorplugin.ValidationResult
-			matrix           *connectivity.MatrixResult
-			warnings         []string
-			presetDeviations []groupDeviationReport
-			presetResults    []presetmatch.Result
-			reportClient     ctrlclient.Client
-			reportRestConfig *rest.Config
+			versionCheck      *networkoperatorplugin.VersionCheck
+			componentCheck    *networkoperatorplugin.ComponentVersionCheck
+			helmValuesCheck   *networkoperatorplugin.HelmValuesCheck
+			strayCheck        *preflight.Result
+			results           []networkoperatorplugin.ValidationResult
+			matrix            *connectivity.MatrixResult
+			warnings          []string
+			presetDeviations  []groupDeviationReport
+			presetResults     []presetmatch.Result
+			reportClient      ctrlclient.Client
+			reportRestConfig  *rest.Config
 			reportManifestDir string
 			operatorNamespace = defaultOperatorNamespace
 		)
@@ -198,6 +206,7 @@ connectivity-matrix failure.`,
 		// validate run against a namespace not recorded in cluster-config.yaml
 		// can still target the right Helm release / live CRs.
 		selectedRelease := ""
+		validationCfg := config.DefaultValidationConfig()
 		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{
 			ConfigDir:                configDir,
 			NetworkOperatorNamespace: networkOperatorNamespace,
@@ -212,6 +221,7 @@ connectivity-matrix failure.`,
 			if cfg.NetworkOperator != nil {
 				selectedRelease = cfg.NetworkOperator.SelectedRelease
 			}
+			validationCfg = config.NormalizeValidationConfig(cfg.Validation)
 			for _, g := range cfg.ClusterConfig {
 				if len(g.PresetDeviation) == 0 {
 					continue
@@ -231,6 +241,13 @@ connectivity-matrix failure.`,
 			// validate (matches the historical behaviour of
 			// presetDeviation), so the exit code is unchanged.
 			presetResults = presetmatch.MatchAllWithCatalog(cfg, presetCatalog)
+		}
+		if err := applyValidateFlagOverrides(cmd, validationCfg); err != nil {
+			exitWithReport(apperrors.NewValidationError(
+				"invalid validation configuration",
+				err,
+				"Use --validation-checks rping,ib_write_bw and positive RDMA parameter values",
+			))
 		}
 
 		log.Log.Info("Validating deployment",
@@ -362,7 +379,7 @@ connectivity-matrix failure.`,
 			if outputFormat != "json" {
 				fmt.Fprintln(os.Stderr, "\nNote: some manifests are still reconciling. Re-run later or use --wait to block.")
 			}
-			if validateConnectivity && outputFormat != "json" {
+			if validationConnectivityEnabled(validationCfg) && outputFormat != "json" {
 				fmt.Fprintln(os.Stderr, "Connectivity matrix skipped — cluster has in-progress manifests.")
 			}
 			warnings = append(warnings, "Connectivity matrix skipped — cluster has in-progress manifests.")
@@ -373,13 +390,17 @@ connectivity-matrix failure.`,
 			return
 		}
 
-		if validateConnectivity {
+		if validationConnectivityEnabled(validationCfg) {
 			uiOutput, _ := ui.NewOutputForFormat(outputFormat, yesFlag)
 			ctxWithUI := ui.WithOutput(ctx, uiOutput)
 			m, err := connectivity.RunMatrix(ctxWithUI, k8sClient, restConfig, uiOutput, connectivity.Options{
-				ManifestDir: manifestDir,
-				Timeout:     validateConnectivityTimeout,
-				Keep:        validateKeep,
+				ManifestDir:             manifestDir,
+				Timeout:                 validateConnectivityTimeout,
+				Keep:                    validateKeep,
+				Checks:                  connectivityChecksFromConfig(validationCfg),
+				RPingIterations:         validationCfg.RDMA.RPingIterations,
+				IBWriteSize:             validationCfg.RDMA.IBWriteSize,
+				IBWriteMinBandwidthGbps: *validationCfg.RDMA.IBWriteMinBandwidthGbps,
 			})
 			matrix = m
 			if err != nil {
@@ -410,6 +431,65 @@ connectivity-matrix failure.`,
 			os.Exit(apperrors.ExitDeployment)
 		}
 	},
+}
+
+func applyValidateFlagOverrides(cmd *cobra.Command, validationCfg *config.ValidationConfig) error {
+	if validationCfg == nil {
+		return fmt.Errorf("validation config must not be nil")
+	}
+	if cmd.Flags().Changed("connectivity") {
+		v := validateConnectivity
+		validationCfg.Connectivity = &v
+	}
+	if cmd.Flags().Changed("validation-checks") {
+		validationCfg.Checks = config.NormalizeValidationChecks(validateChecks)
+	}
+	if validationCfg.RDMA == nil {
+		validationCfg.RDMA = &config.ValidationRDMAConfig{}
+	}
+	if cmd.Flags().Changed("rdma-rping-iterations") {
+		if validateRDMAIterations <= 0 {
+			return fmt.Errorf("--rdma-rping-iterations must be greater than 0")
+		}
+		validationCfg.RDMA.RPingIterations = validateRDMAIterations
+	}
+	if cmd.Flags().Changed("rdma-ib-write-size") {
+		if validateRDMAIBWriteSize <= 0 {
+			return fmt.Errorf("--rdma-ib-write-size must be greater than 0")
+		}
+		validationCfg.RDMA.IBWriteSize = validateRDMAIBWriteSize
+	}
+	if cmd.Flags().Changed("rdma-ib-write-min-bandwidth-gbps") {
+		if validateRDMAIBWriteMinGbps < 0 {
+			return fmt.Errorf("--rdma-ib-write-min-bandwidth-gbps must be greater than or equal to 0")
+		}
+		validationCfg.RDMA.IBWriteMinBandwidthGbps = &validateRDMAIBWriteMinGbps
+	}
+	validationCfg = config.NormalizeValidationConfig(validationCfg)
+	return config.ValidateValidationConfig(validationCfg)
+}
+
+func validationConnectivityEnabled(validationCfg *config.ValidationConfig) bool {
+	if validationCfg == nil || validationCfg.Connectivity == nil {
+		return true
+	}
+	return *validationCfg.Connectivity
+}
+
+func connectivityChecksFromConfig(validationCfg *config.ValidationConfig) []connectivity.Check {
+	if validationCfg == nil {
+		return nil
+	}
+	checks := make([]connectivity.Check, 0, len(validationCfg.Checks))
+	for _, check := range validationCfg.Checks {
+		switch check {
+		case config.ValidationCheckRPing:
+			checks = append(checks, connectivity.CheckRPing)
+		case config.ValidationCheckIBWriteBW:
+			checks = append(checks, connectivity.CheckIBWriteBW)
+		}
+	}
+	return checks
 }
 
 // hasPresetDeviation reports whether any group deviated from its
@@ -523,7 +603,6 @@ func platformLabel(r presetmatch.Result) string {
 	}
 	return strings.Join(parts, "-")
 }
-
 
 // emitVerdictBanner prints the PASS/FAIL banner at the top of text
 // output (above the per-check details that follow). JSON mode skips
@@ -705,17 +784,17 @@ func writeHTMLReportIfWanted(
 			APIServerVersion:  probeAPIServerVersion(restConfig),
 			OperatorNamespace: operatorNamespace,
 		},
-		Profile:         loadProfileInfo(userCfgPath, manifestDir),
-		NodeGroups:      loadNodeGroups(userCfgPath, presetResults),
-		Nodes:           listNodesForReport(ctx, c),
-		Release:         versionCheck,
-		ComponentCheck:  componentCheck,
-		HelmValues:      helmValuesCheck,
-		StrayCRs:        strayCheck,
-		PresetMatches:   presetResults,
-		Manifests:       results,
-		Matrix:          *matrix,
-		Warnings:        *warnings,
+		Profile:        loadProfileInfo(userCfgPath, manifestDir),
+		NodeGroups:     loadNodeGroups(userCfgPath, presetResults),
+		Nodes:          listNodesForReport(ctx, c),
+		Release:        versionCheck,
+		ComponentCheck: componentCheck,
+		HelmValues:     helmValuesCheck,
+		StrayCRs:       strayCheck,
+		PresetMatches:  presetResults,
+		Manifests:      results,
+		Matrix:         *matrix,
+		Warnings:       *warnings,
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1490,6 +1569,10 @@ func init() {
 	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run an RDMA matrix (rping + ib_write_bw) between pods of the example DaemonSet to verify the data plane. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
 	validateCmd.Flags().BoolVar(&validateKeep, "keep", false, "Leave the example DaemonSet running after --connectivity completes (useful for debugging).")
 	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 5*time.Minute, "Wall-clock budget for the connectivity matrix (DaemonSet rollout + rping + ib_write_bw execs).")
+	validateCmd.Flags().StringSliceVar(&validateChecks, "validation-checks", nil, "Comma-separated RDMA checks to run during connectivity validation. Supported: rping, ib_write_bw. Overrides validation.checks from cluster-config.yaml.")
+	validateCmd.Flags().IntVar(&validateRDMAIterations, "rdma-rping-iterations", 0, "Number of rping client iterations. Overrides validation.rdma.rpingIterations from cluster-config.yaml.")
+	validateCmd.Flags().IntVar(&validateRDMAIBWriteSize, "rdma-ib-write-size", 0, "Message size for ib_write_bw -s. Overrides validation.rdma.ibWriteSize from cluster-config.yaml.")
+	validateCmd.Flags().Float64Var(&validateRDMAIBWriteMinGbps, "rdma-ib-write-min-bandwidth-gbps", 0, "Minimum observed ib_write_bw peak bandwidth in Gbps required for a test to pass. Use 0 to disable bandwidth gating. Overrides validation.rdma.ibWriteMinBandwidthGbps from cluster-config.yaml.")
 	validateCmd.Flags().DurationVar(&validateWait, "wait", 0, "Block validate up to this duration waiting for in-progress manifests to reach a terminal state. 0 (default) returns immediately on the first snapshot.")
 	validateCmd.Flags().StringVar(&validateReportPath, "report-path", "", "Write the HTML validation report to this path. When empty (default), writes to <deployment-files>/k8s-launch-kit-validation-report.html. Pass '-' to skip the report file entirely.")
 
@@ -1497,4 +1580,13 @@ func init() {
 	setFlagGroup(validateCmd, "user-config", GroupCommon)
 	setFlagGroup(validateCmd, "deployment-files", GroupGeneration)
 	setFlagGroup(validateCmd, "network-operator-namespace", GroupCommon)
+	setFlagGroup(validateCmd, "connectivity", GroupValidation)
+	setFlagGroup(validateCmd, "connectivity-timeout", GroupValidation)
+	setFlagGroup(validateCmd, "keep", GroupValidation)
+	setFlagGroup(validateCmd, "validation-checks", GroupValidation)
+	setFlagGroup(validateCmd, "rdma-rping-iterations", GroupValidation)
+	setFlagGroup(validateCmd, "rdma-ib-write-size", GroupValidation)
+	setFlagGroup(validateCmd, "rdma-ib-write-min-bandwidth-gbps", GroupValidation)
+	setFlagGroup(validateCmd, "wait", GroupValidation)
+	setFlagGroup(validateCmd, "report-path", GroupValidation)
 }

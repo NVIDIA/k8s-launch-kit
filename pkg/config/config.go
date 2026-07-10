@@ -61,6 +61,10 @@ func DefaultLaunchKitConfig() (*LaunchKitConfig, error) {
 	if err := NormalizeMaintenance(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid embedded maintenance config: %w", err)
 	}
+	cfg.Validation = NormalizeValidationConfig(cfg.Validation)
+	if err := ValidateValidationConfig(cfg.Validation); err != nil {
+		return nil, fmt.Errorf("invalid embedded validation config: %w", err)
+	}
 	return &cfg, nil
 }
 
@@ -169,10 +173,11 @@ type LaunchKitConfig struct {
 	// CurrentNetworkNamespace is transient render state. The renderer sets it
 	// to one NetworkNamespaces entry while producing that namespace's copy;
 	// it is never part of the persisted configuration schema.
-	CurrentNetworkNamespace string          `yaml:"-"`
-	Workload                *WorkloadConfig `yaml:"workload,omitempty"`
-	Profile                 *Profile        `yaml:"profile,omitempty"`
-	ClusterConfig           []ClusterConfig `yaml:"clusterConfig,omitempty"`
+	CurrentNetworkNamespace string            `yaml:"-"`
+	Workload                *WorkloadConfig   `yaml:"workload,omitempty"`
+	Validation              *ValidationConfig `yaml:"validation,omitempty"`
+	Profile                 *Profile          `yaml:"profile,omitempty"`
+	ClusterConfig           []ClusterConfig   `yaml:"clusterConfig,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
@@ -298,6 +303,112 @@ type MacvlanConfig struct {
 
 type WorkloadConfig struct {
 	Manifest string `yaml:"manifest,omitempty"`
+}
+
+const (
+	ValidationCheckRPing     = "rping"
+	ValidationCheckIBWriteBW = "ib_write_bw"
+
+	DefaultValidationRPingIterations = 5
+	DefaultValidationIBWriteSize     = 65536
+	DefaultValidationIBWriteMinGbps  = 100
+)
+
+// ValidationConfig controls `l8k validate` data-plane checks. Static manifest
+// and version checks always run; Connectivity gates the example-DaemonSet RDMA
+// matrix. Checks selects which RDMA families to run.
+type ValidationConfig struct {
+	Connectivity *bool                 `yaml:"connectivity,omitempty"`
+	Checks       []string              `yaml:"checks,omitempty"`
+	RDMA         *ValidationRDMAConfig `yaml:"rdma,omitempty"`
+}
+
+type ValidationRDMAConfig struct {
+	RPingIterations         int      `yaml:"rpingIterations,omitempty"`
+	IBWriteSize             int      `yaml:"ibWriteSize,omitempty"`
+	IBWriteMinBandwidthGbps *float64 `yaml:"ibWriteMinBandwidthGbps,omitempty"`
+}
+
+func defaultBool(v bool) *bool {
+	return &v
+}
+
+func defaultFloat64(v float64) *float64 {
+	return &v
+}
+
+func DefaultValidationConfig() *ValidationConfig {
+	return &ValidationConfig{
+		Connectivity: defaultBool(true),
+		Checks:       []string{ValidationCheckRPing, ValidationCheckIBWriteBW},
+		RDMA: &ValidationRDMAConfig{
+			RPingIterations:         DefaultValidationRPingIterations,
+			IBWriteSize:             DefaultValidationIBWriteSize,
+			IBWriteMinBandwidthGbps: defaultFloat64(DefaultValidationIBWriteMinGbps),
+		},
+	}
+}
+
+func NormalizeValidationConfig(v *ValidationConfig) *ValidationConfig {
+	if v == nil {
+		return DefaultValidationConfig()
+	}
+	if v.Connectivity == nil {
+		v.Connectivity = defaultBool(true)
+	}
+	if v.Checks == nil {
+		v.Checks = []string{ValidationCheckRPing, ValidationCheckIBWriteBW}
+	} else {
+		v.Checks = NormalizeValidationChecks(v.Checks)
+	}
+	if v.RDMA == nil {
+		v.RDMA = &ValidationRDMAConfig{}
+	}
+	if v.RDMA.RPingIterations <= 0 {
+		v.RDMA.RPingIterations = DefaultValidationRPingIterations
+	}
+	if v.RDMA.IBWriteSize <= 0 {
+		v.RDMA.IBWriteSize = DefaultValidationIBWriteSize
+	}
+	if v.RDMA.IBWriteMinBandwidthGbps == nil {
+		v.RDMA.IBWriteMinBandwidthGbps = defaultFloat64(DefaultValidationIBWriteMinGbps)
+	}
+	return v
+}
+
+func NormalizeValidationChecks(checks []string) []string {
+	if checks == nil {
+		return nil
+	}
+	out := make([]string, 0, len(checks))
+	seen := map[string]bool{}
+	for _, check := range checks {
+		check = strings.TrimSpace(check)
+		if check == "" || seen[check] {
+			continue
+		}
+		seen[check] = true
+		out = append(out, check)
+	}
+	return out
+}
+
+func ValidateValidationConfig(v *ValidationConfig) error {
+	if v == nil {
+		return nil
+	}
+	if v.RDMA != nil && v.RDMA.IBWriteMinBandwidthGbps != nil && *v.RDMA.IBWriteMinBandwidthGbps < 0 {
+		return fmt.Errorf("validation.rdma.ibWriteMinBandwidthGbps must be greater than or equal to 0")
+	}
+	for _, check := range v.Checks {
+		switch check {
+		case ValidationCheckRPing, ValidationCheckIBWriteBW:
+		default:
+			return fmt.Errorf("validation.checks contains unsupported check %q (supported: %s, %s)",
+				check, ValidationCheckRPing, ValidationCheckIBWriteBW)
+		}
+	}
+	return nil
 }
 
 type Profile struct {
@@ -543,6 +654,10 @@ func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKit
 
 	if err := validateNvIpam(config.NvIpam); err != nil {
 		return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
+	}
+	config.Validation = NormalizeValidationConfig(config.Validation)
+	if err := ValidateValidationConfig(config.Validation); err != nil {
+		return nil, nil, fmt.Errorf("invalid validation config in %s: %w", configPath, err)
 	}
 
 	// Finalize exclusions for explicitly-listed (manual) subnets. Auto-generated

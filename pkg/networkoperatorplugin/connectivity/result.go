@@ -22,17 +22,19 @@ package connectivity
 //
 //   - rping: OK + Err + Stdout/Stderr; BandwidthGbps stays at 0.
 //   - ib_write_bw: OK + Err + Stdout/Stderr + BandwidthGbps +
-//     MsgRateMpps populated by parseIbWriteBwOutput.
+//     MsgRateMpps populated by parseIbWriteBwOutput. MinBandwidthGbps
+//     records the configured passing threshold when set.
 //
 // The struct name is kept for backwards compatibility with the
 // historical ICMP-first pipeline; the matrix is RDMA-only now but
 // callers and the JSON schema continue to reference PingResult.
 type PingResult struct {
-	Test          PingTest
-	OK            bool
-	BandwidthGbps float64 // ib_write_bw only; 0 when n/a
-	MsgRateMpps   float64 // ib_write_bw only; 0 when n/a
-	Stdout        string
-	Stderr        string
-	Err           error
+	Test             PingTest
+	OK               bool
+	BandwidthGbps    float64 // ib_write_bw only; 0 when n/a
+	MsgRateMpps      float64 // ib_write_bw only; 0 when n/a
+	MinBandwidthGbps float64 // ib_write_bw only; 0 when no threshold was applied
+	Stdout           string
+	Stderr           string
+	Err              error
 }

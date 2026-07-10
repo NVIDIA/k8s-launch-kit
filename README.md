@@ -304,14 +304,13 @@ and applies it in four phases: NicClusterPolicy first (await ready), per-group
 NicNodePolicy (await each), all remaining CRs in one batch (controllers
 reconcile concurrently), then verify every manifest reached a terminal state.
 Example workload manifests (`*example*`) are **not** applied by `l8k deploy` —
-they're fixtures consumed by `l8k validate --connectivity` or
-`l8k deploy --test-connectivity` for the data-plane phase. It auto-prefers
+they're fixtures consumed by `l8k validate --connectivity` for the data-plane
+phase. It auto-prefers
 `<dir>/network-operator/` (the layout `l8k generate` produces) and falls back
 to `<dir>` itself. `--dry-run` does a server-side dry run. `--deploy-timeout`
 caps the whole apply+reconcile phase end-to-end (e.g. `--deploy-timeout 90m`);
 without it, deploy polls indefinitely — right for SR-IOV on large clusters
-where reconciliation can take an hour. `--test-connectivity` chains the
-connectivity matrix straight after a successful apply.
+where reconciliation can take an hour.
 
 Verify the deployment end-to-end:
 
@@ -331,10 +330,29 @@ condition-Reason classification, NicClusterPolicy appliedStates breakdown,
 etc.); and (3) a data-plane connectivity matrix — apply the example
 DaemonSet, wait for it to roll out completely (`numberReady ==
 desiredNumberScheduled > 0` — a single ContainerCreating-stuck pod fails),
-and run `ping -c N -I <srcIP> <dstIP>` across every rail and pod pair plus
-a per-pair cross-rail canary. The matrix is on by default
-(`--connectivity=false` to skip), runs concurrent pings capped at 16, and
-cleans up the test DaemonSet unless `--keep` is set.
+and run the configured RDMA checks (`rping` and/or `ib_write_bw`) across
+every same-rail pod pair plus a per-pair cross-rail canary. The matrix is on
+by default (`--connectivity=false` to skip) and cleans up the test DaemonSet
+unless `--keep` is set. Fresh `l8k discover` output includes the default
+validation block:
+
+```yaml
+validation:
+  connectivity: true
+  checks:
+    - rping
+    - ib_write_bw
+  rdma:
+    rpingIterations: 5
+    ibWriteSize: 65536
+    ibWriteMinBandwidthGbps: 100
+```
+
+`l8k validate` can override that config for a single run:
+`--validation-checks rping`, `--validation-checks ib_write_bw`,
+`--validation-checks ""`, `--rdma-rping-iterations <N>`, and
+`--rdma-ib-write-size <BYTES>`, and
+`--rdma-ib-write-min-bandwidth-gbps <GBPS>` (`0` disables bandwidth gating).
 
 A self-contained HTML report lands at `<deployment-files>/k8s-launch-kit-validation-report.html`
 by default (override with `--report-path`, disable with `--report-path=-`).

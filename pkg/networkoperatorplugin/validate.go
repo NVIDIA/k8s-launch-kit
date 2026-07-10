@@ -108,12 +108,12 @@ type HelmReleaseInfo struct {
 type VersionCheck struct {
 	// Skipped is true when the check could not be performed (no
 	// selectedRelease in user-config, or no Helm release Secret found).
-	Skipped       bool
-	Reason        string
+	Skipped         bool
+	Reason          string
 	SelectedRelease string // from user-config (e.g. "26.4")
 	ExpectedVersion string // from embedded release catalog (e.g. "v26.4.0-beta.6")
 	DeployedRelease *HelmReleaseInfo
-	Match         bool
+	Match           bool
 }
 
 const (
@@ -446,7 +446,7 @@ func fetchLiveYAML(ctx context.Context, c client.Client, manifest *unstructured.
 // IsExampleManifest reports whether the given filename matches the
 // example-workload naming pattern (case-insensitive substring
 // "example"). Files matching this pattern are deployed by
-// `l8k validate --connectivity` for the ping matrix and skipped by
+// `l8k validate --connectivity` for the RDMA matrix and skipped by
 // every other code path. Exported so the connectivity package can
 // find the example DS to apply.
 func IsExampleManifest(name string) bool {

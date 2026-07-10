@@ -271,6 +271,12 @@ func cellBody(r *PingResult, fam kindFamily) string {
 		if r.OK && r.BandwidthGbps > 0 {
 			return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
 		}
+		if r.BandwidthGbps > 0 && r.MinBandwidthGbps > 0 {
+			return fmt.Sprintf("✗ %.1f Gbps (< %.1f)", r.BandwidthGbps, r.MinBandwidthGbps)
+		}
+		if r.BandwidthGbps > 0 {
+			return fmt.Sprintf("✗ %.1f Gbps", r.BandwidthGbps)
+		}
 		return "✗ ERR"
 	}
 	// rping

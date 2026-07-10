@@ -31,7 +31,6 @@ import (
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
@@ -43,11 +42,6 @@ var (
 	// until every manifest reaches a terminal state or the user
 	// cancels.
 	deployTimeout time.Duration
-	// deployTestConnectivity chains the data-plane connectivity
-	// matrix (the same one `l8k validate --connectivity` runs)
-	// right after a successful deploy. Off by default; opt-in for
-	// pipelines that want end-to-end verification in one command.
-	deployTestConnectivity bool
 	// overwriteExistingFlag promotes Phase 0 helm install to
 	// `helm upgrade --install` when a release already exists with
 	// values that differ from the rendered values.yaml. Off by default
@@ -196,31 +190,6 @@ is used as the manifest directory.`,
 			uiOutput.Success("Deployment completed")
 		}
 
-		if deployTestConnectivity && !dryRunFlag {
-			// Pipeline the connectivity matrix straight after a
-			// successful apply. We deliberately do NOT re-run the
-			// version check here — deploy just landed manifests
-			// from this binary's catalog, the version is whatever
-			// we shipped. Connectivity is the value-add.
-			matrix, err := connectivity.RunMatrix(ctx, k8sClient, restConfig, uiOutput, connectivity.Options{
-				ManifestDir: manifestDir,
-				Timeout:     0, // RunMatrix defaults to 5m
-			})
-			if err != nil {
-				exitWithError(apperrors.NewClusterError(
-					"deploy succeeded but --test-connectivity failed",
-					err,
-					"Inspect the test DaemonSet via --keep + kubectl get pods",
-				), outputFormat)
-			}
-			if matrix != nil && matrix.Summary.Failed > 0 {
-				exitWithError(apperrors.NewDeploymentError(
-					fmt.Sprintf("connectivity matrix failed: %d/%d passed", matrix.Summary.Passed, matrix.Summary.TotalTests),
-					nil,
-					"Examine the failures above; re-run with --keep to keep the test DaemonSet for debugging",
-				), outputFormat)
-			}
-		}
 	},
 }
 
@@ -254,7 +223,6 @@ func init() {
 	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-discovered from ./cluster-config.yaml or <deployment-files>/../cluster-config.yaml). Used to resolve the network-operator release for Phase 0 helm install and Phase 0.5 preflight checks.")
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
 	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state. Useful for matching a maintenance window when SR-IOV reconciliation on a large cluster can take an hour or more.")
-	deployCmd.Flags().BoolVar(&deployTestConnectivity, "test-connectivity", false, "After a successful deploy, run the connectivity matrix (apply example DaemonSet → wait Ready → RDMA matrix → cleanup) to verify the data plane end-to-end.")
 	deployCmd.Flags().BoolVar(&overwriteExistingFlag, "overwrite-existing", false, "Converge the cluster to the rendered manifests when preflight detects drift: helm upgrade the chart on chart-version/values mismatch, delete stray Network Operator CRs in the operator namespace, and rewrite NicClusterPolicy component versions via SSA. Off by default — preflight fails fast and lists what would change.")
 
 	setFlagGroup(deployCmd, "kubeconfig", GroupCommon)
@@ -262,7 +230,6 @@ func init() {
 	setFlagGroup(deployCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(deployCmd, "deploy-timeout", GroupDeploy)
 	setFlagGroup(deployCmd, "dry-run", GroupDeploy)
-	setFlagGroup(deployCmd, "test-connectivity", GroupDeploy)
 	setFlagGroup(deployCmd, "overwrite-existing", GroupDeploy)
 }
 

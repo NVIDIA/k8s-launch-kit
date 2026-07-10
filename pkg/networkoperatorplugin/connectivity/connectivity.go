@@ -30,6 +30,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+type Check string
+
+const (
+	CheckRPing     Check = "rping"
+	CheckIBWriteBW Check = "ib_write_bw"
+)
+
 // Options control the matrix run end-to-end. The l8k validate CLI
 // fills these from the corresponding flags.
 type Options struct {
@@ -43,6 +50,19 @@ type Options struct {
 	// Keep leaves the test DaemonSets running after the matrix
 	// completes, for follow-up debugging. Default is to delete.
 	Keep bool
+	// Checks selects which RDMA test families to run. Nil means the
+	// default set (rping + ib_write_bw); an empty slice means skip all
+	// connectivity tests without applying the example DaemonSets.
+	Checks []Check
+	// RPingIterations maps to `rping -C`. 0 defaults to 5, matching the
+	// historical hardcoded behavior.
+	RPingIterations int
+	// IBWriteSize maps to `ib_write_bw -s`. 0 defaults to 65536, matching
+	// the historical hardcoded behavior.
+	IBWriteSize int
+	// IBWriteMinBandwidthGbps is the minimum peak bandwidth that must be
+	// observed for an ib_write_bw test to pass. 0 disables threshold gating.
+	IBWriteMinBandwidthGbps float64
 }
 
 // MatrixResult is the aggregate output of one connectivity run. It's
@@ -87,12 +107,11 @@ type DaemonSetReport struct {
 //  4. Lists Running+Ready pods, parses each pod's multus annotation,
 //     filters to secondary networks, picks the first IPv4 per rail.
 //  5. Discovers the RDMA device backing each multus interface per pod.
-//  6. Builds a test plan via Plan() — same-rail rping + ib_write_bw
-//     across pods plus per-pair cross-rail canaries; soft-skip if <2
-//     schedulable pods.
-//  7. Runs rping then ib_write_bw stages sequentially per the
-//     "spawn fresh server per test" lifecycle (concurrent runs would
-//     fight over the listener port).
+//  6. Builds a test plan via Plan() — same-rail plus per-pair cross-rail
+//     canaries; soft-skip if <2 schedulable pods.
+//  7. Runs the configured RDMA stages sequentially per the "spawn fresh
+//     server per test" lifecycle (concurrent runs would fight over the
+//     listener port).
 //  8. Deletes the DaemonSets unless opts.Keep.
 //
 // All UI output flows through `uiOutput` (caller passes
@@ -101,11 +120,23 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	if opts.Timeout <= 0 {
 		opts.Timeout = 5 * time.Minute
 	}
+	opts.Checks = normalizeChecks(opts.Checks)
+	if opts.RPingIterations <= 0 {
+		opts.RPingIterations = 5
+	}
+	if opts.IBWriteSize <= 0 {
+		opts.IBWriteSize = 65536
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
 	uiOutput.Section("Connectivity matrix")
+	if len(opts.Checks) == 0 {
+		return &MatrixResult{
+			Skipped: &MatrixSkip{Reason: "all connectivity checks are disabled"},
+		}, nil
+	}
 	uiOutput.Info("Loading example DaemonSet manifests from %s", opts.ManifestDir)
 
 	objs, refs, err := LoadExampleDaemonSets(opts.ManifestDir)
@@ -210,8 +241,17 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 
 	totalSameRail := len(plan.RDMASameRail)
 	totalCrossRail := len(plan.RDMACrossRail)
-	uiOutput.Info("Plan: %d same-rail rping + %d cross-rail rping; %d same-rail ib_write_bw + %d cross-rail ib_write_bw",
-		totalSameRail, totalCrossRail, len(plan.RDMABwSameRail), len(plan.RDMABwCrossRail))
+	plannedTests := 0
+	if checksContain(opts.Checks, CheckRPing) {
+		uiOutput.Info("Plan: %d same-rail rping + %d cross-rail rping",
+			totalSameRail, totalCrossRail)
+		plannedTests += totalSameRail + totalCrossRail
+	}
+	if checksContain(opts.Checks, CheckIBWriteBW) {
+		uiOutput.Info("Plan: %d same-rail ib_write_bw + %d cross-rail ib_write_bw",
+			len(plan.RDMABwSameRail), len(plan.RDMABwCrossRail))
+		plannedTests += len(plan.RDMABwSameRail) + len(plan.RDMABwCrossRail)
+	}
 	// Defensive: Plan() can return a zero-test plan without setting
 	// Skip (e.g. ≥2 schedulable pods but Plan's same-rail loop emits
 	// nothing). Two possible causes, both surface here:
@@ -227,7 +267,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	//
 	// Without surfacing this, validate prints "Matrix complete: 0/0
 	// passed" and exits success, hiding a real coverage gap.
-	if totalSameRail+totalCrossRail+len(plan.RDMABwSameRail)+len(plan.RDMABwCrossRail) == 0 {
+	if plannedTests == 0 {
 		uiOutput.Warning(
 			"Matrix produced 0 tests despite %d schedulable pod(s) — either every rail had at least one endpoint with no resolvable RDMA device, or no rail key was shared across pods. "+
 				"Most common cause: macvlan or IPoIB secondary networks, where the in-pod iface has no PCI-direct mlx5 sysfs entry. "+
@@ -250,32 +290,38 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	// runs the client, kills the server. Concurrent runs would
 	// fight over the listener port.
 	stages := []struct {
+		check Check
 		label string
 		tests []PingTest
 		run   func(t PingTest) PingResult
 	}{
 		{
+			check: CheckRPing,
 			label: "RDMA ping (rping)",
 			tests: append(append([]PingTest{}, plan.RDMASameRail...), plan.RDMACrossRail...),
 			run: func(t PingTest) PingResult {
 				return RunRPing(ctx, restConfig, namespaceByPod[t.DstPod],
 					t.DstPod, containerByPod[t.DstPod], // server side
 					t.SrcPod, containerByPod[t.SrcPod], // client side
-					t, 5)
+					t, opts.RPingIterations)
 			},
 		},
 		{
+			check: CheckIBWriteBW,
 			label: "RDMA bandwidth (ib_write_bw)",
 			tests: append(append([]PingTest{}, plan.RDMABwSameRail...), plan.RDMABwCrossRail...),
 			run: func(t PingTest) PingResult {
 				return RunIbWriteBw(ctx, restConfig, namespaceByPod[t.DstPod],
 					t.DstPod, containerByPod[t.DstPod],
 					t.SrcPod, containerByPod[t.SrcPod],
-					t, 0)
+					t, 0, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)
 			},
 		},
 	}
 	for _, stage := range stages {
+		if !checksContain(opts.Checks, stage.check) {
+			continue
+		}
 		if len(stage.tests) == 0 {
 			continue
 		}
@@ -307,6 +353,31 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	RenderMatrixText(uiOutput, result)
 	emitSummary(uiOutput, result)
 	return result, nil
+}
+
+func normalizeChecks(checks []Check) []Check {
+	if checks == nil {
+		return []Check{CheckRPing, CheckIBWriteBW}
+	}
+	out := make([]Check, 0, len(checks))
+	seen := map[Check]bool{}
+	for _, check := range checks {
+		if check == "" || seen[check] {
+			continue
+		}
+		seen[check] = true
+		out = append(out, check)
+	}
+	return out
+}
+
+func checksContain(checks []Check, want Check) bool {
+	for _, check := range checks {
+		if check == want {
+			return true
+		}
+	}
+	return false
 }
 
 // testPodWithDS pairs a Running+Ready pod with the DaemonSetRef that

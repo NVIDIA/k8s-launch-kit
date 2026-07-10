@@ -75,7 +75,7 @@ var schemaCmd = &cobra.Command{
 					Example:     "l8k deploy --deployment-files ./deployment --kubeconfig ~/.kube/config",
 				},
 				"validate": {
-					Description: "Verify a deployment matches the selected Network Operator release (Helm chart version + manifest presence in cluster)",
+					Description: "Verify a deployment matches the selected Network Operator release (Helm chart version + manifest state + configurable RDMA connectivity checks)",
 					Example:     "l8k validate --user-config ./cluster-config.yaml --deployment-files ./deployment",
 				},
 				"sosreport": {
@@ -203,6 +203,26 @@ var schemaCmd = &cobra.Command{
 				"--network-operator-release": {
 					Type:        "string",
 					Description: "Network Operator release line (MAJOR.MINOR). See supportedNetworkOperatorReleases for valid values; populates component versions and gates version-specific template sections.",
+				},
+				"--validation-checks": {
+					Type:        "[]string",
+					Default:     "inherit from validation.checks",
+					Description: "Comma-separated RDMA checks to run during validate connectivity: rping, ib_write_bw.",
+				},
+				"--rdma-rping-iterations": {
+					Type:        "int",
+					Default:     "0 (inherit from validation.rdma.rpingIterations)",
+					Description: "Number of rping client iterations during validate connectivity.",
+				},
+				"--rdma-ib-write-size": {
+					Type:        "int",
+					Default:     "0 (inherit from validation.rdma.ibWriteSize)",
+					Description: "Message size for ib_write_bw -s during validate connectivity.",
+				},
+				"--rdma-ib-write-min-bandwidth-gbps": {
+					Type:        "float",
+					Default:     "0 (inherit from validation.rdma.ibWriteMinBandwidthGbps)",
+					Description: "Minimum observed ib_write_bw peak bandwidth in Gbps required for a validate connectivity test to pass. Use 0 to disable bandwidth gating.",
 				},
 			},
 		}
