@@ -52,16 +52,10 @@ func TestGetPresetsDir_CWD(t *testing.T) {
 }
 
 func TestGetPresetsDir_NotFound(t *testing.T) {
-	// Use a temp dir with no presets subdirectory
+	// Test the candidate scanner directly so a developer's system-wide l8k
+	// installation cannot satisfy a later fallback candidate.
 	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	_ = os.Chdir(tmpDir)
-
-	dir, err := GetPresetsDir()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	dir := findPresetsDir([]string{filepath.Join(tmpDir, "presets")})
 	if dir != "" {
 		t.Errorf("expected empty string for missing presets dir, got %q", dir)
 	}
@@ -75,14 +69,7 @@ func TestGetPresetsDir_SkipsFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origDir, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origDir) }()
-	_ = os.Chdir(tmpDir)
-
-	dir, err := GetPresetsDir()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	dir := findPresetsDir([]string{presetsFile})
 	if dir != "" {
 		t.Errorf("expected empty string when 'presets' is a file, got %q", dir)
 	}

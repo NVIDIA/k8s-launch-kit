@@ -201,10 +201,8 @@ INSTALL_CMDS="
     mkdir -p '${INSTALL_DIR}/bin'
     install -m 755 '${WORK_DIR}/extracted/l8k' '${INSTALL_DIR}/bin/l8k'
     mkdir -p '${INSTALL_DIR}/share/l8k'
-    rm -rf '${INSTALL_DIR}/share/l8k/profiles' '${INSTALL_DIR}/share/l8k/presets'
+    rm -rf '${INSTALL_DIR}/share/l8k/profiles'
     cp -r '${WORK_DIR}/extracted/profiles' '${INSTALL_DIR}/share/l8k/'
-    cp -r '${WORK_DIR}/extracted/pkg/presets/data' '${INSTALL_DIR}/share/l8k/presets'
-    cp '${WORK_DIR}/extracted/pkg/config/default-config.yaml' '${INSTALL_DIR}/share/l8k/l8k-config.yaml'
 "
 
 if [ "$NEED_SUDO" = true ]; then
@@ -222,8 +220,11 @@ echo ""
 echo "Installed successfully:"
 echo "  Binary:   ${INSTALL_DIR}/bin/l8k"
 echo "  Profiles: ${INSTALL_DIR}/share/l8k/profiles"
-echo "  Presets:  ${INSTALL_DIR}/share/l8k/presets"
-echo "  Config:   ${INSTALL_DIR}/share/l8k/l8k-config.yaml"
+if [ -e "${INSTALL_DIR}/share/l8k/presets" ] || [ -e "${INSTALL_DIR}/share/l8k/l8k-config.yaml" ]; then
+    echo ""
+    echo "Existing config overrides were preserved under ${INSTALL_DIR}/share/l8k."
+    echo "Select them explicitly with: l8k --config-dir ${INSTALL_DIR}/share/l8k ..."
+fi
 echo ""
 "${INSTALL_DIR}/bin/l8k" version
 

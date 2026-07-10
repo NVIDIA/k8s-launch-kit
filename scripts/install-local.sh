@@ -15,7 +15,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Install l8k binary, profiles, and default config to system paths.
+# Install the l8k binary and external profile templates to system paths.
 #
 # Usage:
 #   scripts/install-local.sh                     # Install to /usr/local (copies files)
@@ -25,8 +25,9 @@
 # Install layout:
 #   <prefix>/bin/l8k                       # Binary
 #   <prefix>/share/l8k/profiles/           # Profile templates
-#   <prefix>/share/l8k/presets/            # Predefined cluster topology presets
-#   <prefix>/share/l8k/l8k-config.yaml    # Default configuration
+#
+# The default config and topology presets are embedded in the binary. Existing
+# filesystem overrides are preserved and can be selected with --config-dir.
 
 set -euo pipefail
 
@@ -50,9 +51,6 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --dev-env              Create symlinks instead of copies (for development)"
             echo "  --prefix               Install prefix (default: /usr/local)"
-            echo ""
-            echo "Presets are installed from the bundled \`presets/\` tree only."
-            echo "To fetch the latest presets from GitHub, run \`l8k preset update\` after install."
             exit 0
             ;;
         *)
@@ -79,8 +77,6 @@ if [ "$DEV_ENV" = true ]; then
     ln -sfn "${REPO_ROOT}/build/l8k" "${BIN_DIR}/l8k"
     mkdir -p "${SHARE_DIR}"
     ln -sfn "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
-    ln -sfn "${REPO_ROOT}/pkg/presets/data" "${SHARE_DIR}/presets"
-    ln -sfn "${REPO_ROOT}/pkg/config/default-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
 else
     echo "Installing l8k..."
     mkdir -p "${BIN_DIR}"
@@ -88,17 +84,14 @@ else
     mkdir -p "${SHARE_DIR}"
     rm -rf "${SHARE_DIR}/profiles"
     cp -r "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
-    rm -rf "${SHARE_DIR}/presets"
-    cp -r "${REPO_ROOT}/pkg/presets/data" "${SHARE_DIR}/presets"
-    cp "${REPO_ROOT}/pkg/config/default-config.yaml" "${SHARE_DIR}/l8k-config.yaml"
 fi
 
 echo ""
 echo "Installed successfully:"
 echo "  Binary:   ${BIN_DIR}/l8k"
 echo "  Profiles: ${SHARE_DIR}/profiles"
-echo "  Presets:  ${SHARE_DIR}/presets"
-echo "  Config:   ${SHARE_DIR}/l8k-config.yaml"
-echo ""
-echo "Presets installed from the bundled \`presets/\` tree."
-echo "Run \`l8k preset update\` to fetch the latest presets from GitHub."
+if [ -e "${SHARE_DIR}/presets" ] || [ -e "${SHARE_DIR}/l8k-config.yaml" ]; then
+    echo ""
+    echo "Existing config overrides were preserved under ${SHARE_DIR}."
+    echo "Select them explicitly with: l8k --config-dir ${SHARE_DIR} ..."
+fi

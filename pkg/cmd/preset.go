@@ -19,9 +19,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/assets"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 )
 
@@ -44,25 +46,26 @@ matches and PCI topology validates.`,
 
 var presetListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List available local presets",
-	Long:  "List all predefined topology presets available in the local presets directory.",
+	Short: "List available presets",
+	Long:  "List topology presets from --config-dir, the legacy local directory, or the embedded catalog.",
 	Example: `  l8k preset list
-  l8k preset list --output json`,
+	  l8k preset list --config-dir /etc/l8k
+	  l8k preset list --output json`,
 	Run: func(cmd *cobra.Command, args []string) {
-		summaries, skipped, err := presets.ListPresetSummaries()
+		catalog, _, err := presetCatalogForConfigDir(configDir)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
 			return
 		}
-
-		dir, _ := presets.GetPresetsDir()
-		if dir == "" {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No presets directory found.")
+		summaries, skipped, err := catalog.ListPresetSummaries()
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
 			return
 		}
+		source := catalog.Source()
 
 		if len(summaries) == 0 && len(skipped) == 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "No presets found in %s\n", dir)
+			fmt.Fprintf(cmd.OutOrStdout(), "No presets found in %s\n", source)
 			return
 		}
 
@@ -77,13 +80,13 @@ var presetListCmd = &cobra.Command{
 				}
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Available presets (%s):\n", dir)
+			fmt.Fprintf(cmd.OutOrStdout(), "Available presets (%s):\n", source)
 			fmt.Fprintf(cmd.OutOrStdout(), "  %-*s  %-*s  %s\n", nameW, "NAME", machineW, "MACHINETYPE", "GPUTYPE")
 			for _, s := range summaries {
 				fmt.Fprintf(cmd.OutOrStdout(), "  %-*s  %-*s  %s\n", nameW, s.DirName, machineW, s.MachineType, s.GPUType)
 			}
 		} else {
-			fmt.Fprintf(cmd.OutOrStdout(), "No valid presets found in %s\n", dir)
+			fmt.Fprintf(cmd.OutOrStdout(), "No valid presets found in %s\n", source)
 		}
 
 		if len(skipped) > 0 {
@@ -103,13 +106,25 @@ var presetUpdateCmd = &cobra.Command{
 Uses the GitHub API to list and fetch preset files. Set GITHUB_TOKEN
 environment variable for authenticated requests (avoids rate limits).`,
 	Example: `  l8k preset update
-  l8k preset update --repo nvidia/k8s-launch-kit --branch main
-  l8k preset update --dir /usr/local/share/l8k/presets`,
+	  l8k preset update --repo nvidia/k8s-launch-kit --branch main
+	  l8k preset update --config-dir /etc/l8k
+	  l8k preset update --dir /usr/local/share/l8k/presets`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		destination := presetDir
+		if destination == "" && configDir != "" {
+			resolved, err := assets.ResolveConfigDir(configDir)
+			if err != nil {
+				return fmt.Errorf("invalid --config-dir: %w", err)
+			}
+			destination = resolved.PresetsDir
+			if destination == "" {
+				destination = filepath.Join(resolved.Root, assets.PresetsDirName)
+			}
+		}
 		opts := presets.DownloadOptions{
 			Repo:   presetRepo,
 			Branch: presetBranch,
-			Dir:    presetDir,
+			Dir:    destination,
 		}
 
 		downloaded, err := presets.DownloadPresets(context.Background(), opts)

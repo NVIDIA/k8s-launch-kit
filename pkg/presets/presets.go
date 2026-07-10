@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/assets"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"gopkg.in/yaml.v2"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -98,12 +99,16 @@ func GetPresetsDir() (string, error) {
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "share", "l8k", "presets"))
 	}
+	return findPresetsDir(candidates), nil
+}
+
+func findPresetsDir(candidates []string) string {
 	for _, p := range candidates {
 		if info, err := os.Stat(p); err == nil && info.IsDir() {
-			return p, nil
+			return p
 		}
 	}
-	return "", nil
+	return ""
 }
 
 // presetsSource describes the FS-rooted preset tree loadAllPresets walks. It
@@ -121,6 +126,75 @@ type presetsSource struct {
 	embedded bool
 }
 
+// Catalog is an immutable topology-preset source. A catalog is bound to one
+// filesystem root (or the embedded preset tree), so independent library calls
+// can use different overrides without mutating process-global state.
+type Catalog struct {
+	source *presetsSource
+}
+
+// NewCatalogFromDir returns a catalog rooted at an explicit on-disk presets
+// directory. The directory is authoritative: entries missing from it are not
+// filled from the embedded catalog.
+func NewCatalogFromDir(dir string) (*Catalog, error) {
+	if dir == "" {
+		return nil, fmt.Errorf("presets directory must not be empty")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil, fmt.Errorf("presets directory %q is not accessible: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("presets path %q is not a directory", dir)
+	}
+	return &Catalog{source: &presetsSource{FS: os.DirFS(dir), label: dir}}, nil
+}
+
+// EmbeddedCatalog returns a catalog backed by the preset tree compiled into
+// the binary.
+func EmbeddedCatalog() (*Catalog, error) {
+	sub, err := fs.Sub(embeddedPresets, "data")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open embedded presets FS: %w", err)
+	}
+	return &Catalog{source: &presetsSource{FS: sub, label: "embedded", embedded: true}}, nil
+}
+
+// DefaultCatalog preserves the historical lookup chain used by the package-
+// level helpers: an implicit on-disk directory wins, with the embedded tree as
+// fallback. New CLI/library code that needs deterministic source selection
+// should use NewCatalogFromDir or EmbeddedCatalog directly.
+func DefaultCatalog() (*Catalog, error) {
+	source, err := resolvePresetsFS()
+	if err != nil {
+		return nil, err
+	}
+	return &Catalog{source: source}, nil
+}
+
+// CatalogForConfigDir selects the preset catalog for a validated config-dir
+// layout. With no explicit root it preserves the historical implicit
+// disk-to-embedded lookup. An explicit root selects its presets/ directory
+// when present and otherwise deliberately falls back to the embedded catalog.
+func CatalogForConfigDir(configDir assets.ConfigDir) (*Catalog, error) {
+	if configDir.Root == "" {
+		return DefaultCatalog()
+	}
+	if configDir.PresetsDir == "" {
+		return EmbeddedCatalog()
+	}
+	return NewCatalogFromDir(configDir.PresetsDir)
+}
+
+// Source returns the user-facing source label: "embedded" or the on-disk
+// presets directory.
+func (c *Catalog) Source() string {
+	if c == nil || c.source == nil {
+		return ""
+	}
+	return c.source.label
+}
+
 // resolvePresetsFS chooses the preset tree to load against. Disk wins over
 // embedded — an on-disk presets directory found via GetPresetsDir is the
 // user's override, kept ahead of the binary's baked-in copy so `l8k preset
@@ -134,11 +208,11 @@ func resolvePresetsFS() (*presetsSource, error) {
 	if dir != "" {
 		return &presetsSource{FS: os.DirFS(dir), label: dir}, nil
 	}
-	sub, err := fs.Sub(embeddedPresets, "data")
+	catalog, err := EmbeddedCatalog()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open embedded presets FS: %w", err)
+		return nil, err
 	}
-	return &presetsSource{FS: sub, label: "embedded", embedded: true}, nil
+	return catalog.source, nil
 }
 
 // SkippedPreset describes a preset directory that loadAllPresets rejected.
@@ -151,21 +225,17 @@ type SkippedPreset struct {
 	Reason  string
 }
 
-// loadAllPresets returns every valid preset under the resolved preset source
-// (disk if present, embedded otherwise), sorted by directory name, plus a
-// list of skipped entries with reasons. Invalid entries (parse error,
-// missing machineType, missing gpuType) are skipped rather than failing the
-// whole load — keeps the lookup robust to stale or partial preset
-// directories. Returns (nil, nil, nil) when neither a disk presets dir nor
-// the embedded FS yields any entries (only happens in a misconfigured build).
-func loadAllPresets() ([]presetEntry, []SkippedPreset, error) {
-	src, err := resolvePresetsFS()
-	if err != nil {
-		return nil, nil, err
+// loadAllPresets returns every valid preset in this catalog's selected source,
+// sorted by directory name, plus a list of skipped entries with reasons.
+// Invalid entries (parse error, missing machineType, missing gpuType) are
+// skipped rather than failing the whole load — keeps the lookup robust to
+// stale or partial preset directories. Returns (nil, nil, nil) when the
+// selected source has no preset directories.
+func (c *Catalog) loadAllPresets() ([]presetEntry, []SkippedPreset, error) {
+	if c == nil || c.source == nil {
+		return nil, nil, fmt.Errorf("preset catalog source is not configured")
 	}
-	if src == nil {
-		return nil, nil, nil
-	}
+	src := c.source
 
 	entries, err := fs.ReadDir(src, ".")
 	if err != nil {
@@ -240,10 +310,9 @@ func (s *presetsSource) diagPath(rel string) string {
 
 // LoadPreset returns the topology preset whose YAML declares both machineType
 // and gpuType equal to the arguments. Lookup is exact-match — there is no
-// "any-GPU" fallback. Returns (nil, nil) when no preset matches or no presets
-// directory exists.
-func LoadPreset(machineType, gpuType string) (*Topology, error) {
-	all, _, err := loadAllPresets()
+// "any-GPU" fallback. Returns (nil, nil) when no preset matches.
+func (c *Catalog) LoadPreset(machineType, gpuType string) (*Topology, error) {
+	all, _, err := c.loadAllPresets()
 	if err != nil {
 		return nil, err
 	}
@@ -275,13 +344,23 @@ func LoadPreset(machineType, gpuType string) (*Topology, error) {
 	return &t, nil
 }
 
+// LoadPreset uses the historical default catalog resolution. Prefer a Catalog
+// method when the caller must select an explicit source.
+func LoadPreset(machineType, gpuType string) (*Topology, error) {
+	catalog, err := DefaultCatalog()
+	if err != nil {
+		return nil, err
+	}
+	return catalog.LoadPreset(machineType, gpuType)
+}
+
 // LoadPresetByDir returns the topology preset stored at <presets-dir>/<dirName>.
 // This is the lookup used by `--for`: the user passes a directory name (which
 // `l8k preset list` shows) and we hand back the parsed topology. Returns
 // (nil, error) with a typed error listing available presets when the directory
 // is missing or the preset is invalid.
-func LoadPresetByDir(dirName string) (*Topology, error) {
-	all, skipped, err := loadAllPresets()
+func (c *Catalog) LoadPresetByDir(dirName string) (*Topology, error) {
+	all, skipped, err := c.loadAllPresets()
 	if err != nil {
 		return nil, err
 	}
@@ -308,19 +387,29 @@ func LoadPresetByDir(dirName string) (*Topology, error) {
 	}
 	if len(available) == 0 {
 		if len(skipped) > 0 {
-			return nil, fmt.Errorf("unknown preset %q: %d preset(s) on disk but all were rejected at load time (see warnings); run 'l8k preset list' to inspect",
-				dirName, len(skipped))
+			return nil, fmt.Errorf("unknown preset %q: %d preset(s) in catalog %s were rejected at load time (see warnings); run 'l8k preset list' to inspect",
+				dirName, len(skipped), c.Source())
 		}
-		return nil, fmt.Errorf("unknown preset %q: no presets are installed (run 'l8k preset update')", dirName)
+		return nil, fmt.Errorf("unknown preset %q: catalog %s contains no valid presets (run 'l8k preset list' to inspect)", dirName, c.Source())
 	}
 	return nil, fmt.Errorf("unknown preset %q; available: %v", dirName, available)
+}
+
+// LoadPresetByDir uses the historical default catalog resolution. Prefer a
+// Catalog method when the caller must select an explicit source.
+func LoadPresetByDir(dirName string) (*Topology, error) {
+	catalog, err := DefaultCatalog()
+	if err != nil {
+		return nil, err
+	}
+	return catalog.LoadPresetByDir(dirName)
 }
 
 // ListPresets returns the directory names of all valid presets, sorted.
 // Returns nil if no presets directory exists. Invalid presets (missing
 // machineType / gpuType, parse failures) are filtered out with a warning.
-func ListPresets() ([]string, error) {
-	all, _, err := loadAllPresets()
+func (c *Catalog) ListPresets() ([]string, error) {
+	all, _, err := c.loadAllPresets()
 	if err != nil {
 		return nil, err
 	}
@@ -332,6 +421,16 @@ func ListPresets() ([]string, error) {
 		names = append(names, p.DirName)
 	}
 	return names, nil
+}
+
+// ListPresets uses the historical default catalog resolution. Prefer a Catalog
+// method when the caller must select an explicit source.
+func ListPresets() ([]string, error) {
+	catalog, err := DefaultCatalog()
+	if err != nil {
+		return nil, err
+	}
+	return catalog.ListPresets()
 }
 
 // ListPresetSummaries returns a summary row per valid preset: directory name
@@ -346,8 +445,8 @@ type PresetSummary struct {
 // ListPresetSummaries returns one summary per valid preset (sorted by
 // directory name) plus the list of skipped/invalid presets so callers can
 // surface rejection reasons.
-func ListPresetSummaries() ([]PresetSummary, []SkippedPreset, error) {
-	all, skipped, err := loadAllPresets()
+func (c *Catalog) ListPresetSummaries() ([]PresetSummary, []SkippedPreset, error) {
+	all, skipped, err := c.loadAllPresets()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -363,6 +462,16 @@ func ListPresetSummaries() ([]PresetSummary, []SkippedPreset, error) {
 		})
 	}
 	return out, skipped, nil
+}
+
+// ListPresetSummaries uses the historical default catalog resolution. Prefer
+// a Catalog method when the caller must select an explicit source.
+func ListPresetSummaries() ([]PresetSummary, []SkippedPreset, error) {
+	catalog, err := DefaultCatalog()
+	if err != nil {
+		return nil, nil, err
+	}
+	return catalog.ListPresetSummaries()
 }
 
 // ApplyPreset enriches a discovered ClusterConfig group with data from a

@@ -153,6 +153,16 @@ func TestDefaultLaunchKitConfig_FreshCopy(t *testing.T) {
 		"second DefaultLaunchKitConfig() saw mutation made to the first — copies are not independent")
 }
 
+func TestDefaultConfigYAMLReturnsFreshCopy(t *testing.T) {
+	a := DefaultConfigYAML()
+	require.NotEmpty(t, a)
+	a[0] = 'X'
+
+	b := DefaultConfigYAML()
+	require.NotEmpty(t, b)
+	assert.NotEqual(t, byte('X'), b[0])
+}
+
 func TestValidateClusterConfig(t *testing.T) {
 	t.Run("validate config with missing network operator repository", func(t *testing.T) {
 		config := &LaunchKitConfig{
@@ -1082,4 +1092,3 @@ func TestValidateNvIpam(t *testing.T) {
 		assert.NoError(t, err)
 	})
 }
-

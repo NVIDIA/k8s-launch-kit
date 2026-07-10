@@ -162,6 +162,16 @@ connectivity-matrix failure.`,
 			exitWithError(err, outputFormat)
 		}
 
+		presetCatalog, _, catalogErr := presetCatalogForConfigDir(configDir)
+		if catalogErr != nil {
+			exitWithReport(apperrors.NewValidationError(
+				"invalid --config-dir",
+				catalogErr,
+				"Provide an accessible directory; when present, l8k-config.yaml must be a file and presets/ a directory",
+			))
+		}
+		log.Log.V(1).Info("Using topology preset catalog", "source", presetCatalog.Source())
+
 		resolved, err := resolveKubeconfig(kubeconfig)
 		if err != nil {
 			exitWithReport(apperrors.NewValidationError(
@@ -189,6 +199,7 @@ connectivity-matrix failure.`,
 		// can still target the right Helm release / live CRs.
 		selectedRelease := ""
 		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{
+			ConfigDir:                configDir,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 		})
 		if cfgErr != nil {
@@ -219,7 +230,7 @@ connectivity-matrix failure.`,
 			// informational — a deviation doesn't fail
 			// validate (matches the historical behaviour of
 			// presetDeviation), so the exit code is unchanged.
-			presetResults = presetmatch.MatchAll(cfg)
+			presetResults = presetmatch.MatchAllWithCatalog(cfg, presetCatalog)
 		}
 
 		log.Log.Info("Validating deployment",

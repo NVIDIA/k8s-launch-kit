@@ -72,6 +72,7 @@ NICs, and probes OFED-dependent modules.`,
 		}
 
 		opts := options.Options{
+			ConfigDir:               configDir,
 			DiscoverClusterConfig:   true,
 			DiscoverOnly:            true,
 			Kubeconfig:              resolved,

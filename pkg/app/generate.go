@@ -142,7 +142,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	// already enforced --node-selector being set; here we do the substitution
 	// before the rest of the pipeline runs.
 	if l.options.ForPreset != "" {
-		preset, err := presets.LoadPresetByDir(l.options.ForPreset)
+		preset, err := l.presetCatalog.LoadPresetByDir(l.options.ForPreset)
 		if err != nil {
 			return apperrors.NewValidationError(
 				fmt.Sprintf("invalid --for value %q", l.options.ForPreset),

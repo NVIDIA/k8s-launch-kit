@@ -97,16 +97,30 @@ type Result struct {
 	Preset *presets.Topology
 }
 
-// MatchGroup runs the preset lookup + comparison for one group.
-// Does not mutate the group; callers that also want to enrich
-// rail/NUMA topology fields invoke presets.ApplyPreset separately.
+// MatchGroup runs the preset lookup + comparison for one group using the
+// historical default catalog resolution. Call MatchGroupWithCatalog when the
+// preset source must be selected explicitly.
+func MatchGroup(group config.ClusterConfig) Result {
+	if group.MachineType == "" || group.GPUType == "" {
+		return MatchGroupWithCatalog(group, nil)
+	}
+	catalog, err := presets.DefaultCatalog()
+	if err != nil {
+		return lookupFailure(group, err)
+	}
+	return MatchGroupWithCatalog(group, catalog)
+}
+
+// MatchGroupWithCatalog runs the preset lookup + comparison for one group.
+// It does not mutate the group; callers that also want to enrich rail/NUMA
+// topology fields invoke presets.ApplyPreset separately.
 //
 // Lookup is exact-match on (machineType, gpuType). Empty fields
 // short-circuit to StatusSkipped — without those values the preset
 // catalog can't be queried, and we don't fall back to fuzzy matching
 // because picking the wrong preset would silently rewrite the
 // deployment to target the wrong hardware shape.
-func MatchGroup(group config.ClusterConfig) Result {
+func MatchGroupWithCatalog(group config.ClusterConfig, catalog *presets.Catalog) Result {
 	res := Result{
 		Group:       group.Identifier,
 		MachineType: group.MachineType,
@@ -124,7 +138,10 @@ func MatchGroup(group config.ClusterConfig) Result {
 		}
 		return res
 	}
-	preset, err := presets.LoadPreset(group.MachineType, group.GPUType)
+	if catalog == nil {
+		return lookupFailure(group, fmt.Errorf("preset catalog must not be nil"))
+	}
+	preset, err := catalog.LoadPreset(group.MachineType, group.GPUType)
 	if err != nil {
 		res.Status = StatusNotFound
 		res.Reason = fmt.Sprintf("preset lookup failed: %v", err)
@@ -132,7 +149,7 @@ func MatchGroup(group config.ClusterConfig) Result {
 	}
 	if preset == nil {
 		res.Status = StatusNotFound
-		res.Reason = fmt.Sprintf("no preset matches (%s, %s) in the local presets directory", group.MachineType, group.GPUType)
+		res.Reason = fmt.Sprintf("no preset matches (%s, %s) in catalog %s", group.MachineType, group.GPUType, catalog.Source())
 		return res
 	}
 	deviations := presets.ValidatePreset(preset, group.PFs)
@@ -149,15 +166,43 @@ func MatchGroup(group config.ClusterConfig) Result {
 	return res
 }
 
+func lookupFailure(group config.ClusterConfig, err error) Result {
+	return Result{
+		Group:       group.Identifier,
+		MachineType: group.MachineType,
+		GPUType:     group.GPUType,
+		Status:      StatusNotFound,
+		Reason:      fmt.Sprintf("preset lookup failed: %v", err),
+	}
+}
+
 // MatchAll runs MatchGroup over every entry in cfg.ClusterConfig and
 // returns the results in the same order. cfg is never mutated.
 func MatchAll(cfg *config.LaunchKitConfig) []Result {
+	catalog, err := presets.DefaultCatalog()
+	if err != nil {
+		if cfg == nil {
+			return nil
+		}
+		out := make([]Result, 0, len(cfg.ClusterConfig))
+		for _, group := range cfg.ClusterConfig {
+			out = append(out, lookupFailure(group, err))
+		}
+		return out
+	}
+	return MatchAllWithCatalog(cfg, catalog)
+}
+
+// MatchAllWithCatalog runs MatchGroupWithCatalog over every entry in
+// cfg.ClusterConfig and returns the results in the same order. cfg is never
+// mutated.
+func MatchAllWithCatalog(cfg *config.LaunchKitConfig, catalog *presets.Catalog) []Result {
 	if cfg == nil {
 		return nil
 	}
 	out := make([]Result, 0, len(cfg.ClusterConfig))
 	for _, g := range cfg.ClusterConfig {
-		out = append(out, MatchGroup(g))
+		out = append(out, MatchGroupWithCatalog(g, catalog))
 	}
 	return out
 }

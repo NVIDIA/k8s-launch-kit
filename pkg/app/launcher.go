@@ -28,12 +28,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/assets"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/plugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
@@ -49,6 +51,8 @@ type Launcher struct {
 	jsonOutput    *ui.JSONOutput // non-nil only in JSON mode
 	result        *ui.JSONResult // accumulated result for JSON output
 	foundProfiles []profiles.Profile // populated by executeGeneration, consumed by executeDeploy
+	configAssets  assets.ConfigDir
+	presetCatalog *presets.Catalog
 }
 
 // New creates a new Launcher instance with the given options
@@ -82,6 +86,27 @@ func (l *Launcher) Run() error {
 		}
 	}
 
+	resolvedAssets, err := assets.ResolveConfigDir(l.options.ConfigDir)
+	if err != nil {
+		return apperrors.NewValidationError(
+			"invalid --config-dir",
+			err,
+			"Provide an accessible directory; when present, l8k-config.yaml must be a file and presets/ a directory",
+		)
+	}
+	l.configAssets = resolvedAssets
+
+	catalog, err := presets.CatalogForConfigDir(resolvedAssets)
+	if err != nil {
+		return apperrors.NewValidationError(
+			"cannot load topology presets",
+			err,
+			"Check the presets/ directory under --config-dir",
+		)
+	}
+	l.presetCatalog = catalog
+	l.logger.V(1).Info("Using topology preset catalog", "source", catalog.Source())
+
 	for _, pluginName := range l.options.EnabledPlugins {
 		switch pluginName {
 		case networkoperatorplugin.PluginName:
@@ -91,6 +116,7 @@ func (l *Launcher) Run() error {
 				NodeSelector:     parseNodeSelector(l.options.NodeSelector),
 				KeepNamespace:    l.options.KeepNamespace,
 				CollapseNicRails: l.options.CollapseNicRails,
+				PresetCatalog:    l.presetCatalog,
 			}
 		default:
 			err := fmt.Errorf("unknown plugin: %s", pluginName)
@@ -114,7 +140,7 @@ func (l *Launcher) Run() error {
 		}
 	}
 
-	err := l.executeWorkflow()
+	err = l.executeWorkflow()
 
 	// Finalize JSON output if in JSON mode
 	if l.jsonOutput != nil {
@@ -163,6 +189,9 @@ func (l *Launcher) executeWorkflow() error {
 		configPath = l.options.SaveClusterConfig
 	} else {
 		configPath = l.options.UserConfig
+		if configPath == "" && l.options.ConfigDir != "" {
+			configPath = l.configAssets.DefaultConfigPath
+		}
 	}
 
 	if !l.options.DiscoverOnly {

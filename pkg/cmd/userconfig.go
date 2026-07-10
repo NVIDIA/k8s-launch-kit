@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
+	"github.com/nvidia/k8s-launch-kit/pkg/assets"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
@@ -43,36 +44,62 @@ const defaultUserConfigPath = "./cluster-config.yaml"
 //     subcommand (deploymentFiles != "").
 //  4. <deployment-files>/cluster-config.yaml — fallback for users
 //     who keep the config inside the deployment dir.
-//  5. ./l8k-config.yaml — the generate-path's legacy default, used
-//     when neither `cluster-config.yaml` nor a deployment-files-anchored
-//     candidate is present.
-//  6. <share-dir>/l8k-config.yaml — the installed system-wide config
-//     (e.g. /usr/local/share/l8k/l8k-config.yaml), so that a `l8k`
-//     invocation with no local config can still pick up the operator
-//     defaults shipped with the binary.
+//  5. <config-dir>/l8k-config.yaml — the explicit default-config override,
+//     when --config-dir was supplied and the file exists.
+//  6. ./l8k-config.yaml — the generate-path's legacy default, used only when
+//     --config-dir was not supplied.
+//  7. <share-dir>/l8k-config.yaml — the legacy installed system-wide config
+//     (e.g. /usr/local/share/l8k/l8k-config.yaml), also used only when
+//     --config-dir was not supplied.
 //
 // Callers decide how to react to a missing config: validate softens its
 // per-check verdicts to "skipped"; deploy and generate treat it as an
 // error (deploy because Phase 0 + preflight would otherwise skip with no
-// useful signal; generate because there's nothing to render against).
-func userConfigPath() string {
-	candidates := []string{}
-	if userConfig != "" {
-		candidates = append(candidates, userConfig)
+// useful signal; generate unless --for can synthesize clusterConfig from a
+// preset and use the embedded default for the remaining fields).
+func userConfigPathFor(configRoot string) (string, error) {
+	if path := userConfigPathBeforeDefaults(); path != "" {
+		return path, nil
 	}
-	candidates = append(candidates, defaultUserConfigPath)
+	return defaultConfigPathFor(configRoot)
+}
+
+func userConfigPathBeforeDefaults() string {
+	if userConfig != "" {
+		return userConfig
+	}
+	candidates := []string{defaultUserConfigPath}
 	if deploymentFiles != "" {
 		candidates = append(candidates,
 			filepath.Join(deploymentFiles, "..", "cluster-config.yaml"),
 			filepath.Join(deploymentFiles, "cluster-config.yaml"),
 		)
 	}
-	// Generate-path legacy fallbacks: ./l8k-config.yaml then the
-	// installed system-wide config under <share-dir>.
-	candidates = append(candidates,
-		"l8k-config.yaml",
-		filepath.Join(app.ResolveShareDir(), "l8k-config.yaml"),
-	)
+	return firstExistingConfigPath(candidates)
+}
+
+func defaultConfigPathFor(configRoot string) (string, error) {
+	var candidates []string
+	if configRoot != "" {
+		resolved, err := assets.ResolveConfigDir(configRoot)
+		if err != nil {
+			return "", err
+		}
+		if resolved.DefaultConfigPath != "" {
+			candidates = append(candidates, resolved.DefaultConfigPath)
+		}
+	} else {
+		// Generate-path legacy fallbacks: ./l8k-config.yaml then the
+		// installed system-wide config under <share-dir>.
+		candidates = append(candidates,
+			"l8k-config.yaml",
+			filepath.Join(app.ResolveShareDir(), "l8k-config.yaml"),
+		)
+	}
+	return firstExistingConfigPath(candidates), nil
+}
+
+func firstExistingConfigPath(candidates []string) string {
 	for _, p := range candidates {
 		if p == "" {
 			continue
@@ -82,6 +109,27 @@ func userConfigPath() string {
 		}
 	}
 	return ""
+}
+
+// userConfigPathForGenerate resolves only explicit/discovered cluster config
+// paths when --config-dir is set. The launcher owns config-dir resolution so
+// the filesystem layout is statted once and used consistently for both the
+// default config and preset catalog. Without --config-dir, retain the legacy
+// local/install-prefix default lookup.
+func userConfigPathForGenerate(configRoot string) string {
+	if path := userConfigPathBeforeDefaults(); path != "" {
+		return path
+	}
+	if configRoot != "" {
+		return ""
+	}
+	path, _ := defaultConfigPathFor("")
+	return path
+}
+
+func userConfigPath() string {
+	path, _ := userConfigPathFor(configDir)
+	return path
 }
 
 // loadUserConfig reads the resolved user-config file and applies the
@@ -96,7 +144,10 @@ func userConfigPath() string {
 // caller should bail since downstream code would be making decisions
 // from incomplete state.
 func loadUserConfig(opts options.Options) (*config.LaunchKitConfig, string, error) {
-	path := userConfigPath()
+	path, err := userConfigPathFor(opts.ConfigDir)
+	if err != nil {
+		return nil, "", err
+	}
 	if path == "" {
 		return nil, "", nil
 	}

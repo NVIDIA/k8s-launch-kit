@@ -36,13 +36,13 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
-	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
 var (
 	logLevel              string
 	logFile               string
+	configDir             string
 	fabric                string
 	deploymentType        string
 	multirail             bool
@@ -98,14 +98,11 @@ func resolveNetworkNamespaces(networkNamespaces []string, podNamespace string) [
 	return networkNamespaces
 }
 
-// forFlagHelp builds the help string for `--for`. Computed at init() time so
-// users see the live list of available preset directories alongside `--help`.
+// forFlagHelp is intentionally static. --config-dir is parsed after command
+// initialization, so enumerating presets here would always show the default
+// source rather than the source selected by the user.
 func forFlagHelp() string {
-	names, _ := presets.ListPresets()
-	if len(names) == 0 {
-		return "Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. No presets installed; run 'l8k preset update' to fetch them."
-	}
-	return fmt.Sprintf("Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Available: %s", strings.Join(names, ", "))
+	return "Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Run 'l8k preset list' with the same --config-dir to list available names."
 }
 
 // rootCmd represents the base command when called without any subcommands
@@ -167,6 +164,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 		opts := options.Options{
 			LogLevel:              logLevel,
 			LogFile:               logFile,
+			ConfigDir:             configDir,
 			UserConfig:            userConfig,
 			DiscoverClusterConfig: discoverClusterConfig,
 			Fabric:                fabric,
@@ -281,6 +279,7 @@ func init() {
 	rootCmd.Flags().DurationVar(&deployTimeoutRoot, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state.")
 
 	// Output control flags
+	rootCmd.PersistentFlags().StringVar(&configDir, "config-dir", "", "Directory containing optional l8k-config.yaml and presets/ overrides")
 	rootCmd.PersistentFlags().StringVar(&outputFormat, "output", "text", "Output format: text (default, human-readable) or json (structured, for automation and AI agents)")
 	rootCmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Auto-confirm all prompts without interactive input")
 	rootCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress informational output (errors still shown)")
@@ -295,6 +294,7 @@ func init() {
 	// into the rendered help. installGroupedUsage propagates the template
 	// to every subcommand via cobra's parent lookup.
 	setFlagGroup(rootCmd, "enabled-plugins", GroupCommon)
+	setFlagGroup(rootCmd, "config-dir", GroupCommon)
 	setFlagGroup(rootCmd, "user-config", GroupCommon)
 	setFlagGroup(rootCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(rootCmd, "network-operator-namespace", GroupCommon)
@@ -367,9 +367,9 @@ func validateConfig(options *options.Options) error {
 		return fmt.Errorf("no plugins enabled, use --enabled-plugins to enable plugins")
 	}
 
-	// At least one of user-config or discover-cluster-config should be provided
-	if options.UserConfig == "" && !options.DiscoverClusterConfig {
-		return fmt.Errorf("either --user-config or --discover-cluster-config must be provided")
+	// Require either a config source, a preset-generated config, or discovery.
+	if options.UserConfig == "" && options.ConfigDir == "" && options.ForPreset == "" && !options.DiscoverClusterConfig {
+		return fmt.Errorf("one of --user-config, --config-dir, --for, or --discover-cluster-config must be provided")
 	}
 
 	// --for synthesizes clusterConfig from a static preset, so it cannot be
