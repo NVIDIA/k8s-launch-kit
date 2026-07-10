@@ -102,7 +102,7 @@ func LoadExampleDaemonSets(manifestDir string) ([]*unstructured.Unstructured, []
 
 // ApplyDaemonSet performs a kubectl-style server-side apply of obj.
 func ApplyDaemonSet(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
-	return c.Patch(ctx, obj, client.Apply, client.FieldOwner("l8k-connectivity"), client.ForceOwnership)
+	return c.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj), client.FieldOwner("l8k-connectivity"), client.ForceOwnership)
 }
 
 // DeleteDaemonSet removes the DaemonSet by Namespace/Name, ignoring
