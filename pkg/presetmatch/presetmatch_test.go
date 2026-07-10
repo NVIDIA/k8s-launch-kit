@@ -17,10 +17,14 @@
 package presetmatch
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMatchGroup_SkippedWhenMachineOrGPUMissing(t *testing.T) {
@@ -74,6 +78,36 @@ func TestMatchAll(t *testing.T) {
 	assert.Equal(t, "b", results[1].Group)
 	// StatusNotFound when no preset catalog; never panics either way.
 	assert.NotEqual(t, StatusSkipped, results[1].Status)
+}
+
+func TestMatchAllWithCatalogUsesSelectedSource(t *testing.T) {
+	root := t.TempDir()
+	presetDir := filepath.Join(root, "machine-a-gpu-model-x")
+	require.NoError(t, os.MkdirAll(presetDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(presetDir, "topology.yaml"), []byte(`machineType: machine-a
+gpuType: gpu-model-x
+manufacturer: vendor-a
+pfs:
+  - deviceID: "1021"
+    pciAddress: "0000:01:00.0"
+`), 0o644))
+
+	catalog, err := presets.NewCatalogFromDir(root)
+	require.NoError(t, err)
+	cfg := &config.LaunchKitConfig{ClusterConfig: []config.ClusterConfig{{
+		Identifier:  "group-a",
+		MachineType: "machine-a",
+		GPUType:     "gpu-model-x",
+		PFs: []config.PFConfig{{
+			DeviceID:   "1021",
+			PciAddress: "0000:01:00.0",
+		}},
+	}}}
+
+	results := MatchAllWithCatalog(cfg, catalog)
+	require.Len(t, results, 1)
+	assert.Equal(t, StatusMatch, results[0].Status)
+	assert.Equal(t, "vendor-a", results[0].Manufacturer)
 }
 
 func TestAnyMatched(t *testing.T) {

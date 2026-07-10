@@ -100,6 +100,10 @@ var schemaCmd = &cobra.Command{
 				"5": "partial_success",
 			},
 			Flags: map[string]flagSchema{
+				"--config-dir": {
+					Type:        "string",
+					Description: "Directory containing optional l8k-config.yaml and presets/ overrides",
+				},
 				"--kubeconfig": {
 					Type:        "string",
 					Description: "Path to kubeconfig file for cluster access",

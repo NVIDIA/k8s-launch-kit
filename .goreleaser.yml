@@ -54,14 +54,11 @@ archives:
       - goos: windows
         formats:
           - zip
-    # In-repo layout: presets and the default l8k-config live under pkg/
-    # so they can be //go:embed'ed by their consuming packages. The archive
-    # preserves those paths; install scripts copy them out to the canonical
-    # share/l8k locations on the host so existing user workflows are unchanged.
+    # Presets and the default l8k-config are embedded in the binary. Profiles
+    # remain external because manifest generation reads their templates from
+    # the filesystem.
     files:
       - profiles/**/*
-      - pkg/presets/data/**/*
-      - pkg/config/default-config.yaml
       - LICENSE
     name_template: "l8k_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
@@ -122,7 +119,5 @@ brews:
     install: |
       bin.install "l8k"
       (share/"l8k").install "profiles"
-      (share/"l8k").install "presets"
-      (share/"l8k").install "l8k-config.yaml"
     test: |
       assert_match version.to_s, shell_output("#{bin}/l8k version")

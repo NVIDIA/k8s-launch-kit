@@ -155,6 +155,7 @@ is used as the manifest directory.`,
 			RestConfig:        restConfig,
 		}
 		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{
+			ConfigDir:                configDir,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 		})
 		if cfgErr != nil {

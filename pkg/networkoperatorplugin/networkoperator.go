@@ -25,6 +25,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/plugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,6 +60,10 @@ type NetworkOperatorPlugin struct {
 	// master PF while genuinely dual-port NICs keep a rail per port. False
 	// restores the legacy one-rail-per-PF behaviour (handy on dev setups).
 	CollapseNicRails bool
+
+	// PresetCatalog is the topology-preset source selected for this launcher
+	// invocation. Nil preserves the historical implicit disk/embedded lookup.
+	PresetCatalog *presets.Catalog
 
 	// NetworkOperator is the resolved NetworkOperator config used by
 	// DeployProfile to drive the helm install in Phase 0. Populated by
@@ -293,6 +298,7 @@ func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c cli
 		NodeSelector:     p.NodeSelector,
 		KeepNamespace:    p.KeepNamespace,
 		CollapseNicRails: p.CollapseNicRails,
+		PresetCatalog:    p.PresetCatalog,
 	})
 }
 

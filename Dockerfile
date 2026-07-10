@@ -46,8 +46,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-$(go env GOOS)} GOARCH=${TARGETARCH:-$(go env
 FROM nvcr.io/nvidia/distroless/go:v4.0.8
 
 
-COPY . /src
 WORKDIR /src
 COPY --from=builder /workspace/build/l8k /src/l8k
+COPY --from=builder /workspace/profiles /src/profiles
 
 ENTRYPOINT ["/src/l8k"]

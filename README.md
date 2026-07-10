@@ -56,20 +56,49 @@ make build
 
 The binary will be available at `build/l8k`.
 
-After building, install the binary, profiles, and config to `/usr/local`:
+After building, install the binary and profile templates to `/usr/local`:
 
 ```bash
-make install        # Copies binary, profiles, config to /usr/local
+make install        # Copies binary and profiles to /usr/local
 make dev-install    # Symlinks instead of copies (for development)
 ```
 
 This runs `scripts/install-local.sh`, which places:
 - `<prefix>/bin/l8k`
 - `<prefix>/share/l8k/profiles/`
-- `<prefix>/share/l8k/presets/`
-- `<prefix>/share/l8k/l8k-config.yaml`
 
 Default prefix is `/usr/local`. Override with `PREFIX=/opt/l8k make install`.
+
+The default `l8k-config.yaml` and topology presets are embedded in the binary;
+they are not copied into the installation prefix.
+
+### Override Embedded Configuration
+
+Use the persistent `--config-dir` flag to replace either embedded asset from
+the filesystem:
+
+```text
+/etc/l8k/
+├── l8k-config.yaml       # optional full replacement for the embedded default
+└── presets/              # optional authoritative preset catalog
+    └── <name>/topology.yaml
+```
+
+```bash
+# Discover using both overrides
+l8k discover --config-dir /etc/l8k --kubeconfig ~/.kube/config
+
+# Inspect the selected preset catalog
+l8k preset list --config-dir /etc/l8k
+```
+
+`--user-config <file>` has higher precedence than
+`--config-dir/l8k-config.yaml`; `--config-dir` still selects the preset
+catalog. If the directory provides only one asset, the other falls back to the
+embedded copy. A filesystem `presets/` directory replaces the complete
+embedded catalog rather than merging with it. Without `--config-dir`, the
+legacy current-directory/install-prefix lookup remains supported before the
+embedded fallback.
 
 ### Docker
 
@@ -178,6 +207,7 @@ Available Commands:
   version     Print the version number
 
 Common Flags:
+      --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides
       --enabled-plugins string              Comma-separated list of plugins to enable (default "network-operator")
       --image-pull-secrets strings          Image pull secret names for NicClusterPolicy (comma-separated)
       --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)
@@ -194,7 +224,7 @@ Discovery Flags:
 Profile Selection Flags:
       --deployment-type string   Select the deployment type (sriov, rdma_shared, host_device)
       --fabric string            Select the fabric type to deploy (infiniband, ethernet)
-      --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Available: PowerEdge-R760xa-H100-NVL, PowerEdge-XE7745-RTX-PRO-4500, PowerEdge-XE9680-H200, ThinkSystem-SR650-V4-RTX-PRO-6000, ThinkSystem-SR675-V3-H200-NVL, ThinkSystem-SR675-V3-RTX-PRO-6000, ThinkSystem-SR680a-V3-H200, UCSC-885A-M8-H22-H200
+      --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Run 'l8k preset list' with the same --config-dir to list available names.
       --gpu-type string          Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.
       --groups strings           Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.
       --multirail                Enable multirail deployment
@@ -333,6 +363,10 @@ l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./my-cluster-config.yaml
 ```
 
+When `--user-config` and a filesystem default are both absent, discovery uses
+the default configuration embedded in the binary. Pass `--config-dir` to use
+an external default and/or preset catalog instead.
+
 Filter discovery to specific nodes using a label selector:
 
 ```bash
@@ -403,9 +437,9 @@ When you have a known server SKU, use `--for <preset-name>` to skip cluster disc
 # List available presets (each shows machineType + gpuType)
 l8k preset list
 
-# Generate from a known SKU (no kubeconfig needed)
-l8k generate --user-config ./config.yaml \
-    --for ThinkSystem-SR680a-V3 \
+# Generate from a known SKU using the embedded default config (no kubeconfig needed)
+l8k generate \
+    --for ThinkSystem-SR680a-V3-H200 \
     --node-selector "nvidia.com/gpu.product=NVIDIA-H200" \
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./deployments
@@ -1112,6 +1146,8 @@ discovered hardware topology, and writes the
 
 ```go
 import (
+    "path/filepath"
+
     l8kconfig "github.com/nvidia/k8s-launch-kit/pkg/config"
     l8kdisc   "github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery"
 )
@@ -1122,8 +1158,22 @@ if err != nil { return err }
 cfg, err = l8kdisc.Discover(ctx, kubeClient, restConfig, cfg,
     l8kdisc.WithLogger(logr.FromSlogHandler(slog.Default().Handler())),
     // l8kdisc.WithRelease("26.1"),  // optional override
+    // l8kdisc.WithPresetsDir(filepath.Join(configDir, "presets")),
 )
 ```
+
+To replace the embedded default as well, load the filesystem copy before
+calling discovery:
+
+```go
+cfg, err := l8kconfig.LoadFullConfig(
+    filepath.Join(configDir, "l8k-config.yaml"), logger,
+)
+```
+
+`WithPresetsDir` selects an authoritative catalog for that call and does not
+mutate process-global preset state, so concurrent embedders can use different
+directories safely.
 
 The discovery package is deliberately Helm-free — importing it does NOT
 pull `helm.sh/helm/v3` or its transitive deps into the consumer's binary.

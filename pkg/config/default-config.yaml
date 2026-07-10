@@ -127,9 +127,9 @@ profile:
   multirail: false
   spectrumX: # Spectrum-X configuration (set enable: true or use --spectrum-x CLI flag)
     enable: false # CLI parameter (overrides this value): --spectrum-x
-    spcxVersion: "RA2.2" # CLI parameter (overrides this value): --spcx-version
-    multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
-    numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
+    # spcxVersion: "RA2.2" # CLI parameter (overrides this value): --spectrum-x
+    # multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
+    # numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
   ai: false
 
 clusterConfig:

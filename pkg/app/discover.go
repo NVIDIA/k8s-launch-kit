@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/assets"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
@@ -59,6 +60,16 @@ func DefaultConfigPath() string {
 	return ""
 }
 
+func defaultConfigSource(configPath, configRoot string) string {
+	if configPath != "" {
+		return configPath
+	}
+	if configRoot != "" {
+		return fmt.Sprintf("embedded (--config-dir %q has no %s)", configRoot, assets.DefaultConfigName)
+	}
+	return "embedded"
+}
+
 // discoverClusterConfig handles cluster configuration discovery
 func (l *Launcher) discoverClusterConfig() error {
 	l.ui.Info("Discovering cluster capabilities")
@@ -69,31 +80,31 @@ func (l *Launcher) discoverClusterConfig() error {
 	if l.options.UserConfig != "" {
 		configPath = l.options.UserConfig
 		l.ui.Info("Using base configuration: %s", configPath)
+	} else if l.options.ConfigDir != "" {
+		configPath = l.configAssets.DefaultConfigPath
 	} else {
 		configPath = DefaultConfigPath()
 	}
 
-	if configPath == "" {
-		return apperrors.NewValidationError(
-			"no configuration file found",
-			fmt.Errorf("checked ./l8k-config.yaml and /usr/local/share/l8k/l8k-config.yaml"),
-			"Provide --user-config <path> or run 'scripts/install.sh' to install the default config")
-	}
-
 	defaults, err := config.LoadFullConfig(configPath, l.logger)
 	if err != nil {
+		source := defaultConfigSource(configPath, l.options.ConfigDir)
 		return apperrors.NewValidationError(
-			fmt.Sprintf("cannot load config: %s", configPath), err,
-			fmt.Sprintf("Check that %s exists and is valid YAML", configPath))
+			fmt.Sprintf("cannot load config: %s", source), err,
+			fmt.Sprintf("Check that %s is valid YAML", source))
 	}
 
 	// Keep the annotated source bytes so the saved cluster-config.yaml can
 	// retain the field documentation comments (best-effort — a read failure
 	// just means the output won't carry comments).
-	srcConfigYAML, _ := os.ReadFile(configPath)
+	srcConfigYAML := config.DefaultConfigYAML()
+	if configPath != "" {
+		srcConfigYAML, _ = os.ReadFile(configPath)
+	}
 
 	if l.options.UserConfig == "" {
-		l.ui.Info("Using default configuration: %s", configPath)
+		source := defaultConfigSource(configPath, l.options.ConfigDir)
+		l.ui.Info("Using default configuration: %s", source)
 	}
 
 	// Override namespace from CLI flag if provided

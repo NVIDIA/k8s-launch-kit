@@ -17,6 +17,7 @@
 package config
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/binary"
 	"fmt"
@@ -37,6 +38,13 @@ import (
 //
 //go:embed default-config.yaml
 var defaultConfigYAML []byte
+
+// DefaultConfigYAML returns a copy of the embedded default configuration
+// source. Discovery uses it to preserve field comments when no filesystem
+// override is selected. The copy is safe for callers to mutate.
+func DefaultConfigYAML() []byte {
+	return bytes.Clone(defaultConfigYAML)
+}
 
 // DefaultLaunchKitConfig returns a freshly-parsed copy of the binary's
 // embedded default configuration. Returned value is safe to mutate; each call

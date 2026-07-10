@@ -25,6 +25,9 @@ type Options struct {
 	LogFile  string // Path to log file (optional)
 
 	// Phase 1: Cluster Discovery
+	// ConfigDir is an optional root containing l8k-config.yaml and/or presets/.
+	// Explicit --user-config still has higher precedence for the config file.
+	ConfigDir               string
 	UserConfig              string // Path to user-provided config (skips discovery)
 	DiscoverClusterConfig   bool   // Whether to discover cluster config
 	// DiscoverOnly skips Phase 2 (manifest generation) entirely. Set by

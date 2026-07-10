@@ -18,6 +18,7 @@ package discovery
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +104,17 @@ func TestDiscover_NilCfgRejected(t *testing.T) {
 	_, err := Discover(context.Background(), c, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cfg must not be nil")
+}
+
+func TestDiscover_WithPresetsDirRejectsMissingDirectoryBeforeClusterChanges(t *testing.T) {
+	cfg, err := config.DefaultLaunchKitConfig()
+	require.NoError(t, err)
+	c := fake.NewClientBuilder().Build()
+
+	_, err = Discover(context.Background(), c, nil, cfg,
+		WithPresetsDir(filepath.Join(t.TempDir(), "missing")))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve topology presets")
 }
 
 // TestDiscover_PreservesUserFields checks that Discover hands the

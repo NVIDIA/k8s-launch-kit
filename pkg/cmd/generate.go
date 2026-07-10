@@ -75,32 +75,32 @@ Optionally deploy the generated manifests with --deploy.`,
     --save-deployment-files ./output \
     --output json --yes 2>/dev/null
 
-  # Generate from a known server preset (no cluster discovery required)
-  l8k generate --user-config cluster-config.yaml \
-    --for ThinkSystem-SR680a-V3 \
+  # Generate from a known server preset using the embedded default config
+  l8k generate \
+    --for ThinkSystem-SR680a-V3-H200 \
     --node-selector "feature.node.kubernetes.io/pci-15b3.present=true" \
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Resolve user-config via the shared lookup chain (deploy +
-		// validate use the same one). When --user-config wasn't passed,
-		// userConfigPath() will probe ./cluster-config.yaml,
-		// ./l8k-config.yaml, and the installed share-dir fallback in
-		// turn — none of those resolving is a hard error here since
-		// `l8k generate` needs a config to render against.
+		// Probe explicit/discovered cluster configs here, but leave an
+		// explicit --config-dir for Launcher.Run to resolve exactly once.
+		// Without --config-dir, retain the legacy local/install-prefix
+		// default lookup.
 		if userConfig == "" {
-			if resolved := userConfigPath(); resolved != "" {
+			resolved := userConfigPathForGenerate(configDir)
+			if resolved != "" {
 				userConfig = resolved
-			} else {
+			} else if forPreset == "" && configDir == "" {
 				exitWithError(apperrors.NewValidationError(
 					"no configuration file found",
-					fmt.Errorf("checked ./cluster-config.yaml, ./l8k-config.yaml, and installed paths"),
-					"Run 'l8k discover' first, or pass --user-config <path>",
+					fmt.Errorf("checked ./cluster-config.yaml, --config-dir, ./l8k-config.yaml, and installed paths"),
+					"Run 'l8k discover' first, pass --user-config <path>, or use --for with the embedded default",
 				), outputFormat)
 			}
 		}
 
 		opts := options.Options{
+			ConfigDir:     configDir,
 			UserConfig:     userConfig,
 			Fabric:         fabric,
 			DeploymentType: deploymentType,
@@ -177,7 +177,7 @@ func init() {
 	rootCmd.AddCommand(generateCmd)
 
 	// Config
-	generateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-detected from ./cluster-config.yaml or installed path)")
+	generateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (otherwise auto-detected from ./cluster-config.yaml; --for can use embedded defaults)")
 
 	// Profile selection
 	generateCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type: ethernet, infiniband")

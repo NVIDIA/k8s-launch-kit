@@ -94,6 +94,11 @@ func isNorthSouthDevice(partNumber string) bool {
 // functional DiscoverOptions.
 func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *rest.Config, cfg *config.LaunchKitConfig, opts Options) error {
 	uiOutput := ui.FromContext(ctx)
+	presetCatalog, err := resolvePresetCatalog(opts)
+	if err != nil {
+		return fmt.Errorf("resolve topology presets: %w", err)
+	}
+	log.Log.V(1).Info("Using topology preset catalog", "source", presetCatalog.Source())
 
 	if cfg.NetworkOperator == nil {
 		return fmt.Errorf("networkOperator section is required in config for discovery")
@@ -256,7 +261,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 			// applies the preset onto the group so rail/NUMA topology
 			// fields populate. Lookup is exact-match on (machineType,
 			// gpuType) — both must be known for a preset to apply.
-			matchResult := presetmatch.MatchGroup(*group)
+			matchResult := presetmatch.MatchGroupWithCatalog(*group, presetCatalog)
 			log.Log.V(1).Info("Preset match",
 				"group", group.Identifier,
 				"machineType", group.MachineType,
@@ -285,23 +290,16 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 						group.MachineType, group.GPUType, len(matchResult.Deviations))
 					break
 				}
-				// Exact topology match (or only benign deviations) — load
-				// the Topology again and enrich rail/NUMA/GPU fields.
-				// (MatchGroup intentionally doesn't mutate.)
-				preset, err := presets.LoadPreset(group.MachineType, group.GPUType)
+				// Exact topology match (or only benign deviations) — enrich
+				// rail/NUMA/GPU fields from the same catalog entry MatchGroup
+				// validated. Reusing the returned pointer avoids resolving a
+				// different source between validation and application.
 				switch {
-				case err != nil:
-					// MatchGroup already loaded this preset to produce the
-					// match, so a reload failure here is unexpected — surface
-					// it rather than silently falling back to live discovery.
+				case matchResult.Preset == nil:
 					uiOutput.Warning(
-						"Preset for %s/%s matched but could not be re-loaded to apply (%v). Using live discovery results.",
-						group.MachineType, group.GPUType, err)
-				case preset == nil:
-					uiOutput.Warning(
-						"Preset for %s/%s matched but was not found on re-load. Using live discovery results.",
+						"Preset for %s/%s matched but no topology was returned. Using live discovery results.",
 						group.MachineType, group.GPUType)
-				case presets.ApplyPreset(preset, group):
+				case presets.ApplyPreset(matchResult.Preset, group):
 					uiOutput.Info("Applied preset configuration for %s", group.MachineType)
 				default:
 					// Loaded fine but the all-or-nothing apply declined (PCI
@@ -373,6 +371,16 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		"machineLabelledGroups", labelled)
 
 	return nil
+}
+
+func resolvePresetCatalog(opts Options) (*presets.Catalog, error) {
+	if opts.PresetCatalog != nil {
+		return opts.PresetCatalog, nil
+	}
+	if opts.PresetsDir != "" {
+		return presets.NewCatalogFromDir(opts.PresetsDir)
+	}
+	return presets.DefaultCatalog()
 }
 
 // applyMachineLabelToGroups walks each group and writes two l8k-specific
@@ -1737,4 +1745,3 @@ func execInPod(ctx context.Context, restConfig *rest.Config,
 	namespace, podName, containerName string, command []string) (string, error) {
 	return kubeclient.ExecStdoutInPod(ctx, restConfig, namespace, podName, containerName, command)
 }
-

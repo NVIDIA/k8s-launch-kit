@@ -37,6 +37,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"gopkg.in/yaml.v2"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -87,6 +88,17 @@ type Options struct {
 	// already in cfg" — the default config ships with the currently
 	// recommended line baked in.
 	Release string
+
+	// PresetsDir selects an authoritative on-disk topology-preset catalog.
+	// Empty preserves the historical implicit lookup chain. Library callers
+	// normally set this through WithPresetsDir.
+	PresetsDir string
+
+	// PresetCatalog is an already-resolved catalog. It is primarily used by
+	// the CLI adapter so a partial --config-dir override can explicitly select
+	// the embedded catalog instead of falling through to legacy install paths.
+	// When set, it takes precedence over PresetsDir.
+	PresetCatalog *presets.Catalog
 }
 
 // DiscoverOption configures a Discover call. Functional-options seam for
@@ -151,6 +163,13 @@ func WithLogger(logger logr.Logger) DiscoverOption {
 // catalog enumeration / validation outside Discover.
 func WithRelease(release string) DiscoverOption {
 	return func(o *Options) { o.Release = release }
+}
+
+// WithPresetsDir replaces the embedded/default preset catalog with the
+// topology presets rooted at dir. The directory is authoritative: presets
+// missing from it are not filled from the embedded catalog.
+func WithPresetsDir(dir string) DiscoverOption {
+	return func(o *Options) { o.PresetsDir = dir }
 }
 
 // Discover walks the cluster and populates cfg with the discovered
@@ -288,4 +307,3 @@ func applyRelease(cfg *config.LaunchKitConfig, release string) error {
 	cfg.DOCADriver.Version = rel.DOCADriver.Version
 	return nil
 }
-
