@@ -21,7 +21,9 @@ l8k generate --user-config <CONFIG> \
 ```
 
 Configs produced by `l8k discover` already contain the resolved profile.
-Profile flags remain available as generation-time overrides.
+Profile flags remain available as generation-time overrides. When generation
+uses a file-backed config, resolved defaults and CLI overrides are written back
+to that source file; embedded `--for` generation does not write a config.
 
 ## Profile Selection Flags
 

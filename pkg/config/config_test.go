@@ -83,6 +83,10 @@ profile:
 		assert.Equal(t, "sriov", config.Profile.Deployment)
 		assert.False(t, config.Profile.Multirail)
 		assert.Nil(t, config.Profile.SpectrumX)
+
+		_, source, err := LoadFullConfigWithSource(configPath, logger)
+		require.NoError(t, err)
+		assert.Equal(t, configContent, string(source))
 	})
 
 	t.Run("load config file that does not exist", func(t *testing.T) {

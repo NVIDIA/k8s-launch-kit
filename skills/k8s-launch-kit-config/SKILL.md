@@ -35,15 +35,16 @@ l8k discover --user-config my-config.yaml \
 
 ## Profile Resolution and Write-Back
 
-Discovery resolves and persists the `profile` section with this precedence:
+Discovery and file-backed generation resolve and persist settings with this precedence:
 
 1. Hardware and built-in defaults fill missing fields.
 2. Values already present in `--user-config` are preserved.
-3. Explicit discovery CLI flags override both.
+3. Explicit CLI flags override both.
 
-The final values are written back to the output YAML. On later discovery runs,
-only missing fields are recalculated. `multirail: false` is an explicit value,
-not a missing field, so it remains false across rewrites.
+Discovery writes to its selected output YAML; generation rewrites its source
+config in place. On later runs, only missing fields are recalculated.
+`multirail: false` is an explicit value, not a missing field, so it remains
+false across rewrites.
 
 ## Config Sections Quick Reference
 
