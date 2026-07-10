@@ -126,6 +126,8 @@ var templateFuncs = template.FuncMap{
 		return spcx.SPCXVersion
 	},
 	"indent": func(s string, spaces int) string {
+		s = strings.ReplaceAll(s, "\r\n", "\n")
+		s = strings.ReplaceAll(s, "\r", "\n")
 		pad := strings.Repeat(" ", spaces)
 		return pad + strings.ReplaceAll(strings.TrimRight(s, "\n"), "\n", "\n"+pad)
 	},

@@ -247,9 +247,7 @@ func TestSpectrumXRA23RendersProfileConfigMap(t *testing.T) {
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 4,
 			ConfigMapName:  "site-ra23-profile",
-			Profile: `useSoftwareCCAlgorithm: true
-docaCCVersion: "example"
-`,
+			Profile:        "useSoftwareCCAlgorithm: true\r\ndocaCCVersion: \"example\"\r\n",
 		},
 	}
 
@@ -285,6 +283,7 @@ docaCCVersion: "example"
 	require.Contains(t, cm, "namespace: \"nvidia-network-operator\"")
 	require.Contains(t, cm, config.SpectrumXProfileLabel+": \"\"")
 	require.Contains(t, cm, `docaCCVersion: "example"`)
+	require.NotContains(t, cm, "\r")
 
 	nct := rendered["30-nicconfigurationtemplate-gpu-model-y.yaml"]
 	require.Contains(t, nct, `version: "site-ra23-profile"`)

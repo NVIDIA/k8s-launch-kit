@@ -88,11 +88,10 @@ func parseSpectrumXProfileConfigMap(raw string) (*spectrumXProfileConfigMap, boo
 		return nil, false, fmt.Errorf("failed to parse spectrum-x profile input: %w", err)
 	}
 
-	isConfigMap := strings.EqualFold(cm.Kind, "ConfigMap") || cm.Data[SpectrumXProfileConfigMapDataKey] != ""
-	if !isConfigMap {
+	if cm.Kind == "" {
 		return nil, false, nil
 	}
-	if cm.Kind != "" && !strings.EqualFold(cm.Kind, "ConfigMap") {
+	if !strings.EqualFold(cm.Kind, "ConfigMap") {
 		return nil, false, fmt.Errorf("spectrum-x profile input kind must be ConfigMap, got %q", cm.Kind)
 	}
 	return &cm, true, nil

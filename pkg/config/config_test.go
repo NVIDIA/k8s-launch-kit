@@ -201,6 +201,20 @@ docaCCVersion: "example"
 	assert.Contains(t, spcx.Profile, `docaCCVersion: "example"`)
 }
 
+func TestNormalizeSpectrumXProfileConfigDoesNotMisclassifyRawDataProfile(t *testing.T) {
+	raw := `data:
+  profile: raw profile field owned by Spectrum-X
+`
+	spcx := &ProfileSpectrumX{
+		ConfigMapName: "site-ra23-profile",
+		Profile:       raw,
+	}
+
+	require.NoError(t, NormalizeSpectrumXProfileConfig(spcx))
+	assert.Equal(t, "site-ra23-profile", spcx.ConfigMapName)
+	assert.Equal(t, raw, spcx.Profile)
+}
+
 func TestValidateClusterConfig(t *testing.T) {
 	t.Run("validate config with missing network operator repository", func(t *testing.T) {
 		config := &LaunchKitConfig{
