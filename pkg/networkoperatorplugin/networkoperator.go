@@ -200,19 +200,10 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 	if len(options.NetworkNamespaces) > 0 {
 		fullConfig.NetworkNamespaces = options.NetworkNamespaces
 	}
-	// Back-compat: a legacy scalar podNamespace becomes the sole network
-	// namespace when the list isn't set.
-	if len(fullConfig.NetworkNamespaces) == 0 && fullConfig.PodNamespace != "" {
-		fullConfig.NetworkNamespaces = []string{fullConfig.PodNamespace}
-	}
-	// Default to a single "default" namespace if neither config nor CLI set it.
+	// Default to a single "default" namespace when neither config nor CLI set it.
 	if len(fullConfig.NetworkNamespaces) == 0 {
 		fullConfig.NetworkNamespaces = []string{"default"}
 	}
-	// PodNamespace is the "current" namespace scalar the templates read; the
-	// renderer overrides it per network namespace while fanning out. Seed it
-	// with the first entry so non-fanned-out templates render deterministically.
-	fullConfig.PodNamespace = fullConfig.NetworkNamespaces[0]
 
 	// Default NicConfigurationOperator if not set
 	if fullConfig.NicConfigurationOperator == nil {

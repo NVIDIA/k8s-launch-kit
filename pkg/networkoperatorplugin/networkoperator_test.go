@@ -127,6 +127,16 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		err := p.ApplyOptionsToConfig(options.Options{Fabric: "ethernet"}, cfg)
 		require.NoError(t, err)
 		assert.Nil(t, cfg.Profile)
+		assert.Equal(t, []string{"default"}, cfg.NetworkNamespaces)
+		assert.Empty(t, cfg.CurrentNetworkNamespace)
+	})
+
+	t.Run("CLI network namespaces do not mutate transient render state", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{Profile: &config.Profile{}}
+		err := p.ApplyOptionsToConfig(options.Options{NetworkNamespaces: []string{"ns1", "ns2"}}, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"ns1", "ns2"}, cfg.NetworkNamespaces)
+		assert.Empty(t, cfg.CurrentNetworkNamespace)
 	})
 
 	t.Run("CLI fabric overrides config fabric", func(t *testing.T) {

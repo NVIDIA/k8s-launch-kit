@@ -125,7 +125,7 @@ func TestDiscover_WithPresetsDirRejectsMissingDirectoryBeforeClusterChanges(t *t
 // the supplied cfg lacks a NetworkOperator section.
 func TestDiscover_PreservesUserFields(t *testing.T) {
 	base := &config.LaunchKitConfig{
-		PodNamespace: "library-test-ns",
+		NetworkNamespaces: []string{"library-test-ns"},
 		// Deliberately no NetworkOperator: DiscoverClusterConfig requires
 		// it and will return early with a descriptive error. That gets
 		// us past the wiring step (which is what this test pins down)

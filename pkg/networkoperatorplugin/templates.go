@@ -71,7 +71,7 @@ var templateFuncs = template.FuncMap{
 	// secondary-network CR (and the network name the example DaemonSet
 	// references). With a single namespace it returns "" so the common case
 	// keeps its existing names unchanged. Called as
-	// `{{nsSuffix $.NetworkNamespaces $.PodNamespace}}` — type-agnostic so it
+	// `{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}` — type-agnostic so it
 	// works whether the template root is the bare config or a per-group ctx.
 	//
 	// The `namespaces` it reads is the *per-render* set: the renderer
@@ -672,6 +672,10 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	if err := config.NormalizeMaintenance(cfg); err != nil {
 		return nil, fmt.Errorf("normalize maintenance configuration: %w", err)
 	}
+	if len(cfg.NetworkNamespaces) == 0 {
+		cfg.NetworkNamespaces = []string{"default"}
+	}
+	cfg.CurrentNetworkNamespace = cfg.NetworkNamespaces[0]
 
 	// Apply --groups / --gpu-type filter to source groups before merging.
 	// `applyGroupFilter` enforces mutual exclusivity, errors on empty match,

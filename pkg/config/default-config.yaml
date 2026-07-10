@@ -28,7 +28,7 @@ networkOperator:
   # imagePullSecrets:
   #   - my-registry-secret
 
-podNamespace: default
+networkNamespaces: [default]
 
 # workload:
 #   manifest: /path/to/my-deployment.yaml  # Custom workload manifest (replaces default example DaemonSet)

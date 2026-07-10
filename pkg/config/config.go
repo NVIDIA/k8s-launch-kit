@@ -154,17 +154,17 @@ type LaunchKitConfig struct {
 	Macvlan         *MacvlanConfig         `yaml:"macvlan,omitempty"`
 	SpectrumX                *SpectrumXConfig                `yaml:"spectrumX,omitempty"`
 	NicConfigurationOperator *NicConfigurationOperatorConfig `yaml:"nicConfigurationOperator,omitempty"`
-	PodNamespace             string                          `yaml:"podNamespace,omitempty"`
 	// NetworkNamespaces is the set of namespaces the secondary-network CRs
 	// (SriovNetwork, SriovIBNetwork, HostDeviceNetwork, MacvlanNetwork,
 	// IPoIBNetwork) and their example test DaemonSets are rendered into —
 	// one independent copy per namespace. Shared resources (IPPool,
 	// NicNodePolicy, SriovNetworkNodePolicy, NicClusterPolicy, …) are NOT
-	// duplicated. Empty defaults to a single "default" namespace; a legacy
-	// scalar podNamespace is folded in as the sole entry. PodNamespace stays
-	// the "current" namespace scalar the templates read — the renderer
-	// overrides it per entry while fanning out.
+	// duplicated. Empty defaults to a single "default" namespace.
 	NetworkNamespaces        []string                        `yaml:"networkNamespaces,omitempty"`
+	// CurrentNetworkNamespace is transient render state. The renderer sets it
+	// to one NetworkNamespaces entry while producing that namespace's copy;
+	// it is never part of the persisted configuration schema.
+	CurrentNetworkNamespace  string                          `yaml:"-"`
 	Workload                 *WorkloadConfig                 `yaml:"workload,omitempty"`
 	Profile         *Profile               `yaml:"profile,omitempty"`
 	ClusterConfig   []ClusterConfig        `yaml:"clusterConfig,omitempty"`

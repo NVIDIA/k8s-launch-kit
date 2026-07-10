@@ -91,6 +91,9 @@ func TestDiscoverFreshConfigIgnoresReferenceProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "# user-selected fabric",
 		"profile documentation comments should survive write-back")
+	assert.Contains(t, string(data), "networkNamespaces:")
+	assert.NotContains(t, string(data), "podNamespace:")
+	assert.NotContains(t, string(data), "currentNetworkNamespace:")
 }
 
 func TestDiscoverPreservesPartialUserProfileAndFillsMissingSettings(t *testing.T) {

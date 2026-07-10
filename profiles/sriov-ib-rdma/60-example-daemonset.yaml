@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: sriov-ib-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
-  namespace: "{{$.PodNamespace}}"
+  namespace: "{{$.CurrentNetworkNamespace}}"
 spec:
   selector:
     matchLabels:
@@ -14,7 +14,7 @@ spec:
       labels:
         app: sriov-ib-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
       annotations:
-        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}{{- end}}{{- end}}
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}{{- end}}{{- end}}
     spec:
       {{- if .ClusterConfig.NodeSelector }}
       affinity:
@@ -67,7 +67,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: sriov-ib-test{{boundedSuffix 48 $.ClusterConfig.Identifier}}
-  namespace: "{{$.PodNamespace}}"
+  namespace: "{{$.CurrentNetworkNamespace}}"
 spec:
   selector:
     matchLabels:
@@ -77,7 +77,7 @@ spec:
       labels:
         app: sriov-ib-test{{boundedSuffix 48 $.ClusterConfig.Identifier}}
       annotations:
-        k8s.v1.cni.cncf.io/networks: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
+        k8s.v1.cni.cncf.io/networks: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}
     spec:
       {{- if $.ClusterConfig.NodeSelector }}
       affinity:

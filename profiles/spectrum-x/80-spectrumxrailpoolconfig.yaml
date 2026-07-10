@@ -15,7 +15,7 @@ spec:
     {{ $key }}: "{{ $value }}"
     {{- end }}
   {{- end }}
-  networkNamespace: "{{.PodNamespace}}"
+  networkNamespace: "{{.CurrentNetworkNamespace}}"
   numVfs: 1
   railTopology:
   {{- range $railIdx := untilStep 0 $railCount 1 }}

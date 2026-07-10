@@ -59,8 +59,8 @@ func patchWorkloadManifest(manifestPath string, cfg *config.LaunchKitConfig, gro
 
 	// Set namespace
 	meta := ensureMap(obj, "metadata")
-	if cfg.PodNamespace != "" {
-		meta["namespace"] = cfg.PodNamespace
+	if namespace := currentNetworkNamespace(cfg); namespace != "" {
+		meta["namespace"] = namespace
 	}
 
 	// Add group suffix to name if present

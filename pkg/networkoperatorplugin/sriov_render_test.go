@@ -68,7 +68,7 @@ func renderSRIOV(t *testing.T, dir, fabric, networkTemplate string) map[string]s
 
 // renderSRIOVWithNamespaces is renderSRIOV with the network-namespace fan-out
 // the CLI's ApplyOptionsToConfig would normally seed: NetworkNamespaces drives
-// per-namespace duplication and PodNamespace is the first ("current") entry.
+// per-namespace duplication and the renderer selects each current entry.
 func renderSRIOVWithNamespaces(t *testing.T, dir, fabric, networkTemplate string, namespaces []string) map[string]string {
 	t.Helper()
 	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -86,7 +86,6 @@ func renderSRIOVWithNamespaces(t *testing.T, dir, fabric, networkTemplate string
 	}
 	if len(namespaces) > 0 {
 		cfg.NetworkNamespaces = namespaces
-		cfg.PodNamespace = namespaces[0]
 	}
 
 	plugin := &NetworkOperatorPlugin{}

@@ -5,7 +5,7 @@
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovIBNetwork
 metadata:
-  name: {{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
+  name: {{$.Sriov.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}
   namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
   ipam: |
@@ -15,7 +15,7 @@ spec:
     }
   resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
   linkState: enable
-  networkNamespace: "{{$.PodNamespace}}"
+  networkNamespace: "{{$.CurrentNetworkNamespace}}"
 {{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
 {{- end -}}
 {{- end -}}
@@ -23,7 +23,7 @@ spec:
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovIBNetwork
 metadata:
-  name: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
+  name: {{.Sriov.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}
   namespace: "{{.NetworkOperator.Namespace}}"
 spec:
   ipam: |
@@ -33,5 +33,5 @@ spec:
     }
   resourceName: {{.Sriov.ResourceName}}
   linkState: enable
-  networkNamespace: "{{$.PodNamespace}}"
+  networkNamespace: "{{$.CurrentNetworkNamespace}}"
 {{- end}}

@@ -488,16 +488,16 @@ var networkNSReplicatedKinds = map[string]bool{
 // into. Replicated network Kinds fan out across cfg.NetworkNamespaces;
 // everything else (and every Spectrum-X Kind, which uses a distinct combined-CR
 // rendering path not amenable to independent per-namespace copies) renders once
-// into the current namespace (cfg.PodNamespace).
+// into the current namespace.
 func networkNamespacesForKind(cfg *config.LaunchKitConfig, kind string) []string {
 	if !isSpectrumX(cfg) && networkNSReplicatedKinds[kind] && len(cfg.NetworkNamespaces) > 0 {
 		return cfg.NetworkNamespaces
 	}
-	return []string{cfg.PodNamespace}
+	return []string{currentNetworkNamespace(cfg)}
 }
 
 // withRenderNamespaces returns a shallow copy of cfg scoped to a single
-// render: PodNamespace is the "current" namespace the templates read, and
+// render: CurrentNetworkNamespace is the namespace the templates read, and
 // NetworkNamespaces is narrowed to nsList — the exact set being rendered for
 // this Kind. For a replicated Kind nsList is the full cfg.NetworkNamespaces
 // (so `nsSuffix` sees len>1 and suffixes); for a shared Kind nsList is the
@@ -507,9 +507,19 @@ func networkNamespacesForKind(cfg *config.LaunchKitConfig, kind string) []string
 // on shared templates simply never calling the helper.
 func withRenderNamespaces(cfg *config.LaunchKitConfig, ns string, nsList []string) *config.LaunchKitConfig {
 	out := *cfg
-	out.PodNamespace = ns
+	out.CurrentNetworkNamespace = ns
 	out.NetworkNamespaces = nsList
 	return &out
+}
+
+func currentNetworkNamespace(cfg *config.LaunchKitConfig) string {
+	if cfg.CurrentNetworkNamespace != "" {
+		return cfg.CurrentNetworkNamespace
+	}
+	if len(cfg.NetworkNamespaces) > 0 {
+		return cfg.NetworkNamespaces[0]
+	}
+	return "default"
 }
 
 // suffixFilenamesWithNamespace appends "-<ns>" before the extension of every
@@ -610,4 +620,3 @@ func subnetsAt(planSubnets [][]config.NvIpamSubnetConfig, i int) []config.NvIpam
 	}
 	return planSubnets[i]
 }
-

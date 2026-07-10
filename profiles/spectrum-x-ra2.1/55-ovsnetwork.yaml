@@ -18,7 +18,7 @@ metadata:
 spec:
   resourceName: rail_{{$railIdx}}_plane_{{$planeIdx}}
   interfaceType: dpdk
-  networkNamespace: "{{$.PodNamespace}}"
+  networkNamespace: "{{$.CurrentNetworkNamespace}}"
   mtu: 9216
   ipam: |
     {
@@ -45,7 +45,7 @@ metadata:
 spec:
   resourceName: rail_{{$railIdx}}
   interfaceType: dpdk
-  networkNamespace: "{{$.PodNamespace}}"
+  networkNamespace: "{{$.CurrentNetworkNamespace}}"
   mtu: 9216
   ipam: |
     {
