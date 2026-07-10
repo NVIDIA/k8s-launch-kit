@@ -18,7 +18,7 @@ Controls the NVIDIA Network Operator deployment settings.
 
 | Field               | Type     | Default       | Description                                       |
 |---------------------|----------|---------------|---------------------------------------------------|
-| `networkNamespaces` | []string | `["default"]` | Namespaces the secondary-network CRs (SriovNetwork, SriovIBNetwork, HostDeviceNetwork, MacvlanNetwork, IPoIBNetwork) and their example test DaemonSets are rendered into — one independent copy per namespace. Shared resources (IPPool, NicNodePolicy, SriovNetworkNodePolicy, NicClusterPolicy) are NOT duplicated. With >1 namespace, per-namespace CR copies get a `-<namespace>` name suffix. CLI: `--network-namespaces ns1,ns2`. A legacy scalar `podNamespace` is still accepted and folded in as the sole entry. |
+| `networkNamespaces` | []string | `["default"]` | Namespaces the secondary-network CRs (SriovNetwork, SriovIBNetwork, HostDeviceNetwork, MacvlanNetwork, IPoIBNetwork) and their example test DaemonSets are rendered into — one independent copy per namespace. Shared resources (IPPool, NicNodePolicy, SriovNetworkNodePolicy, NicClusterPolicy) are NOT duplicated. With >1 namespace, per-namespace CR copies get a `-<namespace>` name suffix. CLI: `--network-namespaces ns1,ns2`. |
 
 ## docaDriver
 

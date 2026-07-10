@@ -5,9 +5,9 @@
 apiVersion: mellanox.com/v1alpha1
 kind: MacvlanNetwork
 metadata:
-  name: {{$.Macvlan.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
+  name: {{$.Macvlan.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}
 spec:
-  networkNamespace: "{{$.PodNamespace}}"
+  networkNamespace: "{{$.CurrentNetworkNamespace}}"
   master: "{{$pf.NetworkInterface}}"
   mode: "bridge"
   # mtu: 0 → inherit master PF's MTU. The macvlan CNI enforces
@@ -32,9 +32,9 @@ spec:
 apiVersion: mellanox.com/v1alpha1
 kind: MacvlanNetwork
 metadata:
-  name: {{.Macvlan.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.PodNamespace}}
+  name: {{.Macvlan.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}
 spec:
-  networkNamespace: "{{$.PodNamespace}}"
+  networkNamespace: "{{$.CurrentNetworkNamespace}}"
   master: "{{(index .ClusterConfig.PFs 0).NetworkInterface}}"
   mode: "bridge"
   # mtu: 0 → inherit master PF's MTU (see multirail branch above).

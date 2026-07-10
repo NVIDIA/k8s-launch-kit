@@ -42,7 +42,7 @@ nicConfigurationOperator:
   deployNicInterfaceNameTemplate: true
   rdmaPrefix: rdma_r%rail_id%
   netdevPrefix: eth_r%rail_id%
-podNamespace: default
+networkNamespaces: [default]
 clusterConfig:
 - identifier: group-0
   machineType: machine-x

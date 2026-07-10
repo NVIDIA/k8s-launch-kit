@@ -34,8 +34,7 @@ networkOperator:
 # reference the secondary networks. Shared resources (IPPool, NicNodePolicy,
 # SriovNetworkNodePolicy, NicClusterPolicy, ...) are NOT duplicated. With more
 # than one namespace, the per-namespace CR copies get a "-<namespace>" name
-# suffix so they don't collide. A legacy scalar `podNamespace:` is still
-# accepted and folded in as the sole entry.
+# suffix so they don't collide.
 networkNamespaces: ["default"]
 
 # ============================================================================

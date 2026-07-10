@@ -32,7 +32,7 @@ func intPtr(i int) *int { return &i }
 // multirailSriovConfig returns a simple sriov config with 2 east-west PFs for testing.
 func multirailSriovConfig() (*config.LaunchKitConfig, *config.ClusterConfig) {
 	cfg := &config.LaunchKitConfig{
-		PodNamespace: "gpu-workloads",
+		NetworkNamespaces: []string{"gpu-workloads"},
 		Profile: &config.Profile{
 			Fabric:     "ethernet",
 			Deployment: "sriov",
