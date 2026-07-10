@@ -2,6 +2,41 @@ This quick start guide covers five essential networking configurations for
 different computational requirements. See :doc:`maintenance` when sizing node
 disruption and upgrade concurrency for larger clusters.
 
+Discovery and profile resolution
+--------------------------------
+
+``l8k discover`` writes both the discovered hardware inventory and the final
+profile settings to ``cluster-config.yaml``. Missing profile fields are filled
+from hardware and built-in defaults, existing values from ``--user-config``
+are preserved, and explicit CLI flags take precedence over both.
+
+.. code-block:: bash
+
+   l8k discover --kubeconfig ~/.kube/config \
+     --save-cluster-config ./cluster-config.yaml
+
+   # The saved profile is sufficient; flags are optional overrides here.
+   l8k generate --user-config ./cluster-config.yaml \
+     --save-deployment-files ./deployment
+
+Discovery defaults ``deployment`` to ``sriov`` and ``multirail`` to ``true``.
+It derives ``fabric`` only when every discovered group reports the same
+confirmed link type. If the fabric cannot be confirmed, discovery still saves
+the config with an empty fabric so it can be supplied explicitly later.
+
+All profile flags accepted by ``generate`` are also accepted by ``discover``:
+``--fabric``, ``--deployment-type``, ``--multirail``, ``--spectrum-x``,
+``--multiplane-mode``, and ``--number-of-planes``. Explicit false is supported
+for both YAML (``multirail: false``) and CLI (``--multirail=false``) and remains
+stable when discovery rewrites the file.
+
+.. code-block:: bash
+
+   l8k discover --user-config ./cluster-config.yaml \
+     --kubeconfig ~/.kube/config \
+     --fabric infiniband --deployment-type rdma_shared \
+     --multirail=false
+
 .. toctree::
    :hidden:
    :maxdepth: 1

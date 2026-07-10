@@ -279,9 +279,11 @@ spectrumX:
 # ============================================================================
 # Profile Selection
 # Determines which manifest templates are rendered.
+# `l8k discover` fills missing values, preserves values already in
+# --user-config, applies explicit CLI overrides, and writes the final block.
 # ============================================================================
 profile:
-  # string | default: "ethernet"
+  # string | default: unanimous discovered linkType (when confirmed)
   # Fabric type: "ethernet" or "infiniband".
   # Selects Ethernet-based or InfiniBand-based profile templates.
   fabric: ethernet
@@ -291,9 +293,10 @@ profile:
   # Determines how NICs are exposed to pods.
   deployment: sriov
 
-  # bool | default: false
+  # bool | default: true when the key is absent
   # Enable multirail mode. When true, generates per-rail resources
-  # (one resource/network per physical function).
+  # (one resource/network per physical function). An explicit false is
+  # preserved across discover/generate round trips.
   multirail: false
 
   spectrumX:
@@ -310,14 +313,15 @@ profile:
     # value of --spectrum-x on the CLI.
     spcxVersion: "RA2.2"
 
-    # string | default: "swplb"
+    # string | default: derived from east-west NIC device ID
     # Multiplane mode: "none", "swplb" (software PLB), "hwplb" (hardware PLB),
-    # "uniplane". CLI: --multiplane-mode (mandatory under --spectrum-x).
+    # "uniplane". When Spectrum-X is enabled and this is absent, discovery
+    # derives it from the east-west NIC device ID.
     multiplaneMode: swplb
 
-    # int | default: 4
+    # int | default: derived from east-west NIC device ID
     # Number of network planes (1, 2, or 4). Also used as pfsPerNic for
-    # Spectrum-X. CLI: --number-of-planes (mandatory under --spectrum-x).
+    # Spectrum-X. When absent, discovery derives it with multiplaneMode.
     numberOfPlanes: 4
 
 # ============================================================================

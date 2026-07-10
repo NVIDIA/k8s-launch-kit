@@ -16,9 +16,12 @@ Generate Kubernetes YAML manifests for NVIDIA networking from a cluster config a
 ## Usage
 
 ```bash
-l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> \
+l8k generate --user-config <CONFIG> \
   --save-deployment-files <OUTPUT_DIR>
 ```
+
+Configs produced by `l8k discover` already contain the resolved profile.
+Profile flags remain available as generation-time overrides.
 
 ## Profile Selection Flags
 
@@ -29,7 +32,7 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> \
 | `--spectrum-x` | — | `RA2.1`, `RA2.2` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
 | `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb`, `uniplane` | Auto-defaults from east-west PF deviceID: CX7 / BF3 SuperNIC → `uniplane`, CX8 → `swplb`, CX9 → `hwplb`. Skipped+warned when groups have mixed deviceIDs. |
 | `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4` | Auto-defaults from deviceID: CX7 / BF3 → 1, CX8 → 2, CX9 → 4. |
-| `--multirail` | Auto-defaulted | — | Auto-defaults to `true`. Opt out with `--multirail=false` — YAML cannot express explicit-false (a bool zero in config is indistinguishable from "not set"). |
+| `--multirail` | Auto-defaulted | — | Auto-defaults to `true`. Explicit `multirail: false` in YAML and `--multirail=false` on the CLI are both preserved. |
 | `--save-deployment-files` | Yes | — | Output directory for generated YAMLs |
 | `--groups` | — | `dgx-b200-nvidia-h100-nvl,poweredge-xe9680-nvidia-h200` | Restrict output to the named source groups (comma-separated). Mutually exclusive with `--gpu-type`. |
 | `--gpu-type` | — | `NVIDIA-H200` | Restrict output to source groups whose `gpuType` matches (case-insensitive). Mutually exclusive with `--groups`. |
@@ -78,7 +81,7 @@ l8k generate --user-config cluster-config.yaml \
 
 ## Choosing `l8k discover` vs `--for`
 
-- **`l8k discover` then `l8k generate`** — default flow. Run discovery against a live cluster to learn machine type, GPU type, and NIC topology, then generate from the resulting `cluster-config.yaml`.
+- **`l8k discover` then `l8k generate`** — default flow. Discovery learns the hardware and persists the resolved profile, so generation needs only the resulting `cluster-config.yaml` unless an override is desired.
 - **`l8k generate --for <preset>`** — skip discovery entirely when the SKU is already known and there is a preset for it. Useful for ahead-of-time generation (CI scaffolding, lab runbooks, demos), or when you don't have `kubectl` access yet. Requires `--node-selector` to identify the target nodes at apply time.
 
 A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in its `topology.yaml`. All bundled presets do.
@@ -129,9 +132,12 @@ internal drainer uses `maintenance.maxUnavailable` through
 limits are effective for both flows; the legacy OFED and SR-IOV pool limits do
 not control requestor-mode concurrency.
 
-## Auto-Detecting Multirail
+## Reusing the Discovered Profile
 
-After discovery, check if any group in cluster-config.yaml has `railNumber > 0` in its `physicalFunctions`. If so, add `--multirail` to the generate command.
+`l8k discover` writes the final `profile.fabric`, `profile.deployment`,
+`profile.multirail`, and any enabled Spectrum-X settings to the config. Run
+`generate` without profile flags to reuse them; explicit generate flags still
+win when a one-off override is needed.
 
 ## Common Mistakes
 

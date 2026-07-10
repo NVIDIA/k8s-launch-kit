@@ -252,12 +252,8 @@ func TestConfigOnlyProfileResolution(t *testing.T) {
 	})
 
 	t.Run("config with explicit CLI --multirail=false rejects multirail-required profile", func(t *testing.T) {
-		// Unit 8: YAML cannot express "explicit multirail: false" — the
-		// bool zero value is indistinguishable from "not set", so
-		// `ApplyHardwareDefaults` flips it to true. To express explicit
-		// false, the user must pass `--multirail=false` on the CLI,
-		// which sets `Options.MultirailSet=true` and prevents the
-		// default from firing.
+		// CLI presence is tracked independently from YAML presence, so an
+		// explicit `--multirail=false` prevents the true default from firing.
 		cfgProfile := &config.Profile{
 			Fabric:     "ethernet",
 			Deployment: "sriov",
@@ -407,10 +403,8 @@ func TestMissingInvalidParams(t *testing.T) {
 	})
 
 	t.Run("explicit CLI --multirail=false fails multirail-required profile", func(t *testing.T) {
-		// See note in `TestConfigOnlyProfileResolution`: YAML cannot
-		// express "explicit multirail: false". To opt out of the
-		// always-on multirail default, the user must pass
-		// `--multirail=false` on the CLI (which sets `MultirailSet`).
+		// `--multirail=false` sets `MultirailSet`, so it remains an explicit
+		// override rather than being replaced by the true default.
 		cfgProfile := &config.Profile{
 			Fabric:     "ethernet",
 			Deployment: "sriov",

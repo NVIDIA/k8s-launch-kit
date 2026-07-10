@@ -117,6 +117,9 @@ Deploy a minimal Network Operator profile to automatically discover your cluster
 network capabilities and hardware configuration by using --discover-cluster-config.
 This phase can be skipped if you provide your own configuration file by using --user-config.
 This phase requires --kubeconfig to be specified.
+Discovery fills missing profile settings from the detected hardware and built-in
+defaults, applies explicit CLI overrides, and saves the final profile with the
+hardware inventory in cluster-config.yaml.
 
 ### Generate Deployment Files
 Based on the discovered or provided configuration,
@@ -202,8 +205,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			opts.EnableDocaDriver = &enableDocaDriver
 		}
 
-		// Apply Spectrum-X implied defaults (fabric, deployment, multirail)
-		if err := applySpectrumXSyntaxChecks(&opts); err != nil {
+		if err := validateProfileFlagValues(&opts); err != nil {
 			exitWithError(apperrors.NewValidationError(err.Error(), err, "Check --spectrum-x flag combinations"), opts.OutputFormat)
 		}
 
@@ -253,11 +255,11 @@ func init() {
 	// Phase 2: Deployment generation flags
 	rootCmd.Flags().StringVar(&fabric, "fabric", "", "Select the fabric type to deploy (infiniband, ethernet)")
 	rootCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Select the deployment type (sriov, rdma_shared, host_device)")
-	rootCmd.Flags().BoolVar(&multirail, "multirail", false, "Enable multirail deployment")
+	rootCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")
 	rootCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
 		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: %v",
 			config.SupportedSPCXVersions))
-	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: swplb, hwplb, uniplane (requires --spectrum-x)")
+	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)")
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
 	rootCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
 	rootCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
@@ -426,7 +428,21 @@ func validateConfig(options *options.Options) error {
 	return nil
 }
 
-// applySpectrumXSyntaxChecks is the Phase 1 enum/value validator. It
+// validateProfileFlagValues validates profile enums that can be supplied to
+// discover, generate, or the root pipeline before any cluster-side work.
+// Partial profiles are valid because the resolution phase fills missing
+// values from discovered hardware.
+func validateProfileFlagValues(opts *options.Options) error {
+	if opts.Fabric != "" && !slices.Contains([]string{"infiniband", "ethernet"}, opts.Fabric) {
+		return fmt.Errorf("--fabric must be one of: infiniband, ethernet")
+	}
+	if opts.DeploymentType != "" && !slices.Contains([]string{"sriov", "rdma_shared", "host_device"}, opts.DeploymentType) {
+		return fmt.Errorf("--deployment-type must be one of: sriov, rdma_shared, host_device")
+	}
+	return applySpectrumXSyntaxChecks(opts)
+}
+
+// applySpectrumXSyntaxChecks is the Phase 1 Spectrum-X enum/value validator. It
 // runs in PreRunE BEFORE LoadFullConfig + ApplyHardwareDefaults, so it
 // catches obvious typos (e.g. `--multiplane-mode bogus`) up-front
 // without false positives from values that defaults are about to fill.

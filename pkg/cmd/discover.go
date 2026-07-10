@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/app"
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
@@ -41,7 +42,8 @@ and its CRDs are created in a dedicated namespace, used to publish
 NicDevice CRs, and torn down when discovery finishes.
 
 Discovery groups nodes by hardware, detects east-west vs north-south
-NICs, and probes OFED-dependent modules.`,
+NICs, probes OFED-dependent modules, resolves missing profile settings,
+and writes the final profile back to cluster-config.yaml.`,
 	Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
@@ -53,6 +55,12 @@ NICs, and probes OFED-dependent modules.`,
   l8k discover --user-config my-config.yaml \
     --save-cluster-config ./cluster-config.yaml
 
+  # Override settings before they are persisted
+  l8k discover --kubeconfig ~/.kube/config \
+    --fabric infiniband --deployment-type rdma_shared \
+    --multirail=false \
+    --save-cluster-config ./cluster-config.yaml
+
   # Keep the bootstrap namespace for debugging
   l8k discover --kubeconfig ~/.kube/config \
     --keep-namespace \
@@ -60,7 +68,7 @@ NICs, and probes OFED-dependent modules.`,
 
   # Agent mode (JSON output)
   l8k discover --save-cluster-config ./cluster-config.yaml \
-    --output json --yes 2>/dev/null`,
+    --output json 2>/dev/null`,
 	Run: func(cmd *cobra.Command, args []string) {
 		resolved, err := resolveKubeconfig(kubeconfig)
 		if err != nil {
@@ -72,22 +80,35 @@ NICs, and probes OFED-dependent modules.`,
 		}
 
 		opts := options.Options{
-			ConfigDir:               configDir,
-			DiscoverClusterConfig:   true,
-			DiscoverOnly:            true,
-			Kubeconfig:              resolved,
-			UserConfig:              userConfig,
-			SaveClusterConfig:       saveClusterConfig,
+			ConfigDir:                configDir,
+			DiscoverClusterConfig:    true,
+			DiscoverOnly:             true,
+			Kubeconfig:               resolved,
+			UserConfig:               userConfig,
+			SaveClusterConfig:        saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
+			Fabric:                   fabric,
+			DeploymentType:           deploymentType,
+			Multirail:                multirail,
+			MultirailSet:             cmd.Flag("multirail").Changed,
+			SpectrumX:                spectrumXVersion != "",
+			SPCXVersion:              spectrumXVersion,
+			MultiplaneMode:           multiplaneMode,
+			NumberOfPlanes:           numberOfPlanes,
 			KeepNamespace:            keepNamespace,
 			CollapseNicRails:         collapseNicRails,
-			NodeSelector:            nodeSelector,
-			ImagePullSecrets:        imagePullSecrets,
+			NodeSelector:             nodeSelector,
+			ImagePullSecrets:         imagePullSecrets,
 			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
 			OutputFormat:             outputFormat,
 			Yes:                      yesFlag,
 			Quiet:                    quietFlag,
+		}
+
+		if err := validateProfileFlagValues(&opts); err != nil {
+			exitWithError(apperrors.NewValidationError(
+				err.Error(), err, "Check profile selection flags"), opts.OutputFormat)
 		}
 
 		launcher := app.New(opts)
@@ -117,6 +138,17 @@ func init() {
 	discoverCmd.Flags().BoolVar(&keepNamespace, "keep-namespace", false, "Skip teardown of the nvidia-k8s-launch-kit namespace (for debugging)")
 	discoverCmd.Flags().BoolVar(&collapseNicRails, "collapse-nic-rails", true, collapseNicRailsFlagHelp)
 
+	// Profile settings are resolved after hardware discovery and persisted in
+	// cluster-config.yaml. Explicit flags override values from --user-config.
+	discoverCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type override: ethernet, infiniband")
+	discoverCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Deployment type override: sriov, rdma_shared, host_device")
+	discoverCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")
+	discoverCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
+		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version. Supported: %v",
+			config.SupportedSPCXVersions))
+	discoverCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode override: none, swplb, hwplb, uniplane (requires --spectrum-x)")
+	discoverCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Spectrum-X plane count override: 1, 2, or 4 (requires --spectrum-x)")
+
 	setFlagGroup(discoverCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(discoverCmd, "user-config", GroupCommon)
 	setFlagGroup(discoverCmd, "network-operator-namespace", GroupCommon)
@@ -127,4 +159,10 @@ func init() {
 	setFlagGroup(discoverCmd, "save-cluster-config", GroupDiscovery)
 	setFlagGroup(discoverCmd, "keep-namespace", GroupDiscovery)
 	setFlagGroup(discoverCmd, "collapse-nic-rails", GroupDiscovery)
+	setFlagGroup(discoverCmd, "fabric", GroupProfile)
+	setFlagGroup(discoverCmd, "deployment-type", GroupProfile)
+	setFlagGroup(discoverCmd, "multirail", GroupProfile)
+	setFlagGroup(discoverCmd, "spectrum-x", GroupProfile)
+	setFlagGroup(discoverCmd, "multiplane-mode", GroupSpectrumX)
+	setFlagGroup(discoverCmd, "number-of-planes", GroupSpectrumX)
 }

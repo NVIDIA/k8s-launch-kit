@@ -61,7 +61,8 @@ type Options struct {
 	// `pkg/resolve.ApplyHardwareDefaults` defaults Multirail to true:
 	// `ApplyOptionsToConfig` only overrides the HW default when
 	// MultirailSet is true, so a user passing `--multirail=false`
-	// correctly opts out.
+	// correctly opts out. YAML presence is tracked separately by
+	// `config.Profile.MultirailSet`.
 	MultirailSet bool
 	SpectrumX    bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
 	SPCXVersion         string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
