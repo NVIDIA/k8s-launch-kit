@@ -35,6 +35,17 @@ import (
 // unparseable, cfg is marshaled without transplanted comments (banner still
 // applied). Output uses 2-space indentation to match l8k's config style.
 func MarshalConfigWithComments(cfg *LaunchKitConfig, srcYAML []byte, banner string) ([]byte, error) {
+	return marshalConfigWithComments(cfg, srcYAML, banner, true)
+}
+
+// MarshalConfigPreservingComments marshals cfg while retaining comments from
+// every matching source key, including clusterConfig. It is intended for
+// in-place updates where the hardware inventory is not being regenerated.
+func MarshalConfigPreservingComments(cfg *LaunchKitConfig, srcYAML []byte, banner string) ([]byte, error) {
+	return marshalConfigWithComments(cfg, srcYAML, banner, false)
+}
+
+func marshalConfigWithComments(cfg *LaunchKitConfig, srcYAML []byte, banner string, skipClusterConfig bool) ([]byte, error) {
 	// Render cfg to a fresh node tree via a marshal/unmarshal round-trip.
 	raw, err := yaml3.Marshal(cfg)
 	if err != nil {
@@ -49,7 +60,7 @@ func MarshalConfigWithComments(cfg *LaunchKitConfig, srcYAML []byte, banner stri
 	if len(bytes.TrimSpace(srcYAML)) > 0 {
 		// Best-effort: a malformed source just means no comments to transplant.
 		if err := yaml3.Unmarshal(srcYAML, &src); err == nil {
-			transplantComments(&src, &dst)
+			transplantComments(&src, &dst, skipClusterConfig)
 		}
 	}
 
@@ -70,9 +81,9 @@ func MarshalConfigWithComments(cfg *LaunchKitConfig, srcYAML []byte, banner stri
 }
 
 // transplantComments recursively copies comments from src onto dst for nodes
-// that correspond (matching mapping keys). The top-level "clusterConfig" key is
-// skipped since discovery regenerates that section.
-func transplantComments(src, dst *yaml3.Node) {
+// that correspond (matching mapping keys). When skipClusterConfig is true, the
+// top-level clusterConfig key is skipped because discovery regenerates it.
+func transplantComments(src, dst *yaml3.Node, skipClusterConfig bool) {
 	if src == nil || dst == nil {
 		return
 	}
@@ -81,7 +92,7 @@ func transplantComments(src, dst *yaml3.Node) {
 	case src.Kind == yaml3.DocumentNode && dst.Kind == yaml3.DocumentNode:
 		copyComments(src, dst)
 		if len(src.Content) > 0 && len(dst.Content) > 0 {
-			transplantComments(src.Content[0], dst.Content[0])
+			transplantComments(src.Content[0], dst.Content[0], skipClusterConfig)
 		}
 
 	case src.Kind == yaml3.MappingNode && dst.Kind == yaml3.MappingNode:
@@ -95,7 +106,7 @@ func transplantComments(src, dst *yaml3.Node) {
 		for i := 0; i+1 < len(dst.Content); i += 2 {
 			dk := dst.Content[i]
 			dv := dst.Content[i+1]
-			if dk.Value == "clusterConfig" {
+			if skipClusterConfig && dk.Value == "clusterConfig" {
 				continue
 			}
 			sk, ok := srcKeyNode[dk.Value]
@@ -103,12 +114,24 @@ func transplantComments(src, dst *yaml3.Node) {
 				continue
 			}
 			copyComments(sk, dk)
-			transplantComments(srcValNode[dk.Value], dv)
+			transplantComments(srcValNode[dk.Value], dv, skipClusterConfig)
+		}
+
+	case src.Kind == yaml3.SequenceNode && dst.Kind == yaml3.SequenceNode:
+		copyComments(src, dst)
+		// Discovery historically treats sequences as regenerated values. An
+		// in-place write-back keeps their order, so index matching preserves
+		// comments within clusterConfig entries and other lists.
+		if !skipClusterConfig {
+			limit := min(len(src.Content), len(dst.Content))
+			for i := 0; i < limit; i++ {
+				transplantComments(src.Content[i], dst.Content[i], skipClusterConfig)
+			}
 		}
 
 	default:
-		// Scalars (and sequences we don't recurse into): copy the node's own
-		// comments, e.g. an inline `value # note`. Only when the shapes line up
+		// Scalars: copy the node's own comments, e.g. an inline `value # note`.
+		// Only when the shapes line up
 		// — a value-kind mismatch (e.g. source section is a mapping but cfg
 		// marshaled it as a scalar) means there are no value-level comments
 		// worth moving. Section doc comments live on the key nodes and are

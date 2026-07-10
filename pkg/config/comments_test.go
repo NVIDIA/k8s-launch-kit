@@ -38,7 +38,7 @@ nvIpam:
   reserveFirstIPs: 10
 rdmaShared:
   resourceName: rdma_shared_resource # inline note about suffixes
-clusterConfig:
+clusterConfig: # inventory section comment
   - identifier: example   # this comment must NOT be carried over
 `
 	cfg := &LaunchKitConfig{
@@ -74,6 +74,7 @@ clusterConfig:
 	})
 	t.Run("clusterConfig comments are NOT carried over", func(t *testing.T) {
 		assert.NotContains(t, got, "must NOT be carried over")
+		assert.NotContains(t, got, "inventory section comment")
 	})
 	t.Run("discovered values win over source values", func(t *testing.T) {
 		assert.Contains(t, got, "identifier: discovered-group")
@@ -95,6 +96,13 @@ clusterConfig:
 		require.NoError(t, err)
 		assert.Contains(t, string(out), "# banner only")
 		assert.Contains(t, string(out), "poolName: nv-ipam-pool")
+	})
+
+	t.Run("in-place write-back preserves clusterConfig comments", func(t *testing.T) {
+		out, err := MarshalConfigPreservingComments(cfg, []byte(src), "")
+		require.NoError(t, err)
+		assert.Contains(t, string(out), "# top of file banner from source")
+		assert.Contains(t, string(out), "# inventory section comment")
 	})
 }
 

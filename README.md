@@ -23,6 +23,8 @@ skills, which wrap the deterministic CLI commands.
 
 ### Generate Deployment Files
 Based on the discovered/provided configuration, generate a complete set of YAML deployment files tailored to your selected network profile.
+When generation uses a file-backed config, resolved defaults and CLI overrides
+are written back to that same file while its comments are preserved.
 
 ## Installation
 
@@ -465,6 +467,10 @@ l8k generate --user-config ./config.yaml \
     --fabric ethernet --deployment-type sriov --multirail \
     --save-deployment-files ./deployments
 ```
+
+After successful profile resolution, `generate` rewrites the source config with
+the final defaults and explicit CLI overrides before rendering manifests. The
+embedded config used by `--for` when no file is selected is not written.
 
 ### Generate Deployment Files for a Specific Node Group
 

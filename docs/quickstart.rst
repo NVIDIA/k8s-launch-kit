@@ -19,6 +19,10 @@ are preserved, and explicit CLI flags take precedence over both.
    l8k generate --user-config ./cluster-config.yaml \
      --save-deployment-files ./deployment
 
+When ``generate`` uses a file-backed config, it writes resolved defaults and
+explicit CLI overrides back to that same file before rendering manifests.
+Comments in the original YAML are preserved.
+
 Discovery defaults ``deployment`` to ``sriov`` and ``multirail`` to ``true``.
 It derives ``fabric`` only when every discovered group reports the same
 confirmed link type. If the fabric cannot be confirmed, discovery still saves

@@ -492,38 +492,47 @@ func AggregateCapabilities(groups []ClusterConfig) *ClusterCapabilities {
 // that does not exist remains an error (a typo'd --user-config should NOT
 // silently fall back to defaults).
 func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKitConfig, error) {
+	cfg, _, err := LoadFullConfigWithSource(configPath, logger)
+	return cfg, err
+}
+
+// LoadFullConfigWithSource loads and normalizes the same configuration as
+// LoadFullConfig and also returns the exact YAML bytes that were parsed. The
+// source snapshot lets in-place writers preserve comments without reading the
+// file a second time.
+func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKitConfig, []byte, error) {
 	if configPath == "" {
 		logger.Info("Loading embedded default l8k-config (no path provided)")
 		cfg, err := DefaultLaunchKitConfig()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		// emitPresetDeviationWarnings is a no-op for defaults (no
 		// ClusterConfig entries yet) but kept for shape parity.
 		emitPresetDeviationWarnings(cfg, logger)
-		return cfg, nil
+		return cfg, DefaultConfigYAML(), nil
 	}
 
 	logger.Info("Loading cluster configuration", "path", configPath)
 
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("cluster config file does not exist: %s", configPath)
+		return nil, nil, fmt.Errorf("cluster config file does not exist: %s", configPath)
 	}
 
 	// Read the configuration file
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read cluster config file %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("failed to read cluster config file %s: %w", configPath, err)
 	}
 
 	// Parse the YAML configuration
 	var config LaunchKitConfig
 	if err := yaml.Unmarshal(configData, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse cluster config YAML %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("failed to parse cluster config YAML %s: %w", configPath, err)
 	}
 	if err := NormalizeMaintenance(&config); err != nil {
-		return nil, fmt.Errorf("invalid maintenance config in %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("invalid maintenance config in %s: %w", configPath, err)
 	}
 
 	logger.Info("Cluster configuration loaded successfully",
@@ -531,22 +540,23 @@ func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKitConfig, er
 		"namespace", config.NetworkOperator.Namespace)
 
 	if err := validateNvIpam(config.NvIpam); err != nil {
-		return nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
 	}
 
 	// Finalize exclusions for explicitly-listed (manual) subnets. Auto-generated
-	// subnets are finalized in the render path after GenerateSubnets. l8k never
-	// rewrites nvIpam back to disk, so this runs exactly once per load.
+	// subnets are finalized in the render path after GenerateSubnets. Config
+	// write-back restores the source nvIpam form, so exclusions are applied once
+	// per load without accumulating in the file.
 	if config.NvIpam != nil && len(config.NvIpam.Subnets) > 0 {
 		if err := ApplyReservedExclusions(
 			config.NvIpam.Subnets, config.NvIpam.ReserveFirstIPs, config.NvIpam.ReserveLastIPs); err != nil {
-			return nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
+			return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
 		}
 	}
 
 	emitPresetDeviationWarnings(&config, logger)
 
-	return &config, nil
+	return &config, configData, nil
 }
 
 // emitPresetDeviationWarnings logs a warning for every group whose config

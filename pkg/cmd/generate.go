@@ -45,6 +45,7 @@ var generateCmd = &cobra.Command{
 from a cluster configuration file.
 
 Supports SR-IOV, host-device, RDMA-shared, IPoIB, MacVLAN, and Spectrum-X profiles.
+File-backed configs are rewritten with resolved defaults and CLI overrides.
 Optionally deploy the generated manifests with --deploy.`,
 	Example: `  # SR-IOV Ethernet (most common for GPU clusters)
   l8k generate --user-config cluster-config.yaml \

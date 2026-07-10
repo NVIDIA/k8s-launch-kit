@@ -26,14 +26,21 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
+	"gopkg.in/yaml.v2"
 )
 
 // executeGeneration handles the profile selection and manifest generation phase.
 // Returns nil if no profile is configured and generation is skipped.
 func (l *Launcher) executeGeneration(configPath string) error {
-	fullConfig, err := config.LoadFullConfig(configPath, l.logger)
+	fullConfig, srcConfigYAML, err := config.LoadFullConfigWithSource(configPath, l.logger)
 	if err != nil {
 		return fmt.Errorf("failed to load full config: %w", err)
+	}
+	var srcConfig config.LaunchKitConfig
+	if configPath != "" {
+		if err := yaml.Unmarshal(srcConfigYAML, &srcConfig); err != nil {
+			return fmt.Errorf("failed to parse source config %s for write-back: %w", configPath, err)
+		}
 	}
 
 	// Validate `--groups` / `--gpu-type` against the loaded config before
@@ -108,6 +115,14 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		)
 	}
 
+	// Persist the exact config used for generation: hardware defaults fill
+	// missing fields, existing YAML values survive, and explicit CLI options
+	// win. Do this before --for substitutes a synthetic clusterConfig so only
+	// the resolved settings—not preset-only topology—are written back.
+	if err := l.saveResolvedConfig(configPath, fullConfig, srcConfig, srcConfigYAML); err != nil {
+		return err
+	}
+
 	// --for: replace clusterConfig with a synthesized group from a preset.
 	// This is the explicit ahead-of-time generation path that skips live
 	// discovery in favor of a static preset description. The CLI layer has
@@ -170,6 +185,41 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	warnThirdPartyRDMAModules(fullConfig, "generate", l.ui)
 	warnStorageModules(fullConfig, "generate", l.ui)
 
+	return nil
+}
+
+func (l *Launcher) saveResolvedConfig(
+	configPath string,
+	fullConfig *config.LaunchKitConfig,
+	srcConfig config.LaunchKitConfig,
+	srcConfigYAML []byte,
+) error {
+	if configPath == "" {
+		return nil
+	}
+
+	writeBackConfig := *fullConfig
+	// LoadFullConfig materializes maintenance defaults and computed NV-IPAM
+	// reserve exclusions for rendering. Those are not profile/CLI resolution,
+	// so keep their original YAML forms rather than accumulating derived state
+	// every time generate rewrites the file.
+	writeBackConfig.Maintenance = srcConfig.Maintenance
+	writeBackConfig.NvIpam = srcConfig.NvIpam
+
+	data, err := config.MarshalConfigPreservingComments(&writeBackConfig, srcConfigYAML, "")
+	if err != nil {
+		return fmt.Errorf("failed to marshal resolved config: %w", err)
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat source config %s before write-back: %w", configPath, err)
+	}
+	if err := os.WriteFile(configPath, data, info.Mode().Perm()); err != nil {
+		return fmt.Errorf("failed to write resolved config to %s: %w", configPath, err)
+	}
+
+	l.ui.Success("Resolved configuration saved: %s", configPath)
+	l.logger.Info("Resolved generation config saved", "path", configPath)
 	return nil
 }
 
