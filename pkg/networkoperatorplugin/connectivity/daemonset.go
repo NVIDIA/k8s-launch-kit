@@ -56,7 +56,7 @@ type DaemonSetRef struct {
 // per file. Multi-doc YAMLs are walked; non-DaemonSet docs are skipped
 // (the file pattern is descriptive, not enforced, so we tolerate a
 // ConfigMap or two beside the DS).
-func LoadExampleDaemonSets(manifestDir string) ([]*unstructured.Unstructured, []DaemonSetRef, error) {
+func LoadExampleDaemonSets(manifestDir string, includeICMP bool) ([]*unstructured.Unstructured, []DaemonSetRef, error) {
 	entries, err := os.ReadDir(manifestDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read manifest dir %s: %w", manifestDir, err)
@@ -95,7 +95,9 @@ func LoadExampleDaemonSets(manifestDir string) ([]*unstructured.Unstructured, []
 					obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
 				}
 			}
-			ensureICMPContainer(obj)
+			if includeICMP {
+				ensureICMPContainer(obj)
+			}
 			rdmaContainer, icmpContainer := testContainerNames(obj)
 			objs = append(objs, obj)
 			refs = append(refs, DaemonSetRef{

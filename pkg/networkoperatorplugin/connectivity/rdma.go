@@ -41,7 +41,12 @@ const rdmaServerSettleDelay = 2 * time.Second
 // Options.Timeout.
 const rdmaTestTimeout = 90 * time.Second
 
-const rpingBatchResultMarker = "__L8K_RPING_RESULT__"
+const (
+	rpingBatchResultMarker     = "__L8K_RPING_RESULT__"
+	rdmaBatchRouteResultMarker = "__L8K_ROUTE_RESULT__"
+	rdmaBatchRouteEndMarker    = "__L8K_ROUTE_END__"
+	rdmaBatchRouteFailCode     = 201
+)
 
 const (
 	ibWriteBwBatchResultMarker = "__L8K_IBWRITEBW_RESULT__"
@@ -288,9 +293,25 @@ func runRPingBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod,
 	clientCmd := rpingBatchClientCommand(tests, iterations)
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, first.SrcPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	rcByIndex := parseRPingBatchResults(cliRes.Stdout)
+	routeByIndex := parseRDMABatchRouteResults(cliRes.Stdout, tests)
 	for i := range results {
 		results[i].Stdout = cliRes.Stdout
 		results[i].Stderr = cliRes.Stderr
+		if results[i].Expectation == ExpectRequired {
+			route, ok := routeByIndex[i]
+			if !ok {
+				err := fmt.Errorf("rping batch missing source-route check for test %d", i)
+				finalizeExpectedResult(&results[i], false, err)
+				continue
+			}
+			results[i].Route = route
+			if routeMismatch(route, tests[i]) {
+				err := fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
+					route.Dev, tests[i].SrcIface, route.Output)
+				finalizeExpectedResult(&results[i], false, err)
+				continue
+			}
+		}
 		rc, ok := rcByIndex[i]
 		if !ok {
 			err := cliErr
@@ -355,8 +376,12 @@ func rpingBatchClientCommand(tests []PingTest, iterations int) string {
 		if timeoutSeconds <= 0 {
 			timeoutSeconds = 1
 		}
+		appendRDMABatchRouteGuard(&b, i, test,
+			fmt.Sprintf("echo %s %d %d", rpingBatchResultMarker, i, rdmaBatchRouteFailCode))
 		fmt.Fprintf(&b,
-			"run_with_timeout %d rping -c -I %s -a %s -p 9999 -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; echo %s %d $rc; ",
+			`if [ "$route_ok" = "1" ]; then `+
+				"run_with_timeout %d rping -c -I %s -a %s -p 9999 -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; echo %s %d $rc; "+
+				`fi; `,
 			timeoutSeconds, shellArg(test.SrcIP), shellArg(test.DstIP), iterations, i, i, rpingBatchResultMarker, i)
 	}
 	b.WriteString("exit 0")
@@ -376,6 +401,80 @@ func parseRPingBatchResults(stdout string) map[int]int {
 			continue
 		}
 		out[idx] = rc
+	}
+	return out
+}
+
+func appendRDMABatchRouteGuard(b *strings.Builder, index int, test PingTest, failCommand string) {
+	b.WriteString("route_ok=1; ")
+	if test.Expectation != ExpectRequired {
+		return
+	}
+	routeFile := fmt.Sprintf("/tmp/l8k-route-%d.out", index)
+	fmt.Fprintf(b,
+		`route_file=%s; ipcmd=""; for p in ip /sbin/ip /usr/sbin/ip /bin/ip /usr/bin/ip; do `+
+			`if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then ipcmd="$p"; break; fi; `+
+			`done; `+
+			`if [ -z "$ipcmd" ]; then echo %s >"$route_file"; route_rc=127; `+
+			`else "$ipcmd" -o route get %s from %s >"$route_file" 2>&1; route_rc=$?; fi; `+
+			`route_dev=$(sed -n 's/.* dev \([^ ]*\).*/\1/p' "$route_file" | head -n1); `+
+			`echo %s %d $route_rc; cat "$route_file" 2>/dev/null; echo %s %d; `+
+			`if [ "$route_rc" != "0" ] || [ "$route_dev" != %s ]; then route_ok=0; %s; fi; `,
+		shellArg(routeFile), shellArg(routeSkipMarker), shellArg(test.DstIP), shellArg(test.SrcIP),
+		rdmaBatchRouteResultMarker, index, rdmaBatchRouteEndMarker, index, shellArg(test.SrcIface), failCommand)
+}
+
+func parseRDMABatchRouteResults(stdout string, tests []PingTest) map[int]RouteCheck {
+	out := map[int]RouteCheck{}
+	var current *int
+	var b strings.Builder
+	rcByIndex := map[int]int{}
+	for _, line := range strings.Split(stdout, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 3 && fields[0] == rdmaBatchRouteResultMarker {
+			idx, idxErr := strconv.Atoi(fields[1])
+			rc, rcErr := strconv.Atoi(fields[2])
+			if idxErr != nil || rcErr != nil {
+				current = nil
+				b.Reset()
+				continue
+			}
+			current = &idx
+			rcByIndex[idx] = rc
+			b.Reset()
+			continue
+		}
+		if len(fields) == 2 && fields[0] == rdmaBatchRouteEndMarker {
+			idx, err := strconv.Atoi(fields[1])
+			if err == nil && current != nil && idx == *current {
+				output := strings.TrimSpace(b.String())
+				route := RouteCheck{
+					Output: output,
+					OK:     rcByIndex[idx] == 0,
+				}
+				if idx >= 0 && idx < len(tests) {
+					route.Command = fmt.Sprintf("ip -o route get %s from %s", tests[idx].DstIP, tests[idx].SrcIP)
+				}
+				if strings.Contains(output, routeSkipMarker) {
+					route.Err = "ip command not found in validation container"
+					route.OK = false
+				}
+				if m := routeDevRe.FindStringSubmatch(output); len(m) == 2 {
+					route.Dev = m[1]
+				}
+				if route.Dev == "" {
+					route.OK = false
+				}
+				out[idx] = route
+			}
+			current = nil
+			b.Reset()
+			continue
+		}
+		if current != nil {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
 	}
 	return out
 }
@@ -541,10 +640,26 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 	clientCmd := ibWriteBwBatchClientCommand(tests, size)
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, first.SrcPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	parsed := parseIbWriteBwBatchResults(cliRes.Stdout)
+	routeByIndex := parseRDMABatchRouteResults(cliRes.Stdout, tests)
 	for i := range results {
 		results[i].Stderr = cliRes.Stderr
 		if results[i].Err != nil {
 			continue
+		}
+		if results[i].Expectation == ExpectRequired {
+			route, ok := routeByIndex[i]
+			if !ok {
+				err := fmt.Errorf("ib_write_bw batch missing source-route check for test %d", i)
+				finalizeExpectedResult(&results[i], false, err)
+				continue
+			}
+			results[i].Route = route
+			if routeMismatch(route, tests[i]) {
+				err := fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
+					route.Dev, tests[i].SrcIface, route.Output)
+				finalizeExpectedResult(&results[i], false, err)
+				continue
+			}
 		}
 		cell, ok := parsed[i]
 		if !ok {
@@ -598,8 +713,12 @@ func ibWriteBwBatchClientCommand(tests []PingTest, size int) string {
 		}
 		outFile := fmt.Sprintf("/tmp/l8k-ibwritebw-client-%d.out", i)
 		errFile := fmt.Sprintf("/tmp/l8k-ibwritebw-client-%d.err", i)
+		appendRDMABatchRouteGuard(&b, i, test,
+			fmt.Sprintf("echo %s %d %d; echo %s %d", ibWriteBwBatchResultMarker, i, rdmaBatchRouteFailCode, ibWriteBwBatchEndMarker, i))
 		fmt.Fprintf(&b,
-			"run_with_timeout %d ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s %s >%s 2>%s; rc=$?; echo %s %d $rc; cat %s 2>/dev/null; echo %s %d; ",
+			`if [ "$route_ok" = "1" ]; then `+
+				"run_with_timeout %d ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s %s >%s 2>%s; rc=$?; echo %s %d $rc; cat %s 2>/dev/null; echo %s %d; "+
+				`fi; `,
 			timeoutSeconds, shellArg(test.SrcRDMADev), size, ibWriteBwBatchPort(i), shellArg(test.SrcIP), shellArg(test.DstIP),
 			outFile, errFile, ibWriteBwBatchResultMarker, i, outFile, ibWriteBwBatchEndMarker, i)
 	}

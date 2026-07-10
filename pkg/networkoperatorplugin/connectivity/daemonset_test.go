@@ -62,7 +62,7 @@ func writeExampleDS(t *testing.T) string {
 // its namespace baked in), so validate fans out across them automatically
 // without any namespace flag of its own.
 func TestLoadExampleDaemonSetsUsesManifestNamespace(t *testing.T) {
-	objs, refs, err := LoadExampleDaemonSets(writeExampleDS(t))
+	objs, refs, err := LoadExampleDaemonSets(writeExampleDS(t), true)
 	require.NoError(t, err)
 	require.Len(t, objs, 1)
 	require.Len(t, refs, 1)
@@ -74,4 +74,17 @@ func TestLoadExampleDaemonSetsUsesManifestNamespace(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, containers, 2)
+}
+
+func TestLoadExampleDaemonSetsSkipsICMPSidecarWhenDisabled(t *testing.T) {
+	objs, refs, err := LoadExampleDaemonSets(writeExampleDS(t), false)
+	require.NoError(t, err)
+	require.Len(t, objs, 1)
+	require.Len(t, refs, 1)
+	require.Equal(t, "test-container", refs[0].RDMAContainer)
+	require.Equal(t, "test-container", refs[0].ICMPContainer)
+	containers, ok, err := unstructured.NestedSlice(objs[0].Object, "spec", "template", "spec", "containers")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, containers, 1)
 }

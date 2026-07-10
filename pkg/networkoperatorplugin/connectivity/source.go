@@ -114,7 +114,7 @@ func routeMatchesSourceInterface(route RouteCheck, test PingTest) bool {
 }
 
 func routeMismatch(route RouteCheck, test PingTest) bool {
-	return route.OK && !routeMatchesSourceInterface(route, test)
+	return !routeMatchesSourceInterface(route, test)
 }
 
 func finalizeExpectedResult(r *PingResult, observedOK bool, observedErr error) {
