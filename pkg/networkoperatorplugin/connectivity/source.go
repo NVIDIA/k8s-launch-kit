@@ -51,7 +51,10 @@ func shellWithTimeout(command string, timeout time.Duration) string {
 		seconds = 1
 	}
 	return fmt.Sprintf(
-		`%s & pid=$!; (`+
+		`if command -v timeout >/dev/null 2>&1; then `+
+			`timeout -s TERM -k 2 %d sh -c %s; `+
+			`else `+
+			`%s & pid=$!; (`+
 			`sleep %d; `+
 			`kill -TERM "$pid" 2>/dev/null; `+
 			`sleep 2; `+
@@ -60,8 +63,9 @@ func shellWithTimeout(command string, timeout time.Duration) string {
 			`wait "$pid"; rc=$?; `+
 			`kill "$watchdog" 2>/dev/null; `+
 			`wait "$watchdog" 2>/dev/null; `+
-			`exit "$rc"`,
-		command, seconds)
+			`exit "$rc"; `+
+			`fi`,
+		seconds, shellArg(command), command, seconds)
 }
 
 func commandTimeoutFor(test PingTest, defaultTimeout time.Duration) time.Duration {
