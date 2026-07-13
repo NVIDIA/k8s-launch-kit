@@ -38,6 +38,7 @@ const (
 	rdmaTestContainerName = "test-container"
 	icmpTestContainerName = "netshoot"
 	icmpTestImage         = "nicolaka/netshoot:latest"
+	icmpTestCommand       = `trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done`
 )
 
 // DaemonSetRef identifies an applied test DaemonSet so the orchestrator
@@ -302,7 +303,7 @@ func ensureICMPContainer(ds *unstructured.Unstructured) {
 	containers = append(containers, map[string]interface{}{
 		"name":    icmpTestContainerName,
 		"image":   icmpTestImage,
-		"command": []interface{}{"/bin/sh", "-c", "sleep infinity"},
+		"command": []interface{}{"/bin/bash", "-c", icmpTestCommand},
 		"securityContext": map[string]interface{}{
 			"capabilities": map[string]interface{}{
 				"add": []interface{}{"NET_RAW"},

@@ -74,6 +74,9 @@ func TestLoadExampleDaemonSetsUsesManifestNamespace(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, containers, 2)
+	sidecar, ok := containers[1].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, []interface{}{"/bin/bash", "-c", icmpTestCommand}, sidecar["command"])
 }
 
 func TestLoadExampleDaemonSetsSkipsICMPSidecarWhenDisabled(t *testing.T) {
