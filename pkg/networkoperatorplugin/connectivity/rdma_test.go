@@ -17,6 +17,7 @@
 package connectivity
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -131,6 +132,7 @@ func TestParseRDMABatchRouteResults(t *testing.T) {
 	assert.Equal(t, "ip -o route get 192.168.0.20 from 192.168.0.10", got[0].Command)
 	assert.False(t, got[1].OK)
 	assert.Equal(t, "ip command not found in validation container", got[1].Err)
+	assert.False(t, routeMismatch(got[1], PingTest{SrcIface: "net2"}))
 }
 
 func TestRDMABatchClientCommandsIncludeSourceRouteGuard(t *testing.T) {
@@ -148,6 +150,7 @@ func TestRDMABatchClientCommandsIncludeSourceRouteGuard(t *testing.T) {
 	assert.Contains(t, rpingCmd, "route get")
 	assert.Contains(t, rpingCmd, rpingBatchResultMarker+" 0 201")
 	assert.Contains(t, rpingCmd, `if [ "$route_ok" = "1" ]; then run_with_timeout`)
+	assert.Contains(t, rpingCmd, `-p 9999`)
 	assert.NotContains(t, rpingCmd, "continue")
 
 	ibCmd := ibWriteBwBatchClientCommand([]PingTest{test}, 65536)
@@ -156,6 +159,23 @@ func TestRDMABatchClientCommandsIncludeSourceRouteGuard(t *testing.T) {
 	assert.Contains(t, ibCmd, ibWriteBwBatchResultMarker+" 0 201")
 	assert.Contains(t, ibCmd, `if [ "$route_ok" = "1" ]; then run_with_timeout`)
 	assert.NotContains(t, ibCmd, "continue")
+}
+
+func TestRPingBatchServerCommandRunsOneListenerPerTest(t *testing.T) {
+	tests := []PingTest{
+		{DstIP: "192.168.0.20"},
+		{DstIP: "192.168.0.20"},
+		{DstIP: "192.168.4.20"},
+	}
+
+	cmd := rpingBatchServerCommand(tests)
+
+	assert.Contains(t, cmd, "pkill rping")
+	assert.Contains(t, cmd, "rping -s -a \"192.168.0.20\" -p 9999")
+	assert.Contains(t, cmd, "rping -s -a \"192.168.0.20\" -p 10000")
+	assert.Contains(t, cmd, "rping -s -a \"192.168.4.20\" -p 10001")
+	assert.Equal(t, 3, strings.Count(cmd, "rping -s -a "))
+	assert.Equal(t, 3, strings.Count(cmd, "nohup rping"))
 }
 
 func TestPingTestKind_Predicates(t *testing.T) {
