@@ -352,17 +352,14 @@ func groupRPingTests(tests []PingTest) [][]PingTest {
 }
 
 func rpingBatchServerCommand(tests []PingTest) string {
-	seen := map[string]bool{}
 	var b strings.Builder
 	b.WriteString("pkill rping 2>/dev/null || true; rm -f /tmp/l8k-rping-server-*.log; ")
-	idx := 0
-	for _, test := range tests {
-		if test.DstIP == "" || seen[test.DstIP] {
+	for i, test := range tests {
+		if test.DstIP == "" {
 			continue
 		}
-		seen[test.DstIP] = true
-		fmt.Fprintf(&b, "nohup rping -s -a %s -p 9999 -v >/tmp/l8k-rping-server-%d.log 2>&1 & ", shellArg(test.DstIP), idx)
-		idx++
+		fmt.Fprintf(&b, "nohup rping -s -a %s -p %d -v >/tmp/l8k-rping-server-%d.log 2>&1 & ",
+			shellArg(test.DstIP), rpingBatchPort(i), i)
 	}
 	b.WriteString("echo ready")
 	return b.String()
@@ -380,12 +377,16 @@ func rpingBatchClientCommand(tests []PingTest, iterations int) string {
 			fmt.Sprintf("echo %s %d %d", rpingBatchResultMarker, i, rdmaBatchRouteFailCode))
 		fmt.Fprintf(&b,
 			`if [ "$route_ok" = "1" ]; then `+
-				"run_with_timeout %d rping -c -I %s -a %s -p 9999 -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; echo %s %d $rc; "+
+				"run_with_timeout %d rping -c -I %s -a %s -p %d -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; echo %s %d $rc; "+
 				`fi; `,
-			timeoutSeconds, shellArg(test.SrcIP), shellArg(test.DstIP), iterations, i, i, rpingBatchResultMarker, i)
+			timeoutSeconds, shellArg(test.SrcIP), shellArg(test.DstIP), rpingBatchPort(i), iterations, i, i, rpingBatchResultMarker, i)
 	}
 	b.WriteString("exit 0")
 	return b.String()
+}
+
+func rpingBatchPort(index int) int {
+	return 9999 + index
 }
 
 func parseRPingBatchResults(stdout string) map[int]int {
@@ -415,11 +416,11 @@ func appendRDMABatchRouteGuard(b *strings.Builder, index int, test PingTest, fai
 		`route_file=%s; ipcmd=""; for p in ip /sbin/ip /usr/sbin/ip /bin/ip /usr/bin/ip; do `+
 			`if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then ipcmd="$p"; break; fi; `+
 			`done; `+
-			`if [ -z "$ipcmd" ]; then echo %s >"$route_file"; route_rc=127; `+
+			`route_missing=0; if [ -z "$ipcmd" ]; then echo %s >"$route_file"; route_rc=0; route_missing=1; `+
 			`else "$ipcmd" -o route get %s from %s >"$route_file" 2>&1; route_rc=$?; fi; `+
 			`route_dev=$(sed -n 's/.* dev \([^ ]*\).*/\1/p' "$route_file" | head -n1); `+
 			`echo %s %d $route_rc; cat "$route_file" 2>/dev/null; echo %s %d; `+
-			`if [ "$route_rc" != "0" ] || [ "$route_dev" != %s ]; then route_ok=0; %s; fi; `,
+			`if [ "$route_missing" != "1" ] && { [ "$route_rc" != "0" ] || [ "$route_dev" != %s ]; }; then route_ok=0; %s; fi; `,
 		shellArg(routeFile), shellArg(routeSkipMarker), shellArg(test.DstIP), shellArg(test.SrcIP),
 		rdmaBatchRouteResultMarker, index, rdmaBatchRouteEndMarker, index, shellArg(test.SrcIface), failCommand)
 }
@@ -456,7 +457,7 @@ func parseRDMABatchRouteResults(stdout string, tests []PingTest) map[int]RouteCh
 					route.Command = fmt.Sprintf("ip -o route get %s from %s", tests[idx].DstIP, tests[idx].SrcIP)
 				}
 				if strings.Contains(output, routeSkipMarker) {
-					route.Err = "ip command not found in validation container"
+					route.Err = routeSkipErr
 					route.OK = false
 				}
 				if m := routeDevRe.FindStringSubmatch(output); len(m) == 2 {

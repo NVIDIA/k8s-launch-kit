@@ -31,6 +31,7 @@ import (
 var routeDevRe = regexp.MustCompile(`(?:^|\s)dev\s+(\S+)`)
 
 const routeSkipMarker = "__L8K_ROUTE_SKIP__"
+const routeSkipErr = "ip command not found in validation container"
 
 func initResult(test PingTest) PingResult {
 	exp := test.Expectation
@@ -99,7 +100,7 @@ func checkRoute(ctx context.Context, restConfig *rest.Config, namespace, pod, co
 		return out
 	}
 	if strings.Contains(out.Output, routeSkipMarker) {
-		out.Err = "ip command not found in validation container"
+		out.Err = routeSkipErr
 		return out
 	}
 	if m := routeDevRe.FindStringSubmatch(out.Output); len(m) == 2 {
@@ -114,6 +115,9 @@ func routeMatchesSourceInterface(route RouteCheck, test PingTest) bool {
 }
 
 func routeMismatch(route RouteCheck, test PingTest) bool {
+	if route.Err == routeSkipErr {
+		return false
+	}
 	return !routeMatchesSourceInterface(route, test)
 }
 
