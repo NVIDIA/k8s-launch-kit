@@ -158,6 +158,14 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 		cfg.Profile.SpectrumX = &config.ProfileSpectrumX{}
 	}
 	cfg.Profile.SpectrumX.Enable = true
+	if cfg.Profile.SpectrumX.IPVersion == "" && opts.IPVersion == "" {
+		cfg.Profile.SpectrumX.IPVersion = config.SpectrumXIPVersionIPv4
+		*decisions = append(*decisions, DefaultDecision{
+			Flag:   "--ip-version",
+			Value:  config.SpectrumXIPVersionIPv4,
+			Reason: "Spectrum-X default",
+		})
+	}
 
 	// Implicit defaults: --spectrum-x forces ethernet fabric and sriov
 	// deployment. Multirail is handled by ApplyHardwareDefaults so its

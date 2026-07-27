@@ -1,62 +1,28 @@
-{{- /* One CIDRPool per rail (non-swplb) or per rail-plane (swplb).
-       All IP ranges are placeholders; the cluster operator must replace the
-       TODO_* values before applying. */ -}}
-{{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
-{{- $railCount := railCount .ClusterConfig.PFs $planes }}
-{{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
-{{- $first := true }}
-{{- range $railIdx := untilStep 0 $railCount 1 }}
-{{- if $swplb }}
-{{- range $planeIdx := untilStep 0 $planes 1 }}
-{{- if not $first }}---
-{{ end }}{{- $first = false -}}
+{{- /* .ClusterConfig.PFs keeps this template in per-group render mode. */ -}}
+{{- $pools := spectrumXCIDRPools . .ClusterConfig }}
+{{- range $idx, $pool := $pools }}
+{{- if $idx }}---
+{{ end -}}
 apiVersion: nv-ipam.nvidia.com/v1alpha1
 kind: CIDRPool
 metadata:
-  name: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
+  name: {{$pool.Name}}
   namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
-  # TODO: rail subnet for this plane (/15 for 2-tier, /11 for 3-tier topology)
-  cidr: TODO_RAIL_{{$railIdx}}_PLANE_{{$planeIdx}}_CIDR
+  cidr: {{$pool.CIDR}}
   gatewayIndex: 0
   perNodeNetworkPrefix: 31
   perNodeExclusions:
     - startIndex: 1
       endIndex: 1
   routes:
-    # TODO: rail subnet (same as cidr) + full east-west subnet
-    - dst: TODO_RAIL_SUBNET
-    - dst: TODO_EAST_WEST_SUBNET
-  # TODO: populate one entry per worker node
-  #   - gateway: <host ip on pod network>
-  #     nodeName: <node name>
-  #     prefix: <point-to-point /31 subnet>
-  staticAllocations: []
-{{ end }}
-{{- else }}
-{{- if not $first }}---
-{{ end }}{{- $first = false -}}
-apiVersion: nv-ipam.nvidia.com/v1alpha1
-kind: CIDRPool
-metadata:
-  name: rail-{{$railIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
-  namespace: "{{$.NetworkOperator.Namespace}}"
-spec:
-  # TODO: rail subnet (/15 for 2-tier, /11 for 3-tier topology)
-  cidr: TODO_RAIL_{{$railIdx}}_CIDR
-  gatewayIndex: 0
-  perNodeNetworkPrefix: 31
-  perNodeExclusions:
-    - startIndex: 1
-      endIndex: 1
-  routes:
-    # TODO: rail subnet (same as cidr) + full east-west subnet
-    - dst: TODO_RAIL_SUBNET
-    - dst: TODO_EAST_WEST_SUBNET
-  # TODO: populate one entry per worker node
-  #   - gateway: <host ip on pod network>
-  #     nodeName: <node name>
-  #     prefix: <point-to-point /31 subnet>
-  staticAllocations: []
-{{ end }}
+  {{- range $route := $pool.Routes }}
+    - dst: {{$route}}
+  {{- end }}
+  staticAllocations:
+  {{- range $allocation := $pool.StaticAllocations }}
+    - gateway: {{$allocation.Gateway}}
+      nodeName: {{$allocation.NodeName}}
+      prefix: {{$allocation.Prefix}}
+  {{- end }}
 {{- end }}

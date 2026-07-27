@@ -99,6 +99,9 @@ and writes the final profile back to cluster-config.yaml.`,
 			SPCXVersion:              spectrumXVersion,
 			MultiplaneMode:           multiplaneMode,
 			NumberOfPlanes:           numberOfPlanes,
+			TopologyScheme:           topologyScheme,
+			IPVersion:                ipVersion,
+			TopologyFile:             topologyFile,
 			SpectrumXConfig:          spectrumXConfig,
 			SpectrumXConfigMapName:   spectrumXConfigMapName,
 			KeepNamespace:            keepNamespace,
@@ -155,6 +158,9 @@ func init() {
 			config.SupportedSPCXVersions))
 	discoverCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode override: none, swplb, hwplb, uniplane (requires --spectrum-x)")
 	discoverCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Spectrum-X plane count override: 1, 2, or 4 (requires --spectrum-x)")
+	discoverCmd.Flags().StringVar(&topologyScheme, "topology-scheme", "", "Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)")
+	discoverCmd.Flags().StringVar(&ipVersion, "ip-version", "", "Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)")
+	discoverCmd.Flags().StringVar(&topologyFile, "topology-file", "", "Path to spcx-gen-format topology.json for Spectrum-X CIDRPool generation (requires --spectrum-x)")
 	discoverCmd.Flags().StringVar(&spectrumXConfig, "spectrum-x-config", "", "Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)")
 	discoverCmd.Flags().StringVar(&spectrumXConfigMapName, "spectrum-x-configmap-name", "", "Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML")
 
@@ -176,6 +182,9 @@ func init() {
 	setFlagGroup(discoverCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(discoverCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(discoverCmd, "number-of-planes", GroupSpectrumX)
+	setFlagGroup(discoverCmd, "topology-scheme", GroupSpectrumX)
+	setFlagGroup(discoverCmd, "ip-version", GroupSpectrumX)
+	setFlagGroup(discoverCmd, "topology-file", GroupSpectrumX)
 	setFlagGroup(discoverCmd, "spectrum-x-config", GroupSpectrumX)
 	setFlagGroup(discoverCmd, "spectrum-x-configmap-name", GroupSpectrumX)
 }

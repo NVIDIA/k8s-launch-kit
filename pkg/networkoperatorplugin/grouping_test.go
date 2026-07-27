@@ -17,6 +17,9 @@
 package networkoperatorplugin
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -79,6 +82,7 @@ func renderSpectrumXWithDRA(t *testing.T, configName, multiplaneMode string, num
 		ctrllog.Log,
 	)
 	require.NoError(t, err)
+	topologyFile := writeSpectrumXTopology(t, cfg, numberOfPlanes)
 
 	// Attach the profile metadata that the CLI would normally inject.
 	cfg.Profile = &config.Profile{
@@ -90,6 +94,8 @@ func renderSpectrumXWithDRA(t *testing.T, configName, multiplaneMode string, num
 			SPCXVersion:    "RA2.2",
 			MultiplaneMode: multiplaneMode,
 			NumberOfPlanes: numberOfPlanes,
+			TopologyType:   config.SpectrumXTopology2Tier,
+			TopologyFile:   topologyFile,
 			UseDRA:         useDRA,
 		},
 	}
@@ -98,6 +104,108 @@ func renderSpectrumXWithDRA(t *testing.T, configName, multiplaneMode string, num
 	rendered, err := plugin.GenerateProfileDeploymentFiles(loadSpectrumXProfile(t), cfg)
 	require.NoError(t, err)
 	return rendered
+}
+
+func writeSpectrumXTopology(t *testing.T, cfg *config.LaunchKitConfig, planes int) string {
+	t.Helper()
+	type endpoint struct {
+		Node      string         `json:"node"`
+		Interface string         `json:"interface"`
+		Attrs     map[string]any `json:"attributes"`
+	}
+	type node struct {
+		Name string `json:"name"`
+		Role string `json:"role"`
+		Type string `json:"type"`
+	}
+	if planes < 1 {
+		planes = 1
+	}
+	nodesByName := map[string]node{}
+	var links [][]endpoint
+	for groupIdx, group := range cfg.ClusterConfig {
+		rails := railsForTest(group.PFs, planes)
+		for _, workerNode := range group.WorkerNodes {
+			nodesByName[workerNode] = node{Name: workerNode, Role: "host", Type: "default"}
+		}
+		for plane := 0; plane < planes; plane++ {
+			for _, rail := range rails {
+				leafName := fmt.Sprintf("leaf-g%d-p%d-r%d", groupIdx, plane, rail)
+				nodesByName[leafName] = node{Name: leafName, Role: "leaf", Type: "cumulus"}
+				for nodeIdx, workerNode := range group.WorkerNodes {
+					links = append(links, []endpoint{
+						{
+							Node:      leafName,
+							Interface: fmt.Sprintf("swp%d", nodeIdx+1),
+							Attrs: map[string]any{
+								"role":       "leaf",
+								"plane":      plane,
+								"pod":        0,
+								"su":         groupIdx,
+								"rail_group": []int{rail},
+							},
+						},
+						{
+							Node:      workerNode,
+							Interface: fmt.Sprintf("eth_p%d_r%d", plane, rail),
+							Attrs: map[string]any{
+								"role": "host",
+								"rail": rail,
+								"pod":  0,
+								"su":   groupIdx,
+							},
+						},
+					})
+				}
+			}
+		}
+	}
+	nodes := make([]node, 0, len(nodesByName))
+	for _, node := range nodesByName {
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
+	data, err := json.Marshal(map[string]any{
+		"nodes": nodes,
+		"links": links,
+	})
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "topology.json")
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	return path
+}
+
+func railsForTest(pfs []config.PFConfig, planes int) []int {
+	seen := map[int]struct{}{}
+	for _, pf := range pfs {
+		if pf.Traffic != "east-west" {
+			continue
+		}
+		if pf.Rail != nil {
+			seen[*pf.Rail] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		count := len(pfs)
+		if planes > 0 {
+			count = len(pfs) / planes
+		}
+		if count < 1 {
+			count = 1
+		}
+		for rail := 0; rail < count; rail++ {
+			seen[rail] = struct{}{}
+		}
+	}
+	rails := make([]int, 0, len(seen))
+	for rail := range seen {
+		rails = append(rails, rail)
+	}
+	sort.Ints(rails)
+	if len(rails) > 8 {
+		rails = rails[:8]
+	}
+	return rails
 }
 
 // fileNamesMatching returns the sorted file names whose basenames contain the
@@ -234,6 +342,7 @@ func TestSpectrumXRA23RendersProfileConfigMap(t *testing.T) {
 		ctrllog.Log,
 	)
 	require.NoError(t, err)
+	topologyFile := writeSpectrumXTopology(t, cfg, 4)
 
 	cfg.NetworkOperator.SelectedRelease = "26.7"
 	cfg.NetworkOperator.Namespace = "nvidia-network-operator"
@@ -246,6 +355,8 @@ func TestSpectrumXRA23RendersProfileConfigMap(t *testing.T) {
 			SPCXVersion:    "RA2.3",
 			MultiplaneMode: "hwplb",
 			NumberOfPlanes: 4,
+			TopologyType:   config.SpectrumXTopology2Tier,
+			TopologyFile:   topologyFile,
 			ConfigMapName:  "site-ra23-profile",
 			Profile:        "useSoftwareCCAlgorithm: true\r\ndocaCCVersion: \"example\"\r\n",
 		},
@@ -415,6 +526,7 @@ func TestSpectrumXModeBSubsetFilter(t *testing.T) {
 		ctrllog.Log,
 	)
 	require.NoError(t, err)
+	topologyFile := writeSpectrumXTopology(t, cfg, 1)
 	cfg.Profile = &config.Profile{
 		Fabric:     "ethernet",
 		Deployment: "sriov",
@@ -424,6 +536,8 @@ func TestSpectrumXModeBSubsetFilter(t *testing.T) {
 			SPCXVersion:    "RA2.2",
 			MultiplaneMode: "none",
 			NumberOfPlanes: 1,
+			TopologyType:   config.SpectrumXTopology2Tier,
+			TopologyFile:   topologyFile,
 		},
 	}
 
@@ -514,6 +628,7 @@ func renderSpectrumXRA21(t *testing.T, configName, multiplaneMode string, number
 		ctrllog.Log,
 	)
 	require.NoError(t, err)
+	topologyFile := writeSpectrumXTopology(t, cfg, numberOfPlanes)
 
 	cfg.Profile = &config.Profile{
 		Fabric:     "ethernet",
@@ -524,6 +639,8 @@ func renderSpectrumXRA21(t *testing.T, configName, multiplaneMode string, number
 			SPCXVersion:    "RA2.1",
 			MultiplaneMode: multiplaneMode,
 			NumberOfPlanes: numberOfPlanes,
+			TopologyType:   config.SpectrumXTopology2Tier,
+			TopologyFile:   topologyFile,
 		},
 	}
 

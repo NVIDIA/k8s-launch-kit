@@ -60,6 +60,8 @@ func applySpectrumXDefaults(opts *options.Options) error {
 			SPCXVersion:    opts.SPCXVersion,
 			MultiplaneMode: opts.MultiplaneMode,
 			NumberOfPlanes: opts.NumberOfPlanes,
+			TopologyType:   opts.TopologyScheme,
+			IPVersion:      opts.IPVersion,
 		}
 	}
 	if opts.NetworkOperatorRelease != "" {
@@ -92,6 +94,7 @@ func minSpectrumXOpts() *options.Options {
 		SPCXVersion:            "RA2.2",
 		MultiplaneMode:         "hwplb",
 		NumberOfPlanes:         4,
+		TopologyScheme:         config.SpectrumXTopology2Tier,
 		NetworkOperatorRelease: "26.4",
 	}
 }
@@ -210,6 +213,9 @@ func TestApplySpectrumXDefaults_RejectsCohortFlagsWithoutSpectrumX(t *testing.T)
 	cases := map[string]*options.Options{
 		"multiplane-mode":  {MultiplaneMode: "hwplb"},
 		"number-of-planes": {NumberOfPlanes: 4},
+		"topology-scheme":  {TopologyScheme: config.SpectrumXTopology2Tier},
+		"ip-version":       {IPVersion: config.SpectrumXIPVersionIPv4},
+		"topology-file":    {TopologyFile: "topology.json"},
 	}
 	for flag, opts := range cases {
 		t.Run(flag, func(t *testing.T) {
@@ -327,14 +333,14 @@ func TestValidateConfig_DryRunRequiresDeploy(t *testing.T) {
 
 func TestValidateConfig_DryRunWithDeployPasses(t *testing.T) {
 	opts := options.Options{
-		UserConfig:     "config.yaml",
-		EnabledPlugins: []string{"network-operator"},
-		OutputFormat:   "text",
-		DryRun:         true,
-		Deploy:         true,
-		Kubeconfig:     "/path/to/kubeconfig",
-		Fabric:         "ethernet",
-		DeploymentType: "sriov",
+		UserConfig:          "config.yaml",
+		EnabledPlugins:      []string{"network-operator"},
+		OutputFormat:        "text",
+		DryRun:              true,
+		Deploy:              true,
+		Kubeconfig:          "/path/to/kubeconfig",
+		Fabric:              "ethernet",
+		DeploymentType:      "sriov",
 		SaveDeploymentFiles: "/tmp/test",
 	}
 	err := validateConfig(&opts)

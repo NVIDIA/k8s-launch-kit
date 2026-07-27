@@ -94,14 +94,14 @@ var (
 )
 
 // resolveProfile simulates the full Unit-8 CLI→config→validate chain:
-// 1. Phase 1 syntax checks on CLI options.
-// 2. Build cfg with config profile (or empty when no source).
-// 3. ApplyHardwareDefaults — fills empty profile fields from cluster
-//    hardware (always-on defaults + Spectrum-X-implied defaults).
-// 4. ApplyOptionsToConfig — CLI overlay; non-zero CLI values override
-//    HW defaults; bool override gated by MultirailSet.
-// 5. Phase 2 cohort validation.
-// 6. Validate against the target profile definition.
+//  1. Phase 1 syntax checks on CLI options.
+//  2. Build cfg with config profile (or empty when no source).
+//  3. ApplyHardwareDefaults — fills empty profile fields from cluster
+//     hardware (always-on defaults + Spectrum-X-implied defaults).
+//  4. ApplyOptionsToConfig — CLI overlay; non-zero CLI values override
+//     HW defaults; bool override gated by MultirailSet.
+//  5. Phase 2 cohort validation.
+//  6. Validate against the target profile definition.
 func resolveProfile(
 	t *testing.T,
 	opts options.Options,
@@ -110,6 +110,10 @@ func resolveProfile(
 	capabilities *config.ClusterCapabilities,
 ) (bool, string) {
 	t.Helper()
+
+	if opts.SpectrumX && opts.TopologyScheme == "" {
+		opts.TopologyScheme = config.SpectrumXTopology2Tier
+	}
 
 	// Step 1: Phase 1 syntax checks
 	err := applySpectrumXSyntaxChecks(&opts)
@@ -123,6 +127,9 @@ func resolveProfile(
 		profileCopy := *configProfile
 		if configProfile.SpectrumX != nil {
 			sxCopy := *configProfile.SpectrumX
+			if sxCopy.TopologyType == "" {
+				sxCopy.TopologyType = config.SpectrumXTopology2Tier
+			}
 			profileCopy.SpectrumX = &sxCopy
 		}
 		fullConfig.Profile = &profileCopy
@@ -332,6 +339,7 @@ func TestMixedCLIConfigProfileResolution(t *testing.T) {
 			SPCXVersion:            "RA2.2",
 			MultiplaneMode:         "hwplb",
 			NumberOfPlanes:         4, // CLI overrides planes
+			TopologyScheme:         config.SpectrumXTopology2Tier,
 			NetworkOperatorRelease: "26.4",
 		}
 

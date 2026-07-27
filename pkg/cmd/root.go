@@ -56,6 +56,9 @@ var (
 	spectrumXVersion         string
 	multiplaneMode           string
 	numberOfPlanes           int
+	topologyScheme           string
+	ipVersion                string
+	topologyFile             string
 	spectrumXConfig          string
 	spectrumXConfigMapName   string
 	saveDeploymentFiles      string
@@ -174,6 +177,9 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			SPCXVersion:              spectrumXVersion,
 			MultiplaneMode:           multiplaneMode,
 			NumberOfPlanes:           numberOfPlanes,
+			TopologyScheme:           topologyScheme,
+			IPVersion:                ipVersion,
+			TopologyFile:             topologyFile,
 			SpectrumXConfig:          spectrumXConfig,
 			SpectrumXConfigMapName:   spectrumXConfigMapName,
 			Groups:                   groups,
@@ -261,6 +267,9 @@ func init() {
 			config.SupportedSPCXVersions))
 	rootCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)")
 	rootCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes for Spectrum-X (requires --spectrum-x)")
+	rootCmd.Flags().StringVar(&topologyScheme, "topology-scheme", "", "Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)")
+	rootCmd.Flags().StringVar(&ipVersion, "ip-version", "", "Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)")
+	rootCmd.Flags().StringVar(&topologyFile, "topology-file", "", "Path to spcx-gen-format topology.json for Spectrum-X CIDRPool generation (requires --spectrum-x)")
 	rootCmd.Flags().StringVar(&spectrumXConfig, "spectrum-x-config", "", "Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)")
 	rootCmd.Flags().StringVar(&spectrumXConfigMapName, "spectrum-x-configmap-name", "", "Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML")
 	rootCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
@@ -319,6 +328,9 @@ func init() {
 
 	setFlagGroup(rootCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(rootCmd, "number-of-planes", GroupSpectrumX)
+	setFlagGroup(rootCmd, "topology-scheme", GroupSpectrumX)
+	setFlagGroup(rootCmd, "ip-version", GroupSpectrumX)
+	setFlagGroup(rootCmd, "topology-file", GroupSpectrumX)
 	setFlagGroup(rootCmd, "spectrum-x-config", GroupSpectrumX)
 	setFlagGroup(rootCmd, "spectrum-x-configmap-name", GroupSpectrumX)
 
@@ -473,6 +485,15 @@ func applySpectrumXSyntaxChecks(opts *options.Options) error {
 		if opts.NumberOfPlanes != 0 {
 			return fmt.Errorf("--number-of-planes can only be used with --spectrum-x")
 		}
+		if opts.TopologyScheme != "" {
+			return fmt.Errorf("--topology-scheme can only be used with --spectrum-x")
+		}
+		if opts.IPVersion != "" {
+			return fmt.Errorf("--ip-version can only be used with --spectrum-x")
+		}
+		if opts.TopologyFile != "" {
+			return fmt.Errorf("--topology-file can only be used with --spectrum-x")
+		}
 		if opts.SpectrumXConfig != "" {
 			return fmt.Errorf("--spectrum-x-config can only be used with --spectrum-x")
 		}
@@ -502,6 +523,14 @@ func applySpectrumXSyntaxChecks(opts *options.Options) error {
 	if opts.NumberOfPlanes != 0 && !slices.Contains(config.SupportedNumberOfPlanes, opts.NumberOfPlanes) {
 		return fmt.Errorf("invalid --number-of-planes %d; supported: %v",
 			opts.NumberOfPlanes, config.SupportedNumberOfPlanes)
+	}
+	if opts.TopologyScheme != "" && !slices.Contains(config.SupportedSpectrumXTopologyTypes, opts.TopologyScheme) {
+		return fmt.Errorf("invalid --topology-scheme %q; supported: %v",
+			opts.TopologyScheme, config.SupportedSpectrumXTopologyTypes)
+	}
+	if opts.IPVersion != "" && !slices.Contains(config.SupportedSpectrumXIPVersions, opts.IPVersion) {
+		return fmt.Errorf("invalid --ip-version %q; supported: %v",
+			opts.IPVersion, config.SupportedSpectrumXIPVersions)
 	}
 
 	// --network-operator-release enum check (when supplied). The
