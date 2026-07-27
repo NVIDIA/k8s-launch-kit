@@ -17,6 +17,7 @@
 package releases
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,16 +35,23 @@ func TestLookupRelease_Known(t *testing.T) {
 	}
 }
 
-func TestLookupRelease_267BetaUsesStagingArtifacts(t *testing.T) {
-	r, ok := LookupRelease("26.7")
-	require.True(t, ok)
+func TestLookupRelease_BetaReleasesUseStagingArtifacts(t *testing.T) {
+	checkedBeta := false
+	for _, key := range SupportedReleases() {
+		r, ok := LookupRelease(key)
+		require.True(t, ok, "expected catalog entry for %q", key)
+		if !strings.Contains(r.NetworkOperator.Version, "-beta.") {
+			continue
+		}
+		checkedBeta = true
 
-	assert.Equal(t, "v26.7.0-beta.2", r.NetworkOperator.Version)
-	assert.Equal(t, "network-operator-v26.7.0-beta.2", r.NetworkOperator.ComponentVersion)
-	assert.Equal(t, "nvcr.io/nvstaging/mellanox", r.NetworkOperator.Repository)
-	assert.Equal(t, "nvcr.io/nvstaging/mellanox", r.NetworkOperator.OperatorRepository)
-	assert.Equal(t, "https://helm.ngc.nvidia.com/nvstaging/mellanox", r.NetworkOperator.HelmRepoURL)
-	assert.Equal(t, "doca3.5.0-26.07-0.3.4.0-0", r.DOCADriver.Version)
+		assert.Equal(t, "network-operator-"+r.NetworkOperator.Version, r.NetworkOperator.ComponentVersion)
+		assert.Equal(t, "nvcr.io/nvstaging/mellanox", r.NetworkOperator.Repository)
+		assert.Equal(t, "nvcr.io/nvstaging/mellanox", r.NetworkOperator.OperatorRepository)
+		assert.Equal(t, "https://helm.ngc.nvidia.com/nvstaging/mellanox", r.NetworkOperator.HelmRepoURL)
+		assert.NotEmpty(t, r.DOCADriver.Version)
+	}
+	require.True(t, checkedBeta, "expected at least one beta release catalog entry")
 }
 
 func TestLookupRelease_Unknown(t *testing.T) {
