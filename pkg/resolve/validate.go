@@ -52,6 +52,15 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 		if cfg.Profile.SpectrumX.NumberOfPlanes != 0 {
 			return fmt.Errorf("numberOfPlanes is set but spectrumX.enable=false; remove the field or set --spectrum-x")
 		}
+		if cfg.Profile.SpectrumX.TopologyType != "" {
+			return fmt.Errorf("topologyType is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
+		if cfg.Profile.SpectrumX.IPVersion != "" {
+			return fmt.Errorf("ipVersion is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
+		if cfg.Profile.SpectrumX.TopologyFile != "" {
+			return fmt.Errorf("topologyFile is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
 	}
 
 	return nil
@@ -130,6 +139,21 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 	if !slices.Contains(config.SupportedNumberOfPlanes, spcx.NumberOfPlanes) {
 		return fmt.Errorf("invalid --number-of-planes %d; supported: %v",
 			spcx.NumberOfPlanes, config.SupportedNumberOfPlanes)
+	}
+	if spcx.TopologyType == "" {
+		return fmt.Errorf("--topology-scheme is required when --spectrum-x is set; supported: %v",
+			config.SupportedSpectrumXTopologyTypes)
+	}
+	if !slices.Contains(config.SupportedSpectrumXTopologyTypes, spcx.TopologyType) {
+		return fmt.Errorf("invalid --topology-scheme %q; supported: %v",
+			spcx.TopologyType, config.SupportedSpectrumXTopologyTypes)
+	}
+	if spcx.IPVersion == "" {
+		spcx.IPVersion = config.SpectrumXIPVersionIPv4
+	}
+	if !slices.Contains(config.SupportedSpectrumXIPVersions, spcx.IPVersion) {
+		return fmt.Errorf("invalid --ip-version %q; supported: %v",
+			spcx.IPVersion, config.SupportedSpectrumXIPVersions)
 	}
 
 	// Cross-validate mode ↔ planes. "none" (and "uniplane") collapse

@@ -32,6 +32,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
+	spectrumxaddressing "github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/spectrumx"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 )
 
@@ -116,6 +117,21 @@ var templateFuncs = template.FuncMap{
 		return profile != nil && profile.SpectrumX != nil && profile.SpectrumX.UseDRA
 	},
 	"spectrumXProfileConfigRequired": config.SpectrumXProfileConfigRequired,
+	"spectrumXCIDRPools": func(root any, clusterConfig *config.ClusterConfig) ([]spectrumxaddressing.CIDRPool, error) {
+		var cfg *config.LaunchKitConfig
+		switch v := root.(type) {
+		case *config.LaunchKitConfig:
+			cfg = v
+		case *templateContext:
+			cfg = v.LaunchKitConfig
+		default:
+			return nil, fmt.Errorf("Spectrum-X CIDRPool template requires launch-kit config root, got %T", root)
+		}
+		if clusterConfig == nil {
+			return nil, fmt.Errorf("Spectrum-X CIDRPool template requires a clusterConfig group")
+		}
+		return spectrumxaddressing.BuildCIDRPools(cfg, *clusterConfig)
+	},
 	"spectrumXVersionRef": func(spcx *config.ProfileSpectrumX) string {
 		if spcx == nil {
 			return ""

@@ -120,6 +120,7 @@ func TestValidateResolvedConfigAcceptsConfigMapProfileForRA23(t *testing.T) {
 				SPCXVersion:    "RA2.3",
 				MultiplaneMode: "hwplb",
 				NumberOfPlanes: 4,
+				TopologyType:   config.SpectrumXTopology2Tier,
 				ConfigMapName:  "site-ra23",
 				Profile:        "useSoftwareCCAlgorithm: true\n",
 			},

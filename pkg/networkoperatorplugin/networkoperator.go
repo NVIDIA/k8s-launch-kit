@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery"
@@ -94,7 +95,9 @@ func (p *NetworkOperatorPlugin) GetVersion() string {
 
 func (p *NetworkOperatorPlugin) ProfileConfiguredInCmd(options options.Options) bool {
 	return options.Fabric != "" || options.DeploymentType != "" ||
-		options.Routing != "" || options.IgnoreARPSet
+		options.Routing != "" || options.IgnoreARPSet ||
+		options.SpectrumX || options.TopologyScheme != "" ||
+		options.IPVersion != "" || options.TopologyFile != ""
 }
 
 func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options, profile *config.Profile) error {
@@ -113,6 +116,9 @@ func (p *NetworkOperatorPlugin) BuildProfileFromOptions(options options.Options,
 			SPCXVersion:    options.SPCXVersion,
 			MultiplaneMode: options.MultiplaneMode,
 			NumberOfPlanes: options.NumberOfPlanes,
+			TopologyType:   options.TopologyScheme,
+			IPVersion:      options.IPVersion,
+			TopologyFile:   options.TopologyFile,
 		}
 	}
 
@@ -281,6 +287,20 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 		}
 		if options.NumberOfPlanes != 0 {
 			fullConfig.Profile.SpectrumX.NumberOfPlanes = options.NumberOfPlanes
+		}
+		if options.TopologyScheme != "" {
+			fullConfig.Profile.SpectrumX.TopologyType = options.TopologyScheme
+		}
+		if options.IPVersion != "" {
+			fullConfig.Profile.SpectrumX.IPVersion = options.IPVersion
+		}
+		if options.TopologyFile != "" {
+			fullConfig.Profile.SpectrumX.TopologyFile = options.TopologyFile
+			resolvedTopologyFile, err := filepath.Abs(options.TopologyFile)
+			if err != nil {
+				return fmt.Errorf("failed to resolve --topology-file %s: %w", options.TopologyFile, err)
+			}
+			fullConfig.Profile.SpectrumX.ResolvedTopologyFile = resolvedTopologyFile
 		}
 		if options.SpectrumXConfigMapName != "" {
 			fullConfig.Profile.SpectrumX.ConfigMapName = options.SpectrumXConfigMapName

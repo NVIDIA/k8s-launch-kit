@@ -171,6 +171,7 @@ func TestDiscoverPersistsSpectrumXHardwareDefaults(t *testing.T) {
 		SaveClusterConfig: outputConfig,
 		SpectrumX:         true,
 		SPCXVersion:       "RA2.2",
+		TopologyScheme:    config.SpectrumXTopology2Tier,
 	}, []config.ClusterConfig{{
 		Identifier: "group-a",
 		LinkType:   "Ethernet",

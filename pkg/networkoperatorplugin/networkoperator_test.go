@@ -17,6 +17,7 @@
 package networkoperatorplugin
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -304,6 +305,28 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		err := p.ApplyOptionsToConfig(opts, cfg)
 		require.NoError(t, err)
 		assert.Equal(t, 4, cfg.Profile.SpectrumX.NumberOfPlanes)
+	})
+
+	t.Run("relative CLI topology file resolves from working directory", func(t *testing.T) {
+		wd := t.TempDir()
+		t.Chdir(wd)
+		cfg := &config.LaunchKitConfig{
+			Profile: &config.Profile{
+				SpectrumX: &config.ProfileSpectrumX{
+					TopologyFile: "config-dir/topology.json",
+				},
+			},
+		}
+		opts := options.Options{
+			SpectrumX:    true,
+			TopologyFile: "cli-dir/topology.json",
+		}
+		err := p.ApplyOptionsToConfig(opts, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, "cli-dir/topology.json", cfg.Profile.SpectrumX.TopologyFile)
+		assert.Equal(t,
+			filepath.Join(wd, "cli-dir", "topology.json"),
+			cfg.Profile.SpectrumX.ResolvedTopologyFile)
 	})
 
 	t.Run("full spectrum-x overlay merges all fields", func(t *testing.T) {

@@ -115,6 +115,9 @@ Optionally deploy the generated manifests with --deploy.`,
 			SPCXVersion:              spectrumXVersion,
 			MultiplaneMode:           multiplaneMode,
 			NumberOfPlanes:           numberOfPlanes,
+			TopologyScheme:           topologyScheme,
+			IPVersion:                ipVersion,
+			TopologyFile:             topologyFile,
 			SpectrumXConfig:          spectrumXConfig,
 			SpectrumXConfigMapName:   spectrumXConfigMapName,
 			Groups:                   groups,
@@ -197,6 +200,9 @@ func init() {
 			config.SupportedSPCXVersions))
 	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)")
 	generateCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes (requires --spectrum-x)")
+	generateCmd.Flags().StringVar(&topologyScheme, "topology-scheme", "", "Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)")
+	generateCmd.Flags().StringVar(&ipVersion, "ip-version", "", "Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)")
+	generateCmd.Flags().StringVar(&topologyFile, "topology-file", "", "Path to spcx-gen-format topology.json for Spectrum-X CIDRPool generation (requires --spectrum-x)")
 	generateCmd.Flags().StringVar(&spectrumXConfig, "spectrum-x-config", "", "Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)")
 	generateCmd.Flags().StringVar(&spectrumXConfigMapName, "spectrum-x-configmap-name", "", "Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML")
 	generateCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
@@ -243,6 +249,9 @@ func init() {
 
 	setFlagGroup(generateCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(generateCmd, "number-of-planes", GroupSpectrumX)
+	setFlagGroup(generateCmd, "topology-scheme", GroupSpectrumX)
+	setFlagGroup(generateCmd, "ip-version", GroupSpectrumX)
+	setFlagGroup(generateCmd, "topology-file", GroupSpectrumX)
 	setFlagGroup(generateCmd, "spectrum-x-config", GroupSpectrumX)
 	setFlagGroup(generateCmd, "spectrum-x-configmap-name", GroupSpectrumX)
 

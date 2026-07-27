@@ -89,3 +89,35 @@ func TestGeneratePersistsResolvedProfileToOriginalConfig(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(updated), string(secondUpdate), "repeated generation must produce stable config YAML")
 }
+
+func TestResolveSpectrumXTopologyFile(t *testing.T) {
+	t.Run("config relative path resolves from config directory", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "configs", "cluster-config.yaml")
+		cfg := &config.LaunchKitConfig{
+			Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+				TopologyFile: "../topology.json",
+			}},
+		}
+
+		resolveSpectrumXTopologyFile(configPath, cfg)
+
+		assert.Equal(t,
+			filepath.Join(filepath.Dir(configPath), "../topology.json"),
+			cfg.Profile.SpectrumX.ResolvedTopologyFile)
+	})
+
+	t.Run("pre-resolved CLI path is preserved", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "configs", "cluster-config.yaml")
+		resolvedCLIPath := filepath.Join(t.TempDir(), "topology.json")
+		cfg := &config.LaunchKitConfig{
+			Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+				TopologyFile:         "topology.json",
+				ResolvedTopologyFile: resolvedCLIPath,
+			}},
+		}
+
+		resolveSpectrumXTopologyFile(configPath, cfg)
+
+		assert.Equal(t, resolvedCLIPath, cfg.Profile.SpectrumX.ResolvedTopologyFile)
+	})
+}

@@ -96,6 +96,13 @@ const (
 	RoutingSourceBased      = "source-based"
 )
 
+const (
+	SpectrumXTopology2Tier = "2-tier"
+	SpectrumXTopology3Tier = "3-tier"
+	SpectrumXIPVersionIPv4 = "ipv4"
+	SpectrumXIPVersionIPv6 = "ipv6"
+)
+
 // MachineLabelValue returns the per-source-group machine label value:
 // `<machineType>-<gpuType>` literal when it fits Kubernetes' 63-char
 // label-value limit, or a deterministic shortened form for long names
@@ -513,13 +520,18 @@ func (p Profile) MarshalYAML() (interface{}, error) {
 }
 
 type ProfileSpectrumX struct {
-	Enable         bool   `yaml:"enable"`         // must be true for Spectrum-X profiles to match
-	SPCXVersion    string `yaml:"spcxVersion"`    // e.g., "RA2.2"
-	MultiplaneMode string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
-	NumberOfPlanes int    `yaml:"numberOfPlanes"` // 2 or 4
-	UseDRA         bool   `yaml:"useDRA"`         // enable DRA ResourceClaimTemplate-based workload allocation
-	ConfigMapName  string `yaml:"configMapName,omitempty"`
-	Profile        string `yaml:"profile,omitempty"`
+	Enable               bool   `yaml:"enable"`         // must be true for Spectrum-X profiles to match
+	SPCXVersion          string `yaml:"spcxVersion"`    // e.g., "RA2.2"
+	MultiplaneMode       string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
+	NumberOfPlanes       int    `yaml:"numberOfPlanes"` // 2 or 4
+	TopologyType         string `yaml:"topologyType,omitempty"`
+	IPVersion            string `yaml:"ipVersion,omitempty"`
+	HostFirstOctet       int    `yaml:"hostFirstOctet,omitempty"`
+	TopologyFile         string `yaml:"topologyFile,omitempty"`
+	ResolvedTopologyFile string `yaml:"-"`
+	UseDRA               bool   `yaml:"useDRA"` // enable DRA ResourceClaimTemplate-based workload allocation
+	ConfigMapName        string `yaml:"configMapName,omitempty"`
+	Profile              string `yaml:"profile,omitempty"`
 }
 
 type ClusterConfig struct {
@@ -794,6 +806,10 @@ var SupportedMultiplaneModes = []string{"none", "swplb", "hwplb", "uniplane"}
 
 // SupportedNumberOfPlanes lists the values numberOfPlanes can take.
 var SupportedNumberOfPlanes = []int{1, 2, 4}
+
+var SupportedSpectrumXTopologyTypes = []string{SpectrumXTopology2Tier, SpectrumXTopology3Tier}
+
+var SupportedSpectrumXIPVersions = []string{SpectrumXIPVersionIPv4, SpectrumXIPVersionIPv6}
 
 // SPCXVersionAllowedReleases is the authoritative mapping from SPC-X RA
 // version to the Network Operator releases that ship that version's CRD

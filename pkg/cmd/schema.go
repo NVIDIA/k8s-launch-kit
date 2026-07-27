@@ -153,6 +153,19 @@ var schemaCmd = &cobra.Command{
 					Type:        "int",
 					Description: "Spectrum-X plane count override: 1, 2, or 4. Auto-derived from NIC device ID when omitted.",
 				},
+				"--topology-scheme": {
+					Type:        "string",
+					Description: "Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier.",
+				},
+				"--ip-version": {
+					Type:        "string",
+					Default:     config.SpectrumXIPVersionIPv4,
+					Description: "Spectrum-X host-to-leaf IP version for guide-based allocation: ipv4 or ipv6. IPv6 is accepted in config but CIDRPool rendering currently supports IPv4 only.",
+				},
+				"--topology-file": {
+					Type:        "string",
+					Description: "Path to a spcx-gen-format topology.json used to generate Spectrum-X CIDRPool host static allocations.",
+				},
 				"--spectrum-x-config": {
 					Type:        "string",
 					Description: "Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML. Required for SPC-X RA versions newer than RA2.2.",

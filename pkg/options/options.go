@@ -74,6 +74,9 @@ type Options struct {
 	SPCXVersion    string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
 	MultiplaneMode string // Spectrum-X multiplane mode (default: swplb)
 	NumberOfPlanes int    // Number of planes for Spectrum-X (default: 4)
+	TopologyScheme string // Spectrum-X topology scheme: 2-tier or 3-tier
+	IPVersion      string // Spectrum-X address family: ipv4 or ipv6
+	TopologyFile   string // Path to spcx-gen-format topology.json for Spectrum-X CIDRPool generation
 	// SpectrumXConfig is a path to either a full Spectrum-X profile ConfigMap
 	// YAML or the raw data.profile YAML body. SpectrumXConfigMapName is required
 	// only when SpectrumXConfig contains the raw profile body.

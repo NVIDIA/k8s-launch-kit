@@ -695,6 +695,23 @@ feature gate, sets `SpectrumXRailPoolConfig.spec.draEnabled: true`, emits
 `ResourceClaimTemplate` manifests, and renders the example workload with DRA
 claims instead of `nvidia.com/rail_*` device-plugin resource requests.
 
+Spectrum-X CIDRPools are generated from a `topology.json` in the reference
+generator format plus the resolved l8k discovery data. Pass the topology scheme
+and file on the CLI, or set the same values under `profile.spectrumX`:
+
+```bash
+l8k generate --user-config cluster-config.yaml \
+  --spectrum-x RA2.3 \
+  --topology-scheme 2-tier \
+  --ip-version ipv4 \
+  --topology-file ./topology.json
+```
+
+`profile.spectrumX.hostFirstOctet` is config-only. When omitted, l8k uses `172`
+for 2-tier IPv4 allocation and `10` for 3-tier IPv4 allocation. `ipVersion:
+ipv6` is accepted in the config and CLI, but Spectrum-X CIDRPool rendering
+currently supports IPv4 static allocations only.
+
 For non-Spectrum-X profiles, leaving both the flag and `selectedRelease` empty
 continues to render the newest gates (treated as "latest").
 
@@ -947,6 +964,9 @@ profile:
     spcxVersion: RA2.3
     multiplaneMode: hwplb
     numberOfPlanes: 4
+    topologyType: 2-tier
+    ipVersion: ipv4
+    topologyFile: ./topology.json
     configMapName: site-ra23-profile
     profile: |
       useSoftwareCCAlgorithm: true

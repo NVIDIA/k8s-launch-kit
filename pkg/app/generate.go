@@ -79,6 +79,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	if err := l.resolveProfileSettings(fullConfig); err != nil {
 		return err
 	}
+	resolveSpectrumXTopologyFile(configPath, fullConfig)
 
 	// Now that fullConfig.NetworkOperator is fully resolved (catalog
 	// values + CLI overrides + l8k-config.yaml), expose it to the plugin
@@ -186,6 +187,28 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	warnStorageModules(fullConfig, "generate", l.ui)
 
 	return nil
+}
+
+func resolveSpectrumXTopologyFile(configPath string, fullConfig *config.LaunchKitConfig) {
+	if fullConfig == nil || fullConfig.Profile == nil || fullConfig.Profile.SpectrumX == nil {
+		return
+	}
+	spcx := fullConfig.Profile.SpectrumX
+	if spcx.TopologyFile == "" {
+		return
+	}
+	if spcx.ResolvedTopologyFile != "" {
+		return
+	}
+	if filepath.IsAbs(spcx.TopologyFile) {
+		spcx.ResolvedTopologyFile = spcx.TopologyFile
+		return
+	}
+	if configPath == "" {
+		spcx.ResolvedTopologyFile = spcx.TopologyFile
+		return
+	}
+	spcx.ResolvedTopologyFile = filepath.Join(filepath.Dir(configPath), spcx.TopologyFile)
 }
 
 func (l *Launcher) saveResolvedConfig(
