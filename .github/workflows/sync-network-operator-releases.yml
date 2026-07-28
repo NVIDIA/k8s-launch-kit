@@ -33,10 +33,13 @@ permissions: {}
 
 jobs:
   sync:
-    if: github.event_name != 'push'
     name: Sync release catalog
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      catalog_changed: ${{ steps.changes.outputs.changed }}
+      release_ref: ${{ steps.merge.outputs.sha || github.sha }}
+      release_tag: ${{ steps.release.outputs.tag }}
     permissions:
       contents: write
       pull-requests: write
@@ -60,6 +63,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: make sync-network-operator-releases
 
+      - name: Read latest catalog tag
+        id: release
+        run: |
+          tag="$(go run ./hack/sync-network-operator-releases \
+            --print-latest-tag)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Detect changes
         id: changes
         run: |
@@ -75,8 +85,9 @@ jobs:
           make build
           go test -race -count=1 ./...
 
-      - name: Create or update pull request
+      - name: Create and merge pull request
         if: steps.changes.outputs.changed == 'true'
+        id: merge
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -120,20 +131,55 @@ jobs:
               --method PATCH \
               "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
               -f title="$title" \
-              -f body="$body"
+              -f body="$body" >/dev/null
           else
-            gh api \
+            pr_number="$(gh api \
               --method POST \
               "repos/${GITHUB_REPOSITORY}/pulls" \
               -f head="$branch" \
               -f base=main \
               -f title="$title" \
-              -f body="$body"
+              -f body="$body" \
+              --jq '.number')"
           fi
 
-  publish:
-    if: github.event_name == 'push'
-    name: Publish synchronized release
+          mergeable=""
+          for _ in {1..15}; do
+            mergeable="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+              --jq '.mergeable')"
+            if [ "$mergeable" != "null" ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ "$mergeable" != "true" ]; then
+            echo "::error::PR #${pr_number} is not mergeable"
+            exit 1
+          fi
+
+          merge_message="Automated nightly synchronization from Mellanox/network-operator release branches.
+
+          Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          merge_result="$(gh api \
+            --method PUT \
+            "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/merge" \
+            -f merge_method=squash \
+            -f commit_title="${title} (#${pr_number})" \
+            -f commit_message="$merge_message" \
+            --jq '[.merged, .sha] | @tsv')"
+          IFS=$'\t' read -r merged merged_sha <<< "$merge_result"
+          if [ "$merged" != "true" ]; then
+            echo "::error::PR #${pr_number} was not merged"
+            exit 1
+          fi
+
+          echo "sha=$merged_sha" >> "$GITHUB_OUTPUT"
+          git push origin --delete "$branch"
+
+  release:
+    name: Release if needed
+    needs: sync
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -144,6 +190,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ needs.sync.outputs.release_ref }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -154,36 +201,22 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Detect a newer latest release
-        id: release
+      - name: Verify merged catalog is current
         env:
-          BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          catalog="pkg/networkoperatorplugin/releases/releases.yaml"
-          previous_tag="$(git show "${BEFORE_SHA}:${catalog}" |
-            go run ./hack/sync-network-operator-releases \
-              --catalog - \
-              --print-latest-tag)"
-          current_tag="$(go run ./hack/sync-network-operator-releases \
-            --print-latest-tag)"
-
-          if [ "$current_tag" = "$previous_tag" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          make sync-network-operator-releases
+          if ! git diff --quiet -- \
+            pkg/networkoperatorplugin/releases/releases.yaml; then
+            echo "::error::Merged release catalog is not synchronized"
+            exit 1
           fi
 
-          go run ./hack/sync-network-operator-releases \
-            --print-latest-tag \
-            --newer-than "$previous_tag" >/dev/null
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "tag=$current_tag" >> "$GITHUB_OUTPUT"
-
       - name: Check upstream and publication state
-        if: steps.release.outputs.changed == 'true'
         id: publication
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_TAG: ${{ needs.sync.outputs.release_tag }}
         run: |
           if ! git ls-remote --exit-code --tags \
             https://github.com/Mellanox/network-operator.git \
@@ -195,10 +228,6 @@ jobs:
 
           tag_sha="$(git ls-remote --tags origin \
             "refs/tags/${RELEASE_TAG}" | cut -f1)"
-          if [ -n "$tag_sha" ] && [ "$tag_sha" != "$GITHUB_SHA" ]; then
-            echo "::error::The k8s-launch-kit tag ${RELEASE_TAG} points to ${tag_sha}, not ${GITHUB_SHA}"
-            exit 1
-          fi
 
           if gh release view "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -206,12 +235,21 @@ jobs:
               echo "::error::Release ${RELEASE_TAG} exists without a matching tag"
               exit 1
             fi
-            echo "create_release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "create_release=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${RELEASE_TAG} already exists; nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           if [ -n "$tag_sha" ]; then
+            catalog="pkg/networkoperatorplugin/releases/releases.yaml"
+            tagged_catalog_tag="$(git show "${RELEASE_TAG}:${catalog}" |
+              go run ./hack/sync-network-operator-releases \
+                --catalog - \
+                --print-latest-tag)"
+            if [ "$tagged_catalog_tag" != "$RELEASE_TAG" ]; then
+              echo "::error::Tag ${RELEASE_TAG} does not contain its synchronized catalog version"
+              exit 1
+            fi
             echo "tag_exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "tag_exists=false" >> "$GITHUB_OUTPUT"
@@ -222,25 +260,23 @@ jobs:
       - name: Publish release and dispatch artifacts
         if: steps.publication.outputs.publish == 'true'
         env:
-          CREATE_RELEASE: ${{ steps.publication.outputs.create_release }}
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_TAG: ${{ needs.sync.outputs.release_tag }}
+          RELEASE_TARGET: ${{ needs.sync.outputs.release_ref }}
           TAG_EXISTS: ${{ steps.publication.outputs.tag_exists }}
         run: |
-          if [ "$CREATE_RELEASE" = "true" ]; then
-            release_args=(
-              "$RELEASE_TAG"
-              --repo "$GITHUB_REPOSITORY"
-              --generate-notes
-              --title "$RELEASE_TAG"
-            )
-            if [ "$TAG_EXISTS" = "true" ]; then
-              release_args+=(--verify-tag)
-            else
-              release_args+=(--target "$GITHUB_SHA")
-            fi
-            gh release create "${release_args[@]}"
+          release_args=(
+            "$RELEASE_TAG"
+            --repo "$GITHUB_REPOSITORY"
+            --generate-notes
+            --title "$RELEASE_TAG"
+          )
+          if [ "$TAG_EXISTS" = "true" ]; then
+            release_args+=(--verify-tag)
+          else
+            release_args+=(--target "$RELEASE_TARGET")
           fi
+          gh release create "${release_args[@]}"
 
           gh workflow run release.yml \
             --repo "$GITHUB_REPOSITORY" \
