@@ -17,51 +17,254 @@
  */
 
 :root {
-  --md-primary-fg-color: #111827;
-  --md-primary-fg-color--light: #374151;
-  --md-primary-fg-color--dark: #0b1220;
+  --nvidia-green: #76b900;
+  --nvidia-green-dark: #4d8100;
+  --fern-text: #252529;
+  --fern-muted: #66666b;
+  --fern-border: #dededf;
+  --fern-surface: #f7f8f7;
+  --md-primary-fg-color: #ffffff;
+  --md-primary-fg-color--light: #ffffff;
+  --md-primary-fg-color--dark: #ffffff;
   --md-accent-fg-color: #76b900;
-  --md-default-fg-color: #111827;
-  --md-default-fg-color--light: #4b5563;
-  --md-typeset-a-color: #0b6f31;
+  --md-default-fg-color: #252529;
+  --md-default-fg-color--light: #66666b;
+  --md-typeset-a-color: #252529;
 }
 
 [data-md-color-scheme="nvidia"] {
   --md-default-bg-color: #ffffff;
-  --md-code-bg-color: #f6f8fa;
-  --md-code-fg-color: #111827;
-  --md-footer-bg-color: #111827;
-  --md-footer-bg-color--dark: #0b1220;
+  --md-code-bg-color: #f3f5f1;
+  --md-code-fg-color: #252529;
+  --md-footer-bg-color: #ffffff;
+  --md-footer-bg-color--dark: #ffffff;
+}
+
+[data-md-color-scheme="slate"] {
+  --fern-text: #f4f4f4;
+  --fern-muted: #b8b8bc;
+  --fern-border: #3d3d40;
+  --fern-surface: #242426;
+  --md-primary-fg-color: #171719;
+  --md-primary-fg-color--light: #171719;
+  --md-primary-fg-color--dark: #111113;
+  --md-default-bg-color: #171719;
+  --md-default-fg-color: #f4f4f4;
+  --md-default-fg-color--light: #b8b8bc;
+  --md-code-bg-color: #222522;
+  --md-code-fg-color: #f4f4f4;
+  --md-footer-bg-color: #171719;
+  --md-footer-bg-color--dark: #111113;
+  --md-typeset-a-color: #f4f4f4;
+}
+
+body {
+  color: var(--fern-text);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+.md-grid {
+  max-width: 100%;
 }
 
 .md-header {
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--md-primary-fg-color);
+  border-bottom: 1px solid var(--fern-border);
+  color: var(--fern-text);
   box-shadow: none;
 }
 
-.md-tabs {
-  border-bottom: 1px solid #e5e7eb;
+.md-header__inner {
+  height: 2.75rem;
+  padding: 0 1.25rem;
+}
+
+.md-header__button.md-logo {
+  align-items: center;
+  border-right: 1px solid var(--fern-border);
+  display: flex;
+  height: 2.75rem;
+  margin: 0;
+  padding: 0 1rem 0 0;
+}
+
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: auto;
+  width: 5.3rem;
+}
+
+.md-header__title {
+  font-size: 0.82rem;
+  font-weight: 650;
+  margin-left: 0.8rem;
+}
+
+.md-search__form {
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--fern-border);
+  border-radius: 7px;
+}
+
+.md-search__form:hover {
+  background: var(--md-default-bg-color);
+  border-color: #b9b9bc;
+}
+
+.md-search__input,
+.md-search__icon,
+.md-source {
+  color: var(--fern-text);
+}
+
+.md-search__input::placeholder {
+  color: var(--fern-muted);
+  opacity: 1;
+}
+
+.md-sidebar--primary {
+  border-right: 1px solid var(--fern-border);
+}
+
+.md-sidebar__scrollwrap {
+  margin: 0;
+  padding: 1.1rem 0.85rem 1rem 1.4rem;
+}
+
+.md-nav {
+  font-size: 0.7rem;
+}
+
+.md-nav__title {
+  background: var(--md-default-bg-color);
+  box-shadow: none;
+  color: var(--fern-text);
+  font-weight: 650;
+}
+
+.md-nav__item--section > .md-nav__link {
+  color: var(--fern-text);
+  font-weight: 650;
+}
+
+.md-nav__link {
+  color: var(--fern-text);
+}
+
+.md-nav__link:focus,
+.md-nav__link:hover,
+.md-nav__link--active {
+  color: var(--nvidia-green-dark);
+}
+
+.md-nav--secondary {
+  border-left: 1px solid var(--fern-border);
+  padding-left: 0.7rem;
+}
+
+.md-nav--secondary .md-nav__link--active {
+  border-left: 2px solid var(--nvidia-green);
+  margin-left: -0.75rem;
+  padding-left: 0.65rem;
+}
+
+.md-content__inner {
+  max-width: 40.6rem;
+  padding-top: 1.7rem;
+}
+
+.md-typeset {
+  color: var(--fern-text);
+  font-size: 0.8rem;
+  line-height: 1.72;
+}
+
+.md-typeset .page-kicker {
+  color: var(--nvidia-green-dark);
+  font-size: 0.7rem;
+  font-weight: 650;
+  margin: 0 0 0.35rem;
 }
 
 .md-typeset h1 {
-  color: #111827;
+  color: var(--fern-text);
+  font-size: 1.8rem;
   font-weight: 700;
   letter-spacing: 0;
+  line-height: 1.2;
+  margin: 0 0 1.65rem;
 }
 
 .md-typeset h2 {
-  border-top: 1px solid #e5e7eb;
-  padding-top: 1.2rem;
+  color: var(--fern-text);
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.25;
+  margin-top: 2.1rem;
+}
+
+.md-typeset h3 {
+  color: var(--fern-text);
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.md-typeset a {
+  color: var(--fern-text);
+  text-decoration-color: var(--nvidia-green);
+  text-decoration-line: underline;
+  text-underline-offset: 3px;
+}
+
+.md-typeset a:focus,
+.md-typeset a:hover {
+  color: var(--nvidia-green-dark);
+}
+
+.md-typeset table:not([class]) {
+  border: 1px solid var(--fern-border);
+  border-collapse: separate;
+  border-radius: 7px;
+  border-spacing: 0;
+  display: table;
+  box-shadow: none;
+  overflow: hidden;
+  width: 100%;
+}
+
+.md-typeset__table {
+  width: 100%;
 }
 
 .md-typeset table:not([class]) th {
-  background: #f3f4f6;
-  color: #111827;
+  background: var(--fern-surface);
+  color: var(--fern-text);
+  font-weight: 650;
+}
+
+.md-typeset table:not([class]) td,
+.md-typeset table:not([class]) th {
+  border-bottom: 1px solid var(--fern-border);
+  border-left: 0;
+  padding: 0.55rem 0.7rem;
+}
+
+.md-typeset table:not([class]) tr:last-child td {
+  border-bottom: 0;
 }
 
 .md-typeset .admonition,
 .md-typeset details {
+  border-color: var(--fern-border);
   border-radius: 6px;
+  box-shadow: none;
 }
 
 .md-typeset .grid.cards > ul > li,
@@ -71,4 +274,136 @@
 
 .md-typeset code {
   border-radius: 4px;
+}
+
+.md-typeset :not(pre) > code {
+  background: #f3f7ef;
+  color: var(--nvidia-green-dark);
+}
+
+.md-typeset pre > code {
+  border: 1px solid var(--fern-border);
+}
+
+.workflow-diagram {
+  align-items: stretch;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns:
+    minmax(0, 1fr) auto minmax(0, 1fr) auto
+    minmax(0, 1fr) auto minmax(0, 1fr);
+  margin: 1.4rem 0 1.6rem;
+}
+
+.workflow-step {
+  align-items: flex-start;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--fern-border);
+  border-radius: 6px;
+  border-top: 3px solid var(--nvidia-green);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 5.1rem;
+  padding: 0.8rem;
+}
+
+.workflow-step__command {
+  color: var(--fern-text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.workflow-step__description {
+  color: var(--fern-muted);
+  font-size: 0.66rem;
+  line-height: 1.35;
+  margin-top: 0.15rem;
+}
+
+.workflow-arrow {
+  align-self: center;
+  color: var(--nvidia-green-dark);
+  font-size: 1.2rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.md-footer {
+  border-top: 1px solid var(--fern-border);
+  color: var(--fern-muted);
+}
+
+.md-footer-meta {
+  background: var(--md-default-bg-color);
+}
+
+.md-copyright {
+  color: var(--fern-muted);
+}
+
+[data-md-color-scheme="slate"] .md-header__button.md-logo img {
+  content: url("nvidia-logo-dark.svg");
+}
+
+[data-md-color-scheme="slate"] .md-typeset :not(pre) > code {
+  background: #242b20;
+  color: #a8d96a;
+}
+
+@media screen and (min-width: 1220px) {
+  .md-sidebar--primary::after {
+    border-right: 1px solid var(--fern-border);
+    bottom: 0;
+    content: "";
+    left: 12.1rem;
+    pointer-events: none;
+    position: fixed;
+    top: 2.75rem;
+  }
+
+}
+
+@media screen and (min-width: 960px) {
+  [dir="ltr"]
+    .md-sidebar--primary:not([hidden])
+    ~ .md-content
+    > .md-content__inner {
+    margin-left: 3.6rem;
+  }
+
+  [dir="ltr"]
+    .md-sidebar--secondary:not([hidden])
+    ~ .md-content
+    > .md-content__inner {
+    margin-right: auto;
+  }
+}
+
+@media screen and (max-width: 959px) {
+  .md-content {
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .md-content__inner {
+    margin-left: 0.8rem;
+    margin-right: 0.8rem;
+    max-width: none;
+    min-width: 0;
+    width: auto;
+  }
+
+  .md-typeset {
+    overflow-wrap: anywhere;
+  }
+
+  .workflow-diagram {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-arrow {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
 }

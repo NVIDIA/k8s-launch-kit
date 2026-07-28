@@ -3,6 +3,8 @@ SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 SPDX-License-Identifier: Apache-2.0
 -->
 
+<p class="page-kicker">Overview</p>
+
 # NVIDIA Kubernetes Launch Kit
 
 NVIDIA Kubernetes Launch Kit (`l8k`) generates, deploys, and validates NVIDIA cloud-native networking manifests for Kubernetes clusters. It discovers NIC and GPU topology, selects a deployment profile, renders Network Operator and NIC Configuration Operator resources, applies them in dependency order, and verifies the result with live manifest and data-plane checks.
@@ -17,23 +19,39 @@ Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, In
 | Platform engineer selecting a topology profile | [Deployment Profiles](user/profiles.md) |
 | Spectrum-X operator | [Spectrum-X](user/spectrum-x.md) |
 | CI/CD or GitOps integrator | [Automation](integrator/automation.md) |
-| User debugging an applied deployment | [Validation](user/validation.md) |
+| Operator confirming a deployment is ready for use | [Validation](user/validation.md) |
 | Maintainer updating the docs site | [Documentation Publishing](reference/docs-publishing.md) |
 
 ## Workflow
 
-```text
-[ Discover ] ---> [ Generate ] ---> [ Deploy ] ---> [ Validate ]
- hardware          manifests         apply           live state
- inventory         + values          in order        + data plane
-```
+<div class="workflow-diagram" role="img" aria-label="Launch Kit workflow: discover hardware, generate manifests, deploy resources, then validate the deployment">
+  <div class="workflow-step">
+    <span class="workflow-step__command">Discover</span>
+    <span class="workflow-step__description">Hardware inventory</span>
+  </div>
+  <span class="workflow-arrow" aria-hidden="true">→</span>
+  <div class="workflow-step">
+    <span class="workflow-step__command">Generate</span>
+    <span class="workflow-step__description">Manifests and values</span>
+  </div>
+  <span class="workflow-arrow" aria-hidden="true">→</span>
+  <div class="workflow-step">
+    <span class="workflow-step__command">Deploy</span>
+    <span class="workflow-step__description">Ordered application</span>
+  </div>
+  <span class="workflow-arrow" aria-hidden="true">→</span>
+  <div class="workflow-step">
+    <span class="workflow-step__command">Validate</span>
+    <span class="workflow-step__description">Acceptance report</span>
+  </div>
+</div>
 
 Each stage is independently invocable:
 
 - `l8k discover` bootstraps a private NIC discovery daemon and writes `cluster-config.yaml`.
 - `l8k generate` renders a profile-specific manifest bundle under `deployment/network-operator/`.
 - `l8k deploy` installs or upgrades the Network Operator Helm chart, applies CRs in dependency order, and waits for reconciliation.
-- `l8k validate` checks Helm version and values, component versions, manifest state, preflight drift, and configurable ICMP/RDMA connectivity.
+- `l8k validate` runs the deployment acceptance checks and produces the report used to green-light the deployment.
 
 ## What The Current Docs Cover
 

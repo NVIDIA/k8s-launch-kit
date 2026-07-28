@@ -26,7 +26,7 @@ exclude_docs: |
 theme:
   name: material
   language: en
-  logo: assets/nvidia-mark.svg
+  logo: assets/nvidia-logo.svg
   favicon: assets/nvidia-mark.svg
   features:
     - navigation.sections
@@ -37,12 +37,25 @@ theme:
     - content.code.copy
     - search.suggest
   palette:
-    - scheme: nvidia
+    - media: "(prefers-color-scheme: light)"
+      scheme: nvidia
       primary: custom
       accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
 
 extra_css:
   - assets/styles.css
+
+copyright: Copyright &copy; 2026 NVIDIA Corporation
 
 markdown_extensions:
   - admonition

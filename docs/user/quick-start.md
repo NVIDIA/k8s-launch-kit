@@ -74,7 +74,7 @@ l8k validate \
   --kubeconfig "$KUBECONFIG"
 ```
 
-Validation checks Helm release metadata, rendered values, component versions, manifest state, preflight drift, and data-plane connectivity. By default it writes an HTML report to:
+Validation is the final acceptance stage of the normal workflow. It checks Helm release metadata, rendered values, component versions, manifest state, preflight drift, and data-plane connectivity. A successful run gives the deployment a green light and writes the supporting HTML report to:
 
 ```text
 deployment/network-operator/k8s-launch-kit-validation-report.html

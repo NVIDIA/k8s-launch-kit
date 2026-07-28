@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Validation
 
-`l8k validate` verifies that generated manifests match the live cluster and then runs configurable data-plane checks.
+`l8k validate` is the final acceptance stage of the deployment workflow. It verifies that generated manifests match the live cluster, runs configurable data-plane checks, and produces the report used to green-light the deployment.
 
 ```bash
 l8k validate \
@@ -91,7 +91,7 @@ l8k validate --report-path=-
 
 The report includes release checks, component checks, manifest state, live YAML dropdowns, topology/preset comparison, connectivity matrices, and warnings.
 
-## Debugging
+## When Validation Does Not Pass
 
 Keep the test DaemonSet:
 
