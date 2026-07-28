@@ -26,8 +26,8 @@
 //   - pkg/cmd (flag validation and help text).
 //
 // The catalog is the single source of truth for what "26.4" / "26.1" /
-// "25.10" actually resolve to. Bump entries here when a patch release
-// ships; add a new key for a new minor.
+// "26.7" actually resolve to. Entries are synchronized nightly from the
+// matching Network Operator release branches.
 package releases
 
 import (

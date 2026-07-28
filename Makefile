@@ -32,7 +32,7 @@ PCI_IDS_NVIDIA=pkg/networkoperatorplugin/internal/pciids/nvidia.ids
 NIC_CONFIG_CRDS_DIR=pkg/nicconfigdaemon/assets/crds
 NIC_CONFIG_OPERATOR_MODULE=github.com/Mellanox/nic-configuration-operator
 
-.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport update-pci-ids sync-nic-config-crds release release-snapshot help
+.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport update-pci-ids sync-network-operator-releases sync-nic-config-crds release release-snapshot help
 
 ## Build the binary
 build:
@@ -179,6 +179,10 @@ sync-nic-config-crds:
 	mkdir -p $(NIC_CONFIG_CRDS_DIR); \
 	cp "$$mod_dir"/config/crd/bases/*.yaml $(NIC_CONFIG_CRDS_DIR)/; \
 	chmod u+w $(NIC_CONFIG_CRDS_DIR)/*.yaml
+
+## Sync managed release catalog entries from Network Operator release branches.
+sync-network-operator-releases:
+	$(GOCMD) run ./hack/sync-network-operator-releases
 
 ## Download sosreport script
 download-sosreport:
