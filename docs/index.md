@@ -56,22 +56,6 @@ Each stage is independently invocable:
 - `l8k deploy` installs or upgrades the Network Operator Helm chart, applies CRs in dependency order, and waits for reconciliation.
 - `l8k validate` runs the deployment acceptance checks and produces the report used to green-light the deployment.
 
-## What The Current Docs Cover
-
-These standalone docs include features added across recent release lines:
-
-- Self-contained discovery without a pre-installed Network Operator.
-- Hardware-derived machine/GPU labels, group filtering, and heterogeneous cluster merging.
-- Repository-provided AI skills for guided discovery, generation, deployment, validation, and troubleshooting.
-- One-rail-per-NIC discovery, north-south-only group filtering, and exact-match topology presets.
-- Network Operator release catalog selection for `26.1`, `26.4`, and `26.7`.
-- NicNodePolicy rendering, maintenance concurrency, and Network Operator Helm install through `l8k deploy`.
-- Multi-namespace secondary network fan-out, source-based routing, ARP tuning, NV-IPAM exclusions, and custom workload manifests.
-- Spectrum-X RA2.1, RA2.2, and RA2.3 flows, including ConfigMap-backed profiles, topology-driven CIDRPools, and optional DRA ResourceClaimTemplates.
-- Configurable validation modes, ICMP/RDMA check selection, bandwidth gates, and self-contained HTML reports.
-- Diagnostic collection and stage-based troubleshooting for discovery, reconciliation, SR-IOV, RDMA, and IPAM.
-- Machine-readable JSON output and the `l8k schema` command for automation and AI agents.
-
 ## Links
 
 - [GitHub repository](https://github.com/NVIDIA/k8s-launch-kit)
