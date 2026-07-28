@@ -20,7 +20,6 @@ Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, In
 | Spectrum-X operator | [Spectrum-X](user/spectrum-x.md) |
 | CI/CD or GitOps integrator | [Automation](integrator/automation.md) |
 | Operator confirming a deployment is ready for use | [Validation](user/validation.md) |
-| Maintainer updating the docs site | [Documentation Publishing](reference/docs-publishing.md) |
 
 ## Workflow
 
@@ -60,7 +59,7 @@ These standalone docs include features added across recent release lines:
 - Self-contained discovery without a pre-installed Network Operator.
 - Hardware-derived machine/GPU labels, group filtering, and heterogeneous cluster merging.
 - One-rail-per-NIC discovery, north-south-only group filtering, and exact-match topology presets.
-- Network Operator release catalog selection for `25.10`, `26.1`, `26.4`, and `26.7`.
+- Network Operator release catalog selection for `26.1`, `26.4`, and `26.7`.
 - NicNodePolicy rendering, maintenance concurrency, and Network Operator Helm install through `l8k deploy`.
 - Multi-namespace secondary network fan-out, source-based routing, ARP tuning, NV-IPAM exclusions, and custom workload manifests.
 - Spectrum-X RA2.1, RA2.2, and RA2.3 flows, including ConfigMap-backed profiles, topology-driven CIDRPools, and optional DRA ResourceClaimTemplates.

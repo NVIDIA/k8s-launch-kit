@@ -28,7 +28,7 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 | `--kubeconfig` | discover, deploy, validate | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
 | `--user-config` | discover, generate, deploy, validate | Config file to merge, render, or validate against. |
 | `--config-dir` | all | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
-| `--network-operator-release` | discover, generate | Release line such as `25.10`, `26.1`, `26.4`, or `26.7`. |
+| `--network-operator-release` | discover, generate | Release line such as `26.1`, `26.4`, or `26.7`. |
 | `--network-operator-namespace` | generate, deploy, validate | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--output json` | all | Emit a single JSON result to stdout for automation. |
 | `--quiet` | all | Suppress informational output. |

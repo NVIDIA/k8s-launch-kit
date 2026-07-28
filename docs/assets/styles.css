@@ -369,7 +369,7 @@ body {
     .md-sidebar--primary:not([hidden])
     ~ .md-content
     > .md-content__inner {
-    margin-left: 3.6rem;
+    margin-left: auto;
   }
 
   [dir="ltr"]

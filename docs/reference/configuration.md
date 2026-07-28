@@ -32,7 +32,6 @@ networkOperator:
 
 Supported release lines are currently:
 
-- `25.10`
 - `26.1`
 - `26.4`
 - `26.7`
