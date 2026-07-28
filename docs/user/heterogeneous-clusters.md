@@ -68,6 +68,145 @@ l8k generate \
 
 `--groups` and `--gpu-type` are mutually exclusive. Launch Kit reports an error when a requested identifier or GPU type does not match, including the available values.
 
+## Example Cluster Shapes
+
+### Two GPU Types
+
+`--gpu-type NVIDIA-H200` selects every H200 source group and excludes the H100 group. The generated deployment still has one cluster-wide `NicClusterPolicy`; bucket-scoped resources target only the selected H200 cohort.
+
+<figure class="hetero-figure">
+  <figcaption>Filter generation to one GPU type</figcaption>
+  <div class="hetero-flow">
+    <div class="hetero-stack">
+      <span class="hetero-label">Discovered source groups</span>
+      <div class="hetero-node hetero-node--excluded">
+        <strong>Group A</strong>
+        <span>DGX-B200 + H100</span>
+        <small>Filtered out</small>
+      </div>
+      <div class="hetero-node hetero-node--selected">
+        <strong>Group B</strong>
+        <span>PowerEdge-XE9680 + H200</span>
+        <small>Selected by GPU type</small>
+      </div>
+    </div>
+    <span class="hetero-arrow" aria-hidden="true">&#8594;</span>
+    <div class="hetero-stack">
+      <span class="hetero-label">Generated scope</span>
+      <div class="hetero-node hetero-node--selected">
+        <strong>NVIDIA-H200 bucket</strong>
+        <span>H200 node-selecting policies</span>
+        <span>H200 network and IP pool</span>
+        <small>NicClusterPolicy remains cluster-wide</small>
+      </div>
+    </div>
+  </div>
+</figure>
+
+```bash
+l8k generate \
+  --user-config ./cluster-config.yaml \
+  --gpu-type NVIDIA-H200 \
+  --fabric ethernet \
+  --deployment-type sriov \
+  --multirail \
+  --save-deployment-files ./deployment-h200
+```
+
+### Same GPU, Different Servers
+
+Three machine types with the same GPU type and east-west rail count combine into one render bucket. An unfiltered run uses the shared GPU label. A strict-subset `--groups` rollout keeps bucket-shared resources together but renders flat-selector policies for only the selected sources.
+
+<figure class="hetero-figure">
+  <figcaption>Combine compatible source groups into one render bucket</figcaption>
+  <div class="hetero-flow">
+    <div class="hetero-stack">
+      <span class="hetero-label">H200 source groups</span>
+      <div class="hetero-node">
+        <strong>Source A</strong>
+        <span>DGX-B200</span>
+        <small>machine label A</small>
+      </div>
+      <div class="hetero-node">
+        <strong>Source B</strong>
+        <span>ThinkSystem-SR680a-V3</span>
+        <small>machine label B</small>
+      </div>
+      <div class="hetero-node">
+        <strong>Source C</strong>
+        <span>PowerEdge-XE9680</span>
+        <small>machine label C</small>
+      </div>
+    </div>
+    <span class="hetero-arrow" aria-hidden="true">&#8594;</span>
+    <div class="hetero-stack">
+      <span class="hetero-label">One compatible bucket</span>
+      <div class="hetero-node hetero-node--selected">
+        <strong>NVIDIA-H200</strong>
+        <span>Same east-west rail count</span>
+        <span>Shared network, resource name, and IP pool</span>
+        <small>GPU selector for the full bucket</small>
+      </div>
+    </div>
+  </div>
+</figure>
+
+```bash
+# Full H200 bucket
+l8k generate \
+  --user-config ./cluster-config.yaml \
+  --save-deployment-files ./deployment
+
+# Stage two of the three source groups
+l8k generate \
+  --user-config ./cluster-config.yaml \
+  --groups dgx-b200-nvidia-h200,thinksystem-sr680a-v3-nvidia-h200 \
+  --save-deployment-files ./deployment-stage1
+```
+
+### Mixed GPU And Server Matrix
+
+In a four-group cluster, the default run renders an H100 bucket and an H200 bucket. A GPU filter selects a row of the matrix; an explicit group list can select a vendor-specific column across GPU types.
+
+<figure class="hetero-figure">
+  <figcaption>Choose a cohort from a mixed cluster</figcaption>
+  <div class="hetero-mixed">
+    <div>
+      <span class="hetero-label">Four discovered source groups</span>
+      <div class="hetero-matrix">
+        <div class="hetero-node hetero-node--group-filter">
+          <strong>G1</strong>
+          <span>DGX-B200 + H100</span>
+        </div>
+        <div class="hetero-node">
+          <strong>G2</strong>
+          <span>ThinkSystem + H100</span>
+        </div>
+        <div class="hetero-node hetero-node--selected hetero-node--group-filter">
+          <strong>G3</strong>
+          <span>DGX-B200 + H200</span>
+        </div>
+        <div class="hetero-node hetero-node--selected">
+          <strong>G4</strong>
+          <span>PowerEdge-XE9680 + H200</span>
+        </div>
+      </div>
+      <div class="hetero-legend">
+        <span><i class="hetero-swatch hetero-swatch--gpu"></i> <code>--gpu-type NVIDIA-H200</code>: G3 + G4</span>
+        <span><i class="hetero-swatch hetero-swatch--group"></i> <code>--groups</code> DGX sources: G1 + G3</span>
+      </div>
+    </div>
+    <div class="hetero-scope">
+      <span class="hetero-label">Resulting buckets</span>
+      <div><code>default</code><span>H100: G1 + G2<br>H200: G3 + G4</span></div>
+      <div><code>--gpu-type</code><span>H200: G3 + G4</span></div>
+      <div><code>--groups</code><span>H100: G1<br>H200: G3</span></div>
+    </div>
+  </div>
+</figure>
+
+Use `--gpu-type` when all nodes of one GPU type are the deployment unit. Use `--groups` for a staged rollout, vendor-specific cohort, or CI matrix with an explicit list of source identifiers.
+
 ## Resource Scope
 
 Launch Kit preserves Kubernetes resource ownership while rendering merged groups:
@@ -98,6 +237,34 @@ find deployment/network-operator \
 Subnets are allocated across the final render buckets before templates are written. This keeps generated IP pools disjoint when one cluster produces multiple GPU/rail buckets.
 
 For production, inspect every generated `IPPool` or `CIDRPool` and confirm that it does not overlap the cluster pod, service, management, or external network ranges.
+
+## East-West And North-South NICs
+
+Only east-west PFs produce rails and workload networking resources. North-south PFs remain visible in a mixed source group's inventory but are excluded from generated manifests. A source group containing only north-south PFs is omitted from `cluster-config.yaml`.
+
+<figure class="hetero-figure">
+  <figcaption>Traffic direction determines whether a PF is rendered</figcaption>
+  <div class="hetero-traffic">
+    <div class="hetero-traffic__row">
+      <div class="hetero-endpoint">Management / OOB network</div>
+      <span class="hetero-arrow" aria-hidden="true">&#8596;</span>
+      <div class="hetero-node hetero-node--north-south">
+        <strong>BlueField DPU</strong>
+        <span>North-south PF</span>
+        <small>Inventory only; not rendered</small>
+      </div>
+    </div>
+    <div class="hetero-traffic__row">
+      <div class="hetero-endpoint">GPU mesh and cluster nodes</div>
+      <span class="hetero-arrow" aria-hidden="true">&#8596;</span>
+      <div class="hetero-node hetero-node--selected">
+        <strong>ConnectX NIC or BlueField SuperNIC</strong>
+        <span>East-west PF</span>
+        <small>Assigned a rail and rendered</small>
+      </div>
+    </div>
+  </div>
+</figure>
 
 ## Operational Guidance
 
