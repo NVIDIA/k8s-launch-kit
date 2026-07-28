@@ -163,8 +163,10 @@ networkNamespaces: ["my-namespace"]
   the installed l8k version. Catalog values are synchronized nightly from the
   matching `Mellanox/network-operator` release branches; the newest entry uses
   `master` only until its `v<MAJOR.MINOR>.x` branch exists. A newer highest
-  version is tagged in k8s-launch-kit after the synchronized catalog reaches
-  `main` and the exact Network Operator tag is present upstream.
+  version is published as a generated-notes k8s-launch-kit GitHub Release
+  after the synchronized catalog reaches `main` and the exact Network Operator
+  tag is present upstream. Publishing creates the matching tag and dispatches
+  the binary and image artifact workflows.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.

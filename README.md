@@ -726,9 +726,11 @@ avoids GitHub's low anonymous API rate limit).
 
 After a catalog update reaches `main`, the workflow compares the previous and
 new highest catalog versions. If the new version is newer and the exact tag
-exists in `Mellanox/network-operator`, it cuts the matching lightweight tag on
-the updated k8s-launch-kit commit and dispatches the existing release-image
-workflow for that tag.
+exists in `Mellanox/network-operator`, it publishes a matching k8s-launch-kit
+GitHub Release with generated release notes. Publishing the release creates
+the tag on the catalog-update commit, then dispatches the existing GoReleaser
+and release-image workflows for that tag. No tag or release is created before
+the catalog update reaches `main`.
 
 Adding a new release remains a YAML-only catalog change: add its top-level
 entry under `releases:`. It automatically becomes part of the nightly sync and,

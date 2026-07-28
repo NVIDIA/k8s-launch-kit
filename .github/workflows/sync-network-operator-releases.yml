@@ -131,9 +131,9 @@ jobs:
               -f body="$body"
           fi
 
-  tag:
+  publish:
     if: github.event_name == 'push'
-    name: Tag synchronized release
+    name: Publish synchronized release
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -178,35 +178,73 @@ jobs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "tag=$current_tag" >> "$GITHUB_OUTPUT"
 
-      - name: Check upstream and local tags
+      - name: Check upstream and publication state
         if: steps.release.outputs.changed == 'true'
-        id: tag
+        id: publication
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           if ! git ls-remote --exit-code --tags \
             https://github.com/Mellanox/network-operator.git \
             "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
             echo "The upstream tag ${RELEASE_TAG} does not exist; skipping"
-            echo "create=false" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if git ls-remote --exit-code --tags origin \
-            "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "The k8s-launch-kit tag ${RELEASE_TAG} already exists; skipping"
-            echo "create=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          tag_sha="$(git ls-remote --tags origin \
+            "refs/tags/${RELEASE_TAG}" | cut -f1)"
+          if [ -n "$tag_sha" ] && [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::The k8s-launch-kit tag ${RELEASE_TAG} points to ${tag_sha}, not ${GITHUB_SHA}"
+            exit 1
           fi
 
-          echo "create=true" >> "$GITHUB_OUTPUT"
+          if gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ -z "$tag_sha" ]; then
+              echo "::error::Release ${RELEASE_TAG} exists without a matching tag"
+              exit 1
+            fi
+            echo "create_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "create_release=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Cut release tag
-        if: steps.tag.outputs.create == 'true'
+          if [ -n "$tag_sha" ]; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release and dispatch artifacts
+        if: steps.publication.outputs.publish == 'true'
         env:
+          CREATE_RELEASE: ${{ steps.publication.outputs.create_release }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          TAG_EXISTS: ${{ steps.publication.outputs.tag_exists }}
         run: |
-          git tag "$RELEASE_TAG" "$GITHUB_SHA"
-          git push origin "refs/tags/${RELEASE_TAG}"
-          gh workflow run image-push-release.yml --ref "$RELEASE_TAG"
+          if [ "$CREATE_RELEASE" = "true" ]; then
+            release_args=(
+              "$RELEASE_TAG"
+              --repo "$GITHUB_REPOSITORY"
+              --generate-notes
+              --title "$RELEASE_TAG"
+            )
+            if [ "$TAG_EXISTS" = "true" ]; then
+              release_args+=(--verify-tag)
+            else
+              release_args+=(--target "$GITHUB_SHA")
+            fi
+            gh release create "${release_args[@]}"
+          fi
+
+          gh workflow run release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$RELEASE_TAG"
+          gh workflow run image-push-release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$RELEASE_TAG"
