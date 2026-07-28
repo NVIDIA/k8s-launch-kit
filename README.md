@@ -226,7 +226,7 @@ Common Flags:
       --image-pull-secrets strings          Image pull secret names for NicClusterPolicy (comma-separated)
       --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)
       --network-operator-namespace string   Override the network operator namespace from the config file
-      --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 25.10, 26.1, 26.4, 26.7
+      --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 26.1, 26.4, 26.7
       --node-selector string                Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and NIC nodes are detected via a sysfs PCI-vendor probe (default "feature.node.kubernetes.io/pci-15b3.present=true")
       --user-config string                  Use provided cluster configuration file (as base config for discovery or as full config without discovery)
 
@@ -715,7 +715,24 @@ currently supports IPv4 static allocations only.
 For non-Spectrum-X profiles, leaving both the flag and `selectedRelease` empty
 continues to render the newest gates (treated as "latest").
 
-Adding a new release is a YAML-only change in `releases.yaml` — patch bumps update an existing entry in place; new minor lines add a new top-level key.
+Every catalog entry is synchronized nightly from
+`Mellanox/network-operator`'s `v<MAJOR.MINOR>.x` branch. When the release
+branch for the highest catalog key has not been created yet, the synchronizer
+uses `master` and verifies that its Network Operator version still belongs to
+that release line. The workflow opens or refreshes a PR only when values
+change. Run the same update locally with
+`GITHUB_TOKEN=<token> make sync-network-operator-releases` (authentication
+avoids GitHub's low anonymous API rate limit).
+
+After a catalog update reaches `main`, the workflow compares the previous and
+new highest catalog versions. If the new version is newer and the exact tag
+exists in `Mellanox/network-operator`, it cuts the matching lightweight tag on
+the updated k8s-launch-kit commit and dispatches the existing release-image
+workflow for that tag.
+
+Adding a new release remains a YAML-only catalog change: add its top-level
+entry under `releases:`. It automatically becomes part of the nightly sync and,
+while it is the highest key, can use `master` until its release branch exists.
 
 ### Maintenance and node upgrade concurrency
 
@@ -880,7 +897,7 @@ networkOperator:
   imagePullSecrets: []
 docaDriver:
   enable: true
-  version: doca3.2.0-25.10-1.2.8.0-2
+  version: doca3.3.0-26.01-1.0.0.0-6
   unloadStorageModules: false
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: false

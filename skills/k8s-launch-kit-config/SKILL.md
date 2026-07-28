@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-config
-version: 1.2.0
+version: 1.2.1
 description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
@@ -124,7 +124,7 @@ sriov:
 
 # Set DOCA driver version
 docaDriver:
-  version: "doca3.2.0-25.10-1.2.8.0-2"
+  version: "doca3.3.0-26.01-1.0.0.0-6"
 
 # Allow four simultaneous maintenance operations. Network Operator 26.1+
 # uses the global Maintenance Operator limits; older releases use the legacy
@@ -159,6 +159,12 @@ networkNamespaces: ["my-namespace"]
 - Start by running discovery (`l8k discover`) to generate a baseline, then edit it.
 - A discovered config can be passed directly to `l8k generate` without
   repeating profile flags; use flags only for overrides.
+- Use `l8k schema` to discover the Network Operator release keys supported by
+  the installed l8k version. Catalog values are synchronized nightly from the
+  matching `Mellanox/network-operator` release branches; the newest entry uses
+  `master` only until its `v<MAJOR.MINOR>.x` branch exists. A newer highest
+  version is tagged in k8s-launch-kit after the synchronized catalog reaches
+  `main` and the exact Network Operator tag is present upstream.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.
