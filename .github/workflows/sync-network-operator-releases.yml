@@ -41,6 +41,8 @@ jobs:
       release_ref: ${{ steps.merge.outputs.sha || github.sha }}
       release_tag: ${{ steps.release.outputs.tag }}
     permissions:
+      actions: write
+      checks: read
       contents: write
       pull-requests: write
     steps:
@@ -85,9 +87,9 @@ jobs:
           make build
           go test -race -count=1 ./...
 
-      - name: Create and merge pull request
+      - name: Create or update pull request
         if: steps.changes.outputs.changed == 'true'
-        id: merge
+        id: pull_request
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -143,18 +145,82 @@ jobs:
               --jq '.number')"
           fi
 
-          mergeable=""
-          for _ in {1..15}; do
-            mergeable="$(gh api \
-              "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-              --jq '.mergeable')"
-            if [ "$mergeable" != "null" ]; then
+          {
+            echo "branch=$branch"
+            echo "head_sha=$(git rev-parse HEAD)"
+            echo "number=$pr_number"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run pull request checks
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          BRANCH: ${{ steps.pull_request.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.pull_request.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.pull_request.outputs.number }}
+        run: |
+          gh workflow run ci.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$BRANCH"
+
+          run_id=""
+          for _ in {1..30}; do
+            run_id="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow ci.yml \
+              --branch "$BRANCH" \
+              --commit "$HEAD_SHA" \
+              --event workflow_dispatch \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+            if [ -n "$run_id" ]; then
               break
             fi
             sleep 2
           done
+          if [ -z "$run_id" ]; then
+            echo "::error::Timed out waiting for the CI workflow to start"
+            exit 1
+          fi
+
+          gh run watch "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --exit-status \
+            --interval 10
+          gh pr checks "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --watch \
+            --fail-fast \
+            --interval 10
+
+      - name: Merge pull request
+        if: steps.changes.outputs.changed == 'true'
+        id: merge
+        env:
+          BRANCH: ${{ steps.pull_request.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pull_request.outputs.number }}
+        run: |
+          mergeable=""
+          for _ in {1..30}; do
+            mergeable="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+              --jq '.mergeable')"
+            case "$mergeable" in
+              true)
+                break
+                ;;
+              false)
+                echo "::error::PR #${PR_NUMBER} is not mergeable"
+                exit 1
+                ;;
+            esac
+            echo "Waiting for GitHub to compute mergeability for PR #${PR_NUMBER}"
+            sleep 2
+          done
           if [ "$mergeable" != "true" ]; then
-            echo "::error::PR #${pr_number} is not mergeable"
+            echo "::error::Timed out waiting for PR #${PR_NUMBER} mergeability"
             exit 1
           fi
 
@@ -163,19 +229,19 @@ jobs:
           Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
           merge_result="$(gh api \
             --method PUT \
-            "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/merge" \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge" \
             -f merge_method=squash \
-            -f commit_title="${title} (#${pr_number})" \
+            -f commit_title="chore: sync Network Operator release versions (#${PR_NUMBER})" \
             -f commit_message="$merge_message" \
             --jq '[.merged, .sha] | @tsv')"
           IFS=$'\t' read -r merged merged_sha <<< "$merge_result"
           if [ "$merged" != "true" ]; then
-            echo "::error::PR #${pr_number} was not merged"
+            echo "::error::PR #${PR_NUMBER} was not merged"
             exit 1
           fi
 
           echo "sha=$merged_sha" >> "$GITHUB_OUTPUT"
-          git push origin --delete "$branch"
+          git push origin --delete "$BRANCH"
 
   release:
     name: Release if needed
