@@ -19,6 +19,7 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -88,8 +89,10 @@ jobs:
     steps:
       - name: Report job statuses
         run: |
-          echo "## Release Pipeline Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Job | Status |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|-----|--------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Test | ${{ needs.test.result }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| GoReleaser | ${{ needs.goreleaser.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Release Pipeline Summary"
+            echo "| Job | Status |"
+            echo "|-----|--------|"
+            echo "| Test | ${{ needs.test.result }} |"
+            echo "| GoReleaser | ${{ needs.goreleaser.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
