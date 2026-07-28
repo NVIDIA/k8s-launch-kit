@@ -18,12 +18,13 @@ l8k discover \
 
 Discovery bootstraps a private NIC Configuration Daemon in `nvidia-k8s-launch-kit`, creates the CRDs it needs, reads `NicDevice` state, and tears the namespace down when finished. A pre-installed Network Operator is not required.
 
+See [Cluster Discovery](discovery.md) for profile precedence, grouping, labels, rail collapsing, preset matching, and bootstrap troubleshooting.
+
 The saved `cluster-config.yaml` includes:
 
 - The discovered NIC and GPU topology.
 - Resolved profile settings.
 - Machine and GPU labels used for later group selection.
-- OFED-dependent storage and third-party RDMA modules.
 - Comments copied from the source config so the generated file remains editable.
 
 ## 2. Generate

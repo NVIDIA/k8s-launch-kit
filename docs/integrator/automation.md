@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 `l8k` is designed for both interactive operators and automated systems.
 
+For repository-provided AI-agent playbooks, see [AI Skills](ai-skills.md).
+
 ## JSON Mode
 
 Use JSON mode when a pipeline or agent needs structured output:
@@ -22,8 +24,48 @@ In JSON mode:
 - `stdout` contains one final JSON object.
 - Human-readable logs go to `stderr`.
 - Prompts are auto-confirmed.
+- Timestamped progress messages are collected under `messages`.
 
 Do not combine `--yes` with subcommands unless the specific command accepts it. `--output json` is the portable automation path.
+
+## Structured Results
+
+A successful command can include its phase, resolved profile, generated file list, deploy status, dry-run status, and collected messages:
+
+```json
+{
+  "success": true,
+  "phase": "generate",
+  "profile": {
+    "fabric": "ethernet",
+    "deployment": "sriov"
+  },
+  "generatedFiles": [
+    "deployment/network-operator/values.yaml"
+  ],
+  "deployed": false,
+  "messages": []
+}
+```
+
+A structured failure includes a stable category and retry guidance:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "CLUSTER_ERROR",
+    "message": "failed to connect to cluster",
+    "category": "cluster",
+    "transient": true,
+    "suggestion": "Check kubeconfig and API server connectivity"
+  },
+  "deployed": false,
+  "messages": []
+}
+```
+
+Use `error.transient` to decide whether retry is appropriate. Treat `suggestion` as operator guidance, not a command to execute without review. The process exit code remains authoritative even when a JSON object is emitted.
 
 ## Capability Discovery
 
@@ -43,6 +85,22 @@ The schema includes command descriptions, supported fabrics and deployment types
 | `3` | Cluster error |
 | `4` | Deployment or validation failure |
 | `5` | Partial success |
+
+Validation uses exit `4` when an acceptance gate fails, including release or manifest drift, preset topology deviation, and gating connectivity failures.
+
+## Logging
+
+Keep JSON on `stdout` and direct diagnostic logging separately:
+
+```bash
+l8k validate \
+  --output json \
+  --log-level debug \
+  --log-file ./l8k-debug.log \
+  >validation.json
+```
+
+Without `--log-file`, logs use `stderr`. Do not merge `stderr` into `stdout` in a parser-facing pipeline.
 
 ## GitOps Pattern
 

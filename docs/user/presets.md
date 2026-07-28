@@ -36,6 +36,27 @@ Bundled presets include:
 - `ThinkSystem-SR680a-V3-H200`
 - `UCSC-885A-M8-H22-H200`
 
+## Update Presets
+
+Download a catalog from a Git repository into the active filesystem override:
+
+```bash
+l8k preset update
+```
+
+Select the source or destination explicitly:
+
+```bash
+l8k preset update \
+  --repo nvidia/k8s-launch-kit \
+  --branch main
+
+l8k preset update \
+  --dir /etc/l8k/presets
+```
+
+Use `--config-dir /etc/l8k` on later commands to select a catalog stored under `/etc/l8k/presets`.
+
 ## Generate From A Preset
 
 ```bash
@@ -74,6 +95,37 @@ pfs:
 ```
 
 The `capabilities.nodes` block is required for `--for` because profile selection happens without live discovery.
+
+## Validation And Deviations
+
+Preset lookup is an exact match on `(machineType, gpuType)`. After lookup, Launch Kit compares:
+
+- PF count.
+- The complete PCI-address set.
+- Device ID at every shared PCI address.
+
+Part number and PSID differences are not topology deviations because firmware and SKU variants are expected.
+
+When the topology differs, discovery:
+
+1. Records each difference under `clusterConfig[].presetDeviation`.
+2. Keeps the live-discovered traffic, rail, NUMA, and GPU-affinity data.
+3. Does not partially apply the preset.
+4. Repeats the warning whenever the config is loaded.
+
+```yaml
+presetDeviation:
+  - field: pfCount
+    expected: "8"
+    got: "6"
+    detail: PF count differs from preset
+  - field: deviceID
+    expected: 1023@0000:5e:00.0
+    got: a2dc@0000:5e:00.0
+    detail: device ID at PCI address differs from preset
+```
+
+`l8k validate` compares the saved group with the current catalog again. A topology mismatch appears as paired actual/expected hardware in the report and prevents the deployment from receiving a green-light result.
 
 ## Override The Catalog
 

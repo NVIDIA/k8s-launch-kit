@@ -14,6 +14,8 @@ l8k validate \
   --kubeconfig "$KUBECONFIG"
 ```
 
+When `--user-config` is omitted, Launch Kit checks `./cluster-config.yaml`, the parent of `--deployment-files`, and then the deployment directory. It uses that file for the selected release, operator namespace, profile, discovered groups, and validation settings.
+
 ## Check Stages
 
 | Stage | What it verifies |
@@ -25,6 +27,8 @@ l8k validate \
 | Connectivity | ICMP, `rping`, and `ib_write_bw` checks between generated test DaemonSet pods. |
 
 Connectivity is skipped when manifests are missing, errored, or still in progress.
+
+Preflight uses the same checks as deployment: Helm chart version, generated Helm values, component versions, and stray managed CRs. Validation never remediates drift.
 
 ## Validation Modes
 
@@ -63,6 +67,7 @@ Override per run:
 ```bash
 l8k validate \
   --validation-checks icmp,rping \
+  --connectivity-timeout 10m \
   --rdma-rping-iterations 20 \
   --rdma-ib-write-size 65536 \
   --rdma-ib-write-min-bandwidth-gbps 100
@@ -91,6 +96,26 @@ l8k validate --report-path=-
 
 The report includes release checks, component checks, manifest state, live YAML dropdowns, topology/preset comparison, connectivity matrices, and warnings.
 
+| Report section | Content |
+| --- | --- |
+| Environment | Launch Kit version, timestamp, API server, operator namespace, and kubeconfig context. |
+| Profile | Fabric, deployment type, multirail, routing, and Spectrum-X settings. |
+| Node groups | Machine/GPU identity, labels, capabilities, worker nodes, PF inventory, and paired actual/expected preset topology. |
+| Release and preflight | Selected and deployed chart, values, component versions, and stray-resource results. |
+| Manifest state | State, reason, kind-specific details, and live YAML with `managedFields` removed. |
+| Connectivity | Same-rail and cross-rail ICMP/RDMA matrices with bandwidth observations. |
+| Warnings | Skipped stages, in-progress resources, and other non-success conditions. |
+
+The report is one HTML file with inline styling and no external runtime dependency, so it can be opened offline or attached to an approved diagnostic record.
+
+## Acceptance Outcomes
+
+- Exit `0`: all gating checks passed.
+- Exit `0` with warnings: no error/missing resources, but at least one resource is still in progress and `--wait` was not used. Connectivity is skipped.
+- Exit `4`: a manifest is missing or errored; release, values, or component checks mismatch; stray resources exist; certified preset topology differs; or a gating connectivity check fails.
+
+Use `--wait <duration>` to turn an in-progress snapshot into a bounded acceptance wait.
+
 ## When Validation Does Not Pass
 
 Keep the test DaemonSet:
@@ -110,3 +135,5 @@ Use JSON output for automation:
 ```bash
 l8k validate --output json 2>/dev/null | jq .
 ```
+
+Continue with [Troubleshooting](troubleshooting.md) to investigate the failed stage while preserving the report and test resources as evidence.

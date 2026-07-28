@@ -15,8 +15,15 @@ This documentation covers the `l8k` CLI for deploying NVIDIA cloud-native networ
 - Deployment Profiles: /k8s-launch-kit/user/profiles/
 - Spectrum-X: /k8s-launch-kit/user/spectrum-x/
 - Validation: /k8s-launch-kit/user/validation/
-- Presets: /k8s-launch-kit/user/presets/
-- Maintenance: /k8s-launch-kit/user/maintenance/
-- Automation: /k8s-launch-kit/integrator/automation/
-- CLI Reference: /k8s-launch-kit/reference/cli/
+- Troubleshooting: /k8s-launch-kit/user/troubleshooting/
+- Advanced Concepts: /k8s-launch-kit/advanced/concepts/
+- Cluster Discovery: /k8s-launch-kit/user/discovery/
+- Manifest Generation: /k8s-launch-kit/advanced/generation/
+- Deployment Mechanics: /k8s-launch-kit/advanced/deployment/
+- Heterogeneous Clusters: /k8s-launch-kit/user/heterogeneous-clusters/
+- Topology Presets: /k8s-launch-kit/user/presets/
+- Maintenance and Upgrades: /k8s-launch-kit/user/maintenance/
 - Configuration File: /k8s-launch-kit/reference/configuration/
+- Automation: /k8s-launch-kit/integrator/automation/
+- AI Skills: /k8s-launch-kit/integrator/ai-skills/
+- CLI Reference: /k8s-launch-kit/reference/cli/

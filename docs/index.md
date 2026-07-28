@@ -16,10 +16,14 @@ Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, In
 | If you are a... | Start here |
 | --- | --- |
 | Operator deploying networking on a cluster | [Quick Start](user/quick-start.md) |
+| Operator inventorying a cluster | [Cluster Discovery](user/discovery.md) |
 | Platform engineer selecting a topology profile | [Deployment Profiles](user/profiles.md) |
+| Platform engineer managing mixed hardware | [Heterogeneous Clusters](user/heterogeneous-clusters.md) |
 | Spectrum-X operator | [Spectrum-X](user/spectrum-x.md) |
 | CI/CD or GitOps integrator | [Automation](integrator/automation.md) |
+| AI agent integrator | [AI Skills](integrator/ai-skills.md) |
 | Operator confirming a deployment is ready for use | [Validation](user/validation.md) |
+| Operator investigating a failed stage | [Troubleshooting](user/troubleshooting.md) |
 
 ## Workflow
 
@@ -58,12 +62,14 @@ These standalone docs include features added across recent release lines:
 
 - Self-contained discovery without a pre-installed Network Operator.
 - Hardware-derived machine/GPU labels, group filtering, and heterogeneous cluster merging.
+- Repository-provided AI skills for guided discovery, generation, deployment, validation, and troubleshooting.
 - One-rail-per-NIC discovery, north-south-only group filtering, and exact-match topology presets.
 - Network Operator release catalog selection for `26.1`, `26.4`, and `26.7`.
 - NicNodePolicy rendering, maintenance concurrency, and Network Operator Helm install through `l8k deploy`.
 - Multi-namespace secondary network fan-out, source-based routing, ARP tuning, NV-IPAM exclusions, and custom workload manifests.
 - Spectrum-X RA2.1, RA2.2, and RA2.3 flows, including ConfigMap-backed profiles, topology-driven CIDRPools, and optional DRA ResourceClaimTemplates.
 - Configurable validation modes, ICMP/RDMA check selection, bandwidth gates, and self-contained HTML reports.
+- Diagnostic collection and stage-based troubleshooting for discovery, reconciliation, SR-IOV, RDMA, and IPAM.
 - Machine-readable JSON output and the `l8k schema` command for automation and AI agents.
 
 ## Links

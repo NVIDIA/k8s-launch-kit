@@ -43,7 +43,36 @@ l8k discover \
 
 RA2.3 requires the Spectrum-X profile data as either a full ConfigMap YAML or raw `data.profile` YAML.
 
-Full ConfigMap:
+The full ConfigMap must use the NIC Configuration Operator discovery label and store the profile as a YAML string:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site-ra23-profile
+  namespace: nvidia-network-operator
+  labels:
+    network.nvidia.com/operator.nic-configuration.spectrum-x-profile: ""
+data:
+  profile: |
+    useSoftwareCCAlgorithm: true
+    docaCCVersion: "<validated-version>"
+    mlxConfig:
+      none:
+        "1023":
+          postBreakout:
+            EXAMPLE_NVCONFIG_PARAMETER: "example-value"
+    runtimeConfig:
+      roce:
+        - name: <parameter-name>
+          value: "<validated-value>"
+          valueType: string
+          dmsPath: "<validated-dms-path>"
+```
+
+Replace the placeholders with a validated profile for the target hardware and RA release. The NIC Configuration Operator repository provides a complete [example Spectrum-X profile ConfigMap](https://raw.githubusercontent.com/Mellanox/nic-configuration-operator/refs/heads/main/docs/examples/spectrum-x/example-spectrum-x-profile-configmap.yaml) covering `mlxConfig`, RoCE, adaptive routing, congestion control, and inter-packet gap sections.
+
+Generate from the full ConfigMap:
 
 ```bash
 l8k generate \
@@ -68,10 +97,57 @@ The generated ConfigMap uses the label expected by the NIC Configuration Operato
 
 Spectrum-X CIDRPools can be generated from an `spcx-gen` format `topology.json`. This replaces placeholder pool entries with per-host static allocations derived from the resolved topology.
 
+The file contains a `nodes` inventory and two-endpoint entries under `links`. This minimal 2-tier example connects one Kubernetes worker to one leaf:
+
+```json
+{
+  "nodes": [
+    {
+      "name": "compute-a",
+      "role": "host",
+      "type": "default"
+    },
+    {
+      "name": "leaf-p0-r0",
+      "role": "leaf",
+      "type": "cumulus"
+    }
+  ],
+  "links": [
+    [
+      {
+        "node": "leaf-p0-r0",
+        "interface": "swp1s0",
+        "attributes": {
+          "role": "leaf",
+          "plane": 0,
+          "pod": 0,
+          "su": 0,
+          "rail_group": [0]
+        }
+      },
+      {
+        "node": "compute-a",
+        "interface": "eth_p0_r0",
+        "attributes": {
+          "role": "host",
+          "rail": 0,
+          "pod": 0,
+          "su": 0
+        }
+      }
+    ]
+  ]
+}
+```
+
+Add one host-to-leaf link for every selected worker rail. Host `node` values must match Kubernetes node names in the selected `clusterConfig` group. Every host endpoint requires `attributes.rail`, every leaf endpoint requires `attributes.plane`, and 3-tier allocation also requires host `attributes.pod`.
+
 ```bash
 l8k generate \
   --network-operator-release 26.7 \
   --spectrum-x RA2.3 \
+  --spectrum-x-config ./spectrum-x-profile-configmap.yaml \
   --topology-scheme 2-tier \
   --ip-version ipv4 \
   --topology-file ./topology.json

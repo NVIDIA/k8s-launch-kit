@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 A profile maps discovered hardware and user intent to a complete set of Kubernetes manifests. Profile selection is driven by `profile.fabric`, `profile.deployment`, `profile.multirail`, and optional Spectrum-X settings.
 
+Fabric describes the physical transport (`ethernet` or `infiniband`). Deployment type describes how Kubernetes exposes that transport to workloads (`sriov`, `rdma_shared`, or `host_device`).
+
 ## Profile Matrix
 
 | Profile | Fabric | Deployment | Main resources |
@@ -20,21 +22,59 @@ A profile maps discovered hardware and user intent to a complete set of Kubernet
 | Spectrum-X RA2.2 | Ethernet | `sriov` | v1alpha2 `SpectrumXRailPoolConfig` |
 | Spectrum-X RA2.3 | Ethernet | `sriov` | v1alpha2 `SpectrumXRailPoolConfig` plus Spectrum-X profile ConfigMap |
 
-## Discovery Defaults
+## Selection Guidance
 
-Fresh discovery fills missing profile fields:
+| Profile | Use when |
+| --- | --- |
+| SR-IOV Ethernet RDMA | Each pod needs a dedicated Ethernet VF, isolated bandwidth, and direct RDMA. Common for distributed training and HPC. |
+| SR-IOV InfiniBand RDMA | Each pod needs a dedicated InfiniBand VF and isolated IB connectivity. |
+| Host Device RDMA | A pod needs exclusive use of a physical NIC with minimal virtualization overhead. The device must not be required by the host. |
+| Macvlan RDMA shared | Many Ethernet workloads need separate MAC/network namespaces while sharing the host RDMA device. |
+| IPoIB RDMA shared | InfiniBand workloads can share the host RDMA device and use IP over InfiniBand rather than dedicated VFs. |
+| Spectrum-X | The cluster uses a configured Spectrum-X switch fabric and the selected RA release. |
 
-- `deployment` defaults to `sriov`.
-- `multirail` defaults to `true`.
-- `fabric` is persisted only when all discovered groups have the same confirmed fabric.
-- Explicit CLI flags override both defaults and values from `--user-config`.
+## Generate A Standard Profile
 
 ```bash
-l8k discover \
-  --fabric infiniband \
-  --deployment-type rdma_shared \
-  --multirail=false
+# SR-IOV Ethernet
+l8k generate --user-config ./cluster-config.yaml \
+  --fabric ethernet --deployment-type sriov --multirail \
+  --save-deployment-files ./deployment
+
+# SR-IOV InfiniBand
+l8k generate --user-config ./cluster-config.yaml \
+  --fabric infiniband --deployment-type sriov --multirail \
+  --save-deployment-files ./deployment
+
+# Host device; set fabric explicitly when discovery could not resolve it
+l8k generate --user-config ./cluster-config.yaml \
+  --fabric ethernet --deployment-type host_device --multirail \
+  --save-deployment-files ./deployment
+
+# Macvlan with shared RDMA
+l8k generate --user-config ./cluster-config.yaml \
+  --fabric ethernet --deployment-type rdma_shared --multirail \
+  --save-deployment-files ./deployment
+
+# IPoIB with shared RDMA
+l8k generate --user-config ./cluster-config.yaml \
+  --fabric infiniband --deployment-type rdma_shared --multirail \
+  --save-deployment-files ./deployment
 ```
+
+The saved profile from discovery makes these flags optional. Pass them during generation only when intentionally overriding that file.
+
+After deployment, profile-specific resources should be present:
+
+| Profile | Inspect |
+| --- | --- |
+| SR-IOV Ethernet | `kubectl get sriovnetworknodepolicy,sriovnetwork -A` |
+| SR-IOV InfiniBand | `kubectl get sriovnetworknodepolicy,sriovibnetwork -A` |
+| Host device | `kubectl get hostdevicenetwork -A` |
+| Macvlan RDMA shared | `kubectl get macvlannetwork -A` |
+| IPoIB RDMA shared | `kubectl get ipoibnetwork -A` |
+
+Use `l8k validate` for the deployment acceptance verdict; resource presence alone is not a green light.
 
 ## Group Selection
 
@@ -56,6 +96,8 @@ Use `--gpu-type` when all groups with the same GPU type can share a generated bu
 ```bash
 l8k generate --gpu-type NVIDIA-H200
 ```
+
+For automatic merging, strict subset behavior, and resource scope, see [Heterogeneous Clusters](heterogeneous-clusters.md).
 
 ## Routing And ARP Tuning
 
@@ -86,3 +128,5 @@ l8k generate --workload-manifest ./workloads/rdma-test-daemonset.yaml
 ```
 
 `l8k validate` consumes generated example workloads for connectivity tests. `l8k deploy` skips example workloads and applies only the operational manifests.
+
+For bundle layout and custom workload mutation, see [Manifest Generation](../advanced/generation.md).

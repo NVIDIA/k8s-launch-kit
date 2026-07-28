@@ -32,6 +32,21 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 | `--network-operator-namespace` | generate, deploy, validate | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--output json` | all | Emit a single JSON result to stdout for automation. |
 | `--quiet` | all | Suppress informational output. |
+| `--log-level` | all | Enable `debug`, `info`, `warn`, or `error` logging. |
+| `--log-file` | all | Write logs to a file instead of `stderr`. |
+
+## Discover Flags
+
+| Flag | Description |
+| --- | --- |
+| `--save-cluster-config` | Output path for the discovered configuration. Defaults to the `--user-config` path or `./cluster-config.yaml`. |
+| `--node-selector` | Selector persisted for generated resources. It does not filter discovery scheduling. |
+| `--keep-namespace` | Keep the temporary `nvidia-k8s-launch-kit` namespace and daemon workload for inspection. |
+| `--collapse-nic-rails` | Collapse eligible multi-port NICs into one rail. Enabled by default; known dual-port models retain a rail per port. |
+| `--image-pull-secrets` | Secret names used to pull the discovery daemon and propagated into generated policy. |
+| `--enabled-plugins` | Comma-separated plugins. The supported deployment plugin is `network-operator`. |
+
+Discovery also accepts the profile and Spectrum-X flags below. Explicit flags override values from `--user-config` and discovered defaults.
 
 ## Profile Flags
 
@@ -46,6 +61,8 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 | `--gpu-type` | Render all source groups whose GPU type matches. |
 | `--for` | Generate from a topology preset. Requires `--node-selector`. |
 
+`--groups`, `--gpu-type`, and `--for` apply to generation. The remaining profile flags apply to discovery and generation.
+
 ## Spectrum-X Flags
 
 | Flag | Description |
@@ -58,6 +75,20 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 | `--topology-file` | Path to an `spcx-gen` format `topology.json`. |
 | `--spectrum-x-config` | Full ConfigMap YAML or raw `data.profile` YAML. Required for RA2.3. |
 | `--spectrum-x-configmap-name` | ConfigMap name when `--spectrum-x-config` is raw profile YAML. |
+
+## Generate Flags
+
+| Flag | Description |
+| --- | --- |
+| `--save-deployment-files` | Output directory for generated manifests. |
+| `--network-namespaces` | Namespaces that receive secondary-network resources and example workloads. |
+| `--workload-manifest` | Replace the profile's example workload with a Pod or workload-controller manifest. |
+| `--enable-doca-driver` | Override `docaDriver.enable` and include the DOCA driver deployment. |
+| `--image-pull-secrets` | Secret names propagated into generated Network Operator policy. |
+| `--deploy` | Deploy immediately after generation. |
+| `--kubeconfig` | Kubeconfig used with `--deploy`. |
+| `--dry-run` | Preview the deploy stage used with `--deploy`. |
+| `--overwrite-existing` | Allow convergence when deploy preflight finds Helm or managed-resource drift. |
 
 ## Deploy Flags
 
@@ -75,9 +106,28 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 | `--connectivity` | Enable or disable data-plane connectivity checks. |
 | `--validation-mode` | `quick`, `full`, or `strict`. |
 | `--validation-checks` | Comma-separated list of `icmp`, `rping`, and `ib_write_bw`. |
+| `--connectivity-timeout` | Wall-clock budget for connectivity workload rollout and test execution. |
 | `--rdma-rping-iterations` | Override `validation.rdma.rpingIterations`. |
 | `--rdma-ib-write-size` | Override `validation.rdma.ibWriteSize`. |
 | `--rdma-ib-write-min-bandwidth-gbps` | Minimum `ib_write_bw` peak bandwidth. |
 | `--report-path` | HTML report path. Use `-` to disable. |
 | `--keep` | Keep the test DaemonSet after validation. |
 | `--wait` | Wait for in-progress manifests to reach a terminal state. |
+
+## Preset Flags
+
+| Command and flag | Description |
+| --- | --- |
+| `preset list --config-dir` | List presets from a custom configuration directory instead of the embedded catalog. |
+| `preset update --dir` | Destination directory for downloaded presets. |
+| `preset update --repo` | Source GitHub repository. Defaults to `nvidia/k8s-launch-kit`. |
+| `preset update --branch` | Source branch. Defaults to `main`. |
+
+Set `GITHUB_TOKEN` for authenticated GitHub API requests when updating presets.
+
+## Sosreport Flags
+
+| Flag | Description |
+| --- | --- |
+| `--kubeconfig` | Cluster kubeconfig, with the same environment and home-directory fallback as other cluster commands. |
+| `--output-dir` | Diagnostic output directory. Defaults to `./sosreport`. |

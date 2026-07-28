@@ -63,6 +63,8 @@ markdown_extensions:
   - md_in_html
   - pymdownx.details
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
   - pymdownx.highlight:
       anchor_linenums: true
   - toc:
@@ -80,13 +82,21 @@ nav:
       - Deployment Profiles: user/profiles.md
       - Spectrum-X: user/spectrum-x.md
       - Validation: user/validation.md
-      - Presets: user/presets.md
-      - Maintenance: user/maintenance.md
+      - Troubleshooting: user/troubleshooting.md
+  - Advanced:
+      - Concepts: advanced/concepts.md
+      - Cluster Discovery: user/discovery.md
+      - Manifest Generation: advanced/generation.md
+      - Deployment Mechanics: advanced/deployment.md
+      - Heterogeneous Clusters: user/heterogeneous-clusters.md
+      - Topology Presets: user/presets.md
+      - Maintenance and Upgrades: user/maintenance.md
+      - Configuration File: reference/configuration.md
   - Integrator Guide:
       - Automation: integrator/automation.md
+      - AI Skills: integrator/ai-skills.md
   - Reference:
       - CLI Reference: reference/cli.md
-      - Configuration File: reference/configuration.md
       - Documentation Publishing: reference/docs-publishing.md
 
 validation:
