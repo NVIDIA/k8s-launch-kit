@@ -69,11 +69,12 @@ exclusive mode for each rail.
 ## RDMA Configuration
 
 - **Mode**: `exclusive` -- each workload gets dedicated RDMA resources (not shared)
-- **rdmaPrefix**: Template for RDMA device names
-  - Non-swplb: `"roce_p%plane_id%_r%rail_id%"` (from spectrumX config)
-  - swplb: `"roce_p%plane_id%_r%rail_id%"` with per-plane expansion
-- **netdevPrefix**: Template for network interface names
-  - Pattern: `"eth_p%plane_id%_r%rail_id%"`
+- **rdmaPrefix**: Selected from the mode's `spectrumX` block
+  - hwplb/none: `"roce_r%rail_id%"`
+  - swplb: `"roce_r%rail_id%_p%plane_id%"`
+- **netdevPrefix**: Selected from the mode's `spectrumX` block
+  - hwplb/swplb: `"eth_r%rail_id%_p%plane_id%"`
+  - none: `"eth_r%rail_id%"`
 - **eSwitchMultiport**: `"true"` for Spectrum-X configurations
 
 Note: RDMA exclusive mode requires a node reboot and cannot be set when namespaces

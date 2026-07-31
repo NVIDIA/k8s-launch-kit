@@ -158,6 +158,16 @@ func TestDefaultLaunchKitConfig(t *testing.T) {
 	assert.Equal(t, DefaultValidationIBWriteSize, cfg.Validation.RDMA.IBWriteSize)
 	require.NotNil(t, cfg.Validation.RDMA.IBWriteMinBandwidthGbps)
 	assert.Equal(t, float64(DefaultValidationIBWriteMinGbps), *cfg.Validation.RDMA.IBWriteMinBandwidthGbps)
+	require.NotNil(t, cfg.SpectrumX)
+	require.NotNil(t, cfg.SpectrumX.SinglePlane)
+	assert.Equal(t, "eth_r%rail_id%", cfg.SpectrumX.SinglePlane.NetdevPrefix)
+	assert.Equal(t, "roce_r%rail_id%", cfg.SpectrumX.SinglePlane.RdmaPrefix)
+	require.NotNil(t, cfg.SpectrumX.HWPLB)
+	assert.Equal(t, "eth_r%rail_id%_p%plane_id%", cfg.SpectrumX.HWPLB.NetdevPrefix)
+	assert.Equal(t, "roce_r%rail_id%", cfg.SpectrumX.HWPLB.RdmaPrefix)
+	require.NotNil(t, cfg.SpectrumX.SWPLB)
+	assert.Equal(t, "eth_r%rail_id%_p%plane_id%", cfg.SpectrumX.SWPLB.NetdevPrefix)
+	assert.Equal(t, "roce_r%rail_id%_p%plane_id%", cfg.SpectrumX.SWPLB.RdmaPrefix)
 }
 
 func TestValidationConfig(t *testing.T) {
@@ -462,8 +472,15 @@ sriov:
 spectrumX:
   nicType: "1023"
   overlay: "none"
-  rdmaPrefix: "roce_nic%nic_id%_p%plane%_r%rail%"
-  netdevPrefix: "nic%nic_id%_p%plane%_r%rail%"
+  singlePlane:
+    netdevPrefix: "nic%nic_id%_r%rail%"
+    rdmaPrefix: "roce_nic%nic_id%_r%rail%"
+  hwplb:
+    netdevPrefix: "nic%nic_id%_p%plane%_r%rail%"
+    rdmaPrefix: "roce_nic%nic_id%_r%rail%"
+  swplb:
+    netdevPrefix: "nic%nic_id%_p%plane%_r%rail%"
+    rdmaPrefix: "roce_nic%nic_id%_p%plane%_r%rail%"
 
 profile:
   fabric: ethernet
@@ -488,8 +505,15 @@ profile:
 		require.NotNil(t, config.SpectrumX)
 		assert.Equal(t, "1023", config.SpectrumX.NicType)
 		assert.Equal(t, "none", config.SpectrumX.Overlay)
-		assert.Equal(t, "roce_nic%nic_id%_p%plane%_r%rail%", config.SpectrumX.RdmaPrefix)
-		assert.Equal(t, "nic%nic_id%_p%plane%_r%rail%", config.SpectrumX.NetdevPrefix)
+		require.NotNil(t, config.SpectrumX.SinglePlane)
+		assert.Equal(t, "roce_nic%nic_id%_r%rail%", config.SpectrumX.SinglePlane.RdmaPrefix)
+		assert.Equal(t, "nic%nic_id%_r%rail%", config.SpectrumX.SinglePlane.NetdevPrefix)
+		require.NotNil(t, config.SpectrumX.HWPLB)
+		assert.Equal(t, "roce_nic%nic_id%_r%rail%", config.SpectrumX.HWPLB.RdmaPrefix)
+		assert.Equal(t, "nic%nic_id%_p%plane%_r%rail%", config.SpectrumX.HWPLB.NetdevPrefix)
+		require.NotNil(t, config.SpectrumX.SWPLB)
+		assert.Equal(t, "roce_nic%nic_id%_p%plane%_r%rail%", config.SpectrumX.SWPLB.RdmaPrefix)
+		assert.Equal(t, "nic%nic_id%_p%plane%_r%rail%", config.SpectrumX.SWPLB.NetdevPrefix)
 
 		// Verify profile flags
 		require.NotNil(t, config.Profile)
@@ -501,18 +525,56 @@ profile:
 		assert.True(t, config.Profile.Multirail)
 	})
 
+	t.Run("legacy file without mode blocks uses embedded mode defaults", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "legacy-spectrum-x-config.yaml")
+		configContent := `networkOperator:
+  version: v26.4.0
+  componentVersion: network-operator-v26.4.0
+  repository: nvcr.io/nvidia/mellanox
+  namespace: network-operator
+
+spectrumX:
+  nicType: "1023"
+  overlay: "none"
+  rdmaPrefix: "legacy-rdma"
+  netdevPrefix: "legacy-netdev"
+
+profile:
+  fabric: ethernet
+  deployment: sriov
+  multirail: true
+  spectrumX:
+    spcxVersion: "RA2.2"
+    multiplaneMode: hwplb
+    numberOfPlanes: 2
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644))
+
+		loaded, err := LoadFullConfig(configPath, logr.Discard())
+		require.NoError(t, err)
+		require.NotNil(t, loaded.SpectrumX)
+		assert.Nil(t, loaded.SpectrumX.HWPLB)
+
+		rdmaPrefix, netdevPrefix := SpectrumXInterfaceNamePrefixes(loaded.SpectrumX, "hwplb")
+		assert.Equal(t, "roce_r%rail_id%", rdmaPrefix)
+		assert.Equal(t, "eth_r%rail_id%_p%plane_id%", netdevPrefix)
+	})
+
 	t.Run("verify Spectrum-X struct fields", func(t *testing.T) {
 		config := &SpectrumXConfig{
-			NicType:      "1023",
-			Overlay:      "none",
-			RdmaPrefix:   "roce_",
-			NetdevPrefix: "eth_p%plane%_r%rail%",
+			NicType: "1023",
+			Overlay: "none",
+			HWPLB: &SpectrumXInterfaceNamePrefixConfig{
+				RdmaPrefix:   "roce_",
+				NetdevPrefix: "eth_p%plane%_r%rail%",
+			},
 		}
 
 		assert.Equal(t, "1023", config.NicType)
 		assert.Equal(t, "none", config.Overlay)
-		assert.Equal(t, "roce_", config.RdmaPrefix)
-		assert.Equal(t, "eth_p%plane%_r%rail%", config.NetdevPrefix)
+		require.NotNil(t, config.HWPLB)
+		assert.Equal(t, "roce_", config.HWPLB.RdmaPrefix)
+		assert.Equal(t, "eth_p%plane%_r%rail%", config.HWPLB.NetdevPrefix)
 	})
 
 	t.Run("verify different multiplane modes", func(t *testing.T) {
@@ -540,7 +602,132 @@ profile:
 	})
 }
 
+func TestSpectrumXInterfaceNamePrefixes(t *testing.T) {
+	defaults, err := DefaultLaunchKitConfig()
+	require.NoError(t, err)
+	require.NotNil(t, defaults.SpectrumX)
+
+	testCases := []struct {
+		mode           string
+		wantRdmaPrefix string
+		wantNetPrefix  string
+	}{
+		{
+			mode:           "hwplb",
+			wantRdmaPrefix: "roce_r%rail_id%",
+			wantNetPrefix:  "eth_r%rail_id%_p%plane_id%",
+		},
+		{
+			mode:           "swplb",
+			wantRdmaPrefix: "roce_r%rail_id%_p%plane_id%",
+			wantNetPrefix:  "eth_r%rail_id%_p%plane_id%",
+		},
+		{
+			mode:           "none",
+			wantRdmaPrefix: "roce_r%rail_id%",
+			wantNetPrefix:  "eth_r%rail_id%",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.mode, func(t *testing.T) {
+			rdmaPrefix, netdevPrefix := SpectrumXInterfaceNamePrefixes(defaults.SpectrumX, tc.mode)
+			assert.Equal(t, tc.wantRdmaPrefix, rdmaPrefix)
+			assert.Equal(t, tc.wantNetPrefix, netdevPrefix)
+		})
+	}
+
+	t.Run("uses embedded defaults when the selected block is absent", func(t *testing.T) {
+		rdmaPrefix, netdevPrefix := SpectrumXInterfaceNamePrefixes(&SpectrumXConfig{}, "hwplb")
+		assert.Equal(t, defaults.SpectrumX.HWPLB.RdmaPrefix, rdmaPrefix)
+		assert.Equal(t, defaults.SpectrumX.HWPLB.NetdevPrefix, netdevPrefix)
+	})
+
+	t.Run("preserves a partial per-mode override", func(t *testing.T) {
+		settings := &SpectrumXConfig{
+			HWPLB: &SpectrumXInterfaceNamePrefixConfig{
+				RdmaPrefix: "custom-rdma-r%rail_id%",
+			},
+		}
+
+		rdmaPrefix, netdevPrefix := SpectrumXInterfaceNamePrefixes(settings, "hwplb")
+		assert.Equal(t, settings.HWPLB.RdmaPrefix, rdmaPrefix)
+		assert.Equal(t, defaults.SpectrumX.HWPLB.NetdevPrefix, netdevPrefix)
+	})
+
+	t.Run("selects explicit overrides from each mode block", func(t *testing.T) {
+		settings := &SpectrumXConfig{
+			SinglePlane: &SpectrumXInterfaceNamePrefixConfig{
+				RdmaPrefix:   "single-rdma-r%rail_id%",
+				NetdevPrefix: "single-net-r%rail_id%",
+			},
+			HWPLB: &SpectrumXInterfaceNamePrefixConfig{
+				RdmaPrefix:   "hw-rdma-r%rail_id%",
+				NetdevPrefix: "hw-net-r%rail_id%-p%plane_id%",
+			},
+			SWPLB: &SpectrumXInterfaceNamePrefixConfig{
+				RdmaPrefix:   "sw-rdma-r%rail_id%-p%plane_id%",
+				NetdevPrefix: "sw-net-r%rail_id%-p%plane_id%",
+			},
+		}
+
+		for _, tc := range []struct {
+			mode string
+			want *SpectrumXInterfaceNamePrefixConfig
+		}{
+			{mode: "none", want: settings.SinglePlane},
+			{mode: "hwplb", want: settings.HWPLB},
+			{mode: "swplb", want: settings.SWPLB},
+		} {
+			t.Run(tc.mode, func(t *testing.T) {
+				rdmaPrefix, netdevPrefix := SpectrumXInterfaceNamePrefixes(settings, tc.mode)
+				assert.Equal(t, tc.want.RdmaPrefix, rdmaPrefix)
+				assert.Equal(t, tc.want.NetdevPrefix, netdevPrefix)
+			})
+		}
+	})
+}
+
+func spectrumXConfigWithPrefixes(mode, netdevPrefix, rdmaPrefix string) *SpectrumXConfig {
+	prefixes := &SpectrumXInterfaceNamePrefixConfig{
+		NetdevPrefix: netdevPrefix,
+		RdmaPrefix:   rdmaPrefix,
+	}
+	settings := &SpectrumXConfig{}
+	switch mode {
+	case "hwplb":
+		settings.HWPLB = prefixes
+	case "swplb":
+		settings.SWPLB = prefixes
+	default:
+		settings.SinglePlane = prefixes
+	}
+	return settings
+}
+
 func TestValidateSpectrumXTemplates(t *testing.T) {
+	t.Run("selected prefix block inherits embedded defaults", func(t *testing.T) {
+		config := &LaunchKitConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.2",
+					MultiplaneMode: "hwplb",
+					NumberOfPlanes: 2,
+				},
+			},
+			SpectrumX: &SpectrumXConfig{},
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.NoError(t, err)
+	})
+
 	t.Run("valid multiplane and multirail templates", func(t *testing.T) {
 		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
@@ -556,10 +743,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 4,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic%nic_id%_p%plane%_r%rail%",
-				RdmaPrefix:   "roce_nic%nic_id%_p%plane%_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"swplb",
+				"nic%nic_id%_p%plane%_r%rail%",
+				"roce_nic%nic_id%_p%plane%_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -581,10 +769,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 4, // Multiplane
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic%nic_id%_r%rail%", // Missing %plane%
-				RdmaPrefix:   "roce_p%plane%_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"swplb",
+				"nic%nic_id%_r%rail%", // Missing %plane%
+				"roce_p%plane%_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -592,7 +781,34 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 		assert.Contains(t, err.Error(), "netdevPrefix must contain %plane_id% placeholder")
 	})
 
-	t.Run("multiplane without plane placeholder in rdmaPrefix", func(t *testing.T) {
+	t.Run("swplb without plane placeholder in rdmaPrefix", func(t *testing.T) {
+		config := &LaunchKitConfig{
+			NetworkOperator: &NetworkOperatorConfig{
+				Repository:       "nvcr.io/nvidia/mellanox",
+				ComponentVersion: "v26.1.0",
+				Namespace:        "nvidia-network-operator",
+			},
+			Profile: &Profile{
+				Multirail: true,
+				SpectrumX: &ProfileSpectrumX{
+					SPCXVersion:    "RA2.2",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 2, // Multiplane
+				},
+			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"swplb",
+				"nic_p%plane%_r%rail%",
+				"roce_nic%nic_id%_r%rail%", // Missing %plane%
+			),
+		}
+
+		err := ValidateClusterConfig(config, "spectrum-x")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "rdmaPrefix must contain %plane_id% placeholder when multiplaneMode is swplb")
+	})
+
+	t.Run("hwplb accepts rail-only rdmaPrefix", func(t *testing.T) {
 		config := &LaunchKitConfig{
 			NetworkOperator: &NetworkOperatorConfig{
 				Repository:       "nvcr.io/nvidia/mellanox",
@@ -604,18 +820,18 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 				SpectrumX: &ProfileSpectrumX{
 					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "hwplb",
-					NumberOfPlanes: 2, // Multiplane
+					NumberOfPlanes: 2,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic_p%plane%_r%rail%",
-				RdmaPrefix:   "roce_nic%nic_id%_r%rail%", // Missing %plane%
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"hwplb",
+				"eth_r%rail_id%_p%plane_id%",
+				"roce_r%rail_id%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "rdmaPrefix must contain %plane_id% placeholder")
+		assert.NoError(t, err)
 	})
 
 	t.Run("multirail without rail placeholder in netdevPrefix", func(t *testing.T) {
@@ -633,10 +849,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 1,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic%nic_id%_p%plane%", // Missing %rail%
-				RdmaPrefix:   "roce_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"swplb",
+				"nic%nic_id%_p%plane%", // Missing %rail%
+				"roce_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -659,10 +876,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 1,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic_p%plane%_r%rail%",
-				RdmaPrefix:   "roce_nic%nic_id%", // Missing %rail%
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"none",
+				"nic_p%plane%_r%rail%",
+				"roce_nic%nic_id%", // Missing %rail%
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -685,10 +903,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 4,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "eth_p%plane%_r%rail%", // No %nic_id% but has plane and rail
-				RdmaPrefix:   "roce_p%plane%_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"swplb",
+				"eth_p%plane%_r%rail%", // No %nic_id% but has plane and rail
+				"roce_p%plane%_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -710,10 +929,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 1, // Single plane
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic%nic_id%", // No plane or rail required
-				RdmaPrefix:   "roce%nic_id%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"none",
+				"nic%nic_id%", // No plane or rail required
+				"roce%nic_id%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -756,10 +976,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 4,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic_p%plane%_r%rail%",
-				RdmaPrefix:   "roce_p%plane%_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"swplb",
+				"nic_p%plane%_r%rail%",
+				"roce_p%plane%_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -784,10 +1005,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 4,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic_p%plane%_r%rail%",
-				RdmaPrefix:   "roce_p%plane%_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"hwplb",
+				"nic_p%plane%_r%rail%",
+				"roce_p%plane%_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -810,10 +1032,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 2,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic_p%plane%_r%rail%",
-				RdmaPrefix:   "roce_p%plane%_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"swplb",
+				"nic_p%plane%_r%rail%",
+				"roce_p%plane%_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x-ra2.1")
@@ -835,10 +1058,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 2,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic_p%plane%_r%rail%",
-				RdmaPrefix:   "roce_p%plane%_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"hwplb",
+				"nic_p%plane%_r%rail%",
+				"roce_p%plane%_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x-ra2.1")
@@ -860,10 +1084,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 1,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "nic%nic_id%",
-				RdmaPrefix:   "roce%nic_id%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"none",
+				"nic%nic_id%",
+				"roce%nic_id%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")
@@ -885,10 +1110,11 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 					NumberOfPlanes: 4,
 				},
 			},
-			SpectrumX: &SpectrumXConfig{
-				NetdevPrefix: "static_interface", // Missing both %plane% and %rail%
-				RdmaPrefix:   "roce_p%plane%_r%rail%",
-			},
+			SpectrumX: spectrumXConfigWithPrefixes(
+				"swplb",
+				"static_interface", // Missing both %plane% and %rail%
+				"roce_p%plane%_r%rail%",
+			),
 		}
 
 		err := ValidateClusterConfig(config, "spectrum-x")

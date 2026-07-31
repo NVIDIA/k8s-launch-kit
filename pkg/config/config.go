@@ -26,6 +26,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/go-logr/logr"
 	"gopkg.in/yaml.v2"
@@ -38,6 +39,12 @@ import (
 //
 //go:embed default-config.yaml
 var defaultConfigYAML []byte
+
+var (
+	spectrumXPrefixDefaultsOnce sync.Once
+	spectrumXPrefixDefaults     *SpectrumXConfig
+	spectrumXPrefixDefaultsErr  error
+)
 
 // DefaultConfigYAML returns a copy of the embedded default configuration
 // source. Discovery uses it to preserve field comments when no filesystem
@@ -277,10 +284,88 @@ type SriovConfig struct {
 }
 
 type SpectrumXConfig struct {
-	NicType      string `yaml:"nicType"`      // "1023" for ConnectX-8, "1025" for ConnectX-9, "a2dc" for BlueField-3 SuperNIC
-	Overlay      string `yaml:"overlay"`      // "none"
-	RdmaPrefix   string `yaml:"rdmaPrefix"`   // e.g., "roce_p%plane_id%_r%rail_id%"
-	NetdevPrefix string `yaml:"netdevPrefix"` // e.g., "eth_p%plane_id%_r%rail_id%"
+	NicType     string                              `yaml:"nicType"` // "1023" for ConnectX-8, "1025" for ConnectX-9, "a2dc" for BlueField-3 SuperNIC
+	Overlay     string                              `yaml:"overlay"` // "none"
+	SinglePlane *SpectrumXInterfaceNamePrefixConfig `yaml:"singlePlane,omitempty"`
+	HWPLB       *SpectrumXInterfaceNamePrefixConfig `yaml:"hwplb,omitempty"`
+	SWPLB       *SpectrumXInterfaceNamePrefixConfig `yaml:"swplb,omitempty"`
+}
+
+// SpectrumXInterfaceNamePrefixConfig contains the device-name templates for
+// one Spectrum-X multiplane mode family.
+type SpectrumXInterfaceNamePrefixConfig struct {
+	NetdevPrefix string `yaml:"netdevPrefix"`
+	RdmaPrefix   string `yaml:"rdmaPrefix"`
+}
+
+// SpectrumXInterfaceNamePrefixes returns the RDMA and network-device naming
+// templates from the Spectrum-X block selected by the multiplane mode.
+// Missing blocks or fields inherit from the matching block in the embedded
+// default-config.yaml, so file-backed and programmatic configs follow the same
+// defaults while explicit per-mode values remain authoritative.
+//
+// Hardware PLB exposes one RDMA bond per rail while retaining one network
+// device per rail-plane. Software PLB exposes both device types per rail-plane.
+// The none mode exposes one device of each type per rail.
+func SpectrumXInterfaceNamePrefixes(settings *SpectrumXConfig, multiplaneMode string) (string, string) {
+	defaults, err := defaultSpectrumXInterfaceNamePrefixes()
+	if err != nil {
+		return "", ""
+	}
+
+	var selected, selectedDefaults *SpectrumXInterfaceNamePrefixConfig
+
+	switch multiplaneMode {
+	case "hwplb":
+		selectedDefaults = defaults.HWPLB
+		if settings != nil {
+			selected = settings.HWPLB
+		}
+	case "swplb":
+		selectedDefaults = defaults.SWPLB
+		if settings != nil {
+			selected = settings.SWPLB
+		}
+	default:
+		selectedDefaults = defaults.SinglePlane
+		if settings != nil {
+			selected = settings.SinglePlane
+		}
+	}
+
+	if selectedDefaults == nil {
+		return "", ""
+	}
+
+	rdmaPrefix := selectedDefaults.RdmaPrefix
+	netdevPrefix := selectedDefaults.NetdevPrefix
+	if selected != nil {
+		if selected.RdmaPrefix != "" {
+			rdmaPrefix = selected.RdmaPrefix
+		}
+		if selected.NetdevPrefix != "" {
+			netdevPrefix = selected.NetdevPrefix
+		}
+	}
+	return rdmaPrefix, netdevPrefix
+}
+
+func defaultSpectrumXInterfaceNamePrefixes() (*SpectrumXConfig, error) {
+	spectrumXPrefixDefaultsOnce.Do(func() {
+		var defaults struct {
+			SpectrumX *SpectrumXConfig `yaml:"spectrumX"`
+		}
+		if err := yaml.Unmarshal(defaultConfigYAML, &defaults); err != nil {
+			spectrumXPrefixDefaultsErr = fmt.Errorf("failed to parse embedded Spectrum-X prefix defaults: %w", err)
+			return
+		}
+		if defaults.SpectrumX == nil {
+			spectrumXPrefixDefaultsErr = fmt.Errorf("embedded default config is missing spectrumX")
+			return
+		}
+		spectrumXPrefixDefaults = defaults.SpectrumX
+	})
+	return spectrumXPrefixDefaults, spectrumXPrefixDefaultsErr
 }
 
 type NicConfigurationOperatorConfig struct {
@@ -840,12 +925,26 @@ func DefaultSPCXReleaseFor(ra string) string {
 
 // validateSpectrumXTemplates validates that Spectrum-X templates have required placeholders
 func validateSpectrumXTemplates(config *LaunchKitConfig) error {
-	netdevPrefix := config.SpectrumX.NetdevPrefix
-	rdmaPrefix := config.SpectrumX.RdmaPrefix
+	mode := config.Profile.SpectrumX.MultiplaneMode
+	rdmaPrefix, netdevPrefix := SpectrumXInterfaceNamePrefixes(config.SpectrumX, mode)
+	prefixSection := "singlePlane"
+	switch mode {
+	case "hwplb":
+		prefixSection = "hwplb"
+	case "swplb":
+		prefixSection = "swplb"
+	}
+
+	if netdevPrefix == "" {
+		return fmt.Errorf("spectrumX.%s.netdevPrefix must not be empty", prefixSection)
+	}
+	if rdmaPrefix == "" {
+		return fmt.Errorf("spectrumX.%s.rdmaPrefix must not be empty", prefixSection)
+	}
 
 	// Non-`none` multiplane modes (swplb, hwplb) require a supported
 	// RA version.
-	if config.Profile.SpectrumX.MultiplaneMode != "none" && config.Profile.SpectrumX.MultiplaneMode != "" {
+	if mode != "none" && mode != "" {
 		got := config.Profile.SpectrumX.SPCXVersion
 		supported := false
 		for _, v := range SupportedSPCXVersions {
@@ -856,7 +955,7 @@ func validateSpectrumXTemplates(config *LaunchKitConfig) error {
 		}
 		if !supported {
 			return fmt.Errorf("multiplane mode %s requires spcxVersion in %v, got %q",
-				config.Profile.SpectrumX.MultiplaneMode, SupportedSPCXVersions, got)
+				mode, SupportedSPCXVersions, got)
 		}
 	}
 
@@ -868,23 +967,25 @@ func validateSpectrumXTemplates(config *LaunchKitConfig) error {
 	hasRailInNetdev := containsPlaceholder(netdevPrefix, "%rail%") || containsPlaceholder(netdevPrefix, "%rail_id%")
 
 	if isMultiplane && !hasPlaneInNetdev {
-		return fmt.Errorf("spectrumX.netdevPrefix must contain %%plane_id%% placeholder when numberOfPlanes > 1 (multiplane mode)")
+		return fmt.Errorf("spectrumX.%s.netdevPrefix must contain %%plane_id%% placeholder when numberOfPlanes > 1 (multiplane mode)", prefixSection)
 	}
 
 	if isMultirail && !hasRailInNetdev {
-		return fmt.Errorf("spectrumX.netdevPrefix must contain %%rail_id%% placeholder when multirail is enabled")
+		return fmt.Errorf("spectrumX.%s.netdevPrefix must contain %%rail_id%% placeholder when multirail is enabled", prefixSection)
 	}
 
-	// Check rdmaPrefix (same rules)
+	// SWPLB exposes one RDMA device per plane. HWPLB exposes a single RDMA
+	// bond per rail, so its correct prefix intentionally has no plane
+	// placeholder even when numberOfPlanes > 1.
 	hasPlaneInRdma := containsPlaceholder(rdmaPrefix, "%plane%") || containsPlaceholder(rdmaPrefix, "%plane_id%")
 	hasRailInRdma := containsPlaceholder(rdmaPrefix, "%rail%") || containsPlaceholder(rdmaPrefix, "%rail_id%")
 
-	if isMultiplane && !hasPlaneInRdma {
-		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%plane_id%% placeholder when numberOfPlanes > 1 (multiplane mode)")
+	if isMultiplane && mode == "swplb" && !hasPlaneInRdma {
+		return fmt.Errorf("spectrumX.%s.rdmaPrefix must contain %%plane_id%% placeholder when multiplaneMode is swplb", prefixSection)
 	}
 
 	if isMultirail && !hasRailInRdma {
-		return fmt.Errorf("spectrumX.rdmaPrefix must contain %%rail_id%% placeholder when multirail is enabled")
+		return fmt.Errorf("spectrumX.%s.rdmaPrefix must contain %%rail_id%% placeholder when multirail is enabled", prefixSection)
 	}
 
 	return nil

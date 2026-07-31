@@ -34,8 +34,15 @@ macvlan:
 spectrumX:
   nicType: "1023"
   overlay: none
-  rdmaPrefix: roce_p%plane_id%_r%rail_id%
-  netdevPrefix: eth_p%plane_id%_r%rail_id%
+  singlePlane:
+    netdevPrefix: eth_r%rail_id%
+    rdmaPrefix: roce_r%rail_id%
+  hwplb:
+    netdevPrefix: eth_r%rail_id%_p%plane_id%
+    rdmaPrefix: roce_r%rail_id%
+  swplb:
+    netdevPrefix: eth_r%rail_id%_p%plane_id%
+    rdmaPrefix: roce_r%rail_id%_p%plane_id%
 nicConfigurationOperator:
   deployNicInterfaceNameTemplate: true
   rdmaPrefix: rdma_r%rail_id%

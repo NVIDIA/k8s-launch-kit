@@ -413,7 +413,7 @@ func TestSpectrumXGrouping_MergedRailPoolContent(t *testing.T) {
 		"merged rail pool must select by gpuType so it covers all y-model machines")
 	require.Contains(t, merged, "draEnabled: false",
 		"Spectrum-X DRA must stay disabled unless profile.spectrumX.useDRA is true")
-	require.Contains(t, merged, `pfNames: ["eth_p0_r0"]`,
+	require.Contains(t, merged, `pfNames: ["eth_r0"]`,
 		"merged rail pool must reference the renamed netdev names, not raw PCI")
 	require.NotContains(t, merged, "0000:19:00.0",
 		"merged rail pool must not leak any machine-specific PCI address")

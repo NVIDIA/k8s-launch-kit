@@ -194,8 +194,11 @@ Spectrum-X specific NIC and overlay configuration.
 |---------------|--------|----------------------------------|------------------------------------------------|
 | `nicType`     | string | `1023`                           | NIC device ID: `1023` (CX8) or `a2dc` (BF3)   |
 | `overlay`     | string | `none`                           | Overlay network type                           |
-| `rdmaPrefix`  | string | `roce_p%plane_id%_r%rail_id%`    | RDMA device name template with plane and rail  |
-| `netdevPrefix`| string | `eth_p%plane_id%_r%rail_id%`     | Network interface name template                |
+| `singlePlane` | object | rail-only prefixes                | Prefix block selected by `none` |
+| `hwplb`       | object | rail-only RDMA, rail-plane NET    | Prefix block selected by `hwplb` |
+| `swplb`       | object | rail-plane RDMA and NET           | Prefix block selected by `swplb` |
+
+Each mode object contains user-overridable `rdmaPrefix` and `netdevPrefix` strings.
 
 ## profile
 

@@ -64,8 +64,9 @@ nodeCapabilities:
 ### RDMA Configuration
 
 - **rdmaMode**: `exclusive` or `shared`
-- **rdmaPrefix**: Prefix for RDMA device names (e.g., `"roce_"`)
-- **netdevPrefix**: Template for network interface names (e.g., `"nic%nic_id%_p%plane%_r%rail%"`)
+- **singlePlane**: User-overridable NET and RDMA prefixes for `none`
+- **hwplb**: User-overridable rail-plane NET and rail-only RDMA prefixes
+- **swplb**: User-overridable rail-plane NET and RDMA prefixes
 
 ### Bridge Configuration
 
@@ -137,8 +138,15 @@ spectrumX:
   ovsBridgeDatapathType: netdev
   ovsBridgeFailMode: secure
   ovsUplinkInterfaceType: dpdk
-  rdmaPrefix: "roce_"
-  netdevPrefix: "nic%nic_id%_p%plane%_r%rail%"
+  singlePlane:
+    netdevPrefix: "eth_r%rail_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+  hwplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+  swplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
   eSwitchMultiport: "true"
   bridgeGroupingPolicy: perPF
   cidrPoolPerNodePrefix: 31
