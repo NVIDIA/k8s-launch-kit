@@ -35,8 +35,8 @@ releases:
     docaDriver:
       version: doca3.4.1-26.04-1.1.0.0-1
     xPlane:
-      repository: nvcr.io/nvstaging/doca
-      version: 3.4.0005
+      repository: nvcr.io/nvidia/doca
+      version: doca-3.4.0
   "26.7":
     networkOperator:
       version: v26.7.0-beta.5
@@ -48,4 +48,4 @@ releases:
       version: doca3.5.0-26.07-0.4.9.0-0
     xPlane:
       repository: nvcr.io/nvstaging/doca
-      version: 3.4.0040
+      version: 3.5.0032

@@ -97,21 +97,13 @@ func main() {
 	}
 
 	for _, update := range result.Updates {
-		message := fmt.Sprintf(
-			"updated %s from %s: Network Operator %s, DOCA driver %s",
+		fmt.Printf(
+			"updated %s from %s: Network Operator %s, DOCA driver %s\n",
 			update.Release,
 			update.Ref,
 			update.NetworkOperatorVersion,
 			update.DOCADriverVersion,
 		)
-		if update.XPlaneVersion != "" {
-			message += fmt.Sprintf(
-				", xPlane %s (repository %s)",
-				update.XPlaneVersion,
-				update.XPlaneRepository,
-			)
-		}
-		fmt.Println(message)
 	}
 }
 

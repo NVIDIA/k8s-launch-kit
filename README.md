@@ -732,13 +732,10 @@ Every catalog entry is synchronized nightly from
 `Mellanox/network-operator`'s `v<MAJOR.MINOR>.x` branch. When the release
 branch for the highest catalog key has not been created yet, the synchronizer
 uses `master` and verifies that its Network Operator version still belongs to
-that release line. Network Operator, component, DOCA driver, and xPlane
-coordinates are read from the branch's `hack/release.yaml`; xPlane is optional
-for older release lines that do not deploy it. When values change, the workflow
-verifies the synchronized catalog, opens or refreshes its PR, and squash-merges
-it automatically. The release stage checks out that merge commit and verifies
-the catalog is still current before publishing anything. Run the same update
-locally with
+that release line. When values change, the workflow verifies the synchronized
+catalog, opens or refreshes its PR, and squash-merges it automatically. The
+release stage checks out that merge commit and verifies the catalog is still
+current before publishing anything. Run the same update locally with
 `GITHUB_TOKEN=<token> make sync-network-operator-releases` (authentication
 avoids GitHub's low anonymous API rate limit).
 
