@@ -1,0 +1,85 @@
+{
+  "format": "JSON",
+  "name": "simple-quadplane",
+  "ztp": null,
+  "content": {
+    "nodes": {
+      "worker-su01-rack01-h01": {
+        "model": "host",
+        "emulation_type": "HOST",
+        "network_pci": {
+          "rail1": {
+            "model": "connectx8",
+            "emulation_type": "NIC_ETHERNET",
+            "number_of_ports": 4
+          }
+        }
+      },
+      "worker-su01-rack01-h02": {
+        "model": "host",
+        "emulation_type": "HOST",
+        "network_pci": {
+          "rail1": {
+            "model": "connectx8",
+            "emulation_type": "NIC_ETHERNET",
+            "number_of_ports": 4
+          }
+        }
+      },
+      "leaf-p1-su001-r1": {
+        "model": "SN5600",
+        "emulation_type": "SWITCH_ETHERNET",
+        "network_pci": {}
+      },
+      "leaf-p2-su001-r1": {
+        "model": "SN5600",
+        "emulation_type": "SWITCH_ETHERNET",
+        "network_pci": {}
+      },
+      "leaf-p3-su001-r1": {
+        "model": "SN5600",
+        "emulation_type": "SWITCH_ETHERNET",
+        "network_pci": {}
+      },
+      "leaf-p4-su001-r1": {
+        "model": "SN5600",
+        "emulation_type": "SWITCH_ETHERNET",
+        "network_pci": {}
+      }
+    },
+    "links": [
+      [
+        {"node": "worker-su01-rack01-h01", "interface": "rail1p1", "network_pci": "rail1"},
+        {"node": "leaf-p1-su001-r1", "interface": "swp1s0"}
+      ],
+      [
+        {"node": "worker-su01-rack01-h01", "interface": "rail1p2", "network_pci": "rail1"},
+        {"node": "leaf-p2-su001-r1", "interface": "swp1s0"}
+      ],
+      [
+        {"node": "worker-su01-rack01-h01", "interface": "rail1p3", "network_pci": "rail1"},
+        {"node": "leaf-p3-su001-r1", "interface": "swp1s0"}
+      ],
+      [
+        {"node": "worker-su01-rack01-h01", "interface": "rail1p4", "network_pci": "rail1"},
+        {"node": "leaf-p4-su001-r1", "interface": "swp1s0"}
+      ],
+      [
+        {"node": "worker-su01-rack01-h02", "interface": "rail1p1", "network_pci": "rail1"},
+        {"node": "leaf-p1-su001-r1", "interface": "swp1s1"}
+      ],
+      [
+        {"node": "worker-su01-rack01-h02", "interface": "rail1p2", "network_pci": "rail1"},
+        {"node": "leaf-p2-su001-r1", "interface": "swp1s1"}
+      ],
+      [
+        {"node": "worker-su01-rack01-h02", "interface": "rail1p3", "network_pci": "rail1"},
+        {"node": "leaf-p3-su001-r1", "interface": "swp1s1"}
+      ],
+      [
+        {"node": "worker-su01-rack01-h02", "interface": "rail1p4", "network_pci": "rail1"},
+        {"node": "leaf-p4-su001-r1", "interface": "swp1s1"}
+      ]
+    ]
+  }
+}

@@ -164,7 +164,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--topology-file": {
 					Type:        "string",
-					Description: "Path to a spcx-gen-format topology.json used to generate Spectrum-X CIDRPool host static allocations.",
+					Description: "Path to spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON used to generate Spectrum-X CIDRPool host static allocations. The format is detected from the JSON structure.",
 				},
 				"--spectrum-x-config": {
 					Type:        "string",

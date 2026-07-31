@@ -98,7 +98,12 @@ The generated ConfigMap uses the label expected by the NIC Configuration Operato
 
 ## Topology-Driven CIDRPools
 
-Spectrum-X CIDRPools can be generated from an `spcx-gen` format `topology.json`. This replaces placeholder pool entries with per-host static allocations derived from the resolved topology.
+Spectrum-X CIDRPools can be generated from either spcx-gen/reference-generator topology JSON or a contract-compliant NVIDIA AIR topology export. This replaces placeholder pool entries with per-host static allocations derived from the resolved topology. l8k detects the format by JSON structure:
+
+- spcx-gen/reference-generator format has top-level `nodes` and `links` arrays.
+- NVIDIA AIR format has a `content` object containing a `nodes` map and a `links` array.
+
+The outer AIR `format` value is not used for detection.
 
 The file contains a `nodes` inventory and two-endpoint entries under `links`. This minimal 2-tier example connects one Kubernetes worker to one leaf:
 
@@ -145,6 +150,15 @@ The file contains a `nodes` inventory and two-endpoint entries under `links`. Th
 ```
 
 Add one host-to-leaf link for every selected worker rail. Host `node` values must match Kubernetes node names in the selected `clusterConfig` group. Every host endpoint requires `attributes.rail`, every leaf endpoint requires `attributes.plane`, and 3-tier allocation also requires host `attributes.pod`.
+
+NVIDIA AIR exports do not carry those numeric attributes directly, so AIR support relies on the following naming contract. All AIR ordinals are one-based and l8k converts them to its zero-based addressing fields:
+
+- A 2-tier host name contains hyphen-delimited `su<S>` and `h<H>` tokens, for example `worker-su01-rack01-h01`. A 3-tier host additionally contains `pod<D>`, for example `worker-pod01-su01-rack01-h01`.
+- A leaf name starts with `leaf-`. A 2-tier leaf also contains `p<P>`, `su<S>`, and `r<R>` tokens, for example `leaf-p1-su001-r1`. A 3-tier leaf additionally contains `pod<D>`, for example `leaf-p1-pod01-su001-r1`.
+- Each AIR host interface is named `rail<R>p<P>` and its endpoint `network_pci` value is `rail<R>`. That key must also exist in the host node's `network_pci` map.
+- The plane, rail, SU, and, for 3-tier, pod values encoded by both link endpoints must agree. `h<H>` is the host position within its pod/SU and must be unique there.
+
+Files with other AIR naming schemes are rejected with a contract error rather than assigned inferred addresses.
 
 ```bash
 l8k generate \

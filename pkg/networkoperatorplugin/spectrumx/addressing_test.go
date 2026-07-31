@@ -150,6 +150,105 @@ func TestBuildCIDRPools3Tier(t *testing.T) {
 	}}, pools)
 }
 
+func TestBuildCIDRPoolsFromAIR2Tier(t *testing.T) {
+	topologyPath := filepath.Join("testdata", "air-simple-quadplane.json")
+	rail := 0
+	tests := []struct {
+		name          string
+		mode          string
+		wantPools     int
+		wantFirstName string
+		wantLastName  string
+		wantLastCIDR  string
+	}{
+		{
+			name:          "software plane load balancing",
+			mode:          "swplb",
+			wantPools:     4,
+			wantFirstName: "rail-0-plane-0",
+			wantLastName:  "rail-0-plane-3",
+			wantLastCIDR:  "172.28.0.0/18",
+		},
+		{
+			name:          "hardware plane load balancing",
+			mode:          "hwplb",
+			wantPools:     1,
+			wantFirstName: "rail-0",
+			wantLastName:  "rail-0",
+			wantLastCIDR:  "172.16.0.0/18",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.LaunchKitConfig{
+				Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+					Enable:         true,
+					TopologyType:   config.SpectrumXTopology2Tier,
+					IPVersion:      config.SpectrumXIPVersionIPv4,
+					TopologyFile:   topologyPath,
+					MultiplaneMode: tt.mode,
+					NumberOfPlanes: 4,
+				}},
+			}
+			pools, err := BuildCIDRPools(cfg, config.ClusterConfig{
+				WorkerNodes: []string{"worker-su01-rack01-h01", "worker-su01-rack01-h02"},
+				PFs:         []config.PFConfig{{Traffic: "east-west", Rail: &rail}},
+			})
+			require.NoError(t, err)
+			require.Len(t, pools, tt.wantPools)
+			require.Equal(t, tt.wantFirstName, pools[0].Name)
+			require.Equal(t, []StaticAllocation{
+				{Gateway: "172.16.0.1", NodeName: "worker-su01-rack01-h01", Prefix: "172.16.0.0/31"},
+				{Gateway: "172.16.0.3", NodeName: "worker-su01-rack01-h02", Prefix: "172.16.0.2/31"},
+			}, pools[0].StaticAllocations)
+			require.Equal(t, tt.wantLastName, pools[len(pools)-1].Name)
+			require.Equal(t, tt.wantLastCIDR, pools[len(pools)-1].CIDR)
+		})
+	}
+}
+
+func TestBuildCIDRPoolsFromAIR3Tier(t *testing.T) {
+	topologyPath := writeTopology(t, `{
+  "content": {
+    "nodes": {
+      "worker-pod02-su03-h04": {"model": "host", "network_pci": {"rail2": {}}},
+      "leaf-p1-pod02-su03-r2": {"model": "SN5600", "network_pci": {}}
+    },
+    "links": [[
+      {"node": "worker-pod02-su03-h04", "interface": "rail2p1", "network_pci": "rail2"},
+      {"node": "leaf-p1-pod02-su03-r2", "interface": "swp1s0"}
+    ]]
+  }
+}`)
+	rail := 1
+	cfg := &config.LaunchKitConfig{
+		Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+			Enable:         true,
+			TopologyType:   config.SpectrumXTopology3Tier,
+			IPVersion:      config.SpectrumXIPVersionIPv4,
+			TopologyFile:   topologyPath,
+			MultiplaneMode: "hwplb",
+			NumberOfPlanes: 4,
+		}},
+	}
+	pools, err := BuildCIDRPools(cfg, config.ClusterConfig{
+		WorkerNodes: []string{"worker-pod02-su03-h04"},
+		PFs:         []config.PFConfig{{Traffic: "east-west", Rail: &rail}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []CIDRPool{{
+		Name:   "rail-1",
+		CIDR:   "10.8.0.0/13",
+		Routes: []string{"10.8.0.0/13", "10.0.0.0/10"},
+		StaticAllocations: []StaticAllocation{{
+			Gateway:  "10.8.66.7",
+			NodeName: "worker-pod02-su03-h04",
+			Prefix:   "10.8.66.6/31",
+		}},
+	}}, pools)
+}
+
 func TestBuildCIDRPoolsRejectsIPv6UntilRenderable(t *testing.T) {
 	cfg := &config.LaunchKitConfig{
 		Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
