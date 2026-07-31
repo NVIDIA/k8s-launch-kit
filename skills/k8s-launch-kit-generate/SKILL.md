@@ -158,6 +158,12 @@ win when a one-off override is needed.
 - NVIDIA AIR topology support requires the documented one-based node/interface
   naming contract (`su<S>`, `h<H>`, `leaf-p<P>`, `r<R>`, `rail<R>p<P>`, and
   `pod<D>` for 3-tier). See `docs/user/spectrum-x.md` in the l8k repository.
+- Spectrum-X CIDRPool allocation matches `clusterConfig.workerNodes` to
+  topology host endpoint `node` values exactly and case-sensitively. A zero-match
+  error usually means the wrong topology file, a case difference, or a
+  short-name/FQDN difference. Partial-pool errors report the worker's available
+  rail/plane coverage; check host `attributes.rail` and, for `swplb`, leaf
+  `attributes.plane`.
 - RA2.2 and RA2.3 v1alpha2 `SpectrumXRailPoolConfig` output intentionally
   omits the removed `spec.withBCM` field; current CRDs reject it during strict
   decoding.

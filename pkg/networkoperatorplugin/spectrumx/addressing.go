@@ -146,6 +146,16 @@ type poolKey struct {
 	plane int
 }
 
+const diagnosticListLimit = 8
+
+type topologyMatchSummary struct {
+	selected     []string
+	topology     []string
+	matched      []string
+	missing      []string
+	topologyOnly []string
+}
+
 // BuildCIDRPools builds nv-ipam CIDRPool data for the Spectrum-X profiles from
 // a topology.json that follows the reference generator or NVIDIA AIR schema.
 func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]CIDRPool, error) {
@@ -177,19 +187,19 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 	allocations := allocationsByPool(links, allowedNodes, spcx)
 	poolKeys := sortedPoolKeys(allocations)
 	if len(poolKeys) == 0 {
-		return nil, fmt.Errorf("no Spectrum-X topology allocations matched clusterConfig group %q", group.Identifier)
+		summary := summarizeTopologyMatches(links, allowedNodes)
+		return nil, fmt.Errorf("no Spectrum-X topology allocations matched %s in topology file %q: %s; %s",
+			clusterConfigGroupLabel(group), topologyPath, formatTopologyMatchSummary(summary), topologyMismatchHint(summary))
 	}
 	pools := make([]CIDRPool, 0, len(poolKeys))
+	coverage := topologyCoverage(links, spcx)
 	for _, key := range poolKeys {
 		staticAllocations := allocations[key]
-		if len(staticAllocations) == 0 {
-			return nil, fmt.Errorf("CIDR pool %s has no host static allocations in topology file %s",
-				poolName(key, group.MergedIdentifier, spcx), topologyPath)
-		}
 		if len(allowedNodes) > 0 {
 			if missing := missingNodes(allowedNodes, staticAllocations); len(missing) > 0 {
-				return nil, fmt.Errorf("CIDR pool %s is missing topology allocations for worker nodes: %s",
-					poolName(key, group.MergedIdentifier, spcx), strings.Join(missing, ", "))
+				return nil, fmt.Errorf("CIDRPool %s for %s is missing topology allocations for workers %s in topology file %q: %s; %s",
+					poolName(key, group.MergedIdentifier, spcx), clusterConfigGroupLabel(group), formatLimitedList(missing),
+					topologyPath, formatMissingCoverage(missing, coverage, spcx), topologyAttributeHint(spcx))
 			}
 		}
 		cidr := poolCIDR(staticAllocations[0].Prefix, spcx)
@@ -401,10 +411,7 @@ func allocationsByPool(links []hostLink, allowedNodes map[string]struct{}, spcx 
 				continue
 			}
 		}
-		key := poolKey{rail: link.rail}
-		if spcx.MultiplaneMode == "swplb" {
-			key.plane = link.plane
-		}
+		key := poolKeyForLink(link, spcx)
 		if seen[key] == nil {
 			seen[key] = map[string]struct{}{}
 		}
@@ -419,6 +426,14 @@ func allocationsByPool(links []hostLink, allowedNodes map[string]struct{}, spcx 
 		})
 	}
 	return result
+}
+
+func poolKeyForLink(link hostLink, spcx *config.ProfileSpectrumX) poolKey {
+	key := poolKey{rail: link.rail}
+	if spcx.MultiplaneMode == "swplb" {
+		key.plane = link.plane
+	}
+	return key
 }
 
 func sortedPoolKeys(allocations map[poolKey][]StaticAllocation) []poolKey {
@@ -514,4 +529,155 @@ func missingNodes(nodes map[string]struct{}, allocations []StaticAllocation) []s
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+func clusterConfigGroupLabel(group config.ClusterConfig) string {
+	if group.Identifier != "" {
+		return fmt.Sprintf("clusterConfig group %q", group.Identifier)
+	}
+	return "unnamed clusterConfig group"
+}
+
+func summarizeTopologyMatches(links []hostLink, selected map[string]struct{}) topologyMatchSummary {
+	topology := map[string]struct{}{}
+	for _, link := range links {
+		topology[link.node] = struct{}{}
+	}
+
+	summary := topologyMatchSummary{
+		selected: sortedSet(selected),
+		topology: sortedSet(topology),
+	}
+	for _, node := range summary.selected {
+		if _, ok := topology[node]; ok {
+			summary.matched = append(summary.matched, node)
+		} else {
+			summary.missing = append(summary.missing, node)
+		}
+	}
+	for _, node := range summary.topology {
+		if _, ok := selected[node]; !ok {
+			summary.topologyOnly = append(summary.topologyOnly, node)
+		}
+	}
+	return summary
+}
+
+func formatTopologyMatchSummary(summary topologyMatchSummary) string {
+	return fmt.Sprintf("topology match summary: selected workers=%s, topology host nodes=%s, exact matches=%s, missing workers=%s, topology-only hosts=%s",
+		formatLimitedList(summary.selected), formatLimitedList(summary.topology), formatLimitedList(summary.matched),
+		formatLimitedList(summary.missing), formatLimitedList(summary.topologyOnly))
+}
+
+func topologyMismatchHint(summary topologyMatchSummary) string {
+	if selected, topology, ok := similarNodePair(summary.selected, summary.topology, strings.EqualFold); ok {
+		return fmt.Sprintf("possible case mismatch between selected worker %q and topology host %q; host endpoint node values must exactly match clusterConfig.workerNodes",
+			selected, topology)
+	}
+	shortNameEqual := func(left, right string) bool {
+		return strings.EqualFold(shortHostname(left), shortHostname(right))
+	}
+	if selected, topology, ok := similarNodePair(summary.selected, summary.topology, shortNameEqual); ok {
+		return fmt.Sprintf("possible short-name/FQDN mismatch between selected worker %q and topology host %q; host endpoint node values must exactly match clusterConfig.workerNodes",
+			selected, topology)
+	}
+	return "the topology may describe a different cluster; host endpoint node values must exactly match clusterConfig.workerNodes"
+}
+
+func similarNodePair(selected, topology []string, matches func(string, string) bool) (string, string, bool) {
+	for _, selectedNode := range selected {
+		for _, topologyNode := range topology {
+			if selectedNode != topologyNode && matches(selectedNode, topologyNode) {
+				return selectedNode, topologyNode, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func shortHostname(node string) string {
+	short, _, _ := strings.Cut(node, ".")
+	return short
+}
+
+func topologyCoverage(links []hostLink, spcx *config.ProfileSpectrumX) map[string][]poolKey {
+	coverageSets := map[string]map[poolKey]struct{}{}
+	for _, link := range links {
+		if coverageSets[link.node] == nil {
+			coverageSets[link.node] = map[poolKey]struct{}{}
+		}
+		coverageSets[link.node][poolKeyForLink(link, spcx)] = struct{}{}
+	}
+
+	coverage := make(map[string][]poolKey, len(coverageSets))
+	for node, keys := range coverageSets {
+		allocations := make(map[poolKey][]StaticAllocation, len(keys))
+		for key := range keys {
+			allocations[key] = nil
+		}
+		coverage[node] = sortedPoolKeys(allocations)
+	}
+	return coverage
+}
+
+func formatMissingCoverage(missing []string, coverage map[string][]poolKey, spcx *config.ProfileSpectrumX) string {
+	present := make([]string, 0, len(missing))
+	absent := make([]string, 0, len(missing))
+	for _, node := range missing {
+		keys := coverage[node]
+		if len(keys) == 0 {
+			absent = append(absent, node)
+			continue
+		}
+		present = append(present, fmt.Sprintf("%s=%s", node, formatPoolKeys(keys, spcx)))
+	}
+
+	details := make([]string, 0, 2)
+	if len(present) > 0 {
+		details = append(details, "available topology coverage for missing workers "+formatLimitedList(present))
+	}
+	if len(absent) > 0 {
+		details = append(details, "workers absent from topology "+formatLimitedList(absent))
+	}
+	return strings.Join(details, "; ")
+}
+
+func formatPoolKeys(keys []poolKey, spcx *config.ProfileSpectrumX) string {
+	names := make([]string, 0, len(keys))
+	for _, key := range keys {
+		names = append(names, poolName(key, "", spcx))
+	}
+	return formatLimitedList(names)
+}
+
+func topologyAttributeHint(spcx *config.ProfileSpectrumX) string {
+	if spcx.MultiplaneMode == "swplb" {
+		return "check host attributes.rail and leaf attributes.plane for the missing rail/plane links"
+	}
+	return "check host attributes.rail for the missing rail links"
+}
+
+func sortedSet(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func formatLimitedList(values []string) string {
+	values = append([]string(nil), values...)
+	sort.Strings(values)
+	shown := values
+	remaining := 0
+	if len(values) > diagnosticListLimit {
+		shown = values[:diagnosticListLimit]
+		remaining = len(values) - diagnosticListLimit
+	}
+	formatted := "[" + strings.Join(shown, ", ") + "]"
+	if remaining > 0 {
+		formatted += fmt.Sprintf(" (+%d more)", remaining)
+	}
+	return formatted
 }

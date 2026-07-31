@@ -736,6 +736,12 @@ for 2-tier IPv4 allocation and `10` for 3-tier IPv4 allocation. `ipVersion:
 ipv6` is accepted in the config and CLI, but Spectrum-X CIDRPool rendering
 currently supports IPv4 static allocations only.
 
+CIDRPool allocation requires exact, case-sensitive equality between selected
+`clusterConfig.workerNodes` values and topology host endpoint `node` values.
+Generation errors summarize both name sets and identify missing rail/plane
+coverage, including likely case or short-name/FQDN mismatches. See the
+[Spectrum-X troubleshooting guidance](docs/user/spectrum-x.md#troubleshooting-cidrpool-allocation-errors).
+
 For non-Spectrum-X profiles, leaving both the flag and `selectedRelease` empty
 continues to render the newest gates (treated as "latest").
 
