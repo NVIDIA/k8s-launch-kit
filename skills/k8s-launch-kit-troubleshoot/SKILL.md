@@ -53,6 +53,7 @@ kubectl get pods -A -o wide | grep -E 'ContainerCreating|Init'
 | `CrashLoopBackOff` on mofed pods | Kernel module conflict | Check `thirdPartyRDMAModules`, enable `unloadThirdPartyRDMAModules` |
 | No VFs on node | SriovNetworkNodePolicy not matching | Verify `nodeSelector` labels match worker nodes |
 | RDMA not working | Missing RDMA device plugin or wrong resource name | Check `rdma-shared-dp` pods, verify resource annotations |
+| Phase 0 Helm chart download returns HTTP 401 or an image-pull-Secret error | The configured Secret is missing from the operator namespace, unreadable by the kubeconfig, or has no compatible Docker auth entry | Verify the Secret in `networkOperator.namespace`; for NGC, its `.dockerconfigjson` must contain `nvcr.io` credentials |
 | `l8k discover` daemon pods stuck (ImagePullBackOff / Pending) | Bad image tag, missing pull secret, or no `feature.node.kubernetes.io/pci-15b3.present=true` nodes | Re-run with `--keep-namespace` then `kubectl describe pod -n nvidia-k8s-launch-kit`. Fix `networkOperator.componentVersion` / pass `--image-pull-secrets` / verify NFD is running. |
 | `l8k validate` / `deploy` can't find Network Operator pods | Operator namespace mismatch | Verify `--network-operator-namespace` matches actual namespace (does NOT apply to `l8k discover` — it ignores the flag and uses its own `nvidia-k8s-launch-kit` namespace) |
 | IPPool not allocating | NV-IPAM subnet exhausted or misconfigured | Check `ippools` CR status, verify CIDR ranges |

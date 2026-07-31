@@ -220,7 +220,7 @@ func init() {
 	generateCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
 		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
 			strings.Join(releases.SupportedReleases(), ", ")))
-	generateCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for Network Operator components (comma-separated)")
+	generateCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)")
 	generateCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 
 	// Deploy (optional)

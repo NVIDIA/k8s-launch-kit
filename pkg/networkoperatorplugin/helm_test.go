@@ -6,8 +6,15 @@ package networkoperatorplugin
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,11 +23,15 @@ import (
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
+	chartloader "helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	kubefake "helm.sh/helm/v3/pkg/kube/fake"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
 )
@@ -325,4 +336,251 @@ func TestInstallOrUpgrade_DetectsStuckPendingRelease(t *testing.T) {
 func TestInstallOrUpgrade_RejectsEmptyCfg(t *testing.T) {
 	err := InstallOrUpgrade(context.Background(), nil, nil, []byte("nfd: {}\n"), false, 30*time.Second, false)
 	require.Error(t, err)
+}
+
+func TestCredentialsFromImagePullSecrets_NGCRegistryCredential(t *testing.T) {
+	const (
+		namespace  = "nvidia-network-operator"
+		secretName = "ngc-image-secret"
+		username   = "$oauthtoken"
+		password   = "test-api-key"
+	)
+
+	dockerConfig, err := json.Marshal(dockerConfigJSON{
+		Auths: map[string]dockerAuthConfig{
+			"nvcr.io": {
+				Username: username,
+				Password: password,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	clientset := k8sfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data:       map[string][]byte{corev1.DockerConfigJsonKey: dockerConfig},
+	})
+
+	credentials, err := credentialsFromImagePullSecrets(
+		context.Background(),
+		clientset.CoreV1().Secrets(namespace),
+		[]string{secretName},
+		"https://helm.ngc.nvidia.com/nvstaging/mellanox",
+		namespace,
+	)
+	require.NoError(t, err)
+	require.Len(t, credentials, 1)
+	assert.Equal(t, username, credentials[0].Username)
+	assert.Equal(t, password, credentials[0].Password)
+	assert.Equal(t, secretName, credentials[0].SourceSecret)
+}
+
+func TestCredentialsFromImagePullSecrets_ExactHelmHostLegacySecret(t *testing.T) {
+	const (
+		namespace  = "operator-system"
+		secretName = "chart-creds"
+	)
+
+	auth := base64.StdEncoding.EncodeToString([]byte("chart-user:chart-password"))
+	dockerConfig, err := json.Marshal(map[string]dockerAuthConfig{
+		"https://charts.example.com/v1/": {Auth: auth},
+	})
+	require.NoError(t, err)
+
+	clientset := k8sfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+		Type:       corev1.SecretTypeDockercfg,
+		Data:       map[string][]byte{corev1.DockerConfigKey: dockerConfig},
+	})
+
+	credentials, err := credentialsFromImagePullSecrets(
+		context.Background(),
+		clientset.CoreV1().Secrets(namespace),
+		[]string{secretName},
+		"https://charts.example.com/networking",
+		namespace,
+	)
+	require.NoError(t, err)
+	require.Len(t, credentials, 1)
+	assert.Equal(t, "chart-user", credentials[0].Username)
+	assert.Equal(t, "chart-password", credentials[0].Password)
+}
+
+func TestCredentialsFromImagePullSecrets_DoesNotForwardUnrelatedRegistry(t *testing.T) {
+	const (
+		namespace  = "nvidia-network-operator"
+		secretName = "unrelated-registry"
+	)
+
+	dockerConfig, err := json.Marshal(dockerConfigJSON{
+		Auths: map[string]dockerAuthConfig{
+			"registry.internal.example.com": {
+				Username: "private-user",
+				Password: "private-password",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	clientset := k8sfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data:       map[string][]byte{corev1.DockerConfigJsonKey: dockerConfig},
+	})
+
+	credentials, err := credentialsFromImagePullSecrets(
+		context.Background(),
+		clientset.CoreV1().Secrets(namespace),
+		[]string{secretName},
+		"https://helm.ngc.nvidia.com/nvidia",
+		namespace,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, credentials)
+}
+
+func TestCredentialsFromImagePullSecrets_MissingSecret(t *testing.T) {
+	const namespace = "nvidia-network-operator"
+	clientset := k8sfake.NewSimpleClientset()
+
+	credentials, err := credentialsFromImagePullSecrets(
+		context.Background(),
+		clientset.CoreV1().Secrets(namespace),
+		[]string{"missing-secret"},
+		"https://helm.ngc.nvidia.com/nvidia",
+		namespace,
+	)
+	require.Error(t, err)
+	assert.Empty(t, credentials)
+	assert.Contains(t, err.Error(), "missing-secret")
+	assert.Contains(t, err.Error(), namespace)
+}
+
+func TestPullChart_UsesImagePullSecretCredentials(t *testing.T) {
+	const (
+		username = "$oauthtoken"
+		password = "test-api-key"
+		version  = "0.0.0"
+	)
+
+	chartPath, err := chartutil.Save(newTestChart(t), t.TempDir())
+	require.NoError(t, err)
+	chartArchive, err := os.ReadFile(chartPath)
+	require.NoError(t, err)
+
+	var totalRequests atomic.Int32
+	var authenticatedRequests atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		totalRequests.Add(1)
+		requestUsername, requestPassword, ok := r.BasicAuth()
+		if !ok || requestUsername != username || requestPassword != password {
+			w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		authenticatedRequests.Add(1)
+
+		switch r.URL.Path {
+		case "/index.yaml":
+			_, _ = fmt.Fprintf(w, `apiVersion: v1
+entries:
+  network-operator:
+  - apiVersion: v2
+    name: network-operator
+    version: %s
+    urls:
+    - %s/network-operator-%s.tgz
+`, version, server.URL, version)
+		case "/network-operator-" + version + ".tgz":
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write(chartArchive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	pulledPath, cleanup, err := pullChart(
+		context.Background(),
+		server.URL,
+		networkOperatorChartName,
+		version,
+		[]helmRepositoryCredential{
+			{
+				Username:     "expired-user",
+				Password:     "expired-password",
+				SourceSecret: "expired-secret",
+			},
+			{
+				Username:     username,
+				Password:     password,
+				SourceSecret: "ngc-image-secret",
+			},
+		},
+	)
+	require.NoError(t, err)
+	defer cleanup()
+
+	pulledChart, err := chartloader.Load(pulledPath)
+	require.NoError(t, err)
+	assert.Equal(t, networkOperatorChartName, pulledChart.Name())
+	assert.EqualValues(t, 2, authenticatedRequests.Load(), "index and chart archive must both use credentials")
+	assert.EqualValues(t, 3, totalRequests.Load(), "downloader must try configured credentials in order")
+}
+
+func TestPullChart_DoesNotForwardCredentialsToCrossHostChart(t *testing.T) {
+	const (
+		username = "chart-user"
+		password = "chart-password"
+		version  = "0.0.0"
+	)
+
+	chartPath, err := chartutil.Save(newTestChart(t), t.TempDir())
+	require.NoError(t, err)
+	chartArchive, err := os.ReadFile(chartPath)
+	require.NoError(t, err)
+
+	var archiveReceivedAuth atomic.Bool
+	archiveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _, received := r.BasicAuth()
+		archiveReceivedAuth.Store(received)
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(chartArchive)
+	}))
+	defer archiveServer.Close()
+
+	indexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestUsername, requestPassword, ok := r.BasicAuth()
+		if !ok || requestUsername != username || requestPassword != password {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `apiVersion: v1
+entries:
+  network-operator:
+  - apiVersion: v2
+    name: network-operator
+    version: %s
+    urls:
+    - %s/network-operator-%s.tgz
+`, version, archiveServer.URL, version)
+	}))
+	defer indexServer.Close()
+
+	_, cleanup, err := pullChart(
+		context.Background(),
+		indexServer.URL,
+		networkOperatorChartName,
+		version,
+		[]helmRepositoryCredential{{
+			Username:     username,
+			Password:     password,
+			SourceSecret: "chart-creds",
+		}},
+	)
+	require.NoError(t, err)
+	defer cleanup()
+	assert.False(t, archiveReceivedAuth.Load(), "repository credentials must not cross chart hosts")
 }

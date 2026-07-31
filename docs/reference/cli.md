@@ -43,7 +43,7 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 | `--node-selector` | Selector persisted for generated resources. It does not filter discovery scheduling. |
 | `--keep-namespace` | Keep the temporary `nvidia-k8s-launch-kit` namespace and daemon workload for inspection. |
 | `--collapse-nic-rails` | Collapse eligible multi-port NICs into one rail. Enabled by default; known dual-port models retain a rail per port. |
-| `--image-pull-secrets` | Secret names used to pull the discovery daemon and propagated into generated policies and Network Operator Helm values. |
+| `--image-pull-secrets` | Secret names used to pull the discovery daemon, propagated into generated policies and Helm values, and reused for authenticated Helm chart downloads when the registry host matches. |
 | `--enabled-plugins` | Comma-separated plugins. The supported deployment plugin is `network-operator`. |
 
 Discovery also accepts the profile and Spectrum-X flags below. Explicit flags override values from `--user-config` and discovered defaults.
@@ -84,7 +84,7 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 | `--network-namespaces` | Namespaces that receive secondary-network resources and example workloads. |
 | `--workload-manifest` | Replace the profile's example workload with a Pod or workload-controller manifest. |
 | `--enable-doca-driver` | Override `docaDriver.enable` and include the DOCA driver deployment. |
-| `--image-pull-secrets` | Secret names propagated into generated Network Operator policies and Helm values. |
+| `--image-pull-secrets` | Secret names propagated into generated Network Operator policies and Helm values. Matching credentials already present in the operator namespace authenticate the Helm chart download. |
 | `--deploy` | Deploy immediately after generation. |
 | `--kubeconfig` | Kubeconfig used with `--deploy`. |
 | `--dry-run` | Preview the deploy stage used with `--deploy`. |

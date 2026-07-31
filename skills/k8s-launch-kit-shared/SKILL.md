@@ -64,7 +64,7 @@ The root command `l8k --discover-cluster-config ...` still works for backward-co
 | `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`). **No-op for `l8k discover`** — discover always bootstraps into `nvidia-k8s-launch-kit`; the flag still applies to `l8k generate` / `l8k deploy` / `l8k validate`. |
 | `--network-namespaces <NS,...>` | Comma-separated namespaces for the secondary-network CRs + example test DaemonSets; one copy rendered per namespace (shared resources like IPPools/NodePolicies are NOT duplicated). Default: `default` |
 | `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
-| `--image-pull-secrets <NAMES>` | Image pull secret names for Network Operator components (comma-separated) |
+| `--image-pull-secrets <NAMES>` | Image pull secret names for Network Operator components and authenticated Helm chart downloads (comma-separated) |
 
 `l8k discover` and `l8k generate` both accept the profile flags `--fabric`,
 `--deployment-type`, `--multirail`, `--spectrum-x`, `--multiplane-mode`, and

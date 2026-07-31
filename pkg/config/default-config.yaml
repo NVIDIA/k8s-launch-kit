@@ -25,6 +25,11 @@ networkOperator:
   # `helm.ngc.nvidia.com/nvidia`; staging under `helm.ngc.nvidia.com/nvstaging/mellanox`.
   helmRepoURL: https://helm.ngc.nvidia.com/nvidia
   namespace: nvidia-network-operator
+  # imagePullSecrets are rendered into every enabled Network Operator
+  # component. During `l8k deploy`, a matching docker-registry Secret that
+  # already exists in this namespace is also used to authenticate the Helm
+  # chart download. For NGC, nvcr.io credentials are valid for
+  # helm.ngc.nvidia.com. Secret data is read in memory and is never logged.
   # imagePullSecrets:
   #   - my-registry-secret
 

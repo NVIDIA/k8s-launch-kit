@@ -219,7 +219,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--image-pull-secrets": {
 					Type:        "[]string",
-					Description: "Image pull secret names for Network Operator components (comma-separated)",
+					Description: "Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)",
 				},
 				"--network-operator-release": {
 					Type:        "string",

@@ -56,6 +56,12 @@ Deploy runs in phases:
 3. Apply per-group `NicNodePolicy` resources and wait for readiness.
 4. Apply the remaining CRs and verify each one reaches a terminal state.
 
+If `networkOperator.imagePullSecrets` is configured, create the named Secret
+in `networkOperator.namespace` before deploying. Phase 0 reads compatible
+Docker credentials through the Kubernetes API to authenticate the chart
+download; the kubeconfig therefore needs `get secrets` permission in that
+namespace.
+
 Preview the server-side apply without persisting resources:
 
 ```bash
