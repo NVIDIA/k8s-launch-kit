@@ -1,7 +1,7 @@
 {{- /* .ClusterConfig.PFs keeps this template in per-group render mode. */ -}}
 {{- $pools := spectrumXCIDRPools . .ClusterConfig }}
 {{- range $idx, $pool := $pools }}
-{{- if $idx }}---
+{{ if $idx }}---
 {{ end -}}
 apiVersion: nv-ipam.nvidia.com/v1alpha1
 kind: CIDRPool

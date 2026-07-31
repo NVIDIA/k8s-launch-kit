@@ -245,6 +245,75 @@ func TestProfileManifestsAreValidMultiDocYAML(t *testing.T) {
 	}
 }
 
+func TestSpectrumXCIDRPoolSeparators(t *testing.T) {
+	profilesUnderTest := []struct {
+		dir            string
+		spcxVersion    string
+		multiplaneMode string
+		numberOfPlanes int
+	}{
+		{
+			dir:            "spectrum-x",
+			spcxVersion:    "RA2.3",
+			multiplaneMode: "hwplb",
+			numberOfPlanes: 4,
+		},
+		{
+			dir:            "spectrum-x-ra2.2",
+			spcxVersion:    "RA2.2",
+			multiplaneMode: "swplb",
+			numberOfPlanes: 2,
+		},
+		{
+			dir:            "spectrum-x-ra2.1",
+			spcxVersion:    "RA2.1",
+			multiplaneMode: "hwplb",
+			numberOfPlanes: 2,
+		},
+	}
+
+	for _, profile := range profilesUnderTest {
+		t.Run(profile.dir, func(t *testing.T) {
+			cfg, err := config.LoadFullConfig(
+				filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
+			require.NoError(t, err)
+			cfg.Profile = &config.Profile{
+				Fabric:     "ethernet",
+				Deployment: "sriov",
+				Multirail:  true,
+				SpectrumX: &config.ProfileSpectrumX{
+					Enable:         true,
+					SPCXVersion:    profile.spcxVersion,
+					MultiplaneMode: profile.multiplaneMode,
+					NumberOfPlanes: profile.numberOfPlanes,
+					TopologyType:   config.SpectrumXTopology2Tier,
+					TopologyFile:   writeSpectrumXTopology(t, cfg, profile.numberOfPlanes),
+				},
+			}
+
+			rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
+				loadProfileFromDir(t, profile.dir), cfg)
+			require.NoError(t, err)
+			name, content := fileMatching(t, rendered, "60-cidrpool")
+
+			for _, line := range strings.Split(content, "\n") {
+				if strings.Contains(line, "---") {
+					require.Equal(t, "---", strings.TrimSpace(line),
+						"%s must put each YAML document separator on its own line", name)
+				}
+			}
+
+			docs := parseDocs(t, name, content)
+			require.Greater(t, len(docs), 1, "%s must contain multiple CIDRPool documents", name)
+			require.Equal(t, countKindLines(content), len(docs),
+				"%s must have one YAML document per CIDRPool kind", name)
+			for _, doc := range docs {
+				require.Equal(t, "CIDRPool", doc["kind"])
+			}
+		})
+	}
+}
+
 func TestSecondaryNetworkMetaPluginsHelper(t *testing.T) {
 	t.Run("default empty", func(t *testing.T) {
 		require.Empty(t, secondaryNetworkMetaPlugins(&config.Profile{}))
