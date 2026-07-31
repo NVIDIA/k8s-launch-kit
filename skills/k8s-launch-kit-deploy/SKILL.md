@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-deploy
-version: 1.3.1
+version: 1.3.2
 description: "Use this skill when the user wants to deploy generated NVIDIA networking manifests to a Kubernetes cluster using k8s-launch-kit (l8k). Activate for: applying manifests, deploying to cluster, the `l8k deploy` subcommand or the legacy --deploy flag on `l8k generate`, applying generated files, or any mention of pushing l8k output to a live cluster. Even if the user just says 'apply these' or 'push to cluster' after generating manifests, use this skill."
 metadata:
   requires:
@@ -45,7 +45,7 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> -
 | `--deployment-files` | — | Directory with manifests to apply (default `./deployment`) |
 | `--kubeconfig` | — | Path to kubeconfig with cluster-admin access (falls back to `$KUBECONFIG`) |
 | `--dry-run` | — | Server-side dry-run (`client.DryRunAll`) — cluster validates without persisting |
-| `--overwrite-existing` | — | When a `network-operator` helm release already exists with values that differ from the freshly rendered `values.yaml`, promote Phase 0 to `helm upgrade --install`. Off by default to avoid clobbering an out-of-band install. |
+| `--overwrite-existing` | — | Converge detected l8k-owned drift: upgrade a mismatched Helm release, delete conflicting generated-resource kinds, and rewrite owned policy fields. Spectrum-X operator-generated child resources are excluded from conflicts. |
 
 ## Examples
 
@@ -93,7 +93,17 @@ part-number selectors. l8k validates only those
 named `NicDevice` objects and waits for their corresponding
 `spec.configuration` or `spec.firmware` to reflect the current template
 payload and for device conditions to observe the current device generation;
-unrelated device configuration state does not block deployment.
+unrelated device configuration state does not block deployment. A
+`NicConfigurationTemplate` gates on `FirmwareUpdateInProgress` only when the
+matched device has `spec.firmware`; configuration-only deployments ignore a
+stale firmware condition.
+
+During preflight, do not classify `SriovNetworkPoolConfig`,
+`SriovNetworkNodePolicy`, or `OVSNetwork` objects labeled with
+`spectrumx.nvidia.com/owner-name` as strays. They are child resources generated
+and reconciled by the Spectrum-X operator from `SpectrumXRailPoolConfig`, not
+manifests owned by l8k. Unlabelled objects of the same kinds remain subject to
+the normal conflict check.
 
 ```bash
 kubectl get nicclusterpolicy -o yaml          # Check policy state

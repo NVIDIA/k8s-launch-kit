@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-validate
-version: 1.0.1
+version: 1.0.2
 description: "Use this skill when the user wants to verify that an NVIDIA networking deployment matches the configuration that produced it. Activate for: 'is my deployment correct', 'are all the manifests applied', 'does the network operator version match', 'verify deployment', 'check cluster state against config', or any question about whether the cluster reflects what l8k generated. Wraps the `l8k validate` subcommand."
 metadata:
   requires:
@@ -31,11 +31,20 @@ Operator release.
    NIC type, PCI-address, serial-number, and part-number selectors and validate
    only the named devices. Their propagated template
    payload and condition `observedGeneration` must also be current; unrelated
-   discovered NIC configuration state is ignored. Each manifest is reported
+   discovered NIC configuration state is ignored. A configuration template
+   checks `FirmwareUpdateInProgress` only for a matched device with
+   `spec.firmware`, so a stale firmware condition does not block a deployment
+   with no `NicFirmwareTemplate`. Each manifest is reported
    `READY`, `IN-PROGRESS`, `ERROR`, or `MISSING`.
 3. **Connectivity matrix.** By default, `l8k validate` applies the generated
    example DaemonSet, waits for ready pods, and runs source-bound `icmp`,
    `rping`, and `ib_write_bw` tests. The default mode is `strict`.
+
+Validation also reports deploy-preflight drift without remediating it.
+`SriovNetworkPoolConfig`, `SriovNetworkNodePolicy`, and `OVSNetwork` objects
+labeled with `spectrumx.nvidia.com/owner-name` are excluded from stray results
+because the Spectrum-X operator owns them as children of
+`SpectrumXRailPoolConfig`.
 
 Exit code is non-zero (4) on any missing manifest, version mismatch, or
 gating connectivity failure. Version checks soft-skip when prerequisites are

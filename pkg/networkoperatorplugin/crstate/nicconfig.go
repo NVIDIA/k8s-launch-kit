@@ -551,10 +551,10 @@ func classifyInterfaceName(byType map[string]map[string]interface{}) (CRState, s
 	}
 }
 
-// classifyConfiguration inspects ConfigUpdateInProgress (primary) and
-// FirmwareUpdateInProgress (when present). Reason is the authoritative
-// classifier — Status=False with Reason=UpdateSuccessful is the *success*
-// terminal state, not failure.
+// classifyConfiguration inspects ConfigUpdateInProgress (primary) and, when
+// the device is targeted by a NicFirmwareTemplate, FirmwareUpdateInProgress.
+// Reason is the authoritative classifier — Status=False with
+// Reason=UpdateSuccessful is the *success* terminal state, not failure.
 func classifyConfiguration(device *unstructured.Unstructured, byType map[string]map[string]interface{}) (CRState, string) {
 	if cond, ok := byType[consts.ConfigUpdateInProgressCondition]; ok {
 		if pending, reason := conditionGenerationPending(device, cond, consts.ConfigUpdateInProgressCondition); pending {
@@ -589,7 +589,15 @@ func classifyConfiguration(device *unstructured.Unstructured, byType map[string]
 	}
 
 	// At this point ConfigUpdateInProgress.Reason=UpdateSuccessful.
-	// If firmware section is also present, gate on its terminal state.
+	// Firmware conditions can remain on a NicDevice after a configuration-only
+	// update increments its generation. Ignore that stale condition unless a
+	// NicFirmwareTemplate populated spec.firmware for this device.
+	if !deviceTargetedByTemplate(device, templateKindFirmware) {
+		return StateSuccess, "config reconciled (no firmware spec)"
+	}
+
+	// A firmware payload is present, so gate on its terminal state when the
+	// operator has published the corresponding condition.
 	if cond, ok := byType[consts.FirmwareUpdateInProgressCondition]; ok {
 		if pending, reason := conditionGenerationPending(device, cond, consts.FirmwareUpdateInProgressCondition); pending {
 			return StateInProgress, reason

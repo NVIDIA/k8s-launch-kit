@@ -547,7 +547,7 @@ func TestNicConfigurationTemplate_AllReasonsClassified(t *testing.T) {
 
 func TestNicConfigurationTemplate_FirmwareGate(t *testing.T) {
 	// ConfigUpdateInProgress=False/UpdateSuccessful gates on
-	// FirmwareUpdateInProgress when present.
+	// FirmwareUpdateInProgress when spec.firmware is present.
 	cases := []struct {
 		name       string
 		fwReason   string
@@ -565,15 +565,16 @@ func TestNicConfigurationTemplate_FirmwareGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			manifest := nicTemplateManifest(nicopKindConfigurationTemplate, "tpl", "ns", map[string]string{"role": "worker"})
 			live := withMatchedDevices(manifest.DeepCopy(), "dev-1")
+			device := withFirmwareSpec(nicDevice("dev-1", "ns", "worker-1",
+				[]map[string]interface{}{port("0000:1a:00.0")},
+				false, true,
+				[]map[string]interface{}{
+					condition(consts.ConfigUpdateInProgressCondition, "False", consts.UpdateSuccessfulReason, ""),
+					condition(consts.FirmwareUpdateInProgressCondition, tc.fwStatus, tc.fwReason, ""),
+				}))
 			c := newClient(t,
 				live,
-				nicDevice("dev-1", "ns", "worker-1",
-					[]map[string]interface{}{port("0000:1a:00.0")},
-					false, true,
-					[]map[string]interface{}{
-						condition(consts.ConfigUpdateInProgressCondition, "False", consts.UpdateSuccessfulReason, ""),
-						condition(consts.FirmwareUpdateInProgressCondition, tc.fwStatus, tc.fwReason, ""),
-					}),
+				device,
 				node("worker-1", map[string]string{"role": "worker"}),
 			)
 			v := nicTemplateValidator(templateKindConfiguration)
@@ -582,6 +583,28 @@ func TestNicConfigurationTemplate_FirmwareGate(t *testing.T) {
 			assert.Equal(t, tc.wantState, res.State, "fwReason=%s", tc.fwReason)
 		})
 	}
+}
+
+func TestNicConfigurationTemplate_IgnoresStaleFirmwareConditionWithoutFirmwareSpec(t *testing.T) {
+	manifest := nicTemplateManifest(nicopKindConfigurationTemplate, "tpl", "ns", map[string]string{"role": "worker"})
+	live := withMatchedDevices(manifest.DeepCopy(), "dev-1")
+	device := nicDevice("dev-1", "ns", "worker-1",
+		[]map[string]interface{}{port("0000:1a:00.0")},
+		false, true,
+		[]map[string]interface{}{
+			conditionWithGeneration(consts.ConfigUpdateInProgressCondition, "False", consts.UpdateSuccessfulReason, "", 3),
+			conditionWithGeneration(consts.FirmwareUpdateInProgressCondition, "False", consts.DeviceFwMatchReason, "", 2),
+		})
+	device.SetGeneration(3)
+
+	res, err := nicTemplateValidator(templateKindConfiguration)(context.Background(), newClient(t,
+		live,
+		device,
+		node("worker-1", map[string]string{"role": "worker"}),
+	), manifest)
+	require.NoError(t, err)
+	assert.Equal(t, StateSuccess, res.State)
+	assert.Contains(t, res.Details["worker-1/0000:1a:00.0"], "no firmware spec")
 }
 
 func TestNicConfigurationTemplate_AggregatesAcrossDevices(t *testing.T) {

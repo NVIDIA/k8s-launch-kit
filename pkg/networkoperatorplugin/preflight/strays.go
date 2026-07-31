@@ -27,6 +27,14 @@ type kindInfo struct {
 	ClusterScoped bool
 }
 
+const spectrumXOwnerNameLabel = "spectrumx.nvidia.com/owner-name"
+
+var spectrumXOperatorGeneratedKinds = map[schema.GroupKind]struct{}{
+	{Group: "sriovnetwork.openshift.io", Kind: "SriovNetworkNodePolicy"}: {},
+	{Group: "sriovnetwork.openshift.io", Kind: "SriovNetworkPoolConfig"}: {},
+	{Group: "sriovnetwork.openshift.io", Kind: "OVSNetwork"}:             {},
+}
+
 // managedKinds is the hardcoded set of CR Kinds the Network Operator
 // chart manages and that `l8k generate` may render. Listed exhaustively
 // (not derived from the rendered manifests) so the check catches strays
@@ -37,7 +45,10 @@ type kindInfo struct {
 // Operator-created service CRs (NicDevice, SriovNetworkNodeState,
 // SriovOperatorConfig) are deliberately excluded — they are created by
 // the operator itself per node / per install and have no l8k-rendered
-// counterpart to compare against.
+// counterpart to compare against. Spectrum-X-derived child resources share
+// Kinds that l8k also renders for other profiles, so they remain in this list
+// and are filtered by isSpectrumXOperatorGenerated using their ownership
+// label.
 var managedKinds = []kindInfo{
 	// Cluster-scoped — singletons or per-group resources.
 	{GVK: gvk("mellanox.com", "v1alpha1", "NicClusterPolicy"), ClusterScoped: true},
@@ -120,6 +131,9 @@ func CheckStrayCRs(ctx context.Context, in Inputs) Result {
 		}
 		for i := range list.Items {
 			obj := &list.Items[i]
+			if isSpectrumXOperatorGenerated(obj, kind.GVK) {
+				continue
+			}
 			ref := ObjectRef{
 				GVK:       kind.GVK,
 				Namespace: obj.GetNamespace(),
@@ -151,6 +165,18 @@ func CheckStrayCRs(ctx context.Context, in Inputs) Result {
 			len(r.Mismatches), namespace)
 	}
 	return r
+}
+
+// isSpectrumXOperatorGenerated identifies the SR-IOV/OVS resources synthesized
+// by the Spectrum-X operator from a SpectrumXRailPoolConfig. These objects are
+// intentionally absent from l8k's generated bundle and are reconciled and
+// cleaned up by their owning operator, so they must not be treated as l8k
+// strays during a resumed deployment.
+func isSpectrumXOperatorGenerated(obj *unstructured.Unstructured, gvk schema.GroupVersionKind) bool {
+	if _, ok := spectrumXOperatorGeneratedKinds[gvk.GroupKind()]; !ok {
+		return false
+	}
+	return obj.GetLabels()[spectrumXOwnerNameLabel] != ""
 }
 
 // refKey serialises an ObjectRef to a deterministic string identifier

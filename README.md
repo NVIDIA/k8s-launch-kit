@@ -190,6 +190,13 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 
 The deploy step installs (or upgrades) the `nvidia/network-operator` Helm chart in-process before applying the post-install CRs. The chart version and Helm repository URL are taken from the embedded release catalog and can be selected via `--network-operator-release <MAJOR.MINOR>`. Each profile renders a per-profile `values.yaml` next to the CR manifests; `l8k deploy` reads that file and runs the install. When a release already exists with different values, deploy fails fast — pass `--overwrite-existing` to promote to `helm upgrade --install`.
 
+Deploy preflight does not treat `SriovNetworkPoolConfig`,
+`SriovNetworkNodePolicy`, or `OVSNetwork` objects labeled with
+`spectrumx.nvidia.com/owner-name` as conflicting resources. The Spectrum-X
+operator derives and owns those objects from `SpectrumXRailPoolConfig`, so a
+deploy restarted after the rail-pool controller has run remains idempotent and
+does not require `--overwrite-existing`.
+
 ### AI Agent / Automation Support
 Use --output json for structured machine-readable output (single JSON object to stdout).
 Use --yes to auto-confirm prompts, --quiet to suppress informational output, and --dry-run to preview deployments.
@@ -346,7 +353,8 @@ registry (with SR-IOV silent-failure detection, NicConfigurationTemplate
 and NicFirmwareTemplate validation scoped to the operator-populated
 `status.nicDevices`, current template-payload and device-generation checks,
 matched-set checks for node, NIC type, PCI, serial-number, and part-number
-selectors, condition-Reason classification,
+selectors, condition-Reason classification, and firmware-condition gating
+only for devices carrying `spec.firmware`,
 NicClusterPolicy appliedStates breakdown, etc.); and (3) a data-plane
 connectivity matrix —
 apply the example DaemonSet, wait for it to roll out completely (`numberReady ==

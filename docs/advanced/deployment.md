@@ -39,11 +39,19 @@ Before applying custom resources, Launch Kit compares the bundle with the cluste
 | Helm chart version | Installed chart differs from the selected release. |
 | Helm values | Installed user values differ from generated `values.yaml`. |
 | Component versions | Live `NicClusterPolicy` component versions differ from the release catalog. |
-| Stray resources | Managed Network Operator CRs exist but are not in the generated bundle. |
+| Stray resources | l8k-managed Network Operator CRs exist but are not in the generated bundle. Spectrum-X operator-generated `SriovNetworkPoolConfig`, `SriovNetworkNodePolicy`, and `OVSNetwork` objects are excluded. |
 
 Without `--overwrite-existing`, any mismatch stops deployment and all detected drift is reported together.
 
 With `--overwrite-existing`, Launch Kit authorizes the Helm upgrade, deletes stray managed CRs, and lets server-side apply converge owned `NicClusterPolicy` fields. This can remove resources, so inspect the preflight report before enabling it.
+
+The Spectrum-X operator labels the SR-IOV pool configs, node policies, and OVS
+networks it derives from `SpectrumXRailPoolConfig` with
+`spectrumx.nvidia.com/owner-name`. Launch Kit leaves these controller-owned
+objects out of stray detection and remediation. This makes a restarted
+Spectrum-X deployment idempotent after the controller has created its child
+resources, while unlabelled resources of the same kinds remain protected by
+the normal conflict check.
 
 ## Apply Order
 
@@ -71,7 +79,7 @@ The shared resource-state registry classifies generated objects as:
 
 Kind-specific checks include per-component Network Operator state, SR-IOV per-node sync, matched PF counts, NIC configuration templates, IP pools, and Spectrum-X rail configuration.
 
-For `NicConfigurationTemplate` and `NicFirmwareTemplate`, Launch Kit first waits for the operator to publish matched device names in `status.nicDevices` and for that name set to reflect the current `nodeSelector`, NIC type, PCI-address, serial-number, and part-number selectors. It then evaluates only those `NicDevice` objects and waits for the corresponding `spec.configuration` or `spec.firmware` field to reflect the current template payload. A successful device condition is accepted only after its `observedGeneration` catches up with the `NicDevice` generation. Other discovered NICs do not block on configuration or firmware state. Changed templates are also observation-gated before this status is accepted, so status left by an earlier generation cannot produce a false success.
+For `NicConfigurationTemplate` and `NicFirmwareTemplate`, Launch Kit first waits for the operator to publish matched device names in `status.nicDevices` and for that name set to reflect the current `nodeSelector`, NIC type, PCI-address, serial-number, and part-number selectors. It then evaluates only those `NicDevice` objects and waits for the corresponding `spec.configuration` or `spec.firmware` field to reflect the current template payload. A successful device condition is accepted only after its `observedGeneration` catches up with the `NicDevice` generation. A configuration template checks `FirmwareUpdateInProgress` only when the matched device carries `spec.firmware`; without a deployed firmware template, a stale firmware condition from an older device generation does not block configuration reconciliation. Other discovered NICs do not block on configuration or firmware state. Changed templates are also observation-gated before this status is accepted, so status left by an earlier generation cannot produce a false success.
 
 ## Timeout
 
