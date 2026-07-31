@@ -136,6 +136,48 @@ func TestCheckStrayCRs_IgnoresStrayInOtherNamespace(t *testing.T) {
 	assert.Empty(t, r.Mismatches)
 }
 
+func TestCheckStrayCRs_IgnoresSpectrumXOperatorGeneratedResources(t *testing.T) {
+	namespace := "nvidia-network-operator"
+	childKinds := []schema.GroupVersionKind{
+		{Group: "sriovnetwork.openshift.io", Version: "v1", Kind: "SriovNetworkNodePolicy"},
+		{Group: "sriovnetwork.openshift.io", Version: "v1", Kind: "SriovNetworkPoolConfig"},
+		{Group: "sriovnetwork.openshift.io", Version: "v1", Kind: "OVSNetwork"},
+	}
+	objects := make([]runtime.Object, 0, len(childKinds)*2)
+	for _, childGVK := range childKinds {
+		operatorGenerated := newCR(childGVK, namespace, "rail0")
+		operatorGenerated.SetLabels(map[string]string{spectrumXOwnerNameLabel: "rails"})
+		objects = append(objects, operatorGenerated)
+
+		// Preserve the existing protection for an unlabelled resource of the
+		// same Kind: only Spectrum-X operator output is exempt.
+		objects = append(objects, newCR(childGVK, namespace, "unmanaged"))
+	}
+
+	r := CheckStrayCRs(context.Background(), Inputs{
+		KubeClient:        newFakeClientWith(t, objects...).Build(),
+		OperatorNamespace: namespace,
+	})
+	require.False(t, r.Skipped)
+	require.Len(t, r.Mismatches, len(childKinds))
+	for _, mismatch := range r.Mismatches {
+		assert.Contains(t, mismatch.Path, "/unmanaged")
+	}
+}
+
+func TestCheckStrayCRs_DoesNotIgnoreOwnerLabelOnOtherKinds(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "sriovnetwork.openshift.io", Version: "v1", Kind: "SriovNetwork"}
+	stray := newCR(gvk, "nvidia-network-operator", "rail0")
+	stray.SetLabels(map[string]string{spectrumXOwnerNameLabel: "rails"})
+
+	r := CheckStrayCRs(context.Background(), Inputs{
+		KubeClient:        newFakeClientWith(t, stray).Build(),
+		OperatorNamespace: "nvidia-network-operator",
+	})
+	require.Len(t, r.Mismatches, 1)
+	assert.Equal(t, "SriovNetwork/nvidia-network-operator/rail0", r.Mismatches[0].Path)
+}
+
 func TestScanGeneratedManifests_FiltersValuesAndExamples(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "values.yaml"), []byte("nfd:\n  enabled: true\n"), 0o644))
