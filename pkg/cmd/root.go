@@ -278,7 +278,7 @@ func init() {
 	rootCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and NIC nodes are detected via a sysfs PCI-vendor probe")
 	rootCmd.Flags().BoolVar(&collapseNicRails, "collapse-nic-rails", true, collapseNicRailsFlagHelp)
 	rootCmd.Flags().StringVar(&forPreset, "for", "", forFlagHelp())
-	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for NicClusterPolicy (comma-separated)")
+	rootCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for Network Operator components (comma-separated)")
 	rootCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "./deployment", "Save generated deployment files to the specified directory")
 	rootCmd.Flags().StringSliceVar(&networkNamespaces, "network-namespaces", nil, "Comma-separated namespaces for the secondary-network CRs and example test DaemonSets. One independent copy is rendered per namespace (shared resources like IPPools and NodePolicies are NOT duplicated). Overrides config networkNamespaces; default: 'default'.")
 	rootCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment (overrides config file docaDriver.enable)")

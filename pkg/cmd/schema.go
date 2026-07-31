@@ -219,7 +219,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--image-pull-secrets": {
 					Type:        "[]string",
-					Description: "Image pull secret names for NicClusterPolicy (comma-separated)",
+					Description: "Image pull secret names for Network Operator components (comma-separated)",
 				},
 				"--network-operator-release": {
 					Type:        "string",
