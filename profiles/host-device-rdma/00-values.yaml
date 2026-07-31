@@ -7,6 +7,14 @@ or upgrade the network-operator release in the configured namespace
 */ -}}
 nfd:
   enabled: true
+{{- if .NetworkOperator.ImagePullSecrets }}
+
+node-feature-discovery:
+  imagePullSecrets:
+{{- range .NetworkOperator.ImagePullSecrets }}
+    - name: "{{ . }}"
+{{- end }}
+{{- end }}
 
 upgradeCRDs: true
 
@@ -24,7 +32,7 @@ operator:
 
 imagePullSecrets:
 {{- range .NetworkOperator.ImagePullSecrets }}
-  - name: {{ . }}
+  - "{{ . }}"
 {{- end }}
 {{- end }}
 
@@ -32,6 +40,12 @@ maintenanceOperator:
   enabled: {{ if or .NicConfigurationOperator (versionGE .NetworkOperator.SelectedRelease "26.1") }}true{{ else }}false{{ end }}
 
 maintenance-operator-chart:
+{{- if .NetworkOperator.ImagePullSecrets }}
+  imagePullSecrets:
+{{- range .NetworkOperator.ImagePullSecrets }}
+    - name: "{{ . }}"
+{{- end }}
+{{- end }}
   operatorConfig:
     deploy: true
     # Keep scalar overrides quoted: upstream truthiness guards omit numeric 0.

@@ -236,7 +236,7 @@ Available Commands:
 Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides
       --enabled-plugins string              Comma-separated list of plugins to enable (default "network-operator")
-      --image-pull-secrets strings          Image pull secret names for NicClusterPolicy (comma-separated)
+      --image-pull-secrets strings          Image pull secret names for Network Operator components (comma-separated)
       --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)
       --network-operator-namespace string   Override the network operator namespace from the config file
       --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 26.1, 26.4, 26.7

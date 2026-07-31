@@ -7,7 +7,7 @@ spec:
   global:
     imagePullSecrets:
     {{- range .NetworkOperator.ImagePullSecrets }}
-      - {{ . }}
+      - "{{ . }}"
     {{- end }}
   {{- end }}
   {{- if and .NicConfigurationOperator (or .NicConfigurationOperator.DeployNicInterfaceNameTemplate .NicConfigurationOperator.UpdateFW) }}
@@ -60,7 +60,7 @@ spec:
     {{- if .NetworkOperator.ImagePullSecrets }}
     imagePullSecrets:
     {{- range .NetworkOperator.ImagePullSecrets }}
-      - {{ . }}
+      - "{{ . }}"
     {{- end }}
     {{- end }}
     version: "{{.DOCADriver.Version}}"
@@ -97,7 +97,7 @@ spec:
     {{- if .NetworkOperator.ImagePullSecrets }}
     imagePullSecrets:
     {{- range .NetworkOperator.ImagePullSecrets }}
-      - {{ . }}
+      - "{{ . }}"
     {{- end }}
     {{- end }}
     version: "{{.NetworkOperator.ComponentVersion}}"

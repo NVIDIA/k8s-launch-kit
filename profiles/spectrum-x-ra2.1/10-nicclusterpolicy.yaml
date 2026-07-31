@@ -7,7 +7,7 @@ spec:
   global:
     imagePullSecrets:
     {{- range .NetworkOperator.ImagePullSecrets }}
-      - {{ . }}
+      - "{{ . }}"
     {{- end }}
   {{- end }}
   nicConfigurationOperator:

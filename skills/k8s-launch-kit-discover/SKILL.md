@@ -55,7 +55,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--network-operator-namespace` | — | — | **Deprecated for `discover`**: accepted but ignored. The daemon always runs in `nvidia-k8s-launch-kit`. Still used by `l8k generate` / `l8k deploy`. |
 | `--user-config` | — | — | Base config to merge with discovered hardware |
 | `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Value written into the **saved** `cluster-config.yaml` `nodeSelector` (for deploy time). It does **not** gate discovery scheduling or the NicDevice wait set — the daemon is restricted to Ready schedulable nodes and NIC-bearing nodes are detected via a sysfs `0x15b3` probe. |
-| `--image-pull-secrets` | — | — | Image pull secret names (comma-separated). Forwarded onto the bootstrapped DaemonSet pod spec. |
+| `--image-pull-secrets` | — | — | Image pull secret names (comma-separated). Forwarded to the discovery DaemonSet and persisted for generated policies and Network Operator Helm values. |
 | `--fabric` | — | discovered unanimous link type | Fabric override: `ethernet` or `infiniband`. |
 | `--deployment-type` | — | `sriov` | Deployment override: `sriov`, `rdma_shared`, or `host_device`. |
 | `--multirail` | — | `true` | Multirail override. Use `--multirail=false` to opt out; explicit false is persisted. |
