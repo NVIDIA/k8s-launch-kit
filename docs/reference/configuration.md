@@ -259,7 +259,7 @@ profile:
 | `spectrumX.topologyType` | `2-tier` or `3-tier`. |
 | `spectrumX.ipVersion` | `ipv4` or `ipv6`; CIDRPool rendering currently supports IPv4. |
 | `spectrumX.hostFirstOctet` | Config-only first octet for generated IPv4 topology addressing. |
-| `spectrumX.topologyFile` | Path to `spcx-gen` format topology JSON. Relative paths resolve from the config file. |
+| `spectrumX.topologyFile` | Path to spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from its structure; relative paths resolve from the config file. |
 | `spectrumX.configMapName` / `profile` | RA2.3 ConfigMap name and embedded profile data. |
 | `spectrumX.useDRA` | Render DRA `ResourceClaimTemplate` workload allocation. |
 

@@ -716,9 +716,12 @@ feature gate, sets `SpectrumXRailPoolConfig.spec.draEnabled: true`, emits
 `ResourceClaimTemplate` manifests, and renders the example workload with DRA
 claims instead of `nvidia.com/rail_*` device-plugin resource requests.
 
-Spectrum-X CIDRPools are generated from a `topology.json` in the reference
-generator format plus the resolved l8k discovery data. Pass the topology scheme
-and file on the CLI, or set the same values under `profile.spectrumX`:
+Spectrum-X CIDRPools are generated from spcx-gen/reference-generator or contract-compliant
+NVIDIA AIR topology JSON plus the resolved l8k discovery data. l8k detects the
+format from the JSON structure. AIR support relies on the documented node and
+interface naming contract; see [Spectrum-X topology-driven CIDRPools](docs/user/spectrum-x.md#topology-driven-cidrpools).
+Pass the topology scheme and file on the CLI, or set the same values under
+`profile.spectrumX`:
 
 ```bash
 l8k generate --user-config cluster-config.yaml \

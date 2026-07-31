@@ -78,6 +78,7 @@ type topologyEndpoint struct {
 	Node      string             `json:"node"`
 	Interface string             `json:"interface"`
 	Attrs     topologyAttributes `json:"attributes"`
+	HostIndex *int               `json:"-"`
 }
 
 type topologyAttributes struct {
@@ -146,7 +147,7 @@ type poolKey struct {
 }
 
 // BuildCIDRPools builds nv-ipam CIDRPool data for the Spectrum-X profiles from
-// a topology.json that follows the reference generator schema.
+// a topology.json that follows the reference generator or NVIDIA AIR schema.
 func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]CIDRPool, error) {
 	if cfg == nil || cfg.Profile == nil || cfg.Profile.SpectrumX == nil || !cfg.Profile.SpectrumX.Enable {
 		return nil, nil
@@ -163,7 +164,7 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 	if topologyPath == "" {
 		topologyPath = spcx.TopologyFile
 	}
-	topology, err := loadTopology(topologyPath)
+	topology, err := loadTopology(topologyPath, spcx.TopologyType)
 	if err != nil {
 		return nil, err
 	}
@@ -207,19 +208,19 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 	return pools, nil
 }
 
-func loadTopology(path string) (*topologyFile, error) {
+func loadTopology(path, topologyType string) (*topologyFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read Spectrum-X topology file %s: %w", path, err)
 	}
-	var topology topologyFile
-	if err := json.Unmarshal(data, &topology); err != nil {
+	topology, err := parseTopology(data, topologyType)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse Spectrum-X topology file %s: %w", path, err)
 	}
 	if len(topology.Links) == 0 {
 		return nil, fmt.Errorf("Spectrum-X topology file %s has no links", path)
 	}
-	return &topology, nil
+	return topology, nil
 }
 
 func hostLinks(topology *topologyFile, spcx *config.ProfileSpectrumX) ([]hostLink, error) {
@@ -265,7 +266,11 @@ func hostLinks(topology *topologyFile, spcx *config.ProfileSpectrumX) ([]hostLin
 		key := hostIndexKey(host.Attrs)
 		index, ok := hostIndexes[key+"|"+host.Node]
 		if !ok {
-			index = countHostIndex(hostIndexes, key)
+			if host.HostIndex != nil {
+				index = *host.HostIndex
+			} else {
+				index = countHostIndex(hostIndexes, key)
+			}
 			hostIndexes[key+"|"+host.Node] = index
 		}
 		addressPlane := leaf.Attrs.Plane

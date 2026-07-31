@@ -76,7 +76,7 @@ type Options struct {
 	NumberOfPlanes int    // Number of planes for Spectrum-X (default: 4)
 	TopologyScheme string // Spectrum-X topology scheme: 2-tier or 3-tier
 	IPVersion      string // Spectrum-X address family: ipv4 or ipv6
-	TopologyFile   string // Path to spcx-gen-format topology.json for Spectrum-X CIDRPool generation
+	TopologyFile   string // Path to spcx-gen/reference-generator or NVIDIA AIR topology JSON for Spectrum-X CIDRPool generation
 	// SpectrumXConfig is a path to either a full Spectrum-X profile ConfigMap
 	// YAML or the raw data.profile YAML body. SpectrumXConfigMapName is required
 	// only when SpectrumXConfig contains the raw profile body.

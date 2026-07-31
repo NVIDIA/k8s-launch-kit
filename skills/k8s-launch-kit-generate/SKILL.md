@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.3
+version: 1.2.4
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -31,9 +31,12 @@ to that source file; embedded `--for` generation does not write a config.
 |------|----------|--------|-------------|
 | `--fabric` | Auto-defaulted | `ethernet`, `infiniband` | Network fabric. Auto-defaults from the cluster's unanimous `linkType` when omitted (Unit 5 fabric probe); skipped+warned when groups disagree or any has unverified linkType. |
 | `--deployment-type` | Auto-defaulted | `sriov`, `rdma_shared`, `host_device` | Deployment type. Auto-defaults to `sriov`. |
-| `--spectrum-x` | — | `RA2.1`, `RA2.2` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
+| `--spectrum-x` | — | `RA2.1`, `RA2.2`, `RA2.3` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
 | `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from east-west PF deviceID: CX7 / BF3 SuperNIC → `none`, CX8 → `swplb`, CX9 → `hwplb`. Skipped+warned when groups have mixed deviceIDs. |
 | `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4` | Auto-defaults from deviceID: CX7 / BF3 → 1, CX8 → 2, CX9 → 4. |
+| `--topology-scheme` | Required with `--spectrum-x` | `2-tier`, `3-tier` | Selects the Spectrum-X topology addressing scheme. |
+| `--ip-version` | Required with `--spectrum-x` | `ipv4`, `ipv6` | Selects the address family. CIDRPool rendering currently supports IPv4 only. |
+| `--topology-file` | Required with `--spectrum-x` | path | spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from the JSON structure. |
 | `--multirail` | Auto-defaulted | — | Auto-defaults to `true`. Explicit `multirail: false` in YAML and `--multirail=false` on the CLI are both preserved. |
 | `--save-deployment-files` | Yes | — | Output directory for generated YAMLs |
 | `--groups` | — | `dgx-b200-nvidia-h100-nvl,poweredge-xe9680-nvidia-h200` | Restrict output to the named source groups (comma-separated). Mutually exclusive with `--gpu-type`. |
@@ -54,6 +57,8 @@ l8k generate --user-config cluster-config.yaml \
 # Spectrum-X with hardware plane load balancing
 l8k generate --user-config cluster-config.yaml \
   --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
+  --topology-scheme 2-tier --ip-version ipv4 \
+  --topology-file ./topology.json \
   --save-deployment-files ./output
 
 # Host device RDMA
@@ -150,6 +155,9 @@ win when a one-off override is needed.
 
 - Default to SR-IOV Ethernet for new GPU cluster deployments unless told otherwise.
 - For Spectrum-X, NIC type determines available multiplane modes — read `references/spectrum-x-guide.md`.
+- NVIDIA AIR topology support requires the documented one-based node/interface
+  naming contract (`su<S>`, `h<H>`, `leaf-p<P>`, `r<R>`, `rail<R>p<P>`, and
+  `pod<D>` for 3-tier). See `docs/user/spectrum-x.md` in the l8k repository.
 - RA2.2 and RA2.3 v1alpha2 `SpectrumXRailPoolConfig` output intentionally
   omits the removed `spec.withBCM` field; current CRDs reject it during strict
   decoding.
