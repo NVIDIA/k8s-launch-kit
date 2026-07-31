@@ -94,6 +94,8 @@ The profile generates the following Kubernetes Custom Resources:
 1. **NicClusterPolicy** (`10-nicclusterpolicy.yaml`)
    - Configures Network Operator, NicConfigurationOperator (with `nicFirmwareStorage`),
      NV-IPAM, Spectrum-X Operator with nested `xPlane` block, and secondary network CNI.
+   - Resolves the xPlane repository and version independently from the selected
+     Network Operator release catalog entry.
 
 2. **NICInterfaceNameTemplate** (`25-nicinterfacenametemplate.yaml`)
    - Defines interface naming conventions for multi-rail (one inner list per rail,

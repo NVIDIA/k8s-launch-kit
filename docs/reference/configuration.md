@@ -47,7 +47,7 @@ Supported release lines are currently:
 - `26.4`
 - `26.7`
 
-The release line fills Network Operator versions, component image tags, DOCA driver version, repositories, Helm repository URL, and version-gated template behavior.
+The release line fills Network Operator versions, component image tags, DOCA driver version, repositories, Helm repository URL, and version-gated template behavior. Spectrum-X releases also carry a manually maintained xPlane repository and version used in `spectrumXOperator.xPlane` instead of reusing the generic component tag.
 
 ## Network Operator
 

@@ -32,6 +32,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	spectrumxaddressing "github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/spectrumx"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 )
@@ -96,6 +97,12 @@ var templateFuncs = template.FuncMap{
 	// hash of the original (same algorithm as MachineLabelValue), so the result
 	// is deterministic across calls but never breaches maxLen.
 	"boundedSuffix": boundedSuffix,
+	// xPlane has its own repository and version in Network Operator's release
+	// metadata. Resolve them from the selected release catalog entry, while
+	// retaining the generic component values as a fallback for unpinned,
+	// hand-authored configs.
+	"xPlaneRepository": xPlaneRepository,
+	"xPlaneVersion":    xPlaneVersion,
 	// secondaryNetworkMetaPlugins renders the metaPlugins literal-block body
 	// shared by non-Spectrum-X secondary-network CRs. Keep tuning before sbr:
 	// tuning fixes per-interface ARP ownership before sbr installs
@@ -991,6 +998,28 @@ func boundedSuffix(maxLen int, s string) string {
 	}
 	prefix := strings.TrimRight(s[:prefixBudget], "-_.")
 	return "-" + prefix + hashTail
+}
+
+func xPlaneRepository(networkOperator *config.NetworkOperatorConfig) string {
+	if networkOperator == nil {
+		return ""
+	}
+	if release, ok := releases.LookupRelease(networkOperator.SelectedRelease); ok &&
+		release.XPlane.Repository != "" {
+		return release.XPlane.Repository
+	}
+	return networkOperator.Repository
+}
+
+func xPlaneVersion(networkOperator *config.NetworkOperatorConfig) string {
+	if networkOperator == nil {
+		return ""
+	}
+	if release, ok := releases.LookupRelease(networkOperator.SelectedRelease); ok &&
+		release.XPlane.Version != "" {
+		return release.XPlane.Version
+	}
+	return networkOperator.ComponentVersion
 }
 
 // mergeCompatibleGroups merges ClusterConfig groups that share the same gpuType

@@ -38,8 +38,8 @@ spec:
     version: "{{.NetworkOperator.ComponentVersion}}"
     xPlane:
       image: xplane
-      repository: "{{.NetworkOperator.Repository}}"
-      version: "{{.NetworkOperator.ComponentVersion}}"
+      repository: "{{xPlaneRepository .NetworkOperator}}"
+      version: "{{xPlaneVersion .NetworkOperator}}"
       {{- if .NetworkOperator.ImagePullSecrets }}
       imagePullSecrets:
       {{- range .NetworkOperator.ImagePullSecrets }}

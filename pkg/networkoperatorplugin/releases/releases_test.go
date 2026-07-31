@@ -54,6 +54,22 @@ func TestLookupRelease_BetaReleasesUseStagingArtifacts(t *testing.T) {
 	require.True(t, checkedBeta, "expected at least one beta release catalog entry")
 }
 
+func TestLookupRelease_XPlaneArtifactsAreIndependent(t *testing.T) {
+	for _, key := range []string{"26.4", "26.7"} {
+		r, ok := LookupRelease(key)
+		require.True(t, ok, "expected catalog entry for %q", key)
+		assert.NotEmpty(t, r.XPlane.Repository, "key %s: xPlane.repository", key)
+		assert.NotEmpty(t, r.XPlane.Version, "key %s: xPlane.version", key)
+		assert.NotEqual(t, r.NetworkOperator.Repository, r.XPlane.Repository)
+		assert.NotEqual(t, r.NetworkOperator.ComponentVersion, r.XPlane.Version)
+	}
+
+	r, ok := LookupRelease("26.1")
+	require.True(t, ok)
+	assert.Empty(t, r.XPlane.Repository)
+	assert.Empty(t, r.XPlane.Version)
+}
+
 func TestLookupRelease_Unknown(t *testing.T) {
 	_, ok := LookupRelease("99.0")
 	assert.False(t, ok)
