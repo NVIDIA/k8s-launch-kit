@@ -646,6 +646,8 @@ type templateContext struct {
 	ClusterConfig *config.ClusterConfig
 }
 
+const templateGroupDiagnosticLimit = 8
+
 // ProcessTemplate processes a Go template file with the given config.
 // Returns a map of filename → rendered content. Templates that reference
 // .ClusterConfig are rendered once per group (producing separate files),
@@ -793,7 +795,7 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilt
 		}
 		var buf bytes.Buffer
 		if err := tmpl.Execute(&buf, ctx); err != nil {
-			return nil, fmt.Errorf("failed to execute template %s for group %s: %w", templatePath, groups[i].Identifier, err)
+			return nil, fmt.Errorf("failed to execute template %s for %s: %w", templatePath, templateGroupLabel(groups[i]), err)
 		}
 		id := renderGroup.Identifier
 		fileName := baseName
@@ -807,6 +809,28 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilt
 	}
 
 	return results, nil
+}
+
+func templateGroupLabel(group config.ClusterConfig) string {
+	if group.Identifier != "" {
+		return fmt.Sprintf("clusterConfig group %q", group.Identifier)
+	}
+	if len(group.WorkerNodes) > 0 {
+		workers := append([]string(nil), group.WorkerNodes...)
+		sort.Strings(workers)
+		shown := workers
+		remaining := 0
+		if len(workers) > templateGroupDiagnosticLimit {
+			shown = workers[:templateGroupDiagnosticLimit]
+			remaining = len(workers) - templateGroupDiagnosticLimit
+		}
+		label := fmt.Sprintf("clusterConfig workers [%s]", strings.Join(shown, ", "))
+		if remaining > 0 {
+			label += fmt.Sprintf(" (+%d more)", remaining)
+		}
+		return label
+	}
+	return "unnamed clusterConfig group"
 }
 
 // groupFabric returns the discovered fabric ("Ethernet" or "InfiniBand")

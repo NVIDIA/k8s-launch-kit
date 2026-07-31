@@ -1451,6 +1451,32 @@ spec:
 	})
 }
 
+func TestProcessTemplateErrorIdentifiesUnnamedGroupByWorkers(t *testing.T) {
+	templatePath := filepath.Join(t.TempDir(), "broken.yaml")
+	require.NoError(t, os.WriteFile(templatePath, []byte(`{{index .ClusterConfig.WorkerNodes 1}}`), 0o600))
+	cfg := &config.LaunchKitConfig{
+		ClusterConfig: []config.ClusterConfig{{
+			WorkerNodes: []string{"compute-a"},
+		}},
+	}
+
+	_, err := ProcessTemplate(templatePath, cfg, "")
+
+	require.ErrorContains(t, err, "for clusterConfig workers [compute-a]")
+	require.NotContains(t, err.Error(), "for group :")
+}
+
+func TestTemplateGroupLabelBoundsAndSortsWorkers(t *testing.T) {
+	group := config.ClusterConfig{WorkerNodes: []string{
+		"node-09", "node-03", "node-01", "node-07", "node-05",
+		"node-10", "node-08", "node-02", "node-06", "node-04",
+	}}
+
+	require.Equal(t,
+		"clusterConfig workers [node-01, node-02, node-03, node-04, node-05, node-06, node-07, node-08] (+2 more)",
+		templateGroupLabel(group))
+}
+
 func TestVersionGE(t *testing.T) {
 	cases := []struct {
 		have, target string

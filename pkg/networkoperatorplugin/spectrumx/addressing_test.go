@@ -17,6 +17,7 @@
 package spectrumx
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -260,6 +261,137 @@ func TestBuildCIDRPoolsRejectsIPv6UntilRenderable(t *testing.T) {
 	}
 	_, err := BuildCIDRPools(cfg, config.ClusterConfig{})
 	require.ErrorContains(t, err, "currently supports ipVersion=ipv4 only")
+}
+
+func TestBuildCIDRPoolsReportsWrongTopologyFile(t *testing.T) {
+	topologyPath := writeSingleLinkTopology(t, "stale-worker")
+	cfg := spectrumXTestConfig(topologyPath, "hwplb")
+
+	_, err := BuildCIDRPools(cfg, config.ClusterConfig{
+		WorkerNodes: []string{"compute-b", "compute-a"},
+	})
+
+	require.ErrorContains(t, err, "no Spectrum-X topology allocations matched unnamed clusterConfig group")
+	require.ErrorContains(t, err, "selected workers=[compute-a, compute-b]")
+	require.ErrorContains(t, err, "topology host nodes=[stale-worker]")
+	require.ErrorContains(t, err, "exact matches=[]")
+	require.ErrorContains(t, err, "missing workers=[compute-a, compute-b]")
+	require.ErrorContains(t, err, "topology-only hosts=[stale-worker]")
+	require.ErrorContains(t, err, "topology may describe a different cluster")
+	require.ErrorContains(t, err, "must exactly match clusterConfig.workerNodes")
+}
+
+func TestBuildCIDRPoolsReportsLikelyNodeNameMismatch(t *testing.T) {
+	tests := []struct {
+		name         string
+		topologyNode string
+		workerNode   string
+		wantHint     string
+	}{
+		{
+			name:         "case mismatch",
+			topologyNode: "compute-a",
+			workerNode:   "Compute-A",
+			wantHint:     `possible case mismatch between selected worker "Compute-A" and topology host "compute-a"`,
+		},
+		{
+			name:         "short name and FQDN mismatch",
+			topologyNode: "compute-a.example.test",
+			workerNode:   "compute-a",
+			wantHint:     `possible short-name/FQDN mismatch between selected worker "compute-a" and topology host "compute-a.example.test"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			topologyPath := writeSingleLinkTopology(t, tt.topologyNode)
+			cfg := spectrumXTestConfig(topologyPath, "hwplb")
+
+			_, err := BuildCIDRPools(cfg, config.ClusterConfig{WorkerNodes: []string{tt.workerNode}})
+
+			require.ErrorContains(t, err, tt.wantHint)
+			require.ErrorContains(t, err, "must exactly match clusterConfig.workerNodes")
+		})
+	}
+}
+
+func TestBuildCIDRPoolsReportsMissingRailPlaneCoverage(t *testing.T) {
+	topologyPath := writeTopology(t, `{
+  "nodes": [
+    {"name": "compute-a", "role": "host", "type": "default"},
+    {"name": "compute-b", "role": "host", "type": "default"},
+    {"name": "leaf-a", "role": "leaf", "type": "cumulus"}
+  ],
+  "links": [
+    [
+      {"node": "leaf-a", "interface": "swp1s0", "attributes": {"role": "leaf", "plane": 0, "pod": 0, "su": 0}},
+      {"node": "compute-a", "interface": "eth_p0_r0", "attributes": {"role": "host", "rail": 0, "pod": 0, "su": 0}}
+    ],
+    [
+      {"node": "leaf-a", "interface": "swp2s0", "attributes": {"role": "leaf", "plane": 0, "pod": 0, "su": 0}},
+      {"node": "compute-b", "interface": "eth_p0_r0", "attributes": {"role": "host", "rail": 0, "pod": 0, "su": 0}}
+    ],
+    [
+      {"node": "leaf-a", "interface": "swp1s1", "attributes": {"role": "leaf", "plane": 1, "pod": 0, "su": 0}},
+      {"node": "compute-a", "interface": "eth_p1_r0", "attributes": {"role": "host", "rail": 0, "pod": 0, "su": 0}}
+    ]
+  ]
+}`)
+	cfg := spectrumXTestConfig(topologyPath, "swplb")
+
+	_, err := BuildCIDRPools(cfg, config.ClusterConfig{
+		Identifier:  "gpu-workers",
+		WorkerNodes: []string{"compute-a", "compute-b"},
+	})
+
+	require.ErrorContains(t, err, `CIDRPool rail-0-plane-1 for clusterConfig group "gpu-workers"`)
+	require.ErrorContains(t, err, "missing topology allocations for workers [compute-b]")
+	require.ErrorContains(t, err, "available topology coverage for missing workers [compute-b=[rail-0-plane-0]]")
+	require.ErrorContains(t, err, "check host attributes.rail and leaf attributes.plane")
+}
+
+func TestBuildCIDRPoolsAIRDiagnosticsUseNormalizedHostNames(t *testing.T) {
+	cfg := spectrumXTestConfig(filepath.Join("testdata", "air-simple-quadplane.json"), "swplb")
+
+	_, err := BuildCIDRPools(cfg, config.ClusterConfig{WorkerNodes: []string{"unrelated-worker"}})
+
+	require.ErrorContains(t, err, "topology host nodes=[worker-su01-rack01-h01, worker-su01-rack01-h02]")
+	require.ErrorContains(t, err, "topology-only hosts=[worker-su01-rack01-h01, worker-su01-rack01-h02]")
+}
+
+func TestFormatLimitedList(t *testing.T) {
+	values := []string{"node-09", "node-03", "node-01", "node-07", "node-05", "node-10", "node-08", "node-02", "node-06", "node-04"}
+
+	require.Equal(t,
+		"[node-01, node-02, node-03, node-04, node-05, node-06, node-07, node-08] (+2 more)",
+		formatLimitedList(values))
+}
+
+func spectrumXTestConfig(topologyPath, multiplaneMode string) *config.LaunchKitConfig {
+	return &config.LaunchKitConfig{
+		Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+			Enable:         true,
+			TopologyType:   config.SpectrumXTopology2Tier,
+			IPVersion:      config.SpectrumXIPVersionIPv4,
+			TopologyFile:   topologyPath,
+			MultiplaneMode: multiplaneMode,
+			NumberOfPlanes: 2,
+		}},
+	}
+}
+
+func writeSingleLinkTopology(t *testing.T, hostNode string) string {
+	t.Helper()
+	return writeTopology(t, fmt.Sprintf(`{
+  "nodes": [
+    {"name": %q, "role": "host", "type": "default"},
+    {"name": "leaf-a", "role": "leaf", "type": "cumulus"}
+  ],
+  "links": [[
+    {"node": "leaf-a", "interface": "swp1s0", "attributes": {"role": "leaf", "plane": 0, "pod": 0, "su": 0}},
+    {"node": %q, "interface": "eth_p0_r0", "attributes": {"role": "host", "rail": 0, "pod": 0, "su": 0}}
+  ]]
+}`, hostNode, hostNode))
 }
 
 func writeTopology(t *testing.T, content string) string {

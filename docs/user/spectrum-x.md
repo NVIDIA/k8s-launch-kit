@@ -172,6 +172,28 @@ l8k generate \
 
 IPv4 CIDRPool rendering is supported. IPv6 is accepted in config for forward compatibility but is not rendered into CIDRPools yet.
 
+### Troubleshooting CIDRPool allocation errors
+
+CIDRPool generation matches every selected `clusterConfig.workerNodes` value
+against topology host endpoint `node` values using an exact, case-sensitive
+comparison. l8k does not automatically equate short names with FQDNs because
+that could allocate an address to the wrong node.
+
+When no workers match, the error reports the topology file path and a sorted
+summary of selected workers, topology hosts, exact matches, missing workers,
+and topology-only hosts. It also calls out likely case or short-name/FQDN
+mismatches. If no names are similar, verify that `--topology-file` points to
+the topology export for the cluster represented by `cluster-config.yaml`.
+
+When a worker matches by name but is absent from a generated pool, the error
+reports that worker's available rail/plane coverage. Check every host
+endpoint's `attributes.rail`; for `swplb`, also check the connected leaf
+endpoint's `attributes.plane`. Each selected worker must have a link for every
+rail, and for every rail/plane combination in `swplb` mode.
+
+Large node lists are sorted and limited to the first eight entries, followed
+by a `(+N more)` count, so generation failures remain readable.
+
 ## DRA Workload Allocation
 
 For RA2.2 and RA2.3, set `profile.spectrumX.useDRA: true` to render ResourceClaimTemplate-based workload allocation.
