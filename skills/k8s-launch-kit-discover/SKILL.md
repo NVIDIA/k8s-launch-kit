@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-discover
-version: 1.2.0
+version: 1.2.1
 description: "Use this skill when the user wants to discover their Kubernetes cluster's network hardware capabilities using k8s-launch-kit (l8k). Activate for: cluster discovery, hardware detection, NIC detection, finding what GPUs or NICs are in a cluster, creating a cluster config file, or when the user says 'discover' in the context of l8k or NVIDIA networking."
 metadata:
   requires:
@@ -60,7 +60,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--deployment-type` | — | `sriov` | Deployment override: `sriov`, `rdma_shared`, or `host_device`. |
 | `--multirail` | — | `true` | Multirail override. Use `--multirail=false` to opt out; explicit false is persisted. |
 | `--spectrum-x` | — | disabled | Enable Spectrum-X with an RA version (`RA2.1` or `RA2.2`). |
-| `--multiplane-mode` | — | derived with Spectrum-X | Spectrum-X mode override: `none`, `swplb`, `hwplb`, or `uniplane`. |
+| `--multiplane-mode` | — | derived with Spectrum-X | Spectrum-X mode override: `none`, `swplb`, or `hwplb`. |
 | `--number-of-planes` | — | derived with Spectrum-X | Spectrum-X plane-count override: `1`, `2`, or `4`. |
 
 ## Examples

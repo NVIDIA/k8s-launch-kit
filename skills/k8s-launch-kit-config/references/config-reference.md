@@ -313,9 +313,9 @@ profile:
     spcxVersion: "RA2.2"
 
     # string | default: derived from east-west NIC device ID
-    # Multiplane mode: "none", "swplb" (software PLB), "hwplb" (hardware PLB),
-    # "uniplane". When Spectrum-X is enabled and this is absent, discovery
-    # derives it from the east-west NIC device ID.
+    # Multiplane mode: "none", "swplb" (software PLB), or "hwplb"
+    # (hardware PLB). When Spectrum-X is enabled and this is absent,
+    # discovery derives it from the east-west NIC device ID.
     multiplaneMode: swplb
 
     # int | default: derived from east-west NIC device ID

@@ -516,7 +516,7 @@ profile:
 	})
 
 	t.Run("verify different multiplane modes", func(t *testing.T) {
-		modes := []string{"swplb", "hwplb", "uniplane"}
+		modes := []string{"none", "swplb", "hwplb"}
 
 		for _, mode := range modes {
 			profileSpectrumX := &ProfileSpectrumX{
@@ -655,7 +655,7 @@ func TestValidateSpectrumXTemplates(t *testing.T) {
 				Multirail: true, // Multirail
 				SpectrumX: &ProfileSpectrumX{
 					SPCXVersion:    "RA2.2",
-					MultiplaneMode: "uniplane",
+					MultiplaneMode: "none",
 					NumberOfPlanes: 1,
 				},
 			},

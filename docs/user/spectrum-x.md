@@ -15,6 +15,10 @@ Spectrum-X profiles render multi-rail AI interconnect manifests. The selected RA
 | RA2.2 | `26.4` | `spectrum-x-ra2.2` | Uses v1alpha2 `SpectrumXRailPoolConfig`. |
 | RA2.3 | `26.7` | `spectrum-x` | Uses v1alpha2 `SpectrumXRailPoolConfig` and a ConfigMap-backed Spectrum-X profile. |
 
+RA2.2 and RA2.3 output does not include the removed `spec.withBCM` field.
+Adding it causes the v1alpha2 CRD to reject the manifest during strict
+decoding.
+
 Select the release line explicitly:
 
 ```bash
@@ -27,10 +31,9 @@ l8k generate \
 
 | Mode | Use |
 | --- | --- |
-| `none` | No plane separation. Common for ConnectX-7 and BlueField-3 SuperNIC topologies. |
+| `none` | No plane separation. Used for ConnectX-7 and BlueField-3 SuperNIC topologies. |
 | `swplb` | Software plane load balancing. Renders per-rail, per-plane resources. |
 | `hwplb` | Hardware plane load balancing for larger topologies. |
-| `uniplane` | Single unified plane. |
 
 ```bash
 l8k discover \

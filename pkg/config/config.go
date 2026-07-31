@@ -522,7 +522,7 @@ func (p Profile) MarshalYAML() (interface{}, error) {
 type ProfileSpectrumX struct {
 	Enable               bool   `yaml:"enable"`         // must be true for Spectrum-X profiles to match
 	SPCXVersion          string `yaml:"spcxVersion"`    // e.g., "RA2.2"
-	MultiplaneMode       string `yaml:"multiplaneMode"` // swplb, hwplb, uniplane
+	MultiplaneMode       string `yaml:"multiplaneMode"` // none, swplb, hwplb
 	NumberOfPlanes       int    `yaml:"numberOfPlanes"` // 2 or 4
 	TopologyType         string `yaml:"topologyType,omitempty"`
 	IPVersion            string `yaml:"ipVersion,omitempty"`
@@ -800,9 +800,9 @@ func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
 var SupportedSPCXVersions = []string{"RA2.1", "RA2.2", "RA2.3"}
 
 // SupportedMultiplaneModes lists the Spectrum-X multiplane modes the CLI
-// accepts. `none` and `uniplane` collapse to one plane; `swplb` and `hwplb`
-// require numberOfPlanes > 1.
-var SupportedMultiplaneModes = []string{"none", "swplb", "hwplb", "uniplane"}
+// accepts. `none` collapses to one plane; `swplb` and `hwplb` require
+// numberOfPlanes > 1.
+var SupportedMultiplaneModes = []string{"none", "swplb", "hwplb"}
 
 // SupportedNumberOfPlanes lists the values numberOfPlanes can take.
 var SupportedNumberOfPlanes = []int{1, 2, 4}
@@ -843,7 +843,7 @@ func validateSpectrumXTemplates(config *LaunchKitConfig) error {
 	netdevPrefix := config.SpectrumX.NetdevPrefix
 	rdmaPrefix := config.SpectrumX.RdmaPrefix
 
-	// Non-`none` multiplane modes (swplb, hwplb, uniplane) require a supported
+	// Non-`none` multiplane modes (swplb, hwplb) require a supported
 	// RA version.
 	if config.Profile.SpectrumX.MultiplaneMode != "none" && config.Profile.SpectrumX.MultiplaneMode != "" {
 		got := config.Profile.SpectrumX.SPCXVersion

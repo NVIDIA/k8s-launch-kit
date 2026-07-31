@@ -337,7 +337,7 @@ func TestApplyOptionsToConfig(t *testing.T) {
 				Multirail:  false,
 				SpectrumX: &config.ProfileSpectrumX{
 					SPCXVersion:    "",
-					MultiplaneMode: "uniplane",
+					MultiplaneMode: "none",
 					NumberOfPlanes: 1,
 				},
 			},

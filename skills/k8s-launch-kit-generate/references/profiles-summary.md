@@ -87,10 +87,10 @@ direct-drain controllers.
 - **Plugin**: network-operator
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
   `spectrumX.spcxVersion=RA2.2`,
-  `spectrumX.multiplaneMode` in `[swplb, hwplb, uniplane, none]`,
+  `spectrumX.multiplaneMode` in `[swplb, hwplb, none]`,
   `minNetworkOperatorRelease=26.4`
 - **Node Capabilities**: `sriov: true`, `rdma: true`
-- **Description**: Unified Spectrum-X profile covering all four multiplane modes.
+- **Description**: Unified Spectrum-X profile covering all three multiplane modes.
   Emits a single `SpectrumXRailPoolConfig` (`v1alpha2`) that replaces the
   legacy SriovNetworkPoolConfig + SriovNetworkNodePolicy + OVSNetwork trio.
   In `swplb` the `railTopology[]` splits each rail into per-plane entries; in
@@ -107,7 +107,8 @@ direct-drain controllers.
   - `60-cidrpool.yaml` -- One CIDRPool per rail (non-swplb) or per rail-plane
     (swplb), with IP placeholders
   - `80-spectrumxrailpoolconfig.yaml` -- Single SpectrumXRailPoolConfig with
-    `railTopology[]`
+    `railTopology[]`; omits the removed `spec.withBCM` field because current
+    v1alpha2 strict decoding rejects it
   - `90-example-daemonset.yaml` -- Example workload
 
 ## 7. Spectrum-X Multi-Rail (RA2.1, Network Operator 26.1)
@@ -116,7 +117,7 @@ direct-drain controllers.
 - **Plugin**: network-operator
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
   `spectrumX.spcxVersion=RA2.1`,
-  `spectrumX.multiplaneMode` in `[swplb, hwplb, uniplane, none]`,
+  `spectrumX.multiplaneMode` in `[swplb, hwplb, none]`,
   `minNetworkOperatorRelease=26.1`, `maxNetworkOperatorRelease=26.1`
   (pinned to exactly 26.1)
 - **Node Capabilities**: `sriov: true`, `rdma: true`
@@ -127,14 +128,14 @@ direct-drain controllers.
   otherConfig), per-rail `SriovNetworkNodePolicy`, `OVSNetwork` with
   `rdma`+`rail` meta-plugins, nv-ipam `CIDRPool`, and v1alpha1
   `SpectrumXRailPoolConfig` referencing the SR-IOV node policy and CIDR
-  pool. Same multiplane modes as the RA2.2 profile (swplb, hwplb, uniplane,
-  none). 26.1 NCP shape is leaner: no `nicFirmwareStorage`, no
+  pool. Same multiplane modes as the RA2.2 profile (swplb, hwplb, none).
+  26.1 NCP shape is leaner: no `nicFirmwareStorage`, no
   `spectrumXOperator.xPlane`.
 - **Mode-specific shape**:
   - `swplb` -- `bridge.groupingPolicy: perPF`, single PF per
     SriovNetworkNodePolicy, no `devlinkParams`. Per-plane resources named
     `rail-{i}-plane-{p}`.
-  - `hwplb`/`uniplane`/`none` -- `bridge.groupingPolicy: all`, all of a
+  - `hwplb`/`none` -- `bridge.groupingPolicy: all`, all of a
     rail's PFs grouped, plus `devlinkParams.params.esw_multiport: "true"`.
     Per-rail resources named `rail-{i}`.
 - **Templates**:

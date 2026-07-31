@@ -330,7 +330,7 @@ func TestProfileValidation(t *testing.T) {
 				Multirail:  boolPtr(true),
 				SpectrumX: &ProfileRequirementsSpectrumX{
 					SPCXVersion:    "RA2.2",
-					MultiplaneMode: []string{"hwplb", "uniplane", "none"},
+					MultiplaneMode: []string{"hwplb", "none"},
 				},
 			},
 			NodeCapabilities: NodeCapabilities{
@@ -373,7 +373,7 @@ func TestProfileValidation(t *testing.T) {
 				Multirail:  boolPtr(true),
 				SpectrumX: &ProfileRequirementsSpectrumX{
 					SPCXVersion:    "RA2.2",
-					MultiplaneMode: []string{"hwplb", "uniplane", "none"},
+					MultiplaneMode: []string{"hwplb", "none"},
 				},
 			},
 			NodeCapabilities: NodeCapabilities{
@@ -402,7 +402,7 @@ func TestProfileValidation(t *testing.T) {
 		}
 
 		valid, reason := profile.Validate(requirements, capabilities, "")
-		assert.False(t, valid, "Profile should reject swplb mode when only hwplb/uniplane/none are allowed")
+		assert.False(t, valid, "Profile should reject swplb mode when only hwplb/none are allowed")
 		assert.Contains(t, reason, "multiplane mode swplb not in profile's allowed modes")
 	})
 

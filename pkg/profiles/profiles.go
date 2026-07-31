@@ -51,7 +51,7 @@ type ProfileRequirements struct {
 
 type ProfileRequirementsSpectrumX struct {
 	SPCXVersion    string   `yaml:"spcxVersion"`              // Required version, e.g., "RA2.2"
-	MultiplaneMode []string `yaml:"multiplaneMode,omitempty"` // Allowed multiplane modes, e.g., ["hwplb", "uniplane", "none"]
+	MultiplaneMode []string `yaml:"multiplaneMode,omitempty"` // Allowed multiplane modes, e.g., ["hwplb", "none"]
 }
 
 type NodeCapabilities struct {
@@ -202,7 +202,7 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 		if requirements.SpectrumX == nil || !requirements.SpectrumX.Enable {
 			return false, "profile requires Spectrum-X but it is not enabled"
 		}
-		
+
 		// Validate SPCX version if specified in profile requirements
 		if p.ProfileRequirements.SpectrumX.SPCXVersion != "" {
 			if requirements.SpectrumX.SPCXVersion != p.ProfileRequirements.SpectrumX.SPCXVersion {

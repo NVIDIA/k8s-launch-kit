@@ -258,7 +258,7 @@ Profile Selection Flags:
       --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: [RA2.1 RA2.2 RA2.3]
 
 Spectrum-X Flags:
-      --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, hwplb, uniplane (requires --spectrum-x)
+      --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, hwplb (requires --spectrum-x)
       --number-of-planes int               Number of planes for Spectrum-X (requires --spectrum-x)
       --spectrum-x-config string           Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)
       --spectrum-x-configmap-name string   Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML
@@ -667,6 +667,10 @@ There are three **Spectrum-X** profiles, picked by the value of `--spectrum-x`:
 - **`spectrum-x`** — RA2.3 on `26.7+`. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` and deploys the Spectrum-X profile through a ConfigMap consumed by NIC Configuration Operator. Selected for `--spectrum-x RA2.3`.
 - **`spectrum-x-ra2.2`** — RA2.2 on `26.4` only. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` to consolidate rail wiring. Selected for `--spectrum-x RA2.2`.
 - **`spectrum-x-ra2.1`** — RA2.1 on `26.1` only (pinned via `min`/`maxNetworkOperatorRelease: "26.1"`). Renders the full SR-IOV operator chain: per-group `SriovNetworkPoolConfig` + per-rail `SriovNetworkNodePolicy` + `OVSNetwork` + nv-ipam `CIDRPool` + a v1alpha1 glue `SpectrumXRailPoolConfig`. Selected for `--spectrum-x RA2.1`.
+
+The v1alpha2 RA2.2 and RA2.3 manifests omit the removed `spec.withBCM`
+field. Current `SpectrumXRailPoolConfig` CRDs reject that field during strict
+decoding.
 
 When Spectrum-X is enabled and no release is already set, profile resolution
 selects its compatible default release (`RA2.1` → `26.1`, `RA2.2` → `26.4`,

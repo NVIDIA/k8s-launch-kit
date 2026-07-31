@@ -68,7 +68,7 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 | Flag | Description |
 | --- | --- |
 | `--spectrum-x` | Enable Spectrum-X and select RA version, such as `RA2.3`. |
-| `--multiplane-mode` | `none`, `swplb`, `hwplb`, or `uniplane`. |
+| `--multiplane-mode` | `none`, `swplb`, or `hwplb`. |
 | `--number-of-planes` | Plane count for Spectrum-X. |
 | `--topology-scheme` | `2-tier` or `3-tier` for topology-driven CIDRPool allocation. |
 | `--ip-version` | `ipv4` or `ipv6`. CIDRPool rendering currently supports IPv4. |

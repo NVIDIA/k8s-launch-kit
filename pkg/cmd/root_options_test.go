@@ -42,7 +42,7 @@ var (
 			Multirail:  boolPtr(true),
 			SpectrumX: &profiles.ProfileRequirementsSpectrumX{
 				SPCXVersion:    "RA2.2",
-				MultiplaneMode: []string{"swplb", "hwplb", "uniplane", "none"},
+				MultiplaneMode: []string{"swplb", "hwplb", "none"},
 			},
 		},
 		NodeCapabilities: profiles.NodeCapabilities{

@@ -132,3 +132,33 @@ func TestApplyHardwareDefaultsRecordsSpectrumXMultirailReason(t *testing.T) {
 	require.Len(t, multirailDecisions, 1)
 	assert.Equal(t, "implied by --spectrum-x", multirailDecisions[0].Reason)
 }
+
+func TestDefaultSpectrumXModeForDeviceUsesSupportedModes(t *testing.T) {
+	tests := []struct {
+		deviceID string
+		wantMode string
+		wantN    int
+	}{
+		{deviceID: "1021", wantMode: "none", wantN: 1},
+		{deviceID: "a2dc", wantMode: "none", wantN: 1},
+		{deviceID: "1023", wantMode: "swplb", wantN: 2},
+		{deviceID: "1025", wantMode: "hwplb", wantN: 4},
+	}
+
+	for _, test := range tests {
+		t.Run(test.deviceID, func(t *testing.T) {
+			mode, planes, ok, _ := spectrumXDefaultsForDeviceID([]config.ClusterConfig{
+				{
+					PFs: []config.PFConfig{
+						{DeviceID: test.deviceID, Traffic: "east-west"},
+					},
+				},
+			})
+
+			require.True(t, ok)
+			assert.Equal(t, test.wantMode, mode)
+			assert.Equal(t, test.wantN, planes)
+			assert.Contains(t, config.SupportedMultiplaneModes, mode)
+		})
+	}
+}

@@ -36,14 +36,14 @@ gate will reject it.
 
 ## Multiplane modes
 
-Same set as the RA2.2 profile: `none`, `swplb`, `hwplb`, `uniplane`.
+Same set as the RA2.2 profile: `none`, `swplb`, `hwplb`.
 
 - `swplb` — each rail explodes into per-plane policies, with
   `bridge.groupingPolicy: perPF`. One PF per `SriovNetworkNodePolicy`,
   `metadata.name: rail-{i}-plane-{p}`,
   `resourceName: rail_{i}_plane_{p}`. No `devlinkParams` (each PF runs as
   an independent OVS bridge).
-- `hwplb` / `uniplane` / `none` — one policy per rail with
+- `hwplb` / `none` — one policy per rail with
   `bridge.groupingPolicy: all`, all of a rail's PF netdevs in `pfNames`,
   and `devlinkParams.params.esw_multiport: "true"` on the PF.
 

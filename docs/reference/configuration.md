@@ -245,7 +245,7 @@ profile:
 | `ignoreARP` | Adds per-interface ARP tuning outside Spectrum-X. |
 | `spectrumX.enable` | Select a Spectrum-X profile. |
 | `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, or `RA2.3`. |
-| `spectrumX.multiplaneMode` | `none`, `swplb`, `hwplb`, or `uniplane`. |
+| `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. |
 | `spectrumX.numberOfPlanes` | `1`, `2`, or `4`. |
 | `spectrumX.topologyType` | `2-tier` or `3-tier`. |
 | `spectrumX.ipVersion` | `ipv4` or `ipv6`; CIDRPool rendering currently supports IPv4. |

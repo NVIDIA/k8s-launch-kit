@@ -5,7 +5,7 @@ profileRequirements:
   deployment: sriov
   spectrumX:
     spcxVersion: "RA2.3"
-    multiplaneMode: ["swplb", "hwplb", "uniplane", "none"]
+    multiplaneMode: ["swplb", "hwplb", "none"]
   multirail: true
   # SpectrumXRailPoolConfig (spectrumx.net.nvidia.com/v1alpha2) is only
   # available in Network Operator 26.4+. RA2.3 also requires the
@@ -18,7 +18,7 @@ description: |
   Spectrum-X RA2.3 profile provides optimized multi-rail networking with the
   SpectrumXRailPoolConfig CRD, DOCA acceleration, and advanced NIC firmware
   configuration supplied via a Spectrum-X profile ConfigMap. Supports swplb,
-  hwplb, uniplane, and none multiplane modes. In swplb the railTopology splits
+  hwplb, and none multiplane modes. In swplb the railTopology splits
   each rail into per-plane entries; in other modes one entry per rail groups
   all planes together.
 deploymentGuide: spectrum-x.rst

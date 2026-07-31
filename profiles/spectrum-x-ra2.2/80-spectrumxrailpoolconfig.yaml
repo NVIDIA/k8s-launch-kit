@@ -7,7 +7,6 @@ metadata:
   name: rails{{suffix .ClusterConfig.Identifier}}
   namespace: "{{.NetworkOperator.Namespace}}"
 spec:
-  withBCM: false
   draEnabled: {{ spectrumXUseDRA .Profile }}
   {{- if .ClusterConfig.NodeSelector }}
   nodeSelector:
