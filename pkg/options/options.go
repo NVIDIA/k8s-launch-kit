@@ -49,7 +49,7 @@ type Options struct {
 	// a full semver. Selects component image tags + repository from the
 	// embedded releases catalog and drives version-gated template sections.
 	NetworkOperatorRelease string
-	ImagePullSecrets       []string // Image pull secret names for NicClusterPolicy
+	ImagePullSecrets       []string // Image pull secret names for Network Operator components and Helm repository authentication
 
 	// Phase 2: Deployment Generation
 	Fabric         string // Fabric type to deploy

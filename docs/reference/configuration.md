@@ -60,9 +60,19 @@ The release line fills Network Operator versions, component image tags, DOCA dri
 | `operatorRepository` | Registry path for the Network Operator controller image. |
 | `helmRepoURL` | Chart repository used by `l8k deploy`. Empty means Helm phase 0 is skipped. |
 | `namespace` | Namespace for the Helm release and namespaced Network Operator resources. |
-| `imagePullSecrets` | Secret names propagated into the discovery daemon, generated policies, and Helm values for the Network Operator and enabled subcharts. |
+| `imagePullSecrets` | Secret names propagated into the discovery daemon, generated policies, and Helm values for the Network Operator and enabled subcharts. During deploy, matching credentials also authenticate the Helm chart download. |
 
 When `selectedRelease` is set, catalog values replace explicit version and repository fields so the cohort remains consistent.
+
+For an authenticated Helm repository, each referenced Secret must already
+exist in `networkOperator.namespace` before `l8k deploy` starts, and the
+kubeconfig must allow `get` on Secrets there. l8k reads
+`kubernetes.io/dockerconfigjson` and legacy `kubernetes.io/dockercfg` data in
+memory and never logs or persists the credential. Credentials are sent only
+when the Docker registry host exactly matches the Helm repository host. The
+one explicit cross-host mapping is NGC: `nvcr.io` credentials use the same
+`$oauthtoken` and API key required by `helm.ngc.nvidia.com`. Unrelated registry
+credentials are never forwarded to the chart server.
 
 ## Network And Workload Namespaces
 

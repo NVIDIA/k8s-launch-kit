@@ -12,6 +12,7 @@ Validation is the normal deployment acceptance stage. When it does not produce a
 | Failure area | First checks |
 | --- | --- |
 | Discovery | Bootstrap pod status, events, image pulls, and `NicDevice` publication in `nvidia-k8s-launch-kit`. |
+| Helm chart download | For an HTTP 401 or image-pull-Secret error, verify each configured Secret exists in `networkOperator.namespace`, the kubeconfig can read it, and its Docker config has credentials for the Helm host or `nvcr.io` for an NGC Helm repository. |
 | Deploy preflight | Existing Helm values, generated values, stray custom resources, and whether overwrite was explicitly intended. |
 | Reconciliation | `NicClusterPolicy`, `NicNodePolicy`, and component pod conditions in the Network Operator namespace. |
 | SR-IOV | `SriovNetworkNodeState` sync status, VF totals, node selectors, and advertised resources. |

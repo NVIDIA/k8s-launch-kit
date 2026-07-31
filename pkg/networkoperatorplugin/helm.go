@@ -134,12 +134,21 @@ func InstallOrUpgrade(
 	}
 
 	loadChart := func() (*chart.Chart, error) {
-		chartPath, cleanup, perr := pullChart(ctx, cfg.HelmRepoURL, networkOperatorChartName, chartVersion)
+		credentials, cerr := loadHelmRepositoryCredentials(ctx, restConfig, cfg, namespace)
+		if cerr != nil {
+			return nil, pkgerrors.NewDeploymentError(
+				"failed to read configured image pull secrets for Helm repository authentication",
+				cerr,
+				fmt.Sprintf("ensure each networkOperator.imagePullSecrets Secret exists in namespace %s and the kubeconfig can get secrets", namespace),
+			)
+		}
+		chartPath, cleanup, perr := pullChart(
+			ctx, cfg.HelmRepoURL, networkOperatorChartName, chartVersion, credentials)
 		if perr != nil {
 			return nil, pkgerrors.NewDeploymentError(
 				fmt.Sprintf("failed to fetch network-operator chart %s from %s", chartVersion, cfg.HelmRepoURL),
 				perr,
-				"verify the helm repository URL and that the chart version exists",
+				"verify the helm repository URL, chart version, and image pull secret credentials",
 			)
 		}
 		defer cleanup()
@@ -302,7 +311,33 @@ func runUpgrade(
 // pullChart fetches a chart tarball from repoURL into a temp directory and
 // returns the local path plus a cleanup func. Uses helm's downloader
 // directly — no repo cache, no `helm repo add` side effects.
-func pullChart(_ context.Context, repoURL, chartName, chartVersion string) (string, func(), error) {
+func pullChart(
+	ctx context.Context,
+	repoURL, chartName, chartVersion string,
+	credentials []helmRepositoryCredential,
+) (string, func(), error) {
+	if len(credentials) == 0 {
+		return pullChartWithCredential(repoURL, chartName, chartVersion, helmRepositoryCredential{})
+	}
+
+	var errs []error
+	for _, credential := range credentials {
+		if err := ctx.Err(); err != nil {
+			return "", func() {}, err
+		}
+		saved, cleanup, err := pullChartWithCredential(repoURL, chartName, chartVersion, credential)
+		if err == nil {
+			return saved, cleanup, nil
+		}
+		errs = append(errs, fmt.Errorf("credentials from Secret %q: %w", credential.SourceSecret, err))
+	}
+	return "", func() {}, errors.Join(errs...)
+}
+
+func pullChartWithCredential(
+	repoURL, chartName, chartVersion string,
+	credential helmRepositoryCredential,
+) (string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "l8k-helm-chart-*")
 	if err != nil {
 		return "", func() {}, fmt.Errorf("create temp dir for chart pull: %w", err)
@@ -316,8 +351,10 @@ func pullChart(_ context.Context, repoURL, chartName, chartVersion string) (stri
 	settings.RepositoryCache = tmpDir
 
 	getters := getter.All(settings)
-	chartURL, err := repo.FindChartInRepoURL(
+	chartURL, err := repo.FindChartInAuthRepoURL(
 		repoURL,
+		credential.Username,
+		credential.Password,
 		chartName,
 		chartVersion,
 		"", // certFile
@@ -337,12 +374,28 @@ func pullChart(_ context.Context, repoURL, chartName, chartVersion string) (stri
 		RepositoryConfig: settings.RepositoryConfig,
 		RepositoryCache:  settings.RepositoryCache,
 	}
+	// An index may point at a chart archive on another host. Do not forward
+	// the repository credential across that boundary; getter's URL guard is
+	// relative to chartURL at this stage, not the original repository URL.
+	if credential.Username != "" && credential.Password != "" &&
+		sameRegistryHost(repoURL, chartURL) {
+		dl.Options = append(dl.Options,
+			getter.WithBasicAuth(credential.Username, credential.Password),
+			getter.WithPassCredentialsAll(false),
+		)
+	}
 	saved, _, err := dl.DownloadTo(chartURL, chartVersion, tmpDir)
 	if err != nil {
 		cleanup()
 		return "", func() {}, fmt.Errorf("download %s: %w", chartURL, err)
 	}
 	return saved, cleanup, nil
+}
+
+func sameRegistryHost(left, right string) bool {
+	leftHost, leftErr := registryHost(left)
+	rightHost, rightErr := registryHost(right)
+	return leftErr == nil && rightErr == nil && leftHost == rightHost
 }
 
 // isPendingStatus reports whether the helm release is mid-operation

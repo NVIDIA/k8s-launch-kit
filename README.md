@@ -188,7 +188,7 @@ or via a profile section in the user-config file.
 ### Deploy to Cluster
 Apply the generated deployment files to your Kubernetes cluster by using --deploy. This phase requires --kubeconfig and can be skipped if --deploy is not specified.
 
-The deploy step installs (or upgrades) the `nvidia/network-operator` Helm chart in-process before applying the post-install CRs. The chart version and Helm repository URL are taken from the embedded release catalog and can be selected via `--network-operator-release <MAJOR.MINOR>`. Each profile renders a per-profile `values.yaml` next to the CR manifests; `l8k deploy` reads that file and runs the install. When a release already exists with different values, deploy fails fast — pass `--overwrite-existing` to promote to `helm upgrade --install`.
+The deploy step installs (or upgrades) the `nvidia/network-operator` Helm chart in-process before applying the post-install CRs. The chart version and Helm repository URL are taken from the embedded release catalog and can be selected via `--network-operator-release <MAJOR.MINOR>`. Each profile renders a per-profile `values.yaml` next to the CR manifests; `l8k deploy` reads that file and runs the install. When `networkOperator.imagePullSecrets` is configured, l8k reads matching Docker credentials from Secrets already present in the operator namespace and uses them for the chart download (including the `nvcr.io` to `helm.ngc.nvidia.com` NGC credential mapping). Secret data remains in memory and is never logged. When a release already exists with different values, deploy fails fast — pass `--overwrite-existing` to promote to `helm upgrade --install`.
 
 Deploy preflight does not treat `SriovNetworkPoolConfig`,
 `SriovNetworkNodePolicy`, or `OVSNetwork` objects labeled with
@@ -243,7 +243,7 @@ Available Commands:
 Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides
       --enabled-plugins string              Comma-separated list of plugins to enable (default "network-operator")
-      --image-pull-secrets strings          Image pull secret names for Network Operator components (comma-separated)
+      --image-pull-secrets strings          Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)
       --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)
       --network-operator-namespace string   Override the network operator namespace from the config file
       --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 26.1, 26.4, 26.7

@@ -25,6 +25,14 @@ l8k deploy [--deployment-files <DIR>] [--kubeconfig <PATH>] [--dry-run]
 
 When the deployment directory contains a `values.yaml` (the `l8k generate` profile renderer emits one per profile), Phase 0 runs first: the Helm Go SDK installs (or upgrades, with `--overwrite-existing`) the `nvidia/network-operator` chart in the namespace from `networkOperator.namespace`. The chart version and Helm repo URL come from the embedded release catalog selected via `--network-operator-release`. Phase 0 is skipped silently when `values.yaml` is absent — backward compatible with users managing the chart out of band.
 
+When `networkOperator.imagePullSecrets` is non-empty, l8k reads the named
+Docker Secrets from the operator namespace and uses compatible credentials to
+authenticate both the Helm repository index and chart archive requests. The
+Secret must exist before Phase 0, and the kubeconfig must allow `get secrets`.
+l8k never logs or persists the credential. It sends credentials only to an
+exact matching chart host, with one intentional NGC mapping from `nvcr.io` to
+`helm.ngc.nvidia.com`; unrelated registry credentials are not forwarded.
+
 Network Operator 26.1+ requestor mode is a Helm-level change: the generated
 values add Network Operator Deployment environment variables and enable the
 SR-IOV external drainer where applicable. Applying only the generated CRs
