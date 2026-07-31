@@ -95,8 +95,13 @@ const MachineLabelKey = "nvidia.kubernetes-launch-kit.machine"
 // machineTypes but share a GPU type.
 const GPULabelKey = "nvidia.kubernetes-launch-kit.gpu"
 
-// MaxLabelValueLength is the Kubernetes hard limit for label values.
-const MaxLabelValueLength = 63
+const (
+	// MaxLabelValueLength is the Kubernetes hard limit for label values.
+	MaxLabelValueLength = 63
+	// MaxGeneratedIdentifierLength leaves room for prefixes added to generated
+	// resource names and label values while retaining a collision-resistant hash.
+	MaxGeneratedIdentifierLength = 40
+)
 
 const (
 	RoutingDestinationBased = "destination-based"
@@ -111,13 +116,13 @@ const (
 )
 
 // MachineLabelValue returns the per-source-group machine label value:
-// `<machineType>-<gpuType>` literal when it fits Kubernetes' 63-char
-// label-value limit, or a deterministic shortened form for long names
+// `<machineType>-<gpuType>` literal when it fits the 40-byte generated-group
+// identity limit, or a deterministic shortened form for long names
 // (truncated prefix + 8-hex FNV-32a suffix). Returns the empty string
 // only when either input is empty.
 //
 // The shortened form looks like
-// `HPE-ProLiant-Compute-DL380a-Gen12-NVIDIA-RTX-PRO-6000-B-7c4d8e91`
+// `HPE-ProLiant-Compute-DL380-Gen1-0885f134`
 // and is reproducible: identical inputs always produce the same
 // value, so the label discover writes onto nodes always matches what
 // `MachineLabelValue` returns at filter time.
@@ -126,16 +131,7 @@ func MachineLabelValue(machineType, gpuType string) string {
 		return ""
 	}
 	raw := machineType + "-" + gpuType
-	if len(raw) <= MaxLabelValueLength {
-		return raw
-	}
-	// 63-char budget = prefix + "-" + 8-hex hash. 8 hex digits + dash = 9.
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(raw))
-	suffix := fmt.Sprintf("-%08x", h.Sum32())
-	prefixBudget := MaxLabelValueLength - len(suffix)
-	prefix := strings.TrimRight(raw[:prefixBudget], "-_.")
-	return prefix + suffix
+	return truncateWithHash(raw, MaxGeneratedIdentifierLength)
 }
 
 // GPULabelValue returns the gpu label value, applying the same
@@ -145,28 +141,36 @@ func GPULabelValue(gpuType string) string {
 	if gpuType == "" {
 		return ""
 	}
-	if len(gpuType) <= MaxLabelValueLength {
-		return gpuType
+	return truncateWithHash(gpuType, MaxLabelValueLength)
+}
+
+// truncateWithHash returns s unchanged when it fits maxLen bytes. Longer
+// values retain a readable prefix and an 8-hex FNV-32a hash of the full input.
+func truncateWithHash(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
 	}
 	h := fnv.New32a()
-	_, _ = h.Write([]byte(gpuType))
+	_, _ = h.Write([]byte(s))
 	suffix := fmt.Sprintf("-%08x", h.Sum32())
-	prefixBudget := MaxLabelValueLength - len(suffix)
-	prefix := strings.TrimRight(gpuType[:prefixBudget], "-_.")
+	prefixBudget := maxLen - len(suffix)
+	prefix := strings.TrimRight(s[:prefixBudget], "-_.")
 	return prefix + suffix
 }
 
 // SanitizeIdentifier converts a product-type or label-value string into a
 // valid K8s name component: lowercases the input and replaces spaces with
-// hyphens. Used by discovery to derive `ClusterConfig.Identifier` from the
-// machine label, and by the renderer when an identifier needs to land in a
-// resource name. Both call sites must agree on the rule so a config produced
-// by discovery renders the same names downstream — single function here
-// guarantees that.
+// hyphens, then deterministically bounds the result to 40 bytes. The shorter
+// limit leaves room for prefixes wherever the identifier is appended to a
+// generated resource name or label value. Used by discovery to derive
+// `ClusterConfig.Identifier` from the machine label, and by the renderer when
+// an identifier needs to land in a resource name. Both call sites must agree
+// on the rule so a config produced by discovery renders the same names
+// downstream — single function here guarantees that.
 func SanitizeIdentifier(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "-")
-	return s
+	return truncateWithHash(s, MaxGeneratedIdentifierLength)
 }
 
 // LaunchKitConfig represents the l8k-config.yaml structure

@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-discover
-version: 1.2.1
+version: 1.2.2
 description: "Use this skill when the user wants to discover their Kubernetes cluster's network hardware capabilities using k8s-launch-kit (l8k). Activate for: cluster discovery, hardware detection, NIC detection, finding what GPUs or NICs are in a cluster, creating a cluster config file, or when the user says 'discover' in the context of l8k or NVIDIA networking."
 metadata:
   requires:
@@ -135,14 +135,13 @@ Discovery patches every node in the group with two labels:
   `nodeSelector` when `l8k generate` auto-merges source groups sharing a GPU type.
 
 Label values keep their original case (matching `nvidia.com/gpu.product` style) since
-upstream discovery already trims whitespace and replaces spaces with hyphens. Values
-that would exceed the Kubernetes 63-char label-value limit are skipped (logged at
-debug). The group's `identifier` is the lowercase resource-name form of the machine
-label (RFC 1123 — required for downstream NicNodePolicy / SriovNetworkNodePolicy
-naming). When `machineType` or `gpuType` couldn't be resolved (GPU operator labels
-absent and hardware probe failed), a fallback `group-N` identifier is used and the
-machine label is not written; the GPU label is still written when `gpuType` alone is
-resolved.
+upstream discovery already trims whitespace and replaces spaces with hyphens. The
+combined machine/GPU label and the lowercase group `identifier` are bounded to 40
+bytes; long values retain a readable prefix plus an 8-character deterministic hash.
+GPU-only labels use Kubernetes' 63-byte limit with the same shortening rule. When
+`machineType` or `gpuType` couldn't be resolved (GPU operator labels absent and
+hardware probe failed), a fallback `group-N` identifier is used and the machine label
+is not written; the GPU label is still written when `gpuType` alone is resolved.
 
 ## Prerequisites
 

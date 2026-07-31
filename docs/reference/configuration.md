@@ -292,7 +292,7 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 
 | Field | Meaning |
 | --- | --- |
-| `identifier` | Lowercase resource-name form of machine/GPU identity, or `group-N` fallback. |
+| `identifier` | Lowercase resource-name form of machine/GPU identity, bounded to 40 bytes with a deterministic hash suffix when needed, or `group-N` fallback. |
 | `machineType` / `gpuType` | Discovered hardware identity. |
 | `linkType` | Per-group `Ethernet` or `InfiniBand` result when fabric probes agree. |
 | `presetApplied` | An exact topology preset was applied. |

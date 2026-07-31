@@ -26,6 +26,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGeneratedGroupIdentityIsBounded(t *testing.T) {
+	const (
+		machineType = "HPE-ProLiant-Compute-DL380-Gen12"
+		gpuType     = "NVIDIA-AX800-Converged-Accelerator"
+	)
+
+	machineLabel := MachineLabelValue(machineType, gpuType)
+	assert.Equal(t, "HPE-ProLiant-Compute-DL380-Gen1-0885f134", machineLabel)
+	assert.LessOrEqual(t, len(machineLabel), MaxGeneratedIdentifierLength)
+
+	identifier := SanitizeIdentifier(machineLabel)
+	assert.Equal(t, "hpe-proliant-compute-dl380-gen1-0885f134", identifier)
+	assert.LessOrEqual(t, len(identifier), MaxGeneratedIdentifierLength)
+
+	otherIdentifier := SanitizeIdentifier(MachineLabelValue(machineType, gpuType+"-Variant"))
+	assert.NotEqual(t, identifier, otherIdentifier,
+		"long identities with a shared prefix must retain distinct hash suffixes")
+}
+
+func TestSanitizeIdentifierBoundsLongValues(t *testing.T) {
+	input := "hpe-proliant-compute-dl380-gen12-nvidia-ax800-converge-0885f134"
+	got := SanitizeIdentifier(input)
+
+	assert.Len(t, got, MaxGeneratedIdentifierLength)
+	assert.Equal(t, got, SanitizeIdentifier(input), "shortening must be deterministic")
+}
+
 func TestLoadFullConfig(t *testing.T) {
 	logger := logr.Discard()
 

@@ -234,7 +234,7 @@ homogeneous worker nodes with their NIC hardware.
 
 | Field                      | Type     | Default | Description                                    |
 |----------------------------|----------|---------|------------------------------------------------|
-| `identifier`               | string   | `""`    | Unique group name (auto-generated during discovery) |
+| `identifier`               | string   | `""`    | Unique group name (auto-generated during discovery, max 40 bytes) |
 | `capabilities.nodes.sriov` | bool     | `true`  | Nodes have SR-IOV capable NICs                 |
 | `capabilities.nodes.rdma`  | bool     | `true`  | Nodes have RDMA capable NICs                   |
 | `capabilities.nodes.ib`    | bool     | `false` | Nodes have InfiniBand capable NICs             |

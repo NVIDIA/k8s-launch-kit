@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-config
-version: 1.2.2
+version: 1.2.3
 description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
@@ -66,7 +66,7 @@ false across rewrites.
 
 Each `clusterConfig[]` entry has these key fields:
 
-- `identifier` — group name (used for `NicNodePolicy` naming). For groups with both `machineType` and `gpuType` resolved, this is the sanitised machine label (`<machineType>-<gpuType>`); otherwise a fallback `group-N`.
+- `identifier` — group name (used for `NicNodePolicy` naming). For groups with both `machineType` and `gpuType` resolved, this is the sanitised machine label (`<machineType>-<gpuType>`), bounded to 40 bytes with a deterministic hash suffix when needed; otherwise a fallback `group-N`.
 - `machineType` — server model (e.g. `PowerEdge-XE9680`); populated from `nvidia.com/gpu.machine` label or DMI fallback.
 - `gpuType` — GPU SKU (e.g. `NVIDIA-H200`); populated from `nvidia.com/gpu.product` label or `nvidia-smi` fallback. **Note:** this field used to be called `productType` — the rename happened to disambiguate it from the server model. Old `productType:` keys in hand-authored configs must be renamed to `gpuType:`.
 - `capabilities.nodes.{sriov,rdma,ib}` — what the underlying hardware supports.

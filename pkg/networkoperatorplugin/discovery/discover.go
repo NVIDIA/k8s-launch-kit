@@ -408,11 +408,12 @@ func resolvePresetCatalog(opts Options) (*presets.Catalog, error) {
 //     Used as the merged-group NodeSelector when source groups span
 //     machineTypes but share a GPU type.
 //
-// Both label values bypass the Kubernetes 63-char limit by skipping the
-// label entirely when the value would overflow (logged at debug). Group
-// `Identifier` follows the resource-name convention (lowercase via
-// `sanitizeIdentifier`); the label values keep their original case to
-// match `nvidia.com/gpu.product`-style values.
+// Long label values are shortened with a deterministic hash. Machine labels
+// and generated group identifiers are bounded to 40 bytes so identifiers can
+// be safely appended to other generated values; GPU labels use Kubernetes'
+// 63-byte limit. Group `Identifier` follows the resource-name convention
+// (lowercase via `SanitizeIdentifier`); label values keep their original case
+// to match `nvidia.com/gpu.product`-style values.
 //
 // Groups whose machine label can't be computed (one input missing) keep
 // their fallback identifier ("group-N") and an empty NodeSelector. The
@@ -425,7 +426,7 @@ func applyMachineLabelToGroups(ctx context.Context, c client.Client, groups []co
 		gpuLabel := config.GPULabelValue(g.GPUType)
 
 		if machineLabel == "" {
-			log.Log.V(1).Info("Skipping machine label: machineType/gpuType unresolved or value > 63 chars",
+			log.Log.V(1).Info("Skipping machine label: machineType/gpuType unresolved",
 				"group", g.Identifier,
 				"machineType", g.MachineType,
 				"gpuType", g.GPUType)
