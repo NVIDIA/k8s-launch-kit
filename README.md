@@ -343,9 +343,13 @@ chart's appVersion matches the version expected by
 manifest under `--deployment-files` is classified against the live cluster
 as `READY` / `IN-PROGRESS` / `ERROR` / `MISSING` via the per-Kind validator
 registry (with SR-IOV silent-failure detection, NicConfigurationTemplate
-condition-Reason classification, NicClusterPolicy appliedStates breakdown,
-etc.); and (3) a data-plane connectivity matrix — apply the example
-DaemonSet, wait for it to roll out completely (`numberReady ==
+and NicFirmwareTemplate validation scoped to the operator-populated
+`status.nicDevices`, current template-payload and device-generation checks,
+matched-set checks for node, NIC type, PCI, serial-number, and part-number
+selectors, condition-Reason classification,
+NicClusterPolicy appliedStates breakdown, etc.); and (3) a data-plane
+connectivity matrix —
+apply the example DaemonSet, wait for it to roll out completely (`numberReady ==
 desiredNumberScheduled > 0` — a single ContainerCreating-stuck pod fails),
 and run the configured checks (`icmp`, `rping`, and/or `ib_write_bw`) with
 source-bound rail identity. ICMP uses `ping -I <src-iface>`, `rping` uses

@@ -204,12 +204,13 @@ func TestNeedsObservationGate(t *testing.T) {
 		{schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "IPoIBNetwork"}, true, "IPoIBNetwork"},
 		{schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "MacvlanNetwork"}, true, "MacvlanNetwork"},
 		{schema.GroupVersionKind{Group: "spectrumx.nvidia.com", Version: "v1alpha2", Kind: "SpectrumXRailPoolConfig"}, true, "SpectrumXRailPoolConfig"},
+		{schema.GroupVersionKind{Group: "configuration.net.nvidia.com", Version: "v1alpha1", Kind: "NicConfigurationTemplate"}, true, "NicConfigurationTemplate"},
+		{schema.GroupVersionKind{Group: "configuration.net.nvidia.com", Version: "v1alpha1", Kind: "NicFirmwareTemplate"}, true, "NicFirmwareTemplate"},
 
 		// Kinds whose validators read companion CRs — gate would
 		// block forever waiting for an RV bump that never lands.
 		{schema.GroupVersionKind{Group: "sriovnetwork.openshift.io", Version: "v1", Kind: "SriovNetworkNodePolicy"}, false, "SriovNetworkNodePolicy (companion = SriovNetworkNodeState)"},
 		{schema.GroupVersionKind{Group: "configuration.net.nvidia.com", Version: "v1alpha1", Kind: "NicInterfaceNameTemplate"}, false, "NicInterfaceNameTemplate (companion = NicDevice)"},
-		{schema.GroupVersionKind{Group: "configuration.net.nvidia.com", Version: "v1alpha1", Kind: "NicConfigurationTemplate"}, false, "NicConfigurationTemplate (companion = NicDevice)"},
 
 		// Existence-only Kinds — no status at all, gate irrelevant.
 		{schema.GroupVersionKind{Group: "nv-ipam.nvidia.com", Version: "v1alpha1", Kind: "IPPool"}, false, "IPPool"},
