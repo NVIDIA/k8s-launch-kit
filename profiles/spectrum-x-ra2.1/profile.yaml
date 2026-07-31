@@ -5,7 +5,7 @@ profileRequirements:
   deployment: sriov
   spectrumX:
     spcxVersion: "RA2.1"
-    multiplaneMode: ["swplb", "hwplb", "uniplane", "none"]
+    multiplaneMode: ["swplb", "hwplb", "none"]
   multirail: true
   # SPC-X RA2.1 only ships on Network Operator 26.1. Pin both bounds to
   # 26.1 so this profile never matches a 26.4+ deployment (which uses
@@ -21,7 +21,7 @@ description: |
   SriovNetworkNodePolicy, OVSNetwork) plus an nv-ipam CIDRPool, and ties
   them together with the v1alpha1 SpectrumXRailPoolConfig glue resource.
   Supports the same multiplane modes as the 26.4+ profile (swplb, hwplb,
-  uniplane, none): in swplb the rail explodes into per-plane policies,
+  none): in swplb the rail explodes into per-plane policies,
   otherwise one policy per rail groups all planes together.
 deploymentGuide: spectrum-x-ra2.1.rst
 templates:

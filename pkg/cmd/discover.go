@@ -156,7 +156,7 @@ func init() {
 	discoverCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
 		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version. Supported: %v",
 			config.SupportedSPCXVersions))
-	discoverCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode override: none, swplb, hwplb, uniplane (requires --spectrum-x)")
+	discoverCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode override: none, swplb, hwplb (requires --spectrum-x)")
 	discoverCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Spectrum-X plane count override: 1, 2, or 4 (requires --spectrum-x)")
 	discoverCmd.Flags().StringVar(&topologyScheme, "topology-scheme", "", "Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)")
 	discoverCmd.Flags().StringVar(&ipVersion, "ip-version", "", "Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)")

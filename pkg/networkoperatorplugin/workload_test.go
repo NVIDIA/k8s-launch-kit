@@ -265,12 +265,12 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 		assert.Equal(t, "rail-0-plane-0,rail-0-plane-1,rail-1-plane-0,rail-1-plane-1", got)
 	})
 
-	t.Run("spectrum-x uniplane", func(t *testing.T) {
+	t.Run("spectrum-x hwplb", func(t *testing.T) {
 		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
-					MultiplaneMode: "uniplane",
+					MultiplaneMode: "hwplb",
 				},
 			},
 		}
@@ -353,12 +353,12 @@ func TestBuildNetworkResources(t *testing.T) {
 		}, got)
 	})
 
-	t.Run("spectrum-x uniplane", func(t *testing.T) {
+	t.Run("spectrum-x hwplb", func(t *testing.T) {
 		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
-					MultiplaneMode: "uniplane",
+					MultiplaneMode: "hwplb",
 				},
 			},
 		}

@@ -18,6 +18,6 @@ spec:
     spectrumXOptimized:
       enabled: true
       version: "{{ spectrumXVersionRef .Profile.SpectrumX }}"
-      multiplaneMode: "{{.Profile.SpectrumX.MultiplaneMode}}"  # swplb, hwplb, uniplane
+      multiplaneMode: "{{.Profile.SpectrumX.MultiplaneMode}}"  # none, swplb, hwplb
       numberOfPlanes: {{.Profile.SpectrumX.NumberOfPlanes}}
       overlay: "{{.SpectrumX.Overlay}}"

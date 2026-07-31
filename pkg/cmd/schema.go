@@ -147,7 +147,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--multiplane-mode": {
 					Type:        "string",
-					Description: "Spectrum-X multiplane mode override: none, swplb, hwplb, uniplane. Auto-derived from NIC device ID when omitted.",
+					Description: "Spectrum-X multiplane mode override: none, swplb, hwplb. Auto-derived from NIC device ID when omitted.",
 				},
 				"--number-of-planes": {
 					Type:        "int",

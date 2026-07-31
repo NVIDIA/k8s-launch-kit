@@ -57,7 +57,7 @@ func (d DefaultDecision) String() string {
 //	--multirail           ← true (unless config or CLI explicitly sets it).
 //	--routing             ← "destination-based" (unless config or CLI sets it).
 //	--multiplane-mode     ← per east-west PF deviceID (only when --spectrum-x):
-//	                       1021 (CX7) / a2dc (BF3 SuperNIC) → "uniplane"
+//	                       1021 (CX7) / a2dc (BF3 SuperNIC) → "none"
 //	                       1023 (CX8) → "swplb"
 //	                       1025 (CX9) → "hwplb"
 //	                       Skipped+warned when groups have mixed deviceIDs.
@@ -301,13 +301,13 @@ func spectrumXDefaultsForDeviceID(groups []config.ClusterConfig) (mode string, p
 	}
 	switch seenID {
 	case "1021":
-		return "uniplane", 1, true, "ConnectX-7 (deviceID 1021)"
+		return "none", 1, true, "ConnectX-7 (deviceID 1021)"
 	case "1023":
 		return "swplb", 2, true, "ConnectX-8 (deviceID 1023)"
 	case "1025":
 		return "hwplb", 4, true, "ConnectX-9 (deviceID 1025)"
 	case "a2dc":
-		return "uniplane", 1, true, "BF3 SuperNIC (deviceID a2dc)"
+		return "none", 1, true, "BF3 SuperNIC (deviceID a2dc)"
 	}
 	return "", 0, false, fmt.Sprintf("east-west PF deviceID %q has no Spectrum-X default", seenID)
 }

@@ -143,6 +143,18 @@ func TestApplySpectrumXDefaults_RejectsInvalidMultiplaneMode(t *testing.T) {
 	assert.Contains(t, err.Error(), `invalid --multiplane-mode "bogus"`)
 }
 
+func TestApplySpectrumXDefaults_RejectsRemovedUniplaneMode(t *testing.T) {
+	opts := minSpectrumXOpts()
+	opts.MultiplaneMode = "uniplane"
+	opts.NumberOfPlanes = 1
+
+	err := applySpectrumXDefaults(opts)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid --multiplane-mode "uniplane"`)
+	assert.Contains(t, err.Error(), "supported: [none swplb hwplb]")
+}
+
 func TestApplySpectrumXDefaults_RequiresNumberOfPlanes(t *testing.T) {
 	opts := minSpectrumXOpts()
 	opts.NumberOfPlanes = 0

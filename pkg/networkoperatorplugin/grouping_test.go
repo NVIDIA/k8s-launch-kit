@@ -48,7 +48,7 @@ func loadSpectrumXProfile(t *testing.T) *profiles.Profile {
 			Deployment: "sriov",
 			SpectrumX: &profiles.ProfileRequirementsSpectrumX{
 				SPCXVersion:    "RA2.2",
-				MultiplaneMode: []string{"swplb", "hwplb", "uniplane", "none"},
+				MultiplaneMode: []string{"swplb", "hwplb", "none"},
 			},
 		},
 		Templates: []string{
@@ -597,7 +597,7 @@ func loadSpectrumXRA21Profile(t *testing.T) *profiles.Profile {
 			Deployment: "sriov",
 			SpectrumX: &profiles.ProfileRequirementsSpectrumX{
 				SPCXVersion:    "RA2.1",
-				MultiplaneMode: []string{"swplb", "hwplb", "uniplane", "none"},
+				MultiplaneMode: []string{"swplb", "hwplb", "none"},
 			},
 			MinNetworkOperatorRelease: "26.1",
 			MaxNetworkOperatorRelease: "26.1",

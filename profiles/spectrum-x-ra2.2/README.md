@@ -10,7 +10,7 @@ The Spectrum-X profile provides optimized multi-rail networking with OVS hardwar
 - **OVS Hardware Offload**: DOCA-accelerated Open vSwitch with hardware offloading
 - **RDMA Exclusive Mode**: Dedicated RDMA resources per workload
 - **Advanced Firmware Configuration**: Spectrum-X optimized firmware with RA2.2 support
-- **Multiple Plane Modes**: Supports none, swplb, hwplb, and uniplane configurations
+- **Multiple Plane Modes**: Supports none, swplb, and hwplb configurations
 - **Dynamic Interface Naming**: Automatic NIC interface naming based on plane and rail topology
 - **Optional DRA Workload Allocation**: `profile.spectrumX.useDRA` enables ResourceClaimTemplate-based GPU/VF allocation
 
@@ -40,7 +40,6 @@ nodeCapabilities:
   - `none`: Single plane
   - `swplb`: Software plane load balancing
   - `hwplb`: Hardware plane load balancing
-  - `uniplane`: Unified plane mode
 - **numberOfPlanes**: Number of planes (1, 2, or 4)
 
 ### Spectrum-X Profile Options
@@ -49,6 +48,8 @@ nodeCapabilities:
   `dynamicResourceAllocation` feature gate, sets `SpectrumXRailPoolConfig.spec.draEnabled`
   to `true`, emits `ResourceClaimTemplate` manifests, and renders the example workload
   with DRA claims instead of device-plugin resource requests.
+- Generated v1alpha2 `SpectrumXRailPoolConfig` resources omit the removed
+  `spec.withBCM` field because current CRDs reject it during strict decoding.
 
 ### OVS Configuration
 

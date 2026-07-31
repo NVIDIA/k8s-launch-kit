@@ -1,4 +1,4 @@
-{{- /* One SriovNetworkNodePolicy per rail (hwplb/uniplane/none) or per
+{{- /* One SriovNetworkNodePolicy per rail (hwplb/none) or per
        rail-plane (swplb). SWPLB uses groupingPolicy=perPF and a single PF;
        other modes use groupingPolicy=all with all of a rail's PF netdevs
        grouped under one bridge plus devlinkParams.esw_multiport=true. */ -}}

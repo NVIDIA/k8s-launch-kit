@@ -153,7 +153,7 @@ profile:
   spectrumX: # Spectrum-X configuration (set enable: true or use --spectrum-x CLI flag)
     enable: false # CLI parameter (overrides this value): --spectrum-x
     # spcxVersion: "RA2.3" # CLI parameter (overrides this value): --spectrum-x
-    # multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (swplb, hwplb, uniplane)
+    # multiplaneMode: swplb # CLI parameter (overrides this value): --multiplane-mode (none, swplb, hwplb)
     # numberOfPlanes: 4 # CLI parameter (overrides this value): --number-of-planes, also used as pfsPerNic
     # topologyType: 2-tier # CLI parameter (overrides this value): --topology-scheme (2-tier, 3-tier)
     # ipVersion: ipv4 # CLI parameter (overrides this value): --ip-version (ipv4, ipv6); CIDRPool rendering currently supports ipv4

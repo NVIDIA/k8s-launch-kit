@@ -156,8 +156,8 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 			spcx.IPVersion, config.SupportedSpectrumXIPVersions)
 	}
 
-	// Cross-validate mode ↔ planes. "none" (and "uniplane") collapse
-	// to one plane; anything else is a contradiction.
+	// Cross-validate mode ↔ planes. "none" collapses to one plane; anything
+	// else is a contradiction.
 	if spcx.MultiplaneMode == "none" && spcx.NumberOfPlanes != 1 {
 		return fmt.Errorf("--multiplane-mode none requires --number-of-planes 1, got %d", spcx.NumberOfPlanes)
 	}

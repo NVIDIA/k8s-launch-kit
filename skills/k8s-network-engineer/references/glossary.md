@@ -2,7 +2,7 @@
 
 ## Hardware
 
-- **ConnectX-8 (CX8)**: NVIDIA network adapter (deviceID `1023`). Supports SR-IOV, RDMA, and Spectrum-X with swplb/hwplb/uniplane multiplane modes.
+- **ConnectX-8 (CX8)**: NVIDIA network adapter (deviceID `1023`). Supports SR-IOV, RDMA, and Spectrum-X with swplb/hwplb multiplane modes.
 - **ConnectX-9 (CX9)**: NVIDIA network adapter (deviceID `1025`). Same Spectrum-X capabilities as ConnectX-8.
 - **BlueField-3 (BF3)**: NVIDIA DPU/SuperNIC (deviceID `a2dc`). When used with Spectrum-X, only supports multiplane mode `none` with 1 plane.
 - **PF (Physical Function)**: A physical NIC port exposed by the hardware. Each PF can be split into multiple VFs via SR-IOV.
@@ -26,10 +26,9 @@
 
 ## Spectrum-X
 
-- **Multiplane mode**: How Spectrum-X organizes switch fabric planes. Options: `none` (BF3 only), `swplb` (software plane load balancing), `hwplb` (hardware plane load balancing), `uniplane` (single logical plane).
+- **Multiplane mode**: How Spectrum-X organizes switch fabric planes. Options: `none` (CX7/BF3), `swplb` (software plane load balancing), and `hwplb` (hardware plane load balancing).
 - **SWPLB (Software Plane Load Balancing)**: Each rail-plane combination gets its own set of Kubernetes resources. Default for CX8.
 - **HWPLB (Hardware Plane Load Balancing)**: Planes managed by switch hardware. Resources generated per-rail only. For larger-scale 2/3-tier topologies.
-- **Uniplane**: Single logical plane, no plane separation. Simplest topology.
 
 ## Network Operator Components
 

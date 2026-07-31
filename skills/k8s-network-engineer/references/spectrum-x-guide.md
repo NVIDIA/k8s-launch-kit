@@ -8,7 +8,7 @@ It always requires `fabric=ethernet`, `deployment=sriov`, and `multirail=true`.
 
 ## Multiplane Modes
 
-Spectrum-X supports four multiplane modes that determine how network planes are
+Spectrum-X supports three multiplane modes that determine how network planes are
 organized and how resources are named:
 
 ### none (BF3 Only)
@@ -37,21 +37,13 @@ organized and how resources are named:
 - Resources are named per-rail only (hardware handles plane distribution)
 - Better for large-scale 2-tier and 3-tier network topologies
 
-### uniplane (Unified Plane)
-
-- ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
-- Single logical plane encompassing all physical connections
-- Number of planes: 1 (fixed)
-- Resources are named per-rail only
-- Simplest CX8 topology
-
-All four modes are supported by both Spectrum-X profiles. Pick the profile
+All three modes are supported by the Spectrum-X profiles. Pick the profile
 by the value of `--spectrum-x` (the legacy `--spcx-version` has been folded
 into `--spectrum-x`):
 
 - `profiles/spectrum-x/` — RA2.2 on Network Operator 26.4+. Uses the
   consolidated v1alpha2 `SpectrumXRailPoolConfig` (`railTopology[]`) for
-  rail wiring.
+  rail wiring and omits the removed `spec.withBCM` field.
 - `profiles/spectrum-x-ra2.1/` — RA2.1 on Network Operator 26.1 only.
   Renders the full SR-IOV operator chain (`SriovNetworkPoolConfig` +
   `SriovNetworkNodePolicy` + `OVSNetwork` + `CIDRPool`) plus a v1alpha1
@@ -91,7 +83,7 @@ are already configured. This is a tech-preview feature for non-BCM workflows.
 
 Resources are named based on rail and (optionally) plane indices:
 
-### Per-Rail Resources (hwplb, uniplane, none)
+### Per-Rail Resources (hwplb, none)
 
 ```
 sriov-network-node-policy-rail-0
@@ -175,9 +167,4 @@ l8k --user-config config.yaml \
   --multirail --spectrum-x \
   --multiplane-mode hwplb --number-of-planes 4
 
-# CX8 uniplane (simplest)
-l8k --user-config config.yaml \
-  --fabric ethernet --deployment-type sriov \
-  --multirail --spectrum-x \
-  --multiplane-mode uniplane --number-of-planes 1
 ```
