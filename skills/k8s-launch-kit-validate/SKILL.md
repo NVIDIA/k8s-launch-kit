@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-validate
-version: 1.0.0
+version: 1.0.1
 description: "Use this skill when the user wants to verify that an NVIDIA networking deployment matches the configuration that produced it. Activate for: 'is my deployment correct', 'are all the manifests applied', 'does the network operator version match', 'verify deployment', 'check cluster state against config', or any question about whether the cluster reflects what l8k generated. Wraps the `l8k validate` subcommand."
 metadata:
   requires:
@@ -23,10 +23,16 @@ Operator release.
    "network-operator", in the operator namespace. Compares with the
    version expected by `networkOperator.selectedRelease` in
    `cluster-config.yaml` (looked up in l8k's embedded release catalog).
-2. **Manifest presence.** Every YAML manifest under
+2. **Manifest state.** Every YAML manifest under
    `--deployment-files` (skipping any file with "example" in its name)
-   is fetched from the cluster via `client.Get`. Each manifest is
-   reported `FOUND`, `MISSING`, or `ERROR`.
+   is fetched from the cluster and classified by the per-Kind resource-state
+   registry. `NicConfigurationTemplate` and `NicFirmwareTemplate` wait for
+   the operator-populated `status.nicDevices` list to reflect current node,
+   NIC type, PCI-address, serial-number, and part-number selectors and validate
+   only the named devices. Their propagated template
+   payload and condition `observedGeneration` must also be current; unrelated
+   discovered NIC configuration state is ignored. Each manifest is reported
+   `READY`, `IN-PROGRESS`, `ERROR`, or `MISSING`.
 3. **Connectivity matrix.** By default, `l8k validate` applies the generated
    example DaemonSet, waits for ready pods, and runs source-bound `icmp`,
    `rping`, and `ib_write_bw` tests. The default mode is `strict`.
@@ -93,12 +99,12 @@ Network Operator release
   result: MATCH
 
 Manifests
-  [FOUND] NicClusterPolicy/nic-cluster-policy in (cluster-scoped)
-  [FOUND] NicNodePolicy/nicnodepolicy-h100 in (cluster-scoped)
-  [MISSING] SriovNetwork/sriov-network-rail-0 in default — not found in cluster
+  [READY      ] NicClusterPolicy/nic-cluster-policy in (cluster-scoped)
+  [IN-PROGRESS] NicConfigurationTemplate/spectrum-x-config in network-operator — waiting for nic-configuration-operator to populate status.nicDevices with matched devices
+  [MISSING    ] SriovNetwork/sriov-network-rail-0 in default — not found in cluster
   ...
 
-Summary: 12 manifests, 1 missing/error; version: match
+Summary: 1/3 ready, 1 in-progress, 0 error, 1 missing; version: match; topology mismatches: 0 group(s)
 ```
 
 JSON mode (`--output json`) emits one object with `versionCheck`,

@@ -28,6 +28,8 @@ When `--user-config` is omitted, Launch Kit checks `./cluster-config.yaml`, the 
 
 Connectivity is skipped when manifests are missing, errored, or still in progress.
 
+Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a device condition with a stale `observedGeneration` remains `IN-PROGRESS`. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
+
 Preflight uses the same checks as deployment: Helm chart version, generated Helm values, component versions, and stray managed CRs. Validation never remediates drift.
 
 ## Validation Modes

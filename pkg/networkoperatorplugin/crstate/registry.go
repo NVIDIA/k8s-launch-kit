@@ -74,17 +74,17 @@ func (r *Registry) Validate(ctx context.Context, c client.Client, obj *unstructu
 // signal:
 //
 //   - true  — validator reads `obj.status.*` directly (NCP/NNP/the
-//     three Mellanox Network Kinds, SpectrumXRailPoolConfig
-//     v1alpha2). Until the controller writes status back the RV
-//     stays at the apply-time value, and the validator would return
-//     stale data from the previous reconcile. Gate the verdict
-//     until live RV moves past apply-time RV.
+//     three Mellanox Network Kinds, NicConfigurationTemplate /
+//     NicFirmwareTemplate status.nicDevices, SpectrumXRailPoolConfig
+//     v1alpha2). Until the controller writes status back the RV stays
+//     at the apply-time value, and the validator would return stale
+//     data from the previous reconcile. Gate the verdict until live RV
+//     moves past apply-time RV.
 //
 //   - false — validator reads companion CRs whose lifecycle is
 //     independent of the apply (SriovNetworkNodePolicy →
-//     SriovNetworkNodeState per node; NicInterfaceNameTemplate /
-//     NicConfigurationTemplate → NicDevice per device). The
-//     companion's RV evolves on its own schedule and the
+//     SriovNetworkNodeState per node; NicInterfaceNameTemplate →
+//     NicDevice per device). The companion's RV evolves on its own schedule and the
 //     SriovNetworkNodePolicy itself never gets a status write, so
 //     gating on its RV would block forever. Validators in this
 //     bucket get to give an immediate verdict — staleness is their
@@ -105,6 +105,12 @@ func NeedsObservationGate(gvk schema.GroupVersionKind) bool {
 	}
 	if gvk.Group == spcxGroup && gvk.Version == spcxVersionAlpha2 && gvk.Kind == spcxKindRailPoolConfig {
 		return true
+	}
+	if gvk.Group == nicopGroup && gvk.Version == nicopVersion {
+		switch gvk.Kind {
+		case nicopKindConfigurationTemplate, nicopKindFirmwareTemplate:
+			return true
+		}
 	}
 	return false
 }

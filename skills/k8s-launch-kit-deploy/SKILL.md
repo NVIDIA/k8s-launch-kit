@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-deploy
-version: 1.3.0
+version: 1.3.1
 description: "Use this skill when the user wants to deploy generated NVIDIA networking manifests to a Kubernetes cluster using k8s-launch-kit (l8k). Activate for: applying manifests, deploying to cluster, the `l8k deploy` subcommand or the legacy --deploy flag on `l8k generate`, applying generated files, or any mention of pushing l8k output to a live cluster. Even if the user just says 'apply these' or 'push to cluster' after generating manifests, use this skill."
 metadata:
   requires:
@@ -85,6 +85,15 @@ l8k applies resources in dependency order:
 6. Example workload DaemonSets (optional)
 
 ## Post-Deploy Verification
+
+During reconciliation, `NicConfigurationTemplate` and
+`NicFirmwareTemplate` wait for the operator-populated `status.nicDevices`
+list to reflect the current node, NIC type, PCI-address, serial-number, and
+part-number selectors. l8k validates only those
+named `NicDevice` objects and waits for their corresponding
+`spec.configuration` or `spec.firmware` to reflect the current template
+payload and for device conditions to observe the current device generation;
+unrelated device configuration state does not block deployment.
 
 ```bash
 kubectl get nicclusterpolicy -o yaml          # Check policy state
