@@ -167,7 +167,7 @@ func TestEnsure_SkipsCRDsWhenPresent(t *testing.T) {
 func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	c := newFakeClient(t)
 
-	pullSecrets := []string{"my-registry-creds"}
+	pullSecrets := []string{"my-registry-creds", "true", "null", "123"}
 	require.NoError(t, Ensure(context.Background(), c, Options{
 		Repository:       testRepo,
 		Version:          testVersion,
@@ -195,8 +195,12 @@ func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	assert.Equal(t, "debug", logLevelEnv)
 
 	// ImagePullSecrets surfaced on the pod spec
-	require.Len(t, ds.Spec.Template.Spec.ImagePullSecrets, 1)
-	assert.Equal(t, "my-registry-creds", ds.Spec.Template.Spec.ImagePullSecrets[0].Name)
+	assert.Equal(t, []corev1.LocalObjectReference{
+		{Name: "my-registry-creds"},
+		{Name: "true"},
+		{Name: "null"},
+		{Name: "123"},
+	}, ds.Spec.Template.Spec.ImagePullSecrets)
 
 	// No nodeSelector: discovery runs on every node (the NFD
 	// pci-15b3.present label may not exist yet at discover time). NIC-bearing

@@ -24,7 +24,7 @@ spec:
     {{- if .NetworkOperator.ImagePullSecrets }}
     imagePullSecrets:
     {{- range .NetworkOperator.ImagePullSecrets }}
-      - {{ . }}
+      - "{{ . }}"
     {{- end }}
     {{- end }}
     version: "{{.DOCADriver.Version}}"

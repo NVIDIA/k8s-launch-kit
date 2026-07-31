@@ -12,7 +12,7 @@ nfd:
 node-feature-discovery:
   imagePullSecrets:
 {{- range .NetworkOperator.ImagePullSecrets }}
-    - name: {{ . }}
+    - name: "{{ . }}"
 {{- end }}
 {{- end }}
 
@@ -33,7 +33,7 @@ operator:
 
 imagePullSecrets:
 {{- range .NetworkOperator.ImagePullSecrets }}
-  - {{ . }}
+  - "{{ . }}"
 {{- end }}
 {{- end }}
 
@@ -44,7 +44,7 @@ maintenance-operator-chart:
 {{- if .NetworkOperator.ImagePullSecrets }}
   imagePullSecrets:
 {{- range .NetworkOperator.ImagePullSecrets }}
-    - name: {{ . }}
+    - name: "{{ . }}"
 {{- end }}
 {{- end }}
   operatorConfig:
@@ -70,7 +70,7 @@ sriov-network-operator:
 {{- if .NetworkOperator.ImagePullSecrets }}
   imagePullSecrets:
 {{- range .NetworkOperator.ImagePullSecrets }}
-    - {{ . }}
+    - "{{ . }}"
 {{- end }}
 {{- end }}
 {{- if versionGE .NetworkOperator.SelectedRelease "26.1" }}

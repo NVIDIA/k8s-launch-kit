@@ -17,9 +17,11 @@
 package networkoperatorplugin
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,10 +56,12 @@ func TestHelmValuesImagePullSecretShapes(t *testing.T) {
 		{name: "sriov-ethernet-rdma", deploysSriov: true},
 		{name: "sriov-ib-rdma", deploysSriov: true},
 	}
-	secretNames := []string{"registry-secret", "backup-secret"}
+	secretNames := []string{"registry-secret", "true", "null", "123"}
 	secretRefs := []corev1.LocalObjectReference{
 		{Name: "registry-secret"},
-		{Name: "backup-secret"},
+		{Name: "true"},
+		{Name: "null"},
+		{Name: "123"},
 	}
 
 	for _, profile := range profiles {
@@ -93,5 +97,75 @@ func TestHelmValuesImagePullSecretShapes(t *testing.T) {
 				assert.Empty(t, values.SriovNetworkOperator.ImagePullSecrets)
 			}
 		})
+	}
+}
+
+func TestProfilePolicyImagePullSecretsRemainStrings(t *testing.T) {
+	configPath, err := filepath.Abs(filepath.Join(
+		"testdata", "grouping", "mixed-same-type.yaml"))
+	require.NoError(t, err)
+
+	cfg, err := config.LoadFullConfig(configPath, logr.Discard())
+	require.NoError(t, err)
+	cfg.NetworkOperator.SelectedRelease = "26.7"
+	cfg.NetworkOperator.ImagePullSecrets = []string{"registry-secret", "true", "null", "123"}
+	cfg.Profile = &config.Profile{Multirail: true}
+
+	profiles := []string{
+		"host-device-rdma",
+		"ipoib-rdma-shared",
+		"macvlan-rdma-shared",
+		"spectrum-x-ra2.1",
+		"spectrum-x-ra2.2",
+		"spectrum-x",
+		"sriov-ethernet-rdma",
+		"sriov-ib-rdma",
+	}
+
+	for _, profile := range profiles {
+		for _, templateName := range []string{"10-nicclusterpolicy.yaml", "11-nicnodepolicy.yaml"} {
+			t.Run(profile+"/"+templateName, func(t *testing.T) {
+				templatePath, err := filepath.Abs(filepath.Join(
+					"..", "..", "profiles", profile, templateName))
+				require.NoError(t, err)
+				_, err = os.Stat(templatePath)
+				if os.IsNotExist(err) {
+					t.Skip("profile does not use this policy kind")
+				}
+				require.NoError(t, err)
+
+				rendered, err := ProcessTemplate(templatePath, cfg, "")
+				require.NoError(t, err)
+				for fileName, content := range rendered {
+					var document map[string]any
+					require.NoError(t, yaml.Unmarshal([]byte(content), &document), fileName)
+					assertImagePullSecretItemsAreStrings(t, document, fileName)
+				}
+			})
+		}
+	}
+}
+
+func assertImagePullSecretItemsAreStrings(t *testing.T, value any, path string) {
+	t.Helper()
+
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			childPath := path + "." + key
+			if key == "imagePullSecrets" {
+				items, ok := child.([]any)
+				require.True(t, ok, "%s must be a list", childPath)
+				for index, item := range items {
+					assert.IsType(t, "", item, "%s[%d] must remain a string", childPath, index)
+				}
+				continue
+			}
+			assertImagePullSecretItemsAreStrings(t, child, childPath)
+		}
+	case []any:
+		for _, child := range typed {
+			assertImagePullSecretItemsAreStrings(t, child, path)
+		}
 	}
 }
