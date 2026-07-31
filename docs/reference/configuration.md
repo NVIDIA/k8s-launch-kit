@@ -202,8 +202,15 @@ nicConfigurationOperator:
 spectrumX:
   nicType: "1023"
   overlay: "none"
-  rdmaPrefix: "roce_p%plane_id%_r%rail_id%"
-  netdevPrefix: "eth_p%plane_id%_r%rail_id%"
+  singlePlane:
+    netdevPrefix: "eth_r%rail_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+  hwplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+  swplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
 ```
 
 | Field | Meaning |
@@ -213,7 +220,9 @@ spectrumX:
 | `updateFW` | Enables firmware staging storage in generated Network Operator configuration. |
 | `spectrumX.nicType` | Device ID: `1021` ConnectX-7, `1023` ConnectX-8, `1025` ConnectX-9, or `a2dc` BlueField-3 SuperNIC. |
 | `spectrumX.overlay` | Spectrum-X overlay mode. |
-| `spectrumX.rdmaPrefix` / `netdevPrefix` | Spectrum-X names with plane and rail placeholders when the profile requires them. |
+| `spectrumX.singlePlane` | Prefix block selected by `none`; defaults both device types to rail-only names. |
+| `spectrumX.hwplb` | Prefix block selected by `hwplb`; defaults RDMA to rail-only and NET to rail-plane names. |
+| `spectrumX.swplb` | Prefix block selected by `swplb`; defaults both device types to rail-plane names. |
 
 ## Profile
 

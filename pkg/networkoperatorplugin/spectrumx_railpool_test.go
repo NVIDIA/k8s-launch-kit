@@ -42,7 +42,10 @@ func TestSpectrumXRailPoolTemplatesOmitRemovedWithBCMField(t *testing.T) {
 				},
 				CurrentNetworkNamespace: "default",
 				SpectrumX: &config.SpectrumXConfig{
-					NetdevPrefix: "eth_p%plane_id%_r%rail_id%",
+					SinglePlane: &config.SpectrumXInterfaceNamePrefixConfig{
+						NetdevPrefix: "eth_r%rail_id%",
+						RdmaPrefix:   "roce_r%rail_id%",
+					},
 				},
 				Profile: &config.Profile{
 					SpectrumX: &config.ProfileSpectrumX{

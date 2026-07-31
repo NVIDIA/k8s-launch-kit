@@ -138,8 +138,15 @@ nicConfigurationOperator:
 spectrumX:
   nicType: "1023" # "1023" for ConnectX-8, "a2dc" for BlueField-3 SuperNIC
   overlay: "none"
-  rdmaPrefix: "roce_p%plane_id%_r%rail_id%"
-  netdevPrefix: "eth_p%plane_id%_r%rail_id%"
+  singlePlane: # Used by multiplaneMode none
+    netdevPrefix: "eth_r%rail_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+  hwplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+  swplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
 
 # This reference profile is used as-is when the file is passed explicitly via
 # --user-config. A fresh `l8k discover` ignores these example values, derives

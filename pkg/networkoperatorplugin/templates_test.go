@@ -167,6 +167,112 @@ func TestMultiplaneInterfaceNaming(t *testing.T) {
 	})
 }
 
+func TestSpectrumXInterfaceNameTemplateModeDefaults(t *testing.T) {
+	templatePath := "../../profiles/spectrum-x-ra2.2/25-nicinterfacenametemplate.yaml"
+	rail0 := 0
+
+	testCases := []struct {
+		mode           string
+		planes         int
+		wantRdmaPrefix string
+		wantNetPrefix  string
+	}{
+		{
+			mode:           "hwplb",
+			planes:         2,
+			wantRdmaPrefix: "roce_r%rail_id%",
+			wantNetPrefix:  "eth_r%rail_id%_p%plane_id%",
+		},
+		{
+			mode:           "swplb",
+			planes:         2,
+			wantRdmaPrefix: "roce_r%rail_id%_p%plane_id%",
+			wantNetPrefix:  "eth_r%rail_id%_p%plane_id%",
+		},
+		{
+			mode:           "none",
+			planes:         1,
+			wantRdmaPrefix: "roce_r%rail_id%",
+			wantNetPrefix:  "eth_r%rail_id%",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.mode, func(t *testing.T) {
+			cfg := &config.LaunchKitConfig{
+				NetworkOperator: &config.NetworkOperatorConfig{
+					Namespace: "network-operator",
+				},
+				SpectrumX: &config.SpectrumXConfig{},
+				Profile: &config.Profile{
+					SpectrumX: &config.ProfileSpectrumX{
+						MultiplaneMode: tc.mode,
+						NumberOfPlanes: tc.planes,
+					},
+				},
+				ClusterConfig: []config.ClusterConfig{
+					{
+						Identifier: "machine-a",
+						PFs: []config.PFConfig{
+							{
+								DeviceID:   "1023",
+								PciAddress: "0000:03:00.0",
+								Traffic:    "east-west",
+								Rail:       &rail0,
+							},
+						},
+					},
+				},
+			}
+
+			results, err := ProcessTemplate(templatePath, cfg, "")
+			require.NoError(t, err)
+			content := results["25-nicinterfacenametemplate-machine-a.yaml"]
+			assert.Contains(t, content, `rdmaDevicePrefix: "`+tc.wantRdmaPrefix+`"`)
+			assert.Contains(t, content, `netDevicePrefix: "`+tc.wantNetPrefix+`"`)
+		})
+	}
+
+	t.Run("explicit overrides are preserved in rendered YAML", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{
+			NetworkOperator: &config.NetworkOperatorConfig{
+				Namespace: "network-operator",
+			},
+			SpectrumX: &config.SpectrumXConfig{
+				HWPLB: &config.SpectrumXInterfaceNamePrefixConfig{
+					RdmaPrefix:   "custom-rdma-r%rail_id%",
+					NetdevPrefix: "custom-net-r%rail_id%-p%plane_id%",
+				},
+			},
+			Profile: &config.Profile{
+				SpectrumX: &config.ProfileSpectrumX{
+					MultiplaneMode: "hwplb",
+					NumberOfPlanes: 2,
+				},
+			},
+			ClusterConfig: []config.ClusterConfig{
+				{
+					Identifier: "machine-a",
+					PFs: []config.PFConfig{
+						{
+							DeviceID:   "1023",
+							PciAddress: "0000:03:00.0",
+							Traffic:    "east-west",
+							Rail:       &rail0,
+						},
+					},
+				},
+			},
+		}
+
+		results, err := ProcessTemplate(templatePath, cfg, "")
+		require.NoError(t, err)
+		content := results["25-nicinterfacenametemplate-machine-a.yaml"]
+		assert.Contains(t, content, `rdmaDevicePrefix: "custom-rdma-r%rail_id%"`)
+		assert.Contains(t, content, `netDevicePrefix: "custom-net-r%rail_id%-p%plane_id%"`)
+	})
+}
+
 func TestEdgeCases(t *testing.T) {
 	replaceVarsFunc := templateFuncs["replaceVars"].(func(string, int, int, int) string)
 

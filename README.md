@@ -989,8 +989,15 @@ nicConfigurationOperator:
 spectrumX:
   nicType: "1023"
   overlay: none
-  rdmaPrefix: roce_p%plane%_r%rail%    # Spectrum-X uses its own prefixes (with %plane%)
-  netdevPrefix: eth_p%plane%_r%rail%
+  singlePlane:
+    netdevPrefix: "eth_r%rail_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+  hwplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+  swplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
 profile:
   fabric: ethernet
   deployment: sriov
@@ -1293,6 +1300,16 @@ The `nicConfigurationOperator.deployNicInterfaceNameTemplate` setting controls w
 2. **rdma_shared deployment with empty network interface names** — When the deployment type is `rdma_shared` (macvlan-rdma-shared or ipoib-rdma-shared profiles) and PFs have empty `networkInterface` fields. The `rdmaSharedDevicePlugin` uses `ifNames` selectors that require interface names, so NicInterfaceNameTemplate must be enabled to provide them. This typically happens when discovery finds multiple nodes per group and omits device names for safety.
 
 When neither condition holds, name templates are disabled and the device plugin uses PCI addresses directly, avoiding the overhead of deploying the NIC configuration operator.
+
+Spectrum-X interface prefixes default according to the selected multiplane mode:
+
+| Mode | Network device prefix | RDMA device prefix |
+| --- | --- | --- |
+| `hwplb` | `eth_r%rail_id%_p%plane_id%` | `roce_r%rail_id%` |
+| `swplb` | `eth_r%rail_id%_p%plane_id%` | `roce_r%rail_id%_p%plane_id%` |
+| `none` | `eth_r%rail_id%` | `roce_r%rail_id%` |
+
+Set the prefixes in the corresponding `spectrumX.singlePlane`, `spectrumX.hwplb`, or `spectrumX.swplb` block to override that mode. The `none` mode uses `singlePlane`.
 
 ### Custom Workload Manifest
 

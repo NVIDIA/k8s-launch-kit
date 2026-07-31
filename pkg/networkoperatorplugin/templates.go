@@ -123,6 +123,14 @@ var templateFuncs = template.FuncMap{
 	"spectrumXUseDRA": func(profile *config.Profile) bool {
 		return profile != nil && profile.SpectrumX != nil && profile.SpectrumX.UseDRA
 	},
+	"spectrumXRdmaPrefix": func(settings *config.SpectrumXConfig, multiplaneMode string) string {
+		rdmaPrefix, _ := config.SpectrumXInterfaceNamePrefixes(settings, multiplaneMode)
+		return rdmaPrefix
+	},
+	"spectrumXNetdevPrefix": func(settings *config.SpectrumXConfig, multiplaneMode string) string {
+		_, netdevPrefix := config.SpectrumXInterfaceNamePrefixes(settings, multiplaneMode)
+		return netdevPrefix
+	},
 	"spectrumXProfileConfigRequired": config.SpectrumXProfileConfigRequired,
 	"spectrumXCIDRPools": func(root any, clusterConfig *config.ClusterConfig) ([]spectrumxaddressing.CIDRPool, error) {
 		var cfg *config.LaunchKitConfig

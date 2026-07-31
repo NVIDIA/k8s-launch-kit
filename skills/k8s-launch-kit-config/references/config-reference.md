@@ -267,13 +267,20 @@ spectrumX:
   # Overlay mode for Spectrum-X fabric.
   overlay: "none"
 
-  # string | default: "roce_p%plane_id%_r%rail_id%"
-  # RDMA device naming pattern. %plane_id% and %rail_id% are replaced.
-  rdmaPrefix: "roce_p%plane_id%_r%rail_id%"
+  # Prefix block selected for multiplaneMode none.
+  singlePlane:
+    netdevPrefix: "eth_r%rail_id%"
+    rdmaPrefix: "roce_r%rail_id%"
 
-  # string | default: "eth_p%plane_id%_r%rail_id%"
-  # Network device naming pattern. %plane_id% and %rail_id% are replaced.
-  netdevPrefix: "eth_p%plane_id%_r%rail_id%"
+  # Prefix block selected for multiplaneMode hwplb.
+  hwplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%"
+
+  # Prefix block selected for multiplaneMode swplb.
+  swplb:
+    netdevPrefix: "eth_r%rail_id%_p%plane_id%"
+    rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
 
 # ============================================================================
 # Profile Selection
