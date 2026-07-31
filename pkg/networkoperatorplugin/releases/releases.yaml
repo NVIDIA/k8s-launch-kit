@@ -12,6 +12,9 @@
 #                          the operator at `nvcr.io/nvidia/cloud-native`
 #                          while components live at `nvcr.io/nvidia/mellanox`;
 #                          staging lumps both under `nvcr.io/nvstaging/mellanox`.
+#   - xPlane             — repository and version for the xPlane service,
+#                          which follows its own release cadence and registry
+#                          path instead of the generic component coordinates.
 releases:
   "26.1":
     networkOperator:
@@ -31,6 +34,9 @@ releases:
       helmRepoURL: https://helm.ngc.nvidia.com/nvidia
     docaDriver:
       version: doca3.4.1-26.04-1.1.0.0-1
+    xPlane:
+      repository: nvcr.io/nvstaging/doca
+      version: 3.4.0005
   "26.7":
     networkOperator:
       version: v26.7.0-beta.5
@@ -40,3 +46,6 @@ releases:
       helmRepoURL: https://helm.ngc.nvidia.com/nvstaging/mellanox
     docaDriver:
       version: doca3.5.0-26.07-0.4.9.0-0
+    xPlane:
+      repository: nvcr.io/nvstaging/doca
+      version: 3.4.0040

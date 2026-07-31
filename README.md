@@ -643,7 +643,7 @@ The tool resolves configuration and profile paths in order: local directory firs
 
 ### Network Operator release selection
 
-Use `--network-operator-release <MAJOR.MINOR>` (or `networkOperator.selectedRelease` in the config file) to pick a Network Operator release line by name instead of hand-editing image tags. Supported releases live in an embedded catalog ([pkg/networkoperatorplugin/releases/releases.yaml](pkg/networkoperatorplugin/releases/releases.yaml)); each entry maps a release key to image tags + repository for the operator and DOCA driver. Selecting a release populates `networkOperator.{version,componentVersion,repository}` and `docaDriver.version` from the catalog — explicit values in `l8k-config.yaml` are overridden when a release is set.
+Use `--network-operator-release <MAJOR.MINOR>` (or `networkOperator.selectedRelease` in the config file) to pick a Network Operator release line by name instead of hand-editing image tags. Supported releases live in an embedded catalog ([pkg/networkoperatorplugin/releases/releases.yaml](pkg/networkoperatorplugin/releases/releases.yaml)); each entry maps a release key to image tags and repositories for the operator, DOCA driver, and—where the release deploys it—the independently versioned xPlane service. Selecting a release populates `networkOperator.{version,componentVersion,repository}` and `docaDriver.version` from the catalog, while Spectrum-X profiles resolve `spectrumXOperator.xPlane.{repository,version}` from the same entry. Explicit values in `l8k-config.yaml` are overridden when a release is set.
 
 ```bash
 # Pick a release on the CLI
@@ -732,10 +732,13 @@ Every catalog entry is synchronized nightly from
 `Mellanox/network-operator`'s `v<MAJOR.MINOR>.x` branch. When the release
 branch for the highest catalog key has not been created yet, the synchronizer
 uses `master` and verifies that its Network Operator version still belongs to
-that release line. When values change, the workflow verifies the synchronized
-catalog, opens or refreshes its PR, and squash-merges it automatically. The
-release stage checks out that merge commit and verifies the catalog is still
-current before publishing anything. Run the same update locally with
+that release line. Network Operator, component, DOCA driver, and xPlane
+coordinates are read from the branch's `hack/release.yaml`; xPlane is optional
+for older release lines that do not deploy it. When values change, the workflow
+verifies the synchronized catalog, opens or refreshes its PR, and squash-merges
+it automatically. The release stage checks out that merge commit and verifies
+the catalog is still current before publishing anything. Run the same update
+locally with
 `GITHUB_TOKEN=<token> make sync-network-operator-releases` (authentication
 avoids GitHub's low anonymous API rate limit).
 

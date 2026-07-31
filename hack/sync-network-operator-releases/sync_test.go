@@ -84,6 +84,10 @@ type catalogReleaseValues struct {
 	DOCADriver struct {
 		Version string `yaml:"version"`
 	} `yaml:"docaDriver"`
+	XPlane struct {
+		Repository string `yaml:"repository"`
+		Version    string `yaml:"version"`
+	} `yaml:"xPlane"`
 }
 
 func TestSyncCatalogUpdatesAllReleasesAndFallsBackForLatest(t *testing.T) {
@@ -101,11 +105,13 @@ func TestSyncCatalogUpdatesAllReleasesAndFallsBackForLatest(t *testing.T) {
 				stableComponentRepository,
 				"doca3.3.0-26.01-1.0.0.0-6",
 			),
-			"master": upstreamReleaseYAML(
+			"master": upstreamReleaseYAMLWithXPlane(
 				"v26.7.0-beta.5",
 				stagingOperatorRepository,
 				stagingComponentRepository,
 				"doca3.5.0-26.07-0.4.3.0-0",
+				"nvcr.io/nvstaging/doca",
+				"3.4.0035",
 			),
 		},
 		requests: nil,
@@ -149,6 +155,10 @@ func TestSyncCatalogUpdatesAllReleasesAndFallsBackForLatest(t *testing.T) {
 	assert.Equal(t, stagingOperatorRepository, latest.NetworkOperator.OperatorRepository)
 	assert.Equal(t, stagingHelmRepoURL, latest.NetworkOperator.HelmRepoURL)
 	assert.Equal(t, "doca3.5.0-26.07-0.4.3.0-0", latest.DOCADriver.Version)
+	assert.Equal(t, "nvcr.io/nvstaging/doca", latest.XPlane.Repository)
+	assert.Equal(t, "3.4.0035", latest.XPlane.Version)
+	assert.Equal(t, "nvcr.io/nvstaging/doca", result.Updates[1].XPlaneRepository)
+	assert.Equal(t, "3.4.0035", result.Updates[1].XPlaneVersion)
 
 	beforeSecondRun := append([]byte(nil), updated...)
 	secondResult, err := syncCatalog(context.Background(), syncOptions{
@@ -204,11 +214,13 @@ func TestSyncCatalogRejectsMismatchedMasterWithoutWriting(t *testing.T) {
 				stableComponentRepository,
 				"doca3.3.0-26.01-1.0.0.0-6",
 			),
-			"master": upstreamReleaseYAML(
+			"master": upstreamReleaseYAMLWithXPlane(
 				"v26.10.0-beta.1",
 				stagingOperatorRepository,
 				stagingComponentRepository,
 				"doca3.6.0-26.10-0.1.0.0-0",
+				"nvcr.io/nvstaging/doca",
+				"3.5.0001",
 			),
 		},
 		requests: nil,
@@ -275,6 +287,22 @@ func TestDesiredFromUpstreamRejectsInvalidArtifactMetadata(t *testing.T) {
 	}
 }
 
+func TestDesiredFromUpstreamRejectsPartialXPlaneMetadata(t *testing.T) {
+	upstream := upstreamReleaseYAML(
+		"v26.4.1",
+		stableOperatorRepository,
+		stableComponentRepository,
+		"doca3.4.1-26.04-1.1.0.0-1",
+	) + `
+xPlaneService:
+  repository: nvcr.io/nvstaging/doca
+`
+
+	_, err := desiredFromUpstream("26.4", []byte(upstream))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "xPlaneService.version must not be empty")
+}
+
 func TestCatalogReleasesRequiresMajorMinorKeys(t *testing.T) {
 	_, err := catalogReleases([]byte(`
 releases:
@@ -336,6 +364,9 @@ releases:
       helmRepoURL: https://helm.ngc.nvidia.com/nvstaging/mellanox
     docaDriver:
       version: doca3.5.0-26.07-0.4.2.0-0
+    xPlane:
+      repository: nvcr.io/nvstaging/doca
+      version: 3.4.0034
 `
 }
 
@@ -362,5 +393,28 @@ Mofed:
 		version,
 		componentRepository,
 		docaVersion,
+	)
+}
+
+func upstreamReleaseYAMLWithXPlane(
+	version string,
+	operatorRepository string,
+	componentRepository string,
+	docaVersion string,
+	xPlaneRepository string,
+	xPlaneVersion string,
+) string {
+	return upstreamReleaseYAML(
+		version,
+		operatorRepository,
+		componentRepository,
+		docaVersion,
+	) + fmt.Sprintf(`
+xPlaneService:
+  repository: %s
+  version: %s
+`,
+		xPlaneRepository,
+		xPlaneVersion,
 	)
 }

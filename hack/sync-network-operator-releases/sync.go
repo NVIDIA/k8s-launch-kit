@@ -65,12 +65,15 @@ type releaseUpdate struct {
 	Ref                    string
 	NetworkOperatorVersion string
 	DOCADriverVersion      string
+	XPlaneRepository       string
+	XPlaneVersion          string
 }
 
 type upstreamReleaseFile struct {
 	NetworkOperator              upstreamImage `yaml:"NetworkOperator"`
 	NetworkOperatorInitContainer upstreamImage `yaml:"NetworkOperatorInitContainer"`
 	Mofed                        upstreamImage `yaml:"Mofed"`
+	XPlaneService                upstreamImage `yaml:"xPlaneService"`
 }
 
 type upstreamImage struct {
@@ -85,6 +88,8 @@ type desiredRelease struct {
 	OperatorRepository     string
 	HelmRepoURL            string
 	DOCADriverVersion      string
+	XPlaneRepository       string
+	XPlaneVersion          string
 }
 
 type desiredReleaseWithSource struct {
@@ -205,6 +210,8 @@ func syncCatalog(ctx context.Context, opts syncOptions) (syncResult, error) {
 			Ref:                    item.Ref,
 			NetworkOperatorVersion: item.Desired.NetworkOperatorVersion,
 			DOCADriverVersion:      item.Desired.DOCADriverVersion,
+			XPlaneRepository:       item.Desired.XPlaneRepository,
+			XPlaneVersion:          item.Desired.XPlaneVersion,
 		})
 	}
 	return result, nil
@@ -467,6 +474,16 @@ func desiredFromUpstream(release string, upstreamYAML []byte) (desiredRelease, e
 			return desiredRelease{}, fmt.Errorf("%s must not be empty", field)
 		}
 	}
+	xPlaneConfigured := upstream.XPlaneService.Repository != "" ||
+		upstream.XPlaneService.Version != ""
+	if xPlaneConfigured {
+		if upstream.XPlaneService.Repository == "" {
+			return desiredRelease{}, errors.New("xPlaneService.repository must not be empty")
+		}
+		if upstream.XPlaneService.Version == "" {
+			return desiredRelease{}, errors.New("xPlaneService.version must not be empty")
+		}
+	}
 
 	operatorVersion, err := semver.NewVersion(upstream.NetworkOperator.Version)
 	if err != nil {
@@ -524,6 +541,8 @@ func desiredFromUpstream(release string, upstreamYAML []byte) (desiredRelease, e
 		OperatorRepository:     upstream.NetworkOperator.Repository,
 		HelmRepoURL:            destination.HelmRepoURL,
 		DOCADriverVersion:      upstream.Mofed.Version,
+		XPlaneRepository:       upstream.XPlaneService.Repository,
+		XPlaneVersion:          upstream.XPlaneService.Version,
 	}, nil
 }
 
@@ -578,18 +597,37 @@ func applyDesiredRelease(
 	if err != nil {
 		return false, fmt.Errorf("catalog release %s: %w", release, err)
 	}
+	xPlaneNode, xPlaneErr := mappingValue(releaseNode, "xPlane")
+	hasDesiredXPlane := desired.XPlaneRepository != "" || desired.XPlaneVersion != ""
+	if hasDesiredXPlane && xPlaneErr != nil {
+		return false, fmt.Errorf("catalog release %s: %w", release, xPlaneErr)
+	}
+	if !hasDesiredXPlane && xPlaneErr == nil {
+		return false, fmt.Errorf(
+			"catalog release %s defines xPlane but upstream xPlaneService is missing",
+			release,
+		)
+	}
 
-	updates := []struct {
+	type yamlUpdate struct {
 		parent *yaml.Node
 		key    string
 		value  string
-	}{
+	}
+	updates := []yamlUpdate{
 		{networkOperatorNode, "version", desired.NetworkOperatorVersion},
 		{networkOperatorNode, "componentVersion", desired.ComponentVersion},
 		{networkOperatorNode, "repository", desired.ComponentRepository},
 		{networkOperatorNode, "operatorRepository", desired.OperatorRepository},
 		{networkOperatorNode, "helmRepoURL", desired.HelmRepoURL},
 		{docaDriverNode, "version", desired.DOCADriverVersion},
+	}
+	if hasDesiredXPlane {
+		updates = append(
+			updates,
+			yamlUpdate{xPlaneNode, "repository", desired.XPlaneRepository},
+			yamlUpdate{xPlaneNode, "version", desired.XPlaneVersion},
+		)
 	}
 
 	changed := false
