@@ -16,6 +16,11 @@ Each `clusterConfig` entry is a source group with its own:
 - East-west PF inventory, rail assignments, and capabilities.
 - Storage and third-party RDMA kernel modules.
 
+Fresh discovery derives `identifier` from the machine/GPU identity and bounds
+it to 40 bytes with a deterministic hash suffix when the natural value is
+longer. Use the persisted identifier shown in `cluster-config.yaml` with
+`--groups`.
+
 Inspect the available groups before filtering:
 
 ```bash

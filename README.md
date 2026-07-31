@@ -1280,6 +1280,12 @@ During discovery, each node group's `machineType` and `gpuType` are populated fr
 
 Values are sanitized to match the GPU operator label format (spaces replaced with dashes). If either probe fails (e.g., `nvidia-smi` not installed, DMI not readable), the corresponding field is left empty and discovery continues without error.
 
+When both values are available, discovery derives the group `identifier` from
+`<machineType>-<gpuType>`. Generated identifiers are limited to 40 bytes; long
+values keep a readable prefix plus an 8-character deterministic hash. This
+keeps resource names and label values that append the identifier below their
+Kubernetes size limits without making similar hardware identities collide.
+
 Example of discovered hardware types in the config:
 ```yaml
 clusterConfig:

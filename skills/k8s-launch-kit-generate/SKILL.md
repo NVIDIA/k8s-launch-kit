@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.2
+version: 1.2.3
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -153,6 +153,10 @@ win when a one-off override is needed.
 - RA2.2 and RA2.3 v1alpha2 `SpectrumXRailPoolConfig` output intentionally
   omits the removed `spec.withBCM` field; current CRDs reject it during strict
   decoding.
+- Group identifiers produced by discovery are bounded to 40 bytes with a
+  deterministic hash suffix. Use the exact persisted identifier from
+  `cluster-config.yaml` with `--groups`; do not reconstruct it from long
+  `machineType` and `gpuType` strings.
 - Use `--groups <a,b,...>` (case-sensitive identifier list) or `--gpu-type <X>` (case-insensitive) to scope a generate to a subset of source groups in heterogeneous clusters. Mutually exclusive. Empty match is a validation error. Strict-subset filters split per-source rendering: NodePolicies emit one CR per source (each with its own machine-label nodeSelector but a shared bucket-level resourceName); IPPool/example DaemonSet emit one CR per bucket with an `In` list of source machine labels.
 
 > [!CAUTION]

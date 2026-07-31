@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func TestSpectrumXRailPoolTemplatesOmitRemovedWithBCMField(t *testing.T) {
+func TestSpectrumXRailPoolTemplatesStaySchemaCompatibleAndBounded(t *testing.T) {
 	tests := []struct {
 		name       string
 		profileDir string
@@ -36,6 +36,12 @@ func TestSpectrumXRailPoolTemplatesOmitRemovedWithBCMField(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			identifier := config.SanitizeIdentifier(config.MachineLabelValue(
+				"HPE-ProLiant-Compute-DL380-Gen12",
+				"NVIDIA-AX800-Converged-Accelerator",
+			))
+			require.LessOrEqual(t, len(identifier), config.MaxGeneratedIdentifierLength)
+
 			cfg := &config.LaunchKitConfig{
 				NetworkOperator: &config.NetworkOperatorConfig{
 					Namespace: "network-operator",
@@ -55,8 +61,8 @@ func TestSpectrumXRailPoolTemplatesOmitRemovedWithBCMField(t *testing.T) {
 				},
 				ClusterConfig: []config.ClusterConfig{
 					{
-						Identifier:       "test",
-						MergedIdentifier: "test",
+						Identifier:       identifier,
+						MergedIdentifier: identifier,
 						PFs: []config.PFConfig{
 							{
 								PciAddress: "0000:19:00.0",
@@ -76,13 +82,19 @@ func TestSpectrumXRailPoolTemplatesOmitRemovedWithBCMField(t *testing.T) {
 
 			rendered, err := ProcessTemplate(templatePath, cfg, "")
 			require.NoError(t, err)
-			manifest := rendered["80-spectrumxrailpoolconfig-test.yaml"]
+			manifest := rendered["80-spectrumxrailpoolconfig-"+identifier+".yaml"]
 			require.NotEmpty(t, manifest)
 
 			var object struct {
+				Metadata struct {
+					Name string `yaml:"name"`
+				} `yaml:"metadata"`
 				Spec map[string]any `yaml:"spec"`
 			}
 			require.NoError(t, yaml.Unmarshal([]byte(manifest), &object))
+			require.Equal(t, "rails-"+identifier, object.Metadata.Name)
+			require.Less(t, len(object.Metadata.Name), 60,
+				"generated values that append the group identifier must stay below 60 bytes")
 			require.NotNil(t, object.Spec)
 			require.NotContains(t, object.Spec, "withBCM",
 				"v1alpha2 SpectrumXRailPoolConfig rejects the removed spec.withBCM field")
