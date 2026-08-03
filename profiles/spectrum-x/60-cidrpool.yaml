@@ -10,11 +10,13 @@ metadata:
   namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
   cidr: {{$pool.CIDR}}
-  gatewayIndex: 0
-  perNodeNetworkPrefix: 31
+  gatewayIndex: {{$pool.GatewayIndex}}
+  perNodeNetworkPrefix: {{$pool.PerNodeNetworkPrefix}}
   perNodeExclusions:
-    - startIndex: 1
-      endIndex: 1
+  {{- range $exclusion := $pool.PerNodeExclusions }}
+    - startIndex: {{$exclusion.StartIndex}}
+      endIndex: {{$exclusion.EndIndex}}
+  {{- end }}
   routes:
   {{- range $route := $pool.Routes }}
     - dst: {{$route}}

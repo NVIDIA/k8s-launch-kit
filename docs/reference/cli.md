@@ -71,7 +71,7 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 | `--multiplane-mode` | `none`, `swplb`, or `hwplb`. |
 | `--number-of-planes` | Plane count for Spectrum-X. |
 | `--topology-scheme` | `2-tier` or `3-tier` for topology-driven CIDRPool allocation. |
-| `--ip-version` | `ipv4` or `ipv6`. CIDRPool rendering currently supports IPv4. |
+| `--ip-version` | `ipv4` for per-node `/31` allocation or `ipv6` for per-node `/64` allocation. |
 | `--topology-file` | Path to spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from its structure. |
 | `--spectrum-x-config` | Full ConfigMap YAML or raw `data.profile` YAML. Required for RA2.3. |
 | `--spectrum-x-configmap-name` | ConfigMap name when `--spectrum-x-config` is raw profile YAML. |

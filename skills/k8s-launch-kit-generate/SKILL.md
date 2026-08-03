@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.4
+version: 1.2.5
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -35,7 +35,7 @@ to that source file; embedded `--for` generation does not write a config.
 | `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from east-west PF deviceID: CX7 / BF3 SuperNIC → `none`, CX8 → `swplb`, CX9 → `hwplb`. Skipped+warned when groups have mixed deviceIDs. |
 | `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4` | Auto-defaults from deviceID: CX7 / BF3 → 1, CX8 → 2, CX9 → 4. |
 | `--topology-scheme` | Required with `--spectrum-x` | `2-tier`, `3-tier` | Selects the Spectrum-X topology addressing scheme. |
-| `--ip-version` | Required with `--spectrum-x` | `ipv4`, `ipv6` | Selects the address family. CIDRPool rendering currently supports IPv4 only. |
+| `--ip-version` | Required with `--spectrum-x` | `ipv4`, `ipv6` | Selects per-node IPv4 `/31` or IPv6 `/64` CIDRPool allocation. |
 | `--topology-file` | Required with `--spectrum-x` | path | spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from the JSON structure. |
 | `--multirail` | Auto-defaulted | — | Auto-defaults to `true`. Explicit `multirail: false` in YAML and `--multirail=false` on the CLI are both preserved. |
 | `--save-deployment-files` | Yes | — | Output directory for generated YAMLs |
@@ -57,7 +57,7 @@ l8k generate --user-config cluster-config.yaml \
 # Spectrum-X with hardware plane load balancing
 l8k generate --user-config cluster-config.yaml \
   --spectrum-x RA2.2 --multiplane-mode hwplb --number-of-planes 4 \
-  --topology-scheme 2-tier --ip-version ipv4 \
+  --topology-scheme 2-tier --ip-version ipv6 \
   --topology-file ./topology.json \
   --save-deployment-files ./output
 

@@ -735,14 +735,16 @@ Pass the topology scheme and file on the CLI, or set the same values under
 l8k generate --user-config cluster-config.yaml \
   --spectrum-x RA2.3 \
   --topology-scheme 2-tier \
-  --ip-version ipv4 \
+  --ip-version ipv6 \
   --topology-file ./topology.json
 ```
 
 `profile.spectrumX.hostFirstOctet` is config-only. When omitted, l8k uses `172`
-for 2-tier IPv4 allocation and `10` for 3-tier IPv4 allocation. `ipVersion:
-ipv6` is accepted in the config and CLI, but Spectrum-X CIDRPool rendering
-currently supports IPv4 static allocations only.
+for 2-tier IPv4 allocation and `10` for 3-tier IPv4 allocation. It has no effect
+on IPv6 allocation. IPv6 uses the standard `fd02:00PP:RRDD:SSHH::peer` layout,
+with a `/64` per node, host candidate `::1`, leaf gateway `::2`, and a `/40`
+CIDRPool per rail or rail-plane. Generated IPv6 routes use `/32` for a single
+plane and `/24` for dual- or quad-plane deployments.
 
 CIDRPool allocation requires exact, case-sensitive equality between selected
 `clusterConfig.workerNodes` values and topology host endpoint `node` values.

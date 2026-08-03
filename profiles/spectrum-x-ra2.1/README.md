@@ -61,10 +61,11 @@ Same set as the RA2.2 profile: `none`, `swplb`, `hwplb`.
 | `80-spectrumxrailpoolconfig.yaml`        | SpectrumXRailPoolConfig (v1alpha1) | matches 50-                       |
 | `90-example-daemonset.yaml`              | DaemonSet (example workload) | 1 per group                             |
 
-`60-cidrpool.yaml` emits `TODO_*` placeholders for `cidr`, `routes`, and
-`staticAllocations` — the cluster operator must fill these in before
-applying. CIDR ranges come from the switch fabric configuration
-(`nv show interface`).
+`60-cidrpool.yaml` derives complete IPv4 or IPv6 CIDRPools from the topology
+file. IPv4 uses a `/31` per node with gateway index `0`. IPv6 uses the standard
+Spectrum-X `/64` per-node layout with leaf gateway `::2`, gateway index `2`,
+and a `/40` pool per rail or rail-plane. IPv6 routes are `/32` for one plane
+and `/24` for two or four planes.
 
 ## NCP differences vs the RA2.2 profile
 
@@ -101,6 +102,8 @@ l8k generate \
   --user-config <cluster-config.yaml> \
   --spectrum-x RA2.1 \
   --multiplane-mode hwplb --number-of-planes 2 \
+  --topology-scheme 2-tier --ip-version ipv6 \
+  --topology-file ./topology.json \
   --network-operator-release 26.1 \
   --save-deployment-files ./deployment
 ```

@@ -245,7 +245,7 @@ func TestProfileManifestsAreValidMultiDocYAML(t *testing.T) {
 	}
 }
 
-func TestSpectrumXCIDRPoolSeparators(t *testing.T) {
+func TestSpectrumXIPv6CIDRPoolRendering(t *testing.T) {
 	profilesUnderTest := []struct {
 		dir            string
 		spcxVersion    string
@@ -287,6 +287,7 @@ func TestSpectrumXCIDRPoolSeparators(t *testing.T) {
 					MultiplaneMode: profile.multiplaneMode,
 					NumberOfPlanes: profile.numberOfPlanes,
 					TopologyType:   config.SpectrumXTopology2Tier,
+					IPVersion:      config.SpectrumXIPVersionIPv6,
 					TopologyFile:   writeSpectrumXTopology(t, cfg, profile.numberOfPlanes),
 				},
 			}
@@ -309,6 +310,40 @@ func TestSpectrumXCIDRPoolSeparators(t *testing.T) {
 				"%s must have one YAML document per CIDRPool kind", name)
 			for _, doc := range docs {
 				require.Equal(t, "CIDRPool", doc["kind"])
+				spec, ok := doc["spec"].(map[string]any)
+				require.True(t, ok, "CIDRPool has no spec map")
+				require.EqualValues(t, 2, spec["gatewayIndex"])
+				require.EqualValues(t, 64, spec["perNodeNetworkPrefix"])
+				require.Contains(t, spec["cidr"], "/40")
+
+				exclusions, ok := spec["perNodeExclusions"].([]any)
+				require.True(t, ok)
+				require.Len(t, exclusions, 1)
+				exclusion, ok := exclusions[0].(map[string]any)
+				require.True(t, ok)
+				require.EqualValues(t, 2, exclusion["startIndex"])
+				require.EqualValues(t, 2, exclusion["endIndex"])
+
+				routes, ok := spec["routes"].([]any)
+				require.True(t, ok)
+				require.Len(t, routes, 1)
+				route, ok := routes[0].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, "fd02::/24", route["dst"])
+
+				allocations, ok := spec["staticAllocations"].([]any)
+				require.True(t, ok)
+				require.NotEmpty(t, allocations)
+				for _, rawAllocation := range allocations {
+					allocation, ok := rawAllocation.(map[string]any)
+					require.True(t, ok)
+					prefix, ok := allocation["prefix"].(string)
+					require.True(t, ok)
+					require.True(t, strings.HasSuffix(prefix, "/64"))
+					gateway, ok := allocation["gateway"].(string)
+					require.True(t, ok)
+					require.True(t, strings.HasSuffix(gateway, "::2"))
+				}
 			}
 		})
 	}

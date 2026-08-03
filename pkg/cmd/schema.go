@@ -160,7 +160,7 @@ var schemaCmd = &cobra.Command{
 				"--ip-version": {
 					Type:        "string",
 					Default:     config.SpectrumXIPVersionIPv4,
-					Description: "Spectrum-X host-to-leaf IP version for guide-based allocation: ipv4 or ipv6. IPv6 is accepted in config but CIDRPool rendering currently supports IPv4 only.",
+					Description: "Spectrum-X host-to-leaf IP version for guide-based CIDRPool allocation: ipv4 or ipv6.",
 				},
 				"--topology-file": {
 					Type:        "string",
