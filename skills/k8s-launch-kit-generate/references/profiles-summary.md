@@ -1,6 +1,6 @@
 # Profiles Summary
 
-Summary of all 7 l8k profile definitions from `profiles/*/profile.yaml`.
+Summary of all 8 l8k profile definitions from `profiles/*/profile.yaml`.
 
 Every profile renders the top-level `maintenance` settings into Helm values.
 For Network Operator 26.1+, those values enable Maintenance Operator, deploy a
@@ -81,21 +81,20 @@ direct-drain controllers.
   - `40-sriovibnetwork.yaml` -- SriovIBNetwork attachment definition
   - `50-pod.yaml`
 
-## 6. Spectrum-X Multi-Rail (RA2.2, Network Operator 26.4+)
+## 6. Spectrum-X Multi-Rail (RA2.3, Network Operator 26.7+)
 
 - **Directory**: `profiles/spectrum-x/`
 - **Plugin**: network-operator
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
-  `spectrumX.spcxVersion=RA2.2`,
+  `spectrumX.spcxVersion=RA2.3`,
   `spectrumX.multiplaneMode` in `[swplb, hwplb, none]`,
-  `minNetworkOperatorRelease=26.4`
+  `minNetworkOperatorRelease=26.7`
 - **Node Capabilities**: `sriov: true`, `rdma: true`
-- **Description**: Unified Spectrum-X profile covering all three multiplane modes.
-  Emits a single `SpectrumXRailPoolConfig` (`v1alpha2`) that replaces the
-  legacy SriovNetworkPoolConfig + SriovNetworkNodePolicy + OVSNetwork trio.
-  In `swplb` the `railTopology[]` splits each rail into per-plane entries; in
-  other modes one entry per rail groups all planes. `CIDRPool` manifests are
-  generated with IP-address placeholders for the operator to fill in.
+- **Description**: Unified Spectrum-X profile covering all three multiplane
+  modes. It deploys the Spectrum-X profile through a ConfigMap and emits one
+  `SpectrumXRailPoolConfig` (`v1alpha2`). In `swplb`, `railTopology[]` splits
+  each rail into per-plane entries; in other modes one entry per rail groups
+  all planes.
 - **Templates**:
   - `10-nicclusterpolicy.yaml` -- NicClusterPolicy (with `nicFirmwareStorage`
     and `spectrumXOperator.xPlane`)
@@ -103,15 +102,39 @@ direct-drain controllers.
     inner `railPciAddresses` list groups all planes of one rail. Applied
     **before** the NIC config template so firmware settings reference the
     renamed PFs.
-  - `30-nicconfigurationtemplate.yaml` -- Spectrum-X firmware settings (RA2.2)
+  - `28-spectrumxprofile-configmap.yaml` -- ConfigMap-backed RA2.3 profile
+  - `30-nicconfigurationtemplate.yaml` -- Spectrum-X firmware settings (RA2.3)
   - `60-cidrpool.yaml` -- One CIDRPool per rail (non-swplb) or per rail-plane
-    (swplb), with IP placeholders
+    (swplb), with topology-derived IPv4 or IPv6 static allocations
   - `80-spectrumxrailpoolconfig.yaml` -- Single SpectrumXRailPoolConfig with
     `railTopology[]`; omits the removed `spec.withBCM` field because current
     v1alpha2 strict decoding rejects it
+  - `85-resourceclaimtemplate.yaml` -- Optional DRA workload claims
   - `90-example-daemonset.yaml` -- Example workload
 
-## 7. Spectrum-X Multi-Rail (RA2.1, Network Operator 26.1)
+## 7. Spectrum-X Multi-Rail (RA2.2, Network Operator 26.4)
+
+- **Directory**: `profiles/spectrum-x-ra2.2/`
+- **Plugin**: network-operator
+- **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
+  `spectrumX.spcxVersion=RA2.2`,
+  `spectrumX.multiplaneMode` in `[swplb, hwplb, none]`,
+  `minNetworkOperatorRelease=26.4`, `maxNetworkOperatorRelease=26.4`
+- **Node Capabilities**: `sriov: true`, `rdma: true`
+- **Description**: RA2.2 variant of the consolidated v1alpha2 profile. In
+  `swplb`, `railTopology[]` splits each rail into per-plane entries; in other
+  modes one entry per rail groups all planes.
+- **Templates**:
+  - `10-nicclusterpolicy.yaml` -- NicClusterPolicy with Spectrum-X Operator
+  - `25-nicinterfacenametemplate.yaml` -- Multi-rail interface naming
+  - `30-nicconfigurationtemplate.yaml` -- Spectrum-X firmware settings (RA2.2)
+  - `60-cidrpool.yaml` -- One CIDRPool per rail (non-swplb) or per rail-plane
+    (swplb), with topology-derived IPv4 or IPv6 static allocations
+  - `80-spectrumxrailpoolconfig.yaml` -- Single v1alpha2 rail topology resource
+  - `85-resourceclaimtemplate.yaml` -- Optional DRA workload claims
+  - `90-example-daemonset.yaml` -- Example workload
+
+## 8. Spectrum-X Multi-Rail (RA2.1, Network Operator 26.1)
 
 - **Directory**: `profiles/spectrum-x-ra2.1/`
 - **Plugin**: network-operator
@@ -150,7 +173,7 @@ direct-drain controllers.
     swplb) SriovNetworkNodePolicy with bridge config
   - `55-ovsnetwork.yaml` -- Matching OVSNetwork with rdma+rail meta-plugins
   - `60-cidrpool.yaml` -- One CIDRPool per rail (or per rail-plane in
-    swplb), with IP placeholders
+    swplb), with topology-derived IPv4 or IPv6 static allocations
   - `80-spectrumxrailpoolconfig.yaml` -- v1alpha1 glue resource referencing
     the SR-IOV node policy and CIDR pool
   - `90-example-daemonset.yaml` -- Example workload

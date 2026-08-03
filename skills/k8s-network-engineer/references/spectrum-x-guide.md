@@ -112,12 +112,19 @@ ovs-network-plane-1-rail-0
 
 Each rail (or rail-plane combination for swplb) gets its own CIDRPool:
 
-- **perNodeNetworkPrefix**: Typically `31` (point-to-point /31 subnets)
-- **gatewayIndex**: `0` (first address in subnet is the gateway)
-- **exclusions**: Index `1` is typically excluded
+- **IPv4**: Per-node `/31`, gateway index `0`, exclusion index `1`
+- **IPv6**: Per-node `/64`, leaf gateway `::2`, gateway index and exclusion
+  index `2`, and a `/40` pool per rail or rail-plane
+- **IPv6 routes**: `/32` for a single plane; `/24` for dual- or quad-plane
+  deployments
 - **Size limits**: Each CIDRPool CRD has a 1.5 MB etcd limit
   - `kubectl apply`: ~6,424 nodes per pool
   - `kubectl apply --server-side`: ~10,105 nodes per pool (recommended)
+
+IPv6 uses `fd02:00PP:RRDD:SSHH::peer/64`, where the byte-sized fields encode
+plane, rail, pod, SU, and host. The host candidate is `::1` and the leaf is
+`::2`. `swplb` encodes the plane and creates per-rail-plane pools; `none` and
+`hwplb` use address plane zero and create per-rail pools.
 
 ## Generated CRDs
 

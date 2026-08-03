@@ -98,6 +98,9 @@ func TestBuildCIDRPools2TierSWPLB(t *testing.T) {
 	require.Len(t, pools, 4)
 	require.Equal(t, "rail-0-plane-0-gpu-model", pools[0].Name)
 	require.Equal(t, "172.16.0.0/18", pools[0].CIDR)
+	require.Equal(t, 0, pools[0].GatewayIndex)
+	require.Equal(t, 31, pools[0].PerNodeNetworkPrefix)
+	require.Equal(t, []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}}, pools[0].PerNodeExclusions)
 	require.Equal(t, []string{"172.16.0.0/18", "172.16.0.0/14"}, pools[0].Routes)
 	require.Equal(t, []StaticAllocation{
 		{Gateway: "172.16.0.1", NodeName: "compute-a", Prefix: "172.16.0.0/31"},
@@ -137,8 +140,11 @@ func TestBuildCIDRPools3Tier(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, []CIDRPool{{
-		Name: "rail-0",
-		CIDR: "10.0.0.0/13",
+		Name:                 "rail-0",
+		CIDR:                 "10.0.0.0/13",
+		GatewayIndex:         0,
+		PerNodeNetworkPrefix: 31,
+		PerNodeExclusions:    []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}},
 		Routes: []string{
 			"10.0.0.0/13",
 			"10.0.0.0/10",
@@ -239,9 +245,12 @@ func TestBuildCIDRPoolsFromAIR3Tier(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, []CIDRPool{{
-		Name:   "rail-1",
-		CIDR:   "10.8.0.0/13",
-		Routes: []string{"10.8.0.0/13", "10.0.0.0/10"},
+		Name:                 "rail-1",
+		CIDR:                 "10.8.0.0/13",
+		GatewayIndex:         0,
+		PerNodeNetworkPrefix: 31,
+		PerNodeExclusions:    []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}},
+		Routes:               []string{"10.8.0.0/13", "10.0.0.0/10"},
 		StaticAllocations: []StaticAllocation{{
 			Gateway:  "10.8.66.7",
 			NodeName: "worker-pod02-su03-h04",
@@ -250,17 +259,167 @@ func TestBuildCIDRPoolsFromAIR3Tier(t *testing.T) {
 	}}, pools)
 }
 
-func TestBuildCIDRPoolsRejectsIPv6UntilRenderable(t *testing.T) {
+func TestBuildCIDRPoolsIPv6TwoTierSWPLB(t *testing.T) {
+	topologyPath := writeTopology(t, `{
+  "nodes": [
+    {"name": "compute-a", "role": "host", "type": "default"},
+    {"name": "compute-b", "role": "host", "type": "default"},
+    {"name": "leaf-a", "role": "leaf", "type": "cumulus"}
+  ],
+  "links": [
+    [
+      {"node": "leaf-a", "interface": "swp1s0", "attributes": {"role": "leaf", "plane": 1}},
+      {"node": "compute-a", "interface": "eth_p1_r1", "attributes": {"role": "host", "rail": 1, "pod": 0, "su": 3}}
+    ],
+    [
+      {"node": "leaf-a", "interface": "swp2s0", "attributes": {"role": "leaf", "plane": 1}},
+      {"node": "compute-b", "interface": "eth_p1_r1", "attributes": {"role": "host", "rail": 1, "pod": 0, "su": 3}}
+    ]
+  ]
+}`)
 	cfg := &config.LaunchKitConfig{
 		Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
-			Enable:       true,
-			TopologyType: config.SpectrumXTopology2Tier,
-			IPVersion:    config.SpectrumXIPVersionIPv6,
-			TopologyFile: "topology.json",
+			Enable:         true,
+			TopologyType:   config.SpectrumXTopology2Tier,
+			IPVersion:      config.SpectrumXIPVersionIPv6,
+			TopologyFile:   topologyPath,
+			MultiplaneMode: "swplb",
+			NumberOfPlanes: 2,
 		}},
 	}
-	_, err := BuildCIDRPools(cfg, config.ClusterConfig{})
-	require.ErrorContains(t, err, "currently supports ipVersion=ipv4 only")
+	pools, err := BuildCIDRPools(cfg, config.ClusterConfig{WorkerNodes: []string{"compute-a", "compute-b"}})
+	require.NoError(t, err)
+	require.Equal(t, []CIDRPool{{
+		Name:                 "rail-1-plane-1",
+		CIDR:                 "fd02:1:100::/40",
+		GatewayIndex:         2,
+		PerNodeNetworkPrefix: 64,
+		PerNodeExclusions:    []PerNodeExclusion{{StartIndex: 2, EndIndex: 2}},
+		Routes:               []string{"fd02::/24"},
+		StaticAllocations: []StaticAllocation{
+			{Gateway: "fd02:1:100:300::2", NodeName: "compute-a", Prefix: "fd02:1:100:300::/64"},
+			{Gateway: "fd02:1:100:301::2", NodeName: "compute-b", Prefix: "fd02:1:100:301::/64"},
+		},
+	}}, pools)
+}
+
+func TestBuildCIDRPoolsIPv6ThreeTierHWPLB(t *testing.T) {
+	topologyPath := writeTopology(t, `{
+  "nodes": [
+    {"name": "compute-a", "role": "host", "type": "default"},
+    {"name": "leaf-a", "role": "leaf", "type": "cumulus"}
+  ],
+  "links": [[
+    {"node": "leaf-a", "interface": "swp1s0", "attributes": {"role": "leaf", "plane": 3}},
+    {"node": "compute-a", "interface": "eth_p3_r2", "attributes": {"role": "host", "rail": 2, "pod": 4, "su": 5}}
+  ]]
+}`)
+	cfg := &config.LaunchKitConfig{
+		Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+			Enable:         true,
+			TopologyType:   config.SpectrumXTopology3Tier,
+			IPVersion:      config.SpectrumXIPVersionIPv6,
+			TopologyFile:   topologyPath,
+			MultiplaneMode: "hwplb",
+			NumberOfPlanes: 4,
+		}},
+	}
+	pools, err := BuildCIDRPools(cfg, config.ClusterConfig{WorkerNodes: []string{"compute-a"}})
+	require.NoError(t, err)
+	require.Equal(t, []CIDRPool{{
+		Name:                 "rail-2",
+		CIDR:                 "fd02:0:200::/40",
+		GatewayIndex:         2,
+		PerNodeNetworkPrefix: 64,
+		PerNodeExclusions:    []PerNodeExclusion{{StartIndex: 2, EndIndex: 2}},
+		Routes:               []string{"fd02::/24"},
+		StaticAllocations: []StaticAllocation{{
+			Gateway:  "fd02:0:204:500::2",
+			NodeName: "compute-a",
+			Prefix:   "fd02:0:204:500::/64",
+		}},
+	}}, pools)
+}
+
+func TestBuildCIDRPoolsIPv6SinglePlaneRoute(t *testing.T) {
+	topologyPath := writeSingleLinkTopology(t, "compute-a")
+	cfg := spectrumXTestConfig(topologyPath, "none")
+	cfg.Profile.SpectrumX.IPVersion = config.SpectrumXIPVersionIPv6
+	cfg.Profile.SpectrumX.NumberOfPlanes = 1
+
+	pools, err := BuildCIDRPools(cfg, config.ClusterConfig{WorkerNodes: []string{"compute-a"}})
+	require.NoError(t, err)
+	require.Len(t, pools, 1)
+	require.Equal(t, "fd02::/40", pools[0].CIDR)
+	require.Equal(t, []string{"fd02::/32"}, pools[0].Routes)
+}
+
+func TestBuildCIDRPoolsFromAIRIPv6(t *testing.T) {
+	tests := []struct {
+		name         string
+		mode         string
+		wantPools    int
+		wantLastCIDR string
+	}{
+		{name: "software plane load balancing", mode: "swplb", wantPools: 4, wantLastCIDR: "fd02:3::/40"},
+		{name: "hardware plane load balancing", mode: "hwplb", wantPools: 1, wantLastCIDR: "fd02::/40"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.LaunchKitConfig{
+				Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+					Enable:         true,
+					TopologyType:   config.SpectrumXTopology2Tier,
+					IPVersion:      config.SpectrumXIPVersionIPv6,
+					TopologyFile:   filepath.Join("testdata", "air-simple-quadplane.json"),
+					MultiplaneMode: tt.mode,
+					NumberOfPlanes: 4,
+				}},
+			}
+			pools, err := BuildCIDRPools(cfg, config.ClusterConfig{
+				WorkerNodes: []string{"worker-su01-rack01-h01", "worker-su01-rack01-h02"},
+			})
+			require.NoError(t, err)
+			require.Len(t, pools, tt.wantPools)
+			require.Equal(t, "fd02::/40", pools[0].CIDR)
+			require.Equal(t, []string{"fd02::/24"}, pools[0].Routes)
+			require.Equal(t, []StaticAllocation{
+				{Gateway: "fd02::2", NodeName: "worker-su01-rack01-h01", Prefix: "fd02::/64"},
+				{Gateway: "fd02:0:0:1::2", NodeName: "worker-su01-rack01-h02", Prefix: "fd02:0:0:1::/64"},
+			}, pools[0].StaticAllocations)
+			require.Equal(t, tt.wantLastCIDR, pools[len(pools)-1].CIDR)
+		})
+	}
+}
+
+func TestAllocateIPv6HostLeafRejectsInvalidFields(t *testing.T) {
+	tests := []struct {
+		name         string
+		topologyType string
+		plane        int
+		rail         int
+		pod          int
+		su           int
+		hostIndex    int
+		wantError    string
+	}{
+		{name: "negative plane", topologyType: config.SpectrumXTopology3Tier, plane: -1, wantError: "plane -1 exceeds"},
+		{name: "rail overflow", topologyType: config.SpectrumXTopology3Tier, rail: 256, wantError: "rail 256 exceeds"},
+		{name: "pod overflow", topologyType: config.SpectrumXTopology3Tier, pod: 256, wantError: "pod 256 exceeds"},
+		{name: "su overflow", topologyType: config.SpectrumXTopology3Tier, su: 256, wantError: "su 256 exceeds"},
+		{name: "host overflow", topologyType: config.SpectrumXTopology3Tier, hostIndex: 256, wantError: "host index 256 exceeds"},
+		{name: "two-tier pod", topologyType: config.SpectrumXTopology2Tier, pod: 1, wantError: "pod 1 must be zero"},
+		{name: "unsupported topology", topologyType: "fabric", wantError: `unsupported Spectrum-X topologyType "fabric"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spcx := &config.ProfileSpectrumX{TopologyType: tt.topologyType, IPVersion: config.SpectrumXIPVersionIPv6}
+			_, _, err := allocateIPv6HostLeaf(spcx, tt.plane, tt.rail, tt.pod, tt.su, tt.hostIndex)
+			require.ErrorContains(t, err, tt.wantError)
+		})
+	}
 }
 
 func TestBuildCIDRPoolsReportsWrongTopologyFile(t *testing.T) {

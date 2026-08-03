@@ -19,7 +19,7 @@ package spectrumx
 import (
 	"encoding/json"
 	"fmt"
-	"net"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
@@ -28,10 +28,18 @@ import (
 )
 
 type CIDRPool struct {
-	Name              string
-	CIDR              string
-	Routes            []string
-	StaticAllocations []StaticAllocation
+	Name                 string
+	CIDR                 string
+	GatewayIndex         int
+	PerNodeNetworkPrefix int
+	PerNodeExclusions    []PerNodeExclusion
+	Routes               []string
+	StaticAllocations    []StaticAllocation
+}
+
+type PerNodeExclusion struct {
+	StartIndex int
+	EndIndex   int
 }
 
 type StaticAllocation struct {
@@ -137,8 +145,8 @@ type hostLink struct {
 	su        int
 	rail      int
 	hostIndex int
-	hostIP    net.IP
-	leafIP    net.IP
+	hostIP    netip.Addr
+	leafIP    netip.Addr
 }
 
 type poolKey struct {
@@ -163,10 +171,6 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 		return nil, nil
 	}
 	spcx := cfg.Profile.SpectrumX
-	if spcx.IPVersion == config.SpectrumXIPVersionIPv6 {
-		return nil, fmt.Errorf("Spectrum-X CIDRPool generation currently supports ipVersion=%s only; got %s",
-			config.SpectrumXIPVersionIPv4, spcx.IPVersion)
-	}
 	if spcx.TopologyFile == "" {
 		return nil, fmt.Errorf("profile.spectrumX.topologyFile or --topology-file is required for Spectrum-X CIDRPool generation")
 	}
@@ -203,16 +207,15 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 			}
 		}
 		cidr := poolCIDR(staticAllocations[0].Prefix, spcx)
-		planeCIDR := planeCIDR(staticAllocations[0].Prefix, spcx)
-		routes := []string{cidr}
-		if planeCIDR != "" && planeCIDR != cidr {
-			routes = append(routes, planeCIDR)
-		}
+		settings := poolSettings(spcx)
 		pools = append(pools, CIDRPool{
-			Name:              poolName(key, group.MergedIdentifier, spcx),
-			CIDR:              cidr,
-			Routes:            routes,
-			StaticAllocations: staticAllocations,
+			Name:                 poolName(key, group.MergedIdentifier, spcx),
+			CIDR:                 cidr,
+			GatewayIndex:         settings.gatewayIndex,
+			PerNodeNetworkPrefix: settings.perNodeNetworkPrefix,
+			PerNodeExclusions:    settings.perNodeExclusions,
+			Routes:               poolRoutes(cidr, spcx),
+			StaticAllocations:    staticAllocations,
 		})
 	}
 	return pools, nil
@@ -284,10 +287,10 @@ func hostLinks(topology *topologyFile, spcx *config.ProfileSpectrumX) ([]hostLin
 			hostIndexes[key+"|"+host.Node] = index
 		}
 		addressPlane := leaf.Attrs.Plane
-		if spcx.MultiplaneMode == "hwplb" {
+		if spcx.MultiplaneMode != "swplb" {
 			addressPlane = 0
 		}
-		hostIP, leafIP, err := allocateIPv4HostLeaf(spcx, addressPlane, host.Attrs.Rail, host.Attrs.Pod, host.Attrs.SU, index)
+		hostIP, leafIP, err := allocateHostLeaf(spcx, addressPlane, host.Attrs.Rail, host.Attrs.Pod, host.Attrs.SU, index)
 		if err != nil {
 			return nil, fmt.Errorf("topology host link %d endpoint %s/%s: %w", linkIdx, host.Node, host.Interface, err)
 		}
@@ -335,27 +338,78 @@ func countHostIndex(indexes map[string]int, key string) int {
 	return count
 }
 
-func allocateIPv4HostLeaf(spcx *config.ProfileSpectrumX, plane, rail, pod, su, hostIndex int) (net.IP, net.IP, error) {
+func allocateHostLeaf(spcx *config.ProfileSpectrumX, plane, rail, pod, su, hostIndex int) (netip.Addr, netip.Addr, error) {
+	switch spcx.IPVersion {
+	case "", config.SpectrumXIPVersionIPv4:
+		return allocateIPv4HostLeaf(spcx, plane, rail, pod, su, hostIndex)
+	case config.SpectrumXIPVersionIPv6:
+		return allocateIPv6HostLeaf(spcx, plane, rail, pod, su, hostIndex)
+	default:
+		return netip.Addr{}, netip.Addr{}, fmt.Errorf("unsupported Spectrum-X ipVersion %q", spcx.IPVersion)
+	}
+}
+
+func allocateIPv4HostLeaf(spcx *config.ProfileSpectrumX, plane, rail, pod, su, hostIndex int) (netip.Addr, netip.Addr, error) {
 	if rail < 0 || rail > 7 {
-		return nil, nil, fmt.Errorf("rail %d exceeds the supported 3-bit rail field", rail)
+		return netip.Addr{}, netip.Addr{}, fmt.Errorf("rail %d exceeds the supported 3-bit rail field", rail)
 	}
 	if hostIndex < 0 || hostIndex > 127 {
-		return nil, nil, fmt.Errorf("host index %d exceeds the supported 7-bit host field", hostIndex)
+		return netip.Addr{}, netip.Addr{}, fmt.Errorf("host index %d exceeds the supported 7-bit host field", hostIndex)
 	}
 	firstOctet := spcx.HostFirstOctet
 	if firstOctet == 0 {
 		firstOctet = config.SpectrumXDefaultHostFirstOctet(spcx.TopologyType)
 	}
 	if firstOctet < 1 || firstOctet > 255 {
-		return nil, nil, fmt.Errorf("hostFirstOctet %d must fit in one IPv4 octet", firstOctet)
+		return netip.Addr{}, netip.Addr{}, fmt.Errorf("hostFirstOctet %d must fit in one IPv4 octet", firstOctet)
 	}
 	second, third, err := ipv4HostLeafMiddleOctets(spcx, plane, rail, pod, su)
 	if err != nil {
-		return nil, nil, err
+		return netip.Addr{}, netip.Addr{}, err
 	}
-	host := net.IPv4(byte(firstOctet), byte(second), byte(third), byte(hostIndex<<1))
-	leaf := net.IPv4(byte(firstOctet), byte(second), byte(third), byte(hostIndex<<1|1))
+	host := netip.AddrFrom4([4]byte{byte(firstOctet), byte(second), byte(third), byte(hostIndex << 1)})
+	leaf := netip.AddrFrom4([4]byte{byte(firstOctet), byte(second), byte(third), byte(hostIndex<<1 | 1)})
 	return host, leaf, nil
+}
+
+func allocateIPv6HostLeaf(spcx *config.ProfileSpectrumX, plane, rail, pod, su, hostIndex int) (netip.Addr, netip.Addr, error) {
+	fields := []struct {
+		name  string
+		value int
+	}{
+		{name: "plane", value: plane},
+		{name: "rail", value: rail},
+		{name: "pod", value: pod},
+		{name: "su", value: su},
+		{name: "host index", value: hostIndex},
+	}
+	for _, field := range fields {
+		if field.value < 0 || field.value > 255 {
+			return netip.Addr{}, netip.Addr{}, fmt.Errorf("%s %d exceeds the supported 8-bit field", field.name, field.value)
+		}
+	}
+
+	switch spcx.TopologyType {
+	case config.SpectrumXTopology2Tier:
+		if pod != 0 {
+			return netip.Addr{}, netip.Addr{}, fmt.Errorf("pod %d must be zero for 2-tier IPv6 allocation", pod)
+		}
+	case config.SpectrumXTopology3Tier:
+	default:
+		return netip.Addr{}, netip.Addr{}, fmt.Errorf("unsupported Spectrum-X topologyType %q", spcx.TopologyType)
+	}
+
+	address := [16]byte{
+		0xfd, 0x02,
+		0x00, byte(plane),
+		byte(rail), byte(pod),
+		byte(su), byte(hostIndex),
+	}
+	hostAddress := address
+	hostAddress[15] = 1
+	leafAddress := address
+	leafAddress[15] = 2
+	return netip.AddrFrom16(hostAddress), netip.AddrFrom16(leafAddress), nil
 }
 
 func ipv4HostLeafMiddleOctets(spcx *config.ProfileSpectrumX, plane, rail, pod, su int) (int, int, error) {
@@ -405,6 +459,7 @@ func planeAwareAddressing(spcx *config.ProfileSpectrumX) bool {
 func allocationsByPool(links []hostLink, allowedNodes map[string]struct{}, spcx *config.ProfileSpectrumX) map[poolKey][]StaticAllocation {
 	result := map[poolKey][]StaticAllocation{}
 	seen := map[poolKey]map[string]struct{}{}
+	settings := poolSettings(spcx)
 	for _, link := range links {
 		if len(allowedNodes) > 0 {
 			if _, ok := allowedNodes[link.node]; !ok {
@@ -422,7 +477,7 @@ func allocationsByPool(links []hostLink, allowedNodes map[string]struct{}, spcx 
 		result[key] = append(result[key], StaticAllocation{
 			Gateway:  link.leafIP.String(),
 			NodeName: link.node,
-			Prefix:   link.hostIP.String() + "/31",
+			Prefix:   netip.PrefixFrom(link.hostIP, settings.perNodeNetworkPrefix).Masked().String(),
 		})
 	}
 	return result
@@ -465,11 +520,27 @@ func poolCIDR(prefix string, spcx *config.ProfileSpectrumX) string {
 	return supernet(prefix, railPrefixLength(spcx))
 }
 
-func planeCIDR(prefix string, spcx *config.ProfileSpectrumX) string {
-	return supernet(prefix, planePrefixLength(spcx))
+func poolRoutes(cidr string, spcx *config.ProfileSpectrumX) []string {
+	if isIPv6(spcx) {
+		prefixLength := 32
+		if spcx.NumberOfPlanes > 1 {
+			prefixLength = 24
+		}
+		return []string{supernet(cidr, prefixLength)}
+	}
+
+	planeCIDR := supernet(cidr, planePrefixLength(spcx))
+	routes := []string{cidr}
+	if planeCIDR != "" && planeCIDR != cidr {
+		routes = append(routes, planeCIDR)
+	}
+	return routes
 }
 
 func railPrefixLength(spcx *config.ProfileSpectrumX) int {
+	if isIPv6(spcx) {
+		return 40
+	}
 	if spcx.TopologyType == config.SpectrumXTopology3Tier {
 		if planeAwareAddressing(spcx) {
 			return 13
@@ -496,13 +567,39 @@ func planePrefixLength(spcx *config.ProfileSpectrumX) int {
 }
 
 func supernet(prefix string, prefixLength int) string {
-	ip, _, err := net.ParseCIDR(prefix)
+	parsed, err := netip.ParsePrefix(prefix)
 	if err != nil {
 		return ""
 	}
-	mask := net.CIDRMask(prefixLength, 32)
-	network := ip.Mask(mask)
-	return (&net.IPNet{IP: network, Mask: mask}).String()
+	if prefixLength < 0 || prefixLength > parsed.Addr().BitLen() {
+		return ""
+	}
+	return netip.PrefixFrom(parsed.Addr(), prefixLength).Masked().String()
+}
+
+type cidrPoolSettings struct {
+	gatewayIndex         int
+	perNodeNetworkPrefix int
+	perNodeExclusions    []PerNodeExclusion
+}
+
+func poolSettings(spcx *config.ProfileSpectrumX) cidrPoolSettings {
+	if isIPv6(spcx) {
+		return cidrPoolSettings{
+			gatewayIndex:         2,
+			perNodeNetworkPrefix: 64,
+			perNodeExclusions:    []PerNodeExclusion{{StartIndex: 2, EndIndex: 2}},
+		}
+	}
+	return cidrPoolSettings{
+		gatewayIndex:         0,
+		perNodeNetworkPrefix: 31,
+		perNodeExclusions:    []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}},
+	}
+}
+
+func isIPv6(spcx *config.ProfileSpectrumX) bool {
+	return spcx.IPVersion == config.SpectrumXIPVersionIPv6
 }
 
 func nodeSet(nodes []string) map[string]struct{} {

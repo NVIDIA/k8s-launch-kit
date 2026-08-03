@@ -2,7 +2,7 @@
 
 ## Core Profiles
 
-l8k ships with 7 profile definitions. Each profile is matched by comparing the
+l8k ships with 8 profile definitions. Each profile is matched by comparing the
 user's fabric, deployment type, multirail, and Spectrum-X flags against the
 profile's `profileRequirements`.
 
@@ -66,24 +66,40 @@ profile's `profileRequirements`.
   SriovIBNetwork, NicInterfaceNameTemplate, test Pod
 - **Keywords**: InfiniBand, IB, SR-IOV, HPC, AI training, large-scale
 
-### 6. Spectrum-X Multi-Rail (RA2.2, Network Operator 26.4+)
+### 6. Spectrum-X Multi-Rail (RA2.3, Network Operator 26.7+)
 
 - **Directory**: `profiles/spectrum-x/`
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
-  `spectrumX.spcxVersion=RA2.2`, `spectrumX.multiplaneMode` in
-  `[swplb, hwplb, none]`, `minNetworkOperatorRelease=26.4`
+  `spectrumX.spcxVersion=RA2.3`, `spectrumX.multiplaneMode` in
+  `[swplb, hwplb, none]`, `minNetworkOperatorRelease=26.7`
 - **Node capabilities**: `sriov: true`, `rdma: true`
 - **Use cases**: Multi-tenant AI cloud, Spectrum-X ethernet fabric with OVS
   hardware offload, BF3 SuperNIC deployments, CX8 with any multiplane mode
 - **Templates**: NicClusterPolicy (with `nicFirmwareStorage` and
   `spectrumXOperator.xPlane`), NicInterfaceNameTemplate (applied first),
-  NicConfigurationTemplate, CIDRPool (one per rail or per rail-plane in
-  swplb with IP placeholders), SpectrumXRailPoolConfig (`v1alpha2`, single
-  resource with `railTopology[]` — per-plane entries in swplb, per-rail
-  entries otherwise, with removed `spec.withBCM` omitted), example DaemonSet
-- **Keywords**: Spectrum-X, SPCX, RA2.2, multi-rail, AI cloud, DOCA, swplb, hwplb
+  profile ConfigMap, NicConfigurationTemplate, topology-derived IPv4 or IPv6
+  CIDRPool (one per rail or per rail-plane in swplb),
+  SpectrumXRailPoolConfig (`v1alpha2`, single resource with `railTopology[]`
+  and removed `spec.withBCM` omitted), optional ResourceClaimTemplate,
+  example DaemonSet
+- **Keywords**: Spectrum-X, SPCX, RA2.3, multi-rail, AI cloud, DOCA, swplb, hwplb
 
-### 7. Spectrum-X Multi-Rail (RA2.1, Network Operator 26.1)
+### 7. Spectrum-X Multi-Rail (RA2.2, Network Operator 26.4)
+
+- **Directory**: `profiles/spectrum-x-ra2.2/`
+- **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
+  `spectrumX.spcxVersion=RA2.2`, `spectrumX.multiplaneMode` in
+  `[swplb, hwplb, none]`, `minNetworkOperatorRelease=26.4`,
+  `maxNetworkOperatorRelease=26.4`
+- **Node capabilities**: `sriov: true`, `rdma: true`
+- **Use cases**: Spectrum-X RA2.2 deployments on Network Operator 26.4
+- **Templates**: NicClusterPolicy, NicInterfaceNameTemplate,
+  NicConfigurationTemplate, topology-derived IPv4 or IPv6 CIDRPool,
+  v1alpha2 SpectrumXRailPoolConfig, optional ResourceClaimTemplate,
+  example DaemonSet
+- **Keywords**: Spectrum-X, SPCX, RA2.2, network-operator-26.4, multi-rail, DOCA
+
+### 8. Spectrum-X Multi-Rail (RA2.1, Network Operator 26.1)
 
 - **Directory**: `profiles/spectrum-x-ra2.1/`
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
@@ -112,7 +128,7 @@ profile's `profileRequirements`.
 - Multiplane mode: **must be `none`**
 - Number of planes: **must be 1**
 - Single-plane operation only; no multiplane support in BF3 hardware
-- Version: `RA2.1` (with `--network-operator-release 26.1`) or `RA2.2` (26.4+)
+- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7+
 
 ### ConnectX-8 (deviceID: 1023) / ConnectX-9 (deviceID: 1025)
 
@@ -121,7 +137,7 @@ profile's `profileRequirements`.
   - `swplb`: 2 or 4 (default: 4)
   - `hwplb`: 2 or 4 (default: 4)
 - `swplb` is the default mode for CX8 when no explicit mode is given
-- Version: `RA2.1` (with `--network-operator-release 26.1`) or `RA2.2` (26.4+)
+- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7+
 
 ### Multiplane Mode Selection Guide
 

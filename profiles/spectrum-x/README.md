@@ -85,9 +85,11 @@ nodeCapabilities:
 
 ### CIDR Pool Configuration
 
-- **cidrPoolPerNodePrefix**: Subnet prefix for per-node allocation (typically `31` for point-to-point)
-- **cidrPoolGatewayIndex**: Gateway IP index in the subnet (typically `0`)
-- **cidrPoolPerNodeExclusions**: IP indices to exclude from allocation
+`--topology-file`, `--topology-scheme`, and `--ip-version` drive CIDRPool
+generation. IPv4 uses a `/31` per node with gateway index `0`; IPv6 uses a
+`/64` per node with leaf gateway `::2`, gateway index `2`, and a `/40` pool per
+rail or rail-plane. IPv6 routes are `/32` for one plane and `/24` for two or
+four planes.
 
 ## Generated CRDs
 
@@ -114,8 +116,8 @@ The profile generates the following Kubernetes Custom Resources:
      `spectrumXOptimized.version` is the generated profile ConfigMap name.
 
 5. **CIDRPool** (`60-cidrpool.yaml`)
-   - One pool per rail (non-swplb) or per rail-plane (swplb), with IP placeholders
-     the cluster operator must fill in.
+   - One topology-derived IPv4 or IPv6 pool per rail (non-swplb) or per
+     rail-plane (swplb), including routes and per-node static allocations.
 
 6. **SpectrumXRailPoolConfig** (`80-spectrumxrailpoolconfig.yaml`)
    - Single `v1alpha2` resource with `railTopology[]`. In swplb, one entry per
@@ -162,10 +164,6 @@ spectrumX:
     rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
   eSwitchMultiport: "true"
   bridgeGroupingPolicy: perPF
-  cidrPoolPerNodePrefix: 31
-  cidrPoolGatewayIndex: 0
-  cidrPoolPerNodeExclusions:
-    - "1"
 
 profile:
   fabric: ethernet
@@ -176,6 +174,9 @@ profile:
     spcxVersion: RA2.3
     multiplaneMode: hwplb
     numberOfPlanes: 4
+    topologyType: 2-tier
+    ipVersion: ipv6
+    topologyFile: ./topology.json
     configMapName: site-ra23-profile
     profile: |
       useSoftwareCCAlgorithm: true

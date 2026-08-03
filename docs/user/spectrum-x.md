@@ -166,11 +166,30 @@ l8k generate \
   --spectrum-x RA2.3 \
   --spectrum-x-config ./spectrum-x-profile-configmap.yaml \
   --topology-scheme 2-tier \
-  --ip-version ipv4 \
+  --ip-version ipv6 \
   --topology-file ./topology.json
 ```
 
-IPv4 CIDRPool rendering is supported. IPv6 is accepted in config for forward compatibility but is not rendered into CIDRPools yet.
+Both `ipv4` and `ipv6` generate complete nv-ipam CIDRPools. IPv4 preserves the
+existing per-node `/31` allocation. IPv6 uses the standard Spectrum-X layout:
+
+```text
+fd02:00PP:RRDD:SSHH::peer/64
+```
+
+`PP`, `RR`, `DD`, `SS`, and `HH` are the zero-based plane, rail, pod, SU, and
+host indices encoded as one byte each. Two-tier topologies require `DD=00`.
+The host candidate is `::1`, the connected leaf and gateway are `::2`, and the
+static allocation prefix is the canonical `/64` network. Each pool covers a
+rail or rail-plane with a `/40`. The route is `/32` for a single-plane
+deployment and `/24` for a dual- or quad-plane deployment.
+
+In `swplb`, the plane is encoded and l8k emits one pool per rail-plane. In
+`none` and `hwplb`, the address plane is zero and l8k emits one pool per rail.
+`profile.spectrumX.hostFirstOctet` affects IPv4 only. The current topology
+contract provides the fields required by this standard layout; alternative
+platform-specific layouts that require additional topology fields are not
+generated.
 
 ### Troubleshooting CIDRPool allocation errors
 
