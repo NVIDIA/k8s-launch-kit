@@ -319,16 +319,18 @@ profile:
     # value of --spectrum-x on the CLI.
     spcxVersion: "RA2.2"
 
-    # string | default: derived from east-west NIC device ID
+    # string | default: derived from GPU platform + east-west NIC device ID
     # Multiplane mode: "none", "swplb" (software PLB), or "hwplb"
     # (hardware PLB). When Spectrum-X is enabled and this is absent,
-    # discovery derives it from the east-west NIC device ID.
+    # H100/H200/B200/GB200 default to none; B300/GB300 default to the
+    # GA swplb path. Platform type cannot select hwplb; override explicitly.
     multiplaneMode: swplb
 
-    # int | default: derived from east-west NIC device ID
+    # int | default: derived from GPU platform + east-west NIC device ID
     # Number of network planes (1, 2, or 4). Also used as pfsPerNic for
-    # Spectrum-X. When absent, discovery derives it with multiplaneMode.
-    numberOfPlanes: 4
+    # Spectrum-X. Single-plane platforms default to 1; B300/GB300 default
+    # to 2. Set 4 explicitly for a quad-plane B300 topology.
+    numberOfPlanes: 2
 
 # ============================================================================
 # Validation Configuration

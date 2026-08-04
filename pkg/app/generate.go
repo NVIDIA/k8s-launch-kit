@@ -74,6 +74,36 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		}
 	}
 
+	// --for supplies the hardware inventory used by profile defaulting as well
+	// as rendering. Substitute it before resolveProfileSettings so defaults can
+	// use the preset's machine/gpu types and east-west NICs. Keep the source
+	// inventory separately: generated preset hardware is transient and must not
+	// replace clusterConfig in a file-backed user configuration.
+	sourceClusterConfig := fullConfig.ClusterConfig
+	presetClusterConfigApplied := false
+	if l.options.ForPreset != "" {
+		preset, err := l.presetCatalog.LoadPresetByDir(l.options.ForPreset)
+		if err != nil {
+			return apperrors.NewValidationError(
+				fmt.Sprintf("invalid --for value %q", l.options.ForPreset),
+				err,
+				"Run 'l8k preset list' to see available presets",
+			)
+		}
+		selectorMap := parseNodeSelector(l.options.NodeSelector)
+		cc, synthErr := presets.SynthesizeClusterConfig(l.options.ForPreset, preset, selectorMap)
+		if synthErr != nil {
+			return apperrors.NewValidationError(
+				fmt.Sprintf("preset %q cannot be used with --for", l.options.ForPreset),
+				synthErr,
+				"Add a 'capabilities.nodes.{sriov,rdma,ib}' block to the preset's topology.yaml",
+			)
+		}
+		fullConfig.ClusterConfig = []config.ClusterConfig{cc}
+		presetClusterConfigApplied = true
+		l.ui.Info("Using preset %q (clusterConfig replaced from preset)", l.options.ForPreset)
+	}
+
 	// Resolve the same defaults/config/CLI precedence that discovery uses
 	// before either flow persists or consumes the final profile.
 	if err := l.resolveProfileSettings(fullConfig); err != nil {
@@ -116,39 +146,18 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		)
 	}
 
-	// Persist the exact config used for generation: hardware defaults fill
+	// Persist the exact profile used for generation: hardware defaults fill
 	// missing fields, existing YAML values survive, and explicit CLI options
-	// win. Do this before --for substitutes a synthetic clusterConfig so only
-	// the resolved settings—not preset-only topology—are written back.
-	if err := l.saveResolvedConfig(configPath, fullConfig, srcConfig, srcConfigYAML); err != nil {
-		return err
+	// win. When --for supplied the hardware, restore the source clusterConfig
+	// only in the write-back copy so preset-only topology remains transient.
+	resolvedConfigForWriteBack := fullConfig
+	if presetClusterConfigApplied {
+		writeBackCopy := *fullConfig
+		writeBackCopy.ClusterConfig = sourceClusterConfig
+		resolvedConfigForWriteBack = &writeBackCopy
 	}
-
-	// --for: replace clusterConfig with a synthesized group from a preset.
-	// This is the explicit ahead-of-time generation path that skips live
-	// discovery in favor of a static preset description. The CLI layer has
-	// already enforced --node-selector being set; here we do the substitution
-	// before the rest of the pipeline runs.
-	if l.options.ForPreset != "" {
-		preset, err := l.presetCatalog.LoadPresetByDir(l.options.ForPreset)
-		if err != nil {
-			return apperrors.NewValidationError(
-				fmt.Sprintf("invalid --for value %q", l.options.ForPreset),
-				err,
-				"Run 'l8k preset list' to see available presets",
-			)
-		}
-		selectorMap := parseNodeSelector(l.options.NodeSelector)
-		cc, synthErr := presets.SynthesizeClusterConfig(l.options.ForPreset, preset, selectorMap)
-		if synthErr != nil {
-			return apperrors.NewValidationError(
-				fmt.Sprintf("preset %q cannot be used with --for", l.options.ForPreset),
-				synthErr,
-				"Add a 'capabilities.nodes.{sriov,rdma,ib}' block to the preset's topology.yaml",
-			)
-		}
-		fullConfig.ClusterConfig = []config.ClusterConfig{cc}
-		l.ui.Info("Using preset %q (clusterConfig replaced from preset)", l.options.ForPreset)
+	if err := l.saveResolvedConfig(configPath, resolvedConfigForWriteBack, srcConfig, srcConfigYAML); err != nil {
+		return err
 	}
 
 	aggregatedCapabilities := config.AggregateCapabilities(fullConfig.ClusterConfig)

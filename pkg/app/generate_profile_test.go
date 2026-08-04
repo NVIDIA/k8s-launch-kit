@@ -14,6 +14,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,4 +121,49 @@ func TestResolveSpectrumXTopologyFile(t *testing.T) {
 
 		assert.Equal(t, resolvedCLIPath, cfg.Profile.SpectrumX.ResolvedTopologyFile)
 	})
+}
+
+func TestGenerateUsesPresetHardwareForDefaultsWithoutPersistingPresetInventory(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	source := `networkOperator:
+  selectedRelease: "26.4"
+profile:
+  multirail: true
+  spectrumX:
+    enable: true
+    spcxVersion: RA2.2
+    topologyType: 2-tier
+clusterConfig:
+  - identifier: source-inventory
+    machineType: source-machine
+    gpuType: NVIDIA-H200
+    linkType: Ethernet
+    pfs:
+      - deviceID: a2dc
+        traffic: east-west
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(source), 0o600))
+
+	catalog, err := presets.EmbeddedCatalog()
+	require.NoError(t, err)
+	launcher := New(options.Options{
+		ForPreset:    "GB300-NVL-NVIDIA-GB300",
+		NodeSelector: "nvidia.com/gpu.product=NVIDIA-GB300",
+	})
+	launcher.ui = ui.NewSilent()
+	launcher.presetCatalog = catalog
+
+	require.NoError(t, launcher.executeGeneration(configPath))
+
+	got, err := config.LoadFullConfig(configPath, launcher.logger)
+	require.NoError(t, err)
+	require.NotNil(t, got.Profile)
+	require.NotNil(t, got.Profile.SpectrumX)
+	assert.Equal(t, "swplb", got.Profile.SpectrumX.MultiplaneMode)
+	assert.Equal(t, 2, got.Profile.SpectrumX.NumberOfPlanes)
+	require.Len(t, got.ClusterConfig, 1)
+	assert.Equal(t, "source-inventory", got.ClusterConfig[0].Identifier)
+	assert.Equal(t, "NVIDIA-H200", got.ClusterConfig[0].GPUType)
+	require.Len(t, got.ClusterConfig[0].PFs, 1)
+	assert.Equal(t, "a2dc", got.ClusterConfig[0].PFs[0].DeviceID)
 }

@@ -35,6 +35,27 @@ l8k generate \
 | `swplb` | Software plane load balancing. Renders per-rail, per-plane resources. |
 | `hwplb` | Hardware plane load balancing for larger topologies. |
 
+### Platform-derived defaults
+
+When `multiplaneMode` or `numberOfPlanes` is absent, l8k combines the
+discovered GPU platform with the east-west NIC device ID:
+
+| GPU platform | Default mode | Default planes | Notes |
+| --- | --- | --- | --- |
+| H100, H200, B200, GB200 | `none` | 1 | Single-plane architecture. |
+| B300 | `swplb` | 2 | Conservative dual-plane default; pass 4 explicitly for a quad-plane topology. |
+| GB300 | `swplb` | 2 | Dual-plane architecture. |
+
+The platform is read from `clusterConfig[].gpuType`, with `machineType` as a
+fallback. `--for` presets participate in the same resolution before manifests
+are rendered.
+
+B300 and GB300 support both `swplb` and `hwplb`, so platform type does not
+identify which load-balancing mechanism the fabric uses. l8k defaults to the
+documented GA `swplb` path. Select `hwplb` explicitly when the site topology
+requires hardware plane load balancing. Explicit config values and CLI flags
+always override these defaults.
+
 ```bash
 l8k discover \
   --spectrum-x RA2.3 \
