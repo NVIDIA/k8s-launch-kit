@@ -193,22 +193,69 @@ func countKindLines(content string) int {
 	return n
 }
 
-// TestProfileManifestsAreValidMultiDocYAML is the broad regression guard for
-// the glued-`---`-separator class of bug across EVERY standard profile —
-// including the IPPool / Network / NodePolicy templates beyond the four SR-IOV
-// files that originally regressed. For each rendered manifest it strict-parses
-// every document and asserts the document count equals the number of `kind:`
-// headers: a glued separator (e.g. `resourceName: foo---`) merges two docs into
-// one, which both drops the count and trips UnmarshalStrict on the duplicate
-// top-level keys.
-func TestProfileManifestsAreValidMultiDocYAML(t *testing.T) {
-	profilesUnderTest := []struct{ dir, fabric, deployment string }{
-		{"sriov-ethernet-rdma", "ethernet", "sriov"},
-		{"sriov-ib-rdma", "infiniband", "sriov"},
-		{"host-device-rdma", "ethernet", "host_device"},
-		{"macvlan-rdma-shared", "ethernet", "rdma_shared"},
-		{"ipoib-rdma-shared", "infiniband", "rdma_shared"},
+type profileRenderTestCase struct {
+	dir        string
+	fabric     string
+	deployment string
+	fileSubstr string
+}
+
+// TestFabricProfileRendering groups the profile-render regression tests by
+// fabric. The named subtests are intentional selectors: Go runs both by
+// default, while contributors can use -run '/Ethernet($|/)' or
+// -run '/InfiniBand($|/)' to exercise one fabric without build tags.
+func TestFabricProfileRendering(t *testing.T) {
+	ethernetProfiles := []profileRenderTestCase{
+		{dir: "sriov-ethernet-rdma", fabric: "ethernet", deployment: "sriov", fileSubstr: "50-sriovnetwork"},
+		{dir: "host-device-rdma", fabric: "ethernet", deployment: "host_device", fileSubstr: "30-hostdevicenetwork"},
+		{dir: "macvlan-rdma-shared", fabric: "ethernet", deployment: "rdma_shared", fileSubstr: "30-macvlannetwork"},
 	}
+	infinibandProfiles := []profileRenderTestCase{
+		{dir: "sriov-ib-rdma", fabric: "infiniband", deployment: "sriov", fileSubstr: "50-sriovibnetwork"},
+		{dir: "host-device-rdma", fabric: "infiniband", deployment: "host_device", fileSubstr: "30-hostdevicenetwork"},
+		{dir: "ipoib-rdma-shared", fabric: "infiniband", deployment: "rdma_shared", fileSubstr: "30-ipoibnetwork"},
+	}
+
+	t.Run("Ethernet", func(t *testing.T) {
+		t.Run("MultiDocumentYAML", func(t *testing.T) {
+			testProfileManifestsAreValidMultiDocYAML(t, ethernetProfiles)
+		})
+		t.Run("SpectrumXIPv6CIDRPools", testSpectrumXIPv6CIDRPoolRendering)
+		t.Run("MetaPlugins", func(t *testing.T) {
+			testNonSpectrumXProfilesRenderMetaPlugins(t, ethernetProfiles)
+		})
+		t.Run("DefaultMetaPlugins", func(t *testing.T) {
+			testDefaultProfilesDoNotRenderMetaPlugins(t, ethernetProfiles)
+		})
+		t.Run("SRIOVMultiDocSeparators", func(t *testing.T) {
+			testSRIOVMultiDocSeparators(t, "ethernet")
+		})
+		t.Run("NetworkNamespaces", testNetworkNamespacesFanOut)
+	})
+
+	t.Run("InfiniBand", func(t *testing.T) {
+		t.Run("MultiDocumentYAML", func(t *testing.T) {
+			testProfileManifestsAreValidMultiDocYAML(t, infinibandProfiles)
+		})
+		t.Run("MetaPlugins", func(t *testing.T) {
+			testNonSpectrumXProfilesRenderMetaPlugins(t, infinibandProfiles)
+		})
+		t.Run("DefaultMetaPlugins", func(t *testing.T) {
+			testDefaultProfilesDoNotRenderMetaPlugins(t, infinibandProfiles)
+		})
+		t.Run("SRIOVMultiDocSeparators", func(t *testing.T) {
+			testSRIOVMultiDocSeparators(t, "infiniband")
+		})
+	})
+}
+
+// testProfileManifestsAreValidMultiDocYAML is the broad regression guard for
+// the glued-`---`-separator class of bug across the supplied profiles. It also
+// covers IPPool / Network / NodePolicy templates beyond the four SR-IOV files
+// that originally regressed. For each rendered manifest it strict-parses every
+// document and asserts the document count equals the number of `kind:` headers.
+func testProfileManifestsAreValidMultiDocYAML(t *testing.T, profilesUnderTest []profileRenderTestCase) {
+	t.Helper()
 	for _, p := range profilesUnderTest {
 		t.Run(p.dir, func(t *testing.T) {
 			rendered := renderProfile(t, p.dir, p.fabric, p.deployment)
@@ -245,7 +292,7 @@ func TestProfileManifestsAreValidMultiDocYAML(t *testing.T) {
 	}
 }
 
-func TestSpectrumXIPv6CIDRPoolRendering(t *testing.T) {
+func testSpectrumXIPv6CIDRPoolRendering(t *testing.T) {
 	profilesUnderTest := []struct {
 		dir            string
 		spcxVersion    string
@@ -389,20 +436,8 @@ func TestSecondaryNetworkMetaPluginsHelper(t *testing.T) {
 	})
 }
 
-func TestNonSpectrumXProfilesRenderMetaPlugins(t *testing.T) {
-	profilesUnderTest := []struct {
-		dir        string
-		fabric     string
-		deployment string
-		fileSubstr string
-	}{
-		{"sriov-ethernet-rdma", "ethernet", "sriov", "50-sriovnetwork"},
-		{"sriov-ib-rdma", "infiniband", "sriov", "50-sriovibnetwork"},
-		{"host-device-rdma", "ethernet", "host_device", "30-hostdevicenetwork"},
-		{"macvlan-rdma-shared", "ethernet", "rdma_shared", "30-macvlannetwork"},
-		{"ipoib-rdma-shared", "infiniband", "rdma_shared", "30-ipoibnetwork"},
-	}
-
+func testNonSpectrumXProfilesRenderMetaPlugins(t *testing.T, profilesUnderTest []profileRenderTestCase) {
+	t.Helper()
 	for _, p := range profilesUnderTest {
 		t.Run(p.dir, func(t *testing.T) {
 			rendered := renderProfileWithProfile(t, p.dir, &config.Profile{
@@ -430,49 +465,58 @@ func TestNonSpectrumXProfilesRenderMetaPlugins(t *testing.T) {
 	}
 }
 
-func TestDefaultProfilesDoNotRenderMetaPlugins(t *testing.T) {
-	rendered := renderProfile(t, "sriov-ethernet-rdma", "ethernet", "sriov")
-	name, content := fileMatching(t, rendered, "50-sriovnetwork")
-	for _, doc := range parseDocs(t, name, content) {
-		_, ok := optionalSpecString(t, doc, "metaPlugins")
-		require.False(t, ok, "default destination-based routing with ignoreARP=false must not render metaPlugins")
+func testDefaultProfilesDoNotRenderMetaPlugins(t *testing.T, profilesUnderTest []profileRenderTestCase) {
+	t.Helper()
+	for _, profile := range profilesUnderTest {
+		t.Run(profile.dir, func(t *testing.T) {
+			rendered := renderProfile(t, profile.dir, profile.fabric, profile.deployment)
+			name, content := fileMatching(t, rendered, profile.fileSubstr)
+			for _, doc := range parseDocs(t, name, content) {
+				_, ok := optionalSpecString(t, doc, "metaPlugins")
+				require.False(t, ok, "default destination-based routing with ignoreARP=false must not render metaPlugins")
+			}
+		})
 	}
 }
 
-// TestSRIOVMultiDocSeparators is the regression test for the broken-formatting
+// testSRIOVMultiDocSeparators is the regression test for the broken-formatting
 // bug: the multirail SR-IOV templates used to glue the `---` document
 // separator (and, for SriovIBNetwork, the `linkState: enable` key) directly
 // onto the `resourceName:` line, producing manifests that `kubectl apply`
 // rejected. Each multi-doc network file must now split into one valid document
 // per east-west rail with the expected, un-glued field values.
-func TestSRIOVMultiDocSeparators(t *testing.T) {
+func testSRIOVMultiDocSeparators(t *testing.T, fabric string) {
+	t.Helper()
 	const wantRails = 8 // mixed-same-type.yaml merges to one 8-rail bucket
 
-	t.Run("ethernet sriovnetworknodepolicy", func(t *testing.T) {
-		rendered := renderSRIOV(t, "sriov-ethernet-rdma", "ethernet", "50-sriovnetwork.yaml")
-		name, content := fileMatching(t, rendered, "40-sriovnetworknodepolicy")
-		require.NotContains(t, content, "---apiVersion", "separator must sit on its own line")
-		docs := parseDocs(t, name, content)
-		require.Len(t, docs, wantRails)
-		for i, doc := range docs {
-			require.Equal(t, "SriovNetworkNodePolicy", doc["kind"])
-			require.Equal(t, fmt.Sprintf("sriov_resource_rail_%d", i), specString(t, doc, "resourceName"))
-		}
-	})
+	if fabric == "ethernet" {
+		t.Run("sriovnetworknodepolicy", func(t *testing.T) {
+			rendered := renderSRIOV(t, "sriov-ethernet-rdma", "ethernet", "50-sriovnetwork.yaml")
+			name, content := fileMatching(t, rendered, "40-sriovnetworknodepolicy")
+			require.NotContains(t, content, "---apiVersion", "separator must sit on its own line")
+			docs := parseDocs(t, name, content)
+			require.Len(t, docs, wantRails)
+			for i, doc := range docs {
+				require.Equal(t, "SriovNetworkNodePolicy", doc["kind"])
+				require.Equal(t, fmt.Sprintf("sriov_resource_rail_%d", i), specString(t, doc, "resourceName"))
+			}
+		})
 
-	t.Run("ethernet sriovnetwork", func(t *testing.T) {
-		rendered := renderSRIOV(t, "sriov-ethernet-rdma", "ethernet", "50-sriovnetwork.yaml")
-		name, content := fileMatching(t, rendered, "50-sriovnetwork")
-		require.NotContains(t, content, "---apiVersion", "separator must sit on its own line")
-		docs := parseDocs(t, name, content)
-		require.Len(t, docs, wantRails)
-		for i, doc := range docs {
-			require.Equal(t, "SriovNetwork", doc["kind"])
-			require.Equal(t, fmt.Sprintf("sriov_resource_rail_%d", i), specString(t, doc, "resourceName"))
-		}
-	})
+		t.Run("sriovnetwork", func(t *testing.T) {
+			rendered := renderSRIOV(t, "sriov-ethernet-rdma", "ethernet", "50-sriovnetwork.yaml")
+			name, content := fileMatching(t, rendered, "50-sriovnetwork")
+			require.NotContains(t, content, "---apiVersion", "separator must sit on its own line")
+			docs := parseDocs(t, name, content)
+			require.Len(t, docs, wantRails)
+			for i, doc := range docs {
+				require.Equal(t, "SriovNetwork", doc["kind"])
+				require.Equal(t, fmt.Sprintf("sriov_resource_rail_%d", i), specString(t, doc, "resourceName"))
+			}
+		})
+		return
+	}
 
-	t.Run("infiniband sriovnetworknodepolicy", func(t *testing.T) {
+	t.Run("sriovnetworknodepolicy", func(t *testing.T) {
 		rendered := renderSRIOV(t, "sriov-ib-rdma", "infiniband", "50-sriovibnetwork.yaml")
 		name, content := fileMatching(t, rendered, "40-sriovnetworknodepolicy")
 		require.NotContains(t, content, "---apiVersion", "separator must sit on its own line")
@@ -484,7 +528,7 @@ func TestSRIOVMultiDocSeparators(t *testing.T) {
 		}
 	})
 
-	t.Run("infiniband sriovibnetwork keeps resourceName and linkState separate", func(t *testing.T) {
+	t.Run("sriovibnetwork keeps resourceName and linkState separate", func(t *testing.T) {
 		rendered := renderSRIOV(t, "sriov-ib-rdma", "infiniband", "50-sriovibnetwork.yaml")
 		name, content := fileMatching(t, rendered, "50-sriovibnetwork")
 		require.NotContains(t, content, "---apiVersion", "separator must sit on its own line")
@@ -501,12 +545,12 @@ func TestSRIOVMultiDocSeparators(t *testing.T) {
 	})
 }
 
-// TestNetworkNamespacesFanOut covers --network-namespaces: the secondary-network
+// testNetworkNamespacesFanOut covers --network-namespaces: the secondary-network
 // CRs and the example test DaemonSet are duplicated once per namespace (each
 // pointed at its namespace, with namespace-suffixed names so the copies don't
 // collide), while shared resources — IPPool, SriovNetworkNodePolicy,
 // NicClusterPolicy — are rendered exactly once.
-func TestNetworkNamespacesFanOut(t *testing.T) {
+func testNetworkNamespacesFanOut(t *testing.T) {
 	t.Run("two namespaces duplicate networks + DS but not shared CRs", func(t *testing.T) {
 		rendered := renderSRIOVWithNamespaces(t, "sriov-ethernet-rdma", "ethernet", "50-sriovnetwork.yaml", []string{"ns1", "ns2"})
 

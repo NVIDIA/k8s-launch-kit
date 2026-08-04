@@ -32,7 +32,7 @@ PCI_IDS_NVIDIA=pkg/networkoperatorplugin/internal/pciids/nvidia.ids
 NIC_CONFIG_CRDS_DIR=pkg/nicconfigdaemon/assets/crds
 NIC_CONFIG_OPERATOR_MODULE=github.com/Mellanox/nic-configuration-operator
 
-.PHONY: all build clean test coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport update-pci-ids sync-network-operator-releases sync-nic-config-crds release release-snapshot help
+.PHONY: all build clean test test-ethernet test-infiniband coverage deps lint docker-build docker-build-local docker-run update-readme download-sosreport update-pci-ids sync-network-operator-releases sync-nic-config-crds release release-snapshot help
 
 ## Build the binary
 build:
@@ -73,6 +73,14 @@ clean:
 ## Run tests
 test:
 	$(GOTEST) -v ./...
+
+## Run Ethernet profile-render tests
+test-ethernet:
+	$(GOTEST) -v ./pkg/networkoperatorplugin -run '^TestFabricProfileRendering/Ethernet($$|/)'
+
+## Run InfiniBand profile-render tests
+test-infiniband:
+	$(GOTEST) -v ./pkg/networkoperatorplugin -run '^TestFabricProfileRendering/InfiniBand($$|/)'
 
 ## Run tests with coverage
 coverage:

@@ -69,6 +69,9 @@ git checkout -b dev/some-topic-branch
 
 * Make your changes to the code and add tests to cover contributed code.
 * Run `make build && make test` to validate it builds and will not break current functionality.
+  During profile-render development, `make test-ethernet` and
+  `make test-infiniband` run the corresponding fabric suite independently;
+  `make test` remains the required all-tests check.
 * Commit your changes and push them to your fork.
 * Open a pull request for the appropriate project.
 * Maintainers will review your pull request, suggest changes, run tests and eventually merge or close the request.

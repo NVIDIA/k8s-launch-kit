@@ -1391,9 +1391,17 @@ make clean        # Clean build artifacts
 ### Testing
 
 ```bash
-make test         # Run tests
-make coverage     # Run tests with coverage
+make test             # Run all tests (Ethernet + InfiniBand + common)
+make test-ethernet    # Run the Ethernet profile-render suite
+make test-infiniband  # Run the InfiniBand profile-render suite
+make coverage         # Run all tests with coverage
 ```
+
+The fabric-specific targets use Go named subtests rather than build tags, so
+plain `go test ./...` and `make test` continue to run both fabrics by default.
+They cover profile rendering, strict multi-document YAML parsing, meta-plugin
+output, and SR-IOV separator regressions; the Ethernet suite also covers
+Spectrum-X and per-namespace rendering.
 
 ### Linting
 
