@@ -72,8 +72,8 @@ type Options struct {
 	IgnoreARPSet   bool
 	SpectrumX      bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
 	SPCXVersion    string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
-	MultiplaneMode string // Spectrum-X multiplane mode (default: swplb)
-	NumberOfPlanes int    // Number of planes for Spectrum-X (default: 4)
+	MultiplaneMode string // Spectrum-X multiplane mode (platform/NIC-derived when empty)
+	NumberOfPlanes int    // Number of planes for Spectrum-X (platform/NIC-derived when zero)
 	TopologyScheme string // Spectrum-X topology scheme: 2-tier or 3-tier
 	IPVersion      string // Spectrum-X address family: ipv4 or ipv6
 	TopologyFile   string // Path to spcx-gen/reference-generator or NVIDIA AIR topology JSON for Spectrum-X CIDRPool generation

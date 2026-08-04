@@ -68,8 +68,8 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 | Flag | Description |
 | --- | --- |
 | `--spectrum-x` | Enable Spectrum-X and select RA version, such as `RA2.3`. |
-| `--multiplane-mode` | `none`, `swplb`, or `hwplb`. |
-| `--number-of-planes` | Plane count for Spectrum-X. |
+| `--multiplane-mode` | `none`, `swplb`, or `hwplb`. Defaults from GPU platform and east-west NIC: single-plane H100/H200/B200/GB200 use `none`; B300/GB300 use the GA `swplb` default. Select `hwplb` explicitly. |
+| `--number-of-planes` | Plane count for Spectrum-X. Defaults to 1 for single-plane platforms and 2 for B300/GB300; pass 4 explicitly for quad-plane B300. |
 | `--topology-scheme` | `2-tier` or `3-tier` for topology-driven CIDRPool allocation. |
 | `--ip-version` | `ipv4` for per-node `/31` allocation or `ipv6` for per-node `/64` allocation. |
 | `--topology-file` | Path to spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from its structure. |

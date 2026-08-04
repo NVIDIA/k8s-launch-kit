@@ -220,8 +220,8 @@ the single CLI gateway: a non-empty value sets `enable: true` AND populates
 |------------------|--------|----------|------------------------------------------------------|----------------------------------------|
 | `enable`         | bool   | `false`  | derived from `--spectrum-x` (true when value is set) | Enable Spectrum-X profile              |
 | `spcxVersion`    | string | `RA2.2`  | value of `--spectrum-x`                              | Spectrum-X RA version. `RA2.2` (Network Operator 26.4+) or `RA2.1` (26.1 only). |
-| `multiplaneMode` | string | `swplb`  | `--multiplane-mode`                                  | `swplb`, `hwplb`, or `none`|
-| `numberOfPlanes` | int    | `4`      | `--number-of-planes`                                 | 1, 2, or 4 (also used as pfsPerNic)   |
+| `multiplaneMode` | string | platform/NIC-derived | `--multiplane-mode`                         | H100/H200/B200/GB200 use `none`; B300/GB300 use GA `swplb`; select `hwplb` explicitly |
+| `numberOfPlanes` | int    | platform/NIC-derived | `--number-of-planes`                         | Single-plane platforms use 1; B300/GB300 use 2; pass 4 explicitly for quad-plane B300 |
 
 CLI flags always override config file values for all profile fields.
 

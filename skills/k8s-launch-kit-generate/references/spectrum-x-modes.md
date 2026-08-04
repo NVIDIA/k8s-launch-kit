@@ -15,7 +15,8 @@ All Spectrum-X deployments require:
 
 ## Mode: none
 
-- **NIC type**: BlueField-3 SuperNIC only (deviceID `a2dc`)
+- **NIC type**: BlueField-3 SuperNIC (`a2dc`), ConnectX-7 (`1021`), or
+  ConnectX-8 (`1023`) in a single-plane platform
 - **Number of planes**: 1 (fixed, no other value allowed)
 - **Profile**: `spectrum-x` (the base Spectrum-X profile)
 - **Resource naming**: Per-rail only
@@ -27,14 +28,13 @@ ovs-network-rail-0
 ovs-network-rail-1
 ```
 
-- **Description**: Single-plane operation for BF3 SuperNICs. No multiplane support
-  because BF3 hardware does not implement plane load balancing. This is the only
-  valid mode for BF3 deployments.
+- **Description**: Single-plane operation. This is the only valid mode for BF3
+  and CX7, and the default for H100/H200/B200/GB200 GPU platforms.
 
 ## Mode: swplb (Software Plane Load Balancing)
 
 - **NIC type**: ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
-- **Number of planes**: 2 or 4 (default: 4)
+- **Number of planes**: 2 or 4; l8k defaults B300/GB300 to 2
 - **Profile**: `spectrum-x` (unified profile, branches on swplb internally)
 - **Resource naming**: Per-rail AND per-plane (finest granularity)
 
@@ -49,14 +49,14 @@ ovs-network-plane-1-rail-0
 
 - **Description**: Software-based distribution of traffic across multiple planes.
   Each rail-plane combination gets its own SR-IOV policy, OVS network, and CIDR
-  pool. This provides the finest resource granularity and is the default mode for
-  CX8 deployments. Best for small-to-medium Spectrum-X clusters.
+  pool. This provides the finest resource granularity and is the GA default for
+  B300/GB300 deployments. Best for small-to-medium Spectrum-X clusters.
 - **docaEswitchMax**: planes x number of rails
 
 ## Mode: hwplb (Hardware Plane Load Balancing)
 
 - **NIC type**: ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
-- **Number of planes**: 2 or 4 (default: 4)
+- **Number of planes**: 2 or 4, selected explicitly with `hwplb`
 - **Profile**: `spectrum-x` (base Spectrum-X profile)
 - **Resource naming**: Per-rail only (hardware handles plane distribution)
 
@@ -82,13 +82,27 @@ ovs-network-rail-1
 | ConnectX-8      | `1023`   | `swplb`, `hwplb`    | `swplb`      |
 | ConnectX-9      | `1025`   | `swplb`, `hwplb`    | `hwplb`      |
 
+NIC type only constrains what is possible. Platform type does not distinguish
+`swplb` from `hwplb` on B300 or GB300 because both modes support both
+platforms. For the documented CX8/B300/GB300 combinations, Launch Kit uses
+`swplb` as the GA default and treats `hwplb` as an explicit site-topology
+choice. Unknown platforms retain the NIC-family fallback in the table above.
+
+## Platform Default Summary
+
+| GPU platform | Default mode | Default planes | Notes |
+|--------------|--------------|----------------|-------|
+| H100/H200/B200/GB200 | `none` | 1 | Single-plane architecture |
+| B300 | `swplb` | 2 | Pass 4 explicitly for quad-plane |
+| GB300 | `swplb` | 2 | Dual-plane architecture |
+
 ## Number of Planes Rules
 
 | Mode      | Valid Values | Default | Notes                                  |
 |-----------|-------------|---------|----------------------------------------|
 | `none`    | 1           | 1       | CX7/BF3, single plane                  |
-| `swplb`   | 2, 4        | 4       | More planes = finer resource granularity|
-| `hwplb`   | 2, 4        | 4       | More planes = more hardware capacity   |
+| `swplb`   | 2, 4        | 2 on B300/GB300 | Pass 4 explicitly for quad-plane B300 |
+| `hwplb`   | 2, 4        | explicit | Platform type cannot select the mode |
 
 ## Version
 
@@ -117,7 +131,7 @@ decoding.
 | CX7 deployment                            | `none`           |
 | CX8, small cluster, fine-grained control  | `swplb`          |
 | CX8, large multi-tier topology            | `hwplb`          |
-| Not sure (CX8)                            | `swplb` (default)|
+| Not sure (B300/GB300)                    | `swplb` (GA default) |
 
 ## Validation Rules
 

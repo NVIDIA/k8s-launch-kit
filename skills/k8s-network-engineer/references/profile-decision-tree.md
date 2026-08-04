@@ -134,17 +134,21 @@ profile's `profileRequirements`.
 
 - Multiplane modes: `swplb` or `hwplb`
 - Number of planes:
-  - `swplb`: 2 or 4 (default: 4)
-  - `hwplb`: 2 or 4 (default: 4)
-- `swplb` is the default mode for CX8 when no explicit mode is given
+  - `swplb`: 2 or 4 (B300/GB300 default: 2)
+  - `hwplb`: 2 or 4 (explicit site-topology choice)
+- H100/H200/B200/GB200 default to single-plane `none` / 1 even when the
+  east-west NIC is CX8.
+- B300/GB300 default to `swplb` / 2. Pass 4 explicitly for quad-plane B300.
+- Platform type cannot distinguish `swplb` from `hwplb`; both are supported on
+  B300 and GB300, so `hwplb` must be selected explicitly.
 - Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7+
 
 ### Multiplane Mode Selection Guide
 
 | Mode     | NIC  | Scale          | Resources                | Use When                          |
 |----------|------|----------------|--------------------------|-----------------------------------|
-| `none`   | BF3  | Any            | Per-rail                 | BF3 SuperNIC deployments          |
-| `swplb`  | CX8  | Small-medium   | Per-rail-per-plane       | Default for CX8, finer granularity|
+| `none`   | BF3/CX7/CX8 | Any      | Per-rail                 | Single-plane GPU platforms        |
+| `swplb`  | CX8  | Small-medium   | Per-rail-per-plane       | GA default for B300/GB300         |
 | `hwplb`  | CX8  | Large (2/3-tier)| Per-rail only           | Large-scale multi-tier topologies |
 
 ### Number of Planes Rules
@@ -152,8 +156,8 @@ profile's `profileRequirements`.
 | Mode      | Valid Values | Default | Notes                          |
 |-----------|-------------|---------|--------------------------------|
 | `none`    | 1           | 1       | CX7/BF3, no planes             |
-| `swplb`   | 2, 4        | 4       | More planes = more granularity  |
-| `hwplb`   | 2, 4        | 4       | More planes = more capacity     |
+| `swplb`   | 2, 4        | 2 on B300/GB300 | Pass 4 explicitly for quad-plane B300 |
+| `hwplb`   | 2, 4        | explicit | Select from site topology, not platform type |
 
 ## Keyword Matching Heuristics
 

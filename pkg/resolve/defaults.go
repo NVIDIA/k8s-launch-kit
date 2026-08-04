@@ -23,6 +23,7 @@ package resolve
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -56,13 +57,17 @@ func (d DefaultDecision) String() string {
 //	--deployment-type     ← "sriov" (always).
 //	--multirail           ← true (unless config or CLI explicitly sets it).
 //	--routing             ← "destination-based" (unless config or CLI sets it).
-//	--multiplane-mode     ← per east-west PF deviceID (only when --spectrum-x):
-//	                       1021 (CX7) / a2dc (BF3 SuperNIC) → "none"
-//	                       1023 (CX8) → "swplb"
-//	                       1025 (CX9) → "hwplb"
-//	                       Skipped+warned when groups have mixed deviceIDs.
-//	--number-of-planes    ← per deviceID (only when --spectrum-x):
-//	                       1021 / a2dc → 1, 1023 → 2, 1025 → 4.
+//	--multiplane-mode     ← per GPU platform + east-west PF deviceID
+//	                       (only when --spectrum-x):
+//	                       H100/H200/B200/GB200 → "none"
+//	                       B300/GB300 → "swplb" (the GA default;
+//	                       hwplb remains an explicit opt-in)
+//	                       Unknown platforms fall back to the NIC family.
+//	                       Skipped+warned when groups need different defaults.
+//	--number-of-planes    ← per platform + deviceID (only when
+//	                       --spectrum-x): single-plane platforms → 1;
+//	                       B300/GB300 → 2 (pass 4 explicitly for a
+//	                       quad-plane B300 topology); CX9 fallback → 4.
 //	--network-operator-release ← `config.DefaultSPCXReleaseFor(SPCXVersion)`
 //	                            (only when --spectrum-x is set).
 //
@@ -151,7 +156,7 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 
 // applySpectrumXHardwareDefaults handles the Spectrum-X-only defaults:
 // implicit fabric/deployment/multirail (forced by Spectrum-X),
-// --multiplane-mode, --number-of-planes (from east-west PF deviceID),
+// --multiplane-mode, --number-of-planes (from GPU platform + east-west PF),
 // and --network-operator-release (matched to the chosen RA version).
 func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options, decisions *[]DefaultDecision) {
 	if cfg.Profile.SpectrumX == nil {
@@ -183,32 +188,62 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 			Flag: "--deployment-type", Value: "sriov", Reason: "implied by --spectrum-x",
 		})
 	}
-	// --multiplane-mode + --number-of-planes (paired — both come from
-	// the same deviceID).
+	// --multiplane-mode + --number-of-planes. An explicit single-plane value
+	// determines its missing companion without consulting hardware. Otherwise,
+	// fill the missing values from the platform/NIC pair.
 	modeUnset := cfg.Profile.SpectrumX.MultiplaneMode == "" && opts.MultiplaneMode == ""
 	planesUnset := cfg.Profile.SpectrumX.NumberOfPlanes == 0 && opts.NumberOfPlanes == 0
 	if modeUnset || planesUnset {
-		mode, planes, ok, reason := spectrumXDefaultsForDeviceID(cfg.ClusterConfig)
+		effectiveMode := cfg.Profile.SpectrumX.MultiplaneMode
+		if opts.MultiplaneMode != "" {
+			effectiveMode = opts.MultiplaneMode
+		}
+		effectivePlanes := cfg.Profile.SpectrumX.NumberOfPlanes
+		if opts.NumberOfPlanes != 0 {
+			effectivePlanes = opts.NumberOfPlanes
+		}
+
+		mode, planes, ok, reason := "", 0, false, ""
+		needsHardwareMode := modeUnset && effectivePlanes != 1
+		needsHardwarePlanes := planesUnset && effectiveMode != "none"
+		if needsHardwareMode || needsHardwarePlanes {
+			mode, planes, ok, reason = spectrumXDefaultsForHardware(cfg.ClusterConfig)
+		}
+
+		modeReason := reason
+		if modeUnset && effectivePlanes == 1 {
+			mode = "none"
+			modeReason = "number-of-planes=1 implies single-plane mode"
+		}
+		planesReason := reason
+		if planesUnset && effectiveMode == "none" {
+			planes = 1
+			planesReason = "multiplane-mode=none implies one plane"
+		}
+
+		modeResolved := mode != "" && (ok || effectivePlanes == 1)
+		planesResolved := planes != 0 && (ok || effectiveMode == "none")
 		log.Log.V(1).Info("HW default: --multiplane-mode / --number-of-planes",
 			"groupsConsidered", len(cfg.ClusterConfig),
 			"resolvedMode", mode, "resolvedPlanes", planes,
-			"applied", ok, "reason", reason)
-		if ok {
-			if modeUnset {
-				cfg.Profile.SpectrumX.MultiplaneMode = mode
-				*decisions = append(*decisions, DefaultDecision{
-					Flag: "--multiplane-mode", Value: mode,
-					Reason: reason,
-				})
-			}
-			if planesUnset {
-				cfg.Profile.SpectrumX.NumberOfPlanes = planes
-				*decisions = append(*decisions, DefaultDecision{
-					Flag: "--number-of-planes", Value: fmt.Sprintf("%d", planes),
-					Reason: reason,
-				})
-			}
-		} else {
+			"modeApplied", modeUnset && modeResolved,
+			"planesApplied", planesUnset && planesResolved,
+			"hardwareReason", reason)
+		if modeUnset && modeResolved {
+			cfg.Profile.SpectrumX.MultiplaneMode = mode
+			*decisions = append(*decisions, DefaultDecision{
+				Flag: "--multiplane-mode", Value: mode,
+				Reason: modeReason,
+			})
+		}
+		if planesUnset && planesResolved {
+			cfg.Profile.SpectrumX.NumberOfPlanes = planes
+			*decisions = append(*decisions, DefaultDecision{
+				Flag: "--number-of-planes", Value: fmt.Sprintf("%d", planes),
+				Reason: planesReason,
+			})
+		}
+		if (modeUnset && !modeResolved) || (planesUnset && !planesResolved) {
 			log.Log.Info("Cannot default --multiplane-mode / --number-of-planes", "reason", reason)
 		}
 	}
@@ -272,42 +307,121 @@ func dominantLinkType(groups []config.ClusterConfig) (linkType string, ok bool, 
 	return seen, true, ""
 }
 
-// spectrumXDefaultsForDeviceID returns the Spectrum-X (multiplane-mode,
-// number-of-planes) pair that matches the deviceID of the east-west
-// PFs across all groups. ok=false when groups have mixed deviceIDs or
-// a deviceID isn't in the registered Spectrum-X mapping.
-func spectrumXDefaultsForDeviceID(groups []config.ClusterConfig) (mode string, planes int, ok bool, reason string) {
+// spectrumXDefaultsForHardware returns a single Spectrum-X
+// (multiplane-mode, number-of-planes) pair that is valid for every group.
+// GPU platform refines the NIC-family fallback because ConnectX-8 can back
+// both single-plane H100/H200/B200/GB200 systems and multiplane B300/GB300
+// systems. Platform does not distinguish swplb from hwplb: both are available
+// on B300 and GB300, so l8k defaults to the GA swplb path and requires an
+// explicit override for tech-preview hwplb.
+func spectrumXDefaultsForHardware(groups []config.ClusterConfig) (mode string, planes int, ok bool, reason string) {
 	if len(groups) == 0 {
 		return "", 0, false, "no clusterConfig groups"
 	}
 	var seenID string
+	var seenPlatform string
+	var seenMode string
+	var seenPlanes int
+	groupsConsidered := 0
 	for _, g := range groups {
-		for _, pf := range g.PFs {
-			if pf.Traffic != "east-west" {
-				continue
-			}
-			normID := strings.ToLower(pf.DeviceID)
-			if seenID == "" {
-				seenID = normID
-				continue
-			}
-			if seenID != normID {
-				return "", 0, false, fmt.Sprintf("east-west PFs have mixed deviceIDs: %q vs %q", seenID, normID)
-			}
+		deviceID, hasEastWest, idReason := eastWestDeviceID(g)
+		if !hasEastWest {
+			continue
 		}
+		if idReason != "" {
+			return "", 0, false, idReason
+		}
+		if seenID == "" {
+			seenID = deviceID
+		} else if seenID != deviceID {
+			return "", 0, false, fmt.Sprintf("east-west PFs have mixed deviceIDs: %q vs %q", seenID, deviceID)
+		}
+
+		platform := spectrumXGPUPlatform(g)
+		groupMode, groupPlanes, groupReason := spectrumXDefaultForDeviceAndPlatform(deviceID, platform)
+		if groupMode == "" {
+			return "", 0, false, groupReason
+		}
+		if groupsConsidered == 0 {
+			seenMode = groupMode
+			seenPlanes = groupPlanes
+			seenPlatform = platform
+			reason = groupReason
+		} else if seenMode != groupMode || seenPlanes != groupPlanes {
+			return "", 0, false, fmt.Sprintf(
+				"groups require different Spectrum-X defaults: %s/%d for platform %q vs %s/%d for platform %q",
+				seenMode, seenPlanes, seenPlatform, groupMode, groupPlanes, platform)
+		} else if seenPlatform != "" && platform != "" && platform != seenPlatform {
+			reason = fmt.Sprintf("platforms %s and %s share the %s/%d default", seenPlatform, platform, seenMode, seenPlanes)
+		}
+		groupsConsidered++
 	}
-	if seenID == "" {
+	if groupsConsidered == 0 {
 		return "", 0, false, "no east-west PFs"
 	}
-	switch seenID {
-	case "1021":
-		return "none", 1, true, "ConnectX-7 (deviceID 1021)"
-	case "1023":
-		return "swplb", 2, true, "ConnectX-8 (deviceID 1023)"
-	case "1025":
-		return "hwplb", 4, true, "ConnectX-9 (deviceID 1025)"
-	case "a2dc":
-		return "none", 1, true, "BF3 SuperNIC (deviceID a2dc)"
+	return seenMode, seenPlanes, true, reason
+}
+
+func eastWestDeviceID(group config.ClusterConfig) (deviceID string, hasEastWest bool, reason string) {
+	for _, pf := range group.PFs {
+		if pf.Traffic != "east-west" {
+			continue
+		}
+		hasEastWest = true
+		normID := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(pf.DeviceID)), "0x")
+		if normID == "" {
+			return "", true, fmt.Sprintf("group %q has an east-west PF without a deviceID", group.Identifier)
+		}
+		if deviceID == "" {
+			deviceID = normID
+			continue
+		}
+		if deviceID != normID {
+			return "", true, fmt.Sprintf("group %q east-west PFs have mixed deviceIDs: %q vs %q", group.Identifier, deviceID, normID)
+		}
 	}
-	return "", 0, false, fmt.Sprintf("east-west PF deviceID %q has no Spectrum-X default", seenID)
+	return deviceID, hasEastWest, ""
+}
+
+func spectrumXDefaultForDeviceAndPlatform(deviceID, platform string) (mode string, planes int, reason string) {
+	switch deviceID {
+	case "1021":
+		return "none", 1, "ConnectX-7 (deviceID 1021)"
+	case "1023":
+		switch platform {
+		case "H100", "H200", "B200", "GB200":
+			return "none", 1, fmt.Sprintf("%s is a single-plane GPU platform (ConnectX-8 deviceID 1023)", platform)
+		case "B300":
+			return "swplb", 2, "B300 conservative dual-plane SWPLB default; pass 4 explicitly for quad-plane"
+		case "GB300":
+			return "swplb", 2, "GB300 dual-plane platform; SWPLB is the GA default"
+		default:
+			return "swplb", 2, "ConnectX-8 (deviceID 1023) fallback; SWPLB is the GA default"
+		}
+	case "1025":
+		return "hwplb", 4, "ConnectX-9 (deviceID 1025)"
+	case "a2dc":
+		return "none", 1, "BF3 SuperNIC (deviceID a2dc)"
+	}
+	return "", 0, fmt.Sprintf("east-west PF deviceID %q has no Spectrum-X default", deviceID)
+}
+
+func spectrumXGPUPlatform(group config.ClusterConfig) string {
+	if platform := spectrumXGPUPlatformToken(group.GPUType); platform != "" {
+		return platform
+	}
+	return spectrumXGPUPlatformToken(group.MachineType)
+}
+
+func spectrumXGPUPlatformToken(value string) string {
+	tokens := strings.FieldsFunc(strings.ToUpper(value), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	for _, token := range tokens {
+		switch token {
+		case "H100", "H200", "B200", "GB200", "B300", "GB300":
+			return token
+		}
+	}
+	return ""
 }

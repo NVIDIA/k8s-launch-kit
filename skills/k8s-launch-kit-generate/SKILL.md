@@ -32,8 +32,8 @@ to that source file; embedded `--for` generation does not write a config.
 | `--fabric` | Auto-defaulted | `ethernet`, `infiniband` | Network fabric. Auto-defaults from the cluster's unanimous `linkType` when omitted (Unit 5 fabric probe); skipped+warned when groups disagree or any has unverified linkType. |
 | `--deployment-type` | Auto-defaulted | `sriov`, `rdma_shared`, `host_device` | Deployment type. Auto-defaults to `sriov`. |
 | `--spectrum-x` | — | `RA2.1`, `RA2.2`, `RA2.3` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
-| `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from east-west PF deviceID: CX7 / BF3 SuperNIC → `none`, CX8 → `swplb`, CX9 → `hwplb`. Skipped+warned when groups have mixed deviceIDs. |
-| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4` | Auto-defaults from deviceID: CX7 / BF3 → 1, CX8 → 2, CX9 → 4. |
+| `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from GPU platform plus east-west PF deviceID: H100/H200/B200/GB200 → `none`; B300/GB300 → the GA `swplb` path. Platform cannot identify `hwplb`; select it explicitly. Unknown platforms fall back to NIC family. |
+| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4` | Single-plane platforms → 1; B300/GB300 → 2. Pass 4 explicitly for quad-plane B300. An explicit `none` also implies 1, and an explicit 1 implies `none`. |
 | `--topology-scheme` | Required with `--spectrum-x` | `2-tier`, `3-tier` | Selects the Spectrum-X topology addressing scheme. |
 | `--ip-version` | Required with `--spectrum-x` | `ipv4`, `ipv6` | Selects per-node IPv4 `/31` or IPv6 `/64` CIDRPool allocation. |
 | `--topology-file` | Required with `--spectrum-x` | path | spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from the JSON structure. |
@@ -154,7 +154,10 @@ win when a one-off override is needed.
 ## Tips
 
 - Default to SR-IOV Ethernet for new GPU cluster deployments unless told otherwise.
-- For Spectrum-X, NIC type determines available multiplane modes — read `references/spectrum-x-guide.md`.
+- For Spectrum-X, GPU platform and NIC type determine the safe defaults, but
+  B300/GB300 platform type does not distinguish SWPLB from HWPLB. l8k defaults
+  to SWPLB; use an explicit HWPLB override when the site topology requires it.
+  Read `references/spectrum-x-modes.md`.
 - NVIDIA AIR topology support requires the documented one-based node/interface
   naming contract (`su<S>`, `h<H>`, `leaf-p<P>`, `r<R>`, `rail<R>p<P>`, and
   `pod<D>` for 3-tier). See `docs/user/spectrum-x.md` in the l8k repository.

@@ -11,10 +11,11 @@ It always requires `fabric=ethernet`, `deployment=sriov`, and `multirail=true`.
 Spectrum-X supports three multiplane modes that determine how network planes are
 organized and how resources are named:
 
-### none (BF3 Only)
+### none (Single Plane)
 
 - Single plane, no multiplane support
-- BlueField-3 SuperNIC only (deviceID `a2dc`)
+- BlueField-3 SuperNIC (`a2dc`), ConnectX-7 (`1021`), or ConnectX-8
+  (`1023`) on H100/H200/B200/GB200
 - Number of planes: 1 (fixed)
 - Resources are named per-rail only
 - Simplest Spectrum-X deployment
@@ -23,7 +24,7 @@ organized and how resources are named:
 
 - ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
 - Software-based load balancing across planes
-- Number of planes: 2 or 4 (default: 4)
+- Number of planes: 2 or 4 (B300/GB300 default: 2)
 - Resources are named per-rail AND per-plane (finest granularity)
 - SpectrumXRailPoolConfig emits one `railTopology[]` entry per rail-plane,
   each with its own `cidrPoolRef: rail-{i}-plane-{p}`
@@ -33,9 +34,14 @@ organized and how resources are named:
 
 - ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
 - Hardware-based load balancing across planes
-- Number of planes: 2 or 4 (default: 4)
+- Number of planes: 2 or 4 (explicit site-topology choice)
 - Resources are named per-rail only (hardware handles plane distribution)
 - Better for large-scale 2-tier and 3-tier network topologies
+
+Both B300 and GB300 support `swplb` and `hwplb`, so the GPU platform cannot
+identify which load-balancing mechanism the fabric uses. Launch Kit defaults
+these platforms to the GA `swplb` path with 2 planes. Select `hwplb`
+explicitly, and pass 4 explicitly for a quad-plane B300 topology.
 
 All three modes are supported by the Spectrum-X profiles. Pick the profile
 by the value of `--spectrum-x` (the legacy `--spcx-version` has been folded
@@ -163,11 +169,11 @@ l8k --user-config config.yaml \
   --multirail --spectrum-x \
   --multiplane-mode none --number-of-planes 1
 
-# CX8 with software plane load balancing (default)
+# B300/GB300 with software plane load balancing (default)
 l8k --user-config config.yaml \
   --fabric ethernet --deployment-type sriov \
   --multirail --spectrum-x \
-  --multiplane-mode swplb --number-of-planes 4
+  --multiplane-mode swplb --number-of-planes 2
 
 # CX8 with hardware plane load balancing (large scale)
 l8k --user-config config.yaml \

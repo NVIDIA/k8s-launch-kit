@@ -31,6 +31,17 @@ Discovery fills missing profile values from hardware and built-in defaults.
 Values already present under `profile` are preserved, while explicit CLI flags
 (`--fabric`, `--deployment-type`, `--multirail`, `--routing`, `--ignore-arp`,
 `--spectrum-x`) take precedence.
+
+For Spectrum-X, discovery combines the east-west NIC device ID with each
+group's `gpuType` (or `machineType` fallback). H100/H200/B200/GB200 platforms
+default to `multiplaneMode: none` and `numberOfPlanes: 1`. B300 and GB300
+default to the common GA dual-plane configuration, `swplb` with 2 planes.
+Platform type cannot distinguish `swplb` from `hwplb`: both are available on
+B300 and GB300, while `hwplb` is an explicit opt-in. Pass
+`--multiplane-mode hwplb` when required, and pass `--number-of-planes 4`
+explicitly for a quad-plane B300 topology. The same defaults apply when
+`--for` supplies hardware from a topology preset.
+
 AI-driven profile selection now lives in the `k8s-launch-kit-*` Claude Code
 skills, which wrap the deterministic CLI commands.
 

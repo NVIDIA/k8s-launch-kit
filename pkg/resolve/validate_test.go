@@ -129,3 +129,24 @@ func TestValidateResolvedConfigAcceptsConfigMapProfileForRA23(t *testing.T) {
 
 	require.NoError(t, ValidateResolvedConfig(cfg))
 }
+
+func TestValidateResolvedConfigRejectsMultiplaneModeWithOnePlane(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.4"},
+		Profile: &config.Profile{
+			Fabric:     "ethernet",
+			Deployment: "sriov",
+			Multirail:  true,
+			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
+				SPCXVersion:    "RA2.2",
+				MultiplaneMode: "swplb",
+				NumberOfPlanes: 1,
+				TopologyType:   config.SpectrumXTopology2Tier,
+			},
+		},
+	}
+
+	err := ValidateResolvedConfig(cfg)
+	require.ErrorContains(t, err, "--multiplane-mode swplb requires --number-of-planes 2 or 4")
+}

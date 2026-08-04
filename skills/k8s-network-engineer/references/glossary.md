@@ -27,8 +27,8 @@
 ## Spectrum-X
 
 - **Multiplane mode**: How Spectrum-X organizes switch fabric planes. Options: `none` (CX7/BF3), `swplb` (software plane load balancing), and `hwplb` (hardware plane load balancing).
-- **SWPLB (Software Plane Load Balancing)**: Each rail-plane combination gets its own set of Kubernetes resources. Default for CX8.
-- **HWPLB (Hardware Plane Load Balancing)**: Planes managed by switch hardware. Resources generated per-rail only. For larger-scale 2/3-tier topologies.
+- **SWPLB (Software Plane Load Balancing)**: Each rail-plane combination gets its own set of Kubernetes resources. The GA Launch Kit default for B300/GB300.
+- **HWPLB (Hardware Plane Load Balancing)**: Planes managed by switch hardware. Resources generated per-rail only. For larger-scale 2/3-tier topologies; selected explicitly because B300/GB300 platform type does not distinguish it from SWPLB.
 
 ## Network Operator Components
 

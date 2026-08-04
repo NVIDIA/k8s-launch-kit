@@ -264,8 +264,8 @@ profile:
 | `ignoreARP` | Adds per-interface ARP tuning outside Spectrum-X. |
 | `spectrumX.enable` | Select a Spectrum-X profile. |
 | `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, or `RA2.3`. |
-| `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. |
-| `spectrumX.numberOfPlanes` | `1`, `2`, or `4`. |
+| `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. When absent, H100/H200/B200/GB200 default to `none`; B300/GB300 default to the GA `swplb` path. Platform type cannot distinguish `swplb` from `hwplb`, so `hwplb` must be selected explicitly. |
+| `spectrumX.numberOfPlanes` | `1`, `2`, or `4`. Single-plane platforms default to 1; B300/GB300 default to 2. Pass 4 explicitly for quad-plane B300. |
 | `spectrumX.topologyType` | `2-tier` or `3-tier`. |
 | `spectrumX.ipVersion` | `ipv4` for per-node `/31` allocation or `ipv6` for per-node `/64` allocation. |
 | `spectrumX.hostFirstOctet` | Config-only first octet for generated IPv4 topology addressing. |
