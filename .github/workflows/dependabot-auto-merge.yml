@@ -1,0 +1,205 @@
+# Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Auto-merge Dependabot pull requests
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+  statuses: read
+
+concurrency:
+  group: dependabot-auto-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.user.login == 'dependabot[bot]' &&
+       github.event.pull_request.base.ref == github.event.repository.default_branch &&
+       !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Merge conflict-free pull requests with green checks
+        env:
+          AUTO_MERGE_WORKFLOW: Auto-merge Dependabot pull requests
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          process_pr() {
+            local pr_number=$1
+            local max_attempts=$2
+            local pr author base_ref draft expected_head_sha pr_url state
+            local checks checks_status other_checks check_count
+            local pending_count unsuccessful_count stable_complete_snapshots
+
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")
+            author=$(jq -r '.user.login' <<< "$pr")
+            base_ref=$(jq -r '.base.ref' <<< "$pr")
+            draft=$(jq -r '.draft' <<< "$pr")
+            expected_head_sha=$(jq -r '.head.sha' <<< "$pr")
+            pr_url=$(jq -r '.html_url' <<< "$pr")
+            state=$(jq -r '.state' <<< "$pr")
+
+            if [ "$author" != "dependabot[bot]" ] || \
+               [ "$base_ref" != "$DEFAULT_BRANCH" ] || \
+               [ "$draft" = "true" ] || \
+               [ "$state" != "open" ]; then
+              echo "Pull request #$pr_number is not an eligible open Dependabot update; skipping."
+              return 0
+            fi
+
+            stable_complete_snapshots=0
+
+            for attempt in $(seq 1 "$max_attempts"); do
+              checks_status=0
+              checks=$(gh pr checks "$pr_url" \
+                --json name,state,bucket,link,workflow) || checks_status=$?
+
+              if [ "$checks_status" -ne 0 ] && \
+                 [ "$checks_status" -ne 1 ] && \
+                 [ "$checks_status" -ne 8 ]; then
+                echo "Failed to read checks for pull request #$pr_number (exit $checks_status)." >&2
+                return "$checks_status"
+              fi
+
+              other_checks=$(jq -c \
+                --arg workflow "$AUTO_MERGE_WORKFLOW" \
+                '[.[] | select(.workflow != $workflow)]' <<< "$checks")
+              check_count=$(jq 'length' <<< "$other_checks")
+              pending_count=$(jq \
+                '[.[] | select(.bucket == "pending")] | length' \
+                <<< "$other_checks")
+              unsuccessful_count=$(jq \
+                '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' \
+                <<< "$other_checks")
+
+              if [ "$check_count" -eq 0 ]; then
+                stable_complete_snapshots=0
+                echo "No other checks are registered for pull request #$pr_number yet (attempt $attempt/$max_attempts)."
+              elif [ "$unsuccessful_count" -gt 0 ]; then
+                echo "Pull request #$pr_number has unsuccessful checks; leaving it open:"
+                jq -r '.[] | "- \(.name): \(.bucket)"' <<< "$other_checks"
+                return 0
+              elif [ "$pending_count" -gt 0 ]; then
+                stable_complete_snapshots=0
+                echo "Waiting for checks on pull request #$pr_number (attempt $attempt/$max_attempts):"
+                jq -r '.[] | "- \(.name): \(.bucket)"' <<< "$other_checks"
+              else
+                stable_complete_snapshots=$((stable_complete_snapshots + 1))
+                echo "All $check_count other checks for pull request #$pr_number are green (stable snapshot $stable_complete_snapshots/2)."
+
+                if [ "$stable_complete_snapshots" -ge 2 ]; then
+                  break
+                fi
+              fi
+
+              sleep 10
+            done
+
+            if [ "$stable_complete_snapshots" -lt 2 ]; then
+              echo "Pull request #$pr_number is not ready; a scheduled scan will retry it."
+              return 0
+            fi
+
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")
+            author=$(jq -r '.user.login' <<< "$pr")
+            base_ref=$(jq -r '.base.ref' <<< "$pr")
+            draft=$(jq -r '.draft' <<< "$pr")
+            state=$(jq -r '.state' <<< "$pr")
+
+            if [ "$author" != "dependabot[bot]" ] || \
+               [ "$base_ref" != "$DEFAULT_BRANCH" ] || \
+               [ "$draft" = "true" ] || \
+               [ "$state" != "open" ]; then
+              echo "Pull request #$pr_number is no longer eligible; skipping."
+              return 0
+            fi
+
+            if [ "$(jq -r '.head.sha' <<< "$pr")" != "$expected_head_sha" ]; then
+              echo "Pull request #$pr_number changed while checks were evaluated; waiting for checks on the new head."
+              return 0
+            fi
+
+            for attempt in {1..12}; do
+              mergeable=$(gh pr view "$pr_url" --json mergeable --jq '.mergeable')
+
+              case "$mergeable" in
+                MERGEABLE)
+                  gh pr merge "$pr_url" --merge --match-head-commit "$expected_head_sha"
+                  return 0
+                  ;;
+                CONFLICTING)
+                  echo "Dependabot pull request #$pr_number has merge conflicts; leaving it open."
+                  return 0
+                  ;;
+                UNKNOWN)
+                  echo "Mergeability for pull request #$pr_number is not ready yet (attempt $attempt/12)."
+                  sleep 5
+                  ;;
+                *)
+                  echo "Unexpected mergeability value for pull request #$pr_number: $mergeable" >&2
+                  return 1
+                  ;;
+              esac
+            done
+
+            echo "GitHub did not calculate mergeability for pull request #$pr_number; a scheduled scan will retry it."
+          }
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # Allow other checks time to register before evaluating the check set.
+            sleep 15
+            process_pr "$EVENT_PR_NUMBER" 150
+            exit 0
+          fi
+
+          mapfile -t pr_numbers < <(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --app dependabot \
+              --base "$DEFAULT_BRANCH" \
+              --state open \
+              --limit 100 \
+              --json number \
+              --jq '.[].number'
+          )
+
+          if [ "${#pr_numbers[@]}" -eq 0 ]; then
+            echo "No open Dependabot pull requests target the default branch."
+            exit 0
+          fi
+
+          for pr_number in "${pr_numbers[@]}"; do
+            process_pr "$pr_number" 2
+          done
