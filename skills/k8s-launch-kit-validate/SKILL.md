@@ -38,7 +38,10 @@ Operator release.
    `READY`, `IN-PROGRESS`, `ERROR`, or `MISSING`.
 3. **Connectivity matrix.** By default, `l8k validate` applies the generated
    example DaemonSet, waits for ready pods, and runs source-bound `icmp`,
-   `rping`, and `ib_write_bw` tests. The default mode is `strict`.
+   `rping`, and `ib_write_bw` tests. Profile templates declare both validation
+   containers: DOCA for the RDMA checks and `netshoot` for ICMP and route
+   checks. Validate applies the generated DaemonSet without runtime container
+   injection. The default mode is `strict`.
 
 Validation also reports deploy-preflight drift without remediating it.
 `SriovNetworkPoolConfig`, `SriovNetworkNodePolicy`, and `OVSNetwork` objects

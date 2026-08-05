@@ -28,6 +28,12 @@ When `--user-config` is omitted, Launch Kit checks `./cluster-config.yaml`, the 
 
 Connectivity is skipped when manifests are missing, errored, or still in progress.
 
+Each generated example DaemonSet declares two validation containers: the DOCA
+container runs `rping` and `ib_write_bw`, while the `netshoot` container runs
+ICMP and route checks from the same pod network namespace. Validation applies
+the generated DaemonSet as written; it does not inject a helper container at
+runtime.
+
 Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a relevant device condition with a stale `observedGeneration` remains `IN-PROGRESS`. `NicConfigurationTemplate` considers `FirmwareUpdateInProgress` relevant only when the matched device has `spec.firmware`; a stale firmware condition cannot block a configuration-only deployment. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
 
 Preflight uses the same checks as deployment: Helm chart version, generated Helm values, component versions, and stray l8k-managed CRs. SR-IOV pool configs, node policies, and OVS networks labeled with `spectrumx.nvidia.com/owner-name` are controller-owned outputs of `SpectrumXRailPoolConfig`, so they are not reported as strays. Validation never remediates drift.

@@ -150,9 +150,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 
 	hasICMP := checksContain(opts.Checks, CheckICMP)
 	hasRDMA := checksContain(opts.Checks, CheckRPing) || checksContain(opts.Checks, CheckIBWriteBW)
-	deferICMPSidecar := hasICMP && hasRDMA
-	includeICMP := hasICMP && !deferICMPSidecar
-	objs, refs, err := LoadExampleDaemonSets(opts.ManifestDir, includeICMP)
+	objs, refs, err := LoadExampleDaemonSets(opts.ManifestDir)
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +158,14 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		return &MatrixResult{
 			Skipped: &MatrixSkip{Reason: "no example DaemonSet manifests found under " + opts.ManifestDir},
 		}, nil
+	}
+	if hasICMP {
+		for _, ref := range refs {
+			if ref.ICMPContainer == "" {
+				return nil, fmt.Errorf("example DaemonSet %s/%s from %s does not declare the %q ICMP helper container",
+					ref.Namespace, ref.Name, ref.SourceFile, icmpTestContainerName)
+			}
+		}
 	}
 
 	result := &MatrixResult{}
@@ -324,10 +330,6 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	// tooling stays in the DOCA container that owns the RDMA resources.
 	rdmaContainerByPod, icmpContainerByPod, namespaceByPod := containerMaps(allPods)
 
-	// Stages run RDMA first when ICMP and RDMA are both enabled. In that case
-	// the initial DaemonSet rollout stays DOCA-only; the netshoot sidecar is
-	// patched in only before the ICMP stage so a restricted cluster can still
-	// produce RDMA results if the helper image cannot be pulled.
 	stages := []struct {
 		check Check
 		label string
@@ -359,26 +361,6 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			continue
 		}
 		tests := stage.tests
-		if stage.check == CheckICMP && deferICMPSidecar {
-			uiOutput.Info("Adding ICMP helper sidecar before ICMP stage")
-			icmpObjs, icmpRefs, err := LoadExampleDaemonSets(opts.ManifestDir, true)
-			if err != nil {
-				return result, err
-			}
-			icmpPods, err := applyAndCollectPods(icmpObjs, icmpRefs)
-			if err != nil {
-				uiOutput.Warning("ICMP helper rollout failed: %v — skipping ICMP stage", err)
-				log.Log.V(1).Info("skipping ICMP stage after helper rollout failure", "error", err.Error())
-				continue
-			}
-			_, icmpContainerByPod, namespaceByPod = containerMaps(icmpPods)
-			icmpPlan := PlanWithOptions(buildMatrixPods(icmpPods, false), opts.Mode, opts.Routing)
-			if icmpPlan.Skip != nil {
-				uiOutput.Warning("ICMP matrix skipped: %s", icmpPlan.Skip.Reason)
-				continue
-			}
-			tests = append(append([]PingTest{}, icmpPlan.ICMPSameRail...), icmpPlan.ICMPCrossRail...)
-		}
 		if len(tests) == 0 {
 			continue
 		}

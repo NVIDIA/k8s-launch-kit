@@ -19,6 +19,7 @@ package connectivity
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -42,6 +43,12 @@ spec:
       containers:
       - name: test-container
         image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
+      - name: netshoot
+        image: nicolaka/netshoot:latest
+        command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
+        securityContext:
+          capabilities:
+            add: ["NET_RAW"]
 `
 
 // writeExampleDS drops a single example DaemonSet manifest into a temp dir and
@@ -62,7 +69,7 @@ func writeExampleDS(t *testing.T) string {
 // its namespace baked in), so validate fans out across them automatically
 // without any namespace flag of its own.
 func TestLoadExampleDaemonSetsUsesManifestNamespace(t *testing.T) {
-	objs, refs, err := LoadExampleDaemonSets(writeExampleDS(t), true)
+	objs, refs, err := LoadExampleDaemonSets(writeExampleDS(t))
 	require.NoError(t, err)
 	require.Len(t, objs, 1)
 	require.Len(t, refs, 1)
@@ -76,16 +83,27 @@ func TestLoadExampleDaemonSetsUsesManifestNamespace(t *testing.T) {
 	require.Len(t, containers, 2)
 	sidecar, ok := containers[1].(map[string]interface{})
 	require.True(t, ok)
-	require.Equal(t, []interface{}{"/bin/bash", "-c", icmpTestCommand}, sidecar["command"])
+	require.Equal(t, "netshoot", sidecar["name"])
+	require.Equal(t, "nicolaka/netshoot:latest", sidecar["image"])
 }
 
-func TestLoadExampleDaemonSetsSkipsICMPSidecarWhenDisabled(t *testing.T) {
-	objs, refs, err := LoadExampleDaemonSets(writeExampleDS(t), false)
+func TestLoadExampleDaemonSetsDoesNotInventICMPContainer(t *testing.T) {
+	dir := t.TempDir()
+	manifest := strings.Replace(exampleDaemonSetManifest, `      - name: netshoot
+        image: nicolaka/netshoot:latest
+        command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
+        securityContext:
+          capabilities:
+            add: ["NET_RAW"]
+`, "", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "60-example-daemonset.yaml"), []byte(manifest), 0o600))
+
+	objs, refs, err := LoadExampleDaemonSets(dir)
 	require.NoError(t, err)
 	require.Len(t, objs, 1)
 	require.Len(t, refs, 1)
 	require.Equal(t, "test-container", refs[0].RDMAContainer)
-	require.Equal(t, "test-container", refs[0].ICMPContainer)
+	require.Empty(t, refs[0].ICMPContainer)
 	containers, ok, err := unstructured.NestedSlice(objs[0].Object, "spec", "template", "spec", "containers")
 	require.NoError(t, err)
 	require.True(t, ok)
