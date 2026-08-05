@@ -15,6 +15,15 @@ python -m pip install -r requirements-docs.txt
 mkdocs build --strict
 ```
 
+## Repository Automation
+
+The `dependabot-auto-merge.yml` workflow automatically merges non-draft
+Dependabot pull requests that target the current default branch after every
+other pull request check has completed successfully or been skipped. Conflicting
+pull requests and pull requests with unsuccessful checks are left open. A
+scheduled scan revisits open Dependabot pull requests whose checks outlast the
+initial workflow run.
+
 ## Operation Phases
 
 ### Discover Cluster Configuration
