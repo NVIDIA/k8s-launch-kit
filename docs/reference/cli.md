@@ -112,16 +112,16 @@ metadata and chart-managed resources are removed with the release.
 Namespace resolution uses the first available source: an explicit
 `--network-operator-namespace`, `networkOperator.namespace` from
 `--user-config`, `./cluster-config.yaml`, or an explicit
-`--config-dir/l8k-config.yaml`, one unique live Helm release namespace, or
-`nvidia-network-operator`. Multiple live release namespaces are an error
-unless the namespace is explicit.
+`--config-dir/l8k-config.yaml`, then `nvidia-network-operator`. Custom
+installation namespaces must be explicit in a flag or config; untrusted
+in-cluster objects do not select a destructive cleanup target.
 
 | Flag | Description |
 | --- | --- |
 | `--keep-helm-chart` | Delete custom resources but leave the Network Operator Helm release and chart-managed resources installed. |
 | `--kubeconfig` | Cluster to clean. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
 | `--user-config` | Optional config used only to read `networkOperator.namespace`. |
-| `--network-operator-namespace` | Explicit cleanup namespace; takes precedence over config and live Helm discovery. |
+| `--network-operator-namespace` | Explicit cleanup namespace; takes precedence over config and the standard default. |
 
 Cleanup is destructive and asks for confirmation in text mode. JSON mode is
 non-interactive and auto-confirms, so use `--output json` only after verifying

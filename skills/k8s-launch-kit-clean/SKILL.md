@@ -45,7 +45,8 @@ l8k clean \
 
 Omit `--network-operator-namespace` only when the user expects l8k to resolve
 it from `--user-config`, `./cluster-config.yaml`, an explicit `--config-dir`,
-one unique live Helm release, or the `nvidia-network-operator` default.
+or the `nvidia-network-operator` default. l8k does not trust in-cluster objects
+to select a destructive cleanup target.
 
 To retain the installed release and its chart-managed resources:
 

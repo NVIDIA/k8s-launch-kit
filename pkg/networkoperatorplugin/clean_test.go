@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	corev1 "k8s.io/api/core/v1"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,7 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -41,7 +39,6 @@ var (
 func newCleanTestClient(t *testing.T, objects ...runtime.Object) client.WithWatch {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, apiextv1.AddToScheme(scheme))
 
 	gvks := append([]schema.GroupVersionKind{}, clusterScopedCleanKinds...)
@@ -85,55 +82,6 @@ func testCleanObject(gvk schema.GroupVersionKind, namespace, name string) *unstr
 	obj.SetNamespace(namespace)
 	obj.SetName(name)
 	return obj
-}
-
-func testHelmSecret(namespace, name string) *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
-			Name:      name,
-			Labels: map[string]string{
-				"owner": "helm",
-				"name":  helmclient.DefaultReleaseName,
-			},
-		},
-	}
-}
-
-func TestResolveNetworkOperatorNamespace(t *testing.T) {
-	t.Run("explicit namespace wins without cluster access", func(t *testing.T) {
-		namespace, err := ResolveNetworkOperatorNamespace(context.Background(), nil, "custom-ns")
-		require.NoError(t, err)
-		assert.Equal(t, "custom-ns", namespace)
-	})
-
-	t.Run("defaults when Helm release is absent", func(t *testing.T) {
-		namespace, err := ResolveNetworkOperatorNamespace(
-			context.Background(), newCleanTestClient(t), "")
-		require.NoError(t, err)
-		assert.Equal(t, helmclient.DefaultNamespace, namespace)
-	})
-
-	t.Run("resolves one unique Helm release namespace", func(t *testing.T) {
-		kubeClient := newCleanTestClient(t,
-			testHelmSecret("operator-system", "sh.helm.release.v1.network-operator.v1"),
-			testHelmSecret("operator-system", "sh.helm.release.v1.network-operator.v2"),
-		)
-		namespace, err := ResolveNetworkOperatorNamespace(context.Background(), kubeClient, "")
-		require.NoError(t, err)
-		assert.Equal(t, "operator-system", namespace)
-	})
-
-	t.Run("rejects releases in multiple namespaces", func(t *testing.T) {
-		kubeClient := newCleanTestClient(t,
-			testHelmSecret("operator-b", "release-b"),
-			testHelmSecret("operator-a", "release-a"),
-		)
-		_, err := ResolveNetworkOperatorNamespace(context.Background(), kubeClient, "")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "[operator-a operator-b]")
-		assert.Contains(t, err.Error(), "--network-operator-namespace")
-	})
 }
 
 func TestListNamespacedCustomResources(t *testing.T) {

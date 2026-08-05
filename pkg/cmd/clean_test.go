@@ -43,13 +43,13 @@ func TestCleanCommandFlags(t *testing.T) {
 	assert.Equal(t, "false", cleanCmd.Flags().Lookup("keep-helm-chart").DefValue)
 }
 
-func TestConfiguredCleanNamespace(t *testing.T) {
+func TestResolveCleanNamespace(t *testing.T) {
 	t.Run("explicit flag wins", func(t *testing.T) {
 		preserveCleanFlagState(t)
 		networkOperatorNamespace = "explicit-namespace"
 		userConfig = filepath.Join(t.TempDir(), "does-not-exist.yaml")
 
-		namespace, source, err := configuredCleanNamespace()
+		namespace, source, err := resolveCleanNamespace()
 		require.NoError(t, err)
 		assert.Equal(t, "explicit-namespace", namespace)
 		assert.Equal(t, "--network-operator-namespace", source)
@@ -66,7 +66,7 @@ unrelatedSetting:
 		networkOperatorNamespace = ""
 		userConfig = path
 
-		namespace, source, err := configuredCleanNamespace()
+		namespace, source, err := resolveCleanNamespace()
 		require.NoError(t, err)
 		assert.Equal(t, "operator-system", namespace)
 		assert.Equal(t, path, source)
@@ -79,7 +79,7 @@ unrelatedSetting:
 		networkOperatorNamespace = ""
 		userConfig = path
 
-		_, source, err := configuredCleanNamespace()
+		_, source, err := resolveCleanNamespace()
 		require.Error(t, err)
 		assert.Equal(t, path, source)
 		assert.Contains(t, err.Error(), "parse")
@@ -97,10 +97,24 @@ unrelatedSetting:
 		deploymentFiles = ""
 		configDir = dir
 
-		namespace, source, err := configuredCleanNamespace()
+		namespace, source, err := resolveCleanNamespace()
 		require.NoError(t, err)
 		assert.Equal(t, "config-dir-operator", namespace)
 		assert.Equal(t, path, source)
+	})
+
+	t.Run("uses the standard default without trusted config", func(t *testing.T) {
+		preserveCleanFlagState(t)
+		t.Chdir(t.TempDir())
+		networkOperatorNamespace = ""
+		userConfig = ""
+		deploymentFiles = ""
+		configDir = ""
+
+		namespace, source, err := resolveCleanNamespace()
+		require.NoError(t, err)
+		assert.Equal(t, defaultOperatorNamespace, namespace)
+		assert.Equal(t, "default", source)
 	})
 }
 

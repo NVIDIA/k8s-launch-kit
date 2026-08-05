@@ -28,10 +28,11 @@ var cleanCmd = &cobra.Command{
 by default, uninstall the network-operator Helm release.
 
 The operator namespace is resolved from --network-operator-namespace, then a
-user or explicit default config, then a uniquely installed network-operator
-Helm release, and finally defaults to nvidia-network-operator. All namespaced
-custom resources in that namespace are deleted. The known cluster-scoped
-Network Operator policy and network custom resources are also removed.
+user or explicit default config, and finally defaults to
+nvidia-network-operator. All namespaced custom resources in that namespace are
+deleted. The known cluster-scoped Network Operator policy and network custom
+resources are also removed. Custom installation namespaces must be supplied by
+flag or config; untrusted in-cluster objects never select the cleanup target.
 
 The namespace and CustomResourceDefinitions are preserved. Pass
 --keep-helm-chart to remove the custom resources while leaving the Helm release
@@ -71,21 +72,12 @@ and its chart-managed resources installed.`,
 		uiOutput, jsonOutput := ui.NewOutputForFormat(outputFormat, yesFlag)
 		ctx := ui.WithOutput(cmd.Context(), uiOutput)
 
-		configuredNamespace, source, err := configuredCleanNamespace()
+		namespace, source, err := resolveCleanNamespace()
 		if err != nil {
 			exitWithError(apperrors.NewValidationError(
 				"failed to resolve namespace from user config",
 				err,
 				"Fix the config or pass --network-operator-namespace <namespace>",
-			), outputFormat)
-		}
-		namespace, err := networkoperatorplugin.ResolveNetworkOperatorNamespace(
-			ctx, k8sClient, configuredNamespace)
-		if err != nil {
-			exitWithError(apperrors.NewClusterError(
-				"failed to resolve the Network Operator namespace",
-				err,
-				"Pass --network-operator-namespace <namespace> explicitly",
 			), outputFormat)
 		}
 		if problems := validation.IsDNS1123Label(namespace); len(problems) > 0 {
@@ -97,9 +89,6 @@ and its chart-managed resources installed.`,
 		}
 
 		uiOutput.Section("Network Operator cleanup")
-		if source == "" {
-			source = "live Helm release or default"
-		}
 		uiOutput.Info("Target namespace: %s (%s)", namespace, source)
 		if keepHelmChart {
 			uiOutput.Info("Helm release: keep %s installed", "network-operator")
@@ -148,7 +137,7 @@ and its chart-managed resources installed.`,
 	},
 }
 
-func configuredCleanNamespace() (string, string, error) {
+func resolveCleanNamespace() (string, string, error) {
 	if networkOperatorNamespace != "" {
 		return networkOperatorNamespace, "--network-operator-namespace", nil
 	}
@@ -164,7 +153,7 @@ func configuredCleanNamespace() (string, string, error) {
 		}
 	}
 	if path == "" {
-		return "", "", nil
+		return defaultOperatorNamespace, "default", nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -179,7 +168,7 @@ func configuredCleanNamespace() (string, string, error) {
 		return "", path, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if cfg.NetworkOperator == nil || cfg.NetworkOperator.Namespace == "" {
-		return "", "", nil
+		return defaultOperatorNamespace, "default", nil
 	}
 	return cfg.NetworkOperator.Namespace, path, nil
 }

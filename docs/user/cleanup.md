@@ -17,10 +17,9 @@ The command is destructive and asks for confirmation before changing the
 cluster. Verify the kubeconfig and the displayed target namespace before
 confirming.
 
-The kubeconfig identity must be able to list CRDs and Helm release Secrets
-cluster-wide, and to list, get, and delete the selected custom resources and
-Helm-managed objects. Cluster-administrator access normally satisfies this
-requirement.
+The kubeconfig identity must be able to list CRDs cluster-wide, list, get, and
+delete the selected custom resources, and manage the Helm release in the target
+namespace. Cluster-administrator access normally satisfies this requirement.
 
 ## Namespace Resolution
 
@@ -31,12 +30,13 @@ The first available namespace source wins:
    `./cluster-config.yaml`
 3. `networkOperator.namespace` in an explicit
    `--config-dir/l8k-config.yaml`
-4. The namespace of one unique live `network-operator` Helm release
-5. `nvidia-network-operator`
+4. `nvidia-network-operator`
 
-If Helm release records exist in multiple namespaces, cleanup stops and
-requires `--network-operator-namespace`. The config is read only for the
-namespace; stale release settings elsewhere in the file do not block cleanup.
+Custom installation namespaces must be supplied by flag or trusted local
+config. Cleanup deliberately does not infer a destructive target from
+user-creatable in-cluster objects such as Helm release Secrets. The config is
+read only for the namespace; stale release settings elsewhere in the file do
+not block cleanup.
 
 ```bash
 l8k clean --kubeconfig ~/.kube/config \

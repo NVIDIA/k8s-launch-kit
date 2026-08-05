@@ -10,7 +10,6 @@ import (
 	"sort"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -66,60 +65,6 @@ type cleanObjectRef struct {
 }
 
 type helmUninstallFunc func(context.Context, *rest.Config, string, time.Duration) (bool, error)
-
-// ResolveNetworkOperatorNamespace applies the live-cluster portion of clean's
-// namespace resolution. A caller-supplied namespace wins. Otherwise Helm
-// release Secrets are inspected cluster-wide; one unique release namespace is
-// selected, multiple namespaces are rejected as ambiguous, and no release
-// falls back to l8k's normal Network Operator namespace.
-func ResolveNetworkOperatorNamespace(
-	ctx context.Context,
-	kubeClient client.Client,
-	configured string,
-) (string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if configured != "" {
-		return configured, nil
-	}
-	if kubeClient == nil {
-		return "", fmt.Errorf("resolve network operator namespace: nil Kubernetes client")
-	}
-
-	releases := &corev1.SecretList{}
-	if err := kubeClient.List(ctx, releases, client.MatchingLabels{
-		"owner": "helm",
-		"name":  helmclient.DefaultReleaseName,
-	}); err != nil {
-		return "", fmt.Errorf("list Helm release Secrets: %w", err)
-	}
-
-	set := make(map[string]struct{})
-	for i := range releases.Items {
-		namespace := releases.Items[i].Namespace
-		if namespace != "" {
-			set[namespace] = struct{}{}
-		}
-	}
-	namespaces := make([]string, 0, len(set))
-	for namespace := range set {
-		namespaces = append(namespaces, namespace)
-	}
-	sort.Strings(namespaces)
-
-	switch len(namespaces) {
-	case 0:
-		return helmclient.DefaultNamespace, nil
-	case 1:
-		return namespaces[0], nil
-	default:
-		return "", fmt.Errorf(
-			"network-operator Helm releases exist in multiple namespaces (%v); pass --network-operator-namespace",
-			namespaces,
-		)
-	}
-}
 
 // Clean deletes Network Operator custom resources and then uninstalls the
 // Helm release unless KeepHelmChart is set. Helm is always last so controllers
