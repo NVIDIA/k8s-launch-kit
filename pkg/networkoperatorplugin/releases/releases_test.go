@@ -17,9 +17,9 @@
 package releases
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,23 +35,29 @@ func TestLookupRelease_Known(t *testing.T) {
 	}
 }
 
-func TestLookupRelease_BetaReleasesUseStagingArtifacts(t *testing.T) {
-	checkedBeta := false
+func TestLookupRelease_ArtifactDestinationsMatchVersion(t *testing.T) {
 	for _, key := range SupportedReleases() {
-		r, ok := LookupRelease(key)
-		require.True(t, ok, "expected catalog entry for %q", key)
-		if !strings.Contains(r.NetworkOperator.Version, "-beta.") {
-			continue
-		}
-		checkedBeta = true
+		t.Run(key, func(t *testing.T) {
+			r, ok := LookupRelease(key)
+			require.True(t, ok, "expected catalog entry for %q", key)
 
-		assert.Equal(t, "network-operator-"+r.NetworkOperator.Version, r.NetworkOperator.ComponentVersion)
-		assert.Equal(t, "nvcr.io/nvstaging/mellanox", r.NetworkOperator.Repository)
-		assert.Equal(t, "nvcr.io/nvstaging/mellanox", r.NetworkOperator.OperatorRepository)
-		assert.Equal(t, "https://helm.ngc.nvidia.com/nvstaging/mellanox", r.NetworkOperator.HelmRepoURL)
-		assert.NotEmpty(t, r.DOCADriver.Version)
+			version, err := semver.NewVersion(r.NetworkOperator.Version)
+			require.NoError(t, err, "release %s has an invalid Network Operator version", key)
+			assert.Equal(t, "network-operator-"+r.NetworkOperator.Version, r.NetworkOperator.ComponentVersion)
+			assert.NotEmpty(t, r.DOCADriver.Version)
+
+			if version.Prerelease() != "" {
+				assert.Equal(t, "nvcr.io/nvstaging/mellanox", r.NetworkOperator.Repository)
+				assert.Equal(t, "nvcr.io/nvstaging/mellanox", r.NetworkOperator.OperatorRepository)
+				assert.Equal(t, "https://helm.ngc.nvidia.com/nvstaging/mellanox", r.NetworkOperator.HelmRepoURL)
+				return
+			}
+
+			assert.Equal(t, "nvcr.io/nvidia/mellanox", r.NetworkOperator.Repository)
+			assert.Equal(t, "nvcr.io/nvidia/cloud-native", r.NetworkOperator.OperatorRepository)
+			assert.Equal(t, "https://helm.ngc.nvidia.com/nvidia", r.NetworkOperator.HelmRepoURL)
+		})
 	}
-	require.True(t, checkedBeta, "expected at least one beta release catalog entry")
 }
 
 func TestLookupRelease_XPlaneArtifactsAreIndependent(t *testing.T) {

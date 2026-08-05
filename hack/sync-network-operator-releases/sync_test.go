@@ -102,10 +102,10 @@ func TestSyncCatalogUpdatesAllReleasesAndFallsBackForLatest(t *testing.T) {
 				"doca3.3.0-26.01-1.0.0.0-6",
 			),
 			"master": upstreamReleaseYAML(
-				"v26.7.0-beta.5",
+				"v26.7.0-rc.1",
 				stagingOperatorRepository,
 				stagingComponentRepository,
-				"doca3.5.0-26.07-0.4.3.0-0",
+				"doca3.5.0-26.07-0.5.1.0-0",
 			),
 		},
 		requests: nil,
@@ -143,12 +143,12 @@ func TestSyncCatalogUpdatesAllReleasesAndFallsBackForLatest(t *testing.T) {
 	assert.Equal(t, "doca3.3.0-26.01-1.0.0.0-6", stable.DOCADriver.Version)
 
 	latest := catalog.Releases["26.7"]
-	assert.Equal(t, "v26.7.0-beta.5", latest.NetworkOperator.Version)
-	assert.Equal(t, "network-operator-v26.7.0-beta.5", latest.NetworkOperator.ComponentVersion)
+	assert.Equal(t, "v26.7.0-rc.1", latest.NetworkOperator.Version)
+	assert.Equal(t, "network-operator-v26.7.0-rc.1", latest.NetworkOperator.ComponentVersion)
 	assert.Equal(t, stagingComponentRepository, latest.NetworkOperator.Repository)
 	assert.Equal(t, stagingOperatorRepository, latest.NetworkOperator.OperatorRepository)
 	assert.Equal(t, stagingHelmRepoURL, latest.NetworkOperator.HelmRepoURL)
-	assert.Equal(t, "doca3.5.0-26.07-0.4.3.0-0", latest.DOCADriver.Version)
+	assert.Equal(t, "doca3.5.0-26.07-0.5.1.0-0", latest.DOCADriver.Version)
 
 	beforeSecondRun := append([]byte(nil), updated...)
 	secondResult, err := syncCatalog(context.Background(), syncOptions{
@@ -294,6 +294,7 @@ func TestLatestCatalogTag(t *testing.T) {
 
 func TestRequireNewerTag(t *testing.T) {
 	require.NoError(t, requireNewerTag("v26.7.0-beta.5", "v26.7.0-beta.4"))
+	require.NoError(t, requireNewerTag("v26.7.0-rc.1", "v26.7.0-beta.5"))
 	require.NoError(t, requireNewerTag("v26.7.0", "v26.7.0-rc.1"))
 
 	err := requireNewerTag("v26.7.0-beta.4", "v26.7.0-beta.5")
