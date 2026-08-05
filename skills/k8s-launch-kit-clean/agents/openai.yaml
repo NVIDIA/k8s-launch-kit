@@ -1,0 +1,4 @@
+interface:
+  display_name: "K8s Launch Kit Clean"
+  short_description: "Remove a Network Operator deployment safely"
+  default_prompt: "Use $k8s-launch-kit-clean to remove the Network Operator deployment from the selected Kubernetes cluster."

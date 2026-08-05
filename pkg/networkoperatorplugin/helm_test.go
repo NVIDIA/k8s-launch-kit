@@ -87,6 +87,30 @@ func seedRelease(t *testing.T, cfg *action.Configuration, values map[string]inte
 	require.NoError(t, cfg.Releases.Create(rel))
 }
 
+func TestUninstallWithActionConfig(t *testing.T) {
+	t.Run("removes an installed release", func(t *testing.T) {
+		actionCfg := newTestActionConfig(t)
+		seedRelease(t, actionCfg, map[string]interface{}{"nfd": map[string]interface{}{"enabled": true}})
+
+		removed, err := uninstallWithActionConfig(
+			actionCfg, helmclient.DefaultNamespace, 30*time.Second)
+		require.NoError(t, err)
+		assert.True(t, removed)
+
+		_, err = actionCfg.Releases.Last(helmclient.DefaultReleaseName)
+		assert.ErrorIs(t, err, driver.ErrReleaseNotFound)
+	})
+
+	t.Run("missing release is an idempotent no-op", func(t *testing.T) {
+		actionCfg := newTestActionConfig(t)
+
+		removed, err := uninstallWithActionConfig(
+			actionCfg, helmclient.DefaultNamespace, 30*time.Second)
+		require.NoError(t, err)
+		assert.False(t, removed)
+	})
+}
+
 func TestInstallOrUpgrade_FreshInstall(t *testing.T) {
 	actionCfg := newTestActionConfig(t)
 	generated := map[string]interface{}{"nfd": map[string]interface{}{"enabled": true}}

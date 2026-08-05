@@ -82,6 +82,7 @@ nav:
       - Deployment Profiles: user/profiles.md
       - Spectrum-X: user/spectrum-x.md
       - Validation: user/validation.md
+      - Cleanup: user/cleanup.md
       - Troubleshooting: user/troubleshooting.md
   - Advanced:
       - Concepts: advanced/concepts.md

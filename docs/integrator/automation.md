@@ -67,6 +67,28 @@ A structured failure includes a stable category and retry guidance:
 
 Use `error.transient` to decide whether retry is appropriate. Treat `suggestion` as operator guidance, not a command to execute without review. The process exit code remains authoritative even when a JSON object is emitted.
 
+Cleanup returns a command-specific summary:
+
+```json
+{
+  "success": true,
+  "phase": "clean",
+  "deployed": false,
+  "cleanup": {
+    "namespace": "nvidia-network-operator",
+    "customResourcesDeleted": 12,
+    "helmReleaseRemoved": true,
+    "keepHelmChart": false
+  },
+  "messages": []
+}
+```
+
+`l8k clean --output json` auto-confirms an irreversible cluster mutation and
+has no dry-run mode. Automation must pin the intended kubeconfig and should
+pass `--network-operator-namespace` explicitly after independently checking
+the target.
+
 ## Capability Discovery
 
 ```bash

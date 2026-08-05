@@ -4,7 +4,8 @@
 
 // Package networkoperatorplugin's helm.go wraps the Helm Go SDK so that
 // `l8k deploy` can install or upgrade the network-operator chart in-process
-// before applying the post-install CRs.
+// before applying the post-install CRs, and `l8k clean` can uninstall it after
+// its custom resources have been removed.
 //
 //   - InstallOrUpgrade is the only entry point. It fetches the chart tgz
 //     from cfg.HelmRepoURL, decides install-vs-upgrade-vs-no-op by checking
@@ -68,6 +69,67 @@ var ErrReleaseExistsWithDifferentChartVersion = errors.New("network-operator rel
 // follow-up operation with "another operation in progress" until the
 // release is unstuck via `helm rollback` or `helm uninstall`.
 var ErrReleaseStuckInPendingState = errors.New("network-operator release is stuck in pending state")
+
+const defaultHelmUninstallTimeout = 10 * time.Minute
+
+// Uninstall removes l8k's network-operator Helm release from namespace. A
+// missing release is an idempotent no-op and returns removed=false.
+func Uninstall(
+	ctx context.Context,
+	restConfig *rest.Config,
+	namespace string,
+	timeout time.Duration,
+) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if restConfig == nil {
+		return false, pkgerrors.NewValidationError(
+			"helm uninstall requires a Kubernetes REST config",
+			nil,
+			"pass a valid kubeconfig to `l8k clean`",
+		)
+	}
+	if namespace == "" {
+		namespace = helmclient.DefaultNamespace
+	}
+	if timeout <= 0 {
+		timeout = defaultHelmUninstallTimeout
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
+	actionCfg, err := helmclient.NewActionConfig(restConfig, namespace, helmclient.StorageDriver)
+	if err != nil {
+		return false, pkgerrors.NewClusterError(
+			"failed to initialize helm action configuration",
+			err,
+			"verify the kubeconfig is valid and the cluster is reachable",
+		)
+	}
+	return uninstallWithActionConfig(actionCfg, namespace, timeout)
+}
+
+func uninstallWithActionConfig(
+	actionCfg *action.Configuration,
+	namespace string,
+	timeout time.Duration,
+) (bool, error) {
+	uninstall := action.NewUninstall(actionCfg)
+	uninstall.IgnoreNotFound = true
+	uninstall.Wait = true
+	uninstall.Timeout = timeout
+	response, err := uninstall.Run(helmclient.DefaultReleaseName)
+	if err != nil {
+		return false, pkgerrors.NewDeploymentError(
+			fmt.Sprintf("helm uninstall of network-operator failed in namespace %s", namespace),
+			err,
+			"inspect Helm release hooks and cluster events, then re-run `l8k clean`",
+		)
+	}
+	return response != nil, nil
+}
 
 // InstallOrUpgrade installs the nvidia/network-operator helm chart into
 // cfg.Namespace, or upgrades it when overwriteExisting=true. When the

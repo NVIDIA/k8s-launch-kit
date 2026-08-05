@@ -135,4 +135,5 @@ these by applying `MaintenanceOperatorConfig` alone.
 
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — Global flags and exit codes
 - [k8s-launch-kit-dryrun](../k8s-launch-kit-dryrun/SKILL.md) — Preview before deploying
+- [k8s-launch-kit-clean](../k8s-launch-kit-clean/SKILL.md) — Remove an installed deployment
 - [k8s-launch-kit-troubleshoot](../k8s-launch-kit-troubleshoot/SKILL.md) — Debug deployment failures
