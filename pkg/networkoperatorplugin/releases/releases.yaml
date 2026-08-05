@@ -39,13 +39,13 @@ releases:
       version: doca-3.4.0
   "26.7":
     networkOperator:
-      version: v26.7.0-beta.5
-      componentVersion: network-operator-v26.7.0-beta.5
+      version: v26.7.0-rc.1
+      componentVersion: network-operator-v26.7.0-rc.1
       repository: nvcr.io/nvstaging/mellanox
       operatorRepository: nvcr.io/nvstaging/mellanox
       helmRepoURL: https://helm.ngc.nvidia.com/nvstaging/mellanox
     docaDriver:
-      version: doca3.5.0-26.07-0.4.9.0-0
+      version: doca3.5.0-26.07-0.5.6.0-0
     xPlane:
       repository: nvcr.io/nvstaging/doca
       version: 3.5.0032
