@@ -14,6 +14,7 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 | `l8k discover` | Discover cluster network hardware and write `cluster-config.yaml`. |
 | `l8k generate` | Generate deployment manifests for a selected profile. |
 | `l8k deploy` | Apply previously generated manifests to a cluster. |
+| `l8k clean` | Delete Network Operator custom resources and optionally uninstall its Helm release. |
 | `l8k validate` | Verify Helm release, component versions, manifest state, and connectivity. |
 | `l8k preset list` | List local topology presets. |
 | `l8k preset update` | Download topology presets from GitHub. |
@@ -25,11 +26,11 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 
 | Flag | Applies to | Description |
 | --- | --- | --- |
-| `--kubeconfig` | discover, deploy, validate | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
-| `--user-config` | discover, generate, deploy, validate | Config file to merge, render, or validate against. |
+| `--kubeconfig` | discover, deploy, clean, validate | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
+| `--user-config` | discover, generate, deploy, clean, validate | Config file to merge, render, validate against, or use for cleanup namespace resolution. |
 | `--config-dir` | all | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
 | `--network-operator-release` | discover, generate | Release line such as `26.1`, `26.4`, or `26.7`. |
-| `--network-operator-namespace` | generate, deploy, validate | Override the Network Operator namespace. It is a no-op for discovery. |
+| `--network-operator-namespace` | generate, deploy, clean, validate | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--output json` | all | Emit a single JSON result to stdout for automation. |
 | `--quiet` | all | Suppress informational output. |
 | `--log-level` | all | Enable `debug`, `info`, `warn`, or `error` logging. |
@@ -98,6 +99,34 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 | `--dry-run` | Use server-side dry run. |
 | `--deploy-timeout` | End-to-end deploy timeout. `0` means unbounded. |
 | `--overwrite-existing` | Allow Helm upgrade when an existing Network Operator release has different values. |
+
+## Clean Flags
+
+`l8k clean` deletes every namespaced custom-resource instance in the resolved
+Network Operator namespace, then deletes the known cluster-scoped Network
+Operator CRs. It waits for their finalizers before uninstalling the
+`network-operator` Helm release. It preserves the namespace, CRDs, unrelated
+Secrets, generated files, and resources outside the namespace. Helm release
+metadata and chart-managed resources are removed with the release.
+
+Namespace resolution uses the first available source: an explicit
+`--network-operator-namespace`, `networkOperator.namespace` from
+`--user-config`, `./cluster-config.yaml`, or an explicit
+`--config-dir/l8k-config.yaml`, one unique live Helm release namespace, or
+`nvidia-network-operator`. Multiple live release namespaces are an error
+unless the namespace is explicit.
+
+| Flag | Description |
+| --- | --- |
+| `--keep-helm-chart` | Delete custom resources but leave the Network Operator Helm release and chart-managed resources installed. |
+| `--kubeconfig` | Cluster to clean. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
+| `--user-config` | Optional config used only to read `networkOperator.namespace`. |
+| `--network-operator-namespace` | Explicit cleanup namespace; takes precedence over config and live Helm discovery. |
+
+Cleanup is destructive and asks for confirmation in text mode. JSON mode is
+non-interactive and auto-confirms, so use `--output json` only after verifying
+the kubeconfig and resolved namespace. See [Cleanup](../user/cleanup.md) for the
+full deletion boundary.
 
 ## Validate Flags
 

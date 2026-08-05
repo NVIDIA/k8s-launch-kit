@@ -74,6 +74,10 @@ var schemaCmd = &cobra.Command{
 					Description: "Apply previously generated manifests to a Kubernetes cluster (NicClusterPolicy → per-group NicNodePolicy → remaining)",
 					Example:     "l8k deploy --deployment-files ./deployment --kubeconfig ~/.kube/config",
 				},
+				"clean": {
+					Description: "Delete Network Operator custom resources and uninstall its Helm release",
+					Example:     "l8k clean --kubeconfig ~/.kube/config [--keep-helm-chart]",
+				},
 				"validate": {
 					Description: "Verify a deployment matches the selected Network Operator release (Helm chart version + manifest state + configurable ICMP/RDMA connectivity checks)",
 					Example:     "l8k validate --user-config ./cluster-config.yaml --deployment-files ./deployment",
@@ -183,6 +187,11 @@ var schemaCmd = &cobra.Command{
 					Type:        "bool",
 					Default:     "false",
 					Description: "Deploy the generated files to the Kubernetes cluster",
+				},
+				"--keep-helm-chart": {
+					Type:        "bool",
+					Default:     "false",
+					Description: "With l8k clean, delete custom resources but keep the network-operator Helm release installed",
 				},
 				"--dry-run": {
 					Type:        "bool",

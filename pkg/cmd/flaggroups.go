@@ -37,8 +37,9 @@ const (
 	GroupSpectrumX     = "4-spectrumx"
 	GroupGeneration    = "5-generation"
 	GroupDeploy        = "6-deploy"
-	GroupValidation    = "7-validation"
-	GroupOutputLogging = "8-output-logging"
+	GroupClean         = "7-clean"
+	GroupValidation    = "8-validation"
+	GroupOutputLogging = "9-output-logging"
 )
 
 var groupOrder = []string{
@@ -48,6 +49,7 @@ var groupOrder = []string{
 	GroupSpectrumX,
 	GroupGeneration,
 	GroupDeploy,
+	GroupClean,
 	GroupValidation,
 	GroupOutputLogging,
 }
@@ -59,6 +61,7 @@ var groupTitles = map[string]string{
 	GroupSpectrumX:     "Spectrum-X Flags",
 	GroupGeneration:    "Generation Output Flags",
 	GroupDeploy:        "Deploy Flags",
+	GroupClean:         "Clean Flags",
 	GroupValidation:    "Validation Flags",
 	GroupOutputLogging: "Output & Logging Flags",
 }

@@ -164,30 +164,9 @@ Deploy a minimal Network Operator profile to automatically discover your cluster
 network capabilities and hardware configuration by using --discover-cluster-config.
 This phase can be skipped if you provide your own configuration file by using --user-config.
 This phase requires --kubeconfig to be specified.
-
 Discovery fills missing profile settings from the detected hardware and built-in
 defaults, applies explicit CLI overrides, and saves the final profile with the
 hardware inventory in cluster-config.yaml.
-
-By default discovery advertises **one rail per NIC**. When a NIC exposes several
-east-west PFs that are planes of a single physical port (e.g. Spectrum-X
-multi-plane ConnectX-8/9), only the master PF is written to `cluster-config.yaml`
-so the rail count reflects physical NICs, not PFs. A NIC whose VPD model name is
-genuinely dual-port (e.g. "... QSFP112 **2-port** ...", "... **Dual-port** ...")
-keeps a rail per port. Pass `--collapse-nic-rails=false` to restore the legacy
-behaviour of one rail per PF (useful on dev setups). The model string is read
-from `NicDevice.Status.modelName`; when it is empty the NIC is collapsed by
-default.
-
-Node groups whose NICs are **all north-south** (e.g. BlueField-DPU-only or
-out-of-band-NIC-only nodes) are **not written** to `cluster-config.yaml` — they
-produce no networking manifests and would otherwise consume an NV-IPAM subnet
-slice. North-south NICs that sit alongside east-west NICs in the same group are
-still recorded.
-
-The saved `cluster-config.yaml` also **keeps the documentation comments** from
-the config you started from (the default `l8k-config.yaml` or your
-`--user-config`), so the field reference travels with the generated file.
 
 ### Generate Deployment Files
 Based on the discovered or provided configuration,
@@ -198,15 +177,6 @@ or via a profile section in the user-config file.
 
 ### Deploy to Cluster
 Apply the generated deployment files to your Kubernetes cluster by using --deploy. This phase requires --kubeconfig and can be skipped if --deploy is not specified.
-
-The deploy step installs (or upgrades) the `nvidia/network-operator` Helm chart in-process before applying the post-install CRs. The chart version and Helm repository URL are taken from the embedded release catalog and can be selected via `--network-operator-release <MAJOR.MINOR>`. Each profile renders a per-profile `values.yaml` next to the CR manifests; `l8k deploy` reads that file and runs the install. When `networkOperator.imagePullSecrets` is configured, l8k reads matching Docker credentials from Secrets already present in the operator namespace and uses them for the chart download (including the `nvcr.io` to `helm.ngc.nvidia.com` NGC credential mapping). Secret data remains in memory and is never logged. When a release already exists with different values, deploy fails fast — pass `--overwrite-existing` to promote to `helm upgrade --install`.
-
-Deploy preflight does not treat `SriovNetworkPoolConfig`,
-`SriovNetworkNodePolicy`, or `OVSNetwork` objects labeled with
-`spectrumx.nvidia.com/owner-name` as conflicting resources. The Spectrum-X
-operator derives and owns those objects from `SpectrumXRailPoolConfig`, so a
-deploy restarted after the rail-pool controller has run remains idempotent and
-does not require `--overwrite-existing`.
 
 ### AI Agent / Automation Support
 Use --output json for structured machine-readable output (single JSON object to stdout).
@@ -240,6 +210,7 @@ Examples:
   l8k schema
 
 Available Commands:
+  clean       Remove a Network Operator deployment from a Kubernetes cluster
   completion  Generate the autocompletion script for the specified shell
   deploy      Apply previously generated manifests to a Kubernetes cluster
   discover    Discover cluster network hardware capabilities
@@ -262,7 +233,6 @@ Common Flags:
       --user-config string                  Use provided cluster configuration file (as base config for discovery or as full config without discovery)
 
 Discovery Flags:
-      --collapse-nic-rails           Advertise one rail per NIC: collapse a NIC's multi-plane PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set to false to keep the legacy one-rail-per-PF behaviour (dev setups). (default true)
       --discover-cluster-config      Deploy a thin Network Operator profile to discover cluster capabilities
       --save-cluster-config string   Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)
 
@@ -272,18 +242,23 @@ Profile Selection Flags:
       --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Run 'l8k preset list' with the same --config-dir to list available names.
       --gpu-type string          Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.
       --groups strings           Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.
+      --ignore-arp               Chain the tuning CNI meta-plugin to prevent ARP flux across pod rails
       --multirail                Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)
+      --routing string           Secondary-network routing mode: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin.
       --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: [RA2.1 RA2.2 RA2.3]
 
 Spectrum-X Flags:
+      --ip-version string                  Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)
       --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, hwplb (requires --spectrum-x)
       --number-of-planes int               Number of planes for Spectrum-X (requires --spectrum-x)
       --spectrum-x-config string           Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)
       --spectrum-x-configmap-name string   Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML
+      --topology-file string               Path to spcx-gen/reference-generator or NVIDIA AIR topology JSON for Spectrum-X CIDRPool generation (requires --spectrum-x)
+      --topology-scheme string             Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)
 
 Generation Output Flags:
       --enable-doca-driver             Enable DOCA driver deployment (overrides config file docaDriver.enable)
-      --network-namespaces strings     Comma-separated namespaces for the secondary-network CRs and example test DaemonSets; one copy is rendered per namespace (shared resources like IPPools/NodePolicies are NOT duplicated). Overrides config networkNamespaces; default: 'default'.
+      --network-namespaces strings     Comma-separated namespaces for the secondary-network CRs and example test DaemonSets. One independent copy is rendered per namespace (shared resources like IPPools and NodePolicies are NOT duplicated). Overrides config networkNamespaces; default: 'default'.
       --save-deployment-files string   Save generated deployment files to the specified directory (default "./deployment")
       --workload-manifest string       Path to a custom workload manifest YAML (replaces the profile's default example workload)
 
@@ -299,6 +274,9 @@ Output & Logging Flags:
       --output string      Output format: text (default, human-readable) or json (structured, for automation and AI agents) (default "text")
   -q, --quiet              Suppress informational output (errors still shown)
   -y, --yes                Auto-confirm all prompts without interactive input
+
+Other Flags:
+      --collapse-nic-rails   Advertise one rail per NIC: collapse a NIC's multi-plane PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set to false to keep the legacy one-rail-per-PF behaviour (dev setups). (default true)
 
 Use "l8k [command] --help" for more information about a command.
 ```
@@ -574,6 +552,30 @@ l8k generate \
 
 The preset YAML must declare a `capabilities.nodes.{sriov,rdma,ib}` block to be usable with `--for`; presets shipped with l8k already have one. See [docs/presets.rst](docs/presets.rst) for the full preset format and how to add new ones.
 
+### Remove a Network Operator Deployment
+
+`l8k clean` removes a Network Operator installation from the selected cluster:
+
+```bash
+l8k clean --kubeconfig ~/.kube/config
+```
+
+The command resolves the operator namespace from an explicit
+`--network-operator-namespace`, `networkOperator.namespace` in
+`--user-config`, `./cluster-config.yaml`, or an explicit `--config-dir`, a
+unique live Helm release, or the `nvidia-network-operator` default. It deletes
+every namespaced custom resource in that namespace, removes the known
+cluster-scoped Network Operator CRs, waits for their finalizers, and uninstalls
+the `network-operator` Helm release last. The namespace, CRDs, unrelated
+Secrets, files on disk, and custom resources outside the namespace are
+preserved; Helm metadata and chart-managed resources are removed with the
+release.
+
+Pass `--keep-helm-chart` to delete the custom resources while leaving the Helm
+release installed. Cleanup is destructive and confirms the resolved target in
+text mode. See [the cleanup guide](docs/user/cleanup.md) for the full deletion
+boundary and automation output.
+
 ### Troubleshooting Network Operator Issues
 
 Collect a diagnostic dump from the cluster:
@@ -586,7 +588,7 @@ The sosreport contains NicClusterPolicy, pod logs, node info, CRDs, and other di
 
 ### AI Agent / Automation Usage
 
-l8k supports structured output for AI agents and CI/CD pipelines. Use `--output json` to get machine-readable output, `--yes` to skip interactive prompts, and `--dry-run` to preview changes safely.
+l8k supports structured output for AI agents and CI/CD pipelines. Use `--output json` to get machine-readable output and auto-confirm subcommand prompts; `--yes` is available on the root pipeline. Use `--dry-run` to preview deployment changes safely. Because `l8k clean` has no dry-run mode, verify its kubeconfig and resolved namespace before using JSON mode.
 
 #### Structured JSON Output
 
