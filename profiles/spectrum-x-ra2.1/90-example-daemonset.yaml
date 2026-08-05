@@ -47,7 +47,6 @@ spec:
       containers:
       - name: spectrum-x-test
         image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
-        command: ["/bin/bash", "-c", "sleep infinity"]
         securityContext:
           capabilities:
             add: ["IPC_LOCK", "NET_RAW"]
@@ -85,3 +84,9 @@ spec:
           echo ""
           echo "Sleeping indefinitely for manual testing..."
           sleep infinity
+      - name: netshoot
+        image: nicolaka/netshoot:latest
+        command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
+        securityContext:
+          capabilities:
+            add: ["NET_RAW"]

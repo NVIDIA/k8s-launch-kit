@@ -358,7 +358,10 @@ connectivity matrix —
 apply the example DaemonSet, wait for it to roll out completely (`numberReady ==
 desiredNumberScheduled > 0` — a single ContainerCreating-stuck pod fails),
 and run the configured checks (`icmp`, `rping`, and/or `ib_write_bw`) with
-source-bound rail identity. ICMP uses `ping -I <src-iface>`, `rping` uses
+source-bound rail identity. Every profile renders the DaemonSet with a DOCA
+container for RDMA checks and a declared `netshoot` container for ICMP; validate
+applies that manifest without injecting containers at runtime. ICMP uses
+`ping -I <src-iface>`, `rping` uses
 `-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`; every test
 also records a source-qualified `ip route get <dst> from <src>` lookup. The
 matrix is on by default (`--connectivity=false` to skip) and cleans up the

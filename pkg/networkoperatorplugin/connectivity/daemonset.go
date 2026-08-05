@@ -37,8 +37,6 @@ import (
 const (
 	rdmaTestContainerName = "test-container"
 	icmpTestContainerName = "netshoot"
-	icmpTestImage         = "nicolaka/netshoot:latest"
-	icmpTestCommand       = `trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done`
 )
 
 // DaemonSetRef identifies an applied test DaemonSet so the orchestrator
@@ -57,7 +55,7 @@ type DaemonSetRef struct {
 // per file. Multi-doc YAMLs are walked; non-DaemonSet docs are skipped
 // (the file pattern is descriptive, not enforced, so we tolerate a
 // ConfigMap or two beside the DS).
-func LoadExampleDaemonSets(manifestDir string, includeICMP bool) ([]*unstructured.Unstructured, []DaemonSetRef, error) {
+func LoadExampleDaemonSets(manifestDir string) ([]*unstructured.Unstructured, []DaemonSetRef, error) {
 	entries, err := os.ReadDir(manifestDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read manifest dir %s: %w", manifestDir, err)
@@ -95,9 +93,6 @@ func LoadExampleDaemonSets(manifestDir string, includeICMP bool) ([]*unstructure
 				if gv, err := schema.ParseGroupVersion(apiv); err == nil {
 					obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
 				}
-			}
-			if includeICMP {
-				ensureICMPContainer(obj)
 			}
 			rdmaContainer, icmpContainer := testContainerNames(obj)
 			objs = append(objs, obj)
@@ -274,43 +269,11 @@ func testContainerNames(ds *unstructured.Unstructured) (rdmaContainer, icmpConta
 		if rdmaContainer == "" || name == rdmaTestContainerName || strings.Contains(image, "/doca/") {
 			rdmaContainer = name
 		}
-		if icmpContainer == "" || name == icmpTestContainerName || strings.Contains(image, "netshoot") {
+		if name == icmpTestContainerName || (icmpContainer == "" && strings.Contains(image, "netshoot")) {
 			icmpContainer = name
 		}
 	}
-	if icmpContainer == "" {
-		icmpContainer = rdmaContainer
-	}
 	return rdmaContainer, icmpContainer
-}
-
-func ensureICMPContainer(ds *unstructured.Unstructured) {
-	containers, found, _ := unstructured.NestedSlice(ds.Object, "spec", "template", "spec", "containers")
-	if !found {
-		return
-	}
-	for _, raw := range containers {
-		c, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		name, _, _ := unstructured.NestedString(c, "name")
-		image, _, _ := unstructured.NestedString(c, "image")
-		if name == icmpTestContainerName || strings.Contains(image, "netshoot") {
-			return
-		}
-	}
-	containers = append(containers, map[string]interface{}{
-		"name":    icmpTestContainerName,
-		"image":   icmpTestImage,
-		"command": []interface{}{"/bin/bash", "-c", icmpTestCommand},
-		"securityContext": map[string]interface{}{
-			"capabilities": map[string]interface{}{
-				"add": []interface{}{"NET_RAW"},
-			},
-		},
-	})
-	_ = unstructured.SetNestedSlice(ds.Object, containers, "spec", "template", "spec", "containers")
 }
 
 // splitYAMLDocs is a minimal local copy of the YAML doc splitter in

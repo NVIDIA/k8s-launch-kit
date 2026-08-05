@@ -62,6 +62,12 @@ spec:
             nvidia.com/{{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}: '1'
             {{- end}}
             {{- end}}
+      - name: netshoot
+        image: nicolaka/netshoot:latest
+        command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
+        securityContext:
+          capabilities:
+            add: ["NET_RAW"]
 {{- else}}
 apiVersion: apps/v1
 kind: DaemonSet
@@ -117,4 +123,10 @@ spec:
             nvidia.com/{{.Sriov.ResourceName}}: '1'
           limits:
             nvidia.com/{{.Sriov.ResourceName}}: '1'
+      - name: netshoot
+        image: nicolaka/netshoot:latest
+        command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
+        securityContext:
+          capabilities:
+            add: ["NET_RAW"]
 {{- end}}
