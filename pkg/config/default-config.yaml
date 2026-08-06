@@ -141,7 +141,8 @@ nicConfigurationOperator:
   netdevPrefix: "eth_r%rail_id%"
 
 spectrumX:
-  nicType: "1023" # "1023" for ConnectX-8, "a2dc" for BlueField-3 SuperNIC
+  # NicConfigurationTemplate nicSelector.nicType is derived from the
+  # deviceID shared by all selected east-west PFs.
   overlay: "none"
   singlePlane: # Used by multiplaneMode none
     netdevPrefix: "eth_r%rail_id%"

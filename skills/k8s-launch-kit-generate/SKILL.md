@@ -158,6 +158,10 @@ win when a one-off override is needed.
   B300/GB300 platform type does not distinguish SWPLB from HWPLB. l8k defaults
   to SWPLB; use an explicit HWPLB override when the site topology requires it.
   Read `references/spectrum-x-modes.md`.
+- Spectrum-X `NicConfigurationTemplate.spec.nicSelector.nicType` is derived
+  from the device ID shared by the selected east-west PFs; do not ask users to
+  configure `spectrumX.nicType`. Missing or mixed east-west device IDs are a
+  generation error.
 - NVIDIA AIR topology support requires the documented one-based node/interface
   naming contract (`su<S>`, `h<H>`, `leaf-p<P>`, `r<R>`, `rail<R>p<P>`, and
   `pod<D>` for 3-tier). See `docs/user/spectrum-x.md` in the l8k repository.

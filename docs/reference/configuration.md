@@ -210,7 +210,6 @@ nicConfigurationOperator:
   updateFW: false
 
 spectrumX:
-  nicType: "1023"
   overlay: "none"
   singlePlane:
     netdevPrefix: "eth_r%rail_id%"
@@ -228,11 +227,16 @@ spectrumX:
 | `deployNicInterfaceNameTemplate` | Allows per-source interface-name templates when profile or PCI-layout rules require stable names. |
 | `rdmaPrefix` / `netdevPrefix` | Standard-profile names. Multirail values require a rail placeholder. |
 | `updateFW` | Enables firmware staging storage in generated Network Operator configuration. |
-| `spectrumX.nicType` | Device ID: `1021` ConnectX-7, `1023` ConnectX-8, `1025` ConnectX-9, or `a2dc` BlueField-3 SuperNIC. |
 | `spectrumX.overlay` | Spectrum-X overlay mode. |
 | `spectrumX.singlePlane` | Prefix block selected by `none`; defaults both device types to rail-only names. |
 | `spectrumX.hwplb` | Prefix block selected by `hwplb`; defaults RDMA to rail-only and NET to rail-plane names. |
 | `spectrumX.swplb` | Prefix block selected by `swplb`; defaults both device types to rail-plane names. |
+
+Spectrum-X `NicConfigurationTemplate.spec.nicSelector.nicType` is not a
+separate configuration input. Launch Kit derives it for each generated group
+from `clusterConfig[].pfs[].deviceID` entries whose `traffic` is `east-west`.
+North-south PFs are ignored; every selected east-west PF must have the same
+non-empty device ID or generation fails.
 
 ## Profile
 

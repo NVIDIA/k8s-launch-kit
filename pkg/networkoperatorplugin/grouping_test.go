@@ -231,6 +231,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 		wantNameTmpls   []string // expected nic-interface-name-template filenames (sorted)
 		wantCidrPools   []string // expected cidrpool filenames (sorted)
 		wantNicCfgTmpls []string // expected nic-configuration-template filenames (sorted)
+		wantNicType     string   // expected nicSelector.nicType derived from east-west PFs
 	}{
 		{
 			// Two groups that share every east-west PCI address but have different
@@ -253,6 +254,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 			wantNicCfgTmpls: []string{
 				"30-nicconfigurationtemplate-gpu-model-x.yaml",
 			},
+			wantNicType: "1023",
 		},
 		{
 			// Three groups with the same gpuType and east-west rail count but
@@ -276,6 +278,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 			wantNicCfgTmpls: []string{
 				"30-nicconfigurationtemplate-gpu-model-y.yaml",
 			},
+			wantNicType: "a2dc",
 		},
 		{
 			// Two groups of gpu-model-y (8 east-west rails each) + one group of
@@ -306,6 +309,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 				"30-nicconfigurationtemplate-gpu-model-y.yaml",
 				"30-nicconfigurationtemplate-group-2.yaml",
 			},
+			wantNicType: "a2dc",
 		},
 	}
 
@@ -325,11 +329,83 @@ func TestSpectrumXGrouping(t *testing.T) {
 			require.Equal(t, tc.wantNicCfgTmpls,
 				fileNamesMatching(rendered, "30-nicconfigurationtemplate"),
 				"nic-configuration-template manifests mismatch")
+			for _, fileName := range tc.wantNicCfgTmpls {
+				require.Contains(t, rendered[fileName], fmt.Sprintf(`nicType: %q`, tc.wantNicType),
+					"NicConfigurationTemplate must derive nicType from the group's east-west PFs")
+			}
 
 			// NCP is cluster-wide and always produced exactly once.
 			require.Equal(t, []string{"10-nicclusterpolicy.yaml"},
 				fileNamesMatching(rendered, "10-nicclusterpolicy"),
 				"expected exactly one NicClusterPolicy")
+		})
+	}
+}
+
+func TestSpectrumXGenerationValidatesEastWestDeviceIDs(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*config.LaunchKitConfig)
+		wantErr string
+	}{
+		{
+			name: "missing device ID",
+			mutate: func(cfg *config.LaunchKitConfig) {
+				cfg.ClusterConfig[0].PFs[0].DeviceID = ""
+			},
+			wantErr: `group "group-0" has an east-west PF without a deviceID`,
+		},
+		{
+			name: "mixed device IDs across groups",
+			mutate: func(cfg *config.LaunchKitConfig) {
+				for i := range cfg.ClusterConfig[1].PFs {
+					if cfg.ClusterConfig[1].PFs[i].Traffic == "east-west" {
+						cfg.ClusterConfig[1].PFs[i].DeviceID = "1023"
+					}
+				}
+			},
+			wantErr: `east-west PFs have mixed deviceIDs: "a2dc" vs "1023"`,
+		},
+		{
+			name: "no east-west PFs",
+			mutate: func(cfg *config.LaunchKitConfig) {
+				for groupIndex := range cfg.ClusterConfig {
+					for pfIndex := range cfg.ClusterConfig[groupIndex].PFs {
+						cfg.ClusterConfig[groupIndex].PFs[pfIndex].Traffic = "north-south"
+					}
+				}
+			},
+			wantErr: "no east-west PFs",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
+			cfg, err := config.LoadFullConfig(
+				filepath.Join("testdata", "grouping", "mixed-same-type.yaml"),
+				ctrllog.Log,
+			)
+			require.NoError(t, err)
+			test.mutate(cfg)
+			topologyFile := writeSpectrumXTopology(t, cfg, 1)
+			cfg.Profile = &config.Profile{
+				Fabric:     "ethernet",
+				Deployment: "sriov",
+				Multirail:  true,
+				SpectrumX: &config.ProfileSpectrumX{
+					Enable:         true,
+					SPCXVersion:    "RA2.2",
+					MultiplaneMode: "none",
+					NumberOfPlanes: 1,
+					TopologyType:   config.SpectrumXTopology2Tier,
+					TopologyFile:   topologyFile,
+				},
+			}
+
+			_, err = (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadSpectrumXProfile(t), cfg)
+
+			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
 }

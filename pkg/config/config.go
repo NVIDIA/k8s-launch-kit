@@ -288,7 +288,6 @@ type SriovConfig struct {
 }
 
 type SpectrumXConfig struct {
-	NicType     string                              `yaml:"nicType"` // "1023" for ConnectX-8, "1025" for ConnectX-9, "a2dc" for BlueField-3 SuperNIC
 	Overlay     string                              `yaml:"overlay"` // "none"
 	SinglePlane *SpectrumXInterfaceNamePrefixConfig `yaml:"singlePlane,omitempty"`
 	HWPLB       *SpectrumXInterfaceNamePrefixConfig `yaml:"hwplb,omitempty"`

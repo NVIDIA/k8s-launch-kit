@@ -497,7 +497,6 @@ sriov:
   networkName: rail-1
 
 spectrumX:
-  nicType: "1023"
   overlay: "none"
   singlePlane:
     netdevPrefix: "nic%nic_id%_r%rail%"
@@ -530,7 +529,6 @@ profile:
 
 		// Verify Spectrum-X config
 		require.NotNil(t, config.SpectrumX)
-		assert.Equal(t, "1023", config.SpectrumX.NicType)
 		assert.Equal(t, "none", config.SpectrumX.Overlay)
 		require.NotNil(t, config.SpectrumX.SinglePlane)
 		assert.Equal(t, "roce_nic%nic_id%_r%rail%", config.SpectrumX.SinglePlane.RdmaPrefix)
@@ -561,7 +559,6 @@ profile:
   namespace: network-operator
 
 spectrumX:
-  nicType: "1023"
   overlay: "none"
   rdmaPrefix: "legacy-rdma"
   netdevPrefix: "legacy-netdev"
@@ -589,7 +586,6 @@ profile:
 
 	t.Run("verify Spectrum-X struct fields", func(t *testing.T) {
 		config := &SpectrumXConfig{
-			NicType: "1023",
 			Overlay: "none",
 			HWPLB: &SpectrumXInterfaceNamePrefixConfig{
 				RdmaPrefix:   "roce_",
@@ -597,7 +593,6 @@ profile:
 			},
 		}
 
-		assert.Equal(t, "1023", config.NicType)
 		assert.Equal(t, "none", config.Overlay)
 		require.NotNil(t, config.HWPLB)
 		assert.Equal(t, "roce_", config.HWPLB.RdmaPrefix)
@@ -616,17 +611,6 @@ profile:
 		}
 	})
 
-	t.Run("verify NIC types", func(t *testing.T) {
-		connectX8 := &SpectrumXConfig{
-			NicType: "1023",
-		}
-		blueField3 := &SpectrumXConfig{
-			NicType: "a2dc",
-		}
-
-		assert.Equal(t, "1023", connectX8.NicType, "ConnectX-8 NIC type")
-		assert.Equal(t, "a2dc", blueField3.NicType, "BlueField-3 SuperNIC type")
-	})
 }
 
 func TestSpectrumXInterfaceNamePrefixes(t *testing.T) {

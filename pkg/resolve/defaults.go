@@ -318,25 +318,25 @@ func spectrumXDefaultsForHardware(groups []config.ClusterConfig) (mode string, p
 	if len(groups) == 0 {
 		return "", 0, false, "no clusterConfig groups"
 	}
-	var seenID string
+	_, hasEastWest, deviceIDErr := config.EastWestDeviceIDForGroups(groups)
+	if deviceIDErr != nil {
+		return "", 0, false, deviceIDErr.Error()
+	}
+	if !hasEastWest {
+		return "", 0, false, "no east-west PFs"
+	}
 	var seenPlatform string
 	var seenMode string
 	var seenPlanes int
 	groupsConsidered := 0
 	for _, g := range groups {
-		deviceID, hasEastWest, idReason := eastWestDeviceID(g)
+		deviceID, hasEastWest, idErr := config.EastWestDeviceID(g)
 		if !hasEastWest {
 			continue
 		}
-		if idReason != "" {
-			return "", 0, false, idReason
+		if idErr != nil {
+			return "", 0, false, idErr.Error()
 		}
-		if seenID == "" {
-			seenID = deviceID
-		} else if seenID != deviceID {
-			return "", 0, false, fmt.Sprintf("east-west PFs have mixed deviceIDs: %q vs %q", seenID, deviceID)
-		}
-
 		platform := spectrumXGPUPlatform(g)
 		groupMode, groupPlanes, groupReason := spectrumXDefaultForDeviceAndPlatform(deviceID, platform)
 		if groupMode == "" {
@@ -356,31 +356,7 @@ func spectrumXDefaultsForHardware(groups []config.ClusterConfig) (mode string, p
 		}
 		groupsConsidered++
 	}
-	if groupsConsidered == 0 {
-		return "", 0, false, "no east-west PFs"
-	}
 	return seenMode, seenPlanes, true, reason
-}
-
-func eastWestDeviceID(group config.ClusterConfig) (deviceID string, hasEastWest bool, reason string) {
-	for _, pf := range group.PFs {
-		if pf.Traffic != "east-west" {
-			continue
-		}
-		hasEastWest = true
-		normID := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(pf.DeviceID)), "0x")
-		if normID == "" {
-			return "", true, fmt.Sprintf("group %q has an east-west PF without a deviceID", group.Identifier)
-		}
-		if deviceID == "" {
-			deviceID = normID
-			continue
-		}
-		if deviceID != normID {
-			return "", true, fmt.Sprintf("group %q east-west PFs have mixed deviceIDs: %q vs %q", group.Identifier, deviceID, normID)
-		}
-	}
-	return deviceID, hasEastWest, ""
 }
 
 func spectrumXDefaultForDeviceAndPlatform(deviceID, platform string) (mode string, planes int, reason string) {

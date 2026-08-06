@@ -13,6 +13,12 @@ All Spectrum-X deployments require:
 - `multirail=true`
 - `spectrumX.enable=true`
 
+Launch Kit derives each generated
+`NicConfigurationTemplate.spec.nicSelector.nicType` from the selected
+east-west PF `deviceID` values. The selector is not configured under
+`spectrumX`; north-south PFs are ignored, and the selected east-west IDs must
+be non-empty and unanimous.
+
 ## Mode: none
 
 - **NIC type**: BlueField-3 SuperNIC (`a2dc`), ConnectX-7 (`1021`), or

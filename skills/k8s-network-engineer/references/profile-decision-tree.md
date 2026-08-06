@@ -173,9 +173,9 @@ guide profile selection:
 | Spectrum-X, SPCX, AI cloud           | `spectrumX=true`              |
 | host device, DPDK, passthrough        | `deployment=host_device`      |
 | shared, multi-tenant, many pods       | `deployment=rdma_shared`      |
-| BlueField, BF3, SuperNIC, DPU        | `spectrumX.nicType=a2dc`      |
-| ConnectX-8, CX8                       | `spectrumX.nicType=1023`      |
-| ConnectX-9, CX9                       | `spectrumX.nicType=1025`      |
+| BlueField, BF3, SuperNIC, DPU        | east-west PF `deviceID=a2dc`  |
+| ConnectX-8, CX8                       | east-west PF `deviceID=1023`  |
+| ConnectX-9, CX9                       | east-west PF `deviceID=1025`  |
 
 ## Decision Flow
 
