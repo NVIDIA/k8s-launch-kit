@@ -131,6 +131,7 @@ var templateFuncs = template.FuncMap{
 		_, netdevPrefix := config.SpectrumXInterfaceNamePrefixes(settings, multiplaneMode)
 		return netdevPrefix
 	},
+	"spectrumXNicType":               spectrumXNicType,
 	"spectrumXProfileConfigRequired": config.SpectrumXProfileConfigRequired,
 	"spectrumXCIDRPools": func(root any, clusterConfig *config.ClusterConfig) ([]spectrumxaddressing.CIDRPool, error) {
 		var cfg *config.LaunchKitConfig
@@ -205,6 +206,24 @@ var templateFuncs = template.FuncMap{
 	// legacySriovDevicePluginConfigList does the same shape for the
 	// sriovDevicePlugin used by the 26.1 host-device profile.
 	"legacySriovDevicePluginConfigList": legacySriovDevicePluginConfigList,
+}
+
+// spectrumXNicType resolves the NicConfigurationTemplate selector from the
+// east-west rail inventory. The same resolver drives Spectrum-X hardware
+// defaults, keeping missing and mixed device-ID handling consistent between
+// profile resolution and manifest generation.
+func spectrumXNicType(group *config.ClusterConfig) (string, error) {
+	if group == nil {
+		return "", fmt.Errorf("Spectrum-X NIC type requires a clusterConfig group")
+	}
+	deviceID, hasEastWest, err := config.EastWestDeviceID(*group)
+	if err != nil {
+		return "", err
+	}
+	if !hasEastWest {
+		return "", fmt.Errorf("group %q has no east-west PFs", group.Identifier)
+	}
+	return deviceID, nil
 }
 
 func secondaryNetworkMetaPlugins(profile *config.Profile) string {
@@ -862,6 +881,19 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	filtered, err := applyGroupFilter(cfg.ClusterConfig, p.Groups, p.GpuType)
 	if err != nil {
 		return nil, err
+	}
+	// Spectrum-X uses one resolved profile configuration for the whole
+	// generation target. Validate the filtered source inventory before merging
+	// so a representative merged PF list cannot hide a missing or different
+	// east-west device ID in another source group.
+	if isSpectrumX(cfg) {
+		_, hasEastWest, deviceIDErr := config.EastWestDeviceIDForGroups(filtered)
+		if deviceIDErr != nil {
+			return nil, fmt.Errorf("resolve Spectrum-X NIC type from east-west PFs: %w", deviceIDErr)
+		}
+		if !hasEastWest {
+			return nil, fmt.Errorf("resolve Spectrum-X NIC type from east-west PFs: no east-west PFs")
+		}
 	}
 
 	// Temporary workaround for the NicInterfaceNameTemplate collision

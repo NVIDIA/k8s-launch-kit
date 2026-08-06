@@ -1036,7 +1036,7 @@ nicConfigurationOperator:
   rdmaPrefix: "rdma_r%rail%"           # RDMA device name template (%rail% substituted per rail)
   netdevPrefix: "eth_r%rail%"          # Network interface name template (%rail% substituted per rail)
 spectrumX:
-  nicType: "1023"
+  # nicSelector.nicType is derived from the shared east-west PF deviceID.
   overlay: none
   singlePlane:
     netdevPrefix: "eth_r%rail_id%"

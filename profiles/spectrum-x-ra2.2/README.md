@@ -31,10 +31,10 @@ nodeCapabilities:
 
 ### NIC Configuration
 
-- **nicType**: NIC device type
-  - `"1023"` for ConnectX-8
-  - `"1025"` for ConnectX-9
-  - `"a2dc"` for BlueField-3 SuperNIC
+- **nicSelector.nicType**: Derived in each generated
+  `NicConfigurationTemplate` from the device ID shared by the selected
+  east-west PFs. North-south PFs are ignored; missing or mixed east-west
+  device IDs fail generation.
 - **firmwareVersion**: Spectrum-X firmware version (e.g., `"RA2.2"`)
 - **multiplaneMode**: Multiplane configuration
   - `none`: Single plane
@@ -126,7 +126,6 @@ operator; l8k does not generate them.
 
 ```yaml
 spectrumX:
-  nicType: "1023"
   firmwareVersion: "RA2.2"
   multiplaneMode: hwplb
   numberOfPlanes: 4

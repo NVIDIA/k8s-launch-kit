@@ -50,6 +50,12 @@ The platform is read from `clusterConfig[].gpuType`, with `machineType` as a
 fallback. `--for` presets participate in the same resolution before manifests
 are rendered.
 
+The generated `NicConfigurationTemplate` also derives
+`spec.nicSelector.nicType` from the target group's east-west PF device IDs.
+There is no separate `spectrumX.nicType` setting. North-south PFs are ignored,
+and generation requires every selected east-west PF to have the same non-empty
+`deviceID`.
+
 B300 and GB300 support both `swplb` and `hwplb`, so platform type does not
 identify which load-balancing mechanism the fabric uses. l8k defaults to the
 documented GA `swplb` path. Select `hwplb` explicitly when the site topology

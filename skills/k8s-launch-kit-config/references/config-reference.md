@@ -259,10 +259,6 @@ nicConfigurationOperator:
 # Used only when profile.spectrumX.enable is true.
 # ============================================================================
 spectrumX:
-  # string | default: "1023"
-  # PCI device ID of the NIC. "1023" = ConnectX-8, "1025" = ConnectX-9, "a2dc" = BlueField-3 SuperNIC.
-  nicType: "1023"
-
   # string | default: "none"
   # Overlay mode for Spectrum-X fabric.
   overlay: "none"
@@ -281,6 +277,10 @@ spectrumX:
   swplb:
     netdevPrefix: "eth_r%rail_id%_p%plane_id%"
     rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
+
+# Generated Spectrum-X NicConfigurationTemplate resources derive
+# spec.nicSelector.nicType from the non-empty deviceID shared by every
+# selected east-west PF. North-south PFs are ignored.
 
 # ============================================================================
 # Profile Selection

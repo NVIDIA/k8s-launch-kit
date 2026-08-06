@@ -34,7 +34,6 @@ ipoib:
 macvlan:
   networkName: macvlan-network
 spectrumX:
-  nicType: "1023"
   overlay: none
   singlePlane:
     netdevPrefix: eth_r%rail_id%
