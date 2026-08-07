@@ -30,6 +30,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"gopkg.in/yaml.v2"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // defaultConfigYAML is the canonical baseline l8k configuration baked into the
@@ -196,11 +197,16 @@ type LaunchKitConfig struct {
 	// CurrentNetworkNamespace is transient render state. The renderer sets it
 	// to one NetworkNamespaces entry while producing that namespace's copy;
 	// it is never part of the persisted configuration schema.
-	CurrentNetworkNamespace string            `yaml:"-"`
-	Workload                *WorkloadConfig   `yaml:"workload,omitempty"`
-	Validation              *ValidationConfig `yaml:"validation,omitempty"`
-	Profile                 *Profile          `yaml:"profile,omitempty"`
-	ClusterConfig           []ClusterConfig   `yaml:"clusterConfig,omitempty"`
+	CurrentNetworkNamespace string `yaml:"-"`
+	// ValidationGPUResourceCount is transient render state. The renderer
+	// computes the largest GPU prefix required across every source group in a
+	// DaemonSet render bucket so endpoint-specific CUDA indices remain visible
+	// after compatible groups are merged. It is never persisted in user config.
+	ValidationGPUResourceCount int               `yaml:"-"`
+	Workload                   *WorkloadConfig   `yaml:"workload,omitempty"`
+	Validation                 *ValidationConfig `yaml:"validation,omitempty"`
+	Profile                    *Profile          `yaml:"profile,omitempty"`
+	ClusterConfig              []ClusterConfig   `yaml:"clusterConfig,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
@@ -417,16 +423,28 @@ const (
 	DefaultValidationRPingIterations = 5
 	DefaultValidationIBWriteSize     = 65536
 	DefaultValidationIBWriteMinGbps  = 100
+	DefaultGPUResourceType           = "nvidia.com/gpu"
 )
 
 // ValidationConfig controls `l8k validate` data-plane checks. Static manifest
-// and version checks always run; Connectivity gates the example-DaemonSet RDMA
-// matrix. Checks selects which RDMA families to run.
+// and version checks always run; Connectivity gates the example-DaemonSet data
+// plane matrix. Checks selects the base families, while GPUDirect enables the
+// DMA-BUF variant of ib_write_bw.
 type ValidationConfig struct {
-	Connectivity *bool                 `yaml:"connectivity,omitempty"`
-	Mode         string                `yaml:"mode,omitempty"`
-	Checks       []string              `yaml:"checks,omitempty"`
-	RDMA         *ValidationRDMAConfig `yaml:"rdma,omitempty"`
+	Connectivity *bool                     `yaml:"connectivity,omitempty"`
+	Mode         string                    `yaml:"mode,omitempty"`
+	Checks       []string                  `yaml:"checks,omitempty"`
+	RDMA         *ValidationRDMAConfig     `yaml:"rdma,omitempty"`
+	GPUDirect    ValidationGPUDirectConfig `yaml:"gpuDirect"`
+}
+
+// ValidationGPUDirectConfig controls the CUDA DMA-BUF variant of the
+// ib_write_bw matrix. Enabled is deliberately non-optional: discovery writes
+// its decision to the generated config and users may override that value
+// before generation or validation.
+type ValidationGPUDirectConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	GPUResourceType string `yaml:"gpuResourceType"`
 }
 
 type ValidationRDMAConfig struct {
@@ -452,6 +470,10 @@ func DefaultValidationConfig() *ValidationConfig {
 			RPingIterations:         DefaultValidationRPingIterations,
 			IBWriteSize:             DefaultValidationIBWriteSize,
 			IBWriteMinBandwidthGbps: defaultFloat64(DefaultValidationIBWriteMinGbps),
+		},
+		GPUDirect: ValidationGPUDirectConfig{
+			Enabled:         false,
+			GPUResourceType: DefaultGPUResourceType,
 		},
 	}
 }
@@ -483,6 +505,10 @@ func NormalizeValidationConfig(v *ValidationConfig) *ValidationConfig {
 	}
 	if v.RDMA.IBWriteMinBandwidthGbps == nil {
 		v.RDMA.IBWriteMinBandwidthGbps = defaultFloat64(DefaultValidationIBWriteMinGbps)
+	}
+	v.GPUDirect.GPUResourceType = strings.TrimSpace(v.GPUDirect.GPUResourceType)
+	if v.GPUDirect.GPUResourceType == "" {
+		v.GPUDirect.GPUResourceType = DefaultGPUResourceType
 	}
 	return v
 }
@@ -516,6 +542,13 @@ func ValidateValidationConfig(v *ValidationConfig) error {
 	}
 	if v.RDMA != nil && v.RDMA.IBWriteMinBandwidthGbps != nil && *v.RDMA.IBWriteMinBandwidthGbps < 0 {
 		return fmt.Errorf("validation.rdma.ibWriteMinBandwidthGbps must be greater than or equal to 0")
+	}
+	resourceType := v.GPUDirect.GPUResourceType
+	if !strings.Contains(resourceType, "/") {
+		return fmt.Errorf("validation.gpuDirect.gpuResourceType must be a qualified extended resource name, got %q", resourceType)
+	}
+	if errs := k8svalidation.IsQualifiedName(resourceType); len(errs) > 0 {
+		return fmt.Errorf("validation.gpuDirect.gpuResourceType %q is invalid: %s", resourceType, strings.Join(errs, "; "))
 	}
 	for _, check := range v.Checks {
 		switch check {

@@ -16,6 +16,8 @@
 
 package connectivity
 
+import "encoding/json"
+
 type RouteCheck struct {
 	Command string
 	Output  string
@@ -25,11 +27,11 @@ type RouteCheck struct {
 }
 
 // PingResult carries the outcome of one src→dst matrix test. The
-// matrix currently runs rping and ib_write_bw — fields specific to a
-// kind stay zero for tests of the other kind:
+// matrix runs ICMP, rping, host-memory ib_write_bw, and GPUDirect DMA-BUF;
+// fields specific to a kind stay zero for other kinds:
 //
 //   - rping: OK + Err + Stdout/Stderr; BandwidthGbps stays at 0.
-//   - ib_write_bw: OK + Err + Stdout/Stderr + BandwidthGbps +
+//   - both ib_write_bw families: OK + Err + Stdout/Stderr + BandwidthGbps +
 //     MsgRateMpps populated by parseIbWriteBwOutput. MinBandwidthGbps
 //     records the configured passing threshold when set.
 //
@@ -42,10 +44,38 @@ type PingResult struct {
 	ObservedOK       bool
 	Expectation      Expectation
 	Route            RouteCheck
-	BandwidthGbps    float64 // ib_write_bw only; 0 when n/a
-	MsgRateMpps      float64 // ib_write_bw only; 0 when n/a
-	MinBandwidthGbps float64 // ib_write_bw only; 0 when no threshold was applied
+	BandwidthGbps    float64 // ib_write_bw families only; 0 when n/a
+	MsgRateMpps      float64 // ib_write_bw families only; 0 when n/a
+	MinBandwidthGbps float64 // ib_write_bw families only; 0 when no threshold was applied
 	Stdout           string
 	Stderr           string
-	Err              error
+	Err              error `json:"-"`
+}
+
+func (r PingResult) MarshalJSON() ([]byte, error) {
+	type alias PingResult
+	errorText := ""
+	if r.Err != nil {
+		errorText = r.Err.Error()
+	}
+	return json.Marshal(struct {
+		alias
+		Family string `json:"Family"`
+		Error  string `json:"Error,omitempty"`
+	}{alias: alias(r), Family: resultFamily(r.Test.Kind), Error: errorText})
+}
+
+func resultFamily(kind PingTestKind) string {
+	switch {
+	case kind.IsICMP():
+		return "icmp"
+	case kind.IsRDMAPing():
+		return "rping"
+	case kind.IsRDMABw():
+		return "ib_write_bw"
+	case kind.IsGPUDirectDMABuf():
+		return "gpudirect_dmabuf"
+	default:
+		return "unknown"
+	}
 }

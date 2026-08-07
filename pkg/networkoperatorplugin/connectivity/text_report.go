@@ -56,7 +56,7 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 	// (QP-establishment canary) before ib_write_bw (bandwidth).
 	byRail, byCross, nodes, rails := groupResultsByKind(result.PingResults)
 
-	families := []kindFamily{familyICMP, familyRPing, familyIbBw}
+	families := []kindFamily{familyICMP, familyRPing, familyIbBw, familyGPUDirectDMABuf}
 	for _, rail := range rails {
 		for _, fam := range families {
 			grid, ok := byRail[rail][fam]
@@ -82,10 +82,31 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 			uiOutput.Info("%s", line)
 		}
 	}
+
+	var gpuResults []PingResult
+	for _, r := range result.PingResults {
+		if r.Test.Kind.IsGPUDirectDMABuf() {
+			gpuResults = append(gpuResults, r)
+		}
+	}
+	if len(gpuResults) > 0 {
+		uiOutput.Info("")
+		uiOutput.Info("GPUDirect DMA-BUF endpoint details:")
+		for _, r := range gpuResults {
+			status := cellBody(&r, familyGPUDirectDMABuf)
+			if r.Err != nil {
+				status += ": " + r.Err.Error()
+			}
+			uiOutput.Info("  %s GPU%d (%s) [%s] → %s GPU%d (%s) [%s]: %s; threshold %.1f Gbps",
+				axisLabel(r.Test.SrcNode, r.Test.SrcPod), r.Test.SrcGPUIndex, r.Test.SrcGPUPCIAddress, r.Test.SrcRail,
+				axisLabel(r.Test.DstNode, r.Test.DstPod), r.Test.DstGPUIndex, r.Test.DstGPUPCIAddress, r.Test.DstRail,
+				status, r.MinBandwidthGbps)
+		}
+	}
 }
 
-// kindFamily collapses the four PingTestKind values down to the two
-// families the renderer cares about: rping and ib_write_bw. The
+// kindFamily collapses same/cross-rail PingTestKind values into the four
+// families the renderer presents. The
 // same-rail / cross-rail axis is handled separately (per-rail grid vs
 // cross-rail list).
 type kindFamily int
@@ -94,6 +115,7 @@ const (
 	familyICMP kindFamily = iota
 	familyRPing
 	familyIbBw
+	familyGPUDirectDMABuf
 )
 
 func kindFamilyOf(k PingTestKind) kindFamily {
@@ -103,12 +125,18 @@ func kindFamilyOf(k PingTestKind) kindFamily {
 	if k.IsRDMABw() {
 		return familyIbBw
 	}
+	if k.IsGPUDirectDMABuf() {
+		return familyGPUDirectDMABuf
+	}
 	return familyRPing
 }
 
 func familyTitle(f kindFamily) string {
 	if f == familyIbBw {
 		return "RDMA bandwidth (ib_write_bw)"
+	}
+	if f == familyGPUDirectDMABuf {
+		return "GPUDirect RDMA bandwidth (DMA-BUF)"
 	}
 	if f == familyICMP {
 		return "Layer 3 ping (ICMP)"
@@ -296,7 +324,7 @@ func cellBody(r *PingResult, fam kindFamily) string {
 		}
 		return "✗ connected"
 	}
-	if fam == familyIbBw {
+	if fam == familyIbBw || fam == familyGPUDirectDMABuf {
 		if observedOK(r) && r.BandwidthGbps > 0 {
 			return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
 		}

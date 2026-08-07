@@ -158,6 +158,11 @@ is not written; the GPU label is still written when `gpuType` alone is resolved.
   in the config file) for private registries.
 - Network Operator does **NOT** need to be pre-installed.
 
+Discovery also always writes `validation.gpuDirect.enabled`. It is true only
+when every worker in every discovered group can satisfy its render bucket's
+topology-derived `validation.gpuDirect.gpuResourceType` request; otherwise it
+is false. Do not add GPU counts or resource maps under `clusterConfig`.
+
 ## Tips
 
 - Profile precedence is `hardware/default < existing YAML < explicit CLI`.

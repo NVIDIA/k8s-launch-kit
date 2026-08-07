@@ -47,7 +47,7 @@ Supported release lines are currently:
 - `26.4`
 - `26.7`
 
-The release line fills Network Operator versions, component image tags, DOCA driver version, repositories, Helm repository URL, and version-gated template behavior. Spectrum-X releases also carry a manually maintained xPlane repository and version used in `spectrumXOperator.xPlane` instead of reusing the generic component tag.
+The release line fills Network Operator versions, component image tags, DOCA driver version, full-runtime validation image, repositories, Helm repository URL, and version-gated template behavior. Spectrum-X releases also carry a manually maintained xPlane repository and version used in `spectrumXOperator.xPlane` instead of reusing the generic component tag.
 
 ## Network Operator
 
@@ -92,6 +92,9 @@ Secondary-network CRs and example workloads render once per network namespace. S
 
 ```yaml
 validation:
+  gpuDirect:
+    enabled: false
+    gpuResourceType: nvidia.com/gpu
   connectivity: true
   mode: strict
   checks:
@@ -106,12 +109,22 @@ validation:
 
 | Field | Meaning |
 | --- | --- |
+| `gpuDirect.enabled` | Run a separate CUDA DMA-BUF `ib_write_bw` matrix when `ib_write_bw` is selected. Discovery always writes this boolean and enables it only when every discovered worker can satisfy its render bucket's topology-derived `gpuResourceType` request. |
+| `gpuDirect.gpuResourceType` | Qualified Kubernetes extended resource requested by the primary validation container. Defaults to `nvidia.com/gpu`. |
 | `connectivity` | Enables the data-plane stage. Static acceptance checks always run. |
 | `mode` | `quick`, `full`, or `strict`. |
 | `checks` | Any combination of `icmp`, `rping`, and `ib_write_bw`; an empty list disables all connectivity test families. |
 | `rdma.rpingIterations` | Client iterations for each `rping` test. |
 | `rdma.ibWriteSize` | Message size passed to `ib_write_bw`. |
 | `rdma.ibWriteMinBandwidthGbps` | Minimum observed peak bandwidth. Set `0` to disable the bandwidth gate. |
+
+GPU resource counts are not added to `clusterConfig`. Generation derives the
+request needed to expose the discovered `GPU<N>` indices from the existing PF
+topology. The DMA-BUF runner resolves source and destination indices separately
+from `connectedGPU` (and reports `connectedGPUPCIAddress` when available); an
+unresolved or ambiguous NIC/GPU association is a failed validation result.
+`networkOperator.imagePullSecrets` is copied to the validation Pod spec, so
+each named Secret must exist in every generated network namespace.
 
 ## DOCA Driver
 

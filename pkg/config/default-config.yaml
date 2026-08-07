@@ -39,6 +39,11 @@ networkNamespaces: [default]
 #   manifest: /path/to/my-deployment.yaml  # Custom workload manifest (replaces default example DaemonSet)
 
 validation:
+  gpuDirect:
+    # Discovery sets enabled=true only when every discovered worker node can
+    # satisfy the topology-derived request for gpuResourceType.
+    enabled: false
+    gpuResourceType: nvidia.com/gpu
   # connectivity gates the data-plane validation stage. Static manifest,
   # Helm release, component-version, and preflight checks always run.
   connectivity: true

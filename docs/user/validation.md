@@ -24,12 +24,12 @@ When `--user-config` is omitted, Launch Kit checks `./cluster-config.yaml`, the 
 | Component versions | Version-bearing sections of `NicClusterPolicy` and `NicNodePolicy` match the selected release catalog. |
 | Manifest state | Each generated CR is classified as `READY`, `IN-PROGRESS`, `ERROR`, or `MISSING`. |
 | Preflight | Stray CRs and Helm value drift that can make the apply path ambiguous. |
-| Connectivity | ICMP, `rping`, and `ib_write_bw` checks between generated test DaemonSet pods. |
+| Connectivity | ICMP, `rping`, host-memory `ib_write_bw`, and optional GPUDirect DMA-BUF bandwidth checks between generated test DaemonSet pods. |
 
 Connectivity is skipped when manifests are missing, errored, or still in progress.
 
 Each generated example DaemonSet declares two validation containers: the DOCA
-container runs `rping` and `ib_write_bw`, while the `netshoot` container runs
+container runs `rping`, `ib_write_bw`, and DMA-BUF bandwidth, while the `netshoot` container runs
 ICMP and route checks from the same pod network namespace. Validation applies
 the generated DaemonSet as written; it does not inject a helper container at
 runtime.
@@ -58,6 +58,9 @@ Fresh discovery writes:
 
 ```yaml
 validation:
+  gpuDirect:
+    enabled: false
+    gpuResourceType: nvidia.com/gpu
   connectivity: true
   mode: strict
   checks:
@@ -69,6 +72,26 @@ validation:
     ibWriteSize: 65536
     ibWriteMinBandwidthGbps: 100
 ```
+
+`gpuDirect.enabled` is never omitted. Discovery sets it to `true` only when
+every worker in every discovered group can satisfy its render bucket's
+topology-derived `gpuResourceType` request; otherwise it writes `false`. You may
+change the value before generation. GPUDirect runs as a distinct result family whenever
+it is enabled and `ib_write_bw` is selected.
+
+The generated validation DaemonSet selects its full-runtime DOCA image from
+the Network Operator release catalog and copies
+`networkOperator.imagePullSecrets` into the Pod spec. Create those Secrets in
+every network namespace used by validation. Only the DOCA container requests
+the configured GPU resource.
+
+For each test, Launch Kit maps the source rail and destination rail to their
+own `connectedGPU` value from discovery or the selected topology preset. It
+then passes `--use_cuda=<source-index> --use_cuda_dmabuf` to the client and
+`--use_cuda=<destination-index> --use_cuda_dmabuf` to the server. Missing or
+ambiguous mappings fail; GPU 0 is never assumed. Text, JSON, and HTML output
+keep DMA-BUF results separate and include indices, PCI addresses when known,
+bandwidth, threshold, and errors.
 
 Override per run:
 

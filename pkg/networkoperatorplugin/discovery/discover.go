@@ -356,6 +356,27 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	// the group's Identifier + NodeSelector are aligned with that value.
 	applyMachineLabelToGroups(ctx, c, cfg.ClusterConfig)
 
+	// Persist the automatic GPUDirect decision in the generated config. The
+	// test is enabled only when the configured extended GPU resource can
+	// satisfy the topology-derived request on every worker represented by every
+	// discovered group.
+	// Discovery does not persist per-group GPU quantities; the boolean is the
+	// complete discovery output for this feature and remains user-editable.
+	cfg.Validation = config.NormalizeValidationConfig(cfg.Validation)
+	nodeList := &corev1.NodeList{}
+	if err := c.List(ctx, nodeList); err != nil {
+		cfg.Validation.GPUDirect.Enabled = false
+		uiOutput.Warning("Could not inspect GPU resources on cluster nodes; GPUDirect DMA-BUF validation disabled: %v", err)
+	} else {
+		resourceType := cfg.Validation.GPUDirect.GPUResourceType
+		cfg.Validation.GPUDirect.Enabled = gpuDirectAvailableOnAllGroupNodes(cfg.ClusterConfig, nodeList.Items, resourceType)
+		if cfg.Validation.GPUDirect.Enabled {
+			uiOutput.Info("Enabled GPUDirect DMA-BUF validation: every discovered worker can satisfy its topology-derived %s request", resourceType)
+		} else {
+			uiOutput.Info("GPUDirect DMA-BUF validation disabled: %s cannot satisfy the topology-derived request on every discovered worker", resourceType)
+		}
+	}
+
 	// Phase summary — counts surfaced at info level so the default UX shows
 	// progress without requiring --log-level=debug.
 	totalEW, totalNS, presetMatches, deviationGroups, labelled := 0, 0, 0, 0, 0
@@ -387,6 +408,68 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		"machineLabelledGroups", labelled)
 
 	return nil
+}
+
+func gpuDirectAvailableOnAllGroupNodes(groups []config.ClusterConfig, nodes []corev1.Node, resourceType string) bool {
+	if len(groups) == 0 || resourceType == "" {
+		return false
+	}
+	nodeByName := make(map[string]*corev1.Node, len(nodes))
+	for i := range nodes {
+		nodeByName[nodes[i].Name] = &nodes[i]
+	}
+	requiredByGroup := gpuDirectResourceCountsByGroup(groups)
+	foundWorker := false
+	for i := range groups {
+		if len(groups[i].WorkerNodes) == 0 {
+			return false
+		}
+		for _, nodeName := range groups[i].WorkerNodes {
+			foundWorker = true
+			node := nodeByName[nodeName]
+			if node == nil {
+				return false
+			}
+			quantity, ok := node.Status.Allocatable[corev1.ResourceName(resourceType)]
+			if !ok || quantity.CmpInt64(int64(requiredByGroup[i])) < 0 {
+				return false
+			}
+		}
+	}
+	return foundWorker
+}
+
+type gpuDirectRenderBucket struct {
+	gpuType     string
+	eastWestPFs int
+	unique      int
+}
+
+// gpuDirectResourceCountsByGroup mirrors the renderer's merge key
+// (gpuType, east-west PF count). Every node selected by one merged DaemonSet
+// must satisfy that bucket's largest topology-derived GPU prefix.
+func gpuDirectResourceCountsByGroup(groups []config.ClusterConfig) []int {
+	keys := make([]gpuDirectRenderBucket, len(groups))
+	maxByBucket := make(map[gpuDirectRenderBucket]int, len(groups))
+	for i := range groups {
+		key := gpuDirectRenderBucket{
+			gpuType:     groups[i].GPUType,
+			eastWestPFs: len(pfutil.FilterEastWestPFs(groups[i].PFs)),
+		}
+		if key.gpuType == "" {
+			key.unique = i + 1
+		}
+		keys[i] = key
+		count := pfutil.GPUResourceCountForPFs(groups[i].PFs)
+		if count > maxByBucket[key] {
+			maxByBucket[key] = count
+		}
+	}
+	required := make([]int, len(groups))
+	for i := range groups {
+		required[i] = maxByBucket[keys[i]]
+	}
+	return required
 }
 
 func resolvePresetCatalog(opts Options) (*presets.Catalog, error) {

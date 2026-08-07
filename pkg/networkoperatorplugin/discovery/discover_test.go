@@ -23,10 +23,52 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestGPUDirectAvailableOnAllGroupNodes(t *testing.T) {
+	groups := []config.ClusterConfig{
+		{WorkerNodes: []string{"node-a", "node-b"}},
+		{WorkerNodes: []string{"node-c"}},
+	}
+	node := func(name, quantity string) corev1.Node {
+		return corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{corev1.ResourceName("example.com/gpu"): resource.MustParse(quantity)},
+		}}
+	}
+	nodes := []corev1.Node{node("node-a", "8"), node("node-b", "1"), node("node-c", "2")}
+	assert.True(t, gpuDirectAvailableOnAllGroupNodes(groups, nodes, "example.com/gpu"))
+	nodes[1].Status.Allocatable[corev1.ResourceName("example.com/gpu")] = resource.MustParse("0")
+	assert.False(t, gpuDirectAvailableOnAllGroupNodes(groups, nodes, "example.com/gpu"))
+	assert.False(t, gpuDirectAvailableOnAllGroupNodes(groups, nodes[:2], "example.com/gpu"))
+	assert.False(t, gpuDirectAvailableOnAllGroupNodes(nil, nodes, "example.com/gpu"))
+
+	t.Run("merged bucket requires its largest topology prefix on every worker", func(t *testing.T) {
+		rail0 := 0
+		mergedGroups := []config.ClusterConfig{
+			{GPUType: "same-gpu", WorkerNodes: []string{"node-a"}, PFs: []config.PFConfig{{
+				Traffic: "east-west", Rail: &rail0, ConnectedGPU: "GPU1",
+			}}},
+			{GPUType: "same-gpu", WorkerNodes: []string{"node-c"}, PFs: []config.PFConfig{{
+				Traffic: "east-west", Rail: &rail0, ConnectedGPU: "GPU7",
+			}}},
+		}
+		limitedNodes := []corev1.Node{node("node-a", "2"), node("node-c", "8")}
+		assert.False(t, gpuDirectAvailableOnAllGroupNodes(mergedGroups, limitedNodes, "example.com/gpu"))
+		limitedNodes[0].Status.Allocatable[corev1.ResourceName("example.com/gpu")] = resource.MustParse("8")
+		assert.True(t, gpuDirectAvailableOnAllGroupNodes(mergedGroups, limitedNodes, "example.com/gpu"))
+
+		mergedGroups[1].GPUType = "different-gpu"
+		limitedNodes[0].Status.Allocatable[corev1.ResourceName("example.com/gpu")] = resource.MustParse("2")
+		assert.True(t, gpuDirectAvailableOnAllGroupNodes(mergedGroups, limitedNodes, "example.com/gpu"),
+			"separate render buckets must retain their own request sizes")
+	})
+}
 
 func TestCheckDaemonSetPodsReady_NoPodsFound(t *testing.T) {
 	scheme := runtime.NewScheme()

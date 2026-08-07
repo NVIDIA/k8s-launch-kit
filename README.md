@@ -363,13 +363,22 @@ container for RDMA checks and a declared `netshoot` container for ICMP; validate
 applies that manifest without injecting containers at runtime. ICMP uses
 `ping -I <src-iface>`, `rping` uses
 `-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`; every test
-also records a source-qualified `ip route get <dst> from <src>` lookup. The
+also records a source-qualified `ip route get <dst> from <src>` lookup from the
+netshoot container. When `validation.gpuDirect.enabled` is true, a separate
+DMA-BUF bandwidth stage repeats the selected `ib_write_bw` matrix with
+`--use_cuda=<endpoint-index> --use_cuda_dmabuf`. Source and destination CUDA
+indices are resolved independently from each node's per-PF `connectedGPU`
+topology; missing or ambiguous mappings fail explicitly instead of falling
+back to GPU 0. The
 matrix is on by default (`--connectivity=false` to skip) and cleans up the
 test DaemonSet unless `--keep` is set. Fresh `l8k discover` output includes
 the default validation block:
 
 ```yaml
 validation:
+  gpuDirect:
+    enabled: false
+    gpuResourceType: nvidia.com/gpu
   connectivity: true
   mode: strict
   checks:
@@ -381,6 +390,16 @@ validation:
     ibWriteSize: 65536
     ibWriteMinBandwidthGbps: 100
 ```
+
+Discovery always writes `gpuDirect.enabled`: it is `true` only when every
+worker in every discovered group can satisfy the topology-derived
+`gpuResourceType` request for its render bucket, and `false` otherwise. Users
+can edit the result before generation. When enabled, generated validation DaemonSets use
+the release-specific full-runtime DOCA image, propagate
+`networkOperator.imagePullSecrets`, and request the GPU prefix required by the
+largest discovered `GPU<N>` index in the primary DOCA container. The netshoot
+container never requests GPUs. The named pull Secret must exist in every
+validation workload namespace.
 
 Validation modes control cross-rail coverage and gating:
 
@@ -681,7 +700,7 @@ The tool resolves configuration and profile paths in order: local directory firs
 
 ### Network Operator release selection
 
-Use `--network-operator-release <MAJOR.MINOR>` (or `networkOperator.selectedRelease` in the config file) to pick a Network Operator release line by name instead of hand-editing image tags. Supported releases live in an embedded catalog ([pkg/networkoperatorplugin/releases/releases.yaml](pkg/networkoperatorplugin/releases/releases.yaml)); each entry maps a release key to image tags and repositories for the operator, DOCA driver, and—where the release deploys it—the independently versioned xPlane service. Selecting a release populates `networkOperator.{version,componentVersion,repository}` and `docaDriver.version` from the catalog, while Spectrum-X profiles resolve `spectrumXOperator.xPlane.{repository,version}` from the same entry. Explicit values in `l8k-config.yaml` are overridden when a release is set.
+Use `--network-operator-release <MAJOR.MINOR>` (or `networkOperator.selectedRelease` in the config file) to pick a Network Operator release line by name instead of hand-editing image tags. Supported releases live in an embedded catalog ([pkg/networkoperatorplugin/releases/releases.yaml](pkg/networkoperatorplugin/releases/releases.yaml)); each entry maps a release key to image tags and repositories for the operator, DOCA driver, full-runtime validation workload, and—where the release deploys it—the independently versioned xPlane service. Selecting a release populates `networkOperator.{version,componentVersion,repository}` and `docaDriver.version` from the catalog, while validation workloads and Spectrum-X profiles resolve their image coordinates from the same entry. Explicit values in `l8k-config.yaml` are overridden when a release is set.
 
 ```bash
 # Pick a release on the CLI

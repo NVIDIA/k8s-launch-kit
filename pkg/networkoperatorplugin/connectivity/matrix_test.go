@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,15 +31,19 @@ import (
 // IP/interface data.
 func mkPod(name string, rails ...string) TestPod {
 	tp := TestPod{
-		Name:             name,
-		IPsByRail:        map[string]string{},
-		RDMADevsByRail:   map[string]string{},
-		InterfacesByRail: map[string]string{},
+		Name:                  name,
+		IPsByRail:             map[string]string{},
+		RDMADevsByRail:        map[string]string{},
+		InterfacesByRail:      map[string]string{},
+		GPUIndicesByRail:      map[string]int{},
+		GPUPCIAddressesByRail: map[string]string{},
 	}
 	for i, rail := range rails {
 		tp.IPsByRail[rail] = fakeIP(name, rail)
 		tp.RDMADevsByRail[rail] = fakeRDMADev(name, rail)
 		tp.InterfacesByRail[rail] = fakeIface(i)
+		tp.GPUIndicesByRail[rail] = i + 2
+		tp.GPUPCIAddressesByRail[rail] = fmt.Sprintf("0000:%02x:00.0", i+1)
 		tp.RailOrder = append(tp.RailOrder, rail)
 	}
 	return tp
@@ -119,10 +124,12 @@ func TestPlan_TwoPodsOneRail(t *testing.T) {
 	// rping tests and 2 ib_write_bw tests.
 	assert.Len(t, plan.RDMASameRail, 2)
 	assert.Len(t, plan.RDMABwSameRail, 2)
+	assert.Len(t, plan.GPUDirectDMABufSameRail, 2)
 	assert.Len(t, plan.ICMPSameRail, 2)
 	// Cross-rail canary requires ≥2 rails per pod — skipped here.
 	assert.Empty(t, plan.RDMACrossRail)
 	assert.Empty(t, plan.RDMABwCrossRail)
+	assert.Empty(t, plan.GPUDirectDMABufCrossRail)
 	assert.Empty(t, plan.ICMPCrossRail)
 
 	// Check direction coverage: both A→B and B→A appear in the rping
@@ -141,6 +148,69 @@ func TestPlan_TwoPodsOneRail(t *testing.T) {
 		assert.NotEmpty(t, tt.SrcIface, "%+v", tt)
 		assert.NotEmpty(t, tt.DstIface, "%+v", tt)
 	}
+}
+
+func TestPopulateGPUTopologyUsesNodeRailAndPlane(t *testing.T) {
+	rail0, rail1 := 0, 1
+	groups := []config.ClusterConfig{{
+		WorkerNodes: []string{"node-a"},
+		PFs: []config.PFConfig{
+			{Traffic: "east-west", Rail: &rail0, PciAddress: "0000:01:00.0", ConnectedGPU: "GPU4", ConnectedGPUPCIAddress: "0000:41:00.0"},
+			{Traffic: "east-west", Rail: &rail0, PciAddress: "0000:01:00.1", ConnectedGPU: "GPU5", ConnectedGPUPCIAddress: "0000:51:00.0"},
+			{Traffic: "east-west", Rail: &rail1, PciAddress: "0000:02:00.0", ConnectedGPU: "GPU7", ConnectedGPUPCIAddress: "0000:71:00.0"},
+		},
+	}}
+	pod := TestPod{Node: "node-a", RailOrder: []string{"rail-0-plane-0", "rail-0-plane-1", "rail-1"}}
+	PopulateGPUTopology(&pod, groups)
+	assert.Equal(t, 4, pod.GPUIndicesByRail["rail-0-plane-0"])
+	assert.Equal(t, 5, pod.GPUIndicesByRail["rail-0-plane-1"])
+	assert.Equal(t, 7, pod.GPUIndicesByRail["rail-1"])
+	assert.Equal(t, "0000:71:00.0", pod.GPUPCIAddressesByRail["rail-1"])
+}
+
+func TestPlanGPUDirectUsesEndpointSpecificGPUIndices(t *testing.T) {
+	src := mkPod("pod-a", "rail-0")
+	dst := mkPod("pod-b", "rail-0")
+	src.GPUIndicesByRail["rail-0"] = 4
+	src.GPUPCIAddressesByRail["rail-0"] = "0000:41:00.0"
+	dst.GPUIndicesByRail["rail-0"] = 7
+	dst.GPUPCIAddressesByRail["rail-0"] = "0000:71:00.0"
+
+	plan := Plan([]TestPod{src, dst})
+	require.Len(t, plan.GPUDirectDMABufSameRail, 2)
+	forward := plan.GPUDirectDMABufSameRail[0]
+	assert.Equal(t, "pod-a", forward.SrcPod)
+	assert.Equal(t, "pod-b", forward.DstPod)
+	assert.Equal(t, 4, forward.SrcGPUIndex)
+	assert.Equal(t, 7, forward.DstGPUIndex)
+	assert.Equal(t, "0000:41:00.0", forward.SrcGPUPCIAddress)
+	assert.Equal(t, "0000:71:00.0", forward.DstGPUPCIAddress)
+}
+
+func TestPopulateGPUTopologyDoesNotFallbackForAmbiguousRail(t *testing.T) {
+	rail0 := 0
+	groups := []config.ClusterConfig{{WorkerNodes: []string{"node-a"}, PFs: []config.PFConfig{
+		{Traffic: "east-west", Rail: &rail0, PciAddress: "0000:01:00.0", ConnectedGPU: "GPU1"},
+		{Traffic: "east-west", Rail: &rail0, PciAddress: "0000:02:00.0", ConnectedGPU: "GPU2"},
+	}}}
+	pod := TestPod{Node: "node-a", RailOrder: []string{"rail-0"}}
+	PopulateGPUTopology(&pod, groups)
+	assert.NotContains(t, pod.GPUIndicesByRail, "rail-0")
+}
+
+func TestPopulateGPUTopologyDoesNotChooseFirstAmbiguousNodeGroup(t *testing.T) {
+	rail0 := 0
+	groups := []config.ClusterConfig{
+		{WorkerNodes: []string{"node-a"}, PFs: []config.PFConfig{{
+			Traffic: "east-west", Rail: &rail0, PciAddress: "0000:01:00.0", ConnectedGPU: "GPU1",
+		}}},
+		{WorkerNodes: []string{"node-a"}, PFs: []config.PFConfig{{
+			Traffic: "east-west", Rail: &rail0, PciAddress: "0000:02:00.0", ConnectedGPU: "GPU6",
+		}}},
+	}
+	pod := TestPod{Node: "node-a", RailOrder: []string{"rail-0"}}
+	PopulateGPUTopology(&pod, groups)
+	assert.NotContains(t, pod.GPUIndicesByRail, "rail-0")
 }
 
 func TestPlan_TwoPodsTwoRails_IncludesCrossRailCanary(t *testing.T) {

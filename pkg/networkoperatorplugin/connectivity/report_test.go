@@ -19,6 +19,7 @@ package connectivity
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -299,4 +300,28 @@ func TestRenderHTML_HandlesNilOptionalFields(t *testing.T) {
 	require.NoError(t, RenderHTML(&buf, data))
 	assert.Contains(t, buf.String(), "<html")
 	assert.Contains(t, buf.String(), "Connectivity testing was not run")
+}
+
+func TestRenderHTML_GPUDirectFamilyIncludesEndpointEvidence(t *testing.T) {
+	data := ReportData{
+		Cluster: ClusterInfo{L8kVersion: "v0", GeneratedAt: time.Now()},
+		Matrix: &MatrixResult{PingResults: []PingResult{{
+			Test: PingTest{
+				Kind:    GPUDirectDMABufSameRail,
+				SrcNode: "worker-a", DstNode: "worker-b", Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0",
+				SrcGPUIndex: 4, DstGPUIndex: 7,
+				SrcGPUPCIAddress: "0000:41:00.0", DstGPUPCIAddress: "0000:71:00.0",
+			},
+			BandwidthGbps: 91.25, MinBandwidthGbps: 100, Err: fmt.Errorf("below minimum"),
+		}}},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, RenderHTML(&buf, data))
+	html := buf.String()
+	assert.Contains(t, html, "GPUDirect RDMA bandwidth (DMA-BUF)")
+	assert.Contains(t, html, "GPU4 0000:41:00.0")
+	assert.Contains(t, html, "GPU7 0000:71:00.0")
+	assert.Contains(t, html, "91.2 Gbps")
+	assert.Contains(t, html, "100.0 Gbps")
+	assert.Contains(t, html, "below minimum")
 }

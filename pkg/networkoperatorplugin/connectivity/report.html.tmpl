@@ -942,6 +942,27 @@ footer strong { color: var(--text-muted); }
           </tbody>
         </table>
       {{- end}}
+
+      {{- $gpuResults := gpudirectResults .Matrix.PingResults}}
+      {{- if $gpuResults}}
+      <div class="matrix-rail">GPUDirect DMA-BUF endpoint details</div>
+      <table class="matrix-table">
+        <thead><tr><th>Source</th><th>Source GPU</th><th>Destination</th><th>Destination GPU</th><th>Bandwidth</th><th>Minimum</th><th>Error</th></tr></thead>
+        <tbody>
+        {{- range $gpuResults}}
+          <tr>
+            <td>{{srcLabel .Test}} [{{.Test.SrcRail}}]</td>
+            <td>GPU{{.Test.SrcGPUIndex}} {{.Test.SrcGPUPCIAddress}}</td>
+            <td>{{dstLabel .Test}} [{{.Test.DstRail}}]</td>
+            <td>GPU{{.Test.DstGPUIndex}} {{.Test.DstGPUPCIAddress}}</td>
+            <td>{{printf "%.1f" .BandwidthGbps}} Gbps</td>
+            <td>{{printf "%.1f" .MinBandwidthGbps}} Gbps</td>
+            <td>{{errorText .Err}}</td>
+          </tr>
+        {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
       {{- else}}
       <p class="empty">No ping tests executed.</p>
       {{- end}}

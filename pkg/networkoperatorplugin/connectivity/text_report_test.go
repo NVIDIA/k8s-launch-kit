@@ -201,6 +201,26 @@ func TestRenderMatrixText_EmptyResultsIsNoOp(t *testing.T) {
 	assert.Empty(t, out.lines)
 }
 
+func TestRenderMatrixText_GPUDirectFamilyIncludesEndpointDetails(t *testing.T) {
+	result := &MatrixResult{PingResults: []PingResult{{
+		Test: PingTest{
+			Kind:    GPUDirectDMABufSameRail,
+			SrcNode: "worker-a", DstNode: "worker-b", Rail: "rail-0", SrcRail: "rail-0", DstRail: "rail-0",
+			SrcGPUIndex: 4, DstGPUIndex: 7,
+			SrcGPUPCIAddress: "0000:41:00.0", DstGPUPCIAddress: "0000:71:00.0",
+		},
+		OK: true, ObservedOK: true, BandwidthGbps: 191.25, MinBandwidthGbps: 100,
+	}}}
+	out := &captureOutput{}
+	RenderMatrixText(out, result)
+	joined := strings.Join(out.lines, "\n")
+	assert.Contains(t, joined, "GPUDirect RDMA bandwidth (DMA-BUF)")
+	assert.Contains(t, joined, "worker-a GPU4 (0000:41:00.0)")
+	assert.Contains(t, joined, "worker-b GPU7 (0000:71:00.0)")
+	assert.Contains(t, joined, "191.2 Gbps")
+	assert.Contains(t, joined, "threshold 100.0 Gbps")
+}
+
 func TestShortPodName(t *testing.T) {
 	t.Run("short name unchanged", func(t *testing.T) {
 		assert.Equal(t, "sriov-test-abc", shortPodName("sriov-test-abc"))

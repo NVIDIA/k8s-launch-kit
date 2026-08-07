@@ -405,6 +405,9 @@ func reportFuncMap() template.FuncMap {
 			if fam == "icmp" {
 				return "Layer 3 ping (ICMP)"
 			}
+			if fam == "gpudirect_dmabuf" {
+				return "GPUDirect RDMA bandwidth (DMA-BUF)"
+			}
 			return "RDMA ping (rping)"
 		},
 		// cellClass returns the CSS class for a matrix cell based
@@ -447,7 +450,7 @@ func reportFuncMap() template.FuncMap {
 				}
 				return "✗ connected"
 			}
-			if fam == "ibbw" {
+			if fam == "ibbw" || fam == "gpudirect_dmabuf" {
 				if observedOK(r) && r.BandwidthGbps > 0 {
 					return fmt.Sprintf("✓ %.1f Gbps", r.BandwidthGbps)
 				}
@@ -478,6 +481,21 @@ func reportFuncMap() template.FuncMap {
 				return t.DstNode
 			}
 			return t.DstPod
+		},
+		"gpudirectResults": func(results []PingResult) []PingResult {
+			out := make([]PingResult, 0)
+			for _, result := range results {
+				if result.Test.Kind.IsGPUDirectDMABuf() {
+					out = append(out, result)
+				}
+			}
+			return out
+		},
+		"errorText": func(err error) string {
+			if err == nil {
+				return ""
+			}
+			return err.Error()
 		},
 	}
 }
@@ -511,17 +529,22 @@ func htmlFamilyOf(k PingTestKind) string {
 	if k.IsRDMABw() {
 		return "ibbw"
 	}
+	if k.IsGPUDirectDMABuf() {
+		return "gpudirect_dmabuf"
+	}
 	return "rping"
 }
 
 // htmlFamilyRank gives a stable ordering of families in the rendered
-// report — ICMP before rping (QP establishment) before ib_write_bw (bandwidth).
+// report — ICMP, rping, host-memory ib_write_bw, then GPUDirect DMA-BUF.
 func htmlFamilyRank(fam string) int {
 	switch fam {
 	case "icmp":
 		return 0
 	case "ibbw":
 		return 2
+	case "gpudirect_dmabuf":
+		return 3
 	default:
 		return 1
 	}

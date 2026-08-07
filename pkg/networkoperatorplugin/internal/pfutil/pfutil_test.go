@@ -49,6 +49,18 @@ func TestIsDualPortModel(t *testing.T) {
 	}
 }
 
+func TestGPUResourceCountForPFs(t *testing.T) {
+	rail0 := 0
+	pfs := []config.PFConfig{
+		{Traffic: "north-south", ConnectedGPU: "GPU15"},
+		{Traffic: "east-west", Rail: &rail0, ConnectedGPU: "GPU2"},
+		{Traffic: "east-west", Rail: &rail0, ConnectedGPU: "GPU7"},
+		{Traffic: "east-west", Rail: &rail0, ConnectedGPU: "unknown"},
+	}
+	assert.Equal(t, 8, GPUResourceCountForPFs(pfs))
+	assert.Equal(t, 1, GPUResourceCountForPFs(nil))
+}
+
 func TestCollapsePFsToOnePerNIC(t *testing.T) {
 	t.Run("multi-plane NIC collapses to master", func(t *testing.T) {
 		// Two PFs on one NIC (same bus:device), no port-count keyword in model

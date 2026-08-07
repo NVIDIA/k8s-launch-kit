@@ -18,6 +18,12 @@ spec:
         {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
         k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}-plane-{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}{{- end }}{{- end }}
     spec:
+      {{- if $.NetworkOperator.ImagePullSecrets }}
+      imagePullSecrets:
+        {{- range $.NetworkOperator.ImagePullSecrets }}
+      - name: "{{ . }}"
+        {{- end }}
+      {{- end }}
       {{- if or .ClusterConfig.SourceMachineLabels .ClusterConfig.NodeSelector }}
       affinity:
         nodeAffinity:
@@ -46,12 +52,15 @@ spec:
       {{- end }}
       containers:
       - name: spectrum-x-test
-        image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
+        image: {{validationImage $.NetworkOperator}}
         securityContext:
           capabilities:
             add: ["IPC_LOCK", "NET_RAW"]
         resources:
           requests:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
             {{- range $railIdx := untilStep 0 $railCount 1 }}
             {{- if $swplb }}
             {{- range $planeIdx := untilStep 0 $planes 1 }}
@@ -62,6 +71,9 @@ spec:
             {{- end }}
             {{- end }}
           limits:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
             {{- range $railIdx := untilStep 0 $railCount 1 }}
             {{- if $swplb }}
             {{- range $planeIdx := untilStep 0 $planes 1 }}
@@ -71,19 +83,7 @@ spec:
             nvidia.com/rail_{{$railIdx}}: "1"
             {{- end }}
             {{- end }}
-        command:
-        - sh
-        - -c
-        - |
-          echo "Spectrum-X Multi-Rail Test DaemonSet"
-          echo "Available network interfaces:"
-          ip addr show
-          echo ""
-          echo "RDMA devices:"
-          rdma link
-          echo ""
-          echo "Sleeping indefinitely for manual testing..."
-          sleep infinity
+        command: ["/bin/bash", "-c", "sleep infinity"]
       - name: netshoot
         image: nicolaka/netshoot:latest
         command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]

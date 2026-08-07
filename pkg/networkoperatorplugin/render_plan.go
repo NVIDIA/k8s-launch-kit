@@ -423,6 +423,9 @@ func renderForScope(
 			nsCfg := withRenderNamespaces(cfg, ns, nsList)
 			for i, plan := range plans {
 				renderCfg := withClusterConfig(nsCfg, []config.ClusterConfig{plan.Merged}, subnetsAt(planSubnets, i))
+				if kind == "DaemonSet" {
+					renderCfg.ValidationGPUResourceCount = gpuResourceCountForGroups(plan.Sources)
+				}
 				rendered, err := ProcessTemplate(templatePath, renderCfg, "")
 				if err != nil {
 					return nil, err

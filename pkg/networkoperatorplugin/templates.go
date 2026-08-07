@@ -103,6 +103,8 @@ var templateFuncs = template.FuncMap{
 	// hand-authored configs.
 	"xPlaneRepository": xPlaneRepository,
 	"xPlaneVersion":    xPlaneVersion,
+	"validationImage":  validationImage,
+	"gpuResourceCount": gpuResourceCount,
 	// secondaryNetworkMetaPlugins renders the metaPlugins literal-block body
 	// shared by non-Spectrum-X secondary-network CRs. Keep tuning before sbr:
 	// tuning fixes per-interface ARP ownership before sbr installs
@@ -1084,6 +1086,53 @@ func xPlaneVersion(networkOperator *config.NetworkOperatorConfig) string {
 		return release.XPlane.Version
 	}
 	return networkOperator.ComponentVersion
+}
+
+func validationImage(networkOperator *config.NetworkOperatorConfig) string {
+	if networkOperator != nil {
+		if release, ok := releases.LookupRelease(networkOperator.SelectedRelease); ok && release.Validation.Image != "" {
+			return release.Validation.Image
+		}
+		if version, err := semver.NewVersion(strings.TrimPrefix(networkOperator.Version, "v")); err == nil {
+			key := fmt.Sprintf("%d.%d", version.Major(), version.Minor())
+			if release, ok := releases.LookupRelease(key); ok && release.Validation.Image != "" {
+				return release.Validation.Image
+			}
+		}
+	}
+	keys := releases.SupportedReleases()
+	if len(keys) == 0 {
+		return ""
+	}
+	latest, _ := releases.LookupRelease(keys[len(keys)-1])
+	return latest.Validation.Image
+}
+
+// gpuResourceCount requests the visible GPU prefix needed to preserve the
+// host GPU indices recorded in connectedGPU. The renderer supplies an
+// aggregate count for merged DaemonSet buckets; direct ProcessTemplate callers
+// fall back to the current group's PFs. For example, topology that uses GPU0
+// and GPU4 requests five devices so --use_cuda=4 remains addressable. Missing
+// topology still requests one GPU to make the runtime available; the validator
+// reports an explicit topology error instead of assuming GPU0.
+func gpuResourceCount(aggregate int, pfs []config.PFConfig) int {
+	if aggregate > 0 {
+		return aggregate
+	}
+	return pfutil.GPUResourceCountForPFs(pfs)
+}
+
+func gpuResourceCountForGroups(groups []config.ClusterConfig) int {
+	maxCount := 0
+	for _, group := range groups {
+		if count := pfutil.GPUResourceCountForPFs(group.PFs); count > maxCount {
+			maxCount = count
+		}
+	}
+	if maxCount == 0 {
+		return 1
+	}
+	return maxCount
 }
 
 // mergeCompatibleGroups merges ClusterConfig groups that share the same gpuType

@@ -210,6 +210,7 @@ connectivity-matrix failure.`,
 		selectedRelease := ""
 		profileRouting := config.RoutingDestinationBased
 		validationCfg := config.DefaultValidationConfig()
+		var clusterConfig []config.ClusterConfig
 		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{
 			ConfigDir:                configDir,
 			NetworkOperatorNamespace: networkOperatorNamespace,
@@ -228,6 +229,7 @@ connectivity-matrix failure.`,
 				profileRouting = cfg.Profile.Routing
 			}
 			validationCfg = config.NormalizeValidationConfig(cfg.Validation)
+			clusterConfig = cfg.ClusterConfig
 			for _, g := range cfg.ClusterConfig {
 				if len(g.PresetDeviation) == 0 {
 					continue
@@ -409,6 +411,7 @@ connectivity-matrix failure.`,
 				RPingIterations:         validationCfg.RDMA.RPingIterations,
 				IBWriteSize:             validationCfg.RDMA.IBWriteSize,
 				IBWriteMinBandwidthGbps: *validationCfg.RDMA.IBWriteMinBandwidthGbps,
+				ClusterConfig:           clusterConfig,
 			})
 			matrix = m
 			if err != nil {
@@ -502,7 +505,20 @@ func connectivityChecksFromConfig(validationCfg *config.ValidationConfig) []conn
 			checks = append(checks, connectivity.CheckIBWriteBW)
 		}
 	}
+	if validationCfg.GPUDirect.Enabled &&
+		checksContainConfig(validationCfg.Checks, config.ValidationCheckIBWriteBW) {
+		checks = append(checks, connectivity.CheckGPUDirectDMABuf)
+	}
 	return checks
+}
+
+func checksContainConfig(checks []string, want string) bool {
+	for _, check := range checks {
+		if check == want {
+			return true
+		}
+	}
+	return false
 }
 
 // hasPresetDeviation reports whether any group deviated from its
