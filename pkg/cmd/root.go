@@ -36,6 +36,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -149,6 +150,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 
   # Get tool capabilities as JSON (for AI agents)
   l8k schema`,
+	PreRun: targetPreRun(target.Pipeline),
 	Run: func(cmd *cobra.Command, args []string) {
 		// Bare `l8k` invocation: print help instead of erroring on the
 		// missing-config validation. Any flag or positional argument
@@ -243,6 +245,7 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	addTargetFlag(rootCmd)
 
 	// Phase 0: Plugin flags
 	rootCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
@@ -315,6 +318,7 @@ func init() {
 
 	setFlagGroup(rootCmd, "discover-cluster-config", GroupDiscovery)
 	setFlagGroup(rootCmd, "save-cluster-config", GroupDiscovery)
+	setFlagGroup(rootCmd, "collapse-nic-rails", GroupDiscovery)
 
 	setFlagGroup(rootCmd, "fabric", GroupProfile)
 	setFlagGroup(rootCmd, "deployment-type", GroupProfile)
@@ -339,15 +343,16 @@ func init() {
 	setFlagGroup(rootCmd, "enable-doca-driver", GroupGeneration)
 	setFlagGroup(rootCmd, "workload-manifest", GroupGeneration)
 
-	setFlagGroup(rootCmd, "deploy", GroupDeploy)
-	setFlagGroup(rootCmd, "deploy-timeout", GroupDeploy)
-	setFlagGroup(rootCmd, "dry-run", GroupDeploy)
+	setFlagGroup(rootCmd, "deploy", GroupExecution)
+	setFlagGroup(rootCmd, "deploy-timeout", GroupExecution)
+	setFlagGroup(rootCmd, "dry-run", GroupExecution)
 
 	setFlagGroup(rootCmd, "output", GroupOutputLogging)
 	setFlagGroup(rootCmd, "yes", GroupOutputLogging)
 	setFlagGroup(rootCmd, "quiet", GroupOutputLogging)
 	setFlagGroup(rootCmd, "log-level", GroupOutputLogging)
 	setFlagGroup(rootCmd, "log-file", GroupOutputLogging)
+	markRootTargetScopes()
 
 	installGroupedUsage(rootCmd)
 }

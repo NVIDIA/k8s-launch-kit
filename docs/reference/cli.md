@@ -22,19 +22,34 @@ Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for
 | `l8k schema` | Print JSON capabilities for automation. |
 | `l8k version` | Print version information. |
 
-## Common Flags
+## Target selection and flag ownership
 
-| Flag | Applies to | Description |
-| --- | --- | --- |
-| `--kubeconfig` | discover, deploy, clean, validate | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
-| `--user-config` | discover, generate, deploy, clean, validate | Config file to merge, render, validate against, or use for cleanup namespace resolution. |
-| `--config-dir` | all | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
-| `--network-operator-release` | discover, generate | Release line such as `26.1`, `26.4`, or `26.7`. |
-| `--network-operator-namespace` | generate, deploy, clean, validate | Override the Network Operator namespace. It is a no-op for discovery. |
-| `--output json` | all | Emit a single JSON result to stdout for automation. |
-| `--quiet` | all | Suppress informational output. |
-| `--log-level` | all | Enable `debug`, `info`, `warn`, or `error` logging. |
-| `--log-file` | all | Write logs to a file instead of `stderr`. |
+Omitting `--target` selects `host`; adding `--target host` follows the same
+code path. `dpf` is a recognized target name whose phases are unavailable in
+this build. Selecting it returns validation exit code `2`. This explicit
+capability error prevents DPF invocations from falling through to host logic.
+
+Host-only flags are rejected when they are explicitly supplied for another
+target. Defaults are ignored by this check, including explicit-value flags
+where `false` differs from omission. Run `l8k <command> --help` for target-aware
+flag groups and `l8k schema` for each flag's `targets` list.
+
+| Flag | Applies to | Target scope | Description |
+| --- | --- | --- | --- |
+| `--target` | discover, generate, deploy, validate, root pipeline | target-agnostic | Target name. Defaults to `host`. |
+| `--kubeconfig` | discover, deploy, clean, validate | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
+| `--user-config` | discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace resolution. |
+| `--config-dir` | all | host | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
+| `--network-operator-release` | discover, generate | host | Release line such as `26.1`, `26.4`, or `26.7`. |
+| `--network-operator-namespace` | generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
+| `--output json` | all | target-agnostic | Emit a single JSON result to stdout for automation. |
+| `--quiet` | root pipeline | target-agnostic | Suppress informational output. |
+| `--log-level` | all | target-agnostic | Enable `debug`, `info`, `warn`, or `error` logging. |
+| `--log-file` | all | target-agnostic | Write logs to a file instead of `stderr`. |
+
+The current host config and artifact contract is unchanged:
+`cluster-config.yaml` remains flat and generated manifests remain under
+`deployment/network-operator/`.
 
 ## Discover Flags
 

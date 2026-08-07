@@ -55,10 +55,23 @@ After installation, `l8k` is available system-wide.
 
 The root command `l8k --discover-cluster-config ...` still works for backward-compatible full-pipeline usage.
 
+## Target selection
+
+`discover`, `generate`, `deploy`, `validate`, and the root pipeline default to
+the `host` target. Existing invocations must omit `--target` unless the user
+explicitly requests it; `--target host` is an equivalent explicit form.
+
+The `dpf` target name is reserved but its phases are not implemented in this
+build. Do not attempt DPF provisioning. Use `l8k schema` and inspect
+`targets[].phases` before selecting any non-host target. Host-only flags such as
+`--fabric`, `--kubeconfig`, and the Network Operator/Spectrum-X flags are
+rejected when explicitly combined with another target.
+
 ## Global Flags
 
 | Flag | Description |
 |------|-------------|
+| `--target <NAME>` | Lifecycle target: `host` (default); `dpf` is currently unavailable |
 | `--kubeconfig <PATH>` | Path to kubeconfig file (optional — falls back to `$KUBECONFIG` env var) |
 | `--user-config <PATH>` | Path to user-supplied l8k-config.yaml |
 | `--output <FORMAT>` | Output format: `text` (default), `json` |

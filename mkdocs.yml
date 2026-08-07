@@ -86,6 +86,7 @@ nav:
       - Troubleshooting: user/troubleshooting.md
   - Advanced:
       - Concepts: advanced/concepts.md
+      - Target-aware CLI: advanced/targets.md
       - Cluster Discovery: user/discovery.md
       - Manifest Generation: advanced/generation.md
       - Deployment Mechanics: advanced/deployment.md

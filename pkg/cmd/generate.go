@@ -28,6 +28,7 @@ import (
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/target"
 )
 
 // generateNodeSelector is the per-subcommand node selector value. It must be
@@ -83,6 +84,7 @@ Optionally deploy the generated manifests with --deploy.`,
     --node-selector "feature.node.kubernetes.io/pci-15b3.present=true" \
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output`,
+	PreRun: targetPreRun(target.Generate),
 	Run: func(cmd *cobra.Command, args []string) {
 		// Probe explicit/discovered cluster configs here, but leave an
 		// explicit --config-dir for Launcher.Run to resolve exactly once.
@@ -185,6 +187,7 @@ Optionally deploy the generated manifests with --deploy.`,
 
 func init() {
 	rootCmd.AddCommand(generateCmd)
+	addTargetFlag(generateCmd)
 
 	// Config
 	generateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (otherwise auto-detected from ./cluster-config.yaml; --for can use embedded defaults)")
@@ -260,7 +263,8 @@ func init() {
 	setFlagGroup(generateCmd, "enable-doca-driver", GroupGeneration)
 	setFlagGroup(generateCmd, "workload-manifest", GroupGeneration)
 
-	setFlagGroup(generateCmd, "deploy", GroupDeploy)
-	setFlagGroup(generateCmd, "dry-run", GroupDeploy)
+	setFlagGroup(generateCmd, "deploy", GroupExecution)
+	setFlagGroup(generateCmd, "dry-run", GroupExecution)
 	setFlagGroup(generateCmd, "overwrite-existing", GroupDeploy)
+	markGenerateTargetScopes()
 }

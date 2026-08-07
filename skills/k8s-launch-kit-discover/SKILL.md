@@ -11,6 +11,8 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
+This workflow uses the default `host` target; `--target host` is equivalent.
+
 Discover cluster hardware and produce a `cluster-config.yaml` describing NICs, GPUs, rails, and node groups.
 
 Three things to know about the saved file:

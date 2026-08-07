@@ -11,6 +11,8 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and exit codes.
 
+This workflow uses the default `host` target; `--target host` is equivalent.
+
 Verify that a previously generated and deployed NVIDIA networking
 deployment is correctly applied and matches the selected Network
 Operator release.

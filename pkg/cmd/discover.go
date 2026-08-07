@@ -28,6 +28,7 @@ import (
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/target"
 )
 
 var discoverCmd = &cobra.Command{
@@ -69,6 +70,7 @@ and writes the final profile back to cluster-config.yaml.`,
   # Agent mode (JSON output)
   l8k discover --save-cluster-config ./cluster-config.yaml \
     --output json 2>/dev/null`,
+	PreRun: targetPreRun(target.Discover),
 	Run: func(cmd *cobra.Command, args []string) {
 		resolved, err := resolveKubeconfig(kubeconfig)
 		if err != nil {
@@ -132,6 +134,7 @@ and writes the final profile back to cluster-config.yaml.`,
 
 func init() {
 	rootCmd.AddCommand(discoverCmd)
+	addTargetFlag(discoverCmd)
 
 	discoverCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Base config to merge with discovered hardware")
@@ -187,4 +190,5 @@ func init() {
 	setFlagGroup(discoverCmd, "topology-file", GroupSpectrumX)
 	setFlagGroup(discoverCmd, "spectrum-x-config", GroupSpectrumX)
 	setFlagGroup(discoverCmd, "spectrum-x-configmap-name", GroupSpectrumX)
+	markDiscoverTargetScopes()
 }

@@ -11,6 +11,8 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
+This workflow uses the default `host` target; `--target host` is equivalent.
+
 Apply previously generated NVIDIA networking manifests to a Kubernetes cluster.
 
 ## Usage

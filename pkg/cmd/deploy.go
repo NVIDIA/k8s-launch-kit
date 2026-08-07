@@ -32,6 +32,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -91,6 +92,7 @@ is used as the manifest directory.`,
 
   # Server-side dry run: validate against the cluster without persisting
   l8k deploy --dry-run`,
+	PreRun: targetPreRun(target.Deploy),
 	Run: func(cmd *cobra.Command, args []string) {
 		resolved, err := resolveKubeconfig(kubeconfig)
 		if err != nil {
@@ -212,6 +214,7 @@ func resolveDeploymentDir(dir string) (string, error) {
 
 func init() {
 	rootCmd.AddCommand(deployCmd)
+	addTargetFlag(deployCmd)
 
 	deployCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	deployCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to apply")
@@ -226,11 +229,13 @@ func init() {
 	deployCmd.Flags().BoolVar(&overwriteExistingFlag, "overwrite-existing", false, "Converge the cluster to the rendered manifests when preflight detects drift: helm upgrade the chart on chart-version/values mismatch, delete stray Network Operator CRs in the operator namespace, and rewrite NicClusterPolicy component versions via SSA. Off by default — preflight fails fast and lists what would change.")
 
 	setFlagGroup(deployCmd, "kubeconfig", GroupCommon)
+	setFlagGroup(deployCmd, "user-config", GroupCommon)
 	setFlagGroup(deployCmd, "deployment-files", GroupGeneration)
 	setFlagGroup(deployCmd, "network-operator-namespace", GroupCommon)
-	setFlagGroup(deployCmd, "deploy-timeout", GroupDeploy)
-	setFlagGroup(deployCmd, "dry-run", GroupDeploy)
+	setFlagGroup(deployCmd, "deploy-timeout", GroupExecution)
+	setFlagGroup(deployCmd, "dry-run", GroupExecution)
 	setFlagGroup(deployCmd, "overwrite-existing", GroupDeploy)
+	markDeployTargetScopes()
 }
 
 // selectedReleaseFromCfg returns the catalog key the user-config pinned, or

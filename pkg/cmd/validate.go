@@ -45,6 +45,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
+	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -124,6 +125,7 @@ connectivity-matrix failure.`,
 
   # Agent mode (JSON output)
   l8k validate --output json 2>/dev/null`,
+	PreRun: targetPreRun(target.Validate),
 	Run: func(cmd *cobra.Command, args []string) {
 		// State accumulated during the run. Captured by reference
 		// in exitWithReport so that EVERY error path — including
@@ -1566,6 +1568,7 @@ func versionStatusText(vc *networkoperatorplugin.VersionCheck) string {
 
 func init() {
 	rootCmd.AddCommand(validateCmd)
+	addTargetFlag(validateCmd)
 
 	validateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to verify")
@@ -1604,4 +1607,5 @@ func init() {
 	setFlagGroup(validateCmd, "rdma-ib-write-min-bandwidth-gbps", GroupValidation)
 	setFlagGroup(validateCmd, "wait", GroupValidation)
 	setFlagGroup(validateCmd, "report-path", GroupValidation)
+	markValidateTargetScopes()
 }

@@ -11,6 +11,12 @@ NVIDIA Kubernetes Launch Kit (`l8k`) generates, deploys, and validates NVIDIA cl
 
 Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, InfiniBand, or Spectrum-X networking on NVIDIA accelerated clusters.
 
+These four lifecycle commands operate on the `host` target by default. Existing
+commands remain valid; `--target host` is an explicit synonym. Launch Kit also
+reserves the `dpf` target name, but its phases remain unavailable until the DPF
+driver is implemented. See [Target-aware CLI](advanced/targets.md) for the
+compatibility and extension contract.
+
 ## Find Your Path
 
 | If you are a... | Start here |
@@ -21,6 +27,7 @@ Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, In
 | Platform engineer managing mixed hardware | [Heterogeneous Clusters](user/heterogeneous-clusters.md) |
 | Spectrum-X operator | [Spectrum-X](user/spectrum-x.md) |
 | CI/CD or GitOps integrator | [Automation](integrator/automation.md) |
+| Integrator adding an infrastructure target | [Target-aware CLI](advanced/targets.md) |
 | AI agent integrator | [AI Skills](integrator/ai-skills.md) |
 | Operator confirming a deployment is ready for use | [Validation](user/validation.md) |
 | Operator removing a deployment | [Cleanup](user/cleanup.md) |

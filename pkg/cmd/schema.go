@@ -19,11 +19,13 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
+	"github.com/nvidia/k8s-launch-kit/pkg/target"
 )
 
 // commandSchema describes a subcommand for AI agent discovery.
@@ -37,6 +39,8 @@ type schema struct {
 	Version                          string                   `json:"version"`
 	Description                      string                   `json:"description"`
 	Commands                         map[string]commandSchema `json:"commands"`
+	DefaultTarget                    string                   `json:"defaultTarget"`
+	Targets                          []targetSchema           `json:"targets"`
 	Phases                           []string                 `json:"phases"`
 	Fabrics                          []string                 `json:"fabrics"`
 	DeploymentTypes                  []string                 `json:"deploymentTypes"`
@@ -47,10 +51,18 @@ type schema struct {
 }
 
 type flagSchema struct {
-	Type        string `json:"type"`
-	Default     string `json:"default,omitempty"`
-	Description string `json:"description"`
-	Required    bool   `json:"required,omitempty"`
+	Type        string   `json:"type"`
+	Default     string   `json:"default,omitempty"`
+	Description string   `json:"description"`
+	Required    bool     `json:"required,omitempty"`
+	Targets     []string `json:"targets"`
+}
+
+type targetSchema struct {
+	Name        string                       `json:"name"`
+	Description string                       `json:"description"`
+	Default     bool                         `json:"default,omitempty"`
+	Phases      map[string]target.Capability `json:"phases"`
 }
 
 var schemaCmd = &cobra.Command{
@@ -91,7 +103,9 @@ var schemaCmd = &cobra.Command{
 					Example:     "l8k schema",
 				},
 			},
-			Phases:                           []string{"discover", "generate", "deploy"},
+			DefaultTarget:                    string(target.Host),
+			Targets:                          targetCapabilitiesSchema(),
+			Phases:                           []string{"discover", "generate", "deploy", "validate"},
 			Fabrics:                          []string{"ethernet", "infiniband"},
 			DeploymentTypes:                  []string{"sriov", "rdma_shared", "host_device"},
 			OutputFormats:                    []string{"text", "json"},
@@ -105,6 +119,11 @@ var schemaCmd = &cobra.Command{
 				"5": "partial_success",
 			},
 			Flags: map[string]flagSchema{
+				"--target": {
+					Type:        "string",
+					Default:     string(target.Host),
+					Description: "Deployment target. Omission preserves the existing host workflow; inspect targets[].phases for availability.",
+				},
 				"--config-dir": {
 					Type:        "string",
 					Description: "Directory containing optional l8k-config.yaml and presets/ overrides",
@@ -261,9 +280,55 @@ var schemaCmd = &cobra.Command{
 				},
 			},
 		}
+		annotateSchemaFlagTargets(&s)
 		data, _ := json.MarshalIndent(s, "", "  ")
 		fmt.Println(string(data))
 	},
+}
+
+func targetCapabilitiesSchema() []targetSchema {
+	descriptors := targetDescriptors()
+	result := make([]targetSchema, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		phases := make(map[string]target.Capability, len(target.PublicPhases()))
+		for _, phase := range target.PublicPhases() {
+			phases[string(phase)] = descriptor.Capability(phase)
+		}
+		result = append(result, targetSchema{
+			Name:        string(descriptor.Name),
+			Description: descriptor.Description,
+			Default:     descriptor.Name == target.Host,
+			Phases:      phases,
+		})
+	}
+	return result
+}
+
+func annotateSchemaFlagTargets(s *schema) {
+	if s == nil {
+		return
+	}
+	for name, spec := range s.Flags {
+		spec.Targets = schemaFlagTargets(name)
+		s.Flags[name] = spec
+	}
+}
+
+func schemaFlagTargets(schemaName string) []string {
+	flagName := strings.TrimPrefix(schemaName, "--")
+	for _, command := range []*cobra.Command{rootCmd, discoverCmd, generateCmd, deployCmd, validateCmd} {
+		flag := command.Flags().Lookup(flagName)
+		if flag == nil {
+			flag = command.PersistentFlags().Lookup(flagName)
+		}
+		if flag == nil || len(flag.Annotations[flagTargetsAnnotation]) == 0 {
+			continue
+		}
+		return append([]string(nil), flag.Annotations[flagTargetsAnnotation]...)
+	}
+	// Commands outside the target-aware lifecycle, such as clean, retain
+	// their existing host semantics until they are explicitly migrated.
+	return []string{string(target.Host)}
 }
 
 func init() {

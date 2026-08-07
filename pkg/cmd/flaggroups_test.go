@@ -57,9 +57,9 @@ func TestGroupedFlagUsages_RendersGroupsInOrderWithBlankLines(t *testing.T) {
 
 	out := groupedFlagUsages(cmd)
 
-	commonIdx := strings.Index(out, "Common Flags:")
-	profileIdx := strings.Index(out, "Profile Selection Flags:")
-	deployIdx := strings.Index(out, "Deploy Flags:")
+	commonIdx := strings.Index(out, groupTitles[GroupCommon]+":")
+	profileIdx := strings.Index(out, groupTitles[GroupProfile]+":")
+	deployIdx := strings.Index(out, groupTitles[GroupDeploy]+":")
 	require.NotEqual(t, -1, commonIdx, "Common Flags section missing:\n%s", out)
 	require.NotEqual(t, -1, profileIdx, "Profile Selection Flags section missing:\n%s", out)
 	require.NotEqual(t, -1, deployIdx, "Deploy Flags section missing:\n%s", out)
@@ -73,8 +73,8 @@ func TestGroupedFlagUsages_RendersGroupsInOrderWithBlankLines(t *testing.T) {
 	assert.NotContains(t, commonSection, "--deploy-flag")
 
 	// Sections are visually separated by a blank line.
-	assert.Contains(t, out, "\n\nProfile Selection Flags:")
-	assert.Contains(t, out, "\n\nDeploy Flags:")
+	assert.Contains(t, out, "\n\n"+groupTitles[GroupProfile]+":")
+	assert.Contains(t, out, "\n\n"+groupTitles[GroupDeploy]+":")
 }
 
 func TestGroupedFlagUsages_UntaggedFlagFallsIntoOtherFlags(t *testing.T) {
@@ -86,7 +86,7 @@ func TestGroupedFlagUsages_UntaggedFlagFallsIntoOtherFlags(t *testing.T) {
 	setFlagGroup(cmd, "tagged", GroupCommon)
 
 	out := groupedFlagUsages(cmd)
-	assert.Contains(t, out, "Common Flags:")
+	assert.Contains(t, out, groupTitles[GroupCommon]+":")
 	assert.Contains(t, out, "Other Flags:")
 
 	otherIdx := strings.Index(out, "Other Flags:")
@@ -123,8 +123,8 @@ func TestGroupedFlagUsages_IncludesInheritedFlagsFromParent(t *testing.T) {
 	setFlagGroup(child, "local-flag", GroupCommon)
 
 	out := groupedFlagUsages(child)
-	assert.Contains(t, out, "Common Flags:")
+	assert.Contains(t, out, groupTitles[GroupCommon]+":")
 	assert.Contains(t, out, "--local-flag")
-	assert.Contains(t, out, "Output & Logging Flags:")
+	assert.Contains(t, out, groupTitles[GroupOutputLogging]+":")
 	assert.Contains(t, out, "--global-output")
 }
