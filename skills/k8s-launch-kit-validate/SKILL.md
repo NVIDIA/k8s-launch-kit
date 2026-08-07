@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-validate
-version: 1.0.2
+version: 1.0.3
 description: "Use this skill when the user wants to verify that an NVIDIA networking deployment matches the configuration that produced it. Activate for: 'is my deployment correct', 'are all the manifests applied', 'does the network operator version match', 'verify deployment', 'check cluster state against config', or any question about whether the cluster reflects what l8k generated. Wraps the `l8k validate` subcommand."
 metadata:
   requires:
@@ -12,6 +12,9 @@ metadata:
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and exit codes.
 
 This workflow uses the default `host` target; `--target host` is equivalent.
+The CLI snapshots validation arguments and runs the standalone Host validation
+and report service through the target registry; checks and report semantics
+are unchanged.
 
 Verify that a previously generated and deployed NVIDIA networking
 deployment is correctly applied and matches the selected Network

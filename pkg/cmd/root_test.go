@@ -32,7 +32,7 @@ import (
 // validation + defaulting pipeline against an Options struct. The
 // production split is:
 //
-//	pkg/cmd.applySpectrumXSyntaxChecks  → Phase 1 (PreRunE)
+//	pkg/cmd.applySpectrumXSyntaxChecks  → Phase 1 (Host adapter bind)
 //	pkg/resolve.ApplyHardwareDefaults    → fills empty cfg fields
 //	plugin.ApplyOptionsToConfig          → CLI overlay
 //	pkg/resolve.ValidateResolvedConfig   → Phase 2 cohort

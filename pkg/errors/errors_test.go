@@ -107,3 +107,17 @@ func TestStructuredError_JSON(t *testing.T) {
 	assert.Equal(t, false, parsed["transient"])
 	assert.Equal(t, "use --help", parsed["suggestion"])
 }
+
+func TestReportedAndExitStatusErrors(t *testing.T) {
+	structured := NewDeploymentError("failed", nil, "retry")
+	reported := MarkReported(structured)
+	assert.True(t, IsReported(reported))
+	assert.Equal(t, ExitDeployment, ExitCodeFromError(reported))
+	assert.Equal(t, structured, StructuredFromError(reported))
+
+	status := NewExitStatus(ExitPartialSuccess)
+	code, ok := IsExitStatus(status)
+	assert.True(t, ok)
+	assert.Equal(t, ExitPartialSuccess, code)
+	assert.Equal(t, ExitPartialSuccess, ExitCodeFromError(status))
+}

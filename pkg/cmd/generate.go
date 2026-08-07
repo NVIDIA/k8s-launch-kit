@@ -17,18 +17,16 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
 // generateNodeSelector is the per-subcommand node selector value. It must be
@@ -84,25 +82,7 @@ Optionally deploy the generated manifests with --deploy.`,
     --node-selector "feature.node.kubernetes.io/pci-15b3.present=true" \
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output`,
-	PreRun: targetPreRun(target.Generate),
 	Run: func(cmd *cobra.Command, args []string) {
-		// Probe explicit/discovered cluster configs here, but leave an
-		// explicit --config-dir for Launcher.Run to resolve exactly once.
-		// Without --config-dir, retain the legacy local/install-prefix
-		// default lookup.
-		if userConfig == "" {
-			resolved := userConfigPathForGenerate(configDir)
-			if resolved != "" {
-				userConfig = resolved
-			} else if forPreset == "" && configDir == "" {
-				exitWithError(apperrors.NewValidationError(
-					"no configuration file found",
-					fmt.Errorf("checked ./cluster-config.yaml, --config-dir, ./l8k-config.yaml, and installed paths"),
-					"Run 'l8k discover' first, pass --user-config <path>, or use --for with the embedded default",
-				), outputFormat)
-			}
-		}
-
 		opts := options.Options{
 			ConfigDir:                configDir,
 			UserConfig:               userConfig,
@@ -147,41 +127,10 @@ Optionally deploy the generated manifests with --deploy.`,
 			opts.EnableDocaDriver = &enableDocaDriver
 		}
 
-		if err := validateProfileFlagValues(&opts); err != nil {
-			exitWithError(apperrors.NewValidationError(err.Error(), err, "Check --spectrum-x flag combinations"), opts.OutputFormat)
-		}
-
-		// --for requires --node-selector since the preset has no live worker-node
-		// list to target.
-		if opts.ForPreset != "" && opts.NodeSelector == "" {
-			exitWithError(apperrors.NewValidationError(
-				"--for requires --node-selector",
-				fmt.Errorf("preset %q has no live worker-node list; supply a node selector to identify target nodes", opts.ForPreset),
-				"Specify --node-selector key1=val1,key2=val2",
-			), opts.OutputFormat)
-		}
-
-		// Resolve kubeconfig if deploy is requested
-		if opts.Deploy {
-			resolved, err := resolveKubeconfig(opts.Kubeconfig)
-			if err != nil {
-				exitWithError(apperrors.NewValidationError(
-					"kubeconfig required for deployment",
-					err,
-					"Set $KUBECONFIG or pass --kubeconfig <path>",
-				), opts.OutputFormat)
-			}
-			opts.Kubeconfig = resolved
-		}
-
-		launcher := app.New(opts)
-		if err := launcher.Run(); err != nil {
-			var se *apperrors.StructuredError
-			if !errors.As(err, &se) {
-				se = apperrors.NewGeneralError(err.Error(), err)
-			}
-			exitWithError(se, opts.OutputFormat)
-		}
+		runTargetCommand(cmd, target.Generate, hosttarget.NewGenerateAdapter(
+			hosttarget.LauncherRequest{Options: opts},
+			hosttarget.NewLauncherRunner(),
+		))
 	},
 }
 

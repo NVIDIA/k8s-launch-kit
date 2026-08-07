@@ -17,9 +17,9 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -29,6 +29,7 @@ import (
 
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
 const flagTargetsAnnotation = "launchkit.nvidia.com/targets"
@@ -150,27 +151,6 @@ func validateExplicitFlagTargets(cmd *cobra.Command, selected target.Name) error
 	return invalid
 }
 
-type commandTargetDriver struct {
-	descriptor target.Descriptor
-	phase      target.Phase
-	runHost    func()
-}
-
-func (d commandTargetDriver) Descriptor() target.Descriptor { return d.descriptor }
-
-func (d commandTargetDriver) Bind(invocation target.Invocation) (target.Operation, error) {
-	if invocation.Phase != d.phase {
-		return nil, fmt.Errorf("host CLI adapter was bound for phase %q, not %q", d.phase, invocation.Phase)
-	}
-	if d.runHost == nil {
-		return nil, fmt.Errorf("host CLI adapter for phase %q has no operation", d.phase)
-	}
-	return target.OperationFunc(func(context.Context) error {
-		d.runHost()
-		return nil
-	}), nil
-}
-
 type unavailableTargetDriver struct {
 	descriptor target.Descriptor
 }
@@ -182,21 +162,6 @@ func (d unavailableTargetDriver) Bind(invocation target.Invocation) (target.Oper
 		Name:   invocation.Target,
 		Phase:  invocation.Phase,
 		Reason: d.descriptor.Capability(invocation.Phase).Reason,
-	}
-}
-
-func hostTargetDescriptor() target.Descriptor {
-	available := target.Capability{Available: true}
-	return target.Descriptor{
-		Name:        target.Host,
-		Description: "Kubernetes host networking managed through NVIDIA Network Operator",
-		Phases: map[target.Phase]target.Capability{
-			target.Discover: available,
-			target.Generate: available,
-			target.Deploy:   available,
-			target.Validate: available,
-			target.Pipeline: available,
-		},
 	}
 }
 
@@ -217,10 +182,10 @@ func dpfTargetDescriptor() target.Descriptor {
 }
 
 func targetDescriptors() []target.Descriptor {
-	return []target.Descriptor{hostTargetDescriptor(), dpfTargetDescriptor()}
+	return []target.Descriptor{hosttarget.Descriptor(), dpfTargetDescriptor()}
 }
 
-func bindTargetCommand(cmd *cobra.Command, phase target.Phase, runHost func()) (target.Operation, error) {
+func bindTargetCommand(cmd *cobra.Command, phase target.Phase, hostDriver target.Driver) (target.Operation, error) {
 	selected, err := target.ParseName(targetName)
 	if err != nil {
 		return nil, err
@@ -230,7 +195,7 @@ func bindTargetCommand(cmd *cobra.Command, phase target.Phase, runHost func()) (
 	}
 
 	registry, err := target.NewRegistry(
-		commandTargetDriver{descriptor: hostTargetDescriptor(), phase: phase, runHost: runHost},
+		hostDriver,
 		unavailableTargetDriver{descriptor: dpfTargetDescriptor()},
 	)
 	if err != nil {
@@ -259,21 +224,31 @@ func bindTargetCommand(cmd *cobra.Command, phase target.Phase, runHost func()) (
 	})
 }
 
-func targetPreRun(phase target.Phase) func(*cobra.Command, []string) {
-	return func(cmd *cobra.Command, _ []string) {
-		// The compatibility-first migration deliberately leaves the host Run
-		// body untouched. Binding here proves target/phase availability and
-		// flag ownership before Cobra enters that existing host path. A future
-		// target replaces this no-op host operation with its typed bound
-		// operation when command execution moves behind the common runner.
-		_, err := bindTargetCommand(cmd, phase, func() {})
-		if err != nil {
-			exitWithError(apperrors.NewValidationError(
-				"invalid target invocation",
-				err,
-				targetErrorSuggestion(err),
-			), outputFormat)
+func runTargetCommand(cmd *cobra.Command, phase target.Phase, hostDriver target.Driver) {
+	operation, err := bindTargetCommand(cmd, phase, hostDriver)
+	if err != nil {
+		var structured *apperrors.StructuredError
+		if errors.As(err, &structured) {
+			exitWithError(structured, outputFormat)
 		}
+		exitWithError(apperrors.NewValidationError(
+			"invalid target invocation",
+			err,
+			targetErrorSuggestion(err),
+		), outputFormat)
+	}
+	if err := operation.Run(cmd.Context()); err != nil {
+		if code, ok := apperrors.IsExitStatus(err); ok {
+			os.Exit(code)
+		}
+		if apperrors.IsReported(err) {
+			os.Exit(apperrors.ExitCodeFromError(err))
+		}
+		var structured *apperrors.StructuredError
+		if !errors.As(err, &structured) {
+			structured = apperrors.NewGeneralError(err.Error(), err)
+		}
+		exitWithError(structured, outputFormat)
 	}
 }
 

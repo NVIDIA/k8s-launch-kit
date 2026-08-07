@@ -19,14 +19,12 @@ package cmd
 import (
 	"testing"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newValidateOverrideTestCmd() *cobra.Command {
+func newValidateRequestTestCommand() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "")
 	cmd.Flags().StringVar(&validateMode, "validation-mode", "", "")
@@ -37,7 +35,7 @@ func newValidateOverrideTestCmd() *cobra.Command {
 	return cmd
 }
 
-func resetValidateOverrideGlobals(t *testing.T) {
+func resetValidateRequestGlobals(t *testing.T) {
 	t.Helper()
 	validateConnectivity = true
 	validateMode = ""
@@ -47,97 +45,42 @@ func resetValidateOverrideGlobals(t *testing.T) {
 	validateRDMAIBWriteMinGbps = 0
 }
 
-func TestApplyValidateFlagOverrides(t *testing.T) {
-	t.Cleanup(func() { resetValidateOverrideGlobals(t) })
+func TestNewHostValidateRequestCapturesExplicitValues(t *testing.T) {
+	t.Cleanup(func() { resetValidateRequestGlobals(t) })
+	resetValidateRequestGlobals(t)
+	cmd := newValidateRequestTestCommand()
 
-	t.Run("cli overrides config checks and rdma parameters", func(t *testing.T) {
-		resetValidateOverrideGlobals(t)
-		cmd := newValidateOverrideTestCmd()
-		minBandwidthGbps := 200.0
-		cfg := config.NormalizeValidationConfig(&config.ValidationConfig{
-			Checks: []string{config.ValidationCheckRPing},
-			Mode:   config.ValidationModeQuick,
-			RDMA: &config.ValidationRDMAConfig{
-				RPingIterations:         3,
-				IBWriteSize:             4096,
-				IBWriteMinBandwidthGbps: &minBandwidthGbps,
-			},
-		})
+	require.NoError(t, cmd.Flags().Set("connectivity", "false"))
+	require.NoError(t, cmd.Flags().Set("validation-mode", "full"))
+	require.NoError(t, cmd.Flags().Set("validation-checks", ""))
+	require.NoError(t, cmd.Flags().Set("rdma-rping-iterations", "11"))
+	require.NoError(t, cmd.Flags().Set("rdma-ib-write-size", "8192"))
+	require.NoError(t, cmd.Flags().Set("rdma-ib-write-min-bandwidth-gbps", "0"))
 
-		require.NoError(t, cmd.Flags().Set("validation-mode", "full"))
-		require.NoError(t, cmd.Flags().Set("validation-checks", "ib_write_bw"))
-		require.NoError(t, cmd.Flags().Set("rdma-rping-iterations", "11"))
-		require.NoError(t, cmd.Flags().Set("rdma-ib-write-size", "8192"))
-		require.NoError(t, cmd.Flags().Set("rdma-ib-write-min-bandwidth-gbps", "800"))
-		require.NoError(t, applyValidateFlagOverrides(cmd, cfg))
+	request := newHostValidateRequest(cmd)
+	assert.True(t, request.Connectivity.Set)
+	assert.False(t, request.Connectivity.Value)
+	assert.True(t, request.Mode.Set)
+	assert.Equal(t, "full", request.Mode.Value)
+	assert.True(t, request.Checks.Set)
+	assert.Empty(t, request.Checks.Value)
+	assert.Equal(t, 11, request.RDMAPIterations.Value)
+	assert.True(t, request.RDMAPIterations.Set)
+	assert.Equal(t, 8192, request.RDMAIBWriteSize.Value)
+	assert.True(t, request.RDMAIBWriteSize.Set)
+	assert.Zero(t, request.RDMAMinBandwidth.Value)
+	assert.True(t, request.RDMAMinBandwidth.Set)
+}
 
-		assert.Equal(t, config.ValidationModeFull, cfg.Mode)
-		assert.Equal(t, []string{config.ValidationCheckIBWriteBW}, cfg.Checks)
-		assert.Equal(t, 11, cfg.RDMA.RPingIterations)
-		assert.Equal(t, 8192, cfg.RDMA.IBWriteSize)
-		require.NotNil(t, cfg.RDMA.IBWriteMinBandwidthGbps)
-		assert.Equal(t, 800.0, *cfg.RDMA.IBWriteMinBandwidthGbps)
-		assert.Equal(t, []connectivity.Check{connectivity.CheckIBWriteBW}, connectivityChecksFromConfig(cfg))
-	})
+func TestNewHostValidateRequestPreservesOmission(t *testing.T) {
+	t.Cleanup(func() { resetValidateRequestGlobals(t) })
+	resetValidateRequestGlobals(t)
 
-	t.Run("cli can select icmp check", func(t *testing.T) {
-		resetValidateOverrideGlobals(t)
-		cmd := newValidateOverrideTestCmd()
-		cfg := config.NormalizeValidationConfig(nil)
-
-		require.NoError(t, cmd.Flags().Set("validation-checks", "icmp"))
-		require.NoError(t, applyValidateFlagOverrides(cmd, cfg))
-
-		assert.Equal(t, []string{config.ValidationCheckICMP}, cfg.Checks)
-		assert.Equal(t, []connectivity.Check{connectivity.CheckICMP}, connectivityChecksFromConfig(cfg))
-	})
-
-	t.Run("enabled GPUDirect follows ib_write_bw selection", func(t *testing.T) {
-		cfg := config.NormalizeValidationConfig(&config.ValidationConfig{
-			Checks:    []string{config.ValidationCheckIBWriteBW},
-			GPUDirect: config.ValidationGPUDirectConfig{Enabled: true, GPUResourceType: "example.com/gpu"},
-		})
-		assert.Equal(t,
-			[]connectivity.Check{connectivity.CheckIBWriteBW, connectivity.CheckGPUDirectDMABuf},
-			connectivityChecksFromConfig(cfg))
-		cfg.Checks = []string{config.ValidationCheckRPing}
-		assert.Equal(t, []connectivity.Check{connectivity.CheckRPing}, connectivityChecksFromConfig(cfg))
-	})
-
-	t.Run("zero minimum bandwidth override disables bandwidth gating", func(t *testing.T) {
-		resetValidateOverrideGlobals(t)
-		cmd := newValidateOverrideTestCmd()
-		cfg := config.NormalizeValidationConfig(nil)
-
-		require.NoError(t, cmd.Flags().Set("rdma-ib-write-min-bandwidth-gbps", "0"))
-		require.NoError(t, applyValidateFlagOverrides(cmd, cfg))
-
-		require.NotNil(t, cfg.RDMA.IBWriteMinBandwidthGbps)
-		assert.Equal(t, 0.0, *cfg.RDMA.IBWriteMinBandwidthGbps)
-	})
-
-	t.Run("explicit empty check list disables connectivity tests", func(t *testing.T) {
-		resetValidateOverrideGlobals(t)
-		cmd := newValidateOverrideTestCmd()
-		cfg := config.NormalizeValidationConfig(nil)
-
-		require.NoError(t, cmd.Flags().Set("validation-checks", ""))
-		require.NoError(t, applyValidateFlagOverrides(cmd, cfg))
-
-		assert.Empty(t, cfg.Checks)
-		assert.Empty(t, connectivityChecksFromConfig(cfg))
-	})
-
-	t.Run("connectivity flag can override config false", func(t *testing.T) {
-		resetValidateOverrideGlobals(t)
-		cmd := newValidateOverrideTestCmd()
-		disabled := false
-		cfg := config.NormalizeValidationConfig(&config.ValidationConfig{Connectivity: &disabled})
-
-		require.NoError(t, cmd.Flags().Set("connectivity", "true"))
-		require.NoError(t, applyValidateFlagOverrides(cmd, cfg))
-
-		require.NotNil(t, cfg.Connectivity)
-		assert.True(t, *cfg.Connectivity)
-	})
+	request := newHostValidateRequest(newValidateRequestTestCommand())
+	assert.False(t, request.Connectivity.Set)
+	assert.False(t, request.Mode.Set)
+	assert.False(t, request.Checks.Set)
+	assert.False(t, request.RDMAPIterations.Set)
+	assert.False(t, request.RDMAIBWriteSize.Set)
+	assert.False(t, request.RDMAMinBandwidth.Set)
 }

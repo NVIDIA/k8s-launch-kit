@@ -22,6 +22,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,7 +31,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
 func TestSetFlagTargetScope(t *testing.T) {
@@ -173,12 +176,21 @@ func TestBindTargetCommand(t *testing.T) {
 		addTargetFlag(command)
 		return command
 	}
+	generateDriver := func(run func()) target.Driver {
+		return hosttarget.NewGenerateAdapter(
+			hosttarget.LauncherRequest{},
+			hosttarget.LauncherRunnerFunc(func(context.Context, target.Phase, options.Options) error {
+				run()
+				return nil
+			}),
+		)
+	}
 
 	t.Run("omitted target runs host", func(t *testing.T) {
 		targetName = string(target.Host)
 		command := newCommand()
 		ran := false
-		operation, err := bindTargetCommand(command, target.Generate, func() { ran = true })
+		operation, err := bindTargetCommand(command, target.Generate, generateDriver(func() { ran = true }))
 		require.NoError(t, err)
 		require.NoError(t, operation.Run(context.Background()))
 		assert.True(t, ran)
@@ -188,7 +200,7 @@ func TestBindTargetCommand(t *testing.T) {
 		command := newCommand()
 		require.NoError(t, command.ParseFlags([]string{"--target", "host"}))
 		ran := false
-		operation, err := bindTargetCommand(command, target.Generate, func() { ran = true })
+		operation, err := bindTargetCommand(command, target.Generate, generateDriver(func() { ran = true }))
 		require.NoError(t, err)
 		require.NoError(t, operation.Run(context.Background()))
 		assert.True(t, ran)
@@ -197,7 +209,13 @@ func TestBindTargetCommand(t *testing.T) {
 	t.Run("dpf returns phase capability error", func(t *testing.T) {
 		command := newCommand()
 		require.NoError(t, command.ParseFlags([]string{"--target", "dpf"}))
-		operation, err := bindTargetCommand(command, target.Validate, func() { t.Fatal("host must not run") })
+		operation, err := bindTargetCommand(command, target.Validate, hosttarget.NewValidateAdapter(
+			hosttarget.ValidateRequest{},
+			hosttarget.ValidateRunnerFunc(func(context.Context, hosttarget.ValidateRequest) error {
+				t.Fatal("host must not run")
+				return nil
+			}),
+		))
 		var unavailable *target.PhaseUnavailableError
 		require.ErrorAs(t, err, &unavailable)
 		assert.Equal(t, target.DPF, unavailable.Name)
@@ -208,7 +226,13 @@ func TestBindTargetCommand(t *testing.T) {
 	t.Run("unknown target reports registered targets", func(t *testing.T) {
 		command := newCommand()
 		require.NoError(t, command.ParseFlags([]string{"--target", "future"}))
-		operation, err := bindTargetCommand(command, target.Discover, func() { t.Fatal("host must not run") })
+		operation, err := bindTargetCommand(command, target.Discover, hosttarget.NewDiscoverAdapter(
+			hosttarget.LauncherRequest{},
+			hosttarget.LauncherRunnerFunc(func(context.Context, target.Phase, options.Options) error {
+				t.Fatal("host must not run")
+				return nil
+			}),
+		))
 		var unknown *target.UnknownTargetError
 		require.ErrorAs(t, err, &unknown)
 		assert.Equal(t, []target.Name{target.DPF, target.Host}, unknown.Supported)
@@ -296,6 +320,21 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Equal(t, 2, exitCode)
 		assert.Contains(t, output, `unknown target "future"`)
 		assert.Contains(t, output, `registered targets: [dpf host]`)
+	})
+
+	t.Run("early validate failure writes a partial report without panicking", func(t *testing.T) {
+		reportPath := filepath.Join(t.TempDir(), "partial-report.html")
+		output, exitCode := runCLIHelper(t,
+			"validate",
+			"--kubeconfig", filepath.Join(t.TempDir(), "missing-kubeconfig"),
+			"--deployment-files", filepath.Join(t.TempDir(), "missing-deployment"),
+			"--report-path", reportPath,
+		)
+
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "deployment files directory not found")
+		assert.NotContains(t, output, "panic:")
+		assert.FileExists(t, reportPath)
 	})
 }
 

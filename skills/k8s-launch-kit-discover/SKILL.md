@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-discover
-version: 1.2.2
+version: 1.2.3
 description: "Use this skill when the user wants to discover their Kubernetes cluster's network hardware capabilities using k8s-launch-kit (l8k). Activate for: cluster discovery, hardware detection, NIC detection, finding what GPUs or NICs are in a cluster, creating a cluster config file, or when the user says 'discover' in the context of l8k or NVIDIA networking."
 metadata:
   requires:
@@ -12,6 +12,9 @@ metadata:
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
 This workflow uses the default `host` target; `--target host` is equivalent.
+The CLI snapshots discovery arguments and runs the concrete Host discovery
+operation through the target registry; command syntax and artifacts are
+unchanged.
 
 Discover cluster hardware and produce a `cluster-config.yaml` describing NICs, GPUs, rails, and node groups.
 

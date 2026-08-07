@@ -73,7 +73,7 @@ func (l *Launcher) deployConfigurationProfile(profile *profiles.Profile) error {
 		return fmt.Errorf("plugin %s not found", profile.Plugin)
 	}
 
-	ctx := ui.WithOutput(context.Background(), l.ui)
+	ctx := ui.WithOutput(l.context, l.ui)
 	if l.options.DeployTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, l.options.DeployTimeout)

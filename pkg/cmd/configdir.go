@@ -19,17 +19,9 @@ package cmd
 import (
 	"github.com/nvidia/k8s-launch-kit/pkg/assets"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
+	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
 func presetCatalogForConfigDir(configRoot string) (*presets.Catalog, assets.ConfigDir, error) {
-	resolved, err := assets.ResolveConfigDir(configRoot)
-	if err != nil {
-		return nil, assets.ConfigDir{}, err
-	}
-
-	catalog, err := presets.CatalogForConfigDir(resolved)
-	if err != nil {
-		return nil, assets.ConfigDir{}, err
-	}
-	return catalog, resolved, nil
+	return hosttarget.PresetCatalogForConfigDir(configRoot)
 }

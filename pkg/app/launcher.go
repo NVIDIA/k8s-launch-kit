@@ -17,6 +17,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,11 +49,12 @@ type Launcher struct {
 	kubeClient    client.Client
 	restConfig    *rest.Config
 	ui            ui.Output
-	jsonOutput    *ui.JSONOutput // non-nil only in JSON mode
-	result        *ui.JSONResult // accumulated result for JSON output
+	jsonOutput    *ui.JSONOutput     // non-nil only in JSON mode
+	result        *ui.JSONResult     // accumulated result for JSON output
 	foundProfiles []profiles.Profile // populated by executeGeneration, consumed by executeDeploy
 	configAssets  assets.ConfigDir
 	presetCatalog *presets.Catalog
+	context       context.Context
 }
 
 // New creates a new Launcher instance with the given options
@@ -73,6 +75,7 @@ func New(opts options.Options) *Launcher {
 			Phase:    "init",
 			Messages: []ui.LogEntry{},
 		},
+		context: context.Background(),
 	}
 
 	return l
@@ -80,6 +83,16 @@ func New(opts options.Options) *Launcher {
 
 // Run executes the main application logic with the 3-phase workflow
 func (l *Launcher) Run() error {
+	return l.RunContext(context.Background())
+}
+
+// RunContext executes the launcher with the caller's cancellation context.
+// Run remains as a compatibility wrapper for library consumers.
+func (l *Launcher) RunContext(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("launcher context must not be nil")
+	}
+	l.context = ctx
 	if l.options.LogLevel != "" {
 		if err := applog.SetLogLevel(l.options.LogLevel); err != nil {
 			return fmt.Errorf("failed to set log level: %w", err)
@@ -152,16 +165,13 @@ func (l *Launcher) Run() error {
 		if finalizeErr := l.jsonOutput.Finalize(l.result); finalizeErr != nil {
 			fmt.Fprintf(os.Stderr, "Failed to write JSON output: %v\n", finalizeErr)
 		}
-		// In JSON mode, Finalize() already emitted the JSON to stdout.
-		// Exit directly to prevent root.go:exitWithError() from emitting a second JSON object.
+		// In JSON mode, Finalize() already emitted the JSON to stdout. Mark
+		// failures as reported so the outer CLI boundary exits without
+		// emitting a second JSON object.
 		if err != nil {
-			var se *apperrors.StructuredError
-			if errors.As(err, &se) {
-				os.Exit(se.ExitCode)
-			}
-			os.Exit(apperrors.ExitGeneral)
+			return apperrors.MarkReported(err)
 		}
-		return nil // Success — return nil so root.go doesn't emit again
+		return nil
 	}
 
 	return err
