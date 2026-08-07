@@ -2,6 +2,14 @@
 
 K8s Launch Kit (l8k) is a CLI tool for deploying and managing NVIDIA cloud-native solutions on Kubernetes. The tool helps provide flexible deployment workflows for optimal network performance with SR-IOV, RDMA, and other networking technologies.
 
+The four lifecycle commands are target-aware. The existing Network Operator
+workflow is the `host` target and remains the default, so current commands do
+not need to change. `--target host` is an explicit synonym. The `dpf` target
+name is reserved for future DPU-plane provisioning and currently reports its
+phases as unavailable instead of executing host logic. See the
+[target-aware CLI architecture](docs/advanced/targets.md) and run `l8k schema`
+for machine-readable target, phase, and flag ownership information.
+
 ## Documentation
 
 Standalone documentation is published from this repository to GitHub Pages:
@@ -231,7 +239,10 @@ Available Commands:
   validate    Verify a deployment matches the selected Network Operator release
   version     Print the version number
 
-Common Flags:
+Target Selection Flags:
+      --target string   Deployment target: host (default) or dpf (reserved; phases are unavailable until the DPF driver is added) (default "host")
+
+Host Target Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides
       --enabled-plugins string              Comma-separated list of plugins to enable (default "network-operator")
       --image-pull-secrets strings          Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)
@@ -241,11 +252,12 @@ Common Flags:
       --node-selector string                Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and NIC nodes are detected via a sysfs PCI-vendor probe (default "feature.node.kubernetes.io/pci-15b3.present=true")
       --user-config string                  Use provided cluster configuration file (as base config for discovery or as full config without discovery)
 
-Discovery Flags:
+Host Target Discovery Flags:
+      --collapse-nic-rails           Advertise one rail per NIC: collapse a NIC's multi-plane PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set to false to keep the legacy one-rail-per-PF behaviour (dev setups). (default true)
       --discover-cluster-config      Deploy a thin Network Operator profile to discover cluster capabilities
       --save-cluster-config string   Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)
 
-Profile Selection Flags:
+Host Target Profile Selection Flags:
       --deployment-type string   Select the deployment type (sriov, rdma_shared, host_device)
       --fabric string            Select the fabric type to deploy (infiniband, ethernet)
       --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Run 'l8k preset list' with the same --config-dir to list available names.
@@ -256,7 +268,7 @@ Profile Selection Flags:
       --routing string           Secondary-network routing mode: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin.
       --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: [RA2.1 RA2.2 RA2.3]
 
-Spectrum-X Flags:
+Host Target Spectrum-X Flags:
       --ip-version string                  Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)
       --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, hwplb (requires --spectrum-x)
       --number-of-planes int               Number of planes for Spectrum-X (requires --spectrum-x)
@@ -265,27 +277,24 @@ Spectrum-X Flags:
       --topology-file string               Path to spcx-gen/reference-generator or NVIDIA AIR topology JSON for Spectrum-X CIDRPool generation (requires --spectrum-x)
       --topology-scheme string             Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)
 
-Generation Output Flags:
+Host Target Generation Output Flags:
       --enable-doca-driver             Enable DOCA driver deployment (overrides config file docaDriver.enable)
       --network-namespaces strings     Comma-separated namespaces for the secondary-network CRs and example test DaemonSets. One independent copy is rendered per namespace (shared resources like IPPools and NodePolicies are NOT duplicated). Overrides config networkNamespaces; default: 'default'.
       --save-deployment-files string   Save generated deployment files to the specified directory (default "./deployment")
       --workload-manifest string       Path to a custom workload manifest YAML (replaces the profile's default example workload)
 
-Deploy Flags:
+Target-Agnostic Execution Flags:
       --deploy                    Deploy the generated files to the Kubernetes cluster
       --deploy-timeout duration   Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state.
       --dry-run                   Preview what would be deployed without applying changes to the cluster
 
-Output & Logging Flags:
+Target-Agnostic Output & Logging Flags:
   -h, --help               help for l8k
       --log-file string    Write logs to file instead of stderr
       --log-level string   Enable logging at specified level (debug, info, warn, error)
       --output string      Output format: text (default, human-readable) or json (structured, for automation and AI agents) (default "text")
   -q, --quiet              Suppress informational output (errors still shown)
   -y, --yes                Auto-confirm all prompts without interactive input
-
-Other Flags:
-      --collapse-nic-rails   Advertise one rail per NIC: collapse a NIC's multi-plane PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set to false to keep the legacy one-rail-per-PF behaviour (dev setups). (default true)
 
 Use "l8k [command] --help" for more information about a command.
 ```

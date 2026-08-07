@@ -31,23 +31,27 @@ const flagGroupAnnotation = "flagGroup"
 // also encodes ordering, leaving groupOrder as the single source of truth
 // for what gets rendered.
 const (
+	GroupTarget        = "0-target"
 	GroupCommon        = "1-common"
 	GroupDiscovery     = "2-discovery"
 	GroupProfile       = "3-profile"
 	GroupSpectrumX     = "4-spectrumx"
 	GroupGeneration    = "5-generation"
-	GroupDeploy        = "6-deploy"
-	GroupClean         = "7-clean"
-	GroupValidation    = "8-validation"
-	GroupOutputLogging = "9-output-logging"
+	GroupExecution     = "6-execution"
+	GroupDeploy        = "7-deploy"
+	GroupClean         = "8-clean"
+	GroupValidation    = "9-validation"
+	GroupOutputLogging = "10-output-logging"
 )
 
 var groupOrder = []string{
+	GroupTarget,
 	GroupCommon,
 	GroupDiscovery,
 	GroupProfile,
 	GroupSpectrumX,
 	GroupGeneration,
+	GroupExecution,
 	GroupDeploy,
 	GroupClean,
 	GroupValidation,
@@ -55,15 +59,17 @@ var groupOrder = []string{
 }
 
 var groupTitles = map[string]string{
-	GroupCommon:        "Common Flags",
-	GroupDiscovery:     "Discovery Flags",
-	GroupProfile:       "Profile Selection Flags",
-	GroupSpectrumX:     "Spectrum-X Flags",
-	GroupGeneration:    "Generation Output Flags",
-	GroupDeploy:        "Deploy Flags",
-	GroupClean:         "Clean Flags",
-	GroupValidation:    "Validation Flags",
-	GroupOutputLogging: "Output & Logging Flags",
+	GroupTarget:        "Target Selection Flags",
+	GroupCommon:        "Host Target Common Flags",
+	GroupDiscovery:     "Host Target Discovery Flags",
+	GroupProfile:       "Host Target Profile Selection Flags",
+	GroupSpectrumX:     "Host Target Spectrum-X Flags",
+	GroupGeneration:    "Host Target Generation Output Flags",
+	GroupExecution:     "Target-Agnostic Execution Flags",
+	GroupDeploy:        "Host Target Deploy Flags",
+	GroupClean:         "Host Target Clean Flags",
+	GroupValidation:    "Host Target Validation Flags",
+	GroupOutputLogging: "Target-Agnostic Output & Logging Flags",
 }
 
 // setFlagGroup tags the named flag on cmd with the given group key.

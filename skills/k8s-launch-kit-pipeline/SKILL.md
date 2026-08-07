@@ -13,6 +13,10 @@ metadata:
 
 Run discovery + generation + deployment as a single command.
 
+The pipeline operates on the default `host` target. Omitting `--target` keeps
+the established behavior; `--target host` is equivalent. Do not select `dpf`
+until `l8k schema` reports all required DPF phases as available.
+
 ## Usage
 
 The root command chains all phases in one invocation:
