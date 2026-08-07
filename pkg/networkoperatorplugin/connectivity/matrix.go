@@ -18,7 +18,10 @@ package connectivity
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 )
@@ -63,6 +66,11 @@ type TestPod struct {
 	// InterfacesByRail is "<rail>" → pod netdev name (e.g. "net1").
 	// Every runner uses this to pin or verify the source interface.
 	InterfacesByRail map[string]string
+	// GPUIndicesByRail and GPUPCIAddressesByRail describe the host GPU
+	// connected to each NIC/rail. They come from discovered or preset PF
+	// topology and are intentionally endpoint-specific.
+	GPUIndicesByRail      map[string]int
+	GPUPCIAddressesByRail map[string]string
 	// RailOrder is the deterministic iteration order over IPsByRail
 	// — needed because Go map iteration is randomized and the cross
 	// -rail canary picks "rail 0" vs "rail 1" by position.
@@ -70,7 +78,7 @@ type TestPod struct {
 }
 
 // PingTest is one src→dst test the matrix will execute. Kind tags the
-// test bucket. ICMP and two RDMA test families are scheduled in stages by the
+// test bucket. ICMP and three RDMA test families are scheduled in stages by the
 // orchestrator:
 //
 //   - Kind = RDMAPingSameRail / RDMAPingCrossRail — `rping -c -a
@@ -81,6 +89,9 @@ type TestPod struct {
 //     <dev> -R --report_gbits [<server-ip>]` against an
 //     `ib_write_bw -d <dev> -R --report_gbits` server. Measures
 //     bandwidth in Gbps.
+//   - Kind = GPUDirectDMABufSameRail / GPUDirectDMABufCrossRail — the
+//     same bandwidth matrix with endpoint-specific CUDA buffers exported
+//     through DMA-BUF.
 //
 // SrcPod/DstPod carry the actual k8s pod names — needed by the
 // orchestrator to issue the SPDY exec against the right pod. SrcNode/
@@ -90,26 +101,33 @@ type TestPod struct {
 // SrcRDMADev / DstRDMADev carry the per-pod RDMA device names so the
 // test runner can pass `-d <dev>` for ib_write_bw.
 type PingTest struct {
-	Kind        PingTestKind
-	SrcPod      string
-	DstPod      string
-	SrcNode     string
-	DstNode     string
-	Rail        string // for same-rail tests; "<srcRail>→<dstRail>" for cross
-	SrcIP       string
-	DstIP       string
-	SrcRail     string
-	DstRail     string
-	SrcIface    string
-	DstIface    string
-	SrcRDMADev  string
-	DstRDMADev  string
-	Expectation Expectation
+	Kind             PingTestKind
+	SrcPod           string
+	DstPod           string
+	SrcNode          string
+	DstNode          string
+	Rail             string // for same-rail tests; "<srcRail>→<dstRail>" for cross
+	SrcIP            string
+	DstIP            string
+	SrcRail          string
+	DstRail          string
+	SrcIface         string
+	DstIface         string
+	SrcRDMADev       string
+	DstRDMADev       string
+	SrcGPUIndex      int
+	DstGPUIndex      int
+	SrcGPUPCIAddress string
+	DstGPUPCIAddress string
+	Expectation      Expectation
+	sourceRoute      RouteCheck
+	sourceRouteErr   error
 }
 
 // PingTestKind enumerates the buckets the matrix renders into. Order
 // follows the orchestrator's staged-execution flow: rping first
-// (QP-establishment canary), ib_write_bw second (bandwidth).
+// (QP-establishment canary), host-memory ib_write_bw second, then the
+// GPUDirect DMA-BUF bandwidth family.
 type PingTestKind int
 
 const (
@@ -119,6 +137,8 @@ const (
 	RDMAPingCrossRail
 	RDMABwSameRail
 	RDMABwCrossRail
+	GPUDirectDMABufSameRail
+	GPUDirectDMABufCrossRail
 )
 
 func (k PingTestKind) IsICMP() bool {
@@ -137,10 +157,14 @@ func (k PingTestKind) IsRDMABw() bool {
 	return k == RDMABwSameRail || k == RDMABwCrossRail
 }
 
+func (k PingTestKind) IsGPUDirectDMABuf() bool {
+	return k == GPUDirectDMABufSameRail || k == GPUDirectDMABufCrossRail
+}
+
 // IsCrossRail reports whether the test kind is one of the cross-rail
 // canary variants (regardless of family).
 func (k PingTestKind) IsCrossRail() bool {
-	return k == ICMPCrossRail || k == RDMAPingCrossRail || k == RDMABwCrossRail
+	return k == ICMPCrossRail || k == RDMAPingCrossRail || k == RDMABwCrossRail || k == GPUDirectDMABufCrossRail
 }
 
 // MatrixSkip captures the soft-skip case where fewer than 2 schedulable
@@ -159,13 +183,15 @@ type MatrixSkip struct {
 // silently dropped: there's no `-d <dev>` to pass and the test
 // would fail with a confusing error.
 type MatrixPlan struct {
-	ICMPSameRail    []PingTest
-	ICMPCrossRail   []PingTest
-	RDMASameRail    []PingTest
-	RDMACrossRail   []PingTest
-	RDMABwSameRail  []PingTest
-	RDMABwCrossRail []PingTest
-	Skip            *MatrixSkip
+	ICMPSameRail             []PingTest
+	ICMPCrossRail            []PingTest
+	RDMASameRail             []PingTest
+	RDMACrossRail            []PingTest
+	RDMABwSameRail           []PingTest
+	RDMABwCrossRail          []PingTest
+	GPUDirectDMABufSameRail  []PingTest
+	GPUDirectDMABufCrossRail []PingTest
+	Skip                     *MatrixSkip
 }
 
 // Plan builds the test plan from the given pods. The matrix generation
@@ -244,6 +270,9 @@ func PlanWithOptions(pods []TestPod, mode Mode, routing string) MatrixPlan {
 				bwT := base
 				bwT.Kind = RDMABwSameRail
 				plan.RDMABwSameRail = append(plan.RDMABwSameRail, bwT)
+				gpuT := withGPUEndpoints(base, src, dst, rail, rail)
+				gpuT.Kind = GPUDirectDMABufSameRail
+				plan.GPUDirectDMABufSameRail = append(plan.GPUDirectDMABufSameRail, gpuT)
 			}
 			for _, pair := range crossRailPairs(src, dst, mode, i, j) {
 				srcRail, dstRail := pair.srcRail, pair.dstRail
@@ -279,11 +308,142 @@ func PlanWithOptions(pods []TestPod, mode Mode, routing string) MatrixPlan {
 				bwC := base
 				bwC.Kind = RDMABwCrossRail
 				plan.RDMABwCrossRail = append(plan.RDMABwCrossRail, bwC)
+				gpuC := withGPUEndpoints(base, src, dst, srcRail, dstRail)
+				gpuC.Kind = GPUDirectDMABufCrossRail
+				plan.GPUDirectDMABufCrossRail = append(plan.GPUDirectDMABufCrossRail, gpuC)
 			}
 		}
 	}
 
 	return plan
+}
+
+func withGPUEndpoints(test PingTest, src, dst TestPod, srcRail, dstRail string) PingTest {
+	test.SrcGPUIndex = -1
+	test.DstGPUIndex = -1
+	if index, ok := src.GPUIndicesByRail[srcRail]; ok {
+		test.SrcGPUIndex = index
+		test.SrcGPUPCIAddress = src.GPUPCIAddressesByRail[srcRail]
+	}
+	if index, ok := dst.GPUIndicesByRail[dstRail]; ok {
+		test.DstGPUIndex = index
+		test.DstGPUPCIAddress = dst.GPUPCIAddressesByRail[dstRail]
+	}
+	return test
+}
+
+var (
+	railIndexRE  = regexp.MustCompile(`(?:^|-)rail-([0-9]+)(?:-|$)`)
+	planeIndexRE = regexp.MustCompile(`(?:^|-)plane-([0-9]+)(?:-|$)`)
+	gpuIndexRE   = regexp.MustCompile(`^GPU([0-9]+)$`)
+)
+
+// PopulateGPUTopology resolves each pod rail to the connected host GPU from
+// the original discovery groups. A mapping is accepted only when it is
+// unambiguous. Missing topology stays absent so the GPUDirect runner can emit
+// an explicit failed precondition instead of silently selecting GPU0.
+func PopulateGPUTopology(pod *TestPod, groups []config.ClusterConfig) {
+	if pod == nil {
+		return
+	}
+	pod.GPUIndicesByRail = map[string]int{}
+	pod.GPUPCIAddressesByRail = map[string]string{}
+	group := groupForNode(pod.Node, groups)
+	if group == nil {
+		return
+	}
+	for _, railName := range pod.RailOrder {
+		pf, ok := pfForNetworkRail(group.PFs, railName)
+		if !ok {
+			continue
+		}
+		match := gpuIndexRE.FindStringSubmatch(strings.TrimSpace(pf.ConnectedGPU))
+		if len(match) != 2 {
+			continue
+		}
+		index, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		pod.GPUIndicesByRail[railName] = index
+		pod.GPUPCIAddressesByRail[railName] = pf.ConnectedGPUPCIAddress
+	}
+}
+
+func groupForNode(node string, groups []config.ClusterConfig) *config.ClusterConfig {
+	match := -1
+	for i := range groups {
+		for _, worker := range groups[i].WorkerNodes {
+			if worker == node {
+				if match >= 0 && match != i {
+					return nil
+				}
+				match = i
+				break
+			}
+		}
+	}
+	if match >= 0 {
+		return &groups[match]
+	}
+	if len(groups) == 1 {
+		return &groups[0]
+	}
+	return nil
+}
+
+func pfForNetworkRail(pfs []config.PFConfig, network string) (config.PFConfig, bool) {
+	railMatch := railIndexRE.FindStringSubmatch(network)
+	rail := -1
+	if len(railMatch) == 2 {
+		rail, _ = strconv.Atoi(railMatch[1])
+	}
+	candidates := make([]config.PFConfig, 0)
+	for _, pf := range pfs {
+		if pf.Traffic != "east-west" {
+			continue
+		}
+		if rail >= 0 && (pf.Rail == nil || *pf.Rail != rail) {
+			continue
+		}
+		candidates = append(candidates, pf)
+	}
+	if rail < 0 {
+		railSet := map[int]bool{}
+		for _, pf := range candidates {
+			if pf.Rail != nil {
+				railSet[*pf.Rail] = true
+			}
+		}
+		if len(railSet) > 1 {
+			return config.PFConfig{}, false
+		}
+	}
+	if len(candidates) == 0 {
+		return config.PFConfig{}, false
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].PciAddress < candidates[j].PciAddress })
+	if planeMatch := planeIndexRE.FindStringSubmatch(network); len(planeMatch) == 2 {
+		plane, _ := strconv.Atoi(planeMatch[1])
+		if plane >= 0 && plane < len(candidates) {
+			return candidates[plane], true
+		}
+		// Collapsed topology can retain one master PF per NIC while the
+		// generated network exposes multiple firmware planes. Those planes
+		// still share the NIC's connected GPU.
+		if len(candidates) == 1 {
+			return candidates[0], true
+		}
+		return config.PFConfig{}, false
+	}
+	firstGPU := candidates[0].ConnectedGPU
+	firstPCI := candidates[0].ConnectedGPUPCIAddress
+	for _, pf := range candidates[1:] {
+		if pf.ConnectedGPU != firstGPU || pf.ConnectedGPUPCIAddress != firstPCI {
+			return config.PFConfig{}, false
+		}
+	}
+	return candidates[0], true
 }
 
 type railPair struct {

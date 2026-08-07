@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,9 +35,10 @@ import (
 type Check string
 
 const (
-	CheckICMP      Check = "icmp"
-	CheckRPing     Check = "rping"
-	CheckIBWriteBW Check = "ib_write_bw"
+	CheckICMP            Check = "icmp"
+	CheckRPing           Check = "rping"
+	CheckIBWriteBW       Check = "ib_write_bw"
+	CheckGPUDirectDMABuf Check = "gpudirect_dmabuf"
 )
 
 // Options control the matrix run end-to-end. The l8k validate CLI
@@ -70,6 +72,10 @@ type Options struct {
 	// IBWriteMinBandwidthGbps is the minimum peak bandwidth that must be
 	// observed for an ib_write_bw test to pass. 0 disables threshold gating.
 	IBWriteMinBandwidthGbps float64
+	// ClusterConfig supplies the node/rail to connected-GPU topology used by
+	// the DMA-BUF test. GPUDirect is selected by including
+	// CheckGPUDirectDMABuf in Checks.
+	ClusterConfig []config.ClusterConfig
 }
 
 // MatrixResult is the aggregate output of one connectivity run. It's
@@ -79,7 +85,8 @@ type MatrixResult struct {
 	// one per merged group.
 	DaemonSets []DaemonSetReport
 	// PingResults is the flat list of every executed connectivity test
-	// (icmp + rping + ib_write_bw, same-rail + cross-rail).
+	// (icmp + rping + host-memory ib_write_bw + GPUDirect DMA-BUF,
+	// same-rail + cross-rail).
 	PingResults []PingResult
 	// Skipped is non-nil when fewer than 2 schedulable test pods
 	// were available across all DaemonSets. The matrix is treated
@@ -149,7 +156,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	uiOutput.Info("Loading example DaemonSet manifests from %s", opts.ManifestDir)
 
 	hasICMP := checksContain(opts.Checks, CheckICMP)
-	hasRDMA := checksContain(opts.Checks, CheckRPing) || checksContain(opts.Checks, CheckIBWriteBW)
+	hasRDMA := checksContain(opts.Checks, CheckRPing) || checksContain(opts.Checks, CheckIBWriteBW) || checksContain(opts.Checks, CheckGPUDirectDMABuf)
 	objs, refs, err := LoadExampleDaemonSets(opts.ManifestDir)
 	if err != nil {
 		return nil, err
@@ -159,10 +166,10 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			Skipped: &MatrixSkip{Reason: "no example DaemonSet manifests found under " + opts.ManifestDir},
 		}, nil
 	}
-	if hasICMP {
+	if hasICMP || hasRDMA {
 		for _, ref := range refs {
 			if ref.ICMPContainer == "" {
-				return nil, fmt.Errorf("example DaemonSet %s/%s from %s does not declare the %q ICMP helper container",
+				return nil, fmt.Errorf("example DaemonSet %s/%s from %s does not declare the %q ICMP/route helper container",
 					ref.Namespace, ref.Name, ref.SourceFile, icmpTestContainerName)
 			}
 		}
@@ -255,6 +262,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 					"rdmaDevsByRail", tp.RDMADevsByRail)
 			}
 			tp.InterfacesByRail = ifaceByRail
+			PopulateGPUTopology(&tp, opts.ClusterConfig)
 			testPods = append(testPods, tp)
 		}
 		return testPods
@@ -303,6 +311,11 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			len(plan.RDMABwSameRail), len(plan.RDMABwCrossRail))
 		plannedTests += len(plan.RDMABwSameRail) + len(plan.RDMABwCrossRail)
 	}
+	if checksContain(opts.Checks, CheckGPUDirectDMABuf) {
+		uiOutput.Info("Plan: %d same-rail GPUDirect DMA-BUF + %d cross-rail GPUDirect DMA-BUF",
+			len(plan.GPUDirectDMABufSameRail), len(plan.GPUDirectDMABufCrossRail))
+		plannedTests += len(plan.GPUDirectDMABufSameRail) + len(plan.GPUDirectDMABufCrossRail)
+	}
 	// Defensive: Plan() can return a zero-test plan without setting
 	// Skip (e.g. ≥2 schedulable pods but Plan's same-rail loop emits
 	// nothing). Two possible causes, both surface here:
@@ -347,6 +360,11 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			tests: append(append([]PingTest{}, plan.RDMABwSameRail...), plan.RDMABwCrossRail...),
 		},
 		{
+			check: CheckGPUDirectDMABuf,
+			label: "GPUDirect RDMA bandwidth (DMA-BUF)",
+			tests: append(append([]PingTest{}, plan.GPUDirectDMABufSameRail...), plan.GPUDirectDMABufCrossRail...),
+		},
+		{
 			check: CheckICMP,
 			label: "Layer 3 ping (ICMP)",
 			tests: append(append([]PingTest{}, plan.ICMPSameRail...), plan.ICMPCrossRail...),
@@ -365,6 +383,9 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			continue
 		}
 		uiOutput.Info("Stage: %s — %d test(s)", stage.label, len(tests))
+		if stage.check != CheckICMP {
+			tests = checkSourceRoutes(ctx, restConfig, namespaceByPod, icmpContainerByPod, tests)
+		}
 		if stage.check == CheckRPing {
 			result.PingResults = append(result.PingResults,
 				RunRPingBatches(ctx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.RPingIterations)...)
@@ -373,6 +394,11 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		if stage.check == CheckIBWriteBW {
 			result.PingResults = append(result.PingResults,
 				RunIbWriteBwBatches(ctx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)...)
+			continue
+		}
+		if stage.check == CheckGPUDirectDMABuf {
+			result.PingResults = append(result.PingResults,
+				RunGPUDirectDMABufBatches(ctx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)...)
 			continue
 		}
 		for _, t := range tests {
@@ -416,6 +442,27 @@ func normalizeChecks(checks []Check) []Check {
 		}
 		seen[check] = true
 		out = append(out, check)
+	}
+	return out
+}
+
+func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest) []PingTest {
+	out := append([]PingTest(nil), tests...)
+	for i := range out {
+		if out[i].Expectation != ExpectRequired {
+			continue
+		}
+		namespace := namespaceByPod[out[i].SrcPod]
+		container := containerByPod[out[i].SrcPod]
+		if namespace == "" || container == "" {
+			out[i].sourceRouteErr = fmt.Errorf("no netshoot namespace/container lookup for source pod %s", out[i].SrcPod)
+			continue
+		}
+		out[i].sourceRoute = checkRoute(ctx, restConfig, namespace, out[i].SrcPod, container, out[i])
+		if routeMismatch(out[i].sourceRoute, out[i]) {
+			out[i].sourceRouteErr = fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
+				out[i].sourceRoute.Dev, out[i].SrcIface, out[i].sourceRoute.Output)
+		}
 	}
 	return out
 }
@@ -538,14 +585,17 @@ func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 	}
 }
 
-// stageLabelOf returns the human-friendly label for a test kind used
-// in failure-line prefixes ("icmp", "rping", "ib_write_bw").
+// stageLabelOf returns the human-friendly family label for a test kind used
+// in failure-line prefixes.
 func stageLabelOf(k PingTestKind) string {
 	if k.IsICMP() {
 		return "icmp"
 	}
 	if k.IsRDMABw() {
 		return "ib_write_bw"
+	}
+	if k.IsGPUDirectDMABuf() {
+		return "gpudirect_dmabuf"
 	}
 	return "rping"
 }

@@ -43,13 +43,15 @@ import (
 var releasesYAML []byte
 
 // Release describes a single Network Operator minor release: image tags for
-// the operator, DOCA driver, and independently versioned xPlane service.
+// the operator, DOCA driver, validation workload, and independently versioned
+// xPlane service.
 // Keyed by MAJOR.MINOR (e.g. "26.4") in the embedded catalog — patch bumps
 // update the values in place.
 type Release struct {
 	NetworkOperator ReleaseNetworkOperator `yaml:"networkOperator"`
 	DOCADriver      ReleaseDOCADriver      `yaml:"docaDriver"`
 	XPlane          ReleaseXPlane          `yaml:"xPlane"`
+	Validation      ReleaseValidation      `yaml:"validation"`
 }
 
 type ReleaseNetworkOperator struct {
@@ -78,6 +80,10 @@ type ReleaseDOCADriver struct {
 type ReleaseXPlane struct {
 	Repository string `yaml:"repository"`
 	Version    string `yaml:"version"`
+}
+
+type ReleaseValidation struct {
+	Image string `yaml:"image"`
 }
 
 type releasesFile struct {

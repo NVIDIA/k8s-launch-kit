@@ -84,6 +84,9 @@ type catalogReleaseValues struct {
 	DOCADriver struct {
 		Version string `yaml:"version"`
 	} `yaml:"docaDriver"`
+	Validation struct {
+		Image string `yaml:"image"`
+	} `yaml:"validation"`
 }
 
 func TestSyncCatalogUpdatesAllReleasesAndFallsBackForLatest(t *testing.T) {
@@ -141,6 +144,7 @@ func TestSyncCatalogUpdatesAllReleasesAndFallsBackForLatest(t *testing.T) {
 	assert.Equal(t, stableOperatorRepository, stable.NetworkOperator.OperatorRepository)
 	assert.Equal(t, stableHelmRepoURL, stable.NetworkOperator.HelmRepoURL)
 	assert.Equal(t, "doca3.3.0-26.01-1.0.0.0-6", stable.DOCADriver.Version)
+	assert.Equal(t, "registry.example/validation:26.1", stable.Validation.Image)
 
 	latest := catalog.Releases["26.7"]
 	assert.Equal(t, "v26.7.0-rc.1", latest.NetworkOperator.Version)
@@ -149,6 +153,7 @@ func TestSyncCatalogUpdatesAllReleasesAndFallsBackForLatest(t *testing.T) {
 	assert.Equal(t, stagingOperatorRepository, latest.NetworkOperator.OperatorRepository)
 	assert.Equal(t, stagingHelmRepoURL, latest.NetworkOperator.HelmRepoURL)
 	assert.Equal(t, "doca3.5.0-26.07-0.5.1.0-0", latest.DOCADriver.Version)
+	assert.Equal(t, "registry.example/validation:26.7", latest.Validation.Image)
 
 	beforeSecondRun := append([]byte(nil), updated...)
 	secondResult, err := syncCatalog(context.Background(), syncOptions{
@@ -328,6 +333,8 @@ releases:
       helmRepoURL: https://helm.ngc.nvidia.com/nvidia
     docaDriver:
       version: doca3.3.0-26.01-1.0.0.0-0
+    validation:
+      image: registry.example/validation:26.1
   "26.7":
     networkOperator:
       version: v26.7.0-beta.4
@@ -337,6 +344,8 @@ releases:
       helmRepoURL: https://helm.ngc.nvidia.com/nvstaging/mellanox
     docaDriver:
       version: doca3.5.0-26.07-0.4.2.0-0
+    validation:
+      image: registry.example/validation:26.7
 `
 }
 

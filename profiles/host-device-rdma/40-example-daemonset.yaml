@@ -16,6 +16,12 @@ spec:
       annotations:
         k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}{{- end}}{{- end}}
     spec:
+      {{- if $.NetworkOperator.ImagePullSecrets }}
+      imagePullSecrets:
+        {{- range $.NetworkOperator.ImagePullSecrets }}
+      - name: "{{ . }}"
+        {{- end }}
+      {{- end }}
       {{- if .ClusterConfig.NodeSelector }}
       affinity:
         nodeAffinity:
@@ -44,19 +50,25 @@ spec:
       {{- end }}
       containers:
       - name: test-container
-        image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
+        image: {{validationImage $.NetworkOperator}}
         command: ["/bin/bash", "-c", "sleep infinity"]
         securityContext:
           capabilities:
             add: ["IPC_LOCK"]
         resources:
           requests:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
             {{- range $i, $pf := .ClusterConfig.PFs}}
             {{- if eq $pf.Traffic "east-west"}}
             nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}: '1'
             {{- end}}
             {{- end}}
           limits:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
             {{- range $i, $pf := .ClusterConfig.PFs}}
             {{- if eq $pf.Traffic "east-west"}}
             nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}: '1'
@@ -85,6 +97,12 @@ spec:
       annotations:
         k8s.v1.cni.cncf.io/networks: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}
     spec:
+      {{- if $.NetworkOperator.ImagePullSecrets }}
+      imagePullSecrets:
+        {{- range $.NetworkOperator.ImagePullSecrets }}
+      - name: "{{ . }}"
+        {{- end }}
+      {{- end }}
       {{- if .ClusterConfig.NodeSelector }}
       affinity:
         nodeAffinity:
@@ -113,15 +131,21 @@ spec:
       {{- end }}
       containers:
       - name: test-container
-        image: nvcr.io/nvidia/doca/doca:3.3.0-full-rt-host
+        image: {{validationImage $.NetworkOperator}}
         command: ["/bin/bash", "-c", "sleep infinity"]
         securityContext:
           capabilities:
             add: ["IPC_LOCK"]
         resources:
           requests:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
             nvidia.com/{{.Hostdev.ResourceName}}: '1'
           limits:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
             nvidia.com/{{.Hostdev.ResourceName}}: '1'
       - name: netshoot
         image: nicolaka/netshoot:latest

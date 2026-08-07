@@ -256,7 +256,7 @@ var schemaCmd = &cobra.Command{
 				"--validation-checks": {
 					Type:        "[]string",
 					Default:     "inherit from validation.checks",
-					Description: "Comma-separated checks to run during validate connectivity: icmp, rping, ib_write_bw.",
+					Description: "Comma-separated checks to run during validate connectivity: icmp, rping, ib_write_bw. Enabled GPUDirect DMA-BUF validation follows ib_write_bw.",
 				},
 				"--validation-mode": {
 					Type:        "string",

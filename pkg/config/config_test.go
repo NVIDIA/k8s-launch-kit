@@ -24,6 +24,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v2"
 )
 
 func TestGeneratedGroupIdentityIsBounded(t *testing.T) {
@@ -121,6 +122,8 @@ profile:
 		assert.Equal(t, ValidationModeStrict, config.Validation.Mode)
 		assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, config.Validation.Checks)
 		require.NotNil(t, config.Validation.RDMA)
+		assert.False(t, config.Validation.GPUDirect.Enabled)
+		assert.Equal(t, DefaultGPUResourceType, config.Validation.GPUDirect.GPUResourceType)
 		assert.Equal(t, DefaultValidationRPingIterations, config.Validation.RDMA.RPingIterations)
 		assert.Equal(t, DefaultValidationIBWriteSize, config.Validation.RDMA.IBWriteSize)
 		require.NotNil(t, config.Validation.RDMA.IBWriteMinBandwidthGbps)
@@ -181,6 +184,8 @@ func TestDefaultLaunchKitConfig(t *testing.T) {
 	assert.Equal(t, ValidationModeStrict, cfg.Validation.Mode)
 	assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
 	require.NotNil(t, cfg.Validation.RDMA)
+	assert.False(t, cfg.Validation.GPUDirect.Enabled)
+	assert.Equal(t, DefaultGPUResourceType, cfg.Validation.GPUDirect.GPUResourceType)
 	assert.Equal(t, DefaultValidationRPingIterations, cfg.Validation.RDMA.RPingIterations)
 	assert.Equal(t, DefaultValidationIBWriteSize, cfg.Validation.RDMA.IBWriteSize)
 	require.NotNil(t, cfg.Validation.RDMA.IBWriteMinBandwidthGbps)
@@ -198,6 +203,21 @@ func TestDefaultLaunchKitConfig(t *testing.T) {
 }
 
 func TestValidationConfig(t *testing.T) {
+	t.Run("always serializes explicit GPUDirect fields", func(t *testing.T) {
+		data, err := yaml.Marshal(DefaultValidationConfig())
+		require.NoError(t, err)
+		assert.Contains(t, string(data), "gpuDirect:\n  enabled: false\n  gpuResourceType: nvidia.com/gpu")
+	})
+
+	t.Run("does not serialize transient GPU render count", func(t *testing.T) {
+		cfg, err := DefaultLaunchKitConfig()
+		require.NoError(t, err)
+		cfg.ValidationGPUResourceCount = 8
+		data, err := yaml.Marshal(cfg)
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "validationGPUResourceCount")
+	})
+
 	t.Run("explicit empty checks stays empty", func(t *testing.T) {
 		cfg := NormalizeValidationConfig(&ValidationConfig{Checks: []string{}})
 		require.NotNil(t, cfg)
@@ -228,6 +248,17 @@ func TestValidationConfig(t *testing.T) {
 		cfg := NormalizeValidationConfig(&ValidationConfig{RDMA: &ValidationRDMAConfig{IBWriteMinBandwidthGbps: &zero}})
 		require.NotNil(t, cfg.RDMA.IBWriteMinBandwidthGbps)
 		assert.Equal(t, 0.0, *cfg.RDMA.IBWriteMinBandwidthGbps)
+	})
+
+	t.Run("defaults and validates GPU resource type", func(t *testing.T) {
+		cfg := NormalizeValidationConfig(&ValidationConfig{GPUDirect: ValidationGPUDirectConfig{Enabled: true}})
+		assert.True(t, cfg.GPUDirect.Enabled)
+		assert.Equal(t, DefaultGPUResourceType, cfg.GPUDirect.GPUResourceType)
+		require.NoError(t, ValidateValidationConfig(cfg))
+		cfg.GPUDirect.GPUResourceType = "gpu"
+		err := ValidateValidationConfig(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "qualified extended resource")
 	})
 }
 

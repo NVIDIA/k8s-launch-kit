@@ -38,7 +38,12 @@ func initResult(test PingTest) PingResult {
 	if exp == "" {
 		exp = ExpectRequired
 	}
-	return PingResult{Test: test, Expectation: exp}
+	return PingResult{
+		Test:        test,
+		Expectation: exp,
+		Route:       test.sourceRoute,
+		Err:         test.sourceRouteErr,
+	}
 }
 
 func shellArg(s string) string {

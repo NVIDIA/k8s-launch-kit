@@ -41,12 +41,7 @@ const rdmaServerSettleDelay = 2 * time.Second
 // Options.Timeout.
 const rdmaTestTimeout = 90 * time.Second
 
-const (
-	rpingBatchResultMarker     = "__L8K_RPING_RESULT__"
-	rdmaBatchRouteResultMarker = "__L8K_ROUTE_RESULT__"
-	rdmaBatchRouteEndMarker    = "__L8K_ROUTE_END__"
-	rdmaBatchRouteFailCode     = 201
-)
+const rpingBatchResultMarker = "__L8K_RPING_RESULT__"
 
 const (
 	ibWriteBwBatchResultMarker = "__L8K_IBWRITEBW_RESULT__"
@@ -191,6 +186,9 @@ func RunRPing(ctx context.Context, restConfig *rest.Config, serverNamespace stri
 		iterations = 5
 	}
 	r := initResult(test)
+	if r.Err != nil {
+		return r
+	}
 
 	tctx, cancel := context.WithTimeout(ctx, rdmaTestTimeout)
 	defer cancel()
@@ -248,10 +246,17 @@ func RunRPingBatches(ctx context.Context, restConfig *rest.Config, namespaceByPo
 
 func runRPingBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, iterations int) []PingResult {
 	results := make([]PingResult, len(tests))
+	runnable := false
 	for i, test := range tests {
 		results[i] = initResult(test)
+		if results[i].Err == nil {
+			runnable = true
+		}
 	}
 	if len(tests) == 0 {
+		return results
+	}
+	if !runnable {
 		return results
 	}
 
@@ -293,24 +298,11 @@ func runRPingBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod,
 	clientCmd := rpingBatchClientCommand(tests, iterations)
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, first.SrcPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	rcByIndex := parseRPingBatchResults(cliRes.Stdout)
-	routeByIndex := parseRDMABatchRouteResults(cliRes.Stdout, tests)
 	for i := range results {
 		results[i].Stdout = cliRes.Stdout
 		results[i].Stderr = cliRes.Stderr
-		if results[i].Expectation == ExpectRequired {
-			route, ok := routeByIndex[i]
-			if !ok {
-				err := fmt.Errorf("rping batch missing source-route check for test %d", i)
-				finalizeExpectedResult(&results[i], false, err)
-				continue
-			}
-			results[i].Route = route
-			if routeMismatch(route, tests[i]) {
-				err := fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
-					route.Dev, tests[i].SrcIface, route.Output)
-				finalizeExpectedResult(&results[i], false, err)
-				continue
-			}
+		if results[i].Err != nil {
+			continue
 		}
 		rc, ok := rcByIndex[i]
 		if !ok {
@@ -355,7 +347,7 @@ func rpingBatchServerCommand(tests []PingTest) string {
 	var b strings.Builder
 	b.WriteString("pkill rping 2>/dev/null || true; rm -f /tmp/l8k-rping-server-*.log; ")
 	for i, test := range tests {
-		if test.DstIP == "" {
+		if test.DstIP == "" || test.sourceRouteErr != nil {
 			continue
 		}
 		fmt.Fprintf(&b, "nohup rping -s -a %s -p %d -v >/tmp/l8k-rping-server-%d.log 2>&1 & ",
@@ -373,12 +365,11 @@ func rpingBatchClientCommand(tests []PingTest, iterations int) string {
 		if timeoutSeconds <= 0 {
 			timeoutSeconds = 1
 		}
-		appendRDMABatchRouteGuard(&b, i, test,
-			fmt.Sprintf("echo %s %d %d", rpingBatchResultMarker, i, rdmaBatchRouteFailCode))
+		if test.sourceRouteErr != nil {
+			continue
+		}
 		fmt.Fprintf(&b,
-			`if [ "$route_ok" = "1" ]; then `+
-				"run_with_timeout %d rping -c -I %s -a %s -p %d -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; echo %s %d $rc; "+
-				`fi; `,
+			"run_with_timeout %d rping -c -I %s -a %s -p %d -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; echo %s %d $rc; ",
 			timeoutSeconds, shellArg(test.SrcIP), shellArg(test.DstIP), rpingBatchPort(i), iterations, i, i, rpingBatchResultMarker, i)
 	}
 	b.WriteString("exit 0")
@@ -402,80 +393,6 @@ func parseRPingBatchResults(stdout string) map[int]int {
 			continue
 		}
 		out[idx] = rc
-	}
-	return out
-}
-
-func appendRDMABatchRouteGuard(b *strings.Builder, index int, test PingTest, failCommand string) {
-	b.WriteString("route_ok=1; ")
-	if test.Expectation != ExpectRequired {
-		return
-	}
-	routeFile := fmt.Sprintf("/tmp/l8k-route-%d.out", index)
-	fmt.Fprintf(b,
-		`route_file=%s; ipcmd=""; for p in ip /sbin/ip /usr/sbin/ip /bin/ip /usr/bin/ip; do `+
-			`if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then ipcmd="$p"; break; fi; `+
-			`done; `+
-			`route_missing=0; if [ -z "$ipcmd" ]; then echo %s >"$route_file"; route_rc=0; route_missing=1; `+
-			`else "$ipcmd" -o route get %s from %s >"$route_file" 2>&1; route_rc=$?; fi; `+
-			`route_dev=$(sed -n 's/.* dev \([^ ]*\).*/\1/p' "$route_file" | head -n1); `+
-			`echo %s %d $route_rc; cat "$route_file" 2>/dev/null; echo %s %d; `+
-			`if [ "$route_missing" != "1" ] && { [ "$route_rc" != "0" ] || [ "$route_dev" != %s ]; }; then route_ok=0; %s; fi; `,
-		shellArg(routeFile), shellArg(routeSkipMarker), shellArg(test.DstIP), shellArg(test.SrcIP),
-		rdmaBatchRouteResultMarker, index, rdmaBatchRouteEndMarker, index, shellArg(test.SrcIface), failCommand)
-}
-
-func parseRDMABatchRouteResults(stdout string, tests []PingTest) map[int]RouteCheck {
-	out := map[int]RouteCheck{}
-	var current *int
-	var b strings.Builder
-	rcByIndex := map[int]int{}
-	for _, line := range strings.Split(stdout, "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) == 3 && fields[0] == rdmaBatchRouteResultMarker {
-			idx, idxErr := strconv.Atoi(fields[1])
-			rc, rcErr := strconv.Atoi(fields[2])
-			if idxErr != nil || rcErr != nil {
-				current = nil
-				b.Reset()
-				continue
-			}
-			current = &idx
-			rcByIndex[idx] = rc
-			b.Reset()
-			continue
-		}
-		if len(fields) == 2 && fields[0] == rdmaBatchRouteEndMarker {
-			idx, err := strconv.Atoi(fields[1])
-			if err == nil && current != nil && idx == *current {
-				output := strings.TrimSpace(b.String())
-				route := RouteCheck{
-					Output: output,
-					OK:     rcByIndex[idx] == 0,
-				}
-				if idx >= 0 && idx < len(tests) {
-					route.Command = fmt.Sprintf("ip -o route get %s from %s", tests[idx].DstIP, tests[idx].SrcIP)
-				}
-				if strings.Contains(output, routeSkipMarker) {
-					route.Err = routeSkipErr
-					route.OK = false
-				}
-				if m := routeDevRe.FindStringSubmatch(output); len(m) == 2 {
-					route.Dev = m[1]
-				}
-				if route.Dev == "" {
-					route.OK = false
-				}
-				out[idx] = route
-			}
-			current = nil
-			b.Reset()
-			continue
-		}
-		if current != nil {
-			b.WriteString(line)
-			b.WriteByte('\n')
-		}
 	}
 	return out
 }
@@ -513,6 +430,9 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, serverNamespace 
 	}
 	r := initResult(test)
 	r.MinBandwidthGbps = minBandwidthGbps
+	if r.Err != nil {
+		return r
+	}
 	if test.SrcRDMADev == "" || test.DstRDMADev == "" {
 		r.Err = fmt.Errorf("ib_write_bw needs RDMA device names; got src=%q dst=%q", test.SrcRDMADev, test.DstRDMADev)
 		return r
@@ -580,27 +500,50 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, serverNamespace 
 // listeners can be started with one server-side exec before the client pod runs
 // the tests sequentially in one client-side exec.
 func RunIbWriteBwBatches(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, size int, minBandwidthGbps float64) []PingResult {
+	return runIbWriteBwBatches(ctx, restConfig, namespaceByPod, containerByPod, tests, size, minBandwidthGbps, false)
+}
+
+// RunGPUDirectDMABufBatches executes the bandwidth matrix with CUDA buffers
+// exported through DMA-BUF. Each endpoint uses the GPU index resolved for its
+// own NIC/rail topology.
+func RunGPUDirectDMABufBatches(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, size int, minBandwidthGbps float64) []PingResult {
+	return runIbWriteBwBatches(ctx, restConfig, namespaceByPod, containerByPod, tests, size, minBandwidthGbps, true)
+}
+
+func runIbWriteBwBatches(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, size int, minBandwidthGbps float64, gpuDirect bool) []PingResult {
 	if size <= 0 {
 		size = 65536
 	}
 	groups := groupRPingTests(tests)
 	out := make([]PingResult, 0, len(tests))
 	for _, group := range groups {
-		out = append(out, runIbWriteBwBatch(ctx, restConfig, namespaceByPod, containerByPod, group, size, minBandwidthGbps)...)
+		out = append(out, runIbWriteBwBatch(ctx, restConfig, namespaceByPod, containerByPod, group, size, minBandwidthGbps, gpuDirect)...)
 	}
 	return out
 }
 
-func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, size int, minBandwidthGbps float64) []PingResult {
+func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, size int, minBandwidthGbps float64, gpuDirect bool) []PingResult {
 	results := make([]PingResult, len(tests))
+	runnable := false
 	for i, test := range tests {
 		results[i] = initResult(test)
 		results[i].MinBandwidthGbps = minBandwidthGbps
 		if test.SrcRDMADev == "" || test.DstRDMADev == "" {
 			results[i].Err = fmt.Errorf("ib_write_bw needs RDMA device names; got src=%q dst=%q", test.SrcRDMADev, test.DstRDMADev)
 		}
+		if gpuDirect {
+			if err := gpudirectPreconditionError(test); err != nil {
+				results[i].Err = err
+			}
+		}
+		if results[i].Err == nil {
+			runnable = true
+		}
 	}
 	if len(tests) == 0 {
+		return results
+	}
+	if !runnable {
 		return results
 	}
 	first := tests[0]
@@ -609,7 +552,9 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 	if serverNamespace == "" || serverContainer == "" || clientNamespace == "" || clientContainer == "" {
 		err := fmt.Errorf("no namespace/container lookup for ib_write_bw pod pair (%s, %s)", first.SrcPod, first.DstPod)
 		for i := range results {
-			results[i].Err = err
+			if results[i].Err == nil {
+				results[i].Err = err
+			}
 		}
 		return results
 	}
@@ -617,12 +562,14 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 	tctx, cancel := context.WithTimeout(ctx, ibWriteBwBatchTimeoutFor(tests))
 	defer cancel()
 
-	serverCmd := ibWriteBwBatchServerCommand(tests, size)
+	serverCmd := ibWriteBwBatchServerCommandMode(tests, size, gpuDirect)
 	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, serverNamespace, first.DstPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
 	if err != nil {
 		batchErr := fmt.Errorf("ib_write_bw batch server start: %w (stderr: %s)", err, srvRes.Stderr)
 		for i := range results {
-			results[i].Err = batchErr
+			if results[i].Err == nil {
+				results[i].Err = batchErr
+			}
 		}
 		return results
 	}
@@ -632,35 +579,21 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 	case <-tctx.Done():
 		batchErr := fmt.Errorf("ib_write_bw batch settle wait: %w", tctx.Err())
 		for i := range results {
-			results[i].Err = batchErr
+			if results[i].Err == nil {
+				results[i].Err = batchErr
+			}
 		}
 		return results
 	case <-time.After(rdmaBatchSettleDelayFor(tests)):
 	}
 
-	clientCmd := ibWriteBwBatchClientCommand(tests, size)
+	clientCmd := ibWriteBwBatchClientCommandMode(tests, size, gpuDirect)
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, first.SrcPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	parsed := parseIbWriteBwBatchResults(cliRes.Stdout)
-	routeByIndex := parseRDMABatchRouteResults(cliRes.Stdout, tests)
 	for i := range results {
 		results[i].Stderr = cliRes.Stderr
 		if results[i].Err != nil {
 			continue
-		}
-		if results[i].Expectation == ExpectRequired {
-			route, ok := routeByIndex[i]
-			if !ok {
-				err := fmt.Errorf("ib_write_bw batch missing source-route check for test %d", i)
-				finalizeExpectedResult(&results[i], false, err)
-				continue
-			}
-			results[i].Route = route
-			if routeMismatch(route, tests[i]) {
-				err := fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
-					route.Dev, tests[i].SrcIface, route.Output)
-				finalizeExpectedResult(&results[i], false, err)
-				continue
-			}
 		}
 		cell, ok := parsed[i]
 		if !ok {
@@ -688,23 +621,27 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 	return results
 }
 
-func ibWriteBwBatchServerCommand(tests []PingTest, size int) string {
+func ibWriteBwBatchServerCommandMode(tests []PingTest, size int, gpuDirect bool) string {
 	var b strings.Builder
 	b.WriteString("pkill ib_write_bw 2>/dev/null || true; rm -f /tmp/l8k-ibwritebw-server-*.log; ")
 	for i, test := range tests {
-		if test.DstRDMADev == "" || test.DstIP == "" {
+		if !ibWriteBwRunnable(test, gpuDirect) {
 			continue
 		}
 		port := ibWriteBwBatchPort(i)
 		fmt.Fprintf(&b,
-			"nohup ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s >/tmp/l8k-ibwritebw-server-%d.log 2>&1 & ",
-			shellArg(test.DstRDMADev), size, port, shellArg(test.DstIP), i)
+			"nohup ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s%s >/tmp/l8k-ibwritebw-server-%d.log 2>&1 & ",
+			shellArg(test.DstRDMADev), size, port, shellArg(test.DstIP), cudaDMABufArgs(gpuDirect, test.DstGPUIndex), i)
 	}
 	b.WriteString("echo ready")
 	return b.String()
 }
 
 func ibWriteBwBatchClientCommand(tests []PingTest, size int) string {
+	return ibWriteBwBatchClientCommandMode(tests, size, false)
+}
+
+func ibWriteBwBatchClientCommandMode(tests []PingTest, size int, gpuDirect bool) string {
 	var b strings.Builder
 	b.WriteString(`run_with_timeout() { seconds="$1"; shift; if command -v timeout >/dev/null 2>&1; then timeout --kill-after=2s "${seconds}s" "$@"; else "$@" & pid=$!; (sleep "$seconds"; kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null) & watchdog=$!; wait "$pid"; rc=$?; kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null; return "$rc"; fi; }; `)
 	for i, test := range tests {
@@ -714,17 +651,38 @@ func ibWriteBwBatchClientCommand(tests []PingTest, size int) string {
 		}
 		outFile := fmt.Sprintf("/tmp/l8k-ibwritebw-client-%d.out", i)
 		errFile := fmt.Sprintf("/tmp/l8k-ibwritebw-client-%d.err", i)
-		appendRDMABatchRouteGuard(&b, i, test,
-			fmt.Sprintf("echo %s %d %d; echo %s %d", ibWriteBwBatchResultMarker, i, rdmaBatchRouteFailCode, ibWriteBwBatchEndMarker, i))
+		if !ibWriteBwRunnable(test, gpuDirect) {
+			continue
+		}
 		fmt.Fprintf(&b,
-			`if [ "$route_ok" = "1" ]; then `+
-				"run_with_timeout %d ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s %s >%s 2>%s; rc=$?; echo %s %d $rc; cat %s 2>/dev/null; echo %s %d; "+
-				`fi; `,
-			timeoutSeconds, shellArg(test.SrcRDMADev), size, ibWriteBwBatchPort(i), shellArg(test.SrcIP), shellArg(test.DstIP),
+			"run_with_timeout %d ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s%s %s >%s 2>%s; rc=$?; echo %s %d $rc; cat %s 2>/dev/null; echo %s %d; ",
+			timeoutSeconds, shellArg(test.SrcRDMADev), size, ibWriteBwBatchPort(i), shellArg(test.SrcIP), cudaDMABufArgs(gpuDirect, test.SrcGPUIndex), shellArg(test.DstIP),
 			outFile, errFile, ibWriteBwBatchResultMarker, i, outFile, ibWriteBwBatchEndMarker, i)
 	}
 	b.WriteString("exit 0")
 	return b.String()
+}
+
+func cudaDMABufArgs(enabled bool, gpuIndex int) string {
+	if !enabled {
+		return ""
+	}
+	return fmt.Sprintf(" --use_cuda=%d --use_cuda_dmabuf", gpuIndex)
+}
+
+func ibWriteBwRunnable(test PingTest, gpuDirect bool) bool {
+	if test.sourceRouteErr != nil || test.SrcRDMADev == "" || test.DstRDMADev == "" || test.SrcIP == "" || test.DstIP == "" {
+		return false
+	}
+	return !gpuDirect || (test.SrcGPUIndex >= 0 && test.DstGPUIndex >= 0)
+}
+
+func gpudirectPreconditionError(test PingTest) error {
+	if test.SrcGPUIndex >= 0 && test.DstGPUIndex >= 0 {
+		return nil
+	}
+	return fmt.Errorf("GPUDirect DMA-BUF needs unambiguous connected GPU indices for both endpoints; got src=%d dst=%d (srcNode=%s srcRail=%s dstNode=%s dstRail=%s)",
+		test.SrcGPUIndex, test.DstGPUIndex, test.SrcNode, test.SrcRail, test.DstNode, test.DstRail)
 }
 
 type ibWriteBwBatchCell struct {

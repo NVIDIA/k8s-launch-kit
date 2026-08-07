@@ -40,8 +40,10 @@ Operator release.
    `READY`, `IN-PROGRESS`, `ERROR`, or `MISSING`.
 3. **Connectivity matrix.** By default, `l8k validate` applies the generated
    example DaemonSet, waits for ready pods, and runs source-bound `icmp`,
-   `rping`, and `ib_write_bw` tests. Profile templates declare both validation
-   containers: DOCA for the RDMA checks and `netshoot` for ICMP and route
+   `rping`, and `ib_write_bw` tests. When `validation.gpuDirect.enabled` is
+   true and `ib_write_bw` is selected, a distinct DMA-BUF bandwidth family
+   uses the connected GPU index for each source and destination rail. Profile templates declare both validation
+   containers: the release-specific full-runtime DOCA image for the RDMA checks and `netshoot` for ICMP and route
    checks. Validate applies the generated DaemonSet without runtime container
    injection. The default mode is `strict`.
 
@@ -84,7 +86,11 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
   must succeed, `destination-based` must stay isolated.
 
 All checks are source-bound. ICMP uses `ping -I <src-iface>`, `rping` uses
-`-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`.
+`-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`. GPUDirect
+adds `--use_cuda=<endpoint-index> --use_cuda_dmabuf` independently on the
+client and server. Treat missing or ambiguous `connectedGPU` topology as a
+failure; never substitute GPU 0. Pull Secrets come from
+`networkOperator.imagePullSecrets` and must exist in every validation namespace.
 
 ## Examples
 

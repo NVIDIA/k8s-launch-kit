@@ -149,7 +149,7 @@ full deletion boundary.
 | --- | --- |
 | `--connectivity` | Enable or disable data-plane connectivity checks. |
 | `--validation-mode` | `quick`, `full`, or `strict`. |
-| `--validation-checks` | Comma-separated list of `icmp`, `rping`, and `ib_write_bw`. |
+| `--validation-checks` | Comma-separated list of `icmp`, `rping`, and `ib_write_bw`. Enabled GPUDirect DMA-BUF validation follows the `ib_write_bw` selection. |
 | `--connectivity-timeout` | Wall-clock budget for connectivity workload rollout and test execution. |
 | `--rdma-rping-iterations` | Override `validation.rdma.rpingIterations`. |
 | `--rdma-ib-write-size` | Override `validation.rdma.ibWriteSize`. |

@@ -113,6 +113,13 @@ read `references/profile-decision-tree.md`.
 
 Generated YAMLs are written to the output directory under `network-operator/`. Each profile also emits a `values.yaml` (Helm values for the `nvidia/network-operator` chart) alongside the CR manifests:
 
+When `validation.gpuDirect.enabled` is true, every generated example
+DaemonSet requests `validation.gpuDirect.gpuResourceType` only on its primary
+DOCA container. The request exposes the highest `GPU<N>` referenced by PF
+topology, the image comes from the selected release's `validation.image`, and
+`networkOperator.imagePullSecrets` is copied to the Pod spec. Do not inject
+these fields later at validation runtime.
+
 ```
 output/
 └── network-operator/

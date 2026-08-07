@@ -17,6 +17,9 @@
 package connectivity
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -113,52 +116,101 @@ timeout text
 	assert.Contains(t, got[1].stdout, "timeout text")
 }
 
-func TestParseRDMABatchRouteResults(t *testing.T) {
-	tests := []PingTest{
-		{SrcIP: "192.168.0.10", DstIP: "192.168.0.20"},
-		{SrcIP: "192.168.4.10", DstIP: "192.168.0.20"},
-	}
-	stdout := rdmaBatchRouteResultMarker + ` 0 0
-192.168.0.20 from 192.168.0.10 dev net1 src 192.168.0.10
-` + rdmaBatchRouteEndMarker + ` 0
-` + rdmaBatchRouteResultMarker + ` 1 127
-` + routeSkipMarker + `
-` + rdmaBatchRouteEndMarker + ` 1
-`
-	got := parseRDMABatchRouteResults(stdout, tests)
-	require.Len(t, got, 2)
-	assert.True(t, got[0].OK)
-	assert.Equal(t, "net1", got[0].Dev)
-	assert.Equal(t, "ip -o route get 192.168.0.20 from 192.168.0.10", got[0].Command)
-	assert.False(t, got[1].OK)
-	assert.Equal(t, "ip command not found in validation container", got[1].Err)
-	assert.False(t, routeMismatch(got[1], PingTest{SrcIface: "net2"}))
-}
-
-func TestRDMABatchClientCommandsIncludeSourceRouteGuard(t *testing.T) {
+func TestRDMABatchClientCommandsDoNotRequireIPTooling(t *testing.T) {
 	test := PingTest{
 		SrcIP:       "192.168.0.10",
 		DstIP:       "192.168.0.20",
 		SrcIface:    "net1",
 		SrcRDMADev:  "mlx5_1",
+		DstRDMADev:  "mlx5_2",
 		Expectation: ExpectRequired,
 	}
 
 	rpingCmd := rpingBatchClientCommand([]PingTest{test}, 5)
-	assert.Contains(t, rpingCmd, rdmaBatchRouteResultMarker)
-	assert.Contains(t, rpingCmd, "ipcmd")
-	assert.Contains(t, rpingCmd, "route get")
-	assert.Contains(t, rpingCmd, rpingBatchResultMarker+" 0 201")
-	assert.Contains(t, rpingCmd, `if [ "$route_ok" = "1" ]; then run_with_timeout`)
+	assert.NotContains(t, rpingCmd, "route get")
+	assert.NotContains(t, rpingCmd, "ipcmd")
+	assert.NotContains(t, rpingCmd, "route get")
 	assert.Contains(t, rpingCmd, `-p 9999`)
-	assert.NotContains(t, rpingCmd, "continue")
 
 	ibCmd := ibWriteBwBatchClientCommand([]PingTest{test}, 65536)
-	assert.Contains(t, ibCmd, rdmaBatchRouteResultMarker)
-	assert.Contains(t, ibCmd, "route get")
-	assert.Contains(t, ibCmd, ibWriteBwBatchResultMarker+" 0 201")
-	assert.Contains(t, ibCmd, `if [ "$route_ok" = "1" ]; then run_with_timeout`)
-	assert.NotContains(t, ibCmd, "continue")
+	assert.NotContains(t, ibCmd, "ipcmd")
+	assert.NotContains(t, ibCmd, "route get")
+	assert.Contains(t, ibCmd, ibWriteBwBatchResultMarker+" 0 $rc")
+}
+
+func TestGPUDirectDMABufCommandsUseEndpointGPUIndices(t *testing.T) {
+	test := PingTest{
+		SrcIP: "192.168.0.10", DstIP: "192.168.0.20",
+		SrcRDMADev: "mlx5_1", DstRDMADev: "mlx5_9",
+		SrcGPUIndex: 4, DstGPUIndex: 7,
+	}
+	server := ibWriteBwBatchServerCommandMode([]PingTest{test}, 65536, true)
+	client := ibWriteBwBatchClientCommandMode([]PingTest{test}, 65536, true)
+	assert.Contains(t, server, "--use_cuda=7 --use_cuda_dmabuf")
+	assert.NotContains(t, server, "--use_cuda=4")
+	assert.Contains(t, client, "--use_cuda=4 --use_cuda_dmabuf")
+	assert.NotContains(t, client, "--use_cuda=7")
+}
+
+func TestGPUDirectDMABufRejectsMissingTopologyWithoutGPUZeroFallback(t *testing.T) {
+	err := gpudirectPreconditionError(PingTest{
+		SrcGPUIndex: -1, DstGPUIndex: 3,
+		SrcNode: "worker-a", DstNode: "worker-b",
+		SrcRail: "rail-0", DstRail: "rail-0",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "src=-1 dst=3")
+	assert.Contains(t, err.Error(), "worker-a")
+	assert.NotContains(t, err.Error(), "assuming GPU0")
+}
+
+func TestRunGPUDirectDMABufBatchesFailsMissingTopologyBeforeExec(t *testing.T) {
+	results := RunGPUDirectDMABufBatches(context.Background(), nil, nil, nil, []PingTest{{
+		Kind:   GPUDirectDMABufSameRail,
+		SrcPod: "pod-a", DstPod: "pod-b", SrcNode: "worker-a", DstNode: "worker-b",
+		SrcRail: "rail-0", DstRail: "rail-0", SrcIP: "192.0.2.1", DstIP: "192.0.2.2",
+		SrcRDMADev: "mlx5_0", DstRDMADev: "mlx5_1", SrcGPUIndex: -1, DstGPUIndex: 7,
+	}}, 65536, 100)
+	require.Len(t, results, 1)
+	require.Error(t, results[0].Err)
+	assert.Contains(t, results[0].Err.Error(), "src=-1 dst=7")
+	assert.Equal(t, 100.0, results[0].MinBandwidthGbps)
+	assert.False(t, results[0].OK)
+}
+
+func TestRunGPUDirectDMABufBatchesPreservesTopologyErrorInMixedBatch(t *testing.T) {
+	tests := []PingTest{
+		{
+			Kind: GPUDirectDMABufSameRail, SrcPod: "pod-a", DstPod: "pod-b",
+			SrcNode: "worker-a", DstNode: "worker-b", SrcRail: "rail-0", DstRail: "rail-0",
+			SrcIP: "192.0.2.1", DstIP: "192.0.2.2", SrcRDMADev: "mlx5_0", DstRDMADev: "mlx5_1",
+			SrcGPUIndex: -1, DstGPUIndex: 7,
+		},
+		{
+			Kind: GPUDirectDMABufSameRail, SrcPod: "pod-a", DstPod: "pod-b",
+			SrcNode: "worker-a", DstNode: "worker-b", SrcRail: "rail-1", DstRail: "rail-1",
+			SrcIP: "198.51.100.1", DstIP: "198.51.100.2", SrcRDMADev: "mlx5_2", DstRDMADev: "mlx5_3",
+			SrcGPUIndex: 4, DstGPUIndex: 7,
+		},
+	}
+	results := RunGPUDirectDMABufBatches(context.Background(), nil, nil, nil, tests, 65536, 100)
+	require.Len(t, results, 2)
+	require.Error(t, results[0].Err)
+	assert.Contains(t, results[0].Err.Error(), "src=-1 dst=7")
+	require.Error(t, results[1].Err)
+	assert.Contains(t, results[1].Err.Error(), "no namespace/container lookup")
+}
+
+func TestGPUDirectResultJSONIncludesFamilyAndError(t *testing.T) {
+	data, err := json.Marshal(PingResult{
+		Test: PingTest{Kind: GPUDirectDMABufSameRail, SrcGPUIndex: 4, DstGPUIndex: 7},
+		Err:  fmt.Errorf("DMA-BUF unavailable"),
+	})
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"Family":"gpudirect_dmabuf"`)
+	assert.Contains(t, string(data), `"Error":"DMA-BUF unavailable"`)
+	assert.Contains(t, string(data), `"SrcGPUIndex":4`)
+	assert.Contains(t, string(data), `"DstGPUIndex":7`)
 }
 
 func TestRPingBatchServerCommandRunsOneListenerPerTest(t *testing.T) {
@@ -191,4 +243,7 @@ func TestPingTestKind_Predicates(t *testing.T) {
 	assert.True(t, RDMABwCrossRail.IsCrossRail())
 	assert.False(t, RDMAPingSameRail.IsCrossRail())
 	assert.False(t, RDMABwSameRail.IsCrossRail())
+	assert.True(t, GPUDirectDMABufSameRail.IsGPUDirectDMABuf())
+	assert.True(t, GPUDirectDMABufCrossRail.IsCrossRail())
+	assert.False(t, GPUDirectDMABufSameRail.IsRDMABw())
 }

@@ -92,6 +92,18 @@ func TestApplyValidateFlagOverrides(t *testing.T) {
 		assert.Equal(t, []connectivity.Check{connectivity.CheckICMP}, connectivityChecksFromConfig(cfg))
 	})
 
+	t.Run("enabled GPUDirect follows ib_write_bw selection", func(t *testing.T) {
+		cfg := config.NormalizeValidationConfig(&config.ValidationConfig{
+			Checks:    []string{config.ValidationCheckIBWriteBW},
+			GPUDirect: config.ValidationGPUDirectConfig{Enabled: true, GPUResourceType: "example.com/gpu"},
+		})
+		assert.Equal(t,
+			[]connectivity.Check{connectivity.CheckIBWriteBW, connectivity.CheckGPUDirectDMABuf},
+			connectivityChecksFromConfig(cfg))
+		cfg.Checks = []string{config.ValidationCheckRPing}
+		assert.Equal(t, []connectivity.Check{connectivity.CheckRPing}, connectivityChecksFromConfig(cfg))
+	})
+
 	t.Run("zero minimum bandwidth override disables bandwidth gating", func(t *testing.T) {
 		resetValidateOverrideGlobals(t)
 		cmd := newValidateOverrideTestCmd()

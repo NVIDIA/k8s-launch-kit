@@ -337,6 +337,13 @@ profile:
 # Controls l8k validate data-plane checks.
 # ============================================================================
 validation:
+  gpuDirect:
+    # bool | always present; discovery writes true only when every worker can
+    # satisfy its render bucket's topology-derived gpuResourceType request.
+    enabled: false
+    # string | qualified extended resource | default: nvidia.com/gpu
+    gpuResourceType: nvidia.com/gpu
+
   # bool | default: true
   # Run the example DaemonSet connectivity matrix.
   connectivity: true
