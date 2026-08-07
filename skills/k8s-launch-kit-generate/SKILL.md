@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.5
+version: 1.2.6
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -12,6 +12,9 @@ metadata:
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
 This workflow uses the default `host` target; `--target host` is equivalent.
+The CLI snapshots generation arguments and runs the concrete Host generation
+operation through the target registry; command syntax and artifacts are
+unchanged.
 
 Generate Kubernetes YAML manifests for NVIDIA networking from a cluster config and profile selection.
 

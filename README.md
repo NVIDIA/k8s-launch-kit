@@ -4,10 +4,13 @@ K8s Launch Kit (l8k) is a CLI tool for deploying and managing NVIDIA cloud-nativ
 
 The four lifecycle commands are target-aware. The existing Network Operator
 workflow is the `host` target and remains the default, so current commands do
-not need to change. `--target host` is an explicit synonym. The `dpf` target
-name is reserved for future DPU-plane provisioning and currently reports its
-phases as unavailable instead of executing host logic. See the
-[target-aware CLI architecture](docs/advanced/targets.md) and run `l8k schema`
+not need to change. Each lifecycle command binds a typed, immutable request
+through the target registry and the concrete Host implementation.
+`--target host` is an explicit synonym. The `dpf` target name is reserved for
+future DPU-plane provisioning and currently reports its phases as unavailable
+instead of executing host logic. See the
+[target-aware CLI architecture](docs/advanced/targets.md), the
+[complete component map](docs/architecture/overview.md), and run `l8k schema`
 for machine-readable target, phase, and flag ownership information.
 
 ## Documentation

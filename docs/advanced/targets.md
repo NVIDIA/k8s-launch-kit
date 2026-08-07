@@ -92,17 +92,19 @@ type Operation interface {
 }
 ```
 
-`Invocation` contains only target-neutral output and execution policy. A CLI
-adapter owns target-specific flags, loads its target-native configuration,
-applies only explicit overrides, validates phase requirements, and captures a
-typed domain request in the returned `Operation`. Drivers never receive a
-Cobra command, `pflag.FlagSet`, untyped option map, or host/DPF union config.
+`Invocation` contains only target-neutral output and execution policy. The
+Cobra layer captures explicitly changed flags into a typed, immutable Host
+request. A phase-specific adapter validates and snapshots that request while
+binding the target-neutral invocation. Drivers never receive a Cobra command,
+`pflag.FlagSet`, untyped option map, or host/DPF union config.
 
-The first migration stage validates target selection in Cobra `PreRun` and
-then enters the existing host command body unchanged. This prevents host
-behavioral drift while the standalone deploy and validate bodies are prepared
-for extraction. The DPF target remains unavailable during this stage, so it
-cannot accidentally execute host logic.
+Every Host lifecycle command now follows this boundary. The common runner
+binds through the registry and calls `Operation.Run(cmd.Context())` exactly
+once. Discover, generate, and the root pipeline reuse the Host application
+launcher; standalone deploy and validate are Host-owned services outside
+Cobra. Those services return errors, while `pkg/cmd` remains the only process
+termination boundary. The DPF target remains unavailable, so it cannot
+accidentally construct a Kubernetes client or execute Host logic.
 
 ## Registry guarantees
 
@@ -148,3 +150,9 @@ those roles to credentials without changing the four lifecycle command names.
 
 That environment layer composes target plans and cross-target ownership
 contracts; it does not merge host and DPF configuration structures.
+
+## Implementation plans
+
+- [Complete Launch Kit architecture](../architecture/overview.md)
+- [DPF integration roadmap](../architecture/dpf-integration-plan.md)
+- [HostTarget migration plan](../architecture/host-target-migration-plan.md)

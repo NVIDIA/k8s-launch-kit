@@ -17,7 +17,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -135,7 +134,7 @@ func (l *Launcher) discoverClusterConfig() error {
 		defaults.Profile = nil
 	}
 
-	ctx := ui.WithOutput(context.Background(), l.ui)
+	ctx := ui.WithOutput(l.context, l.ui)
 	for _, plugin := range l.plugins {
 		err := plugin.DiscoverClusterConfig(ctx, l.kubeClient, defaults)
 		if err != nil {

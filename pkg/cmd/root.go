@@ -18,10 +18,8 @@ package cmd
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -29,14 +27,13 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -150,7 +147,6 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 
   # Get tool capabilities as JSON (for AI agents)
   l8k schema`,
-	PreRun: targetPreRun(target.Pipeline),
 	Run: func(cmd *cobra.Command, args []string) {
 		// Bare `l8k` invocation: print help instead of erroring on the
 		// missing-config validation. Any flag or positional argument
@@ -211,26 +207,11 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			opts.EnableDocaDriver = &enableDocaDriver
 		}
 
-		if err := validateProfileFlagValues(&opts); err != nil {
-			exitWithError(apperrors.NewValidationError(err.Error(), err, "Check --spectrum-x flag combinations"), opts.OutputFormat)
-		}
-
-		// Validate CLI configuration
-		if err := validateConfig(&opts); err != nil {
-			exitWithError(apperrors.NewValidationError(err.Error(), err, "Run 'l8k --help' for usage information"), opts.OutputFormat)
-		}
-
 		logger.Info("SaveConfig", "val", opts)
-
-		// Create and run the application
-		launcher := app.New(opts)
-		if err := launcher.Run(); err != nil {
-			var se *apperrors.StructuredError
-			if !errors.As(err, &se) {
-				se = apperrors.NewGeneralError(err.Error(), err)
-			}
-			exitWithError(se, opts.OutputFormat)
-		}
+		runTargetCommand(cmd, target.Pipeline, hosttarget.NewPipelineAdapter(
+			hosttarget.LauncherRequest{Options: opts},
+			hosttarget.NewLauncherRunner(),
+		))
 	},
 }
 
@@ -359,94 +340,7 @@ func init() {
 
 // validateConfig validates the CLI flag combinations
 func validateConfig(options *options.Options) error {
-	// Validate --output flag
-	if !slices.Contains([]string{"text", "json"}, options.OutputFormat) {
-		return fmt.Errorf("--output must be one of: text, json")
-	}
-
-	// Validate --network-operator-release against the embedded catalog so the
-	// user sees the supported list immediately, before discovery/render.
-	if options.NetworkOperatorRelease != "" {
-		if _, ok := releases.LookupRelease(options.NetworkOperatorRelease); !ok {
-			return fmt.Errorf("unknown --network-operator-release %q; supported: %v",
-				options.NetworkOperatorRelease, releases.SupportedReleases())
-		}
-	}
-
-	// Validate --dry-run requires --deploy
-	if options.DryRun && !options.Deploy {
-		return fmt.Errorf("--dry-run requires --deploy to be specified (it previews what deploy would do)")
-	}
-
-	// Validate --workload-manifest file exists
-	if options.WorkloadManifest != "" {
-		if _, err := os.Stat(options.WorkloadManifest); os.IsNotExist(err) {
-			return fmt.Errorf("workload manifest file does not exist: %s", options.WorkloadManifest)
-		}
-	}
-
-	// At least one plugin should be enabled
-	if len(options.EnabledPlugins) == 0 {
-		return fmt.Errorf("no plugins enabled, use --enabled-plugins to enable plugins")
-	}
-
-	// Require either a config source, a preset-generated config, or discovery.
-	if options.UserConfig == "" && options.ConfigDir == "" && options.ForPreset == "" && !options.DiscoverClusterConfig {
-		return fmt.Errorf("one of --user-config, --config-dir, --for, or --discover-cluster-config must be provided")
-	}
-
-	// --for synthesizes clusterConfig from a static preset, so it cannot be
-	// combined with discovery, and it always needs a node selector to identify
-	// which nodes the rendered manifests target.
-	if options.ForPreset != "" {
-		if options.DiscoverClusterConfig {
-			return fmt.Errorf("--for and --discover-cluster-config are mutually exclusive")
-		}
-		if options.NodeSelector == "" {
-			return fmt.Errorf("--for requires --node-selector (specify which nodes the synthesized clusterConfig should target)")
-		}
-	}
-
-	// Resolve kubeconfig from flag or $KUBECONFIG env var for cluster operations
-	if options.DiscoverClusterConfig || options.Deploy {
-		resolved, err := resolveKubeconfig(options.Kubeconfig)
-		if err != nil {
-			return fmt.Errorf("kubeconfig required for cluster operations: set $KUBECONFIG or pass --kubeconfig <path>")
-		}
-		options.Kubeconfig = resolved
-	}
-
-	// Spectrum-X cohort + value validation lives in applySpectrumXDefaults so
-	// it runs for both the root command and the `generate` subcommand. Don't
-	// duplicate it here — that function is the single authoritative point of
-	// rejection for malformed --spectrum-x usage.
-
-	// Network Operator plugin rules
-	if slices.Contains(options.EnabledPlugins, networkoperatorplugin.PluginName) {
-		// If profile is selected, either save-deployment-files or deploy options should be provided
-		if (options.Fabric != "" || options.DeploymentType != "") && options.SaveDeploymentFiles == "" && !options.Deploy {
-			return fmt.Errorf("when --deployment-type is specified, either --save-deployment-files or --deploy must be provided")
-		}
-
-		// Save-deployment-files or deploy can't work without profile
-		if options.Fabric == "" && options.DeploymentType == "" && options.UserConfig == "" && options.Deploy {
-			return fmt.Errorf("--deploy requires --deployment-type or --user-config with a profile to be specified")
-		}
-
-		if (options.DeploymentType != "" && options.Fabric == "") || (options.Fabric != "" && options.DeploymentType == "") {
-			return fmt.Errorf("--deployment-type requires --fabric to be specified")
-		}
-
-		if options.Fabric != "" && !slices.Contains([]string{"infiniband", "ethernet"}, options.Fabric) {
-			return fmt.Errorf("--fabric must be one of: infiniband, ethernet")
-		}
-
-		if options.DeploymentType != "" && !slices.Contains([]string{"sriov", "rdma_shared", "host_device"}, options.DeploymentType) {
-			return fmt.Errorf("--deployment-type must be one of: sriov, rdma_shared, host_device")
-		}
-	}
-
-	return nil
+	return hosttarget.ValidatePipelineOptions(options)
 }
 
 // validateProfileFlagValues validates profile enums that can be supplied to
@@ -454,22 +348,14 @@ func validateConfig(options *options.Options) error {
 // Partial profiles are valid because the resolution phase fills missing
 // values from discovered hardware.
 func validateProfileFlagValues(opts *options.Options) error {
-	if opts.Fabric != "" && !slices.Contains([]string{"infiniband", "ethernet"}, opts.Fabric) {
-		return fmt.Errorf("--fabric must be one of: infiniband, ethernet")
-	}
-	if opts.DeploymentType != "" && !slices.Contains([]string{"sriov", "rdma_shared", "host_device"}, opts.DeploymentType) {
-		return fmt.Errorf("--deployment-type must be one of: sriov, rdma_shared, host_device")
-	}
-	if opts.Routing != "" && !slices.Contains([]string{config.RoutingDestinationBased, config.RoutingSourceBased}, opts.Routing) {
-		return fmt.Errorf("--routing must be one of: %s, %s", config.RoutingDestinationBased, config.RoutingSourceBased)
-	}
-	return applySpectrumXSyntaxChecks(opts)
+	return hosttarget.ValidateProfileFlagValues(opts)
 }
 
-// applySpectrumXSyntaxChecks is the Phase 1 Spectrum-X enum/value validator. It
-// runs in PreRunE BEFORE LoadFullConfig + ApplyHardwareDefaults, so it
-// catches obvious typos (e.g. `--multiplane-mode bogus`) up-front
-// without false positives from values that defaults are about to fill.
+// applySpectrumXSyntaxChecks is the Phase 1 Spectrum-X enum/value validator. A
+// Host adapter runs it while binding, before LoadFullConfig and
+// ApplyHardwareDefaults, so it catches obvious typos (for example,
+// `--multiplane-mode bogus`) without false positives from values that defaults
+// are about to fill.
 //
 // Cohort/cross-flag rules ("RA2.1 requires release 26.1", "spectrum-x
 // requires ethernet fabric", etc.) live in
@@ -479,79 +365,7 @@ func validateProfileFlagValues(opts *options.Options) error {
 // Implicit defaulting (Spectrum-X → fabric=ethernet etc.) lives in
 // `pkg/resolve.ApplyHardwareDefaults`.
 func applySpectrumXSyntaxChecks(opts *options.Options) error {
-	// Inverse cohort: --multiplane-mode / --number-of-planes and
-	// ConfigMap-backed Spectrum-X profile inputs are only
-	// meaningful with --spectrum-x. Catch the CLI typo case here so
-	// the user doesn't get a confusing render-time failure.
-	if !opts.SpectrumX {
-		if opts.MultiplaneMode != "" {
-			return fmt.Errorf("--multiplane-mode can only be used with --spectrum-x")
-		}
-		if opts.NumberOfPlanes != 0 {
-			return fmt.Errorf("--number-of-planes can only be used with --spectrum-x")
-		}
-		if opts.TopologyScheme != "" {
-			return fmt.Errorf("--topology-scheme can only be used with --spectrum-x")
-		}
-		if opts.IPVersion != "" {
-			return fmt.Errorf("--ip-version can only be used with --spectrum-x")
-		}
-		if opts.TopologyFile != "" {
-			return fmt.Errorf("--topology-file can only be used with --spectrum-x")
-		}
-		if opts.SpectrumXConfig != "" {
-			return fmt.Errorf("--spectrum-x-config can only be used with --spectrum-x")
-		}
-		if opts.SpectrumXConfigMapName != "" {
-			return fmt.Errorf("--spectrum-x-configmap-name can only be used with --spectrum-x")
-		}
-		return nil
-	}
-
-	// SPCXVersion enum check — defensive even though Run() should
-	// have set SpectrumX only when SPCXVersion is non-empty.
-	if opts.SPCXVersion == "" {
-		return fmt.Errorf("--spectrum-x requires the SPC-X RA version as its value; supported: %v",
-			config.SupportedSPCXVersions)
-	}
-	if !slices.Contains(config.SupportedSPCXVersions, opts.SPCXVersion) {
-		return fmt.Errorf("invalid --spectrum-x value %q; supported: %v",
-			opts.SPCXVersion, config.SupportedSPCXVersions)
-	}
-
-	// Enum checks for --multiplane-mode and --number-of-planes only
-	// fire when the user supplied a value; defaults fill them later.
-	if opts.MultiplaneMode != "" && !slices.Contains(config.SupportedMultiplaneModes, opts.MultiplaneMode) {
-		return fmt.Errorf("invalid --multiplane-mode %q; supported: %v",
-			opts.MultiplaneMode, config.SupportedMultiplaneModes)
-	}
-	if opts.NumberOfPlanes != 0 && !slices.Contains(config.SupportedNumberOfPlanes, opts.NumberOfPlanes) {
-		return fmt.Errorf("invalid --number-of-planes %d; supported: %v",
-			opts.NumberOfPlanes, config.SupportedNumberOfPlanes)
-	}
-	if opts.TopologyScheme != "" && !slices.Contains(config.SupportedSpectrumXTopologyTypes, opts.TopologyScheme) {
-		return fmt.Errorf("invalid --topology-scheme %q; supported: %v",
-			opts.TopologyScheme, config.SupportedSpectrumXTopologyTypes)
-	}
-	if opts.IPVersion != "" && !slices.Contains(config.SupportedSpectrumXIPVersions, opts.IPVersion) {
-		return fmt.Errorf("invalid --ip-version %q; supported: %v",
-			opts.IPVersion, config.SupportedSpectrumXIPVersions)
-	}
-
-	// --network-operator-release enum check (when supplied). The
-	// (RA, release) pairing is enforced in Phase 2 against the
-	// resolved cfg, but we can reject obvious typos here — the
-	// release line is consequential (CRD shape + SR-IOV operator
-	// behaviour), so a misspelled release is worth catching early.
-	if opts.NetworkOperatorRelease != "" {
-		allowed := config.SPCXVersionAllowedReleases[opts.SPCXVersion]
-		if !slices.Contains(allowed, opts.NetworkOperatorRelease) {
-			return fmt.Errorf("--spectrum-x %s requires --network-operator-release in %v, got %s",
-				opts.SPCXVersion, allowed, opts.NetworkOperatorRelease)
-		}
-	}
-
-	return nil
+	return hosttarget.ValidateSpectrumXSyntax(opts)
 }
 
 // exitWithError prints the error and exits with the appropriate code.

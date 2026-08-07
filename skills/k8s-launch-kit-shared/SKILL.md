@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-shared
-version: 1.0.0
+version: 1.0.1
 description: "k8s-launch-kit (l8k) CLI: Shared patterns for binary location, global flags, output formatting, exit codes, and error handling. Read this before using any other k8s-launch-kit skill."
 ---
 
@@ -66,6 +66,14 @@ build. Do not attempt DPF provisioning. Use `l8k schema` and inspect
 `targets[].phases` before selecting any non-host target. Host-only flags such as
 `--fabric`, `--kubeconfig`, and the Network Operator/Spectrum-X flags are
 rejected when explicitly combined with another target.
+
+Internally, each lifecycle command snapshots the explicitly supplied Host
+arguments, binds a phase-specific adapter through the target registry, and
+runs the resulting operation exactly once with the command context. Do not
+bypass this route when extending or automating a lifecycle phase. The
+canonical component and data-flow diagrams live in
+`docs/architecture/overview.md`; update them with any change to lifecycle,
+package ownership, artifacts, or external integration boundaries.
 
 ## Global Flags
 

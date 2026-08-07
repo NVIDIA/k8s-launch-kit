@@ -16,7 +16,10 @@
 
 package errors
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Exit codes for structured error handling.
 // Agents use these to distinguish error types programmatically.
@@ -49,6 +52,68 @@ func (e *StructuredError) Error() string {
 
 func (e *StructuredError) Unwrap() error {
 	return e.Cause
+}
+
+// ReportedError marks an error whose machine-readable output has already been
+// emitted. The outer CLI boundary still owns the process exit code, but must
+// not render the error a second time.
+type ReportedError struct {
+	Err error
+}
+
+func (e *ReportedError) Error() string {
+	if e == nil || e.Err == nil {
+		return "reported error"
+	}
+	return e.Err.Error()
+}
+
+func (e *ReportedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// MarkReported records that err has already been rendered to the user.
+func MarkReported(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ReportedError{Err: err}
+}
+
+// IsReported returns true when an error has already been rendered.
+func IsReported(err error) bool {
+	var reported *ReportedError
+	return errors.As(err, &reported)
+}
+
+// ExitStatusError requests a process exit code without rendering another
+// error. It is used when a phase has already emitted its complete verdict.
+type ExitStatusError struct {
+	Code int
+}
+
+func (e *ExitStatusError) Error() string {
+	if e == nil {
+		return "exit status"
+	}
+	return fmt.Sprintf("exit status %d", e.Code)
+}
+
+// NewExitStatus creates a silent terminal status for the outer CLI boundary.
+func NewExitStatus(code int) error {
+	return &ExitStatusError{Code: code}
+}
+
+// IsExitStatus extracts a silent terminal status.
+func IsExitStatus(err error) (int, bool) {
+	var status *ExitStatusError
+	if !errors.As(err, &status) || status == nil {
+		return 0, false
+	}
+	return status.Code, true
 }
 
 // NewValidationError creates a validation error (exit code 2).
@@ -108,7 +173,11 @@ func ExitCodeFromError(err error) int {
 	if err == nil {
 		return ExitSuccess
 	}
-	if se, ok := err.(*StructuredError); ok {
+	if code, ok := IsExitStatus(err); ok {
+		return code
+	}
+	var se *StructuredError
+	if errors.As(err, &se) {
 		return se.ExitCode
 	}
 	return ExitGeneral
@@ -120,7 +189,8 @@ func StructuredFromError(err error) *StructuredError {
 	if err == nil {
 		return nil
 	}
-	if se, ok := err.(*StructuredError); ok {
+	var se *StructuredError
+	if errors.As(err, &se) {
 		return se
 	}
 	return NewGeneralError(err.Error(), err)

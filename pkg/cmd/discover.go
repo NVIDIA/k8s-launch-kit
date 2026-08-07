@@ -17,18 +17,16 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
 var discoverCmd = &cobra.Command{
@@ -70,22 +68,12 @@ and writes the final profile back to cluster-config.yaml.`,
   # Agent mode (JSON output)
   l8k discover --save-cluster-config ./cluster-config.yaml \
     --output json 2>/dev/null`,
-	PreRun: targetPreRun(target.Discover),
 	Run: func(cmd *cobra.Command, args []string) {
-		resolved, err := resolveKubeconfig(kubeconfig)
-		if err != nil {
-			exitWithError(apperrors.NewValidationError(
-				"kubeconfig required for discovery",
-				err,
-				"Set $KUBECONFIG or pass --kubeconfig <path>",
-			), outputFormat)
-		}
-
 		opts := options.Options{
 			ConfigDir:                configDir,
 			DiscoverClusterConfig:    true,
 			DiscoverOnly:             true,
-			Kubeconfig:               resolved,
+			Kubeconfig:               kubeconfig,
 			UserConfig:               userConfig,
 			SaveClusterConfig:        saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
@@ -116,19 +104,10 @@ and writes the final profile back to cluster-config.yaml.`,
 			Quiet:                    quietFlag,
 		}
 
-		if err := validateProfileFlagValues(&opts); err != nil {
-			exitWithError(apperrors.NewValidationError(
-				err.Error(), err, "Check profile selection flags"), opts.OutputFormat)
-		}
-
-		launcher := app.New(opts)
-		if err := launcher.Run(); err != nil {
-			var se *apperrors.StructuredError
-			if !errors.As(err, &se) {
-				se = apperrors.NewGeneralError(err.Error(), err)
-			}
-			exitWithError(se, opts.OutputFormat)
-		}
+		runTargetCommand(cmd, target.Discover, hosttarget.NewDiscoverAdapter(
+			hosttarget.LauncherRequest{Options: opts},
+			hosttarget.NewLauncherRunner(),
+		))
 	},
 }
 

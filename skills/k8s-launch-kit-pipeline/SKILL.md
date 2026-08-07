@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-pipeline
-version: 1.1.0
+version: 1.1.1
 description: "Use this skill when the user wants to run the full k8s-launch-kit (l8k) pipeline end-to-end: discover cluster hardware, select a profile, generate manifests, and deploy them all in one command. Also activate for CI/CD integration, automation pipelines, 'one-liner', 'complete workflow', or end-to-end NVIDIA networking deployment."
 metadata:
   requires:
@@ -16,6 +16,8 @@ Run discovery + generation + deployment as a single command.
 The pipeline operates on the default `host` target. Omitting `--target` keeps
 the established behavior; `--target host` is equivalent. Do not select `dpf`
 until `l8k schema` reports all required DPF phases as available.
+The root command snapshots its arguments and runs the complete concrete Host
+pipeline as one bound target operation.
 
 ## Usage
 

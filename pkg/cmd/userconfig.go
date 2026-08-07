@@ -1,176 +1,47 @@
-// Copyright 2026 NVIDIA CORPORATION & AFFILIATES.
+// Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// userconfig.go centralises how `l8k` subcommands locate and load the
-// user-supplied cluster-config.yaml. Both `l8k validate` and `l8k deploy`
-// read the same file to drive their release-aware checks; keeping the
-// resolution + loading here means the two stay in lock-step when the
-// auto-discovery rules change.
-
 package cmd
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
+import hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 
-	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	"github.com/nvidia/k8s-launch-kit/pkg/app"
-	"github.com/nvidia/k8s-launch-kit/pkg/assets"
-	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
-	"github.com/nvidia/k8s-launch-kit/pkg/options"
-)
-
-// defaultUserConfigPath is the conventional location `l8k discover` writes
-// its output to and where subcommands look first when --user-config is
-// not supplied.
+// defaultUserConfigPath remains the CLI compatibility constant used by tests
+// and help. Host path resolution is implemented by pkg/target/host.
 const defaultUserConfigPath = "./cluster-config.yaml"
 
-// userConfigPath returns the user-config file path to read, or "" when
-// none is found. Lookup order (first hit wins):
-//
-//  1. The explicit --user-config when set (mandatory if non-empty).
-//  2. ./cluster-config.yaml in the current working directory — the
-//     historical default `l8k discover` writes when no path is given.
-//  3. <deployment-files>/../cluster-config.yaml — the convention
-//     `l8k discover --save-cluster-config <dir>/cluster-config.yaml
-//     --save-deployment-files <dir>/deployment` produces, so an
-//     operator running `l8k validate --deployment-files <dir>/deployment`
-//     (or `l8k deploy …`) from anywhere finds the matching config.
-//     Only checked when --deployment-files was bound on the active
-//     subcommand (deploymentFiles != "").
-//  4. <deployment-files>/cluster-config.yaml — fallback for users
-//     who keep the config inside the deployment dir.
-//  5. <config-dir>/l8k-config.yaml — the explicit default-config override,
-//     when --config-dir was supplied and the file exists.
-//  6. ./l8k-config.yaml — the generate-path's legacy default, used only when
-//     --config-dir was not supplied.
-//  7. <share-dir>/l8k-config.yaml — the legacy installed system-wide config
-//     (e.g. /usr/local/share/l8k/l8k-config.yaml), also used only when
-//     --config-dir was not supplied.
-//
-// Callers decide how to react to a missing config: validate softens its
-// per-check verdicts to "skipped"; deploy and generate treat it as an
-// error (deploy because Phase 0 + preflight would otherwise skip with no
-// useful signal; generate unless --for can synthesize clusterConfig from a
-// preset and use the embedded default for the remaining fields).
-func userConfigPathFor(configRoot string) (string, error) {
-	if path := userConfigPathBeforeDefaults(); path != "" {
-		return path, nil
+func currentUserConfigInput(configRoot string) hosttarget.UserConfigInput {
+	return hosttarget.UserConfigInput{
+		Explicit:        userConfig,
+		DeploymentFiles: deploymentFiles,
+		ConfigDir:       configRoot,
 	}
-	return defaultConfigPathFor(configRoot)
+}
+
+func userConfigPathFor(configRoot string) (string, error) {
+	return hosttarget.UserConfigPathFor(currentUserConfigInput(configRoot))
 }
 
 func userConfigPathBeforeDefaults() string {
-	if userConfig != "" {
-		return userConfig
-	}
-	candidates := []string{defaultUserConfigPath}
-	if deploymentFiles != "" {
-		candidates = append(candidates,
-			filepath.Join(deploymentFiles, "..", "cluster-config.yaml"),
-			filepath.Join(deploymentFiles, "cluster-config.yaml"),
-		)
-	}
-	return firstExistingConfigPath(candidates)
+	return hosttarget.UserConfigPathBeforeDefaults(currentUserConfigInput(configDir))
 }
 
 func defaultConfigPathFor(configRoot string) (string, error) {
-	var candidates []string
-	if configRoot != "" {
-		resolved, err := assets.ResolveConfigDir(configRoot)
-		if err != nil {
-			return "", err
-		}
-		if resolved.DefaultConfigPath != "" {
-			candidates = append(candidates, resolved.DefaultConfigPath)
-		}
-	} else {
-		// Generate-path legacy fallbacks: ./l8k-config.yaml then the
-		// installed system-wide config under <share-dir>.
-		candidates = append(candidates,
-			"l8k-config.yaml",
-			filepath.Join(app.ResolveShareDir(), "l8k-config.yaml"),
-		)
-	}
-	return firstExistingConfigPath(candidates), nil
+	return hosttarget.DefaultConfigPathFor(configRoot)
 }
 
-func firstExistingConfigPath(candidates []string) string {
-	for _, p := range candidates {
-		if p == "" {
-			continue
-		}
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
-		}
-	}
-	return ""
-}
-
-// userConfigPathForGenerate resolves only explicit/discovered cluster config
-// paths when --config-dir is set. The launcher owns config-dir resolution so
-// the filesystem layout is statted once and used consistently for both the
-// default config and preset catalog. Without --config-dir, retain the legacy
-// local/install-prefix default lookup.
 func userConfigPathForGenerate(configRoot string) string {
-	if path := userConfigPathBeforeDefaults(); path != "" {
-		return path
-	}
-	if configRoot != "" {
-		return ""
-	}
-	path, _ := defaultConfigPathFor("")
-	return path
-}
-
-func userConfigPath() string {
-	path, _ := userConfigPathFor(configDir)
-	return path
-}
-
-// loadUserConfig reads the resolved user-config file and applies the
-// embedded Network Operator release catalog. When opts is non-zero,
-// values from opts override config-file fields (the same precedence
-// applied by the generate path's launcher).
-//
-// Returns (cfg, path, nil) on success. Returns (nil, "", nil) when no
-// user-config file is found — callers treat that as "no catalog data
-// available" and proceed accordingly. A non-nil error means the file
-// existed but couldn't be parsed (or the release lookup failed); the
-// caller should bail since downstream code would be making decisions
-// from incomplete state.
-func loadUserConfig(opts options.Options) (*config.LaunchKitConfig, string, error) {
-	path, err := userConfigPathFor(opts.ConfigDir)
-	if err != nil {
-		return nil, "", err
-	}
-	if path == "" {
-		return nil, "", nil
-	}
-	cfg, err := config.LoadFullConfig(path, log.Log)
-	if err != nil {
-		return nil, path, fmt.Errorf("load %s: %w", path, err)
-	}
-	if cfg == nil {
-		return nil, path, fmt.Errorf("user-config %s is empty", path)
-	}
-	if err := networkoperatorplugin.ApplyNetworkOperatorRelease(opts, cfg); err != nil {
-		return nil, path, fmt.Errorf("apply release catalog: %w", err)
-	}
-	// Apply CLI namespace override. Mirror of the same branch in
-	// NetworkOperatorPlugin.ApplyOptionsToConfig so the standalone
-	// `l8k deploy` / `l8k validate` paths honour --network-operator-namespace
-	// the same way the root-pipeline generate path does (which goes through
-	// the launcher's plugin.ApplyOptionsToConfig instead of this helper).
-	if opts.NetworkOperatorNamespace != "" {
-		if cfg.NetworkOperator == nil {
-			cfg.NetworkOperator = &config.NetworkOperatorConfig{}
-		}
-		cfg.NetworkOperator.Namespace = opts.NetworkOperatorNamespace
-	}
-	return cfg, path, nil
+	return hosttarget.UserConfigPathForGenerate(currentUserConfigInput(configRoot))
 }

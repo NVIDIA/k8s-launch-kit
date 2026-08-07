@@ -17,23 +17,12 @@
 package cmd
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
-	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
-	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
-	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
 var (
@@ -53,12 +42,7 @@ var (
 // DefaultDeploymentDir is the default directory `l8k generate` writes
 // manifests to and `l8k deploy` reads from when --deployment-files is
 // not specified.
-const DefaultDeploymentDir = "./deployment"
-
-// networkOperatorManifestSubdir is the subdirectory `l8k generate` nests
-// network-operator manifests under (matches l.options.SaveDeploymentFiles +
-// profile.Plugin in pkg/app/deploy.go).
-const networkOperatorManifestSubdir = "network-operator"
+const DefaultDeploymentDir = hosttarget.DefaultDeploymentDir
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
@@ -92,124 +76,19 @@ is used as the manifest directory.`,
 
   # Server-side dry run: validate against the cluster without persisting
   l8k deploy --dry-run`,
-	PreRun: targetPreRun(target.Deploy),
 	Run: func(cmd *cobra.Command, args []string) {
-		resolved, err := resolveKubeconfig(kubeconfig)
-		if err != nil {
-			exitWithError(apperrors.NewValidationError(
-				"kubeconfig required for deploy",
-				err,
-				"Set $KUBECONFIG or pass --kubeconfig <path>",
-			), outputFormat)
-		}
-
-		manifestDir, err := resolveDeploymentDir(deploymentFiles)
-		if err != nil {
-			exitWithError(apperrors.NewValidationError(
-				"deployment files directory not found",
-				err,
-				"Run 'l8k generate' first or pass --deployment-files <path>",
-			), outputFormat)
-		}
-
-		log.Log.Info("Deploying manifests", "kubeconfig", resolved, "manifestDir", manifestDir, "dryRun", dryRunFlag)
-
-		k8sClient, restConfig, err := kubeclient.New(resolved)
-		if err != nil {
-			exitWithError(apperrors.NewClusterError(
-				"failed to create Kubernetes client",
-				err,
-				"Check that kubeconfig is valid and the cluster is reachable",
-			), outputFormat)
-		}
-
-		uiOutput, _ := ui.NewOutputForFormat(outputFormat, yesFlag)
-		ctx := ui.WithOutput(context.Background(), uiOutput)
-		if deployTimeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, deployTimeout)
-			defer cancel()
-		}
-
-		if dryRunFlag {
-			uiOutput.Section("Dry Run: Cluster Deployment (preview)")
-			uiOutput.Info("Manifests in %s will be sent to the cluster with server-side dry-run.", manifestDir)
-		} else {
-			uiOutput.Section("Cluster Deployment")
-			uiOutput.Info("Applying manifests from %s", manifestDir)
-		}
-
-		// Load cluster-config.yaml when present (auto-discovered next
-		// to --deployment-files or in CWD) so Phase 0 helm install and
-		// the Phase 0.5 preflight checks have catalog-resolved chart
-		// version, helm repo URL, operator namespace, and component /
-		// DOCA versions to compare against. Without this, every check
-		// soft-skips with "no expected version" — useless.
-		deployOpts := networkoperatorplugin.DeployOptions{
-			DryRun:            dryRunFlag,
-			OverwriteExisting: overwriteExistingFlag,
-			RestConfig:        restConfig,
-		}
-		cfg, cfgPath, cfgErr := loadUserConfig(options.Options{
-			ConfigDir:                configDir,
-			NetworkOperatorNamespace: networkOperatorNamespace,
-		})
-		if cfgErr != nil {
-			exitWithError(apperrors.NewValidationError(
-				"failed to load user config",
-				cfgErr,
-				"Verify the YAML is parseable and networkOperator.selectedRelease is set to a supported MAJOR.MINOR (e.g. 26.4), or re-run `l8k discover`",
-			), outputFormat)
-		}
-		if cfg != nil {
-			deployOpts.NetworkOperator = cfg.NetworkOperator
-			if cfg.DOCADriver != nil {
-				deployOpts.DOCAVersion = cfg.DOCADriver.Version
-			}
-			log.Log.V(1).Info("Loaded user config for deploy",
-				"path", cfgPath,
-				"selectedRelease", selectedReleaseFromCfg(cfg))
-		}
-		if err := networkoperatorplugin.ApplyManifestsFromDir(ctx, k8sClient, manifestDir, deployOpts); err != nil {
-			// Pass StructuredError through as-is — the deploy
-			// internals build them with actionable Message +
-			// Suggestion text. Re-wrapping would clobber the
-			// suggestion and duplicate the message.
-			var se *apperrors.StructuredError
-			if errors.As(err, &se) {
-				exitWithError(se, outputFormat)
-			}
-			exitWithError(apperrors.NewDeploymentError(
-				"deployment failed",
-				err,
-				"Check cluster connectivity, RBAC, and manifest validity.",
-			), outputFormat)
-		}
-
-		if dryRunFlag {
-			uiOutput.Success("Dry run completed — no changes were applied")
-		} else {
-			uiOutput.Success("Deployment completed")
-		}
-
+		runTargetCommand(cmd, target.Deploy, hosttarget.NewDeployAdapter(
+			hosttarget.DeployRequest{
+				Kubeconfig:        kubeconfig,
+				DeploymentFiles:   deploymentFiles,
+				UserConfig:        userConfig,
+				ConfigDir:         configDir,
+				OperatorNamespace: networkOperatorNamespace,
+				OverwriteExisting: overwriteExistingFlag,
+			},
+			hosttarget.NewDeployRunner(),
+		))
 	},
-}
-
-// resolveDeploymentDir prefers <dir>/network-operator/ when present (matches
-// the layout 'l8k generate' produces), falling back to <dir> itself.
-// Returns an error if neither path exists or is not a directory.
-func resolveDeploymentDir(dir string) (string, error) {
-	if dir == "" {
-		dir = DefaultDeploymentDir
-	}
-	candidate := filepath.Join(dir, networkOperatorManifestSubdir)
-	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-		return candidate, nil
-	}
-	if info, err := os.Stat(dir); err == nil && info.IsDir() {
-		return dir, nil
-	}
-	return "", fmt.Errorf("not found: %s (also checked %s)", dir, candidate)
 }
 
 func init() {
@@ -218,10 +97,9 @@ func init() {
 
 	deployCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	deployCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to apply")
-	// --network-operator-namespace overrides cfg.NetworkOperator.Namespace at
-	// load time (via loadUserConfig). Drives Phase 0 helm install target,
-	// Phase 0.5 preflight stray-CR scope, and any other downstream code that
-	// reads opts.NetworkOperator.Namespace.
+	// --network-operator-namespace overrides cfg.NetworkOperator.Namespace in
+	// the Host deploy service. It drives the Phase 0 Helm target, Phase 0.5
+	// preflight scope, and downstream options that read the namespace.
 	deployCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
 	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-discovered from ./cluster-config.yaml or <deployment-files>/../cluster-config.yaml). Used to resolve the network-operator release for Phase 0 helm install and Phase 0.5 preflight checks.")
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
@@ -236,13 +114,4 @@ func init() {
 	setFlagGroup(deployCmd, "dry-run", GroupExecution)
 	setFlagGroup(deployCmd, "overwrite-existing", GroupDeploy)
 	markDeployTargetScopes()
-}
-
-// selectedReleaseFromCfg returns the catalog key the user-config pinned, or
-// "" when the file didn't carry a networkOperator block.
-func selectedReleaseFromCfg(cfg *config.LaunchKitConfig) string {
-	if cfg == nil || cfg.NetworkOperator == nil {
-		return ""
-	}
-	return cfg.NetworkOperator.SelectedRelease
 }
