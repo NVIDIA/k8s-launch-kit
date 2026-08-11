@@ -197,10 +197,11 @@ Spectrum-X specific NIC and overlay configuration.
 | `hwplb`       | object | rail-only RDMA, rail-plane NET    | Prefix block selected by `hwplb` |
 | `swplb`       | object | rail-plane RDMA and NET           | Prefix block selected by `swplb` |
 
-Each mode object contains user-overridable `rdmaPrefix` and `netdevPrefix` strings.
-The generated `NicConfigurationTemplate.spec.nicSelector.nicType` comes from
-the unanimous, non-empty `deviceID` of the selected east-west PFs;
-north-south PFs do not participate.
+Each mode object contains user-overridable `rdmaPrefix` and `netdevPrefix`
+strings. Launch Kit renders one `NicConfigurationTemplate` per source group;
+its `spec.nicSelector.nicType` and `pciAddresses` come from that group's
+east-west PF inventory. North-south PFs do not participate, so a DPU with the
+same device ID as a SuperNIC is excluded by the PCI selector.
 
 ## profile
 

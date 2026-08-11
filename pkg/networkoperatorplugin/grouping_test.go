@@ -238,9 +238,10 @@ func TestSpectrumXGrouping(t *testing.T) {
 			// north-south DPU PCIs. Merge keys on (gpuType, east-west rail count)
 			// — both match — and hasRailPciConflict only looks at east-west PFs, so
 			// no conflict. The merged bucket emits one rail-pool config and one
-			// CIDRPool per bucket. NicInterfaceNameTemplate is ScopePerSource —
-			// always one per source group regardless of whether PCIs agree, so each
-			// node gets its own udev-rule template even when bodies happen to match.
+			// CIDRPool per bucket. NicInterfaceNameTemplate and
+			// NicConfigurationTemplate are ScopePerSource — always one per source
+			// group regardless of whether PCIs agree, so each node gets selectors
+			// built from its own hardware inventory.
 			name:           "same east-west PCIs different north-south: merges fully, per-source name templates",
 			configFile:     "same-ew-different-ns.yaml",
 			planes:         1,
@@ -253,6 +254,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 			wantCidrPools: []string{"60-cidrpool-gpu-model-x.yaml"},
 			wantNicCfgTmpls: []string{
 				"30-nicconfigurationtemplate-gpu-model-x.yaml",
+				"30-nicconfigurationtemplate-group-1.yaml",
 			},
 			wantNicType: "1023",
 		},
@@ -277,6 +279,8 @@ func TestSpectrumXGrouping(t *testing.T) {
 			wantCidrPools: []string{"60-cidrpool-gpu-model-y.yaml"},
 			wantNicCfgTmpls: []string{
 				"30-nicconfigurationtemplate-gpu-model-y.yaml",
+				"30-nicconfigurationtemplate-group-1.yaml",
+				"30-nicconfigurationtemplate-group-2.yaml",
 			},
 			wantNicType: "a2dc",
 		},
@@ -307,6 +311,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 			},
 			wantNicCfgTmpls: []string{
 				"30-nicconfigurationtemplate-gpu-model-y.yaml",
+				"30-nicconfigurationtemplate-group-1.yaml",
 				"30-nicconfigurationtemplate-group-2.yaml",
 			},
 			wantNicType: "a2dc",
@@ -592,9 +597,10 @@ func TestPCIeRoot(t *testing.T) {
 //   - ScopeBucketed (CIDRPool): one CR per bucket, named with bucket id
 //   - ScopeAggregate (DaemonSet): one CR per bucket; nodeAffinity
 //     emits an `In` list of source machine labels
-//   - ScopeSimpleSelect (SpectrumXRailPoolConfig, NicConfigurationTemplate):
+//   - ScopeSimpleSelect (SpectrumXRailPoolConfig):
 //     N CRs per bucket — one per source group
-//   - ScopePerSource (NicInterfaceNameTemplate): N CRs per bucket
+//   - ScopePerSource (NicInterfaceNameTemplate, NicConfigurationTemplate):
+//     N CRs per bucket
 func TestSpectrumXModeBSubsetFilter(t *testing.T) {
 	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
 	cfg, err := config.LoadFullConfig(
@@ -641,6 +647,14 @@ func TestSpectrumXModeBSubsetFilter(t *testing.T) {
 		"25-nicinterfacenametemplate-group-0.yaml",
 		"25-nicinterfacenametemplate-group-1.yaml",
 	}, ninTmpls)
+
+	// NicConfigurationTemplate (PerSource): Mode B was already per-source
+	// before PCI selectors were added, so preserve both source names.
+	nicConfigTmpls := fileNamesMatching(rendered, "30-nicconfigurationtemplate")
+	require.Equal(t, []string{
+		"30-nicconfigurationtemplate-group-0.yaml",
+		"30-nicconfigurationtemplate-group-1.yaml",
+	}, nicConfigTmpls)
 
 	// Example DaemonSet (Aggregate): one CR per bucket, with In selector
 	// listing source machine labels.

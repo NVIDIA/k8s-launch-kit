@@ -13,11 +13,12 @@ All Spectrum-X deployments require:
 - `multirail=true`
 - `spectrumX.enable=true`
 
-Launch Kit derives each generated
-`NicConfigurationTemplate.spec.nicSelector.nicType` from the selected
-east-west PF `deviceID` values. The selector is not configured under
-`spectrumX`; north-south PFs are ignored, and the selected east-west IDs must
-be non-empty and unanimous.
+Launch Kit renders one `NicConfigurationTemplate` per source hardware group and
+derives `spec.nicSelector.nicType` plus `pciAddresses` from the selected
+east-west PF inventory. The selector is not configured under `spectrumX`;
+north-south PFs are ignored, and the east-west IDs must be non-empty and
+unanimous while every east-west PF must have a PCI address. Combining type and
+PCI selectors prevents a same-device-ID DPU from receiving the SuperNIC config.
 
 ## Mode: none
 

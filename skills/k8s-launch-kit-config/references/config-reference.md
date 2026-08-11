@@ -278,9 +278,9 @@ spectrumX:
     netdevPrefix: "eth_r%rail_id%_p%plane_id%"
     rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
 
-# Generated Spectrum-X NicConfigurationTemplate resources derive
-# spec.nicSelector.nicType from the non-empty deviceID shared by every
-# selected east-west PF. North-south PFs are ignored.
+# Generated Spectrum-X NicConfigurationTemplate resources are per source group
+# and derive spec.nicSelector.nicType plus pciAddresses from selected east-west
+# PFs. North-south PFs are ignored, including same-device-ID DPUs.
 
 # ============================================================================
 # Profile Selection

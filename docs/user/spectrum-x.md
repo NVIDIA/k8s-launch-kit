@@ -50,11 +50,19 @@ The platform is read from `clusterConfig[].gpuType`, with `machineType` as a
 fallback. `--for` presets participate in the same resolution before manifests
 are rendered.
 
-The generated `NicConfigurationTemplate` also derives
-`spec.nicSelector.nicType` from the target group's east-west PF device IDs.
-There is no separate `spectrumX.nicType` setting. North-south PFs are ignored,
-and generation requires every selected east-west PF to have the same non-empty
-`deviceID`.
+The generated `NicConfigurationTemplate` derives both
+`spec.nicSelector.nicType` and `spec.nicSelector.pciAddresses` from the target
+source group's east-west PFs. There is no separate `spectrumX.nicType` setting.
+Each source hardware group gets its own template, and the operator matches the
+intersection of NIC type and PCI address. A north-south DPU is therefore not
+selected even when it reports the same device ID as an east-west SuperNIC.
+Generation requires every selected east-west PF to have the same non-empty
+`deviceID` and a non-empty `pciAddress`.
+
+When a previously merged group expands into per-source templates, the first
+source retains the former merged template name. Applying the new manifests
+therefore narrows the existing broad selector in place instead of leaving it
+active as a stale `NicConfigurationTemplate`.
 
 B300 and GB300 support both `swplb` and `hwplb`, so platform type does not
 identify which load-balancing mechanism the fabric uses. l8k defaults to the

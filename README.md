@@ -1067,7 +1067,8 @@ nicConfigurationOperator:
   rdmaPrefix: "rdma_r%rail%"           # RDMA device name template (%rail% substituted per rail)
   netdevPrefix: "eth_r%rail%"          # Network interface name template (%rail% substituted per rail)
 spectrumX:
-  # nicSelector.nicType is derived from the shared east-west PF deviceID.
+  # NicConfigurationTemplate nicType and pciAddresses are derived from the
+  # east-west PF inventory of each source group.
   overlay: none
   singlePlane:
     netdevPrefix: "eth_r%rail_id%"
@@ -1331,7 +1332,7 @@ clusterConfig:
 
 During cluster discovery, the tool automatically identifies BlueField DPU devices (as opposed to SuperNICs or ConnectX NICs) by matching each device's `partNumber` against a known list of DPU product codes in [pkg/networkoperatorplugin/discovery/ns-product-ids](pkg/networkoperatorplugin/discovery/ns-product-ids). Devices matching a DPU product code are classified as **north-south** traffic (management/external), while all other devices are classified as **east-west** traffic (GPU interconnect).
 
-North-south PFs are included in the saved cluster configuration for visibility, but are **automatically filtered out** during template rendering so that only east-west PFs appear in the generated manifests. Each east-west PF is assigned a sequential rail number (rail-0, rail-1, rail-2, ...) used for naming resources like SriovNetworkNodePolicy and IPPool entries.
+North-south PFs are included in the saved cluster configuration for visibility, but are **automatically filtered out** during template rendering so that only east-west PFs appear in the generated manifests. Spectrum-X renders one `NicConfigurationTemplate` per source hardware group and selects the intersection of that group's east-west NIC type and PCI addresses. This prevents a north-south DPU from receiving Spectrum-X settings when it reports the same device ID as an east-west SuperNIC. Each east-west PF is assigned a sequential rail number (rail-0, rail-1, rail-2, ...) used for naming resources like SriovNetworkNodePolicy and IPPool entries.
 
 Example of mixed traffic types in the config:
 ```yaml
