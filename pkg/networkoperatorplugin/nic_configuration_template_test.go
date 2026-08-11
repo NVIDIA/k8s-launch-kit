@@ -139,9 +139,10 @@ func TestSpectrumXNicConfigurationTemplateExcludesSameTypeNorthSouthDevices(t *t
 				var eastWestPCIs []string
 				var northSouthPCIs []string
 				for _, pf := range group.PFs {
-					if pf.Traffic == "east-west" {
+					switch pf.Traffic {
+					case "east-west":
 						eastWestPCIs = append(eastWestPCIs, pf.PciAddress)
-					} else if pf.Traffic == "north-south" {
+					case "north-south":
 						northSouthPCIs = append(northSouthPCIs, pf.PciAddress)
 					}
 				}
