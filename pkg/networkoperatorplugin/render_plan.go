@@ -457,16 +457,7 @@ func renderForScope(
 
 	case ScopePerSource:
 		for i, plan := range plans {
-			for sourceIndex, src := range plan.Sources {
-				// Before NicConfigurationTemplate became PCI-scoped per source,
-				// Mode A rendered one broad template under the merged bucket
-				// name. Reuse that name for the first narrowed source so an
-				// ordinary apply updates the unsafe legacy object in place instead
-				// of leaving it active beside the new per-source templates. Mode B
-				// was already per-source, so its existing names stay unchanged.
-				if kind == "NicConfigurationTemplate" && !plan.ModeB && sourceIndex == 0 {
-					src.Identifier = plan.Merged.Identifier
-				}
+			for _, src := range plan.Sources {
 				renderCfg := withClusterConfig(cfg, []config.ClusterConfig{src}, subnetsAt(planSubnets, i))
 				rendered, err := ProcessTemplate(templatePath, renderCfg, "")
 				if err != nil {

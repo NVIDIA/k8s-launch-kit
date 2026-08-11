@@ -110,16 +110,13 @@ func TestSpectrumXNicConfigurationTemplateExcludesSameTypeNorthSouthDevices(t *t
 			rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
 			require.NoError(t, err)
 			require.Equal(t, []string{
-				"30-nicconfigurationtemplate-gpu-model-x.yaml",
+				"30-nicconfigurationtemplate-group-0.yaml",
 				"30-nicconfigurationtemplate-group-1.yaml",
 			}, fileNamesMatching(rendered, "30-nicconfigurationtemplate"),
 				"a merged hardware bucket must still emit one PCI-scoped template per source group")
 
 			for groupIndex, group := range cfg.ClusterConfig {
 				fileName := fmt.Sprintf("30-nicconfigurationtemplate-group-%d.yaml", groupIndex)
-				if groupIndex == 0 {
-					fileName = "30-nicconfigurationtemplate-gpu-model-x.yaml"
-				}
 				manifest := rendered[fileName]
 				require.NotEmpty(t, manifest)
 

@@ -59,10 +59,12 @@ selected even when it reports the same device ID as an east-west SuperNIC.
 Generation requires every selected east-west PF to have the same non-empty
 `deviceID` and a non-empty `pciAddress`.
 
-When a previously merged group expands into per-source templates, the first
-source retains the former merged template name. Applying the new manifests
-therefore narrows the existing broad selector in place instead of leaving it
-active as a stale `NicConfigurationTemplate`.
+Template names remain source-group based in both full and strict-subset
+renders, so changing `--groups` does not rename retained templates. When
+upgrading from a Launch Kit version that generated one merged, type-only
+template, deploy preflight reports that legacy template as a stray resource.
+Review the report, then use `--overwrite-existing` to delete the broad template
+before applying the new PCI-scoped templates.
 
 B300 and GB300 support both `swplb` and `hwplb`, so platform type does not
 identify which load-balancing mechanism the fabric uses. l8k defaults to the

@@ -253,7 +253,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 			},
 			wantCidrPools: []string{"60-cidrpool-gpu-model-x.yaml"},
 			wantNicCfgTmpls: []string{
-				"30-nicconfigurationtemplate-gpu-model-x.yaml",
+				"30-nicconfigurationtemplate-group-0.yaml",
 				"30-nicconfigurationtemplate-group-1.yaml",
 			},
 			wantNicType: "1023",
@@ -278,7 +278,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 			},
 			wantCidrPools: []string{"60-cidrpool-gpu-model-y.yaml"},
 			wantNicCfgTmpls: []string{
-				"30-nicconfigurationtemplate-gpu-model-y.yaml",
+				"30-nicconfigurationtemplate-group-0.yaml",
 				"30-nicconfigurationtemplate-group-1.yaml",
 				"30-nicconfigurationtemplate-group-2.yaml",
 			},
@@ -310,7 +310,7 @@ func TestSpectrumXGrouping(t *testing.T) {
 				"60-cidrpool-group-2.yaml",
 			},
 			wantNicCfgTmpls: []string{
-				"30-nicconfigurationtemplate-gpu-model-y.yaml",
+				"30-nicconfigurationtemplate-group-0.yaml",
 				"30-nicconfigurationtemplate-group-1.yaml",
 				"30-nicconfigurationtemplate-group-2.yaml",
 			},
@@ -477,7 +477,7 @@ func TestSpectrumXRA23RendersProfileConfigMap(t *testing.T) {
 	require.Contains(t, cm, `docaCCVersion: "example"`)
 	require.NotContains(t, cm, "\r")
 
-	nct := rendered["30-nicconfigurationtemplate-gpu-model-y.yaml"]
+	nct := rendered["30-nicconfigurationtemplate-group-0.yaml"]
 	require.Contains(t, nct, `version: "site-ra23-profile"`)
 }
 
@@ -623,6 +623,9 @@ func TestSpectrumXModeBSubsetFilter(t *testing.T) {
 		},
 	}
 
+	fullRendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadSpectrumXProfile(t), cfg)
+	require.NoError(t, err)
+
 	plugin := &NetworkOperatorPlugin{Groups: []string{"group-0", "group-1"}}
 	rendered, err := plugin.GenerateProfileDeploymentFiles(loadSpectrumXProfile(t), cfg)
 	require.NoError(t, err)
@@ -648,13 +651,23 @@ func TestSpectrumXModeBSubsetFilter(t *testing.T) {
 		"25-nicinterfacenametemplate-group-1.yaml",
 	}, ninTmpls)
 
-	// NicConfigurationTemplate (PerSource): Mode B was already per-source
-	// before PCI selectors were added, so preserve both source names.
+	// NicConfigurationTemplate (PerSource): source-based names are stable
+	// between full Mode A and strict-subset Mode B renders. A retained source
+	// must never be renamed just because the selection mode changed.
 	nicConfigTmpls := fileNamesMatching(rendered, "30-nicconfigurationtemplate")
 	require.Equal(t, []string{
 		"30-nicconfigurationtemplate-group-0.yaml",
 		"30-nicconfigurationtemplate-group-1.yaml",
 	}, nicConfigTmpls)
+	require.Equal(t, []string{
+		"30-nicconfigurationtemplate-group-0.yaml",
+		"30-nicconfigurationtemplate-group-1.yaml",
+		"30-nicconfigurationtemplate-group-2.yaml",
+	}, fileNamesMatching(fullRendered, "30-nicconfigurationtemplate"))
+	for _, fileName := range nicConfigTmpls {
+		require.Contains(t, fullRendered, fileName,
+			"retained NicConfigurationTemplate %s must keep its identity across render modes", fileName)
+	}
 
 	// Example DaemonSet (Aggregate): one CR per bucket, with In selector
 	// listing source machine labels.
