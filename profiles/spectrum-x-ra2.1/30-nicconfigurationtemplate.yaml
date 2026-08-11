@@ -12,6 +12,7 @@ spec:
   {{- end }}
   nicSelector:
     nicType: "{{spectrumXNicType .ClusterConfig}}"
+    pciAddresses: [{{- $first := true }}{{- range $addr := spectrumXPCIAddresses .ClusterConfig }}{{- if not $first }}, {{ end }}{{- $first = false }}"{{$addr}}"{{- end }}]
   template:
     numVfs: 1
     linkType: Ethernet

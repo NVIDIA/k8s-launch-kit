@@ -46,13 +46,14 @@ const (
 	// poolName-equivalent) so companion ScopeBucketed / ScopeAggregate
 	// CRs can reference one stable name. Examples: NicNodePolicy,
 	// SriovNetworkNodePolicy, SriovNetworkPoolConfig,
-	// SpectrumXRailPoolConfig, NicConfigurationTemplate.
+	// SpectrumXRailPoolConfig.
 	ScopeSimpleSelect
 
 	// ScopePerSource: always one CR per source group, regardless of
 	// merge. Used for Kinds whose body depends on machine-specific data
 	// (e.g. PCI addresses) that cannot meaningfully merge across
-	// source machineTypes. Example: NicInterfaceNameTemplate.
+	// source machineTypes. Examples: NicInterfaceNameTemplate,
+	// NicConfigurationTemplate.
 	ScopePerSource
 )
 
@@ -106,15 +107,15 @@ var crScopeByKind = map[string]CRScope{
 	// once per source under Mode B. Shared resources (resourceName,
 	// poolName, etc.) reference the merged bucket identifier so all
 	// per-source CRs register the same kubelet resource.
-	"NicNodePolicy":            ScopeSimpleSelect,
-	"SriovNetworkNodePolicy":   ScopeSimpleSelect,
-	"SriovNetworkPoolConfig":   ScopeSimpleSelect,
-	"SpectrumXRailPoolConfig":  ScopeSimpleSelect,
-	"NicConfigurationTemplate": ScopeSimpleSelect,
+	"NicNodePolicy":           ScopeSimpleSelect,
+	"SriovNetworkNodePolicy":  ScopeSimpleSelect,
+	"SriovNetworkPoolConfig":  ScopeSimpleSelect,
+	"SpectrumXRailPoolConfig": ScopeSimpleSelect,
 
 	// Per-source — body depends on machine-specific data like PCI
 	// addresses; never merged across source groups.
 	"NicInterfaceNameTemplate": ScopePerSource,
+	"NicConfigurationTemplate": ScopePerSource,
 }
 
 // ScopeForKind returns the registered scope for a Kubernetes Kind.

@@ -31,10 +31,11 @@ nodeCapabilities:
 
 ### NIC Configuration
 
-- **nicSelector.nicType**: Derived in each generated
-  `NicConfigurationTemplate` from the device ID shared by the selected
-  east-west PFs. North-south PFs are ignored; missing or mixed east-west
-  device IDs fail generation.
+- **nicSelector.nicType / pciAddresses**: Derived in each per-source
+  `NicConfigurationTemplate` from the selected east-west PFs. The combined
+  selector excludes a north-south DPU even when it has the same device ID as
+  the SuperNIC. Missing or mixed east-west device IDs and missing east-west PCI
+  addresses fail generation.
 - **firmwareVersion**: Spectrum-X firmware version (e.g., `"RA2.3"`)
 - **multiplaneMode**: Multiplane configuration
   - `none`: Single plane
@@ -114,6 +115,8 @@ The profile generates the following Kubernetes Custom Resources:
 4. **NicConfigurationTemplate** (`30-nicconfigurationtemplate.yaml`)
    - Configures Spectrum-X optimized firmware settings. For RA2.3,
      `spectrumXOptimized.version` is the generated profile ConfigMap name.
+   - Rendered once per source hardware group with east-west-only NIC type and
+     PCI-address selectors.
 
 5. **CIDRPool** (`60-cidrpool.yaml`)
    - One topology-derived IPv4 or IPv6 pool per rail (non-swplb) or per

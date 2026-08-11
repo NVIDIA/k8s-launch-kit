@@ -245,11 +245,13 @@ spectrumX:
 | `spectrumX.hwplb` | Prefix block selected by `hwplb`; defaults RDMA to rail-only and NET to rail-plane names. |
 | `spectrumX.swplb` | Prefix block selected by `swplb`; defaults both device types to rail-plane names. |
 
-Spectrum-X `NicConfigurationTemplate.spec.nicSelector.nicType` is not a
-separate configuration input. Launch Kit derives it for each generated group
-from `clusterConfig[].pfs[].deviceID` entries whose `traffic` is `east-west`.
-North-south PFs are ignored; every selected east-west PF must have the same
-non-empty device ID or generation fails.
+Spectrum-X `NicConfigurationTemplate.spec.nicSelector` is not a separate
+configuration input. Launch Kit renders one template per source hardware group
+and derives both `nicType` and `pciAddresses` from `clusterConfig[].pfs[]`
+entries whose `traffic` is `east-west`. The NIC Configuration Operator matches
+the intersection of those fields, so a north-south DPU with the same device ID
+as an east-west SuperNIC is not selected. Every selected east-west PF must have
+the same non-empty device ID and a non-empty PCI address or generation fails.
 
 ## Profile
 

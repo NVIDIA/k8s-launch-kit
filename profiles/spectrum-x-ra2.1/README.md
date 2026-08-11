@@ -61,6 +61,11 @@ Same set as the RA2.2 profile: `none`, `swplb`, `hwplb`.
 | `80-spectrumxrailpoolconfig.yaml`        | SpectrumXRailPoolConfig (v1alpha1) | matches 50-                       |
 | `90-example-daemonset.yaml`              | DaemonSet (example workload) | 1 per group                             |
 
+Each `NicConfigurationTemplate` is rendered per source hardware group and
+selects both the NIC type and PCI addresses derived from east-west PFs. The
+intersection prevents a north-south DPU from receiving Spectrum-X settings
+when it reports the same device ID as an east-west SuperNIC.
+
 `60-cidrpool.yaml` derives complete IPv4 or IPv6 CIDRPools from the topology
 file. IPv4 uses a `/31` per node with gateway index `0`. IPv6 uses the standard
 Spectrum-X `/64` per-node layout with leaf gateway `::2`, gateway index `2`,

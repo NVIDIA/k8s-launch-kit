@@ -134,6 +134,7 @@ var templateFuncs = template.FuncMap{
 		return netdevPrefix
 	},
 	"spectrumXNicType":               spectrumXNicType,
+	"spectrumXPCIAddresses":          spectrumXPCIAddresses,
 	"spectrumXProfileConfigRequired": config.SpectrumXProfileConfigRequired,
 	"spectrumXCIDRPools": func(root any, clusterConfig *config.ClusterConfig) ([]spectrumxaddressing.CIDRPool, error) {
 		var cfg *config.LaunchKitConfig
@@ -226,6 +227,34 @@ func spectrumXNicType(group *config.ClusterConfig) (string, error) {
 		return "", fmt.Errorf("group %q has no east-west PFs", group.Identifier)
 	}
 	return deviceID, nil
+}
+
+// spectrumXPCIAddresses returns the exact east-west PCI inventory used to
+// constrain a Spectrum-X NicConfigurationTemplate. nicType alone cannot
+// distinguish a BlueField DPU from a SuperNIC when both devices report the
+// same PCI device ID, so the generated selector must include both fields.
+func spectrumXPCIAddresses(group *config.ClusterConfig) ([]string, error) {
+	if group == nil {
+		return nil, fmt.Errorf("Spectrum-X PCI selector requires a clusterConfig group")
+	}
+
+	addresses := make([]string, 0, len(group.PFs))
+	seen := make(map[string]struct{}, len(group.PFs))
+	for _, pf := range pfutil.FilterEastWestPFs(group.PFs) {
+		address := strings.ToLower(strings.TrimSpace(pf.PciAddress))
+		if address == "" {
+			return nil, fmt.Errorf("group %q has an east-west PF without a pciAddress", group.Identifier)
+		}
+		if _, exists := seen[address]; exists {
+			continue
+		}
+		seen[address] = struct{}{}
+		addresses = append(addresses, address)
+	}
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("group %q has no east-west PFs", group.Identifier)
+	}
+	return addresses, nil
 }
 
 func secondaryNetworkMetaPlugins(profile *config.Profile) string {

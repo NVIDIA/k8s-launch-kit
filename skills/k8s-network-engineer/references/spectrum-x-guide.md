@@ -139,7 +139,7 @@ The Spectrum-X profile generates these Kubernetes Custom Resources:
 | Order | CRD                        | File                              | Purpose                                       |
 |-------|----------------------------|-----------------------------------|-----------------------------------------------|
 | 1     | NicClusterPolicy           | 10-nicclusterpolicy.yaml          | Network Operator, NV-IPAM, Spectrum-X Operator|
-| 2     | NicConfigurationTemplate   | 30-nicconfigurationtemplate.yaml  | Spectrum-X firmware settings per NIC type      |
+| 2     | NicConfigurationTemplate   | 30-nicconfigurationtemplate.yaml  | Per-source Spectrum-X settings for east-west NIC PCIs |
 | 3     | NICInterfaceNameTemplate   | 35-nicinterfacenametemplate.yaml  | Interface naming for multi-rail topology       |
 | 4     | SriovNetworkPoolConfig     | 40-sriovnetworkpoolconfig.yaml    | RDMA mode and OVS hardware offload per rail    |
 | 5     | SriovNetworkNodePolicy     | 50-sriovnetworknodepolicy.yaml    | SR-IOV VF policies per rail (per plane for swplb)|
