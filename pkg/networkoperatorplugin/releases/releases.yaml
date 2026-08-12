@@ -24,7 +24,7 @@ releases:
       operatorRepository: nvcr.io/nvidia/cloud-native
       helmRepoURL: https://helm.ngc.nvidia.com/nvidia
     docaDriver:
-      version: doca3.3.0-26.01-1.0.0.0-6
+      version: doca3.3.0-26.01-1.0.0.0-0
     validation:
       image: nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.2.3-runtime-host
   "26.4":
