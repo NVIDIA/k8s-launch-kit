@@ -49,7 +49,7 @@ to that source file; embedded `--for` generation does not write a config.
 | `--for` | — | preset directory name | Skip discovery: synthesize `clusterConfig` from a topology preset. Requires `--node-selector`. List options with `l8k preset list`. |
 | `--node-selector` | Required with `--for` | `key=val,key2=val2` | Identifies which nodes the synthesized clusterConfig targets at apply time. |
 
-*Not required when `--spectrum-x` is used.
+**Note:** `--fabric` and `--deployment-type` are not required when `--spectrum-x` is used (it implies `ethernet` fabric and `sriov` deployment).
 
 ## Examples
 
