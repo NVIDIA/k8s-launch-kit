@@ -1,8 +1,8 @@
-# Spectrum-X Multi-Rail Profile
+# Spectrum-X Multi-Rail Profile (RA2.2, Network Operator 26.4)
 
 ## Overview
 
-The Spectrum-X profile provides optimized multi-rail networking with OVS hardware offload, DOCA acceleration, and advanced NIC firmware configuration specifically designed for AI workloads.
+The Spectrum-X RA2.2 profile provides optimized multi-rail networking with OVS hardware offload, DOCA acceleration, and advanced NIC firmware configuration specifically designed for AI workloads.
 
 ## Features
 
@@ -174,7 +174,7 @@ profile:
 ### Prerequisites
 
 1. Kubernetes cluster with SR-IOV capable nodes
-2. NVIDIA Network Operator v26.1.0 or later
+2. NVIDIA Network Operator v26.4.0
 3. ConnectX-8, ConnectX-9, or BlueField-3 SuperNIC adapters
 4. Firmware compatible with Spectrum-X RA2.2
 
@@ -189,7 +189,7 @@ helm repo update
 helm install network-operator nvidia/network-operator \
   --namespace nvidia-network-operator \
   --create-namespace \
-  --version v26.1.0 \
+  --version v26.4.0 \
   -f myValues.yaml \
   --wait
 ```
