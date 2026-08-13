@@ -225,10 +225,10 @@ kubectl apply -f ./output/network-operator/
 
 ## Testing
 
-Deploy the test pod to verify the configuration:
+Deploy the example DaemonSet to verify the configuration:
 
 ```bash
-kubectl apply -f 90-pod.yaml
+kubectl apply -f ./output/network-operator/90-example-daemonset.yaml
 ```
 
 Check the pod has access to all rails:
