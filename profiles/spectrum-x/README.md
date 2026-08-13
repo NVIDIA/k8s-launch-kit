@@ -242,16 +242,22 @@ kubectl apply -f ./output/network-operator/
 
 ## Testing
 
-Deploy the test pod to verify the configuration:
+Deploy the example DaemonSet to verify the configuration:
 
 ```bash
-kubectl apply -f 90-pod.yaml
+kubectl apply -f ./output/network-operator/90-example-daemonset-<identifier>.yaml
 ```
 
-Check the pod has access to all rails:
+Wait for the DaemonSet to be ready, then run a command in one of its pods.
+Because Kubernetes object names are bounded to 63 characters, the DaemonSet
+name inside the manifest may differ from the filename identifier when the
+group identifier is long. Extract the actual name from the rendered manifest
+(replace `<identifier>` with the group identifier from your generated filename):
 
 ```bash
-kubectl exec -it spectrum-x-multirail-test-pod -- sh -c "ip addr show && rdma link"
+DS_NAME=$(sed -n 's/^  name: //p' ./output/network-operator/90-example-daemonset-<identifier>.yaml | head -n1)
+kubectl rollout status daemonset/$DS_NAME
+kubectl exec -it daemonset/$DS_NAME -- sh -c "ip addr show && rdma link"
 ```
 
 ## Multi-Rail Topology Examples
