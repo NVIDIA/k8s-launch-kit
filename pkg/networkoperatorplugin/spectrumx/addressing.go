@@ -419,6 +419,9 @@ func ipv4HostLeafMiddleOctets(spcx *config.ProfileSpectrumX, plane, rail, pod, s
 		if su < 0 || su > 63 {
 			return 0, 0, fmt.Errorf("su %d exceeds the supported 6-bit SU field", su)
 		}
+		if pod != 0 {
+			return 0, 0, fmt.Errorf("pod %d must be zero for 2-tier IPv4 allocation", pod)
+		}
 		if planeAware {
 			if plane < 0 || plane > 3 {
 				return 0, 0, fmt.Errorf("plane %d exceeds the supported 2-bit plane field", plane)
