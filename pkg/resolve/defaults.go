@@ -81,7 +81,9 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 	cfgHasSpectrumX := cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable
 
 	// --fabric ----------------------------------------------------------
-	if cfg.Profile.Fabric == "" && opts.Fabric == "" {
+	// Spectrum-X forces ethernet fabric; skip hardware linkType default
+	// when active so the Spectrum-X branch can default it to ethernet.
+	if cfg.Profile.Fabric == "" && opts.Fabric == "" && !opts.SpectrumX && !cfgHasSpectrumX {
 		fabric, ok, reason := dominantLinkType(cfg.ClusterConfig)
 		log.Log.V(1).Info("HW default: --fabric",
 			"current", cfg.Profile.Fabric, "cliValue", opts.Fabric,
