@@ -568,12 +568,12 @@ embedded config used by `--for` when no file is selected is not written.
 
 ### Generate Deployment Files for a Specific Node Group
 
-In heterogeneous clusters, discovery produces multiple node groups. Use `--group` to generate manifests for a single group:
+In heterogeneous clusters, discovery produces multiple node groups. Use `--groups` to generate manifests for a single group:
 
 ```bash
 l8k generate --user-config ./config.yaml \
     --fabric infiniband --deployment-type sriov --multirail \
-    --group group-0 \
+    --groups group-0 \
     --save-deployment-files ./deployments
 ```
 
