@@ -18,7 +18,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -69,6 +68,7 @@ var schemaCmd = &cobra.Command{
 	Use:   "schema",
 	Short: "Print tool capabilities as JSON (for AI agents and automation)",
 	Long:  `Output a machine-readable JSON description of l8k's capabilities, flags, and exit codes. Designed for AI agents to programmatically discover what this tool can do.`,
+	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		s := schema{
 			Version:     Version,
@@ -281,8 +281,12 @@ var schemaCmd = &cobra.Command{
 			},
 		}
 		annotateSchemaFlagTargets(&s)
-		data, _ := json.MarshalIndent(s, "", "  ")
-		fmt.Println(string(data))
+		data, err := json.MarshalIndent(s, "", "  ")
+		if err != nil {
+			cmd.PrintErrln("failed to marshal schema:", err)
+			return
+		}
+		cmd.Println(string(data))
 	},
 }
 
