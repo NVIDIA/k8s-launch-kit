@@ -234,7 +234,7 @@ sriov-network-operator:
 
 ```bash
 # Generate deployment files
-l8k --user-config config.yaml --save-deployment-files ./output
+l8k generate --user-config config.yaml --save-deployment-files ./output
 
 # Apply manifests
 kubectl apply -f ./output/network-operator/
