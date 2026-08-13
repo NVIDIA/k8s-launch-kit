@@ -84,6 +84,7 @@ Optionally deploy the generated manifests with --deploy.`,
     --save-deployment-files ./output`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := options.Options{
+			LaunchKitVersion:         Version,
 			ConfigDir:                configDir,
 			UserConfig:               userConfig,
 			Fabric:                   fabric,

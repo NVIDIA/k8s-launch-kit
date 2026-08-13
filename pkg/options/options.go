@@ -20,6 +20,10 @@ import "time"
 
 // Options holds all the configuration parameters for the application
 type Options struct {
+	// LaunchKitVersion is the version reported by `l8k version`. The CLI
+	// passes it through so generated resources can record their producer.
+	LaunchKitVersion string
+
 	// Logging
 	LogLevel string
 	LogFile  string // Path to log file (optional)

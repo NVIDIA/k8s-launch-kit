@@ -145,6 +145,7 @@ func InstallOrUpgrade(
 	restConfig *rest.Config,
 	cfg *config.NetworkOperatorConfig,
 	valuesYAML []byte,
+	launchKitVersion string,
 	overwriteExisting bool,
 	timeout time.Duration,
 	dryRun bool,
@@ -225,7 +226,7 @@ func InstallOrUpgrade(
 		return chrt, nil
 	}
 
-	return installOrUpgradeWithLoader(ctx, actionCfg, loadChart, generated, chartVersion, namespace, overwriteExisting, timeout, dryRun)
+	return installOrUpgradeWithLoader(ctx, actionCfg, loadChart, generated, chartVersion, namespace, launchKitVersion, overwriteExisting, timeout, dryRun)
 }
 
 // installOrUpgradeWithLoader is the test seam for InstallOrUpgrade: it owns
@@ -245,6 +246,7 @@ func installOrUpgradeWithLoader(
 	loadChart func() (*chart.Chart, error),
 	generated map[string]interface{},
 	chartVersion, namespace string,
+	launchKitVersion string,
 	overwriteExisting bool,
 	timeout time.Duration,
 	dryRun bool,
@@ -278,7 +280,7 @@ func installOrUpgradeWithLoader(
 			if lerr != nil {
 				return lerr
 			}
-			return runUpgrade(ctx, actionCfg, chrt, generated, chartVersion, namespace, timeout, dryRun)
+			return runUpgrade(ctx, actionCfg, chrt, generated, chartVersion, namespace, launchKitVersion, timeout, dryRun)
 		}
 
 		// Values gate — same diff logic the preflight values check
@@ -297,14 +299,14 @@ func installOrUpgradeWithLoader(
 		if lerr != nil {
 			return lerr
 		}
-		return runUpgrade(ctx, actionCfg, chrt, generated, chartVersion, namespace, timeout, dryRun)
+		return runUpgrade(ctx, actionCfg, chrt, generated, chartVersion, namespace, launchKitVersion, timeout, dryRun)
 
 	case errors.Is(getErr, driver.ErrReleaseNotFound):
 		chrt, lerr := loadChart()
 		if lerr != nil {
 			return lerr
 		}
-		return runInstall(ctx, actionCfg, chrt, generated, chartVersion, namespace, timeout, dryRun)
+		return runInstall(ctx, actionCfg, chrt, generated, chartVersion, namespace, launchKitVersion, timeout, dryRun)
 
 	default:
 		return pkgerrors.NewClusterError(
@@ -321,6 +323,7 @@ func runInstall(
 	chrt *chart.Chart,
 	values map[string]interface{},
 	chartVersion, namespace string,
+	launchKitVersion string,
 	timeout time.Duration,
 	dryRun bool,
 ) error {
@@ -332,6 +335,7 @@ func runInstall(
 	inst.Timeout = timeout
 	inst.DryRun = dryRun
 	inst.Version = chartVersion
+	inst.PostRenderer = annotationPostRenderer{version: launchKitVersion}
 
 	if _, err := inst.RunWithContext(ctx, chrt, values); err != nil {
 		return pkgerrors.NewDeploymentError(
@@ -349,6 +353,7 @@ func runUpgrade(
 	chrt *chart.Chart,
 	values map[string]interface{},
 	chartVersion, namespace string,
+	launchKitVersion string,
 	timeout time.Duration,
 	dryRun bool,
 ) error {
@@ -359,6 +364,7 @@ func runUpgrade(
 	upg.Timeout = timeout
 	upg.DryRun = dryRun
 	upg.Version = chartVersion
+	upg.PostRenderer = annotationPostRenderer{version: launchKitVersion}
 
 	if _, err := upg.RunWithContext(ctx, helmclient.DefaultReleaseName, chrt, values); err != nil {
 		return pkgerrors.NewDeploymentError(
