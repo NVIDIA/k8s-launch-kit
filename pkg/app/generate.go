@@ -66,10 +66,10 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		}
 	}
 
-	profilesConfiguredInCmd := true
+	allProfilesConfiguredInCmd := true
 	for _, plugin := range l.plugins {
 		if !plugin.ProfileConfiguredInCmd(l.options) {
-			profilesConfiguredInCmd = false
+			allProfilesConfiguredInCmd = false
 			break
 		}
 	}
@@ -134,7 +134,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	// is unverified, defaults skip). Deployment + Multirail always
 	// default.
 	if fullConfig.Profile == nil || fullConfig.Profile.Fabric == "" {
-		if !profilesConfiguredInCmd && len(fullConfig.ClusterConfig) == 0 {
+		if !allProfilesConfiguredInCmd && len(fullConfig.ClusterConfig) == 0 {
 			l.ui.Info("Profiles not configured, skipping deployment file generation")
 			l.logger.Info("Profiles are not configured for every plugin, skipping deployment files generation")
 			return nil
