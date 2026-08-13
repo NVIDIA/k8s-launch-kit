@@ -279,19 +279,19 @@ clusterConfig:
       - worker-0
       - worker-1
     pfs:
-      - deviceID: 1023
+      - deviceID: "1023"
         pciAddress: "0000:05:00.0"
         rdmaDevice: ""
         networkInterface: ""
         traffic: east-west
         rail: 0
-      - deviceID: 1023
+      - deviceID: "1023"
         pciAddress: "0000:75:00.0"
         rdmaDevice: ""
         networkInterface: ""
         traffic: east-west
         rail: 1
-      - deviceID: 1023
+      - deviceID: "1023"
         pciAddress: "0000:6a:00.0"
         rdmaDevice: ""
         networkInterface: ""
