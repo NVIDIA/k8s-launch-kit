@@ -1370,7 +1370,7 @@ Kubernetes size limits without making similar hardware identities collide.
 Example of discovered hardware types in the config:
 ```yaml
 clusterConfig:
-- identifier: group-0
+- identifier: thinksystem-sr680a-v3-nvidia-h100-nvl
   machineType: ThinkSystem-SR680a-V3
   gpuType: NVIDIA-H100-NVL
   workerNodes:
