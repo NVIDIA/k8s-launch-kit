@@ -419,6 +419,7 @@ func TestNonSpectrumXProfilesRenderMetaPlugins(t *testing.T) {
 				metaPlugins := specString(t, doc, "metaPlugins")
 				require.Contains(t, metaPlugins, `"type": "tuning"`)
 				require.Contains(t, metaPlugins, `"net.ipv4.conf.all.arp_ignore": "1"`)
+				require.Contains(t, metaPlugins, `"net.ipv4.conf.IFNAME.arp_ignore": "1"`)
 				require.Contains(t, metaPlugins, `"net.ipv4.conf.IFNAME.arp_announce": "2"`)
 				require.Contains(t, metaPlugins, `"type": "sbr"`)
 				require.Less(t,
