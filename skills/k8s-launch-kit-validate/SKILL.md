@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-validate
-version: 1.0.4
+version: 1.0.5
 description: "Use this skill when the user wants to verify that an NVIDIA networking deployment matches the configuration that produced it. Activate for: 'is my deployment correct', 'are all the manifests applied', 'does the network operator version match', 'verify deployment', 'check cluster state against config', or any question about whether the cluster reflects what l8k generated. Wraps the `l8k validate` subcommand."
 metadata:
   requires:
@@ -90,8 +90,10 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 - `strict`: full matrix. Cross-rail gates by `profile.routing`: `source-based`
   must succeed, `destination-based` must stay isolated.
 
-All checks are source-bound. ICMP uses `ping -I <src-iface>`, `rping` uses
-`-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`. GPUDirect
+All checks are source-bound. ICMP always uses `ping -I <src-iface>` for
+same-rail and cross-rail probes in every validation mode; it never binds only
+the source IP. `rping` uses `-I <src-ip>`, and `ib_write_bw` uses
+`--bind_source_ip <src-ip>`. GPUDirect
 adds `--use_cuda=<endpoint-index> --use_cuda_dmabuf` independently on the
 client and server. Treat missing or ambiguous `connectedGPU` topology as a
 failure; never substitute GPU 0. Pull Secrets come from
