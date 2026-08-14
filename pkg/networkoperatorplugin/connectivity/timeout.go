@@ -23,6 +23,7 @@ const (
 	automaticSafetyMinimum       = 30 * time.Second
 	matrixCleanupTimeout         = 30 * time.Second
 	rdmaServerCleanupTimeout     = 3 * time.Second
+	rdmaServerLogTimeout         = 5 * time.Second
 	routeCheckTimeout            = 10 * time.Second
 	nonRequiredCommandTimeout    = 5 * time.Second
 	icmpCommandTimeout           = 5 * time.Second
@@ -45,10 +46,12 @@ func (b timeoutBudget) executionTimeout() time.Duration {
 }
 
 // automaticTimeoutBudget mirrors the serial execution graph in RunMatrix.
-// Route probes run before each selected RDMA family, RDMA commands are grouped
-// by ordered pod pair, and ICMP tests run one-by-one. Keeping the calculation
-// beside the command timeout constants makes the default deadline grow with
-// the actual plan instead of relying on a fixed cluster-size assumption.
+// Route probes are budgeted per selected family as a conservative upper bound;
+// RunMatrix reuses identical route results across families. RDMA commands are
+// grouped by ordered pod pair, and ICMP tests run one-by-one. Keeping the
+// calculation beside the command timeout constants makes the default deadline
+// grow with the actual plan instead of relying on a fixed cluster-size
+// assumption.
 func automaticTimeoutBudget(plan MatrixPlan, checks []Check) timeoutBudget {
 	checks = normalizeChecks(checks)
 	budget := timeoutBudget{

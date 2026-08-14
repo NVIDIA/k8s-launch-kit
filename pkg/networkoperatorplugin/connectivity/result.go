@@ -49,7 +49,10 @@ type PingResult struct {
 	MinBandwidthGbps float64 // ib_write_bw families only; 0 when no threshold was applied
 	Stdout           string
 	Stderr           string
-	Err              error `json:"-"`
+	// ServerLog is populated for failed RDMA batch cells before the
+	// temporary in-pod server log is removed during cleanup.
+	ServerLog string `json:"ServerLog,omitempty"`
+	Err       error  `json:"-"`
 }
 
 func (r PingResult) MarshalJSON() ([]byte, error) {

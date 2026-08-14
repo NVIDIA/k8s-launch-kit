@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-shared
-version: 1.0.1
+version: 1.0.2
 description: "k8s-launch-kit (l8k) CLI: Shared patterns for binary location, global flags, output formatting, exit codes, and error handling. Read this before using any other k8s-launch-kit skill."
 ---
 
@@ -85,6 +85,7 @@ package ownership, artifacts, or external integration boundaries.
 | `--output <FORMAT>` | Output format: `text` (default), `json` |
 | `--yes` / `-y` | Auto-confirm all prompts (root command only — **not available on subcommands**; `--output json` auto-confirms) |
 | `--quiet` / `-q` | Suppress informational output (errors still shown) |
+| `--log-level <LEVEL>` | Enable logs at `trace`, `debug`, `info`, `warn`, or `error`. Debug shows structured progress; trace also shows bounded command output. |
 | `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`). **No-op for `l8k discover`** — discover always bootstraps into `nvidia-k8s-launch-kit`; the flag still applies to `l8k generate` / `l8k deploy` / `l8k clean` / `l8k validate`. |
 | `--network-namespaces <NS,...>` | Comma-separated namespaces for the secondary-network CRs + example test DaemonSets; one copy rendered per namespace (shared resources like IPPools/NodePolicies are NOT duplicated). Default: `default` |
 | `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |

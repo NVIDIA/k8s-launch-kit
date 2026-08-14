@@ -101,19 +101,69 @@ func TestParseIbWriteBwOutput(t *testing.T) {
 
 func TestParseIbWriteBwBatchResults(t *testing.T) {
 	stdout := ibWriteBwBatchResultMarker + ` 0 0
+` + ibWriteBwBatchStdoutMarker + ` 0
 banner
  65536      5000             194.39             193.21		   0.368459
+` + ibWriteBwBatchStderrMarker + ` 0
+harmless warning
 ` + ibWriteBwBatchEndMarker + ` 0
 ` + ibWriteBwBatchResultMarker + ` 1 124
+` + ibWriteBwBatchStdoutMarker + ` 1
 timeout text
+` + ibWriteBwBatchStderrMarker + ` 1
+connection timed out
 ` + ibWriteBwBatchEndMarker + ` 1
 `
 	got := parseIbWriteBwBatchResults(stdout)
 	require.Len(t, got, 2)
 	assert.Equal(t, 0, got[0].rc)
 	assert.Contains(t, got[0].stdout, "194.39")
+	assert.Equal(t, "harmless warning", got[0].stderr)
 	assert.Equal(t, 124, got[1].rc)
 	assert.Contains(t, got[1].stdout, "timeout text")
+	assert.Equal(t, "connection timed out", got[1].stderr)
+}
+
+func TestParseRPingBatchResultsKeepsPerCellOutput(t *testing.T) {
+	output := rpingBatchResultMarker + ` 0 0
+` + rpingBatchStdoutMarker + ` 0
+ping data verified
+` + rpingBatchStderrMarker + ` 0
+` + rpingBatchEndMarker + ` 0
+` + rpingBatchResultMarker + ` 1 1
+` + rpingBatchStdoutMarker + ` 1
+client output
+` + rpingBatchStderrMarker + ` 1
+RDMA_CM_EVENT_REJECTED
+` + rpingBatchEndMarker + ` 1
+`
+
+	got := parseRPingBatchResults(output)
+
+	require.Len(t, got, 2)
+	assert.Equal(t, 0, got[0].rc)
+	assert.Equal(t, "ping data verified", got[0].stdout)
+	assert.Empty(t, got[0].stderr)
+	assert.Equal(t, 1, got[1].rc)
+	assert.Equal(t, "client output", got[1].stdout)
+	assert.Equal(t, "RDMA_CM_EVENT_REJECTED", got[1].stderr)
+}
+
+func TestParseRDMAServerLogs(t *testing.T) {
+	output := rdmaServerLogMarker + ` 1
+server listening
+connection rejected
+` + rdmaServerLogEndMarker + ` 1
+` + rdmaServerLogMarker + ` 3
+empty peer response
+` + rdmaServerLogEndMarker + ` 3
+`
+
+	got := parseRDMAServerLogs(output)
+
+	require.Len(t, got, 2)
+	assert.Contains(t, got[1], "connection rejected")
+	assert.Equal(t, "empty peer response", got[3])
 }
 
 func TestRDMABatchClientCommandsDoNotRequireIPTooling(t *testing.T) {
@@ -131,11 +181,15 @@ func TestRDMABatchClientCommandsDoNotRequireIPTooling(t *testing.T) {
 	assert.NotContains(t, rpingCmd, "ipcmd")
 	assert.NotContains(t, rpingCmd, "route get")
 	assert.Contains(t, rpingCmd, `-p 9999`)
+	assert.Contains(t, rpingCmd, rpingBatchStdoutMarker+" 0")
+	assert.Contains(t, rpingCmd, rpingBatchStderrMarker+" 0")
 
 	ibCmd := ibWriteBwBatchClientCommand([]PingTest{test}, 65536)
 	assert.NotContains(t, ibCmd, "ipcmd")
 	assert.NotContains(t, ibCmd, "route get")
 	assert.Contains(t, ibCmd, ibWriteBwBatchResultMarker+" 0 $rc")
+	assert.Contains(t, ibCmd, ibWriteBwBatchStdoutMarker+" 0")
+	assert.Contains(t, ibCmd, ibWriteBwBatchStderrMarker+" 0")
 }
 
 func TestGPUDirectDMABufCommandsUseEndpointGPUIndices(t *testing.T) {

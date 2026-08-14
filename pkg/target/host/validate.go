@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"k8s.io/client-go/rest"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -64,6 +65,7 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 		reportClient      ctrlclient.Client
 		reportRestConfig  *rest.Config
 		reportManifestDir string
+		reportConfig      *config.LaunchKitConfig
 		cfgPath           string
 		operatorNamespace = defaultOperatorNamespace
 	)
@@ -87,7 +89,7 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 		writeHTMLReportIfWanted(context.Background(), reportClient, reportRestConfig,
 			reportManifestDir, request.DeploymentFiles,
 			operatorNamespace, versionCheck, componentCheck, helmValuesCheck, strayCheck, results, &matrix, &warnings,
-			presetResults, overall, cfgPath, request.OutputFormat,
+			presetResults, overall, reportConfig, request.OutputFormat,
 			request.ReportPath, request.Version, request.Kubeconfig)
 		return err
 	}
@@ -145,6 +147,7 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 		log.Log.V(1).Info("user-config not loaded; version check will be skipped",
 			"path", cfgPath, "error", cfgErr.Error())
 	} else if cfg != nil {
+		reportConfig = cfg
 		if cfg.NetworkOperator != nil && cfg.NetworkOperator.Namespace != "" {
 			operatorNamespace = cfg.NetworkOperator.Namespace
 		}
@@ -204,7 +207,10 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 	ctx := operationContext
 
 	var vcErr error
+	checkStarted := time.Now()
 	versionCheck, vcErr = networkoperatorplugin.CheckHelmReleaseVersion(ctx, k8sClient, operatorNamespace, selectedRelease)
+	log.Log.V(1).Info("validation check completed", "check", "helm release version",
+		"success", vcErr == nil, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
 	if vcErr != nil {
 		return exitWithReport(apperrors.NewClusterError(
 			"version check failed",
@@ -220,7 +226,10 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 	// already covers the dominant "wrong operator version"
 	// case. The per-component breakdown is most useful when
 	// catching out-of-band kubectl edits or partial upgrades.
+	checkStarted = time.Now()
 	ccCheck, ccErr := networkoperatorplugin.CheckComponentVersions(ctx, k8sClient, operatorNamespace, selectedRelease)
+	log.Log.V(1).Info("validation check completed", "check", "component versions",
+		"success", ccErr == nil, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
 	if ccErr != nil {
 		log.Log.V(1).Info("component-version check failed", "error", ccErr.Error())
 	}
@@ -236,7 +245,10 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 	if b, err := os.ReadFile(valuesPath); err == nil {
 		generatedValuesYAML = b
 	}
+	checkStarted = time.Now()
 	hvCheck, hvErr := networkoperatorplugin.CheckHelmReleaseValues(ctx, restConfig, operatorNamespace, generatedValuesYAML)
+	log.Log.V(1).Info("validation check completed", "check", "Helm values drift",
+		"success", hvErr == nil, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
 	if hvErr != nil {
 		log.Log.V(1).Info("helm-values check failed", "error", hvErr.Error())
 	}
@@ -247,6 +259,7 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 	// NOT render. Surfaces as a soft fail — the verdict picks it up,
 	// the HTML report lists every offender, and the user can sweep
 	// them with `l8k deploy --overwrite-existing`.
+	checkStarted = time.Now()
 	genRefs, scanErr := preflight.ScanGeneratedManifests(manifestDir)
 	if scanErr != nil {
 		log.Log.V(1).Info("stray-CR scan failed", "error", scanErr.Error())
@@ -256,10 +269,17 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 		OperatorNamespace:  operatorNamespace,
 		GeneratedManifests: genRefs,
 	})
+	log.Log.V(1).Info("validation check completed", "check", "stray custom resources",
+		"success", scanErr == nil, "mismatches", len(stray.Mismatches),
+		"duration", time.Since(checkStarted).Round(time.Millisecond).String())
 	strayCheck = &stray
 
 	var valErr error
+	checkStarted = time.Now()
 	results, valErr = networkoperatorplugin.ValidateManifests(ctx, k8sClient, manifestDir)
+	log.Log.V(1).Info("validation check completed", "check", "manifest readiness",
+		"success", valErr == nil, "objects", len(results),
+		"duration", time.Since(checkStarted).Round(time.Millisecond).String())
 	if valErr != nil {
 		return exitWithReport(apperrors.NewGeneralError(
 			"manifest validation failed",
@@ -290,7 +310,7 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 		emitVerdictBanner(overall, request.OutputFormat)
 		writeHTMLReportIfWanted(ctx, k8sClient, restConfig, manifestDir, request.DeploymentFiles,
 			operatorNamespace, versionCheck, componentCheck, helmValuesCheck, strayCheck, results, &matrix, &warnings,
-			presetResults, overall, cfgPath, request.OutputFormat,
+			presetResults, overall, reportConfig, request.OutputFormat,
 			request.ReportPath, request.Version, request.Kubeconfig)
 	}
 
@@ -343,7 +363,7 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 			return exitWithReport(apperrors.NewClusterError(
 				"connectivity matrix failed",
 				err,
-				"See log output for the failing step; re-run with --keep to inspect the test DaemonSet",
+				"Re-run with --log-level trace for bounded command output; add --keep to inspect the test DaemonSet",
 			))
 		}
 		if request.OutputFormat == "json" {

@@ -129,6 +129,31 @@ maintenance or CI window. Test DaemonSet and RDMA-process cleanup use short,
 independent best-effort contexts so cleanup is still attempted after either an
 automatic or user-supplied deadline expires.
 
+## Debug and Trace Logs
+
+Use debug logging for structured progress without command output:
+
+```bash
+l8k validate --log-level debug
+```
+
+Debug includes static-check durations, the complete endpoint inventory,
+matrix and timeout planning, source-route executions and cache hits, stage and
+RDMA-batch progress, pass/fail counts, cleanup, report writes, elapsed time,
+and remaining time.
+
+Use trace when a connectivity failure needs command evidence:
+
+```bash
+l8k validate --log-level trace --keep
+```
+
+Trace adds bounded route and ICMP commands, RDMA batch commands, per-test
+client stdout/stderr, and RDMA server logs. Failed RDMA server logs are
+collected before the temporary files and test workload are removed. Each log
+field is capped to keep command output bounded. Add `--keep` only when the
+validation pods must remain available for follow-up inspection.
+
 Disable only the connectivity stage:
 
 ```bash

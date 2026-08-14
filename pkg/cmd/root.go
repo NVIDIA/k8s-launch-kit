@@ -282,7 +282,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview what would be deployed without applying changes to the cluster")
 
 	// Logging flags
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "Enable logging at specified level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "Enable logging at specified level (trace, debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "Write logs to file instead of stderr")
 
 	// Group the flags into labelled sections in --help output. The phase

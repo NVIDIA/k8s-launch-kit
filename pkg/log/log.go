@@ -19,6 +19,7 @@ package log
 import (
 	"flag"
 	"os"
+	"strings"
 
 	"github.com/go-logr/zapr"
 	zzap "go.uber.org/zap"
@@ -31,6 +32,10 @@ import (
 
 const (
 	DebugLevel = int(zapcore.DebugLevel)
+	// TraceLevel is two verbosity steps below info. logr maps V(1) to zap's
+	// debug level (-1) and V(2) to -2, so a dedicated trace level is needed
+	// to make V(2) logs selectable from the CLI.
+	TraceLevel = zapcore.Level(-2)
 )
 
 var (
@@ -101,7 +106,7 @@ func InitLog() {
 			MessageKey:     "msg",
 			StacktraceKey:  "stacktrace",
 			LineEnding:     zapcore.DefaultLineEnding,
-			EncodeLevel:    zapcore.CapitalLevelEncoder,
+			EncodeLevel:    encodeLevel,
 			EncodeTime:     zapcore.RFC3339NanoTimeEncoder,
 			EncodeDuration: zapcore.StringDurationEncoder,
 			EncodeCaller:   zapcore.ShortCallerEncoder,
@@ -124,7 +129,7 @@ func InitLog() {
 		MessageKey:     "msg",
 		StacktraceKey:  "stacktrace",
 		LineEnding:     zapcore.DefaultLineEnding,
-		EncodeLevel:    zapcore.CapitalLevelEncoder,
+		EncodeLevel:    encodeLevel,
 		EncodeTime:     zapcore.RFC3339NanoTimeEncoder,
 		EncodeDuration: zapcore.StringDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder,
@@ -138,7 +143,7 @@ func InitLog() {
 
 // SetLogLevel sets current logging level to the provided lvl
 func SetLogLevel(lvl string) error {
-	newLevel, err := zapcore.ParseLevel(lvl)
+	newLevel, err := parseLevel(lvl)
 	if err != nil {
 		return err
 	}
@@ -146,7 +151,7 @@ func SetLogLevel(lvl string) error {
 	currLevel := Options.Level.(zzap.AtomicLevel).Level()
 
 	if newLevel != currLevel {
-		log.Log.Info("set log verbose level", "newLevel", newLevel.String(), "currentLevel", currLevel.String())
+		log.Log.Info("set log verbose level", "newLevel", levelName(newLevel), "currentLevel", levelName(currLevel))
 		Options.Level.(zzap.AtomicLevel).SetLevel(newLevel)
 	}
 	return nil
@@ -154,7 +159,29 @@ func SetLogLevel(lvl string) error {
 
 // GetLogLevel returns the current logging level
 func GetLogLevel() string {
-	return Options.Level.(zzap.AtomicLevel).Level().String()
+	return levelName(Options.Level.(zzap.AtomicLevel).Level())
+}
+
+func parseLevel(level string) (zapcore.Level, error) {
+	if strings.EqualFold(strings.TrimSpace(level), "trace") {
+		return TraceLevel, nil
+	}
+	return zapcore.ParseLevel(level)
+}
+
+func levelName(level zapcore.Level) string {
+	if level == TraceLevel {
+		return "trace"
+	}
+	return level.String()
+}
+
+func encodeLevel(level zapcore.Level, encoder zapcore.PrimitiveArrayEncoder) {
+	if level == TraceLevel {
+		encoder.AppendString("TRACE")
+		return
+	}
+	zapcore.CapitalLevelEncoder(level, encoder)
 }
 
 // routeNoiseToControllerRuntimeLogger silences two upstream sources of
@@ -164,7 +191,7 @@ func GetLogLevel() string {
 //     deprecations like "node-role.kubernetes.io/master is deprecated").
 //     The default handler prints to klog; we route it through our
 //     logr.Logger at V(2) so the warnings stay visible under
-//     --log-level=debug but disappear otherwise.
+//     --log-level=trace but disappear otherwise.
 //   - klog itself, which client-go and the helm SDK both initialise.
 //     Without this, klog still prints `I0524 18:40:18.932 warnings.go:110]`
 //     to stderr even when our zap logger is configured to be quiet.
@@ -178,7 +205,7 @@ func routeNoiseToControllerRuntimeLogger() {
 
 // restWarningRouter forwards client-go HTTP-299 warning headers to the
 // controller-runtime logger at V(2). At info-level the calls are no-ops
-// (zap filters them); at debug-level they surface alongside the rest of
+// (zap filters them); at trace-level they surface alongside the rest of
 // our structured logs.
 type restWarningRouter struct{}
 
