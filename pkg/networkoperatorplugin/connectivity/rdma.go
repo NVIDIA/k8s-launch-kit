@@ -222,7 +222,7 @@ func RunRPing(ctx context.Context, restConfig *rest.Config, serverNamespace stri
 
 	clientCmd := shellWithTimeout(
 		fmt.Sprintf("rping -c -I %s -a %s -p 9999 -C %d -v", shellArg(test.SrcIP), shellArg(test.DstIP), iterations),
-		commandTimeoutFor(test, 30*time.Second))
+		commandTimeoutFor(test, rpingCommandTimeout))
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	r.Stdout, r.Stderr = cliRes.Stdout, cliRes.Stderr
 	finalizeExpectedResult(&r, cliErr == nil, cliErr)
@@ -361,7 +361,7 @@ func rpingBatchClientCommand(tests []PingTest, iterations int) string {
 	var b strings.Builder
 	b.WriteString(`run_with_timeout() { seconds="$1"; shift; if command -v timeout >/dev/null 2>&1; then timeout --kill-after=2s "${seconds}s" "$@"; else "$@" & pid=$!; (sleep "$seconds"; kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null) & watchdog=$!; wait "$pid"; rc=$?; kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null; return "$rc"; fi; }; `)
 	for i, test := range tests {
-		timeoutSeconds := int(commandTimeoutFor(test, 30*time.Second).Seconds())
+		timeoutSeconds := int(commandTimeoutFor(test, rpingCommandTimeout).Seconds())
 		if timeoutSeconds <= 0 {
 			timeoutSeconds = 1
 		}
@@ -400,7 +400,7 @@ func parseRPingBatchResults(stdout string) map[int]int {
 func rdmaBatchTimeoutFor(tests []PingTest) time.Duration {
 	timeout := 15 * time.Second
 	for _, test := range tests {
-		timeout += commandTimeoutFor(test, 30*time.Second) + rdmaBatchSettleDelayFor([]PingTest{test})
+		timeout += commandTimeoutFor(test, rpingCommandTimeout) + rdmaBatchSettleDelayFor([]PingTest{test})
 	}
 	return timeout
 }
@@ -476,7 +476,7 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, serverNamespace 
 	clientCmd := shellWithTimeout(
 		fmt.Sprintf("ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s %s",
 			shellArg(test.SrcRDMADev), size, port, shellArg(test.SrcIP), shellArg(test.DstIP)),
-		commandTimeoutFor(test, 45*time.Second))
+		commandTimeoutFor(test, ibWriteBwCommandTimeout))
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	r.Stdout, r.Stderr = cliRes.Stdout, cliRes.Stderr
 
@@ -645,7 +645,7 @@ func ibWriteBwBatchClientCommandMode(tests []PingTest, size int, gpuDirect bool)
 	var b strings.Builder
 	b.WriteString(`run_with_timeout() { seconds="$1"; shift; if command -v timeout >/dev/null 2>&1; then timeout --kill-after=2s "${seconds}s" "$@"; else "$@" & pid=$!; (sleep "$seconds"; kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null) & watchdog=$!; wait "$pid"; rc=$?; kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null; return "$rc"; fi; }; `)
 	for i, test := range tests {
-		timeoutSeconds := int(commandTimeoutFor(test, 45*time.Second).Seconds())
+		timeoutSeconds := int(commandTimeoutFor(test, ibWriteBwCommandTimeout).Seconds())
 		if timeoutSeconds <= 0 {
 			timeoutSeconds = 1
 		}
@@ -733,7 +733,7 @@ func ibWriteBwBatchPort(index int) int {
 func ibWriteBwBatchTimeoutFor(tests []PingTest) time.Duration {
 	timeout := 20 * time.Second
 	for _, test := range tests {
-		timeout += commandTimeoutFor(test, 45*time.Second) + rdmaBatchSettleDelayFor([]PingTest{test})
+		timeout += commandTimeoutFor(test, ibWriteBwCommandTimeout) + rdmaBatchSettleDelayFor([]PingTest{test})
 	}
 	return timeout
 }
@@ -757,7 +757,7 @@ func bandwidthVerdict(bw, minBandwidthGbps float64) (bool, error) {
 func killRDMAServer(restConfig *rest.Config, namespace, pod, container, prog, pid string) {
 	// Use a fresh background context so the cleanup runs even if
 	// the test's deadline already fired.
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), rdmaServerCleanupTimeout)
 	defer cancel()
 	cmd := fmt.Sprintf("kill %s 2>/dev/null; pkill %s 2>/dev/null; true", pid, shellArg(prog))
 	_, _ = kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", cmd})

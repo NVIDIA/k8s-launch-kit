@@ -19,7 +19,6 @@ package connectivity
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"k8s.io/client-go/rest"
@@ -42,7 +41,7 @@ func RunICMP(ctx context.Context, restConfig *rest.Config, namespace, pod, conta
 		}
 	}
 	cmd := shellWithTimeout(fmt.Sprintf("ping -c 1 -W 1 -I %s %s", shellArg(test.SrcIP), shellArg(test.DstIP)),
-		commandTimeoutFor(test, 5*time.Second))
+		commandTimeoutFor(test, icmpCommandTimeout))
 	res, err := kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", cmd})
 	r.Stdout, r.Stderr = res.Stdout, res.Stderr
 	finalizeExpectedResult(&r, err == nil, err)

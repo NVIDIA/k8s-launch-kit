@@ -145,7 +145,7 @@ func init() {
 	validateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
 	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a source-bound connectivity matrix (icmp + rping + ib_write_bw) between pods of the example DaemonSet. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
 	validateCmd.Flags().BoolVar(&validateKeep, "keep", false, "Leave the example DaemonSet running after --connectivity completes (useful for debugging).")
-	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 5*time.Minute, "Wall-clock budget for the connectivity matrix (DaemonSet rollout + icmp + rping + ib_write_bw execs).")
+	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 0, "Maximum wall-clock budget for connectivity workload setup and test execution. 0 (default) calculates the budget from the generated matrix plan.")
 	validateCmd.Flags().StringVar(&validateMode, "validation-mode", "", "Connectivity validation mode: quick, full, or strict. Overrides validation.mode from cluster-config.yaml.")
 	validateCmd.Flags().StringSliceVar(&validateChecks, "validation-checks", nil, "Comma-separated checks to run during connectivity validation. Supported: icmp, rping, ib_write_bw. Overrides validation.checks from cluster-config.yaml.")
 	validateCmd.Flags().IntVar(&validateRDMAIterations, "rdma-rping-iterations", 0, "Number of rping client iterations. Overrides validation.rdma.rpingIterations from cluster-config.yaml.")
