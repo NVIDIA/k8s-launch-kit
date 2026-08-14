@@ -29,7 +29,7 @@ Operator release.
    version expected by `networkOperator.selectedRelease` in
    `cluster-config.yaml` (looked up in l8k's embedded release catalog).
 2. **Manifest state.** Every YAML manifest under
-   `--deployment-files` (skipping any file with "example" in its name)
+   `--deployment-files` (skipping example workloads and Helm `values.yaml`)
    is fetched from the cluster and classified by the per-Kind resource-state
    registry. `NicConfigurationTemplate` and `NicFirmwareTemplate` wait for
    the operator-populated `status.nicDevices` list to reflect current node,
@@ -79,6 +79,7 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 | `--rdma-rping-iterations` | `validation.rdma.rpingIterations` | rping client iteration count |
 | `--rdma-ib-write-size` | `validation.rdma.ibWriteSize` | ib_write_bw message size |
 | `--rdma-ib-write-min-bandwidth-gbps` | `validation.rdma.ibWriteMinBandwidthGbps` | Minimum peak Gbps; `0` disables bandwidth gating |
+| `--log-level` | disabled | `debug` for structured progress and timing; `trace` also includes bounded command output |
 
 ## Connectivity Modes
 
@@ -115,7 +116,19 @@ l8k validate --user-config ./cluster-config.yaml \
 
 # Agent mode (single JSON object on stdout, logs on stderr)
 l8k validate --output json 2>/dev/null | jq '.summary'
+
+# Diagnose stage or batch progress without raw command output
+l8k validate --log-level debug
+
+# Capture bounded route, ICMP, RDMA client, and RDMA server evidence
+l8k validate --log-level trace --keep
 ```
+
+Debug logs show the endpoint inventory, plan, source-route cache statistics,
+static checks, stages, RDMA batches, cleanup, report writes, elapsed time, and
+remaining timeout. Trace adds bounded commands and per-test stdout/stderr.
+Failed RDMA server logs are collected before the temporary files and test
+workload are removed. Add `--keep` only when follow-up pod inspection is needed.
 
 ## Output
 

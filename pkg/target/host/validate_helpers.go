@@ -357,7 +357,7 @@ func writeHTMLReportIfWanted(
 	warnings *[]string,
 	presetResults []presetmatch.Result,
 	overall connectivity.OverallVerdict,
-	userCfgPath string,
+	loadedConfig *config.LaunchKitConfig,
 	outputFormat string,
 	reportPath string,
 	version string,
@@ -373,6 +373,11 @@ func writeHTMLReportIfWanted(
 	if path == "" {
 		return
 	}
+	reportStarted := time.Now()
+	if info, err := os.Stat(path); err == nil {
+		log.Log.V(1).Info("validation report will be overwritten",
+			"path", path, "previousSizeBytes", info.Size(), "previousModifiedAt", info.ModTime())
+	}
 
 	data := connectivity.ReportData{
 		Verdict: overall,
@@ -383,8 +388,8 @@ func writeHTMLReportIfWanted(
 			APIServerVersion:  probeAPIServerVersion(restConfig),
 			OperatorNamespace: operatorNamespace,
 		},
-		Profile:        loadProfileInfo(userCfgPath, manifestDir),
-		NodeGroups:     loadNodeGroups(userCfgPath, presetResults),
+		Profile:        loadProfileInfo(manifestDir, loadedConfig),
+		NodeGroups:     loadNodeGroups(presetResults, loadedConfig),
 		Nodes:          listNodesForReport(ctx, c),
 		Release:        versionCheck,
 		ComponentCheck: componentCheck,
@@ -411,6 +416,8 @@ func writeHTMLReportIfWanted(
 		return
 	}
 	abs, _ := filepath.Abs(path)
+	log.Log.V(1).Info("validation report written",
+		"path", abs, "duration", time.Since(reportStarted).Round(time.Millisecond).String())
 	if outputFormat == "json" {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"reportPath": abs})
 	} else {
@@ -451,31 +458,26 @@ func probeAPIServerVersion(restConfig *rest.Config) string {
 	return info.GitVersion
 }
 
-// loadProfileInfo reads the profile section out of cluster-config.yaml
-// (when present) and projects it into the report's ProfileInfo. When
-// the config doesn't carry an explicit `profile:` block (which is
-// normal — `l8k discover` writes only `clusterConfig:` and
-// `networkOperator:`), this falls back to inferring the profile from
-// the Kinds present in the rendered deployment manifests.
-func loadProfileInfo(userCfgPath, manifestDir string) connectivity.ProfileInfo {
-	if userCfgPath != "" {
-		if cfg, err := config.LoadFullConfig(userCfgPath, log.Log); err == nil && cfg != nil && cfg.Profile != nil {
-			info := connectivity.ProfileInfo{
-				Fabric:         cfg.Profile.Fabric,
-				DeploymentType: cfg.Profile.Deployment,
-				Multirail:      cfg.Profile.Multirail,
-			}
-			if cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable {
-				info.SpectrumX = &connectivity.ProfileSpectrumX{
-					Version:        cfg.Profile.SpectrumX.SPCXVersion,
-					MultiplaneMode: cfg.Profile.SpectrumX.MultiplaneMode,
-					NumberOfPlanes: cfg.Profile.SpectrumX.NumberOfPlanes,
-				}
-			}
-			return info
+// loadProfileInfo projects the already-loaded profile into the report. When
+// the config doesn't carry an explicit profile block, it falls back to the
+// Kinds present in the rendered deployment manifests.
+func loadProfileInfo(manifestDir string, cfg *config.LaunchKitConfig) connectivity.ProfileInfo {
+	if cfg == nil || cfg.Profile == nil {
+		return inferProfileFromManifests(manifestDir)
+	}
+	info := connectivity.ProfileInfo{
+		Fabric:         cfg.Profile.Fabric,
+		DeploymentType: cfg.Profile.Deployment,
+		Multirail:      cfg.Profile.Multirail,
+	}
+	if cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable {
+		info.SpectrumX = &connectivity.ProfileSpectrumX{
+			Version:        cfg.Profile.SpectrumX.SPCXVersion,
+			MultiplaneMode: cfg.Profile.SpectrumX.MultiplaneMode,
+			NumberOfPlanes: cfg.Profile.SpectrumX.NumberOfPlanes,
 		}
 	}
-	return inferProfileFromManifests(manifestDir)
+	return info
 }
 
 // inferProfileFromManifests walks the deployment-files directory and
@@ -615,9 +617,9 @@ func splitYAMLDocs(s string) []string {
 	return docs
 }
 
-// loadNodeGroups projects every cluster-config.yaml `clusterConfig[]`
-// entry into a NodeGroupInfo for the report. Empty result when the
-// config wasn't found / parsed — the section just renders empty.
+// loadNodeGroups projects every cluster-config.yaml `clusterConfig[]` entry
+// from the already-loaded config into a NodeGroupInfo for the report. Empty
+// result when the config wasn't found or parsed.
 //
 // presetResults carries the runtime-fresh per-group preset match
 // (computed by presetmatch.MatchAll at validate-time). Its
@@ -628,12 +630,8 @@ func splitYAMLDocs(s string) []string {
 // stored snapshot when the runtime entry is absent keeps the older
 // flow working (e.g. validate run without l8k discover access to
 // the cluster).
-func loadNodeGroups(userCfgPath string, presetResults []presetmatch.Result) []connectivity.NodeGroupInfo {
-	if userCfgPath == "" {
-		return nil
-	}
-	cfg, err := config.LoadFullConfig(userCfgPath, log.Log)
-	if err != nil || cfg == nil {
+func loadNodeGroups(presetResults []presetmatch.Result, cfg *config.LaunchKitConfig) []connectivity.NodeGroupInfo {
+	if cfg == nil {
 		return nil
 	}
 	// Build a per-group index of fresh match results so the

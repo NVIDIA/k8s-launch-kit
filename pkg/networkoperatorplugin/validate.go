@@ -190,6 +190,10 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 		if ext != ".yaml" && ext != ".yml" {
 			continue
 		}
+		if strings.EqualFold(e.Name(), "values.yaml") || strings.EqualFold(e.Name(), "values.yml") {
+			log.Log.V(1).Info("Skipping Helm values file", "file", e.Name())
+			continue
+		}
 		if isExampleManifest(e.Name()) {
 			log.Log.V(1).Info("Skipping example manifest", "file", e.Name())
 			continue

@@ -41,11 +41,24 @@ const rdmaServerSettleDelay = 2 * time.Second
 // Options.Timeout.
 const rdmaTestTimeout = 90 * time.Second
 
-const rpingBatchResultMarker = "__L8K_RPING_RESULT__"
+const (
+	rpingBatchResultMarker = "__L8K_RPING_RESULT__"
+	rpingBatchStdoutMarker = "__L8K_RPING_STDOUT__"
+	rpingBatchStderrMarker = "__L8K_RPING_STDERR__"
+	rpingBatchEndMarker    = "__L8K_RPING_END__"
+)
 
 const (
 	ibWriteBwBatchResultMarker = "__L8K_IBWRITEBW_RESULT__"
+	ibWriteBwBatchStdoutMarker = "__L8K_IBWRITEBW_STDOUT__"
+	ibWriteBwBatchStderrMarker = "__L8K_IBWRITEBW_STDERR__"
 	ibWriteBwBatchEndMarker    = "__L8K_IBWRITEBW_END__"
+)
+
+const (
+	rdmaServerLogMarker    = "__L8K_RDMA_SERVER_LOG__"
+	rdmaServerLogEndMarker = "__L8K_RDMA_SERVER_LOG_END__"
+	rdmaServerLogLimit     = 16 * 1024
 )
 
 // railNameIndex extracts the numeric rail index from a rail key like
@@ -97,6 +110,7 @@ func railIndex(rail string) int {
 // rail. Returns map[rail]→<rdmaDev>; rails whose interface couldn't
 // be resolved are absent from the map.
 func DiscoverRDMADevices(ctx context.Context, restConfig *rest.Config, namespace, pod, container string, ifaceByRail map[string]string) map[string]string {
+	started := time.Now()
 	out := map[string]string{}
 	if len(ifaceByRail) == 0 {
 		return out
@@ -149,8 +163,19 @@ func DiscoverRDMADevices(ctx context.Context, restConfig *rest.Config, namespace
 	if b.Len() == 0 {
 		return out
 	}
+	connectivityLogger().V(2).Info("RDMA device discovery command",
+		"namespace", namespace, "pod", pod, "container", container,
+		"command", boundedTraceOutput(b.String()))
 	res, err := kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", b.String()})
 	if err != nil {
+		connectivityLogger().V(1).Info("RDMA device discovery failed",
+			"namespace", namespace, "pod", pod, "container", container,
+			"interfacesByRail", ifaceByRail,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err.Error())
+		connectivityLogger().V(2).Info("RDMA device discovery output",
+			"namespace", namespace, "pod", pod,
+			"stdout", boundedTraceOutput(res.Stdout), "stderr", boundedTraceOutput(res.Stderr))
 		return out
 	}
 	for _, line := range strings.Split(res.Stdout, "\n") {
@@ -168,6 +193,13 @@ func DiscoverRDMADevices(ctx context.Context, restConfig *rest.Config, namespace
 			out[rail] = dev
 		}
 	}
+	connectivityLogger().V(1).Info("RDMA device discovery completed",
+		"namespace", namespace, "pod", pod, "container", container,
+		"interfacesByRail", ifaceByRail, "rdmaDevicesByRail", out,
+		"duration", time.Since(started).Round(time.Millisecond).String())
+	connectivityLogger().V(2).Info("RDMA device discovery output",
+		"namespace", namespace, "pod", pod,
+		"stdout", boundedTraceOutput(res.Stdout), "stderr", boundedTraceOutput(res.Stderr))
 	return out
 }
 
@@ -238,8 +270,25 @@ func RunRPingBatches(ctx context.Context, restConfig *rest.Config, namespaceByPo
 	}
 	groups := groupRPingTests(tests)
 	out := make([]PingResult, 0, len(tests))
-	for _, group := range groups {
-		out = append(out, runRPingBatch(ctx, restConfig, namespaceByPod, containerByPod, group, iterations)...)
+	for i, group := range groups {
+		started := time.Now()
+		first := group[0]
+		connectivityLogger().V(1).Info("RDMA batch started",
+			"family", "rping", "batch", i+1, "batches", len(groups),
+			"tests", len(group), "completedTests", len(out), "totalTests", len(tests),
+			"srcPod", first.SrcPod, "dstPod", first.DstPod,
+			"remainingTimeout", remainingTimeout(ctx))
+		batchResults := runRPingBatch(ctx, restConfig, namespaceByPod, containerByPod, group, iterations)
+		out = append(out, batchResults...)
+		passed, failed := resultCounts(batchResults)
+		connectivityLogger().V(1).Info("RDMA batch completed",
+			"family", "rping", "batch", i+1, "batches", len(groups),
+			"tests", len(batchResults), "passed", passed, "failed", failed,
+			"completedTests", len(out), "totalTests", len(tests),
+			"srcPod", first.SrcPod, "dstPod", first.DstPod,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"remainingTimeout", remainingTimeout(ctx))
+		logRDMABatchResults(batchResults, i+1, len(groups))
 	}
 	return out
 }
@@ -275,6 +324,9 @@ func runRPingBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod,
 	defer cancel()
 
 	serverCmd := rpingBatchServerCommand(tests)
+	connectivityLogger().V(2).Info("RDMA batch server command",
+		"family", "rping", "srcPod", first.SrcPod, "dstPod", first.DstPod,
+		"tests", len(tests), "command", boundedTraceOutput(serverCmd))
 	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, serverNamespace, first.DstPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
 	if err != nil {
 		batchErr := fmt.Errorf("rping batch server start: %w (stderr: %s)", err, srvRes.Stderr)
@@ -296,16 +348,19 @@ func runRPingBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod,
 	}
 
 	clientCmd := rpingBatchClientCommand(tests, iterations)
+	connectivityLogger().V(2).Info("RDMA batch client command",
+		"family", "rping", "srcPod", first.SrcPod, "dstPod", first.DstPod,
+		"tests", len(tests), "iterations", iterations, "command", boundedTraceOutput(clientCmd))
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, first.SrcPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
-	rcByIndex := parseRPingBatchResults(cliRes.Stdout)
+	parsed := parseRPingBatchResults(cliRes.Stdout)
 	for i := range results {
-		results[i].Stdout = cliRes.Stdout
-		results[i].Stderr = cliRes.Stderr
 		if results[i].Err != nil {
 			continue
 		}
-		rc, ok := rcByIndex[i]
+		cell, ok := parsed[i]
 		if !ok {
+			results[i].Stdout = cliRes.Stdout
+			results[i].Stderr = cliRes.Stderr
 			err := cliErr
 			if err == nil {
 				err = fmt.Errorf("rping batch missing result for test %d", i)
@@ -313,12 +368,16 @@ func runRPingBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod,
 			finalizeExpectedResult(&results[i], false, err)
 			continue
 		}
-		if rc == 0 {
+		results[i].Stdout = cell.stdout
+		results[i].Stderr = cell.stderr
+		if cell.rc == 0 {
 			finalizeExpectedResult(&results[i], true, nil)
 			continue
 		}
-		finalizeExpectedResult(&results[i], false, fmt.Errorf("rping exited with code %d", rc))
+		finalizeExpectedResult(&results[i], false, fmt.Errorf("rping exited with code %d", cell.rc))
 	}
+	attachRDMAServerLogs(tctx, restConfig, serverNamespace, first.DstPod, serverContainer,
+		"/tmp/l8k-rping-server", results)
 	return results
 }
 
@@ -369,8 +428,12 @@ func rpingBatchClientCommand(tests []PingTest, iterations int) string {
 			continue
 		}
 		fmt.Fprintf(&b,
-			"run_with_timeout %d rping -c -I %s -a %s -p %d -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; echo %s %d $rc; ",
-			timeoutSeconds, shellArg(test.SrcIP), shellArg(test.DstIP), rpingBatchPort(i), iterations, i, i, rpingBatchResultMarker, i)
+			"run_with_timeout %d rping -c -I %s -a %s -p %d -C %d -v >/tmp/l8k-rping-client-%d.out 2>/tmp/l8k-rping-client-%d.err; rc=$?; "+
+				"echo %s %d $rc; echo %s %d; cat /tmp/l8k-rping-client-%d.out 2>/dev/null; echo; "+
+				"echo %s %d; cat /tmp/l8k-rping-client-%d.err 2>/dev/null; echo; echo %s %d; ",
+			timeoutSeconds, shellArg(test.SrcIP), shellArg(test.DstIP), rpingBatchPort(i), iterations, i, i,
+			rpingBatchResultMarker, i, rpingBatchStdoutMarker, i, i,
+			rpingBatchStderrMarker, i, i, rpingBatchEndMarker, i)
 	}
 	b.WriteString("exit 0")
 	return b.String()
@@ -380,25 +443,17 @@ func rpingBatchPort(index int) int {
 	return 9999 + index
 }
 
-func parseRPingBatchResults(stdout string) map[int]int {
-	out := map[int]int{}
-	for _, line := range strings.Split(stdout, "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) != 3 || fields[0] != rpingBatchResultMarker {
-			continue
-		}
-		idx, err1 := strconv.Atoi(fields[1])
-		rc, err2 := strconv.Atoi(fields[2])
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		out[idx] = rc
-	}
-	return out
+func parseRPingBatchResults(stdout string) map[int]rdmaBatchCell {
+	return parseRDMABatchResults(stdout, rdmaBatchMarkers{
+		result: rpingBatchResultMarker,
+		stdout: rpingBatchStdoutMarker,
+		stderr: rpingBatchStderrMarker,
+		end:    rpingBatchEndMarker,
+	})
 }
 
 func rdmaBatchTimeoutFor(tests []PingTest) time.Duration {
-	timeout := 15 * time.Second
+	timeout := 15*time.Second + rdmaServerLogTimeout
 	for _, test := range tests {
 		timeout += commandTimeoutFor(test, rpingCommandTimeout) + rdmaBatchSettleDelayFor([]PingTest{test})
 	}
@@ -516,8 +571,29 @@ func runIbWriteBwBatches(ctx context.Context, restConfig *rest.Config, namespace
 	}
 	groups := groupRPingTests(tests)
 	out := make([]PingResult, 0, len(tests))
-	for _, group := range groups {
-		out = append(out, runIbWriteBwBatch(ctx, restConfig, namespaceByPod, containerByPod, group, size, minBandwidthGbps, gpuDirect)...)
+	family := "ib_write_bw"
+	if gpuDirect {
+		family = "gpudirect_dmabuf"
+	}
+	for i, group := range groups {
+		started := time.Now()
+		first := group[0]
+		connectivityLogger().V(1).Info("RDMA batch started",
+			"family", family, "batch", i+1, "batches", len(groups),
+			"tests", len(group), "completedTests", len(out), "totalTests", len(tests),
+			"srcPod", first.SrcPod, "dstPod", first.DstPod,
+			"remainingTimeout", remainingTimeout(ctx))
+		batchResults := runIbWriteBwBatch(ctx, restConfig, namespaceByPod, containerByPod, group, size, minBandwidthGbps, gpuDirect)
+		out = append(out, batchResults...)
+		passed, failed := resultCounts(batchResults)
+		connectivityLogger().V(1).Info("RDMA batch completed",
+			"family", family, "batch", i+1, "batches", len(groups),
+			"tests", len(batchResults), "passed", passed, "failed", failed,
+			"completedTests", len(out), "totalTests", len(tests),
+			"srcPod", first.SrcPod, "dstPod", first.DstPod,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"remainingTimeout", remainingTimeout(ctx))
+		logRDMABatchResults(batchResults, i+1, len(groups))
 	}
 	return out
 }
@@ -563,6 +639,13 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 	defer cancel()
 
 	serverCmd := ibWriteBwBatchServerCommandMode(tests, size, gpuDirect)
+	family := "ib_write_bw"
+	if gpuDirect {
+		family = "gpudirect_dmabuf"
+	}
+	connectivityLogger().V(2).Info("RDMA batch server command",
+		"family", family, "srcPod", first.SrcPod, "dstPod", first.DstPod,
+		"tests", len(tests), "size", size, "command", boundedTraceOutput(serverCmd))
 	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, serverNamespace, first.DstPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
 	if err != nil {
 		batchErr := fmt.Errorf("ib_write_bw batch server start: %w (stderr: %s)", err, srvRes.Stderr)
@@ -588,15 +671,19 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 	}
 
 	clientCmd := ibWriteBwBatchClientCommandMode(tests, size, gpuDirect)
+	connectivityLogger().V(2).Info("RDMA batch client command",
+		"family", family, "srcPod", first.SrcPod, "dstPod", first.DstPod,
+		"tests", len(tests), "size", size, "command", boundedTraceOutput(clientCmd))
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, first.SrcPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	parsed := parseIbWriteBwBatchResults(cliRes.Stdout)
 	for i := range results {
-		results[i].Stderr = cliRes.Stderr
 		if results[i].Err != nil {
 			continue
 		}
 		cell, ok := parsed[i]
 		if !ok {
+			results[i].Stdout = cliRes.Stdout
+			results[i].Stderr = cliRes.Stderr
 			err := cliErr
 			if err == nil {
 				err = fmt.Errorf("ib_write_bw batch missing result for test %d", i)
@@ -605,6 +692,7 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 			continue
 		}
 		results[i].Stdout = cell.stdout
+		results[i].Stderr = cell.stderr
 		bw, msgRate, parseOK := parseIbWriteBwOutput(cell.stdout)
 		results[i].BandwidthGbps = bw
 		results[i].MsgRateMpps = msgRate
@@ -618,6 +706,8 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 			finalizeExpectedResult(&results[i], observedOK, observedErr)
 		}
 	}
+	attachRDMAServerLogs(tctx, restConfig, serverNamespace, first.DstPod, serverContainer,
+		"/tmp/l8k-ibwritebw-server", results)
 	return results
 }
 
@@ -655,9 +745,14 @@ func ibWriteBwBatchClientCommandMode(tests []PingTest, size int, gpuDirect bool)
 			continue
 		}
 		fmt.Fprintf(&b,
-			"run_with_timeout %d ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s%s %s >%s 2>%s; rc=$?; echo %s %d $rc; cat %s 2>/dev/null; echo %s %d; ",
+			"run_with_timeout %d ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s%s %s >%s 2>%s; rc=$?; "+
+				"echo %s %d $rc; echo %s %d; cat %s 2>/dev/null; echo; echo %s %d; cat %s 2>/dev/null; echo; echo %s %d; ",
 			timeoutSeconds, shellArg(test.SrcRDMADev), size, ibWriteBwBatchPort(i), shellArg(test.SrcIP), cudaDMABufArgs(gpuDirect, test.SrcGPUIndex), shellArg(test.DstIP),
-			outFile, errFile, ibWriteBwBatchResultMarker, i, outFile, ibWriteBwBatchEndMarker, i)
+			outFile, errFile,
+			ibWriteBwBatchResultMarker, i,
+			ibWriteBwBatchStdoutMarker, i, outFile,
+			ibWriteBwBatchStderrMarker, i, errFile,
+			ibWriteBwBatchEndMarker, i)
 	}
 	b.WriteString("exit 0")
 	return b.String()
@@ -685,44 +780,95 @@ func gpudirectPreconditionError(test PingTest) error {
 		test.SrcGPUIndex, test.DstGPUIndex, test.SrcNode, test.SrcRail, test.DstNode, test.DstRail)
 }
 
-type ibWriteBwBatchCell struct {
+type rdmaBatchCell struct {
 	rc     int
 	stdout string
+	stderr string
 }
 
-func parseIbWriteBwBatchResults(stdout string) map[int]ibWriteBwBatchCell {
-	out := map[int]ibWriteBwBatchCell{}
-	var current *int
-	var b strings.Builder
-	for _, line := range strings.Split(stdout, "\n") {
+type rdmaBatchMarkers struct {
+	result string
+	stdout string
+	stderr string
+	end    string
+}
+
+func parseIbWriteBwBatchResults(stdout string) map[int]rdmaBatchCell {
+	return parseRDMABatchResults(stdout, rdmaBatchMarkers{
+		result: ibWriteBwBatchResultMarker,
+		stdout: ibWriteBwBatchStdoutMarker,
+		stderr: ibWriteBwBatchStderrMarker,
+		end:    ibWriteBwBatchEndMarker,
+	})
+}
+
+func parseRDMABatchResults(output string, markers rdmaBatchMarkers) map[int]rdmaBatchCell {
+	out := map[int]rdmaBatchCell{}
+	currentIndex := -1
+	currentStream := ""
+	var stdout, stderr strings.Builder
+	flush := func() {
+		if currentIndex < 0 {
+			return
+		}
+		cell, ok := out[currentIndex]
+		if !ok {
+			return
+		}
+		cell.stdout = strings.TrimSpace(stdout.String())
+		cell.stderr = strings.TrimSpace(stderr.String())
+		out[currentIndex] = cell
+	}
+	reset := func(index int) {
+		currentIndex = index
+		currentStream = ""
+		stdout.Reset()
+		stderr.Reset()
+	}
+	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) == 3 && fields[0] == ibWriteBwBatchResultMarker {
+		if len(fields) == 3 && fields[0] == markers.result {
 			idx, err1 := strconv.Atoi(fields[1])
 			rc, err2 := strconv.Atoi(fields[2])
 			if err1 == nil && err2 == nil {
-				out[idx] = ibWriteBwBatchCell{rc: rc}
-				current = &idx
-				b.Reset()
+				flush()
+				out[idx] = rdmaBatchCell{rc: rc}
+				reset(idx)
 			}
 			continue
 		}
-		if len(fields) == 2 && fields[0] == ibWriteBwBatchEndMarker {
+		if len(fields) == 2 && fields[0] == markers.stdout {
 			idx, err := strconv.Atoi(fields[1])
-			if err == nil {
-				if cell, ok := out[idx]; ok {
-					cell.stdout = strings.TrimSpace(b.String())
-					out[idx] = cell
-				}
+			if err == nil && idx == currentIndex {
+				currentStream = "stdout"
 			}
-			current = nil
-			b.Reset()
 			continue
 		}
-		if current != nil {
-			b.WriteString(line)
-			b.WriteByte('\n')
+		if len(fields) == 2 && fields[0] == markers.stderr {
+			idx, err := strconv.Atoi(fields[1])
+			if err == nil && idx == currentIndex {
+				currentStream = "stderr"
+			}
+			continue
+		}
+		if len(fields) == 2 && fields[0] == markers.end {
+			idx, err := strconv.Atoi(fields[1])
+			if err == nil && idx == currentIndex {
+				flush()
+			}
+			reset(-1)
+			continue
+		}
+		switch currentStream {
+		case "stdout":
+			stdout.WriteString(line)
+			stdout.WriteByte('\n')
+		case "stderr":
+			stderr.WriteString(line)
+			stderr.WriteByte('\n')
 		}
 	}
+	flush()
 	return out
 }
 
@@ -731,7 +877,7 @@ func ibWriteBwBatchPort(index int) int {
 }
 
 func ibWriteBwBatchTimeoutFor(tests []PingTest) time.Duration {
-	timeout := 20 * time.Second
+	timeout := 20*time.Second + rdmaServerLogTimeout
 	for _, test := range tests {
 		timeout += commandTimeoutFor(test, ibWriteBwCommandTimeout) + rdmaBatchSettleDelayFor([]PingTest{test})
 	}
@@ -747,6 +893,116 @@ func bandwidthVerdict(bw, minBandwidthGbps float64) (bool, error) {
 	default:
 		return true, nil
 	}
+}
+
+func logRDMABatchResults(results []PingResult, batch, batches int) {
+	for i, result := range results {
+		errText := ""
+		if result.Err != nil {
+			errText = result.Err.Error()
+		}
+		if !result.OK {
+			testLogger(result.Test).V(1).Info("RDMA test failed",
+				"batch", batch, "batches", batches, "batchTest", i+1,
+				"observedConnected", result.ObservedOK, "error", errText,
+				"clientStdoutBytes", len(result.Stdout),
+				"clientStderrBytes", len(result.Stderr),
+				"serverLogBytes", len(result.ServerLog))
+		}
+		testLogger(result.Test).V(2).Info("RDMA test output",
+			"batch", batch, "batches", batches, "batchTest", i+1,
+			"passed", result.OK, "observedConnected", result.ObservedOK, "error", errText,
+			"clientStdout", boundedTraceOutput(result.Stdout),
+			"clientStderr", boundedTraceOutput(result.Stderr),
+			"serverLog", boundedTraceOutput(result.ServerLog),
+			"routeCommand", boundedTraceOutput(result.Route.Command),
+			"routeOutput", boundedTraceOutput(result.Route.Output),
+			"routeError", result.Route.Err)
+	}
+}
+
+func attachRDMAServerLogs(ctx context.Context, restConfig *rest.Config, namespace, pod, container, pathPrefix string, results []PingResult) {
+	indices := make([]int, 0, len(results))
+	traceEnabled := connectivityLogger().V(2).Enabled()
+	for i := range results {
+		if traceEnabled || !results[i].OK {
+			indices = append(indices, i)
+		}
+	}
+	if len(indices) == 0 {
+		return
+	}
+
+	logs, err := collectRDMAServerLogs(ctx, restConfig, namespace, pod, container, pathPrefix, indices)
+	if err != nil {
+		connectivityLogger().V(1).Info("RDMA server log collection failed",
+			"namespace", namespace, "pod", pod, "container", container,
+			"pathPrefix", pathPrefix, "indices", indices, "error", err.Error())
+		return
+	}
+	for i, serverLog := range logs {
+		if i >= 0 && i < len(results) {
+			results[i].ServerLog = serverLog
+		}
+	}
+}
+
+func collectRDMAServerLogs(ctx context.Context, restConfig *rest.Config, namespace, pod, container, pathPrefix string, indices []int) (map[int]string, error) {
+	var command strings.Builder
+	for _, index := range indices {
+		fmt.Fprintf(&command, "echo %s %d; tail -c %d %s-%d.log 2>/dev/null; echo; echo %s %d; ",
+			rdmaServerLogMarker, index, rdmaServerLogLimit, pathPrefix, index, rdmaServerLogEndMarker, index)
+	}
+	// The batch timeout reserves this collection window. Derive from the batch
+	// context so diagnostics cannot run beyond the advertised matrix deadline.
+	tctx, cancel := context.WithTimeout(ctx, rdmaServerLogTimeout)
+	defer cancel()
+	res, err := kubeclient.ExecInPod(tctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", command.String()})
+	if err != nil {
+		return nil, fmt.Errorf("collect RDMA server logs: %w (stderr: %s)", err, boundedTraceOutput(res.Stderr))
+	}
+	return parseRDMAServerLogs(res.Stdout), nil
+}
+
+func parseRDMAServerLogs(output string) map[int]string {
+	out := map[int]string{}
+	current := -1
+	var contents strings.Builder
+	flush := func() {
+		if current >= 0 {
+			out[current] = strings.TrimSpace(contents.String())
+		}
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 2 && fields[0] == rdmaServerLogMarker {
+			flush()
+			index, err := strconv.Atoi(fields[1])
+			if err != nil {
+				current = -1
+				contents.Reset()
+				continue
+			}
+			current = index
+			contents.Reset()
+			continue
+		}
+		if len(fields) == 2 && fields[0] == rdmaServerLogEndMarker {
+			index, err := strconv.Atoi(fields[1])
+			if err == nil && index == current {
+				flush()
+			}
+			current = -1
+			contents.Reset()
+			continue
+		}
+		if current >= 0 {
+			contents.WriteString(line)
+			contents.WriteByte('\n')
+		}
+	}
+	flush()
+	return out
 }
 
 // killRDMAServer is best-effort cleanup. We try the captured PID

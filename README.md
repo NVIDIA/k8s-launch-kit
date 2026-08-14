@@ -294,7 +294,7 @@ Target-Agnostic Execution Flags:
 Target-Agnostic Output & Logging Flags:
   -h, --help               help for l8k
       --log-file string    Write logs to file instead of stderr
-      --log-level string   Enable logging at specified level (debug, info, warn, error)
+      --log-level string   Enable logging at specified level (trace, debug, info, warn, error)
       --output string      Output format: text (default, human-readable) or json (structured, for automation and AI agents) (default "text")
   -q, --quiet              Suppress informational output (errors still shown)
   -y, --yes                Auto-confirm all prompts without interactive input
@@ -446,6 +446,14 @@ the selected checks, their per-command limits, ordered pod-pair batches, a
 bounded setup allowance, cleanup, and a safety margin. The calculated total
 is printed before test execution. Use `--connectivity-timeout <DURATION>` to
 replace it with an explicit end-to-end setup and execution deadline.
+
+For connectivity troubleshooting, add `--log-level debug` to see endpoint
+inventory, plan decisions, source-route cache statistics, stage and RDMA-batch
+progress, pass/fail counts, and elapsed/remaining time. Use `--log-level trace`
+when command evidence is needed: it additionally records bounded route,
+client, and server output for each test. RDMA client stdout/stderr and failed
+server logs are collected before the temporary files are removed. Output
+fields are capped to prevent a noisy command from producing unbounded logs.
 
 A self-contained HTML report lands at `<deployment-files>/k8s-launch-kit-validation-report.html`
 by default (override with `--report-path`, disable with `--report-path=-`).

@@ -44,7 +44,7 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | `--network-operator-namespace` | generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--output json` | all | target-agnostic | Emit a single JSON result to stdout for automation. |
 | `--quiet` | root pipeline | target-agnostic | Suppress informational output. |
-| `--log-level` | all | target-agnostic | Enable `debug`, `info`, `warn`, or `error` logging. |
+| `--log-level` | all | target-agnostic | Enable `trace`, `debug`, `info`, `warn`, or `error` logging. `debug` shows structured progress; `trace` also shows bounded command output. |
 | `--log-file` | all | target-agnostic | Write logs to a file instead of `stderr`. |
 
 The current host config and artifact contract is unchanged:
@@ -157,6 +157,11 @@ full deletion boundary.
 | `--report-path` | HTML report path. Use `-` to disable. |
 | `--keep` | Keep the test DaemonSet after validation. |
 | `--wait` | Wait for in-progress manifests to reach a terminal state. |
+
+Use `--log-level debug` with `validate` for structured check, endpoint, route,
+stage, batch, test, cleanup, and report timings. `--log-level trace` also emits
+bounded command stdout/stderr and RDMA server logs. Failed RDMA server logs are
+collected before the validation workload cleanup runs.
 
 ## Preset Flags
 

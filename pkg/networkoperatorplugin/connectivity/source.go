@@ -88,6 +88,7 @@ func rdmaSettleDelayFor(test PingTest) time.Duration {
 }
 
 func checkRoute(ctx context.Context, restConfig *rest.Config, namespace, pod, container string, test PingTest) RouteCheck {
+	started := time.Now()
 	cmd := fmt.Sprintf(
 		`ipcmd=""; for p in ip /sbin/ip /usr/sbin/ip /bin/ip /usr/bin/ip; do `+
 			`if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then ipcmd="$p"; break; fi; `+
@@ -98,6 +99,7 @@ func checkRoute(ctx context.Context, restConfig *rest.Config, namespace, pod, co
 	out := RouteCheck{Command: cmd}
 	if test.SrcIP == "" || test.DstIP == "" {
 		out.Err = "missing source or destination IP"
+		testLogger(test).V(1).Info("source route check failed", "error", out.Err)
 		return out
 	}
 	tctx, cancel := context.WithTimeout(ctx, routeCheckTimeout)
@@ -106,16 +108,26 @@ func checkRoute(ctx context.Context, restConfig *rest.Config, namespace, pod, co
 	out.Output = strings.TrimSpace(strings.Join([]string{res.Stdout, res.Stderr}, "\n"))
 	if err != nil {
 		out.Err = err.Error()
+		testLogger(test).V(1).Info("source route check failed",
+			"duration", time.Since(started).Round(time.Millisecond).String(), "error", out.Err)
+		testLogger(test).V(2).Info("source route check output",
+			"command", boundedTraceOutput(cmd), "output", boundedTraceOutput(out.Output))
 		return out
 	}
 	if strings.Contains(out.Output, routeSkipMarker) {
 		out.Err = routeSkipErr
+		testLogger(test).V(1).Info("source route check skipped",
+			"duration", time.Since(started).Round(time.Millisecond).String(), "reason", out.Err)
 		return out
 	}
 	if m := routeDevRe.FindStringSubmatch(out.Output); len(m) == 2 {
 		out.Dev = m[1]
 	}
 	out.OK = out.Dev != ""
+	testLogger(test).V(2).Info("source route check completed",
+		"duration", time.Since(started).Round(time.Millisecond).String(),
+		"routeDev", out.Dev, "routeOK", out.OK,
+		"command", boundedTraceOutput(cmd), "output", boundedTraceOutput(out.Output))
 	return out
 }
 

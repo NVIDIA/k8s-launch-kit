@@ -19,7 +19,10 @@ package networkoperatorplugin
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -96,15 +99,25 @@ func TestHelmReleaseNameFromSecret(t *testing.T) {
 
 func TestIsExampleManifest(t *testing.T) {
 	tests := map[string]bool{
-		"50-example-daemonset.yaml":          true,
-		"40-example-pod.yaml":                true,
-		"30-EXAMPLE-something.yaml":          true,
-		"10-nicclusterpolicy.yaml":           false,
-		"11-nicnodepolicy-group-0.yaml":      false,
-		"30-sriovnetworknodepolicy.yaml":     false,
-		"35-nicinterfacenametemplate.yaml":   false,
+		"50-example-daemonset.yaml":        true,
+		"40-example-pod.yaml":              true,
+		"30-EXAMPLE-something.yaml":        true,
+		"10-nicclusterpolicy.yaml":         false,
+		"11-nicnodepolicy-group-0.yaml":    false,
+		"30-sriovnetworknodepolicy.yaml":   false,
+		"35-nicinterfacenametemplate.yaml": false,
 	}
 	for in, want := range tests {
 		assert.Equalf(t, want, isExampleManifest(in), "isExampleManifest(%q)", in)
 	}
+}
+
+func TestValidateManifestsSkipsHelmValues(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "values.yaml"), []byte("operator:\n  tag: v26.7.0\n"), 0o600))
+
+	results, err := ValidateManifests(context.Background(), nil, dir)
+
+	require.NoError(t, err)
+	assert.Empty(t, results)
 }

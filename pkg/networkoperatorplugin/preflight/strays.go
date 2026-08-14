@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -125,8 +126,13 @@ func CheckStrayCRs(ctx context.Context, in Inputs) Result {
 			// Tolerate "no matches for kind ...List" — the cluster
 			// may not have this CRD (older operator release). Log
 			// once at debug and move on.
+			reason := "list_failed"
+			if meta.IsNoMatchError(err) || strings.Contains(err.Error(), "no matches for kind") {
+				reason = "crd_not_installed"
+			}
 			log.Log.V(1).Info("stray-CR list skipped",
-				"kind", kind.GVK.Kind, "scope", scopeLabel(kind), "error", err.Error())
+				"kind", kind.GVK.Kind, "apiVersion", kind.GVK.GroupVersion().String(),
+				"scope", scopeLabel(kind), "reason", reason, "error", err.Error())
 			continue
 		}
 		for i := range list.Items {

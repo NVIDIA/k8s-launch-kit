@@ -17,6 +17,9 @@
 package connectivity
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,4 +40,46 @@ func TestShellWithTimeoutUsesMinimumOneSecond(t *testing.T) {
 
 	assert.Contains(t, cmd, `timeout -s TERM -k 2 1 sh -c "true"`)
 	assert.Contains(t, cmd, `sleep 1;`)
+}
+
+func TestCheckSourceRoutesReusesCachedRoute(t *testing.T) {
+	test := PingTest{
+		Kind: ICMPSameRail, SrcPod: "pod-a", DstPod: "pod-b",
+		SrcIP: "192.0.2.10", DstIP: "192.0.2.20", SrcIface: "net1",
+		Expectation: ExpectRequired,
+	}
+	key := routeCacheKey{
+		namespace: "default", pod: "pod-a", container: "netshoot",
+		srcIP: test.SrcIP, dstIP: test.DstIP,
+	}
+	cache := routeCache{key: {
+		Command: "ip route get", Output: "192.0.2.20 dev net1 src 192.0.2.10", Dev: "net1", OK: true,
+	}}
+
+	got := checkSourceRoutes(context.Background(), nil,
+		map[string]string{"pod-a": "default"}, map[string]string{"pod-a": "netshoot"}, []PingTest{test}, cache)
+
+	assert.Len(t, got, 1)
+	assert.Equal(t, "net1", got[0].sourceRoute.Dev)
+	assert.NoError(t, got[0].sourceRouteErr)
+}
+
+func TestBoundedTraceOutput(t *testing.T) {
+	input := strings.Repeat("x", traceOutputLimit+100)
+	got := boundedTraceOutput(input)
+
+	assert.Less(t, len(got), len(input))
+	assert.Contains(t, got, "truncated 100 bytes")
+}
+
+func TestRunICMPPreservesPrecomputedRouteError(t *testing.T) {
+	test := PingTest{
+		Kind: ICMPSameRail, SrcIface: "net1", Expectation: ExpectRequired,
+		sourceRouteErr: errors.New("route lookup failed"),
+	}
+
+	result := RunICMP(context.Background(), nil, "default", "pod-a", "netshoot", test)
+
+	assert.False(t, result.OK)
+	assert.EqualError(t, result.Err, "route lookup failed")
 }
