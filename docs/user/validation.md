@@ -32,7 +32,10 @@ Each generated example DaemonSet declares two validation containers: the DOCA
 container runs `rping`, `ib_write_bw`, and DMA-BUF bandwidth, while the `netshoot` container runs
 ICMP and route checks from the same pod network namespace. Validation applies
 the generated DaemonSet as written; it does not inject a helper container at
-runtime.
+runtime. Every ICMP probe is pinned with `ping -I <src-iface>`, including
+same-rail and cross-rail probes in `quick`, `full`, and `strict` modes. Binding
+only the source IP is intentionally not used because it does not guarantee the
+probe stays on the selected Multus interface.
 
 Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a relevant device condition with a stale `observedGeneration` remains `IN-PROGRESS`. `NicConfigurationTemplate` considers `FirmwareUpdateInProgress` relevant only when the matched device has `spec.firmware`; a stale firmware condition cannot block a configuration-only deployment. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
 

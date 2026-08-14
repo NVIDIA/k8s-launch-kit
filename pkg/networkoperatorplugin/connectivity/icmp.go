@@ -48,11 +48,15 @@ func RunICMP(ctx context.Context, restConfig *rest.Config, namespace, pod, conta
 			return r
 		}
 	}
-	cmd := shellWithTimeout(fmt.Sprintf("ping -c 1 -W 1 -I %s %s", shellArg(test.SrcIP), shellArg(test.DstIP)),
+	cmd := shellWithTimeout(icmpCommand(test),
 		commandTimeoutFor(test, icmpCommandTimeout))
 	testLogger(test).V(2).Info("ICMP command", "command", boundedTraceOutput(cmd))
 	res, err := kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", cmd})
 	r.Stdout, r.Stderr = res.Stdout, res.Stderr
 	finalizeExpectedResult(&r, err == nil, err)
 	return r
+}
+
+func icmpCommand(test PingTest) string {
+	return fmt.Sprintf("ping -c 1 -W 1 -I %s %s", shellArg(test.SrcIface), shellArg(test.DstIP))
 }
