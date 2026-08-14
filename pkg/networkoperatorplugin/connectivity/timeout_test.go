@@ -45,11 +45,11 @@ func TestAutomaticTimeoutBudgetMirrorsSelectedExecutionPlan(t *testing.T) {
 
 	assert.Equal(t, 12, budget.PlannedTests)
 	assert.Equal(t, automaticSetupTimeout, budget.Setup)
-	assert.Equal(t, 5*time.Minute+51*time.Second, budget.Tests)
-	assert.Equal(t, 35*time.Second+100*time.Millisecond, budget.SafetyMargin)
-	assert.Equal(t, 6*time.Minute+26*time.Second+100*time.Millisecond, budget.executionTimeout())
+	assert.Equal(t, 6*time.Minute+21*time.Second, budget.Tests)
+	assert.Equal(t, 38*time.Second+100*time.Millisecond, budget.SafetyMargin)
+	assert.Equal(t, 6*time.Minute+59*time.Second+100*time.Millisecond, budget.executionTimeout())
 	assert.Equal(t, matrixCleanupTimeout, budget.Cleanup)
-	assert.Equal(t, 16*time.Minute+56*time.Second+100*time.Millisecond, budget.Total)
+	assert.Equal(t, 17*time.Minute+29*time.Second+100*time.Millisecond, budget.Total)
 }
 
 func TestAutomaticTimeoutBudgetIncludesOnlySelectedChecks(t *testing.T) {
@@ -108,7 +108,7 @@ func TestAutomaticTimeoutBudgetForThreeNodeFourRailQuickMatrix(t *testing.T) {
 	})
 
 	assert.Equal(t, 144, budget.PlannedTests)
-	assert.Equal(t, 2*time.Hour+10*time.Minute+24*time.Second, budget.Total)
+	assert.Equal(t, 2*time.Hour+12*time.Minute+3*time.Second, budget.Total)
 }
 
 func TestAutomaticTimeoutBudgetUsesDefaultChecksAndNoSafetyForEmptyPlan(t *testing.T) {

@@ -376,7 +376,7 @@ func runRPingBatch(ctx context.Context, restConfig *rest.Config, namespaceByPod,
 		}
 		finalizeExpectedResult(&results[i], false, fmt.Errorf("rping exited with code %d", cell.rc))
 	}
-	attachRDMAServerLogs(restConfig, serverNamespace, first.DstPod, serverContainer,
+	attachRDMAServerLogs(tctx, restConfig, serverNamespace, first.DstPod, serverContainer,
 		"/tmp/l8k-rping-server", results)
 	return results
 }
@@ -453,7 +453,7 @@ func parseRPingBatchResults(stdout string) map[int]rdmaBatchCell {
 }
 
 func rdmaBatchTimeoutFor(tests []PingTest) time.Duration {
-	timeout := 15 * time.Second
+	timeout := 15*time.Second + rdmaServerLogTimeout
 	for _, test := range tests {
 		timeout += commandTimeoutFor(test, rpingCommandTimeout) + rdmaBatchSettleDelayFor([]PingTest{test})
 	}
@@ -706,7 +706,7 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 			finalizeExpectedResult(&results[i], observedOK, observedErr)
 		}
 	}
-	attachRDMAServerLogs(restConfig, serverNamespace, first.DstPod, serverContainer,
+	attachRDMAServerLogs(tctx, restConfig, serverNamespace, first.DstPod, serverContainer,
 		"/tmp/l8k-ibwritebw-server", results)
 	return results
 }
@@ -877,7 +877,7 @@ func ibWriteBwBatchPort(index int) int {
 }
 
 func ibWriteBwBatchTimeoutFor(tests []PingTest) time.Duration {
-	timeout := 20 * time.Second
+	timeout := 20*time.Second + rdmaServerLogTimeout
 	for _, test := range tests {
 		timeout += commandTimeoutFor(test, ibWriteBwCommandTimeout) + rdmaBatchSettleDelayFor([]PingTest{test})
 	}
@@ -921,7 +921,7 @@ func logRDMABatchResults(results []PingResult, batch, batches int) {
 	}
 }
 
-func attachRDMAServerLogs(restConfig *rest.Config, namespace, pod, container, pathPrefix string, results []PingResult) {
+func attachRDMAServerLogs(ctx context.Context, restConfig *rest.Config, namespace, pod, container, pathPrefix string, results []PingResult) {
 	indices := make([]int, 0, len(results))
 	traceEnabled := connectivityLogger().V(2).Enabled()
 	for i := range results {
@@ -933,7 +933,7 @@ func attachRDMAServerLogs(restConfig *rest.Config, namespace, pod, container, pa
 		return
 	}
 
-	logs, err := collectRDMAServerLogs(restConfig, namespace, pod, container, pathPrefix, indices)
+	logs, err := collectRDMAServerLogs(ctx, restConfig, namespace, pod, container, pathPrefix, indices)
 	if err != nil {
 		connectivityLogger().V(1).Info("RDMA server log collection failed",
 			"namespace", namespace, "pod", pod, "container", container,
@@ -947,15 +947,15 @@ func attachRDMAServerLogs(restConfig *rest.Config, namespace, pod, container, pa
 	}
 }
 
-func collectRDMAServerLogs(restConfig *rest.Config, namespace, pod, container, pathPrefix string, indices []int) (map[int]string, error) {
+func collectRDMAServerLogs(ctx context.Context, restConfig *rest.Config, namespace, pod, container, pathPrefix string, indices []int) (map[int]string, error) {
 	var command strings.Builder
 	for _, index := range indices {
 		fmt.Fprintf(&command, "echo %s %d; tail -c %d %s-%d.log 2>/dev/null; echo; echo %s %d; ",
 			rdmaServerLogMarker, index, rdmaServerLogLimit, pathPrefix, index, rdmaServerLogEndMarker, index)
 	}
-	// The client/batch context may already have expired. Use a fresh, tightly
-	// bounded context so failure evidence is collected before deferred cleanup.
-	tctx, cancel := context.WithTimeout(context.Background(), rdmaServerLogTimeout)
+	// The batch timeout reserves this collection window. Derive from the batch
+	// context so diagnostics cannot run beyond the advertised matrix deadline.
+	tctx, cancel := context.WithTimeout(ctx, rdmaServerLogTimeout)
 	defer cancel()
 	res, err := kubeclient.ExecInPod(tctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", command.String()})
 	if err != nil {

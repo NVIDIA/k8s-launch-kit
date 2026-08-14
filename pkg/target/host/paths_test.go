@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/options"
 )
 
 func TestResolveKubeconfigPrecedence(t *testing.T) {
@@ -76,4 +78,25 @@ func TestUserConfigPathForUsesExplicitAndDeploymentFallback(t *testing.T) {
 	actual, err = UserConfigPathFor(UserConfigInput{DeploymentFiles: deployment})
 	require.NoError(t, err)
 	assert.Equal(t, configPath, actual)
+}
+
+func TestLoadUserConfigRetainsParsedConfigWhenReleaseOverlayFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`networkOperator:
+  selectedRelease: "99.9"
+  namespace: custom-network-operator
+clusterConfig:
+  - identifier: retained-report-group
+`), 0o600))
+
+	cfg, actualPath, err := LoadUserConfig(UserConfigInput{Explicit: path}, options.Options{})
+
+	require.ErrorContains(t, err, `unsupported network operator release "99.9"`)
+	assert.Equal(t, path, actualPath)
+	require.NotNil(t, cfg)
+	require.NotNil(t, cfg.NetworkOperator)
+	assert.Equal(t, "99.9", cfg.NetworkOperator.SelectedRelease)
+	assert.Equal(t, "custom-network-operator", cfg.NetworkOperator.Namespace)
+	require.Len(t, cfg.ClusterConfig, 1)
+	assert.Equal(t, "retained-report-group", cfg.ClusterConfig[0].Identifier)
 }

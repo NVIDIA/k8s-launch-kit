@@ -143,11 +143,16 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 		NetworkOperatorNamespace: request.OperatorNamespace,
 	})
 	cfgPath = loadedCfgPath
+	// Preserve successfully parsed user input in partial reports even when a
+	// release-catalog overlay fails. Operational validation still follows the
+	// existing soft-failure path below and skips config-derived version checks.
+	if cfg != nil {
+		reportConfig = cfg
+	}
 	if cfgErr != nil {
 		log.Log.V(1).Info("user-config not loaded; version check will be skipped",
 			"path", cfgPath, "error", cfgErr.Error())
 	} else if cfg != nil {
-		reportConfig = cfg
 		if cfg.NetworkOperator != nil && cfg.NetworkOperator.Namespace != "" {
 			operatorNamespace = cfg.NetworkOperator.Namespace
 		}
