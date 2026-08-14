@@ -159,6 +159,7 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 		enabledPlugins := parseEnabledPlugins(enabledPlugins)
 		// Create application options from CLI flags
 		opts := options.Options{
+			LaunchKitVersion:         Version,
 			LogLevel:                 logLevel,
 			LogFile:                  logFile,
 			ConfigDir:                configDir,

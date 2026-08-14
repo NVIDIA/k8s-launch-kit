@@ -124,6 +124,7 @@ func (l *Launcher) RunContext(ctx context.Context) error {
 		switch pluginName {
 		case networkoperatorplugin.PluginName:
 			l.plugins[pluginName] = &networkoperatorplugin.NetworkOperatorPlugin{
+				LaunchKitVersion: l.options.LaunchKitVersion,
 				Groups:           l.options.Groups,
 				GpuType:          l.options.GpuType,
 				NodeSelector:     parseNodeSelector(l.options.NodeSelector),

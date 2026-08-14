@@ -123,6 +123,7 @@ func TestInstallOrUpgrade_FreshInstall(t *testing.T) {
 		generated,
 		"0.0.0",
 		"nvidia-network-operator",
+		testLaunchKitVersion,
 		false, // overwriteExisting
 		30*time.Second,
 		false,
@@ -133,6 +134,7 @@ func TestInstallOrUpgrade_FreshInstall(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusDeployed, rel.Info.Status)
 	assert.Equal(t, generated, rel.Config)
+	assertReleaseResourcesAnnotated(t, rel)
 }
 
 func TestInstallOrUpgrade_SameValuesNoOp(t *testing.T) {
@@ -156,6 +158,7 @@ func TestInstallOrUpgrade_SameValuesNoOp(t *testing.T) {
 		values, // identical to deployed
 		"0.0.0",
 		"nvidia-network-operator",
+		testLaunchKitVersion,
 		false,
 		30*time.Second,
 		false,
@@ -192,6 +195,7 @@ func TestInstallOrUpgrade_ConflictWithoutOverwrite(t *testing.T) {
 		generated,
 		"0.0.0",
 		"nvidia-network-operator",
+		testLaunchKitVersion,
 		false,
 		30*time.Second,
 		false,
@@ -220,6 +224,7 @@ func TestInstallOrUpgrade_UpgradeOnOverwrite(t *testing.T) {
 		generated,
 		"0.0.0",
 		"nvidia-network-operator",
+		testLaunchKitVersion,
 		true, // overwriteExisting
 		30*time.Second,
 		false,
@@ -235,6 +240,13 @@ func TestInstallOrUpgrade_UpgradeOnOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, latest.Version)
 	assert.Equal(t, generated, latest.Config)
+	assertReleaseResourcesAnnotated(t, latest)
+}
+
+func assertReleaseResourcesAnnotated(t *testing.T, rel *release.Release) {
+	t.Helper()
+	require.NotNil(t, rel)
+	assert.Equal(t, 1, countVersionAnnotations(t, []byte(rel.Manifest), testLaunchKitVersion))
 }
 
 // (UnmarshalValues + DeepEqualValues tests moved to
@@ -274,6 +286,7 @@ func TestInstallOrUpgrade_ChartVersionConflictWithoutOverwrite(t *testing.T) {
 		seededValues, // same values — so only chart version differs
 		"2.0.0",      // expected
 		"nvidia-network-operator",
+		testLaunchKitVersion,
 		false, // no overwrite
 		30*time.Second,
 		false,
@@ -310,6 +323,7 @@ func TestInstallOrUpgrade_ChartVersionUpgradeOnOverwrite(t *testing.T) {
 		seededValues,
 		"2.0.0", // expected version differs
 		"nvidia-network-operator",
+		testLaunchKitVersion,
 		true, // overwrite
 		30*time.Second,
 		false,
@@ -348,6 +362,7 @@ func TestInstallOrUpgrade_DetectsStuckPendingRelease(t *testing.T) {
 		map[string]interface{}{"k": "v"},
 		"0.0.0",
 		"nvidia-network-operator",
+		testLaunchKitVersion,
 		true, // even with overwrite, the stuck gate fires first
 		30*time.Second,
 		false,
@@ -358,7 +373,7 @@ func TestInstallOrUpgrade_DetectsStuckPendingRelease(t *testing.T) {
 }
 
 func TestInstallOrUpgrade_RejectsEmptyCfg(t *testing.T) {
-	err := InstallOrUpgrade(context.Background(), nil, nil, []byte("nfd: {}\n"), false, 30*time.Second, false)
+	err := InstallOrUpgrade(context.Background(), nil, nil, []byte("nfd: {}\n"), testLaunchKitVersion, false, 30*time.Second, false)
 	require.Error(t, err)
 }
 

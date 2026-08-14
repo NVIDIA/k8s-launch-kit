@@ -79,6 +79,7 @@ is used as the manifest directory.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runTargetCommand(cmd, target.Deploy, hosttarget.NewDeployAdapter(
 			hosttarget.DeployRequest{
+				LaunchKitVersion:  Version,
 				Kubeconfig:        kubeconfig,
 				DeploymentFiles:   deploymentFiles,
 				UserConfig:        userConfig,

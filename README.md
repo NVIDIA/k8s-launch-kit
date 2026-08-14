@@ -327,6 +327,12 @@ l8k generate --user-config ./cluster-config.yaml \
 The generated config already contains the resolved profile. Pass profile flags
 to `generate` only when you want to override the saved values.
 
+Every Kubernetes object in the generated bundle carries
+`nvidia.kubernetes-launch-kit.version: <l8k-release-version>` in
+`metadata.annotations`. This identifies the Launch Kit release that rendered
+the object without replacing annotations already supplied by a profile or a
+custom workload manifest.
+
 Apply the generated manifests to the cluster:
 
 ```bash
@@ -345,6 +351,10 @@ to `<dir>` itself. `--dry-run` does a server-side dry run. `--deploy-timeout`
 caps the whole apply+reconcile phase end-to-end (e.g. `--deploy-timeout 90m`);
 without it, deploy polls indefinitely — right for SR-IOV on large clusters
 where reconciliation can take an hour.
+
+When Launch Kit installs or upgrades the Network Operator chart, its Helm
+post-renderer adds the same version annotation to chart-rendered resources.
+Helm hooks and chart CRDs are outside Helm's post-renderer stream.
 
 Verify the deployment end-to-end:
 

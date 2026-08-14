@@ -58,6 +58,9 @@ const defaultHelmInstallTimeout = 10 * time.Minute
 // callsite readable as Phase 0 (helm install) and the existing four phases
 // grow more parameters over time.
 type DeployOptions struct {
+	// LaunchKitVersion is applied to resources rendered by Helm.
+	LaunchKitVersion string
+
 	// DryRun threads through to server-side dry-run for apply and to
 	// action.Install.DryRun / action.Upgrade.DryRun for helm.
 	DryRun bool
@@ -111,6 +114,7 @@ type appliedManifest struct {
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
 	_ = profile
 	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, DeployOptions{
+		LaunchKitVersion:  p.LaunchKitVersion,
 		DryRun:            p.DryRun,
 		OverwriteExisting: p.OverwriteExisting,
 		RestConfig:        p.RESTConfig,
@@ -752,7 +756,7 @@ func runHelmInstallPhase(ctx context.Context, manifestsDir string, opts DeployOp
 		}
 	}
 
-	err = InstallOrUpgrade(ctx, opts.RestConfig, opts.NetworkOperator, valuesYAML, opts.OverwriteExisting, timeout, opts.DryRun)
+	err = InstallOrUpgrade(ctx, opts.RestConfig, opts.NetworkOperator, valuesYAML, opts.LaunchKitVersion, opts.OverwriteExisting, timeout, opts.DryRun)
 	if err == nil {
 		if opts.DryRun {
 			uiOutput.Success("Dry-run: helm install would create network-operator release in namespace %s",

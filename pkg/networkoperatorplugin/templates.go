@@ -990,7 +990,34 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		}
 	}
 
+	if err := annotateGeneratedResources(results, p.LaunchKitVersion); err != nil {
+		return nil, err
+	}
+
 	return results, nil
+}
+
+// annotateGeneratedResources applies Launch Kit ownership metadata at the
+// renderer boundary so every current and future profile resource, including a
+// user-supplied workload, receives the release version. values.yaml is Helm
+// input rather than a Kubernetes resource and is intentionally excluded.
+func annotateGeneratedResources(results map[string]string, launchKitVersion string) error {
+	filenames := make([]string, 0, len(results))
+	for filename := range results {
+		if filename != helmValuesOutputName {
+			filenames = append(filenames, filename)
+		}
+	}
+	slices.Sort(filenames)
+
+	for _, filename := range filenames {
+		annotated, err := annotateResources([]byte(results[filename]), launchKitVersion)
+		if err != nil {
+			return fmt.Errorf("annotate generated resource %s: %w", filename, err)
+		}
+		results[filename] = string(annotated)
+	}
+	return nil
 }
 
 // hasEmptyNetworkInterfaceNames returns true if any east-west PF across all

@@ -85,6 +85,7 @@ func (deployRunner) Run(ctx context.Context, request DeployRequest) error {
 	}
 
 	deployOpts := networkoperatorplugin.DeployOptions{
+		LaunchKitVersion:  request.LaunchKitVersion,
 		DryRun:            request.DryRun,
 		OverwriteExisting: request.OverwriteExisting,
 		RestConfig:        restConfig,

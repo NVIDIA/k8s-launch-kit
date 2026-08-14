@@ -40,6 +40,9 @@ const (
 )
 
 type NetworkOperatorPlugin struct {
+	// LaunchKitVersion is the version reported by the invoking l8k binary.
+	LaunchKitVersion string
+
 	// Groups is the list of source-group identifiers passed via
 	// `--groups <a,b,...>` (matched case-sensitively against
 	// `cluster-config.yaml`'s `clusterConfig[].identifier`). Empty when
