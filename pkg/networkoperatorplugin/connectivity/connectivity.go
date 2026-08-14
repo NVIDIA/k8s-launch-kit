@@ -48,8 +48,9 @@ type Options struct {
 	// manifests live under (validate uses the same dir it just
 	// validated).
 	ManifestDir string
-	// Timeout caps the whole connectivity phase: apply + DS rollout
-	// + connectivity test execs + cleanup. 0 falls back to 5 minutes.
+	// Timeout caps connectivity workload setup and test execution when
+	// positive. Zero selects an automatic budget derived from the generated
+	// matrix plan. Cleanup uses its own short context in either mode.
 	Timeout time.Duration
 	// Keep leaves the test DaemonSets running after the matrix
 	// completes, for follow-up debugging. Default is to delete.
@@ -130,8 +131,8 @@ type DaemonSetReport struct {
 // All UI output flows through `uiOutput` (caller passes
 // ui.FromContext(ctx)). Logs go to controller-runtime's logr.
 func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, uiOutput ui.Output, opts Options) (*MatrixResult, error) {
-	if opts.Timeout <= 0 {
-		opts.Timeout = 5 * time.Minute
+	if opts.Timeout < 0 {
+		return nil, fmt.Errorf("connectivity timeout must be greater than or equal to zero")
 	}
 	opts.Checks = normalizeChecks(opts.Checks)
 	if opts.Mode == "" {
@@ -144,15 +145,31 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		opts.IBWriteSize = 65536
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
-	defer cancel()
-
 	uiOutput.Section("Connectivity matrix")
 	if len(opts.Checks) == 0 {
 		return &MatrixResult{
 			Skipped: &MatrixSkip{Reason: "all connectivity checks are disabled"},
 		}, nil
 	}
+
+	automaticTimeout := opts.Timeout == 0
+	runCtx := ctx
+	runCancel := func() {}
+	setupTimeout := automaticSetupTimeout
+	if !automaticTimeout {
+		runCtx, runCancel = context.WithTimeout(ctx, opts.Timeout)
+		setupTimeout = opts.Timeout
+		uiOutput.Info("Connectivity timeout set by user: %s", opts.Timeout)
+	}
+	defer runCancel()
+
+	setupCtx := runCtx
+	setupCancel := func() {}
+	if automaticTimeout {
+		setupCtx, setupCancel = context.WithTimeout(runCtx, setupTimeout)
+	}
+	defer setupCancel()
+
 	uiOutput.Info("Loading example DaemonSet manifests from %s", opts.ManifestDir)
 
 	hasICMP := checksContain(opts.Checks, CheckICMP)
@@ -185,7 +202,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		}
 		// Use a fresh context for cleanup; the main ctx may have
 		// already been cancelled / timed out.
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), matrixCleanupTimeout)
 		defer cleanupCancel()
 		for _, ref := range refs {
 			if err := DeleteDaemonSet(cleanupCtx, c, ref); err != nil {
@@ -195,11 +212,11 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		}
 	}()
 
-	applyAndCollectPods := func(objs []*unstructured.Unstructured, refs []DaemonSetRef) ([]testPodWithDS, error) {
+	applyAndCollectPods := func(runCtx context.Context, objs []*unstructured.Unstructured, refs []DaemonSetRef) ([]testPodWithDS, error) {
 		for i, obj := range objs {
 			ref := refs[i]
 			uiOutput.Info("Applying %s/%s (from %s)", ref.Namespace, ref.Name, ref.SourceFile)
-			if err := ApplyDaemonSet(ctx, c, obj); err != nil {
+			if err := ApplyDaemonSet(runCtx, c, obj); err != nil {
 				return nil, fmt.Errorf("apply daemonset %s/%s: %w", ref.Namespace, ref.Name, err)
 			}
 		}
@@ -208,12 +225,12 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		out := make([]testPodWithDS, 0)
 		for _, ref := range refs {
 			uiOutput.Info("Waiting for DaemonSet %s/%s to roll out", ref.Namespace, ref.Name)
-			rollout, err := WaitForRollout(ctx, c, ref, opts.Timeout)
+			rollout, err := WaitForRollout(runCtx, c, ref, setupTimeout)
 			if err != nil {
 				return out, err
 			}
 			uiOutput.Success("DaemonSet %s/%s ready (%d/%d pods)", ref.Namespace, ref.Name, rollout.Ready, rollout.Desired)
-			pods, err := ListPods(ctx, c, ref)
+			pods, err := ListPods(runCtx, c, ref)
 			if err != nil {
 				return out, err
 			}
@@ -237,7 +254,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		return out, nil
 	}
 
-	buildMatrixPods := func(allPods []testPodWithDS, discoverRDMA bool) []TestPod {
+	buildMatrixPods := func(runCtx context.Context, allPods []testPodWithDS, discoverRDMA bool) []TestPod {
 		// Parse multus annotations and build the TestPod list. Each
 		// pod's RDMA-device-by-rail map is filled in from a single
 		// in-pod shell exec that reads
@@ -256,7 +273,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 				continue
 			}
 			if discoverRDMA {
-				tp.RDMADevsByRail = DiscoverRDMADevices(ctx, restConfig, p.pod.Namespace, p.pod.Name, p.ref.RDMAContainer, ifaceByRail)
+				tp.RDMADevsByRail = DiscoverRDMADevices(runCtx, restConfig, p.pod.Namespace, p.pod.Name, p.ref.RDMAContainer, ifaceByRail)
 				log.Log.V(1).Info("RDMA device discovery",
 					"pod", p.pod.Name, "rails", tp.RailOrder,
 					"rdmaDevsByRail", tp.RDMADevsByRail)
@@ -280,11 +297,11 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		return rdmaContainerByPod, icmpContainerByPod, namespaceByPod
 	}
 
-	allPods, err := applyAndCollectPods(objs, refs)
+	allPods, err := applyAndCollectPods(setupCtx, objs, refs)
 	if err != nil {
 		return result, err
 	}
-	testPods := buildMatrixPods(allPods, hasRDMA)
+	testPods := buildMatrixPods(setupCtx, allPods, hasRDMA)
 
 	plan := PlanWithOptions(testPods, opts.Mode, opts.Routing)
 	if plan.Skip != nil {
@@ -292,6 +309,16 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		result.Skipped = plan.Skip
 		return result, nil
 	}
+
+	executionCtx := runCtx
+	executionCancel := func() {}
+	if automaticTimeout {
+		budget := automaticTimeoutBudget(plan, opts.Checks)
+		uiOutput.Info("Connectivity timeout automatically calculated from %d planned tests: %s total budget", budget.PlannedTests, budget.Total)
+		setupCancel()
+		executionCtx, executionCancel = context.WithTimeout(ctx, budget.executionTimeout())
+	}
+	defer executionCancel()
 
 	totalSameRail := len(plan.RDMASameRail)
 	totalCrossRail := len(plan.RDMACrossRail)
@@ -352,24 +379,24 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		{
 			check: CheckRPing,
 			label: "RDMA ping (rping)",
-			tests: append(append([]PingTest{}, plan.RDMASameRail...), plan.RDMACrossRail...),
+			tests: testsForCheck(plan, CheckRPing),
 		},
 		{
 			check: CheckIBWriteBW,
 			label: "RDMA bandwidth (ib_write_bw)",
-			tests: append(append([]PingTest{}, plan.RDMABwSameRail...), plan.RDMABwCrossRail...),
+			tests: testsForCheck(plan, CheckIBWriteBW),
 		},
 		{
 			check: CheckGPUDirectDMABuf,
 			label: "GPUDirect RDMA bandwidth (DMA-BUF)",
-			tests: append(append([]PingTest{}, plan.GPUDirectDMABufSameRail...), plan.GPUDirectDMABufCrossRail...),
+			tests: testsForCheck(plan, CheckGPUDirectDMABuf),
 		},
 		{
 			check: CheckICMP,
 			label: "Layer 3 ping (ICMP)",
-			tests: append(append([]PingTest{}, plan.ICMPSameRail...), plan.ICMPCrossRail...),
+			tests: testsForCheck(plan, CheckICMP),
 			run: func(t PingTest) PingResult {
-				return RunICMP(ctx, restConfig, namespaceByPod[t.SrcPod],
+				return RunICMP(executionCtx, restConfig, namespaceByPod[t.SrcPod],
 					t.SrcPod, icmpContainerByPod[t.SrcPod], t)
 			},
 		},
@@ -384,21 +411,21 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		}
 		uiOutput.Info("Stage: %s — %d test(s)", stage.label, len(tests))
 		if stage.check != CheckICMP {
-			tests = checkSourceRoutes(ctx, restConfig, namespaceByPod, icmpContainerByPod, tests)
+			tests = checkSourceRoutes(executionCtx, restConfig, namespaceByPod, icmpContainerByPod, tests)
 		}
 		if stage.check == CheckRPing {
 			result.PingResults = append(result.PingResults,
-				RunRPingBatches(ctx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.RPingIterations)...)
+				RunRPingBatches(executionCtx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.RPingIterations)...)
 			continue
 		}
 		if stage.check == CheckIBWriteBW {
 			result.PingResults = append(result.PingResults,
-				RunIbWriteBwBatches(ctx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)...)
+				RunIbWriteBwBatches(executionCtx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)...)
 			continue
 		}
 		if stage.check == CheckGPUDirectDMABuf {
 			result.PingResults = append(result.PingResults,
-				RunGPUDirectDMABufBatches(ctx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)...)
+				RunGPUDirectDMABufBatches(executionCtx, restConfig, namespaceByPod, rdmaContainerByPod, tests, opts.IBWriteSize, opts.IBWriteMinBandwidthGbps)...)
 			continue
 		}
 		for _, t := range tests {

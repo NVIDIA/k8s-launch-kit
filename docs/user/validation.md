@@ -104,6 +104,31 @@ l8k validate \
   --rdma-ib-write-min-bandwidth-gbps 100
 ```
 
+## Connectivity Timeout
+
+By default, `--connectivity-timeout=0` selects an automatic timeout. Launch Kit
+first applies and discovers the generated validation workload under a bounded
+setup allowance. Once the matrix is known, it calculates the total budget from
+the selected tests, their individual command limits, ordered pod-pair batches,
+cleanup allowances, and a safety margin. The log reports the calculated total
+before connectivity test execution starts:
+
+```text
+Connectivity timeout automatically calculated from 144 planned tests: 2h10m24s total budget
+```
+
+Set a positive duration to replace the automatic budget with an explicit hard
+deadline for connectivity workload setup and execution:
+
+```bash
+l8k validate --connectivity-timeout 45m
+```
+
+The explicit deadline is useful for fitting validation into an external
+maintenance or CI window. Test DaemonSet and RDMA-process cleanup use short,
+independent best-effort contexts so cleanup is still attempted after either an
+automatic or user-supplied deadline expires.
+
 Disable only the connectivity stage:
 
 ```bash

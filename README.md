@@ -440,6 +440,13 @@ Validation modes control cross-rail coverage and gating:
 `--rdma-ib-write-size <BYTES>`, and
 `--rdma-ib-write-min-bandwidth-gbps <GBPS>` (`0` disables bandwidth gating).
 
+The connectivity timeout is automatic by default. After the test workload is
+ready and the matrix has been planned, validate derives a total budget from
+the selected checks, their per-command limits, ordered pod-pair batches, a
+bounded setup allowance, cleanup, and a safety margin. The calculated total
+is printed before test execution. Use `--connectivity-timeout <DURATION>` to
+replace it with an explicit end-to-end setup and execution deadline.
+
 A self-contained HTML report lands at `<deployment-files>/k8s-launch-kit-validation-report.html`
 by default (override with `--report-path`, disable with `--report-path=-`).
 The report has: header (l8k version, kubeconfig context, API-server version),

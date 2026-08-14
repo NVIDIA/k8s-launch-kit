@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -32,6 +33,7 @@ func newValidateRequestTestCommand() *cobra.Command {
 	cmd.Flags().IntVar(&validateRDMAIterations, "rdma-rping-iterations", 0, "")
 	cmd.Flags().IntVar(&validateRDMAIBWriteSize, "rdma-ib-write-size", 0, "")
 	cmd.Flags().Float64Var(&validateRDMAIBWriteMinGbps, "rdma-ib-write-min-bandwidth-gbps", 0, "")
+	cmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 0, "")
 	return cmd
 }
 
@@ -43,6 +45,7 @@ func resetValidateRequestGlobals(t *testing.T) {
 	validateRDMAIterations = 0
 	validateRDMAIBWriteSize = 0
 	validateRDMAIBWriteMinGbps = 0
+	validateConnectivityTimeout = 0
 }
 
 func TestNewHostValidateRequestCapturesExplicitValues(t *testing.T) {
@@ -56,6 +59,7 @@ func TestNewHostValidateRequestCapturesExplicitValues(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("rdma-rping-iterations", "11"))
 	require.NoError(t, cmd.Flags().Set("rdma-ib-write-size", "8192"))
 	require.NoError(t, cmd.Flags().Set("rdma-ib-write-min-bandwidth-gbps", "0"))
+	require.NoError(t, cmd.Flags().Set("connectivity-timeout", "42m"))
 
 	request := newHostValidateRequest(cmd)
 	assert.True(t, request.Connectivity.Set)
@@ -70,6 +74,7 @@ func TestNewHostValidateRequestCapturesExplicitValues(t *testing.T) {
 	assert.True(t, request.RDMAIBWriteSize.Set)
 	assert.Zero(t, request.RDMAMinBandwidth.Value)
 	assert.True(t, request.RDMAMinBandwidth.Set)
+	assert.Equal(t, 42*time.Minute, request.ConnectivityTime)
 }
 
 func TestNewHostValidateRequestPreservesOmission(t *testing.T) {
@@ -83,4 +88,11 @@ func TestNewHostValidateRequestPreservesOmission(t *testing.T) {
 	assert.False(t, request.RDMAPIterations.Set)
 	assert.False(t, request.RDMAIBWriteSize.Set)
 	assert.False(t, request.RDMAMinBandwidth.Set)
+	assert.Zero(t, request.ConnectivityTime)
+}
+
+func TestValidateConnectivityTimeoutDefaultsToAutomatic(t *testing.T) {
+	flag := validateCmd.Flags().Lookup("connectivity-timeout")
+	require.NotNil(t, flag)
+	assert.Equal(t, "0s", flag.DefValue)
 }

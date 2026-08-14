@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-validate
-version: 1.0.3
+version: 1.0.4
 description: "Use this skill when the user wants to verify that an NVIDIA networking deployment matches the configuration that produced it. Activate for: 'is my deployment correct', 'are all the manifests applied', 'does the network operator version match', 'verify deployment', 'check cluster state against config', or any question about whether the cluster reflects what l8k generated. Wraps the `l8k validate` subcommand."
 metadata:
   requires:
@@ -75,6 +75,7 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 | `--deployment-files` | `./deployment` | Directory containing the manifests to verify |
 | `--validation-mode` | `validation.mode` (`strict`) | Connectivity mode: `quick`, `full`, or `strict` |
 | `--validation-checks` | `validation.checks` (`icmp,rping,ib_write_bw`) | Comma-separated connectivity checks; `""` disables all |
+| `--connectivity-timeout` | automatic (`0`) | Total connectivity budget is calculated from the generated matrix plan; set a positive duration for an explicit hard setup and execution deadline |
 | `--rdma-rping-iterations` | `validation.rdma.rpingIterations` | rping client iteration count |
 | `--rdma-ib-write-size` | `validation.rdma.ibWriteSize` | ib_write_bw message size |
 | `--rdma-ib-write-min-bandwidth-gbps` | `validation.rdma.ibWriteMinBandwidthGbps` | Minimum peak Gbps; `0` disables bandwidth gating |
@@ -94,6 +95,12 @@ adds `--use_cuda=<endpoint-index> --use_cuda_dmabuf` independently on the
 client and server. Treat missing or ambiguous `connectedGPU` topology as a
 failure; never substitute GPU 0. Pull Secrets come from
 `networkOperator.imagePullSecrets` and must exist in every validation namespace.
+
+With the default `--connectivity-timeout=0`, validate logs one total automatic
+budget after planning the matrix. The calculation reflects the enabled test
+families, per-command limits, ordered pod-pair batches, bounded workload setup,
+cleanup, and a safety margin. A positive flag value replaces that calculation
+with a user-supplied hard deadline.
 
 ## Examples
 

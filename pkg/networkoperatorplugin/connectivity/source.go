@@ -75,7 +75,7 @@ func shellWithTimeout(command string, timeout time.Duration) string {
 
 func commandTimeoutFor(test PingTest, defaultTimeout time.Duration) time.Duration {
 	if test.Expectation == ExpectForbidden || test.Expectation == ExpectObserve {
-		return 5 * time.Second
+		return nonRequiredCommandTimeout
 	}
 	return defaultTimeout
 }
@@ -100,7 +100,7 @@ func checkRoute(ctx context.Context, restConfig *rest.Config, namespace, pod, co
 		out.Err = "missing source or destination IP"
 		return out
 	}
-	tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	tctx, cancel := context.WithTimeout(ctx, routeCheckTimeout)
 	defer cancel()
 	res, err := kubeclient.ExecInPod(tctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", cmd})
 	out.Output = strings.TrimSpace(strings.Join([]string{res.Stdout, res.Stderr}, "\n"))
