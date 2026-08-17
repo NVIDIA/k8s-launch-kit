@@ -98,7 +98,7 @@ l8k generate \
 # An explicit source-group subset
 l8k generate \
   --user-config ./cluster-config.yaml \
-  --groups poweredge-xe9680-h200,thinksystem-sr680a-v3-h200 \
+  --groups pe-xe9680-h200,ts-sr680a-v3-h200 \
   --save-deployment-files ./deployment-stage
 ```
 

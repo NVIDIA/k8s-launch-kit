@@ -90,16 +90,18 @@ Discovery also writes up to two Launch Kit-owned labels:
 
 | Label | Purpose |
 | --- | --- |
-| `nvidia.kubernetes-launch-kit.machine: <machineType>-<gpuType>` | Selects one source hardware group. |
+| `nvidia.kubernetes-launch-kit.machine: <identifier>` | Selects one source hardware group using the same value persisted in `clusterConfig[].identifier`. |
 | `nvidia.kubernetes-launch-kit.gpu: <gpuType>` | Selects compatible source groups that share a GPU type. |
 
-Label values preserve the discovered case and normalize spaces for Kubernetes.
-The combined machine/GPU label and its lowercase group `identifier` are bounded
-to 40 bytes; long values keep a readable prefix plus an 8-character
-deterministic hash. GPU-only labels use the Kubernetes 63-byte limit and the
-same shortening rule. If the machine or GPU type cannot be resolved, discovery
-uses a fallback `group-N` identifier and writes only the labels it can
-construct.
+The machine label and group `identifier` share one lowercase, vendor-free value
+bounded to 30 bytes. The same normalization shortens common machine segments:
+`ThinkSystem` becomes `ts` and `PowerEdge` becomes `pe`. Long identities keep
+balanced machine/GPU prefixes plus a 6-character deterministic hash; unused
+prefix space moves to the longer component. GPU-only labels preserve the
+discovered case and `NVIDIA` segment, using the Kubernetes 63-byte limit and the
+existing 8-character shortening hash. If the machine or GPU type cannot be
+resolved, discovery uses a fallback `group-N` identifier and writes only the
+labels it can construct.
 
 See [Heterogeneous Clusters](heterogeneous-clusters.md) for group merging and targeted generation.
 

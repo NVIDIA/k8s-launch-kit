@@ -1388,15 +1388,21 @@ During discovery, each node group's `machineType` and `gpuType` are populated fr
 Values are sanitized to match the GPU operator label format (spaces replaced with dashes). If either probe fails (e.g., `nvidia-smi` not installed, DMI not readable), the corresponding field is left empty and discovery continues without error.
 
 When both values are available, discovery derives the group `identifier` from
-`<machineType>-<gpuType>`. Generated identifiers are limited to 40 bytes; long
-values keep a readable prefix plus an 8-character deterministic hash. This
-keeps resource names and label values that append the identifier below their
-Kubernetes size limits without making similar hardware identities collide.
+`<machineType>-<gpuType>`, lowercases it, and removes complete `NVIDIA`
+segments. Common machine segments are shortened in the same pass:
+`ThinkSystem` becomes `ts` and `PowerEdge` becomes `pe`. The
+`nvidia.kubernetes-launch-kit.machine` node label uses that same identifier;
+the separate `.gpu` label retains the discovered GPU value.
+Generated identifiers are limited to 30 bytes. Long identities keep balanced
+machine/GPU prefixes plus a 6-character deterministic hash, with unused prefix
+space reassigned when one component is short. This keeps resource names and
+label values that append the identifier below their Kubernetes size limits
+without making similar hardware identities collide.
 
 Example of discovered hardware types in the config:
 ```yaml
 clusterConfig:
-- identifier: group-0
+- identifier: ts-sr680a-v3-h100-nvl
   machineType: ThinkSystem-SR680a-V3
   gpuType: NVIDIA-H100-NVL
   workerNodes:

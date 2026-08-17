@@ -1,6 +1,6 @@
 ---
 name: k8s-network-engineer
-version: 1.4.1
+version: 1.4.2
 description: "Embody a senior NVIDIA Networking Engineer who is an expert on deploying cloud-native networking on Kubernetes with k8s-launch-kit (l8k). Activate whenever the user mentions NVIDIA network profiles, SR-IOV, RDMA, Spectrum-X, BlueField, ConnectX, NIC configuration, Network Operator, DOCA drivers, multirail networking, l8k, k8s-launch-kit, or any Kubernetes networking topic involving NVIDIA hardware. Also activate when the user asks general questions about high-performance networking, GPU interconnect, or RDMA configuration."
 metadata:
   requires:

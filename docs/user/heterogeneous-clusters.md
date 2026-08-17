@@ -16,10 +16,15 @@ Each `clusterConfig` entry is a source group with its own:
 - East-west PF inventory, rail assignments, and capabilities.
 - Storage and third-party RDMA kernel modules.
 
-Fresh discovery derives `identifier` from the machine/GPU identity and bounds
-it to 40 bytes with a deterministic hash suffix when the natural value is
-longer. Use the persisted identifier shown in `cluster-config.yaml` with
-`--groups`.
+Fresh discovery derives `identifier` from the machine/GPU identity, lowercases
+it, and removes complete `NVIDIA` segments. For example,
+`DGX-B200-NVIDIA-H200` becomes `dgx-b200-h200`; the Launch Kit machine node
+label uses the same value. Common machine segments are shortened in the same
+pass (`ThinkSystem` → `ts`, `PowerEdge` → `pe`). Identifiers are bounded to 30
+bytes. Long values use balanced machine/GPU prefixes plus a 6-character
+deterministic hash, with unused prefix space reassigned to the longer component.
+The separate GPU label still retains its discovered value such as `NVIDIA-H200`.
+Use the persisted identifier shown in `cluster-config.yaml` with `--groups`.
 
 Inspect the available groups before filtering:
 
@@ -67,7 +72,7 @@ Use `--groups` for an exact set of source identifiers. Identifier matching is ca
 ```bash
 l8k generate \
   --user-config ./cluster-config.yaml \
-  --groups poweredge-xe9680-h200,thinksystem-sr680a-v3-h200 \
+  --groups pe-xe9680-h200,ts-sr680a-v3-h200 \
   --save-deployment-files ./deployment
 ```
 
@@ -165,7 +170,7 @@ l8k generate \
 # Stage two of the three source groups
 l8k generate \
   --user-config ./cluster-config.yaml \
-  --groups dgx-b200-nvidia-h200,thinksystem-sr680a-v3-nvidia-h200 \
+  --groups dgx-b200-h200,ts-sr680a-v3-h200 \
   --save-deployment-files ./deployment-stage1
 ```
 

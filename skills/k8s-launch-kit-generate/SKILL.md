@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.6
+version: 1.2.7
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -44,7 +44,7 @@ to that source file; embedded `--for` generation does not write a config.
 | `--topology-file` | Required with `--spectrum-x` | path | spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from the JSON structure. |
 | `--multirail` | Auto-defaulted | — | Auto-defaults to `true`. Explicit `multirail: false` in YAML and `--multirail=false` on the CLI are both preserved. |
 | `--save-deployment-files` | Yes | — | Output directory for generated YAMLs |
-| `--groups` | — | `dgx-b200-nvidia-h100-nvl,poweredge-xe9680-nvidia-h200` | Restrict output to the named source groups (comma-separated). Mutually exclusive with `--gpu-type`. |
+| `--groups` | — | `dgx-b200-h100-nvl,pe-xe9680-h200` | Restrict output to the named source groups (comma-separated). Mutually exclusive with `--gpu-type`. |
 | `--gpu-type` | — | `NVIDIA-H200` | Restrict output to source groups whose `gpuType` matches (case-insensitive). Mutually exclusive with `--groups`. |
 | `--for` | — | preset directory name | Skip discovery: synthesize `clusterConfig` from a topology preset. Requires `--node-selector`. List options with `l8k preset list`. |
 | `--node-selector` | Required with `--for` | `key=val,key2=val2` | Identifies which nodes the synthesized clusterConfig targets at apply time. |
@@ -188,8 +188,11 @@ win when a one-off override is needed.
 - RA2.2 and RA2.3 v1alpha2 `SpectrumXRailPoolConfig` output intentionally
   omits the removed `spec.withBCM` field; current CRDs reject it during strict
   decoding.
-- Group identifiers produced by discovery are bounded to 40 bytes with a
-  deterministic hash suffix. Use the exact persisted identifier from
+- Group identifiers produced by discovery omit complete `NVIDIA` segments and
+  shorten common machine segments (`ThinkSystem` → `ts`, `PowerEdge` → `pe`).
+  They are bounded to 30 bytes with balanced machine/GPU prefixes and a
+  6-character deterministic hash suffix. The machine label uses the same value;
+  the GPU label still retains its discovered value such as `NVIDIA-H200`. Use the exact persisted identifier from
   `cluster-config.yaml` with `--groups`; do not reconstruct it from long
   `machineType` and `gpuType` strings.
 - Use `--groups <a,b,...>` (case-sensitive identifier list) or `--gpu-type <X>` (case-insensitive) to scope a generate to a subset of source groups in heterogeneous clusters. Mutually exclusive. Empty match is a validation error. Strict-subset filters split per-source rendering: NodePolicies emit one CR per source (each with its own machine-label nodeSelector but a shared bucket-level resourceName); IPPool/example DaemonSet emit one CR per bucket with an `In` list of source machine labels.

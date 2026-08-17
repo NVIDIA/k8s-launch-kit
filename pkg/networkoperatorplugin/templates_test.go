@@ -586,8 +586,14 @@ func TestSanitizeIdentifier(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"NVIDIA-H200", "nvidia-h200"},
-		{"NVIDIA A100 80GB PCIe", "nvidia-a100-80gb-pcie"},
+		{"NVIDIA-H200", "h200"},
+		{"nvidia-h200", "h200"},
+		{"NVIDIA A100 80GB PCIe", "a100-80gb-pcie"},
+		{"DGX-B200-NVIDIA-H200", "dgx-b200-h200"},
+		{"NVIDIA-DGX-NVIDIA-H200", "dgx-h200"},
+		{"ThinkSystem-SR680a-V3-NVIDIA-H100-NVL", "ts-sr680a-v3-h100-nvl"},
+		{"PowerEdge-XE9680-NVIDIA-H200", "pe-xe9680-h200"},
+		{"NVIDIAN-H200", "nvidian-h200"},
 		{"already-lowercase", "already-lowercase"},
 		{"MixedCase GPU", "mixedcase-gpu"},
 	}
@@ -599,20 +605,19 @@ func TestSanitizeIdentifier(t *testing.T) {
 }
 
 // labelledGroup builds a source group fixture in the post-Unit-6 shape:
-// MachineType + GPUType resolved, Identifier follows resource-name
-// conventions (lowercase via sanitizeIdentifier), NodeSelector keyed by
-// config.MachineLabelKey with the raw `<machineType>-<gpuType>` value.
+// MachineType + GPUType resolved, with Identifier and the MachineLabelKey
+// NodeSelector sharing the generated group identity.
 func labelledGroup(machineType, gpuType string, pfs []config.PFConfig, nodes []string,
 	caps *config.ClusterCapabilities) config.ClusterConfig {
-	labelValue := config.MachineLabelValue(machineType, gpuType)
+	identifier := config.GeneratedGroupIdentifier(machineType, gpuType)
 	return config.ClusterConfig{
-		Identifier:   config.SanitizeIdentifier(labelValue),
+		Identifier:   identifier,
 		MachineType:  machineType,
 		GPUType:      gpuType,
 		PFs:          pfs,
 		WorkerNodes:  nodes,
 		Capabilities: caps,
-		NodeSelector: map[string]string{config.MachineLabelKey: labelValue},
+		NodeSelector: map[string]string{config.MachineLabelKey: identifier},
 	}
 }
 
@@ -644,7 +649,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		// resource-name conventions (lowercase via sanitizeIdentifier) and
 		// nodeSelector keys on the GPULabelKey written by `l8k discover`
 		// — its value matches the gpuType verbatim.
-		assert.Equal(t, "nvidia-h200", merged.Identifier)
+		assert.Equal(t, "h200", merged.Identifier)
 		assert.Equal(t, "NVIDIA-H200", merged.GPUType)
 		assert.Equal(t, "DGX-B200", merged.MachineType)
 		assert.Equal(t, map[string]string{config.GPULabelKey: "NVIDIA-H200"}, merged.NodeSelector)
@@ -673,8 +678,8 @@ func TestMergeCompatibleGroups(t *testing.T) {
 
 		assert.Len(t, result, 2)
 		// Single-source buckets keep the source group's machine-label identifier.
-		assert.Equal(t, config.SanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200")), result[0].Identifier)
-		assert.Equal(t, config.SanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-A100")), result[1].Identifier)
+		assert.Equal(t, config.GeneratedGroupIdentifier("DGX-B200", "NVIDIA-H200"), result[0].Identifier)
+		assert.Equal(t, config.GeneratedGroupIdentifier("DGX-B200", "NVIDIA-A100"), result[1].Identifier)
 		assert.Nil(t, result[0].RailPciAddresses)
 		assert.Nil(t, result[1].RailPciAddresses)
 	})
@@ -695,7 +700,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 1)
-		assert.Equal(t, "nvidia-h200", result[0].Identifier)
+		assert.Equal(t, "h200", result[0].Identifier)
 		assert.Equal(t, map[string]string{config.GPULabelKey: "NVIDIA-H200"}, result[0].NodeSelector)
 	})
 
@@ -734,12 +739,12 @@ func TestMergeCompatibleGroups(t *testing.T) {
 
 		assert.Len(t, result, 2)
 		// First: merged H200 group (group-0 + group-2) — gpuType-based identifier
-		assert.Equal(t, "nvidia-h200", result[0].Identifier)
+		assert.Equal(t, "h200", result[0].Identifier)
 		assert.Equal(t, []string{"node-a", "node-c"}, result[0].WorkerNodes)
 		assert.Len(t, result[0].RailPciAddresses, 1)
 		assert.Equal(t, []string{"0000:19:00.0", "0000:09:00.0"}, result[0].RailPciAddresses[0])
 		// Second: unmerged DGX-A100/A100 group keeps its machine-label identifier
-		assert.Equal(t, config.SanitizeIdentifier(config.MachineLabelValue("DGX-A100", "NVIDIA-A100")), result[1].Identifier)
+		assert.Equal(t, config.GeneratedGroupIdentifier("DGX-A100", "NVIDIA-A100"), result[1].Identifier)
 		assert.Nil(t, result[1].RailPciAddresses)
 	})
 
@@ -753,7 +758,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 		result, _ := mergeCompatibleGroups(groups, false)
 
 		assert.Len(t, result, 1)
-		assert.Equal(t, config.SanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200")), result[0].Identifier)
+		assert.Equal(t, config.GeneratedGroupIdentifier("DGX-B200", "NVIDIA-H200"), result[0].Identifier)
 		assert.Nil(t, result[0].RailPciAddresses)
 	})
 
@@ -800,7 +805,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 
 		// Should merge: both have 1 east-west rail (north-south excluded from count)
 		assert.Len(t, result, 1)
-		assert.Equal(t, "nvidia-h200", result[0].Identifier)
+		assert.Equal(t, "h200", result[0].Identifier)
 		assert.Len(t, result[0].RailPciAddresses, 1)
 		assert.Equal(t, []string{"0000:19:00.0", "0000:1a:00.0"}, result[0].RailPciAddresses[0])
 	})
@@ -877,7 +882,7 @@ func TestMergeCompatibleGroups(t *testing.T) {
 	t.Run("cross-rail PCI address conflict prevents merge", func(t *testing.T) {
 		// Same PCI address 0000:9c:00.0 at rail 4 in group-1 and rail 5 in group-2.
 		// Merging would cause the device plugin to claim it for the wrong rail.
-		expectedID := config.SanitizeIdentifier(config.MachineLabelValue("DGX-B200", "NVIDIA-H200"))
+		expectedID := config.GeneratedGroupIdentifier("DGX-B200", "NVIDIA-H200")
 		groups := []config.ClusterConfig{
 			labelledGroup("DGX-B200", "NVIDIA-H200",
 				[]config.PFConfig{ewPF("0000:19:00.0", 0), ewPF("0000:9b:00.0", 1)},

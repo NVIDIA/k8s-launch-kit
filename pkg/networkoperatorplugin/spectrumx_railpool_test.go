@@ -36,10 +36,10 @@ func TestSpectrumXRailPoolTemplatesStaySchemaCompatibleAndBounded(t *testing.T) 
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			identifier := config.SanitizeIdentifier(config.MachineLabelValue(
+			identifier := config.GeneratedGroupIdentifier(
 				"HPE-ProLiant-Compute-DL380-Gen12",
 				"NVIDIA-AX800-Converged-Accelerator",
-			))
+			)
 			require.LessOrEqual(t, len(identifier), config.MaxGeneratedIdentifierLength)
 
 			cfg := &config.LaunchKitConfig{
