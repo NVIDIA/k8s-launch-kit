@@ -62,7 +62,7 @@ docaDriver:
   enableNFSRDMA: false
 
   # bool | default: false, auto-enabled by discovery when third-party RDMA modules are found
-  # When true, adds UNLOAD_THIRD_PARTY_RDMA_MODULES env var to the ofedDriver container.
+  # When true, sets UNLOAD_THIRD_PARTY_RDMA_MODULES env var to "true" in the ofedDriver container.
   # Third-party RDMA modules are blacklisted and unloaded before OFED driver reload.
   # Discovery automatically sets this to true when third-party RDMA modules are detected.
   unloadThirdPartyRDMAModules: true

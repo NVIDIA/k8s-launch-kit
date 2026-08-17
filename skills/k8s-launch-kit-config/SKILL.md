@@ -162,7 +162,7 @@ networkNamespaces: ["my-namespace"]
 - Use `l8k schema` to discover the Network Operator release keys supported by
   the installed l8k version.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
-- `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
+- `docaDriver.unloadThirdPartyRDMAModules: true` sets the `UNLOAD_THIRD_PARTY_RDMA_MODULES` environment variable to `"true"` (a boolean flag) in generated manifests. Discovered OFED-dependent modules are saved as `thirdPartyRDMAModules` for visibility and warnings, not passed to that environment variable.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.
 - Updating an existing release to the generated requestor-mode Helm values requires `--overwrite-existing`.
 
