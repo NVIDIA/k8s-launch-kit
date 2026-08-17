@@ -298,7 +298,7 @@ Each `clusterConfig` entry represents one source group:
 
 ```yaml
 clusterConfig:
-  - identifier: poweredge-xe9680-h200
+  - identifier: pe-xe9680-h200
     machineType: PowerEdge-XE9680
     gpuType: NVIDIA-H200
     capabilities:
@@ -307,7 +307,7 @@ clusterConfig:
         rdma: true
         ib: false
     nodeSelector:
-      nvidia.kubernetes-launch-kit.machine: PowerEdge-XE9680-NVIDIA-H200
+      nvidia.kubernetes-launch-kit.machine: pe-xe9680-h200
     pfs:
       - deviceID: a2dc
         pciAddress: 0000:1a:00.0
@@ -321,14 +321,14 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 
 | Field | Meaning |
 | --- | --- |
-| `identifier` | Lowercase resource-name form of machine/GPU identity, bounded to 40 bytes with a deterministic hash suffix when needed, or `group-N` fallback. |
+| `identifier` | Lowercase resource-name form of machine/GPU identity with complete `NVIDIA` segments removed and common machine segments shortened (`ThinkSystem` → `ts`, `PowerEdge` → `pe`), bounded to 30 bytes with balanced machine/GPU prefixes and a 6-character deterministic hash when needed, or `group-N` fallback. The Launch Kit machine node label uses the same value. |
 | `machineType` / `gpuType` | Discovered hardware identity. |
 | `linkType` | Per-group `Ethernet` or `InfiniBand` result when fabric probes agree. |
 | `presetApplied` | An exact topology preset was applied. |
 | `presetDeviation` | PF count, PCI address, or device ID drift from a matched preset. |
 | `capabilities.nodes` | Group-level SR-IOV, RDMA, and InfiniBand capability flags. |
 | `workerNodes` | Kubernetes node names in the source group. |
-| `nodeSelector` | Deployment selector, normally the Launch Kit machine label. |
+| `nodeSelector` | Deployment selector, normally the Launch Kit machine label whose value matches `identifier`. |
 | `storageModules` / `thirdPartyRDMAModules` | Optional site-supplied dependent module lists. |
 | `pfs` | Physical-function inventory. |
 

@@ -94,8 +94,8 @@ var templateFuncs = template.FuncMap{
 	// typically 63 minus the length of the prefix the suffix is appended to.
 	// Empty input returns "". Inputs whose natural "-<s>" form fits within maxLen
 	// are used verbatim. Longer inputs are truncated and combined with an FNV-32a
-	// hash of the original (same algorithm as MachineLabelValue), so the result
-	// is deterministic across calls but never breaches maxLen.
+	// hash of the original (the same FNV-32a basis used by generated identities),
+	// so the result is deterministic across calls but never breaches maxLen.
 	"boundedSuffix": boundedSuffix,
 	// xPlane has its own repository and version in Network Operator's release
 	// metadata. Resolve them from the selected release catalog entry, while
@@ -1096,7 +1096,7 @@ func isSpectrumX(cfg *config.LaunchKitConfig) bool {
 // boundedSuffix returns "-<value>" bounded to at most maxLen chars (including
 // the leading "-"). When the natural "-<s>" form fits, it is returned as-is;
 // otherwise the prefix is truncated and an 8-hex FNV-32a hash of the original
-// is appended, matching MachineLabelValue's algorithm. Empty input returns "".
+// is appended. Empty input returns "".
 //
 // Used by templates that compose label values from ClusterConfig.Identifier:
 // the rendered "<prefix><boundedSuffix>" combination must respect k8s'

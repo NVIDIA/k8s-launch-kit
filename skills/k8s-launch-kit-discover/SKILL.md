@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-discover
-version: 1.2.3
+version: 1.2.4
 description: "Use this skill when the user wants to discover their Kubernetes cluster's network hardware capabilities using k8s-launch-kit (l8k). Activate for: cluster discovery, hardware detection, NIC detection, finding what GPUs or NICs are in a cluster, creating a cluster config file, or when the user says 'discover' in the context of l8k or NVIDIA networking."
 metadata:
   requires:
@@ -115,7 +115,7 @@ profile:
   deployment: sriov
   multirail: true
 clusterConfig:
-  - identifier: "dgx-b200-nvidia-h100-nvl"
+  - identifier: "dgx-b200-h100-nvl"
     machineType: DGX-B200
     gpuType: NVIDIA-H100-NVL
     capabilities:
@@ -128,25 +128,27 @@ clusterConfig:
         rail: 0
     workerNodes: [node-01, node-02]
     nodeSelector:
-      nvidia.kubernetes-launch-kit.machine: "DGX-B200-NVIDIA-H100-NVL"
+      nvidia.kubernetes-launch-kit.machine: "dgx-b200-h100-nvl"
     thirdPartyRDMAModules: [nv_peer_mem]
 ```
 
 Discovery patches every node in the group with two labels:
 
-- `nvidia.kubernetes-launch-kit.machine: <machineType>-<gpuType>` — per-source-group
-  identity, used as the source group's `nodeSelector`.
+- `nvidia.kubernetes-launch-kit.machine: <identifier>` — per-source-group
+  identity, identical to the persisted group `identifier` and used as its
+  `nodeSelector`.
 - `nvidia.kubernetes-launch-kit.gpu: <gpuType>` — used as the merged-group
   `nodeSelector` when `l8k generate` auto-merges source groups sharing a GPU type.
 
-Label values keep their original case (matching `nvidia.com/gpu.product` style) since
-upstream discovery already trims whitespace and replaces spaces with hyphens. The
-combined machine/GPU label and the lowercase group `identifier` are bounded to 40
-bytes; long values retain a readable prefix plus an 8-character deterministic hash.
-GPU-only labels use Kubernetes' 63-byte limit with the same shortening rule. When
-`machineType` or `gpuType` couldn't be resolved (GPU operator labels absent and
-hardware probe failed), a fallback `group-N` identifier is used and the machine label
-is not written; the GPU label is still written when `gpuType` alone is resolved.
+Group identifiers and machine-label values are lowercase and omit complete `NVIDIA`
+segments. The same pass maps `ThinkSystem` to `ts` and `PowerEdge` to `pe`. They are
+bounded to 30 bytes; long values retain balanced machine/GPU prefixes plus a
+6-character deterministic hash, and unused prefix space moves to the longer component.
+GPU-only labels retain their discovered case and vendor segment, use Kubernetes'
+63-byte limit, and keep the existing 8-character shortening hash. When `machineType`
+or `gpuType` couldn't be resolved (GPU operator labels absent and hardware probe
+failed), a fallback `group-N` identifier is used and the machine label is not written;
+the GPU label is still written when `gpuType` alone is resolved.
 
 ## Prerequisites
 

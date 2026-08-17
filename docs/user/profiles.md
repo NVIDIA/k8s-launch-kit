@@ -82,13 +82,13 @@ Discovery writes l8k-owned node labels:
 
 | Label | Meaning |
 | --- | --- |
-| `nvidia.kubernetes-launch-kit.machine` | One source group, value `<machineType>-<gpuType>` |
+| `nvidia.kubernetes-launch-kit.machine` | One source group, value matches the generated `clusterConfig[].identifier` |
 | `nvidia.kubernetes-launch-kit.gpu` | All source groups sharing the same GPU type |
 
 Use `--groups` when named source groups require different outputs:
 
 ```bash
-l8k generate --groups poweredge-xe9680-h200,thinksystem-sr680a-v3-h200
+l8k generate --groups pe-xe9680-h200,ts-sr680a-v3-h200
 ```
 
 Use `--gpu-type` when all groups with the same GPU type can share a generated bundle:

@@ -93,7 +93,7 @@ func planRender(originalGroups, filteredGroups []config.ClusterConfig) ([]Render
 			// from there here keeps the aggregate IPPool's `In` list
 			// in lockstep with the per-source NodePolicy selectors.
 			//
-			// Falls back to `MachineLabelValue(machineType, gpuType)`
+			// Falls back to `GeneratedGroupIdentifier(machineType, gpuType)`
 			// when the source has no machine label set (legacy configs
 			// from before Unit 6, or groups whose machineType/gpuType
 			// resolution failed at discover time). Empty means the
@@ -103,7 +103,7 @@ func planRender(originalGroups, filteredGroups []config.ClusterConfig) ([]Render
 			for _, src := range filteredSources {
 				label := src.NodeSelector[config.MachineLabelKey]
 				if label == "" {
-					label = config.MachineLabelValue(src.MachineType, src.GPUType)
+					label = config.GeneratedGroupIdentifier(src.MachineType, src.GPUType)
 				}
 				if label != "" {
 					labels = append(labels, label)

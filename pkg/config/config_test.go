@@ -33,17 +33,70 @@ func TestGeneratedGroupIdentityIsBounded(t *testing.T) {
 		gpuType     = "NVIDIA-AX800-Converged-Accelerator"
 	)
 
-	machineLabel := MachineLabelValue(machineType, gpuType)
-	assert.Equal(t, "HPE-ProLiant-Compute-DL380-Gen1-0885f134", machineLabel)
-	assert.LessOrEqual(t, len(machineLabel), MaxGeneratedIdentifierLength)
-
-	identifier := SanitizeIdentifier(machineLabel)
-	assert.Equal(t, "hpe-proliant-compute-dl380-gen1-0885f134", identifier)
+	identifier := GeneratedGroupIdentifier(machineType, gpuType)
+	assert.Equal(t, "hpe-prolian-ax800-conve-17fb89", identifier)
 	assert.LessOrEqual(t, len(identifier), MaxGeneratedIdentifierLength)
+	assert.Equal(t, identifier, MachineLabelValue(machineType, gpuType),
+		"the machine node label must match the generated identifier")
 
-	otherIdentifier := SanitizeIdentifier(MachineLabelValue(machineType, gpuType+"-Variant"))
+	otherIdentifier := GeneratedGroupIdentifier(machineType, gpuType+"-Variant")
 	assert.NotEqual(t, identifier, otherIdentifier,
 		"long identities with a shared prefix must retain distinct hash suffixes")
+}
+
+func TestGeneratedGroupIdentifierUsesBalancedComponents(t *testing.T) {
+	identifier := GeneratedGroupIdentifier(
+		"ThinkSystem-SR675-V3",
+		"NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+	)
+
+	assert.Equal(t, "ts-sr675-v3-rtx-pro-600-46c7a9", identifier)
+	assert.Len(t, identifier, MaxGeneratedIdentifierLength)
+	assert.NotContains(t, identifier, "nvidia")
+	assert.Equal(t, identifier, MachineLabelValue(
+		"ThinkSystem-SR675-V3",
+		"NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+	))
+}
+
+func TestGeneratedGroupIdentifierReallocatesUnusedComponentBudget(t *testing.T) {
+	t.Run("short machine type", func(t *testing.T) {
+		identifier := GeneratedGroupIdentifier(
+			"DGX",
+			"NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+		)
+
+		assert.Equal(t, "dgx-rtx-pro-6000-blackw-19773c", identifier)
+		assert.Len(t, identifier, MaxGeneratedIdentifierLength)
+	})
+
+	t.Run("short GPU type", func(t *testing.T) {
+		identifier := GeneratedGroupIdentifier("VeryLongMachineType-Generation", "H200")
+
+		assert.Equal(t, "verylongmachinetyp-h200-8861d3", identifier)
+		assert.Len(t, identifier, MaxGeneratedIdentifierLength)
+	})
+}
+
+func TestGeneratedGroupIdentityDropsNVIDIASegment(t *testing.T) {
+	identifier := GeneratedGroupIdentifier("DGX-B200", "NVIDIA-H200")
+
+	assert.Equal(t, "dgx-b200-h200", identifier)
+	assert.Equal(t, identifier, MachineLabelValue("DGX-B200", "NVIDIA-H200"))
+	assert.Equal(t, identifier, GeneratedGroupIdentifier("DGX-B200", "H200"),
+		"a complete NVIDIA segment is intentionally non-identifying")
+	assert.Equal(t, "NVIDIA-H200", GPULabelValue("NVIDIA-H200"),
+		"the GPU node label must retain its existing value")
+}
+
+func TestGeneratedGroupIdentityUsesCommonShortenings(t *testing.T) {
+	assert.Equal(t, "ts-sr680a-v3-h100-nvl",
+		GeneratedGroupIdentifier("ThinkSystem-SR680a-V3", "NVIDIA-H100-NVL"))
+	assert.Equal(t, "pe-xe9680-h200",
+		GeneratedGroupIdentifier("PowerEdge-XE9680", "NVIDIA-H200"))
+	assert.Equal(t, "nvidian-tsx-h200",
+		GeneratedGroupIdentifier("NVIDIAN-TSX", "NVIDIA-H200"),
+		"only complete known segments should be shortened")
 }
 
 func TestSanitizeIdentifierBoundsLongValues(t *testing.T) {
@@ -51,6 +104,8 @@ func TestSanitizeIdentifierBoundsLongValues(t *testing.T) {
 	got := SanitizeIdentifier(input)
 
 	assert.Len(t, got, MaxGeneratedIdentifierLength)
+	assert.Equal(t, "hpe-proliant-compute-dl-acdfaf", got)
+	assert.NotContains(t, got, "nvidia")
 	assert.Equal(t, got, SanitizeIdentifier(input), "shortening must be deterministic")
 }
 
