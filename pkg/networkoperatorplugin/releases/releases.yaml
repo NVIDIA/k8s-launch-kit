@@ -52,6 +52,6 @@ releases:
       version: doca3.5.0-26.07-0.7.1.0-0
     xPlane:
       repository: nvcr.io/nvstaging/doca
-      version: 3.5.0032
+      version: 3.5.0035
     validation:
       image: nvcr.io/nvstaging/doca/doca:full-rt-cuda13.0.0-3.5.0-runtime-host-dev
