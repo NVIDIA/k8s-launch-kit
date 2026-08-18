@@ -351,11 +351,12 @@ to `<dir>` itself. `--dry-run` does a server-side dry run. `--deploy-timeout`
 caps the whole apply+reconcile phase end-to-end (e.g. `--deploy-timeout 90m`);
 without it, deploy polls indefinitely — right for SR-IOV on large clusters
 where reconciliation can take an hour. `NicInterfaceNameTemplate` is the
-bounded exception: an `InterfaceNameMismatch` remains `IN-PROGRESS` for up to
-five minutes while the NIC configuration daemon retries the udev rename. This
-gates verification of later manifests without aborting on the first transient
-mismatch. If the names still do not match after five minutes, deployment fails
-with the per-device mismatch details. A shorter `--deploy-timeout` still wins.
+bounded exception: once an `InterfaceNameMismatch` is observed, Launch Kit
+retries it for up to five minutes while the NIC configuration daemon retries
+the udev rename. This gates verification of later manifests without aborting
+on the first transient mismatch. If the names still do not match after five
+minutes, deployment fails with the per-device mismatch details. A shorter
+`--deploy-timeout` still wins. Initial discovery remains unbounded.
 
 When Launch Kit installs or upgrades the Network Operator chart, its Helm
 post-renderer adds the same version annotation to chart-rendered resources.

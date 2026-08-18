@@ -93,14 +93,10 @@ type DeployOptions struct {
 // helper cadence so logs feel familiar.
 const deployPollInterval = 3 * time.Second
 
-// nicInterfaceNameTemplateReconcileTimeout bounds the one phase-4 resource
-// whose normal reconciliation can temporarily report a failure-shaped
-// condition. The NIC operator writes InterfaceNameMismatch while udev rules
-// are still taking effect, then retries. Treating that first mismatch as
-// terminal aborts deployment before the remaining resources can be checked;
-// treating it as unbounded progress can hang forever when --deploy-timeout is
-// unset. This per-template window preserves the gate while keeping a real
-// rename failure bounded. A shorter deploy-wide context deadline still wins.
+// nicInterfaceNameTemplateReconcileTimeout bounds the retry window after a
+// NicInterfaceNameTemplate first reports InterfaceNameMismatch. Initial NIC
+// discovery and other ordinary in-progress states remain governed only by the
+// deploy-wide context. A shorter deploy-wide context deadline still wins.
 const nicInterfaceNameTemplateReconcileTimeout = 5 * time.Minute
 
 // appliedManifest pairs an applied "other" manifest with the
@@ -456,8 +452,8 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // pollUntilTerminal polls the registry's Validator for obj until it
 // reports StateSuccess or StateError. not-deployed transitions trigger a
 // single re-apply (object vanished between apply and poll). Besides a terminal
-// state or ctx.Done(), kinds with a manifestReconcileTimeout also exit when
-// that local reconciliation window expires.
+// state or ctx.Done(), retryable errors with a configured local window exit if
+// they do not reconcile before that window expires.
 //
 // awaitObservationAfterRV is the resourceVersion the server returned
 // from the apply Patch. When non-empty, the poll loop refuses to act
@@ -478,18 +474,18 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // so a noisy 3-second polling loop only emits a fresh line when
 // something actually changed.
 func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string) error {
-	return pollUntilTerminalWithReconcileTimeout(
-		ctx, c, registry, obj, label, awaitObservationAfterRV, manifestReconcileTimeout(obj),
+	return pollUntilTerminalWithRetryableErrorTimeout(
+		ctx, c, registry, obj, label, awaitObservationAfterRV, manifestRetryableErrorTimeout(obj),
 	)
 }
 
-func pollUntilTerminalWithReconcileTimeout(
+func pollUntilTerminalWithRetryableErrorTimeout(
 	ctx context.Context,
 	c client.Client,
 	registry *crstate.Registry,
 	obj *unstructured.Unstructured,
 	label, awaitObservationAfterRV string,
-	reconcileTimeout time.Duration,
+	retryableErrorTimeout time.Duration,
 ) error {
 	uiOutput := ui.FromContext(ctx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
@@ -498,14 +494,13 @@ func pollUntilTerminalWithReconcileTimeout(
 	ticker := time.NewTicker(deployPollInterval)
 	defer ticker.Stop()
 
-	var reconcileTimer *time.Timer
-	var reconcileTimeoutC <-chan time.Time
-	if reconcileTimeout > 0 {
-		reconcileTimer = time.NewTimer(reconcileTimeout)
-		reconcileTimeoutC = reconcileTimer.C
-		defer reconcileTimer.Stop()
-		uiOutput.Info("  %s reconciliation timeout: %s", label, reconcileTimeout)
-	}
+	var retryableErrorTimer *time.Timer
+	var retryableErrorTimeoutC <-chan time.Time
+	defer func() {
+		if retryableErrorTimer != nil {
+			retryableErrorTimer.Stop()
+		}
+	}()
 
 	var lastReason string
 	reportProgress := func(reason string) {
@@ -528,19 +523,29 @@ func pollUntilTerminalWithReconcileTimeout(
 			progress.Update(fmt.Sprintf("%s: %s", label, reason))
 		}
 	}
-	timeoutError := func() error {
-		progress.Fail(fmt.Sprintf("Timed out after %s while waiting for %s", reconcileTimeout, label))
-		if lastReason != "" {
-			return fmt.Errorf("%s timed out after %s waiting to reconcile: %s", label, reconcileTimeout, lastReason)
+	startRetryableErrorTimer := func() {
+		if retryableErrorTimeout <= 0 || retryableErrorTimer != nil {
+			return
 		}
-		return fmt.Errorf("%s timed out after %s waiting to reconcile", label, reconcileTimeout)
+		retryableErrorTimer = time.NewTimer(retryableErrorTimeout)
+		retryableErrorTimeoutC = retryableErrorTimer.C
+		uiOutput.Info("  %s retryable-error timeout: %s", label, retryableErrorTimeout)
+	}
+	timeoutError := func() error {
+		progress.Fail(fmt.Sprintf("Timed out after %s while waiting for %s", retryableErrorTimeout, label))
+		if lastReason != "" {
+			return fmt.Errorf("%s timed out after %s waiting for retryable error to reconcile: %s",
+				label, retryableErrorTimeout, lastReason)
+		}
+		return fmt.Errorf("%s timed out after %s waiting for retryable error to reconcile",
+			label, retryableErrorTimeout)
 	}
 	waitForNextPoll := func() error {
 		select {
 		case <-ctx.Done():
 			progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
 			return ctx.Err()
-		case <-reconcileTimeoutC:
+		case <-retryableErrorTimeoutC:
 			return timeoutError()
 		case <-ticker.C:
 			return nil
@@ -596,6 +601,11 @@ func pollUntilTerminalWithReconcileTimeout(
 					"kind", obj.GetKind(), "name", obj.GetName(), "reason", res.Reason)
 				return nil
 			case crstate.StateError:
+				if res.Retryable && retryableErrorTimeout > 0 {
+					startRetryableErrorTimer()
+					reportProgress(res.Reason)
+					break
+				}
 				progress.Fail(fmt.Sprintf("%s error: %s", label, res.Reason))
 				log.Log.Error(nil, "Manifest reported error",
 					"kind", obj.GetKind(), "name", obj.GetName(), "reason", res.Reason)
@@ -623,7 +633,7 @@ func pollUntilTerminalWithReconcileTimeout(
 	}
 }
 
-func manifestReconcileTimeout(obj *unstructured.Unstructured) time.Duration {
+func manifestRetryableErrorTimeout(obj *unstructured.Unstructured) time.Duration {
 	if obj == nil {
 		return 0
 	}

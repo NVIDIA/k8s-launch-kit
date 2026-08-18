@@ -135,19 +135,19 @@ metadata:
 	})
 }
 
-func TestManifestReconcileTimeout(t *testing.T) {
+func TestManifestRetryableErrorTimeout(t *testing.T) {
 	interfaceTemplate := &unstructured.Unstructured{}
 	interfaceTemplate.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "configuration.net.nvidia.com",
 		Version: "v1alpha1",
 		Kind:    "NicInterfaceNameTemplate",
 	})
-	assert.Equal(t, 5*time.Minute, manifestReconcileTimeout(interfaceTemplate))
+	assert.Equal(t, 5*time.Minute, manifestRetryableErrorTimeout(interfaceTemplate))
 
 	configMap := &unstructured.Unstructured{}
 	configMap.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
-	assert.Zero(t, manifestReconcileTimeout(configMap))
-	assert.Zero(t, manifestReconcileTimeout(nil))
+	assert.Zero(t, manifestRetryableErrorTimeout(configMap))
+	assert.Zero(t, manifestRetryableErrorTimeout(nil))
 }
 
 func TestPollUntilTerminal_InterfaceNameMismatchTimesOut(t *testing.T) {
@@ -163,16 +163,45 @@ func TestPollUntilTerminal_InterfaceNameMismatchTimesOut(t *testing.T) {
 	registry := crstate.NewRegistry()
 	registry.Register(gvk, func(context.Context, client.Client, *unstructured.Unstructured) (crstate.Result, error) {
 		return crstate.Result{
-			State:  crstate.StateInProgress,
-			Reason: "worker-1/0000:05:00.0: interface name mismatch",
+			State:     crstate.StateError,
+			Reason:    "worker-1/0000:05:00.0: interface name mismatch",
+			Retryable: true,
 		}, nil
 	})
 
-	err := pollUntilTerminalWithReconcileTimeout(
+	err := pollUntilTerminalWithRetryableErrorTimeout(
 		context.Background(), nil, registry, obj,
 		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out after 10ms")
 	assert.Contains(t, err.Error(), "interface name mismatch")
+}
+
+func TestPollUntilTerminal_InterfaceNameInitializationDoesNotUseMismatchTimeout(t *testing.T) {
+	gvk := schema.GroupVersionKind{
+		Group:   "configuration.net.nvidia.com",
+		Version: "v1alpha1",
+		Kind:    "NicInterfaceNameTemplate",
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName("nic-rename")
+
+	registry := crstate.NewRegistry()
+	registry.Register(gvk, func(context.Context, client.Client, *unstructured.Unstructured) (crstate.Result, error) {
+		return crstate.Result{
+			State:  crstate.StateInProgress,
+			Reason: "waiting for nic-configuration-operator to discover devices",
+		}, nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	err := pollUntilTerminalWithRetryableErrorTimeout(
+		ctx, nil, registry, obj,
+		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond,
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }

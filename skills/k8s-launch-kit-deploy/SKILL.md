@@ -112,10 +112,12 @@ matched device has `spec.firmware`; configuration-only deployments ignore a
 stale firmware condition.
 
 `NicInterfaceNameTemplate` gates verification of the manifests that follow it.
-Treat `InterfaceNameMismatch` as retryable for up to five minutes because the
-NIC configuration daemon can publish that condition while new udev rules are
-still taking effect. If every targeted device reaches `InterfaceNameApplied`,
-continue verification. If a mismatch persists for five minutes, fail with the
+Treat `InterfaceNameMismatch` as retryable because the NIC configuration
+daemon can publish that condition while new udev rules are still taking
+effect. Start the five-minute retry window only when the first mismatch is
+observed; initial device discovery and other ordinary in-progress states stay
+unbounded. If every targeted device reaches `InterfaceNameApplied`, continue
+verification. If a mismatch persists for five minutes, fail with the
 per-device details. A shorter deploy-wide `--deploy-timeout` takes precedence.
 
 During preflight, do not classify `SriovNetworkPoolConfig`,

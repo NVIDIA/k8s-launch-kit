@@ -49,12 +49,15 @@ const (
 // short human-readable summary; Details carries structured per-companion
 // information (e.g. per-node syncStatus for SR-IOV) for richer reports.
 // Source identifies the object that produced the result (Kind/Name) for
-// log breadcrumbs.
+// log breadcrumbs. Retryable marks a StateError that a polling caller may
+// retry under its own bounded policy; one-shot callers still treat the state
+// as an error.
 type Result struct {
-	State   CRState
-	Reason  string
-	Details map[string]string
-	Source  string
+	State     CRState
+	Reason    string
+	Details   map[string]string
+	Source    string
+	Retryable bool
 }
 
 // Validator inspects a manifest object plus whatever companion CRs it
