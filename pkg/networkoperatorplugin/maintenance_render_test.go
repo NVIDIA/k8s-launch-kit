@@ -243,7 +243,7 @@ func TestMaxParallelUpgradesRendersInNCPAndNNP(t *testing.T) {
 			t.Run(profile.dir+"/"+releaseName, func(t *testing.T) {
 				rendered := renderFullProfileForMaintenance(t, profile, release, maintenanceYAML)
 				manifestFragment := "11-nicnodepolicy"
-				if release == "25.10" || release == "26.1" {
+				if profile.dir == "host-device-rdma" || release == "25.10" || release == "26.1" {
 					manifestFragment = "10-nicclusterpolicy"
 				}
 				names := fileNamesMatching(rendered, manifestFragment)
