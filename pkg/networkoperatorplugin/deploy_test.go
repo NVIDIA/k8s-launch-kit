@@ -17,9 +17,16 @@
 package networkoperatorplugin
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestSniffKind(t *testing.T) {
@@ -126,4 +133,46 @@ metadata:
 			assert.True(t, containsNicNodePolicyKind([]byte(doc)))
 		}
 	})
+}
+
+func TestManifestReconcileTimeout(t *testing.T) {
+	interfaceTemplate := &unstructured.Unstructured{}
+	interfaceTemplate.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "configuration.net.nvidia.com",
+		Version: "v1alpha1",
+		Kind:    "NicInterfaceNameTemplate",
+	})
+	assert.Equal(t, 5*time.Minute, manifestReconcileTimeout(interfaceTemplate))
+
+	configMap := &unstructured.Unstructured{}
+	configMap.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
+	assert.Zero(t, manifestReconcileTimeout(configMap))
+	assert.Zero(t, manifestReconcileTimeout(nil))
+}
+
+func TestPollUntilTerminal_InterfaceNameMismatchTimesOut(t *testing.T) {
+	gvk := schema.GroupVersionKind{
+		Group:   "configuration.net.nvidia.com",
+		Version: "v1alpha1",
+		Kind:    "NicInterfaceNameTemplate",
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName("nic-rename")
+
+	registry := crstate.NewRegistry()
+	registry.Register(gvk, func(context.Context, client.Client, *unstructured.Unstructured) (crstate.Result, error) {
+		return crstate.Result{
+			State:  crstate.StateInProgress,
+			Reason: "worker-1/0000:05:00.0: interface name mismatch",
+		}, nil
+	})
+
+	err := pollUntilTerminalWithReconcileTimeout(
+		context.Background(), nil, registry, obj,
+		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out after 10ms")
+	assert.Contains(t, err.Error(), "interface name mismatch")
 }

@@ -528,10 +528,11 @@ func classifyFirmware(device *unstructured.Unstructured, byType map[string]map[s
 	}
 }
 
-// classifyInterfaceName inspects InterfaceNameApplied. Mismatch is the
-// silent-failure case we want to catch: udev rules didn't apply, so
-// downstream SR-IOV selectors that key on the new name will match
-// nothing.
+// classifyInterfaceName inspects InterfaceNameApplied. A mismatch is
+// retryable because the NIC operator can report it while newly-written udev
+// rules are still taking effect. The deploy state machine gives
+// NicInterfaceNameTemplate its own bounded reconciliation window, so a
+// persistent mismatch still fails before downstream verification proceeds.
 func classifyInterfaceName(byType map[string]map[string]interface{}) (CRState, string) {
 	cond, ok := byType[consts.InterfaceNameCondition]
 	if !ok {
@@ -545,7 +546,7 @@ func classifyInterfaceName(byType map[string]map[string]interface{}) (CRState, s
 	case reason == consts.InterfaceNameAppliedReason && status == "True":
 		return StateSuccess, "InterfaceNameApplied"
 	case reason == consts.InterfaceNameMismatchReason:
-		return StateError, fallbackMessage(message, "interface name mismatch — udev rules did not apply")
+		return StateInProgress, fallbackMessage(message, "interface name mismatch — waiting for udev rules to apply")
 	default:
 		return StateInProgress, fallbackMessage(fmt.Sprintf("InterfaceNameApplied=%s reason=%s", status, reason), "InterfaceNameApplied unknown")
 	}

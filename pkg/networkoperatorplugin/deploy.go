@@ -93,6 +93,16 @@ type DeployOptions struct {
 // helper cadence so logs feel familiar.
 const deployPollInterval = 3 * time.Second
 
+// nicInterfaceNameTemplateReconcileTimeout bounds the one phase-4 resource
+// whose normal reconciliation can temporarily report a failure-shaped
+// condition. The NIC operator writes InterfaceNameMismatch while udev rules
+// are still taking effect, then retries. Treating that first mismatch as
+// terminal aborts deployment before the remaining resources can be checked;
+// treating it as unbounded progress can hang forever when --deploy-timeout is
+// unset. This per-template window preserves the gate while keeping a real
+// rename failure bounded. A shorter deploy-wide context deadline still wins.
+const nicInterfaceNameTemplateReconcileTimeout = 5 * time.Minute
+
 // appliedManifest pairs an applied "other" manifest with the
 // information phase 4 needs to gate on controller observation:
 // awaitObservationAfterRV holds the resourceVersion the server
@@ -149,12 +159,12 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 //     until each reaches a terminal state (success/error) or the deploy
 //     context is cancelled. Skipped in dry-run mode.
 //
-// Per-manifest deadlines have been removed: the only timeout that applies
-// is whatever the caller threads into ctx (typically wrapped via
-// context.WithTimeout for a maintenance-window-sized budget). When ctx
-// has no deadline, the deploy waits indefinitely for reconciliation —
-// which is the right default for SR-IOV configuration on large clusters,
-// where a single policy can easily exceed any small per-manifest budget.
+// Most manifests have no per-resource deadline: the caller can thread a
+// deploy-wide timeout into ctx, and without one the deploy waits indefinitely
+// for long-running SR-IOV or driver reconciliation. NicInterfaceNameTemplate
+// is the exception: it has a five-minute local window because its normal
+// InterfaceNameMismatch condition is retryable, but a permanent udev rename
+// failure must not block an otherwise-unbounded deployment forever.
 //
 // When opts.DryRun is true the apply path uses server-side dry-run
 // (client.DryRunAll) so the cluster validates manifests without
@@ -445,8 +455,9 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 
 // pollUntilTerminal polls the registry's Validator for obj until it
 // reports StateSuccess or StateError. not-deployed transitions trigger a
-// single re-apply (object vanished between apply and poll); the only
-// exit condition besides terminal state is ctx.Done().
+// single re-apply (object vanished between apply and poll). Besides a terminal
+// state or ctx.Done(), kinds with a manifestReconcileTimeout also exit when
+// that local reconciliation window expires.
 //
 // awaitObservationAfterRV is the resourceVersion the server returned
 // from the apply Patch. When non-empty, the poll loop refuses to act
@@ -467,12 +478,34 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // so a noisy 3-second polling loop only emits a fresh line when
 // something actually changed.
 func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string) error {
+	return pollUntilTerminalWithReconcileTimeout(
+		ctx, c, registry, obj, label, awaitObservationAfterRV, manifestReconcileTimeout(obj),
+	)
+}
+
+func pollUntilTerminalWithReconcileTimeout(
+	ctx context.Context,
+	c client.Client,
+	registry *crstate.Registry,
+	obj *unstructured.Unstructured,
+	label, awaitObservationAfterRV string,
+	reconcileTimeout time.Duration,
+) error {
 	uiOutput := ui.FromContext(ctx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
 	log.Log.Info("Waiting for manifest to reconcile", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
 
 	ticker := time.NewTicker(deployPollInterval)
 	defer ticker.Stop()
+
+	var reconcileTimer *time.Timer
+	var reconcileTimeoutC <-chan time.Time
+	if reconcileTimeout > 0 {
+		reconcileTimer = time.NewTimer(reconcileTimeout)
+		reconcileTimeoutC = reconcileTimer.C
+		defer reconcileTimer.Stop()
+		uiOutput.Info("  %s reconciliation timeout: %s", label, reconcileTimeout)
+	}
 
 	var lastReason string
 	reportProgress := func(reason string) {
@@ -493,6 +526,24 @@ func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.R
 		// it here and rely on the history line alone.
 		if uiOutput.IsTTY() {
 			progress.Update(fmt.Sprintf("%s: %s", label, reason))
+		}
+	}
+	timeoutError := func() error {
+		progress.Fail(fmt.Sprintf("Timed out after %s while waiting for %s", reconcileTimeout, label))
+		if lastReason != "" {
+			return fmt.Errorf("%s timed out after %s waiting to reconcile: %s", label, reconcileTimeout, lastReason)
+		}
+		return fmt.Errorf("%s timed out after %s waiting to reconcile", label, reconcileTimeout)
+	}
+	waitForNextPoll := func() error {
+		select {
+		case <-ctx.Done():
+			progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
+			return ctx.Err()
+		case <-reconcileTimeoutC:
+			return timeoutError()
+		case <-ticker.C:
+			return nil
 		}
 	}
 
@@ -519,11 +570,8 @@ func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.R
 				// uniformly below.
 			case live.GetResourceVersion() == awaitObservationAfterRV:
 				reportProgress("waiting for controller to observe new spec")
-				select {
-				case <-ctx.Done():
-					progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
-					return ctx.Err()
-				case <-ticker.C:
+				if err := waitForNextPoll(); err != nil {
+					return err
 				}
 				continue
 			default:
@@ -569,13 +617,23 @@ func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.R
 			}
 		}
 
-		select {
-		case <-ctx.Done():
-			progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
-			return ctx.Err()
-		case <-ticker.C:
+		if err := waitForNextPoll(); err != nil {
+			return err
 		}
 	}
+}
+
+func manifestReconcileTimeout(obj *unstructured.Unstructured) time.Duration {
+	if obj == nil {
+		return 0
+	}
+	gvk := obj.GroupVersionKind()
+	if gvk.Group == "configuration.net.nvidia.com" &&
+		gvk.Version == "v1alpha1" &&
+		gvk.Kind == "NicInterfaceNameTemplate" {
+		return nicInterfaceNameTemplateReconcileTimeout
+	}
+	return 0
 }
 
 // applyUnstructuredWithRetry wraps applyUnstructured with the legacy

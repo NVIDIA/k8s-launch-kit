@@ -81,9 +81,11 @@ Kind-specific checks include per-component Network Operator state, SR-IOV per-no
 
 For `NicConfigurationTemplate` and `NicFirmwareTemplate`, Launch Kit first waits for the operator to publish matched device names in `status.nicDevices` and for that name set to reflect the current `nodeSelector`, NIC type, PCI-address, serial-number, and part-number selectors. It then evaluates only those `NicDevice` objects and waits for the corresponding `spec.configuration` or `spec.firmware` field to reflect the current template payload. A successful device condition is accepted only after its `observedGeneration` catches up with the `NicDevice` generation. A configuration template checks `FirmwareUpdateInProgress` only when the matched device carries `spec.firmware`; without a deployed firmware template, a stale firmware condition from an older device generation does not block configuration reconciliation. Other discovered NICs do not block on configuration or firmware state. Changed templates are also observation-gated before this status is accepted, so status left by an earlier generation cannot produce a false success.
 
+For `NicInterfaceNameTemplate`, `InterfaceNameMismatch` is retryable because the NIC configuration daemon can publish it while newly-written udev rules are still taking effect. Launch Kit keeps that template `IN-PROGRESS` for up to five minutes. Since phase-4 verification is ordered, the template gates later checks during this window. A persistent mismatch fails deployment after the local timeout and retains the per-node and per-port mismatch details.
+
 ## Timeout
 
-The default deploy budget is unbounded because SR-IOV and driver reconciliation can exceed a small fixed timeout on large clusters.
+The default deploy budget is unbounded because SR-IOV and driver reconciliation can exceed a small fixed timeout on large clusters. `NicInterfaceNameTemplate` is the only bounded exception: its retryable interface-name reconciliation window is five minutes. A shorter deploy-wide timeout takes precedence.
 
 Bound the entire Helm, apply, and reconciliation operation to a maintenance window:
 
@@ -93,7 +95,7 @@ l8k deploy \
   --deploy-timeout 90m
 ```
 
-There is no independent per-manifest deadline.
+Other manifests have no independent per-manifest deadline.
 
 ## Server-Side Dry Run
 
