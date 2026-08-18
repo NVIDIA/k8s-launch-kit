@@ -216,8 +216,10 @@ func TestNicInterfaceNameTemplate_AppliedSuccessfully(t *testing.T) {
 	assert.Equal(t, StateSuccess, res.State)
 }
 
-func TestNicInterfaceNameTemplate_MismatchIsError(t *testing.T) {
-	// Silent-failure case: udev rules didn't apply, names didn't take.
+func TestNicInterfaceNameTemplate_MismatchIsRetryableError(t *testing.T) {
+	// The operator can publish a mismatch while newly-written udev rules are
+	// still taking effect. One-shot validation must retain the error state;
+	// deploy uses the retryable marker to apply its bounded wait policy.
 	manifest := nicTemplateManifest(nicopKindInterfaceNameTemplate, "tpl", "ns", map[string]string{"role": "worker"})
 	live := manifest.DeepCopy()
 	c := newClient(t,
@@ -235,6 +237,7 @@ func TestNicInterfaceNameTemplate_MismatchIsError(t *testing.T) {
 	res, err := v(context.Background(), c, manifest)
 	require.NoError(t, err)
 	assert.Equal(t, StateError, res.State)
+	assert.True(t, res.Retryable)
 	assert.Contains(t, res.Reason, "interface name mismatch")
 }
 

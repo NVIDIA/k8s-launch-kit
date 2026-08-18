@@ -101,10 +101,12 @@ advertising RDMA-capable resources.
 ## 6. NIC Name Template Not Applied
 
 **Symptom**: NIC interfaces on nodes are not renamed according to the expected naming
-pattern (e.g., `eth_r0`, `eth_r1`). PCI addresses are used instead of friendly names.
+pattern (e.g., `eth_r0`, `eth_r1`). PCI addresses are used instead of friendly names,
+or deploy waits on `InterfaceNameMismatch` and fails after five minutes.
 
-**Root cause**: The NIC configuration operator is not deployed, or
-`deployNicInterfaceNameTemplate` is not enabled.
+**Root cause**: The NIC configuration operator is not deployed,
+`deployNicInterfaceNameTemplate` is not enabled, or the generated udev rules
+have not taken effect on every targeted node.
 
 **Remediation**:
 1. Verify `nicConfigurationOperator.deployNicInterfaceNameTemplate: true` in your config.
@@ -112,8 +114,12 @@ pattern (e.g., `eth_r0`, `eth_r1`). PCI addresses are used instead of friendly n
    `kubectl get pods -n nvidia-network-operator -l app=nic-configuration-operator`
 3. NIC name templates are only enabled when needed: merged groups with cross-rail PCI
    conflicts, or `rdma_shared` deployment with empty NetworkInterface fields.
-4. If the operator is running but templates are not applied, check its logs for errors.
-5. A node reboot may be required for NIC renaming to take effect.
+4. Inspect the per-device reason with
+   `kubectl get nicdevice -n nvidia-network-operator -o yaml`; the
+   `InterfaceNameApplied` condition lists expected and actual names.
+5. Launch Kit treats a mismatch as retryable for five minutes while udev rules settle.
+   If it persists, check the NIC configuration daemon logs and udev rules.
+6. A node reboot may be required for NIC renaming to take effect.
 
 ---
 

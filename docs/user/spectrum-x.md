@@ -207,6 +207,13 @@ l8k generate \
   --topology-file ./topology.json
 ```
 
+For the RA2.2 and RA2.3 v1alpha2 profiles, every
+`SpectrumXRailPoolConfig.spec.railTopology[].name` is consumer-visible. The
+Spectrum-X Operator uses it as both the NetworkAttachmentDefinition name and
+the device-plugin resource suffix. Launch Kit therefore renders `rail0` and
+`nvidia.com/rail0` for a per-rail workload, or `rail0p0` and
+`nvidia.com/rail0p0` for a per-rail-plane workload.
+
 Both `ipv4` and `ipv6` generate complete nv-ipam CIDRPools. IPv4 preserves the
 existing per-node `/31` allocation. IPv6 uses the standard Spectrum-X layout:
 

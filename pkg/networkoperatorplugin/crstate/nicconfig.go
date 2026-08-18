@@ -120,9 +120,11 @@ func nicTemplateValidator(kind templateKind) Validator {
 		}
 
 		var (
-			contributing  []unstructured.Unstructured
-			details       = make(map[string]string)
-			anyInProgress bool
+			contributing         []unstructured.Unstructured
+			details              = make(map[string]string)
+			anyInProgress        bool
+			anyRetryableError    bool
+			anyNonRetryableError bool
 		)
 		if templateUsesMatchedDeviceStatus(kind) {
 			devicesByName := make(map[string]*unstructured.Unstructured, len(devices.Items))
@@ -189,15 +191,18 @@ func nicTemplateValidator(kind templateKind) Validator {
 		}
 
 		// 4. Classify each contributing device.
-		var anyError bool
 		for i := range contributing {
 			d := &contributing[i]
 			label := deviceLabel(d)
-			state, reason := classifyDevice(d, kind)
+			state, reason, retryable := classifyDevice(d, kind)
 			details[label] = reason
 			switch state {
 			case StateError:
-				anyError = true
+				if retryable {
+					anyRetryableError = true
+				} else {
+					anyNonRetryableError = true
+				}
 			case StateInProgress:
 				anyInProgress = true
 			case StateSuccess:
@@ -209,8 +214,14 @@ func nicTemplateValidator(kind templateKind) Validator {
 		}
 
 		switch {
-		case anyError:
-			return Result{State: StateError, Reason: summarizeNodeStates(details), Details: details, Source: src}, nil
+		case anyRetryableError || anyNonRetryableError:
+			return Result{
+				State:     StateError,
+				Reason:    summarizeNodeStates(details),
+				Details:   details,
+				Source:    src,
+				Retryable: anyRetryableError && !anyNonRetryableError,
+			}, nil
 		case anyInProgress:
 			return Result{State: StateInProgress, Reason: summarizeNodeStates(details), Details: details, Source: src}, nil
 		default:
@@ -470,7 +481,7 @@ func deviceLabel(d *unstructured.Unstructured) string {
 // classifyDevice maps the relevant condition type+status+reason to one of
 // the four states. The mapping mirrors nic-configuration-operator's
 // controller (internal/controller/nicdevice_controller.go).
-func classifyDevice(d *unstructured.Unstructured, kind templateKind) (CRState, string) {
+func classifyDevice(d *unstructured.Unstructured, kind templateKind) (CRState, string, bool) {
 	conds, _, _ := unstructured.NestedSlice(d.Object, "status", "conditions")
 	byType := map[string]map[string]interface{}{}
 	for _, raw := range conds {
@@ -488,11 +499,13 @@ func classifyDevice(d *unstructured.Unstructured, kind templateKind) (CRState, s
 	case templateKindInterfaceName:
 		return classifyInterfaceName(byType)
 	case templateKindConfiguration:
-		return classifyConfiguration(d, byType)
+		state, reason := classifyConfiguration(d, byType)
+		return state, reason, false
 	case templateKindFirmware:
-		return classifyFirmware(d, byType)
+		state, reason := classifyFirmware(d, byType)
+		return state, reason, false
 	default:
-		return StateInProgress, "unknown template kind"
+		return StateInProgress, "unknown template kind", false
 	}
 }
 
@@ -528,14 +541,13 @@ func classifyFirmware(device *unstructured.Unstructured, byType map[string]map[s
 	}
 }
 
-// classifyInterfaceName inspects InterfaceNameApplied. Mismatch is the
-// silent-failure case we want to catch: udev rules didn't apply, so
-// downstream SR-IOV selectors that key on the new name will match
-// nothing.
-func classifyInterfaceName(byType map[string]map[string]interface{}) (CRState, string) {
+// classifyInterfaceName inspects InterfaceNameApplied. A mismatch remains an
+// error for one-shot validation, but is marked retryable so the deploy state
+// machine can give newly-written udev rules a bounded reconciliation window.
+func classifyInterfaceName(byType map[string]map[string]interface{}) (CRState, string, bool) {
 	cond, ok := byType[consts.InterfaceNameCondition]
 	if !ok {
-		return StateInProgress, "InterfaceNameApplied condition not yet set"
+		return StateInProgress, "InterfaceNameApplied condition not yet set", false
 	}
 	reason, _, _ := unstructured.NestedString(cond, "reason")
 	status, _, _ := unstructured.NestedString(cond, "status")
@@ -543,11 +555,11 @@ func classifyInterfaceName(byType map[string]map[string]interface{}) (CRState, s
 
 	switch {
 	case reason == consts.InterfaceNameAppliedReason && status == "True":
-		return StateSuccess, "InterfaceNameApplied"
+		return StateSuccess, "InterfaceNameApplied", false
 	case reason == consts.InterfaceNameMismatchReason:
-		return StateError, fallbackMessage(message, "interface name mismatch — udev rules did not apply")
+		return StateError, fallbackMessage(message, "interface name mismatch — udev rules did not apply"), true
 	default:
-		return StateInProgress, fallbackMessage(fmt.Sprintf("InterfaceNameApplied=%s reason=%s", status, reason), "InterfaceNameApplied unknown")
+		return StateInProgress, fallbackMessage(fmt.Sprintf("InterfaceNameApplied=%s reason=%s", status, reason), "InterfaceNameApplied unknown"), false
 	}
 }
 

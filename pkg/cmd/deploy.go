@@ -63,7 +63,10 @@ and applies them in four phases:
 Use --deploy-timeout to bound the entire end-to-end run (e.g. for a
 maintenance window). Without the flag the deploy waits indefinitely for
 reconciliation — appropriate for large SR-IOV clusters where a single
-policy can take an hour or more.
+policy can take an hour or more. NicInterfaceNameTemplate is the bounded
+exception: once observed, an interface-name mismatch is retried for up to
+five minutes so udev rules can settle, then fails before later verification
+proceeds. Initial device discovery remains unbounded.
 
 If <deployment-files>/network-operator/ exists (the layout 'l8k generate'
 produces), that subdirectory is used. Otherwise <deployment-files> itself

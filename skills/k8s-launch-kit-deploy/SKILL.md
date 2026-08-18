@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-deploy
-version: 1.3.3
+version: 1.3.4
 description: "Use this skill when the user wants to deploy generated NVIDIA networking manifests to a Kubernetes cluster using k8s-launch-kit (l8k). Activate for: applying manifests, deploying to cluster, the `l8k deploy` subcommand or the legacy --deploy flag on `l8k generate`, applying generated files, or any mention of pushing l8k output to a live cluster. Even if the user just says 'apply these' or 'push to cluster' after generating manifests, use this skill."
 metadata:
   requires:
@@ -110,6 +110,15 @@ unrelated device configuration state does not block deployment. A
 `NicConfigurationTemplate` gates on `FirmwareUpdateInProgress` only when the
 matched device has `spec.firmware`; configuration-only deployments ignore a
 stale firmware condition.
+
+`NicInterfaceNameTemplate` gates verification of the manifests that follow it.
+Treat `InterfaceNameMismatch` as retryable because the NIC configuration
+daemon can publish that condition while new udev rules are still taking
+effect. Start the five-minute retry window only when the first mismatch is
+observed; initial device discovery and other ordinary in-progress states stay
+unbounded. If every targeted device reaches `InterfaceNameApplied`, continue
+verification. If a mismatch persists for five minutes, fail with the
+per-device details. A shorter deploy-wide `--deploy-timeout` takes precedence.
 
 During preflight, do not classify `SriovNetworkPoolConfig`,
 `SriovNetworkNodePolicy`, or `OVSNetwork` objects labeled with

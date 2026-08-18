@@ -41,7 +41,7 @@ spec:
           count: 1
           selectors:
           - cel:
-              expression: 'device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}"'
+              expression: 'device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail{{$railIdx}}p{{$planeIdx}}"'
           {{- if $vfRoot }}
           - cel:
               expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "{{$vfRoot}}"'
@@ -77,7 +77,7 @@ spec:
           count: {{$planes}}
           selectors:
           - cel:
-              expression: 'device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_{{$railIdx}}"'
+              expression: 'device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail{{$railIdx}}"'
           {{- if $vfRoot }}
           - cel:
               expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "{{$vfRoot}}"'

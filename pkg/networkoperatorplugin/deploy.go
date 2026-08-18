@@ -93,6 +93,12 @@ type DeployOptions struct {
 // helper cadence so logs feel familiar.
 const deployPollInterval = 3 * time.Second
 
+// nicInterfaceNameTemplateReconcileTimeout bounds the retry window after a
+// NicInterfaceNameTemplate first reports InterfaceNameMismatch. Initial NIC
+// discovery and other ordinary in-progress states remain governed only by the
+// deploy-wide context. A shorter deploy-wide context deadline still wins.
+const nicInterfaceNameTemplateReconcileTimeout = 5 * time.Minute
+
 // appliedManifest pairs an applied "other" manifest with the
 // information phase 4 needs to gate on controller observation:
 // awaitObservationAfterRV holds the resourceVersion the server
@@ -149,12 +155,12 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 //     until each reaches a terminal state (success/error) or the deploy
 //     context is cancelled. Skipped in dry-run mode.
 //
-// Per-manifest deadlines have been removed: the only timeout that applies
-// is whatever the caller threads into ctx (typically wrapped via
-// context.WithTimeout for a maintenance-window-sized budget). When ctx
-// has no deadline, the deploy waits indefinitely for reconciliation —
-// which is the right default for SR-IOV configuration on large clusters,
-// where a single policy can easily exceed any small per-manifest budget.
+// Most manifests have no per-resource deadline: the caller can thread a
+// deploy-wide timeout into ctx, and without one the deploy waits indefinitely
+// for long-running SR-IOV or driver reconciliation. NicInterfaceNameTemplate
+// is the exception: it has a five-minute local window because its normal
+// InterfaceNameMismatch condition is retryable, but a permanent udev rename
+// failure must not block an otherwise-unbounded deployment forever.
 //
 // When opts.DryRun is true the apply path uses server-side dry-run
 // (client.DryRunAll) so the cluster validates manifests without
@@ -445,8 +451,9 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 
 // pollUntilTerminal polls the registry's Validator for obj until it
 // reports StateSuccess or StateError. not-deployed transitions trigger a
-// single re-apply (object vanished between apply and poll); the only
-// exit condition besides terminal state is ctx.Done().
+// single re-apply (object vanished between apply and poll). Besides a terminal
+// state or ctx.Done(), retryable errors with a configured local window exit if
+// they do not reconcile before that window expires.
 //
 // awaitObservationAfterRV is the resourceVersion the server returned
 // from the apply Patch. When non-empty, the poll loop refuses to act
@@ -467,12 +474,38 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // so a noisy 3-second polling loop only emits a fresh line when
 // something actually changed.
 func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string) error {
+	return pollUntilTerminalWithRetryableErrorTimeout(
+		ctx, c, registry, obj, label, awaitObservationAfterRV,
+		manifestRetryableErrorTimeout(obj), deployPollInterval,
+	)
+}
+
+func pollUntilTerminalWithRetryableErrorTimeout(
+	ctx context.Context,
+	c client.Client,
+	registry *crstate.Registry,
+	obj *unstructured.Unstructured,
+	label, awaitObservationAfterRV string,
+	retryableErrorTimeout time.Duration,
+	pollInterval time.Duration,
+) error {
 	uiOutput := ui.FromContext(ctx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
 	log.Log.Info("Waiting for manifest to reconcile", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
 
-	ticker := time.NewTicker(deployPollInterval)
+	if pollInterval <= 0 {
+		pollInterval = deployPollInterval
+	}
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+
+	var retryableErrorTimer *time.Timer
+	var retryableErrorTimeoutC <-chan time.Time
+	defer func() {
+		if retryableErrorTimer != nil {
+			retryableErrorTimer.Stop()
+		}
+	}()
 
 	var lastReason string
 	reportProgress := func(reason string) {
@@ -493,6 +526,47 @@ func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.R
 		// it here and rely on the history line alone.
 		if uiOutput.IsTTY() {
 			progress.Update(fmt.Sprintf("%s: %s", label, reason))
+		}
+	}
+	startRetryableErrorTimer := func() {
+		if retryableErrorTimeout <= 0 || retryableErrorTimer != nil {
+			return
+		}
+		retryableErrorTimer = time.NewTimer(retryableErrorTimeout)
+		retryableErrorTimeoutC = retryableErrorTimer.C
+		uiOutput.Info("  %s retryable-error timeout: %s", label, retryableErrorTimeout)
+	}
+	stopRetryableErrorTimer := func() {
+		if retryableErrorTimer == nil {
+			return
+		}
+		if !retryableErrorTimer.Stop() {
+			select {
+			case <-retryableErrorTimer.C:
+			default:
+			}
+		}
+		retryableErrorTimer = nil
+		retryableErrorTimeoutC = nil
+	}
+	timeoutError := func() error {
+		progress.Fail(fmt.Sprintf("Timed out after %s while waiting for %s", retryableErrorTimeout, label))
+		if lastReason != "" {
+			return fmt.Errorf("%s timed out after %s waiting for retryable error to reconcile: %s",
+				label, retryableErrorTimeout, lastReason)
+		}
+		return fmt.Errorf("%s timed out after %s waiting for retryable error to reconcile",
+			label, retryableErrorTimeout)
+	}
+	waitForNextPoll := func() error {
+		select {
+		case <-ctx.Done():
+			progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
+			return ctx.Err()
+		case <-retryableErrorTimeoutC:
+			return timeoutError()
+		case <-ticker.C:
+			return nil
 		}
 	}
 
@@ -519,11 +593,8 @@ func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.R
 				// uniformly below.
 			case live.GetResourceVersion() == awaitObservationAfterRV:
 				reportProgress("waiting for controller to observe new spec")
-				select {
-				case <-ctx.Done():
-					progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
-					return ctx.Err()
-				case <-ticker.C:
+				if err := waitForNextPoll(); err != nil {
+					return err
 				}
 				continue
 			default:
@@ -548,11 +619,17 @@ func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.R
 					"kind", obj.GetKind(), "name", obj.GetName(), "reason", res.Reason)
 				return nil
 			case crstate.StateError:
+				if res.Retryable && retryableErrorTimeout > 0 {
+					startRetryableErrorTimer()
+					reportProgress(res.Reason)
+					break
+				}
 				progress.Fail(fmt.Sprintf("%s error: %s", label, res.Reason))
 				log.Log.Error(nil, "Manifest reported error",
 					"kind", obj.GetKind(), "name", obj.GetName(), "reason", res.Reason)
 				return fmt.Errorf("%s/%s: %s", obj.GetKind(), obj.GetName(), res.Reason)
 			case crstate.StateNotDeployed:
+				stopRetryableErrorTimer()
 				// Object vanished between apply and poll (admission
 				// webhook race, manual kubectl delete). Re-apply once
 				// and continue polling.
@@ -565,17 +642,31 @@ func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.R
 				}
 				reportProgress("re-applied after disappearance")
 			case crstate.StateInProgress:
+				// The retryable mismatch cleared. Return to the normal,
+				// deploy-wide reconciliation budget while other devices
+				// continue initializing.
+				stopRetryableErrorTimer()
 				reportProgress(res.Reason)
 			}
 		}
 
-		select {
-		case <-ctx.Done():
-			progress.Fail(fmt.Sprintf("Cancelled or timed out while waiting for %s", label))
-			return ctx.Err()
-		case <-ticker.C:
+		if err := waitForNextPoll(); err != nil {
+			return err
 		}
 	}
+}
+
+func manifestRetryableErrorTimeout(obj *unstructured.Unstructured) time.Duration {
+	if obj == nil {
+		return 0
+	}
+	gvk := obj.GroupVersionKind()
+	if gvk.Group == "configuration.net.nvidia.com" &&
+		gvk.Version == "v1alpha1" &&
+		gvk.Kind == "NicInterfaceNameTemplate" {
+		return nicInterfaceNameTemplateReconcileTimeout
+	}
+	return 0
 }
 
 // applyUnstructuredWithRetry wraps applyUnstructured with the legacy

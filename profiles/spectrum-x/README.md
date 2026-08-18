@@ -126,6 +126,8 @@ The profile generates the following Kubernetes Custom Resources:
    - Single `v1alpha2` resource with `railTopology[]`. In swplb, one entry per
      rail-plane; otherwise one entry per rail grouping all planes. `draEnabled`
      is rendered from `profile.spectrumX.useDRA`; the default is explicit `false`.
+   - Each topology name is also the operator-generated NetworkAttachmentDefinition
+     and device-plugin resource name: `rail0` per rail or `rail0p0` per rail-plane.
 
 7. **ResourceClaimTemplate** (`85-resourceclaimtemplate.yaml`)
    - Rendered only when `profile.spectrumX.useDRA: true`. Each template requests
@@ -133,7 +135,9 @@ The profile generates the following Kubernetes Custom Resources:
 
 8. **Example DaemonSet** (`90-example-daemonset.yaml`)
    - Example workload requesting one VF per rail (non-swplb) or per rail-plane (swplb).
-     In DRA mode, it references the generated `ResourceClaimTemplate` resources instead.
+     Its network annotations and resource requests use the corresponding
+     `railTopology[].name`. In DRA mode, it references the generated
+     `ResourceClaimTemplate` resources instead.
 
 `NicFirmwareSource` and `NicFirmwareTemplate` must be applied separately by the
 operator; l8k does not generate them.
