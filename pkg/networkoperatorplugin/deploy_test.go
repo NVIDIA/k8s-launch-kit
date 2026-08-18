@@ -171,7 +171,7 @@ func TestPollUntilTerminal_InterfaceNameMismatchTimesOut(t *testing.T) {
 
 	err := pollUntilTerminalWithRetryableErrorTimeout(
 		context.Background(), nil, registry, obj,
-		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond,
+		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out after 10ms")
@@ -200,8 +200,46 @@ func TestPollUntilTerminal_InterfaceNameInitializationDoesNotUseMismatchTimeout(
 	defer cancel()
 	err := pollUntilTerminalWithRetryableErrorTimeout(
 		ctx, nil, registry, obj,
-		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond,
+		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond,
 	)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestPollUntilTerminal_ClearedInterfaceNameMismatchStopsMismatchTimeout(t *testing.T) {
+	gvk := schema.GroupVersionKind{
+		Group:   "configuration.net.nvidia.com",
+		Version: "v1alpha1",
+		Kind:    "NicInterfaceNameTemplate",
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName("nic-rename")
+
+	validationCalls := 0
+	registry := crstate.NewRegistry()
+	registry.Register(gvk, func(context.Context, client.Client, *unstructured.Unstructured) (crstate.Result, error) {
+		validationCalls++
+		if validationCalls == 1 {
+			return crstate.Result{
+				State:     crstate.StateError,
+				Reason:    "worker-1/0000:05:00.0: interface name mismatch",
+				Retryable: true,
+			}, nil
+		}
+		return crstate.Result{
+			State:  crstate.StateInProgress,
+			Reason: "worker-2: waiting for InterfaceNameApplied condition",
+		}, nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	err := pollUntilTerminalWithRetryableErrorTimeout(
+		ctx, nil, registry, obj,
+		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond,
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Greater(t, validationCalls, 1)
 }

@@ -475,7 +475,8 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // something actually changed.
 func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string) error {
 	return pollUntilTerminalWithRetryableErrorTimeout(
-		ctx, c, registry, obj, label, awaitObservationAfterRV, manifestRetryableErrorTimeout(obj),
+		ctx, c, registry, obj, label, awaitObservationAfterRV,
+		manifestRetryableErrorTimeout(obj), deployPollInterval,
 	)
 }
 
@@ -486,12 +487,16 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 	obj *unstructured.Unstructured,
 	label, awaitObservationAfterRV string,
 	retryableErrorTimeout time.Duration,
+	pollInterval time.Duration,
 ) error {
 	uiOutput := ui.FromContext(ctx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
 	log.Log.Info("Waiting for manifest to reconcile", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
 
-	ticker := time.NewTicker(deployPollInterval)
+	if pollInterval <= 0 {
+		pollInterval = deployPollInterval
+	}
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	var retryableErrorTimer *time.Timer
@@ -530,6 +535,19 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 		retryableErrorTimer = time.NewTimer(retryableErrorTimeout)
 		retryableErrorTimeoutC = retryableErrorTimer.C
 		uiOutput.Info("  %s retryable-error timeout: %s", label, retryableErrorTimeout)
+	}
+	stopRetryableErrorTimer := func() {
+		if retryableErrorTimer == nil {
+			return
+		}
+		if !retryableErrorTimer.Stop() {
+			select {
+			case <-retryableErrorTimer.C:
+			default:
+			}
+		}
+		retryableErrorTimer = nil
+		retryableErrorTimeoutC = nil
 	}
 	timeoutError := func() error {
 		progress.Fail(fmt.Sprintf("Timed out after %s while waiting for %s", retryableErrorTimeout, label))
@@ -611,6 +629,7 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 					"kind", obj.GetKind(), "name", obj.GetName(), "reason", res.Reason)
 				return fmt.Errorf("%s/%s: %s", obj.GetKind(), obj.GetName(), res.Reason)
 			case crstate.StateNotDeployed:
+				stopRetryableErrorTimer()
 				// Object vanished between apply and poll (admission
 				// webhook race, manual kubectl delete). Re-apply once
 				// and continue polling.
@@ -623,6 +642,10 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 				}
 				reportProgress("re-applied after disappearance")
 			case crstate.StateInProgress:
+				// The retryable mismatch cleared. Return to the normal,
+				// deploy-wide reconciliation budget while other devices
+				// continue initializing.
+				stopRetryableErrorTimer()
 				reportProgress(res.Reason)
 			}
 		}
