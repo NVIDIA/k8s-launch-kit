@@ -120,12 +120,12 @@ func buildNetworkAnnotation(cfg *config.LaunchKitConfig, group *config.ClusterCo
 		if cfg.Profile.SpectrumX.MultiplaneMode == "swplb" {
 			for i := range ewPFs {
 				for p := 0; p < cfg.Profile.SpectrumX.NumberOfPlanes; p++ {
-					parts = append(parts, fmt.Sprintf("rail-%d-plane-%d", i, p))
+					parts = append(parts, spectrumXNetworkName(cfg.Profile.SpectrumX, i, p))
 				}
 			}
 		} else {
 			for i := range ewPFs {
-				parts = append(parts, fmt.Sprintf("rail-%d", i))
+				parts = append(parts, spectrumXNetworkName(cfg.Profile.SpectrumX, i, 0))
 			}
 		}
 		return strings.Join(parts, ",")
@@ -189,12 +189,12 @@ func buildNetworkResources(cfg *config.LaunchKitConfig, group *config.ClusterCon
 		if cfg.Profile.SpectrumX.MultiplaneMode == "swplb" {
 			for i := range ewPFs {
 				for p := 0; p < cfg.Profile.SpectrumX.NumberOfPlanes; p++ {
-					resources[fmt.Sprintf("nvidia.com/rail_%d_plane_%d", i, p)] = "1"
+					resources["nvidia.com/"+spectrumXResourceName(cfg.Profile.SpectrumX, i, p)] = "1"
 				}
 			}
 		} else {
 			for i := range ewPFs {
-				resources[fmt.Sprintf("nvidia.com/rail_%d", i)] = "1"
+				resources["nvidia.com/"+spectrumXResourceName(cfg.Profile.SpectrumX, i, 0)] = "1"
 			}
 		}
 		return resources
@@ -237,6 +237,35 @@ func buildNetworkResources(cfg *config.LaunchKitConfig, group *config.ClusterCon
 	}
 
 	return resources
+}
+
+// spectrumXNetworkName returns the NetworkAttachmentDefinition name created
+// for a rail. RA2.2+ derives the name directly from railTopology[].name;
+// RA2.1 creates the OVSNetwork resources explicitly with legacy separators.
+func spectrumXNetworkName(spcx *config.ProfileSpectrumX, rail, plane int) string {
+	if spcx.SPCXVersion == "RA2.1" {
+		if spcx.MultiplaneMode == "swplb" {
+			return fmt.Sprintf("rail-%d-plane-%d", rail, plane)
+		}
+		return fmt.Sprintf("rail-%d", rail)
+	}
+	if spcx.MultiplaneMode == "swplb" {
+		return fmt.Sprintf("rail%dp%d", rail, plane)
+	}
+	return fmt.Sprintf("rail%d", rail)
+}
+
+// spectrumXResourceName returns the device-plugin resource name created for a
+// rail. It matches railTopology[].name in RA2.2+, while RA2.1 uses the explicit
+// SriovNetworkNodePolicy resourceName from its legacy profile.
+func spectrumXResourceName(spcx *config.ProfileSpectrumX, rail, plane int) string {
+	if spcx.SPCXVersion == "RA2.1" {
+		if spcx.MultiplaneMode == "swplb" {
+			return fmt.Sprintf("rail_%d_plane_%d", rail, plane)
+		}
+		return fmt.Sprintf("rail_%d", rail)
+	}
+	return spectrumXNetworkName(spcx, rail, plane)
 }
 
 // buildNodeAffinity builds a Kubernetes node affinity structure from a label selector map.

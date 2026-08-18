@@ -16,7 +16,7 @@ spec:
         {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
         {{- $railCount := railCount .ClusterConfig.PFs $planes }}
         {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
-        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}-plane-{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail-{{$railIdx}}{{- end }}{{- end }}
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail{{$railIdx}}p{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail{{$railIdx}}{{- end }}{{- end }}
     spec:
       {{- if $.NetworkOperator.ImagePullSecrets }}
       imagePullSecrets:
@@ -83,10 +83,10 @@ spec:
             {{- range $railIdx := untilStep 0 $railCount 1 }}
             {{- if $swplb }}
             {{- range $planeIdx := untilStep 0 $planes 1 }}
-            nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}: "1"
+            nvidia.com/rail{{$railIdx}}p{{$planeIdx}}: "1"
             {{- end }}
             {{- else }}
-            nvidia.com/rail_{{$railIdx}}: "1"
+            nvidia.com/rail{{$railIdx}}: "1"
             {{- end }}
             {{- end }}
           limits:
@@ -96,10 +96,10 @@ spec:
             {{- range $railIdx := untilStep 0 $railCount 1 }}
             {{- if $swplb }}
             {{- range $planeIdx := untilStep 0 $planes 1 }}
-            nvidia.com/rail_{{$railIdx}}_plane_{{$planeIdx}}: "1"
+            nvidia.com/rail{{$railIdx}}p{{$planeIdx}}: "1"
             {{- end }}
             {{- else }}
-            nvidia.com/rail_{{$railIdx}}: "1"
+            nvidia.com/rail{{$railIdx}}: "1"
             {{- end }}
             {{- end }}
         {{- end }}

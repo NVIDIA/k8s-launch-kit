@@ -525,14 +525,14 @@ func TestSpectrumXDRAOptInRendering(t *testing.T) {
 	require.Contains(t, claims, "kind: ResourceClaimTemplate")
 	require.Contains(t, claims, "deviceClassName: gpu.nvidia.com")
 	require.Contains(t, claims, "deviceClassName: sriovnetwork.k8snetworkplumbingwg.io")
-	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_0"`)
+	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail0"`)
 	require.Contains(t, claims, `device.attributes["resource.kubernetes.io"].pcieRoot == "pci0000:00"`)
 
 	workload := rendered["90-example-daemonset-gpu-model-y.yaml"]
 	require.Contains(t, workload, "resourceClaims:")
 	require.Contains(t, workload, "resourceClaimTemplateName: rail-0-template-gpu-model-y")
 	require.Contains(t, workload, "claims:")
-	require.NotContains(t, workload, "nvidia.com/rail_0: \"1\"",
+	require.NotContains(t, workload, "nvidia.com/rail0: \"1\"",
 		"DRA workload must use resource claims instead of device-plugin resource requests")
 }
 
@@ -545,8 +545,8 @@ func TestSpectrumXDRAOptInRenderingSWPLB(t *testing.T) {
 	claims := rendered["85-resourceclaimtemplate-gpu-model-y.yaml"]
 	require.Contains(t, claims, "name: rail-0-plane-0-template-gpu-model-y")
 	require.Contains(t, claims, "name: rail-0-plane-1-template-gpu-model-y")
-	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_0_plane_0"`)
-	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail_0_plane_1"`)
+	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail0p0"`)
+	require.Contains(t, claims, `device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail0p1"`)
 	require.NotContains(t, claims, "count: 2",
 		"swplb DRA must request one VF per rail-plane claim")
 
@@ -555,7 +555,7 @@ func TestSpectrumXDRAOptInRenderingSWPLB(t *testing.T) {
 	require.Contains(t, workload, "- name: rail-0-plane-1")
 	require.Contains(t, workload, "resourceClaimTemplateName: rail-0-plane-0-template-gpu-model-y")
 	require.Contains(t, workload, "resourceClaimTemplateName: rail-0-plane-1-template-gpu-model-y")
-	require.NotContains(t, workload, "nvidia.com/rail_0_plane_0: \"1\"",
+	require.NotContains(t, workload, "nvidia.com/rail0p0: \"1\"",
 		"swplb DRA workload must use resource claims instead of device-plugin resource requests")
 }
 
@@ -575,7 +575,7 @@ func TestSpectrumXDRADisabledByDefault(t *testing.T) {
 
 	workload := rendered["90-example-daemonset-gpu-model-y.yaml"]
 	require.NotContains(t, workload, "resourceClaims:")
-	require.Contains(t, workload, "nvidia.com/rail_0: \"1\"",
+	require.Contains(t, workload, "nvidia.com/rail0: \"1\"",
 		"non-DRA mode must keep device-plugin resource requests")
 }
 

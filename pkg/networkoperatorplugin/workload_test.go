@@ -245,11 +245,12 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 		assert.Equal(t, "ipoib-net", got)
 	})
 
-	t.Run("spectrum-x swplb", func(t *testing.T) {
+	t.Run("spectrum-x RA2.2 swplb", func(t *testing.T) {
 		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 2,
 				},
@@ -262,14 +263,15 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 			},
 		}
 		got := buildNetworkAnnotation(cfg, group)
-		assert.Equal(t, "rail-0-plane-0,rail-0-plane-1,rail-1-plane-0,rail-1-plane-1", got)
+		assert.Equal(t, "rail0p0,rail0p1,rail1p0,rail1p1", got)
 	})
 
-	t.Run("spectrum-x hwplb", func(t *testing.T) {
+	t.Run("spectrum-x RA2.3 hwplb", func(t *testing.T) {
 		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
+					SPCXVersion:    "RA2.3",
 					MultiplaneMode: "hwplb",
 				},
 			},
@@ -281,7 +283,25 @@ func TestBuildNetworkAnnotation(t *testing.T) {
 			},
 		}
 		got := buildNetworkAnnotation(cfg, group)
-		assert.Equal(t, "rail-0,rail-1", got)
+		assert.Equal(t, "rail0,rail1", got)
+	})
+
+	t.Run("spectrum-x RA2.1 keeps legacy names", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{
+			Profile: &config.Profile{
+				SpectrumX: &config.ProfileSpectrumX{
+					Enable:         true,
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 2,
+				},
+			},
+		}
+		group := &config.ClusterConfig{
+			PFs: []config.PFConfig{{Traffic: "east-west", Rail: intPtr(0)}},
+		}
+		got := buildNetworkAnnotation(cfg, group)
+		assert.Equal(t, "rail-0-plane-0,rail-0-plane-1", got)
 	})
 
 	t.Run("nil profile returns empty", func(t *testing.T) {
@@ -328,11 +348,12 @@ func TestBuildNetworkResources(t *testing.T) {
 		assert.Equal(t, map[string]string{"rdma/shared_rdma": "1"}, got)
 	})
 
-	t.Run("spectrum-x swplb", func(t *testing.T) {
+	t.Run("spectrum-x RA2.2 swplb", func(t *testing.T) {
 		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
+					SPCXVersion:    "RA2.2",
 					MultiplaneMode: "swplb",
 					NumberOfPlanes: 2,
 				},
@@ -346,18 +367,19 @@ func TestBuildNetworkResources(t *testing.T) {
 		}
 		got := buildNetworkResources(cfg, group)
 		assert.Equal(t, map[string]string{
-			"nvidia.com/rail_0_plane_0": "1",
-			"nvidia.com/rail_0_plane_1": "1",
-			"nvidia.com/rail_1_plane_0": "1",
-			"nvidia.com/rail_1_plane_1": "1",
+			"nvidia.com/rail0p0": "1",
+			"nvidia.com/rail0p1": "1",
+			"nvidia.com/rail1p0": "1",
+			"nvidia.com/rail1p1": "1",
 		}, got)
 	})
 
-	t.Run("spectrum-x hwplb", func(t *testing.T) {
+	t.Run("spectrum-x RA2.3 hwplb", func(t *testing.T) {
 		cfg := &config.LaunchKitConfig{
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
 					Enable:         true,
+					SPCXVersion:    "RA2.3",
 					MultiplaneMode: "hwplb",
 				},
 			},
@@ -370,8 +392,29 @@ func TestBuildNetworkResources(t *testing.T) {
 		}
 		got := buildNetworkResources(cfg, group)
 		assert.Equal(t, map[string]string{
-			"nvidia.com/rail_0": "1",
-			"nvidia.com/rail_1": "1",
+			"nvidia.com/rail0": "1",
+			"nvidia.com/rail1": "1",
+		}, got)
+	})
+
+	t.Run("spectrum-x RA2.1 keeps legacy names", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{
+			Profile: &config.Profile{
+				SpectrumX: &config.ProfileSpectrumX{
+					Enable:         true,
+					SPCXVersion:    "RA2.1",
+					MultiplaneMode: "swplb",
+					NumberOfPlanes: 2,
+				},
+			},
+		}
+		group := &config.ClusterConfig{
+			PFs: []config.PFConfig{{Traffic: "east-west", Rail: intPtr(0)}},
+		}
+		got := buildNetworkResources(cfg, group)
+		assert.Equal(t, map[string]string{
+			"nvidia.com/rail_0_plane_0": "1",
+			"nvidia.com/rail_0_plane_1": "1",
 		}, got)
 	})
 

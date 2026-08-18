@@ -94,7 +94,9 @@ direct-drain controllers.
   modes. It deploys the Spectrum-X profile through a ConfigMap and emits one
   `SpectrumXRailPoolConfig` (`v1alpha2`). In `swplb`, `railTopology[]` splits
   each rail into per-plane entries; in other modes one entry per rail groups
-  all planes.
+  all planes. The operator uses each topology name for both its
+  NetworkAttachmentDefinition and device-plugin resource: `rail0` per rail or
+  `rail0p0` per rail-plane.
 - **Templates**:
   - `10-nicclusterpolicy.yaml` -- NicClusterPolicy (with `nicFirmwareStorage`
     and `spectrumXOperator.xPlane`)
@@ -123,7 +125,9 @@ direct-drain controllers.
 - **Node Capabilities**: `sriov: true`, `rdma: true`
 - **Description**: RA2.2 variant of the consolidated v1alpha2 profile. In
   `swplb`, `railTopology[]` splits each rail into per-plane entries; in other
-  modes one entry per rail groups all planes.
+  modes one entry per rail groups all planes. Generated workloads consume the
+  topology names directly (`rail0` or `rail0p0`) for both the network
+  annotation and `nvidia.com/<name>` resource request.
 - **Templates**:
   - `10-nicclusterpolicy.yaml` -- NicClusterPolicy with Spectrum-X Operator
   - `25-nicinterfacenametemplate.yaml` -- Multi-rail interface naming
