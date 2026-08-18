@@ -10,7 +10,6 @@ deploymentGuide: host-device-rdma.md
 templates:
   - 00-values.yaml
   - 10-nicclusterpolicy.yaml
-  - 11-nicnodepolicy.yaml
   - 20-ippool.yaml
   - 35-nicinterfacenametemplate.yaml
   - 30-hostdevicenetwork.yaml

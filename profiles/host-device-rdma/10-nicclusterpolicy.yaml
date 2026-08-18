@@ -44,11 +44,9 @@ spec:
       image: multus-cni
       repository: "{{.NetworkOperator.Repository}}"
       version: "{{.NetworkOperator.ComponentVersion}}"
-  {{- if versionLT .NetworkOperator.SelectedRelease "26.4" }}
-  {{- /* 26.1 model: NicNodePolicy does not exist; OFED driver and the
-         SR-IOV device plugin are configured here in NicClusterPolicy and
-         apply cluster-wide. legacySriovDevicePluginConfigList aggregates
-         east-west PFs across all groups since NCP is a singleton. */}}
+  {{- /* Keep the host-device OFED driver and SR-IOV device plugin in the
+         cluster-wide NicClusterPolicy. legacySriovDevicePluginConfigList
+         aggregates east-west PFs across all groups since NCP is a singleton. */}}
   {{- if .DOCADriver.Enable }}
   ofedDriver:
     image: doca-driver
@@ -101,4 +99,3 @@ spec:
       {
         "resourceList": [{{ legacySriovDevicePluginConfigList .ClusterConfig .Hostdev .Profile.Multirail (and .NicConfigurationOperator .NicConfigurationOperator.DeployNicInterfaceNameTemplate) }}]
       }
-  {{- end }}
