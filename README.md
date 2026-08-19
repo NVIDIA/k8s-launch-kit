@@ -640,12 +640,13 @@ The command resolves the operator namespace from an explicit
 `--user-config`, `./cluster-config.yaml`, or an explicit `--config-dir`, then
 the `nvidia-network-operator` default. Custom installation namespaces must be
 supplied by flag or config; in-cluster objects never select this destructive
-target. The command deletes every namespaced custom resource in that namespace,
-removes the known cluster-scoped Network Operator CRs, waits for their
-finalizers, and uninstalls the `network-operator` Helm release last. The
-namespace, CRDs, unrelated Secrets, files on disk, and custom resources outside
-the namespace are preserved; Helm metadata and chart-managed resources are
-removed with the release.
+target. The command discovers every namespaced custom resource in that
+namespace and the known cluster-scoped Network Operator CRs, sends deletion
+requests to the complete set before monitoring any CR for finalizer completion,
+and re-sweeps both scopes before uninstalling the `network-operator` Helm
+release last. The namespace, CRDs, unrelated Secrets, files on disk, and custom
+resources outside the namespace are preserved; Helm metadata and chart-managed
+resources are removed with the release.
 
 Pass `--keep-helm-chart` to delete the custom resources while leaving the Helm
 release installed. Cleanup is destructive and confirms the resolved target in

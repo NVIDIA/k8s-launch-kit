@@ -37,8 +37,8 @@ var clusterScopedCleanKinds = []schema.GroupVersionKind{
 	{Group: "mellanox.com", Version: "v1alpha1", Kind: "IPoIBNetwork"},
 	{Group: "mellanox.com", Version: "v1alpha1", Kind: "MacvlanNetwork"},
 	{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicNodePolicy"},
-	// NicClusterPolicy is last so its controller remains available while the
-	// dependent custom resources above process deletion and finalizers.
+	// Signal NicClusterPolicy deletion last, after every dependent custom
+	// resource has already received its deletion request.
 	{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicClusterPolicy"},
 }
 
@@ -150,18 +150,18 @@ func deleteNetworkOperatorCustomResources(
 		return 0, err
 	}
 
-	deleted := 0
-	for _, refs := range [][]cleanObjectRef{namespaced, clusterScoped} {
-		count, err := deleteAndWait(ctx, kubeClient, refs, pollInterval, uiOutput)
-		deleted += count
-		if err != nil {
-			return deleted, err
-		}
+	// Signal deletion for both scopes before waiting on any one resource. A
+	// finalizer on one CR may depend on another CR entering deletion, so
+	// interleaving scope-by-scope deletion and waiting can deadlock cleanup.
+	refs := append(namespaced, clusterScoped...)
+	deleted, err := deleteAllAndWait(ctx, kubeClient, refs, pollInterval, uiOutput)
+	if err != nil {
+		return deleted, err
 	}
 
 	// Controllers can remove or briefly recreate service CRs while the root
-	// policies disappear. Sweep both scopes until they are empty after deleting
-	// NicClusterPolicy so no operator-generated CR is left behind.
+	// policies disappear. Sweep both scopes until they are empty, preserving the
+	// same delete-all-then-wait ordering for every pass.
 	for {
 		remainingNamespaced, err := listNamespacedCustomResources(ctx, kubeClient, namespace)
 		if err != nil {
@@ -171,15 +171,14 @@ func deleteNetworkOperatorCustomResources(
 		if err != nil {
 			return deleted, err
 		}
-		if len(remainingNamespaced) == 0 && len(remainingClusterScoped) == 0 {
+		remaining := append(remainingNamespaced, remainingClusterScoped...)
+		if len(remaining) == 0 {
 			return deleted, nil
 		}
-		for _, refs := range [][]cleanObjectRef{remainingNamespaced, remainingClusterScoped} {
-			count, err := deleteAndWait(ctx, kubeClient, refs, pollInterval, uiOutput)
-			deleted += count
-			if err != nil {
-				return deleted, err
-			}
+		count, err := deleteAllAndWait(ctx, kubeClient, remaining, pollInterval, uiOutput)
+		deleted += count
+		if err != nil {
+			return deleted, err
 		}
 	}
 }
@@ -276,7 +275,10 @@ func servedStorageVersion(crd *apiextv1.CustomResourceDefinition) string {
 	return ""
 }
 
-func deleteAndWait(
+// deleteAllAndWait sends a background deletion request to every ref before it
+// starts polling. Keep these phases separate: finalizers can depend on another
+// custom resource entering deletion.
+func deleteAllAndWait(
 	ctx context.Context,
 	kubeClient client.Client,
 	refs []cleanObjectRef,

@@ -47,15 +47,18 @@ l8k clean --kubeconfig ~/.kube/config \
 
 Cleanup performs these operations in order:
 
-1. Discover every namespaced CRD served by the cluster and delete all of its
-   custom-resource instances in the resolved operator namespace.
-2. Delete all instances of the Network Operator's known cluster-scoped CR
+1. Discover every namespaced custom-resource instance in the resolved operator
+   namespace and every instance of the Network Operator's known cluster-scoped
    kinds: `HostDeviceNetwork`, `IPoIBNetwork`, `MacvlanNetwork`,
-   `NicNodePolicy`, and `NicClusterPolicy`. `NicClusterPolicy` is deleted last.
-3. Re-scan the operator namespace and the known cluster-scoped kinds, removing
-   any custom resources created or exposed during policy teardown.
-4. Wait until all selected custom resources are gone, including finalizer
-   processing.
+   `NicNodePolicy`, and `NicClusterPolicy`.
+2. Send a background deletion request to every discovered custom resource
+   before waiting on any one of them. The `NicClusterPolicy` request is sent
+   after the other known cluster-scoped kinds.
+3. Monitor the complete deletion set until every custom resource is gone,
+   including finalizer processing. Sending all requests first prevents one
+   CR's finalizer from blocking on another CR that has not entered deletion.
+4. Re-scan both scopes and repeat the delete-all-then-wait sequence for any
+   custom resources created or exposed during policy teardown.
 5. Uninstall the `network-operator` Helm release and wait for Helm-managed
    resources to be removed.
 
