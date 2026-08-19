@@ -54,4 +54,4 @@ releases:
       repository: nvcr.io/nvstaging/doca
       version: 3.5.0035
     validation:
-      image: nvcr.io/nvstaging/doca/doca:full-rt-cuda13.0.0-3.5.0-runtime-host-dev
+      image: nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.4.0-runtime-host
