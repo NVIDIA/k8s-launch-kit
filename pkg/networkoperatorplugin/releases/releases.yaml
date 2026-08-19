@@ -49,7 +49,7 @@ releases:
       operatorRepository: nvcr.io/nvstaging/mellanox
       helmRepoURL: https://helm.ngc.nvidia.com/nvstaging/mellanox
     docaDriver:
-      version: doca3.5.0-26.07-0.7.1.0-0
+      version: doca3.5.0-26.07-0.7.3.0-0
     xPlane:
       repository: nvcr.io/nvstaging/doca
       version: 3.5.0035
