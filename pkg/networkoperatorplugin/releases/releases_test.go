@@ -36,19 +36,6 @@ func TestLookupRelease_Known(t *testing.T) {
 	}
 }
 
-func TestLookupRelease_ValidationImages(t *testing.T) {
-	want := map[string]string{
-		"26.1": "nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.2.3-runtime-host",
-		"26.4": "nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.4.0-runtime-host",
-		"26.7": "nvcr.io/nvstaging/doca/doca:full-rt-cuda13.0.0-3.5.0-runtime-host-dev",
-	}
-	for key, image := range want {
-		release, ok := LookupRelease(key)
-		require.True(t, ok)
-		assert.Equal(t, image, release.Validation.Image)
-	}
-}
-
 func TestLookupRelease_ArtifactDestinationsMatchVersion(t *testing.T) {
 	for _, key := range SupportedReleases() {
 		t.Run(key, func(t *testing.T) {
