@@ -22,3 +22,6 @@ spec:
       multiplaneMode: "{{.Profile.SpectrumX.MultiplaneMode}}"  # none, swplb, hwplb
       numberOfPlanes: {{.Profile.SpectrumX.NumberOfPlanes}}
       overlay: "{{.SpectrumX.Overlay}}"
+    pciPerformanceOptimized:
+      enabled: true
+      maxReadRequest: 4096
