@@ -136,6 +136,43 @@ func TestDeleteNetworkOperatorCustomResources(t *testing.T) {
 		context.Background(), client.ObjectKey{Name: crd.Name}, actualCRD))
 }
 
+func TestDeleteNetworkOperatorCustomResourcesSignalsAllBeforeWaiting(t *testing.T) {
+	namespaced := testCleanObject(testNamespacedGVK, "operator-system", "namespaced")
+	clusterScoped := testCleanObject(clusterScopedCleanKinds[3], "", "cluster-scoped")
+	baseClient := newCleanTestClient(t, testNamespacedCRD(), namespaced, clusterScoped)
+	targets := []*unstructured.Unstructured{namespaced, clusterScoped}
+	var deletionSignals []string
+	kubeClient := interceptor.NewClient(baseClient, interceptor.Funcs{
+		Delete: func(
+			ctx context.Context,
+			underlying client.WithWatch,
+			obj client.Object,
+			opts ...client.DeleteOption,
+		) error {
+			deletionSignals = append(deletionSignals, obj.GetName())
+			if len(deletionSignals) < len(targets) {
+				// Simulate a finalizer that keeps the first CR until the other CR
+				// has also entered deletion.
+				return nil
+			}
+			for _, target := range targets {
+				if err := underlying.Delete(ctx, target.DeepCopy(), opts...); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	deleted, err := deleteNetworkOperatorCustomResources(
+		ctx, kubeClient, "operator-system", time.Millisecond, ui.NewSilent())
+	require.NoError(t, err)
+	assert.Equal(t, 2, deleted)
+	assert.Equal(t, []string{"namespaced", "cluster-scoped"}, deletionSignals)
+}
+
 func TestDeleteNetworkOperatorCustomResourcesSweepsRecreatedClusterResource(t *testing.T) {
 	original := testCleanObject(clusterScopedCleanKinds[3], "", "original-node-policy")
 	nicClusterPolicy := testCleanObject(clusterScopedCleanKinds[4], "", "nic-cluster-policy")

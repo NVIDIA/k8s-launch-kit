@@ -117,9 +117,10 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 
 ## Clean Flags
 
-`l8k clean` deletes every namespaced custom-resource instance in the resolved
-Network Operator namespace, then deletes the known cluster-scoped Network
-Operator CRs. It waits for their finalizers before uninstalling the
+`l8k clean` discovers every namespaced custom-resource instance in the resolved
+Network Operator namespace and the known cluster-scoped Network Operator CRs.
+It sends deletion requests to the complete set before monitoring any CR for
+finalizer completion, then re-sweeps both scopes before uninstalling the
 `network-operator` Helm release. It preserves the namespace, CRDs, unrelated
 Secrets, generated files, and resources outside the namespace. Helm release
 metadata and chart-managed resources are removed with the release.

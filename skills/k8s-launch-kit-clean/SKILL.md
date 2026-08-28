@@ -69,6 +69,9 @@ The command:
   namespace.
 - Deletes all `HostDeviceNetwork`, `IPoIBNetwork`, `MacvlanNetwork`,
   `NicNodePolicy`, and `NicClusterPolicy` instances cluster-wide.
+- Sends deletion requests to the complete namespaced and cluster-scoped set
+  before monitoring any CR for finalizer completion, then uses the same
+  delete-all-then-wait ordering for re-sweeps.
 - Keeps controllers installed until CR deletion and finalizers complete.
 - Uninstalls the `network-operator` Helm release last unless
   `--keep-helm-chart` is set.
