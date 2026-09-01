@@ -45,6 +45,11 @@ the daemon and its CRDs are created in a dedicated namespace, used to publish
 `NicDevice` CRs, and torn down when discovery finishes. This phase can be
 skipped if you provide your own configuration file. Discovery also resolves
 missing profile settings and stores the final values in `cluster-config.yaml`.
+Because `NicDevice` does not expose MAC addresses, Launch Kit reads them
+transiently from sysfs on every worker and checks whether host netplan uses a
+matching `match.macaddress` plus `set-name` rule. The group-level
+`netplanManaged` result identifies potential naming conflicts with udev rules
+deployed by NIC Configuration Operator; host-specific MACs are not saved.
 
 ### Select the Deployment Profile
 Discovery fills missing profile values from hardware and built-in defaults.
@@ -1536,6 +1541,16 @@ state checks) live in the parent `pkg/networkoperatorplugin` package and
 are reachable from there for callers that need them. The release catalog
 that powers `WithRelease` is exposed separately at
 `pkg/networkoperatorplugin/releases` (`LookupRelease`, `SupportedReleases`).
+
+Per-PF host attributes that `NicDevice` does not expose use the integration
+point in `pkg/networkoperatorplugin/discovery/gputopology.go`:
+`pfDiscoveryProbeCmd` walks NVIDIA/Mellanox physical PCI functions once and emits
+PCI-keyed `key=value` records, `parsePFDiscoveryBlock` retains those records,
+and consumers either map stable attributes into `config.PFConfig` through
+`applyPFDiscoveryAttributes` or use node-specific attributes transiently for a
+group-level decision. Add new per-PF probes through that path so each worker
+keeps a single batched sysfs walk. NUMA is persisted per PF; MAC addresses are
+used only to derive `ClusterConfig.NetplanManaged` and are never serialized.
 
 ### Docker
 

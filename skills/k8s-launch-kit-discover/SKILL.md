@@ -118,6 +118,7 @@ clusterConfig:
   - identifier: "dgx-b200-h100-nvl"
     machineType: DGX-B200
     gpuType: NVIDIA-H100-NVL
+    netplanManaged: true
     capabilities:
       nodes:
         sriov: true
@@ -179,6 +180,10 @@ is false. Do not add GPU counts or resource maps under `clusterConfig`.
   profile values user input and therefore preserves them.
 - If fabric probes are mixed or unconfirmed, discovery still writes the file
   with an empty `profile.fabric`; set `--fabric` on discovery or generation.
+- `clusterConfig[].netplanManaged` is true when any worker has an NVIDIA PF
+  selected by a host netplan `match.macaddress` plus `set-name` rule. Discovery
+  checks every worker and uses PF MACs only transiently; they are not saved in
+  the shared group config.
 
 - The bootstrap namespace is **always** `nvidia-k8s-launch-kit` — not configurable. The
   daemon's SA / ClusterRole / ClusterRoleBinding are renamed to

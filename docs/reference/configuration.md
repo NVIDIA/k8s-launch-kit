@@ -301,6 +301,7 @@ clusterConfig:
   - identifier: pe-xe9680-h200
     machineType: PowerEdge-XE9680
     gpuType: NVIDIA-H200
+    netplanManaged: true
     capabilities:
       nodes:
         sriov: true
@@ -324,6 +325,7 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 | `identifier` | Lowercase resource-name form of machine/GPU identity with complete `NVIDIA` segments removed and common machine segments shortened (`ThinkSystem` → `ts`, `PowerEdge` → `pe`), bounded to 30 bytes with balanced machine/GPU prefixes and a 6-character deterministic hash when needed, or `group-N` fallback. The Launch Kit machine node label uses the same value. |
 | `machineType` / `gpuType` | Discovered hardware identity. |
 | `linkType` | Per-group `Ethernet` or `InfiniBand` result when fabric probes agree. |
+| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`; indicates a potential conflict with NCO udev naming. |
 | `presetApplied` | An exact topology preset was applied. |
 | `presetDeviation` | PF count, PCI address, or device ID drift from a matched preset. |
 | `capabilities.nodes` | Group-level SR-IOV, RDMA, and InfiniBand capability flags. |
@@ -332,4 +334,7 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 | `storageModules` / `thirdPartyRDMAModules` | Optional site-supplied dependent module lists. |
 | `pfs` | Physical-function inventory. |
 
-Each PF can include `deviceID`, `pciAddress`, `rdmaDevice`, `networkInterface`, `traffic`, `rail`, `psid`, `partNumber`, `model`, `numaNode`, `connectedGPU`, `connectedGPUPCIAddress`, and `gpuProximity`.
+Each PF can include `deviceID`, `pciAddress`, `rdmaDevice`, `networkInterface`,
+`traffic`, `rail`, `psid`, `partNumber`, `model`, `numaNode`, `connectedGPU`,
+`connectedGPUPCIAddress`, and `gpuProximity`. PF MAC addresses are
+host-specific and are not part of the saved configuration.

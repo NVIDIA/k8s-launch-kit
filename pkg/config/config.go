@@ -722,8 +722,13 @@ type ClusterConfig struct {
 	// IB, a non-zero sm_lid) and the verdicts agree. Otherwise omitted —
 	// the discovery couldn't prove the cluster is using a specific fabric,
 	// and downstream code should treat the field's absence as "unknown".
-	LinkType      string `yaml:"linkType,omitempty"`
-	PresetApplied bool   `yaml:"presetApplied,omitempty"`
+	LinkType string `yaml:"linkType,omitempty"`
+	// NetplanManaged is true when discovery finds, on any worker in the
+	// group, an NVIDIA PF whose current MAC is selected by a host netplan
+	// match.macaddress stanza with a non-empty set-name. Such naming may
+	// conflict with udev rules deployed by NIC Configuration Operator.
+	NetplanManaged bool `yaml:"netplanManaged"`
+	PresetApplied  bool `yaml:"presetApplied,omitempty"`
 	// PresetDeviation lists discrepancies between the matched preset and
 	// the cluster's actually-discovered hardware. When non-empty, the
 	// preset was applied (so rail/NUMA topology fields are populated) but

@@ -79,6 +79,38 @@ ConfigMap/stale `NicDevice` CRs; CRDs preserved), then `Ensure` deploys fresh.
 
 ---
 
+## Per-PF Discovery Integration Point
+
+`pkg/networkoperatorplugin/discovery/gputopology.go` owns the extension rails
+for host attributes that `NicDevice` does not publish:
+
+1. `pfDiscoveryProbeCmd` walks `/sys/bus/pci/devices/*` once, filters vendor
+   `0x15b3` and virtual functions, and emits one PCI-keyed record per PF:
+   `<pci>|<attribute>=<value>|...`.
+2. `parsePFDiscoveryBlock` normalizes the PCI address and retains every
+   non-empty key/value pair, including unknown keys. This makes the transport
+   format forward-compatible.
+3. Consumers choose the correct lifetime for each attribute:
+   `applyPFDiscoveryAttributes` validates stable values such as NUMA and maps
+   them onto `config.PFConfig`; node-specific values such as MAC addresses stay
+   transient and feed group-level decisions.
+
+NUMA and current netdevice MAC address use this path today. MACs are compared
+with a sanitized projection of host netplan device stanzas; a
+`match.macaddress` plus non-empty `set-name` match sets the group's
+`netplanManaged` flag. Every worker is probed because MACs and netplan files are
+node-local, and the group flag is true if any worker matches. The representative
+worker combines this with the GPU probe; other workers run only the smaller
+per-PF/netplan probe.
+
+To integrate a new per-PF field, add its best-effort read to
+`pfDiscoveryProbeCmd`, decide whether its lifetime permits persistence in
+`PFConfig` or requires transient aggregation, and extend parser/consumer tests.
+Do not add a second PCI walk on the same worker. One missing attribute must not
+suppress the other attributes or PF records.
+
+---
+
 ## Node Grouping Algorithm
 
 Nodes are grouped by their **physical-function layout**. Two nodes belong to the same
