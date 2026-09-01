@@ -23,6 +23,14 @@ When ``generate`` uses a file-backed config, it writes resolved defaults and
 explicit CLI overrides back to that same file before rendering manifests.
 Comments in the original YAML are preserved.
 
+When a selected hardware group has ``netplanManaged: true``, generation stops
+if the chosen profile would emit a ``NicInterfaceNameTemplate`` for that group.
+The existing netplan ``set-name`` rule can conflict with the udev naming rule
+deployed by NIC Configuration Operator. Remove the affected ``set-name``
+stanzas from the host netplan configuration, re-run ``l8k discover``, and then
+retry ``l8k generate``. Groups excluded with ``--groups`` or ``--gpu-type`` do
+not participate in this check.
+
 Discovery defaults ``deployment`` to ``sriov`` and ``multirail`` to ``true``.
 It derives ``fabric`` only when every discovered group reports the same
 confirmed link type. If the fabric cannot be confirmed, discovery still saves

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -459,6 +460,7 @@ func renderForScope(
 		}
 
 	case ScopePerSource:
+		var netplanManagedGroups []config.ClusterConfig
 		for i, plan := range plans {
 			for _, src := range plan.Sources {
 				renderCfg := withClusterConfig(cfg, []config.ClusterConfig{src}, subnetsAt(planSubnets, i))
@@ -466,12 +468,40 @@ func renderForScope(
 				if err != nil {
 					return nil, err
 				}
+				// Check the rendered result rather than only the config switch:
+				// non-Spectrum-X templates can render empty after the single-group
+				// fallback disables interface naming, while Spectrum-X templates
+				// emit this CR independently of that switch. This is therefore the
+				// exact boundary where NicInterfaceNameTemplate is actually used.
+				if kind == "NicInterfaceNameTemplate" && len(rendered) > 0 && src.NetplanManaged {
+					netplanManagedGroups = append(netplanManagedGroups, src)
+				}
 				merge(rendered)
 			}
+		}
+		if len(netplanManagedGroups) > 0 {
+			return nil, newNetplanInterfaceNameConflictError(netplanManagedGroups)
 		}
 	}
 
 	return results, nil
+}
+
+func newNetplanInterfaceNameConflictError(groups []config.ClusterConfig) error {
+	labels := make([]string, 0, len(groups))
+	for _, group := range groups {
+		labels = append(labels, templateGroupLabel(group))
+	}
+	slices.Sort(labels)
+
+	return apperrors.NewValidationError(
+		fmt.Sprintf(
+			"cannot generate NicInterfaceNameTemplate: NICs being configured for %s are affected by conflicting netplan configuration",
+			strings.Join(labels, ", "),
+		),
+		nil,
+		"Clean up the set-name stanzas for the affected NICs in the host netplan configuration, re-run 'l8k discover', then retry 'l8k generate'.",
+	)
 }
 
 // networkNSReplicatedKinds is the set of Kinds rendered once per

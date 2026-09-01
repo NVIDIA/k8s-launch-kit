@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-discover
-version: 1.2.4
+version: 1.2.5
 description: "Use this skill when the user wants to discover their Kubernetes cluster's network hardware capabilities using k8s-launch-kit (l8k). Activate for: cluster discovery, hardware detection, NIC detection, finding what GPUs or NICs are in a cluster, creating a cluster config file, or when the user says 'discover' in the context of l8k or NVIDIA networking."
 metadata:
   requires:
@@ -183,7 +183,10 @@ is false. Do not add GPU counts or resource maps under `clusterConfig`.
 - `clusterConfig[].netplanManaged` is true when any worker has an NVIDIA PF
   selected by a host netplan `match.macaddress` plus `set-name` rule. Discovery
   checks every worker and uses PF MACs only transiently; they are not saved in
-  the shared group config.
+  the shared group config. If generation would emit a
+  `NicInterfaceNameTemplate` for an affected group, clean up the host's
+  `set-name` stanzas and re-run discovery before retrying generation; do not
+  clear the field manually.
 
 - The bootstrap namespace is **always** `nvidia-k8s-launch-kit` — not configurable. The
   daemon's SA / ClusterRole / ClusterRoleBinding are renamed to

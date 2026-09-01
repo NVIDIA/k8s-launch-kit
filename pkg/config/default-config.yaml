@@ -194,7 +194,7 @@ profile:
 
 clusterConfig:
   - identifier: ""
-    netplanManaged: false # True when any worker has an NVIDIA PF selected by a netplan match.macaddress + set-name rule
+    netplanManaged: false # True when netplan set-name conflicts with NCO naming; blocks generation of NicInterfaceNameTemplate for this group
     capabilities:
       nodes:
         sriov: true # has nodes with feature.node.kubernetes.io/pci-15b3.present=true

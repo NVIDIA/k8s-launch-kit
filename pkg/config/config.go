@@ -732,7 +732,9 @@ type ClusterConfig struct {
 	// NetplanManaged is true when discovery finds, on any worker in the
 	// group, an NVIDIA PF whose current MAC is selected by a host netplan
 	// match.macaddress stanza with a non-empty set-name. Such naming may
-	// conflict with udev rules deployed by NIC Configuration Operator.
+	// conflict with udev rules deployed by NIC Configuration Operator, so
+	// generation is rejected when a NicInterfaceNameTemplate would configure
+	// this group.
 	NetplanManaged bool `yaml:"netplanManaged"`
 	PresetApplied  bool `yaml:"presetApplied,omitempty"`
 	// PresetDeviation lists discrepancies between the matched preset and

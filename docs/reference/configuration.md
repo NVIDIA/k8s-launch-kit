@@ -338,7 +338,7 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 | `identifier` | Lowercase resource-name form of machine/GPU identity with complete `NVIDIA` segments removed and common machine segments shortened (`ThinkSystem` → `ts`, `PowerEdge` → `pe`), bounded to 30 bytes with balanced machine/GPU prefixes and a 6-character deterministic hash when needed, or `group-N` fallback. The Launch Kit machine node label uses the same value. |
 | `machineType` / `gpuType` | Discovered hardware identity. |
 | `linkType` | Per-group `Ethernet` or `InfiniBand` result when fabric probes agree. |
-| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`; indicates a potential conflict with NCO udev naming. |
+| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`. Generation fails if a `NicInterfaceNameTemplate` would configure this group; remove the affected `set-name` stanzas and re-run discovery before retrying generation. |
 | `presetApplied` | An exact topology preset was applied. |
 | `presetDeviation` | PF count, PCI address, or device ID drift from a matched preset. |
 | `capabilities.nodes` | Group-level SR-IOV, RDMA, and InfiniBand capability flags. |

@@ -17,6 +17,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -184,6 +185,10 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		l.logger.Info("Generating deployment files for profile", "profile", profile.Name)
 
 		if err := l.generateDeploymentFiles(&profile, fullConfig); err != nil {
+			var structured *apperrors.StructuredError
+			if errors.As(err, &structured) {
+				return structured
+			}
 			l.ui.Error("File generation failed: %v", err)
 			return apperrors.NewGeneralError("deployment files generation failed", err)
 		}

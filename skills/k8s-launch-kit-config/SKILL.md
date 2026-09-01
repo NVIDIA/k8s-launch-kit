@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-config
-version: 1.2.5
+version: 1.2.6
 description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
@@ -72,7 +72,9 @@ Each `clusterConfig[]` entry has these key fields:
 - `netplanManaged` — true when any worker has an NVIDIA PF whose current MAC
   is selected by a host netplan `match.macaddress` stanza with a non-empty
   `set-name`. The flag identifies a potential conflict with NCO udev naming;
-  host-specific MACs are not persisted.
+  host-specific MACs are not persisted. If generation would emit a
+  `NicInterfaceNameTemplate` for this group, clean up the affected `set-name`
+  stanzas and re-run discovery instead of editing this flag by hand.
 - `capabilities.nodes.{sriov,rdma,ib}` — what the underlying hardware supports.
 - `pfs[]` — physical function list with PCI address, device ID, RDMA device,
   network interface, traffic class, rail, NUMA, GPU affinity, and `model` (the

@@ -61,7 +61,11 @@ non-empty `set-name`. If any NVIDIA PF matches on any worker in a hardware
 group, the saved group has `netplanManaged: true`; otherwise it is `false`.
 This flags a potential conflict between netplan naming and udev rules deployed
 by NIC Configuration Operator without storing host-unique MAC addresses in the
-shared group configuration.
+shared group configuration. If `l8k generate` would emit a
+`NicInterfaceNameTemplate` for an affected group, it returns a validation error
+instead of generating conflicting NCO naming rules. Remove the affected
+`set-name` stanzas from the host netplan configuration and re-run discovery to
+clear the saved group state before retrying generation.
 
 GPU topology probing adds connected GPU, GPU PCI address, and proximity data
 per PF. A PIX-proximate NIC-to-GPU path can override heuristic traffic
