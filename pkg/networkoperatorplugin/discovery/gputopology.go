@@ -19,10 +19,13 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -30,29 +33,98 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 )
 
-// topologyProbeCmd runs in the nic-configuration-daemon pod. It emits three
-// blocks (some may be empty):
-//  1. nvidia-smi --query-gpu CSV: "<index>, <pci.bus_id>"
-//     --- TOPO --- marker
-//  2. nvidia-smi topo -mp output (matrix + NIC legend)
-//     --- NUMA --- marker
-//  3. Per-Mellanox-PF lines: "<pci>|<numa_node>"
-//
-// The shell is wrapped so that missing/crashing nvidia-smi keeps the overall
-// exit code at 0 (stdout simply lacks the nvidia-smi blocks). The sysfs NUMA
-// walk always runs independently of nvidia-smi.
-const topologyProbeCmd = `if [ -x /host/usr/bin/nvidia-smi ]; then
+// gpuTopologyProbeCmd emits the nvidia-smi-owned part of the batched topology
+// probe. Missing or crashing nvidia-smi keeps the overall exit code at 0 so
+// the independent per-PF sysfs discovery still runs.
+const gpuTopologyProbeCmd = `if [ -x /host/usr/bin/nvidia-smi ]; then
   export LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH
   /host/usr/bin/nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader 2>/dev/null || true
   echo '---TOPO---'
   /host/usr/bin/nvidia-smi topo -mp 2>/dev/null || true
-fi
-echo '---NUMA---'
+fi`
+
+// pfDiscoveryProbeCmd is the integration point for host attributes that are
+// unavailable from NicDevice. It walks every NVIDIA/Mellanox physical PCI
+// function once and emits an extensible record keyed by normalized PCI address:
+//
+//	<pci>|<attribute>=<value>|<attribute>=<value>...
+//
+// To add a per-PF discovery feature, collect another key=value attribute in
+// this walk and preserve it in parsePFDiscoveryBlock. From there, either map
+// it onto PFConfig in applyPFDiscoveryAttributes or consume it transiently for
+// a node-local/group-level discovery decision. Empty attributes are omitted,
+// and a failure to read one attribute must not prevent the other attributes or
+// PFs from being reported.
+const pfDiscoveryProbeCmd = `echo '---PF---'
 for d in /sys/bus/pci/devices/*; do
   v=$(cat "$d/vendor" 2>/dev/null) || continue
   [ "$v" = "0x15b3" ] || continue
-  echo "$(basename "$d")|$(cat "$d/numa_node" 2>/dev/null || echo -1)"
+  [ -e "$d/physfn" ] && continue
+
+  pci=$(basename "$d")
+  numa=$(cat "$d/numa_node" 2>/dev/null || echo -1)
+  printf '%s|numaNode=%s' "$pci" "$numa"
+
+  mac=''
+  for address_file in "$d"/net/*/address; do
+    [ -r "$address_file" ] || continue
+    mac=$(cat "$address_file" 2>/dev/null || true)
+    [ -n "$mac" ] && break
+  done
+  [ -n "$mac" ] && printf '|macAddress=%s' "$mac"
+  printf '\n'
 done`
+
+const (
+	netplanMarker     = "---NETPLAN---"
+	netplanFileMarker = "---NETPLAN-FILE---"
+)
+
+// netplanDiscoveryProbeCmd emits a sanitized structural projection of the
+// host's netplan files. Only empty mapping keys, YAML document separators,
+// match.macaddress, and set-name values leave the node; unrelated settings
+// (including credentials) are never copied into the exec response.
+//
+// The Go parser uses the retained YAML indentation to determine whether a MAC
+// match and set-name belong to the same netplan device stanza.
+const netplanDiscoveryProbeCmd = `echo '---NETPLAN---'
+for netplan_file in /host/etc/netplan/*.yaml /host/etc/netplan/*.yml; do
+  [ -r "$netplan_file" ] || continue
+  echo '---NETPLAN-FILE---'
+  awk '
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+      if (line ~ /^[[:space:]]*---[[:space:]]*$/ ||
+          line ~ /^[[:space:]]*[^:#][^:]*:[[:space:]]*$/ ||
+          line ~ /^[[:space:]]*(macaddress|set-name):[[:space:]]*[^[:space:]].*$/) {
+        print line
+      }
+    }
+  ' "$netplan_file" 2>/dev/null || true
+done`
+
+// nodePFDiscoveryProbeCmd is the reusable node-local probe for per-PF
+// attributes and their host-network configuration consumers. It runs once on
+// every worker in a hardware group because MAC addresses and netplan files are
+// node-specific.
+const nodePFDiscoveryProbeCmd = pfDiscoveryProbeCmd + "\n" + netplanDiscoveryProbeCmd
+
+// topologyProbeCmd runs the representative node's GPU and node-local discovery
+// families in one pod exec. It emits four blocks (some may be empty):
+//  1. nvidia-smi --query-gpu CSV: "<index>, <pci.bus_id>"
+//     --- TOPO --- marker
+//  2. nvidia-smi topo -mp output (matrix + NIC legend)
+//     --- PF --- marker
+//  3. Per-PF key=value records emitted by pfDiscoveryProbeCmd.
+//     --- NETPLAN --- marker
+//  4. Sanitized per-file netplan projections.
+const topologyProbeCmd = gpuTopologyProbeCmd + "\n" + nodePFDiscoveryProbeCmd
+
+const (
+	pfAttributeNUMANode   = "numaNode"
+	pfAttributeMACAddress = "macAddress"
+)
 
 // proximity represents one cell of the nvidia-smi topology matrix.
 // Ordering: lower value = closer. self is a sentinel for the diagonal.
@@ -109,9 +181,15 @@ type topoData struct {
 	gpuPCI map[int]string
 	// matrix maps RDMA device name -> (GPU index -> proximity label).
 	matrix map[string]map[int]proximity
-	// numa maps normalized PCI address -> numa_node value as read from sysfs
-	// (-1 meaning "no NUMA locality").
-	numa map[string]int
+	// pfAttributes maps normalized PCI address to the extensible key=value
+	// records emitted by pfDiscoveryProbeCmd.
+	pfAttributes map[string]map[string]string
+	// netplanSetNameMACs contains canonical MAC addresses from netplan device
+	// stanzas that have both match.macaddress and a non-empty set-name.
+	netplanSetNameMACs map[string]struct{}
+	// netplanParseErrors counts malformed sanitized YAML documents. Parsing is
+	// best-effort, so valid files and documents still contribute matches.
+	netplanParseErrors int
 }
 
 // normalizePCI converts PCI addresses to a canonical lowercase 4-digit-domain
@@ -148,27 +226,38 @@ func busOf(pciAddr string) int {
 	return int(bus)
 }
 
-// parseTopologyProbe parses the three-block output emitted by topologyProbeCmd.
+// parseTopologyProbe parses the four-block output emitted by topologyProbeCmd.
 // All blocks are optional; a missing block produces an empty map on the
-// corresponding field rather than an error. The only hard error is a totally
-// unparseable input (which we treat as empty).
+// corresponding field. Unparseable per-PF lines are ignored, while malformed
+// netplan documents are counted so callers can log the partial result.
 func parseTopologyProbe(output string) topoData {
 	data := topoData{
-		gpuPCI: map[int]string{},
-		matrix: map[string]map[int]proximity{},
-		numa:   map[string]int{},
+		gpuPCI:             map[int]string{},
+		matrix:             map[string]map[int]proximity{},
+		pfAttributes:       map[string]map[string]string{},
+		netplanSetNameMACs: map[string]struct{}{},
 	}
 
 	const (
-		topoMarker = "---TOPO---"
-		numaMarker = "---NUMA---"
+		topoMarker       = "---TOPO---"
+		pfMarker         = "---PF---"
+		legacyNUMAMarker = "---NUMA---"
 	)
 
 	// Segment the output by markers.
-	var queryBlock, topoBlock, numaBlock string
+	var queryBlock, topoBlock, pfBlock, netplanBlock string
 	s := output
-	if i := strings.Index(s, numaMarker); i >= 0 {
-		numaBlock = s[i+len(numaMarker):]
+	if i := strings.Index(s, netplanMarker); i >= 0 {
+		netplanBlock = s[i+len(netplanMarker):]
+		s = s[:i]
+	}
+	if i := strings.Index(s, pfMarker); i >= 0 {
+		pfBlock = s[i+len(pfMarker):]
+		s = s[:i]
+	} else if i := strings.Index(s, legacyNUMAMarker); i >= 0 {
+		// Keep parsing captured output from the former positional NUMA-only
+		// format. New probes always emit the generic ---PF--- block.
+		pfBlock = s[i+len(legacyNUMAMarker):]
 		s = s[:i]
 	}
 	if i := strings.Index(s, topoMarker); i >= 0 {
@@ -182,7 +271,8 @@ func parseTopologyProbe(output string) topoData {
 
 	parseGPUQuery(queryBlock, data.gpuPCI)
 	parseTopoMatrix(topoBlock, data.matrix)
-	parseNUMABlock(numaBlock, data.numa)
+	parsePFDiscoveryBlock(pfBlock, data.pfAttributes)
+	data.netplanParseErrors = parseNetplanSetNameMACs(netplanBlock, data.netplanSetNameMACs)
 	return data
 }
 
@@ -341,26 +431,148 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
-// parseNUMABlock parses lines like "0000:19:00.0|0" emitted by the sysfs walk.
-func parseNUMABlock(block string, out map[string]int) {
+// parsePFDiscoveryBlock parses the extensible records emitted by
+// pfDiscoveryProbeCmd. Unknown attributes are retained so adding a new probe
+// does not require changing this parser. The former positional
+// "<pci>|<numa_node>" record remains accepted for captured fixtures and
+// rolling upgrades.
+func parsePFDiscoveryBlock(block string, out map[string]map[string]string) {
 	for _, line := range strings.Split(block, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 2)
-		if len(parts) != 2 {
+		parts := strings.Split(line, "|")
+		if len(parts) < 2 {
 			continue
 		}
 		pci := normalizePCI(parts[0])
 		if pci == "" {
 			continue
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if err != nil {
+		attributes := out[pci]
+		if attributes == nil {
+			attributes = map[string]string{}
+		}
+		for i, field := range parts[1:] {
+			field = strings.TrimSpace(field)
+			if field == "" {
+				continue
+			}
+			key, value, ok := strings.Cut(field, "=")
+			if !ok {
+				if i == 0 {
+					// Legacy positional NUMA value.
+					attributes[pfAttributeNUMANode] = field
+				}
+				continue
+			}
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if key != "" && value != "" {
+				attributes[key] = value
+			}
+		}
+		if len(attributes) > 0 {
+			out[pci] = attributes
+		}
+	}
+}
+
+// parseNetplanSetNameMACs parses the sanitized YAML projections emitted by
+// netplanDiscoveryProbeCmd. It returns the number of malformed documents while
+// retaining matches from every valid document and file.
+func parseNetplanSetNameMACs(block string, out map[string]struct{}) int {
+	parseErrors := 0
+	for _, fileBlock := range strings.Split(block, netplanFileMarker) {
+		fileBlock = strings.TrimSpace(fileBlock)
+		if fileBlock == "" {
 			continue
 		}
-		out[pci] = n
+
+		decoder := yaml.NewDecoder(strings.NewReader(fileBlock))
+		for {
+			var document interface{}
+			err := decoder.Decode(&document)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				parseErrors++
+				break
+			}
+			collectNetplanSetNameMACs(document, out)
+		}
+	}
+	return parseErrors
+}
+
+// collectNetplanSetNameMACs recursively finds device mappings with a non-empty
+// set-name and a sibling match.macaddress. Recursion keeps the detector
+// independent of whether the stanza is under ethernets, wifis, or another
+// netplan physical-device collection.
+func collectNetplanSetNameMACs(value interface{}, out map[string]struct{}) {
+	switch typed := value.(type) {
+	case map[interface{}]interface{}:
+		setName, _ := typed["set-name"].(string)
+		match, _ := typed["match"].(map[interface{}]interface{})
+		macAddress, _ := match["macaddress"].(string)
+		if strings.TrimSpace(setName) != "" {
+			if mac := normalizeMAC(macAddress); mac != "" {
+				out[mac] = struct{}{}
+			}
+		}
+		for _, child := range typed {
+			collectNetplanSetNameMACs(child, out)
+		}
+	case []interface{}:
+		for _, child := range typed {
+			collectNetplanSetNameMACs(child, out)
+		}
+	}
+}
+
+func normalizeMAC(value string) string {
+	mac, err := net.ParseMAC(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	return mac.String()
+}
+
+// hasNetplanManagedPF reports whether a current per-PF MAC is also referenced
+// by a netplan set-name rule. PF MACs remain transient and are never copied
+// into the group-shared configuration.
+func hasNetplanManagedPF(data topoData) bool {
+	for _, attributes := range data.pfAttributes {
+		mac := normalizeMAC(attributes[pfAttributeMACAddress])
+		if mac == "" {
+			continue
+		}
+		if _, ok := data.netplanSetNameMACs[mac]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// applyPFDiscoveryAttributes is the schema boundary for per-PF probe data.
+// The parser above is intentionally generic; this function validates and maps
+// only attributes supported by PFConfig. Add future per-PF fields here rather
+// than coupling their parsing to the shell record order.
+func applyPFDiscoveryAttributes(pfs []config.PFConfig, discovered map[string]map[string]string) {
+	for i := range pfs {
+		attributes := discovered[normalizePCI(pfs[i].PciAddress)]
+		if attributes == nil {
+			continue
+		}
+
+		if value := attributes[pfAttributeNUMANode]; value != "" {
+			if numaNode, err := strconv.Atoi(value); err == nil && numaNode >= 0 {
+				n := numaNode
+				pfs[i].NumaNode = &n
+			}
+		}
 	}
 }
 
@@ -471,10 +683,85 @@ func reclassifyAndReassignRails(pfs []config.PFConfig) {
 	}
 }
 
-// discoverGPUTopology execs a single probe into the nic-configuration-daemon
-// pod for one representative node of the group, parses the output, and
-// enriches the group's PFs with NumaNode, ConnectedGPU, GPUProximity. If the
-// PIX-gate fires it additionally rewrites Traffic and re-runs rail numbering.
+func podContainerName(pod *corev1.Pod) string {
+	if pod == nil || len(pod.Spec.Containers) == 0 {
+		return ""
+	}
+	return pod.Spec.Containers[0].Name
+}
+
+// discoverGroupNetplanManagement checks every worker because both PF MAC
+// addresses and netplan files are node-local. The group-level flag is an OR:
+// one matching set-name rule is sufficient to indicate a potential naming
+// conflict with NCO-managed udev rules.
+//
+// representativeData is reused from topologyProbeCmd to avoid probing that
+// node twice. When the representative probe failed, pass nil and every worker
+// is checked with the smaller nodePFDiscoveryProbeCmd.
+func discoverGroupNetplanManagement(ctx context.Context, restConfig *rest.Config,
+	namespace string, group *config.ClusterConfig, dsPods []corev1.Pod,
+	representativePod *corev1.Pod, representativeData *topoData) {
+
+	checkedRepresentative := representativePod != nil && representativeData != nil
+	if checkedRepresentative {
+		if representativeData.netplanParseErrors > 0 {
+			log.Log.Info("Some netplan files could not be parsed during discovery",
+				"group", group.Identifier,
+				"node", representativePod.Spec.NodeName,
+				"parseErrors", representativeData.netplanParseErrors)
+		}
+		if hasNetplanManagedPF(*representativeData) {
+			group.NetplanManaged = true
+			log.Log.Info("Detected netplan-managed NVIDIA PF naming",
+				"group", group.Identifier,
+				"node", representativePod.Spec.NodeName)
+			return
+		}
+	}
+
+	for _, node := range group.WorkerNodes {
+		if checkedRepresentative && node == representativePod.Spec.NodeName {
+			continue
+		}
+		pod := findDaemonPod([]string{node}, dsPods)
+		if pod == nil {
+			log.Log.Info("No nic-configuration-daemon pod found; netplan management could not be checked",
+				"group", group.Identifier, "node", node)
+			continue
+		}
+
+		output, err := execInPod(ctx, restConfig, namespace, pod.Name, podContainerName(pod),
+			[]string{"/bin/sh", "-c", nodePFDiscoveryProbeCmd})
+		if err != nil {
+			log.Log.Error(err, "failed to exec per-PF netplan discovery probe",
+				"group", group.Identifier, "node", node, "pod", pod.Name)
+			continue
+		}
+
+		data := parseTopologyProbe(output)
+		if data.netplanParseErrors > 0 {
+			log.Log.Info("Some netplan files could not be parsed during discovery",
+				"group", group.Identifier,
+				"node", node,
+				"parseErrors", data.netplanParseErrors)
+		}
+		if hasNetplanManagedPF(data) {
+			group.NetplanManaged = true
+			log.Log.Info("Detected netplan-managed NVIDIA PF naming",
+				"group", group.Identifier,
+				"node", node)
+			return
+		}
+	}
+}
+
+// discoverGPUTopology execs a combined GPU/per-PF probe in one representative
+// nic-configuration-daemon pod, parses the output, and enriches the group's PFs
+// with the generic per-PF sysfs attributes plus ConnectedGPU and GPUProximity.
+// It also checks every other worker with the smaller node-local probe to derive
+// the group-level NetplanManaged flag without persisting host-specific MACs. If
+// the PIX-gate fires it additionally rewrites Traffic and re-runs rail
+// numbering.
 //
 // All failures are non-fatal: logged, the corresponding fields stay empty,
 // and Traffic/Rail continue to reflect whatever the part-number heuristic
@@ -485,34 +772,39 @@ func discoverGPUTopology(ctx context.Context, restConfig *rest.Config,
 	if group == nil || len(group.PFs) == 0 {
 		return
 	}
+	group.NetplanManaged = false
 
 	targetPod := findDaemonPod(group.WorkerNodes, dsPods)
 	if targetPod == nil {
-		log.Log.Info("No nic-configuration-daemon pod found on group nodes; skipping GPU topology probing",
+		log.Log.Info("No nic-configuration-daemon pod found on group nodes; skipping host topology probing",
 			"group", group.Identifier)
 		return
 	}
-	containerName := ""
-	if len(targetPod.Spec.Containers) > 0 {
-		containerName = targetPod.Spec.Containers[0].Name
-	}
 
-	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
+	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, podContainerName(targetPod),
 		[]string{"/bin/sh", "-c", topologyProbeCmd})
 	if err != nil {
-		log.Log.Error(err, "failed to exec GPU topology probe", "pod", targetPod.Name)
+		log.Log.Error(err, "failed to exec representative host topology probe", "pod", targetPod.Name)
+		discoverGroupNetplanManagement(ctx, restConfig, namespace, group, dsPods, targetPod, nil)
 		return
 	}
 
 	data := parseTopologyProbe(output)
+	discoverGroupNetplanManagement(ctx, restConfig, namespace, group, dsPods, targetPod, &data)
 
-	// Step 1: NumaNode enrichment. Works with or without nvidia-smi.
+	// Step 1: generic per-PF sysfs enrichment. Works with or without
+	// nvidia-smi and is the integration point for attributes NicDevice does
+	// not expose.
+	applyPFDiscoveryAttributes(group.PFs, data.pfAttributes)
 	for i := range group.PFs {
-		pci := normalizePCI(group.PFs[i].PciAddress)
-		if n, ok := data.numa[pci]; ok && n >= 0 {
-			nn := n
-			group.PFs[i].NumaNode = &nn
+		pf := &group.PFs[i]
+		if pf.NumaNode == nil {
+			continue
 		}
+		log.Log.V(1).Info("PF sysfs attributes discovered",
+			"group", group.Identifier,
+			"pci", pf.PciAddress,
+			"numaNode", strconv.Itoa(*pf.NumaNode))
 	}
 
 	// Step 2: if no matrix or no GPUs, topology enrichment stops here.

@@ -386,6 +386,9 @@ clusterConfig:
   - # string — Group identifier/machine label (vendor-free; common machine aliases; max 30 bytes)
     identifier: ""
 
+    # bool — Any worker has an NVIDIA PF selected by netplan match.macaddress + set-name
+    netplanManaged: false
+
     capabilities:
       nodes:
         # bool — Nodes have SR-IOV capable NICs

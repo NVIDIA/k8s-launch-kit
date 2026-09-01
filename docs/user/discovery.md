@@ -46,13 +46,27 @@ The default `--node-selector` value is written to the saved configuration for de
 
 ## Hardware And GPU Topology
 
-For each NIC, discovery records the device ID, PCI address, RDMA device, network interface, VPD identifiers, model, traffic direction, and rail. GPU and host details use layered sources:
+For each NIC, discovery records the device ID, PCI address, RDMA device,
+network interface, VPD identifiers, model, traffic direction, and rail. GPU and
+host details use layered sources:
 
 1. Existing `nvidia.com/gpu.machine` and `nvidia.com/gpu.product` node labels.
 2. DMI data and `nvidia-smi` from the temporary daemon pod.
 3. Sysfs PCI data and the embedded NVIDIA subset of `pci.ids` when `nvidia-smi` is unavailable.
 
-GPU topology probing adds NUMA, connected GPU, GPU PCI address, and proximity data per PF. A PIX-proximate NIC-to-GPU path can override heuristic traffic classification and trigger rail reassignment. Probe failures are non-fatal; discovery keeps the hardware data it can confirm.
+The same batched sysfs probe adds the NUMA node and reads current PF MAC
+addresses transiently. On every worker, discovery compares those addresses
+with host netplan device stanzas that contain both `match.macaddress` and a
+non-empty `set-name`. If any NVIDIA PF matches on any worker in a hardware
+group, the saved group has `netplanManaged: true`; otherwise it is `false`.
+This flags a potential conflict between netplan naming and udev rules deployed
+by NIC Configuration Operator without storing host-unique MAC addresses in the
+shared group configuration.
+
+GPU topology probing adds connected GPU, GPU PCI address, and proximity data
+per PF. A PIX-proximate NIC-to-GPU path can override heuristic traffic
+classification and trigger rail reassignment. Probe failures are non-fatal;
+discovery keeps the hardware data it can confirm.
 
 ## Profile Resolution
 

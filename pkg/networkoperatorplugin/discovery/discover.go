@@ -254,11 +254,13 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 				}
 			}
 
-			// Probe GPU topology from nvidia-smi: populates NumaNode,
-			// ConnectedGPU, GPUProximity per PF; if any PF has PIX to a GPU,
-			// the PIX-gate override rewrites Traffic and re-runs rails.
-			// Failures are non-fatal; when nvidia-smi is absent, today's
-			// part-number classification continues to govern.
+			// Probe GPU topology plus node-local per-PF attributes. This
+			// populates NumaNode, ConnectedGPU, and GPUProximity per PF and
+			// derives the group-level NetplanManaged flag without persisting
+			// host-specific MACs. If any PF has PIX to a GPU, the PIX-gate
+			// override rewrites Traffic and re-runs rails. Failures are
+			// non-fatal; when nvidia-smi is absent, today's part-number
+			// classification continues to govern.
 			discoverGPUTopology(ctx, restConfig,
 				nicconfigdaemon.Namespace, group, dsPods)
 

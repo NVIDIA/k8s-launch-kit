@@ -343,6 +343,22 @@ func TestDefaultConfigYAMLReturnsFreshCopy(t *testing.T) {
 	assert.NotEqual(t, byte('X'), b[0])
 }
 
+func TestClusterConfigNetplanManagedYAMLRoundTrip(t *testing.T) {
+	input := ClusterConfig{NetplanManaged: true}
+
+	marshaled, err := yaml.Marshal(input)
+	require.NoError(t, err)
+	assert.Contains(t, string(marshaled), "netplanManaged: true")
+
+	var reloaded ClusterConfig
+	require.NoError(t, yaml.Unmarshal(marshaled, &reloaded))
+	assert.True(t, reloaded.NetplanManaged)
+
+	marshaled, err = yaml.Marshal(ClusterConfig{NetplanManaged: false})
+	require.NoError(t, err)
+	assert.Contains(t, string(marshaled), "netplanManaged: false")
+}
+
 func TestNormalizeSpectrumXProfileConfigFromFullConfigMap(t *testing.T) {
 	spcx := &ProfileSpectrumX{
 		Profile: `apiVersion: v1

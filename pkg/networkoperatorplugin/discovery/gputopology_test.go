@@ -17,6 +17,10 @@
 package discovery
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -69,21 +73,141 @@ func TestParseGPUQuery(t *testing.T) {
 	assert.Len(t, out, 4)
 }
 
-func TestParseNUMABlock(t *testing.T) {
+func TestParsePFDiscoveryBlock(t *testing.T) {
 	in := `
-0000:19:00.0|0
-0000:5a:00.0|0
-0000:9b:00.0|1
+0000:19:00.0|numaNode=0|macAddress=02:00:00:00:00:19|futureAttribute=value
+0000:5a:00.0|numaNode=0
+0000:9b:00.0|numaNode=1|macAddress=
 0000:d8:00.0|-1
 bogus_line
 |no-pci
 `
-	out := map[string]int{}
-	parseNUMABlock(in, out)
-	assert.Equal(t, 0, out["0000:19:00.0"])
-	assert.Equal(t, 1, out["0000:9b:00.0"])
-	assert.Equal(t, -1, out["0000:d8:00.0"])
+	out := map[string]map[string]string{}
+	parsePFDiscoveryBlock(in, out)
+	assert.Equal(t, "0", out["0000:19:00.0"][pfAttributeNUMANode])
+	assert.Equal(t, "02:00:00:00:00:19", out["0000:19:00.0"][pfAttributeMACAddress])
+	assert.Equal(t, "value", out["0000:19:00.0"]["futureAttribute"])
+	assert.Equal(t, "1", out["0000:9b:00.0"][pfAttributeNUMANode])
+	assert.NotContains(t, out["0000:9b:00.0"], pfAttributeMACAddress)
+	assert.Equal(t, "-1", out["0000:d8:00.0"][pfAttributeNUMANode])
 	assert.Len(t, out, 4)
+}
+
+func TestParseNetplanSetNameMACs(t *testing.T) {
+	block := `
+---NETPLAN-FILE---
+network:
+  ethernets:
+    fabric0:
+      match:
+        macaddress: "02-00-00-00-00-19"
+      set-name: ens19
+    noRename:
+      match:
+        macaddress: "02:00:00:00:00:5a"
+---
+network:
+  wifis:
+    wireless0:
+      set-name: wlan0
+      match:
+        macaddress: "02:00:00:00:00:9b"
+---NETPLAN-FILE---
+network:
+  ethernets:
+    malformed: [
+---NETPLAN-FILE---
+network:
+  ethernets:
+    fabric1:
+      match:
+        macaddress: 02:00:00:00:00:d8
+      set-name: ens216
+`
+
+	out := map[string]struct{}{}
+	parseErrors := parseNetplanSetNameMACs(block, out)
+
+	assert.Equal(t, 1, parseErrors)
+	assert.Contains(t, out, "02:00:00:00:00:19")
+	assert.Contains(t, out, "02:00:00:00:00:9b")
+	assert.Contains(t, out, "02:00:00:00:00:d8")
+	assert.NotContains(t, out, "02:00:00:00:00:5a")
+}
+
+func TestNetplanDiscoveryProbeCmdSanitizesHostConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("probe contract requires POSIX sh and awk")
+	}
+
+	netplanDir := t.TempDir()
+	contents := `network:
+  version: 2
+  ethernets:
+    fabric0:
+      match:
+        macaddress: "02:00:00:00:00:19"
+      set-name: ens19
+      auth:
+        password: top-secret
+`
+	require.NoError(t, os.WriteFile(filepath.Join(netplanDir, "50-fabric.yaml"), []byte(contents), 0o600))
+
+	probe := strings.ReplaceAll(netplanDiscoveryProbeCmd, "/host/etc/netplan", netplanDir)
+	command := exec.Command("/bin/sh", "-c", probe) //nolint:gosec // fixed test command with a temp path
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "probe output: %s", output)
+	assert.Contains(t, string(output), `macaddress: "02:00:00:00:00:19"`)
+	assert.Contains(t, string(output), "set-name: ens19")
+	assert.NotContains(t, string(output), "top-secret")
+
+	data := parseTopologyProbe("---PF---\n0000:19:00.0|macAddress=02:00:00:00:00:19\n" + string(output))
+	assert.True(t, hasNetplanManagedPF(data))
+}
+
+func TestHasNetplanManagedPF(t *testing.T) {
+	data := topoData{
+		pfAttributes: map[string]map[string]string{
+			"0000:19:00.0": {pfAttributeMACAddress: "02-00-00-00-00-19"},
+			"0000:5a:00.0": {pfAttributeMACAddress: "not-a-mac"},
+		},
+		netplanSetNameMACs: map[string]struct{}{
+			"02:00:00:00:00:19": {},
+		},
+	}
+
+	assert.True(t, hasNetplanManagedPF(data))
+
+	data.netplanSetNameMACs = map[string]struct{}{
+		"02:00:00:00:00:5a": {},
+	}
+	assert.False(t, hasNetplanManagedPF(data))
+}
+
+func TestApplyPFDiscoveryAttributes(t *testing.T) {
+	pfs := []config.PFConfig{
+		{PciAddress: "0000:19:00.0"},
+		{PciAddress: "0000:5A:00.0"},
+		{PciAddress: "0000:9b:00.0"},
+	}
+	discovered := map[string]map[string]string{
+		"0000:19:00.0": {
+			pfAttributeNUMANode:   "0",
+			pfAttributeMACAddress: "02-00-00-00-00-19",
+			"futureAttribute":     "ignored by PFConfig mapper",
+		},
+		"0000:5a:00.0": {
+			pfAttributeNUMANode:   "not-an-int",
+			pfAttributeMACAddress: "not-a-mac",
+		},
+	}
+
+	applyPFDiscoveryAttributes(pfs, discovered)
+
+	require.NotNil(t, pfs[0].NumaNode)
+	assert.Equal(t, 0, *pfs[0].NumaNode)
+	assert.Nil(t, pfs[1].NumaNode)
+	assert.Nil(t, pfs[2].NumaNode)
 }
 
 func TestStripANSI(t *testing.T) {
@@ -241,12 +365,20 @@ NIC Legend:
   NIC2: rocep13s0f0
   NIC3: rocep55s0f0
   NIC4: rocep181s0f0
----NUMA---
-0000:22:00.0|0
+---PF---
+0000:22:00.0|numaNode=0|macAddress=02:00:00:00:00:22
 0000:22:00.1|0
 0000:0d:00.0|0
 0000:37:00.0|0
 0000:b5:00.0|1
+---NETPLAN---
+---NETPLAN-FILE---
+network:
+  ethernets:
+    fabric0:
+      match:
+        macaddress: "02:00:00:00:00:22"
+      set-name: fabric0
 `
 	data := parseTopologyProbe(output)
 	require.Len(t, data.gpuPCI, 4)
@@ -265,9 +397,12 @@ NIC Legend:
 		}
 	}
 
-	// Verify NUMA map.
-	assert.Equal(t, 0, data.numa["0000:22:00.0"])
-	assert.Equal(t, 1, data.numa["0000:b5:00.0"])
+	// Verify generic per-PF attributes, including legacy positional NUMA rows.
+	assert.Equal(t, "0", data.pfAttributes["0000:22:00.0"][pfAttributeNUMANode])
+	assert.Equal(t, "02:00:00:00:00:22", data.pfAttributes["0000:22:00.0"][pfAttributeMACAddress])
+	assert.Equal(t, "1", data.pfAttributes["0000:b5:00.0"][pfAttributeNUMANode])
+	assert.Contains(t, data.netplanSetNameMACs, "02:00:00:00:00:22")
+	assert.True(t, hasNetplanManagedPF(data))
 }
 
 // TestParseTopologyProbe_SR680a covers the DGX-class machine from the
@@ -323,16 +458,16 @@ func TestDiscoverGPUTopology_Algorithm_SR680a(t *testing.T) {
 
 	// Construct the group's PFs in PCI-ascending order, as buildClusterConfig would.
 	pfs := []config.PFConfig{
-		{PciAddress: "0000:19:00.0", RdmaDevice: "rocep25s0f0", Traffic: "east-west"},   // BF-3 slot 1
-		{PciAddress: "0000:2a:00.0", RdmaDevice: "rocep42s0f0", Traffic: "east-west"},   // BF-3 slot 2
-		{PciAddress: "0000:3b:00.0", RdmaDevice: "rocep59s0f0", Traffic: "east-west"},   // BF-3 slot 3
-		{PciAddress: "0000:4c:00.0", RdmaDevice: "rocep76s0f0", Traffic: "east-west"},   // BF-3 slot 4
-		{PciAddress: "0000:5a:00.0", RdmaDevice: "rocep90s0f0", Traffic: "north-south"}, // CX-6 Lx port 0
-		{PciAddress: "0000:5a:00.1", RdmaDevice: "rocep90s0f1", Traffic: "north-south"}, // CX-6 Lx port 1
-		{PciAddress: "0000:9b:00.0", RdmaDevice: "rocep155s0f0", Traffic: "east-west"},  // BF-3 slot 5
-		{PciAddress: "0000:ab:00.0", RdmaDevice: "rocep171s0f0", Traffic: "east-west"},  // BF-3 slot 6
-		{PciAddress: "0000:c1:00.0", RdmaDevice: "rocep193s0f0", Traffic: "east-west"},  // BF-3 slot 7
-		{PciAddress: "0000:cb:00.0", RdmaDevice: "rocep203s0f0", Traffic: "east-west"},  // BF-3 slot 8
+		{PciAddress: "0000:19:00.0", RdmaDevice: "rocep25s0f0", Traffic: "east-west"},    // BF-3 slot 1
+		{PciAddress: "0000:2a:00.0", RdmaDevice: "rocep42s0f0", Traffic: "east-west"},    // BF-3 slot 2
+		{PciAddress: "0000:3b:00.0", RdmaDevice: "rocep59s0f0", Traffic: "east-west"},    // BF-3 slot 3
+		{PciAddress: "0000:4c:00.0", RdmaDevice: "rocep76s0f0", Traffic: "east-west"},    // BF-3 slot 4
+		{PciAddress: "0000:5a:00.0", RdmaDevice: "rocep90s0f0", Traffic: "north-south"},  // CX-6 Lx port 0
+		{PciAddress: "0000:5a:00.1", RdmaDevice: "rocep90s0f1", Traffic: "north-south"},  // CX-6 Lx port 1
+		{PciAddress: "0000:9b:00.0", RdmaDevice: "rocep155s0f0", Traffic: "east-west"},   // BF-3 slot 5
+		{PciAddress: "0000:ab:00.0", RdmaDevice: "rocep171s0f0", Traffic: "east-west"},   // BF-3 slot 6
+		{PciAddress: "0000:c1:00.0", RdmaDevice: "rocep193s0f0", Traffic: "east-west"},   // BF-3 slot 7
+		{PciAddress: "0000:cb:00.0", RdmaDevice: "rocep203s0f0", Traffic: "east-west"},   // BF-3 slot 8
 		{PciAddress: "0000:d8:00.0", RdmaDevice: "rocep216s0f0", Traffic: "north-south"}, // Orphan BF-3
 	}
 
