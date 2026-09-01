@@ -89,6 +89,10 @@ is used as the manifest directory.`,
 				ConfigDir:         configDir,
 				OperatorNamespace: networkOperatorNamespace,
 				OverwriteExisting: overwriteExistingFlag,
+				SkipNetworkOperatorHelm: hosttarget.Explicit[bool]{
+					Value: skipNetworkOperatorHelm,
+					Set:   cmd.Flags().Changed("skip-network-operator-helm"),
+				},
 			},
 			hosttarget.NewDeployRunner(),
 		))
@@ -109,6 +113,7 @@ func init() {
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
 	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state. Useful for matching a maintenance window when SR-IOV reconciliation on a large cluster can take an hour or more.")
 	deployCmd.Flags().BoolVar(&overwriteExistingFlag, "overwrite-existing", false, "Converge the cluster to the rendered manifests when preflight detects drift: helm upgrade the chart on chart-version/values mismatch, delete stray Network Operator CRs in the operator namespace, and rewrite NicClusterPolicy component versions via SSA. Off by default — preflight fails fast and lists what would change.")
+	deployCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm chart installation and Helm-specific preflight checks")
 
 	setFlagGroup(deployCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(deployCmd, "user-config", GroupCommon)
@@ -117,5 +122,6 @@ func init() {
 	setFlagGroup(deployCmd, "deploy-timeout", GroupExecution)
 	setFlagGroup(deployCmd, "dry-run", GroupExecution)
 	setFlagGroup(deployCmd, "overwrite-existing", GroupDeploy)
+	setFlagGroup(deployCmd, "skip-network-operator-helm", GroupCommon)
 	markDeployTargetScopes()
 }

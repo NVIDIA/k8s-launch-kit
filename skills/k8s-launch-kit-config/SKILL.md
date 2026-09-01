@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-config
-version: 1.2.4
+version: 1.2.5
 description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
@@ -50,7 +50,7 @@ false across rewrites.
 
 | Section | What It Controls |
 |---------|-----------------|
-| `networkOperator` | Operator namespace, version, image repository, helm chart repository (`helmRepoURL`) |
+| `networkOperator` | Operator namespace, version, image repository, Helm repository, and `skipHelmChart` ownership switch |
 | `docaDriver` | OFED/DOCA driver image, version, blacklist settings |
 | `maintenance` | Maintenance Operator, SR-IOV drain, and legacy OFED upgrade concurrency |
 | `nvIpam` | NV-IPAM IP pool ranges and subnet generation |
@@ -140,6 +140,11 @@ maintenance:
 # Useful only for mirrors or private chart hosts.
 networkOperator:
   helmRepoURL: "https://my-mirror.example.com/charts"
+  # Keep generating/applying Network Operator CRs but let another system own
+  # the Helm release. Generate/deploy/validate have the equivalent CLI flag
+  # --skip-network-operator-helm; clean reads this persistent ownership setting
+  # and retains the release while deleting Network Operator CRs.
+  skipHelmChart: true
 
 # Configure NV-IPAM subnets manually
 nvIpam:

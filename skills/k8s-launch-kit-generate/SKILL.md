@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.7
+version: 1.2.8
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -48,6 +48,7 @@ to that source file; embedded `--for` generation does not write a config.
 | `--gpu-type` | — | `NVIDIA-H200` | Restrict output to source groups whose `gpuType` matches (case-insensitive). Mutually exclusive with `--groups`. |
 | `--for` | — | preset directory name | Skip discovery: synthesize `clusterConfig` from a topology preset. Requires `--node-selector`. List options with `l8k preset list`. |
 | `--node-selector` | Required with `--for` | `key=val,key2=val2` | Identifies which nodes the synthesized clusterConfig targets at apply time. |
+| `--skip-network-operator-helm` | — | boolean | Omit `values.yaml`; with `--deploy`, also skip Network Operator chart installation and Helm preflight checks. |
 
 *Not required when `--spectrum-x` is used.
 
@@ -114,7 +115,7 @@ read `references/profile-decision-tree.md`.
 
 ## Output
 
-Generated YAMLs are written to the output directory under `network-operator/`. Each profile also emits a `values.yaml` (Helm values for the `nvidia/network-operator` chart) alongside the CR manifests:
+Generated YAMLs are written to the output directory under `network-operator/`. Each profile normally emits a `values.yaml` (Helm values for the `nvidia/network-operator` chart) alongside the CR manifests:
 
 When `validation.gpuDirect.enabled` is true, every generated example
 DaemonSet requests `validation.gpuDirect.gpuResourceType` only on its primary
@@ -135,6 +136,11 @@ output/
 ```
 
 `values.yaml` is rendered from the profile's `00-values.yaml` template. `--network-operator-release <MAJOR.MINOR>` populates the chart repository URL and image tag from the embedded catalog. For Spectrum-X profiles, the same catalog entry supplies the independently versioned xPlane repository and tag rather than reusing the generic Network Operator component coordinates. To install or upgrade the chart alongside the CRs, pass `--deploy` (and `--overwrite-existing` when the release already exists with different values).
+
+Set `networkOperator.skipHelmChart: true` or pass
+`--skip-network-operator-helm` when another system owns the Helm release. The
+output directory is cleaned and `values.yaml` is omitted; all Network Operator
+custom-resource manifests are still rendered.
 
 For Network Operator 26.1 and newer, the rendered values enable Maintenance
 Operator requestor mode. Profiles with DOCA/OFED enable

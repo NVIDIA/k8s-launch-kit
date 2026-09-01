@@ -10,6 +10,10 @@ networkOperator:
   version: v26.4.0
   componentVersion: network-operator-v26.4.0
   selectedRelease: "26.4"
+  # Skip Network Operator Helm values generation, chart installation,
+  # Helm-specific validation, and Helm release removal during cleanup. Network
+  # Operator CR generation, deployment, validation, and cleanup still run.
+  skipHelmChart: false
   # repository — registry path for COMPONENT images managed by the operator
   # (ofedDriver, nvIpam, multus, device plugins, …). Rendered into
   # NicClusterPolicy / NicNodePolicy.
@@ -45,7 +49,8 @@ validation:
     enabled: false
     gpuResourceType: nvidia.com/gpu
   # connectivity gates the data-plane validation stage. Static manifest,
-  # Helm release, component-version, and preflight checks always run.
+  # component-version, and preflight checks always run. Helm checks run unless
+  # networkOperator.skipHelmChart is true.
   connectivity: true
   # mode controls matrix coverage and gating.
   # quick: same-rail all nodes plus one non-gating cross-rail canary per rail pair.

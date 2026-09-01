@@ -46,11 +46,12 @@ func TestSchemaDescribesTargetsAdditively(t *testing.T) {
 
 func TestSchemaFlagsDeclareTargetOwnership(t *testing.T) {
 	s := schema{Flags: map[string]flagSchema{
-		"--target":     {},
-		"--output":     {},
-		"--dry-run":    {},
-		"--fabric":     {},
-		"--kubeconfig": {},
+		"--target":                     {},
+		"--output":                     {},
+		"--dry-run":                    {},
+		"--fabric":                     {},
+		"--kubeconfig":                 {},
+		"--skip-network-operator-helm": {},
 	}}
 	annotateSchemaFlagTargets(&s)
 	for name, spec := range s.Flags {
@@ -62,6 +63,9 @@ func TestSchemaFlagsDeclareTargetOwnership(t *testing.T) {
 	assert.Equal(t, []string{"host", "dpf"}, s.Flags["--dry-run"].Targets)
 	assert.Equal(t, []string{"host"}, s.Flags["--fabric"].Targets)
 	assert.Equal(t, []string{"host"}, s.Flags["--kubeconfig"].Targets)
+	assert.Equal(t, []string{"networkOperator.skipHelmChart"},
+		s.Flags["--skip-network-operator-helm"].ConfigPaths)
+	assert.Empty(t, s.Flags["--kubeconfig"].ConfigPaths)
 }
 
 func TestAnnotateSchemaFlagTargetsNilSafe(t *testing.T) {

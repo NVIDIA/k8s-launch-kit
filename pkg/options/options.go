@@ -54,6 +54,11 @@ type Options struct {
 	// embedded releases catalog and drives version-gated template sections.
 	NetworkOperatorRelease string
 	ImagePullSecrets       []string // Image pull secret names for Network Operator components and Helm repository authentication
+	// SkipNetworkOperatorHelm disables values.yaml generation, Network Operator
+	// Helm installation, and Helm-specific validation. The Set companion keeps
+	// an omitted flag distinct from --skip-network-operator-helm=false.
+	SkipNetworkOperatorHelm    bool
+	SkipNetworkOperatorHelmSet bool
 
 	// Phase 2: Deployment Generation
 	Fabric         string // Fabric type to deploy

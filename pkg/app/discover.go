@@ -106,22 +106,9 @@ func (l *Launcher) discoverClusterConfig() error {
 		l.ui.Info("Using default configuration: %s", source)
 	}
 
-	// Override namespace from CLI flag if provided
-	if l.options.NetworkOperatorNamespace != "" {
-		defaults.NetworkOperator.Namespace = l.options.NetworkOperatorNamespace
-		l.logger.Info("Using CLI override for network operator namespace", "namespace", l.options.NetworkOperatorNamespace)
-	}
-
-	// Override image pull secrets from CLI flag if provided
-	if len(l.options.ImagePullSecrets) > 0 {
-		defaults.NetworkOperator.ImagePullSecrets = l.options.ImagePullSecrets
-		l.logger.Info("Using CLI override for image pull secrets", "secrets", l.options.ImagePullSecrets)
-	}
-
-	// Apply --network-operator-release so the saved cluster-config.yaml
-	// reflects the user's chosen release line, not whatever the default
-	// l8k-config.yaml shipped with.
-	if err := networkoperatorplugin.ApplyNetworkOperatorRelease(l.options, defaults); err != nil {
+	// Apply every config-backed CLI flag through the shared mapping registry so
+	// discovery, generation, deploy, and validate use identical precedence.
+	if err := networkoperatorplugin.ApplyCLIConfigOverrides(l.options, defaults); err != nil {
 		return apperrors.NewValidationError(err.Error(), err, "Run 'l8k --help' for supported releases")
 	}
 

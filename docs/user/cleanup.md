@@ -7,7 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 Use `l8k clean` to tear down the Network Operator deployment on one Kubernetes
 cluster. The command removes custom resources first so the installed
-controllers can process their finalizers, then uninstalls the Helm release.
+controllers can process their finalizers, then uninstalls the Helm release
+unless the resolved config marks it externally owned.
 
 ```bash
 l8k clean --kubeconfig ~/.kube/config
@@ -35,8 +36,9 @@ The first available namespace source wins:
 Custom installation namespaces must be supplied by flag or trusted local
 config. Cleanup deliberately does not infer a destructive target from
 user-creatable in-cluster objects such as Helm release Secrets. The config is
-read only for the namespace; stale release settings elsewhere in the file do
-not block cleanup.
+read only for `networkOperator.namespace` and
+`networkOperator.skipHelmChart`; stale release settings elsewhere in the file
+do not block cleanup.
 
 ```bash
 l8k clean --kubeconfig ~/.kube/config \
@@ -59,7 +61,8 @@ Cleanup performs these operations in order:
    CR's finalizer from blocking on another CR that has not entered deletion.
 4. Re-scan both scopes and repeat the delete-all-then-wait sequence for any
    custom resources created or exposed during policy teardown.
-5. Uninstall the `network-operator` Helm release and wait for Helm-managed
+5. Unless `networkOperator.skipHelmChart: true` or `--keep-helm-chart` retains
+   it, uninstall the `network-operator` Helm release and wait for Helm-managed
    resources to be removed.
 
 Because step 1 intentionally covers every custom-resource kind, do not keep
@@ -85,8 +88,17 @@ no-ops, making the command safe to re-run after a partial cleanup.
 
 ## Keep the Helm Release
 
-Use `--keep-helm-chart` to remove the custom resources while leaving the
-Network Operator release and its chart-managed resources installed:
+When the resolved config sets `networkOperator.skipHelmChart: true`, cleanup
+treats the Network Operator Helm release as externally owned and retains it
+while still deleting the same custom resources:
+
+```yaml
+networkOperator:
+  skipHelmChart: true
+```
+
+Use `--keep-helm-chart` to request the same retention explicitly regardless of
+config:
 
 ```bash
 l8k clean --kubeconfig ~/.kube/config --keep-helm-chart
@@ -104,8 +116,8 @@ l8k clean --kubeconfig ~/.kube/config --output json 2>/dev/null | jq .
 ```
 
 A successful result includes the resolved namespace, the number of deleted
-custom resources, whether Helm removed a release, and whether
-`--keep-helm-chart` was requested:
+custom resources, whether Helm removed a release, and the effective Helm
+retention policy derived from config and `--keep-helm-chart`:
 
 ```json
 {

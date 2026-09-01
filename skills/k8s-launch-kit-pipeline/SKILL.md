@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-pipeline
-version: 1.1.1
+version: 1.1.2
 description: "Use this skill when the user wants to run the full k8s-launch-kit (l8k) pipeline end-to-end: discover cluster hardware, select a profile, generate manifests, and deploy them all in one command. Also activate for CI/CD integration, automation pipelines, 'one-liner', 'complete workflow', or end-to-end NVIDIA networking deployment."
 metadata:
   requires:
@@ -103,8 +103,13 @@ l8k generate --user-config ./cluster-config.yaml \
 | Full pipeline (root) | `l8k --discover-cluster-config ... --deploy` |
 | Full pipeline (subcommands) | `l8k discover ... && l8k generate ... --deploy` |
 | Full pipeline dry-run | `l8k --discover-cluster-config ... --deploy --dry-run` |
+| External Helm ownership | `l8k ... --skip-network-operator-helm --deploy` |
 
 Note: The root command's strength is chaining all phases — it runs discover, generate, and deploy in a single invocation. Use subcommands when you need intermediate inspection or different flags per phase.
+
+With `--skip-network-operator-helm`, generation omits `values.yaml` and deploy
+skips the Network Operator Helm install/preflight boundary while continuing to
+apply and reconcile the generated custom resources.
 
 ## Phase Order
 

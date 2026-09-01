@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-deploy
-version: 1.3.4
+version: 1.3.5
 description: "Use this skill when the user wants to deploy generated NVIDIA networking manifests to a Kubernetes cluster using k8s-launch-kit (l8k). Activate for: applying manifests, deploying to cluster, the `l8k deploy` subcommand or the legacy --deploy flag on `l8k generate`, applying generated files, or any mention of pushing l8k output to a live cluster. Even if the user just says 'apply these' or 'push to cluster' after generating manifests, use this skill."
 metadata:
   requires:
@@ -29,6 +29,12 @@ l8k deploy [--deployment-files <DIR>] [--kubeconfig <PATH>] [--dry-run]
 `l8k deploy` reads YAML files from `--deployment-files` (default `./deployment`) and applies them in dependency order. It auto-prefers `<DIR>/network-operator/` (the layout `l8k generate` produces) and falls back to `<DIR>` itself.
 
 When the deployment directory contains a `values.yaml` (the `l8k generate` profile renderer emits one per profile), Phase 0 runs first: the Helm Go SDK installs (or upgrades, with `--overwrite-existing`) the `nvidia/network-operator` chart in the namespace from `networkOperator.namespace`. The chart version and Helm repo URL come from the embedded release catalog selected via `--network-operator-release`. Phase 0 is skipped silently when `values.yaml` is absent — backward compatible with users managing the chart out of band.
+
+`networkOperator.skipHelmChart: true` or
+`--skip-network-operator-helm` explicitly skips Phase 0 and its Helm
+chart-version/values preflight checks even when an external bundle has a
+`values.yaml`. Component-version and stray-resource preflight checks plus all
+manifest apply phases remain enabled.
 
 When `networkOperator.imagePullSecrets` is non-empty, l8k reads the named
 Docker Secrets from the operator namespace and uses compatible credentials to
@@ -59,6 +65,7 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> -
 | `--kubeconfig` | — | Path to kubeconfig with cluster-admin access (falls back to `$KUBECONFIG`) |
 | `--dry-run` | — | Server-side dry-run (`client.DryRunAll`) — cluster validates without persisting |
 | `--overwrite-existing` | — | Converge detected l8k-owned drift: upgrade a mismatched Helm release, delete conflicting generated-resource kinds, and rewrite owned policy fields. Spectrum-X operator-generated child resources are excluded from conflicts. |
+| `--skip-network-operator-helm` | — | Skip Network Operator chart install/upgrade and Helm preflight checks; still deploy the generated CRs. |
 
 ## Examples
 

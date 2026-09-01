@@ -26,6 +26,15 @@ func TestCheckHelmChartVersion_SkipsWithoutExpected(t *testing.T) {
 	assert.Contains(t, r.Reason, "no expected chart version")
 }
 
+func TestCheckHelmChartVersion_SkipsWhenHelmManagementDisabled(t *testing.T) {
+	r := CheckHelmChartVersion(context.Background(), Inputs{
+		SkipHelmChecks:       true,
+		ExpectedChartVersion: "26.7.0",
+	})
+	require.True(t, r.Skipped)
+	assert.Contains(t, r.Reason, "disabled by configuration")
+}
+
 func TestCheckHelmChartVersion_SkipsWithoutRestConfig(t *testing.T) {
 	r := CheckHelmChartVersion(context.Background(), Inputs{
 		ExpectedChartVersion: "26.4.0-beta.9",
@@ -39,6 +48,15 @@ func TestCheckHelmValues_SkipsWithoutValuesYAML(t *testing.T) {
 	require.True(t, r.Skipped)
 	assert.Equal(t, CodeHelmValues, r.Code)
 	assert.Contains(t, r.Reason, "no values.yaml")
+}
+
+func TestCheckHelmValues_SkipsWhenHelmManagementDisabled(t *testing.T) {
+	r := CheckHelmValues(context.Background(), Inputs{
+		SkipHelmChecks:      true,
+		GeneratedValuesYAML: []byte("nfd:\n  enabled: true\n"),
+	})
+	require.True(t, r.Skipped)
+	assert.Contains(t, r.Reason, "disabled by configuration")
 }
 
 func TestCheckHelmValues_SkipsWithoutRestConfig(t *testing.T) {

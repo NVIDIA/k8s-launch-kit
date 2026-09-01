@@ -9,6 +9,13 @@ Comments describe the type, default value, and effect on generated manifests.
 # Controls the NVIDIA Network Operator Helm chart installation.
 # ============================================================================
 networkOperator:
+  # bool | default: false
+  # Omit values.yaml, skip the Network Operator Helm install and Helm-specific
+  # deploy/validate checks, and retain the externally owned release during
+  # cleanup. CR generation, apply, validation, and cleanup still run. CLI for
+  # generate/deploy/validate: --skip-network-operator-helm.
+  skipHelmChart: false
+
   # string | default: "v26.1.0"
   # Helm chart version. Determines which operator image and CRDs are deployed.
   version: v26.1.0

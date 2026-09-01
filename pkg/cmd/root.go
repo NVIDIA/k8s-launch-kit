@@ -84,6 +84,7 @@ var (
 	deployTimeoutRoot        time.Duration
 	keepNamespace            bool
 	collapseNicRails         bool
+	skipNetworkOperatorHelm  bool
 )
 
 // collapseNicRailsFlagHelp is the shared help text for --collapse-nic-rails on
@@ -195,12 +196,16 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
 			SaveClusterConfig:        saveClusterConfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
-			EnabledPlugins:           enabledPlugins,
-			WorkloadManifest:         workloadManifest,
-			OutputFormat:             outputFormat,
-			Yes:                      yesFlag,
-			Quiet:                    quietFlag,
-			DryRun:                   dryRunFlag,
+
+			SkipNetworkOperatorHelm:    skipNetworkOperatorHelm,
+			SkipNetworkOperatorHelmSet: cmd.Flag("skip-network-operator-helm").Changed,
+
+			EnabledPlugins:   enabledPlugins,
+			WorkloadManifest: workloadManifest,
+			OutputFormat:     outputFormat,
+			Yes:              yesFlag,
+			Quiet:            quietFlag,
+			DryRun:           dryRunFlag,
 		}
 
 		// Set EnableDocaDriver only if the flag was explicitly provided
@@ -240,6 +245,7 @@ func init() {
 	rootCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
 		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: %s",
 			strings.Join(releases.SupportedReleases(), ", ")))
+	rootCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm values generation, chart installation, and Helm-specific validation")
 
 	// Phase 2: Deployment generation flags
 	rootCmd.Flags().StringVar(&fabric, "fabric", "", "Select the fabric type to deploy (infiniband, ethernet)")
@@ -295,6 +301,7 @@ func init() {
 	setFlagGroup(rootCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(rootCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(rootCmd, "network-operator-release", GroupCommon)
+	setFlagGroup(rootCmd, "skip-network-operator-helm", GroupCommon)
 	setFlagGroup(rootCmd, "node-selector", GroupCommon)
 	setFlagGroup(rootCmd, "image-pull-secrets", GroupCommon)
 

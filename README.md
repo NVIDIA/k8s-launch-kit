@@ -70,6 +70,14 @@ Based on the discovered/provided configuration, generate a complete set of YAML 
 When generation uses a file-backed config, resolved defaults and CLI overrides
 are written back to that same file while its comments are preserved.
 
+Set `networkOperator.skipHelmChart: true` or pass
+`--skip-network-operator-helm` when another system manages the Network
+Operator Helm release. Generation then omits `values.yaml`; deploy skips chart
+installation and Helm preflight checks; validate skips Helm release and values
+checks; and clean retains the externally owned release. Network Operator custom
+resource generation, deployment, validation, and cleanup, component-version
+checks, stray-resource checks, and connectivity validation are unchanged.
+
 ## Installation
 
 ### Quick install (from GitHub Releases)
@@ -253,6 +261,7 @@ Host Target Common Flags:
       --network-operator-namespace string   Override the network operator namespace from the config file
       --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 26.1, 26.4, 26.7
       --node-selector string                Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and NIC nodes are detected via a sysfs PCI-vendor probe (default "feature.node.kubernetes.io/pci-15b3.present=true")
+      --skip-network-operator-helm          Skip Network Operator Helm values generation, chart installation, and Helm-specific validation
       --user-config string                  Use provided cluster configuration file (as base config for discovery or as full config without discovery)
 
 Host Target Discovery Flags:
@@ -333,6 +342,12 @@ Every Kubernetes object in the generated bundle carries
 the object without replacing annotations already supplied by a profile or a
 custom workload manifest.
 
+For clusters where the Network Operator chart is managed separately, add
+`--skip-network-operator-helm` to `generate`, `deploy`, and `validate`, or set
+`networkOperator.skipHelmChart: true` once in `cluster-config.yaml`. Launch Kit
+still generates, deploys, validates, and cleans up the Network Operator custom
+resources, while `clean` leaves the externally owned Helm release installed.
+
 Apply the generated manifests to the cluster:
 
 ```bash
@@ -398,7 +413,9 @@ DMA-BUF bandwidth stage repeats the selected `ib_write_bw` matrix with
 `--use_cuda=<endpoint-index> --use_cuda_dmabuf`. Source and destination CUDA
 indices are resolved independently from each node's per-PF `connectedGPU`
 topology; missing or ambiguous mappings fail explicitly instead of falling
-back to GPU 0. The
+back to GPU 0. Helm release/version and values checks are reported as skipped
+when `networkOperator.skipHelmChart` or `--skip-network-operator-helm` is
+enabled; component and manifest checks continue. The
 matrix is on by default (`--connectivity=false` to skip) and cleans up the
 test DaemonSet unless `--keep` is set. Fresh `l8k discover` output includes
 the default validation block:
@@ -635,7 +652,7 @@ The preset YAML must declare a `capabilities.nodes.{sriov,rdma,ib}` block to be 
 l8k clean --kubeconfig ~/.kube/config
 ```
 
-The command resolves the operator namespace from an explicit
+The command resolves the operator namespace and Helm ownership from an explicit
 `--network-operator-namespace`, `networkOperator.namespace` in
 `--user-config`, `./cluster-config.yaml`, or an explicit `--config-dir`, then
 the `nvidia-network-operator` default. Custom installation namespaces must be
@@ -644,14 +661,17 @@ target. The command discovers every namespaced custom resource in that
 namespace and the known cluster-scoped Network Operator CRs, sends deletion
 requests to the complete set before monitoring any CR for finalizer completion,
 and re-sweeps both scopes before uninstalling the `network-operator` Helm
-release last. The namespace, CRDs, unrelated Secrets, files on disk, and custom
-resources outside the namespace are preserved; Helm metadata and chart-managed
-resources are removed with the release.
+release last. When the resolved config sets `networkOperator.skipHelmChart:
+true`, the release is treated as externally owned and is retained. The
+namespace, CRDs, unrelated Secrets, files on disk, and custom resources outside
+the namespace are preserved; when Helm is uninstalled, Helm metadata and
+chart-managed resources are removed with the release.
 
-Pass `--keep-helm-chart` to delete the custom resources while leaving the Helm
-release installed. Cleanup is destructive and confirms the resolved target in
-text mode. See [the cleanup guide](docs/user/cleanup.md) for the full deletion
-boundary and automation output.
+Pass `--keep-helm-chart` to retain the Helm release explicitly regardless of
+config. Both retention mechanisms leave the custom-resource cleanup boundary
+unchanged. Cleanup is destructive and confirms the resolved target and Helm
+action in text mode. See [the cleanup guide](docs/user/cleanup.md) for the full
+deletion boundary and automation output.
 
 ### Troubleshooting Network Operator Issues
 
@@ -757,6 +777,7 @@ l8k generate --user-config cluster-config.yaml \
 # Equivalent via config file
 # networkOperator:
 #   selectedRelease: "26.4"
+#   skipHelmChart: true  # manage the Helm release out of band
 
 # Discover supported releases
 l8k schema | jq '.supportedNetworkOperatorReleases'
@@ -1026,6 +1047,7 @@ Example of the configuration file discovered from the cluster:
 networkOperator:
   version: v26.1.0
   componentVersion: network-operator-v26.1.0
+  skipHelmChart: false
   repository: nvcr.io/nvidia/mellanox
   namespace: nvidia-network-operator
   imagePullSecrets: []

@@ -46,7 +46,9 @@ l8k clean \
 Omit `--network-operator-namespace` only when the user expects l8k to resolve
 it from `--user-config`, `./cluster-config.yaml`, an explicit `--config-dir`,
 or the `nvidia-network-operator` default. l8k does not trust in-cluster objects
-to select a destructive cleanup target.
+to select a destructive cleanup target. The same trusted local config supplies
+`networkOperator.skipHelmChart`; when true, l8k treats the Helm release as
+externally owned and retains it.
 
 To retain the installed release and its chart-managed resources:
 
@@ -74,7 +76,7 @@ The command:
   delete-all-then-wait ordering for re-sweeps.
 - Keeps controllers installed until CR deletion and finalizers complete.
 - Uninstalls the `network-operator` Helm release last unless
-  `--keep-helm-chart` is set.
+  `networkOperator.skipHelmChart` or `--keep-helm-chart` retains it.
 - Preserves the namespace, CRDs, Secrets not owned by Helm, local files, and
   namespaced custom resources elsewhere. Helm metadata and chart-managed
   resources are removed with the release.
@@ -92,6 +94,9 @@ Require `.success == true`, then report:
 - `.cleanup.customResourcesDeleted`
 - `.cleanup.helmReleaseRemoved`
 - `.cleanup.keepHelmChart`
+
+`cleanup.keepHelmChart` is the effective policy from config plus the explicit
+flag, not merely whether `--keep-helm-chart` appeared on the command line.
 
 If the Helm release was meant to be removed, verify it is absent with the same
 read-only `helm list` command. If it was kept, verify it remains deployed.

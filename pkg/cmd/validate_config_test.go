@@ -34,6 +34,7 @@ func newValidateRequestTestCommand() *cobra.Command {
 	cmd.Flags().IntVar(&validateRDMAIBWriteSize, "rdma-ib-write-size", 0, "")
 	cmd.Flags().Float64Var(&validateRDMAIBWriteMinGbps, "rdma-ib-write-min-bandwidth-gbps", 0, "")
 	cmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 0, "")
+	cmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "")
 	return cmd
 }
 
@@ -46,6 +47,7 @@ func resetValidateRequestGlobals(t *testing.T) {
 	validateRDMAIBWriteSize = 0
 	validateRDMAIBWriteMinGbps = 0
 	validateConnectivityTimeout = 0
+	skipNetworkOperatorHelm = false
 }
 
 func TestNewHostValidateRequestCapturesExplicitValues(t *testing.T) {
@@ -60,6 +62,7 @@ func TestNewHostValidateRequestCapturesExplicitValues(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("rdma-ib-write-size", "8192"))
 	require.NoError(t, cmd.Flags().Set("rdma-ib-write-min-bandwidth-gbps", "0"))
 	require.NoError(t, cmd.Flags().Set("connectivity-timeout", "42m"))
+	require.NoError(t, cmd.Flags().Set("skip-network-operator-helm", "false"))
 
 	request := newHostValidateRequest(cmd)
 	assert.True(t, request.Connectivity.Set)
@@ -75,6 +78,8 @@ func TestNewHostValidateRequestCapturesExplicitValues(t *testing.T) {
 	assert.Zero(t, request.RDMAMinBandwidth.Value)
 	assert.True(t, request.RDMAMinBandwidth.Set)
 	assert.Equal(t, 42*time.Minute, request.ConnectivityTime)
+	assert.True(t, request.SkipNetworkOperatorHelm.Set)
+	assert.False(t, request.SkipNetworkOperatorHelm.Value)
 }
 
 func TestNewHostValidateRequestPreservesOmission(t *testing.T) {
@@ -89,6 +94,7 @@ func TestNewHostValidateRequestPreservesOmission(t *testing.T) {
 	assert.False(t, request.RDMAIBWriteSize.Set)
 	assert.False(t, request.RDMAMinBandwidth.Set)
 	assert.Zero(t, request.ConnectivityTime)
+	assert.False(t, request.SkipNetworkOperatorHelm.Set)
 }
 
 func TestValidateConnectivityTimeoutDefaultsToAutomatic(t *testing.T) {

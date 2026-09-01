@@ -56,6 +56,7 @@ flowchart TB
 
         subgraph netop["Network Operator domain — pkg/networkoperatorplugin"]
             plugin["plugin.Plugin implementation"]
+            cfgoverrides["CLI-to-config override registry\nflag · config paths · explicit setter"]
             discovery["Discovery\nbootstrap daemon · inventory · grouping · node labels"]
             rendering["Generation\nprofile selection · templates · render plan"]
             releases["Embedded release catalog"]
@@ -78,7 +79,7 @@ flowchart TB
 
     subgraph artifacts["Host artifacts and embedded inputs"]
         clusterconfig["cluster-config.yaml"]
-        deploymentfiles["deployment/network-operator/\nvalues.yaml + ordered manifests"]
+        deploymentfiles["deployment/network-operator/\noptional values.yaml + ordered manifests"]
         report["k8s-launch-kit-validation-report.html"]
         profiledata["profiles/ · presets/ · release catalog · default config"]
     end
@@ -121,6 +122,10 @@ flowchart TB
     launcher --> presets
     launcher --> plugin
 
+    flags --> cfgoverrides
+    hostpaths --> cfgoverrides
+    plugin --> cfgoverrides
+    cfgoverrides --> config
     plugin --> discovery
     plugin --> rendering
     plugin --> deploy
@@ -195,8 +200,8 @@ flowchart LR
     discover["discover\nHost inventory and profile intent"]
     config["cluster-config.yaml\nhardware + resolved Host intent"]
     generate["generate\nselect profile and render"]
-    manifests["deployment/network-operator/\nHelm values + Kubernetes YAML"]
-    deploy["deploy\npreflight + Helm + phased SSA"]
+    manifests["deployment/network-operator/\noptional Helm values + Kubernetes YAML"]
+    deploy["deploy\npreflight + optional Helm + phased SSA"]
     live["Live Network Operator deployment"]
     validate["validate\nrelease + state + topology + data plane"]
     report["Text / JSON verdict\n+ HTML report"]
@@ -216,6 +221,21 @@ flowchart LR
 
 The legacy root command composes `discover → generate → optional deploy` in one
 Host operation. Validation deliberately remains a separate phase.
+
+`networkOperator.skipHelmChart` is a Host-specific lifecycle switch routed by
+`--skip-network-operator-helm`. It removes the `values.yaml` artifact and
+bypasses the Helm install/version/values/uninstall edges, while preserving the
+Network Operator manifest, component-version, stray-resource, data-plane, and
+custom-resource cleanup paths. Cleanup reads the persistent config setting to
+avoid removing a release owned by another system.
+
+Config-backed Host flags are registered once in the Network Operator plugin's
+CLI-to-config override registry. Each entry owns the CLI flag name, the YAML
+path or paths it controls, explicit-value detection, and the setter. Discover,
+generate, standalone deploy, and standalone validate all call the same
+`ApplyCLIConfigOverrides` boundary after loading configuration. `l8k schema`
+publishes the same registry metadata as `flags[].configPaths`, so routing and
+automation do not maintain a second flag-to-config table.
 
 ## Target binding and execution
 
@@ -258,7 +278,7 @@ It does not construct a Kubernetes client or enter any Host lifecycle service.
 flowchart TB
     subgraph deployflow["Host deploy"]
         d0["Resolve config, manifests, kubeconfig"]
-        d1["Phase 0: Helm install / upgrade"]
+        d1["Phase 0: optional Helm install / upgrade"]
         d05["Phase 0.5: drift and stray-resource preflight"]
         d2["Phase 1: NicClusterPolicy + readiness"]
         d3["Phase 2: NicNodePolicies + per-policy readiness"]
@@ -269,7 +289,7 @@ flowchart TB
 
     subgraph validateflow["Host validate"]
         v0["Resolve config, manifests, kubeconfig, preset catalog"]
-        v1["Helm release, component versions, values drift, stray CRs"]
+        v1["Optional Helm release/values, component versions, stray CRs"]
         v2["crstate manifest classification"]
         v3{"Static state terminal?"}
         v4["Connectivity matrix and optional GPUDirect DMA-BUF"]
@@ -290,7 +310,7 @@ flowchart TB
 | `pkg/target` | Names, phases, capabilities, common invocation policy, registry, operation contract | Cobra, Host options, DPF options, Kubernetes clients |
 | `pkg/target/host` | Typed Host requests, explicit-value semantics, Host path/config resolution, phase services | DPF implementation or cross-target composition |
 | `pkg/app` | Discover/generate/root workflow state and Network Operator plugin coordination | CLI parsing or process exit |
-| `pkg/networkoperatorplugin` | Host discovery, rendering, deployment state machine, validation primitives | Target selection |
+| `pkg/networkoperatorplugin` | Host CLI-to-config override registry, discovery, rendering, deployment state machine, validation primitives | Target selection |
 | `pkg/config`, `pkg/options` | Existing Host configuration and option models | A universal union of Host and DPF configuration |
 | `pkg/ui`, `pkg/errors`, `pkg/log` | Presentation, structured failures, and logging | Domain decisions |
 
