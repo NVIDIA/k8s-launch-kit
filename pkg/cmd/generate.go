@@ -115,12 +115,16 @@ Optionally deploy the generated manifests with --deploy.`,
 			Kubeconfig:               kubeconfig,
 			NetworkOperatorNamespace: networkOperatorNamespace,
 			NetworkOperatorRelease:   networkOperatorRelease,
-			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
-			WorkloadManifest:         workloadManifest,
-			OutputFormat:             outputFormat,
-			Yes:                      yesFlag,
-			Quiet:                    quietFlag,
-			DryRun:                   dryRunFlag,
+
+			SkipNetworkOperatorHelm:    skipNetworkOperatorHelm,
+			SkipNetworkOperatorHelmSet: cmd.Flag("skip-network-operator-helm").Changed,
+
+			EnabledPlugins:   parseEnabledPlugins(enabledPlugins),
+			WorkloadManifest: workloadManifest,
+			OutputFormat:     outputFormat,
+			Yes:              yesFlag,
+			Quiet:            quietFlag,
+			DryRun:           dryRunFlag,
 		}
 
 		// Set EnableDocaDriver only if the flag was explicitly provided
@@ -173,6 +177,7 @@ func init() {
 	generateCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
 		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
 			strings.Join(releases.SupportedReleases(), ", ")))
+	generateCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm values generation and, with --deploy, chart installation and Helm preflight checks")
 	generateCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)")
 	generateCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 
@@ -186,6 +191,7 @@ func init() {
 	setFlagGroup(generateCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(generateCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(generateCmd, "network-operator-release", GroupCommon)
+	setFlagGroup(generateCmd, "skip-network-operator-helm", GroupCommon)
 	setFlagGroup(generateCmd, "image-pull-secrets", GroupCommon)
 	setFlagGroup(generateCmd, "enabled-plugins", GroupCommon)
 

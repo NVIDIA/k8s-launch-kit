@@ -120,6 +120,10 @@ type Inputs struct {
 	// constructs its own action.Configuration internally.
 	RestConfig *rest.Config
 
+	// SkipHelmChecks explicitly disables chart-version and values checks when
+	// l8k is configured not to manage the Network Operator Helm release.
+	SkipHelmChecks bool
+
 	// OperatorNamespace is where the network-operator chart is
 	// installed and where namespaced CRs are enumerated.
 	OperatorNamespace string

@@ -6,6 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # CLI Reference
 
 Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for machine-readable capabilities.
+Config-backed flags include a `configPaths` list in schema output, sourced
+from the same registry that applies explicit CLI values to loaded config.
 
 ## Commands
 
@@ -38,10 +40,11 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | --- | --- | --- | --- |
 | `--target` | discover, generate, deploy, validate, root pipeline | target-agnostic | Target name. Defaults to `host`. |
 | `--kubeconfig` | discover, deploy, clean, validate | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
-| `--user-config` | discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace resolution. |
+| `--user-config` | discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace and Helm-ownership resolution. |
 | `--config-dir` | all | host | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
 | `--network-operator-release` | discover, generate | host | Release line such as `26.1`, `26.4`, or `26.7`. |
 | `--network-operator-namespace` | generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
+| `--skip-network-operator-helm` | generate, deploy, validate, root pipeline | host | Skip `values.yaml` generation, Network Operator chart installation, and Helm-specific validation. Custom-resource handling remains enabled. |
 | `--output json` | all | target-agnostic | Emit a single JSON result to stdout for automation. |
 | `--quiet` | root pipeline | target-agnostic | Suppress informational output. |
 | `--log-level` | all | target-agnostic | Enable `trace`, `debug`, `info`, `warn`, or `error` logging. `debug` shows structured progress; `trace` also shows bounded command output. |
@@ -105,6 +108,7 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 | `--kubeconfig` | Kubeconfig used with `--deploy`. |
 | `--dry-run` | Preview the deploy stage used with `--deploy`. |
 | `--overwrite-existing` | Allow convergence when deploy preflight finds Helm or managed-resource drift. |
+| `--skip-network-operator-helm` | Omit `values.yaml`; with `--deploy`, also skip chart installation and Helm preflight checks. |
 
 ## Deploy Flags
 
@@ -114,6 +118,7 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 | `--dry-run` | Use server-side dry run. |
 | `--deploy-timeout` | End-to-end deploy timeout. `0` means unbounded. |
 | `--overwrite-existing` | Allow Helm upgrade when an existing Network Operator release has different values. |
+| `--skip-network-operator-helm` | Skip chart installation and Helm chart-version/values preflight checks; still apply manifests and check component versions and strays. |
 
 ## Clean Flags
 
@@ -121,9 +126,12 @@ Discovery also accepts the profile and Spectrum-X flags below. Explicit flags ov
 Network Operator namespace and the known cluster-scoped Network Operator CRs.
 It sends deletion requests to the complete set before monitoring any CR for
 finalizer completion, then re-sweeps both scopes before uninstalling the
-`network-operator` Helm release. It preserves the namespace, CRDs, unrelated
-Secrets, generated files, and resources outside the namespace. Helm release
-metadata and chart-managed resources are removed with the release.
+`network-operator` Helm release. If the resolved config sets
+`networkOperator.skipHelmChart: true`, the release is externally owned and is
+retained instead. It preserves the namespace, CRDs, unrelated Secrets,
+generated files, and resources outside the namespace. When Helm is
+uninstalled, Helm release metadata and chart-managed resources are removed
+with the release.
 
 Namespace resolution uses the first available source: an explicit
 `--network-operator-namespace`, `networkOperator.namespace` from
@@ -134,9 +142,9 @@ in-cluster objects do not select a destructive cleanup target.
 
 | Flag | Description |
 | --- | --- |
-| `--keep-helm-chart` | Delete custom resources but leave the Network Operator Helm release and chart-managed resources installed. |
+| `--keep-helm-chart` | Delete custom resources but leave the Network Operator Helm release and chart-managed resources installed regardless of config. |
 | `--kubeconfig` | Cluster to clean. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
-| `--user-config` | Optional config used only to read `networkOperator.namespace`. |
+| `--user-config` | Optional config used only to read `networkOperator.namespace` and `networkOperator.skipHelmChart`; unrelated stale settings do not block cleanup. |
 | `--network-operator-namespace` | Explicit cleanup namespace; takes precedence over config and the standard default. |
 
 Cleanup is destructive and asks for confirmation in text mode. JSON mode is
@@ -158,6 +166,7 @@ full deletion boundary.
 | `--report-path` | HTML report path. Use `-` to disable. |
 | `--keep` | Keep the test DaemonSet after validation. |
 | `--wait` | Wait for in-progress manifests to reach a terminal state. |
+| `--skip-network-operator-helm` | Skip Helm release version and values checks; retain component, manifest, stray-resource, and connectivity checks. |
 
 Use `--log-level debug` with `validate` for structured check, endpoint, route,
 stage, batch, test, cleanup, and report timings. `--log-level trace` also emits

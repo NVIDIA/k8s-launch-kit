@@ -30,6 +30,12 @@ The chart is downloaded to a temporary directory. Launch Kit does not add or mod
 
 If Helm metadata is absent, phase 0 is skipped so environments that manage the chart out of band can still apply the generated CRs.
 
+Set `networkOperator.skipHelmChart: true` or pass
+`--skip-network-operator-helm` to disable Helm management explicitly even if a
+bundle still contains `values.yaml`. Launch Kit skips phase 0 and the Helm
+chart-version/values preflight checks, but retains component-version and stray
+resource preflight checks plus every manifest apply/reconciliation phase.
+
 ## Preflight
 
 Before applying custom resources, Launch Kit compares the bundle with the cluster:
@@ -40,6 +46,9 @@ Before applying custom resources, Launch Kit compares the bundle with the cluste
 | Helm values | Installed user values differ from generated `values.yaml`. |
 | Component versions | Live `NicClusterPolicy` component versions differ from the release catalog. |
 | Stray resources | l8k-managed Network Operator CRs exist but are not in the generated bundle. Spectrum-X operator-generated `SriovNetworkPoolConfig`, `SriovNetworkNodePolicy`, and `OVSNetwork` objects are excluded. |
+
+The two Helm rows are reported as skipped when Network Operator Helm
+management is disabled. The remaining rows still gate deployment.
 
 Without `--overwrite-existing`, any mismatch stops deployment and all detected drift is reported together.
 

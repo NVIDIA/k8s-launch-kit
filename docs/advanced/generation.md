@@ -57,11 +57,11 @@ deployment/
     `-- 60-example-daemonset-<group>.yaml
 ```
 
-The exact files depend on the profile:
+The exact files depend on the profile and Helm-management setting:
 
 | Order | Content |
 | --- | --- |
-| `values.yaml` | Network Operator Helm values consumed by deployment phase 0. |
+| `values.yaml` | Network Operator Helm values consumed by deployment phase 0. Omitted when `networkOperator.skipHelmChart` or `--skip-network-operator-helm` is enabled. |
 | `10` | Cluster-wide `NicClusterPolicy`. |
 | `11` | Per-group `NicNodePolicy` resources where the release/profile uses them. |
 | `20` | NV-IPAM `IPPool` resources. |
@@ -70,6 +70,23 @@ The exact files depend on the profile:
 | `40`, `60`, or `90` example | Temporary workload consumed by validation, depending on profile. |
 
 Group and namespace suffixes are added when one render produces multiple copies.
+
+## Skip Network Operator Helm Artifacts
+
+When another system owns the Network Operator Helm release, omit Launch Kit's
+Helm input while retaining the generated custom resources:
+
+```bash
+l8k generate \
+  --user-config ./cluster-config.yaml \
+  --skip-network-operator-helm \
+  --save-deployment-files ./deployment
+```
+
+The equivalent persistent setting is
+`networkOperator.skipHelmChart: true`. The plugin output directory is cleaned
+before rendering, so a `values.yaml` from an earlier run cannot remain in the
+new bundle.
 
 ## Generate Without Discovery
 

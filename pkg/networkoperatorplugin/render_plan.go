@@ -371,6 +371,9 @@ func renderForScope(
 	// ScopeClusterWide CR manifests — and emit under the helm-convention
 	// filename `values.yaml`.
 	if isHelmValuesTemplate(filepath.Base(templatePath)) {
+		if cfg != nil && cfg.NetworkOperator != nil && cfg.NetworkOperator.SkipHelmChart {
+			return map[string]string{}, nil
+		}
 		merged := mergedClusterConfigs(plans)
 		renderCfg := withClusterConfig(cfg, merged, allSubnets(planSubnets))
 		rendered, err := ProcessTemplate(templatePath, renderCfg, "")

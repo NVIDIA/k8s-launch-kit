@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-validate
-version: 1.0.5
+version: 1.0.6
 description: "Use this skill when the user wants to verify that an NVIDIA networking deployment matches the configuration that produced it. Activate for: 'is my deployment correct', 'are all the manifests applied', 'does the network operator version match', 'verify deployment', 'check cluster state against config', or any question about whether the cluster reflects what l8k generated. Wraps the `l8k validate` subcommand."
 metadata:
   requires:
@@ -60,6 +60,11 @@ Exit code is non-zero (4) on any missing manifest, version mismatch, or
 gating connectivity failure. Version checks soft-skip when prerequisites are
 absent — no `cluster-config.yaml`, no Helm release Secret, etc.
 
+If `networkOperator.skipHelmChart: true` is set, or the user passes
+`--skip-network-operator-helm`, both Helm release/version and values checks are
+reported as skipped. Component-version, manifest, stray-resource, connectivity,
+and report stages still run.
+
 ## Usage
 
 ```bash
@@ -73,6 +78,7 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 | `--kubeconfig` | `$KUBECONFIG` | Path to kubeconfig with read access to the cluster |
 | `--user-config` | `./cluster-config.yaml` | Cluster config YAML; used for `networkOperator.selectedRelease` and the operator namespace |
 | `--deployment-files` | `./deployment` | Directory containing the manifests to verify |
+| `--skip-network-operator-helm` | `networkOperator.skipHelmChart` (`false`) | Skip Helm release/version and values validation only |
 | `--validation-mode` | `validation.mode` (`strict`) | Connectivity mode: `quick`, `full`, or `strict` |
 | `--validation-checks` | `validation.checks` (`icmp,rping,ib_write_bw`) | Comma-separated connectivity checks; `""` disables all |
 | `--connectivity-timeout` | automatic (`0`) | Total connectivity budget is calculated from the generated matrix plan; set a positive duration for an explicit hard setup and execution deadline |

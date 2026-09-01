@@ -88,6 +88,7 @@ func (deployRunner) Run(ctx context.Context, request DeployRequest) error {
 		LaunchKitVersion:  request.LaunchKitVersion,
 		DryRun:            request.DryRun,
 		OverwriteExisting: request.OverwriteExisting,
+		SkipHelmChart:     request.SkipNetworkOperatorHelm.Set && request.SkipNetworkOperatorHelm.Value,
 		RestConfig:        restConfig,
 	}
 	cfg, cfgPath, cfgErr := LoadUserConfig(UserConfigInput{
@@ -98,6 +99,9 @@ func (deployRunner) Run(ctx context.Context, request DeployRequest) error {
 		ConfigDir:                request.ConfigDir,
 		UserConfig:               request.UserConfig,
 		NetworkOperatorNamespace: request.OperatorNamespace,
+
+		SkipNetworkOperatorHelm:    request.SkipNetworkOperatorHelm.Value,
+		SkipNetworkOperatorHelmSet: request.SkipNetworkOperatorHelm.Set,
 	})
 	if cfgErr != nil {
 		return apperrors.NewValidationError(
@@ -108,6 +112,9 @@ func (deployRunner) Run(ctx context.Context, request DeployRequest) error {
 	}
 	if cfg != nil {
 		deployOpts.NetworkOperator = cfg.NetworkOperator
+		if cfg.NetworkOperator != nil {
+			deployOpts.SkipHelmChart = cfg.NetworkOperator.SkipHelmChart
+		}
 		if cfg.DOCADriver != nil {
 			deployOpts.DOCAVersion = cfg.DOCADriver.Version
 		}

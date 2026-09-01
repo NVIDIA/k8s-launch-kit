@@ -269,6 +269,12 @@ type LaunchKitConfig struct {
 type NetworkOperatorConfig struct {
 	Version          string `yaml:"version"`
 	ComponentVersion string `yaml:"componentVersion"`
+	// SkipHelmChart disables l8k's Network Operator Helm boundary. Generate
+	// omits values.yaml, deploy skips chart installation and Helm preflight
+	// checks, validate skips Helm release version and values checks, and clean
+	// retains the externally-owned Helm release. Network Operator manifests,
+	// component-version checks, and clean's CR deletion are unaffected.
+	SkipHelmChart bool `yaml:"skipHelmChart"`
 	// SelectedRelease is the catalog key (MAJOR.MINOR, e.g. "26.4") chosen via
 	// --network-operator-release. Empty means "no release pinned"; templates
 	// treat that as "latest" so existing configs render the newest gates by

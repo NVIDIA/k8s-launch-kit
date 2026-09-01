@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-shared
-version: 1.0.2
+version: 1.0.3
 description: "k8s-launch-kit (l8k) CLI: Shared patterns for binary location, global flags, output formatting, exit codes, and error handling. Read this before using any other k8s-launch-kit skill."
 ---
 
@@ -45,7 +45,7 @@ After installation, `l8k` is available system-wide.
 | `l8k discover` | Discover cluster hardware and produce cluster-config.yaml |
 | `l8k generate` | Generate Kubernetes YAML manifests from config + profile (use `--for <preset>` to skip cluster discovery for known SKUs) |
 | `l8k deploy` | Apply generated manifests and install or upgrade the Network Operator Helm release |
-| `l8k clean` | Delete Network Operator custom resources and optionally uninstall its Helm release |
+| `l8k clean` | Delete Network Operator custom resources and uninstall its Helm release unless config or a flag retains it |
 | `l8k validate` | Verify the Helm release, manifests, component versions, and connectivity |
 | `l8k preset list` | List bundled topology presets (directory + machineType + gpuType) |
 | `l8k preset update` | Download latest topology presets from GitHub |
@@ -90,11 +90,21 @@ package ownership, artifacts, or external integration boundaries.
 | `--network-namespaces <NS,...>` | Comma-separated namespaces for the secondary-network CRs + example test DaemonSets; one copy rendered per namespace (shared resources like IPPools/NodePolicies are NOT duplicated). Default: `default` |
 | `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
 | `--image-pull-secrets <NAMES>` | Image pull secret names for Network Operator components and authenticated Helm chart downloads (comma-separated) |
+| `--skip-network-operator-helm` | On generate/deploy/validate and the root pipeline, skip Network Operator Helm values, installation, and Helm-specific validation while retaining custom-resource handling |
+
+The persistent `networkOperator.skipHelmChart` setting also makes `l8k clean`
+retain the externally owned Helm release while deleting Network Operator custom
+resources. Clean does not route the skip flag; use config for the ownership
+policy or `--keep-helm-chart` for an explicit retention-only override.
 
 `l8k discover` and `l8k generate` both accept the profile flags `--fabric`,
 `--deployment-type`, `--multirail`, `--spectrum-x`, `--multiplane-mode`, and
 `--number-of-planes`. Discovery persists the resolved values; later generation
 reuses them unless another explicit CLI override is supplied.
+
+For automation, `l8k schema` exposes `configPaths` on config-backed flags. The
+metadata comes from the same registry that applies explicit flag values, so use
+it instead of maintaining a separate CLI-to-YAML mapping.
 
 ## Agent / JSON Mode
 

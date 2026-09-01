@@ -29,6 +29,11 @@ func CheckHelmChartVersion(ctx context.Context, in Inputs) Result {
 		Name: "Helm chart version",
 		Code: CodeHelmChartVersion,
 	}
+	if in.SkipHelmChecks {
+		r.Skipped = true
+		r.Reason = "Network Operator Helm management disabled by configuration"
+		return r
+	}
 	if in.ExpectedChartVersion == "" {
 		r.Skipped = true
 		r.Reason = "no expected chart version (no --network-operator-release pinned)"
@@ -100,6 +105,11 @@ func CheckHelmValues(ctx context.Context, in Inputs) Result {
 	r := Result{
 		Name: "Helm values",
 		Code: CodeHelmValues,
+	}
+	if in.SkipHelmChecks {
+		r.Skipped = true
+		r.Reason = "Network Operator Helm management disabled by configuration"
+		return r
 	}
 	if len(in.GeneratedValuesYAML) == 0 {
 		r.Skipped = true

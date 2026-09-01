@@ -26,6 +26,12 @@ When `--user-config` is omitted, Launch Kit checks `./cluster-config.yaml`, the 
 | Preflight | Stray CRs and Helm value drift that can make the apply path ambiguous. |
 | Connectivity | ICMP, `rping`, host-memory `ib_write_bw`, and optional GPUDirect DMA-BUF bandwidth checks between generated test DaemonSet pods. |
 
+When another system owns the Network Operator Helm release, set
+`networkOperator.skipHelmChart: true` or pass
+`--skip-network-operator-helm`. The Helm release/version and values checks are
+then reported as skipped. Component versions, manifest state, stray-resource
+preflight, connectivity, and the HTML report still run.
+
 Connectivity is skipped when manifests are missing, errored, or still in progress.
 
 Each generated example DaemonSet declares two validation containers: the DOCA
@@ -40,6 +46,9 @@ probe stays on the selected Multus interface.
 Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a relevant device condition with a stale `observedGeneration` remains `IN-PROGRESS`. `NicConfigurationTemplate` considers `FirmwareUpdateInProgress` relevant only when the matched device has `spec.firmware`; a stale firmware condition cannot block a configuration-only deployment. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
 
 Preflight uses the same checks as deployment: Helm chart version, generated Helm values, component versions, and stray l8k-managed CRs. SR-IOV pool configs, node policies, and OVS networks labeled with `spectrumx.nvidia.com/owner-name` are controller-owned outputs of `SpectrumXRailPoolConfig`, so they are not reported as strays. Validation never remediates drift.
+
+The Helm chart/version checks are omitted when Helm management is disabled;
+component and stray-resource checks remain active.
 
 ## Validation Modes
 

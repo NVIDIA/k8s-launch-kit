@@ -41,6 +41,8 @@ import (
 
 const defaultOperatorNamespace = "nvidia-network-operator"
 
+const skipNetworkOperatorHelmReason = "Network Operator Helm management disabled by configuration"
+
 type validateRunner struct{}
 
 // NewValidateRunner returns the production standalone Host validation service.
@@ -49,6 +51,8 @@ func NewValidateRunner() ValidateRunner {
 }
 
 func (validateRunner) Run(operationContext context.Context, request ValidateRequest) error {
+	skipNetworkOperatorHelm := request.SkipNetworkOperatorHelm.Set && request.SkipNetworkOperatorHelm.Value
+
 	// State accumulated during the run. exitWithReport captures it by
 	// reference so every error path emits the HTML report with whatever was
 	// observed before returning to the outer process boundary.
@@ -141,6 +145,9 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 		ConfigDir:                request.ConfigDir,
 		UserConfig:               request.UserConfig,
 		NetworkOperatorNamespace: request.OperatorNamespace,
+
+		SkipNetworkOperatorHelm:    request.SkipNetworkOperatorHelm.Value,
+		SkipNetworkOperatorHelmSet: request.SkipNetworkOperatorHelm.Set,
 	})
 	cfgPath = loadedCfgPath
 	// Preserve successfully parsed user input in partial reports even when a
@@ -148,6 +155,9 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 	// existing soft-failure path below and skips config-derived version checks.
 	if cfg != nil {
 		reportConfig = cfg
+		if cfg.NetworkOperator != nil {
+			skipNetworkOperatorHelm = cfg.NetworkOperator.SkipHelmChart
+		}
 	}
 	if cfgErr != nil {
 		log.Log.V(1).Info("user-config not loaded; version check will be skipped",
@@ -211,18 +221,22 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 
 	ctx := operationContext
 
-	var vcErr error
 	checkStarted := time.Now()
-	versionCheck, vcErr = networkoperatorplugin.CheckHelmReleaseVersion(ctx, k8sClient, operatorNamespace, selectedRelease)
-	log.Log.V(1).Info("validation check completed", "check", "helm release version",
-		"success", vcErr == nil, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
-	if vcErr != nil {
-		return exitWithReport(apperrors.NewClusterError(
-			"version check failed",
-			vcErr,
-			"Check that the kubeconfig has list-secrets permission in the operator namespace",
-		))
+	if skipNetworkOperatorHelm {
+		versionCheck = &networkoperatorplugin.VersionCheck{Skipped: true, Reason: skipNetworkOperatorHelmReason}
+	} else {
+		var vcErr error
+		versionCheck, vcErr = networkoperatorplugin.CheckHelmReleaseVersion(ctx, k8sClient, operatorNamespace, selectedRelease)
+		if vcErr != nil {
+			return exitWithReport(apperrors.NewClusterError(
+				"version check failed",
+				vcErr,
+				"Check that the kubeconfig has list-secrets permission in the operator namespace",
+			))
+		}
 	}
+	log.Log.V(1).Info("validation check completed", "check", "helm release version",
+		"skipped", versionCheck.Skipped, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
 
 	// Cross-check the NicClusterPolicy + NicNodePolicy
 	// component versions against the catalog. Soft errors only
@@ -245,13 +259,19 @@ func (validateRunner) Run(operationContext context.Context, request ValidateRequ
 	// `l8k generate` produced. Mismatches mean re-running
 	// `l8k deploy` would change the chart configuration —
 	// exit code 4, same as a version mismatch.
-	valuesPath := filepath.Join(manifestDir, "values.yaml")
-	var generatedValuesYAML []byte
-	if b, err := os.ReadFile(valuesPath); err == nil {
-		generatedValuesYAML = b
-	}
 	checkStarted = time.Now()
-	hvCheck, hvErr := networkoperatorplugin.CheckHelmReleaseValues(ctx, restConfig, operatorNamespace, generatedValuesYAML)
+	var hvCheck *networkoperatorplugin.HelmValuesCheck
+	var hvErr error
+	if skipNetworkOperatorHelm {
+		hvCheck = &networkoperatorplugin.HelmValuesCheck{Skipped: true, Reason: skipNetworkOperatorHelmReason}
+	} else {
+		valuesPath := filepath.Join(manifestDir, "values.yaml")
+		var generatedValuesYAML []byte
+		if b, err := os.ReadFile(valuesPath); err == nil {
+			generatedValuesYAML = b
+		}
+		hvCheck, hvErr = networkoperatorplugin.CheckHelmReleaseValues(ctx, restConfig, operatorNamespace, generatedValuesYAML)
+	}
 	log.Log.V(1).Info("validation check completed", "check", "Helm values drift",
 		"success", hvErr == nil, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
 	if hvErr != nil {

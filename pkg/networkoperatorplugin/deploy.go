@@ -69,6 +69,10 @@ type DeployOptions struct {
 	// namespace with different user-supplied values. When false (default),
 	// a value-conflict surfaces as an error pointing at this flag.
 	OverwriteExisting bool
+	// SkipHelmChart disables both Network Operator Helm installation and the
+	// Helm-specific deploy preflight checks. Manifest apply and component/
+	// stray-resource preflight checks remain enabled.
+	SkipHelmChart bool
 	// RestConfig is required for Phase 0. When nil, Phase 0 is skipped
 	// (backward-compatible: lets users keep managing the chart out-of-band).
 	RestConfig *rest.Config
@@ -123,6 +127,7 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 		LaunchKitVersion:  p.LaunchKitVersion,
 		DryRun:            p.DryRun,
 		OverwriteExisting: p.OverwriteExisting,
+		SkipHelmChart:     p.NetworkOperator != nil && p.NetworkOperator.SkipHelmChart,
 		RestConfig:        p.RESTConfig,
 		NetworkOperator:   p.NetworkOperator,
 		DOCAVersion:       p.DOCAVersion,
@@ -812,6 +817,11 @@ func splitYAMLDocuments(s string) []string {
 // A value-conflict against an existing release surfaces as a
 // DeploymentError pointing at --overwrite-existing.
 func runHelmInstallPhase(ctx context.Context, manifestsDir string, opts DeployOptions, uiOutput ui.Output) error {
+	if opts.SkipHelmChart {
+		log.Log.V(1).Info("Network Operator Helm management disabled; skipping operator install")
+		return nil
+	}
+
 	valuesPath := filepath.Join(manifestsDir, helmValuesFile)
 	valuesYAML, err := os.ReadFile(valuesPath)
 	if err != nil {
@@ -961,8 +971,9 @@ func runPreflightPhase(ctx context.Context, kubeClient client.Client, manifestsD
 // individual checks soft-skip when an input is missing.
 func buildPreflightInputs(kubeClient client.Client, manifestsDir string, opts DeployOptions) (preflight.Inputs, error) {
 	in := preflight.Inputs{
-		KubeClient: kubeClient,
-		RestConfig: opts.RestConfig,
+		KubeClient:     kubeClient,
+		RestConfig:     opts.RestConfig,
+		SkipHelmChecks: opts.SkipHelmChart,
 	}
 	if opts.NetworkOperator != nil {
 		in.OperatorNamespace = opts.NetworkOperator.Namespace
@@ -975,9 +986,12 @@ func buildPreflightInputs(kubeClient client.Client, manifestsDir string, opts De
 		in.ExpectedDOCAVersion = opts.DOCAVersion
 	}
 
-	// Best-effort: read values.yaml (helm checks soft-skip if absent).
-	if b, err := os.ReadFile(filepath.Join(manifestsDir, helmValuesFile)); err == nil {
-		in.GeneratedValuesYAML = b
+	// Best-effort: read values.yaml when Helm management is enabled (helm
+	// checks soft-skip if absent).
+	if !opts.SkipHelmChart {
+		if b, err := os.ReadFile(filepath.Join(manifestsDir, helmValuesFile)); err == nil {
+			in.GeneratedValuesYAML = b
+		}
 	}
 
 	// Best-effort: scan manifests dir for rendered object refs (stray

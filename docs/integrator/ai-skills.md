@@ -20,7 +20,7 @@ AI skills are documentation for an agent. They are not Launch Kit runtime plugin
 | `k8s-launch-kit-generate` | Select a profile and render manifests. |
 | `k8s-launch-kit-dryrun` | Preview generated or server-side deployment changes. |
 | `k8s-launch-kit-deploy` | Apply generated resources in dependency order. |
-| `k8s-launch-kit-clean` | Remove Network Operator custom resources and its Helm release. |
+| `k8s-launch-kit-clean` | Remove Network Operator custom resources and uninstall or retain its Helm release according to ownership config. |
 | `k8s-launch-kit-validate` | Run deployment acceptance and interpret the validation report. |
 | `k8s-launch-kit-pipeline` | Coordinate discovery, generation, and deployment as an end-to-end flow. |
 | `k8s-launch-kit-troubleshoot` | Diagnose discovery, operator, SR-IOV, RDMA, and IPAM failures. |

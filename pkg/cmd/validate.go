@@ -103,6 +103,10 @@ func newHostValidateRequest(cmd *cobra.Command) hosttarget.ValidateRequest {
 		UserConfig:        userConfig,
 		ConfigDir:         configDir,
 		OperatorNamespace: networkOperatorNamespace,
+		SkipNetworkOperatorHelm: hosttarget.Explicit[bool]{
+			Value: skipNetworkOperatorHelm,
+			Set:   cmd.Flags().Changed("skip-network-operator-helm"),
+		},
 		Connectivity: hosttarget.Explicit[bool]{
 			Value: validateConnectivity,
 			Set:   cmd.Flags().Changed("connectivity"),
@@ -143,6 +147,7 @@ func init() {
 	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to verify")
 	validateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-detected from ./cluster-config.yaml). Used to read networkOperator.selectedRelease and operator namespace.")
 	validateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
+	validateCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm release version and values validation")
 	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a source-bound connectivity matrix (icmp + rping + ib_write_bw) between pods of the example DaemonSet. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
 	validateCmd.Flags().BoolVar(&validateKeep, "keep", false, "Leave the example DaemonSet running after --connectivity completes (useful for debugging).")
 	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 0, "Maximum wall-clock budget for connectivity workload setup and test execution. 0 (default) calculates the budget from the generated matrix plan.")
@@ -158,6 +163,7 @@ func init() {
 	setFlagGroup(validateCmd, "user-config", GroupCommon)
 	setFlagGroup(validateCmd, "deployment-files", GroupGeneration)
 	setFlagGroup(validateCmd, "network-operator-namespace", GroupCommon)
+	setFlagGroup(validateCmd, "skip-network-operator-helm", GroupCommon)
 	setFlagGroup(validateCmd, "connectivity", GroupValidation)
 	setFlagGroup(validateCmd, "connectivity-timeout", GroupValidation)
 	setFlagGroup(validateCmd, "keep", GroupValidation)

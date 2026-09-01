@@ -21,11 +21,20 @@ import (
 
 var keepHelmChart bool
 
+type cleanSettings struct {
+	Namespace           string
+	NamespaceSource     string
+	KeepHelmChart       bool
+	HelmRetentionSource string
+}
+
 var cleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Remove a Network Operator deployment from a Kubernetes cluster",
 	Long: `Delete custom resources associated with the Network Operator deployment and,
-by default, uninstall the network-operator Helm release.
+by default, uninstall the network-operator Helm release. When the resolved
+config sets networkOperator.skipHelmChart: true, cleanup treats the release as
+externally owned and keeps it installed.
 
 The operator namespace is resolved from --network-operator-namespace, then a
 user or explicit default config, and finally defaults to
@@ -35,8 +44,7 @@ resources are also removed. Custom installation namespaces must be supplied by
 flag or config; untrusted in-cluster objects never select the cleanup target.
 
 The namespace and CustomResourceDefinitions are preserved. Pass
---keep-helm-chart to remove the custom resources while leaving the Helm release
-and its chart-managed resources installed.`,
+--keep-helm-chart to retain the Helm release regardless of config.`,
 	Example: `  # Remove Network Operator CRs and uninstall the Helm release
   l8k clean --kubeconfig ~/.kube/config
 
@@ -44,8 +52,12 @@ and its chart-managed resources installed.`,
   l8k clean --kubeconfig ~/.kube/config \
     --network-operator-namespace custom-network-operator
 
-  # Remove all CRs but keep the operator chart installed
+  # Remove all CRs but keep the operator chart installed explicitly
   l8k clean --kubeconfig ~/.kube/config --keep-helm-chart
+
+  # Config with networkOperator.skipHelmChart: true also keeps the chart
+  l8k clean --kubeconfig ~/.kube/config \
+    --user-config ./cluster-config.yaml
 
   # Non-interactive agent mode (JSON output auto-confirms)
   l8k clean --kubeconfig ~/.kube/config --output json`,
@@ -72,46 +84,52 @@ and its chart-managed resources installed.`,
 		uiOutput, jsonOutput := ui.NewOutputForFormat(outputFormat, yesFlag)
 		ctx := ui.WithOutput(cmd.Context(), uiOutput)
 
-		namespace, source, err := resolveCleanNamespace()
+		settings, err := resolveCleanSettings(keepHelmChart)
 		if err != nil {
 			exitWithError(apperrors.NewValidationError(
-				"failed to resolve namespace from user config",
+				"failed to resolve cleanup settings from user config",
 				err,
-				"Fix the config or pass --network-operator-namespace <namespace>",
+				"Fix or remove the selected config before cleanup",
 			), outputFormat)
 		}
-		if problems := validation.IsDNS1123Label(namespace); len(problems) > 0 {
+		if problems := validation.IsDNS1123Label(settings.Namespace); len(problems) > 0 {
 			exitWithError(apperrors.NewValidationError(
-				fmt.Sprintf("invalid Network Operator namespace %q", namespace),
+				fmt.Sprintf("invalid Network Operator namespace %q", settings.Namespace),
 				fmt.Errorf("%s", problems[0]),
 				"Pass a valid DNS-1123 namespace with --network-operator-namespace",
 			), outputFormat)
 		}
 
 		uiOutput.Section("Network Operator cleanup")
-		uiOutput.Info("Target namespace: %s (%s)", namespace, source)
-		if keepHelmChart {
-			uiOutput.Info("Helm release: keep %s installed", "network-operator")
+		uiOutput.Info("Target namespace: %s (%s)", settings.Namespace, settings.NamespaceSource)
+		if settings.KeepHelmChart {
+			uiOutput.Info("Helm release: keep %s installed (%s)",
+				"network-operator", settings.HelmRetentionSource)
 		} else {
 			uiOutput.Info("Helm release: uninstall %s", "network-operator")
 		}
 
-		confirmed, err := uiOutput.Confirm(fmt.Sprintf(
-			"Delete all custom resources in namespace %s and the known cluster-scoped Network Operator resources?",
-			namespace,
-		))
+		confirmation := fmt.Sprintf(
+			"Delete all custom resources in namespace %s and the known cluster-scoped Network Operator resources, then uninstall the network-operator Helm release?",
+			settings.Namespace)
+		if settings.KeepHelmChart {
+			confirmation = fmt.Sprintf(
+				"Delete all custom resources in namespace %s and the known cluster-scoped Network Operator resources while keeping the network-operator Helm release installed?",
+				settings.Namespace)
+		}
+		confirmed, err := uiOutput.Confirm(confirmation)
 		if err != nil {
 			exitWithError(apperrors.NewGeneralError("failed to read cleanup confirmation", err), outputFormat)
 		}
 		if !confirmed {
 			uiOutput.Info("Cleanup cancelled; no changes were made")
-			finalizeCleanJSON(jsonOutput, namespace, 0, false, keepHelmChart)
+			finalizeCleanJSON(jsonOutput, settings.Namespace, 0, false, settings.KeepHelmChart)
 			return
 		}
 
 		result, err := networkoperatorplugin.Clean(ctx, k8sClient, networkoperatorplugin.CleanOptions{
-			Namespace:     namespace,
-			KeepHelmChart: keepHelmChart,
+			Namespace:     settings.Namespace,
+			KeepHelmChart: settings.KeepHelmChart,
 			RestConfig:    restConfig,
 		})
 		if err != nil {
@@ -132,45 +150,66 @@ and its chart-managed resources installed.`,
 			result.Namespace,
 			result.CustomResourcesDeleted,
 			result.HelmReleaseRemoved,
-			keepHelmChart,
+			settings.KeepHelmChart,
 		)
 	},
 }
 
-func resolveCleanNamespace() (string, string, error) {
-	if networkOperatorNamespace != "" {
-		return networkOperatorNamespace, "--network-operator-namespace", nil
+func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
+	settings := cleanSettings{
+		Namespace:       defaultOperatorNamespace,
+		NamespaceSource: "default",
+		KeepHelmChart:   explicitKeepHelmChart,
 	}
-	// Cleanup only needs one field from the user config. Do not apply release
-	// catalog defaults or validate unrelated deployment settings here: an old
-	// generated config must not prevent the operator from being removed.
+	if explicitKeepHelmChart {
+		settings.HelmRetentionSource = "--keep-helm-chart"
+	}
+
+	// Cleanup only needs namespace and Helm-ownership fields from the user
+	// config. Do not apply release catalog defaults or validate unrelated
+	// deployment settings here: an old generated config must not prevent CRs
+	// from being removed.
 	path := userConfigPathBeforeDefaults()
 	if path == "" && configDir != "" {
 		var err error
 		path, err = defaultConfigPathFor(configDir)
 		if err != nil {
-			return "", "--config-dir", err
+			return settings, err
 		}
 	}
-	if path == "" {
-		return defaultOperatorNamespace, "default", nil
+	if path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return settings, fmt.Errorf("read %s: %w", path, err)
+		}
+		var cfg struct {
+			NetworkOperator *struct {
+				Namespace     string `yaml:"namespace"`
+				SkipHelmChart bool   `yaml:"skipHelmChart"`
+			} `yaml:"networkOperator"`
+		}
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return settings, fmt.Errorf("parse %s: %w", path, err)
+		}
+		if cfg.NetworkOperator != nil {
+			if cfg.NetworkOperator.Namespace != "" {
+				settings.Namespace = cfg.NetworkOperator.Namespace
+				settings.NamespaceSource = path
+			}
+			if cfg.NetworkOperator.SkipHelmChart {
+				settings.KeepHelmChart = true
+				if settings.HelmRetentionSource == "" {
+					settings.HelmRetentionSource = "networkOperator.skipHelmChart in " + path
+				}
+			}
+		}
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", path, fmt.Errorf("read %s: %w", path, err)
+
+	if networkOperatorNamespace != "" {
+		settings.Namespace = networkOperatorNamespace
+		settings.NamespaceSource = "--network-operator-namespace"
 	}
-	var cfg struct {
-		NetworkOperator *struct {
-			Namespace string `yaml:"namespace"`
-		} `yaml:"networkOperator"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return "", path, fmt.Errorf("parse %s: %w", path, err)
-	}
-	if cfg.NetworkOperator == nil || cfg.NetworkOperator.Namespace == "" {
-		return defaultOperatorNamespace, "default", nil
-	}
-	return cfg.NetworkOperator.Namespace, path, nil
+	return settings, nil
 }
 
 func finalizeCleanJSON(
@@ -200,9 +239,9 @@ func init() {
 	rootCmd.AddCommand(cleanCmd)
 
 	cleanCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
-	cleanCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file used to resolve networkOperator.namespace")
+	cleanCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file used to resolve networkOperator.namespace and networkOperator.skipHelmChart")
 	cleanCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the Network Operator namespace from cluster-config.yaml")
-	cleanCmd.Flags().BoolVar(&keepHelmChart, "keep-helm-chart", false, "Delete Network Operator custom resources but keep the network-operator Helm release installed")
+	cleanCmd.Flags().BoolVar(&keepHelmChart, "keep-helm-chart", false, "Delete Network Operator custom resources but keep the network-operator Helm release installed regardless of config")
 
 	setFlagGroup(cleanCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(cleanCmd, "user-config", GroupCommon)

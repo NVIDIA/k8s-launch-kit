@@ -52,11 +52,14 @@ type DeployRequest struct {
 	ConfigDir         string
 	OperatorNamespace string
 	OverwriteExisting bool
-	OutputFormat      string
-	Quiet             bool
-	AutoApprove       bool
-	DryRun            bool
-	Timeout           time.Duration
+
+	SkipNetworkOperatorHelm Explicit[bool]
+
+	OutputFormat string
+	Quiet        bool
+	AutoApprove  bool
+	DryRun       bool
+	Timeout      time.Duration
 }
 
 // ValidateRequest contains the Host-owned inputs for standalone validation.
@@ -66,20 +69,23 @@ type ValidateRequest struct {
 	UserConfig        string
 	ConfigDir         string
 	OperatorNamespace string
-	Connectivity      Explicit[bool]
-	Keep              bool
-	ConnectivityTime  time.Duration
-	Mode              Explicit[string]
-	Checks            Explicit[[]string]
-	RDMAPIterations   Explicit[int]
-	RDMAIBWriteSize   Explicit[int]
-	RDMAMinBandwidth  Explicit[float64]
-	Wait              time.Duration
-	ReportPath        string
-	Version           string
-	OutputFormat      string
-	Quiet             bool
-	AutoApprove       bool
+
+	SkipNetworkOperatorHelm Explicit[bool]
+
+	Connectivity     Explicit[bool]
+	Keep             bool
+	ConnectivityTime time.Duration
+	Mode             Explicit[string]
+	Checks           Explicit[[]string]
+	RDMAPIterations  Explicit[int]
+	RDMAIBWriteSize  Explicit[int]
+	RDMAMinBandwidth Explicit[float64]
+	Wait             time.Duration
+	ReportPath       string
+	Version          string
+	OutputFormat     string
+	Quiet            bool
+	AutoApprove      bool
 }
 
 // LauncherRunner executes one app.Launcher-backed Host phase.

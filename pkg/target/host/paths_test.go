@@ -100,3 +100,27 @@ clusterConfig:
 	require.Len(t, cfg.ClusterConfig, 1)
 	assert.Equal(t, "retained-report-group", cfg.ClusterConfig[0].Identifier)
 }
+
+func TestLoadUserConfigAppliesExplicitSkipNetworkOperatorHelmOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`networkOperator:
+  skipHelmChart: true
+`), 0o600))
+
+	t.Run("omitted preserves config", func(t *testing.T) {
+		cfg, _, err := LoadUserConfig(UserConfigInput{Explicit: path}, options.Options{})
+		require.NoError(t, err)
+		require.NotNil(t, cfg.NetworkOperator)
+		assert.True(t, cfg.NetworkOperator.SkipHelmChart)
+	})
+
+	t.Run("explicit false overrides config", func(t *testing.T) {
+		cfg, _, err := LoadUserConfig(UserConfigInput{Explicit: path}, options.Options{
+			SkipNetworkOperatorHelm:    false,
+			SkipNetworkOperatorHelmSet: true,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, cfg.NetworkOperator)
+		assert.False(t, cfg.NetworkOperator.SkipHelmChart)
+	})
+}

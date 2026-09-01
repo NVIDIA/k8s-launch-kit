@@ -56,6 +56,7 @@ The release line fills Network Operator versions, component image tags, DOCA dri
 | `selectedRelease` | Catalog release line. Equivalent to `--network-operator-release`. |
 | `version` | Network Operator chart/operator version. Filled by the selected release. |
 | `componentVersion` | Tag used by managed component images. |
+| `skipHelmChart` | When `true`, generation omits `values.yaml`, deploy skips Network Operator chart installation and Helm preflight checks, validate skips Helm release-version and values checks, and clean retains the externally owned Helm release. Network Operator CR generation, deployment, validation, and cleanup remain enabled. Equivalent to `--skip-network-operator-helm` for generate, deploy, and validate. |
 | `repository` | Registry path for component images such as drivers, CNI, IPAM, and device plugins. |
 | `operatorRepository` | Registry path for the Network Operator controller image. |
 | `helmRepoURL` | Chart repository used by `l8k deploy`. Empty means Helm phase 0 is skipped. |
@@ -63,6 +64,18 @@ The release line fills Network Operator versions, component image tags, DOCA dri
 | `imagePullSecrets` | Secret names propagated into the discovery daemon, generated policies, and Helm values for the Network Operator and enabled subcharts. During deploy, matching credentials also authenticate the Helm chart download. |
 
 When `selectedRelease` is set, catalog values replace explicit version and repository fields so the cohort remains consistent.
+
+Use `skipHelmChart: true` when another system owns the Network Operator Helm
+release:
+
+```yaml
+networkOperator:
+  selectedRelease: "26.7"
+  skipHelmChart: true
+```
+
+The selected release still drives rendered component versions and their
+validation; only the Helm artifact/install/check/uninstall boundary is disabled.
 
 For an authenticated Helm repository, each referenced Secret must already
 exist in `networkOperator.namespace` before `l8k deploy` starts, and the

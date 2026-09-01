@@ -160,10 +160,10 @@ func UserConfigPathForGenerate(input UserConfigInput) string {
 	return path
 }
 
-// LoadUserConfig loads the resolved Host config and applies release and
-// namespace overlays used by standalone deploy and validate. When parsing
-// succeeds but a release overlay fails, it returns the parsed config together
-// with the error so validation can retain that evidence in a partial report.
+// LoadUserConfig loads the resolved Host config and applies every config-backed
+// CLI override through the shared mapping registry. When parsing succeeds but
+// an override fails, it returns the parsed config together with the error so
+// validation can retain that evidence in a partial report.
 func LoadUserConfig(input UserConfigInput, opts options.Options) (*config.LaunchKitConfig, string, error) {
 	path, err := UserConfigPathFor(input)
 	if err != nil {
@@ -179,14 +179,8 @@ func LoadUserConfig(input UserConfigInput, opts options.Options) (*config.Launch
 	if cfg == nil {
 		return nil, path, fmt.Errorf("user-config %s is empty", path)
 	}
-	if err := networkoperatorplugin.ApplyNetworkOperatorRelease(opts, cfg); err != nil {
-		return cfg, path, fmt.Errorf("apply release catalog: %w", err)
-	}
-	if opts.NetworkOperatorNamespace != "" {
-		if cfg.NetworkOperator == nil {
-			cfg.NetworkOperator = &config.NetworkOperatorConfig{}
-		}
-		cfg.NetworkOperator.Namespace = opts.NetworkOperatorNamespace
+	if err := networkoperatorplugin.ApplyCLIConfigOverrides(opts, cfg); err != nil {
+		return cfg, path, fmt.Errorf("apply CLI config overrides: %w", err)
 	}
 	return cfg, path, nil
 }

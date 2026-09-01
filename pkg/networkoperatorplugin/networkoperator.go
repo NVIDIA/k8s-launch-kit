@@ -19,8 +19,6 @@ package networkoperatorplugin
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery"
@@ -190,29 +188,8 @@ func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.Lau
 // ApplyOptionsToConfig applies CLI options to the configuration, overriding file values.
 // CLI flags take precedence over config file values for any explicitly set option.
 func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fullConfig *config.LaunchKitConfig) error {
-	if err := ApplyNetworkOperatorRelease(options, fullConfig); err != nil {
+	if err := ApplyCLIConfigOverrides(options, fullConfig); err != nil {
 		return err
-	}
-
-	// Apply network operator namespace override from CLI
-	if options.NetworkOperatorNamespace != "" {
-		if fullConfig.NetworkOperator == nil {
-			fullConfig.NetworkOperator = &config.NetworkOperatorConfig{}
-		}
-		fullConfig.NetworkOperator.Namespace = options.NetworkOperatorNamespace
-	}
-
-	// Apply image pull secrets override from CLI
-	if len(options.ImagePullSecrets) > 0 {
-		if fullConfig.NetworkOperator == nil {
-			fullConfig.NetworkOperator = &config.NetworkOperatorConfig{}
-		}
-		fullConfig.NetworkOperator.ImagePullSecrets = options.ImagePullSecrets
-	}
-
-	// Apply network namespaces override from CLI.
-	if len(options.NetworkNamespaces) > 0 {
-		fullConfig.NetworkNamespaces = options.NetworkNamespaces
 	}
 	// Default to a single "default" namespace when neither config nor CLI set it.
 	if len(fullConfig.NetworkNamespaces) == 0 {
@@ -225,98 +202,6 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 			DeployNicInterfaceNameTemplate: true,
 			RdmaPrefix:                     "rdma_r%rail_id%",
 			NetdevPrefix:                   "eth_r%rail_id%",
-		}
-	}
-
-	if fullConfig.Profile == nil {
-		return nil
-	}
-
-	// Apply base profile overrides from CLI (non-empty strings and true bools override config)
-	if options.Fabric != "" {
-		fullConfig.Profile.Fabric = options.Fabric
-	}
-	if options.DeploymentType != "" {
-		fullConfig.Profile.Deployment = options.DeploymentType
-	}
-	// `MultirailSet` is true only when the user explicitly passed
-	// `--multirail` (regardless of value). Without it, the bool zero
-	// value can't be distinguished from "not passed", so a user who
-	// did NOT pass the flag would clobber the hardware default of
-	// true with `false`. See `pkg/options.Options.MultirailSet`.
-	if options.MultirailSet {
-		fullConfig.Profile.Multirail = options.Multirail
-		fullConfig.Profile.MultirailSet = true
-	}
-	if options.Routing != "" {
-		fullConfig.Profile.Routing = options.Routing
-	}
-	if options.IgnoreARPSet {
-		fullConfig.Profile.IgnoreARP = options.IgnoreARP
-		fullConfig.Profile.IgnoreARPSet = true
-	}
-
-	// Apply workload manifest override from CLI
-	if options.WorkloadManifest != "" {
-		if fullConfig.Workload == nil {
-			fullConfig.Workload = &config.WorkloadConfig{}
-		}
-		fullConfig.Workload.Manifest = options.WorkloadManifest
-	}
-
-	// Apply DOCA driver enable override from CLI
-	if options.EnableDocaDriver != nil {
-		if fullConfig.DOCADriver == nil {
-			fullConfig.DOCADriver = &config.DOCADriverConfig{
-				UnloadStorageModules:        true,
-				UnloadThirdPartyRDMAModules: true,
-				SkipPreflightChecks:         false,
-			}
-		}
-		fullConfig.DOCADriver.Enable = *options.EnableDocaDriver
-	}
-
-	// Apply Spectrum-X CLI options
-	if options.SpectrumX {
-		if fullConfig.Profile.SpectrumX == nil {
-			fullConfig.Profile.SpectrumX = &config.ProfileSpectrumX{}
-		}
-		fullConfig.Profile.SpectrumX.Enable = true
-		if options.SPCXVersion != "" {
-			fullConfig.Profile.SpectrumX.SPCXVersion = options.SPCXVersion
-		}
-		if options.MultiplaneMode != "" {
-			fullConfig.Profile.SpectrumX.MultiplaneMode = options.MultiplaneMode
-		}
-		if options.NumberOfPlanes != 0 {
-			fullConfig.Profile.SpectrumX.NumberOfPlanes = options.NumberOfPlanes
-		}
-		if options.TopologyScheme != "" {
-			fullConfig.Profile.SpectrumX.TopologyType = options.TopologyScheme
-		}
-		if options.IPVersion != "" {
-			fullConfig.Profile.SpectrumX.IPVersion = options.IPVersion
-		}
-		if options.TopologyFile != "" {
-			fullConfig.Profile.SpectrumX.TopologyFile = options.TopologyFile
-			resolvedTopologyFile, err := filepath.Abs(options.TopologyFile)
-			if err != nil {
-				return fmt.Errorf("failed to resolve --topology-file %s: %w", options.TopologyFile, err)
-			}
-			fullConfig.Profile.SpectrumX.ResolvedTopologyFile = resolvedTopologyFile
-		}
-		if options.SpectrumXConfigMapName != "" {
-			fullConfig.Profile.SpectrumX.ConfigMapName = options.SpectrumXConfigMapName
-		}
-		if options.SpectrumXConfig != "" {
-			profileConfig, err := os.ReadFile(options.SpectrumXConfig)
-			if err != nil {
-				return fmt.Errorf("failed to read --spectrum-x-config %s: %w", options.SpectrumXConfig, err)
-			}
-			fullConfig.Profile.SpectrumX.Profile = string(profileConfig)
-		}
-		if err := config.NormalizeSpectrumXProfileConfig(fullConfig.Profile.SpectrumX); err != nil {
-			return fmt.Errorf("invalid Spectrum-X profile config: %w", err)
 		}
 	}
 

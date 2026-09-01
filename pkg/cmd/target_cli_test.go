@@ -146,6 +146,9 @@ func TestImportantFlagScopes(t *testing.T) {
 		{command: generateCmd, flag: "deploy", expected: []target.Name{target.Host, target.DPF}},
 		{command: deployCmd, flag: "dry-run", expected: []target.Name{target.Host, target.DPF}},
 		{command: validateCmd, flag: "connectivity", expected: []target.Name{target.Host}},
+		{command: generateCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
+		{command: deployCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
+		{command: validateCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command.Name()+"/"+tt.flag, func(t *testing.T) {

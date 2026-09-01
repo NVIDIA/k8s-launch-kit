@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 )
@@ -56,6 +57,7 @@ type flagSchema struct {
 	Description string   `json:"description"`
 	Required    bool     `json:"required,omitempty"`
 	Targets     []string `json:"targets"`
+	ConfigPaths []string `json:"configPaths,omitempty"`
 }
 
 type targetSchema struct {
@@ -87,7 +89,7 @@ var schemaCmd = &cobra.Command{
 					Example:     "l8k deploy --deployment-files ./deployment --kubeconfig ~/.kube/config",
 				},
 				"clean": {
-					Description: "Delete Network Operator custom resources and uninstall its Helm release",
+					Description: "Delete Network Operator custom resources and uninstall its Helm release unless config or --keep-helm-chart retains it",
 					Example:     "l8k clean --kubeconfig ~/.kube/config [--keep-helm-chart]",
 				},
 				"validate": {
@@ -210,7 +212,12 @@ var schemaCmd = &cobra.Command{
 				"--keep-helm-chart": {
 					Type:        "bool",
 					Default:     "false",
-					Description: "With l8k clean, delete custom resources but keep the network-operator Helm release installed",
+					Description: "With l8k clean, delete custom resources but keep the network-operator Helm release installed regardless of config",
+				},
+				"--skip-network-operator-helm": {
+					Type:        "bool",
+					Default:     "false",
+					Description: "Skip Network Operator Helm values generation, chart installation, and Helm-specific validation while retaining Network Operator manifest handling.",
 				},
 				"--dry-run": {
 					Type:        "bool",
@@ -310,6 +317,7 @@ func annotateSchemaFlagTargets(s *schema) {
 	}
 	for name, spec := range s.Flags {
 		spec.Targets = schemaFlagTargets(name)
+		spec.ConfigPaths = networkoperatorplugin.ConfigPathsForFlag(name)
 		s.Flags[name] = spec
 	}
 }

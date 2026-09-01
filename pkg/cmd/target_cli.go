@@ -273,7 +273,7 @@ func markRootTargetScopes() {
 		"target", "output", "log-level", "log-file", "yes", "quiet", "dry-run", "deploy", "deploy-timeout")
 	setFlagTargetScope(rootCmd, []target.Name{target.Host},
 		"enabled-plugins", "discover-cluster-config", "save-cluster-config", "user-config",
-		"network-operator-namespace", "network-operator-release", "fabric", "deployment-type",
+		"network-operator-namespace", "network-operator-release", "skip-network-operator-helm", "fabric", "deployment-type",
 		"multirail", "routing", "ignore-arp", "spectrum-x", "multiplane-mode", "number-of-planes",
 		"topology-scheme", "ip-version", "topology-file", "spectrum-x-config",
 		"spectrum-x-configmap-name", "groups", "gpu-type", "node-selector", "collapse-nic-rails",
@@ -298,19 +298,19 @@ func markGenerateTargetScopes() {
 		"spectrum-x", "multiplane-mode", "number-of-planes", "topology-scheme", "ip-version",
 		"topology-file", "spectrum-x-config", "spectrum-x-configmap-name", "groups", "gpu-type",
 		"for", "node-selector", "save-deployment-files", "network-namespaces", "enable-doca-driver",
-		"workload-manifest", "network-operator-namespace", "network-operator-release",
+		"workload-manifest", "network-operator-namespace", "network-operator-release", "skip-network-operator-helm",
 		"image-pull-secrets", "enabled-plugins", "kubeconfig", "overwrite-existing")
 }
 
 func markDeployTargetScopes() {
 	setFlagTargetScope(deployCmd, []target.Name{target.Host, target.DPF}, "dry-run", "deploy-timeout")
 	setFlagTargetScope(deployCmd, []target.Name{target.Host},
-		"kubeconfig", "deployment-files", "network-operator-namespace", "user-config", "overwrite-existing")
+		"kubeconfig", "deployment-files", "network-operator-namespace", "user-config", "overwrite-existing", "skip-network-operator-helm")
 }
 
 func markValidateTargetScopes() {
 	setFlagTargetScope(validateCmd, []target.Name{target.Host},
-		"kubeconfig", "deployment-files", "user-config", "network-operator-namespace", "connectivity",
+		"kubeconfig", "deployment-files", "user-config", "network-operator-namespace", "skip-network-operator-helm", "connectivity",
 		"keep", "connectivity-timeout", "validation-mode", "validation-checks",
 		"rdma-rping-iterations", "rdma-ib-write-size", "rdma-ib-write-min-bandwidth-gbps",
 		"wait", "report-path")
