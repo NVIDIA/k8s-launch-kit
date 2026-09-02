@@ -49,7 +49,11 @@ Because `NicDevice` does not expose MAC addresses, Launch Kit reads them
 transiently from sysfs on every worker and checks whether host netplan uses a
 matching `match.macaddress` plus `set-name` rule. The group-level
 `netplanManaged` result identifies potential naming conflicts with udev rules
-deployed by NIC Configuration Operator; host-specific MACs are not saved.
+deployed by NIC Configuration Operator; host-specific MACs are not saved. If
+generation would emit a `NicInterfaceNameTemplate` for an affected group,
+`l8k generate` stops with a validation error. Remove the affected `set-name`
+stanzas from the host netplan configuration and re-run discovery before
+retrying generation.
 
 ### Select the Deployment Profile
 Discovery fills missing profile values from hardware and built-in defaults.
@@ -1453,6 +1457,16 @@ The `nicConfigurationOperator.deployNicInterfaceNameTemplate` setting controls w
 2. **rdma_shared deployment with empty network interface names** — When the deployment type is `rdma_shared` (macvlan-rdma-shared or ipoib-rdma-shared profiles) and PFs have empty `networkInterface` fields. The `rdmaSharedDevicePlugin` uses `ifNames` selectors that require interface names, so NicInterfaceNameTemplate must be enabled to provide them. This typically happens when discovery finds multiple nodes per group and omits device names for safety.
 
 When neither condition holds, name templates are disabled and the device plugin uses PCI addresses directly, avoiding the overhead of deploying the NIC configuration operator.
+
+Before emitting a `NicInterfaceNameTemplate`, `l8k generate` checks the
+selected source groups' discovered `netplanManaged` state. If the CR would
+configure a group marked `netplanManaged: true`, generation fails because the
+netplan `set-name` rule can conflict with NCO's udev rule for the same NIC.
+Clean up the affected `set-name` stanzas in the host netplan configuration,
+re-run `l8k discover` to refresh the group state, and then retry
+`l8k generate`. A group excluded with `--groups` or `--gpu-type` does not block
+generation, and neither does a group for which the name-template CR is not
+rendered.
 
 Spectrum-X interface prefixes default according to the selected multiplane mode:
 

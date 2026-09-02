@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.8
+version: 1.2.9
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -98,6 +98,20 @@ l8k generate --user-config cluster-config.yaml \
 - **`l8k generate --for <preset>`** — skip discovery entirely when the SKU is already known and there is a preset for it. Useful for ahead-of-time generation (CI scaffolding, lab runbooks, demos), or when you don't have `kubectl` access yet. Requires `--node-selector` to identify the target nodes at apply time.
 
 A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in its `topology.yaml`. All bundled presets do.
+
+## Netplan Interface-Name Conflict
+
+Before emitting a `NicInterfaceNameTemplate`, generation checks
+`clusterConfig[].netplanManaged` for the selected source groups. If an affected
+group would receive the CR, `l8k generate` returns a validation error because
+the host netplan `set-name` rule can conflict with NCO's udev naming rule for
+the same NIC. Clean up the affected `set-name` stanzas in the host netplan
+configuration, re-run `l8k discover`, and then retry `l8k generate`.
+
+The check follows the actual render plan: a group excluded with `--groups` or
+`--gpu-type` does not block generation, and neither does a group for which no
+`NicInterfaceNameTemplate` is rendered. Do not clear `netplanManaged` by hand;
+re-run discovery so the config reflects the host state.
 
 ## Profile Quick Reference
 

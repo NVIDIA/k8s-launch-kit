@@ -5,6 +5,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
@@ -19,7 +21,42 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+func TestExecuteGenerationPreservesStructuredTemplateValidationError(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	t.Chdir(filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..")))
+
+	cfg, err := config.LoadFullConfig(
+		filepath.Join("pkg", "networkoperatorplugin", "testdata", "grouping", "mixed-same-type.yaml"),
+		ctrllog.Log,
+	)
+	require.NoError(t, err)
+	cfg.Profile = &config.Profile{
+		Fabric:     "ethernet",
+		Deployment: "sriov",
+		Multirail:  true,
+	}
+	cfg.ClusterConfig[0].NetplanManaged = true
+
+	raw, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+	configPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	require.NoError(t, os.WriteFile(configPath, raw, 0o600))
+
+	launcher := New(options.Options{})
+	launcher.ui = ui.NewSilent()
+	launcher.plugins[networkoperatorplugin.PluginName] = &networkoperatorplugin.NetworkOperatorPlugin{}
+
+	err = launcher.executeGeneration(configPath)
+	require.Error(t, err)
+	var structured *apperrors.StructuredError
+	require.True(t, errors.As(err, &structured))
+	assert.Equal(t, apperrors.ExitValidation, structured.ExitCode)
+	assert.Contains(t, structured.Message, "conflicting netplan configuration")
+}
 
 func TestGeneratePersistsResolvedProfileToOriginalConfig(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
