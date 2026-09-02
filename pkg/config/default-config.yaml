@@ -6,10 +6,10 @@ networkOperator:
   # explicit values here are overridden.
   # Supported: 26.1, 26.4, 26.7. Leave empty to use the explicit values
   # below as-is.
-  # selectedRelease: "26.4"
-  version: v26.4.0
-  componentVersion: network-operator-v26.4.0
-  selectedRelease: "26.4"
+  # selectedRelease: "26.7"
+  version: v26.7.0
+  componentVersion: network-operator-v26.7.0
+  selectedRelease: "26.7"
   # Skip Network Operator Helm values generation, chart installation,
   # Helm-specific validation, and Helm release removal during cleanup. Network
   # Operator CR generation, deployment, validation, and cleanup still run.
@@ -70,7 +70,7 @@ validation:
 
 docaDriver:
   enable: true
-  version: doca3.4.0-26.04-0.8.6.0-0
+  version: doca3.5.0-26.07-0.7.7.0-0
   unloadStorageModules: true
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: true
