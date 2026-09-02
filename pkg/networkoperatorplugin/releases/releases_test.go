@@ -77,6 +77,13 @@ func TestLookupRelease_XPlaneArtifactsAreIndependent(t *testing.T) {
 	assert.Empty(t, r.XPlane.Version)
 }
 
+func TestLookupRelease_267UsesPublicXPlaneImage(t *testing.T) {
+	r, ok := LookupRelease("26.7")
+	require.True(t, ok)
+	assert.Equal(t, "nvcr.io/nvidia/doca", r.XPlane.Repository)
+	assert.Equal(t, "doca-3.5.0", r.XPlane.Version)
+}
+
 func TestLookupRelease_Unknown(t *testing.T) {
 	_, ok := LookupRelease("99.0")
 	assert.False(t, ok)

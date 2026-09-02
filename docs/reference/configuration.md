@@ -38,7 +38,7 @@ Configuration source precedence is:
 
 ```yaml
 networkOperator:
-  selectedRelease: "26.4"
+  selectedRelease: "26.7"
 ```
 
 Supported release lines are currently:
