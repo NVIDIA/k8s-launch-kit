@@ -61,11 +61,6 @@ sriovNetworkOperator:
 # defaults to FALSE in the upstream subchart — without this, the operator
 # logs `default SriovOperatorConfig object not found, cannot reconcile
 # SriovNetworkNodePolicies` and never reconciles any policies.
-#
-# When NicConfigurationOperator is also deployed, gate the daemon's
-# nodeSelector on `network.nvidia.com/operator.nic-configuration.wait=false`
-# so the sriov daemon waits for NCO to finish per-node firmware/NIC config
-# before mutating VFs.
 sriov-network-operator:
 {{- if .NetworkOperator.ImagePullSecrets }}
   imagePullSecrets:
@@ -89,7 +84,3 @@ sriov-network-operator:
     # NodePolicies via the crstate registry, so both helpers are unused.
     enableInjector: false
     enableOperatorWebhook: false
-{{- if .NicConfigurationOperator }}
-    configDaemonNodeSelector:
-      network.nvidia.com/operator.nic-configuration.wait: "false"
-{{- end }}

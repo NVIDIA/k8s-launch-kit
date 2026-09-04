@@ -92,8 +92,6 @@ maintenanceOperator:
 
 sriov-network-operator:
   sriovOperatorConfig:
-    configDaemonNodeSelector:
-      network.nvidia.com/operator.nic-configuration.wait: "false"
     featureGates:
       manageSoftwareBridges: true
     disablePlugins:

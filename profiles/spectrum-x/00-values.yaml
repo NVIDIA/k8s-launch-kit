@@ -69,11 +69,6 @@ sriovNetworkOperator:
 #     NV config / SR-IOV enablement for Spectrum-X. Letting the operator's
 #     own mellanox plugin run too would mutate the same state twice and
 #     produce flapping configurations.
-#
-# When NicConfigurationOperator is also deployed, gate the daemon's
-# nodeSelector on `network.nvidia.com/operator.nic-configuration.wait=false`
-# so the sriov daemon waits for NCO to finish per-node firmware/NIC config
-# before mutating VFs.
 sriov-network-operator:
 {{- if .NetworkOperator.ImagePullSecrets }}
   imagePullSecrets:
@@ -94,10 +89,6 @@ sriov-network-operator:
     # which doesn't always re-run on cross-profile upgrades.
     enableInjector: false
     enableOperatorWebhook: false
-{{- if .NicConfigurationOperator }}
-    configDaemonNodeSelector:
-      network.nvidia.com/operator.nic-configuration.wait: "false"
-{{- end }}
     featureGates:
       manageSoftwareBridges: true
 {{- if spectrumXUseDRA .Profile }}

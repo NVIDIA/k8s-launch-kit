@@ -929,6 +929,11 @@ Operator limits. For older releases, `maxParallelUpgrades` controls OFED and
 `SriovNetworkPoolConfig.spec.maxUnavailable` controls the SR-IOV internal
 drainer.
 
+l8k does not add the NIC Configuration Operator wait label to the SR-IOV
+config daemon's node selector. The daemon keeps the Network Operator chart's
+default scheduling selectors; drain sequencing remains controlled by the
+release-appropriate SR-IOV drain path described above.
+
 Changing to requestor mode modifies Helm values and operator Deployment
 environment variables. Upgrade an existing release with
 `--overwrite-existing`; applying only the generated custom resources cannot

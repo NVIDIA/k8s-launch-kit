@@ -68,6 +68,13 @@ var maintenanceProfileCases = []maintenanceProfileCase{
 		wantExternalDrain:  true,
 	},
 	{
+		dir:                "spectrum-x-ra2.2",
+		fabric:             "ethernet",
+		deployment:         "sriov",
+		wantDrainRequestor: true,
+		wantExternalDrain:  true,
+	},
+	{
 		dir:                "spectrum-x",
 		fabric:             "ethernet",
 		deployment:         "sriov",
@@ -187,6 +194,25 @@ func TestMaintenanceOperatorRemainsEnabledForNCOBeforeRequestorMode(t *testing.T
 	values := renderProfileValuesForMaintenance(t, "host-device-rdma", "25.10", true, "")
 	require.Equal(t, true, nestedMaintenanceMap(t, values, "maintenanceOperator")["enabled"])
 	require.NotContains(t, nestedMaintenanceMap(t, values, "operator"), "maintenanceOperator")
+}
+
+func TestSriovConfigDaemonDoesNotWaitForNICConfiguration(t *testing.T) {
+	for _, profile := range maintenanceProfileCases {
+		if !profile.wantExternalDrain {
+			continue
+		}
+		t.Run(profile.dir, func(t *testing.T) {
+			values := renderProfileValuesForMaintenance(t, profile.dir, "26.7", true, "")
+			operatorConfig := nestedMaintenanceMap(t, values, "sriov-network-operator", "sriovOperatorConfig")
+			selectorValue, hasSelector := operatorConfig["configDaemonNodeSelector"]
+			if !hasSelector {
+				return
+			}
+			selector, isMap := selectorValue.(map[string]any)
+			require.True(t, isMap, "configDaemonNodeSelector must be a map")
+			require.NotContains(t, selector, "network.nvidia.com/operator.nic-configuration.wait")
+		})
+	}
 }
 
 func TestMaintenanceOperatorValuesPreserveExplicitZero(t *testing.T) {
