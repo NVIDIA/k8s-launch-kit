@@ -77,7 +77,7 @@ var schemaCmd = &cobra.Command{
 			Description: "CLI tool for deploying NVIDIA cloud-native networking solutions on Kubernetes",
 			Commands: map[string]commandSchema{
 				"discover": {
-					Description: "Discover cluster network hardware, resolve profile settings, and persist both to cluster-config.yaml",
+					Description: "Discover cluster network hardware; with --user-config, replace only clusterConfig and explicit CLI overrides",
 					Example:     "l8k discover --kubeconfig ~/.kube/config --fabric ethernet --save-cluster-config ./cluster-config.yaml",
 				},
 				"generate": {

@@ -137,11 +137,12 @@ func TestBuildProfileFromOptions(t *testing.T) {
 func TestApplyOptionsToConfig(t *testing.T) {
 	p := &NetworkOperatorPlugin{}
 
-	t.Run("nil profile is no-op", func(t *testing.T) {
+	t.Run("CLI profile override creates a missing profile", func(t *testing.T) {
 		cfg := &config.LaunchKitConfig{Profile: nil}
 		err := p.ApplyOptionsToConfig(options.Options{Fabric: "ethernet"}, cfg)
 		require.NoError(t, err)
-		assert.Nil(t, cfg.Profile)
+		require.NotNil(t, cfg.Profile)
+		assert.Equal(t, "ethernet", cfg.Profile.Fabric)
 		assert.Equal(t, []string{"default"}, cfg.NetworkNamespaces)
 		assert.Empty(t, cfg.CurrentNetworkNamespace)
 	})
@@ -458,5 +459,59 @@ func TestApplyOptionsToConfig(t *testing.T) {
 		assert.Equal(t, "user-supplied", cfg.NetworkOperator.Version)
 		assert.Equal(t, "user-tag", cfg.NetworkOperator.ComponentVersion)
 		assert.Equal(t, "user.example.com", cfg.NetworkOperator.Repository)
+	})
+}
+
+func TestApplyExplicitCLIConfigOverrides(t *testing.T) {
+	t.Run("profile flags create a missing profile", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{}
+
+		require.NoError(t, ApplyExplicitCLIConfigOverrides(options.Options{
+			Fabric:         "infiniband",
+			DeploymentType: "rdma_shared",
+			Multirail:      false,
+			MultirailSet:   true,
+		}, cfg))
+		require.NotNil(t, cfg.Profile)
+		assert.Equal(t, "infiniband", cfg.Profile.Fabric)
+		assert.Equal(t, "rdma_shared", cfg.Profile.Deployment)
+		assert.False(t, cfg.Profile.Multirail)
+		assert.True(t, cfg.Profile.MultirailSet)
+	})
+
+	t.Run("configured release is preserved when CLI release is omitted", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{
+			NetworkOperator: &config.NetworkOperatorConfig{
+				SelectedRelease:  "26.4",
+				Version:          "user-version",
+				ComponentVersion: "user-component-version",
+				Repository:       "user.example.com",
+			},
+			DOCADriver: &config.DOCADriverConfig{Version: "user-doca-version"},
+		}
+
+		require.NoError(t, ApplyExplicitCLIConfigOverrides(options.Options{}, cfg))
+		assert.Equal(t, "26.4", cfg.NetworkOperator.SelectedRelease)
+		assert.Equal(t, "user-version", cfg.NetworkOperator.Version)
+		assert.Equal(t, "user-component-version", cfg.NetworkOperator.ComponentVersion)
+		assert.Equal(t, "user.example.com", cfg.NetworkOperator.Repository)
+		assert.Equal(t, "user-doca-version", cfg.DOCADriver.Version)
+	})
+
+	t.Run("explicit CLI release replaces the configured release cohort", func(t *testing.T) {
+		cfg := &config.LaunchKitConfig{
+			NetworkOperator: &config.NetworkOperatorConfig{
+				SelectedRelease: "26.1",
+				Version:         "user-version",
+			},
+			DOCADriver: &config.DOCADriverConfig{Version: "user-doca-version"},
+		}
+
+		require.NoError(t, ApplyExplicitCLIConfigOverrides(options.Options{
+			NetworkOperatorRelease: "26.4",
+		}, cfg))
+		assert.Equal(t, "26.4", cfg.NetworkOperator.SelectedRelease)
+		assert.NotEqual(t, "user-version", cfg.NetworkOperator.Version)
+		assert.NotEqual(t, "user-doca-version", cfg.DOCADriver.Version)
 	})
 }

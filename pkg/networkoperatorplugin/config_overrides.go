@@ -31,7 +31,7 @@ type configFlagOverride struct {
 
 // ConfigFlagMappings returns the canonical CLI-to-config mapping without the
 // internal setter functions. Callers use this for schema/help introspection;
-// ApplyCLIConfigOverrides is the only mutation entry point.
+// the apply functions below are the mutation entry points.
 func ConfigFlagMappings() []ConfigFlagMapping {
 	registry := configFlagOverrideRegistry()
 	out := make([]ConfigFlagMapping, 0, len(registry))
@@ -56,12 +56,35 @@ func ConfigPathsForFlag(flagName string) []string {
 	return nil
 }
 
-// ApplyCLIConfigOverrides is the single mutation boundary for config-backed
-// CLI flags. It is shared by discover, generate, standalone deploy, and
-// standalone validate so a new mapping is implemented once.
+// ApplyCLIConfigOverrides resolves a release selected in the config file, then
+// applies explicit config-backed CLI flags. It is shared by discover,
+// generate, standalone deploy, and standalone validate so a new mapping is
+// implemented once.
 func ApplyCLIConfigOverrides(opts options.Options, cfg *config.LaunchKitConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config must not be nil")
+	}
+	if opts.NetworkOperatorRelease == "" && cfg.NetworkOperator != nil && cfg.NetworkOperator.SelectedRelease != "" {
+		if err := ApplyNetworkOperatorRelease(opts, cfg); err != nil {
+			return fmt.Errorf("apply --network-operator-release to %s: %w",
+				strings.Join(ConfigPathsForFlag("network-operator-release"), ", "), err)
+		}
+	}
+
+	return ApplyExplicitCLIConfigOverrides(opts, cfg)
+}
+
+// ApplyExplicitCLIConfigOverrides applies only values supplied through CLI
+// options. Unlike ApplyCLIConfigOverrides, it does not expand a release found
+// only in cfg. Discovery uses this after restoring a --user-config so every
+// non-clusterConfig value remains untouched unless an explicit flag replaces
+// it.
+func ApplyExplicitCLIConfigOverrides(opts options.Options, cfg *config.LaunchKitConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("config must not be nil")
+	}
+	if cfg.Profile == nil && hasExplicitProfileOverride(opts) {
+		cfg.Profile = &config.Profile{}
 	}
 
 	for _, entry := range configFlagOverrideRegistry() {
@@ -106,9 +129,8 @@ func configFlagOverrideRegistry() []configFlagOverride {
 					"docaDriver.version",
 				},
 			},
-			shouldApply: func(opts options.Options, cfg *config.LaunchKitConfig) bool {
-				return opts.NetworkOperatorRelease != "" ||
-					(cfg.NetworkOperator != nil && cfg.NetworkOperator.SelectedRelease != "")
+			shouldApply: func(opts options.Options, _ *config.LaunchKitConfig) bool {
+				return opts.NetworkOperatorRelease != ""
 			},
 			apply: ApplyNetworkOperatorRelease,
 		},
@@ -206,8 +228,8 @@ func configFlagOverrideRegistry() []configFlagOverride {
 				FlagName:    "workload-manifest",
 				ConfigPaths: []string{"workload.manifest"},
 			},
-			shouldApply: func(opts options.Options, cfg *config.LaunchKitConfig) bool {
-				return opts.WorkloadManifest != "" && profileAvailable(opts, cfg)
+			shouldApply: func(opts options.Options, _ *config.LaunchKitConfig) bool {
+				return opts.WorkloadManifest != ""
 			},
 			apply: func(opts options.Options, cfg *config.LaunchKitConfig) error {
 				if cfg.Workload == nil {
@@ -222,8 +244,8 @@ func configFlagOverrideRegistry() []configFlagOverride {
 				FlagName:    "enable-doca-driver",
 				ConfigPaths: []string{"docaDriver.enable"},
 			},
-			shouldApply: func(opts options.Options, cfg *config.LaunchKitConfig) bool {
-				return opts.EnableDocaDriver != nil && profileAvailable(opts, cfg)
+			shouldApply: func(opts options.Options, _ *config.LaunchKitConfig) bool {
+				return opts.EnableDocaDriver != nil
 			},
 			apply: func(opts options.Options, cfg *config.LaunchKitConfig) error {
 				ensureDOCADriverConfig(cfg).Enable = *opts.EnableDocaDriver
@@ -307,6 +329,11 @@ func configFlagOverrideRegistry() []configFlagOverride {
 			},
 		},
 	}
+}
+
+func hasExplicitProfileOverride(opts options.Options) bool {
+	return opts.Fabric != "" || opts.DeploymentType != "" || opts.MultirailSet ||
+		opts.Routing != "" || opts.IgnoreARPSet || opts.SpectrumX
 }
 
 func stringProfileOverride(

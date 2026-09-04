@@ -21,7 +21,8 @@ import (
 
 type fakeProfileDiscoveryPlugin struct {
 	networkoperatorplugin.NetworkOperatorPlugin
-	groups []config.ClusterConfig
+	groups       []config.ClusterConfig
+	mutateConfig func(*config.LaunchKitConfig)
 }
 
 func (p *fakeProfileDiscoveryPlugin) DiscoverClusterConfig(
@@ -29,6 +30,9 @@ func (p *fakeProfileDiscoveryPlugin) DiscoverClusterConfig(
 	_ client.Client,
 	cfg *config.LaunchKitConfig,
 ) error {
+	if p.mutateConfig != nil {
+		p.mutateConfig(cfg)
+	}
 	cfg.ClusterConfig = append([]config.ClusterConfig(nil), p.groups...)
 	return nil
 }
@@ -96,35 +100,82 @@ func TestDiscoverFreshConfigIgnoresReferenceProfile(t *testing.T) {
 	assert.NotContains(t, string(data), "currentNetworkNamespace:")
 }
 
-func TestDiscoverPreservesPartialUserProfileAndFillsMissingSettings(t *testing.T) {
+func TestDiscoverPreservesUserConfigOutsideClusterConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	inputConfig := filepath.Join(tmpDir, "input.yaml")
 	outputConfig := filepath.Join(tmpDir, "output.yaml")
 	partial := `networkOperator:
-  version: v26.4.0
-  componentVersion: network-operator-v26.4.0
-  repository: nvcr.io/nvidia/mellanox
-  namespace: nvidia-network-operator
+  selectedRelease: "26.4"
+  version: user-version
+  componentVersion: user-component-version
+  repository: user.example.com/components
+  operatorRepository: user.example.com/operator
+  helmRepoURL: https://user.example.com/charts
+  namespace: user-network-operator
+  imagePullSecrets: [user-secret]
+docaDriver:
+  enable: true
+  version: user-doca-version
+networkNamespaces: [user-namespace]
+validation:
+  connectivity: false
+  mode: quick
+  checks: []
+  gpuDirect:
+    enabled: false
+    gpuResourceType: nvidia.com/gpu
 profile:
   deployment: host_device
   multirail: false
+clusterConfig:
+  - identifier: stale-group
 `
 	require.NoError(t, os.WriteFile(inputConfig, []byte(partial), 0o600))
 
+	groups := []config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet"}}
 	launcher := newProfileDiscoveryLauncher(options.Options{
 		UserConfig:        inputConfig,
 		SaveClusterConfig: outputConfig,
-	}, []config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet"}})
+	}, groups)
+	launcher.plugins[networkoperatorplugin.PluginName] = &fakeProfileDiscoveryPlugin{
+		groups: groups,
+		mutateConfig: func(cfg *config.LaunchKitConfig) {
+			cfg.NetworkOperator.Version = "discovery-version"
+			cfg.DOCADriver.Enable = false
+			cfg.NetworkNamespaces = []string{"discovery-namespace"}
+			cfg.Validation.GPUDirect.Enabled = true
+			cfg.Profile.Fabric = "ethernet"
+		},
+	}
 
 	require.NoError(t, launcher.discoverClusterConfig())
 
 	got, err := config.LoadFullConfig(outputConfig, launcher.logger)
 	require.NoError(t, err)
+	require.NotNil(t, got.NetworkOperator)
+	assert.Equal(t, "26.4", got.NetworkOperator.SelectedRelease)
+	assert.Equal(t, "user-version", got.NetworkOperator.Version)
+	assert.Equal(t, "user-component-version", got.NetworkOperator.ComponentVersion)
+	assert.Equal(t, "user.example.com/components", got.NetworkOperator.Repository)
+	assert.Equal(t, "user.example.com/operator", got.NetworkOperator.OperatorRepository)
+	assert.Equal(t, "https://user.example.com/charts", got.NetworkOperator.HelmRepoURL)
+	assert.Equal(t, "user-network-operator", got.NetworkOperator.Namespace)
+	assert.Equal(t, []string{"user-secret"}, got.NetworkOperator.ImagePullSecrets)
+	require.NotNil(t, got.DOCADriver)
+	assert.True(t, got.DOCADriver.Enable)
+	assert.Equal(t, "user-doca-version", got.DOCADriver.Version)
+	assert.Equal(t, []string{"user-namespace"}, got.NetworkNamespaces)
+	require.NotNil(t, got.Validation)
+	require.NotNil(t, got.Validation.Connectivity)
+	assert.False(t, *got.Validation.Connectivity)
+	assert.False(t, got.Validation.GPUDirect.Enabled)
 	require.NotNil(t, got.Profile)
-	assert.Equal(t, "ethernet", got.Profile.Fabric)
+	assert.Empty(t, got.Profile.Fabric)
 	assert.Equal(t, "host_device", got.Profile.Deployment)
 	assert.False(t, got.Profile.Multirail)
 	assert.True(t, got.Profile.MultirailSet)
+	require.Len(t, got.ClusterConfig, 1)
+	assert.Equal(t, "group-a", got.ClusterConfig[0].Identifier)
 }
 
 func TestDiscoverCLIOverridesPersistAndRemainStableOnRerun(t *testing.T) {
@@ -162,12 +213,12 @@ func TestDiscoverCLIOverridesPersistAndRemainStableOnRerun(t *testing.T) {
 
 func TestDiscoverPersistsSpectrumXHardwareDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
-	inputConfig := filepath.Join(tmpDir, "input.yaml")
+	inputConfig := filepath.Join(tmpDir, "l8k-config.yaml")
 	outputConfig := filepath.Join(tmpDir, "output.yaml")
 	require.NoError(t, os.WriteFile(inputConfig, []byte(profileDiscoveryConfigWithoutProfile), 0o600))
+	t.Chdir(tmpDir)
 
 	launcher := newProfileDiscoveryLauncher(options.Options{
-		UserConfig:        inputConfig,
 		SaveClusterConfig: outputConfig,
 		SpectrumX:         true,
 		SPCXVersion:       "RA2.2",
@@ -196,7 +247,7 @@ func TestDiscoverPersistsSpectrumXHardwareDefaults(t *testing.T) {
 	assert.Equal(t, 2, got.Profile.SpectrumX.NumberOfPlanes)
 }
 
-func TestDiscoverPersistsPartialProfileWhenFabricCannotBeResolved(t *testing.T) {
+func TestDiscoverDoesNotCreateProfileForUserConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	inputConfig := filepath.Join(tmpDir, "input.yaml")
 	outputConfig := filepath.Join(tmpDir, "output.yaml")
@@ -211,8 +262,32 @@ func TestDiscoverPersistsPartialProfileWhenFabricCannotBeResolved(t *testing.T) 
 
 	got, err := config.LoadFullConfig(outputConfig, launcher.logger)
 	require.NoError(t, err)
+	assert.Nil(t, got.Profile)
+}
+
+func TestDiscoverAppliesCLIProfileOverridesWhenUserProfileIsMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputConfig := filepath.Join(tmpDir, "input.yaml")
+	outputConfig := filepath.Join(tmpDir, "output.yaml")
+	require.NoError(t, os.WriteFile(inputConfig, []byte(profileDiscoveryConfigWithoutProfile), 0o600))
+
+	launcher := newProfileDiscoveryLauncher(options.Options{
+		UserConfig:        inputConfig,
+		SaveClusterConfig: outputConfig,
+		Fabric:            "infiniband",
+		DeploymentType:    "rdma_shared",
+		Multirail:         false,
+		MultirailSet:      true,
+	}, []config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet"}})
+
+	require.NoError(t, launcher.discoverClusterConfig())
+
+	got, err := config.LoadFullConfig(outputConfig, launcher.logger)
+	require.NoError(t, err)
 	require.NotNil(t, got.Profile)
-	assert.Empty(t, got.Profile.Fabric)
-	assert.Equal(t, "sriov", got.Profile.Deployment)
-	assert.True(t, got.Profile.Multirail)
+	assert.Equal(t, "infiniband", got.Profile.Fabric)
+	assert.Equal(t, "rdma_shared", got.Profile.Deployment)
+	assert.False(t, got.Profile.Multirail)
+	assert.True(t, got.Profile.MultirailSet)
+	assert.Empty(t, got.Profile.Routing)
 }

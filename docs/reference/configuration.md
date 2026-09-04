@@ -7,13 +7,21 @@ SPDX-License-Identifier: Apache-2.0
 
 `cluster-config.yaml` is both an input and an output. Discovery writes it, generation reads and updates it, and deploy/validate use it to resolve release and namespace context.
 
-Configuration source precedence is:
+For generation, configuration source precedence is:
 
 1. Embedded defaults.
 2. `--config-dir/l8k-config.yaml`, when selected.
 3. `--user-config`.
 4. Resolved hardware defaults for missing profile fields.
 5. Explicit CLI flags.
+
+Fresh discovery has no user input layer: embedded or `--config-dir` defaults
+are combined with discovered hardware, then explicit CLI flags win.
+
+Discovery with `--user-config` is intentionally narrower: it replaces only
+`clusterConfig`, preserves every other loaded section, and then applies
+explicit CLI flags. It does not fill missing profile fields or recompute
+validation settings in the supplied config.
 
 `--config-dir/presets/` replaces the embedded preset catalog. It does not merge with it.
 
@@ -122,7 +130,7 @@ validation:
 
 | Field | Meaning |
 | --- | --- |
-| `gpuDirect.enabled` | Run a separate CUDA DMA-BUF `ib_write_bw` matrix when `ib_write_bw` is selected. Discovery always writes this boolean and enables it only when every discovered worker can satisfy its render bucket's topology-derived `gpuResourceType` request. |
+| `gpuDirect.enabled` | Run a separate CUDA DMA-BUF `ib_write_bw` matrix when `ib_write_bw` is selected. Fresh discovery enables it only when every discovered worker can satisfy its render bucket's topology-derived `gpuResourceType` request. Discovery with `--user-config` preserves the supplied value. |
 | `gpuDirect.gpuResourceType` | Qualified Kubernetes extended resource requested by the primary validation container. Defaults to `nvidia.com/gpu`. |
 | `connectivity` | Enables the data-plane stage. Static acceptance checks always run. |
 | `mode` | `quick`, `full`, or `strict`. |

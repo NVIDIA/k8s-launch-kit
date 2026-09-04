@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-config
-version: 1.2.6
+version: 1.2.7
 description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
@@ -35,16 +35,17 @@ l8k discover --user-config my-config.yaml \
 
 ## Profile Resolution and Write-Back
 
-Discovery and file-backed generation resolve and persist settings with this precedence:
+Fresh discovery and file-backed generation resolve and persist settings with
+this precedence:
 
 1. Hardware and built-in defaults fill missing fields.
-2. Values already present in `--user-config` are preserved.
+2. Existing config values.
 3. Explicit CLI flags override both.
 
-Discovery writes to its selected output YAML; generation rewrites its source
-config in place. On later runs, only missing fields are recalculated.
-`multirail: false` is an explicit value, not a missing field, so it remains
-false across rewrites.
+Discovery with `--user-config` follows a stricter refresh contract: only
+`clusterConfig` is replaced. Every other section remains as loaded unless an
+explicit CLI flag overrides its corresponding field. Generation still fills
+missing profile fields when it consumes that config.
 
 ## Config Sections Quick Reference
 

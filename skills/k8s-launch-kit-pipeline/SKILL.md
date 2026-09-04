@@ -113,7 +113,7 @@ apply and reconcile the generated custom resources.
 
 ## Phase Order
 
-1. **Discover** — Probe hardware, resolve profile settings, and persist both
+1. **Discover** — Probe hardware and persist its inventory; fresh discovery also resolves profile settings, while `--user-config` preserves non-`clusterConfig` sections
 2. **Generate** — Match profile, render templates, write YAMLs
 3. **Deploy** — Apply resources in dependency order
 

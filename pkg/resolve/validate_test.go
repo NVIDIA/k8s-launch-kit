@@ -36,6 +36,27 @@ func TestValidateResolvedConfigAllowsEmptyRoutingWithoutDefaulting(t *testing.T)
 	require.Empty(t, cfg.Profile.Routing)
 }
 
+func TestValidateResolvedConfigDoesNotPersistDefaultIPVersion(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.4"},
+		Profile: &config.Profile{
+			Fabric:     "ethernet",
+			Deployment: "sriov",
+			Multirail:  true,
+			SpectrumX: &config.ProfileSpectrumX{
+				Enable:         true,
+				SPCXVersion:    "RA2.2",
+				MultiplaneMode: "hwplb",
+				NumberOfPlanes: 2,
+				TopologyType:   config.SpectrumXTopology2Tier,
+			},
+		},
+	}
+
+	require.NoError(t, ValidateResolvedConfig(cfg))
+	require.Empty(t, cfg.Profile.SpectrumX.IPVersion)
+}
+
 func TestValidateResolvedConfigRejectsInvalidRouting(t *testing.T) {
 	cfg := &config.LaunchKitConfig{
 		Profile: &config.Profile{Routing: "gateway-based"},

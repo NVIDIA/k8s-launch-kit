@@ -41,8 +41,8 @@ and its CRDs are created in a dedicated namespace, used to publish
 NicDevice CRs, and torn down when discovery finishes.
 
 Discovery groups nodes by hardware, detects east-west vs north-south
-NICs, probes OFED-dependent modules, resolves missing profile settings,
-and writes the final profile back to cluster-config.yaml.`,
+NICs, and probes OFED-dependent modules. With --user-config, it replaces
+only clusterConfig and then applies explicit CLI overrides.`,
 	Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
@@ -50,7 +50,7 @@ and writes the final profile back to cluster-config.yaml.`,
   # Uses $KUBECONFIG if set
   l8k discover --save-cluster-config ./cluster-config.yaml
 
-  # Merge with existing config
+  # Refresh only clusterConfig in an existing config
   l8k discover --user-config my-config.yaml \
     --save-cluster-config ./cluster-config.yaml
 
@@ -128,8 +128,8 @@ func init() {
 	discoverCmd.Flags().BoolVar(&keepNamespace, "keep-namespace", false, "Skip teardown of the nvidia-k8s-launch-kit namespace (for debugging)")
 	discoverCmd.Flags().BoolVar(&collapseNicRails, "collapse-nic-rails", true, collapseNicRailsFlagHelp)
 
-	// Profile settings are resolved after hardware discovery and persisted in
-	// cluster-config.yaml. Explicit flags override values from --user-config.
+	// Profile settings are resolved after hardware discovery for a fresh config.
+	// With --user-config, only explicit flags can change the supplied profile.
 	discoverCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type override: ethernet, infiniband")
 	discoverCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Deployment type override: sriov, rdma_shared, host_device")
 	discoverCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")

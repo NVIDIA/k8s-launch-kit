@@ -43,8 +43,10 @@ namespace to discover your cluster's network capabilities and hardware
 configuration. Discovery does **not** require a pre-installed Network Operator —
 the daemon and its CRDs are created in a dedicated namespace, used to publish
 `NicDevice` CRs, and torn down when discovery finishes. This phase can be
-skipped if you provide your own configuration file. Discovery also resolves
-missing profile settings and stores the final values in `cluster-config.yaml`.
+skipped if you provide your own configuration file. Fresh discovery also
+resolves profile settings and stores the final values in `cluster-config.yaml`.
+With `--user-config`, discovery refreshes only `clusterConfig` and explicit CLI
+overrides, leaving every other section as supplied.
 Because `NicDevice` does not expose MAC addresses, Launch Kit reads them
 transiently from sysfs on every worker and checks whether host netplan uses a
 matching `match.macaddress` plus `set-name` rule. The group-level
@@ -56,10 +58,10 @@ stanzas from the host netplan configuration and re-run discovery before
 retrying generation.
 
 ### Select the Deployment Profile
-Discovery fills missing profile values from hardware and built-in defaults.
-Values already present under `profile` are preserved, while explicit CLI flags
-(`--fabric`, `--deployment-type`, `--multirail`, `--routing`, `--ignore-arp`,
-`--spectrum-x`) take precedence.
+Fresh discovery fills profile values from hardware and built-in defaults.
+When `--user-config` is supplied, its profile is not recalculated. Explicit CLI
+flags (`--fabric`, `--deployment-type`, `--multirail`, `--routing`,
+`--ignore-arp`, `--spectrum-x`) take precedence in both modes.
 
 For Spectrum-X, discovery combines the east-west NIC device ID with each
 group's `gpuType` (or `machineType` fallback). H100/H200/B200/GB200 platforms
@@ -201,9 +203,9 @@ Deploy a minimal Network Operator profile to automatically discover your cluster
 network capabilities and hardware configuration by using --discover-cluster-config.
 This phase can be skipped if you provide your own configuration file by using --user-config.
 This phase requires --kubeconfig to be specified.
-Discovery fills missing profile settings from the detected hardware and built-in
-defaults, applies explicit CLI overrides, and saves the final profile with the
-hardware inventory in cluster-config.yaml.
+Fresh discovery fills profile settings from the detected hardware and built-in
+defaults. With --user-config, discovery replaces only clusterConfig and preserves
+all other settings. Explicit CLI overrides apply in both modes.
 
 ### Generate Deployment Files
 Based on the discovered or provided configuration,
@@ -446,10 +448,10 @@ validation:
     ibWriteMinBandwidthGbps: 100
 ```
 
-Discovery always writes `gpuDirect.enabled`: it is `true` only when every
-worker in every discovered group can satisfy the topology-derived
-`gpuResourceType` request for its render bucket, and `false` otherwise. Users
-can edit the result before generation. When enabled, generated validation DaemonSets use
+Fresh discovery writes `gpuDirect.enabled`: it is `true` only when every worker
+in every discovered group can satisfy the topology-derived `gpuResourceType`
+request for its render bucket, and `false` otherwise. With `--user-config`, the
+supplied value is preserved. When enabled, generated validation DaemonSets use
 the release-specific full-runtime DOCA image, propagate
 `networkOperator.imagePullSecrets`, and request the GPU prefix required by the
 largest discovered `GPU<N>` index in the primary DOCA container. The netshoot
@@ -533,11 +535,17 @@ When `--user-config` and a filesystem default are both absent, discovery uses
 the default configuration embedded in the binary. Pass `--config-dir` to use
 an external default and/or preset catalog instead.
 
-The saved file contains the final `profile` section. Resolution order is:
+For a fresh discovery, the saved file contains a hardware-resolved `profile`
+section. Resolution order is:
 
 1. Hardware and built-in defaults fill missing fields.
-2. Existing values from `--user-config` are preserved.
-3. Explicit `discover` CLI flags override both and are written back.
+2. Explicit `discover` CLI flags override those values and are written back.
+
+When `--user-config` is supplied, discovery instead treats every section other
+than `clusterConfig` as owned by the user: it replaces `clusterConfig`, leaves
+the rest of the loaded configuration unchanged, and then applies explicit CLI
+flags. This includes explicit `false` values such as
+`validation.gpuDirect.enabled: false` and `profile.multirail: false`.
 
 For example, force a shared-RDMA InfiniBand profile and explicitly opt out of
 multirail:
@@ -584,9 +592,10 @@ l8k --discover-cluster-config --save-cluster-config ./my-cluster-config.yaml \
 ### Discovery with User-Provided Base Config
 
 Use your own config file (with custom network operator version, subnets, or a
-partial profile) as the base for discovery. Missing profile values are resolved;
-existing values are retained unless a CLI flag overrides them. Without
-`--save-cluster-config`, the file is rewritten in place with the final results:
+profile) as the base for discovery. Discovery replaces only `clusterConfig`;
+all other sections remain unchanged unless an explicit CLI flag overrides
+them. Without `--save-cluster-config`, the file is rewritten in place with the
+refreshed hardware inventory:
 
 ```bash
 l8k discover --user-config ./my-config.yaml \
@@ -762,13 +771,12 @@ In JSON mode, errors include structured fields (`code`, `category`, `transient`,
 ## Configuration file
 
 During cluster discovery, Kubernetes Launch Kit creates a configuration file
-that contains both hardware inventory and the resolved deployment profile. The
-profile precedence is hardware/built-in defaults, then existing YAML values,
-then explicit CLI flags. The config can be edited and supplied through
-`--user-config` either as a standalone generation input or as a base for a
-later discovery refresh. Refreshing replaces `clusterConfig`, fills only
-missing profile fields, applies CLI overrides, and writes the final profile
-back to YAML.
+that contains both hardware inventory and the resolved deployment profile. A
+fresh discovery uses hardware/built-in defaults followed by explicit CLI
+flags. The config can be edited and supplied through `--user-config` either as
+a standalone generation input or as a base for a later discovery refresh. A
+refresh replaces only `clusterConfig`; every other section stays as supplied,
+except for values selected by explicit CLI flags.
 
 The tool resolves configuration and profile paths in order: local directory first (`./l8k-config.yaml`, `./profiles`), then installed location (`/usr/local/share/l8k/`), then binary-relative.
 
