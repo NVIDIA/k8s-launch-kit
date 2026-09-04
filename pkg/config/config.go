@@ -74,6 +74,9 @@ func DefaultLaunchKitConfig() (*LaunchKitConfig, error) {
 	if err := NormalizeMaintenance(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid embedded maintenance config: %w", err)
 	}
+	if err := validateDOCADriverConfig(cfg.DOCADriver); err != nil {
+		return nil, fmt.Errorf("invalid embedded docaDriver config: %w", err)
+	}
 	cfg.Validation = NormalizeValidationConfig(cfg.Validation)
 	if err := ValidateValidationConfig(cfg.Validation); err != nil {
 		return nil, fmt.Errorf("invalid embedded validation config: %w", err)
@@ -314,6 +317,18 @@ type DOCADriverConfig struct {
 	// a deployment tool should surface hardware-compat issues early rather than
 	// letting a broken MOFED reload happen silently downstream.
 	SkipPreflightChecks bool `yaml:"skipPreflightChecks"`
+	// Env is an advanced escape hatch for environment variables that are not
+	// modeled by first-class DOCADriverConfig fields. Entries are forwarded to
+	// the Network Operator's ofedDriver spec. When a name also has a generated
+	// value (for example UNLOAD_STORAGE_MODULES), this value takes precedence.
+	Env []DOCADriverEnvVar `yaml:"env,omitempty"`
+}
+
+// DOCADriverEnvVar is a literal environment variable forwarded to the
+// Network Operator's ofedDriver configuration.
+type DOCADriverEnvVar struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
 }
 
 type NvIpamConfig struct {
@@ -878,6 +893,9 @@ func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKit
 	if err := NormalizeMaintenance(&config); err != nil {
 		return nil, nil, fmt.Errorf("invalid maintenance config in %s: %w", configPath, err)
 	}
+	if err := validateDOCADriverConfig(config.DOCADriver); err != nil {
+		return nil, nil, fmt.Errorf("invalid docaDriver config in %s: %w", configPath, err)
+	}
 
 	logger.Info("Cluster configuration loaded successfully",
 		"networkOperatorVersion", config.NetworkOperator.Version,
@@ -942,6 +960,9 @@ func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
 	if err := NormalizeMaintenance(config); err != nil {
 		return err
 	}
+	if err := validateDOCADriverConfig(config.DOCADriver); err != nil {
+		return err
+	}
 
 	if config.NetworkOperator.Repository == "" {
 		return fmt.Errorf("networkOperator.repository is required")
@@ -981,6 +1002,21 @@ func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
 		}
 	}
 
+	return nil
+}
+
+func validateDOCADriverConfig(driver *DOCADriverConfig) error {
+	if driver == nil {
+		return nil
+	}
+	for i, env := range driver.Env {
+		if env.Name == "" {
+			return fmt.Errorf("docaDriver.env[%d].name is required", i)
+		}
+		if problems := k8svalidation.IsEnvVarName(env.Name); len(problems) > 0 {
+			return fmt.Errorf("docaDriver.env[%d].name %q is invalid: %s", i, env.Name, strings.Join(problems, "; "))
+		}
+	}
 	return nil
 }
 

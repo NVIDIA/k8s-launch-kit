@@ -75,6 +75,14 @@ docaDriver:
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: true
   skipPreflightChecks: false
+  # Advanced users only: literal environment variables are forwarded to the
+  # MOFED containers through NicClusterPolicy or NicNodePolicy. Values here
+  # override variables generated from the first-class settings above by name.
+  # Incorrect driver options can prevent module reload and disrupt node
+  # networking. Duplicate names are allowed; the last value wins.
+  # env:
+  #   - name: THIRD_PARTY_RDMA_MODULES
+  #     value: "nvidia_peermem"
 
 maintenance:
   # Global concurrency; positive integer or 1%-100%.

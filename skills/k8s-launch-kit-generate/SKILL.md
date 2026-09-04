@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.10
+version: 1.2.11
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -150,6 +150,12 @@ output/
 ```
 
 `values.yaml` is rendered from the profile's `00-values.yaml` template. `--network-operator-release <MAJOR.MINOR>` populates the chart repository URL and image tag from the embedded catalog. For Spectrum-X profiles, the same catalog entry supplies the independently versioned xPlane repository and tag rather than reusing the generic Network Operator component coordinates. To install or upgrade the chart alongside the CRs, pass `--deploy` (and `--overwrite-existing` when the release already exists with different values).
+
+For non-Spectrum-X profiles, `docaDriver.env` entries are forwarded into the
+rendered `ofedDriver.env` list in either NicClusterPolicy (legacy and
+host-device paths) or NicNodePolicy. This is an advanced escape hatch: custom
+values override all generated driver environment values with the same name,
+and duplicate custom names use the last value.
 
 Set `networkOperator.skipHelmChart: true` or pass
 `--skip-network-operator-helm` when another system owns the Helm release. The

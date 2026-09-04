@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-config
-version: 1.2.7
+version: 1.2.8
 description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
@@ -131,9 +131,15 @@ sriov:
 sriov:
   mtu: 9000
 
-# Set DOCA driver version
+# Set the DOCA driver version. Advanced users can also forward literal
+# environment variables through the generated NicClusterPolicy or
+# NicNodePolicy; custom values override any value produced by another
+# docaDriver field with the same name.
 docaDriver:
   version: "doca3.3.0-26.01-1.0.0.0-6"
+  env:
+    - name: THIRD_PARTY_RDMA_MODULES
+      value: "nvidia_peermem"
 
 # Allow four simultaneous maintenance operations. Network Operator 26.1+
 # uses the global Maintenance Operator limits; older releases use the legacy
@@ -177,6 +183,7 @@ networkNamespaces: ["my-namespace"]
   the installed l8k version.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
+- `docaDriver.env` is an advanced escape hatch. Values override generated MOFED environment entries by name, duplicate custom names use the last value, and bad driver options can disrupt node networking.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.
 - Updating an existing release to the generated requestor-mode Helm values requires `--overwrite-existing`.
 
