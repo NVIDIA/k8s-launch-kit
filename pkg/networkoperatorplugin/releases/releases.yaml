@@ -29,11 +29,11 @@ releases:
       image: nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.2.3-runtime-host
   "26.4":
     networkOperator:
-      version: v26.4.1
-      componentVersion: network-operator-v26.4.1
-      repository: nvcr.io/nvidia/mellanox
-      operatorRepository: nvcr.io/nvidia/cloud-native
-      helmRepoURL: https://helm.ngc.nvidia.com/nvidia
+      version: v26.4.2-rc.1
+      componentVersion: network-operator-v26.4.2-rc.1
+      repository: nvcr.io/nvstaging/mellanox
+      operatorRepository: nvcr.io/nvstaging/mellanox
+      helmRepoURL: https://helm.ngc.nvidia.com/nvstaging/mellanox
     docaDriver:
       version: doca3.4.1-26.04-1.1.0.0-1
     xPlane:
