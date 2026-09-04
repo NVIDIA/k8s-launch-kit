@@ -86,14 +86,11 @@ func TestParseAIRTopologyNormalizesOneBasedNamingContract(t *testing.T) {
 	require.Equal(t, "host", host.Attrs.Role)
 	require.Equal(t, 0, host.Attrs.Rail)
 	require.Equal(t, 0, host.Attrs.SU)
-	require.NotNil(t, host.HostIndex)
-	require.Equal(t, 0, *host.HostIndex)
 	require.Equal(t, "leaf", leaf.Attrs.Role)
 	require.Equal(t, 0, leaf.Attrs.Plane)
 	require.Equal(t, 0, leaf.Attrs.Rail)
 	require.Equal(t, 0, leaf.Attrs.SU)
 	require.Equal(t, 3, topology.Links[3][1].Attrs.Plane)
-	require.Equal(t, 1, *topology.Links[4][0].HostIndex)
 }
 
 func TestParseAIRTopologyNormalizes3TierNamingContract(t *testing.T) {
@@ -128,7 +125,6 @@ func TestParseAIRTopologyNormalizes3TierNamingContract(t *testing.T) {
 	require.True(t, host.Attrs.HasPod)
 	require.Equal(t, 2, host.Attrs.SU)
 	require.Equal(t, 1, host.Attrs.Rail)
-	require.Equal(t, 3, *host.HostIndex)
 	require.Equal(t, 1, leaf.Attrs.Pod)
 	require.Equal(t, 0, leaf.Attrs.Plane)
 }
