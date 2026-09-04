@@ -118,7 +118,7 @@ func parseDocs(t *testing.T, name, content string) []map[string]any {
 		}
 		var doc map[string]any
 		err := yaml.UnmarshalStrict([]byte(raw), &doc)
-		require.NoErrorf(t, err, "file %s doc %d is not valid YAML:\n%s", name, i, raw)
+		require.NoErrorf(t, err, "file %s doc %d is not valid YAML (likely a glued separator):\n%s", name, i, raw)
 		docs = append(docs, doc)
 	}
 	return docs
@@ -222,22 +222,13 @@ func TestProfileManifestsAreValidMultiDocYAML(t *testing.T) {
 				if wantDocs == 0 {
 					continue // values-like file with no Kind
 				}
-				gotDocs := 0
-				for _, raw := range splitYAMLDocuments(content) {
-					if strings.TrimSpace(raw) == "" {
-						continue
-					}
-					var doc map[string]any
-					require.NoErrorf(t, yaml.UnmarshalStrict([]byte(raw), &doc),
-						"%s contains a document that is not valid YAML (likely a glued separator):\n%s", name, raw)
-					gotDocs++
-				}
-				require.Equalf(t, wantDocs, gotDocs,
+				docs := parseDocs(t, name, content)
+				require.Equalf(t, wantDocs, len(docs),
 					"%s: expected %d documents (one per `kind:`), got %d — a glued `---` separator merges documents",
-					name, wantDocs, gotDocs)
+					name, wantDocs, len(docs))
 				if strings.Contains(name, "20-ippool") {
 					sawIPPool = true
-					require.Equal(t, 8, gotDocs, "multirail IPPool must emit one valid doc per rail")
+					require.Equal(t, 8, len(docs), "multirail IPPool must emit one valid doc per rail")
 				}
 			}
 			require.True(t, sawIPPool, "expected an IPPool manifest in profile %s", p.dir)
