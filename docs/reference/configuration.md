@@ -157,6 +157,10 @@ docaDriver:
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: true
   skipPreflightChecks: false
+  # Advanced users only. Custom values override generated driver env by name.
+  # env:
+  #   - name: THIRD_PARTY_RDMA_MODULES
+  #     value: "nvidia_peermem"
 ```
 
 | Field | Meaning |
@@ -167,8 +171,13 @@ docaDriver:
 | `unloadThirdPartyRDMAModules` | Allow unload of non-MLX RDMA dependencies before driver replacement. |
 | `enableNFSRDMA` | Enable NFS-over-RDMA support. |
 | `skipPreflightChecks` | Skip the init-container module dependency check. |
+| `env` | Advanced literal `name`/`value` environment entries forwarded through the generated NicClusterPolicy or NicNodePolicy. Custom values override generated values by name; the last custom duplicate wins. |
 
 Both unload controls default to `true`. Discovery does not populate the holder-module lists automatically. Confirm that no active workload depends on a module that the driver flow will unload.
+
+`env` is an advanced escape hatch for driver settings that Launch Kit does not
+model. The generated policy contains no duplicate environment names. Incorrect
+values can prevent MOFED from reloading and disrupt node networking.
 
 ## Maintenance
 
