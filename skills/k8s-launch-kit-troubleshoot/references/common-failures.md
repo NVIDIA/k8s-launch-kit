@@ -189,17 +189,20 @@ NetworkAttachmentDefinition is missing/misconfigured.
 **Symptom**: Running `--discover-cluster-config` completes but produces an empty
 `clusterConfig` array or reports "no groups found".
 
-**Root cause**: The label selector does not match any nodes, or nodes do not have
-NVIDIA/Mellanox NICs detected by NFD.
+**Root cause**: No Ready, schedulable node has a discoverable NVIDIA/Mellanox
+NIC, or all detected BlueFields are in zero-trust (`restricted`) mode and are
+therefore excluded from `NicDevice` discovery.
 
 **Remediation**:
-1. Verify nodes have the expected label:
-   `kubectl get nodes -l feature.node.kubernetes.io/pci-15b3.present=true`
-2. If using `--node-selector`, verify your selector matches existing node labels:
-   `kubectl get nodes --show-labels`
-3. Verify Node Feature Discovery (NFD) is running:
-   `kubectl get pods -n node-feature-discovery` (or the namespace where NFD is deployed)
-4. Check that NodeFeature CRs are populated:
-   `kubectl get nodefeatures -A`
-5. If NFD is running but NIC labels are missing, the NICs may not be properly detected
-   by the host OS. Check `lspci | grep Mellanox` on the node.
+1. Verify the candidate nodes are Ready and not cordoned:
+   `kubectl get nodes`
+2. Re-run discovery with `--keep-namespace`, then inspect the daemon pod and
+   logs in `nvidia-k8s-launch-kit`.
+3. Check that the host exposes NVIDIA NICs:
+   `lspci -Dn | grep 15b3`
+4. For each BlueField PCI address, query the host trust mode from the daemon
+   pod: `mlxprivhost -d <pci> q`. A `level: restricted` result is intentionally
+   excluded because NIC Configuration Operator cannot configure or publish it.
+5. NFD and `feature.node.kubernetes.io/pci-15b3.present` are not prerequisites
+   for discovery. `--node-selector` is saved for deployment-time selection and
+   does not constrain the discovery daemon or its `NicDevice` wait set.

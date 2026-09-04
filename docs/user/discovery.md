@@ -21,7 +21,7 @@ Discovery is self-contained. It does not require Node Feature Discovery (NFD) or
 2. Prepares the private `nvidia-k8s-launch-kit` namespace.
 3. Creates the NIC Configuration Operator CRDs only when they are missing.
 4. Runs a temporary NIC Configuration Daemon on the eligible nodes.
-5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe.
+5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe and excludes BlueFields whose host trust level is `restricted`.
 6. Reads the published `NicDevice` resources and probes GPU, NIC, fabric, module, NUMA, and rail data.
 7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, only `clusterConfig` is replaced.
 8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
@@ -31,7 +31,7 @@ The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for
 ## Requirements
 
 - Kubernetes access through `--kubeconfig`, `$KUBECONFIG`, or `~/.kube/config`.
-- At least one Ready, schedulable node with an NVIDIA or Mellanox NIC.
+- At least one Ready, schedulable node with a discoverable NVIDIA or Mellanox NIC. BlueFields in zero-trust (`restricted`) mode do not count because NIC Configuration Operator does not publish `NicDevice` resources for them.
 - Image pull access on eligible nodes to the configured NIC Configuration Daemon image.
 
 For a private registry, forward one or more pull secrets:
@@ -43,6 +43,13 @@ l8k discover \
 ```
 
 The default `--node-selector` value is written to the saved configuration for deployment-time resource selection. It does not limit which nodes run the discovery daemon.
+
+Before waiting for `NicDevice` resources, Launch Kit checks BlueField trust
+mode with `mlxprivhost`. A restricted BlueField is excluded from the wait set.
+If the same node has another non-restricted NVIDIA NIC, that node remains in
+the wait set and its published devices are discovered normally. A failed or
+unrecognized trust query is treated as non-restricted, matching NIC
+Configuration Operator behavior.
 
 ## Hardware And GPU Topology
 
@@ -213,7 +220,7 @@ l8k discover \
   --save-cluster-config ./cluster-config.yaml
 ```
 
-Debug logs include node eligibility, sysfs NIC probing, machine/GPU source selection, GPU topology, fabric reads, PF traffic classification, preset matching, rail collapsing, hardware fingerprints, and label writes. Summary counts remain visible at info level.
+Debug logs include node eligibility, sysfs NIC and BlueField trust probing, machine/GPU source selection, GPU topology, fabric reads, PF traffic classification, preset matching, rail collapsing, hardware fingerprints, and label writes. Summary counts remain visible at info level.
 
 ## Saved Configuration
 

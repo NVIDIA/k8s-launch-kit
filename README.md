@@ -47,6 +47,10 @@ skipped if you provide your own configuration file. Fresh discovery also
 resolves profile settings and stores the final values in `cluster-config.yaml`.
 With `--user-config`, discovery refreshes only `clusterConfig` and explicit CLI
 overrides, leaving every other section as supplied.
+Before waiting for `NicDevice` resources, Launch Kit probes each node for
+NVIDIA NICs. BlueField devices in zero-trust (`restricted`) mode are excluded
+because NIC Configuration Operator intentionally does not publish them; a node
+with another discoverable NIC remains in the wait set.
 Because `NicDevice` does not expose MAC addresses, Launch Kit reads them
 transiently from sysfs on every worker and checks whether host netplan uses a
 matching `match.macaddress` plus `set-name` rule. The group-level
@@ -271,7 +275,7 @@ Host Target Common Flags:
       --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)
       --network-operator-namespace string   Override the network operator namespace from the config file
       --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 26.1, 26.4, 26.7
-      --node-selector string                Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and NIC nodes are detected via a sysfs PCI-vendor probe (default "feature.node.kubernetes.io/pci-15b3.present=true")
+      --node-selector string                Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and discoverable NICs are detected via sysfs; restricted BlueFields are excluded (default "feature.node.kubernetes.io/pci-15b3.present=true")
       --skip-network-operator-helm          Skip Network Operator Helm values generation, chart installation, and Helm-specific validation
       --user-config string                  Use provided cluster configuration file (as base config for discovery or as full config without discovery)
 

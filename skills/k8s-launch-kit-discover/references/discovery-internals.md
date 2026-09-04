@@ -64,11 +64,18 @@ only hard-fails when no pod ever became Ready.
 
 To pick which nodes to wait on for `NicDevice` CRs, `filterNodesWithNICs` execs a
 sysfs probe (`sysfsMellanoxNICPresentCmd`) into each daemon pod that scans
-`/sys/bus/pci/devices/*/vendor` for `0x15b3`; only NIC-bearing nodes enter the
-wait set. The `--node-selector` flag is **not** used for scheduling or the wait —
-it only populates the **saved** `cluster-config.yaml` `nodeSelector` for deploy
-time. (Fallback: when no REST config is available for pod exec, the legacy
-`--node-selector` label filter is used instead.)
+`/sys/bus/pci/devices/*/vendor` for `0x15b3`. For BlueField-2, BlueField-3,
+BlueField-3 Lx, and BlueField-4 devices, the same probe runs
+`mlxprivhost -d <pci> q`. Devices that successfully report
+`level: restricted` are excluded, mirroring NIC Configuration Operator's
+zero-trust handling; failed or unrecognized trust queries remain discoverable,
+also matching the operator. A node enters the wait set when at least one
+discoverable NIC remains. A restricted-only node is reported separately and
+excluded so discovery does not wait for a `NicDevice` that can never be
+published. The `--node-selector` flag is **not** used for scheduling or the
+wait — it only populates the **saved** `cluster-config.yaml` `nodeSelector` for
+deploy time. (Fallback: when no REST config is available for pod exec, the
+legacy `--node-selector` label filter is used instead.)
 
 ### Leftover pre-clean
 

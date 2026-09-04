@@ -67,7 +67,12 @@ kubectl describe pod -n nvidia-k8s-launch-kit <pod-name>
 kubectl logs -n nvidia-k8s-launch-kit <pod-name>
 ```
 
-Common causes include an unavailable daemon image, a missing image pull secret, no Ready schedulable nodes, or no node exposing PCI vendor `0x15b3` through sysfs. NFD labels are not required for discovery scheduling.
+Common causes include an unavailable daemon image, a missing image pull secret,
+no Ready schedulable nodes, no node exposing PCI vendor `0x15b3` through
+sysfs, or a cluster where every detected BlueField is in zero-trust
+(`restricted`) mode. Restricted BlueFields are deliberately excluded because
+NIC Configuration Operator does not publish `NicDevice` resources for them.
+NFD labels are not required for discovery scheduling.
 
 ## Namespace Mismatch
 

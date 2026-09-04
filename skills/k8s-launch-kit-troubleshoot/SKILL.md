@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-troubleshoot
-version: 1.1.2
+version: 1.1.3
 description: "Use this skill when the user has problems with NVIDIA Network Operator on Kubernetes, or wants to analyze a sosreport diagnostic dump. Activate for: OFED driver crashes, SR-IOV pods failing, NicClusterPolicy errors, network operator pod issues, RDMA not working, NIC configuration failures, pods stuck in CrashLoopBackOff or ContainerCreating with network annotations, VF allocation issues, or when the user mentions 'troubleshoot', 'debug', 'sosreport', 'diagnose', or describes any NVIDIA networking failure -- even if they don't explicitly ask for troubleshooting."
 metadata:
   requires:
@@ -66,7 +66,8 @@ kubectl get pods -A -o wide | grep -E 'ContainerCreating|Init'
 | No VFs on node | SriovNetworkNodePolicy not matching | Verify `nodeSelector` labels match worker nodes |
 | RDMA not working | Missing RDMA device plugin or wrong resource name | Check `rdma-shared-dp` pods, verify resource annotations |
 | Phase 0 Helm chart download returns HTTP 401 or an image-pull-Secret error | The configured Secret is missing from the operator namespace, unreadable by the kubeconfig, or has no compatible Docker auth entry | Verify the Secret in `networkOperator.namespace`; for NGC, its `.dockerconfigjson` must contain `nvcr.io` credentials |
-| `l8k discover` daemon pods stuck (ImagePullBackOff / Pending) | Bad image tag, missing pull secret, or no `feature.node.kubernetes.io/pci-15b3.present=true` nodes | Re-run with `--keep-namespace` then `kubectl describe pod -n nvidia-k8s-launch-kit`. Fix `networkOperator.componentVersion` / pass `--image-pull-secrets` / verify NFD is running. |
+| `l8k discover` daemon pods stuck (ImagePullBackOff / Pending) | Bad image tag, missing pull secret, or no Ready schedulable nodes | Re-run with `--keep-namespace` then `kubectl describe pod -n nvidia-k8s-launch-kit`. Fix `networkOperator.componentVersion`, pass `--image-pull-secrets`, or restore node readiness. NFD is not required. |
+| `l8k discover` waits for a node that has only a BlueField | The BlueField is in zero-trust (`restricted`) mode and NIC Configuration Operator will not publish a `NicDevice` | Use a Launch Kit version that excludes restricted BlueFields from the wait set; confirm the mode with `mlxprivhost -d <pci> q` in the daemon pod. |
 | `l8k validate` / `deploy` can't find Network Operator pods | Operator namespace mismatch | Verify `--network-operator-namespace` matches actual namespace (does NOT apply to `l8k discover` — it ignores the flag and uses its own `nvidia-k8s-launch-kit` namespace) |
 | IPPool not allocating | NV-IPAM subnet exhausted or misconfigured | Check `ippools` CR status, verify CIDR ranges |
 | `--for requires --node-selector` | `--for` was passed without `--node-selector` | Add `--node-selector key=val,…`. The synthesized clusterConfig has no live worker-node list; the selector identifies target nodes at apply time. |
