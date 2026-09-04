@@ -32,9 +32,11 @@ Controls DOCA/OFED driver deployment in the NicClusterPolicy.
 | `enableNFSRDMA`            | bool   | `false`                          | Enable NFS over RDMA support                             |
 | `unloadThirdPartyRDMAModules`   | bool   | `true`                           | Unload kernel modules that depend on MLX/OFED drivers    |
 
-When `unloadThirdPartyRDMAModules` is true and dependent modules are discovered,
-the generated NicClusterPolicy includes `UNLOAD_THIRD_PARTY_RDMA_MODULES` env var
-(space-separated module names) in the ofedDriver section.
+When `unloadThirdPartyRDMAModules` is true, the generated NicClusterPolicy
+sets the `UNLOAD_THIRD_PARTY_RDMA_MODULES` environment variable to `"true"`
+(a boolean flag) in the ofedDriver section. Dependent modules discovered on each
+group are saved as `thirdPartyRDMAModules` for visibility and warnings, but are
+not passed as module names to that environment variable.
 
 ## maintenance
 
