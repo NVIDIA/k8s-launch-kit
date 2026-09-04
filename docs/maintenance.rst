@@ -111,6 +111,11 @@ The generated ``MaintenanceOperatorConfig`` receives
 therefore be used across release upgrades while l8k selects the applicable
 controller.
 
+l8k does not add ``network.nvidia.com/operator.nic-configuration.wait`` to
+the SR-IOV config daemon's node selector. The daemon retains the Network
+Operator chart's default scheduling selectors; drain sequencing remains
+controlled by the release-appropriate SR-IOV drain path described above.
+
 Upgrading an existing installation
 -----------------------------------
 

@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.9
+version: 1.2.10
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -164,6 +164,12 @@ Operator enable both the Network Operator drain requestor and
 a coordinated handoff and must not be separated. The generated
 `MaintenanceOperatorConfig` gets the global limits from the config's
 `maintenance` section.
+
+Generated values do not add
+`network.nvidia.com/operator.nic-configuration.wait` to the SR-IOV config
+daemon node selector. The daemon keeps the Network Operator chart's default
+scheduling selectors; drain sequencing remains controlled by the
+release-appropriate SR-IOV drain path described below.
 
 Before release 26.1, OFED uses `maintenance.maxParallelUpgrades` and the SR-IOV
 internal drainer uses `maintenance.maxUnavailable` through
