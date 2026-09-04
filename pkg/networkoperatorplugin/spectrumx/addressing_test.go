@@ -188,16 +188,8 @@ func TestBuildCIDRPoolsFromAIR2Tier(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.LaunchKitConfig{
-				Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
-					Enable:         true,
-					TopologyType:   config.SpectrumXTopology2Tier,
-					IPVersion:      config.SpectrumXIPVersionIPv4,
-					TopologyFile:   topologyPath,
-					MultiplaneMode: tt.mode,
-					NumberOfPlanes: 4,
-				}},
-			}
+			cfg := spectrumXTestConfig(topologyPath, tt.mode)
+			cfg.Profile.SpectrumX.NumberOfPlanes = 4
 			pools, err := BuildCIDRPools(cfg, config.ClusterConfig{
 				WorkerNodes: []string{"worker-su01-rack01-h01", "worker-su01-rack01-h02"},
 				PFs:         []config.PFConfig{{Traffic: "east-west", Rail: &rail}},
