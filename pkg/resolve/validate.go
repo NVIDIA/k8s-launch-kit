@@ -61,6 +61,15 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 		if cfg.Profile.SpectrumX.TopologyFile != "" {
 			return fmt.Errorf("topologyFile is set but spectrumX.enable=false; remove the field or set --spectrum-x")
 		}
+		if cfg.Profile.SpectrumX.SPCXVersion != "" {
+			return fmt.Errorf("spcxVersion is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
+		if cfg.Profile.SpectrumX.Profile != "" {
+			return fmt.Errorf("profile is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
+		if cfg.Profile.SpectrumX.ConfigMapName != "" {
+			return fmt.Errorf("configMapName is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
 	}
 
 	return nil
