@@ -145,7 +145,8 @@ spec:
       # not exist yet at discover time (NFD not installed), so the daemon must
       # not be pinned to it. Discovery can still provide node-name affinity for
       # the current Ready schedulable nodes, then probes each pod's sysfs for an
-      # NVIDIA NIC (PCI vendor 0x15b3) to decide which nodes to wait on.
+      # NVIDIA NIC (PCI vendor 0x15b3) and excludes restricted BlueFields to
+      # decide which nodes to wait on.
       # Tolerate every taint so the daemon also lands on control-plane (and
       # other tainted) nodes — on small/single-node clusters the control-plane
       # node may carry the data-plane NICs. This is a short-lived, privileged

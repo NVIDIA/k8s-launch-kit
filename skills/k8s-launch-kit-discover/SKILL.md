@@ -60,7 +60,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--collapse-nic-rails` | — | `true` | Advertise one rail per NIC: collapse a NIC's multi-plane east-west PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set `=false` to keep one rail per PF (dev setups). See "Rail collapsing" below. |
 | `--network-operator-namespace` | — | — | **Deprecated for `discover`**: accepted but ignored. The daemon always runs in `nvidia-k8s-launch-kit`. Still used by `l8k generate` / `l8k deploy`. |
 | `--user-config` | — | — | Config whose `clusterConfig` is refreshed; all other sections are preserved unless explicitly overridden by a CLI flag |
-| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Value written into the **saved** `cluster-config.yaml` `nodeSelector` (for deploy time). It does **not** gate discovery scheduling or the NicDevice wait set — the daemon is restricted to Ready schedulable nodes and NIC-bearing nodes are detected via a sysfs `0x15b3` probe. |
+| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Value written into the **saved** `cluster-config.yaml` `nodeSelector` (for deploy time). It does **not** gate discovery scheduling or the NicDevice wait set — the daemon is restricted to Ready schedulable nodes and discoverable NICs are detected via sysfs; restricted BlueFields are excluded. |
 | `--image-pull-secrets` | — | — | Image pull secret names (comma-separated). Forwarded to the discovery DaemonSet and persisted for generated policies, Network Operator Helm values, and authenticated chart downloads during deploy. |
 | `--fabric` | — | discovered unanimous link type | Fabric override: `ethernet` or `infiniband`. |
 | `--deployment-type` | — | `sriov` | Deployment override: `sriov`, `rdma_shared`, or `host_device`. |
@@ -160,7 +160,10 @@ the GPU label is still written when `gpuType` alone is resolved.
   NFD `nodeSelector` and tolerates taints, so eligible control-plane/tainted
   nodes are included. NIC-bearing nodes are detected by a sysfs probe for PCI
   vendor `0x15b3` rather than the NFD
-  `feature.node.kubernetes.io/pci-15b3.present` label.
+  `feature.node.kubernetes.io/pci-15b3.present` label. BlueFields for which
+  `mlxprivhost` reports `level: restricted` are excluded because the daemon
+  will not publish `NicDevice` resources for them. Mixed nodes remain eligible
+  when they have at least one non-restricted NVIDIA NIC.
 - Image-pull access from every worker node to
   `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`.
   Use `--image-pull-secrets <name>` (or `networkOperator.imagePullSecrets`
@@ -215,6 +218,9 @@ Do not add GPU counts or resource maps under `clusterConfig`.
 - If discovery reports "no nodes with an NVIDIA NIC (PCI vendor 15b3) were found",
   the daemon ran but no node's sysfs exposed a `0x15b3` device (no Mellanox/NVIDIA
   NICs, or `/sys` not mounted/readable in the pod).
+- If discovery reports "no discoverable NVIDIA NICs were found", every detected
+  BlueField is in zero-trust (`restricted`) mode. Those devices cannot be
+  configured from the host and intentionally do not publish `NicDevice` resources.
 - After determining each group's `(machineType, gpuType)`, discovery looks up a topology preset under `presets/` using **exact-match** lookup on that pair. A matching preset overrides heuristic-derived topology fields (traffic class, rail, NUMA, GPU affinity). There is no any-GPU fallback — a preset with empty `gpuType:` is rejected at load time. If no preset matches, discovery proceeds with heuristic classification.
 - If you already know the SKU and want to skip cluster discovery entirely, use `l8k generate --for <preset>` (see `k8s-launch-kit-generate`).
 

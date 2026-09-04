@@ -203,8 +203,9 @@ func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	}, ds.Spec.Template.Spec.ImagePullSecrets)
 
 	// No nodeSelector: discovery runs on every node (the NFD
-	// pci-15b3.present label may not exist yet at discover time). NIC-bearing
-	// nodes are selected later via a sysfs probe, not a label.
+	// pci-15b3.present label may not exist yet at discover time). Nodes with
+	// discoverable NICs are selected later via a trust-aware sysfs probe, not a
+	// label.
 	assert.Empty(t, ds.Spec.Template.Spec.NodeSelector)
 
 	// Tolerate every taint so the daemon also lands on control-plane / tainted

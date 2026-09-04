@@ -183,16 +183,29 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		nodeLabels = map[string]map[string]string{}
 	}
 
-	// Filter the wait set to nodes that actually have an NVIDIA NIC. The daemon
-	// runs on every node (no nodeSelector), but only NIC-bearing nodes will
-	// ever report NicDevice CRs — waiting for the rest would time out. We
-	// detect NICs by probing each pod's sysfs for PCI vendor 0x15b3 rather than
-	// the NFD label, which may not exist yet at discover time. The
-	// `--node-selector` value is deliberately NOT used here; it only flows into
-	// the saved cluster-config nodeSelector (for deploy time, when NFD exists).
+	// Filter the wait set to nodes that actually have an NVIDIA NIC which can
+	// publish a NicDevice. The daemon runs on every node (no nodeSelector), but
+	// only nodes with a discoverable NIC will ever report NicDevice CRs —
+	// waiting for the rest would time out. We detect NICs by probing each pod's
+	// sysfs for PCI vendor 0x15b3 rather than the NFD label, which may not exist
+	// yet at discover time. BlueField devices in zero-trust (restricted) mode
+	// are excluded because NIC Configuration Operator intentionally skips them.
+	// The `--node-selector` value is deliberately NOT used here; it only flows
+	// into the saved cluster-config nodeSelector (for deploy time, when NFD
+	// exists).
 	if restConfig != nil {
-		expectedNodes = filterNodesWithNICs(ctx, restConfig, nicconfigdaemon.Namespace, expectedNodes, dsPods)
+		var restrictedOnlyNodes []string
+		expectedNodes, restrictedOnlyNodes = filterNodesWithNICs(ctx, restConfig,
+			nicconfigdaemon.Namespace, expectedNodes, dsPods)
+		if len(restrictedOnlyNodes) > 0 {
+			uiOutput.Warning("Excluding %d node(s) whose detected BlueField devices are all in zero-trust (restricted) mode; those devices do not publish NicDevice resources",
+				len(restrictedOnlyNodes))
+		}
 		if len(expectedNodes) == 0 {
+			if len(restrictedOnlyNodes) > 0 {
+				return fmt.Errorf("no discoverable NVIDIA NICs were found; detected BlueField devices on %d node(s) are all in zero-trust (restricted) mode",
+					len(restrictedOnlyNodes))
+			}
 			return fmt.Errorf("no nodes with an NVIDIA NIC (PCI vendor 15b3) were found")
 		}
 	} else if len(opts.NodeSelector) > 0 {
@@ -1794,33 +1807,80 @@ const sysfsNvidiaGPUIDCmd = `for d in /sys/bus/pci/devices/*; do
   break
 done`
 
-// sysfsMellanoxNICPresentCmd echoes "present" if any PCI device under
-// /sys/bus/pci/devices has vendor 0x15b3 (Mellanox / NVIDIA networking). Unlike
-// the NVIDIA GPU vendor (0x10de, shared by audio/NVSwitch controllers), every
-// 0x15b3 device is a NIC or DPU, so no PCI-class filter is needed. Breaks on
-// the first match; output is empty when no NVIDIA NIC is present; exit is
-// always 0. This replaces the NFD-label filter for deciding which nodes to
-// wait on — NFD may not be installed yet at discover time.
-const sysfsMellanoxNICPresentCmd = `for d in /sys/bus/pci/devices/*; do
+// sysfsMellanoxNICPresentCmd reports whether a node has an NVIDIA NIC that NIC
+// Configuration Operator can publish as a NicDevice. It scans PCI vendor
+// 0x15b3 and mirrors the operator's zero-trust handling for BlueField-2,
+// BlueField-3, BlueField-3 Lx, and BlueField-4: a device for which
+// `mlxprivhost -d <pci> q` successfully reports `level: restricted` is skipped.
+// If mlxprivhost fails or returns unrecognised output, the device remains
+// discoverable, matching the operator's fail-open behaviour. Output is
+// "present" when any discoverable device exists, "restricted" when the node
+// has only restricted BlueFields, and empty when no NVIDIA NIC is present.
+// The command always exits 0.
+const sysfsMellanoxNICPresentCmd = `pci_devices_path=${1:-/sys/bus/pci/devices}
+mlxprivhost_bin=${2:-mlxprivhost}
+restricted_found=false
+for d in "$pci_devices_path"/*; do
   v=$(cat "$d/vendor" 2>/dev/null)
-  if [ "$v" = "0x15b3" ]; then echo present; break; fi
-done`
+  [ "$v" = "0x15b3" ] || continue
 
-// mellanoxNICPresent reports whether the sysfs probe found an NVIDIA NIC.
-// Kept as a tiny pure helper so the decision is unit-testable without a cluster.
-func mellanoxNICPresent(output string) bool {
-	return strings.TrimSpace(output) != ""
+  device_id=$(cat "$d/device" 2>/dev/null)
+  case "$device_id" in
+    0xa2d6|0xa2d9|0xa2dc|0xa2df)
+      pci=${d##*/}
+      trust_output=$("$mlxprivhost_bin" -d "$pci" q 2>/dev/null)
+      trust_rc=$?
+      if [ "$trust_rc" -eq 0 ] && printf '%s\n' "$trust_output" | grep -iq '^[[:space:]]*level[[:space:]]*:[[:space:]]*restricted'; then
+        restricted_found=true
+        continue
+      fi
+      ;;
+  esac
+
+  echo present
+  exit 0
+done
+
+if [ "$restricted_found" = true ]; then
+  echo restricted
+fi`
+
+type mellanoxNICProbeResult string
+
+const (
+	mellanoxNICProbeNone       mellanoxNICProbeResult = ""
+	mellanoxNICProbePresent    mellanoxNICProbeResult = "present"
+	mellanoxNICProbeRestricted mellanoxNICProbeResult = "restricted"
+)
+
+// parseMellanoxNICProbeResult interprets the controlled marker emitted by the
+// sysfs/zero-trust probe. A present marker wins defensively if multiple lines
+// are ever returned, because one discoverable NIC is enough to expect a
+// NicDevice from the node.
+func parseMellanoxNICProbeResult(output string) mellanoxNICProbeResult {
+	result := mellanoxNICProbeNone
+	for line := range strings.SplitSeq(output, "\n") {
+		switch strings.TrimSpace(line) {
+		case string(mellanoxNICProbePresent):
+			return mellanoxNICProbePresent
+		case string(mellanoxNICProbeRestricted):
+			result = mellanoxNICProbeRestricted
+		}
+	}
+	return result
 }
 
 // filterNodesWithNICs returns the subset of candidateNodes that have an NVIDIA
-// NIC (PCI vendor 0x15b3), determined by execing the sysfs probe in each node's
-// daemon pod. Nodes without a daemon pod, or whose probe errors or reports no
-// NIC, are dropped. Replaces the NFD-label filter (filterNodesByLabels) so
-// discovery works on clusters where NFD is not yet installed.
+// NIC expected to publish a NicDevice, plus nodes whose only detected NVIDIA
+// devices are restricted BlueFields. Nodes without a daemon pod, or whose
+// probe errors or reports no NIC, are dropped. This replaces the NFD-label
+// filter (filterNodesByLabels) so discovery works before NFD is installed and
+// avoids waiting for NicDevices that zero-trust devices will never publish.
 func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
-	namespace string, candidateNodes []string, dsPods []corev1.Pod) []string {
+	namespace string, candidateNodes []string, dsPods []corev1.Pod) ([]string, []string) {
 
 	var withNICs []string
+	var restrictedOnly []string
 	for _, node := range candidateNodes {
 		pod := findDaemonPod([]string{node}, dsPods)
 		if pod == nil {
@@ -1838,16 +1898,20 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 				"node", node, "pod", pod.Name)
 			continue
 		}
-		present := mellanoxNICPresent(output)
-		log.Log.V(1).Info("Probed node for NVIDIA NIC via sysfs vendor 0x15b3",
-			"node", node, "pod", pod.Name, "present", present)
-		if present {
+		probeResult := parseMellanoxNICProbeResult(output)
+		log.Log.V(1).Info("Probed node for discoverable NVIDIA NIC via sysfs and BlueField trust mode",
+			"node", node, "pod", pod.Name, "result", string(probeResult))
+		switch probeResult {
+		case mellanoxNICProbePresent:
 			withNICs = append(withNICs, node)
+		case mellanoxNICProbeRestricted:
+			restrictedOnly = append(restrictedOnly, node)
 		}
 	}
-	log.Log.Info("Filtered nodes by NVIDIA NIC presence",
-		"candidates", len(candidateNodes), "withNICs", len(withNICs))
-	return withNICs
+	log.Log.Info("Filtered nodes by discoverable NVIDIA NIC presence",
+		"candidates", len(candidateNodes), "withNICs", len(withNICs),
+		"restrictedOnly", len(restrictedOnly))
+	return withNICs, restrictedOnly
 }
 
 // parseGPUProductFromSysfs resolves a single-line sysfs device-ID output

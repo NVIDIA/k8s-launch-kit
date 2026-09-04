@@ -18,6 +18,10 @@ package discovery
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -378,21 +382,124 @@ func TestParseGPUProductFromSysfs(t *testing.T) {
 	}
 }
 
-func TestMellanoxNICPresent(t *testing.T) {
+func TestParseMellanoxNICProbeResult(t *testing.T) {
 	tests := []struct {
 		name   string
 		output string
-		want   bool
+		want   mellanoxNICProbeResult
 	}{
-		{"present marker", "present\n", true},
-		{"present with whitespace", "  present  \n", true},
-		{"empty", "", false},
-		{"whitespace only", "  \n\t", false},
+		{"present marker", "present\n", mellanoxNICProbePresent},
+		{"present with whitespace", "  present  \n", mellanoxNICProbePresent},
+		{"restricted marker", "restricted\n", mellanoxNICProbeRestricted},
+		{"restricted with whitespace", "  restricted  \n", mellanoxNICProbeRestricted},
+		{"present wins over restricted", "restricted\npresent\n", mellanoxNICProbePresent},
+		{"empty", "", mellanoxNICProbeNone},
+		{"whitespace only", "  \n\t", mellanoxNICProbeNone},
+		{"unexpected output", "mlxprivhost warning\n", mellanoxNICProbeNone},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, mellanoxNICPresent(tt.output))
+			assert.Equal(t, tt.want, parseMellanoxNICProbeResult(tt.output))
+		})
+	}
+}
+
+func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
+	type fakePCIDevice struct {
+		name     string
+		vendorID string
+		deviceID string
+	}
+
+	tests := []struct {
+		name           string
+		devices        []fakePCIDevice
+		mlxprivhostRun string
+		want           string
+	}{
+		{
+			name: "no NVIDIA NIC",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x10de", deviceID: "0x2335"},
+			},
+			mlxprivhostRun: "exit 1",
+			want:           "",
+		},
+		{
+			name: "regular NVIDIA NIC",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0x1023"},
+			},
+			mlxprivhostRun: "exit 1",
+			want:           "present",
+		},
+		{
+			name: "restricted BF3",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
+			},
+			mlxprivhostRun: "printf 'level: restricted\\n'",
+			want:           "restricted",
+		},
+		{
+			name: "privileged BF3",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
+			},
+			mlxprivhostRun: "printf 'level: privileged\\n'",
+			want:           "present",
+		},
+		{
+			name: "trust query failure is fail open",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
+			},
+			mlxprivhostRun: "exit 1",
+			want:           "present",
+		},
+		{
+			name: "all known BlueField device IDs restricted",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2d6"},
+				{name: "0000:02:00.0", vendorID: "0x15b3", deviceID: "0xa2d9"},
+				{name: "0000:03:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
+				{name: "0000:04:00.0", vendorID: "0x15b3", deviceID: "0xa2df"},
+			},
+			mlxprivhostRun: "printf 'level: restricted\\n'",
+			want:           "restricted",
+		},
+		{
+			name: "restricted BF3 plus regular NIC",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
+				{name: "0000:02:00.0", vendorID: "0x15b3", deviceID: "0x1023"},
+			},
+			mlxprivhostRun: "printf 'level: restricted\\n'",
+			want:           "present",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pciRoot := t.TempDir()
+			for _, device := range tt.devices {
+				deviceDir := filepath.Join(pciRoot, device.name)
+				require.NoError(t, os.MkdirAll(deviceDir, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(deviceDir, "vendor"), []byte(device.vendorID+"\n"), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(deviceDir, "device"), []byte(device.deviceID+"\n"), 0o644))
+			}
+
+			mlxprivhost := filepath.Join(t.TempDir(), "mlxprivhost")
+			require.NoError(t, os.WriteFile(mlxprivhost,
+				[]byte("#!/bin/sh\n"+tt.mlxprivhostRun+"\n"), 0o755))
+
+			//nolint:gosec // fixed test command and script; temp paths are positional parameters
+			cmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd,
+				"nic-probe", pciRoot, mlxprivhost)
+			output, err := cmd.CombinedOutput()
+			require.NoError(t, err, "probe output: %s", output)
+			assert.Equal(t, tt.want, strings.TrimSpace(string(output)))
 		})
 	}
 }
