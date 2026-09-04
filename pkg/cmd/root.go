@@ -110,9 +110,9 @@ Deploy a minimal Network Operator profile to automatically discover your cluster
 network capabilities and hardware configuration by using --discover-cluster-config.
 This phase can be skipped if you provide your own configuration file by using --user-config.
 This phase requires --kubeconfig to be specified.
-Discovery fills missing profile settings from the detected hardware and built-in
-defaults, applies explicit CLI overrides, and saves the final profile with the
-hardware inventory in cluster-config.yaml.
+Fresh discovery fills profile settings from the detected hardware and built-in
+defaults. With --user-config, discovery replaces only clusterConfig and preserves
+all other settings. Explicit CLI overrides apply in both modes.
 
 ### Generate Deployment Files
 Based on the discovered or provided configuration,

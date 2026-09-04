@@ -65,7 +65,10 @@ The current host config and artifact contract is unchanged:
 | `--image-pull-secrets` | Secret names used to pull the discovery daemon, propagated into generated policies and Helm values, and reused for authenticated Helm chart downloads when the registry host matches. |
 | `--enabled-plugins` | Comma-separated plugins. The supported deployment plugin is `network-operator`. |
 
-Discovery also accepts the profile and Spectrum-X flags below. Explicit flags override values from `--user-config` and discovered defaults.
+Discovery also accepts the profile and Spectrum-X flags below. A fresh run
+resolves missing values from hardware defaults. With `--user-config`, only
+`clusterConfig` is replaced and explicit flags are the only changes made to
+the rest of the supplied configuration.
 
 ## Profile Flags
 

@@ -148,12 +148,13 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 		return fmt.Errorf("invalid --topology-scheme %q; supported: %v",
 			spcx.TopologyType, config.SupportedSpectrumXTopologyTypes)
 	}
-	if spcx.IPVersion == "" {
-		spcx.IPVersion = config.SpectrumXIPVersionIPv4
+	ipVersion := spcx.IPVersion
+	if ipVersion == "" {
+		ipVersion = config.SpectrumXIPVersionIPv4
 	}
-	if !slices.Contains(config.SupportedSpectrumXIPVersions, spcx.IPVersion) {
+	if !slices.Contains(config.SupportedSpectrumXIPVersions, ipVersion) {
 		return fmt.Errorf("invalid --ip-version %q; supported: %v",
-			spcx.IPVersion, config.SupportedSpectrumXIPVersions)
+			ipVersion, config.SupportedSpectrumXIPVersions)
 	}
 
 	// Cross-validate mode ↔ planes. "none" is exactly one plane; software

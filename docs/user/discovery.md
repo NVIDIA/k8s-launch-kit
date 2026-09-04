@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Cluster Discovery
 
-`l8k discover` inventories NVIDIA NICs and GPUs, groups nodes with compatible hardware, resolves missing profile settings, and writes an editable `cluster-config.yaml`.
+`l8k discover` inventories NVIDIA NICs and GPUs, groups nodes with compatible hardware, and writes an editable `cluster-config.yaml`. Fresh discovery resolves a profile; a `--user-config` refresh preserves its non-hardware settings.
 
 ```bash
 l8k discover \
@@ -23,7 +23,7 @@ Discovery is self-contained. It does not require Node Feature Discovery (NFD) or
 4. Runs a temporary NIC Configuration Daemon on the eligible nodes.
 5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe.
 6. Reads the published `NicDevice` resources and probes GPU, NIC, fabric, module, NUMA, and rail data.
-7. Groups nodes, writes Launch Kit node labels, resolves profile settings, and saves the result.
+7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, only `clusterConfig` is replaced.
 8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
 
 The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
@@ -74,11 +74,11 @@ discovery keeps the hardware data it can confirm.
 
 ## Profile Resolution
 
-Discovery persists the final `profile` block in `cluster-config.yaml`. Values are resolved in this order:
+Fresh discovery persists a resolved `profile` block in `cluster-config.yaml`.
+Values are resolved in this order:
 
 1. Hardware-derived values and Launch Kit defaults.
-2. Existing values from `--user-config`.
-3. Explicit CLI flags.
+2. Explicit CLI flags.
 
 Fresh discovery fills missing profile fields:
 
@@ -98,7 +98,12 @@ l8k discover \
   --save-cluster-config ./cluster-config.yaml
 ```
 
-Explicit `false` values are preserved. On a fresh run without `--user-config`, the example profile in the installed reference configuration is ignored. With `--user-config`, existing profile values are treated as user intent and only missing fields are resolved.
+On a fresh run without `--user-config`, the example profile in the installed
+reference configuration is ignored. With `--user-config`, discovery replaces
+only `clusterConfig`. It preserves every other loaded section and value,
+including explicit `false` values, and then applies explicit CLI overrides.
+Missing profile values are not filled during this refresh; supply them in the
+file or through CLI flags if they are needed.
 
 ## Groups And Node Labels
 
@@ -212,7 +217,11 @@ Debug logs include node eligibility, sysfs NIC probing, machine/GPU source selec
 
 ## Saved Configuration
 
-If `--save-cluster-config` is omitted, discovery rewrites the `--user-config` file or creates `cluster-config.yaml` in the current directory. Source comments are retained where possible, and a generated-file banner identifies the discovery output.
+If `--save-cluster-config` is omitted, discovery rewrites the `--user-config`
+file or creates `cluster-config.yaml` in the current directory. For a user
+config refresh, only `clusterConfig` and explicit CLI overrides change. Source
+comments are retained where possible, and a generated-file banner identifies
+the discovery output.
 
 Review the saved `profile` and `clusterConfig` sections before generation:
 
