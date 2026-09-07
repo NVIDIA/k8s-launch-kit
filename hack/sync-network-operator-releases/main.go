@@ -91,8 +91,18 @@ func main() {
 		exitWithError(fmt.Errorf("sync Network Operator releases: %w", err))
 	}
 
+	for _, preserved := range result.Preserved {
+		fmt.Printf(
+			"kept %s at GA %s; ignored prerelease %s from %s\n",
+			preserved.Release,
+			preserved.CurrentOperatorVersion,
+			preserved.CandidateOperatorVersion,
+			preserved.Ref,
+		)
+	}
+
 	if !result.Changed {
-		fmt.Println("Network Operator release catalog is already current")
+		fmt.Println("Network Operator release catalog requires no updates")
 		return
 	}
 

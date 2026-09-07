@@ -57,6 +57,11 @@ Supported release lines are currently:
 
 The release line fills Network Operator versions, component image tags, DOCA driver version, full-runtime validation image, repositories, Helm repository URL, and version-gated template behavior. Spectrum-X releases also carry a manually maintained xPlane repository and version used in `spectrumXOperator.xPlane` instead of reusing the generic component tag.
 
+Nightly synchronization follows each upstream release branch. Once a catalog
+line points to a GA Network Operator release, beta and release-candidate builds
+of a later patch do not replace its public artifact set. The line advances
+again when that patch is published as GA.
+
 ## Network Operator
 
 | Field | Meaning |
