@@ -56,8 +56,9 @@ type syncOptions struct {
 }
 
 type syncResult struct {
-	Changed bool
-	Updates []releaseUpdate
+	Changed   bool
+	Updates   []releaseUpdate
+	Preserved []preservedRelease
 }
 
 type releaseUpdate struct {
@@ -65,6 +66,13 @@ type releaseUpdate struct {
 	Ref                    string
 	NetworkOperatorVersion string
 	DOCADriverVersion      string
+}
+
+type preservedRelease struct {
+	Release                  string
+	Ref                      string
+	CurrentOperatorVersion   string
+	CandidateOperatorVersion string
 }
 
 type upstreamReleaseFile struct {
@@ -126,6 +134,11 @@ func syncCatalog(ctx context.Context, opts syncOptions) (syncResult, error) {
 		return syncResult{}, err
 	}
 
+	var document yaml.Node
+	if err := yaml.Unmarshal(original, &document); err != nil {
+		return syncResult{}, fmt.Errorf("parse catalog document: %w", err)
+	}
+
 	client, err := newGitHubClient(
 		opts.APIBaseURL,
 		upstreamRepository,
@@ -137,6 +150,7 @@ func syncCatalog(ctx context.Context, opts syncOptions) (syncResult, error) {
 	}
 
 	desired := make([]desiredReleaseWithSource, 0, len(managed))
+	preserved := make([]preservedRelease, 0)
 	latestRelease := managed[len(managed)-1].Key
 	for _, catalogEntry := range managed {
 		release := catalogEntry.Key
@@ -155,16 +169,32 @@ func syncCatalog(ctx context.Context, opts syncOptions) (syncResult, error) {
 			return syncResult{}, fmt.Errorf("validate release %s from %s: %w", release, ref, err)
 		}
 
+		currentVersion, err := catalogNetworkOperatorVersion(&document, release)
+		if err != nil {
+			return syncResult{}, err
+		}
+		keepCurrent, err := shouldKeepCurrentGA(
+			currentVersion,
+			releaseValues.NetworkOperatorVersion,
+		)
+		if err != nil {
+			return syncResult{}, fmt.Errorf("compare release %s versions: %w", release, err)
+		}
+		if keepCurrent {
+			preserved = append(preserved, preservedRelease{
+				Release:                  release,
+				Ref:                      ref,
+				CurrentOperatorVersion:   currentVersion,
+				CandidateOperatorVersion: releaseValues.NetworkOperatorVersion,
+			})
+			continue
+		}
+
 		desired = append(desired, desiredReleaseWithSource{
 			Release: release,
 			Ref:     ref,
 			Desired: releaseValues,
 		})
-	}
-
-	var document yaml.Node
-	if err := yaml.Unmarshal(original, &document); err != nil {
-		return syncResult{}, fmt.Errorf("parse catalog document: %w", err)
 	}
 
 	changedItems := make([]desiredReleaseWithSource, 0, len(desired))
@@ -178,7 +208,10 @@ func syncCatalog(ctx context.Context, opts syncOptions) (syncResult, error) {
 		}
 	}
 	if len(changedItems) == 0 {
-		return syncResult{Changed: false}, nil
+		return syncResult{
+			Changed:   false,
+			Preserved: preserved,
+		}, nil
 	}
 
 	var updated bytes.Buffer
@@ -196,8 +229,9 @@ func syncCatalog(ctx context.Context, opts syncOptions) (syncResult, error) {
 	}
 
 	result := syncResult{
-		Changed: true,
-		Updates: make([]releaseUpdate, 0, len(changedItems)),
+		Changed:   true,
+		Updates:   make([]releaseUpdate, 0, len(changedItems)),
+		Preserved: preserved,
 	}
 	for _, item := range changedItems {
 		result.Updates = append(result.Updates, releaseUpdate{
@@ -208,6 +242,45 @@ func syncCatalog(ctx context.Context, opts syncOptions) (syncResult, error) {
 		})
 	}
 	return result, nil
+}
+
+func catalogNetworkOperatorVersion(document *yaml.Node, release string) (string, error) {
+	if document == nil || document.Kind != yaml.DocumentNode || len(document.Content) == 0 {
+		return "", errors.New("catalog YAML has no document")
+	}
+
+	releasesNode, err := mappingValue(document.Content[0], "releases")
+	if err != nil {
+		return "", err
+	}
+	releaseNode, err := mappingValue(releasesNode, release)
+	if err != nil {
+		return "", fmt.Errorf("catalog release %s: %w", release, err)
+	}
+	networkOperatorNode, err := mappingValue(releaseNode, "networkOperator")
+	if err != nil {
+		return "", fmt.Errorf("catalog release %s: %w", release, err)
+	}
+	versionNode, err := mappingValue(networkOperatorNode, "version")
+	if err != nil {
+		return "", fmt.Errorf("catalog release %s: %w", release, err)
+	}
+	if versionNode.Kind != yaml.ScalarNode || versionNode.Value == "" {
+		return "", fmt.Errorf("catalog release %s field version must be a non-empty scalar", release)
+	}
+	return versionNode.Value, nil
+}
+
+func shouldKeepCurrentGA(currentTag string, candidateTag string) (bool, error) {
+	current, err := semver.NewVersion(currentTag)
+	if err != nil {
+		return false, fmt.Errorf("current Network Operator version %q is invalid: %w", currentTag, err)
+	}
+	candidate, err := semver.NewVersion(candidateTag)
+	if err != nil {
+		return false, fmt.Errorf("candidate Network Operator version %q is invalid: %w", candidateTag, err)
+	}
+	return current.Prerelease() == "" && candidate.Prerelease() != "", nil
 }
 
 func catalogReleases(catalogYAML []byte) ([]catalogRelease, error) {

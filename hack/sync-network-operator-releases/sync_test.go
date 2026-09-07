@@ -193,6 +193,133 @@ func TestSyncCatalogDoesNotFallbackForOlderRelease(t *testing.T) {
 	assert.NotContains(t, strings.Join(fake.requests, "\n"), "/branches/master")
 }
 
+func TestSyncCatalogKeepsCurrentGAUntilCandidateIsGA(t *testing.T) {
+	original := stable264CatalogYAML()
+	catalogPath := writeTestCatalog(t, original)
+	fake := &fakeGitHub{
+		branches: map[string]bool{
+			"v26.4.x": true,
+		},
+		files: map[string]string{
+			"v26.4.x": upstreamReleaseYAML(
+				"v26.4.2-rc.1",
+				stagingOperatorRepository,
+				stagingComponentRepository,
+				"doca3.4.1-26.04-1.2.0.0-0",
+			),
+		},
+		requests: nil,
+	}
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	result, err := syncCatalog(context.Background(), syncOptions{
+		CatalogPath: catalogPath,
+		APIBaseURL:  server.URL,
+		Token:       "",
+		HTTPClient:  server.Client(),
+	})
+	require.NoError(t, err)
+	assert.False(t, result.Changed)
+	assert.Empty(t, result.Updates)
+	require.Len(t, result.Preserved, 1)
+	assert.Equal(t, "26.4", result.Preserved[0].Release)
+	assert.Equal(t, "v26.4.x", result.Preserved[0].Ref)
+	assert.Equal(t, "v26.4.1", result.Preserved[0].CurrentOperatorVersion)
+	assert.Equal(t, "v26.4.2-rc.1", result.Preserved[0].CandidateOperatorVersion)
+	assert.Equal(t, []byte(original), readTestCatalog(t, catalogPath))
+
+	fake.files["v26.4.x"] = upstreamReleaseYAML(
+		"v26.4.2",
+		stableOperatorRepository,
+		stableComponentRepository,
+		"doca3.4.1-26.04-1.2.0.0-0",
+	)
+
+	result, err = syncCatalog(context.Background(), syncOptions{
+		CatalogPath: catalogPath,
+		APIBaseURL:  server.URL,
+		Token:       "",
+		HTTPClient:  server.Client(),
+	})
+	require.NoError(t, err)
+	assert.True(t, result.Changed)
+	require.Len(t, result.Updates, 1)
+	assert.Empty(t, result.Preserved)
+
+	var catalog struct {
+		Releases map[string]catalogReleaseValues `yaml:"releases"`
+	}
+	require.NoError(t, yaml.Unmarshal(readTestCatalog(t, catalogPath), &catalog))
+	updated := catalog.Releases["26.4"]
+	assert.Equal(t, "v26.4.2", updated.NetworkOperator.Version)
+	assert.Equal(t, "network-operator-v26.4.2", updated.NetworkOperator.ComponentVersion)
+	assert.Equal(t, stableComponentRepository, updated.NetworkOperator.Repository)
+	assert.Equal(t, stableOperatorRepository, updated.NetworkOperator.OperatorRepository)
+	assert.Equal(t, stableHelmRepoURL, updated.NetworkOperator.HelmRepoURL)
+	assert.Equal(t, "doca3.4.1-26.04-1.2.0.0-0", updated.DOCADriver.Version)
+}
+
+func TestSyncCatalogPreservesGAWhileUpdatingAnotherRelease(t *testing.T) {
+	catalogPath := writeTestCatalog(t, testCatalogYAML())
+	fake := &fakeGitHub{
+		branches: map[string]bool{
+			"v26.1.x": true,
+			"v26.7.x": true,
+		},
+		files: map[string]string{
+			"v26.1.x": upstreamReleaseYAML(
+				"v26.1.2-rc.1",
+				stagingOperatorRepository,
+				stagingComponentRepository,
+				"doca3.3.0-26.01-1.1.0.0-0",
+			),
+			"v26.7.x": upstreamReleaseYAML(
+				"v26.7.0-rc.1",
+				stagingOperatorRepository,
+				stagingComponentRepository,
+				"doca3.5.0-26.07-0.5.1.0-0",
+			),
+		},
+		requests: nil,
+	}
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	result, err := syncCatalog(context.Background(), syncOptions{
+		CatalogPath: catalogPath,
+		APIBaseURL:  server.URL,
+		Token:       "",
+		HTTPClient:  server.Client(),
+	})
+	require.NoError(t, err)
+	assert.True(t, result.Changed)
+	require.Len(t, result.Updates, 1)
+	assert.Equal(t, "26.7", result.Updates[0].Release)
+	require.Len(t, result.Preserved, 1)
+	assert.Equal(t, "26.1", result.Preserved[0].Release)
+	assert.Equal(t, "v26.1.1", result.Preserved[0].CurrentOperatorVersion)
+	assert.Equal(t, "v26.1.2-rc.1", result.Preserved[0].CandidateOperatorVersion)
+
+	var catalog struct {
+		Releases map[string]catalogReleaseValues `yaml:"releases"`
+	}
+	require.NoError(t, yaml.Unmarshal(readTestCatalog(t, catalogPath), &catalog))
+
+	preserved := catalog.Releases["26.1"]
+	assert.Equal(t, "v26.1.1", preserved.NetworkOperator.Version)
+	assert.Equal(t, "network-operator-v26.1.1", preserved.NetworkOperator.ComponentVersion)
+	assert.Equal(t, stableComponentRepository, preserved.NetworkOperator.Repository)
+	assert.Equal(t, stableOperatorRepository, preserved.NetworkOperator.OperatorRepository)
+	assert.Equal(t, stableHelmRepoURL, preserved.NetworkOperator.HelmRepoURL)
+	assert.Equal(t, "doca3.3.0-26.01-1.0.0.0-0", preserved.DOCADriver.Version)
+	assert.Equal(t, "registry.example/validation:26.1", preserved.Validation.Image)
+
+	updated := catalog.Releases["26.7"]
+	assert.Equal(t, "v26.7.0-rc.1", updated.NetworkOperator.Version)
+	assert.Equal(t, "doca3.5.0-26.07-0.5.1.0-0", updated.DOCADriver.Version)
+}
+
 func TestSyncCatalogRejectsMismatchedMasterWithoutWriting(t *testing.T) {
 	original := testCatalogYAML()
 	catalogPath := writeTestCatalog(t, original)
@@ -307,6 +434,54 @@ func TestRequireNewerTag(t *testing.T) {
 	assert.Contains(t, err.Error(), "is not newer")
 }
 
+func TestShouldKeepCurrentGA(t *testing.T) {
+	tests := []struct {
+		name      string
+		current   string
+		candidate string
+		expected  bool
+	}{
+		{
+			name:      "keep GA over release candidate",
+			current:   "v26.4.1",
+			candidate: "v26.4.2-rc.1",
+			expected:  true,
+		},
+		{
+			name:      "keep GA over beta",
+			current:   "v26.4.1",
+			candidate: "v26.4.2-beta.1",
+			expected:  true,
+		},
+		{
+			name:      "promote prerelease to GA",
+			current:   "v26.4.2-rc.1",
+			candidate: "v26.4.2",
+			expected:  false,
+		},
+		{
+			name:      "advance prerelease",
+			current:   "v26.4.2-beta.1",
+			candidate: "v26.4.2-rc.1",
+			expected:  false,
+		},
+		{
+			name:      "advance GA",
+			current:   "v26.4.1",
+			candidate: "v26.4.2",
+			expected:  false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actual, err := shouldKeepCurrentGA(test.current, test.candidate)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, actual)
+		})
+	}
+}
+
 func writeTestCatalog(t *testing.T, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "releases.yaml")
@@ -346,6 +521,23 @@ releases:
       version: doca3.5.0-26.07-0.4.2.0-0
     validation:
       image: registry.example/validation:26.7
+`
+}
+
+func stable264CatalogYAML() string {
+	return `# Test stable release catalog
+releases:
+  "26.4":
+    networkOperator:
+      version: v26.4.1
+      componentVersion: network-operator-v26.4.1
+      repository: nvcr.io/nvidia/mellanox
+      operatorRepository: nvcr.io/nvidia/cloud-native
+      helmRepoURL: https://helm.ngc.nvidia.com/nvidia
+    docaDriver:
+      version: doca3.4.1-26.04-1.1.0.0-1
+    validation:
+      image: registry.example/validation:26.4
 `
 }
 

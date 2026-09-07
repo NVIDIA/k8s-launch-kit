@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-config
-version: 1.2.7
+version: 1.2.8
 description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
@@ -175,6 +175,10 @@ networkNamespaces: ["my-namespace"]
   repeating profile flags; use flags only for overrides.
 - Use `l8k schema` to discover the Network Operator release keys supported by
   the installed l8k version.
+- Treat a GA catalog entry as sticky during nightly synchronization: an
+  upstream beta or release candidate for the next patch must not replace its
+  public Network Operator artifact set. Update the entry again when the patch
+  is GA.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.
