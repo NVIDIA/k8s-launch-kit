@@ -25,43 +25,51 @@ import (
 )
 
 func RunICMP(ctx context.Context, restConfig *rest.Config, namespace, pod, container string, test PingTest) PingResult {
+	return runICMP(ctx, restConfig, namespace, pod, container, test, kubeclient.ExecInPod)
+}
+
+type execInPodFunc func(context.Context, *rest.Config, string, string, string, []string) (kubeclient.ExecResult, error)
+
+func runICMP(ctx context.Context, restConfig *rest.Config, namespace, pod, container string, test PingTest, execInPod execInPodFunc) PingResult {
 	r := initResult(test)
 	if r.Err != nil {
-		finalizeICMPRouteError(&r)
-		return r
+		// Source-route checks are diagnostic for ICMP. The ping command binds
+		// both the interface and source address, so its observed result is the
+		// authoritative connectivity signal.
+		testLogger(test).V(1).Info("ICMP source route diagnostic unavailable", "error", r.Err.Error())
+		r.Err = nil
 	}
 	if test.SrcIface == "" {
 		r.Err = fmt.Errorf("icmp needs source interface for rail %q", test.SrcRail)
-		finalizeExpectedResult(&r, false, r.Err)
+		r.OK = false
+		r.ObservedOK = false
+		return r
+	}
+	if test.SrcIP == "" {
+		r.Err = fmt.Errorf("icmp needs source IP for rail %q", test.SrcRail)
+		r.OK = false
+		r.ObservedOK = false
 		return r
 	}
 	// RunMatrix pre-computes and caches ICMP source routes across stages.
-	// Keep the standalone runner behavior for direct callers.
+	// Keep the standalone runner behavior for direct callers, but never let
+	// this diagnostic replace the actual ping probe.
 	if r.Route.Command == "" {
 		r.Route = checkRoute(ctx, restConfig, namespace, pod, container, test)
 	}
-	if r.Err = sourceRouteValidationError(r.Route, test); r.Err != nil {
-		finalizeICMPRouteError(&r)
-		return r
+	if routeErr := sourceRouteValidationError(r.Route, test); routeErr != nil {
+		testLogger(test).V(1).Info("ICMP source route diagnostic differs from requested rail", "error", routeErr.Error())
 	}
 	cmd := shellWithTimeout(icmpCommand(test),
 		commandTimeoutFor(test, icmpCommandTimeout))
 	testLogger(test).V(2).Info("ICMP command", "command", boundedTraceOutput(cmd))
-	res, err := kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", cmd})
+	res, err := execInPod(ctx, restConfig, namespace, pod, container, []string{"/bin/sh", "-c", cmd})
 	r.Stdout, r.Stderr = res.Stdout, res.Stderr
 	finalizeExpectedResult(&r, err == nil, err)
 	return r
 }
 
-func finalizeICMPRouteError(result *PingResult) {
-	if isSourceRouteMismatchError(result.Err) {
-		finalizeExpectedResult(result, false, result.Err)
-		return
-	}
-	result.OK = false
-	result.ObservedOK = false
-}
-
 func icmpCommand(test PingTest) string {
-	return fmt.Sprintf("ping -c 1 -W 1 -I %s %s", shellArg(test.SrcIP), shellArg(test.DstIP))
+	return fmt.Sprintf("ping -c 1 -W 1 -I %s -I %s %s",
+		shellArg(test.SrcIface), shellArg(test.SrcIP), shellArg(test.DstIP))
 }
