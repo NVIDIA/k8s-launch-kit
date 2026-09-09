@@ -943,6 +943,29 @@ footer strong { color: var(--text-muted); }
         </table>
       {{- end}}
 
+      {{- $routeDiagnostics := icmpRouteDiagnostics .Matrix.PingResults}}
+      {{- if $routeDiagnostics}}
+      <div class="matrix-rail">ICMP source-route diagnostics (non-gating)</div>
+      <table class="matrix-table">
+        <thead>
+          <tr><th>Source</th><th>Src rail</th><th>Src iface</th><th>Destination</th><th>Dst rail</th><th>Dst iface</th><th>Diagnostic</th></tr>
+        </thead>
+        <tbody>
+          {{- range $routeDiagnostics}}
+          <tr>
+            <td>{{srcLabel .Result.Test}}</td>
+            <td><code>{{.Result.Test.SrcRail}}</code></td>
+            <td><code>{{.Result.Test.SrcIface}}</code></td>
+            <td>{{dstLabel .Result.Test}}</td>
+            <td><code>{{.Result.Test.DstRail}}</code></td>
+            <td><code>{{.Result.Test.DstIface}}</code></td>
+            <td>{{.Message}}</td>
+          </tr>
+          {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
+
       {{- $gpuResults := gpudirectResults .Matrix.PingResults}}
       {{- if $gpuResults}}
       <div class="matrix-rail">GPUDirect DMA-BUF endpoint details</div>

@@ -569,20 +569,26 @@ type routeCache map[routeCacheKey]RouteCheck
 
 func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, cache routeCache) []PingTest {
 	started := time.Now()
-	checks, hits, failures := 0, 0, 0
+	checks, hits, failures, diagnosticIssues := 0, 0, 0, 0
 	out := append([]PingTest(nil), tests...)
 	for i := range out {
 		// Required RDMA checks retain their existing source-route guard. ICMP
-		// always needs the guard because its source IP activates SBR, while the
-		// selected route establishes whether the named source rail is used.
+		// records the same route data for diagnostics, but the dual-bound ping
+		// itself is authoritative for connectivity.
 		if out[i].Expectation != ExpectRequired && !out[i].Kind.IsICMP() {
 			continue
 		}
 		namespace := namespaceByPod[out[i].SrcPod]
 		container := containerByPod[out[i].SrcPod]
 		if namespace == "" || container == "" {
-			out[i].sourceRouteErr = fmt.Errorf("no netshoot namespace/container lookup for source pod %s", out[i].SrcPod)
-			failures++
+			routeErr := fmt.Errorf("no netshoot namespace/container lookup for source pod %s", out[i].SrcPod)
+			if out[i].Kind.IsICMP() {
+				out[i].sourceRoute = RouteCheck{Err: routeErr.Error()}
+				diagnosticIssues++
+			} else {
+				out[i].sourceRouteErr = routeErr
+				failures++
+			}
 			continue
 		}
 		key := routeCacheKey{
@@ -607,12 +613,18 @@ func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceBy
 			}
 		}
 		if routeErr := sourceRouteValidationError(out[i].sourceRoute, out[i]); routeErr != nil {
-			out[i].sourceRouteErr = routeErr
-			failures++
+			if out[i].Kind.IsICMP() {
+				diagnosticIssues++
+				testLogger(out[i]).V(1).Info("ICMP source route diagnostic differs from requested rail", "error", routeErr.Error())
+			} else {
+				out[i].sourceRouteErr = routeErr
+				failures++
+			}
 		}
 	}
 	connectivityLogger().V(1).Info("source route checks completed",
-		"tests", len(tests), "executed", checks, "cacheHits", hits, "failures", failures,
+		"tests", len(tests), "executed", checks, "cacheHits", hits,
+		"failures", failures, "diagnosticIssues", diagnosticIssues,
 		"duration", time.Since(started).Round(time.Millisecond).String())
 	return out
 }

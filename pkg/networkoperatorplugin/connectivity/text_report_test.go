@@ -201,6 +201,30 @@ func TestRenderMatrixText_EmptyResultsIsNoOp(t *testing.T) {
 	assert.Empty(t, out.lines)
 }
 
+func TestRenderMatrixText_SurfacesNonGatingICMPRouteDiagnostic(t *testing.T) {
+	result := &MatrixResult{PingResults: []PingResult{{
+		Test: PingTest{
+			Kind: ICMPCrossRail, SrcPod: "pod-a", DstPod: "pod-b",
+			SrcNode: "worker-a", DstNode: "worker-b",
+			SrcRail: "rail-0", DstRail: "rail-1", SrcIface: "net1", DstIface: "net2",
+			Expectation: ExpectObserve,
+		},
+		OK: true, ObservedOK: true, Expectation: ExpectObserve,
+		Route: RouteCheck{
+			Command: "ip route get", Output: "198.51.100.20 dev net2 src 192.0.2.10", Dev: "net2", OK: true,
+		},
+	}}}
+	out := &captureOutput{}
+
+	RenderMatrixText(out, result)
+
+	joined := strings.Join(out.lines, "\n")
+	assert.Contains(t, joined, "connected")
+	assert.Contains(t, joined, "ICMP source-route diagnostics (non-gating):")
+	assert.Contains(t, joined, "worker-a [rail-0/net1] → worker-b [rail-1/net2]")
+	assert.Contains(t, joined, `source route selected dev "net2", expected "net1"`)
+}
+
 func TestRenderMatrixText_GPUDirectFamilyIncludesEndpointDetails(t *testing.T) {
 	result := &MatrixResult{PingResults: []PingResult{{
 		Test: PingTest{

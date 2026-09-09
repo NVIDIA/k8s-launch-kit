@@ -418,11 +418,12 @@ desiredNumberScheduled > 0` — a single ContainerCreating-stuck pod fails),
 and run the configured checks (`icmp`, `rping`, and/or `ib_write_bw`) with
 source-bound rail identity. Every profile renders the DaemonSet with a DOCA
 container for RDMA checks and a declared `netshoot` container for ICMP; validate
-applies that manifest without injecting containers at runtime. Before every ICMP
-probe, validate checks that `ip route get <dst> from <src>` selects the named
-source interface. A route selecting another interface makes that rail pair not
-connected without forcing traffic onto it; otherwise ICMP uses
-`ping -I <src-ip>`. `rping` uses
+applies that manifest without injecting containers at runtime. ICMP uses
+`ping -I <src-iface> -I <src-ip>` so the probe both stays on the selected rail
+and activates source-based policy rules. The preceding
+`ip route get <dst> from <src>` result is retained as diagnostic evidence; it
+does not replace the actual ping result. Route differences are shown as
+non-gating diagnostics in the terminal and HTML reports. `rping` uses
 `-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`; required RDMA
 tests also record a source-qualified route lookup from the netshoot container.
 When `validation.gpuDirect.enabled` is true, a separate

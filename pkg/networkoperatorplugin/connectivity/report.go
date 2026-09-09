@@ -396,6 +396,7 @@ func reportFuncMap() template.FuncMap {
 			}
 			return out
 		},
+		"icmpRouteDiagnostics": collectICMPRouteDiagnostics,
 		// familyTitle is the human-friendly section header for a
 		// given kind family.
 		"familyTitle": func(fam string) string {

@@ -18,7 +18,6 @@ package connectivity
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -177,9 +176,24 @@ func sourceRouteValidationError(route RouteCheck, test PingTest) error {
 	return nil
 }
 
-func isSourceRouteMismatchError(err error) bool {
-	var mismatch *sourceRouteMismatchError
-	return errors.As(err, &mismatch)
+type icmpRouteDiagnostic struct {
+	Result  PingResult
+	Message string
+}
+
+func collectICMPRouteDiagnostics(results []PingResult) []icmpRouteDiagnostic {
+	out := make([]icmpRouteDiagnostic, 0)
+	for _, result := range results {
+		if !result.Test.Kind.IsICMP() || result.Route.Command == "" {
+			continue
+		}
+		routeErr := sourceRouteValidationError(result.Route, result.Test)
+		if routeErr == nil {
+			continue
+		}
+		out = append(out, icmpRouteDiagnostic{Result: result, Message: routeErr.Error()})
+	}
+	return out
 }
 
 func finalizeExpectedResult(r *PingResult, observedOK bool, observedErr error) {

@@ -83,6 +83,19 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 		}
 	}
 
+	routeDiagnostics := collectICMPRouteDiagnostics(result.PingResults)
+	if len(routeDiagnostics) > 0 {
+		uiOutput.Info("")
+		uiOutput.Info("ICMP source-route diagnostics (non-gating):")
+		for _, diagnostic := range routeDiagnostics {
+			r := diagnostic.Result
+			uiOutput.Info("  %s [%s/%s] → %s [%s/%s]: %s",
+				axisLabel(r.Test.SrcNode, r.Test.SrcPod), r.Test.SrcRail, r.Test.SrcIface,
+				axisLabel(r.Test.DstNode, r.Test.DstPod), r.Test.DstRail, r.Test.DstIface,
+				diagnostic.Message)
+		}
+	}
+
 	var gpuResults []PingResult
 	for _, r := range result.PingResults {
 		if r.Test.Kind.IsGPUDirectDMABuf() {
