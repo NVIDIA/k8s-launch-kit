@@ -418,12 +418,14 @@ desiredNumberScheduled > 0` — a single ContainerCreating-stuck pod fails),
 and run the configured checks (`icmp`, `rping`, and/or `ib_write_bw`) with
 source-bound rail identity. Every profile renders the DaemonSet with a DOCA
 container for RDMA checks and a declared `netshoot` container for ICMP; validate
-applies that manifest without injecting containers at runtime. ICMP always uses
-`ping -I <src-iface>` for both same-rail and cross-rail probes in every
-validation mode; it never relies on binding only the source IP. `rping` uses
-`-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`; every test
-also records a source-qualified `ip route get <dst> from <src>` lookup from the
-netshoot container. When `validation.gpuDirect.enabled` is true, a separate
+applies that manifest without injecting containers at runtime. Before every ICMP
+probe, validate checks that `ip route get <dst> from <src>` selects the named
+source interface. A route selecting another interface makes that rail pair not
+connected without forcing traffic onto it; otherwise ICMP uses
+`ping -I <src-ip>`. `rping` uses
+`-I <src-ip>`, and `ib_write_bw` uses `--bind_source_ip <src-ip>`; required RDMA
+tests also record a source-qualified route lookup from the netshoot container.
+When `validation.gpuDirect.enabled` is true, a separate
 DMA-BUF bandwidth stage repeats the selected `ib_write_bw` matrix with
 `--use_cuda=<endpoint-index> --use_cuda_dmabuf`. Source and destination CUDA
 indices are resolved independently from each node's per-PF `connectedGPU`

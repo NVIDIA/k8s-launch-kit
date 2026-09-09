@@ -18,6 +18,7 @@ package connectivity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -32,6 +33,17 @@ var routeDevRe = regexp.MustCompile(`(?:^|\s)dev\s+(\S+)`)
 
 const routeSkipMarker = "__L8K_ROUTE_SKIP__"
 const routeSkipErr = "ip command not found in validation container"
+
+type sourceRouteMismatchError struct {
+	selected string
+	expected string
+	output   string
+}
+
+func (e *sourceRouteMismatchError) Error() string {
+	return fmt.Sprintf("source route selected dev %q, expected %q (route: %s)",
+		e.selected, e.expected, e.output)
+}
 
 func initResult(test PingTest) PingResult {
 	exp := test.Expectation
@@ -140,6 +152,34 @@ func routeMismatch(route RouteCheck, test PingTest) bool {
 		return false
 	}
 	return !routeMatchesSourceInterface(route, test)
+}
+
+func sourceRouteValidationError(route RouteCheck, test PingTest) error {
+	if route.Err == routeSkipErr {
+		return nil
+	}
+	if route.Err != "" {
+		if route.Output == "" {
+			return fmt.Errorf("source route check failed: %s", route.Err)
+		}
+		return fmt.Errorf("source route check failed: %s (route: %s)", route.Err, route.Output)
+	}
+	if !route.OK {
+		return fmt.Errorf("source route check returned no device (route: %s)", route.Output)
+	}
+	if route.Dev != test.SrcIface {
+		return &sourceRouteMismatchError{
+			selected: route.Dev,
+			expected: test.SrcIface,
+			output:   route.Output,
+		}
+	}
+	return nil
+}
+
+func isSourceRouteMismatchError(err error) bool {
+	var mismatch *sourceRouteMismatchError
+	return errors.As(err, &mismatch)
 }
 
 func finalizeExpectedResult(r *PingResult, observedOK bool, observedErr error) {

@@ -68,7 +68,7 @@ func automaticTimeoutBudget(plan MatrixPlan, checks []Check) timeoutBudget {
 
 		switch check {
 		case CheckICMP:
-			budget.Tests += requiredRouteBudget(tests)
+			budget.Tests += allRouteBudget(tests)
 			for _, test := range tests {
 				budget.Tests += commandTimeoutFor(test, icmpCommandTimeout)
 			}
@@ -118,4 +118,11 @@ func requiredRouteBudget(tests []PingTest) time.Duration {
 		}
 	}
 	return budget
+}
+
+func allRouteBudget(tests []PingTest) time.Duration {
+	// Successful lookups are cached at runtime, but failures are deliberately
+	// retried and each retry can consume the full route deadline. Budget every
+	// ICMP lookup so cache hits become safety headroom instead of a shortfall.
+	return time.Duration(len(tests)) * routeCheckTimeout
 }

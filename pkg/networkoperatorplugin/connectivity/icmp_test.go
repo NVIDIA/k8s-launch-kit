@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPlannedICMPCommandsPinSourceInterfaceInEveryMode(t *testing.T) {
+func TestPlannedICMPCommandsBindSourceIPInEveryMode(t *testing.T) {
 	pods := []TestPod{
 		mkPod("pod-a", "rail-0", "rail-1"),
 		mkPod("pod-b", "rail-0", "rail-1"),
@@ -50,15 +50,15 @@ func TestPlannedICMPCommandsPinSourceInterfaceInEveryMode(t *testing.T) {
 			icmpTests := testsForCheck(plan, CheckICMP)
 
 			for _, test := range icmpTests {
-				expected := fmt.Sprintf("ping -c 1 -W 1 -I %q %q", test.SrcIface, test.DstIP)
+				expected := fmt.Sprintf("ping -c 1 -W 1 -I %q %q", test.SrcIP, test.DstIP)
 				assert.Equal(t, expected, icmpCommand(test), "%+v", test)
-				assert.NotContains(t, icmpCommand(test), test.SrcIP, "%+v", test)
+				assert.NotContains(t, icmpCommand(test), test.SrcIface, "%+v", test)
 			}
 		})
 	}
 }
 
-func TestWrappedICMPCommandPinsInterfaceInTimeoutAndFallbackPaths(t *testing.T) {
+func TestWrappedICMPCommandBindsSourceIPInTimeoutAndFallbackPaths(t *testing.T) {
 	plan := PlanWithOptions([]TestPod{
 		mkPod("pod-a", "rail-0", "rail-1"),
 		mkPod("pod-b", "rail-0", "rail-1"),
@@ -70,5 +70,5 @@ func TestWrappedICMPCommandPinsInterfaceInTimeoutAndFallbackPaths(t *testing.T) 
 
 	assert.Contains(t, cmd, "timeout -s TERM -k 2 5 sh -c "+shellArg(icmpCommand(test)))
 	assert.Contains(t, cmd, "else "+icmpCommand(test)+" & pid=$!")
-	assert.NotContains(t, cmd, test.SrcIP)
+	assert.NotContains(t, cmd, test.SrcIface)
 }

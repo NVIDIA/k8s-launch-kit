@@ -572,7 +572,10 @@ func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceBy
 	checks, hits, failures := 0, 0, 0
 	out := append([]PingTest(nil), tests...)
 	for i := range out {
-		if out[i].Expectation != ExpectRequired {
+		// Required RDMA checks retain their existing source-route guard. ICMP
+		// always needs the guard because its source IP activates SBR, while the
+		// selected route establishes whether the named source rail is used.
+		if out[i].Expectation != ExpectRequired && !out[i].Kind.IsICMP() {
 			continue
 		}
 		namespace := namespaceByPod[out[i].SrcPod]
@@ -603,9 +606,8 @@ func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceBy
 				cache[key] = out[i].sourceRoute
 			}
 		}
-		if routeMismatch(out[i].sourceRoute, out[i]) {
-			out[i].sourceRouteErr = fmt.Errorf("source route selected dev %q, expected %q (route: %s)",
-				out[i].sourceRoute.Dev, out[i].SrcIface, out[i].sourceRoute.Output)
+		if routeErr := sourceRouteValidationError(out[i].sourceRoute, out[i]); routeErr != nil {
+			out[i].sourceRouteErr = routeErr
 			failures++
 		}
 	}
