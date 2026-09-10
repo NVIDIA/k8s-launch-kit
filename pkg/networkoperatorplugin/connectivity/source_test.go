@@ -19,6 +19,7 @@ package connectivity
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -67,13 +68,14 @@ func TestCheckSourceRoutesReusesCachedRoute(t *testing.T) {
 	assert.NoError(t, got[0].sourceRouteErr)
 }
 
-func TestCheckSourceRoutesKeepsICMPRouteMismatchDiagnostic(t *testing.T) {
+func TestCheckSourceRoutesUsesICMPRouteMismatchAsSourceRailOutcome(t *testing.T) {
 	for _, expectation := range []Expectation{ExpectRequired, ExpectObserve, ExpectForbidden} {
 		t.Run(string(expectation), func(t *testing.T) {
 			test := PingTest{
 				Kind: ICMPCrossRail, SrcPod: "pod-a", DstPod: "pod-b",
-				SrcIP: "192.0.2.10", DstIP: "198.51.100.20", SrcIface: "net1",
-				Expectation: expectation,
+				SrcIP: "192.0.2.10", DstIP: "198.51.100.20", SrcIface: "net1", DstIface: "net2",
+				Expectation:        expectation,
+				expectedRouteIface: "net2",
 			}
 			key := routeCacheKey{
 				namespace: "default", pod: "pod-a", container: "netshoot",
@@ -88,7 +90,9 @@ func TestCheckSourceRoutesKeepsICMPRouteMismatchDiagnostic(t *testing.T) {
 
 			assert.Len(t, got, 1)
 			assert.Equal(t, "net2", got[0].sourceRoute.Dev)
-			assert.NoError(t, got[0].sourceRouteErr)
+			assert.EqualError(t, got[0].sourceRouteErr,
+				`source route selected dev "net2", expected "net1" (route: 198.51.100.20 dev net2 src 192.0.2.10)`)
+			assert.NoError(t, profileRouteValidationError(got[0].sourceRoute, got[0]))
 		})
 	}
 }
@@ -138,7 +142,7 @@ func TestBoundedTraceOutput(t *testing.T) {
 	assert.Contains(t, got, "truncated 100 bytes")
 }
 
-func TestRunICMPExecutesProbeDespitePrecomputedRouteError(t *testing.T) {
+func TestRunICMPPreservesPrecomputedRouteErrorForEveryExpectation(t *testing.T) {
 	for _, expectation := range []Expectation{ExpectRequired, ExpectObserve, ExpectForbidden} {
 		t.Run(string(expectation), func(t *testing.T) {
 			test := PingTest{
@@ -149,15 +153,15 @@ func TestRunICMPExecutesProbeDespitePrecomputedRouteError(t *testing.T) {
 			called := false
 			execInPod := func(_ context.Context, _ *rest.Config, _, _, _ string, command []string) (kubeclient.ExecResult, error) {
 				called = true
-				require.Equal(t, []string{"/bin/sh", "-c", shellWithTimeout(icmpCommand(test), commandTimeoutFor(test, icmpCommandTimeout))}, command)
-				return kubeclient.ExecResult{Stdout: "1 packets transmitted, 1 received"}, nil
+				return kubeclient.ExecResult{}, fmt.Errorf("unexpected command: %v", command)
 			}
 
 			result := runICMP(context.Background(), nil, "default", "pod-a", "netshoot", test, execInPod)
 
-			assert.True(t, called)
-			assert.True(t, result.ObservedOK)
-			assert.Equal(t, expectation != ExpectForbidden, result.OK)
+			assert.False(t, called)
+			assert.False(t, result.ObservedOK)
+			assert.False(t, result.OK)
+			assert.EqualError(t, result.Err, "route lookup failed")
 		})
 	}
 }
@@ -186,11 +190,12 @@ func TestSourceRouteValidationErrorRejectsLookupAndParseFailures(t *testing.T) {
 			err := sourceRouteValidationError(tc.route, test)
 
 			assert.EqualError(t, err, tc.want)
+			assert.False(t, isSourceRouteMismatchError(err))
 		})
 	}
 }
 
-func TestRunICMPUsesObservedFailureDespiteRouteLookupFailure(t *testing.T) {
+func TestRunICMPTreatsForbiddenRouteLookupFailureAsValidationFailure(t *testing.T) {
 	test := PingTest{
 		Kind:        ICMPCrossRail,
 		SrcIface:    "net1",
@@ -202,19 +207,21 @@ func TestRunICMPUsesObservedFailureDespiteRouteLookupFailure(t *testing.T) {
 			Err:     "command terminated with exit code 1",
 		},
 	}
-	pingErr := errors.New("ping exited with code 1")
+	called := false
 	execInPod := func(_ context.Context, _ *rest.Config, _, _, _ string, _ []string) (kubeclient.ExecResult, error) {
-		return kubeclient.ExecResult{}, pingErr
+		called = true
+		return kubeclient.ExecResult{}, nil
 	}
 
 	result := runICMP(context.Background(), nil, "default", "pod-a", "netshoot", test, execInPod)
 
-	assert.True(t, result.OK)
+	assert.False(t, called)
+	assert.False(t, result.OK)
 	assert.False(t, result.ObservedOK)
-	assert.NoError(t, result.Err)
+	assert.EqualError(t, result.Err, "source route check failed: command terminated with exit code 1")
 }
 
-func TestRunICMPUsesObservedSuccessDespiteRouteMismatch(t *testing.T) {
+func TestRunICMPTreatsObservedRouteMismatchAsDisconnected(t *testing.T) {
 	test := PingTest{
 		Kind: ICMPCrossRail, SrcIface: "net1", SrcIP: "192.0.2.10", DstIP: "198.51.100.20", Expectation: ExpectObserve,
 		sourceRoute: RouteCheck{
@@ -229,26 +236,63 @@ func TestRunICMPUsesObservedSuccessDespiteRouteMismatch(t *testing.T) {
 
 	result := runICMP(context.Background(), nil, "default", "pod-a", "netshoot", test, execInPod)
 
-	assert.True(t, called)
+	assert.False(t, called)
 	assert.True(t, result.OK)
-	assert.True(t, result.ObservedOK)
-	assert.NoError(t, result.Err)
+	assert.False(t, result.ObservedOK)
+	assert.EqualError(t, result.Err,
+		`source route selected dev "net2", expected "net1" (route: 198.51.100.20 dev net2 src 192.0.2.10)`)
 }
 
-func TestRunICMPUsesObservedSuccessForForbiddenRouteMismatch(t *testing.T) {
+func TestRunICMPTreatsForbiddenRouteMismatchAsDisconnected(t *testing.T) {
 	test := PingTest{
 		Kind: ICMPCrossRail, SrcIface: "net1", SrcIP: "192.0.2.10", DstIP: "198.51.100.20", Expectation: ExpectForbidden,
 		sourceRoute: RouteCheck{
 			Command: "ip route get", Output: "198.51.100.20 dev net2 src 192.0.2.10", Dev: "net2", OK: true,
 		},
 	}
+	called := false
 	execInPod := func(_ context.Context, _ *rest.Config, _, _, _ string, _ []string) (kubeclient.ExecResult, error) {
+		called = true
 		return kubeclient.ExecResult{}, nil
 	}
 
 	result := runICMP(context.Background(), nil, "default", "pod-a", "netshoot", test, execInPod)
 
-	assert.False(t, result.OK)
+	assert.False(t, called)
+	assert.True(t, result.OK)
+	assert.False(t, result.ObservedOK)
+	assert.NoError(t, result.Err)
+}
+
+func TestRunICMPExecutesSourceBoundPingWhenRouteUsesSourceRail(t *testing.T) {
+	test := PingTest{
+		Kind: ICMPCrossRail, SrcIface: "net1", SrcIP: "192.0.2.10", DstIP: "198.51.100.20", Expectation: ExpectObserve,
+		sourceRoute: RouteCheck{
+			Command: "ip route get", Output: "198.51.100.20 via 192.0.2.1 dev net1 src 192.0.2.10", Dev: "net1", OK: true,
+		},
+	}
+	called := false
+	execInPod := func(_ context.Context, _ *rest.Config, _, _, _ string, command []string) (kubeclient.ExecResult, error) {
+		called = true
+		require.Equal(t, []string{"/bin/sh", "-c", shellWithTimeout(icmpCommand(test), commandTimeoutFor(test, icmpCommandTimeout))}, command)
+		return kubeclient.ExecResult{Stdout: "1 packets transmitted, 1 received"}, nil
+	}
+
+	result := runICMP(context.Background(), nil, "default", "pod-a", "netshoot", test, execInPod)
+
+	assert.True(t, called)
+	assert.True(t, result.OK)
 	assert.True(t, result.ObservedOK)
-	assert.EqualError(t, result.Err, "cross-rail traffic succeeded but profile routing expects isolation")
+	assert.NoError(t, result.Err)
+}
+
+func TestProfileRouteValidationFollowsRoutingMode(t *testing.T) {
+	route := RouteCheck{Command: "ip route get", Output: "198.51.100.20 dev net2", Dev: "net2", OK: true}
+
+	sbr := PingTest{SrcIface: "net1", DstIface: "net2", expectedRouteIface: "net1"}
+	dbr := PingTest{SrcIface: "net1", DstIface: "net2", expectedRouteIface: "net2"}
+
+	assert.EqualError(t, profileRouteValidationError(route, sbr),
+		`source route selected dev "net2", expected "net1" (route: 198.51.100.20 dev net2)`)
+	assert.NoError(t, profileRouteValidationError(route, dbr))
 }

@@ -101,27 +101,28 @@ type TestPod struct {
 // SrcRDMADev / DstRDMADev carry the per-pod RDMA device names so the
 // test runner can pass `-d <dev>` for ib_write_bw.
 type PingTest struct {
-	Kind             PingTestKind
-	SrcPod           string
-	DstPod           string
-	SrcNode          string
-	DstNode          string
-	Rail             string // for same-rail tests; "<srcRail>→<dstRail>" for cross
-	SrcIP            string
-	DstIP            string
-	SrcRail          string
-	DstRail          string
-	SrcIface         string
-	DstIface         string
-	SrcRDMADev       string
-	DstRDMADev       string
-	SrcGPUIndex      int
-	DstGPUIndex      int
-	SrcGPUPCIAddress string
-	DstGPUPCIAddress string
-	Expectation      Expectation
-	sourceRoute      RouteCheck
-	sourceRouteErr   error
+	Kind               PingTestKind
+	SrcPod             string
+	DstPod             string
+	SrcNode            string
+	DstNode            string
+	Rail               string // for same-rail tests; "<srcRail>→<dstRail>" for cross
+	SrcIP              string
+	DstIP              string
+	SrcRail            string
+	DstRail            string
+	SrcIface           string
+	DstIface           string
+	SrcRDMADev         string
+	DstRDMADev         string
+	SrcGPUIndex        int
+	DstGPUIndex        int
+	SrcGPUPCIAddress   string
+	DstGPUPCIAddress   string
+	Expectation        Expectation
+	expectedRouteIface string
+	sourceRoute        RouteCheck
+	sourceRouteErr     error
 }
 
 // PingTestKind enumerates the buckets the matrix renders into. Order
@@ -256,6 +257,7 @@ func PlanWithOptions(pods []TestPod, mode Mode, routing string) MatrixPlan {
 				}
 				icmpT := base
 				icmpT.Kind = ICMPSameRail
+				icmpT.expectedRouteIface = srcIface
 				plan.ICMPSameRail = append(plan.ICMPSameRail, icmpT)
 				srcDev, hasSrcDev := src.RDMADevsByRail[rail]
 				dstDev, hasDstDev := dst.RDMADevsByRail[rail]
@@ -294,6 +296,11 @@ func PlanWithOptions(pods []TestPod, mode Mode, routing string) MatrixPlan {
 				}
 				icmpC := base
 				icmpC.Kind = ICMPCrossRail
+				if routing == config.RoutingSourceBased {
+					icmpC.expectedRouteIface = srcIface
+				} else {
+					icmpC.expectedRouteIface = dstIface
+				}
 				plan.ICMPCrossRail = append(plan.ICMPCrossRail, icmpC)
 				srcDev, hasSrcDev := src.RDMADevsByRail[srcRail]
 				dstDev, hasDstDev := dst.RDMADevsByRail[dstRail]

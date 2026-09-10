@@ -96,12 +96,13 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 - `strict`: full matrix. Cross-rail gates by `profile.routing`: `source-based`
   must succeed, `destination-based` must stay isolated.
 
-All checks are source-bound. ICMP uses
-`ping -I <src-iface> -I <src-ip>` so the probe stays on the selected rail while
-its source address activates source-based policy rules. The preceding
-`ip route get <dst> from <src>` output is diagnostic only and never replaces
-the observed ping result. Route differences are visible in the terminal and
-HTML reports as non-gating diagnostics. `rping` uses
+All checks are source-bound. Before every ICMP probe, validate confirms that
+`ip route get <dst> from <src>` selects the requested source interface. A route
+using another interface is reported as not connected for that rail pair rather
+than forcing traffic onto it. When the source rail is selected, ICMP uses
+`ping -I <src-ip>` so source-based policy rules participate naturally. Routing
+diagnostics expect the source interface for source-based routing and the
+destination interface for destination-based routing. `rping` uses
 `-I <src-ip>`, and `ib_write_bw` uses
 `--bind_source_ip <src-ip>`. GPUDirect
 adds `--use_cuda=<endpoint-index> --use_cuda_dmabuf` independently on the

@@ -302,7 +302,7 @@ func TestRenderHTML_HandlesNilOptionalFields(t *testing.T) {
 	assert.Contains(t, buf.String(), "Connectivity testing was not run")
 }
 
-func TestRenderHTML_SurfacesNonGatingICMPRouteDiagnostic(t *testing.T) {
+func TestRenderHTML_SurfacesUnexpectedICMPRouteDiagnostic(t *testing.T) {
 	data := ReportData{
 		Cluster: ClusterInfo{L8kVersion: "v0", GeneratedAt: time.Now()},
 		Matrix: &MatrixResult{PingResults: []PingResult{{
@@ -310,9 +310,10 @@ func TestRenderHTML_SurfacesNonGatingICMPRouteDiagnostic(t *testing.T) {
 				Kind: ICMPCrossRail, SrcPod: "pod-a", DstPod: "pod-b",
 				SrcNode: "worker-a", DstNode: "worker-b",
 				SrcRail: "rail-0", DstRail: "rail-1", SrcIface: "net1", DstIface: "net2",
-				Expectation: ExpectObserve,
+				Expectation:        ExpectObserve,
+				expectedRouteIface: "net1",
 			},
-			OK: true, ObservedOK: true, Expectation: ExpectObserve,
+			OK: true, ObservedOK: false, Expectation: ExpectObserve,
 			Route: RouteCheck{
 				Command: "ip route get", Output: "198.51.100.20 dev net2 src 192.0.2.10", Dev: "net2", OK: true,
 			},
@@ -323,7 +324,7 @@ func TestRenderHTML_SurfacesNonGatingICMPRouteDiagnostic(t *testing.T) {
 	require.NoError(t, RenderHTML(&buf, data))
 
 	html := buf.String()
-	assert.Contains(t, html, "ICMP source-route diagnostics (non-gating)")
+	assert.Contains(t, html, "ICMP routing diagnostics")
 	assert.Contains(t, html, "worker-a")
 	assert.Contains(t, html, "worker-b")
 	assert.Contains(t, html, `source route selected dev &#34;net2&#34;, expected &#34;net1&#34;`)

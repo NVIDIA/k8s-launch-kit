@@ -86,7 +86,7 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 	routeDiagnostics := collectICMPRouteDiagnostics(result.PingResults)
 	if len(routeDiagnostics) > 0 {
 		uiOutput.Info("")
-		uiOutput.Info("ICMP source-route diagnostics (non-gating):")
+		uiOutput.Info("ICMP routing diagnostics:")
 		for _, diagnostic := range routeDiagnostics {
 			r := diagnostic.Result
 			uiOutput.Info("  %s [%s/%s] → %s [%s/%s]: %s",

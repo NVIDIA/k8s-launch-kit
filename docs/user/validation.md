@@ -39,12 +39,13 @@ container runs `rping`, `ib_write_bw`, and DMA-BUF bandwidth, while the `netshoo
 ICMP and route checks from the same pod network namespace. Validation applies
 the generated DaemonSet as written; it does not inject a helper container at
 runtime. Before every same-rail and cross-rail ICMP probe in `quick`, `full`,
-and `strict` modes, validation records `ip route get <dst> from <src>` as
-diagnostic evidence. The route lookup never substitutes for the probe. ICMP
-uses `ping -I <src-iface> -I <src-ip>` so the packet is constrained to the
-selected rail while its source address activates source-based policy rules.
-Route differences are shown as non-gating diagnostics in both terminal and
-HTML reports.
+and `strict` modes, validation runs `ip route get <dst> from <src>`. A route
+that does not select the requested source interface means that rail pair is not
+connected; validation does not force the packet onto that interface. When the
+source rail is selected, ICMP uses `ping -I <src-ip>` so source-based policy
+rules participate naturally. Routing diagnostics compare the selected device
+with the profile expectation: the source interface for source-based routing,
+or the destination interface for destination-based routing.
 
 Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a relevant device condition with a stale `observedGeneration` remains `IN-PROGRESS`. `NicConfigurationTemplate` considers `FirmwareUpdateInProgress` relevant only when the matched device has `spec.firmware`; a stale firmware condition cannot block a configuration-only deployment. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
 

@@ -18,6 +18,7 @@ package connectivity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -154,6 +155,18 @@ func routeMismatch(route RouteCheck, test PingTest) bool {
 }
 
 func sourceRouteValidationError(route RouteCheck, test PingTest) error {
+	return routeValidationError(route, test.SrcIface)
+}
+
+func profileRouteValidationError(route RouteCheck, test PingTest) error {
+	expected := test.expectedRouteIface
+	if expected == "" {
+		expected = test.SrcIface
+	}
+	return routeValidationError(route, expected)
+}
+
+func routeValidationError(route RouteCheck, expectedIface string) error {
 	if route.Err == routeSkipErr {
 		return nil
 	}
@@ -166,14 +179,19 @@ func sourceRouteValidationError(route RouteCheck, test PingTest) error {
 	if !route.OK {
 		return fmt.Errorf("source route check returned no device (route: %s)", route.Output)
 	}
-	if route.Dev != test.SrcIface {
+	if route.Dev != expectedIface {
 		return &sourceRouteMismatchError{
 			selected: route.Dev,
-			expected: test.SrcIface,
+			expected: expectedIface,
 			output:   route.Output,
 		}
 	}
 	return nil
+}
+
+func isSourceRouteMismatchError(err error) bool {
+	var mismatch *sourceRouteMismatchError
+	return errors.As(err, &mismatch)
 }
 
 type icmpRouteDiagnostic struct {
@@ -187,7 +205,7 @@ func collectICMPRouteDiagnostics(results []PingResult) []icmpRouteDiagnostic {
 		if !result.Test.Kind.IsICMP() || result.Route.Command == "" {
 			continue
 		}
-		routeErr := sourceRouteValidationError(result.Route, result.Test)
+		routeErr := profileRouteValidationError(result.Route, result.Test)
 		if routeErr == nil {
 			continue
 		}

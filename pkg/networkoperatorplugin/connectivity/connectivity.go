@@ -569,12 +569,12 @@ type routeCache map[routeCacheKey]RouteCheck
 
 func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceByPod, containerByPod map[string]string, tests []PingTest, cache routeCache) []PingTest {
 	started := time.Now()
-	checks, hits, failures, diagnosticIssues := 0, 0, 0, 0
+	checks, hits, failures, sourceRailMisses, diagnosticIssues := 0, 0, 0, 0, 0
 	out := append([]PingTest(nil), tests...)
 	for i := range out {
-		// Required RDMA checks retain their existing source-route guard. ICMP
-		// records the same route data for diagnostics, but the dual-bound ping
-		// itself is authoritative for connectivity.
+		// Required RDMA checks retain their existing source-route guard. Every
+		// ICMP test also needs the route decision to establish whether the
+		// requested source rail would actually carry the packet.
 		if out[i].Expectation != ExpectRequired && !out[i].Kind.IsICMP() {
 			continue
 		}
@@ -582,13 +582,9 @@ func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceBy
 		container := containerByPod[out[i].SrcPod]
 		if namespace == "" || container == "" {
 			routeErr := fmt.Errorf("no netshoot namespace/container lookup for source pod %s", out[i].SrcPod)
-			if out[i].Kind.IsICMP() {
-				out[i].sourceRoute = RouteCheck{Err: routeErr.Error()}
-				diagnosticIssues++
-			} else {
-				out[i].sourceRouteErr = routeErr
-				failures++
-			}
+			out[i].sourceRoute = RouteCheck{Err: routeErr.Error()}
+			out[i].sourceRouteErr = routeErr
+			failures++
 			continue
 		}
 		key := routeCacheKey{
@@ -613,18 +609,24 @@ func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceBy
 			}
 		}
 		if routeErr := sourceRouteValidationError(out[i].sourceRoute, out[i]); routeErr != nil {
-			if out[i].Kind.IsICMP() {
-				diagnosticIssues++
-				testLogger(out[i]).V(1).Info("ICMP source route diagnostic differs from requested rail", "error", routeErr.Error())
+			out[i].sourceRouteErr = routeErr
+			if isSourceRouteMismatchError(routeErr) {
+				sourceRailMisses++
 			} else {
-				out[i].sourceRouteErr = routeErr
 				failures++
+			}
+		}
+		if out[i].Kind.IsICMP() {
+			if routeErr := profileRouteValidationError(out[i].sourceRoute, out[i]); routeErr != nil {
+				diagnosticIssues++
+				testLogger(out[i]).V(1).Info("ICMP route differs from profile routing mode", "error", routeErr.Error())
 			}
 		}
 	}
 	connectivityLogger().V(1).Info("source route checks completed",
 		"tests", len(tests), "executed", checks, "cacheHits", hits,
-		"failures", failures, "diagnosticIssues", diagnosticIssues,
+		"failures", failures, "sourceRailMisses", sourceRailMisses,
+		"diagnosticIssues", diagnosticIssues,
 		"duration", time.Since(started).Round(time.Millisecond).String())
 	return out
 }

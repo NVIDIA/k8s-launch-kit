@@ -945,7 +945,7 @@ footer strong { color: var(--text-muted); }
 
       {{- $routeDiagnostics := icmpRouteDiagnostics .Matrix.PingResults}}
       {{- if $routeDiagnostics}}
-      <div class="matrix-rail">ICMP source-route diagnostics (non-gating)</div>
+		<div class="matrix-rail">ICMP routing diagnostics</div>
       <table class="matrix-table">
         <thead>
           <tr><th>Source</th><th>Src rail</th><th>Src iface</th><th>Destination</th><th>Dst rail</th><th>Dst iface</th><th>Diagnostic</th></tr>
