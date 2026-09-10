@@ -283,6 +283,21 @@ func TestPlan_StrictCrossRailExpectationFollowsRouting(t *testing.T) {
 	assert.Equal(t, ExpectForbidden, destination.RDMACrossRail[0].Expectation)
 }
 
+func TestPlan_CrossRailRouteExpectationFollowsRouting(t *testing.T) {
+	pods := []TestPod{
+		mkPod("pod-a", "rail-0", "rail-1"),
+		mkPod("pod-b", "rail-0", "rail-1"),
+	}
+
+	source := PlanWithOptions(pods, ModeQuick, config.RoutingSourceBased)
+	require.NotEmpty(t, source.ICMPCrossRail)
+	assert.Equal(t, source.ICMPCrossRail[0].SrcIface, source.ICMPCrossRail[0].expectedRouteIface)
+
+	destination := PlanWithOptions(pods, ModeQuick, config.RoutingDestinationBased)
+	require.NotEmpty(t, destination.ICMPCrossRail)
+	assert.Equal(t, destination.ICMPCrossRail[0].DstIface, destination.ICMPCrossRail[0].expectedRouteIface)
+}
+
 func TestPlan_StableOrderingAcrossRuns(t *testing.T) {
 	pods := []TestPod{
 		mkPod("pod-b", "rail-0", "rail-1"),

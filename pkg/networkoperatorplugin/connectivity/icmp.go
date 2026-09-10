@@ -33,11 +33,8 @@ type execInPodFunc func(context.Context, *rest.Config, string, string, string, [
 func runICMP(ctx context.Context, restConfig *rest.Config, namespace, pod, container string, test PingTest, execInPod execInPodFunc) PingResult {
 	r := initResult(test)
 	if r.Err != nil {
-		// Source-route checks are diagnostic for ICMP. The ping command binds
-		// both the interface and source address, so its observed result is the
-		// authoritative connectivity signal.
-		testLogger(test).V(1).Info("ICMP source route diagnostic unavailable", "error", r.Err.Error())
-		r.Err = nil
+		finalizeICMPRouteError(&r)
+		return r
 	}
 	if test.SrcIface == "" {
 		r.Err = fmt.Errorf("icmp needs source interface for rail %q", test.SrcRail)
@@ -52,13 +49,14 @@ func runICMP(ctx context.Context, restConfig *rest.Config, namespace, pod, conta
 		return r
 	}
 	// RunMatrix pre-computes and caches ICMP source routes across stages.
-	// Keep the standalone runner behavior for direct callers, but never let
-	// this diagnostic replace the actual ping probe.
+	// Keep the standalone runner behavior for direct callers. The route must
+	// select the requested source rail before ping can measure that rail pair.
 	if r.Route.Command == "" {
 		r.Route = checkRoute(ctx, restConfig, namespace, pod, container, test)
 	}
-	if routeErr := sourceRouteValidationError(r.Route, test); routeErr != nil {
-		testLogger(test).V(1).Info("ICMP source route diagnostic differs from requested rail", "error", routeErr.Error())
+	if r.Err = sourceRouteValidationError(r.Route, test); r.Err != nil {
+		finalizeICMPRouteError(&r)
+		return r
 	}
 	cmd := shellWithTimeout(icmpCommand(test),
 		commandTimeoutFor(test, icmpCommandTimeout))
@@ -69,7 +67,15 @@ func runICMP(ctx context.Context, restConfig *rest.Config, namespace, pod, conta
 	return r
 }
 
+func finalizeICMPRouteError(result *PingResult) {
+	if isSourceRouteMismatchError(result.Err) {
+		finalizeExpectedResult(result, false, result.Err)
+		return
+	}
+	result.OK = false
+	result.ObservedOK = false
+}
+
 func icmpCommand(test PingTest) string {
-	return fmt.Sprintf("ping -c 1 -W 1 -I %s -I %s %s",
-		shellArg(test.SrcIface), shellArg(test.SrcIP), shellArg(test.DstIP))
+	return fmt.Sprintf("ping -c 1 -W 1 -I %s %s", shellArg(test.SrcIP), shellArg(test.DstIP))
 }
