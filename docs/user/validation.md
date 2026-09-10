@@ -99,7 +99,11 @@ The generated validation DaemonSet selects its full-runtime DOCA image from
 the Network Operator release catalog and copies
 `networkOperator.imagePullSecrets` into the Pod spec. Create those Secrets in
 every network namespace used by validation. Only the DOCA container requests
-the configured GPU resource.
+the configured GPU resource. When GPUDirect is enabled, that container also
+sets `LD_LIBRARY_PATH` to prefer the host-injected NVIDIA driver libraries and
+exclude the CUDA compatibility-library directory. The override prevents a
+bundled `libcuda` from taking precedence over the host driver and is omitted
+when GPUDirect is disabled.
 
 For each test, Launch Kit maps the source rail and destination rail to their
 own `connectedGPU` value from discovery or the selected topology preset. It

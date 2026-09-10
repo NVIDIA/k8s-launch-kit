@@ -51,6 +51,11 @@ spec:
       containers:
       - name: test-container
         image: {{validationImage $.NetworkOperator}}
+        {{- if $.Validation.GPUDirect.Enabled }}
+        env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/mpi/gcc/openmpi-current/lib:/usr/local/cuda/lib64
+        {{- end }}
         command: ["/bin/bash", "-c", "sleep infinity"]
         securityContext:
           capabilities:
@@ -132,6 +137,11 @@ spec:
       containers:
       - name: test-container
         image: {{validationImage $.NetworkOperator}}
+        {{- if $.Validation.GPUDirect.Enabled }}
+        env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/mpi/gcc/openmpi-current/lib:/usr/local/cuda/lib64
+        {{- end }}
         command: ["/bin/bash", "-c", "sleep infinity"]
         securityContext:
           capabilities:

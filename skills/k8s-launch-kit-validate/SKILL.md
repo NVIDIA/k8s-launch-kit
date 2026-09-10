@@ -47,8 +47,10 @@ Operator release.
    true and `ib_write_bw` is selected, a distinct DMA-BUF bandwidth family
    uses the connected GPU index for each source and destination rail. Profile templates declare both validation
    containers: the release-specific full-runtime DOCA image for the RDMA checks and `netshoot` for ICMP and route
-   checks. Validate applies the generated DaemonSet without runtime container
-   injection. The default mode is `strict`.
+   checks. GPUDirect-enabled templates set `LD_LIBRARY_PATH` on the DOCA
+   container to prefer host-injected NVIDIA driver libraries over bundled CUDA
+   compatibility libraries. Validate applies the generated DaemonSet without
+   runtime container injection. The default mode is `strict`.
 
 Validation also reports deploy-preflight drift without remediating it.
 `SriovNetworkPoolConfig`, `SriovNetworkNodePolicy`, and `OVSNetwork` objects
