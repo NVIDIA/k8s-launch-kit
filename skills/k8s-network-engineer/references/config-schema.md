@@ -33,8 +33,8 @@ Controls DOCA/OFED driver deployment in the NicClusterPolicy.
 | `unloadThirdPartyRDMAModules`   | bool   | `true`                           | Unload kernel modules that depend on MLX/OFED drivers    |
 
 When `unloadThirdPartyRDMAModules` is true and dependent modules are discovered,
-the generated NicClusterPolicy includes `UNLOAD_THIRD_PARTY_RDMA_MODULES` env var
-(space-separated module names) in the ofedDriver section.
+the generated NicClusterPolicy sets the `UNLOAD_THIRD_PARTY_RDMA_MODULES` env var
+to `"true"` (a boolean flag) in the ofedDriver section.
 
 ## maintenance
 
