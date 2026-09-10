@@ -11,7 +11,7 @@ class L8k < Formula
   on_macos do
     if Hardware::CPU.intel?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.7.0/l8k_26.7.0_darwin_amd64.tar.gz"
-      sha256 "5193ea4ccb7ee43680fea14742e15abcb5e9c617ed7504046a3e32719c459158"
+      sha256 "017a239dd30cb30662ef52b4c2674e9167a9d8cf121fb6f47875dd14cf772353"
 
       define_method(:install) do
         bin.install "l8k"
@@ -20,7 +20,7 @@ class L8k < Formula
     end
     if Hardware::CPU.arm?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.7.0/l8k_26.7.0_darwin_arm64.tar.gz"
-      sha256 "3755c242247d13c49df549eff42cfcabd482d819b4881ac5d7bef8df6d638d93"
+      sha256 "4523c966ac702dd9a1502550caa5554572581e8300c6abde52a9f041ce9778d7"
 
       define_method(:install) do
         bin.install "l8k"
@@ -32,7 +32,7 @@ class L8k < Formula
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.7.0/l8k_26.7.0_linux_amd64.tar.gz"
-      sha256 "e505879eac20c56a26851ea9dcbf60e3e45b46297290a8c7bf1ddb07fe037976"
+      sha256 "d11fdafb5d299e1f26433f2c1f776cd3589ca710c3504c5ab379a4efb5a4cbb9"
       define_method(:install) do
         bin.install "l8k"
         (share/"l8k").install "profiles"
@@ -40,7 +40,7 @@ class L8k < Formula
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.7.0/l8k_26.7.0_linux_arm64.tar.gz"
-      sha256 "9ca29a11748ac453e86193243072d95fa314eef7296b749e343edaf5d1780d37"
+      sha256 "1538405d0f45213746981aa81ec069bf1b75cdfa2eeea6d09424295d93e624d7"
       define_method(:install) do
         bin.install "l8k"
         (share/"l8k").install "profiles"
