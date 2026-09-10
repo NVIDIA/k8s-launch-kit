@@ -400,6 +400,29 @@ l8k validate --user-config ./cluster-config.yaml \
     --kubeconfig ~/.kube/config
 ```
 
+`--deployment-files` may also point to a directory containing only a
+user-provided `*example*.yaml` test DaemonSet. In that case, validate runs only
+the connectivity matrix; no separate connectivity-manifest option is needed.
+If `values.yaml` or any non-example YAML manifest is present, the normal full
+validation stages still run. Connectivity requires a user-owned
+`cluster-config.yaml` with explicit `profile.routing` and
+`validation.gpuDirect.enabled` values. The minimum is:
+
+```yaml
+profile:
+  routing: source-based # or destination-based
+validation:
+  gpuDirect:
+    enabled: false
+```
+
+When GPUDirect is enabled with `ib_write_bw`, `clusterConfig` must additionally
+list worker nodes and east-west PFs with non-negative `rail` values and
+`connectedGPU: GPU<N>`. A connectivity-only run requires every selected check
+family to produce at least one gating test; non-gating cross-rail observations
+do not count. A skipped, empty, or incomplete matrix fails because no other
+stage produced acceptance evidence.
+
 `l8k validate` runs three checks back-to-back: (1) the Network Operator Helm
 chart's appVersion matches the version expected by
 `networkOperator.selectedRelease` in `cluster-config.yaml`; (2) every YAML
@@ -513,9 +536,10 @@ connectivity matrix (per-rail src×dst grids + cross-rail results), and a
 warnings rollup. Styled after the NVIDIA AICR documentation light theme;
 no JS, no external assets.
 
-Exits 4 on any missing/error manifest, version mismatch, or connectivity
-failure. `IN-PROGRESS` exits 0 with a warning so CI can re-run later (or
-pass `--wait <duration>` to block).
+Exits 4 on any missing/error manifest, version mismatch, connectivity failure,
+or skipped/empty connectivity-only matrix. `IN-PROGRESS` in full validation
+exits 0 with a warning so CI can re-run later (or pass `--wait <duration>` to
+block).
 
 Collect a diagnostic dump:
 

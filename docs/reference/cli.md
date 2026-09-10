@@ -157,6 +157,12 @@ full deletion boundary.
 
 ## Validate Flags
 
+When `--deployment-files` contains only user-provided `*example*.yaml` test
+DaemonSets, `validate` runs connectivity only. Adding `values.yaml` or any
+non-example YAML manifest selects the full validation pipeline. Connectivity
+requires a user-owned config with explicit `profile.routing` and
+`validation.gpuDirect.enabled`; no separate workload-manifest flag is used.
+
 | Flag | Description |
 | --- | --- |
 | `--connectivity` | Enable or disable data-plane connectivity checks. |

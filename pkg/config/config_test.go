@@ -203,6 +203,25 @@ profile:
 		assert.NotEmpty(t, cfg.NetworkOperator.Version, "embedded default must carry a NetworkOperator version")
 	})
 
+	t.Run("load minimal connectivity config without network operator", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte(`profile:
+  routing: source-based
+validation:
+  gpuDirect:
+    enabled: false
+`), 0o600))
+
+		cfg, err := LoadFullConfig(configPath, logger)
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Nil(t, cfg.NetworkOperator)
+		require.NotNil(t, cfg.Profile)
+		assert.Equal(t, RoutingSourceBased, cfg.Profile.Routing)
+		require.NotNil(t, cfg.Validation)
+		assert.False(t, cfg.Validation.GPUDirect.Enabled)
+	})
+
 	t.Run("load invalid YAML config", func(t *testing.T) {
 		tempDir := t.TempDir()
 		configPath := filepath.Join(tempDir, "invalid-config.yaml")
