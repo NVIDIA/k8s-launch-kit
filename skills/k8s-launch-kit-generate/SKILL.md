@@ -135,7 +135,10 @@ When `validation.gpuDirect.enabled` is true, every generated example
 DaemonSet requests `validation.gpuDirect.gpuResourceType` only on its primary
 DOCA container. The request exposes the highest `GPU<N>` referenced by PF
 topology, the image comes from the selected release's `validation.image`, and
-`networkOperator.imagePullSecrets` is copied to the Pod spec. Do not inject
+`networkOperator.imagePullSecrets` is copied to the Pod spec. The primary
+container also sets `LD_LIBRARY_PATH` to prefer the host-injected NVIDIA driver
+libraries and exclude the CUDA compatibility-library directory. The
+environment override is omitted when GPUDirect is disabled. Do not inject
 these fields later at validation runtime.
 
 ```

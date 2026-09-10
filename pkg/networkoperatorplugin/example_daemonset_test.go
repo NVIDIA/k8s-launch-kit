@@ -29,6 +29,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
+const gpudirectLDLibraryPath = "/usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/mpi/gcc/openmpi-current/lib:/usr/local/cuda/lib64"
+
 func TestExampleDaemonSetTemplatesDeclareICMPHelper(t *testing.T) {
 	templates, err := filepath.Glob(filepath.Join("..", "..", "profiles", "*", "*-example-daemonset.yaml"))
 	require.NoError(t, err)
@@ -68,6 +70,13 @@ func TestExampleDaemonSetTemplatesDeclareReleaseImagePullSecretsAndGPURequests(t
 			branches := strings.Count(body, "kind: DaemonSet")
 			require.Equal(t, branches, strings.Count(body, "image: {{validationImage $.NetworkOperator}}"))
 			require.Equal(t, branches, strings.Count(body, "imagePullSecrets:"))
+			gpudirectEnvBlock := fmt.Sprintf(`{{- if $.Validation.GPUDirect.Enabled }}
+        env:
+        - name: LD_LIBRARY_PATH
+          value: %s
+        {{- end }}`, gpudirectLDLibraryPath)
+			require.Equal(t, branches, strings.Count(body, gpudirectEnvBlock),
+				"every primary container branch must prefer the host-injected CUDA driver during GPUDirect validation")
 			require.GreaterOrEqual(t, strings.Count(body, "{{$.Validation.GPUDirect.GPUResourceType}}"), branches*2,
 				"every primary container branch must request and limit the configured GPU resource")
 		})
@@ -110,9 +119,12 @@ func TestRenderedExampleDaemonSetGPUDirectResources(t *testing.T) {
 	limits := requireMap(t, resources, "limits")
 	require.Equal(t, "8", requests["example.com/gpu"], "merged DaemonSet must cover the highest source-group GPU index")
 	require.Equal(t, "8", limits["example.com/gpu"])
+	require.Equal(t, []any{map[string]any{"name": "LD_LIBRARY_PATH", "value": gpudirectLDLibraryPath}}, primary["env"])
 	helper := containers[1].(map[string]any)
 	_, hasHelperResources := helper["resources"]
 	require.False(t, hasHelperResources)
+	_, hasHelperEnv := helper["env"]
+	require.False(t, hasHelperEnv)
 
 	cfg.Validation.GPUDirect.Enabled = false
 	rendered, err = (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
@@ -125,6 +137,8 @@ func TestRenderedExampleDaemonSetGPUDirectResources(t *testing.T) {
 	requests = requireMap(t, requireMap(t, primary, "resources"), "requests")
 	_, hasGPURequest := requests["example.com/gpu"]
 	require.False(t, hasGPURequest, "disabled GPUDirect must not request a GPU")
+	_, hasGPUDirectEnv := primary["env"]
+	require.False(t, hasGPUDirectEnv, "disabled GPUDirect must preserve the validation image environment")
 }
 
 func TestRenderedSpectrumXDRAExampleDaemonSetGPUDirectResources(t *testing.T) {
@@ -159,6 +173,7 @@ func TestRenderedSpectrumXDRAExampleDaemonSetGPUDirectResources(t *testing.T) {
 	require.NotEmpty(t, resources["claims"])
 	require.Equal(t, "8", requireMap(t, resources, "requests")["nvidia.com/gpu"])
 	require.Equal(t, "8", requireMap(t, resources, "limits")["nvidia.com/gpu"])
+	require.Equal(t, []any{map[string]any{"name": "LD_LIBRARY_PATH", "value": gpudirectLDLibraryPath}}, primary["env"])
 }
 
 func TestRenderedExampleDaemonSetsDeclareICMPHelper(t *testing.T) {
@@ -360,8 +375,11 @@ func assertRenderedGPUDirectExample(t *testing.T, profileDir string, cfg *config
 	resources := requireMap(t, primary, "resources")
 	require.Equal(t, count, requireMap(t, resources, "requests")["example.com/gpu"])
 	require.Equal(t, count, requireMap(t, resources, "limits")["example.com/gpu"])
+	require.Equal(t, []any{map[string]any{"name": "LD_LIBRARY_PATH", "value": gpudirectLDLibraryPath}}, primary["env"])
 	_, helperHasResources := containers[1].(map[string]any)["resources"]
 	require.False(t, helperHasResources)
+	_, helperHasEnv := containers[1].(map[string]any)["env"]
+	require.False(t, helperHasEnv)
 }
 
 func requireMap(t *testing.T, parent map[string]any, key string) map[string]any {

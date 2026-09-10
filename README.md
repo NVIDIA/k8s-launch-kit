@@ -463,8 +463,12 @@ supplied value is preserved. When enabled, generated validation DaemonSets use
 the release-specific full-runtime DOCA image, propagate
 `networkOperator.imagePullSecrets`, and request the GPU prefix required by the
 largest discovered `GPU<N>` index in the primary DOCA container. The netshoot
-container never requests GPUs. The named pull Secret must exist in every
-validation workload namespace.
+container never requests GPUs. The primary container also sets
+`LD_LIBRARY_PATH` to prefer the NVIDIA driver libraries injected from the host
+and exclude the CUDA compatibility-library directory, which can otherwise load
+a `libcuda` version that does not match the host driver. This override is
+omitted when GPUDirect validation is disabled. The named pull Secret must exist
+in every validation workload namespace.
 
 Validation modes control cross-rail coverage and gating:
 
