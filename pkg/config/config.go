@@ -504,10 +504,11 @@ const (
 	DefaultGPUResourceType           = "nvidia.com/gpu"
 )
 
-// ValidationConfig controls `l8k validate` data-plane checks. Static manifest
-// and version checks always run; Connectivity gates the example-DaemonSet data
-// plane matrix. Checks selects the base families, while GPUDirect enables the
-// DMA-BUF variant of ib_write_bw.
+// ValidationConfig controls `l8k validate` data-plane checks. Connectivity
+// gates the example-DaemonSet matrix. Static manifest and version checks run
+// when the deployment directory also contains their generated inputs. Checks
+// selects the base families, while GPUDirect enables the DMA-BUF variant of
+// ib_write_bw.
 type ValidationConfig struct {
 	Connectivity *bool                     `yaml:"connectivity,omitempty"`
 	Mode         string                    `yaml:"mode,omitempty"`
@@ -897,9 +898,13 @@ func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKit
 		return nil, nil, fmt.Errorf("invalid docaDriver config in %s: %w", configPath, err)
 	}
 
-	logger.Info("Cluster configuration loaded successfully",
-		"networkOperatorVersion", config.NetworkOperator.Version,
-		"namespace", config.NetworkOperator.Namespace)
+	if config.NetworkOperator != nil {
+		logger.Info("Cluster configuration loaded successfully",
+			"networkOperatorVersion", config.NetworkOperator.Version,
+			"namespace", config.NetworkOperator.Namespace)
+	} else {
+		logger.Info("Cluster configuration loaded successfully")
+	}
 
 	if err := validateNvIpam(config.NvIpam); err != nil {
 		return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)

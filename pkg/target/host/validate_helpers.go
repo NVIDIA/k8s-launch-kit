@@ -169,6 +169,63 @@ func computeOverallVerdict(
 	return out
 }
 
+// connectivityOnlyVerdict requires every selected data-plane check family to
+// produce at least one gating test. A skipped, empty, or incomplete matrix
+// cannot make a connectivity-only invocation succeed because no other stage
+// can supply acceptance evidence.
+func connectivityOnlyVerdict(
+	matrix *connectivity.MatrixResult,
+	selectedChecks []connectivity.Check,
+) connectivity.OverallVerdict {
+	out := connectivity.OverallVerdict{Pass: true}
+	switch {
+	case matrix == nil:
+		out.Pass = false
+		out.Reasons = append(out.Reasons, "connectivity validation did not produce a result")
+		return out
+	case matrix.Skipped != nil:
+		out.Pass = false
+		out.Reasons = append(out.Reasons, "connectivity matrix skipped: "+matrix.Skipped.Reason)
+		return out
+	case matrix.Summary.TotalTests == 0:
+		out.Pass = false
+		out.Reasons = append(out.Reasons, "connectivity matrix completed without running any tests")
+		return out
+	}
+
+	gatingChecks := make(map[connectivity.Check]bool, len(selectedChecks))
+	for _, result := range matrix.PingResults {
+		if result.Expectation == connectivity.ExpectObserve {
+			continue
+		}
+		switch {
+		case result.Test.Kind.IsICMP():
+			gatingChecks[connectivity.CheckICMP] = true
+		case result.Test.Kind.IsRDMAPing():
+			gatingChecks[connectivity.CheckRPing] = true
+		case result.Test.Kind.IsRDMABw():
+			gatingChecks[connectivity.CheckIBWriteBW] = true
+		case result.Test.Kind.IsGPUDirectDMABuf():
+			gatingChecks[connectivity.CheckGPUDirectDMABuf] = true
+		}
+	}
+	for _, check := range selectedChecks {
+		if gatingChecks[check] {
+			continue
+		}
+		out.Pass = false
+		out.Reasons = append(out.Reasons,
+			fmt.Sprintf("selected connectivity check %q did not produce any gating tests", check))
+	}
+
+	if matrix.Summary.Failed > 0 {
+		out.Pass = false
+		out.Reasons = append(out.Reasons,
+			fmt.Sprintf("%d connectivity test(s) failed in the connectivity matrix", matrix.Summary.Failed))
+	}
+	return out
+}
+
 // platformLabel renders the server-type identifier used in user
 // messages as `<manufacturer>-<machineType>-<gpuType>`, dropping any
 // empty segments. The manufacturer is the leading segment when the

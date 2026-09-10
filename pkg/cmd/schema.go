@@ -93,7 +93,7 @@ var schemaCmd = &cobra.Command{
 					Example:     "l8k clean --kubeconfig ~/.kube/config [--keep-helm-chart]",
 				},
 				"validate": {
-					Description: "Verify a deployment matches the selected Network Operator release (Helm chart version + manifest state + configurable ICMP/RDMA connectivity checks)",
+					Description: "Verify generated deployment state and connectivity, or run connectivity only when --deployment-files contains only example test DaemonSets",
 					Example:     "l8k validate --user-config ./cluster-config.yaml --deployment-files ./deployment",
 				},
 				"sosreport": {

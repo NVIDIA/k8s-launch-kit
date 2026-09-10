@@ -46,7 +46,7 @@ var validateCmd = &cobra.Command{
 	Long: `Validate that a previously generated deployment is correctly applied to
 the cluster.
 
-Three checks are run:
+When generated deployment inputs are present, three checks are run:
 
   1. Network Operator Helm release version: the chart's appVersion is
      compared against the version expected by the user's
@@ -69,10 +69,23 @@ Three checks are run:
      (running connectivity against an unready cluster would just
      produce noise).
 
+When --deployment-files contains only *example*.yaml test DaemonSets,
+validate runs only the connectivity stage. Connectivity always requires a
+user-owned cluster config with explicit profile.routing and
+validation.gpuDirect.enabled decisions. GPUDirect additionally requires
+worker and rail topology when ib_write_bw is selected. The test DaemonSet
+must use apps/v1, set metadata.namespace, and declare the containers needed
+by the selected checks.
+
 Exits non-zero on any missing manifest, version mismatch, or
-connectivity-matrix failure.`,
+connectivity-matrix failure. A skipped, empty, or incomplete connectivity-only
+matrix also fails; every selected check family must produce a gating test, and
+non-gating cross-rail observations do not count.`,
 	Example: `  # Full validate (manifest state + connectivity matrix)
   l8k validate
+
+  # Connectivity only using a user-provided test DaemonSet in this directory
+  l8k validate --deployment-files ./connectivity-test --user-config ./cluster-config.yaml
 
   # Manifest checks only (no DaemonSet apply, no connectivity matrix)
   l8k validate --connectivity=false
@@ -144,8 +157,8 @@ func init() {
 	addTargetFlag(validateCmd)
 
 	validateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
-	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to verify")
-	validateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-detected from ./cluster-config.yaml). Used to read networkOperator.selectedRelease and operator namespace.")
+	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing generated manifests and *example*.yaml connectivity test DaemonSets. A test-only directory selects connectivity-only validation.")
+	validateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-detected from ./cluster-config.yaml). Connectivity requires a user-owned file with profile.routing and validation.gpuDirect.enabled.")
 	validateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
 	validateCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm release version and values validation")
 	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a source-bound connectivity matrix (icmp + rping + ib_write_bw) between pods of the example DaemonSet. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
