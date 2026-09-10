@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -199,6 +200,11 @@ var templateFuncs = template.FuncMap{
 	"versionGE": versionGE,
 	"versionLT": versionLT,
 	"versionEQ": versionEQ,
+	// mofedEnv merges the environment values produced by first-class
+	// docaDriver settings with the advanced custom env list. Custom values win
+	// by name, so templates never emit duplicate environment variable names.
+	"mofedEnv":  mofedEnv,
+	"yamlQuote": strconv.Quote,
 	// legacyRdmaSharedConfigList builds the rdmaSharedDevicePlugin.config JSON
 	// (configList array body) used by the 26.1 NicClusterPolicy. NCP is a
 	// cluster singleton in 26.1, so this aggregates east-west PFs across all
@@ -209,6 +215,45 @@ var templateFuncs = template.FuncMap{
 	// legacySriovDevicePluginConfigList does the same shape for the
 	// sriovDevicePlugin used by the 26.1 host-device profile.
 	"legacySriovDevicePluginConfigList": legacySriovDevicePluginConfigList,
+}
+
+// mofedEnvVar records whether an entry came from the advanced user-supplied
+// list so templates can quote custom names without changing legacy output.
+type mofedEnvVar struct {
+	Name   string
+	Value  string
+	Custom bool
+}
+
+// mofedEnv returns the deterministic environment list shared by every
+// NicClusterPolicy and NicNodePolicy OFED render path. Generated values keep
+// their historical order. Custom entries replace generated or earlier custom
+// entries in place by name; new names are appended in user-supplied order.
+func mofedEnv(driver *config.DOCADriverConfig) []mofedEnvVar {
+	if driver == nil {
+		return nil
+	}
+
+	env := []mofedEnvVar{
+		{Name: "UNLOAD_STORAGE_MODULES", Value: strconv.FormatBool(driver.UnloadStorageModules)},
+		{Name: "ENABLE_NFSRDMA", Value: strconv.FormatBool(driver.EnableNFSRDMA)},
+		{Name: "UNLOAD_THIRD_PARTY_RDMA_MODULES", Value: strconv.FormatBool(driver.UnloadThirdPartyRDMAModules)},
+		{Name: "SKIP_PREFLIGHT_CHECKS", Value: strconv.FormatBool(driver.SkipPreflightChecks)},
+	}
+	positions := make(map[string]int, len(env)+len(driver.Env))
+	for i := range env {
+		positions[env[i].Name] = i
+	}
+	for _, custom := range driver.Env {
+		entry := mofedEnvVar{Name: custom.Name, Value: custom.Value, Custom: true}
+		if i, ok := positions[custom.Name]; ok {
+			env[i] = entry
+			continue
+		}
+		positions[custom.Name] = len(env)
+		env = append(env, entry)
+	}
+	return env
 }
 
 // spectrumXNicType resolves the NicConfigurationTemplate selector from the

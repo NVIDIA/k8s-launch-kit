@@ -131,9 +131,15 @@ sriov:
 sriov:
   mtu: 9000
 
-# Set DOCA driver version
+# Set the DOCA driver version. Advanced users can also forward literal
+# environment variables through the generated NicClusterPolicy or
+# NicNodePolicy; custom values override any value produced by another
+# docaDriver field with the same name.
 docaDriver:
   version: "doca3.3.0-26.01-1.0.0.0-6"
+  env:
+    - name: THIRD_PARTY_RDMA_MODULES
+      value: "nvidia_peermem"
 
 # Allow four simultaneous maintenance operations. Network Operator 26.1+
 # uses the global Maintenance Operator limits; older releases use the legacy
@@ -181,6 +187,7 @@ networkNamespaces: ["my-namespace"]
   is GA.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
+- `docaDriver.env` is an advanced escape hatch. Values override generated MOFED environment entries by name, duplicate custom names use the last value, and bad driver options can disrupt node networking.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.
 - Updating an existing release to the generated requestor-mode Helm values requires `--overwrite-existing`.
 

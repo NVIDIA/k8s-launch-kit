@@ -181,11 +181,20 @@ docaDriver:
   unloadStorageModules: true
   unloadThirdPartyRDMAModules: true
   skipPreflightChecks: false
+  # Advanced users only. Values override generated driver env by name.
+  # env:
+  #   - name: THIRD_PARTY_RDMA_MODULES
+  #     value: "nvidia_peermem"
 ```
 
 The per-group `storageModules` and `thirdPartyRDMAModules` fields remain available for explicit site input and safety warnings. Review running storage and RDMA workloads before allowing the driver container to unload dependent modules.
 
 Set `skipPreflightChecks: true` only when the module state is managed and verified outside Launch Kit.
+
+Use `docaDriver.env` only for low-level driver settings that Launch Kit does
+not model. Entries are forwarded through the generated NicClusterPolicy or
+NicNodePolicy, override generated environment variables with the same name,
+and can prevent the driver from reloading if misconfigured.
 
 ## Topology Presets
 
