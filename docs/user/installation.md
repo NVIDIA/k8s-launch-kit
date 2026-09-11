@@ -109,6 +109,12 @@ l8k preset list --config-dir /etc/l8k
 
 Script, Homebrew, and source installs also place the profile templates under `<prefix>/share/l8k/profiles/`. Existing `l8k-config.yaml` and `presets/` overrides under the share directory are preserved during upgrades and are selected only when passed through `--config-dir`.
 
+The Network Operator sosreport script is downloaded lazily on the first
+`l8k sosreport` run that cannot find an existing copy. It is cached at
+`<prefix>/share/l8k/scripts/kubectl-netop_sosreport`. If that directory is not
+writable or the download is unavailable, the command reports the raw source
+URL and exact destination so the executable script can be installed manually.
+
 ## Verify
 
 ```bash

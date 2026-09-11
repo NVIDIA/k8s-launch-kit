@@ -17,14 +17,24 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+)
+
+const (
+	sosreportScriptName  = "kubectl-netop_sosreport"
+	sosreportScriptURL   = "https://raw.githubusercontent.com/Mellanox/network-operator/refs/heads/master/scripts/sosreport/kubectl-netop_sosreport"
+	sosreportHTTPTimeout = 30 * time.Second
 )
 
 var sosreportOutputDir string
@@ -52,13 +62,13 @@ and other diagnostic data useful for troubleshooting.`,
 			), outputFormat)
 		}
 
-		// Find the sosreport script
-		scriptPath, err := findSosreportScript()
+		// Reuse an existing sosreport script or download it next to the l8k installation.
+		scriptPath, installPath, err := resolveSosreportScript(cmd.Context())
 		if err != nil {
 			exitWithError(apperrors.NewValidationError(
-				"sosreport script not found",
+				"sosreport script unavailable",
 				err,
-				"Run 'make download-sosreport' to download the script",
+				manualSosreportInstallSuggestion(installPath),
 			), outputFormat)
 		}
 
@@ -89,21 +99,108 @@ and other diagnostic data useful for troubleshooting.`,
 	},
 }
 
-// findSosreportScript looks for the sosreport script in known locations.
-func findSosreportScript() (string, error) {
+func resolveSosreportScript(ctx context.Context) (string, string, error) {
+	executablePath, _ := os.Executable()
+	candidates, installPath := sosreportScriptLocations(executablePath)
+	scriptPath, err := findOrDownloadSosreportScript(
+		ctx,
+		&http.Client{Timeout: sosreportHTTPTimeout},
+		sosreportScriptURL,
+		candidates,
+		installPath,
+	)
+	return scriptPath, installPath, err
+}
+
+// sosreportScriptLocations returns the lookup order and the installation-adjacent
+// path used to cache a lazily downloaded script.
+func sosreportScriptLocations(executablePath string) ([]string, string) {
 	candidates := []string{
-		"scripts/kubectl-netop_sosreport",
-		"/usr/local/share/l8k/scripts/kubectl-netop_sosreport",
+		filepath.Join("scripts", sosreportScriptName),
+		filepath.Join("/usr/local/share/l8k/scripts", sosreportScriptName),
 	}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "share", "l8k", "scripts", "kubectl-netop_sosreport"))
+	installPath := candidates[len(candidates)-1]
+	if executablePath != "" {
+		installPath = filepath.Join(filepath.Dir(executablePath), "..", "share", "l8k", "scripts", sosreportScriptName)
+		candidates = append(candidates, installPath)
 	}
+	return candidates, installPath
+}
+
+func findOrDownloadSosreportScript(
+	ctx context.Context,
+	client *http.Client,
+	sourceURL string,
+	candidates []string,
+	installPath string,
+) (string, error) {
 	for _, p := range candidates {
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("checked: %v", candidates)
+
+	if err := downloadSosreportScript(ctx, client, sourceURL, installPath); err != nil {
+		return "", fmt.Errorf("failed to download sosreport script from %s to %s: %w", sourceURL, installPath, err)
+	}
+	return installPath, nil
+}
+
+func downloadSosreportScript(ctx context.Context, client *http.Client, sourceURL, installPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request script: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("request script: HTTP %s", resp.Status)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(installPath), 0o755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(installPath), ".sosreport-*")
+	if err != nil {
+		return fmt.Errorf("create temporary file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer func() {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+	}()
+
+	written, err := io.Copy(tmpFile, resp.Body)
+	if err != nil {
+		return fmt.Errorf("write temporary file: %w", err)
+	}
+	if written == 0 {
+		return fmt.Errorf("downloaded script is empty")
+	}
+	if err := tmpFile.Chmod(0o755); err != nil {
+		return fmt.Errorf("make temporary file executable: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temporary file: %w", err)
+	}
+	if err := os.Rename(tmpPath, installPath); err != nil {
+		return fmt.Errorf("install script: %w", err)
+	}
+	return nil
+}
+
+func manualSosreportInstallSuggestion(installPath string) string {
+	return fmt.Sprintf(
+		"Download %s and place it at %s (the share directory next to the l8k installation) with executable permissions",
+		sosreportScriptURL,
+		installPath,
+	)
 }
 
 func init() {

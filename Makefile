@@ -23,7 +23,7 @@ GOMOD=$(GOCMD) mod
 
 # Sosreport script
 SOSREPORT_SCRIPT=scripts/kubectl-netop_sosreport
-SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/master/scripts/sosreport/kubectl-netop_sosreport
+SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/refs/heads/master/scripts/sosreport/kubectl-netop_sosreport
 
 PCI_IDS_URL=https://raw.githubusercontent.com/pciutils/pciids/master/pci.ids
 PCI_IDS_NVIDIA=pkg/networkoperatorplugin/internal/pciids/nvidia.ids

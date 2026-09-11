@@ -199,3 +199,8 @@ Set `GITHUB_TOKEN` for authenticated GitHub API requests when updating presets.
 | --- | --- |
 | `--kubeconfig` | Cluster kubeconfig, with the same environment and home-directory fallback as other cluster commands. |
 | `--output-dir` | Diagnostic output directory. Defaults to `./sosreport`. |
+
+The command lazily downloads the Network Operator sosreport script when no
+existing copy is found. It caches the executable script under
+`<installation-prefix>/share/l8k/scripts/`. A failed download reports the raw
+GitHub URL and the exact cache path for manual installation.

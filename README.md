@@ -735,7 +735,14 @@ Collect a diagnostic dump from the cluster:
 l8k sosreport --kubeconfig ~/.kube/config --output-dir ./sosreport
 ```
 
-The sosreport contains NicClusterPolicy, pod logs, node info, CRDs, and other diagnostic data. For interactive AI-assisted analysis, use the bundled Claude Code skills under `skills/k8s-launch-kit-troubleshoot/` — they wrap the deterministic commands (`l8k sosreport`, `kubectl`) and let the agent driving the skill do the reasoning.
+The sosreport contains NicClusterPolicy, pod logs, node info, CRDs, and other
+diagnostic data. On first use, `l8k` downloads the Network Operator collection
+script when it is not already available and caches it at
+`<installation-prefix>/share/l8k/scripts/kubectl-netop_sosreport`. For
+interactive AI-assisted analysis, use the bundled Claude Code skills under
+`skills/k8s-launch-kit-troubleshoot/` — they wrap the deterministic commands
+(`l8k sosreport`, `kubectl`) and let the agent driving the skill do the
+reasoning.
 
 ### AI Agent / Automation Usage
 

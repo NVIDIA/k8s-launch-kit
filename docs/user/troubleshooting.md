@@ -147,11 +147,14 @@ l8k sosreport \
   --output-dir ./sosreport
 ```
 
-The kubeconfig can also come from `$KUBECONFIG` or `~/.kube/config`. If the collection script is missing from the source tree or installed share directory, install it with:
-
-```bash
-make download-sosreport
-```
+The kubeconfig can also come from `$KUBECONFIG` or `~/.kube/config`. `l8k`
+reuses an existing Network Operator collection script when available. If the
+script is missing, the command downloads it on first use from
+`https://raw.githubusercontent.com/Mellanox/network-operator/refs/heads/master/scripts/sosreport/kubectl-netop_sosreport`
+and stores it at `<installation-prefix>/share/l8k/scripts/kubectl-netop_sosreport`.
+If the download cannot be completed, the error reports both this source URL
+and the exact installation-adjacent path where an executable copy can be
+placed manually.
 
 Start with the diagnostic summary and collection errors, then correlate:
 
