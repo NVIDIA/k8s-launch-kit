@@ -946,6 +946,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	if err := config.NormalizeMaintenance(cfg); err != nil {
 		return nil, fmt.Errorf("normalize maintenance configuration: %w", err)
 	}
+	config.ApplyNvIpamDefaults(cfg)
 	if len(cfg.NetworkNamespaces) == 0 {
 		cfg.NetworkNamespaces = []string{"default"}
 	}

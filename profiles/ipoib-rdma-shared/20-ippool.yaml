@@ -9,7 +9,7 @@ metadata:
   namespace: "{{$.NetworkOperator.Namespace}}"
 spec:
   subnet: {{(index $.NvIpam.Subnets $i).Subnet}}
-  perNodeBlockSize: 50
+  perNodeBlockSize: {{$.NvIpam.PerNodeBlockSize}}
   gateway: {{(index $.NvIpam.Subnets $i).Gateway}}
   {{- with (index $.NvIpam.Subnets $i).Exclusions }}
   exclusions:
@@ -55,7 +55,7 @@ metadata:
   namespace: "{{.NetworkOperator.Namespace}}"
 spec:
   subnet: {{(index .NvIpam.Subnets 0).Subnet}}
-  perNodeBlockSize: 50
+  perNodeBlockSize: {{.NvIpam.PerNodeBlockSize}}
   gateway: {{(index .NvIpam.Subnets 0).Gateway}}
   {{- with (index .NvIpam.Subnets 0).Exclusions }}
   exclusions:

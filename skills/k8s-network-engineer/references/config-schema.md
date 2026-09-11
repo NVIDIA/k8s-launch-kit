@@ -78,6 +78,7 @@ Controls NV-IPAM (NVIDIA IP Address Management) pool generation.
 | Field            | Type     | Default          | Description                                          |
 |------------------|----------|------------------|------------------------------------------------------|
 | `poolName`       | string   | `nv-ipam-pool`   | Name of the IPPool CR                                |
+| `perNodeBlockSize` | int    | `10`             | Addresses reserved per node; generation warns when lower than `sriov.numVfs` |
 | `startingSubnet` | string   | `192.168.0.0`    | Base subnet for auto-generation                      |
 | `mask`           | int      | `22`             | Subnet mask length for auto-generated subnets        |
 | `offset`         | int      | `1`              | Offset from network address for gateway (gateway = network + offset) |
@@ -123,6 +124,7 @@ relative to its own network address.
 ```yaml
 nvIpam:
   poolName: nv-ipam-pool
+  perNodeBlockSize: 10
   startingSubnet: "192.168.0.0"
   mask: 24
   offset: 1

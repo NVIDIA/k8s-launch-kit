@@ -96,6 +96,9 @@ maintenance:
 
 nvIpam:
   poolName: nv-ipam-pool
+  # Number of IP addresses reserved per node in every generated IPPool.
+  # Keep this at least as large as sriov.numVfs for SR-IOV deployments.
+  perNodeBlockSize: 10
   # --- Option 1: Auto-generate subnets (used when subnets list is empty) --- 
   # Each group gets its own unique subnet slice; gateway = network address + 1.
   startingSubnet: "192.168.0.0"

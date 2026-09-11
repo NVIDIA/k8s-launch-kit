@@ -54,7 +54,7 @@ missing profile fields when it consumes that config.
 | `networkOperator` | Operator namespace, version, image repository, Helm repository, and `skipHelmChart` ownership switch |
 | `docaDriver` | OFED/DOCA driver image, version, blacklist settings |
 | `maintenance` | Maintenance Operator, SR-IOV drain, and legacy OFED upgrade concurrency |
-| `nvIpam` | NV-IPAM IP pool ranges and subnet generation |
+| `nvIpam` | NV-IPAM per-node block size, IP pool ranges, and subnet generation |
 | `sriov` | VF count, resource prefix, MTU, link type |
 | `hostdev` | Host device resource name |
 | `rdmaShared` | RDMA shared device resource name |
@@ -163,6 +163,7 @@ networkOperator:
 
 # Configure NV-IPAM subnets manually
 nvIpam:
+  perNodeBlockSize: 10
   subnets:
     - name: "rail-0-subnet"
       cidr: "10.10.0.0/16"
@@ -186,6 +187,7 @@ networkNamespaces: ["my-namespace"]
   public Network Operator artifact set. Update the entry again when the patch
   is GA.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
+- `nvIpam.perNodeBlockSize` defaults to `10`; generation warns when it is lower than `sriov.numVfs` because the per-node allocation may be too small for all VFs.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
 - `docaDriver.env` is an advanced escape hatch. Values override generated MOFED environment entries by name, duplicate custom names use the last value, and bad driver options can disrupt node networking.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.

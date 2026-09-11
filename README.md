@@ -1066,6 +1066,7 @@ The `nvIpam` section supports two modes for subnet configuration:
 ```yaml
 nvIpam:
   poolName: nv-ipam-pool
+  perNodeBlockSize: 10
   subnets:
   - subnet: 192.168.2.0/24
     gateway: 192.168.2.1
@@ -1077,6 +1078,7 @@ nvIpam:
 ```yaml
 nvIpam:
   poolName: nv-ipam-pool
+  perNodeBlockSize: 10
   startingSubnet: "192.168.2.0"
   mask: 24
   offset: 1
@@ -1087,6 +1089,11 @@ With the auto-generation example above, a cluster with 2 groups (4 east-west PFs
 - Group 1: 192.168.6.0/24, 192.168.7.0/24, 192.168.8.0/24, 192.168.9.0/24
 
 The `offset` parameter controls how many subnet blocks to skip between consecutive subnets (offset=1 is contiguous, offset=2 skips every other).
+
+`perNodeBlockSize` controls how many addresses NV-IPAM reserves for each node
+from every generated IPPool. It defaults to `10`. If it is lower than
+`sriov.numVfs`, `l8k generate` warns that the block may not contain enough
+addresses for all VFs on a node.
 
 **IP exclusions** — l8k can populate the IPPool `spec.exclusions` so addresses
 reserved for infrastructure (gateways, EVPN endpoints) are never handed to pods.
@@ -1105,6 +1112,7 @@ gateway is not excluded automatically — it is covered by the low reserve block
 ```yaml
 nvIpam:
   poolName: nv-ipam-pool
+  perNodeBlockSize: 10
   startingSubnet: "192.168.0.0"
   mask: 24
   offset: 1
@@ -1159,6 +1167,7 @@ maintenance:
   maxParallelUpgrades: 4
 nvIpam:
   poolName: nv-ipam-pool
+  perNodeBlockSize: 10
   subnets:
   - subnet: 192.168.2.0/24
     gateway: 192.168.2.1

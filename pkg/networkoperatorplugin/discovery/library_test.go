@@ -44,6 +44,8 @@ networkOperator:
 docaDriver:
   enable: true
   version: doca3.3.0-26.01-1.0.0.0-0
+nvIpam:
+  poolName: nv-ipam-pool
 clusterConfig:
 - identifier: group-0
   machineType: GB300-NVL
@@ -62,6 +64,8 @@ clusterConfig:
 	assert.Equal(t, "v26.4.0-beta.3", cfg.NetworkOperator.Version)
 	require.NotNil(t, cfg.DOCADriver)
 	assert.True(t, cfg.DOCADriver.Enable)
+	require.NotNil(t, cfg.NvIpam)
+	assert.Equal(t, config.DefaultNvIpamPerNodeBlockSize, cfg.NvIpam.PerNodeBlockSize)
 
 	require.Len(t, cfg.ClusterConfig, 1)
 	g := cfg.ClusterConfig[0]
