@@ -19,7 +19,11 @@ name: Packaging
 on:
   pull_request:
     paths:
+      - ".github/workflows/packaging.yml"
       - ".goreleaser.yml"
+      - "Makefile"
+      - "scripts/install.sh"
+      - "scripts/install-local.sh"
 
 permissions:
   contents: read
@@ -47,3 +51,12 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: release --snapshot --clean --skip=publish,sbom
+
+      - name: Verify sosreport helper in Linux archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(find dist -maxdepth 1 -type f -name 'l8k_*_linux_amd64.tar.gz' -print -quit)"
+          test -n "$archive"
+          tar -tzf "$archive" | grep -Fx 'scripts/kubectl-netop_sosreport' >/dev/null
+          tar -tvzf "$archive" | grep -E '^-rwx.* scripts/kubectl-netop_sosreport$' >/dev/null

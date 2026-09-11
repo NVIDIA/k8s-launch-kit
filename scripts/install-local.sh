@@ -15,7 +15,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Install the l8k binary and external profile templates to system paths.
+# Install the l8k binary, external profile templates, and sosreport helper to
+# system paths.
 #
 # Usage:
 #   scripts/install-local.sh                     # Install to /usr/local (copies files)
@@ -25,6 +26,7 @@
 # Install layout:
 #   <prefix>/bin/l8k                       # Binary
 #   <prefix>/share/l8k/profiles/           # Profile templates
+#   <prefix>/share/l8k/scripts/kubectl-netop_sosreport
 #
 # The default config and topology presets are embedded in the binary. Existing
 # filesystem overrides are preserved and can be selected with --config-dir.
@@ -63,11 +65,24 @@ done
 
 SHARE_DIR="${PREFIX}/share/l8k"
 BIN_DIR="${PREFIX}/bin"
+SOSREPORT_SCRIPT="${REPO_ROOT}/scripts/kubectl-netop_sosreport"
 
 # Verify binary exists
 if [ ! -f "${REPO_ROOT}/build/l8k" ]; then
     echo "Error: binary not found at ${REPO_ROOT}/build/l8k"
     echo "Run 'make build' first."
+    exit 1
+fi
+
+# The helper is generated release input and is not committed to the repository.
+# Download it for direct script invocations as well as the Make install targets.
+if [ ! -x "${SOSREPORT_SCRIPT}" ]; then
+    echo "Downloading sosreport helper..."
+    make -C "${REPO_ROOT}" download-sosreport
+fi
+
+if [ ! -x "${SOSREPORT_SCRIPT}" ]; then
+    echo "Error: sosreport helper not found or not executable at ${SOSREPORT_SCRIPT}"
     exit 1
 fi
 
@@ -77,6 +92,9 @@ if [ "$DEV_ENV" = true ]; then
     ln -sfn "${REPO_ROOT}/build/l8k" "${BIN_DIR}/l8k"
     mkdir -p "${SHARE_DIR}"
     ln -sfn "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
+    mkdir -p "${SHARE_DIR}/scripts"
+    ln -sfn "${SOSREPORT_SCRIPT}" \
+        "${SHARE_DIR}/scripts/kubectl-netop_sosreport"
 else
     echo "Installing l8k..."
     mkdir -p "${BIN_DIR}"
@@ -84,12 +102,16 @@ else
     mkdir -p "${SHARE_DIR}"
     rm -rf "${SHARE_DIR}/profiles"
     cp -r "${REPO_ROOT}/profiles" "${SHARE_DIR}/profiles"
+    mkdir -p "${SHARE_DIR}/scripts"
+    install -m 755 "${SOSREPORT_SCRIPT}" \
+        "${SHARE_DIR}/scripts/kubectl-netop_sosreport"
 fi
 
 echo ""
 echo "Installed successfully:"
 echo "  Binary:   ${BIN_DIR}/l8k"
 echo "  Profiles: ${SHARE_DIR}/profiles"
+echo "  Sosreport: ${SHARE_DIR}/scripts/kubectl-netop_sosreport"
 if [ -e "${SHARE_DIR}/presets" ] || [ -e "${SHARE_DIR}/l8k-config.yaml" ]; then
     echo ""
     echo "Existing config overrides were preserved under ${SHARE_DIR}."

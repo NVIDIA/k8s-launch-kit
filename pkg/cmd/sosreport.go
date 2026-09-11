@@ -27,6 +27,11 @@ import (
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 )
 
+const (
+	sosreportScriptName = "kubectl-netop_sosreport"
+	sosreportScriptURL  = "https://raw.githubusercontent.com/Mellanox/network-operator/refs/heads/master/scripts/sosreport/kubectl-netop_sosreport"
+)
+
 var sosreportOutputDir string
 
 var sosreportCmd = &cobra.Command{
@@ -53,12 +58,12 @@ and other diagnostic data useful for troubleshooting.`,
 		}
 
 		// Find the sosreport script
-		scriptPath, err := findSosreportScript()
+		scriptPath, installPath, err := findSosreportScript()
 		if err != nil {
 			exitWithError(apperrors.NewValidationError(
 				"sosreport script not found",
 				err,
-				"Run 'make download-sosreport' to download the script",
+				manualSosreportInstallSuggestion(installPath),
 			), outputFormat)
 		}
 
@@ -90,20 +95,69 @@ and other diagnostic data useful for troubleshooting.`,
 }
 
 // findSosreportScript looks for the sosreport script in known locations.
-func findSosreportScript() (string, error) {
-	candidates := []string{
-		"scripts/kubectl-netop_sosreport",
-		"/usr/local/share/l8k/scripts/kubectl-netop_sosreport",
-	}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "share", "l8k", "scripts", "kubectl-netop_sosreport"))
-	}
+func findSosreportScript() (string, string, error) {
+	invokedExecutablePath := executableInvocationPath()
+	resolvedExecutablePath, _ := os.Executable()
+	candidates, installPath := sosreportScriptLocations(invokedExecutablePath, resolvedExecutablePath)
 	for _, p := range candidates {
 		if _, err := os.Stat(p); err == nil {
-			return p, nil
+			return p, installPath, nil
 		}
 	}
-	return "", fmt.Errorf("checked: %v", candidates)
+	return "", installPath, fmt.Errorf("checked: %v", candidates)
+}
+
+func executableInvocationPath() string {
+	path, err := exec.LookPath(os.Args[0])
+	if err != nil {
+		return ""
+	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	return absolutePath
+}
+
+func sosreportScriptLocations(invokedExecutablePath, resolvedExecutablePath string) ([]string, string) {
+	candidates := []string{
+		filepath.Join("scripts", sosreportScriptName),
+		filepath.Join("/usr/local/share/l8k/scripts", sosreportScriptName),
+	}
+	installPath := candidates[len(candidates)-1]
+	if invokedExecutablePath != "" {
+		installPath = sosreportScriptPathForExecutable(invokedExecutablePath)
+		candidates = appendUniquePath(candidates, installPath)
+	}
+	if resolvedExecutablePath != "" {
+		resolvedInstallPath := sosreportScriptPathForExecutable(resolvedExecutablePath)
+		if invokedExecutablePath == "" {
+			installPath = resolvedInstallPath
+		}
+		candidates = appendUniquePath(candidates, resolvedInstallPath)
+	}
+	return candidates, installPath
+}
+
+func sosreportScriptPathForExecutable(executablePath string) string {
+	return filepath.Join(filepath.Dir(executablePath), "..", "share", "l8k", "scripts", sosreportScriptName)
+}
+
+func appendUniquePath(paths []string, path string) []string {
+	for _, existingPath := range paths {
+		if existingPath == path {
+			return paths
+		}
+	}
+	return append(paths, path)
+}
+
+func manualSosreportInstallSuggestion(installPath string) string {
+	return fmt.Sprintf(
+		"Download %s and place it at %s next to the l8k installation with executable permissions",
+		sosreportScriptURL,
+		installPath,
+	)
 }
 
 func init() {
