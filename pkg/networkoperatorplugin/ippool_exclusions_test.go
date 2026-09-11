@@ -97,3 +97,25 @@ func TestIPPoolNoExclusionsWhenReserveUnset(t *testing.T) {
 			"IPPool should have no exclusions block when reserve is unset")
 	}
 }
+
+func TestIPPoolPerNodeBlockSizeFromConfig(t *testing.T) {
+	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
+	cfg, err := config.LoadFullConfig(
+		filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
+	require.NoError(t, err)
+	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: true}
+	require.NotNil(t, cfg.NvIpam)
+	cfg.NvIpam.PerNodeBlockSize = 17
+
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
+		loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
+	require.NoError(t, err)
+
+	for _, name := range fileNamesMatching(rendered, "ippool") {
+		for _, doc := range parseDocs(t, name, rendered[name]) {
+			spec, ok := doc["spec"].(map[string]any)
+			require.True(t, ok)
+			assert.EqualValues(t, 17, spec["perNodeBlockSize"])
+		}
+	}
+}

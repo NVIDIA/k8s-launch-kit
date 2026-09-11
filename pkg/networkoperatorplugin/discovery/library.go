@@ -269,6 +269,7 @@ func ParseClusterConfig(r io.Reader) (*config.LaunchKitConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("ParseClusterConfig: yaml unmarshal failed: %w", err)
 	}
+	config.ApplyNvIpamDefaults(&cfg)
 	if cfg.NvIpam != nil && len(cfg.NvIpam.Subnets) > 0 {
 		if err := config.ApplyReservedExclusions(
 			cfg.NvIpam.Subnets, cfg.NvIpam.ReserveFirstIPs, cfg.NvIpam.ReserveLastIPs); err != nil {

@@ -74,6 +74,7 @@ func DefaultLaunchKitConfig() (*LaunchKitConfig, error) {
 	if err := NormalizeMaintenance(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid embedded maintenance config: %w", err)
 	}
+	ApplyNvIpamDefaults(&cfg)
 	if err := validateDOCADriverConfig(cfg.DOCADriver); err != nil {
 		return nil, fmt.Errorf("invalid embedded docaDriver config: %w", err)
 	}
@@ -331,12 +332,19 @@ type DOCADriverEnvVar struct {
 	Value string `yaml:"value"`
 }
 
+// DefaultNvIpamPerNodeBlockSize is the address block reserved per node when
+// nvIpam.perNodeBlockSize is omitted.
+const DefaultNvIpamPerNodeBlockSize = 10
+
 type NvIpamConfig struct {
-	PoolName       string               `yaml:"poolName"`
-	Subnets        []NvIpamSubnetConfig `yaml:"subnets,omitempty"`
-	StartingSubnet string               `yaml:"startingSubnet,omitempty"`
-	Mask           int                  `yaml:"mask,omitempty"`
-	Offset         int                  `yaml:"offset,omitempty"`
+	PoolName string `yaml:"poolName"`
+	// PerNodeBlockSize is the number of addresses NV-IPAM reserves for each
+	// node from an IPPool. Zero is treated as unspecified and defaults to 10.
+	PerNodeBlockSize int                  `yaml:"perNodeBlockSize,omitempty"`
+	Subnets          []NvIpamSubnetConfig `yaml:"subnets,omitempty"`
+	StartingSubnet   string               `yaml:"startingSubnet,omitempty"`
+	Mask             int                  `yaml:"mask,omitempty"`
+	Offset           int                  `yaml:"offset,omitempty"`
 	// ReserveFirstIPs excludes the first N host addresses of EVERY subnet
 	// (network address upward, e.g. 10 → .0–.9 on a /24). Applied to both
 	// auto-generated and manually-listed subnets. Mask-agnostic.
@@ -906,6 +914,7 @@ func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKit
 		logger.Info("Cluster configuration loaded successfully")
 	}
 
+	ApplyNvIpamDefaults(&config)
 	if err := validateNvIpam(config.NvIpam); err != nil {
 		return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
 	}
@@ -1274,11 +1283,25 @@ func ApplyReservedExclusions(subnets []NvIpamSubnetConfig, reserveFirst, reserve
 	return nil
 }
 
-// validateNvIpam checks the nvIpam exclusion settings before any rendering.
-// It validates the reserve counts and any explicit per-subnet exclusion ranges.
+// ApplyNvIpamDefaults applies defaults to the nvIpam configuration. Public
+// callers may construct a config directly, so rendering calls this too.
+func ApplyNvIpamDefaults(cfg *LaunchKitConfig) {
+	if cfg == nil || cfg.NvIpam == nil {
+		return
+	}
+	if cfg.NvIpam.PerNodeBlockSize == 0 {
+		cfg.NvIpam.PerNodeBlockSize = DefaultNvIpamPerNodeBlockSize
+	}
+}
+
+// validateNvIpam checks the nvIpam settings before any rendering. It validates
+// the block size, reserve counts, and any explicit per-subnet exclusion ranges.
 func validateNvIpam(nv *NvIpamConfig) error {
 	if nv == nil {
 		return nil
+	}
+	if nv.PerNodeBlockSize < 0 {
+		return fmt.Errorf("nvIpam.perNodeBlockSize must be >= 0, got %d", nv.PerNodeBlockSize)
 	}
 	if nv.ReserveFirstIPs < 0 {
 		return fmt.Errorf("nvIpam.reserveFirstIPs must be >= 0, got %d", nv.ReserveFirstIPs)

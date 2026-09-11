@@ -238,6 +238,11 @@ func TestProfileManifestsAreValidMultiDocYAML(t *testing.T) {
 				if strings.Contains(name, "20-ippool") {
 					sawIPPool = true
 					require.Equal(t, 8, gotDocs, "multirail IPPool must emit one valid doc per rail")
+					for _, doc := range parseDocs(t, name, content) {
+						spec, ok := doc["spec"].(map[string]any)
+						require.True(t, ok)
+						require.EqualValues(t, config.DefaultNvIpamPerNodeBlockSize, spec["perNodeBlockSize"])
+					}
 				}
 			}
 			require.True(t, sawIPPool, "expected an IPPool manifest in profile %s", p.dir)

@@ -231,6 +231,7 @@ win when a one-off override is needed.
   `cluster-config.yaml` with `--groups`; do not reconstruct it from long
   `machineType` and `gpuType` strings.
 - Use `--groups <a,b,...>` (case-sensitive identifier list) or `--gpu-type <X>` (case-insensitive) to scope a generate to a subset of source groups in heterogeneous clusters. Mutually exclusive. Empty match is a validation error. Strict-subset filters split per-source rendering: NodePolicies emit one CR per source (each with its own machine-label nodeSelector but a shared bucket-level resourceName); IPPool/example DaemonSet emit one CR per bucket with an `In` list of source machine labels.
+- Generated IPPools use `nvIpam.perNodeBlockSize` (default `10`). Generation warns when it is lower than `sriov.numVfs`, since the per-node block may not have an address for every VF.
 
 > [!CAUTION]
 > Generation does not apply anything to the cluster. Use `--deploy` or `k8s-launch-kit-deploy` to apply.

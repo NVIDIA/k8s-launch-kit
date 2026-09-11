@@ -112,6 +112,30 @@ func TestSanitizeIdentifierBoundsLongValues(t *testing.T) {
 func TestLoadFullConfig(t *testing.T) {
 	logger := logr.Discard()
 
+	t.Run("load NV-IPAM per-node block size", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte(`nvIpam:
+  poolName: custom-pool
+  perNodeBlockSize: 16
+`), 0o600))
+
+		cfg, err := LoadFullConfig(configPath, logger)
+		require.NoError(t, err)
+		require.NotNil(t, cfg.NvIpam)
+		assert.Equal(t, 16, cfg.NvIpam.PerNodeBlockSize)
+	})
+
+	t.Run("reject negative NV-IPAM per-node block size", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte(`nvIpam:
+  perNodeBlockSize: -1
+`), 0o600))
+
+		_, err := LoadFullConfig(configPath, logger)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nvIpam.perNodeBlockSize must be >= 0")
+	})
+
 	t.Run("load valid config with separate MTU values", func(t *testing.T) {
 		// Create a temporary config file
 		tempDir := t.TempDir()
@@ -258,6 +282,7 @@ func TestDefaultLaunchKitConfig(t *testing.T) {
 	assert.Equal(t, "doca3.5.0-26.07-0.7.7.0-0", cfg.DOCADriver.Version)
 	assert.Empty(t, cfg.DOCADriver.Env, "advanced driver env must be opt-in")
 	require.NotNil(t, cfg.NvIpam, "DefaultLaunchKitConfig must populate NvIpam")
+	assert.Equal(t, DefaultNvIpamPerNodeBlockSize, cfg.NvIpam.PerNodeBlockSize)
 	require.NotNil(t, cfg.Validation, "DefaultLaunchKitConfig must populate Validation")
 	assert.Equal(t, ValidationModeStrict, cfg.Validation.Mode)
 	assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
@@ -1515,6 +1540,12 @@ func TestValidateNvIpam(t *testing.T) {
 		assert.NoError(t, validateNvIpam(nil))
 	})
 
+	t.Run("negative perNodeBlockSize", func(t *testing.T) {
+		err := validateNvIpam(&NvIpamConfig{PerNodeBlockSize: -1})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "perNodeBlockSize must be >= 0")
+	})
+
 	t.Run("negative reserveFirstIPs", func(t *testing.T) {
 		err := validateNvIpam(&NvIpamConfig{ReserveFirstIPs: -1})
 		require.Error(t, err)
@@ -1598,5 +1629,21 @@ func TestValidateNvIpam(t *testing.T) {
 			}},
 		})
 		assert.NoError(t, err)
+	})
+}
+
+func TestApplyNvIpamDefaults(t *testing.T) {
+	t.Run("defaults an omitted block size", func(t *testing.T) {
+		cfg := &LaunchKitConfig{NvIpam: &NvIpamConfig{}}
+
+		ApplyNvIpamDefaults(cfg)
+		assert.Equal(t, DefaultNvIpamPerNodeBlockSize, cfg.NvIpam.PerNodeBlockSize)
+	})
+
+	t.Run("preserves a configured block size", func(t *testing.T) {
+		cfg := &LaunchKitConfig{NvIpam: &NvIpamConfig{PerNodeBlockSize: 32}}
+
+		ApplyNvIpamDefaults(cfg)
+		assert.Equal(t, 32, cfg.NvIpam.PerNodeBlockSize)
 	})
 }

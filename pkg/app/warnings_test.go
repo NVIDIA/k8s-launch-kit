@@ -35,18 +35,88 @@ func (t *testOutput) Success(format string, args ...interface{}) {}
 func (t *testOutput) Warning(format string, args ...interface{}) {
 	t.warnings = append(t.warnings, fmt.Sprintf(format, args...))
 }
-func (t *testOutput) Error(format string, args ...interface{})       {}
-func (t *testOutput) StartProgress(message string) ui.Progress      { return &noopProgress{} }
-func (t *testOutput) Header(text string)                             {}
-func (t *testOutput) Section(text string)                            {}
-func (t *testOutput) Confirm(prompt string) (bool, error)            { return false, nil }
-func (t *testOutput) IsTTY() bool                                    { return false }
+func (t *testOutput) Error(format string, args ...interface{}) {}
+func (t *testOutput) StartProgress(message string) ui.Progress { return &noopProgress{} }
+func (t *testOutput) Header(text string)                       {}
+func (t *testOutput) Section(text string)                      {}
+func (t *testOutput) Confirm(prompt string) (bool, error)      { return false, nil }
+func (t *testOutput) IsTTY() bool                              { return false }
 
 type noopProgress struct{}
 
 func (p *noopProgress) Update(message string)  {}
 func (p *noopProgress) Success(message string) {}
 func (p *noopProgress) Fail(message string)    {}
+
+func TestWarnNvIpamBlockSize(t *testing.T) {
+	t.Run("warns when block size is smaller than VF count", func(t *testing.T) {
+		out := &testOutput{}
+		cfg := &config.LaunchKitConfig{
+			NvIpam:  &config.NvIpamConfig{PerNodeBlockSize: 7},
+			Sriov:   &config.SriovConfig{NumVfs: 8},
+			Profile: &config.Profile{Deployment: "sriov"},
+		}
+
+		warnNvIpamBlockSize(cfg, out)
+
+		assert.Len(t, out.warnings, 1)
+		assert.Contains(t, out.warnings[0], "nvIpam.perNodeBlockSize (7)")
+		assert.Contains(t, out.warnings[0], "sriov.numVfs (8)")
+		assert.Contains(t, out.warnings[0], "may be insufficient")
+	})
+
+	t.Run("does not warn when block size matches VF count", func(t *testing.T) {
+		out := &testOutput{}
+		cfg := &config.LaunchKitConfig{
+			NvIpam:  &config.NvIpamConfig{PerNodeBlockSize: 8},
+			Sriov:   &config.SriovConfig{NumVfs: 8},
+			Profile: &config.Profile{Deployment: "sriov"},
+		}
+
+		warnNvIpamBlockSize(cfg, out)
+
+		assert.Empty(t, out.warnings)
+	})
+
+	t.Run("does not warn without comparable settings", func(t *testing.T) {
+		for _, cfg := range []*config.LaunchKitConfig{
+			nil,
+			{},
+			{NvIpam: &config.NvIpamConfig{PerNodeBlockSize: 7}},
+			{
+				NvIpam: &config.NvIpamConfig{PerNodeBlockSize: 7},
+				Sriov:  &config.SriovConfig{NumVfs: 8},
+			},
+			{
+				NvIpam:  &config.NvIpamConfig{PerNodeBlockSize: 7},
+				Profile: &config.Profile{Deployment: "sriov"},
+			},
+			{
+				Sriov:   &config.SriovConfig{NumVfs: 8},
+				Profile: &config.Profile{Deployment: "sriov"},
+			},
+		} {
+			out := &testOutput{}
+			warnNvIpamBlockSize(cfg, out)
+			assert.Empty(t, out.warnings)
+		}
+	})
+
+	for _, deployment := range []string{"host_device", "rdma_shared"} {
+		t.Run("does not warn for "+deployment+" deployment", func(t *testing.T) {
+			out := &testOutput{}
+			cfg := &config.LaunchKitConfig{
+				NvIpam:  &config.NvIpamConfig{PerNodeBlockSize: 7},
+				Sriov:   &config.SriovConfig{NumVfs: 8},
+				Profile: &config.Profile{Deployment: deployment},
+			}
+
+			warnNvIpamBlockSize(cfg, out)
+
+			assert.Empty(t, out.warnings)
+		})
+	}
+}
 
 func TestWarnThirdPartyRDMAModules_DriverDisabled(t *testing.T) {
 	out := &testOutput{}

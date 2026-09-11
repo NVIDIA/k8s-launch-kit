@@ -23,6 +23,21 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
+// warnNvIpamBlockSize warns when NV-IPAM may reserve fewer addresses per node
+// than an SR-IOV policy can expose as VFs.
+func warnNvIpamBlockSize(cfg *config.LaunchKitConfig, output ui.Output) {
+	if cfg == nil || cfg.Profile == nil || cfg.Profile.Deployment != "sriov" ||
+		cfg.NvIpam == nil || cfg.Sriov == nil ||
+		cfg.NvIpam.PerNodeBlockSize >= cfg.Sriov.NumVfs {
+		return
+	}
+
+	output.Warning(
+		"nvIpam.perNodeBlockSize (%d) is less than sriov.numVfs (%d). "+
+			"The NV-IPAM block size may be insufficient for all VFs on each node.",
+		cfg.NvIpam.PerNodeBlockSize, cfg.Sriov.NumVfs)
+}
+
 // warnThirdPartyRDMAModules warns about third-party RDMA modules that will be
 // unloaded. Discovery auto-enables the flag when modules are found, so this only
 // emits the "verify safety" warning when the flag is true and modules are present.

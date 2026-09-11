@@ -35,7 +35,7 @@ validation settings in the supplied config.
 | `validation` | Connectivity mode, enabled checks, and RDMA parameters. |
 | `docaDriver` | DOCA driver version and module unload behavior. |
 | `maintenance` | Maintenance Operator and upgrade concurrency limits. |
-| `nvIpam` | IPPool subnet generation, manual subnets, and exclusions. |
+| `nvIpam` | IPPool per-node block allocation, subnet generation, manual subnets, and exclusions. |
 | `sriov`, `hostdev`, `rdmaShared`, `ipoib`, `macvlan` | Profile-specific resource and network naming. |
 | `nicConfigurationOperator` | Interface and RDMA device naming templates. |
 | `spectrumX` | Spectrum-X naming defaults. |
@@ -205,6 +205,7 @@ Auto-generate per-group subnets:
 ```yaml
 nvIpam:
   poolName: nv-ipam-pool
+  perNodeBlockSize: 10
   startingSubnet: "192.168.0.0"
   mask: 22
   offset: 1
@@ -216,6 +217,7 @@ Or list subnets manually:
 
 ```yaml
 nvIpam:
+  perNodeBlockSize: 10
   subnets:
     - subnet: 192.168.2.0/24
       gateway: 192.168.2.1
@@ -228,6 +230,7 @@ Reserved first/last IPs are merged with explicit exclusions for every subnet.
 | Field | Meaning |
 | --- | --- |
 | `poolName` | Base name for generated `IPPool` resources. |
+| `perNodeBlockSize` | Non-negative number of addresses reserved per node in each generated `IPPool`; `0` or omission defaults to `10`. SR-IOV generation warns when the effective value is smaller than `sriov.numVfs`. |
 | `startingSubnet` | Aligned IPv4 network address for automatic allocation. |
 | `mask` | Automatic subnet prefix length, from `/1` through `/30`. |
 | `offset` | Number of subnet-sized blocks between allocations; minimum `1`. |

@@ -133,6 +133,11 @@ nvIpam:
   # Name of the IPPool custom resource created in the operator namespace.
   poolName: nv-ipam-pool
 
+  # int | default: 10
+  # Number of addresses NV-IPAM reserves per node from every generated IPPool.
+  # Generation warns when this is smaller than sriov.numVfs.
+  perNodeBlockSize: 10
+
   # --- Auto-generation mode (used when subnets list is empty) ---
 
   # string | default: "192.168.0.0"
