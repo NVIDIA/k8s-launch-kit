@@ -11,20 +11,22 @@ class L8k < Formula
   on_macos do
     if Hardware::CPU.intel?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.7.0/l8k_26.7.0_darwin_amd64.tar.gz"
-      sha256 "017a239dd30cb30662ef52b4c2674e9167a9d8cf121fb6f47875dd14cf772353"
+      sha256 "a6228a89f5947e67e26e9d986549c8547dede343e2f269208b6942930640b300"
 
       define_method(:install) do
         bin.install "l8k"
         (share/"l8k").install "profiles"
+        (share/"l8k"/"scripts").install "scripts/kubectl-netop_sosreport"
       end
     end
     if Hardware::CPU.arm?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.7.0/l8k_26.7.0_darwin_arm64.tar.gz"
-      sha256 "4523c966ac702dd9a1502550caa5554572581e8300c6abde52a9f041ce9778d7"
+      sha256 "9b128a3a10fc0a82870cc443791bfa7e10dabe60bfc6d994987a7143929de68b"
 
       define_method(:install) do
         bin.install "l8k"
         (share/"l8k").install "profiles"
+        (share/"l8k"/"scripts").install "scripts/kubectl-netop_sosreport"
       end
     end
   end
@@ -32,23 +34,26 @@ class L8k < Formula
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.7.0/l8k_26.7.0_linux_amd64.tar.gz"
-      sha256 "d11fdafb5d299e1f26433f2c1f776cd3589ca710c3504c5ab379a4efb5a4cbb9"
+      sha256 "8d8f6d7d506d73a7e799f7d03636ea1144d12bd37be9670c887f95b86d14b1f0"
       define_method(:install) do
         bin.install "l8k"
         (share/"l8k").install "profiles"
+        (share/"l8k"/"scripts").install "scripts/kubectl-netop_sosreport"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.7.0/l8k_26.7.0_linux_arm64.tar.gz"
-      sha256 "1538405d0f45213746981aa81ec069bf1b75cdfa2eeea6d09424295d93e624d7"
+      sha256 "6e1b797d973ee04379e59b751a1884330ab69187ae684bad4a764eb359cbc122"
       define_method(:install) do
         bin.install "l8k"
         (share/"l8k").install "profiles"
+        (share/"l8k"/"scripts").install "scripts/kubectl-netop_sosreport"
       end
     end
   end
 
   test do
     assert_match version.to_s, shell_output("#{bin}/l8k version")
+    assert_predicate share/"l8k"/"scripts"/"kubectl-netop_sosreport", :executable?
   end
 end
