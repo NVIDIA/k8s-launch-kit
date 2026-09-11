@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-troubleshoot
-version: 1.1.3
+version: 1.1.4
 description: "Use this skill when the user has problems with NVIDIA Network Operator on Kubernetes, or wants to analyze a sosreport diagnostic dump. Activate for: OFED driver crashes, SR-IOV pods failing, NicClusterPolicy errors, network operator pod issues, RDMA not working, NIC configuration failures, pods stuck in CrashLoopBackOff or ContainerCreating with network annotations, VF allocation issues, or when the user mentions 'troubleshoot', 'debug', 'sosreport', 'diagnose', or describes any NVIDIA networking failure -- even if they don't explicitly ask for troubleshooting."
 metadata:
   requires:
@@ -32,7 +32,7 @@ ib_write_bw failure needs command output. Trace fields are bounded; failed RDMA
 server logs are collected before cleanup. Add `--keep` only when the workload
 must remain available for follow-up `kubectl exec` inspection.
 
-`l8k sosreport` gathers cluster state, CRDs, operator logs, and per-node NIC info into a structured directory for offline analysis. Use the diagnostic commands and triage workflow below to interpret the dump.
+`l8k sosreport` gathers cluster state, CRDs, operator logs, and per-node NIC info into a structured directory for offline analysis. Release installations include the Network Operator collection script under `share/l8k/scripts/`; the command never downloads executable code at runtime. If the script is missing, report the upstream URL and exact expected path emitted by `l8k` so the user can install it manually. Use the diagnostic commands and triage workflow below to interpret the dump.
 
 ## Diagnostic Commands
 

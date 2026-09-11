@@ -18,6 +18,10 @@ version: 2
 
 project_name: l8k
 
+before:
+  hooks:
+    - make download-sosreport
+
 builds:
   - main: .
     binary: l8k
@@ -55,10 +59,11 @@ archives:
         formats:
           - zip
     # Presets and the default l8k-config are embedded in the binary. Profiles
-    # remain external because manifest generation reads their templates from
-    # the filesystem.
+    # and the sosreport helper remain external because commands read or execute
+    # them from the filesystem.
     files:
       - profiles/**/*
+      - scripts/kubectl-netop_sosreport
       - LICENSE
     name_template: "l8k_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
@@ -119,5 +124,7 @@ brews:
     install: |
       bin.install "l8k"
       (share/"l8k").install "profiles"
+      (share/"l8k"/"scripts").install "scripts/kubectl-netop_sosreport"
     test: |
       assert_match version.to_s, shell_output("#{bin}/l8k version")
+      assert_predicate share/"l8k"/"scripts"/"kubectl-netop_sosreport", :executable?

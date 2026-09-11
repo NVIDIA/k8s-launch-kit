@@ -23,7 +23,7 @@ GOMOD=$(GOCMD) mod
 
 # Sosreport script
 SOSREPORT_SCRIPT=scripts/kubectl-netop_sosreport
-SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/master/scripts/sosreport/kubectl-netop_sosreport
+SOSREPORT_URL=https://raw.githubusercontent.com/Mellanox/network-operator/refs/heads/master/scripts/sosreport/kubectl-netop_sosreport
 
 PCI_IDS_URL=https://raw.githubusercontent.com/pciutils/pciids/master/pci.ids
 PCI_IDS_NVIDIA=pkg/networkoperatorplugin/internal/pciids/nvidia.ids
@@ -125,12 +125,12 @@ version:
 run: build
 	$(BINARY_PATH)
 
-## Install l8k to system paths (copies binary, profiles, config)
-install: build
+## Install l8k to system paths (copies binary, profiles, and sosreport script)
+install: build download-sosreport
 	scripts/install-local.sh
 
 ## Install l8k with dev symlinks (for development)
-dev-install: build
+dev-install: build download-sosreport
 	scripts/install-local.sh --dev-env
 
 ## Development setup
@@ -184,7 +184,7 @@ sync-nic-config-crds:
 sync-network-operator-releases:
 	$(GOCMD) run ./hack/sync-network-operator-releases
 
-## Download sosreport script
+## Download sosreport script for release packaging and source installs
 download-sosreport:
 	@mkdir -p scripts
 	curl -fsSL -o $(SOSREPORT_SCRIPT) $(SOSREPORT_URL)

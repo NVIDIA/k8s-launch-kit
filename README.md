@@ -141,6 +141,10 @@ make dev-install    # Symlinks instead of copies (for development)
 This runs `scripts/install-local.sh`, which places:
 - `<prefix>/bin/l8k`
 - `<prefix>/share/l8k/profiles/`
+- `<prefix>/share/l8k/scripts/kubectl-netop_sosreport`
+
+The source installer downloads the sosreport helper when it is absent. The
+installed `l8k sosreport` command never downloads executable code at runtime.
 
 Default prefix is `/usr/local`. Override with `PREFIX=/opt/l8k make install`.
 
@@ -735,7 +739,16 @@ Collect a diagnostic dump from the cluster:
 l8k sosreport --kubeconfig ~/.kube/config --output-dir ./sosreport
 ```
 
-The sosreport contains NicClusterPolicy, pod logs, node info, CRDs, and other diagnostic data. For interactive AI-assisted analysis, use the bundled Claude Code skills under `skills/k8s-launch-kit-troubleshoot/` — they wrap the deterministic commands (`l8k sosreport`, `kubectl`) and let the agent driving the skill do the reasoning.
+The sosreport contains NicClusterPolicy, pod logs, node info, CRDs, and other
+diagnostic data. Release archives include the Network Operator collection
+script, and the supported installers place it at
+`<installation-prefix>/share/l8k/scripts/kubectl-netop_sosreport`. `l8k` never
+downloads executable code at runtime. If the script is missing, the error
+reports its upstream URL and exact manual installation path. For interactive
+AI-assisted analysis, use the bundled Claude Code skills under
+`skills/k8s-launch-kit-troubleshoot/` — they wrap the deterministic commands
+(`l8k sosreport`, `kubectl`) and let the agent driving the skill do the
+reasoning.
 
 ### AI Agent / Automation Usage
 
