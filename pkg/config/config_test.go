@@ -666,6 +666,66 @@ func TestSriovConfig(t *testing.T) {
 	})
 }
 
+func TestValidateClusterConfigIdentifiers(t *testing.T) {
+	baseNetworkOperator := func() *NetworkOperatorConfig {
+		return &NetworkOperatorConfig{
+			Version:          "v25.10.0",
+			ComponentVersion: "network-operator-v25.10.0",
+			Repository:       "nvcr.io/nvidia/mellanox",
+			Namespace:        "nvidia-network-operator",
+		}
+	}
+
+	t.Run("reject duplicate clusterConfig identifiers", func(t *testing.T) {
+		config := &LaunchKitConfig{
+			NetworkOperator: baseNetworkOperator(),
+			ClusterConfig: []ClusterConfig{
+				{Identifier: "example-sku", WorkerNodes: []string{"node-a"}},
+				{Identifier: "example-sku", WorkerNodes: []string{"node-b"}},
+			},
+		}
+
+		err := ValidateClusterConfig(config, "sriov-rdma")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), `duplicate identifier "example-sku"`)
+	})
+
+	t.Run("reject duplicate identifiers that differ only by surrounding whitespace", func(t *testing.T) {
+		config := &LaunchKitConfig{
+			NetworkOperator: baseNetworkOperator(),
+			ClusterConfig: []ClusterConfig{
+				{Identifier: "example-sku"},
+				{Identifier: "  example-sku  "},
+			},
+		}
+
+		err := ValidateClusterConfig(config, "sriov-rdma")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate identifier")
+	})
+
+	t.Run("accept distinct clusterConfig identifiers", func(t *testing.T) {
+		config := &LaunchKitConfig{
+			NetworkOperator: baseNetworkOperator(),
+			Sriov: &SriovConfig{
+				EthernetMtu:   9000,
+				InfinibandMtu: 4000,
+				NumVfs:        8,
+				Priority:      90,
+				ResourceName:  "sriov_resource",
+				NetworkName:   "sriov_network",
+			},
+			ClusterConfig: []ClusterConfig{
+				{Identifier: "sku-a", WorkerNodes: []string{"node-a"}},
+				{Identifier: "sku-b", WorkerNodes: []string{"node-b"}},
+			},
+		}
+
+		err := ValidateClusterConfig(config, "sriov-rdma")
+		assert.NoError(t, err)
+	})
+}
+
 func TestSpectrumXConfig(t *testing.T) {
 	t.Run("load config with Spectrum-X parameters", func(t *testing.T) {
 		tempDir := t.TempDir()
