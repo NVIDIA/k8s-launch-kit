@@ -1,4 +1,4 @@
-# Spectrum-X Multi-Rail Profile
+# Spectrum-X Multi-Rail Profile (RA2.2)
 
 ## Overview
 
