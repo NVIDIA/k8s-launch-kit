@@ -21,21 +21,22 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
-	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 )
 
-// resolveProfileSettings applies the shared profile-resolution pipeline used
-// by both discover and generate:
-//
-//	hardware defaults < values already present in config < explicit CLI flags
-//
-// Hardware defaults only fill fields that are absent, plugin option appliers
-// then overlay explicitly-set CLI values, and the final cohort is validated
-// before it is rendered or persisted.
-func (l *Launcher) resolveProfileSettings(fullConfig *config.LaunchKitConfig) error {
-	decisions := resolve.ApplyHardwareDefaults(fullConfig, l.options)
-	for _, decision := range decisions {
+func (l *Launcher) resolveProfileInput(input *config.Input) (*config.LaunchKitConfig, error) {
+	result, err := resolve.Resolve(resolve.Request{
+		Input:                 input,
+		Options:               l.options,
+		ApplyHardwareDefaults: true,
+		ValidateReady:         true,
+	})
+	if err != nil {
+		return nil, apperrors.NewValidationError(err.Error(), nil,
+			"Adjust the conflicting flags or fields in cluster-config.yaml.")
+	}
+
+	for _, decision := range result.Decisions {
 		l.ui.Info("%s", decision.String())
 		l.logger.Info("Applied hardware default",
 			"flag", decision.Flag,
@@ -43,25 +44,8 @@ func (l *Launcher) resolveProfileSettings(fullConfig *config.LaunchKitConfig) er
 			"reason", decision.Reason)
 	}
 
-	for _, enabledPlugin := range l.plugins {
-		applier, ok := enabledPlugin.(interface {
-			ApplyOptionsToConfig(options.Options, *config.LaunchKitConfig) error
-		})
-		if !ok {
-			continue
-		}
-		if err := applier.ApplyOptionsToConfig(l.options, fullConfig); err != nil {
-			return fmt.Errorf("failed to apply options to config for plugin %s: %w", enabledPlugin.GetName(), err)
-		}
-	}
-
-	if err := resolve.ValidateResolvedConfig(fullConfig); err != nil {
-		return apperrors.NewValidationError(err.Error(), nil,
-			"Adjust the conflicting flags or fields in cluster-config.yaml.")
-	}
-
-	l.recordResolvedProfile(fullConfig)
-	return nil
+	l.recordResolvedProfile(result.Config)
+	return result.Config, nil
 }
 
 func (l *Launcher) recordResolvedProfile(fullConfig *config.LaunchKitConfig) {

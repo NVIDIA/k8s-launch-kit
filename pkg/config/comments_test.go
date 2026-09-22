@@ -107,13 +107,13 @@ clusterConfig: # inventory section comment
 }
 
 // TestMarshalConfigWithComments_RealExampleConfig runs the helper against the
-// repo's actual l8k-config.yaml so the round-trip is exercised on the real
+// repo's actual cluster-config.yaml so the round-trip is exercised on the real
 // annotated file (best-effort: skipped if the file isn't reachable from the
 // test CWD).
 func TestMarshalConfigWithComments_RealExampleConfig(t *testing.T) {
-	srcBytes, err := os.ReadFile("../../l8k-config.yaml")
+	srcBytes, err := os.ReadFile("../../cluster-config.yaml")
 	if err != nil {
-		t.Skipf("repo l8k-config.yaml not reachable: %v", err)
+		t.Skipf("repo cluster-config.yaml not reachable: %v", err)
 	}
 	var cfg LaunchKitConfig
 	require.NoError(t, yaml.Unmarshal(srcBytes, &cfg))
@@ -173,4 +173,91 @@ func TestMarshalConfigWithComments_NoComments(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, strings.HasPrefix(string(out), "#"), "no banner, no leading comment")
 	assert.Contains(t, string(out), "namespace: ns")
+}
+
+func TestMarshalConfigWithCommentsPreservesExplicitEmptyCollections(t *testing.T) {
+	cfg := &LaunchKitConfig{
+		NetworkNamespaces: []string{},
+		Validation: &ValidationConfig{
+			Checks: []string{},
+		},
+	}
+	out, err := MarshalConfigWithComments(cfg, nil, "")
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "networkNamespaces: []")
+	assert.Contains(t, string(out), "checks: []")
+
+	input, err := DecodeInput(out, "round-trip.yaml")
+	require.NoError(t, err)
+	assert.True(t, input.Present.Has("networkNamespaces"))
+	assert.True(t, input.Present.Has("validation.checks"))
+	assert.Empty(t, input.Config.NetworkNamespaces)
+	assert.Empty(t, input.Config.Validation.Checks)
+}
+
+func TestPatchConfigYAMLUpdatesAliasedMappingIndependently(t *testing.T) {
+	source := []byte(`shared: &shared
+  namespace: original # namespace note
+  imagePullSecrets: [secret]
+networkOperator:
+  <<: *shared
+  selectedRelease: ""
+docaDriver:
+  enable: &disabled false
+validation:
+  connectivity: *disabled
+`)
+	input, err := DecodeInput(source, "aliases.yaml")
+	require.NoError(t, err)
+	input.Config.NetworkOperator.Namespace = "changed"
+	input.Config.DOCADriver.Enable = true
+	out, err := PatchConfigYAML(source, input.Config,
+		[]string{"networkOperator.namespace", "docaDriver.enable"}, "")
+	require.NoError(t, err)
+	after, err := DecodeInput(out, "patched.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, "changed", after.Config.NetworkOperator.Namespace)
+	assert.Equal(t, []string{"secret"}, after.Config.NetworkOperator.ImagePullSecrets)
+	assert.True(t, after.Config.DOCADriver.Enable)
+	require.NotNil(t, after.Config.Validation.Connectivity)
+	assert.False(t, *after.Config.Validation.Connectivity, "an alias must not follow the edited anchor")
+	assert.True(t, after.Present.Has("networkOperator.selectedRelease"))
+	assert.Contains(t, string(out), "namespace: original")
+	assert.Contains(t, string(out), "# namespace note")
+}
+
+func TestPatchConfigYAMLWritesExplicitZeroOverrides(t *testing.T) {
+	input, err := DecodeInput([]byte("profile: null\n"), "empty.yaml")
+	require.NoError(t, err)
+	input.Config.Profile = &Profile{Multirail: false}
+	input.Config.NetworkOperator = &NetworkOperatorConfig{SelectedRelease: ""}
+	out, err := PatchConfigYAML(input.SourceYAML, input.Config,
+		[]string{"profile.multirail", "networkOperator.selectedRelease"}, "")
+	require.NoError(t, err)
+	after, err := DecodeInput(out, "patched.yaml")
+	require.NoError(t, err)
+	assert.True(t, after.Present.Has("profile.multirail"))
+	assert.True(t, after.Present.Has("networkOperator.selectedRelease"))
+	assert.False(t, after.Present.Has("profile.fabric"))
+	assert.False(t, after.Config.Profile.Multirail)
+}
+
+func TestMarshalConfigWithCommentsPreservesExplicitScalarZeros(t *testing.T) {
+	source := []byte(`networkOperator:
+  selectedRelease: "" # custom coordinates
+nvIpam:
+  offset: 0 # start at zero
+`)
+	input, err := DecodeInput(source, "source.yaml")
+	require.NoError(t, err)
+	out, err := MarshalConfigWithComments(input.Config, source, "")
+	require.NoError(t, err)
+	reloaded, err := DecodeInput(out, "saved.yaml")
+	require.NoError(t, err)
+	assert.True(t, reloaded.Present.Has("networkOperator.selectedRelease"))
+	assert.True(t, reloaded.Present.Has("nvIpam.offset"))
+	assert.Empty(t, reloaded.Config.NetworkOperator.SelectedRelease)
+	assert.Zero(t, reloaded.Config.NvIpam.Offset)
+	assert.Contains(t, string(out), "# custom coordinates")
+	assert.Contains(t, string(out), "# start at zero")
 }

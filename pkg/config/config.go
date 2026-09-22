@@ -18,7 +18,6 @@ package config
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
@@ -33,13 +32,7 @@ import (
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
-// defaultConfigYAML is the canonical baseline l8k configuration baked into the
-// binary. Library callers (and CLI invocations without a checked-out repo or
-// installed share dir) start from these defaults; an explicit configPath
-// overlays / replaces them. See DefaultLaunchKitConfig and LoadFullConfig.
-//
-//go:embed default-config.yaml
-var defaultConfigYAML []byte
+//go:generate go run ../../hack/configgen -input ../../cluster-config.yaml -output default_config_generated.go
 
 var (
 	spectrumXPrefixDefaultsOnce sync.Once
@@ -64,7 +57,7 @@ func DefaultConfigYAML() []byte {
 func DefaultLaunchKitConfig() (*LaunchKitConfig, error) {
 	var cfg LaunchKitConfig
 	if err := yaml.Unmarshal(defaultConfigYAML, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse embedded default l8k-config: %w", err)
+		return nil, fmt.Errorf("failed to parse embedded cluster-config defaults: %w", err)
 	}
 	if cfg.Profile != nil && cfg.Profile.SpectrumX != nil {
 		if err := NormalizeSpectrumXProfileConfig(cfg.Profile.SpectrumX); err != nil {
@@ -396,7 +389,7 @@ type SpectrumXInterfaceNamePrefixConfig struct {
 // SpectrumXInterfaceNamePrefixes returns the RDMA and network-device naming
 // templates from the Spectrum-X block selected by the multiplane mode.
 // Missing blocks or fields inherit from the matching block in the embedded
-// default-config.yaml, so file-backed and programmatic configs follow the same
+// cluster-config.yaml defaults, so file-backed and programmatic configs follow the same
 // defaults while explicit per-mode values remain authoritative.
 //
 // Hardware PLB exposes one RDMA bond per rail while retaining one network
@@ -566,17 +559,23 @@ func DefaultValidationConfig() *ValidationConfig {
 }
 
 func NormalizeValidationConfig(v *ValidationConfig) *ValidationConfig {
+	return NormalizeValidationConfigWithPresence(v, nil)
+}
+
+// NormalizeValidationConfigWithPresence preserves explicit zero values so
+// ValidateValidationConfig can report them instead of silently defaulting.
+func NormalizeValidationConfigWithPresence(v *ValidationConfig, present PathSet) *ValidationConfig {
 	if v == nil {
 		return DefaultValidationConfig()
 	}
-	if v.Connectivity == nil {
+	if v.Connectivity == nil && !present.Has("validation.connectivity") {
 		v.Connectivity = defaultBool(true)
 	}
 	v.Mode = strings.TrimSpace(v.Mode)
-	if v.Mode == "" {
+	if v.Mode == "" && !present.Has("validation.mode") {
 		v.Mode = ValidationModeStrict
 	}
-	if v.Checks == nil {
+	if v.Checks == nil && !present.Has("validation.checks") {
 		v.Checks = []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}
 	} else {
 		v.Checks = NormalizeValidationChecks(v.Checks)
@@ -584,17 +583,17 @@ func NormalizeValidationConfig(v *ValidationConfig) *ValidationConfig {
 	if v.RDMA == nil {
 		v.RDMA = &ValidationRDMAConfig{}
 	}
-	if v.RDMA.RPingIterations <= 0 {
+	if v.RDMA.RPingIterations <= 0 && !present.Has("validation.rdma.rpingIterations") {
 		v.RDMA.RPingIterations = DefaultValidationRPingIterations
 	}
-	if v.RDMA.IBWriteSize <= 0 {
+	if v.RDMA.IBWriteSize <= 0 && !present.Has("validation.rdma.ibWriteSize") {
 		v.RDMA.IBWriteSize = DefaultValidationIBWriteSize
 	}
 	if v.RDMA.IBWriteMinBandwidthGbps == nil {
 		v.RDMA.IBWriteMinBandwidthGbps = defaultFloat64(DefaultValidationIBWriteMinGbps)
 	}
 	v.GPUDirect.GPUResourceType = strings.TrimSpace(v.GPUDirect.GPUResourceType)
-	if v.GPUDirect.GPUResourceType == "" {
+	if v.GPUDirect.GPUResourceType == "" && !present.Has("validation.gpuDirect.gpuResourceType") {
 		v.GPUDirect.GPUResourceType = DefaultGPUResourceType
 	}
 	return v
@@ -622,13 +621,19 @@ func ValidateValidationConfig(v *ValidationConfig) error {
 		return nil
 	}
 	switch v.Mode {
-	case "", ValidationModeQuick, ValidationModeFull, ValidationModeStrict:
+	case ValidationModeQuick, ValidationModeFull, ValidationModeStrict:
 	default:
 		return fmt.Errorf("validation.mode must be one of: %s, %s, %s",
 			ValidationModeQuick, ValidationModeFull, ValidationModeStrict)
 	}
 	if v.RDMA != nil && v.RDMA.IBWriteMinBandwidthGbps != nil && *v.RDMA.IBWriteMinBandwidthGbps < 0 {
 		return fmt.Errorf("validation.rdma.ibWriteMinBandwidthGbps must be greater than or equal to 0")
+	}
+	if v.RDMA != nil && v.RDMA.RPingIterations <= 0 {
+		return fmt.Errorf("validation.rdma.rpingIterations must be greater than 0")
+	}
+	if v.RDMA != nil && v.RDMA.IBWriteSize <= 0 {
+		return fmt.Errorf("validation.rdma.ibWriteSize must be greater than 0")
 	}
 	resourceType := v.GPUDirect.GPUResourceType
 	if !strings.Contains(resourceType, "/") {
@@ -865,7 +870,7 @@ func LoadFullConfig(configPath string, logger logr.Logger) (*LaunchKitConfig, er
 // file a second time.
 func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKitConfig, []byte, error) {
 	if configPath == "" {
-		logger.Info("Loading embedded default l8k-config (no path provided)")
+		logger.Info("Loading embedded cluster-config defaults (no path provided)")
 		cfg, err := DefaultLaunchKitConfig()
 		if err != nil {
 			return nil, nil, err
@@ -1283,13 +1288,19 @@ func ApplyReservedExclusions(subnets []NvIpamSubnetConfig, reserveFirst, reserve
 	return nil
 }
 
-// ApplyNvIpamDefaults applies defaults to the nvIpam configuration. Public
-// callers may construct a config directly, so rendering calls this too.
+// ApplyNvIpamDefaults applies defaults to a programmatically constructed
+// nvIpam configuration that has no YAML presence information.
 func ApplyNvIpamDefaults(cfg *LaunchKitConfig) {
+	ApplyNvIpamDefaultsWithPresence(cfg, nil)
+}
+
+// ApplyNvIpamDefaultsWithPresence does not reinterpret an explicit zero as an
+// omission; validation owns the meaning of explicitly supplied values.
+func ApplyNvIpamDefaultsWithPresence(cfg *LaunchKitConfig, present PathSet) {
 	if cfg == nil || cfg.NvIpam == nil {
 		return
 	}
-	if cfg.NvIpam.PerNodeBlockSize == 0 {
+	if cfg.NvIpam.PerNodeBlockSize == 0 && !present.Has("nvIpam.perNodeBlockSize") {
 		cfg.NvIpam.PerNodeBlockSize = DefaultNvIpamPerNodeBlockSize
 	}
 }

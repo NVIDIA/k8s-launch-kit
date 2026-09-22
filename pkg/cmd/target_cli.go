@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
@@ -279,6 +280,7 @@ func markRootTargetScopes() {
 		"spectrum-x-configmap-name", "groups", "gpu-type", "node-selector", "collapse-nic-rails",
 		"for", "image-pull-secrets", "save-deployment-files", "network-namespaces",
 		"enable-doca-driver", "workload-manifest", "kubeconfig", "config-dir")
+	markConfigFlagTargetScopes(rootCmd, configflags.ScopeRoot)
 }
 
 func markDiscoverTargetScopes() {
@@ -289,6 +291,7 @@ func markDiscoverTargetScopes() {
 		"routing", "ignore-arp", "spectrum-x", "multiplane-mode", "number-of-planes",
 		"topology-scheme", "ip-version", "topology-file", "spectrum-x-config",
 		"spectrum-x-configmap-name")
+	markConfigFlagTargetScopes(discoverCmd, configflags.ScopeDiscover)
 }
 
 func markGenerateTargetScopes() {
@@ -300,6 +303,18 @@ func markGenerateTargetScopes() {
 		"for", "node-selector", "save-deployment-files", "network-namespaces", "enable-doca-driver",
 		"workload-manifest", "network-operator-namespace", "network-operator-release", "skip-network-operator-helm",
 		"image-pull-secrets", "enabled-plugins", "kubeconfig", "overwrite-existing")
+	markConfigFlagTargetScopes(generateCmd, configflags.ScopeGenerate)
+}
+
+func markConfigFlagTargetScopes(cmd *cobra.Command, scope configflags.Scope) {
+	for _, definition := range configflags.Definitions() {
+		for _, available := range definition.Scopes {
+			if available == scope {
+				setFlagTargetScope(cmd, []target.Name{target.Host}, definition.FlagName)
+				break
+			}
+		}
+	}
 }
 
 func markDeployTargetScopes() {

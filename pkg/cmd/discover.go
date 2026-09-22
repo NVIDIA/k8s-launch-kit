@@ -17,22 +17,20 @@
 package cmd
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/spf13/cobra"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
+	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
-var discoverCmd = &cobra.Command{
-	Use:   "discover",
-	Short: "Discover cluster network hardware capabilities",
-	Long: `Bootstrap a private NIC Configuration Daemon into the
+var (
+	discoverConfigOptions options.Options
+	discoverCmd           = &cobra.Command{
+		Use:   "discover",
+		Short: "Discover cluster network hardware capabilities",
+		Long: `Bootstrap a private NIC Configuration Daemon into the
 nvidia-k8s-launch-kit namespace and use it to discover cluster network
 hardware capabilities, producing a cluster-config.yaml file.
 
@@ -43,7 +41,7 @@ NicDevice CRs, and torn down when discovery finishes.
 Discovery groups nodes by hardware, detects east-west vs north-south
 NICs, and probes OFED-dependent modules. With --user-config, it replaces
 only clusterConfig and then applies explicit CLI overrides.`,
-	Example: `  # Basic discovery
+		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
 
@@ -68,48 +66,29 @@ only clusterConfig and then applies explicit CLI overrides.`,
   # Agent mode (JSON output)
   l8k discover --save-cluster-config ./cluster-config.yaml \
     --output json 2>/dev/null`,
-	Run: func(cmd *cobra.Command, args []string) {
-		opts := options.Options{
-			ConfigDir:                configDir,
-			DiscoverClusterConfig:    true,
-			DiscoverOnly:             true,
-			Kubeconfig:               kubeconfig,
-			UserConfig:               userConfig,
-			SaveClusterConfig:        saveClusterConfig,
-			NetworkOperatorNamespace: networkOperatorNamespace,
-			NetworkOperatorRelease:   networkOperatorRelease,
-			Fabric:                   fabric,
-			DeploymentType:           deploymentType,
-			Multirail:                multirail,
-			MultirailSet:             cmd.Flag("multirail").Changed,
-			Routing:                  routing,
-			IgnoreARP:                ignoreARP,
-			IgnoreARPSet:             cmd.Flag("ignore-arp").Changed,
-			SpectrumX:                spectrumXVersion != "",
-			SPCXVersion:              spectrumXVersion,
-			MultiplaneMode:           multiplaneMode,
-			NumberOfPlanes:           numberOfPlanes,
-			TopologyScheme:           topologyScheme,
-			IPVersion:                ipVersion,
-			TopologyFile:             topologyFile,
-			SpectrumXConfig:          spectrumXConfig,
-			SpectrumXConfigMapName:   spectrumXConfigMapName,
-			KeepNamespace:            keepNamespace,
-			CollapseNicRails:         collapseNicRails,
-			NodeSelector:             nodeSelector,
-			ImagePullSecrets:         imagePullSecrets,
-			EnabledPlugins:           parseEnabledPlugins(enabledPlugins),
-			OutputFormat:             outputFormat,
-			Yes:                      yesFlag,
-			Quiet:                    quietFlag,
-		}
+		Run: func(cmd *cobra.Command, args []string) {
+			opts := mustCollectConfigFlags(cmd, discoverConfigOptions)
+			opts.ConfigDir = configDir
+			opts.DiscoverClusterConfig = true
+			opts.DiscoverOnly = true
+			opts.Kubeconfig = kubeconfig
+			opts.UserConfig = userConfig
+			opts.SaveClusterConfig = saveClusterConfig
+			opts.KeepNamespace = keepNamespace
+			opts.CollapseNicRails = collapseNicRails
+			opts.NodeSelector = nodeSelector
+			opts.EnabledPlugins = parseEnabledPlugins(enabledPlugins)
+			opts.OutputFormat = outputFormat
+			opts.Yes = yesFlag
+			opts.Quiet = quietFlag
 
-		runTargetCommand(cmd, target.Discover, hosttarget.NewDiscoverAdapter(
-			hosttarget.LauncherRequest{Options: opts},
-			hosttarget.NewLauncherRunner(),
-		))
-	},
-}
+			runTargetCommand(cmd, target.Discover, hosttarget.NewDiscoverAdapter(
+				hosttarget.LauncherRequest{Options: opts},
+				hosttarget.NewLauncherRunner(),
+			))
+		},
+	}
+)
 
 func init() {
 	rootCmd.AddCommand(discoverCmd)
@@ -118,34 +97,14 @@ func init() {
 	discoverCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Base config to merge with discovered hardware")
 	discoverCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "", "Output path for cluster-config.yaml")
-	discoverCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "(deprecated, no-op for discover) Network Operator namespace override")
-	discoverCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
-		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
-			strings.Join(releases.SupportedReleases(), ", ")))
+	mustBindConfigFlags(discoverCmd, &discoverConfigOptions, configflags.ScopeDiscover)
 	discoverCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and discoverable NICs are detected via sysfs; restricted BlueFields are excluded")
-	discoverCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)")
 	discoverCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 	discoverCmd.Flags().BoolVar(&keepNamespace, "keep-namespace", false, "Skip teardown of the nvidia-k8s-launch-kit namespace (for debugging)")
 	discoverCmd.Flags().BoolVar(&collapseNicRails, "collapse-nic-rails", true, collapseNicRailsFlagHelp)
 
 	// Profile settings are resolved after hardware discovery for a fresh config.
 	// With --user-config, only explicit flags can change the supplied profile.
-	discoverCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type override: ethernet, infiniband")
-	discoverCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Deployment type override: sriov, rdma_shared, host_device")
-	discoverCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")
-	discoverCmd.Flags().StringVar(&routing, "routing", "", "Secondary-network routing mode override: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin.")
-	discoverCmd.Flags().BoolVar(&ignoreARP, "ignore-arp", false, "Chain the tuning CNI meta-plugin to prevent ARP flux across pod rails")
-	discoverCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
-		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version. Supported: %v",
-			config.SupportedSPCXVersions))
-	discoverCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Spectrum-X multiplane mode override: none, swplb, hwplb (requires --spectrum-x)")
-	discoverCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Spectrum-X plane count override: 1, 2, or 4 (requires --spectrum-x)")
-	discoverCmd.Flags().StringVar(&topologyScheme, "topology-scheme", "", "Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)")
-	discoverCmd.Flags().StringVar(&ipVersion, "ip-version", "", "Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)")
-	discoverCmd.Flags().StringVar(&topologyFile, "topology-file", "", "Path to spcx-gen/reference-generator or NVIDIA AIR topology JSON for Spectrum-X CIDRPool generation (requires --spectrum-x)")
-	discoverCmd.Flags().StringVar(&spectrumXConfig, "spectrum-x-config", "", "Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)")
-	discoverCmd.Flags().StringVar(&spectrumXConfigMapName, "spectrum-x-configmap-name", "", "Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML")
-
 	setFlagGroup(discoverCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(discoverCmd, "user-config", GroupCommon)
 	setFlagGroup(discoverCmd, "network-operator-namespace", GroupCommon)

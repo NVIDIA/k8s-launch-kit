@@ -18,6 +18,8 @@ package config
 
 import (
 	"bytes"
+	"reflect"
+	"sort"
 
 	yaml3 "gopkg.in/yaml.v3"
 )
@@ -55,12 +57,21 @@ func marshalConfigWithComments(cfg *LaunchKitConfig, srcYAML []byte, banner stri
 	if err := yaml3.Unmarshal(raw, &dst); err != nil {
 		return nil, err
 	}
+	if err := preserveEmptyCollections(&dst, cfg); err != nil {
+		return nil, err
+	}
 
 	var src yaml3.Node
 	if len(bytes.TrimSpace(srcYAML)) > 0 {
 		// Best-effort: a malformed source just means no comments to transplant.
 		if err := yaml3.Unmarshal(srcYAML, &src); err == nil {
-			transplantComments(&src, &dst, skipClusterConfig)
+			expanded, err := expandYAMLNode(&src, map[*yaml3.Node]bool{})
+			if err == nil {
+				if err := preserveSourceZeros(expanded, &dst, cfg); err != nil {
+					return nil, err
+				}
+				transplantComments(expanded, &dst, skipClusterConfig)
+			}
 		}
 	}
 
@@ -78,6 +89,36 @@ func marshalConfigWithComments(cfg *LaunchKitConfig, srcYAML []byte, banner stri
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// preserveEmptyCollections restores explicitly allocated empty slices and maps
+// that yaml omitempty drops. These values carry resolver intent: [] means
+// "disable all", while an omitted key remains eligible for defaults.
+func preserveEmptyCollections(document *yaml3.Node, cfg *LaunchKitConfig) error {
+	if document == nil || document.Kind != yaml3.DocumentNode || len(document.Content) == 0 {
+		return nil
+	}
+	return patchConfigPaths(document, cfg, emptyCollectionPaths(reflect.ValueOf(cfg), ""))
+}
+
+// preserveSourceZeros retains explicitly supplied scalar zeros that omitempty
+// would otherwise remove, making them eligible for defaults on the next load.
+func preserveSourceZeros(source, destination *yaml3.Node, cfg *LaunchKitConfig) error {
+	present := PathSet{}
+	collectPresentPaths(source, "", present)
+	var paths []string
+	for path := range present {
+		value, err := configValueAtPath(reflect.ValueOf(cfg), path)
+		if err != nil || !value.IsZero() {
+			continue
+		}
+		switch value.Kind() {
+		case reflect.String, reflect.Bool, reflect.Int, reflect.Float64:
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return patchConfigPaths(destination, cfg, paths)
 }
 
 // transplantComments recursively copies comments from src onto dst for nodes

@@ -23,7 +23,10 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
+	"github.com/nvidia/k8s-launch-kit/pkg/configinput"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
+	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	yaml "sigs.k8s.io/yaml"
 )
 
@@ -40,35 +43,50 @@ type connectivityConfigContract struct {
 	} `yaml:"validation"`
 }
 
+func validationOverrides(request ValidateRequest) []configinput.Override {
+	var overrides []configinput.Override
+	add := func(set bool, flag, path string, value any) {
+		if set {
+			overrides = append(overrides, configinput.Override{Flag: flag, Path: path, Value: value})
+		}
+	}
+	add(request.Connectivity.Set, "connectivity", "validation.connectivity", request.Connectivity.Value)
+	add(request.Mode.Set, "validation-mode", "validation.mode", request.Mode.Value)
+	add(request.Checks.Set, "validation-checks", "validation.checks", request.Checks.Value)
+	add(request.RDMAPIterations.Set, "rdma-rping-iterations", "validation.rdma.rpingIterations", request.RDMAPIterations.Value)
+	add(request.RDMAIBWriteSize.Set, "rdma-ib-write-size", "validation.rdma.ibWriteSize", request.RDMAIBWriteSize.Value)
+	add(request.RDMAMinBandwidth.Set, "rdma-ib-write-min-bandwidth-gbps", "validation.rdma.ibWriteMinBandwidthGbps", request.RDMAMinBandwidth.Value)
+	return overrides
+}
+
+// validationOptions puts all CLI fields into the resolver before it validates
+// user YAML, including values that repair an invalid lower-precedence field.
+func validationOptions(request ValidateRequest) options.Options {
+	opts := options.Options{
+		ConfigDir:                  request.ConfigDir,
+		UserConfig:                 request.UserConfig,
+		NetworkOperatorNamespace:   request.OperatorNamespace,
+		SkipNetworkOperatorHelm:    request.SkipNetworkOperatorHelm.Value,
+		SkipNetworkOperatorHelmSet: request.SkipNetworkOperatorHelm.Set,
+	}
+	opts.ConfigInputs = configflags.Infer(opts)
+	opts.ConfigInputs.Overrides = append(opts.ConfigInputs.Overrides, validationOverrides(request)...)
+	return opts
+}
+
 func applyValidationOverrides(request ValidateRequest, validationCfg *config.ValidationConfig) error {
 	if validationCfg == nil {
 		return fmt.Errorf("validation config must not be nil")
 	}
-	if request.Connectivity.Set {
-		value := request.Connectivity.Value
-		validationCfg.Connectivity = &value
+	overrides := validationOverrides(request)
+	if err := config.ApplyOverrides(&config.LaunchKitConfig{Validation: validationCfg}, overrides); err != nil {
+		return err
 	}
-	if request.Mode.Set {
-		validationCfg.Mode = strings.TrimSpace(request.Mode.Value)
+	present := config.PathSet{}
+	for _, override := range overrides {
+		present.Add(override.Path)
 	}
-	if request.Checks.Set {
-		validationCfg.Checks = config.NormalizeValidationChecks(request.Checks.Value)
-	}
-	if validationCfg.RDMA == nil {
-		validationCfg.RDMA = &config.ValidationRDMAConfig{}
-	}
-	if request.RDMAPIterations.Set {
-		validationCfg.RDMA.RPingIterations = request.RDMAPIterations.Value
-	}
-	if request.RDMAIBWriteSize.Set {
-		validationCfg.RDMA.IBWriteSize = request.RDMAIBWriteSize.Value
-	}
-	if request.RDMAMinBandwidth.Set {
-		value := request.RDMAMinBandwidth.Value
-		validationCfg.RDMA.IBWriteMinBandwidthGbps = &value
-	}
-	normalized := config.NormalizeValidationConfig(validationCfg)
-	*validationCfg = *normalized
+	config.NormalizeValidationConfigWithPresence(validationCfg, present)
 	return config.ValidateValidationConfig(validationCfg)
 }
 
@@ -84,6 +102,9 @@ func validateRequiredConnectivityConfig(
 	}
 	if cfg == nil {
 		return fmt.Errorf("cluster config %s is empty", path)
+	}
+	if config.IsEffectiveConfigPath(path) {
+		return validateResolvedConnectivityConfig(path, cfg, checks)
 	}
 
 	data, err := os.ReadFile(path)
@@ -112,6 +133,26 @@ func validateRequiredConnectivityConfig(
 		connectivityChecksContain(checks, connectivity.CheckGPUDirectDMABuf) {
 		if err := validateGPUDirectTopology(cfg.ClusterConfig); err != nil {
 			return fmt.Errorf("cluster config %s cannot support GPUDirect connectivity validation: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func validateResolvedConnectivityConfig(path string, cfg *config.LaunchKitConfig, checks []connectivity.Check) error {
+	if cfg.Profile == nil || strings.TrimSpace(cfg.Profile.Routing) == "" {
+		return fmt.Errorf("resolved config %s has no profile.routing", path)
+	}
+	routing := strings.TrimSpace(cfg.Profile.Routing)
+	if routing != config.RoutingSourceBased && routing != config.RoutingDestinationBased {
+		return fmt.Errorf("resolved config %s profile.routing must be %q or %q, got %q",
+			path, config.RoutingSourceBased, config.RoutingDestinationBased, routing)
+	}
+	if cfg.Validation == nil {
+		return fmt.Errorf("resolved config %s has no validation settings", path)
+	}
+	if cfg.Validation.GPUDirect.Enabled && connectivityChecksContain(checks, connectivity.CheckGPUDirectDMABuf) {
+		if err := validateGPUDirectTopology(cfg.ClusterConfig); err != nil {
+			return fmt.Errorf("resolved config %s cannot support GPUDirect connectivity validation: %w", path, err)
 		}
 	}
 	return nil

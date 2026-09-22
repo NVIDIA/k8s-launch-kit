@@ -5,25 +5,61 @@ SPDX-License-Identifier: Apache-2.0
 
 # Configuration File
 
-`cluster-config.yaml` is both an input and an output. Discovery writes it, generation reads and updates it, and deploy/validate use it to resolve release and namespace context.
+`cluster-config.yaml` keeps its existing public YAML shape. Discovery writes
+it, while generation reads it without modifying it. The repository-root file
+is also the canonical lowest-precedence defaults source embedded in the
+binary. Generation records the effective result in
+`<deployment-dir>/.l8k/resolved-config.yaml`; deploy and validate use that
+bundle metadata when no explicit `--user-config` is supplied.
+
+The canonical default release is `26.7`. A compatible Spectrum-X release
+selected during fresh discovery takes precedence over that default; the saved
+file contains the selected release and its matching catalog versions. An
+explicit release in `--user-config` remains pinned unless a CLI release
+override is supplied.
+
+After changing the repository-root defaults, run `go generate ./pkg/config`
+to refresh the byte-for-byte copy compiled into the binary. The config tests
+fail when the generated copy and `cluster-config.yaml` differ.
 
 For generation, configuration source precedence is:
 
-1. Embedded defaults.
-2. `--config-dir/l8k-config.yaml`, when selected.
-3. `--user-config`.
-4. Resolved hardware defaults for missing profile fields.
-5. Explicit CLI flags.
+1. Canonical defaults from the repository-root `cluster-config.yaml`.
+2. Resolved hardware defaults for missing profile fields.
+3. `--config-dir/l8k-config.yaml` or `--user-config` values.
+4. Explicit CLI flags.
 
-Fresh discovery has no user input layer: embedded or `--config-dir` defaults
-are combined with discovered hardware, then explicit CLI flags win.
+Presence is tracked before normalization. An explicit `false`, `0`, empty
+string, or empty list therefore overrides lower layers; YAML `null` means the
+field is unset. A selected Network Operator release remains authoritative and
+replaces the catalog-managed version and repository fields after all layers
+are merged.
 
-Discovery with `--user-config` is intentionally narrower: it replaces only
-`clusterConfig`, preserves every other loaded section, and then applies
-explicit CLI flags. It does not fill missing profile fields or recompute
-validation settings in the supplied config.
+Fresh discovery treats the selected reference file as a user layer except for
+its sample `profile`, which is discarded before hardware defaults are derived.
+Explicit non-profile values such as `docaDriver.enable: false` are preserved.
+
+Discovery with `--user-config` replaces only `clusterConfig`, preserves every
+other loaded section, and then applies explicit CLI flags. It does not fill
+missing profile fields, recompute validation settings, or expand a release
+selected only in YAML.
+The refresh patches the source YAML, retaining explicit zero values, omitted
+fields, and custom keys. YAML aliases and merge keys are expanded when saving
+so a CLI override affects only its target field.
+
+Standalone validation applies its validation CLI flags before checking the
+resolved configuration. A valid flag value can therefore replace an invalid
+value from the YAML file.
 
 `--config-dir/presets/` replaces the embedded preset catalog. It does not merge with it.
+
+Config-backed CLI flags are declared on `options.Options` with `flag`,
+`config`, and command-scope tags. Direct scalar and string-list flags are
+registered and mapped automatically. Coordinated flags such as
+`--network-operator-release`, `--spectrum-x`, and `--spectrum-x-config` emit
+typed resolver requests handled by domain-specific code. Validation of enums
+runs at CLI binding time; cross-field validation runs only after the effective
+configuration is resolved.
 
 ## Top-Level Sections
 

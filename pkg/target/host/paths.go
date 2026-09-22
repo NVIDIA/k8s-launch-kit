@@ -30,6 +30,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 )
 
 const (
@@ -95,13 +96,16 @@ func userConfigPathBeforeDefaults(input UserConfigInput) string {
 	if input.Explicit != "" {
 		return input.Explicit
 	}
-	candidates := []string{defaultUserConfigPath}
+	var candidates []string
 	if input.DeploymentFiles != "" {
 		candidates = append(candidates,
+			config.EffectiveConfigPath(input.DeploymentFiles),
+			config.EffectiveConfigPath(filepath.Dir(input.DeploymentFiles)),
 			filepath.Join(input.DeploymentFiles, "..", "cluster-config.yaml"),
 			filepath.Join(input.DeploymentFiles, "cluster-config.yaml"),
 		)
 	}
+	candidates = append(candidates, defaultUserConfigPath)
 	return firstExistingConfigPath(candidates)
 }
 
@@ -161,7 +165,7 @@ func UserConfigPathForGenerate(input UserConfigInput) string {
 }
 
 // LoadUserConfig loads the resolved Host config and applies every config-backed
-// CLI override through the shared mapping registry. When parsing succeeds but
+// CLI override through the shared tagged schema. When parsing succeeds but
 // an override fails, it returns the parsed config together with the error so
 // validation can retain that evidence in a partial report.
 func LoadUserConfig(input UserConfigInput, opts options.Options) (*config.LaunchKitConfig, string, error) {
@@ -172,14 +176,33 @@ func LoadUserConfig(input UserConfigInput, opts options.Options) (*config.Launch
 	if path == "" {
 		return nil, "", nil
 	}
-	cfg, err := config.LoadFullConfig(path, log.Log)
+	isEffective := config.IsEffectiveConfigPath(path)
+	var cfg *config.LaunchKitConfig
+	if isEffective {
+		cfg, err = config.LoadEffectiveConfig(path)
+	} else {
+		var configInput *config.Input
+		configInput, err = config.LoadInput(path, log.Log)
+		if err == nil {
+			var result *resolve.Result
+			result, err = resolve.Resolve(resolve.Request{Input: configInput, Options: opts})
+			if result != nil {
+				cfg = result.Config
+			} else {
+				cfg = configInput.Config
+			}
+		}
+	}
 	if err != nil {
-		return nil, path, fmt.Errorf("load %s: %w", path, err)
+		return cfg, path, fmt.Errorf("load and resolve %s: %w", path, err)
 	}
 	if cfg == nil {
 		return nil, path, fmt.Errorf("user-config %s is empty", path)
 	}
-	if err := networkoperatorplugin.ApplyCLIConfigOverrides(opts, cfg); err != nil {
+	if isEffective {
+		err = networkoperatorplugin.ApplyExplicitCLIConfigOverrides(opts, cfg)
+	}
+	if err != nil {
 		return cfg, path, fmt.Errorf("apply CLI config overrides: %w", err)
 	}
 	return cfg, path, nil

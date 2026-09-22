@@ -17,13 +17,9 @@
 package cmd
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/spf13/cobra"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
+	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
@@ -35,7 +31,10 @@ import (
 // init time — so a single shared var would make the root command's default
 // (`feature.node.kubernetes.io/pci-15b3.present=true`) leak into the generate
 // flow and break the `--for` requires `--node-selector` validation.
-var generateNodeSelector string
+var (
+	generateNodeSelector  string
+	generateConfigOptions options.Options
+)
 
 var generateCmd = &cobra.Command{
 	Use:   "generate",
@@ -44,7 +43,7 @@ var generateCmd = &cobra.Command{
 from a cluster configuration file.
 
 Supports SR-IOV, host-device, RDMA-shared, IPoIB, MacVLAN, and Spectrum-X profiles.
-File-backed configs are rewritten with resolved defaults and CLI overrides.
+File-backed configs remain unchanged; the resolved config is saved with the deployment bundle.
 Optionally deploy the generated manifests with --deploy.`,
 	Example: `  # SR-IOV Ethernet (most common for GPU clusters)
   l8k generate --user-config cluster-config.yaml \
@@ -83,54 +82,23 @@ Optionally deploy the generated manifests with --deploy.`,
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output`,
 	Run: func(cmd *cobra.Command, args []string) {
-		opts := options.Options{
-			LaunchKitVersion:         Version,
-			ConfigDir:                configDir,
-			UserConfig:               userConfig,
-			Fabric:                   fabric,
-			DeploymentType:           deploymentType,
-			Multirail:                multirail,
-			MultirailSet:             cmd.Flag("multirail").Changed,
-			Routing:                  routing,
-			IgnoreARP:                ignoreARP,
-			IgnoreARPSet:             cmd.Flag("ignore-arp").Changed,
-			SpectrumX:                spectrumXVersion != "",
-			SPCXVersion:              spectrumXVersion,
-			MultiplaneMode:           multiplaneMode,
-			NumberOfPlanes:           numberOfPlanes,
-			TopologyScheme:           topologyScheme,
-			IPVersion:                ipVersion,
-			TopologyFile:             topologyFile,
-			SpectrumXConfig:          spectrumXConfig,
-			SpectrumXConfigMapName:   spectrumXConfigMapName,
-			Groups:                   groups,
-			GpuType:                  gpuType,
-			NodeSelector:             generateNodeSelector,
-			ForPreset:                forPreset,
-			ImagePullSecrets:         imagePullSecrets,
-			NetworkNamespaces:        networkNamespaces,
-			SaveDeploymentFiles:      saveDeploymentFiles,
-			Deploy:                   deploy,
-			OverwriteExisting:        overwriteExistingFlag,
-			Kubeconfig:               kubeconfig,
-			NetworkOperatorNamespace: networkOperatorNamespace,
-			NetworkOperatorRelease:   networkOperatorRelease,
-
-			SkipNetworkOperatorHelm:    skipNetworkOperatorHelm,
-			SkipNetworkOperatorHelmSet: cmd.Flag("skip-network-operator-helm").Changed,
-
-			EnabledPlugins:   parseEnabledPlugins(enabledPlugins),
-			WorkloadManifest: workloadManifest,
-			OutputFormat:     outputFormat,
-			Yes:              yesFlag,
-			Quiet:            quietFlag,
-			DryRun:           dryRunFlag,
-		}
-
-		// Set EnableDocaDriver only if the flag was explicitly provided
-		if cmd.Flags().Lookup("enable-doca-driver").Changed {
-			opts.EnableDocaDriver = &enableDocaDriver
-		}
+		opts := mustCollectConfigFlags(cmd, generateConfigOptions)
+		opts.LaunchKitVersion = Version
+		opts.ConfigDir = configDir
+		opts.UserConfig = userConfig
+		opts.Groups = groups
+		opts.GpuType = gpuType
+		opts.NodeSelector = generateNodeSelector
+		opts.ForPreset = forPreset
+		opts.SaveDeploymentFiles = saveDeploymentFiles
+		opts.Deploy = deploy
+		opts.OverwriteExisting = overwriteExistingFlag
+		opts.Kubeconfig = kubeconfig
+		opts.EnabledPlugins = parseEnabledPlugins(enabledPlugins)
+		opts.OutputFormat = outputFormat
+		opts.Yes = yesFlag
+		opts.Quiet = quietFlag
+		opts.DryRun = dryRunFlag
 
 		runTargetCommand(cmd, target.Generate, hosttarget.NewGenerateAdapter(
 			hosttarget.LauncherRequest{Options: opts},
@@ -145,23 +113,9 @@ func init() {
 
 	// Config
 	generateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (otherwise auto-detected from ./cluster-config.yaml; --for can use embedded defaults)")
+	mustBindConfigFlags(generateCmd, &generateConfigOptions, configflags.ScopeGenerate)
 
 	// Profile selection
-	generateCmd.Flags().StringVar(&fabric, "fabric", "", "Fabric type: ethernet, infiniband")
-	generateCmd.Flags().StringVar(&deploymentType, "deployment-type", "", "Deployment type: sriov, rdma_shared, host_device")
-	generateCmd.Flags().BoolVar(&multirail, "multirail", false, "Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)")
-	generateCmd.Flags().StringVar(&routing, "routing", "", "Secondary-network routing mode: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin.")
-	generateCmd.Flags().BoolVar(&ignoreARP, "ignore-arp", false, "Chain the tuning CNI meta-plugin to prevent ARP flux across pod rails")
-	generateCmd.Flags().StringVar(&spectrumXVersion, "spectrum-x", "",
-		fmt.Sprintf("Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2). Supported: %v",
-			config.SupportedSPCXVersions))
-	generateCmd.Flags().StringVar(&multiplaneMode, "multiplane-mode", "", "Multiplane mode: none, swplb, hwplb (requires --spectrum-x)")
-	generateCmd.Flags().IntVar(&numberOfPlanes, "number-of-planes", 0, "Number of planes (requires --spectrum-x)")
-	generateCmd.Flags().StringVar(&topologyScheme, "topology-scheme", "", "Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)")
-	generateCmd.Flags().StringVar(&ipVersion, "ip-version", "", "Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)")
-	generateCmd.Flags().StringVar(&topologyFile, "topology-file", "", "Path to spcx-gen/reference-generator or NVIDIA AIR topology JSON for Spectrum-X CIDRPool generation (requires --spectrum-x)")
-	generateCmd.Flags().StringVar(&spectrumXConfig, "spectrum-x-config", "", "Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)")
-	generateCmd.Flags().StringVar(&spectrumXConfigMapName, "spectrum-x-configmap-name", "", "Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML")
 	generateCmd.Flags().StringSliceVar(&groups, "groups", nil, "Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.")
 	generateCmd.Flags().StringVar(&gpuType, "gpu-type", "", "Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.")
 	generateCmd.MarkFlagsMutuallyExclusive("groups", "gpu-type")
@@ -170,15 +124,6 @@ func init() {
 
 	// Output
 	generateCmd.Flags().StringVar(&saveDeploymentFiles, "save-deployment-files", "", "Output directory for generated YAMLs")
-	generateCmd.Flags().StringSliceVar(&networkNamespaces, "network-namespaces", nil, "Comma-separated namespaces for the secondary-network CRs and example test DaemonSets. One independent copy is rendered per namespace (shared resources like IPPools and NodePolicies are NOT duplicated). Overrides config networkNamespaces; default: 'default'.")
-	generateCmd.Flags().BoolVar(&enableDocaDriver, "enable-doca-driver", false, "Enable DOCA driver deployment")
-	generateCmd.Flags().StringVar(&workloadManifest, "workload-manifest", "", "Path to a custom workload manifest YAML")
-	generateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override operator namespace")
-	generateCmd.Flags().StringVar(&networkOperatorRelease, "network-operator-release", "",
-		fmt.Sprintf("Network Operator release line to deploy (MAJOR.MINOR). Supported: %s",
-			strings.Join(releases.SupportedReleases(), ", ")))
-	generateCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm values generation and, with --deploy, chart installation and Helm preflight checks")
-	generateCmd.Flags().StringSliceVar(&imagePullSecrets, "image-pull-secrets", nil, "Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)")
 	generateCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 
 	// Deploy (optional)

@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # CLI Reference
 
 Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for machine-readable capabilities.
-Config-backed flags include a `configPaths` list in schema output, sourced
-from the same registry that applies explicit CLI values to loaded config.
+Config-backed flags include a `configPaths` list in schema output, derived
+from the same field tags that register the flags and apply explicit values.
 
 ## Commands
 
@@ -50,9 +50,10 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | `--log-level` | all | target-agnostic | Enable `trace`, `debug`, `info`, `warn`, or `error` logging. `debug` shows structured progress; `trace` also shows bounded command output. |
 | `--log-file` | all | target-agnostic | Write logs to a file instead of `stderr`. |
 
-The current host config and artifact contract is unchanged:
-`cluster-config.yaml` remains flat and generated manifests remain under
-`deployment/network-operator/`.
+The public host config remains the flat `cluster-config.yaml` schema. Generated
+manifests remain under `deployment/network-operator/`; the exact resolved
+configuration is stored separately at
+`deployment/.l8k/resolved-config.yaml`. Generation does not rewrite its input.
 
 ## Discover Flags
 

@@ -2,22 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Package resolve fills profile-related fields on a loaded
-// `LaunchKitConfig` from discovered hardware (defaults) and then
-// validates the fully-resolved configuration's cohort rules. The two
-// halves are intentionally separate functions so the launcher can wire
-// them in around `ApplyOptionsToConfig`:
-//
-//	LoadFullConfig (cfg.Profile populated from YAML)
-//	→ ApplyHardwareDefaults  (fills empty fields from cluster hardware)
-//	→ ApplyOptionsToConfig   (CLI flags overlay; non-zero values win)
-//	→ ValidateResolvedConfig (cohort + cross-flag checks on resolved cfg)
-//
-// Precedence (lowest to highest): hardware default < config-file <
-// CLI flag. `ApplyHardwareDefaults` checks "is cfg.X already set?"
-// before writing, so config-file values survive. Bool flags use
-// `Profile.MultirailSet` and `Options.MultirailSet` to distinguish
-// omitted values from explicit false values in YAML and on the CLI.
+// Package resolve combines canonical defaults, hardware-derived defaults,
+// presence-aware user YAML, and explicit CLI values into one effective config,
+// then validates the fully resolved cohort.
 package resolve
 
 import (
@@ -74,6 +61,18 @@ func (d DefaultDecision) String() string {
 // `--spectrum-x` itself is NOT defaulted — the user always specifies the
 // RA version (per design discussion).
 func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []DefaultDecision {
+	return ApplyHardwareDefaultsWithPresence(cfg, opts, nil)
+}
+
+// ApplyHardwareDefaultsWithPresence fills hardware-derived values unless the
+// same YAML path was explicitly supplied by a higher-precedence user or CLI
+// layer. Presence is checked separately from Go zero values so empty strings,
+// zero integers, false booleans, and empty slices remain explicit.
+func ApplyHardwareDefaultsWithPresence(
+	cfg *config.LaunchKitConfig,
+	opts options.Options,
+	blocked config.PathSet,
+) []DefaultDecision {
 	if cfg.Profile == nil {
 		cfg.Profile = &config.Profile{}
 	}
@@ -81,7 +80,7 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 	cfgHasSpectrumX := cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable
 
 	// --fabric ----------------------------------------------------------
-	if cfg.Profile.Fabric == "" && opts.Fabric == "" {
+	if canApplyHardwareDefault(blocked, "profile.fabric") && cfg.Profile.Fabric == "" && opts.Fabric == "" {
 		fabric, ok, reason := dominantLinkType(cfg.ClusterConfig)
 		log.Log.V(1).Info("HW default: --fabric",
 			"current", cfg.Profile.Fabric, "cliValue", opts.Fabric,
@@ -99,7 +98,7 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 	}
 
 	// --deployment-type -------------------------------------------------
-	if cfg.Profile.Deployment == "" && opts.DeploymentType == "" {
+	if canApplyHardwareDefault(blocked, "profile.deployment") && cfg.Profile.Deployment == "" && opts.DeploymentType == "" {
 		cfg.Profile.Deployment = "sriov"
 		decisions = append(decisions, DefaultDecision{
 			Flag: "--deployment-type", Value: "sriov", Reason: "default",
@@ -111,7 +110,8 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 	// Bool: skip the default when either the YAML field or CLI flag was
 	// explicitly set (to true or false). The two presence markers keep an
 	// explicit false stable across discover/generate round trips.
-	if !cfg.Profile.Multirail && !cfg.Profile.MultirailSet && !opts.MultirailSet {
+	if canApplyHardwareDefault(blocked, "profile.multirail") &&
+		!cfg.Profile.Multirail && !cfg.Profile.MultirailSet && !opts.MultirailSet {
 		reason := "default"
 		if opts.SpectrumX || cfgHasSpectrumX {
 			reason = "implied by --spectrum-x"
@@ -130,7 +130,7 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 	}
 
 	// --routing ---------------------------------------------------------
-	if cfg.Profile.Routing == "" && opts.Routing == "" {
+	if canApplyHardwareDefault(blocked, "profile.routing") && cfg.Profile.Routing == "" && opts.Routing == "" {
 		cfg.Profile.Routing = config.RoutingDestinationBased
 		decisions = append(decisions, DefaultDecision{
 			Flag: "--routing", Value: config.RoutingDestinationBased, Reason: "default",
@@ -148,7 +148,7 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 	// Without one of those signals, multiplane-mode/planes/release
 	// defaults are meaningless.
 	if opts.SpectrumX || cfgHasSpectrumX {
-		applySpectrumXHardwareDefaults(cfg, opts, &decisions)
+		applySpectrumXHardwareDefaults(cfg, opts, blocked, &decisions)
 	}
 
 	return decisions
@@ -158,12 +158,18 @@ func ApplyHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options) []
 // implicit fabric/deployment/multirail (forced by Spectrum-X),
 // --multiplane-mode, --number-of-planes (from GPU platform + east-west PF),
 // and --network-operator-release (matched to the chosen RA version).
-func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Options, decisions *[]DefaultDecision) {
+func applySpectrumXHardwareDefaults(
+	cfg *config.LaunchKitConfig,
+	opts options.Options,
+	blocked config.PathSet,
+	decisions *[]DefaultDecision,
+) {
 	if cfg.Profile.SpectrumX == nil {
 		cfg.Profile.SpectrumX = &config.ProfileSpectrumX{}
 	}
 	cfg.Profile.SpectrumX.Enable = true
-	if cfg.Profile.SpectrumX.IPVersion == "" && opts.IPVersion == "" {
+	if canApplyHardwareDefault(blocked, "profile.spectrumX.ipVersion") &&
+		cfg.Profile.SpectrumX.IPVersion == "" && opts.IPVersion == "" {
 		cfg.Profile.SpectrumX.IPVersion = config.SpectrumXIPVersionIPv4
 		*decisions = append(*decisions, DefaultDecision{
 			Flag:   "--ip-version",
@@ -176,13 +182,13 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 	// deployment. Multirail is handled by ApplyHardwareDefaults so its
 	// presence markers are evaluated in one place. Phase 2 cohort validation
 	// rejects contradictory user values; here we just fill empty defaults.
-	if cfg.Profile.Fabric == "" {
+	if canApplyHardwareDefault(blocked, "profile.fabric") && cfg.Profile.Fabric == "" {
 		cfg.Profile.Fabric = "ethernet"
 		*decisions = append(*decisions, DefaultDecision{
 			Flag: "--fabric", Value: "ethernet", Reason: "implied by --spectrum-x",
 		})
 	}
-	if cfg.Profile.Deployment == "" {
+	if canApplyHardwareDefault(blocked, "profile.deployment") && cfg.Profile.Deployment == "" {
 		cfg.Profile.Deployment = "sriov"
 		*decisions = append(*decisions, DefaultDecision{
 			Flag: "--deployment-type", Value: "sriov", Reason: "implied by --spectrum-x",
@@ -191,8 +197,10 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 	// --multiplane-mode + --number-of-planes. An explicit single-plane value
 	// determines its missing companion without consulting hardware. Otherwise,
 	// fill the missing values from the platform/NIC pair.
-	modeUnset := cfg.Profile.SpectrumX.MultiplaneMode == "" && opts.MultiplaneMode == ""
-	planesUnset := cfg.Profile.SpectrumX.NumberOfPlanes == 0 && opts.NumberOfPlanes == 0
+	modeUnset := canApplyHardwareDefault(blocked, "profile.spectrumX.multiplaneMode") &&
+		cfg.Profile.SpectrumX.MultiplaneMode == "" && opts.MultiplaneMode == ""
+	planesUnset := canApplyHardwareDefault(blocked, "profile.spectrumX.numberOfPlanes") &&
+		cfg.Profile.SpectrumX.NumberOfPlanes == 0 && opts.NumberOfPlanes == 0
 	if modeUnset || planesUnset {
 		effectiveMode := cfg.Profile.SpectrumX.MultiplaneMode
 		if opts.MultiplaneMode != "" {
@@ -260,7 +268,8 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 	if cfg.NetworkOperator != nil {
 		currentRelease = cfg.NetworkOperator.SelectedRelease
 	}
-	if currentRelease == "" && opts.NetworkOperatorRelease == "" && ra != "" {
+	if canApplyHardwareDefault(blocked, "networkOperator.selectedRelease") &&
+		currentRelease == "" && opts.NetworkOperatorRelease == "" && ra != "" {
 		release := config.DefaultSPCXReleaseFor(ra)
 		log.Log.V(1).Info("HW default: --network-operator-release",
 			"spcxVersion", ra, "resolvedTo", release, "applied", release != "")
@@ -276,6 +285,10 @@ func applySpectrumXHardwareDefaults(cfg *config.LaunchKitConfig, opts options.Op
 			})
 		}
 	}
+}
+
+func canApplyHardwareDefault(blocked config.PathSet, path string) bool {
+	return blocked == nil || !blocked.Has(path)
 }
 
 // dominantLinkType returns the unanimous linkType across all groups,

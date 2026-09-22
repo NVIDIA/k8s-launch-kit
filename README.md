@@ -148,8 +148,9 @@ installed `l8k sosreport` command never downloads executable code at runtime.
 
 Default prefix is `/usr/local`. Override with `PREFIX=/opt/l8k make install`.
 
-The default `l8k-config.yaml` and topology presets are embedded in the binary;
-they are not copied into the installation prefix.
+The repository-root [`cluster-config.yaml`](cluster-config.yaml) is the
+canonical defaults source and is embedded in the binary together with the
+topology presets; neither is copied into the installation prefix.
 
 ### Override Embedded Configuration
 
@@ -669,9 +670,11 @@ l8k generate --user-config ./config.yaml \
     --save-deployment-files ./deployments
 ```
 
-After successful profile resolution, `generate` rewrites the source config with
-the final defaults and explicit CLI overrides before rendering manifests. The
-embedded config used by `--for` when no file is selected is not written.
+Generation never rewrites its source config. It resolves defaults, hardware,
+user YAML, and explicit CLI flags into an immutable effective configuration,
+then writes that exact result to
+`<deployment-dir>/.l8k/resolved-config.yaml`. Standalone `deploy` and
+`validate` prefer this bundle metadata when `--user-config` is omitted.
 
 ### Generate Deployment Files for a Specific Node Group
 
@@ -825,7 +828,8 @@ fresh discovery uses hardware/built-in defaults followed by explicit CLI
 flags. The config can be edited and supplied through `--user-config` either as
 a standalone generation input or as a base for a later discovery refresh. A
 refresh replaces only `clusterConfig`; every other section stays as supplied,
-except for values selected by explicit CLI flags.
+except for values selected by explicit CLI flags. Generation treats that file
+as immutable input and records the resolved result in the deployment bundle.
 
 The tool resolves configuration and profile paths in order: local directory first (`./l8k-config.yaml`, `./profiles`), then installed location (`/usr/local/share/l8k/`), then binary-relative.
 

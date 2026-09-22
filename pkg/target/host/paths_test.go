@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 )
 
@@ -46,6 +47,27 @@ func TestResolveKubeconfigPrecedence(t *testing.T) {
 	actual, err = resolveKubeconfig("", "/home", func(string) string { return "" }, statMissing)
 	assert.Empty(t, actual)
 	assert.ErrorContains(t, err, "no kubeconfig found")
+}
+
+func TestUserConfigPathForPrefersDeploymentEffectiveConfig(t *testing.T) {
+	root := t.TempDir()
+	manifestDir := filepath.Join(root, manifestSubdir)
+	require.NoError(t, os.MkdirAll(manifestDir, 0o755))
+	effectivePath, err := config.WriteEffectiveConfig(root, &config.LaunchKitConfig{
+		NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.7"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cluster-config.yaml"), []byte("clusterConfig: []\n"), 0o600))
+
+	t.Chdir(t.TempDir())
+	actual, err := UserConfigPathFor(UserConfigInput{DeploymentFiles: root})
+	require.NoError(t, err)
+	assert.Equal(t, effectivePath, actual)
+
+	loaded, loadedPath, err := LoadUserConfig(UserConfigInput{DeploymentFiles: root}, options.Options{})
+	require.NoError(t, err)
+	assert.Equal(t, effectivePath, loadedPath)
+	assert.Equal(t, "26.7", loaded.NetworkOperator.SelectedRelease)
 }
 
 func TestResolveDeploymentDirPrefersHostSubdirectory(t *testing.T) {

@@ -18,15 +18,14 @@ package networkoperatorplugin
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/plugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -143,46 +142,7 @@ func ApplyNetworkOperatorRelease(options options.Options, fullConfig *config.Lau
 	if effectiveRelease == "" {
 		return nil
 	}
-	rel, ok := releases.LookupRelease(effectiveRelease)
-	if !ok {
-		return fmt.Errorf("unsupported network operator release %q; supported: %v",
-			effectiveRelease, releases.SupportedReleases())
-	}
-	if fullConfig.NetworkOperator == nil {
-		fullConfig.NetworkOperator = &config.NetworkOperatorConfig{}
-	}
-	fullConfig.NetworkOperator.SelectedRelease = effectiveRelease
-	fullConfig.NetworkOperator.Version = rel.NetworkOperator.Version
-	fullConfig.NetworkOperator.ComponentVersion = rel.NetworkOperator.ComponentVersion
-	fullConfig.NetworkOperator.Repository = rel.NetworkOperator.Repository
-	fullConfig.NetworkOperator.OperatorRepository = rel.NetworkOperator.OperatorRepository
-	fullConfig.NetworkOperator.HelmRepoURL = rel.NetworkOperator.HelmRepoURL
-	if fullConfig.DOCADriver == nil {
-		fullConfig.DOCADriver = &config.DOCADriverConfig{
-			// Default-on unloads: the DOCA driver container is opinionated about
-			// needing a clean MOFED module set, so we unload by default. Users
-			// who know their workload depends on a specific module set can set
-			// either flag false in cluster-config.yaml to opt out.
-			//
-			// Migration note: these defaults apply only when the cluster-config
-			// has no `docaDriver:` block at all. A pre-existing config that
-			// carries `docaDriver:` but omits `unloadStorageModules` /
-			// `unloadThirdPartyRDMAModules` will land with Go bool zero-value
-			// (false). Distinguishing "absent" from "explicit false" requires a
-			// schema change (pointer-bool) we deliberately defer to a separate
-			// PR; the rendered default-config.yaml ships both fields at true,
-			// and a fresh `l8k discover` (without --user-config) picks them up.
-			UnloadStorageModules:        true,
-			UnloadThirdPartyRDMAModules: true,
-			// Pre-flight checks default ON (opinionatedly opposite to the
-			// init container's binary envDefault of true-skip): we want the
-			// init container to surface hardware-incompat early rather than
-			// let a broken MOFED reload happen silently.
-			SkipPreflightChecks: false,
-		}
-	}
-	fullConfig.DOCADriver.Version = rel.DOCADriver.Version
-	return nil
+	return resolve.ExpandNetworkOperatorRelease(effectiveRelease, fullConfig)
 }
 
 // ApplyOptionsToConfig applies CLI options to the configuration, overriding file values.

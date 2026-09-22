@@ -221,7 +221,7 @@ func TestApplySpectrumXDefaults_RejectsRAReleaseMismatch(t *testing.T) {
 	assert.Contains(t, err.Error(), "26.1")
 }
 
-func TestApplySpectrumXDefaults_RejectsCohortFlagsWithoutSpectrumX(t *testing.T) {
+func TestApplySpectrumXDefaults_AllowsCohortFlagsToCombineWithYAML(t *testing.T) {
 	cases := map[string]*options.Options{
 		"multiplane-mode":  {MultiplaneMode: "hwplb"},
 		"number-of-planes": {NumberOfPlanes: 4},
@@ -232,8 +232,8 @@ func TestApplySpectrumXDefaults_RejectsCohortFlagsWithoutSpectrumX(t *testing.T)
 	for flag, opts := range cases {
 		t.Run(flag, func(t *testing.T) {
 			err := applySpectrumXDefaults(opts)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "--"+flag+" can only be used with --spectrum-x")
+			require.NoError(t, err,
+				"syntax validation cannot know whether profile.spectrumX.enable comes from YAML")
 		})
 	}
 }

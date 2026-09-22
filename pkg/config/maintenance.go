@@ -38,6 +38,8 @@ const (
 // scalar (for example, 4 or 25%) rather than exposing IntOrString internals.
 type IntOrPercent intstr.IntOrString
 
+func (IntOrPercent) yamlScalar() {}
+
 // IntOrPercentFromInt32 creates an integer IntOrPercent value.
 func IntOrPercentFromInt32(value int32) *IntOrPercent {
 	result := IntOrPercent(intstr.FromInt32(value))

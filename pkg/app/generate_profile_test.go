@@ -58,16 +58,30 @@ func TestExecuteGenerationPreservesStructuredTemplateValidationError(t *testing.
 	assert.Contains(t, structured.Message, "conflicting netplan configuration")
 }
 
-func TestGeneratePersistsResolvedProfileToOriginalConfig(t *testing.T) {
+func TestGenerateLeavesSourceUntouchedAndWritesEffectiveConfig(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok)
 	t.Chdir(filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..")))
 
 	cfg, err := config.DefaultLaunchKitConfig()
 	require.NoError(t, err)
-	require.NotEmpty(t, cfg.ClusterConfig)
-	cfg.Profile = &config.Profile{Deployment: "host_device"}
-	cfg.ClusterConfig[0].LinkType = "Ethernet"
+	cfg.ClusterConfig = []config.ClusterConfig{{
+		Identifier:  "test-group",
+		LinkType:    "Ethernet",
+		WorkerNodes: []string{"worker-0"},
+		Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{
+			Sriov: true,
+			Rdma:  true,
+		}},
+		PFs: []config.PFConfig{{
+			DeviceID:         "1023",
+			PciAddress:       "0000:05:00.0",
+			RdmaDevice:       "mlx5_0",
+			NetworkInterface: "net1",
+			Traffic:          "east-west",
+		}},
+	}}
+	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "host_device"}
 	cfg.NvIpam.ReserveFirstIPs = 2
 	cfg.NvIpam.Subnets = []config.NvIpamSubnetConfig{{
 		Subnet:  "192.168.50.0/24",
@@ -87,36 +101,30 @@ func TestGeneratePersistsResolvedProfileToOriginalConfig(t *testing.T) {
 
 	configPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte(source), 0o600))
+	outputDir := filepath.Join(t.TempDir(), "deployment")
 
 	launcher := New(options.Options{
-		DeploymentType: "sriov",
-		Multirail:      false,
-		MultirailSet:   true,
+		DeploymentType:      "sriov",
+		Multirail:           false,
+		MultirailSet:        true,
+		SaveDeploymentFiles: outputDir,
 	})
 	launcher.ui = ui.NewSilent()
 	launcher.plugins[networkoperatorplugin.PluginName] = &networkoperatorplugin.NetworkOperatorPlugin{}
 
 	require.NoError(t, launcher.executeGeneration(configPath))
 
-	got, err := config.LoadFullConfig(configPath, launcher.logger)
-	require.NoError(t, err)
-	require.NotNil(t, got.Profile)
-	assert.Equal(t, "ethernet", got.Profile.Fabric, "hardware default must be persisted")
-	assert.Equal(t, "sriov", got.Profile.Deployment, "CLI override must be persisted")
-	assert.False(t, got.Profile.Multirail, "explicit CLI false must be persisted")
-	assert.True(t, got.Profile.MultirailSet)
-
 	updated, err := os.ReadFile(configPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(updated), "# original config comment")
-	assert.Contains(t, string(updated), "# hardware inventory comment")
-	assert.Contains(t, string(updated), "# hardware detail comment")
-	assert.Contains(t, string(updated), "# profile settings comment")
-	var persisted config.LaunchKitConfig
-	require.NoError(t, yaml.Unmarshal(updated, &persisted))
-	require.Len(t, persisted.NvIpam.Subnets, 1)
-	assert.Len(t, persisted.NvIpam.Subnets[0].Exclusions, 1,
-		"computed reserve exclusions must not be written back as explicit input")
+	assert.Equal(t, source, string(updated), "generate must not rewrite user input")
+
+	got, err := config.LoadEffectiveConfig(config.EffectiveConfigPath(outputDir))
+	require.NoError(t, err)
+	require.NotNil(t, got.Profile)
+	assert.Equal(t, "ethernet", got.Profile.Fabric)
+	assert.Equal(t, "sriov", got.Profile.Deployment)
+	assert.False(t, got.Profile.Multirail)
+	assert.True(t, got.Profile.MultirailSet)
 
 	info, err := os.Stat(configPath)
 	require.NoError(t, err)
@@ -125,7 +133,7 @@ func TestGeneratePersistsResolvedProfileToOriginalConfig(t *testing.T) {
 	require.NoError(t, launcher.executeGeneration(configPath))
 	secondUpdate, err := os.ReadFile(configPath)
 	require.NoError(t, err)
-	assert.Equal(t, string(updated), string(secondUpdate), "repeated generation must produce stable config YAML")
+	assert.Equal(t, source, string(secondUpdate), "repeated generation must leave source YAML untouched")
 }
 
 func TestResolveSpectrumXTopologyFile(t *testing.T) {
@@ -184,23 +192,26 @@ clusterConfig:
 	catalog, err := presets.EmbeddedCatalog()
 	require.NoError(t, err)
 	launcher := New(options.Options{
-		ForPreset:    "GB300-NVL-NVIDIA-GB300",
-		NodeSelector: "nvidia.com/gpu.product=NVIDIA-GB300",
+		ForPreset:           "GB300-NVL-NVIDIA-GB300",
+		NodeSelector:        "nvidia.com/gpu.product=NVIDIA-GB300",
+		SaveDeploymentFiles: filepath.Join(t.TempDir(), "deployment"),
 	})
 	launcher.ui = ui.NewSilent()
 	launcher.presetCatalog = catalog
 
 	require.NoError(t, launcher.executeGeneration(configPath))
 
-	got, err := config.LoadFullConfig(configPath, launcher.logger)
+	unchanged, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, source, string(unchanged))
+
+	got, err := config.LoadEffectiveConfig(config.EffectiveConfigPath(launcher.options.SaveDeploymentFiles))
 	require.NoError(t, err)
 	require.NotNil(t, got.Profile)
 	require.NotNil(t, got.Profile.SpectrumX)
 	assert.Equal(t, "swplb", got.Profile.SpectrumX.MultiplaneMode)
 	assert.Equal(t, 2, got.Profile.SpectrumX.NumberOfPlanes)
 	require.Len(t, got.ClusterConfig, 1)
-	assert.Equal(t, "source-inventory", got.ClusterConfig[0].Identifier)
-	assert.Equal(t, "NVIDIA-H200", got.ClusterConfig[0].GPUType)
-	require.Len(t, got.ClusterConfig[0].PFs, 1)
-	assert.Equal(t, "a2dc", got.ClusterConfig[0].PFs[0].DeviceID)
+	assert.NotEqual(t, "source-inventory", got.ClusterConfig[0].Identifier)
+	assert.Equal(t, "NVIDIA-GB300", got.ClusterConfig[0].GPUType)
 }

@@ -34,7 +34,6 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
-	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
@@ -146,14 +145,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		ConfigDir:       request.ConfigDir,
 	}
 	userOwnedCfgPath := UserConfigPathBeforeDefaults(configInput)
-	cfg, loadedCfgPath, cfgErr := LoadUserConfig(configInput, options.Options{
-		ConfigDir:                request.ConfigDir,
-		UserConfig:               request.UserConfig,
-		NetworkOperatorNamespace: request.OperatorNamespace,
-
-		SkipNetworkOperatorHelm:    request.SkipNetworkOperatorHelm.Value,
-		SkipNetworkOperatorHelmSet: request.SkipNetworkOperatorHelm.Set,
-	})
+	cfg, loadedCfgPath, cfgErr := LoadUserConfig(configInput, validationOptions(request))
 	cfgPath = loadedCfgPath
 	// Preserve successfully parsed user input in partial reports even when a
 	// release-catalog overlay fails. Operational validation still follows the
