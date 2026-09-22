@@ -252,9 +252,9 @@ func TestBuildCIDRPoolsFromAIR3Tier(t *testing.T) {
 		PerNodeExclusions:    []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}},
 		Routes:               []string{"10.8.0.0/13", "10.0.0.0/10"},
 		StaticAllocations: []StaticAllocation{{
-			Gateway:  "10.8.66.7",
+			Gateway:  "10.8.66.1",
 			NodeName: "worker-pod02-su03-h04",
-			Prefix:   "10.8.66.6/31",
+			Prefix:   "10.8.66.0/31",
 		}},
 	}}, pools)
 }

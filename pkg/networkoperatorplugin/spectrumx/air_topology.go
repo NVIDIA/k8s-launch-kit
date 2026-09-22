@@ -305,7 +305,6 @@ func normalizeAIRHostLink(
 	}
 	hostPositions[position] = host.Node
 
-	explicitHostIndex := hostIndex
 	hostAttrs := topologyAttributes{
 		Role:    "host",
 		Pod:     hostPod,
@@ -327,7 +326,7 @@ func normalizeAIRHostLink(
 		HasRail:  true,
 	}
 	return topologyLink{
-		{Node: host.Node, Interface: host.Interface, Attrs: hostAttrs, HostIndex: &explicitHostIndex},
+		{Node: host.Node, Interface: host.Interface, Attrs: hostAttrs},
 		{Node: leaf.Node, Interface: leaf.Interface, Attrs: leafAttrs},
 	}, nil
 }

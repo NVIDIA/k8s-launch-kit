@@ -86,7 +86,6 @@ type topologyEndpoint struct {
 	Node      string             `json:"node"`
 	Interface string             `json:"interface"`
 	Attrs     topologyAttributes `json:"attributes"`
-	HostIndex *int               `json:"-"`
 }
 
 type topologyAttributes struct {
@@ -279,11 +278,7 @@ func hostLinks(topology *topologyFile, spcx *config.ProfileSpectrumX) ([]hostLin
 		key := hostIndexKey(host.Attrs)
 		index, ok := hostIndexes[key+"|"+host.Node]
 		if !ok {
-			if host.HostIndex != nil {
-				index = *host.HostIndex
-			} else {
-				index = countHostIndex(hostIndexes, key)
-			}
+			index = countHostIndex(hostIndexes, key)
 			hostIndexes[key+"|"+host.Node] = index
 		}
 		addressPlane := leaf.Attrs.Plane
