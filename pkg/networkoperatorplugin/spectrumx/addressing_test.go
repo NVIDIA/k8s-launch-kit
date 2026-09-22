@@ -519,11 +519,43 @@ func TestBuildCIDRPoolsAIRDiagnosticsUseNormalizedHostNames(t *testing.T) {
 }
 
 func TestFormatLimitedList(t *testing.T) {
-	values := []string{"node-09", "node-03", "node-01", "node-07", "node-05", "node-10", "node-08", "node-02", "node-06", "node-04"}
+	tests := []struct {
+		name   string
+		values []string
+		want   string
+	}{
+		{
+			name:   "empty",
+			values: []string{},
+			want:   "[]",
+		},
+		{
+			name:   "single value",
+			values: []string{"node-z"},
+			want:   "[node-z]",
+		},
+		{
+			name:   "exactly limit",
+			values: []string{"node-09", "node-03", "node-01", "node-07", "node-05", "node-08", "node-02", "node-06"},
+			want:   "[node-01, node-02, node-03, node-05, node-06, node-07, node-08, node-09]",
+		},
+		{
+			name:   "above limit",
+			values: []string{"node-09", "node-03", "node-01", "node-07", "node-05", "node-10", "node-08", "node-02", "node-06", "node-04"},
+			want:   "[node-01, node-02, node-03, node-04, node-05, node-06, node-07, node-08] (+2 more)",
+		},
+		{
+			name:   "lexicographic not numeric sort",
+			values: []string{"node-10", "node-2"},
+			want:   "[node-10, node-2]",
+		},
+	}
 
-	require.Equal(t,
-		"[node-01, node-02, node-03, node-04, node-05, node-06, node-07, node-08] (+2 more)",
-		formatLimitedList(values))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, formatLimitedList(tt.values))
+		})
+	}
 }
 
 func spectrumXTestConfig(topologyPath, multiplaneMode string) *config.LaunchKitConfig {
