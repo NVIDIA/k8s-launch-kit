@@ -63,6 +63,7 @@ func loadSRIOVProfile(t *testing.T, dir, fabric, networkTemplate string) *profil
 // multirail mode against a grouping testdata config, exactly as the generate
 // pipeline does.
 func renderSRIOV(t *testing.T, dir, fabric, networkTemplate string) map[string]string {
+	t.Helper()
 	return renderSRIOVWithNamespaces(t, dir, fabric, networkTemplate, nil)
 }
 
