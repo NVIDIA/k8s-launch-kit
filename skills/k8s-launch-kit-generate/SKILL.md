@@ -50,7 +50,7 @@ to that source file; embedded `--for` generation does not write a config.
 | `--node-selector` | Required with `--for` | `key=val,key2=val2` | Identifies which nodes the synthesized clusterConfig targets at apply time. |
 | `--skip-network-operator-helm` | — | boolean | Omit `values.yaml`; with `--deploy`, also skip Network Operator chart installation and Helm preflight checks. |
 
-*Not required when `--spectrum-x` is used.
+**Note:** `--fabric` and `--deployment-type` are not required when `--spectrum-x` is used (it implies `ethernet` fabric and `sriov` deployment).
 
 ## Examples
 
