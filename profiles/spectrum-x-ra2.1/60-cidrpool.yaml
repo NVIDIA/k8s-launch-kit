@@ -1,4 +1,4 @@
-{{- /* .ClusterConfig.PFs keeps this template in per-group render mode. */ -}}
+{{- /* Renders nv-ipam CIDRPool CRDs for each PF group. Per-group render mode is enabled by .ClusterConfig.PFs. */ -}}
 {{- $pools := spectrumXCIDRPools . .ClusterConfig }}
 {{- range $idx, $pool := $pools }}
 {{ if $idx }}---
