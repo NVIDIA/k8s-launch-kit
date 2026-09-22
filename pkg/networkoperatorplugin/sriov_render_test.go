@@ -166,6 +166,7 @@ func loadProfileFromDir(t *testing.T, dir string) *profiles.Profile {
 // renderProfile renders a whole profile (its real template set) against the
 // mixed-same-type grouping config in multirail mode.
 func renderProfile(t *testing.T, dir, fabric, deployment string) map[string]string {
+	t.Helper()
 	return renderProfileWithProfile(t, dir, &config.Profile{Fabric: fabric, Deployment: deployment, Multirail: true})
 }
 
