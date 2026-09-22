@@ -592,7 +592,7 @@ func poolSettings(spcx *config.ProfileSpectrumX) cidrPoolSettings {
 		}
 	}
 	return cidrPoolSettings{
-		gatewayIndex:         0,
+		gatewayIndex:         1,
 		perNodeNetworkPrefix: 31,
 		perNodeExclusions:    []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}},
 	}
