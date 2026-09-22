@@ -106,12 +106,12 @@ spectrum-x-rail-pool-config-rail-1
 ### Per-Rail-Per-Plane Resources (swplb)
 
 ```
-sriov-network-node-policy-plane-0-rail-0
-sriov-network-node-policy-plane-0-rail-1
-sriov-network-node-policy-plane-1-rail-0
-sriov-network-node-policy-plane-1-rail-1
-ovs-network-plane-0-rail-0
-ovs-network-plane-1-rail-0
+sriov-network-node-policy-rail-0-plane-0
+sriov-network-node-policy-rail-0-plane-1
+sriov-network-node-policy-rail-1-plane-0
+sriov-network-node-policy-rail-1-plane-1
+ovs-network-rail-0-plane-0
+ovs-network-rail-0-plane-1
 ```
 
 ## CIDRPool Configuration
