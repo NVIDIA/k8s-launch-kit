@@ -98,7 +98,7 @@ func TestBuildCIDRPools2TierSWPLB(t *testing.T) {
 	require.Len(t, pools, 4)
 	require.Equal(t, "rail-0-plane-0-gpu-model", pools[0].Name)
 	require.Equal(t, "172.16.0.0/18", pools[0].CIDR)
-	require.Equal(t, 0, pools[0].GatewayIndex)
+	require.Equal(t, 1, pools[0].GatewayIndex)
 	require.Equal(t, 31, pools[0].PerNodeNetworkPrefix)
 	require.Equal(t, []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}}, pools[0].PerNodeExclusions)
 	require.Equal(t, []string{"172.16.0.0/18", "172.16.0.0/14"}, pools[0].Routes)
@@ -142,7 +142,7 @@ func TestBuildCIDRPools3Tier(t *testing.T) {
 	require.Equal(t, []CIDRPool{{
 		Name:                 "rail-0",
 		CIDR:                 "10.0.0.0/13",
-		GatewayIndex:         0,
+		GatewayIndex:         1,
 		PerNodeNetworkPrefix: 31,
 		PerNodeExclusions:    []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}},
 		Routes: []string{
@@ -205,6 +205,7 @@ func TestBuildCIDRPoolsFromAIR2Tier(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, pools, tt.wantPools)
 			require.Equal(t, tt.wantFirstName, pools[0].Name)
+			require.Equal(t, 1, pools[0].GatewayIndex)
 			require.Equal(t, []StaticAllocation{
 				{Gateway: "172.16.0.1", NodeName: "worker-su01-rack01-h01", Prefix: "172.16.0.0/31"},
 				{Gateway: "172.16.0.3", NodeName: "worker-su01-rack01-h02", Prefix: "172.16.0.2/31"},
@@ -247,7 +248,7 @@ func TestBuildCIDRPoolsFromAIR3Tier(t *testing.T) {
 	require.Equal(t, []CIDRPool{{
 		Name:                 "rail-1",
 		CIDR:                 "10.8.0.0/13",
-		GatewayIndex:         0,
+		GatewayIndex:         1,
 		PerNodeNetworkPrefix: 31,
 		PerNodeExclusions:    []PerNodeExclusion{{StartIndex: 1, EndIndex: 1}},
 		Routes:               []string{"10.8.0.0/13", "10.0.0.0/10"},
