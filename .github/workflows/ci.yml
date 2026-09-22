@@ -57,6 +57,9 @@ jobs:
           go test -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
+      - name: Run shell regression tests
+        run: make shell-tests
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
