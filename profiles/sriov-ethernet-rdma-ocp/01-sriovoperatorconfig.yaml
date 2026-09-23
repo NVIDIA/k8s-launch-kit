@@ -1,0 +1,13 @@
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovOperatorConfig
+metadata:
+  name: default
+  namespace: "{{.Sriov.OperatorNamespace}}"
+spec:
+  configDaemonNodeSelector:
+    node-role.kubernetes.io/worker: ""
+    feature.node.kubernetes.io/pci-15b3.sriov.capable: "true"
+    {{- if .DOCADriver.Enable }}
+    network.nvidia.com/operator.mofed.wait: "false"
+    {{- end }}
+  disableDrain: false

@@ -958,7 +958,7 @@ func nodeRoles(labels map[string]string) string {
 // Returns the most recent results regardless of which terminal
 // condition fired. Emits a one-line update only when the in-progress
 // count changes so we don't flood logs on long waits.
-func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir string, initial []networkoperatorplugin.ValidationResult, budget time.Duration) []networkoperatorplugin.ValidationResult {
+func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir string, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string) []networkoperatorplugin.ValidationResult {
 	deadline := time.Now().Add(budget)
 	results := initial
 	lastInProgress := -1
@@ -988,7 +988,7 @@ func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir stri
 		case <-time.After(10 * time.Second):
 		}
 
-		fresh, err := networkoperatorplugin.ValidateManifests(ctx, c, manifestDir)
+		fresh, err := networkoperatorplugin.ValidateManifests(ctx, c, manifestDir, flavor)
 		if err != nil {
 			// Transient — keep the previous snapshot and try again
 			// on the next tick.

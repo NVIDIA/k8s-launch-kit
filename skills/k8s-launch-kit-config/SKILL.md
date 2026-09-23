@@ -204,3 +204,7 @@ networkNamespaces: ["my-namespace"]
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — Global flags
 - [k8s-launch-kit-discover](../k8s-launch-kit-discover/SKILL.md) — Generate a config from live cluster
 - `references/config-reference.md` — Complete annotated YAML, including maintenance value restrictions
+
+## OpenShift
+
+OpenShift configuration uses top-level `flavor: ocp`, `sriov.operatorNamespace`, `nfd.operatorNamespace`, `nfd.configurationName`, and `maintenance.operatorNamespace`. Install operator packages externally; l8k configures existing installations.

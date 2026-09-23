@@ -244,3 +244,7 @@ win when a one-off override is needed.
 - [k8s-launch-kit-discover](../k8s-launch-kit-discover/SKILL.md) — Produce the cluster config needed for generation
 - [k8s-launch-kit-deploy](../k8s-launch-kit-deploy/SKILL.md) — Apply generated manifests
 - [k8s-launch-kit-dryrun](../k8s-launch-kit-dryrun/SKILL.md) — Preview before applying
+
+## OpenShift
+
+`--flavor ocp` selects separate OpenShift profiles and generates no Helm values. Source groups retain their own selectors. Verify each worker selector and PCI address before deployment.

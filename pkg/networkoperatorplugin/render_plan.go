@@ -372,7 +372,7 @@ func renderForScope(
 	// ScopeClusterWide CR manifests — and emit under the helm-convention
 	// filename `values.yaml`.
 	if isHelmValuesTemplate(filepath.Base(templatePath)) {
-		if cfg != nil && cfg.NetworkOperator != nil && cfg.NetworkOperator.SkipHelmChart {
+		if cfg != nil && (cfg.Flavor == config.FlavorOCP || cfg.NetworkOperator != nil && cfg.NetworkOperator.SkipHelmChart) {
 			return map[string]string{}, nil
 		}
 		merged := mergedClusterConfigs(plans)
@@ -407,6 +407,20 @@ func renderForScope(
 	}
 
 	switch scope {
+	case ScopePerNetworkNamespace:
+		nsList := cfg.NetworkNamespaces
+		if len(nsList) == 0 {
+			nsList = []string{"default"}
+		}
+		for _, ns := range nsList {
+			renderCfg := withRenderNamespaces(cfg, ns, nsList)
+			rendered, err := ProcessTemplate(templatePath, renderCfg, "")
+			if err != nil {
+				return nil, err
+			}
+			merge(suffixFilenamesWithNamespace(rendered, ns, len(nsList) > 1))
+		}
+
 	case ScopeClusterWide, ScopeUnknown:
 		merged := mergedClusterConfigs(plans)
 		renderCfg := withClusterConfig(cfg, merged, allSubnets(planSubnets))

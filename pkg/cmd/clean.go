@@ -22,6 +22,7 @@ import (
 var keepHelmChart bool
 
 type cleanSettings struct {
+	Flavor              string
 	Namespace           string
 	NamespaceSource     string
 	KeepHelmChart       bool
@@ -92,6 +93,10 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 				"Fix or remove the selected config before cleanup",
 			), outputFormat)
 		}
+		if settings.Flavor == "ocp" {
+			exitWithError(apperrors.NewValidationError("clean is unsupported for OpenShift flavor", nil,
+				"Remove only the specific l8k resources you intend to delete; broad OpenShift cleanup is unavailable"), outputFormat)
+		}
 		if problems := validation.IsDNS1123Label(settings.Namespace); len(problems) > 0 {
 			exitWithError(apperrors.NewValidationError(
 				fmt.Sprintf("invalid Network Operator namespace %q", settings.Namespace),
@@ -157,6 +162,7 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 
 func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
 	settings := cleanSettings{
+		Flavor:          "k8s",
 		Namespace:       defaultOperatorNamespace,
 		NamespaceSource: "default",
 		KeepHelmChart:   explicitKeepHelmChart,
@@ -183,6 +189,7 @@ func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
 			return settings, fmt.Errorf("read %s: %w", path, err)
 		}
 		var cfg struct {
+			Flavor          string `yaml:"flavor"`
 			NetworkOperator *struct {
 				Namespace     string `yaml:"namespace"`
 				SkipHelmChart bool   `yaml:"skipHelmChart"`
@@ -190,6 +197,9 @@ func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
 		}
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return settings, fmt.Errorf("parse %s: %w", path, err)
+		}
+		if cfg.Flavor != "" {
+			settings.Flavor = cfg.Flavor
 		}
 		if cfg.NetworkOperator != nil {
 			if cfg.NetworkOperator.Namespace != "" {
@@ -208,6 +218,12 @@ func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
 	if networkOperatorNamespace != "" {
 		settings.Namespace = networkOperatorNamespace
 		settings.NamespaceSource = "--network-operator-namespace"
+	}
+	if flavor != "" {
+		settings.Flavor = flavor
+	}
+	if settings.Flavor != "k8s" && settings.Flavor != "ocp" {
+		return settings, fmt.Errorf("unsupported flavor %q", settings.Flavor)
 	}
 	return settings, nil
 }
@@ -239,11 +255,13 @@ func init() {
 	rootCmd.AddCommand(cleanCmd)
 
 	cleanCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
+	cleanCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (OpenShift cleanup is unsupported)")
 	cleanCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file used to resolve networkOperator.namespace and networkOperator.skipHelmChart")
 	cleanCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the Network Operator namespace from cluster-config.yaml")
 	cleanCmd.Flags().BoolVar(&keepHelmChart, "keep-helm-chart", false, "Delete Network Operator custom resources but keep the network-operator Helm release installed regardless of config")
 
 	setFlagGroup(cleanCmd, "kubeconfig", GroupCommon)
+	setFlagGroup(cleanCmd, "flavor", GroupCommon)
 	setFlagGroup(cleanCmd, "user-config", GroupCommon)
 	setFlagGroup(cleanCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(cleanCmd, "keep-helm-chart", GroupClean)

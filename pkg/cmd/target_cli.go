@@ -273,7 +273,7 @@ func markRootTargetScopes() {
 	setFlagTargetScope(rootCmd, []target.Name{target.Host, target.DPF},
 		"target", "output", "log-level", "log-file", "yes", "quiet", "dry-run", "deploy", "deploy-timeout")
 	setFlagTargetScope(rootCmd, []target.Name{target.Host},
-		"enabled-plugins", "discover-cluster-config", "save-cluster-config", "user-config",
+		"flavor", "enabled-plugins", "discover-cluster-config", "save-cluster-config", "user-config",
 		"network-operator-namespace", "network-operator-release", "skip-network-operator-helm", "fabric", "deployment-type",
 		"multirail", "routing", "ignore-arp", "spectrum-x", "multiplane-mode", "number-of-planes",
 		"topology-scheme", "ip-version", "topology-file", "spectrum-x-config",
@@ -285,7 +285,7 @@ func markRootTargetScopes() {
 
 func markDiscoverTargetScopes() {
 	setFlagTargetScope(discoverCmd, []target.Name{target.Host},
-		"kubeconfig", "user-config", "save-cluster-config", "network-operator-namespace",
+		"flavor", "kubeconfig", "user-config", "save-cluster-config", "network-operator-namespace",
 		"network-operator-release", "node-selector", "image-pull-secrets", "enabled-plugins",
 		"keep-namespace", "collapse-nic-rails", "fabric", "deployment-type", "multirail",
 		"routing", "ignore-arp", "spectrum-x", "multiplane-mode", "number-of-planes",
@@ -297,7 +297,7 @@ func markDiscoverTargetScopes() {
 func markGenerateTargetScopes() {
 	setFlagTargetScope(generateCmd, []target.Name{target.Host, target.DPF}, "deploy", "dry-run")
 	setFlagTargetScope(generateCmd, []target.Name{target.Host},
-		"user-config", "fabric", "deployment-type", "multirail", "routing", "ignore-arp",
+		"flavor", "user-config", "fabric", "deployment-type", "multirail", "routing", "ignore-arp",
 		"spectrum-x", "multiplane-mode", "number-of-planes", "topology-scheme", "ip-version",
 		"topology-file", "spectrum-x-config", "spectrum-x-configmap-name", "groups", "gpu-type",
 		"for", "node-selector", "save-deployment-files", "network-namespaces", "enable-doca-driver",
@@ -320,12 +320,12 @@ func markConfigFlagTargetScopes(cmd *cobra.Command, scope configflags.Scope) {
 func markDeployTargetScopes() {
 	setFlagTargetScope(deployCmd, []target.Name{target.Host, target.DPF}, "dry-run", "deploy-timeout")
 	setFlagTargetScope(deployCmd, []target.Name{target.Host},
-		"kubeconfig", "deployment-files", "network-operator-namespace", "user-config", "overwrite-existing", "skip-network-operator-helm")
+		"flavor", "kubeconfig", "deployment-files", "network-operator-namespace", "user-config", "overwrite-existing", "skip-network-operator-helm")
 }
 
 func markValidateTargetScopes() {
 	setFlagTargetScope(validateCmd, []target.Name{target.Host},
-		"kubeconfig", "deployment-files", "user-config", "network-operator-namespace", "skip-network-operator-helm", "connectivity",
+		"flavor", "kubeconfig", "deployment-files", "user-config", "network-operator-namespace", "skip-network-operator-helm", "connectivity",
 		"keep", "connectivity-timeout", "validation-mode", "validation-checks",
 		"rdma-rping-iterations", "rdma-ib-write-size", "rdma-ib-write-min-bandwidth-gbps",
 		"wait", "report-path")

@@ -80,3 +80,7 @@ l8k schema
 
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — Global flags and exit codes
 - [k8s-launch-kit-deploy](../k8s-launch-kit-deploy/SKILL.md) — Apply after previewing
+
+## OpenShift
+
+For OpenShift, use `--flavor ocp`; NV-IPAM IPPool validation may be deferred because its CRD appears only after live NCP reconciliation. A deferred check is not a pass.

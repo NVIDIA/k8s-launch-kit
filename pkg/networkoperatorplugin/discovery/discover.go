@@ -105,6 +105,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	}
 
 	bootstrapOpts := nicconfigdaemon.Options{
+		OpenShift:        cfg.Flavor == config.FlavorOCP,
 		Repository:       cfg.NetworkOperator.Repository,
 		Version:          cfg.NetworkOperator.ComponentVersion,
 		ImagePullSecrets: cfg.NetworkOperator.ImagePullSecrets,
@@ -139,6 +140,25 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	}
 	if len(eligibleNodes) == 0 {
 		return fmt.Errorf("no Ready schedulable nodes available for discovery")
+	}
+	if len(opts.WorkerNodes) > 0 {
+		eligible := make(map[string]bool, len(eligibleNodes))
+		for _, name := range eligibleNodes {
+			eligible[name] = true
+		}
+		selected := make([]string, 0, len(opts.WorkerNodes))
+		var missing []string
+		for _, name := range opts.WorkerNodes {
+			if eligible[name] {
+				selected = append(selected, name)
+			} else {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("requested discovery workers are missing, NotReady, or unschedulable: %s", strings.Join(missing, ", "))
+		}
+		eligibleNodes = selected
 	}
 	bootstrapOpts.NodeNames = eligibleNodes
 	uiOutput.Info("Restricting discovery daemon to %d Ready schedulable node(s)", len(eligibleNodes))
@@ -232,6 +252,19 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	devices := &nicop.NicDeviceList{}
 	if err := c.List(ctx, devices); err != nil {
 		return err
+	}
+	if len(opts.WorkerNodes) > 0 {
+		selected := make(map[string]bool, len(eligibleNodes))
+		for _, name := range eligibleNodes {
+			selected[name] = true
+		}
+		filtered := devices.Items[:0]
+		for _, device := range devices.Items {
+			if selected[device.Status.Node] {
+				filtered = append(filtered, device)
+			}
+		}
+		devices.Items = filtered
 	}
 
 	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, opts.NodeSelector, opts.CollapseNicRails)

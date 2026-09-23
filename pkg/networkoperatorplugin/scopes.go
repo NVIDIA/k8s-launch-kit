@@ -55,6 +55,10 @@ const (
 	// source machineTypes. Examples: NicInterfaceNameTemplate,
 	// NicConfigurationTemplate.
 	ScopePerSource
+
+	// ScopePerNetworkNamespace renders shared validation support once in each
+	// workload namespace, independent of hardware bucket count.
+	ScopePerNetworkNamespace
 )
 
 // String returns a short name for the scope, for log lines.
@@ -70,6 +74,8 @@ func (s CRScope) String() string {
 		return "SimpleSelect"
 	case ScopePerSource:
 		return "PerSource"
+	case ScopePerNetworkNamespace:
+		return "PerNetworkNamespace"
 	default:
 		return "Unknown"
 	}
@@ -86,8 +92,12 @@ func (s CRScope) String() string {
 var crScopeByKind = map[string]CRScope{
 	// Cluster-wide singleton — multus, CNI plugins, NV-IPAM, etc. live
 	// inside a single NicClusterPolicy.
-	"NicClusterPolicy": ScopeClusterWide,
-	"ConfigMap":        ScopeClusterWide,
+	"NicClusterPolicy":           ScopeClusterWide,
+	"ConfigMap":                  ScopeClusterWide,
+	"SriovOperatorConfig":        ScopeClusterWide,
+	"MaintenanceOperatorConfig":  ScopeClusterWide,
+	"NodeFeatureDiscovery":       ScopeClusterWide,
+	"SecurityContextConstraints": ScopePerNetworkNamespace,
 
 	// Aggregate (extended selector — `In: [machine-labels]` under Mode B)
 	"IPPool":    ScopeAggregate,

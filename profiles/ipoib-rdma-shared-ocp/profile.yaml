@@ -1,0 +1,22 @@
+name: OpenShift IP over Infiniband with RDMA shared device
+plugin: network-operator
+profileRequirements:
+  flavor: ocp
+  fabric: infiniband
+  deployment: rdma_shared
+nodeCapabilities:
+  ib: true
+  rdma: true
+description: |
+  IP over Infiniband with RDMA sharev device profile offers InfiniBand networking with shared RDMA resources.
+deploymentGuide: ipoib-rdma-shared.rst
+templates:
+  - ../sriov-ethernet-rdma-ocp/02-maintenanceoperatorconfig.yaml
+  - ../sriov-ethernet-rdma-ocp/03-nodefeaturediscovery.yaml
+  - 10-nicclusterpolicy.yaml
+  - ../ipoib-rdma-shared/11-nicnodepolicy.yaml
+  - ../sriov-ethernet-rdma-ocp/20-ippool.yaml
+  - ../ipoib-rdma-shared/35-nicinterfacenametemplate.yaml
+  - ../ipoib-rdma-shared/30-ipoibnetwork.yaml
+  - ../sriov-ethernet-rdma-ocp/58-example-validation-security.yaml
+  - 40-example-daemonset.yaml

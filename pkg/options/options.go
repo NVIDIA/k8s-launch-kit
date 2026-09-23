@@ -24,6 +24,7 @@ import (
 
 // Options holds all the configuration parameters for the application
 type Options struct {
+	Flavor string `flag:"flavor" config:"flavor" scopes:"root,generate,discover" usage:"Cluster flavor: k8s or ocp (overrides config)"` // Empty means use the config file.
 	// LaunchKitVersion is the version reported by `l8k version`. The CLI
 	// passes it through so generated resources can record their producer.
 	LaunchKitVersion string

@@ -41,6 +41,7 @@ var (
 	logLevel                 string
 	logFile                  string
 	configDir                string
+	flavor                   string // Standalone deploy, validate, and clean flags.
 	saveDeploymentFiles      string
 	deploy                   bool
 	kubeconfig               string

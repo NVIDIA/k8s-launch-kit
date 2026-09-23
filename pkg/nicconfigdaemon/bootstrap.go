@@ -69,6 +69,7 @@ const (
 // Options configures a bootstrap of the self-contained NIC Configuration
 // Daemon.
 type Options struct {
+	OpenShift bool
 	// Repository is the container image repository (e.g. "nvcr.io/nvidia/mellanox").
 	Repository string
 
@@ -195,6 +196,7 @@ func renderDaemonManifests(opts Options) ([]*unstructured.Unstructured, error) {
 		"ImagePullSecrets":       opts.ImagePullSecrets,
 		"NodeNames":              opts.NodeNames,
 		"LogLevel":               opts.LogLevel,
+		"OpenShift":              opts.OpenShift,
 	}
 
 	var buf bytes.Buffer

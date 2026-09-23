@@ -182,3 +182,7 @@ Both `nvidia-network-operator` and `network-operator` are common default namespa
 for an existing Network Operator install. If `l8k generate` / `l8k deploy` /
 `l8k validate` can't find Network Operator resources, retry with
 `--network-operator-namespace <correct-namespace>`.
+
+## OpenShift
+
+Use `--flavor ocp` or `flavor: ocp` for OpenShift Host workflows. The default is `k8s`. See `docs/user/openshift.md` for external operator prerequisites and namespace defaults.

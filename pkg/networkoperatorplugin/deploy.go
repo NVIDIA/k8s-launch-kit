@@ -32,6 +32,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
@@ -58,6 +59,7 @@ const defaultHelmInstallTimeout = 10 * time.Minute
 // callsite readable as Phase 0 (helm install) and the existing four phases
 // grow more parameters over time.
 type DeployOptions struct {
+	Config *config.LaunchKitConfig
 	// LaunchKitVersion is applied to resources rendered by Helm.
 	LaunchKitVersion string
 
@@ -124,6 +126,7 @@ type appliedManifest struct {
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
 	_ = profile
 	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, DeployOptions{
+		Config:            p.LaunchKitConfig,
 		LaunchKitVersion:  p.LaunchKitVersion,
 		DryRun:            p.DryRun,
 		OverwriteExisting: p.OverwriteExisting,
@@ -177,6 +180,18 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	}
 
 	uiOutput := ui.FromContext(ctx)
+	ocp := opts.Config != nil && opts.Config.Flavor == config.FlavorOCP
+	if ocp {
+		if _, err := os.Stat(filepath.Join(manifestsDir, helmValuesFile)); err == nil {
+			return fmt.Errorf("OpenShift deployment contains values.yaml; regenerate with --flavor ocp and remove stale Helm values")
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := CheckOCPOperators(ctx, kubeClient, opts.Config, true); err != nil {
+			return err
+		}
+		opts.SkipHelmChart = true
+	}
 
 	// Phase 0 — helm install/upgrade the network-operator chart when
 	// values.yaml is present and the caller supplied the helm-install
@@ -199,6 +214,25 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	nicDoc, nnpDocs, otherDocs, err := readManifestDir(manifestsDir)
 	if err != nil {
 		return err
+	}
+	var operatorDocs [][]byte
+	if ocp {
+		remaining := make([][]byte, 0, len(otherDocs))
+		for _, doc := range otherDocs {
+			obj, err := decodeUnstructured(doc)
+			if err != nil {
+				return err
+			}
+			if isOCPOperatorConfig(obj) {
+				operatorDocs = append(operatorDocs, doc)
+			} else {
+				remaining = append(remaining, doc)
+			}
+		}
+		otherDocs = remaining
+		if err := applyOCPOperatorConfiguration(ctx, kubeClient, opts.Config, operatorDocs, opts.DryRun); err != nil {
+			return err
+		}
 	}
 
 	dryRun := opts.DryRun
@@ -261,6 +295,7 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	// (don't trust status until live RV moves past the apply's
 	// RV when the spec was new).
 	appliedOthers := make([]appliedManifest, 0, len(otherDocs))
+	var deferred []string
 	if len(otherDocs) > 0 {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Applying %d additional manifest(s)", phases.next(), phases.total, len(otherDocs)))
 		for i, b := range otherDocs {
@@ -287,8 +322,22 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 				"kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace(),
 				"index", i+1, "total", len(otherDocs))
 			if err := applyUnstructuredWithRetry(ctx, kubeClient, obj, dryRun); err != nil {
-				uiOutput.Error("Failed to apply %s: %v", label, err)
-				return err
+				if ocp && meta.IsNoMatchError(err) && obj.GetAPIVersion() == "nv-ipam.nvidia.com/v1alpha1" && obj.GetKind() == "IPPool" && ncpObj != nil {
+					if dryRun {
+						deferred = append(deferred, label)
+						uiOutput.Warning("Deferred dry-run API validation for %s until NicClusterPolicy installs NV-IPAM", label)
+						continue
+					}
+					if retryErr := retryDependentAPI(ctx, kubeClient, obj); retryErr == nil {
+						err = nil
+					} else {
+						err = retryErr
+					}
+				}
+				if err != nil {
+					uiOutput.Error("Failed to apply %s: %v", label, err)
+					return err
+				}
 			}
 
 			am := appliedManifest{obj: obj}
@@ -303,6 +352,9 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	// Phase 4 — verify remaining manifests reach a terminal state.
 	// Dry-run skips this; nothing was actually persisted.
 	if dryRun {
+		if len(deferred) > 0 {
+			return fmt.Errorf("dry-run deferred validation of %s: required API appears only after NicClusterPolicy reconciliation", strings.Join(deferred, ", "))
+		}
 		uiOutput.Info("Dry-run mode: skipping reconciliation verification")
 		return nil
 	}
@@ -318,6 +370,29 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	}
 
 	return nil
+}
+
+func retryDependentAPI(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
+	deadline := time.NewTimer(5 * time.Minute)
+	defer deadline.Stop()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		err := applyUnstructured(ctx, c, obj, false)
+		if err == nil {
+			return nil
+		}
+		if !meta.IsNoMatchError(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("timed out waiting for %s API after NicClusterPolicy: %w", obj.GetKind(), err)
+		case <-ticker.C:
+		}
+	}
 }
 
 // readManifestDir reads every YAML doc under manifestsDir (non-recursive)
@@ -920,6 +995,15 @@ func runPreflightPhase(ctx context.Context, kubeClient client.Client, manifestsD
 	}
 
 	results := preflight.RunAll(ctx, in)
+	if opts.Config != nil && opts.Config.Flavor == config.FlavorOCP {
+		filtered := results[:0]
+		for _, result := range results {
+			if result.Code != preflight.CodeStrayCRs {
+				filtered = append(filtered, result)
+			}
+		}
+		results = filtered
+	}
 	failedCount := 0
 	for _, r := range results {
 		switch {

@@ -1,0 +1,68 @@
+{{- if .Profile.Multirail -}}
+{{- /* Create separate SriovNetworkNodePolicy per PF using rootDevices */ -}}
+{{- range $i, $pf := .ClusterConfig.PFs}}
+{{- if eq $pf.Traffic "east-west"}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: infiniband-sriov-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}
+  namespace: "{{$.Sriov.OperatorNamespace}}"
+spec:
+  deviceType: netdevice
+  mtu: {{$.Sriov.InfinibandMtu}}
+  {{- if $.ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := $.ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+  nicSelector:
+    {{- if and $.NicConfigurationOperator $.NicConfigurationOperator.DeployNicInterfaceNameTemplate }}
+    pfNames:
+      - "{{$pf.NetworkInterface}}"
+    {{- else }}
+    vendor: "15b3"
+    rootDevices:
+    {{- if $.ClusterConfig.RailPciAddresses }}
+    {{- range $addr := (index $.ClusterConfig.RailPciAddresses $i) }}
+      - "{{ $addr }}"
+    {{- end }}
+    {{- else }}
+      - "{{$pf.PciAddress}}"
+    {{- end }}
+    {{- end }}
+  linkType: IB
+  isRdma: true
+  numVfs: {{$.Sriov.NumVfs}}
+  priority: {{$.Sriov.Priority}}
+  resourceName: {{$.Sriov.ResourceName}}_rail_{{$pf.Rail}}
+{{if ne $i (sub (len $.ClusterConfig.PFs) 1)}}---{{end -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: infiniband-sriov{{suffix $.ClusterConfig.Identifier}}
+  namespace: "{{.Sriov.OperatorNamespace}}"
+spec:
+  deviceType: netdevice
+  mtu: {{.Sriov.InfinibandMtu}}
+  {{- if $.ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := $.ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+  nicSelector:
+    rootDevices:
+    {{- range $pf := .ClusterConfig.PFs }}
+    {{- if eq $pf.Traffic "east-west" }}
+      - "{{ $pf.PciAddress }}"
+    {{- end }}
+    {{- end }}
+  linkType: IB
+  isRdma: true
+  numVfs: {{.Sriov.NumVfs}}
+  priority: {{.Sriov.Priority}}
+  resourceName: {{.Sriov.ResourceName}}{{- end}}

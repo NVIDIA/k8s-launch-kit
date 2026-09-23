@@ -1004,6 +1004,16 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	// comparing to the original (pre-filter) bucket. The plans drive
 	// the per-template scope dispatch below.
 	plans, _ := planRender(cfg.ClusterConfig, filtered)
+	if cfg.Flavor == config.FlavorOCP {
+		// OpenShift SR-IOV policies must retain each source group's PCI
+		// selector and worker boundary. GPU-type merging can borrow one
+		// representative PCI address and target unrelated nodes.
+		plans = make([]RenderBucket, 0, len(filtered))
+		for _, src := range filtered {
+			src.MergedIdentifier = src.Identifier
+			plans = append(plans, RenderBucket{Merged: src, Sources: []config.ClusterConfig{src}})
+		}
+	}
 
 	// Pre-allocate subnets across all plans' merged groups so per-plan
 	// `ProcessTemplate` calls don't independently re-allocate from

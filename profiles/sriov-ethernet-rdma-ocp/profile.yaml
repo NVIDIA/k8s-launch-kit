@@ -1,0 +1,24 @@
+name: SR-IOV Ethernet RDMA - OpenShift
+plugin: network-operator
+profileRequirements:
+  flavor: ocp
+  fabric: ethernet
+  deployment: sriov
+nodeCapabilities:
+    rdma: true
+description: |
+  SR-IOV Ethernet RDMA profile offers high-performance virtualized networking with hardware acceleration
+deploymentGuide: sriov-ethernet-rdma.rst
+templates:
+  - 01-sriovoperatorconfig.yaml
+  - 02-maintenanceoperatorconfig.yaml
+  - 03-nodefeaturediscovery.yaml
+  - 10-nicclusterpolicy.yaml
+  - ../sriov-ethernet-rdma/11-nicnodepolicy.yaml
+  - 20-ippool.yaml
+  - ../sriov-ethernet-rdma/30-nicinterfacenametemplate.yaml
+  - 35-sriovnetworkpoolconfig.yaml
+  - 40-sriovnetworknodepolicy.yaml
+  - 50-sriovnetwork.yaml
+  - 58-example-validation-security.yaml
+  - 60-example-daemonset.yaml

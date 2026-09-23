@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,11 +35,13 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/storage/driver"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -176,7 +179,8 @@ type ComponentVersionResult struct {
 // uses, so SriovNetworkNodePolicy's silent-failure cross-check, the
 // NicConfigurationTemplate's condition-Reason classification, and
 // NicClusterPolicy's appliedStates breakdown all surface here too.
-func ValidateManifests(ctx context.Context, c client.Client, manifestDir string) ([]ValidationResult, error) {
+func ValidateManifests(ctx context.Context, c client.Client, manifestDir string, flavor ...string) ([]ValidationResult, error) {
+	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
 	entries, err := os.ReadDir(manifestDir)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest dir %s: %w", manifestDir, err)
@@ -241,6 +245,30 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 			// Ensure GVK on the manifest object so the registry can
 			// dispatch to the right validator.
 			obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
+			if isOCPOperatorConfig(obj) {
+				live := &unstructured.Unstructured{}
+				live.SetGroupVersionKind(obj.GroupVersionKind())
+				if getErr := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, live); getErr != nil {
+					r.State = crstate.StateNotDeployed
+					r.Reason = getErr.Error()
+					results = append(results, r)
+					continue
+				}
+				merged := live.DeepCopy()
+				if mergeErr := mergeOCPSpec(merged, obj); mergeErr != nil {
+					r.State = crstate.StateError
+					r.Reason = mergeErr.Error()
+				} else if !reflect.DeepEqual(merged.Object, live.Object) {
+					r.State = crstate.StateError
+					r.Reason = "operator configuration differs from generated required fields"
+				} else {
+					r.State = crstate.StateSuccess
+					r.Reason = "required operator configuration matches"
+				}
+				applyLegacyFlags(&r)
+				results = append(results, r)
+				continue
+			}
 
 			res, vErr := registry.Validate(ctx, c, obj)
 			if vErr != nil {
@@ -257,6 +285,9 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 				r.State = res.State
 				r.Reason = res.Reason
 			}
+			if ocp && r.State == crstate.StateSuccess && isOCPSriovNetwork(obj) {
+				r.State, r.Reason = validateOCPNetworkAttachment(ctx, c, obj)
+			}
 			r.Details = res.Details
 			// Best-effort capture of the live object for the
 			// HTML report's "Live YAML" dropdown. Skip when the
@@ -270,6 +301,37 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string)
 		}
 	}
 	return results, nil
+}
+
+func isOCPSriovNetwork(obj *unstructured.Unstructured) bool {
+	if obj.GroupVersionKind().Group != "sriovnetwork.openshift.io" {
+		return false
+	}
+	return obj.GetKind() == "SriovNetwork" || obj.GetKind() == "SriovIBNetwork"
+}
+
+// The Red Hat SR-IOV Operator creates a NAD in spec.networkNamespace and
+// annotates it with the device-plugin resource that test pods must request.
+func validateOCPNetworkAttachment(ctx context.Context, c client.Client, network *unstructured.Unstructured) (crstate.CRState, string) {
+	namespace, _, _ := unstructured.NestedString(network.Object, "spec", "networkNamespace")
+	resourceName, _, _ := unstructured.NestedString(network.Object, "spec", "resourceName")
+	if namespace == "" || resourceName == "" {
+		return crstate.StateError, "SR-IOV network requires spec.networkNamespace and spec.resourceName"
+	}
+	nad := &unstructured.Unstructured{}
+	nad.SetGroupVersionKind(schema.GroupVersionKind{Group: "k8s.cni.cncf.io", Version: "v1", Kind: "NetworkAttachmentDefinition"})
+	if err := c.Get(ctx, types.NamespacedName{Namespace: namespace, Name: network.GetName()}, nad); err != nil {
+		if apierrors.IsNotFound(err) {
+			return crstate.StateInProgress, fmt.Sprintf("NetworkAttachmentDefinition %s/%s has not been created", namespace, network.GetName())
+		}
+		return crstate.StateError, fmt.Sprintf("read NetworkAttachmentDefinition %s/%s: %v", namespace, network.GetName(), err)
+	}
+	expected := "openshift.io/" + resourceName
+	actual := nad.GetAnnotations()["k8s.v1.cni.cncf.io/resourceName"]
+	if actual != expected {
+		return crstate.StateError, fmt.Sprintf("NetworkAttachmentDefinition %s/%s resource annotation is %q, expected %q", namespace, network.GetName(), actual, expected)
+	}
+	return crstate.StateSuccess, fmt.Sprintf("NetworkAttachmentDefinition %s/%s requests %s", namespace, network.GetName(), expected)
 }
 
 // applyLegacyFlags fills in the backwards-compatible Found / Missing /

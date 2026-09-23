@@ -104,3 +104,7 @@ sosreport/
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — Exit codes and error structure
 - [k8s-launch-kit-discover](../k8s-launch-kit-discover/SKILL.md) — Re-discover to verify hardware state
 - `references/troubleshooting-guide.md` — Detailed triage workflow
+
+## OpenShift
+
+For OpenShift, check expected operator CSV/API status, SR-IOV device prefix `openshift.io`, NV-IPAM pools in the Network Operator namespace, and temporary SCC admission in the workload namespace.

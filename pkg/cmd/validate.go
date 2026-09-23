@@ -111,6 +111,7 @@ non-gating cross-rail observations do not count.`,
 
 func newHostValidateRequest(cmd *cobra.Command) hosttarget.ValidateRequest {
 	return hosttarget.ValidateRequest{
+		Flavor:            flavor,
 		Kubeconfig:        kubeconfig,
 		DeploymentFiles:   deploymentFiles,
 		UserConfig:        userConfig,
@@ -159,6 +160,7 @@ func init() {
 	validateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing generated manifests and *example*.yaml connectivity test DaemonSets. A test-only directory selects connectivity-only validation.")
 	validateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-detected from ./cluster-config.yaml). Connectivity requires a user-owned file with profile.routing and validation.gpuDirect.enabled.")
+	validateCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (overrides config)")
 	validateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
 	validateCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm release version and values validation")
 	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a source-bound connectivity matrix (icmp + rping + ib_write_bw) between pods of the example DaemonSet. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
@@ -174,6 +176,7 @@ func init() {
 
 	setFlagGroup(validateCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(validateCmd, "user-config", GroupCommon)
+	setFlagGroup(validateCmd, "flavor", GroupCommon)
 	setFlagGroup(validateCmd, "deployment-files", GroupGeneration)
 	setFlagGroup(validateCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(validateCmd, "skip-network-operator-helm", GroupCommon)

@@ -59,6 +59,9 @@ func DefaultLaunchKitConfig() (*LaunchKitConfig, error) {
 	if err := yaml.Unmarshal(defaultConfigYAML, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse embedded cluster-config defaults: %w", err)
 	}
+	if err := ApplyFlavorDefaults(&cfg); err != nil {
+		return nil, err
+	}
 	if cfg.Profile != nil && cfg.Profile.SpectrumX != nil {
 		if err := NormalizeSpectrumXProfileConfig(cfg.Profile.SpectrumX); err != nil {
 			return nil, fmt.Errorf("invalid embedded spectrum-x profile config: %w", err)
@@ -230,9 +233,12 @@ func truncateIdentifierWithHash(s string) string {
 
 // LaunchKitConfig represents the l8k-config.yaml structure
 type LaunchKitConfig struct {
+	namespacePresence        flavorNamespacePresence         `yaml:"-"`
+	Flavor                   string                          `yaml:"flavor,omitempty"`
 	NetworkOperator          *NetworkOperatorConfig          `yaml:"networkOperator,omitempty"`
 	DOCADriver               *DOCADriverConfig               `yaml:"docaDriver,omitempty"`
 	Maintenance              *MaintenanceConfig              `yaml:"maintenance,omitempty"`
+	NFD                      *NFDConfig                      `yaml:"nfd,omitempty"`
 	NvIpam                   *NvIpamConfig                   `yaml:"nvIpam,omitempty"`
 	Sriov                    *SriovConfig                    `yaml:"sriov,omitempty"`
 	Hostdev                  *HostdevConfig                  `yaml:"hostdev,omitempty"`
@@ -364,12 +370,13 @@ type NvIpamExclusion struct {
 }
 
 type SriovConfig struct {
-	EthernetMtu   int    `yaml:"ethernetMtu"`
-	InfinibandMtu int    `yaml:"infinibandMtu"`
-	NumVfs        int    `yaml:"numVfs"`
-	Priority      int    `yaml:"priority"`
-	ResourceName  string `yaml:"resourceName"`
-	NetworkName   string `yaml:"networkName"`
+	OperatorNamespace string `yaml:"operatorNamespace,omitempty"`
+	EthernetMtu       int    `yaml:"ethernetMtu"`
+	InfinibandMtu     int    `yaml:"infinibandMtu"`
+	NumVfs            int    `yaml:"numVfs"`
+	Priority          int    `yaml:"priority"`
+	ResourceName      string `yaml:"resourceName"`
+	NetworkName       string `yaml:"networkName"`
 }
 
 type SpectrumXConfig struct {
@@ -898,6 +905,12 @@ func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKit
 	var config LaunchKitConfig
 	if err := yaml.Unmarshal(configData, &config); err != nil {
 		return nil, nil, fmt.Errorf("failed to parse cluster config YAML %s: %w", configPath, err)
+	}
+	if err := config.recordFlavorNamespacePresence(configData); err != nil {
+		return nil, nil, fmt.Errorf("inspect namespace fields in %s: %w", configPath, err)
+	}
+	if err := ApplyFlavorDefaults(&config); err != nil {
+		return nil, nil, fmt.Errorf("invalid flavor in %s: %w", configPath, err)
 	}
 	if config.Profile != nil && config.Profile.SpectrumX != nil {
 		if err := NormalizeSpectrumXProfileConfig(config.Profile.SpectrumX); err != nil {

@@ -31,6 +31,7 @@ import (
 )
 
 type ProfileRequirements struct {
+	Flavor     string                        `yaml:"flavor,omitempty"`
 	Fabric     string                        `yaml:"fabric"`
 	Deployment string                        `yaml:"deployment"`
 	Multirail  *bool                         `yaml:"multirail"`
@@ -98,8 +99,11 @@ func getprofilesDir() (string, error) {
 // selectedRelease is the catalog key (MAJOR.MINOR, e.g. "26.4") chosen via
 // --network-operator-release; an empty string means "no release pinned" and
 // disables the minimum-release check.
-func FindApplicableProfile(requirements *config.Profile, capabilities *config.ClusterCapabilities, pluginName, selectedRelease string) (*Profile, error) {
-	log.Log.Info("Finding applicable profile", "requirements", requirements)
+func FindApplicableProfile(requirements *config.Profile, capabilities *config.ClusterCapabilities, pluginName, selectedRelease, flavor string) (*Profile, error) {
+	if flavor == "" {
+		flavor = config.FlavorK8s
+	}
+	log.Log.Info("Finding applicable profile", "requirements", requirements, "flavor", flavor)
 
 	profilesDir, err := getprofilesDir()
 	if err != nil {
@@ -132,6 +136,13 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 			if profile.Plugin != pluginName {
 				continue
 			}
+			profileFlavor := profile.ProfileRequirements.Flavor
+			if profileFlavor == "" {
+				profileFlavor = config.FlavorK8s
+			}
+			if profileFlavor != flavor {
+				continue
+			}
 			valid, reason := profile.Validate(requirements, capabilities, selectedRelease)
 			if valid {
 				log.Log.V(1).Info("Found applicable profile", "profile", profile)
@@ -151,7 +162,7 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 	return nil, apperrors.NewValidationError(
 		"no applicable profile found",
 		fmt.Errorf("tried %d profiles, none matched: %s", len(errorMessages), strings.Join(errorMessages, "; ")),
-		"Check --fabric, --deployment-type, and --spectrum-x flags")
+		fmt.Sprintf("Check --flavor %s, --fabric, --deployment-type, and --spectrum-x flags", flavor))
 }
 
 // Validate reports whether the profile applies for the given requirements,

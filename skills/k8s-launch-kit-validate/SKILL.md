@@ -209,3 +209,7 @@ expected vs deployed state.
 - [k8s-launch-kit-deploy](../k8s-launch-kit-deploy/SKILL.md) — apply manifests
 - [k8s-launch-kit-troubleshoot](../k8s-launch-kit-troubleshoot/SKILL.md) — investigate failures uncovered by validate
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — global flags and exit codes
+
+## OpenShift
+
+OpenShift validation checks Network Operator CSV version and uses an ordinary workload namespace with temporary dedicated ServiceAccount/SCC/RBAC. Two-node connectivity requires two usable endpoints; report any API outage or deferred check as incomplete.

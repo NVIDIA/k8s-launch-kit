@@ -111,6 +111,28 @@ func (l *Launcher) discoverClusterConfig() error {
 		return apperrors.NewValidationError(err.Error(), err, "Run 'l8k --help' for supported values")
 	}
 	discoveryConfig := bootstrap.Config
+	if discoveryConfig.Flavor == config.FlavorOCP {
+		if err := networkoperatorplugin.CheckOCPOperators(l.context, l.kubeClient, discoveryConfig, false); err != nil {
+			return apperrors.NewValidationError("OpenShift Network Operator prerequisite failed", err,
+				"Install the certified Network Operator before discovery")
+		}
+	}
+	// Keep the user-selected worker boundary before replacing the inventory.
+	if l.options.UserConfig != "" {
+		seen := map[string]bool{}
+		for _, group := range rawInput.Config.ClusterConfig {
+			for _, name := range group.WorkerNodes {
+				if name != "" && !seen[name] {
+					seen[name] = true
+					for _, p := range l.plugins {
+						if networkPlugin, ok := p.(*networkoperatorplugin.NetworkOperatorPlugin); ok {
+							networkPlugin.DiscoveryWorkers = append(networkPlugin.DiscoveryWorkers, name)
+						}
+					}
+				}
+			}
+		}
+	}
 
 	discoveryConfig.ClusterConfig = nil
 	// The bundled reference config contains an example profile. A fresh
@@ -152,6 +174,9 @@ func (l *Launcher) discoverClusterConfig() error {
 		finalConfig = finalInput.Config
 		if err := networkoperatorplugin.ApplyExplicitCLIConfigOverrides(l.options, finalConfig); err != nil {
 			return apperrors.NewValidationError(err.Error(), err, "Run 'l8k --help' for supported values")
+		}
+		if err := config.ApplyFlavorDefaultsWithPresence(finalConfig, finalInput.Present); err != nil {
+			return apperrors.NewValidationError(err.Error(), err, "Use --flavor k8s or --flavor ocp")
 		}
 		if err := resolve.ValidateResolvedConfig(finalConfig); err != nil {
 			return apperrors.NewValidationError(err.Error(), nil,

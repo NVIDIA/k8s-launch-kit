@@ -96,6 +96,7 @@ func (deployRunner) Run(ctx context.Context, request DeployRequest) error {
 		DeploymentFiles: request.DeploymentFiles,
 		ConfigDir:       request.ConfigDir,
 	}, options.Options{
+		Flavor:                   request.Flavor,
 		ConfigDir:                request.ConfigDir,
 		UserConfig:               request.UserConfig,
 		NetworkOperatorNamespace: request.OperatorNamespace,
@@ -110,7 +111,11 @@ func (deployRunner) Run(ctx context.Context, request DeployRequest) error {
 			"Verify the YAML is parseable and networkOperator.selectedRelease is set to a supported MAJOR.MINOR (e.g. 26.4), or re-run `l8k discover`",
 		)
 	}
+	if request.Flavor == config.FlavorOCP && cfg == nil {
+		return apperrors.NewValidationError("OpenShift deploy requires a cluster config", nil, "Pass --user-config with flavor: ocp and operator namespaces")
+	}
 	if cfg != nil {
+		deployOpts.Config = cfg
 		deployOpts.NetworkOperator = cfg.NetworkOperator
 		if cfg.NetworkOperator != nil {
 			deployOpts.SkipHelmChart = cfg.NetworkOperator.SkipHelmChart

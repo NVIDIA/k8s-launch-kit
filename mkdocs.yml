@@ -85,6 +85,7 @@ nav:
       - Installation: user/installation.md
       - Quick Start: user/quick-start.md
       - Deployment Profiles: user/profiles.md
+      - OpenShift: user/openshift.md
       - Spectrum-X: user/spectrum-x.md
       - Validation: user/validation.md
       - Cleanup: user/cleanup.md
