@@ -18,14 +18,14 @@ spec:
     endIP: {{ .EndIP }}
   {{- end }}
   {{- end }}
-  {{- if $.ClusterConfig.SourceMachineLabels }}
+  {{- if $.ClusterConfig.WorkerNodes }}
   nodeSelector:
     nodeSelectorTerms:
     - matchExpressions:
-      - key: nvidia.kubernetes-launch-kit.machine
+      - key: kubernetes.io/hostname
         operator: In
         values:
-        {{- range $.ClusterConfig.SourceMachineLabels }}
+        {{- range $.ClusterConfig.WorkerNodes }}
         - "{{ . }}"
         {{- end }}
   {{- else if $.ClusterConfig.NodeSelector }}
@@ -63,14 +63,14 @@ spec:
     endIP: {{ .EndIP }}
   {{- end }}
   {{- end }}
-  {{- if $.ClusterConfig.SourceMachineLabels }}
+  {{- if $.ClusterConfig.WorkerNodes }}
   nodeSelector:
     nodeSelectorTerms:
     - matchExpressions:
-      - key: nvidia.kubernetes-launch-kit.machine
+      - key: kubernetes.io/hostname
         operator: In
         values:
-        {{- range $.ClusterConfig.SourceMachineLabels }}
+        {{- range $.ClusterConfig.WorkerNodes }}
         - "{{ . }}"
         {{- end }}
   {{- else if $.ClusterConfig.NodeSelector }}

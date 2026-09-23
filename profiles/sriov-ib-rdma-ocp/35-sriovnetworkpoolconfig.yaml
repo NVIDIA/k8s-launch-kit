@@ -1,4 +1,3 @@
-{{- if versionLT .NetworkOperator.SelectedRelease "26.1" }}
 # Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 # SPDX-License-Identifier: Apache-2.0
 apiVersion: sriovnetwork.openshift.io/v1
@@ -8,11 +7,13 @@ metadata:
   namespace: "{{.Sriov.OperatorNamespace}}"
 spec:
   maxUnavailable: {{ .Maintenance.MaxUnavailable.String }}
-  {{- if .ClusterConfig.NodeSelector }}
+  {{- if .ClusterConfig.WorkerNodes }}
   nodeSelector:
-    matchLabels:
-      {{- range $key, $value := .ClusterConfig.NodeSelector }}
-      {{ $key }}: "{{ $value }}"
+    matchExpressions:
+      - key: kubernetes.io/hostname
+        operator: In
+        values:
+      {{- range .ClusterConfig.WorkerNodes }}
+          - "{{ . }}"
       {{- end }}
   {{- end }}
-{{- end }}

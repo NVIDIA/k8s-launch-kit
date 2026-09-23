@@ -47,6 +47,9 @@ func TestCheckOCPOperatorsRequiresInstalledCSVAndServedAPI(t *testing.T) {
 		return fake.NewClientBuilder().WithObjects(objects...).Build()
 	}
 	require.NoError(t, CheckOCPOperators(ctx, newClient(sub, csv, crd), cfg, false))
+	customSub := sub.DeepCopy()
+	customSub.SetName("custom-network-sub")
+	require.NoError(t, CheckOCPOperators(ctx, newClient(customSub, csv, crd), cfg, false))
 	require.ErrorContains(t, CheckOCPOperators(ctx, newClient(crd), cfg, false), "not installed")
 	require.ErrorContains(t, CheckOCPOperators(ctx, newClient(sub, csv), cfg, false), "required API")
 

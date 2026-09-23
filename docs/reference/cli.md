@@ -17,7 +17,7 @@ from the same field tags that register the flags and apply explicit values.
 | `l8k generate` | Generate deployment manifests for a selected profile. |
 | `l8k deploy` | Apply previously generated manifests to a cluster. |
 | `l8k clean` | Delete Network Operator custom resources and optionally uninstall its Helm release. |
-| `l8k validate` | Verify Helm release, component versions, manifest state, and connectivity. |
+| `l8k validate` | Verify Network Operator version, component versions, manifest state, and connectivity. |
 | `l8k preset list` | List local topology presets. |
 | `l8k preset update` | Download topology presets from GitHub. |
 | `l8k sosreport` | Collect diagnostic data from a cluster. |

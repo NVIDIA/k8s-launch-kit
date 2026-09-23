@@ -48,10 +48,11 @@ the cluster.
 
 When generated deployment inputs are present, three checks are run:
 
-  1. Network Operator Helm release version: the chart's appVersion is
-     compared against the version expected by the user's
-     networkOperator.selectedRelease (looked up in the embedded catalog).
-     Skipped when no user-config is found or no Helm release Secret matches.
+  1. Network Operator version: on Kubernetes, the Helm chart's appVersion
+     is compared with networkOperator.selectedRelease; on OpenShift, the
+     installed Operator Lifecycle Manager CSV version is compared instead.
+     Skipped when no user-config is found or no Helm release Secret matches
+     on Kubernetes.
 
   2. Manifest state: every YAML manifest under --deployment-files
      (excluding example workloads) is classified against the cluster via

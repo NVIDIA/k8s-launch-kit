@@ -28,8 +28,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/rest"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 )
@@ -347,4 +349,100 @@ func TestConnectivityOnlyVerdictRequiresGatingResultForEverySelectedCheck(t *tes
 	}
 
 	assert.True(t, connectivityOnlyVerdict(matrix, selectedChecks).Pass)
+}
+
+func TestOpenShiftFullVerdictRejectsEmptyConnectivityMatrix(t *testing.T) {
+	matrix := &connectivity.MatrixResult{
+		Summary: connectivity.MatrixSummary{TotalTests: 0, Passed: 0, Failed: 0},
+	}
+	verdict := computeOverallVerdict(
+		validationVerdict{OK: true, VersionOK: true}, nil, nil, nil, matrix, nil,
+		[]connectivity.Check{connectivity.CheckICMP}, true,
+	)
+
+	require.False(t, verdict.Pass)
+	require.Contains(t, verdict.Reasons, "connectivity matrix completed without running any tests")
+}
+
+func TestOpenShiftFullValidationFailsWhenNADIsStillMissing(t *testing.T) {
+	deploymentDir := t.TempDir()
+	cfgPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	configYAML := `flavor: ocp
+networkOperator:
+  namespace: nvidia-network-operator
+  selectedRelease: "26.7"
+profile:
+  deployment: sriov
+  routing: destination-based
+validation:
+  mode: strict
+  gpuDirect:
+    enabled: false
+`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(configYAML), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(deploymentDir, "60-example-daemonset.yaml"), []byte(userConnectivityDaemonSet), 0o600))
+	networkYAML := `apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: test-network
+  namespace: openshift-sriov-network-operator
+spec:
+  networkNamespace: default
+  resourceName: sriov_resource
+`
+	require.NoError(t, os.WriteFile(filepath.Join(deploymentDir, "50-sriovnetwork.yaml"), []byte(networkYAML), 0o600))
+	object := func(api, kind, namespace, name string, fields map[string]interface{}) *unstructured.Unstructured {
+		value := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": api, "kind": kind, "metadata": map[string]interface{}{"name": name, "namespace": namespace},
+		}}
+		for key, field := range fields {
+			value.Object[key] = field
+		}
+		return value
+	}
+	objects := []ctrlclient.Object{}
+	for _, operator := range [][3]string{
+		{"nvidia-network-operator", "nvidia-network-operator", "nicclusterpolicies.mellanox.com"},
+		{"sriov-network-operator", "openshift-sriov-network-operator", "sriovoperatorconfigs.sriovnetwork.openshift.io"},
+		{"nfd", "openshift-nfd", "nodefeaturediscoveries.nfd.openshift.io"},
+		{"nvidia-maintenance-operator", "nvidia-maintenance-operator", "maintenanceoperatorconfigs.maintenance.nvidia.com"},
+	} {
+		csvName := operator[0] + ".v26.7.0"
+		objects = append(objects,
+			object("operators.coreos.com/v1alpha1", "Subscription", operator[1], operator[0], map[string]interface{}{
+				"spec":   map[string]interface{}{"name": operator[0]},
+				"status": map[string]interface{}{"installedCSV": csvName},
+			}),
+			object("operators.coreos.com/v1alpha1", "ClusterServiceVersion", operator[1], csvName, map[string]interface{}{
+				"spec":   map[string]interface{}{"version": "26.7.0"},
+				"status": map[string]interface{}{"phase": "Succeeded"},
+			}),
+			object("apiextensions.k8s.io/v1", "CustomResourceDefinition", "", operator[2], map[string]interface{}{
+				"spec":   map[string]interface{}{"versions": []interface{}{map[string]interface{}{"name": "v1", "served": true}}},
+				"status": map[string]interface{}{"conditions": []interface{}{map[string]interface{}{"type": "Established", "status": "True"}}},
+			}),
+		)
+	}
+	objects = append(objects, object("sriovnetwork.openshift.io/v1", "SriovNetwork", "openshift-sriov-network-operator", "test-network", map[string]interface{}{
+		"spec": map[string]interface{}{"networkNamespace": "default", "resourceName": "sriov_resource"},
+	}))
+	kubeClient := fake.NewClientBuilder().WithObjects(objects...).Build()
+	connectivityRan := false
+	runner := validateRunner{
+		newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) { return kubeClient, &rest.Config{}, nil },
+		runConnectivityMatrix: func(context.Context, ctrlclient.Client, *rest.Config, ui.Output, connectivity.Options) (*connectivity.MatrixResult, error) {
+			connectivityRan = true
+			return nil, nil
+		},
+	}
+	reportPath := filepath.Join(t.TempDir(), "report.html")
+	err := runner.Run(context.Background(), ValidateRequest{
+		Kubeconfig: "test", DeploymentFiles: deploymentDir, UserConfig: cfgPath,
+		OutputFormat: "text", ReportPath: reportPath,
+	})
+	require.Equal(t, apperrors.ExitDeployment, apperrors.ExitCodeFromError(err))
+	require.False(t, connectivityRan)
+	report, readErr := os.ReadFile(reportPath)
+	require.NoError(t, readErr)
+	require.Contains(t, string(report), "connectivity validation did not produce a result")
 }

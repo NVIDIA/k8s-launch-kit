@@ -5,12 +5,17 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
@@ -97,6 +102,15 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 			exitWithError(apperrors.NewValidationError("clean is unsupported for OpenShift flavor", nil,
 				"Remove only the specific l8k resources you intend to delete; broad OpenShift cleanup is unavailable"), outputFormat)
 		}
+		openShift, err := isOpenShiftCluster(ctx, k8sClient)
+		if err != nil {
+			exitWithError(apperrors.NewClusterError("cannot determine whether cleanup targets OpenShift", err,
+				"Check cluster access before attempting cleanup"), outputFormat)
+		}
+		if openShift {
+			exitWithError(apperrors.NewValidationError("clean is unsupported for OpenShift clusters", nil,
+				"Remove only the specific l8k resources you intend to delete; broad OpenShift cleanup is unavailable"), outputFormat)
+		}
 		if problems := validation.IsDNS1123Label(settings.Namespace); len(problems) > 0 {
 			exitWithError(apperrors.NewValidationError(
 				fmt.Sprintf("invalid Network Operator namespace %q", settings.Namespace),
@@ -158,6 +172,20 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 			settings.KeepHelmChart,
 		)
 	},
+}
+
+// isOpenShiftCluster checks the platform CRD before any cleanup mutation. An
+// inability to check is an error so missing RBAC cannot bypass the guard.
+func isOpenShiftCluster(ctx context.Context, c client.Client) (bool, error) {
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	err := c.Get(ctx, client.ObjectKey{Name: "clusterversions.config.openshift.io"}, crd)
+	if err == nil {
+		return true, nil
+	}
+	if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("read OpenShift ClusterVersion CRD: %w", err)
 }
 
 func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {

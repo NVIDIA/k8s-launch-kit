@@ -101,21 +101,15 @@ func CheckOCPOperators(ctx context.Context, c client.Client, cfg *config.LaunchK
 }
 
 func installedCSV(ctx context.Context, c client.Client, op ocpOperator) (*unstructured.Unstructured, error) {
-	sub := &unstructured.Unstructured{}
-	sub.SetGroupVersionKind(schema.GroupVersionKind{Group: "operators.coreos.com", Version: "v1alpha1", Kind: "Subscription"})
-	err := c.Get(ctx, types.NamespacedName{Namespace: op.namespace, Name: op.packageName}, sub)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("read %s Subscription in %s: %w", op.packageName, op.namespace, err)
+	sub, err := findOCPOperatorSubscription(ctx, c, op)
+	if err != nil {
+		return nil, err
 	}
 	csvName := ""
-	if err == nil {
-		packageName, _, _ := unstructured.NestedString(sub.Object, "spec", "name")
-		if packageName != op.packageName {
-			return nil, fmt.Errorf("subscription %s/%s installs %q, expected %q", op.namespace, op.packageName, packageName, op.packageName)
-		}
+	if sub != nil {
 		csvName, _, _ = unstructured.NestedString(sub.Object, "status", "installedCSV")
 		if csvName == "" {
-			return nil, fmt.Errorf("OpenShift %s Subscription in %s has no installedCSV", op.packageName, op.namespace)
+			return nil, fmt.Errorf("OpenShift %s Subscription %s/%s has no installedCSV", op.packageName, op.namespace, sub.GetName())
 		}
 	} else {
 		list := &unstructured.UnstructuredList{}
@@ -144,6 +138,42 @@ func installedCSV(ctx context.Context, c client.Client, op ocpOperator) (*unstru
 		return nil, fmt.Errorf("unexpected %s CSV %s", op.packageName, csv.GetName())
 	}
 	return csv, nil
+}
+
+// findOCPOperatorSubscription identifies an OLM package by spec.name while
+// preserving the common exact-name Get path and its narrower RBAC needs.
+func findOCPOperatorSubscription(ctx context.Context, c client.Client, op ocpOperator) (*unstructured.Unstructured, error) {
+	sub := &unstructured.Unstructured{}
+	sub.SetGroupVersionKind(schema.GroupVersionKind{Group: "operators.coreos.com", Version: "v1alpha1", Kind: "Subscription"})
+	err := c.Get(ctx, types.NamespacedName{Namespace: op.namespace, Name: op.packageName}, sub)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("read %s Subscription in %s: %w", op.packageName, op.namespace, err)
+	}
+	if err == nil {
+		packageName, _, _ := unstructured.NestedString(sub.Object, "spec", "name")
+		if packageName != op.packageName {
+			return nil, fmt.Errorf("subscription %s/%s installs %q, expected %q", op.namespace, op.packageName, packageName, op.packageName)
+		}
+		return sub, nil
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{Group: "operators.coreos.com", Version: "v1alpha1", Kind: "SubscriptionList"})
+	if err := c.List(ctx, list, client.InNamespace(op.namespace)); err != nil {
+		return nil, fmt.Errorf("list Subscriptions in %s: %w", op.namespace, err)
+	}
+	var found *unstructured.Unstructured
+	for i := range list.Items {
+		item := &list.Items[i]
+		packageName, _, _ := unstructured.NestedString(item.Object, "spec", "name")
+		if packageName != op.packageName {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("multiple Subscriptions install %s in %s", op.packageName, op.namespace)
+		}
+		found = item.DeepCopy()
+	}
+	return found, nil
 }
 
 // CheckOCPOperatorVersion reports the certified Network Operator CSV version.

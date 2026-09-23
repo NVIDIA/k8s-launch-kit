@@ -31,6 +31,34 @@ func isOCPOperatorConfig(obj *unstructured.Unstructured) bool {
 // applyOCPOperatorConfiguration changes only fields rendered by l8k. The
 // Subscription and pre-existing configuration objects keep unrelated fields.
 func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, docs [][]byte, dryRun bool) error {
+	if cfg.NetworkOperator == nil {
+		return fmt.Errorf("networkOperator config is required")
+	}
+	operatorNamespace := cfg.NetworkOperator.Namespace
+	if operatorNamespace == "" {
+		operatorNamespace = "nvidia-network-operator"
+	}
+	maintenanceNamespace := config.DefaultMaintenanceOperatorNamespace
+	if cfg.Maintenance != nil && cfg.Maintenance.OperatorNamespace != "" {
+		maintenanceNamespace = cfg.Maintenance.OperatorNamespace
+	}
+	// A CSV without a Subscription has no durable OLM configuration channel.
+	// Check this before applying any of the other operator configuration CRs.
+	sub, err := findOCPOperatorSubscription(ctx, c, ocpOperator{
+		packageName: "nvidia-network-operator", namespace: operatorNamespace,
+	})
+	if err != nil {
+		return err
+	}
+	if sub == nil {
+		return fmt.Errorf("network operator Subscription is required to configure OpenShift maintenance settings")
+	}
+	// Driver maintenance coordination is supported by the certified Network
+	// Operator's Subscription deployment config. SR-IOV retains native draining.
+	operatorEnv := map[string]string{
+		"MAINTENANCE_OPERATOR_ENABLED":             "true",
+		"MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE": maintenanceNamespace,
+	}
 	for _, doc := range docs {
 		desired, err := decodeUnstructured(doc)
 		if err != nil {
@@ -71,30 +99,19 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 			return fmt.Errorf("configure %s %s/%s: %w", desired.GetKind(), key.Namespace, key.Name, err)
 		}
 	}
-	if cfg.NetworkOperator == nil {
-		return fmt.Errorf("networkOperator config is required")
-	}
-	maintenanceNamespace := config.DefaultMaintenanceOperatorNamespace
-	if cfg.Maintenance != nil && cfg.Maintenance.OperatorNamespace != "" {
-		maintenanceNamespace = cfg.Maintenance.OperatorNamespace
-	}
-	// Driver maintenance coordination is supported by the certified Network
-	// Operator's Subscription deployment config. SR-IOV retains native draining.
-	operatorEnv := map[string]string{
-		"MAINTENANCE_OPERATOR_ENABLED":             "true",
-		"MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE": maintenanceNamespace,
-	}
-	changed, err := mergeSubscriptionEnvChanged(ctx, c, cfg.NetworkOperator.Namespace, operatorEnv, dryRun)
+	changed, err := mergeSubscriptionEnvChanged(ctx, c, operatorNamespace, operatorEnv, dryRun)
 	if err != nil {
 		return err
 	}
 	if changed && dryRun {
 		ui.FromContext(ctx).Warning("OpenShift Network Operator Subscription rollout is deferred in dry-run")
 	}
-	if !changed || dryRun {
+	if dryRun {
 		return nil
 	}
-	return waitForNetworkOperatorSubscriptionRollout(ctx, c, cfg.NetworkOperator.Namespace, operatorEnv)
+	// A retry must also wait when a previous invocation updated the
+	// Subscription but ended before OLM adopted its environment.
+	return waitForNetworkOperatorSubscriptionRollout(ctx, c, operatorNamespace, operatorEnv)
 }
 
 func mergeOCPSpec(current, desired *unstructured.Unstructured) error {
@@ -149,12 +166,45 @@ func mergeNFDConfigData(existing, desired string) (string, error) {
 		existingPCI = map[string]interface{}{}
 	}
 	for k, v := range wantedPCI {
+		if k == "deviceClassWhitelist" || k == "deviceLabelFields" {
+			merged, err := mergeNFDStringList(existingPCI[k], v)
+			if err != nil {
+				return "", fmt.Errorf("merge NFD sources.pci.%s: %w", k, err)
+			}
+			existingPCI[k] = merged
+			continue
+		}
 		existingPCI[k] = v
 	}
 	existingSources["pci"] = existingPCI
 	have["sources"] = existingSources
 	out, err := yaml.Marshal(have)
 	return string(out), err
+}
+
+func mergeNFDStringList(existing, desired interface{}) ([]interface{}, error) {
+	merged := []interface{}{}
+	seen := map[string]bool{}
+	for _, value := range []interface{}{existing, desired} {
+		if value == nil {
+			continue
+		}
+		list, ok := value.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("expected a list, got %T", value)
+		}
+		for _, item := range list {
+			name, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("expected a string, got %T", item)
+			}
+			if !seen[name] {
+				merged = append(merged, name)
+				seen[name] = true
+			}
+		}
+	}
+	return merged, nil
 }
 
 func mergeSubscriptionEnv(ctx context.Context, c client.Client, namespace string, desired map[string]string, dryRun bool) error {
@@ -169,11 +219,12 @@ func mergeSubscriptionEnvChanged(ctx context.Context, c client.Client, namespace
 	changed := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		changed = false
-		sub := &unstructured.Unstructured{}
-		sub.SetGroupVersionKind(schema.GroupVersionKind{Group: "operators.coreos.com", Version: "v1alpha1", Kind: "Subscription"})
-		key := types.NamespacedName{Namespace: namespace, Name: "nvidia-network-operator"}
-		if err := c.Get(ctx, key, sub); err != nil {
-			return fmt.Errorf("existing Network Operator Subscription required: %w", err)
+		sub, err := findOCPOperatorSubscription(ctx, c, ocpOperator{packageName: "nvidia-network-operator", namespace: namespace})
+		if err != nil {
+			return err
+		}
+		if sub == nil {
+			return fmt.Errorf("existing Network Operator Subscription required in %s", namespace)
 		}
 		env, _, _ := unstructured.NestedSlice(sub.Object, "spec", "config", "env")
 		for name, value := range desired {

@@ -269,7 +269,8 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	// emitReport writes the HTML file synchronously on every remaining exit
 	// path, including success, in-progress no-op, and connectivity failure.
 	emitReport := func() {
-		overall := computeOverallVerdict(verdict, componentCheck, helmValuesCheck, strayCheck, matrix, presetResults)
+		overall := computeOverallVerdict(verdict, componentCheck, helmValuesCheck, strayCheck, matrix, presetResults,
+			connectivityChecks, ocp && connectivityEnabled)
 		if connectivityOnly {
 			overall = connectivityOnlyVerdict(matrix, connectivityChecks)
 		}
@@ -296,7 +297,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 				))
 			}
 		}
-		log.Log.V(1).Info("validation check completed", "check", "helm release version",
+		log.Log.V(1).Info("validation check completed", "check", "Network Operator version",
 			"skipped", versionCheck.Skipped, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
 
 		// Cross-check the NicClusterPolicy + NicNodePolicy
@@ -394,8 +395,9 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		// release or per-component) are *not* fatal here — the cluster
 		// is still up, so the connectivity tests are still meaningful;
 		// the final verdict picks up the mismatch as a fail reason.
-		// In-progress (without errors) prints a warning and exits 0
-		// so CI/operators can re-run later.
+		// In-progress (without errors) exits 0 for Kubernetes so
+		// operators can re-run later. OpenShift requires connectivity
+		// coverage and fails when the matrix cannot run yet.
 		componentMismatch = componentCheck != nil && !componentCheck.Skipped && !componentCheck.AllMatch
 		helmValuesMismatch = helmValuesCheck != nil && !helmValuesCheck.Skipped && !helmValuesCheck.AllMatch
 		strayMismatch = strayCheck != nil && strayCheck.Failed()
@@ -412,7 +414,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 			}
 			warnings = append(warnings, "Connectivity matrix skipped — cluster has in-progress manifests.")
 			emitReport()
-			if !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch {
+			if ocp && connectivityEnabled || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch {
 				return apperrors.NewExitStatus(apperrors.ExitDeployment)
 			}
 			return nil
@@ -465,7 +467,8 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	// the only problem is a stale Helm release / catalog mismatch
 	// / hardware drift from the catalog preset.
 	matrixFailed := matrix != nil && matrix.Summary.Failed > 0
-	if matrixFailed || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch || hasPresetDeviation(presetResults) {
+	coverageFailed := ocp && connectivityEnabled && !connectivityOnlyVerdict(matrix, connectivityChecks).Pass
+	if matrixFailed || coverageFailed || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch || hasPresetDeviation(presetResults) {
 		return apperrors.NewExitStatus(apperrors.ExitDeployment)
 	}
 	return nil

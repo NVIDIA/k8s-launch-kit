@@ -218,7 +218,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	}
 
 	result := &MatrixResult{}
-	var createdSupport []*unstructured.Unstructured
+	var createdSupport []client.Object
 	var createdDaemonSets []DaemonSetRef
 	// Cleanup is registered up-front so a partial failure still
 	// removes anything we applied (unless --keep).
@@ -260,6 +260,9 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		}
 		if len(support) == 0 {
 			return nil, fmt.Errorf("OpenShift validation support manifests are required")
+		}
+		if err := isolateOpenShiftValidation(setupCtx, c, objs, refs, support, &createdSupport); err != nil {
+			return nil, err
 		}
 		for _, obj := range support {
 			existing := &unstructured.Unstructured{}

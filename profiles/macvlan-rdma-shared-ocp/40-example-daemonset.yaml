@@ -23,17 +23,17 @@ spec:
       - name: "{{ . }}"
         {{- end }}
       {{- end }}
-      {{- if .ClusterConfig.NodeSelector }}
+      {{- if or .ClusterConfig.WorkerNodes .ClusterConfig.NodeSelector }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
-              {{- if .ClusterConfig.SourceMachineLabels }}
-              - key: nvidia.kubernetes-launch-kit.machine
+              {{- if .ClusterConfig.WorkerNodes }}
+              - key: kubernetes.io/hostname
                 operator: In
                 values:
-                {{- range .ClusterConfig.SourceMachineLabels }}
+                {{- range .ClusterConfig.WorkerNodes }}
                 - "{{ . }}"
                 {{- end }}
               {{- else }}
@@ -81,7 +81,7 @@ spec:
             {{- end}}
             {{- end}}
       - name: netshoot
-        image: nicolaka/netshoot:latest
+        image: nicolaka/netshoot:v0.15@sha256:47b907d662d139d1e2f22bfe14f4efca1e3f1feed283572f47c970c780c03b61
         command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
         securityContext:
           capabilities:
@@ -111,17 +111,17 @@ spec:
       - name: "{{ . }}"
         {{- end }}
       {{- end }}
-      {{- if $.ClusterConfig.NodeSelector }}
+      {{- if or $.ClusterConfig.WorkerNodes $.ClusterConfig.NodeSelector }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
-              {{- if $.ClusterConfig.SourceMachineLabels }}
-              - key: nvidia.kubernetes-launch-kit.machine
+              {{- if $.ClusterConfig.WorkerNodes }}
+              - key: kubernetes.io/hostname
                 operator: In
                 values:
-                {{- range $.ClusterConfig.SourceMachineLabels }}
+                {{- range $.ClusterConfig.WorkerNodes }}
                 - "{{ . }}"
                 {{- end }}
               {{- else }}
@@ -161,7 +161,7 @@ spec:
             {{- end }}
             rdma/{{.RdmaShared.ResourceName}}: 1
       - name: netshoot
-        image: nicolaka/netshoot:latest
+        image: nicolaka/netshoot:v0.15@sha256:47b907d662d139d1e2f22bfe14f4efca1e3f1feed283572f47c970c780c03b61
         command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
         securityContext:
           capabilities:

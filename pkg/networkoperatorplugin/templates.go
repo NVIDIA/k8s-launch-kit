@@ -970,6 +970,16 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Flavor == config.FlavorOCP {
+		for _, group := range filtered {
+			if len(group.WorkerNodes) == 0 {
+				return nil, fmt.Errorf("OpenShift %s requires workerNodes to scope shared network resources", templateGroupLabel(group))
+			}
+			if len(group.NodeSelector) == 0 {
+				return nil, fmt.Errorf("OpenShift %s requires nodeSelector to scope hardware policies", templateGroupLabel(group))
+			}
+		}
+	}
 	// Spectrum-X uses one resolved profile configuration for the whole
 	// generation target. Validate the filtered source inventory before merging
 	// so a representative merged PF list cannot hide a missing or different
@@ -1004,16 +1014,6 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	// comparing to the original (pre-filter) bucket. The plans drive
 	// the per-template scope dispatch below.
 	plans, _ := planRender(cfg.ClusterConfig, filtered)
-	if cfg.Flavor == config.FlavorOCP {
-		// OpenShift SR-IOV policies must retain each source group's PCI
-		// selector and worker boundary. GPU-type merging can borrow one
-		// representative PCI address and target unrelated nodes.
-		plans = make([]RenderBucket, 0, len(filtered))
-		for _, src := range filtered {
-			src.MergedIdentifier = src.Identifier
-			plans = append(plans, RenderBucket{Merged: src, Sources: []config.ClusterConfig{src}})
-		}
-	}
 
 	// Pre-allocate subnets across all plans' merged groups so per-plan
 	// `ProcessTemplate` calls don't independently re-allocate from
