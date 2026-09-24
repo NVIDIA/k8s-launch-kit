@@ -39,6 +39,19 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	fullConfig := input.Config
 	resolvedInput := input
 
+	// Reject duplicate clusterConfig identifiers before any rendering. Each
+	// identifier keys the per-source output filenames, so two groups sharing
+	// one silently overwrite each other on write and only the last group's
+	// NICs get configured. Validate here, in the actual generation path, so
+	// the check runs for `l8k generate` and not only for direct callers of
+	// ValidateClusterConfig. See issue #234.
+	if err := config.ValidateClusterConfigIdentifiers(fullConfig.ClusterConfig); err != nil {
+		return apperrors.NewValidationError(
+			err.Error(), nil,
+			"Give each clusterConfig[].identifier a unique value in cluster-config.yaml",
+		)
+	}
+
 	// Validate `--groups` / `--gpu-type` against the loaded config before
 	// the profile-configured check. Without this, a filter that matches
 	// no source group silently succeeds when no profile flags were
