@@ -107,6 +107,7 @@ func init() {
 	// With --user-config, only explicit flags can change the supplied profile.
 	setFlagGroup(discoverCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(discoverCmd, "user-config", GroupCommon)
+	setFlagGroup(discoverCmd, "flavor", GroupCommon)
 	setFlagGroup(discoverCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(discoverCmd, "network-operator-release", GroupCommon)
 	setFlagGroup(discoverCmd, "node-selector", GroupCommon)

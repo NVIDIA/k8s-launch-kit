@@ -157,6 +157,30 @@ func TestValidateRunsConnectivityOnlyFromExampleDaemonSet(t *testing.T) {
 	}, captured.Checks)
 }
 
+func TestValidatePassesOpenShiftFlavorToConnectivity(t *testing.T) {
+	deploymentDir, configPath := writeConnectivityOnlyInputs(t, config.RoutingDestinationBased)
+	contents, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, append([]byte("flavor: ocp\n"), contents...), 0o600))
+	stop := errors.New("connectivity options captured")
+	var captured connectivity.Options
+	runner := validateRunner{
+		newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) {
+			return nil, &rest.Config{}, nil
+		},
+		runConnectivityMatrix: func(_ context.Context, _ ctrlclient.Client, _ *rest.Config, _ ui.Output, opts connectivity.Options) (*connectivity.MatrixResult, error) {
+			captured = opts
+			return nil, stop
+		},
+	}
+	err = runner.Run(context.Background(), ValidateRequest{
+		Kubeconfig: "test-kubeconfig", DeploymentFiles: deploymentDir, UserConfig: configPath,
+		ReportPath: "-", OutputFormat: "json",
+	})
+	require.ErrorIs(t, err, stop)
+	require.True(t, captured.OpenShift)
+}
+
 func TestValidateCLIOverridesRepairInvalidYAMLBeforeValidation(t *testing.T) {
 	dir, path := writeConnectivityOnlyInputs(t, config.RoutingDestinationBased)
 	require.NoError(t, os.WriteFile(path, []byte(`profile:

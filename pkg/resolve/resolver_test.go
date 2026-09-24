@@ -68,6 +68,36 @@ clusterConfig:
 	assert.Equal(t, "infiniband", input.Config.Profile.Fabric, "input must remain unchanged")
 }
 
+func TestResolveFlavorCLIOverridesYAMLAndAppliesOperatorDefaults(t *testing.T) {
+	input, err := config.DecodeInput([]byte(`flavor: k8s
+sriov:
+  operatorNamespace: custom-sriov
+nfd:
+  configurationName: custom-nfd
+`), "user.yaml")
+	require.NoError(t, err)
+	defaults, err := config.DecodeInput([]byte("{}"), "defaults.yaml")
+	require.NoError(t, err)
+	result, err := Resolve(Request{Input: input, Defaults: defaults, Options: options.Options{Flavor: config.FlavorOCP}})
+	require.NoError(t, err)
+	require.Equal(t, config.FlavorOCP, result.Config.Flavor)
+	require.Equal(t, "custom-sriov", result.Config.Sriov.OperatorNamespace)
+	require.Equal(t, "custom-nfd", result.Config.NFD.ConfigurationName)
+	require.Equal(t, config.DefaultNFDOperatorNamespace, result.Config.NFD.OperatorNamespace)
+	require.Equal(t, config.DefaultMaintenanceOperatorNamespace, result.Config.Maintenance.OperatorNamespace)
+	require.Equal(t, config.FlavorK8s, input.Config.Flavor, "resolver must not mutate input")
+
+	k8s, err := Resolve(Request{Input: input, Defaults: defaults, Options: options.Options{Flavor: config.FlavorK8s}})
+	require.NoError(t, err)
+	require.Equal(t, config.FlavorK8s, k8s.Config.Flavor)
+	require.NotNil(t, k8s.Config.NFD)
+	require.Equal(t, "custom-nfd", k8s.Config.NFD.ConfigurationName)
+	require.Empty(t, k8s.Config.NFD.OperatorNamespace, "OpenShift-only defaults must not leak into Kubernetes")
+
+	_, err = Resolve(Request{Input: input, Defaults: defaults, Options: options.Options{Flavor: "unknown"}})
+	require.ErrorContains(t, err, "flavor must be")
+}
+
 func TestResolveDefaultsDoNotShareNestedCollections(t *testing.T) {
 	input, err := config.DecodeInput([]byte("{}"), "user.yaml")
 	require.NoError(t, err)

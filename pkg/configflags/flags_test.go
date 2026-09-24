@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/configinput"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 )
 
@@ -49,6 +50,20 @@ func TestComplexFlagsBecomeRequests(t *testing.T) {
 	require.Len(t, opts.ConfigInputs.Requests, 2)
 	assert.Equal(t, "network-operator-release", opts.ConfigInputs.Requests[0].Kind)
 	assert.Equal(t, "spectrum-x", opts.ConfigInputs.Requests[1].Kind)
+}
+
+func TestFlavorFlagUsesConfigMapping(t *testing.T) {
+	for _, scope := range []Scope{ScopeRoot, ScopeGenerate, ScopeDiscover} {
+		var opts options.Options
+		flags := pflag.NewFlagSet(string(scope), pflag.ContinueOnError)
+		require.NoError(t, Bind(flags, &opts, scope))
+		require.NoError(t, flags.Parse([]string{"--flavor=ocp"}))
+		require.NoError(t, Collect(flags, &opts))
+		require.Equal(t, "ocp", opts.Flavor)
+		require.Contains(t, opts.ConfigInputs.Overrides, configinput.Override{
+			Flag: "flavor", Path: "flavor", Value: "ocp",
+		})
+	}
 }
 
 func TestDefinitionsHaveUniqueFlagsAndMappings(t *testing.T) {

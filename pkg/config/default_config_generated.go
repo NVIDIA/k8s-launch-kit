@@ -70,6 +70,8 @@ var defaultConfigYAML = []byte(
 	"  #   - name: THIRD_PARTY_RDMA_MODULES\n" +
 	"  #     value: \"nvidia_peermem\"\n" +
 	"maintenance:\n" +
+	"  # OpenShift Maintenance Operator namespace. Package installation is external.\n" +
+	"  # operatorNamespace: nvidia-maintenance-operator\n" +
 	"  # Global concurrency; positive integer or 1%-100%.\n" +
 	"  maxParallelOperations: 4\n" +
 	"  # Global or legacy SR-IOV limit; non-negative integer or 1%-100%.\n" +
@@ -116,12 +118,18 @@ var defaultConfigYAML = []byte(
 	"  # - subnet: 192.168.10.0/24\n" +
 	"  #   gateway: 192.168.10.1\n" +
 	"sriov:\n" +
+	"  # OpenShift SR-IOV Operator namespace. Package installation is external.\n" +
+	"  # operatorNamespace: openshift-sriov-network-operator\n" +
 	"  ethernetMtu: 9000\n" +
 	"  infinibandMtu: 4000\n" +
 	"  numVfs: 8\n" +
 	"  priority: 90\n" +
 	"  resourceName: sriov_resource\n" +
 	"  networkName: sriov-network\n" +
+	"# OpenShift Node Feature Discovery configuration object. Its installation is external.\n" +
+	"# nfd:\n" +
+	"#   operatorNamespace: openshift-nfd\n" +
+	"#   configurationName: nfd-instance\n" +
 	"hostdev:\n" +
 	"  resourceName: hostdev_resource\n" +
 	"  networkName: hostdev-network\n" +
