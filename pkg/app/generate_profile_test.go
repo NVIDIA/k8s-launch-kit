@@ -204,3 +204,57 @@ clusterConfig:
 	require.Len(t, got.ClusterConfig[0].PFs, 1)
 	assert.Equal(t, "a2dc", got.ClusterConfig[0].PFs[0].DeviceID)
 }
+
+func TestExecuteGenerationRejectsDuplicateClusterConfigIdentifiers(t *testing.T) {
+	// Two groups sharing an identifier must be rejected in the actual
+	// generation path (issue #234): the per-source output filenames are
+	// derived from the identifier, so the second group would silently
+	// overwrite the first and only its NICs would be configured.
+	source := `networkOperator:
+  version: v25.10.0
+  componentVersion: network-operator-v25.10.0
+  repository: nvcr.io/nvidia/mellanox
+  namespace: nvidia-network-operator
+profile:
+  fabric: ethernet
+  deployment: sriov
+  multirail: true
+clusterConfig:
+  - identifier: dgx-h100
+    machineType: dgx-h100
+    gpuType: NVIDIA-H100
+    linkType: Ethernet
+    workerNodes:
+      - node-a
+    pfs:
+      - deviceID: a2dc
+        traffic: east-west
+  - identifier: dgx-h100
+    machineType: dgx-h100
+    gpuType: NVIDIA-H100
+    linkType: Ethernet
+    workerNodes:
+      - node-b
+    pfs:
+      - deviceID: a2dc
+        traffic: east-west
+`
+	configPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(source), 0o600))
+
+	outputDir := filepath.Join(t.TempDir(), "manifests")
+	launcher := New(options.Options{SaveDeploymentFiles: outputDir})
+	launcher.ui = ui.NewSilent()
+	launcher.plugins[networkoperatorplugin.PluginName] = &networkoperatorplugin.NetworkOperatorPlugin{}
+
+	err := launcher.executeGeneration(configPath)
+	require.Error(t, err)
+	var structured *apperrors.StructuredError
+	require.True(t, errors.As(err, &structured))
+	assert.Equal(t, apperrors.ExitValidation, structured.ExitCode)
+	assert.Contains(t, structured.Message, `duplicate identifier "dgx-h100"`)
+
+	// Generation must fail before producing any manifests.
+	_, statErr := os.Stat(outputDir)
+	assert.True(t, os.IsNotExist(statErr), "no deployment files should be written when validation fails")
+}

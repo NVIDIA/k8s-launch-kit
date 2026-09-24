@@ -990,7 +990,7 @@ func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
 		return fmt.Errorf("networkOperator.namespace is required")
 	}
 
-	if err := validateClusterConfigIdentifiers(config.ClusterConfig); err != nil {
+	if err := ValidateClusterConfigIdentifiers(config.ClusterConfig); err != nil {
 		return err
 	}
 
@@ -1023,13 +1023,13 @@ func ValidateClusterConfig(config *LaunchKitConfig, profile string) error {
 	return nil
 }
 
-// validateClusterConfigIdentifiers rejects clusterConfig groups that share an
+// ValidateClusterConfigIdentifiers rejects clusterConfig groups that share an
 // identifier. Each group's identifier keys the CRs and the per-source rendered
 // files (e.g. NicInterfaceNameTemplate is ScopePerSource and its filename is
 // derived from the identifier). Two groups with the same identifier silently
 // collide on write and only the last group survives, so its NICs are the only
 // ones configured. See https://github.com/NVIDIA/k8s-launch-kit/issues/234.
-func validateClusterConfigIdentifiers(groups []ClusterConfig) error {
+func ValidateClusterConfigIdentifiers(groups []ClusterConfig) error {
 	seen := make(map[string]struct{}, len(groups))
 	for _, g := range groups {
 		id := strings.TrimSpace(g.Identifier)
