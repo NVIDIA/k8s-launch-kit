@@ -91,8 +91,12 @@ func patchWorkloadManifest(manifestPath string, cfg *config.LaunchKitConfig, gro
 		}
 	}
 
-	// Inject node affinity if group has a NodeSelector
-	if len(group.NodeSelector) > 0 {
+	// OpenShift shared networks are restricted to the exact selected workers.
+	if cfg.Flavor == config.FlavorOCP && len(group.WorkerNodes) > 0 {
+		if err := addWorkerNodeAffinity(podSpec, group.WorkerNodes); err != nil {
+			return "", fmt.Errorf("merge OpenShift worker affinity: %w", err)
+		}
+	} else if len(group.NodeSelector) > 0 {
 		affinity := buildNodeAffinity(group.NodeSelector)
 		podSpec["affinity"] = affinity
 	}
@@ -153,6 +157,12 @@ func buildNetworkAnnotation(cfg *config.LaunchKitConfig, group *config.ClusterCo
 	if networkName == "" {
 		return ""
 	}
+	namespaceSuffix := ""
+	if cfg.Flavor == config.FlavorOCP && len(cfg.NetworkNamespaces) > 1 {
+		// OpenShift network CRs append the namespace to their NAD name when
+		// the same shared network is rendered into several namespaces.
+		namespaceSuffix = "-" + cfg.CurrentNetworkNamespace
+	}
 
 	suffix := ""
 	if group.Identifier != "" {
@@ -163,13 +173,13 @@ func buildNetworkAnnotation(cfg *config.LaunchKitConfig, group *config.ClusterCo
 		var parts []string
 		for _, pf := range ewPFs {
 			if pf.Rail != nil {
-				parts = append(parts, fmt.Sprintf("%s-rail-%d%s", networkName, *pf.Rail, suffix))
+				parts = append(parts, fmt.Sprintf("%s-rail-%d%s%s", networkName, *pf.Rail, suffix, namespaceSuffix))
 			}
 		}
 		return strings.Join(parts, ",")
 	}
 
-	return networkName + suffix
+	return networkName + suffix + namespaceSuffix
 }
 
 // buildNetworkResources builds the resource requests/limits map based on the
@@ -205,6 +215,9 @@ func buildNetworkResources(cfg *config.LaunchKitConfig, group *config.ClusterCon
 	switch cfg.Profile.Deployment {
 	case "sriov":
 		resourcePrefix = "nvidia.com"
+		if cfg.Flavor == config.FlavorOCP {
+			resourcePrefix = "openshift.io"
+		}
 		if cfg.Sriov != nil {
 			resourceName = cfg.Sriov.ResourceName
 		}
@@ -237,6 +250,58 @@ func buildNetworkResources(cfg *config.LaunchKitConfig, group *config.ClusterCon
 	}
 
 	return resources
+}
+
+func addWorkerNodeAffinity(podSpec map[string]interface{}, workers []string) error {
+	values := make([]interface{}, len(workers))
+	for i, worker := range workers {
+		values[i] = worker
+	}
+	workerExpr := map[string]interface{}{"key": "kubernetes.io/hostname", "operator": "In", "values": values}
+	affinity, ok := podSpec["affinity"].(map[string]interface{})
+	if !ok {
+		if podSpec["affinity"] != nil {
+			return fmt.Errorf("affinity must be a mapping")
+		}
+		affinity = map[string]interface{}{}
+		podSpec["affinity"] = affinity
+	}
+	nodeAffinity, ok := affinity["nodeAffinity"].(map[string]interface{})
+	if !ok {
+		if affinity["nodeAffinity"] != nil {
+			return fmt.Errorf("nodeAffinity must be a mapping")
+		}
+		nodeAffinity = map[string]interface{}{}
+		affinity["nodeAffinity"] = nodeAffinity
+	}
+	const requiredKey = "requiredDuringSchedulingIgnoredDuringExecution"
+	required, ok := nodeAffinity[requiredKey].(map[string]interface{})
+	if !ok {
+		if nodeAffinity[requiredKey] != nil {
+			return fmt.Errorf("required node affinity must be a mapping")
+		}
+		required = map[string]interface{}{"nodeSelectorTerms": []interface{}{
+			map[string]interface{}{"matchExpressions": []interface{}{workerExpr}},
+		}}
+		nodeAffinity[requiredKey] = required
+		return nil
+	}
+	terms, ok := required["nodeSelectorTerms"].([]interface{})
+	if !ok || len(terms) == 0 {
+		return fmt.Errorf("required node affinity must contain nodeSelectorTerms")
+	}
+	for _, value := range terms {
+		term, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("nodeSelectorTerm must be a mapping")
+		}
+		expressions, ok := term["matchExpressions"].([]interface{})
+		if !ok && term["matchExpressions"] != nil {
+			return fmt.Errorf("matchExpressions must be a list")
+		}
+		term["matchExpressions"] = append(expressions, workerExpr)
+	}
+	return nil
 }
 
 // spectrumXNetworkName returns the NetworkAttachmentDefinition name created

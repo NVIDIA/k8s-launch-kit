@@ -166,7 +166,7 @@ func mergeNFDConfigData(existing, desired string) (string, error) {
 		existingPCI = map[string]interface{}{}
 	}
 	for k, v := range wantedPCI {
-		if k == "deviceClassWhitelist" || k == "deviceLabelFields" {
+		if k == "deviceClassWhitelist" {
 			merged, err := mergeNFDStringList(existingPCI[k], v)
 			if err != nil {
 				return "", fmt.Errorf("merge NFD sources.pci.%s: %w", k, err)
@@ -174,6 +174,9 @@ func mergeNFDConfigData(existing, desired string) (string, error) {
 			existingPCI[k] = merged
 			continue
 		}
+		// NFD combines all deviceLabelFields into one label name. A union
+		// with an existing field such as class would stop it producing the
+		// vendor-only pci-15b3 labels required by the operators.
 		existingPCI[k] = v
 	}
 	existingSources["pci"] = existingPCI
@@ -357,5 +360,6 @@ func deploymentRolledOut(deployment *unstructured.Unstructured) bool {
 	observed, _, _ := unstructured.NestedInt64(deployment.Object, "status", "observedGeneration")
 	updated, _, _ := unstructured.NestedInt64(deployment.Object, "status", "updatedReplicas")
 	available, _, _ := unstructured.NestedInt64(deployment.Object, "status", "availableReplicas")
-	return observed >= generation && updated >= replicas && available >= replicas
+	total, _, _ := unstructured.NestedInt64(deployment.Object, "status", "replicas")
+	return observed >= generation && updated >= replicas && available >= replicas && total <= updated
 }

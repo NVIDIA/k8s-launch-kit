@@ -1014,6 +1014,9 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	// comparing to the original (pre-filter) bucket. The plans drive
 	// the per-template scope dispatch below.
 	plans, _ := planRender(cfg.ClusterConfig, filtered)
+	if cfg.Flavor == config.FlavorOCP {
+		disambiguateOCPSameGPUBuckets(plans)
+	}
 
 	// Pre-allocate subnets across all plans' merged groups so per-plan
 	// `ProcessTemplate` calls don't independently re-allocate from
@@ -1039,21 +1042,37 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		}
 	}
 
-	// Render user-provided workload manifest per group. Filter has already
-	// been applied to cfg.ClusterConfig above.
+	// Render user-provided workloads against the same network buckets as the
+	// generated secondary networks. On OpenShift a bucket can contain workers
+	// with different hardware layouts but shares one network and resource name.
 	if skipWorkloadTemplates {
-		for _, group := range cfg.ClusterConfig {
-			ewGroup := group
-			ewGroup.PFs = pfutil.FilterEastWestPFs(group.PFs)
-			rendered, err := patchWorkloadManifest(cfg.Workload.Manifest, cfg, &ewGroup)
-			if err != nil {
-				return nil, fmt.Errorf("failed to patch workload manifest for group %s: %w", group.Identifier, err)
+		workloadGroups := cfg.ClusterConfig
+		workloadNamespaces := []string{cfg.CurrentNetworkNamespace}
+		if cfg.Flavor == config.FlavorOCP {
+			workloadGroups = mergedClusterConfigs(plans)
+			workloadNamespaces = cfg.NetworkNamespaces
+		}
+		for _, ns := range workloadNamespaces {
+			nsCfg := withRenderNamespaces(cfg, ns, workloadNamespaces)
+			for _, group := range workloadGroups {
+				ewGroup := group
+				ewGroup.PFs = pfutil.FilterEastWestPFs(group.PFs)
+				rendered, err := patchWorkloadManifest(cfg.Workload.Manifest, nsCfg, &ewGroup)
+				if err != nil {
+					return nil, fmt.Errorf("failed to patch workload manifest for group %s: %w", group.Identifier, err)
+				}
+				filename := "90-workload.yaml"
+				if group.Identifier != "" {
+					filename = fmt.Sprintf("90-workload-%s.yaml", group.Identifier)
+				}
+				if cfg.Flavor == config.FlavorOCP && len(workloadNamespaces) > 1 {
+					filename = strings.TrimSuffix(filename, ".yaml") + "-" + ns + ".yaml"
+				}
+				if _, exists := results[filename]; exists {
+					return nil, fmt.Errorf("custom workload %s renders more than once", filename)
+				}
+				results[filename] = rendered
 			}
-			filename := "90-workload.yaml"
-			if group.Identifier != "" {
-				filename = fmt.Sprintf("90-workload-%s.yaml", group.Identifier)
-			}
-			results[filename] = rendered
 		}
 	}
 

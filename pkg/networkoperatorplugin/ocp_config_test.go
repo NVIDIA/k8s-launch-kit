@@ -27,7 +27,7 @@ func TestMergeNFDConfigDataPreservesUnrelatedSettings(t *testing.T) {
 	require.Contains(t, got, "other: keep")
 	require.Contains(t, got, "vendor")
 	require.Contains(t, got, "- \"01\"")
-	require.Contains(t, got, "- device")
+	require.NotContains(t, got, "- device")
 	require.Contains(t, got, "- \"03\"")
 	again, err := mergeNFDConfigData(got, desired)
 	require.NoError(t, err)
@@ -82,11 +82,14 @@ func TestNetworkOperatorSubscriptionRolloutChecksEnvAndReadiness(t *testing.T) {
 				}},
 			}}},
 		},
-		"status": map[string]interface{}{"observedGeneration": int64(3), "updatedReplicas": int64(1), "availableReplicas": int64(1)},
+		"status": map[string]interface{}{"observedGeneration": int64(3), "replicas": int64(1), "updatedReplicas": int64(1), "availableReplicas": int64(1)},
 	}}
 	desired := map[string]string{"MAINTENANCE_OPERATOR_ENABLED": "true"}
 	require.True(t, deploymentHasEnv(deployment, desired))
 	require.True(t, deploymentRolledOut(deployment))
+	require.NoError(t, unstructured.SetNestedField(deployment.Object, int64(2), "status", "replicas"))
+	require.False(t, deploymentRolledOut(deployment), "an old available replica must not satisfy a new rollout")
+	require.NoError(t, unstructured.SetNestedField(deployment.Object, int64(1), "status", "replicas"))
 	require.False(t, deploymentHasEnv(deployment, map[string]string{"MAINTENANCE_OPERATOR_ENABLED": "false"}))
 	require.NoError(t, unstructured.SetNestedField(deployment.Object, int64(2), "status", "observedGeneration"))
 	require.False(t, deploymentRolledOut(deployment))

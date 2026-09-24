@@ -103,6 +103,41 @@ spec:
 	assert.NotNil(t, affinity["nodeAffinity"])
 }
 
+func TestPatchWorkloadManifestOpenShiftPreservesAffinity(t *testing.T) {
+	cfg, group := multirailSriovConfig()
+	cfg.Flavor = config.FlavorOCP
+	group.WorkerNodes = []string{"worker-a", "worker-b"}
+	pod := `apiVersion: v1
+kind: Pod
+metadata:
+  name: custom
+spec:
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution: []
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: example.com/rack
+            operator: In
+            values: [rack-a]
+  containers:
+  - name: test
+    image: busybox:1.36
+`
+	path := filepath.Join(t.TempDir(), "pod.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(pod), 0600))
+	out, err := patchWorkloadManifest(path, cfg, group)
+	require.NoError(t, err)
+	require.Contains(t, out, "podAntiAffinity")
+	require.Contains(t, out, "example.com/rack")
+	require.Contains(t, out, "kubernetes.io/hostname")
+	require.Contains(t, out, "worker-a")
+	require.Contains(t, out, "worker-b")
+	require.Contains(t, out, "openshift.io/sriov_net_rail_0")
+}
+
 func TestPatchWorkloadManifest_Deployment(t *testing.T) {
 	cfg, group := multirailSriovConfig()
 

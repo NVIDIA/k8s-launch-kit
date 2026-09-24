@@ -139,6 +139,39 @@ func planRender(originalGroups, filteredGroups []config.ClusterConfig) ([]Render
 	return plans, overallHadConflicts
 }
 
+// disambiguateOCPSameGPUBuckets gives buckets with the same GPU but different
+// rail counts distinct shared-resource names. The render key includes rail
+// count; the normal merged identifier only includes GPU type.
+func disambiguateOCPSameGPUBuckets(plans []RenderBucket) {
+	counts := make(map[string]int, len(plans))
+	used := make(map[string]bool, len(plans))
+	for _, plan := range plans {
+		counts[plan.Merged.Identifier]++
+	}
+	for _, plan := range plans {
+		if counts[plan.Merged.Identifier] == 1 {
+			used[plan.Merged.Identifier] = true
+		}
+	}
+	for i := range plans {
+		plan := &plans[i]
+		if counts[plan.Merged.Identifier] == 1 {
+			continue
+		}
+		base := fmt.Sprintf("%s-r%d", plan.Merged.Identifier, len(pfutil.FilterEastWestPFs(plan.Merged.PFs)))
+		identifier := config.SanitizeIdentifier(base)
+		for suffix := 2; used[identifier]; suffix++ {
+			identifier = config.SanitizeIdentifier(fmt.Sprintf("%s-%d", base, suffix))
+		}
+		used[identifier] = true
+		plan.Merged.Identifier = identifier
+		plan.Merged.MergedIdentifier = identifier
+		for j := range plan.Sources {
+			plan.Sources[j].MergedIdentifier = identifier
+		}
+	}
+}
+
 // bucketKey is the merge key — same shape as `mergeCompatibleGroups`.
 type bucketKey struct {
 	gpuType   string
@@ -485,14 +518,30 @@ func renderForScope(
 
 	case ScopePerSource:
 		var netplanManagedGroups []config.ClusterConfig
+		var ocpWorkerSources [][]config.ClusterConfig
+		if cfg.Flavor == config.FlavorOCP && (kind == "NicNodePolicy" || kind == "SriovNetworkNodePolicy" || kind == "NicInterfaceNameTemplate") {
+			var allSources []config.ClusterConfig
+			for _, plan := range plans {
+				allSources = append(allSources, plan.Sources...)
+			}
+			allWorkers, err := ocpWorkerPolicySources(allSources)
+			if err != nil {
+				return nil, err
+			}
+			ocpWorkerSources = make([][]config.ClusterConfig, len(plans))
+			cursor := 0
+			for i, plan := range plans {
+				for _, source := range plan.Sources {
+					count := len(source.WorkerNodes)
+					ocpWorkerSources[i] = append(ocpWorkerSources[i], allWorkers[cursor:cursor+count]...)
+					cursor += count
+				}
+			}
+		}
 		for i, plan := range plans {
 			sources := plan.Sources
-			if cfg.Flavor == config.FlavorOCP && (kind == "NicNodePolicy" || kind == "SriovNetworkNodePolicy") {
-				var err error
-				sources, err = ocpWorkerPolicySources(plan.Sources)
-				if err != nil {
-					return nil, err
-				}
+			if ocpWorkerSources != nil {
+				sources = ocpWorkerSources[i]
 			}
 			for _, src := range sources {
 				renderCfg := withClusterConfig(cfg, []config.ClusterConfig{src}, subnetsAt(planSubnets, i))
