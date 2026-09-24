@@ -100,6 +100,7 @@ func (value *IntOrPercent) UnmarshalYAML(unmarshal func(interface{}) error) erro
 // make disruptive changes to nodes. Pointer fields distinguish an omitted key
 // (which receives a default) from an explicit zero (which is preserved).
 type MaintenanceConfig struct {
+	OperatorNamespace             string        `yaml:"operatorNamespace,omitempty"`
 	MaxParallelOperations         *IntOrPercent `yaml:"maxParallelOperations,omitempty"`
 	MaxUnavailable                *IntOrPercent `yaml:"maxUnavailable,omitempty"`
 	MaxNodeMaintenanceTimeSeconds *int32        `yaml:"maxNodeMaintenanceTimeSeconds,omitempty"`

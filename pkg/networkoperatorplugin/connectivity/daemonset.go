@@ -109,6 +109,47 @@ func LoadExampleDaemonSets(manifestDir string) ([]*unstructured.Unstructured, []
 	return objs, refs, nil
 }
 
+// LoadOpenShiftExampleSupport reads only the four temporary resource kinds
+// used by the OpenShift validation workload.
+func LoadOpenShiftExampleSupport(manifestDir string) ([]*unstructured.Unstructured, error) {
+	entries, err := os.ReadDir(manifestDir)
+	if err != nil {
+		return nil, err
+	}
+	var out []*unstructured.Unstructured
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.Contains(strings.ToLower(entry.Name()), "example") {
+			continue
+		}
+		if ext := filepath.Ext(entry.Name()); ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(manifestDir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, doc := range splitYAMLDocs(string(data)) {
+			if strings.TrimSpace(doc) == "" {
+				continue
+			}
+			obj := &unstructured.Unstructured{}
+			if err := yaml.Unmarshal([]byte(doc), obj); err != nil {
+				return nil, err
+			}
+			switch obj.GetKind() {
+			case "SecurityContextConstraints", "ServiceAccount", "Role", "RoleBinding":
+				gv, err := schema.ParseGroupVersion(obj.GetAPIVersion())
+				if err != nil {
+					return nil, err
+				}
+				obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
+				out = append(out, obj)
+			}
+		}
+	}
+	return out, nil
+}
+
 // ApplyDaemonSet performs a kubectl-style server-side apply of obj.
 func ApplyDaemonSet(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
 	return c.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj), client.FieldOwner("l8k-connectivity"), client.ForceOwnership)

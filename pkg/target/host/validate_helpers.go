@@ -104,6 +104,8 @@ func computeOverallVerdict(
 	strayCheck *preflight.Result,
 	matrix *connectivity.MatrixResult,
 	presetResults []presetmatch.Result,
+	selectedChecks []connectivity.Check,
+	requireCoverage bool,
 ) connectivity.OverallVerdict {
 	out := connectivity.OverallVerdict{Pass: true}
 	if !verdict.VersionOK {
@@ -138,7 +140,13 @@ func computeOverallVerdict(
 		out.Reasons = append(out.Reasons,
 			fmt.Sprintf("%d existing Network Operator resource(s) in the operator namespace conflict with the rendered manifests — re-run `l8k deploy --overwrite-existing` to delete them", len(strayCheck.Mismatches)))
 	}
-	if matrix != nil {
+	if requireCoverage {
+		coverage := connectivityOnlyVerdict(matrix, selectedChecks)
+		if !coverage.Pass {
+			out.Pass = false
+			out.Reasons = append(out.Reasons, coverage.Reasons...)
+		}
+	} else if matrix != nil {
 		if matrix.Summary.Failed > 0 {
 			out.Pass = false
 			out.Reasons = append(out.Reasons, fmt.Sprintf("%d connectivity test(s) failed in the connectivity matrix", matrix.Summary.Failed))
@@ -148,7 +156,11 @@ func computeOverallVerdict(
 		}
 	}
 	if verdict.HasInProgress {
-		out.Notes = append(out.Notes, fmt.Sprintf("%d manifest(s) still reconciling — re-run later or use --wait to block (does not gate the verdict)", verdict.InProgressCount))
+		note := fmt.Sprintf("%d manifest(s) still reconciling — re-run later or use --wait to block", verdict.InProgressCount)
+		if !requireCoverage {
+			note += " (does not gate the verdict)"
+		}
+		out.Notes = append(out.Notes, note)
 	}
 	// Platform topology mismatches fail the verdict but do NOT block
 	// the other stages (same pattern as version mismatch): when the
@@ -958,7 +970,7 @@ func nodeRoles(labels map[string]string) string {
 // Returns the most recent results regardless of which terminal
 // condition fired. Emits a one-line update only when the in-progress
 // count changes so we don't flood logs on long waits.
-func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir string, initial []networkoperatorplugin.ValidationResult, budget time.Duration) []networkoperatorplugin.ValidationResult {
+func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir string, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string) []networkoperatorplugin.ValidationResult {
 	deadline := time.Now().Add(budget)
 	results := initial
 	lastInProgress := -1
@@ -988,7 +1000,7 @@ func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir stri
 		case <-time.After(10 * time.Second):
 		}
 
-		fresh, err := networkoperatorplugin.ValidateManifests(ctx, c, manifestDir)
+		fresh, err := networkoperatorplugin.ValidateManifests(ctx, c, manifestDir, flavor)
 		if err != nil {
 			// Transient — keep the previous snapshot and try again
 			// on the next tick.

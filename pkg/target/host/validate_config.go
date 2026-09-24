@@ -63,6 +63,7 @@ func validationOverrides(request ValidateRequest) []configinput.Override {
 // user YAML, including values that repair an invalid lower-precedence field.
 func validationOptions(request ValidateRequest) options.Options {
 	opts := options.Options{
+		Flavor:                     request.Flavor,
 		ConfigDir:                  request.ConfigDir,
 		UserConfig:                 request.UserConfig,
 		NetworkOperatorNamespace:   request.OperatorNamespace,

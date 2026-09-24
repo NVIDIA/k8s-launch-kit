@@ -30,6 +30,7 @@ import (
 )
 
 const gpudirectLDLibraryPath = "/usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/mpi/gcc/openmpi-current/lib:/usr/local/cuda/lib64"
+const ocpNetshootImage = "nicolaka/netshoot:v0.15@sha256:47b907d662d139d1e2f22bfe14f4efca1e3f1feed283572f47c970c780c03b61"
 
 func TestExampleDaemonSetTemplatesDeclareICMPHelper(t *testing.T) {
 	templates, err := filepath.Glob(filepath.Join("..", "..", "profiles", "*", "*-example-daemonset.yaml"))
@@ -38,7 +39,6 @@ func TestExampleDaemonSetTemplatesDeclareICMPHelper(t *testing.T) {
 
 	const (
 		helperName    = "- name: netshoot"
-		helperImage   = "image: nicolaka/netshoot:latest"
 		helperCommand = "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"
 	)
 
@@ -47,6 +47,10 @@ func TestExampleDaemonSetTemplatesDeclareICMPHelper(t *testing.T) {
 			content, err := os.ReadFile(templatePath)
 			require.NoError(t, err)
 			body := string(content)
+			helperImage := "image: nicolaka/netshoot:latest"
+			if strings.HasSuffix(filepath.Base(filepath.Dir(templatePath)), "-ocp") {
+				helperImage = "image: " + ocpNetshootImage
+			}
 			daemonSetBranches := strings.Count(body, "kind: DaemonSet")
 			require.Greater(t, daemonSetBranches, 0)
 			require.Equal(t, daemonSetBranches, strings.Count(body, helperName),

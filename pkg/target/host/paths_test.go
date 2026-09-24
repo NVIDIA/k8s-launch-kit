@@ -70,6 +70,22 @@ func TestUserConfigPathForPrefersDeploymentEffectiveConfig(t *testing.T) {
 	assert.Equal(t, "26.7", loaded.NetworkOperator.SelectedRelease)
 }
 
+func TestLoadUserConfigAppliesFlavorOverrideToEffectiveConfig(t *testing.T) {
+	root := t.TempDir()
+	_, err := config.WriteEffectiveConfig(root, &config.LaunchKitConfig{
+		Flavor: config.FlavorK8s,
+		Sriov:  &config.SriovConfig{OperatorNamespace: "custom-sriov"},
+	})
+	require.NoError(t, err)
+
+	loaded, _, err := LoadUserConfig(UserConfigInput{DeploymentFiles: root}, options.Options{Flavor: config.FlavorOCP})
+	require.NoError(t, err)
+	require.Equal(t, config.FlavorOCP, loaded.Flavor)
+	require.Equal(t, "custom-sriov", loaded.Sriov.OperatorNamespace)
+	require.Equal(t, config.DefaultNFDOperatorNamespace, loaded.NFD.OperatorNamespace)
+	require.Equal(t, config.DefaultMaintenanceOperatorNamespace, loaded.Maintenance.OperatorNamespace)
+}
+
 func TestResolveDeploymentDirPrefersHostSubdirectory(t *testing.T) {
 	root := t.TempDir()
 	hostDir := filepath.Join(root, manifestSubdir)

@@ -5,12 +5,17 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
@@ -22,6 +27,7 @@ import (
 var keepHelmChart bool
 
 type cleanSettings struct {
+	Flavor              string
 	Namespace           string
 	NamespaceSource     string
 	KeepHelmChart       bool
@@ -92,6 +98,19 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 				"Fix or remove the selected config before cleanup",
 			), outputFormat)
 		}
+		if settings.Flavor == "ocp" {
+			exitWithError(apperrors.NewValidationError("clean is unsupported for OpenShift flavor", nil,
+				"Remove only the specific l8k resources you intend to delete; broad OpenShift cleanup is unavailable"), outputFormat)
+		}
+		openShift, err := isOpenShiftCluster(ctx, k8sClient)
+		if err != nil {
+			exitWithError(apperrors.NewClusterError("cannot determine whether cleanup targets OpenShift", err,
+				"Check cluster access before attempting cleanup"), outputFormat)
+		}
+		if openShift {
+			exitWithError(apperrors.NewValidationError("clean is unsupported for OpenShift clusters", nil,
+				"Remove only the specific l8k resources you intend to delete; broad OpenShift cleanup is unavailable"), outputFormat)
+		}
 		if problems := validation.IsDNS1123Label(settings.Namespace); len(problems) > 0 {
 			exitWithError(apperrors.NewValidationError(
 				fmt.Sprintf("invalid Network Operator namespace %q", settings.Namespace),
@@ -155,8 +174,23 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 	},
 }
 
+// isOpenShiftCluster checks the platform CRD before any cleanup mutation. An
+// inability to check is an error so missing RBAC cannot bypass the guard.
+func isOpenShiftCluster(ctx context.Context, c client.Client) (bool, error) {
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	err := c.Get(ctx, client.ObjectKey{Name: "clusterversions.config.openshift.io"}, crd)
+	if err == nil {
+		return true, nil
+	}
+	if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("read OpenShift ClusterVersion CRD: %w", err)
+}
+
 func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
 	settings := cleanSettings{
+		Flavor:          "k8s",
 		Namespace:       defaultOperatorNamespace,
 		NamespaceSource: "default",
 		KeepHelmChart:   explicitKeepHelmChart,
@@ -183,6 +217,7 @@ func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
 			return settings, fmt.Errorf("read %s: %w", path, err)
 		}
 		var cfg struct {
+			Flavor          string `yaml:"flavor"`
 			NetworkOperator *struct {
 				Namespace     string `yaml:"namespace"`
 				SkipHelmChart bool   `yaml:"skipHelmChart"`
@@ -190,6 +225,9 @@ func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
 		}
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return settings, fmt.Errorf("parse %s: %w", path, err)
+		}
+		if cfg.Flavor != "" {
+			settings.Flavor = cfg.Flavor
 		}
 		if cfg.NetworkOperator != nil {
 			if cfg.NetworkOperator.Namespace != "" {
@@ -208,6 +246,12 @@ func resolveCleanSettings(explicitKeepHelmChart bool) (cleanSettings, error) {
 	if networkOperatorNamespace != "" {
 		settings.Namespace = networkOperatorNamespace
 		settings.NamespaceSource = "--network-operator-namespace"
+	}
+	if flavor != "" {
+		settings.Flavor = flavor
+	}
+	if settings.Flavor != "k8s" && settings.Flavor != "ocp" {
+		return settings, fmt.Errorf("unsupported flavor %q", settings.Flavor)
 	}
 	return settings, nil
 }
@@ -239,11 +283,13 @@ func init() {
 	rootCmd.AddCommand(cleanCmd)
 
 	cleanCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
+	cleanCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (OpenShift cleanup is unsupported)")
 	cleanCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file used to resolve networkOperator.namespace and networkOperator.skipHelmChart")
 	cleanCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the Network Operator namespace from cluster-config.yaml")
 	cleanCmd.Flags().BoolVar(&keepHelmChart, "keep-helm-chart", false, "Delete Network Operator custom resources but keep the network-operator Helm release installed regardless of config")
 
 	setFlagGroup(cleanCmd, "kubeconfig", GroupCommon)
+	setFlagGroup(cleanCmd, "flavor", GroupCommon)
 	setFlagGroup(cleanCmd, "user-config", GroupCommon)
 	setFlagGroup(cleanCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(cleanCmd, "keep-helm-chart", GroupClean)

@@ -119,6 +119,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	if nop, ok := l.plugins[networkoperatorplugin.PluginName]; ok {
 		if p, ok := nop.(*networkoperatorplugin.NetworkOperatorPlugin); ok {
 			p.NetworkOperator = fullConfig.NetworkOperator
+			p.LaunchKitConfig = fullConfig
 			p.OverwriteExisting = l.options.OverwriteExisting
 			p.DryRun = l.options.DryRun
 			if fullConfig.DOCADriver != nil {
@@ -155,7 +156,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		if fullConfig.NetworkOperator != nil {
 			selectedRelease = fullConfig.NetworkOperator.SelectedRelease
 		}
-		profile, err := profiles.FindApplicableProfile(fullConfig.Profile, aggregatedCapabilities, pluginName, selectedRelease)
+		profile, err := profiles.FindApplicableProfile(fullConfig.Profile, aggregatedCapabilities, pluginName, selectedRelease, fullConfig.Flavor)
 		if err != nil {
 			l.ui.Error("Failed to find profile: %v", err)
 			l.logger.Error(err, "Failed to find applicable profile for the plugin", "plugin", plugin.GetName(), "cluster capabilities", aggregatedCapabilities, "profile requirements", fullConfig.Profile)

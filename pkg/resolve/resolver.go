@@ -82,6 +82,9 @@ func Resolve(request Request) (*Result, error) {
 	if err := config.MergeDefaults(effective, defaults.Config, present); err != nil {
 		return nil, fmt.Errorf("merge canonical defaults: %w", err)
 	}
+	if err := config.ApplyFlavorDefaultsWithPresence(effective, present); err != nil {
+		return nil, err
+	}
 
 	// selectedRelease is authoritative regardless of which layer selected it.
 	// Catalog expansion deliberately runs after all layers are merged so stale

@@ -26,6 +26,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,6 +45,7 @@ const (
 // Options control the matrix run end-to-end. The l8k validate CLI
 // fills these from the corresponding flags.
 type Options struct {
+	OpenShift bool
 	// ManifestDir is the deployment directory the example DaemonSet
 	// manifests live under (validate uses the same dir it just
 	// validated).
@@ -209,8 +211,15 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			}
 		}
 	}
+	if opts.OpenShift {
+		if err := checkOpenShiftDeviceCapacity(setupCtx, c, objs); err != nil {
+			return nil, err
+		}
+	}
 
 	result := &MatrixResult{}
+	var createdSupport []client.Object
+	var createdDaemonSets []DaemonSetRef
 	// Cleanup is registered up-front so a partial failure still
 	// removes anything we applied (unless --keep).
 	defer func() {
@@ -224,7 +233,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), matrixCleanupTimeout)
 		defer cleanupCancel()
 		cleanupStarted := time.Now()
-		for _, ref := range refs {
+		for _, ref := range createdDaemonSets {
 			deleteStarted := time.Now()
 			if err := DeleteDaemonSet(cleanupCtx, c, ref); err != nil {
 				uiOutput.Warning("cleanup: %v", err)
@@ -235,17 +244,70 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 				"namespace", ref.Namespace, "name", ref.Name,
 				"duration", time.Since(deleteStarted).Round(time.Millisecond).String())
 		}
+		for i := len(createdSupport) - 1; i >= 0; i-- {
+			if err := c.Delete(cleanupCtx, createdSupport[i]); err != nil && !apierrors.IsNotFound(err) {
+				uiOutput.Warning("cleanup: %v", err)
+			}
+		}
 		logger.V(1).Info("connectivity cleanup completed",
 			"daemonSets", len(refs),
 			"duration", time.Since(cleanupStarted).Round(time.Millisecond).String())
 	}()
+	if opts.OpenShift {
+		support, err := LoadOpenShiftExampleSupport(opts.ManifestDir)
+		if err != nil {
+			return nil, err
+		}
+		if len(support) == 0 {
+			return nil, fmt.Errorf("OpenShift validation support manifests are required")
+		}
+		if err := isolateOpenShiftValidation(setupCtx, c, objs, refs, support, &createdSupport); err != nil {
+			return nil, err
+		}
+		for _, obj := range support {
+			existing := &unstructured.Unstructured{}
+			existing.SetGroupVersionKind(obj.GroupVersionKind())
+			err := c.Get(setupCtx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, existing)
+			if err == nil {
+				return nil, fmt.Errorf("OpenShift validation support %s %s/%s already exists", obj.GetKind(), obj.GetNamespace(), obj.GetName())
+			}
+			if !apierrors.IsNotFound(err) {
+				return nil, err
+			}
+			if err := c.Create(setupCtx, obj); err != nil {
+				return nil, err
+			}
+			createdSupport = append(createdSupport, obj)
+		}
+	}
 
 	applyAndCollectPods := func(runCtx context.Context, objs []*unstructured.Unstructured, refs []DaemonSetRef) ([]testPodWithDS, error) {
 		for i, obj := range objs {
 			ref := refs[i]
 			uiOutput.Info("Applying %s/%s (from %s)", ref.Namespace, ref.Name, ref.SourceFile)
 			started := time.Now()
-			if err := ApplyDaemonSet(runCtx, c, obj); err != nil {
+			var err error
+			if opts.OpenShift {
+				existing := &unstructured.Unstructured{}
+				existing.SetGroupVersionKind(obj.GroupVersionKind())
+				err = c.Get(runCtx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, existing)
+				if err == nil {
+					return nil, fmt.Errorf("validation DaemonSet %s/%s already exists", obj.GetNamespace(), obj.GetName())
+				}
+				if !apierrors.IsNotFound(err) {
+					return nil, err
+				}
+				err = c.Create(runCtx, obj)
+				if err == nil {
+					createdDaemonSets = append(createdDaemonSets, ref)
+				}
+			} else {
+				err = ApplyDaemonSet(runCtx, c, obj)
+				if err == nil {
+					createdDaemonSets = append(createdDaemonSets, ref)
+				}
+			}
+			if err != nil {
 				return nil, fmt.Errorf("apply daemonset %s/%s: %w", ref.Namespace, ref.Name, err)
 			}
 			logger.V(1).Info("test DaemonSet applied",
@@ -350,6 +412,9 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 
 	plan := PlanWithOptions(testPods, opts.Mode, opts.Routing)
 	if plan.Skip != nil {
+		if opts.OpenShift {
+			return result, fmt.Errorf("OpenShift two-node connectivity requires at least two usable endpoints: %s", plan.Skip.Reason)
+		}
 		uiOutput.Warning("Matrix skipped: %s", plan.Skip.Reason)
 		logger.V(1).Info("connectivity plan skipped", "reason", plan.Skip.Reason, "pods", len(testPods))
 		result.Skipped = plan.Skip

@@ -50,6 +50,7 @@ import (
 // thin DiscoverClusterConfig wrapper can populate it without going through
 // the functional-option API.
 type Options struct {
+	WorkerNodes []string
 	// NodeSelector restricts discovery to nodes matching this label
 	// selector. The default empty selector considers every node that
 	// publishes a NicDevice CR. The selector is also persisted to the

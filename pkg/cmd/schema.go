@@ -144,6 +144,9 @@ var schemaCmd = &cobra.Command{
 					Type:        "string",
 					Description: "Use provided cluster configuration file (as base config for discovery or as full config without discovery)",
 				},
+				"--flavor": {
+					Type: "string", Default: "k8s", Description: "Cluster flavor: k8s or ocp. OpenShift uses certified operator installations and OpenShift profiles.",
+				},
 				"--fabric": {
 					Type:        "string",
 					Description: "Override the resolved fabric type: infiniband, ethernet. Accepted by discover and generate.",

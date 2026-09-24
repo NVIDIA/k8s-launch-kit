@@ -147,6 +147,11 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	userOwnedCfgPath := UserConfigPathBeforeDefaults(configInput)
 	cfg, loadedCfgPath, cfgErr := LoadUserConfig(configInput, validationOptions(request))
 	cfgPath = loadedCfgPath
+	if request.Flavor == config.FlavorOCP && cfg == nil {
+		return exitWithReport(apperrors.NewValidationError("OpenShift validation requires a cluster config", nil,
+			"Pass --user-config with flavor: ocp and operator namespaces"))
+	}
+	ocp := cfg != nil && cfg.Flavor == config.FlavorOCP
 	// Preserve successfully parsed user input in partial reports even when a
 	// release-catalog overlay fails. Operational validation still follows the
 	// existing soft-failure path below and skips config-derived version checks.
@@ -154,6 +159,9 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		reportConfig = cfg
 		if cfg.NetworkOperator != nil {
 			skipNetworkOperatorHelm = cfg.NetworkOperator.SkipHelmChart
+		}
+		if ocp {
+			skipNetworkOperatorHelm = true
 		}
 		validationCfg = config.NormalizeValidationConfig(cfg.Validation)
 	}
@@ -269,7 +277,8 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	// emitReport writes the HTML file synchronously on every remaining exit
 	// path, including success, in-progress no-op, and connectivity failure.
 	emitReport := func() {
-		overall := computeOverallVerdict(verdict, componentCheck, helmValuesCheck, strayCheck, matrix, presetResults)
+		overall := computeOverallVerdict(verdict, componentCheck, helmValuesCheck, strayCheck, matrix, presetResults,
+			connectivityChecks, ocp && connectivityEnabled)
 		if connectivityOnly {
 			overall = connectivityOnlyVerdict(matrix, connectivityChecks)
 		}
@@ -296,7 +305,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 				))
 			}
 		}
-		log.Log.V(1).Info("validation check completed", "check", "helm release version",
+		log.Log.V(1).Info("validation check completed", "check", "Network Operator version",
 			"skipped", versionCheck.Skipped, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
 
 		// Cross-check the NicClusterPolicy + NicNodePolicy
@@ -362,7 +371,11 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 
 		var valErr error
 		checkStarted = time.Now()
-		results, valErr = networkoperatorplugin.ValidateManifests(ctx, k8sClient, manifestDir)
+		validationFlavor := config.FlavorK8s
+		if cfg != nil {
+			validationFlavor = cfg.Flavor
+		}
+		results, valErr = networkoperatorplugin.ValidateManifests(ctx, k8sClient, manifestDir, validationFlavor)
 		log.Log.V(1).Info("validation check completed", "check", "manifest readiness",
 			"success", valErr == nil, "objects", len(results),
 			"duration", time.Since(checkStarted).Round(time.Millisecond).String())
@@ -378,7 +391,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		// loop re-runs the registry-backed validate every 10s. The
 		// final results / verdict are emitted normally below.
 		if request.Wait > 0 {
-			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), manifestDir, results, request.Wait)
+			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), manifestDir, results, request.Wait, validationFlavor)
 		}
 
 		verdict = emitValidationReport(versionCheck, results, presetDeviations, request.OutputFormat)
@@ -394,8 +407,9 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		// release or per-component) are *not* fatal here — the cluster
 		// is still up, so the connectivity tests are still meaningful;
 		// the final verdict picks up the mismatch as a fail reason.
-		// In-progress (without errors) prints a warning and exits 0
-		// so CI/operators can re-run later.
+		// In-progress (without errors) exits 0 for Kubernetes so
+		// operators can re-run later. OpenShift requires connectivity
+		// coverage and fails when the matrix cannot run yet.
 		componentMismatch = componentCheck != nil && !componentCheck.Skipped && !componentCheck.AllMatch
 		helmValuesMismatch = helmValuesCheck != nil && !helmValuesCheck.Skipped && !helmValuesCheck.AllMatch
 		strayMismatch = strayCheck != nil && strayCheck.Failed()
@@ -412,7 +426,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 			}
 			warnings = append(warnings, "Connectivity matrix skipped — cluster has in-progress manifests.")
 			emitReport()
-			if !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch {
+			if ocp && connectivityEnabled || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch {
 				return apperrors.NewExitStatus(apperrors.ExitDeployment)
 			}
 			return nil
@@ -427,6 +441,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		ctxWithUI := ui.WithOutput(ctx, uiOutput)
 		m, err := runner.runConnectivityMatrix(ctxWithUI, k8sClient, restConfig, uiOutput, connectivity.Options{
 			ManifestDir:             manifestDir,
+			OpenShift:               ocp,
 			Timeout:                 request.ConnectivityTime,
 			Keep:                    request.Keep,
 			Mode:                    connectivity.Mode(validationCfg.Mode),
@@ -465,7 +480,8 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	// the only problem is a stale Helm release / catalog mismatch
 	// / hardware drift from the catalog preset.
 	matrixFailed := matrix != nil && matrix.Summary.Failed > 0
-	if matrixFailed || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch || hasPresetDeviation(presetResults) {
+	coverageFailed := ocp && connectivityEnabled && !connectivityOnlyVerdict(matrix, connectivityChecks).Pass
+	if matrixFailed || coverageFailed || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch || hasPresetDeviation(presetResults) {
 		return apperrors.NewExitStatus(apperrors.ExitDeployment)
 	}
 	return nil

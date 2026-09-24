@@ -100,3 +100,7 @@ flag, not merely whether `--keep-helm-chart` appeared on the command line.
 
 If the Helm release was meant to be removed, verify it is absent with the same
 read-only `helm list` command. If it was kept, verify it remains deployed.
+
+## OpenShift
+
+`l8k clean --flavor ocp` is rejected. The broad Kubernetes cleanup does not cover separately installed OpenShift operators; remove only exact intended resources manually.

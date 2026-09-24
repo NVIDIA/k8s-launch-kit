@@ -1693,3 +1693,7 @@ used only to derive `ClusterConfig.NetplanManaged` and are never serialized.
 make docker-build # Build Docker image
 make docker-run   # Run Docker container
 ```
+
+## OpenShift
+
+Use `--flavor ocp` with externally installed operators. See [OpenShift deployments](docs/user/openshift.md).

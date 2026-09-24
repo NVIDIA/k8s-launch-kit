@@ -1,0 +1,168 @@
+{{- if .Profile.Multirail -}}
+{{- /* Create DaemonSet with all host device networks */ -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hostdev-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+  namespace: "{{$.CurrentNetworkNamespace}}"
+spec:
+  selector:
+    matchLabels:
+      app: hostdev-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: hostdev-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+      annotations:
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $i, $pf := .ClusterConfig.PFs}}{{- if eq $pf.Traffic "east-west"}}{{- if not $first}},{{end}}{{- $first = false}}{{$.Hostdev.NetworkName}}-rail-{{$pf.Rail}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}{{- end}}{{- end}}
+    spec:
+      serviceAccountName: l8k-validation
+      {{- if $.NetworkOperator.ImagePullSecrets }}
+      imagePullSecrets:
+        {{- range $.NetworkOperator.ImagePullSecrets }}
+      - name: "{{ . }}"
+        {{- end }}
+      {{- end }}
+      {{- if or .ClusterConfig.WorkerNodes .ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- if .ClusterConfig.WorkerNodes }}
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                {{- range .ClusterConfig.WorkerNodes }}
+                - "{{ . }}"
+                {{- end }}
+              {{- else }}
+              {{- range $key, $value := .ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - "{{ printf "%v" $value }}"
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+              {{- end }}
+      {{- end }}
+      containers:
+      - name: test-container
+        image: {{validationImage $.NetworkOperator}}
+        {{- if $.Validation.GPUDirect.Enabled }}
+        env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/mpi/gcc/openmpi-current/lib:/usr/local/cuda/lib64
+        {{- end }}
+        command: ["/bin/bash", "-c", "sleep infinity"]
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK"]
+        resources:
+          requests:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
+            {{- range $i, $pf := .ClusterConfig.PFs}}
+            {{- if eq $pf.Traffic "east-west"}}
+            nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}: '1'
+            {{- end}}
+            {{- end}}
+          limits:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
+            {{- range $i, $pf := .ClusterConfig.PFs}}
+            {{- if eq $pf.Traffic "east-west"}}
+            nvidia.com/{{$.Hostdev.ResourceName}}_rail_{{$pf.Rail}}: '1'
+            {{- end}}
+            {{- end}}
+      - name: netshoot
+        image: nicolaka/netshoot:v0.15@sha256:47b907d662d139d1e2f22bfe14f4efca1e3f1feed283572f47c970c780c03b61
+        command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
+        securityContext:
+          capabilities:
+            add: ["NET_RAW"]
+{{- else}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hostdev-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+  namespace: "{{$.CurrentNetworkNamespace}}"
+spec:
+  selector:
+    matchLabels:
+      app: hostdev-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: hostdev-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+      annotations:
+        k8s.v1.cni.cncf.io/networks: {{.Hostdev.NetworkName}}{{suffix $.ClusterConfig.Identifier}}{{nsSuffix $.NetworkNamespaces $.CurrentNetworkNamespace}}
+    spec:
+      serviceAccountName: l8k-validation
+      {{- if $.NetworkOperator.ImagePullSecrets }}
+      imagePullSecrets:
+        {{- range $.NetworkOperator.ImagePullSecrets }}
+      - name: "{{ . }}"
+        {{- end }}
+      {{- end }}
+      {{- if or .ClusterConfig.WorkerNodes .ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- if .ClusterConfig.WorkerNodes }}
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                {{- range .ClusterConfig.WorkerNodes }}
+                - "{{ . }}"
+                {{- end }}
+              {{- else }}
+              {{- range $key, $value := .ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - "{{ printf "%v" $value }}"
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+              {{- end }}
+      {{- end }}
+      containers:
+      - name: test-container
+        image: {{validationImage $.NetworkOperator}}
+        {{- if $.Validation.GPUDirect.Enabled }}
+        env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/mpi/gcc/openmpi-current/lib:/usr/local/cuda/lib64
+        {{- end }}
+        command: ["/bin/bash", "-c", "sleep infinity"]
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK"]
+        resources:
+          requests:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
+            nvidia.com/{{.Hostdev.ResourceName}}: '1'
+          limits:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
+            nvidia.com/{{.Hostdev.ResourceName}}: '1'
+      - name: netshoot
+        image: nicolaka/netshoot:v0.15@sha256:47b907d662d139d1e2f22bfe14f4efca1e3f1feed283572f47c970c780c03b61
+        command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
+        securityContext:
+          capabilities:
+            add: ["NET_RAW"]
+{{- end}}

@@ -201,6 +201,9 @@ func LoadUserConfig(input UserConfigInput, opts options.Options) (*config.Launch
 	}
 	if isEffective {
 		err = networkoperatorplugin.ApplyExplicitCLIConfigOverrides(opts, cfg)
+		if err == nil {
+			err = config.ApplyFlavorDefaults(cfg)
+		}
 	}
 	if err != nil {
 		return cfg, path, fmt.Errorf("apply CLI config overrides: %w", err)

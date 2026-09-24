@@ -33,6 +33,8 @@ Two limits apply together in requestor mode: a request starts only when both `ma
 | DOCA/OFED upgrade | Network Operator drains nodes directly and `maxParallelUpgrades` is effective. | Network Operator creates `NodeMaintenance` requests and global Maintenance Operator limits are effective. |
 | SR-IOV configuration | SR-IOV Operator internal drain controller uses `SriovNetworkPoolConfig.spec.maxUnavailable`. | External drainer and Network Operator requestor hand off draining to Maintenance Operator limits. |
 
+OpenShift profiles use the Red Hat SR-IOV Operator's native drain controller for all supported Network Operator releases. Their generated `SriovNetworkPoolConfig.spec.maxUnavailable` carries `maintenance.maxUnavailable`; the external drainer behavior in the table applies to Kubernetes profiles.
+
 ## Upgrade Existing Releases
 
 Requestor mode is partially configured through Helm values. Applying only generated CRs cannot enable the requestors.

@@ -1,0 +1,54 @@
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: l8k-validation{{boundedSuffix 40 .CurrentNetworkNamespace}}
+allowPrivilegedContainer: false
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+readOnlyRootFilesystem: false
+allowedCapabilities: [IPC_LOCK, NET_RAW]
+defaultAddCapabilities: []
+requiredDropCapabilities: []
+volumes: [configMap, downwardAPI, emptyDir, projected, secret]
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: l8k-validation
+  namespace: "{{.CurrentNetworkNamespace}}"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: l8k-validation-scc
+  namespace: "{{.CurrentNetworkNamespace}}"
+rules:
+  - apiGroups: [security.openshift.io]
+    resources: [securitycontextconstraints]
+    resourceNames: [l8k-validation{{boundedSuffix 40 .CurrentNetworkNamespace}}]
+    verbs: [use]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: l8k-validation-scc
+  namespace: "{{.CurrentNetworkNamespace}}"
+subjects:
+  - kind: ServiceAccount
+    name: l8k-validation
+    namespace: "{{.CurrentNetworkNamespace}}"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: l8k-validation-scc

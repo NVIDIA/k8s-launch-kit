@@ -41,6 +41,7 @@ var (
 	logLevel                 string
 	logFile                  string
 	configDir                string
+	flavor                   string // Standalone deploy, validate, and clean flags.
 	saveDeploymentFiles      string
 	deploy                   bool
 	kubeconfig               string
@@ -221,6 +222,7 @@ func init() {
 	setFlagGroup(rootCmd, "enabled-plugins", GroupCommon)
 	setFlagGroup(rootCmd, "config-dir", GroupCommon)
 	setFlagGroup(rootCmd, "user-config", GroupCommon)
+	setFlagGroup(rootCmd, "flavor", GroupCommon)
 	setFlagGroup(rootCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(rootCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(rootCmd, "network-operator-release", GroupCommon)

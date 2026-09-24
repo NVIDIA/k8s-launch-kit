@@ -158,3 +158,7 @@ these by applying `MaintenanceOperatorConfig` alone.
 - [k8s-launch-kit-dryrun](../k8s-launch-kit-dryrun/SKILL.md) — Preview before deploying
 - [k8s-launch-kit-clean](../k8s-launch-kit-clean/SKILL.md) — Remove an installed deployment
 - [k8s-launch-kit-troubleshoot](../k8s-launch-kit-troubleshoot/SKILL.md) — Debug deployment failures
+
+## OpenShift
+
+OpenShift deploy requires certified operator installations, uses OLM CSV/API checks, and configures existing operators. Helm values in the deployment directory are rejected. IPPool dry-run checks may be deferred until NCP installs NV-IPAM.

@@ -6,16 +6,53 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
+
+func TestIsOpenShiftCluster(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	crd.Name = "clusterversions.config.openshift.io"
+	for _, tc := range []struct {
+		name    string
+		objects []client.Object
+		want    bool
+	}{
+		{name: "OpenShift CRD present", objects: []client.Object{crd}, want: true},
+		{name: "Kubernetes CRD absent", objects: nil, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objects...).Build()
+			got, err := isOpenShiftCluster(context.Background(), c)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+	// A read failure must stop cleanup rather than assume Kubernetes.
+	c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return errors.New("forbidden")
+		},
+	}).Build()
+	_, err := isOpenShiftCluster(context.Background(), c)
+	require.ErrorContains(t, err, "forbidden")
+}
 
 func preserveCleanFlagState(t *testing.T) {
 	t.Helper()

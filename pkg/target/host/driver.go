@@ -45,6 +45,7 @@ type LauncherRequest struct {
 
 // DeployRequest contains the Host-owned inputs for standalone deployment.
 type DeployRequest struct {
+	Flavor            string
 	LaunchKitVersion  string
 	Kubeconfig        string
 	DeploymentFiles   string
@@ -64,6 +65,7 @@ type DeployRequest struct {
 
 // ValidateRequest contains the Host-owned inputs for standalone validation.
 type ValidateRequest struct {
+	Flavor            string
 	Kubeconfig        string
 	DeploymentFiles   string
 	UserConfig        string

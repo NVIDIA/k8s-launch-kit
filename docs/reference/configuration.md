@@ -65,6 +65,8 @@ configuration is resolved.
 
 | Section | Purpose |
 | --- | --- |
+| `flavor` | `k8s` (default) or `ocp`; selects profile and operator integration. |
+| `nfd` | OpenShift NFD configuration object namespace and name. |
 | `networkOperator` | Release line, image repositories, Helm repository, namespace, and image pull secrets. |
 | `networkNamespaces` | Namespaces that receive secondary network CRs and example DaemonSets. |
 | `workload` | Optional custom workload manifest. |
@@ -412,3 +414,7 @@ Each PF can include `deviceID`, `pciAddress`, `rdmaDevice`, `networkInterface`,
 `traffic`, `rail`, `psid`, `partNumber`, `model`, `numaNode`, `connectedGPU`,
 `connectedGPUPCIAddress`, and `gpuProximity`. PF MAC addresses are
 host-specific and are not part of the saved configuration.
+
+## OpenShift flavor
+
+See [OpenShift host deployments](../user/openshift.md) for operator prerequisites, separate namespace defaults, supported profiles, and validation behavior. `sriov.operatorNamespace`, `nfd.operatorNamespace`, `nfd.configurationName`, and `maintenance.operatorNamespace` can override their OpenShift defaults.

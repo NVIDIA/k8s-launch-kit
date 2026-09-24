@@ -128,3 +128,7 @@ If any phase fails, subsequent phases are skipped. The JSON output includes whic
 - [k8s-launch-kit-discover](../k8s-launch-kit-discover/SKILL.md) — Discovery details
 - [k8s-launch-kit-generate](../k8s-launch-kit-generate/SKILL.md) — Profile selection details
 - [k8s-launch-kit-deploy](../k8s-launch-kit-deploy/SKILL.md) — Deploy details
+
+## OpenShift
+
+The root Host pipeline accepts `--flavor ocp` and requires externally installed certified operators. Set explicit `clusterConfig[].workerNodes` for bounded discovery and inspect generated selectors before live deploy.

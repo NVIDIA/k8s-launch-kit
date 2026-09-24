@@ -1,0 +1,9 @@
+apiVersion: maintenance.nvidia.com/v1alpha1
+kind: MaintenanceOperatorConfig
+metadata:
+  name: default
+  namespace: "{{.Maintenance.OperatorNamespace}}"
+spec:
+  maxParallelOperations: {{ .Maintenance.MaxParallelOperations.String | yamlQuote }}
+  maxUnavailable: {{ .Maintenance.MaxUnavailable.String | yamlQuote }}
+  maxNodeMaintenanceTimeSeconds: {{ .Maintenance.MaxNodeMaintenanceTimeSeconds }}

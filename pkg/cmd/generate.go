@@ -133,6 +133,7 @@ func init() {
 	generateCmd.Flags().BoolVar(&overwriteExistingFlag, "overwrite-existing", false, "Converge the cluster to the rendered manifests when preflight detects drift: helm upgrade the chart on chart-version/values mismatch, delete stray Network Operator CRs in the operator namespace, and rewrite NicClusterPolicy component versions via SSA. Off by default — preflight fails fast and lists what would change.")
 
 	setFlagGroup(generateCmd, "user-config", GroupCommon)
+	setFlagGroup(generateCmd, "flavor", GroupCommon)
 	setFlagGroup(generateCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(generateCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(generateCmd, "network-operator-release", GroupCommon)

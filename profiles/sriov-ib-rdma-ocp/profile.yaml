@@ -1,0 +1,25 @@
+name: OpenShift SR-IOV Infiniband RDMA
+plugin: network-operator
+profileRequirements:
+  flavor: ocp
+  fabric: infiniband
+  deployment: sriov
+nodeCapabilities:
+  ib: true
+  rdma: true
+description: |
+  SR-IOV Infiniband RDMA profile offers high-performance virtualized Infiniband networking with hardware acceleration
+deploymentGuide: sriov-ib-rdma.rst
+templates:
+  - ../sriov-ethernet-rdma-ocp/01-sriovoperatorconfig.yaml
+  - ../sriov-ethernet-rdma-ocp/02-maintenanceoperatorconfig.yaml
+  - ../sriov-ethernet-rdma-ocp/03-nodefeaturediscovery.yaml
+  - 10-nicclusterpolicy.yaml
+  - ../sriov-ib-rdma/11-nicnodepolicy.yaml
+  - ../sriov-ethernet-rdma-ocp/20-ippool.yaml
+  - ../sriov-ib-rdma/30-nicinterfacenametemplate.yaml
+  - 35-sriovnetworkpoolconfig.yaml
+  - 40-sriovnetworknodepolicy.yaml
+  - 50-sriovibnetwork.yaml
+  - ../sriov-ethernet-rdma-ocp/58-example-validation-security.yaml
+  - 60-example-daemonset.yaml

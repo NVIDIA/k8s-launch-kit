@@ -37,6 +37,8 @@ const (
 )
 
 type NetworkOperatorPlugin struct {
+	LaunchKitConfig  *config.LaunchKitConfig
+	DiscoveryWorkers []string
 	// LaunchKitVersion is the version reported by the invoking l8k binary.
 	LaunchKitVersion string
 
@@ -179,7 +181,9 @@ func (p *NetworkOperatorPlugin) SelectProfile(config *config.LaunchKitConfig) (*
 // forwarded as discovery.Options so library callers can invoke the same
 // flow via discovery.Discover without constructing a NetworkOperatorPlugin.
 func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig) error {
+	if err := CheckOCPOperators(ctx,c,cfg,false);err!=nil{return err}
 	return discovery.DiscoverClusterConfig(ctx, c, p.RESTConfig, cfg, discovery.Options{
+		WorkerNodes:      p.DiscoveryWorkers,
 		NodeSelector:     p.NodeSelector,
 		KeepNamespace:    p.KeepNamespace,
 		CollapseNicRails: p.CollapseNicRails,

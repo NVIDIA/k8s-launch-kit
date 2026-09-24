@@ -1,0 +1,96 @@
+apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+spec:
+  {{- if .NetworkOperator.ImagePullSecrets }}
+  global:
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - "{{ . }}"
+    {{- end }}
+  {{- end }}
+  {{- if and .NicConfigurationOperator (or .NicConfigurationOperator.DeployNicInterfaceNameTemplate .NicConfigurationOperator.UpdateFW) }}
+  nicConfigurationOperator:
+    operator:
+      image: nic-configuration-operator
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
+    configurationDaemon:
+      image: nic-configuration-operator-daemon
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
+    {{- if .NicConfigurationOperator.UpdateFW }}
+    nicFirmwareStorage:
+      create: true
+      pvcName: nic-fw-storage-pvc
+      storageClassName: nic-fw-storage-class
+      availableStorageSize: 1Gi
+    {{- end }}
+    logLevel: info
+  {{- end }}
+  nvIpam:
+    image: nvidia-k8s-ipam
+    repository: "{{.NetworkOperator.Repository}}"
+    version: "{{.NetworkOperator.ComponentVersion}}"
+    imagePullSecrets: []
+    enableWebhook: false
+  secondaryNetwork:
+    ipoib:
+      image: ipoib-cni
+      repository: "{{.NetworkOperator.Repository}}"
+      version: "{{.NetworkOperator.ComponentVersion}}"
+  {{- if versionLT .NetworkOperator.SelectedRelease "26.4" }}
+  {{- /* 26.1 model: NicNodePolicy does not exist; OFED driver and the
+         RDMA-shared device plugin are configured here in NicClusterPolicy and
+         apply cluster-wide. legacyRdmaSharedConfigList aggregates east-west
+         PFs across all groups since NCP is a singleton. */}}
+  {{- if .DOCADriver.Enable }}
+  ofedDriver:
+    image: doca-driver
+    repository: "{{.NetworkOperator.Repository}}"
+    {{- if .NetworkOperator.ImagePullSecrets }}
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - "{{ . }}"
+    {{- end }}
+    {{- end }}
+    version: "{{.DOCADriver.Version}}"
+    env:
+    {{- range mofedEnv .DOCADriver }}
+      - name: {{if .Custom}}{{.Name | yamlQuote}}{{else}}{{.Name}}{{end}}
+        value: {{.Value | yamlQuote}}
+    {{- end }}
+    upgradePolicy:
+      autoUpgrade: true
+      drain:
+        deleteEmptyDir: true
+        enable: true
+        force: true
+        timeoutSeconds: 300
+      maxParallelUpgrades: {{ .Maintenance.MaxParallelUpgrades }}
+    startupProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    livenessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+    readinessProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 30
+  {{- end }}
+  rdmaSharedDevicePlugin:
+    image: k8s-rdma-shared-dev-plugin
+    repository: "{{.NetworkOperator.Repository}}"
+    {{- if .NetworkOperator.ImagePullSecrets }}
+    imagePullSecrets:
+    {{- range .NetworkOperator.ImagePullSecrets }}
+      - "{{ . }}"
+    {{- end }}
+    {{- end }}
+    version: "{{.NetworkOperator.ComponentVersion}}"
+    config: |
+      {
+        "configList": [{{ legacyRdmaSharedConfigList .ClusterConfig .RdmaShared .Profile.Multirail }}]
+      }
+  {{- end }}
