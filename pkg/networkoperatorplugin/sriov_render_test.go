@@ -17,7 +17,9 @@
 package networkoperatorplugin
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +28,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/stretchr/testify/require"
+	kubeyaml "k8s.io/apimachinery/pkg/util/yaml"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	yaml "sigs.k8s.io/yaml"
@@ -112,7 +115,7 @@ func metaString(t *testing.T, doc map[string]any, key string) string {
 func parseDocs(t *testing.T, name, content string) []map[string]any {
 	t.Helper()
 	var docs []map[string]any
-	for i, raw := range splitYAMLDocuments(content) {
+	for i, raw := range splitRenderYAMLDocs(t, content) {
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
@@ -223,7 +226,7 @@ func TestProfileManifestsAreValidMultiDocYAML(t *testing.T) {
 					continue // values-like file with no Kind
 				}
 				gotDocs := 0
-				for _, raw := range splitYAMLDocuments(content) {
+				for _, raw := range splitRenderYAMLDocs(t, content) {
 					if strings.TrimSpace(raw) == "" {
 						continue
 					}
@@ -559,4 +562,19 @@ func TestNetworkNamespacesFanOut(t *testing.T) {
 			require.Equal(t, "default", specString(t, doc, "networkNamespace"))
 		}
 	})
+}
+
+// splitRenderYAMLDocs is test-only strict stream reading for template output.
+func splitRenderYAMLDocs(t *testing.T, content string) []string {
+	t.Helper()
+	reader := kubeyaml.NewYAMLReader(bufio.NewReader(strings.NewReader(content)))
+	var documents []string
+	for {
+		raw, err := reader.Read()
+		if err == io.EOF {
+			return documents
+		}
+		require.NoError(t, err)
+		documents = append(documents, string(raw))
+	}
 }

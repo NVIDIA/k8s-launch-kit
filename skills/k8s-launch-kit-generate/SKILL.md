@@ -18,6 +18,10 @@ unchanged.
 
 Generate Kubernetes YAML manifests for NVIDIA networking from a cluster config and profile selection.
 
+Generation validates all rendered YAML after annotation and before replacing
+the output directory. A malformed resource reports its filename/document and
+leaves the previous output directory in place.
+
 ## Usage
 
 ```bash

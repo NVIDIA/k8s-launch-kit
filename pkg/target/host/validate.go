@@ -21,13 +21,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"k8s.io/client-go/rest"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
@@ -44,14 +44,14 @@ const skipNetworkOperatorHelmReason = "Network Operator Helm management disabled
 
 type validateRunner struct {
 	newKubeClient         func(string) (ctrlclient.Client, *rest.Config, error)
-	runConnectivityMatrix func(context.Context, ctrlclient.Client, *rest.Config, ui.Output, connectivity.Options) (*connectivity.MatrixResult, error)
+	runConnectivityMatrix func(context.Context, ctrlclient.Client, *rest.Config, ui.Output, *bundle.Bundle, connectivity.Options) (*connectivity.MatrixResult, error)
 }
 
 // NewValidateRunner returns the production standalone Host validation service.
 func NewValidateRunner() ValidateRunner {
 	return validateRunner{
 		newKubeClient:         kubeclient.New,
-		runConnectivityMatrix: connectivity.RunMatrix,
+		runConnectivityMatrix: connectivity.RunMatrixBundle,
 	}
 }
 
@@ -73,7 +73,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		presetResults     []presetmatch.Result
 		reportClient      ctrlclient.Client
 		reportRestConfig  *rest.Config
-		reportManifestDir string
+		reportBundle      *bundle.Bundle
 		reportConfig      *config.LaunchKitConfig
 		cfgPath           string
 		operatorNamespace = defaultOperatorNamespace
@@ -96,7 +96,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		}
 		emitVerdictBanner(overall, request.OutputFormat)
 		writeHTMLReportIfWanted(context.Background(), reportClient, reportRestConfig,
-			reportManifestDir, request.DeploymentFiles,
+			reportBundle, request.DeploymentFiles,
 			operatorNamespace, versionCheck, componentCheck, helmValuesCheck, strayCheck, results, &matrix, &warnings,
 			presetResults, overall, reportConfig, request.OutputFormat,
 			request.ReportPath, request.Version, request.Kubeconfig)
@@ -130,7 +130,10 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 			"Run 'l8k generate' first or pass --deployment-files <path>",
 		))
 	}
-	reportManifestDir = manifestDir
+	reportBundle, err = bundle.Load(os.DirFS(manifestDir))
+	if err != nil {
+		return exitWithReport(apperrors.NewValidationError("invalid deployment artifacts", err, "Correct the named file and rerun validate"))
+	}
 
 	// Static validation keeps the historical best-effort config behavior.
 	// Connectivity is stricter because routing and GPUDirect expectations
@@ -206,7 +209,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 				"Set profile.routing and validation.gpuDirect.enabled explicitly; GPUDirect also requires worker and rail topology",
 			))
 		}
-		objects, refs, err := connectivity.LoadExampleDaemonSets(manifestDir)
+		objects, refs, err := connectivity.ExampleDaemonSets(reportBundle)
 		if err != nil {
 			return exitWithReport(apperrors.NewValidationError(
 				"invalid connectivity test workload",
@@ -221,14 +224,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 				"Provide an apps/v1 test DaemonSet with a namespace and the containers required by the selected checks",
 			))
 		}
-		hasDeploymentInputs, err := hasDeploymentValidationInputs(manifestDir)
-		if err != nil {
-			return exitWithReport(apperrors.NewValidationError(
-				"failed to inspect deployment validation inputs",
-				err,
-				"Provide a readable --deployment-files directory",
-			))
-		}
+		hasDeploymentInputs := hasDeploymentValidationInputsBundle(reportBundle)
 		connectivityOnly = !hasDeploymentInputs
 	}
 
@@ -283,7 +279,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 			overall = connectivityOnlyVerdict(matrix, connectivityChecks)
 		}
 		emitVerdictBanner(overall, request.OutputFormat)
-		writeHTMLReportIfWanted(ctx, k8sClient, restConfig, manifestDir, request.DeploymentFiles,
+		writeHTMLReportIfWanted(ctx, k8sClient, restConfig, reportBundle, request.DeploymentFiles,
 			operatorNamespace, versionCheck, componentCheck, helmValuesCheck, strayCheck, results, &matrix, &warnings,
 			presetResults, overall, reportConfig, request.OutputFormat,
 			request.ReportPath, request.Version, request.Kubeconfig)
@@ -335,12 +331,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		if skipNetworkOperatorHelm {
 			hvCheck = &networkoperatorplugin.HelmValuesCheck{Skipped: true, Reason: skipNetworkOperatorHelmReason}
 		} else {
-			valuesPath := filepath.Join(manifestDir, "values.yaml")
-			var generatedValuesYAML []byte
-			if b, err := os.ReadFile(valuesPath); err == nil {
-				generatedValuesYAML = b
-			}
-			hvCheck, hvErr = networkoperatorplugin.CheckHelmReleaseValues(ctx, restConfig, operatorNamespace, generatedValuesYAML)
+			hvCheck, hvErr = networkoperatorplugin.CheckHelmReleaseValuesFromBundle(ctx, restConfig, operatorNamespace, reportBundle)
 		}
 		log.Log.V(1).Info("validation check completed", "check", "Helm values drift",
 			"success", hvErr == nil, "duration", time.Since(checkStarted).Round(time.Millisecond).String())
@@ -355,9 +346,9 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		// the HTML report lists every offender, and the user can sweep
 		// them with `l8k deploy --overwrite-existing`.
 		checkStarted = time.Now()
-		genRefs, scanErr := preflight.ScanGeneratedManifests(manifestDir)
+		genRefs, scanErr := preflight.GeneratedManifestRefs(reportBundle)
 		if scanErr != nil {
-			log.Log.V(1).Info("stray-CR scan failed", "error", scanErr.Error())
+			return exitWithReport(apperrors.NewValidationError("invalid expected manifest inventory", scanErr, "Reload the deployment artifacts"))
 		}
 		stray := preflight.CheckStrayCRs(ctx, preflight.Inputs{
 			KubeClient:         k8sClient,
@@ -375,7 +366,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		if cfg != nil {
 			validationFlavor = cfg.Flavor
 		}
-		results, valErr = networkoperatorplugin.ValidateManifests(ctx, k8sClient, manifestDir, validationFlavor)
+		results, valErr = networkoperatorplugin.ValidateBundle(ctx, k8sClient, reportBundle, validationFlavor)
 		log.Log.V(1).Info("validation check completed", "check", "manifest readiness",
 			"success", valErr == nil, "objects", len(results),
 			"duration", time.Since(checkStarted).Round(time.Millisecond).String())
@@ -391,7 +382,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		// loop re-runs the registry-backed validate every 10s. The
 		// final results / verdict are emitted normally below.
 		if request.Wait > 0 {
-			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), manifestDir, results, request.Wait, validationFlavor)
+			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), reportBundle, results, request.Wait, validationFlavor)
 		}
 
 		verdict = emitValidationReport(versionCheck, results, presetDeviations, request.OutputFormat)
@@ -439,7 +430,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	if connectivityEnabled {
 		uiOutput, _ := ui.NewOutputForFormat(request.OutputFormat, request.AutoApprove)
 		ctxWithUI := ui.WithOutput(ctx, uiOutput)
-		m, err := runner.runConnectivityMatrix(ctxWithUI, k8sClient, restConfig, uiOutput, connectivity.Options{
+		m, err := runner.runConnectivityMatrix(ctxWithUI, k8sClient, restConfig, uiOutput, reportBundle, connectivity.Options{
 			ManifestDir:             manifestDir,
 			OpenShift:               ocp,
 			Timeout:                 request.ConnectivityTime,

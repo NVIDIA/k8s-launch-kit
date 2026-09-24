@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
@@ -32,6 +33,8 @@ import (
 // executeGeneration handles the profile selection and manifest generation phase.
 // Returns nil if no profile is configured and generation is skipped.
 func (l *Launcher) executeGeneration(configPath string) error {
+	l.generatedBundles = make(map[generatedProfileKey]*bundle.Bundle)
+	l.foundProfiles = nil
 	input, err := config.LoadInput(configPath, l.logger)
 	if err != nil {
 		return fmt.Errorf("failed to load full config: %w", err)
@@ -235,19 +238,32 @@ func (l *Launcher) generateDeploymentFiles(profile *profiles.Profile, clusterCon
 	if err != nil {
 		return fmt.Errorf("failed to process profile templates: %w", err)
 	}
+	files := make([]bundle.File, 0, len(renderedFiles))
+	for name, content := range renderedFiles {
+		files = append(files, bundle.File{Name: name, Content: content})
+	}
+	artifacts, err := bundle.FromFiles(files)
+	if err != nil {
+		return apperrors.NewValidationError("invalid generated artifacts", err, "Correct the named template and regenerate")
+	}
 
 	if l.options.SaveDeploymentFiles != "" {
-		if err := l.saveDeploymentFiles(renderedFiles, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin)); err != nil {
+		if err := l.saveDeploymentBundle(artifacts, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin)); err != nil {
 			return fmt.Errorf("failed to save deployment files: %w", err)
 		}
 	}
+	if l.generatedBundles == nil {
+		l.generatedBundles = make(map[generatedProfileKey]*bundle.Bundle)
+	}
+	l.generatedBundles[generatedProfileKey{Plugin: profile.Plugin, Name: profile.Name}] = artifacts
 
 	return nil
 }
 
 // saveDeploymentFiles saves the rendered deployment files to disk.
-func (l *Launcher) saveDeploymentFiles(renderedFiles map[string]string, outputDir string) error {
+func (l *Launcher) saveDeploymentBundle(artifacts *bundle.Bundle, outputDir string) error {
 	l.logger.Info("Saving deployment files", "directory", outputDir)
+	files := artifacts.Files()
 
 	// Clean the output directory before saving files
 	if err := os.RemoveAll(outputDir); err != nil {
@@ -257,10 +273,10 @@ func (l *Launcher) saveDeploymentFiles(renderedFiles map[string]string, outputDi
 		return fmt.Errorf("failed to create output directory %s: %w", outputDir, err)
 	}
 
-	for filename, content := range renderedFiles {
-		outputPath := fmt.Sprintf("%s/%s", outputDir, filename)
+	for _, file := range files {
+		outputPath := filepath.Join(outputDir, file.Name)
 
-		if err := os.WriteFile(outputPath, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(outputPath, []byte(file.Content), 0644); err != nil {
 			l.ui.Error("Failed to write file %s: %v", outputPath, err)
 			return fmt.Errorf("failed to write file %s: %w", outputPath, err)
 		}
@@ -269,10 +285,10 @@ func (l *Launcher) saveDeploymentFiles(renderedFiles map[string]string, outputDi
 		l.result.GeneratedFiles = append(l.result.GeneratedFiles, outputPath)
 	}
 
-	l.ui.Success("Saved %d file(s) to: %s", len(renderedFiles), outputDir)
+	l.ui.Success("Saved %d file(s) to: %s", len(files), outputDir)
 	l.logger.Info("All deployment files saved successfully",
 		"directory", outputDir,
-		"fileCount", len(renderedFiles))
+		"fileCount", len(files))
 
 	return nil
 }

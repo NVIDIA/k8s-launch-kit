@@ -18,41 +18,23 @@ package host
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// hasDeploymentValidationInputs reports whether a deployment directory has
-// anything for the Helm, manifest-state, or stray-resource stages. Example
-// workloads and an adjacent cluster-config.yaml are connectivity inputs only.
-func hasDeploymentValidationInputs(manifestDir string) (bool, error) {
-	entries, err := os.ReadDir(manifestDir)
-	if err != nil {
-		return false, fmt.Errorf("read deployment files directory %s: %w", manifestDir, err)
+func hasDeploymentValidationInputsBundle(artifacts *bundle.Bundle) bool {
+	if artifacts == nil {
+		return false
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	for _, file := range artifacts.Files() {
+		if !bundle.IsExampleFilename(file.Name) {
+			return true
 		}
-		name := strings.ToLower(entry.Name())
-		extension := strings.ToLower(filepath.Ext(name))
-		if extension != ".yaml" && extension != ".yml" {
-			continue
-		}
-		if name == "cluster-config.yaml" || name == "cluster-config.yml" {
-			continue
-		}
-		if networkoperatorplugin.IsExampleManifest(name) {
-			continue
-		}
-		return true, nil
 	}
-	return false, nil
+	return false
 }
 
 func validateConnectivityDaemonSets(

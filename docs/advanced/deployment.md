@@ -16,6 +16,13 @@ l8k deploy \
 
 If `<deployment-files>/network-operator/` exists, Launch Kit uses it automatically. Otherwise it reads YAML files directly from `<deployment-files>`.
 
+Launch Kit loads and checks the complete flat artifact directory before Helm
+installation, preflight remediation, or resource apply. Invalid YAML, missing
+resource identity fields, and duplicate declared resources stop deployment
+with the file and document number in the error. Only `values.yaml` is treated
+as Helm values; rename `values.yml` or case variants to `values.yaml`. The
+expected preflight inventory and applied objects come from that same snapshot.
+
 ## Helm Install Or Upgrade
 
 When the bundle contains `values.yaml` and the selected release supplies a Helm repository URL, Launch Kit uses the Helm Go SDK to manage the `network-operator` release:

@@ -19,6 +19,11 @@ until `l8k schema` reports all required DPF phases as available.
 The root command snapshots its arguments and runs the complete concrete Host
 pipeline as one bound target operation.
 
+The Host pipeline validates the post-annotation artifacts before replacing
+generated output, then deploys that same retained snapshot. If artifact
+validation fails, it reports the source file/document and does not enter Helm
+or resource apply. A standalone deploy loads its own snapshot from disk.
+
 ## Usage
 
 The root command chains all phases in one invocation:

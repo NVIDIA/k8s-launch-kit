@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -123,6 +124,7 @@ func TestValidateRunsConnectivityOnlyFromExampleDaemonSet(t *testing.T) {
 			_ ctrlclient.Client,
 			_ *rest.Config,
 			_ ui.Output,
+			_ *bundle.Bundle,
 			opts connectivity.Options,
 		) (*connectivity.MatrixResult, error) {
 			captured = opts
@@ -168,7 +170,7 @@ func TestValidatePassesOpenShiftFlavorToConnectivity(t *testing.T) {
 		newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) {
 			return nil, &rest.Config{}, nil
 		},
-		runConnectivityMatrix: func(_ context.Context, _ ctrlclient.Client, _ *rest.Config, _ ui.Output, opts connectivity.Options) (*connectivity.MatrixResult, error) {
+		runConnectivityMatrix: func(_ context.Context, _ ctrlclient.Client, _ *rest.Config, _ ui.Output, _ *bundle.Bundle, opts connectivity.Options) (*connectivity.MatrixResult, error) {
 			captured = opts
 			return nil, stop
 		},
@@ -225,6 +227,7 @@ func TestValidateConnectivityOnlyHonorsCLIOverrides(t *testing.T) {
 			_ ctrlclient.Client,
 			_ *rest.Config,
 			_ ui.Output,
+			_ *bundle.Bundle,
 			opts connectivity.Options,
 		) (*connectivity.MatrixResult, error) {
 			captured = opts
@@ -319,7 +322,7 @@ func TestValidateConnectivityOnlyRequiresConclusiveMatrix(t *testing.T) {
 					return nil, &rest.Config{}, nil
 				},
 				runConnectivityMatrix: func(
-					context.Context, ctrlclient.Client, *rest.Config, ui.Output, connectivity.Options,
+					context.Context, ctrlclient.Client, *rest.Config, ui.Output, *bundle.Bundle, connectivity.Options,
 				) (*connectivity.MatrixResult, error) {
 					return result, nil
 				},
@@ -454,7 +457,7 @@ spec:
 	connectivityRan := false
 	runner := validateRunner{
 		newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) { return kubeClient, &rest.Config{}, nil },
-		runConnectivityMatrix: func(context.Context, ctrlclient.Client, *rest.Config, ui.Output, connectivity.Options) (*connectivity.MatrixResult, error) {
+		runConnectivityMatrix: func(context.Context, ctrlclient.Client, *rest.Config, ui.Output, *bundle.Bundle, connectivity.Options) (*connectivity.MatrixResult, error) {
 			connectivityRan = true
 			return nil, nil
 		},
