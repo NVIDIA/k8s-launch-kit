@@ -44,6 +44,11 @@ See [Deployment Profiles](../user/profiles.md) for the fabric and deployment-typ
 
 Launch Kit cleans the selected plugin output directory before every render and writes Network Operator files under:
 
+Rendered files are structurally checked after ownership annotations and
+before the output directory is cleaned. If this check fails, the previous
+output remains in place. Successful output keeps the rendered bytes, and a
+combined generate/deploy run uses the same checked snapshot.
+
 ```text
 deployment/
 `-- network-operator/

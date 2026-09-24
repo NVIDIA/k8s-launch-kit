@@ -27,13 +27,14 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	sigsYaml "sigs.k8s.io/yaml"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
@@ -414,7 +415,7 @@ func writeHTMLReportIfWanted(
 	ctx context.Context,
 	c ctrlclient.Client,
 	restConfig *rest.Config,
-	manifestDir string,
+	artifacts *bundle.Bundle,
 	deploymentDir string,
 	operatorNamespace string,
 	versionCheck *networkoperatorplugin.VersionCheck,
@@ -457,7 +458,7 @@ func writeHTMLReportIfWanted(
 			APIServerVersion:  probeAPIServerVersion(restConfig),
 			OperatorNamespace: operatorNamespace,
 		},
-		Profile:        loadProfileInfo(manifestDir, loadedConfig),
+		Profile:        loadProfileInfo(artifacts, loadedConfig),
 		NodeGroups:     loadNodeGroups(presetResults, loadedConfig),
 		Nodes:          listNodesForReport(ctx, c),
 		Release:        versionCheck,
@@ -530,9 +531,9 @@ func probeAPIServerVersion(restConfig *rest.Config) string {
 // loadProfileInfo projects the already-loaded profile into the report. When
 // the config doesn't carry an explicit profile block, it falls back to the
 // Kinds present in the rendered deployment manifests.
-func loadProfileInfo(manifestDir string, cfg *config.LaunchKitConfig) connectivity.ProfileInfo {
+func loadProfileInfo(artifacts *bundle.Bundle, cfg *config.LaunchKitConfig) connectivity.ProfileInfo {
 	if cfg == nil || cfg.Profile == nil {
-		return inferProfileFromManifests(manifestDir)
+		return inferProfileFromBundle(artifacts)
 	}
 	info := connectivity.ProfileInfo{
 		Fabric:         cfg.Profile.Fabric,
@@ -549,9 +550,8 @@ func loadProfileInfo(manifestDir string, cfg *config.LaunchKitConfig) connectivi
 	return info
 }
 
-// inferProfileFromManifests walks the deployment-files directory and
-// reads the Kinds (and a few spec fields) out of every YAML to deduce
-// the profile that produced them.
+// inferProfileFromBundle reads Kinds and selected spec fields from the
+// validated desired snapshot to infer its profile for partial reports.
 //
 // Detection rules — first match wins, so order matters:
 //
@@ -565,48 +565,27 @@ func loadProfileInfo(manifestDir string, cfg *config.LaunchKitConfig) connectivi
 //
 // Multirail is set true when more than one SriovNetwork / Network CR is
 // present (one per rail) — single-rail deployments yield exactly one.
-func inferProfileFromManifests(manifestDir string) connectivity.ProfileInfo {
-	if manifestDir == "" {
-		return connectivity.ProfileInfo{}
-	}
-	entries, err := os.ReadDir(manifestDir)
-	if err != nil {
+func inferProfileFromBundle(artifacts *bundle.Bundle) connectivity.ProfileInfo {
+	if artifacts == nil {
 		return connectivity.ProfileInfo{}
 	}
 	kinds := map[string]int{}
 	railNetworks := 0
 	sawIBLinkType := false
-	for _, e := range entries {
-		if e.IsDir() {
+	for _, doc := range artifacts.Documents() {
+		if doc.Role() != bundle.Deployment {
 			continue
 		}
-		ext := filepath.Ext(e.Name())
-		if ext != ".yaml" && ext != ".yml" {
-			continue
+		obj := doc.ObjectCopy()
+		kind := obj.GetKind()
+		kinds[kind]++
+		if kind == "SriovNetwork" || kind == "SriovIBNetwork" || kind == "HostDeviceNetwork" ||
+			kind == "IPoIBNetwork" || kind == "MacvlanNetwork" {
+			railNetworks++
 		}
-		// Skip example manifests — they're not part of the
-		// network-operator surface we're trying to identify.
-		if networkoperatorplugin.IsExampleManifest(e.Name()) {
-			continue
-		}
-		content, err := os.ReadFile(filepath.Join(manifestDir, e.Name()))
-		if err != nil {
-			continue
-		}
-		for _, doc := range splitYAMLDocs(string(content)) {
-			meta := sniffManifest(doc)
-			if meta.Kind == "" {
-				continue
-			}
-			kinds[meta.Kind]++
-			if meta.Kind == "SriovNetwork" || meta.Kind == "SriovIBNetwork" ||
-				meta.Kind == "HostDeviceNetwork" || meta.Kind == "IPoIBNetwork" ||
-				meta.Kind == "MacvlanNetwork" {
-				railNetworks++
-			}
-			if meta.LinkType == "IB" || meta.LinkType == "Infiniband" {
-				sawIBLinkType = true
-			}
+		linkType, _, _ := unstructured.NestedString(obj.Object, "spec", "linkType")
+		if linkType == "IB" || linkType == "Infiniband" {
+			sawIBLinkType = true
 		}
 	}
 
@@ -639,51 +618,6 @@ func inferProfileFromManifests(manifestDir string) connectivity.ProfileInfo {
 		}
 	}
 	return info
-}
-
-// sniffManifest is a tiny YAML reader that extracts the few fields
-// inferProfileFromManifests needs without round-tripping through
-// Unstructured. linkType lives under spec.linkType on SR-IOV node
-// policies + most Network CRs.
-type manifestSniff struct {
-	Kind     string
-	LinkType string
-}
-
-func sniffManifest(doc string) manifestSniff {
-	type metaOnly struct {
-		Kind string `yaml:"kind"`
-		Spec struct {
-			LinkType string `yaml:"linkType"`
-		} `yaml:"spec"`
-	}
-	var m metaOnly
-	if err := sigsYaml.Unmarshal([]byte(doc), &m); err != nil {
-		return manifestSniff{}
-	}
-	return manifestSniff{Kind: m.Kind, LinkType: m.Spec.LinkType}
-}
-
-// splitYAMLDocs is a local copy of the splitter — the parent
-// networkoperatorplugin package keeps its own private one; copying
-// the four lines here avoids exposing it.
-func splitYAMLDocs(s string) []string {
-	var docs []string
-	var cur []string
-	for _, ln := range strings.Split(s, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(ln), "---") {
-			if len(cur) > 0 {
-				docs = append(docs, strings.Join(cur, "\n"))
-				cur = nil
-			}
-			continue
-		}
-		cur = append(cur, ln)
-	}
-	if len(cur) > 0 {
-		docs = append(docs, strings.Join(cur, "\n"))
-	}
-	return docs
 }
 
 // loadNodeGroups projects every cluster-config.yaml `clusterConfig[]` entry
@@ -970,7 +904,11 @@ func nodeRoles(labels map[string]string) string {
 // Returns the most recent results regardless of which terminal
 // condition fired. Emits a one-line update only when the in-progress
 // count changes so we don't flood logs on long waits.
-func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir string, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string) []networkoperatorplugin.ValidationResult {
+func waitForReconcile(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string) []networkoperatorplugin.ValidationResult {
+	return waitForReconcileWithInterval(ctx, c, artifacts, initial, budget, flavor, 10*time.Second)
+}
+
+func waitForReconcileWithInterval(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string, pollInterval time.Duration) []networkoperatorplugin.ValidationResult {
 	deadline := time.Now().Add(budget)
 	results := initial
 	lastInProgress := -1
@@ -997,10 +935,10 @@ func waitForReconcile(ctx context.Context, c ctrlclient.Client, manifestDir stri
 		select {
 		case <-ctx.Done():
 			return results
-		case <-time.After(10 * time.Second):
+		case <-time.After(pollInterval):
 		}
 
-		fresh, err := networkoperatorplugin.ValidateManifests(ctx, c, manifestDir, flavor)
+		fresh, err := networkoperatorplugin.ValidateBundle(ctx, c, artifacts, flavor)
 		if err != nil {
 			// Transient — keep the previous snapshot and try again
 			// on the next tick.

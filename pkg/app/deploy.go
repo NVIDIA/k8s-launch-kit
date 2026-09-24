@@ -18,13 +18,20 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+type bundleDeployer interface {
+	DeployBundle(context.Context, client.Client, *bundle.Bundle) error
+}
 
 // executeDeploy handles the deployment phase for all found profiles.
 func (l *Launcher) executeDeploy() error {
@@ -43,6 +50,10 @@ func (l *Launcher) executeDeploy() error {
 		for _, profile := range l.foundProfiles {
 			if err := l.deployConfigurationProfile(&profile); err != nil {
 				l.ui.Error("Deployment failed: %v", err)
+				var structured *apperrors.StructuredError
+				if errors.As(err, &structured) {
+					return structured
+				}
 				return apperrors.NewDeploymentError("deployment failed", err,
 					"Check cluster connectivity and resource permissions")
 			}
@@ -79,7 +90,17 @@ func (l *Launcher) deployConfigurationProfile(profile *profiles.Profile) error {
 		ctx, cancel = context.WithTimeout(ctx, l.options.DeployTimeout)
 		defer cancel()
 	}
-	if err := plugin.DeployProfile(ctx, profile, l.kubeClient, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin)); err != nil {
+	var err error
+	if capable, ok := plugin.(bundleDeployer); ok {
+		artifacts := l.generatedBundles[generatedProfileKey{Plugin: profile.Plugin, Name: profile.Name}]
+		if artifacts == nil {
+			return apperrors.NewValidationError("generated artifact snapshot is missing", nil, "Regenerate the selected profile before deployment")
+		}
+		err = capable.DeployBundle(ctx, l.kubeClient, artifacts)
+	} else {
+		err = plugin.DeployProfile(ctx, profile, l.kubeClient, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin))
+	}
+	if err != nil {
 		l.ui.Error("Deployment failed: %v", err)
 		return fmt.Errorf("failed to deploy profile: %w", err)
 	}

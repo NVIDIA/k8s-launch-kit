@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -35,6 +34,7 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/storage/driver"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
@@ -180,125 +180,83 @@ type ComponentVersionResult struct {
 // NicConfigurationTemplate's condition-Reason classification, and
 // NicClusterPolicy's appliedStates breakdown all surface here too.
 func ValidateManifests(ctx context.Context, c client.Client, manifestDir string, flavor ...string) ([]ValidationResult, error) {
-	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
-	entries, err := os.ReadDir(manifestDir)
+	artifacts, err := bundle.Load(os.DirFS(manifestDir))
 	if err != nil {
-		return nil, fmt.Errorf("read manifest dir %s: %w", manifestDir, err)
+		return nil, err
 	}
-	files := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		ext := filepath.Ext(e.Name())
-		if ext != ".yaml" && ext != ".yml" {
-			continue
-		}
-		if strings.EqualFold(e.Name(), "values.yaml") || strings.EqualFold(e.Name(), "values.yml") {
-			log.Log.V(1).Info("Skipping Helm values file", "file", e.Name())
-			continue
-		}
-		if isExampleManifest(e.Name()) {
-			log.Log.V(1).Info("Skipping example manifest", "file", e.Name())
-			continue
-		}
-		files = append(files, e.Name())
-	}
-	sort.Strings(files)
+	return ValidateBundle(ctx, c, artifacts, flavor...)
+}
 
+func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bundle, flavor ...string) ([]ValidationResult, error) {
+	if artifacts == nil {
+		return nil, fmt.Errorf("validation artifact bundle is nil")
+	}
+	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
 	registry := crstate.NewDefault()
 	var results []ValidationResult
-	for _, name := range files {
-		full := filepath.Join(manifestDir, name)
-		content, err := os.ReadFile(full)
-		if err != nil {
-			return results, fmt.Errorf("read %s: %w", full, err)
+	for _, doc := range artifacts.Documents() {
+		if doc.Role() != bundle.Deployment {
+			continue
 		}
-		for _, doc := range splitYAMLDocuments(string(content)) {
-			if strings.TrimSpace(doc) == "" {
-				continue
-			}
-			obj := &unstructured.Unstructured{}
-			if err := yaml.Unmarshal([]byte(doc), obj); err != nil {
-				log.Log.V(1).Info("Skipping unparseable manifest doc", "file", name, "error", err.Error())
-				continue
-			}
-			if obj.GetKind() == "" || obj.GetName() == "" {
-				continue
-			}
-			r := ValidationResult{
-				Kind:       obj.GetKind(),
-				APIVersion: obj.GetAPIVersion(),
-				Name:       obj.GetName(),
-				Namespace:  obj.GetNamespace(),
-				SourceFile: name,
-			}
-
-			gv, gvErr := schema.ParseGroupVersion(obj.GetAPIVersion())
-			if gvErr != nil {
-				r.State = crstate.StateError
-				r.Reason = fmt.Sprintf("invalid apiVersion %q: %v", obj.GetAPIVersion(), gvErr)
-				r.Detail = r.Reason
+		obj := doc.ObjectCopy()
+		r := ValidationResult{
+			Kind: obj.GetKind(), APIVersion: obj.GetAPIVersion(),
+			Name: obj.GetName(), Namespace: obj.GetNamespace(),
+			SourceFile: doc.Source().File,
+		}
+		if isOCPOperatorConfig(obj) {
+			live := &unstructured.Unstructured{}
+			live.SetGroupVersionKind(obj.GroupVersionKind())
+			if getErr := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, live); getErr != nil {
+				r.State = crstate.StateNotDeployed
+				r.Reason = getErr.Error()
 				results = append(results, r)
 				continue
 			}
-			// Ensure GVK on the manifest object so the registry can
-			// dispatch to the right validator.
-			obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
-			if isOCPOperatorConfig(obj) {
-				live := &unstructured.Unstructured{}
-				live.SetGroupVersionKind(obj.GroupVersionKind())
-				if getErr := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, live); getErr != nil {
-					r.State = crstate.StateNotDeployed
-					r.Reason = getErr.Error()
-					results = append(results, r)
-					continue
-				}
-				merged := live.DeepCopy()
-				if mergeErr := mergeOCPSpec(merged, obj); mergeErr != nil {
-					r.State = crstate.StateError
-					r.Reason = mergeErr.Error()
-				} else if !reflect.DeepEqual(merged.Object, live.Object) {
-					r.State = crstate.StateError
-					r.Reason = "operator configuration differs from generated required fields"
-				} else {
-					r.State = crstate.StateSuccess
-					r.Reason = "required operator configuration matches"
-				}
-				applyLegacyFlags(&r)
-				results = append(results, r)
-				continue
-			}
-
-			res, vErr := registry.Validate(ctx, c, obj)
-			if vErr != nil {
-				// Transport error — treat as error state. Use the
-				// Reason carried by the Result (registry sets it
-				// even on err) so callers still get a useful
-				// summary.
+			merged := live.DeepCopy()
+			if mergeErr := mergeOCPSpec(merged, obj); mergeErr != nil {
 				r.State = crstate.StateError
-				r.Reason = res.Reason
-				if r.Reason == "" {
-					r.Reason = vErr.Error()
-				}
+				r.Reason = mergeErr.Error()
+			} else if !reflect.DeepEqual(merged.Object, live.Object) {
+				r.State = crstate.StateError
+				r.Reason = "operator configuration differs from generated required fields"
 			} else {
-				r.State = res.State
-				r.Reason = res.Reason
-			}
-			if ocp && r.State == crstate.StateSuccess && isOCPSriovNetwork(obj) {
-				r.State, r.Reason = validateOCPNetworkAttachment(ctx, c, obj)
-			}
-			r.Details = res.Details
-			// Best-effort capture of the live object for the
-			// HTML report's "Live YAML" dropdown. Skip when the
-			// validator says the object isn't deployed — there's
-			// nothing in the cluster to fetch.
-			if r.State != crstate.StateNotDeployed {
-				r.LiveYAML = fetchLiveYAML(ctx, c, obj)
+				r.State = crstate.StateSuccess
+				r.Reason = "required operator configuration matches"
 			}
 			applyLegacyFlags(&r)
 			results = append(results, r)
+			continue
 		}
+
+		res, vErr := registry.Validate(ctx, c, obj)
+		if vErr != nil {
+			// Transport error — treat as error state. Use the
+			// Reason carried by the Result (registry sets it
+			// even on err) so callers still get a useful
+			// summary.
+			r.State = crstate.StateError
+			r.Reason = res.Reason
+			if r.Reason == "" {
+				r.Reason = vErr.Error()
+			}
+		} else {
+			r.State = res.State
+			r.Reason = res.Reason
+		}
+		if ocp && r.State == crstate.StateSuccess && isOCPSriovNetwork(obj) {
+			r.State, r.Reason = validateOCPNetworkAttachment(ctx, c, obj)
+		}
+		r.Details = res.Details
+		// Best-effort capture of the live object for the
+		// HTML report's "Live YAML" dropdown. Skip when the
+		// validator says the object isn't deployed — there's
+		// nothing in the cluster to fetch.
+		if r.State != crstate.StateNotDeployed {
+			r.LiveYAML = fetchLiveYAML(ctx, c, obj)
+		}
+		applyLegacyFlags(&r)
+		results = append(results, r)
 	}
 	return results, nil
 }
@@ -523,7 +481,7 @@ func IsExampleManifest(name string) bool {
 // 50-example-daemonset.yaml) as test/demo workloads outside the
 // network-operator surface to validate.
 func isExampleManifest(name string) bool {
-	return strings.Contains(strings.ToLower(name), "example")
+	return bundle.IsExampleFilename(name)
 }
 
 // CheckHelmReleaseVersion compares the Network Operator Helm release
@@ -612,6 +570,19 @@ type ValueDiff struct {
 // When `generatedValuesYAML` is empty, restConfig is nil, or no release
 // exists in the target namespace, returns Skipped=true with a Reason.
 func CheckHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namespace string, generatedValuesYAML []byte) (*HelmValuesCheck, error) {
+	return checkHelmReleaseValues(ctx, restConfig, namespace, generatedValuesYAML, nil)
+}
+
+func CheckHelmReleaseValuesFromBundle(ctx context.Context, restConfig *rest.Config, namespace string, artifacts *bundle.Bundle) (*HelmValuesCheck, error) {
+	if artifacts == nil {
+		return nil, fmt.Errorf("validation artifact bundle is nil")
+	}
+	raw, _ := artifacts.ValuesContent()
+	parsed, _ := artifacts.ValuesCopy()
+	return checkHelmReleaseValues(ctx, restConfig, namespace, []byte(raw), parsed)
+}
+
+func checkHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namespace string, generatedValuesYAML []byte, parsed map[string]any) (*HelmValuesCheck, error) {
 	if restConfig == nil {
 		return &HelmValuesCheck{Skipped: true, Reason: "no kube REST config available for helm values check"}, nil
 	}
@@ -655,14 +626,17 @@ func CheckHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namesp
 		}, nil
 	}
 
-	generated, err := helmclient.UnmarshalValues(generatedValuesYAML)
-	if err != nil {
-		return &HelmValuesCheck{
-			Skipped:     true,
-			Reason:      fmt.Sprintf("parse generated values.yaml: %v", err),
-			Namespace:   namespace,
-			ReleaseName: helmclient.DefaultReleaseName,
-		}, nil
+	generated := parsed
+	if generated == nil {
+		generated, err = helmclient.UnmarshalValues(generatedValuesYAML)
+		if err != nil {
+			return &HelmValuesCheck{
+				Skipped:     true,
+				Reason:      fmt.Sprintf("parse generated values.yaml: %v", err),
+				Namespace:   namespace,
+				ReleaseName: helmclient.DefaultReleaseName,
+			}, nil
+		}
 	}
 
 	// Use the shared preflight diff so deploy + validate can't disagree.
