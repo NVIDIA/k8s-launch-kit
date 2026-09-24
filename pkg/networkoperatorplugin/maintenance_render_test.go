@@ -249,6 +249,7 @@ func renderFullProfileForMaintenance(
 		Multirail:  true,
 	}
 	cfg.Maintenance = maintenanceFromYAML(t, maintenanceYAML)
+	require.NoError(t, config.NormalizeMaintenance(cfg))
 
 	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
 		loadProfileFromDir(t, profile.dir), cfg)
@@ -319,7 +320,7 @@ func TestSpectrumXPoolDoesNotRenderIneffectiveMaxUnavailable(t *testing.T) {
 	require.NotContains(t, pool, "maxUnavailable:")
 }
 
-func TestGenerateProfileDeploymentFilesNormalizesNilMaintenance(t *testing.T) {
+func TestGenerateProfileDeploymentFilesRejectsUnresolvedMaintenance(t *testing.T) {
 	templatePath := filepath.Join(t.TempDir(), helmValuesTemplateName)
 	require.NoError(t, os.WriteFile(templatePath, []byte(`maintenance-operator-chart:
   operatorConfig:
@@ -328,16 +329,35 @@ func TestGenerateProfileDeploymentFilesNormalizesNilMaintenance(t *testing.T) {
     maxNodeMaintenanceTimeSeconds: "{{ .Maintenance.MaxNodeMaintenanceTimeSeconds }}"
 `), 0o644))
 	cfg := &config.LaunchKitConfig{
-		NetworkOperator: &config.NetworkOperatorConfig{},
-		Profile:         &config.Profile{},
-		Maintenance:     nil,
+		NetworkOperator:   &config.NetworkOperatorConfig{},
+		NetworkNamespaces: []string{"default"},
+		Profile:           &config.Profile{},
+		Maintenance:       nil,
 	}
 	profile := &profiles.Profile{Templates: []string{templatePath}}
 
 	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, cfg.Maintenance)
-	require.Contains(t, rendered[helmValuesOutputName], `maxParallelOperations: "4"`)
-	require.Contains(t, rendered[helmValuesOutputName], `maxUnavailable: "4"`)
-	require.Contains(t, rendered[helmValuesOutputName], `maxNodeMaintenanceTimeSeconds: "3600"`)
+	require.ErrorContains(t, err, "maintenance configuration must be resolved before rendering")
+	require.Nil(t, rendered)
+	require.Nil(t, cfg.Maintenance)
+}
+
+func TestGenerateProfileDeploymentFilesRejectsUnresolvedCollectionsAndDoesNotDefault(t *testing.T) {
+	plugin := &NetworkOperatorPlugin{}
+	profile := &profiles.Profile{}
+
+	_, err := plugin.GenerateProfileDeploymentFiles(profile, &config.LaunchKitConfig{
+		NetworkNamespaces: []string{},
+		Maintenance:       config.DefaultMaintenanceConfig(),
+	})
+	require.ErrorContains(t, err, "networkNamespaces must contain at least one namespace")
+
+	cfg := &config.LaunchKitConfig{
+		NetworkNamespaces: []string{"default"},
+		Maintenance:       config.DefaultMaintenanceConfig(),
+		NvIpam:            &config.NvIpamConfig{PerNodeBlockSize: 0},
+	}
+	_, err = plugin.GenerateProfileDeploymentFiles(profile, cfg)
+	require.ErrorContains(t, err, "perNodeBlockSize must be > 0 before rendering")
+	require.Zero(t, cfg.NvIpam.PerNodeBlockSize)
 }

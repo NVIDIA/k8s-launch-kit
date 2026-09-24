@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-config
-version: 1.2.8
+version: 1.2.9
 description: "Use this skill when the user needs help understanding, creating, or editing a k8s-launch-kit (l8k) configuration file (l8k-config.yaml or cluster-config.yaml). Activate for: config file questions, parameter tuning, subnet configuration, NV-IPAM setup, DOCA driver settings, maintenance concurrency, NIC configuration operator settings, changing MTU, VFs, resource names, or understanding what any config field does."
 metadata:
   requires:
@@ -33,14 +33,20 @@ l8k discover --user-config my-config.yaml \
   --save-cluster-config ./updated-config.yaml
 ```
 
-## Profile Resolution and Write-Back
+## Profile Resolution
 
-Fresh discovery and file-backed generation resolve and persist settings with
-this precedence:
+Fresh discovery and file-backed generation resolve settings with this
+precedence:
 
-1. Hardware and built-in defaults fill missing fields.
-2. Existing config values.
-3. Explicit CLI flags override both.
+1. Canonical built-in defaults from the repository-root `cluster-config.yaml`.
+2. Hardware-derived profile defaults.
+3. Existing config values.
+4. Explicit CLI flags.
+
+Generation never rewrites the source config. It stores the exact effective
+configuration at `<output>/.l8k/resolved-config.yaml`; deploy and validate use
+that sidecar automatically when no explicit config is passed. Explicit false,
+zero, and empty values override defaults. YAML `null` means unset.
 
 Discovery with `--user-config` follows a stricter refresh contract: only
 `clusterConfig` is replaced. Every other section remains as loaded unless an

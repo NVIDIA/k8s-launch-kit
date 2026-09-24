@@ -27,22 +27,17 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
-	"gopkg.in/yaml.v2"
 )
 
 // executeGeneration handles the profile selection and manifest generation phase.
 // Returns nil if no profile is configured and generation is skipped.
 func (l *Launcher) executeGeneration(configPath string) error {
-	fullConfig, srcConfigYAML, err := config.LoadFullConfigWithSource(configPath, l.logger)
+	input, err := config.LoadInput(configPath, l.logger)
 	if err != nil {
 		return fmt.Errorf("failed to load full config: %w", err)
 	}
-	var srcConfig config.LaunchKitConfig
-	if configPath != "" {
-		if err := yaml.Unmarshal(srcConfigYAML, &srcConfig); err != nil {
-			return fmt.Errorf("failed to parse source config %s for write-back: %w", configPath, err)
-		}
-	}
+	fullConfig := input.Config
+	resolvedInput := input
 
 	// Validate `--groups` / `--gpu-type` against the loaded config before
 	// the profile-configured check. Without this, a filter that matches
@@ -80,8 +75,6 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	// use the preset's machine/gpu types and east-west NICs. Keep the source
 	// inventory separately: generated preset hardware is transient and must not
 	// replace clusterConfig in a file-backed user configuration.
-	sourceClusterConfig := fullConfig.ClusterConfig
-	presetClusterConfigApplied := false
 	if l.options.ForPreset != "" {
 		preset, err := l.presetCatalog.LoadPresetByDir(l.options.ForPreset)
 		if err != nil {
@@ -100,14 +93,21 @@ func (l *Launcher) executeGeneration(configPath string) error {
 				"Add a 'capabilities.nodes.{sriov,rdma,ib}' block to the preset's topology.yaml",
 			)
 		}
-		fullConfig.ClusterConfig = []config.ClusterConfig{cc}
-		presetClusterConfigApplied = true
+		presetConfig, cloneErr := config.CloneConfig(input.Config)
+		if cloneErr != nil {
+			return fmt.Errorf("copy config for --for: %w", cloneErr)
+		}
+		presetConfig.ClusterConfig = []config.ClusterConfig{cc}
+		presetInput := *input
+		presetInput.Config = presetConfig
+		resolvedInput = &presetInput
 		l.ui.Info("Using preset %q (clusterConfig replaced from preset)", l.options.ForPreset)
 	}
 
 	// Resolve the same defaults/config/CLI precedence that discovery uses
 	// before either flow persists or consumes the final profile.
-	if err := l.resolveProfileSettings(fullConfig); err != nil {
+	fullConfig, err = l.resolveProfileInput(resolvedInput)
+	if err != nil {
 		return err
 	}
 	resolveSpectrumXTopologyFile(configPath, fullConfig)
@@ -147,20 +147,6 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		)
 	}
 
-	// Persist the exact profile used for generation: hardware defaults fill
-	// missing fields, existing YAML values survive, and explicit CLI options
-	// win. When --for supplied the hardware, restore the source clusterConfig
-	// only in the write-back copy so preset-only topology remains transient.
-	resolvedConfigForWriteBack := fullConfig
-	if presetClusterConfigApplied {
-		writeBackCopy := *fullConfig
-		writeBackCopy.ClusterConfig = sourceClusterConfig
-		resolvedConfigForWriteBack = &writeBackCopy
-	}
-	if err := l.saveResolvedConfig(configPath, resolvedConfigForWriteBack, srcConfig, srcConfigYAML); err != nil {
-		return err
-	}
-
 	aggregatedCapabilities := config.AggregateCapabilities(fullConfig.ClusterConfig)
 
 	foundProfiles := []profiles.Profile{}
@@ -193,6 +179,14 @@ func (l *Launcher) executeGeneration(configPath string) error {
 			return apperrors.NewGeneralError("deployment files generation failed", err)
 		}
 	}
+	if l.options.SaveDeploymentFiles != "" {
+		path, err := config.WriteEffectiveConfig(l.options.SaveDeploymentFiles, fullConfig)
+		if err != nil {
+			return fmt.Errorf("failed to save effective configuration: %w", err)
+		}
+		l.logger.Info("Saved effective deployment configuration", "path", path)
+		l.result.GeneratedFiles = append(l.result.GeneratedFiles, path)
+	}
 
 	// Store found profiles for deploy phase
 	l.foundProfiles = foundProfiles
@@ -224,41 +218,6 @@ func resolveSpectrumXTopologyFile(configPath string, fullConfig *config.LaunchKi
 		return
 	}
 	spcx.ResolvedTopologyFile = filepath.Join(filepath.Dir(configPath), spcx.TopologyFile)
-}
-
-func (l *Launcher) saveResolvedConfig(
-	configPath string,
-	fullConfig *config.LaunchKitConfig,
-	srcConfig config.LaunchKitConfig,
-	srcConfigYAML []byte,
-) error {
-	if configPath == "" {
-		return nil
-	}
-
-	writeBackConfig := *fullConfig
-	// LoadFullConfig materializes maintenance defaults and computed NV-IPAM
-	// reserve exclusions for rendering. Those are not profile/CLI resolution,
-	// so keep their original YAML forms rather than accumulating derived state
-	// every time generate rewrites the file.
-	writeBackConfig.Maintenance = srcConfig.Maintenance
-	writeBackConfig.NvIpam = srcConfig.NvIpam
-
-	data, err := config.MarshalConfigPreservingComments(&writeBackConfig, srcConfigYAML, "")
-	if err != nil {
-		return fmt.Errorf("failed to marshal resolved config: %w", err)
-	}
-	info, err := os.Stat(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to stat source config %s before write-back: %w", configPath, err)
-	}
-	if err := os.WriteFile(configPath, data, info.Mode().Perm()); err != nil {
-		return fmt.Errorf("failed to write resolved config to %s: %w", configPath, err)
-	}
-
-	l.ui.Success("Resolved configuration saved: %s", configPath)
-	l.logger.Info("Resolved generation config saved", "path", configPath)
-	return nil
 }
 
 // generateDeploymentFiles handles deployment file generation for a single profile.

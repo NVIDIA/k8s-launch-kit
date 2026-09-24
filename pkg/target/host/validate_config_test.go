@@ -94,6 +94,15 @@ func TestApplyValidationOverridesRejectsNilConfig(t *testing.T) {
 	assert.ErrorContains(t, applyValidationOverrides(ValidateRequest{}, nil), "must not be nil")
 }
 
+func TestApplyValidationOverridesRejectsExplicitInvalidValues(t *testing.T) {
+	validation := config.NormalizeValidationConfig(nil)
+	err := applyValidationOverrides(ValidateRequest{
+		RDMAPIterations: Explicit[int]{Value: -1, Set: true},
+	}, validation)
+	require.ErrorContains(t, err, "rpingIterations must be greater than 0")
+	assert.Equal(t, -1, validation.RDMA.RPingIterations)
+}
+
 func TestValidateRequiredConnectivityConfig(t *testing.T) {
 	load := func(t *testing.T, content string) (string, *config.LaunchKitConfig) {
 		t.Helper()
@@ -144,6 +153,21 @@ validation:
 `)
 		assert.ErrorContains(t, validateRequiredConnectivityConfig(path, cfg, nil), "validation.gpuDirect.enabled")
 	})
+}
+
+func TestValidateRequiredConnectivityConfigAcceptsResolvedSidecar(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.LaunchKitConfig{
+		Profile: &config.Profile{Routing: config.RoutingDestinationBased},
+		Validation: &config.ValidationConfig{
+			GPUDirect: config.ValidationGPUDirectConfig{Enabled: false},
+		},
+	}
+	path, err := config.WriteEffectiveConfig(root, cfg)
+	require.NoError(t, err)
+	loaded, err := config.LoadEffectiveConfig(path)
+	require.NoError(t, err)
+	assert.NoError(t, validateRequiredConnectivityConfig(path, loaded, nil))
 }
 
 func TestValidateRequiredConnectivityConfigGPUDirectTopology(t *testing.T) {

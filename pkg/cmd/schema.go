@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
@@ -314,6 +315,16 @@ func targetCapabilitiesSchema() []targetSchema {
 func annotateSchemaFlagTargets(s *schema) {
 	if s == nil {
 		return
+	}
+	for _, definition := range configflags.Definitions() {
+		name := "--" + definition.FlagName
+		if _, exists := s.Flags[name]; exists {
+			continue
+		}
+		s.Flags[name] = flagSchema{
+			Type:        definition.ValueType,
+			Description: definition.Usage,
+		}
 	}
 	for name, spec := range s.Flags {
 		spec.Targets = schemaFlagTargets(name)

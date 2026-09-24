@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-generate
-version: 1.2.11
+version: 1.2.12
 description: "Use this skill when the user wants to generate Kubernetes YAML manifests for NVIDIA networking deployment using k8s-launch-kit (l8k). Activate for: manifest generation, profile selection, choosing between SR-IOV/host-device/RDMA-shared/IPoIB/MacVLAN/Spectrum-X, creating deployment files, or when the user asks 'which profile should I use' or needs help choosing a network configuration."
 metadata:
   requires:
@@ -26,9 +26,9 @@ l8k generate --user-config <CONFIG> \
 ```
 
 Configs produced by `l8k discover` already contain the resolved profile.
-Profile flags remain available as generation-time overrides. When generation
-uses a file-backed config, resolved defaults and CLI overrides are written back
-to that source file; embedded `--for` generation does not write a config.
+Profile flags remain available as generation-time overrides. Generation keeps
+its source file unchanged and writes the exact effective configuration to
+`<OUTPUT_DIR>/.l8k/resolved-config.yaml` for later deploy and validation.
 
 ## Profile Selection Flags
 
@@ -143,6 +143,8 @@ these fields later at validation runtime.
 
 ```
 output/
+├── .l8k/
+│   └── resolved-config.yaml              # versioned effective-config metadata
 └── network-operator/
     ├── values.yaml                       # Phase 0 helm-install input for `l8k deploy`
     ├── 10-nicclusterpolicy.yaml

@@ -46,6 +46,9 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 	// orphaned --multiplane-mode flag without --spectrum-x — Phase 1
 	// catches the CLI case but a YAML user could still trip this).
 	if cfg.Profile.SpectrumX != nil {
+		if cfg.Profile.SpectrumX.SPCXVersion != "" {
+			return fmt.Errorf("spcxVersion is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
 		if cfg.Profile.SpectrumX.MultiplaneMode != "" {
 			return fmt.Errorf("multiplaneMode is set but spectrumX.enable=false; remove the field or set --spectrum-x")
 		}
@@ -60,6 +63,18 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 		}
 		if cfg.Profile.SpectrumX.TopologyFile != "" {
 			return fmt.Errorf("topologyFile is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
+		if cfg.Profile.SpectrumX.HostFirstOctet != 0 {
+			return fmt.Errorf("hostFirstOctet is set but spectrumX.enable=false; remove the field or enable Spectrum-X")
+		}
+		if cfg.Profile.SpectrumX.UseDRA {
+			return fmt.Errorf("useDRA is true but spectrumX.enable=false; set useDRA: false or enable Spectrum-X")
+		}
+		if cfg.Profile.SpectrumX.ConfigMapName != "" {
+			return fmt.Errorf("configMapName is set but spectrumX.enable=false; remove the field or set --spectrum-x")
+		}
+		if strings.TrimSpace(cfg.Profile.SpectrumX.Profile) != "" {
+			return fmt.Errorf("Spectrum-X profile content is set but spectrumX.enable=false; remove the field or set --spectrum-x")
 		}
 	}
 

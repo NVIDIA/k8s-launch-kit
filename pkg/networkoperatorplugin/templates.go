@@ -943,13 +943,24 @@ func groupFabric(group config.ClusterConfig) (string, bool) {
 
 // GenerateProfileDeploymentFiles processes all template files in a profile directory
 func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles.Profile, cfg *config.LaunchKitConfig) (map[string]string, error) {
-	if err := config.NormalizeMaintenance(cfg); err != nil {
-		return nil, fmt.Errorf("normalize maintenance configuration: %w", err)
+	if cfg == nil {
+		return nil, fmt.Errorf("configuration must not be nil")
 	}
-	config.ApplyNvIpamDefaults(cfg)
 	if len(cfg.NetworkNamespaces) == 0 {
-		cfg.NetworkNamespaces = []string{"default"}
+		return nil, fmt.Errorf("networkNamespaces must contain at least one namespace")
 	}
+	if cfg.Maintenance == nil {
+		return nil, fmt.Errorf("maintenance configuration must be resolved before rendering")
+	}
+	if cfg.NvIpam != nil && cfg.NvIpam.PerNodeBlockSize <= 0 {
+		return nil, fmt.Errorf("nvIpam.perNodeBlockSize must be > 0 before rendering, got %d",
+			cfg.NvIpam.PerNodeBlockSize)
+	}
+	resolved, err := config.CloneConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("copy resolved configuration: %w", err)
+	}
+	cfg = resolved
 	cfg.CurrentNetworkNamespace = cfg.NetworkNamespaces[0]
 
 	// Apply --groups / --gpu-type filter to source groups before merging.

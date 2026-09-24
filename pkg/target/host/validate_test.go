@@ -18,6 +18,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -152,6 +153,38 @@ func TestValidateRunsConnectivityOnlyFromExampleDaemonSet(t *testing.T) {
 		connectivity.CheckRPing,
 		connectivity.CheckIBWriteBW,
 	}, captured.Checks)
+}
+
+func TestValidateCLIOverridesRepairInvalidYAMLBeforeValidation(t *testing.T) {
+	dir, path := writeConnectivityOnlyInputs(t, config.RoutingDestinationBased)
+	require.NoError(t, os.WriteFile(path, []byte(`profile:
+  routing: destination-based
+validation:
+  mode: invalid
+  checks: [unsupported]
+  rdma:
+    rpingIterations: -1
+    ibWriteSize: -1
+    ibWriteMinBandwidthGbps: -1
+  gpuDirect:
+    enabled: false
+`), 0o600))
+	clientReached := errors.New("configuration accepted; stop before cluster operations")
+	runner := validateRunner{
+		newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) {
+			return nil, nil, clientReached
+		},
+	}
+	err := runner.Run(context.Background(), ValidateRequest{
+		Kubeconfig: "test-kubeconfig", DeploymentFiles: dir, UserConfig: path,
+		ReportPath: "-", OutputFormat: "text",
+		Mode:             Explicit[string]{Set: true, Value: "strict"},
+		Checks:           Explicit[[]string]{Set: true, Value: []string{"rping"}},
+		RDMAPIterations:  Explicit[int]{Set: true, Value: 10},
+		RDMAIBWriteSize:  Explicit[int]{Set: true, Value: 4096},
+		RDMAMinBandwidth: Explicit[float64]{Set: true, Value: 0},
+	})
+	require.ErrorIs(t, err, clientReached)
 }
 
 func TestValidateConnectivityOnlyHonorsCLIOverrides(t *testing.T) {

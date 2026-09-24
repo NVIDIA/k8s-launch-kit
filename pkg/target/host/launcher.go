@@ -175,9 +175,6 @@ func ValidatePipelineOptions(opts *options.Options) error {
 		if opts.Fabric == "" && opts.DeploymentType == "" && opts.UserConfig == "" && opts.Deploy {
 			return fmt.Errorf("--deploy requires --deployment-type or --user-config with a profile to be specified")
 		}
-		if (opts.DeploymentType != "" && opts.Fabric == "") || (opts.Fabric != "" && opts.DeploymentType == "") {
-			return fmt.Errorf("--deployment-type requires --fabric to be specified")
-		}
 		if opts.Fabric != "" && !slices.Contains([]string{"infiniband", "ethernet"}, opts.Fabric) {
 			return fmt.Errorf("--fabric must be one of: infiniband, ethernet")
 		}
@@ -212,30 +209,10 @@ func ValidateSpectrumXSyntax(opts *options.Options) error {
 	if opts == nil {
 		return fmt.Errorf("options must not be nil")
 	}
-	if !opts.SpectrumX {
-		switch {
-		case opts.MultiplaneMode != "":
-			return fmt.Errorf("--multiplane-mode can only be used with --spectrum-x")
-		case opts.NumberOfPlanes != 0:
-			return fmt.Errorf("--number-of-planes can only be used with --spectrum-x")
-		case opts.TopologyScheme != "":
-			return fmt.Errorf("--topology-scheme can only be used with --spectrum-x")
-		case opts.IPVersion != "":
-			return fmt.Errorf("--ip-version can only be used with --spectrum-x")
-		case opts.TopologyFile != "":
-			return fmt.Errorf("--topology-file can only be used with --spectrum-x")
-		case opts.SpectrumXConfig != "":
-			return fmt.Errorf("--spectrum-x-config can only be used with --spectrum-x")
-		case opts.SpectrumXConfigMapName != "":
-			return fmt.Errorf("--spectrum-x-configmap-name can only be used with --spectrum-x")
-		default:
-			return nil
-		}
-	}
-	if opts.SPCXVersion == "" {
+	if opts.SpectrumX && opts.SPCXVersion == "" {
 		return fmt.Errorf("--spectrum-x requires the SPC-X RA version as its value; supported: %v", config.SupportedSPCXVersions)
 	}
-	if !slices.Contains(config.SupportedSPCXVersions, opts.SPCXVersion) {
+	if opts.SPCXVersion != "" && !slices.Contains(config.SupportedSPCXVersions, opts.SPCXVersion) {
 		return fmt.Errorf("invalid --spectrum-x value %q; supported: %v", opts.SPCXVersion, config.SupportedSPCXVersions)
 	}
 	if opts.MultiplaneMode != "" && !slices.Contains(config.SupportedMultiplaneModes, opts.MultiplaneMode) {
@@ -250,7 +227,7 @@ func ValidateSpectrumXSyntax(opts *options.Options) error {
 	if opts.IPVersion != "" && !slices.Contains(config.SupportedSpectrumXIPVersions, opts.IPVersion) {
 		return fmt.Errorf("invalid --ip-version %q; supported: %v", opts.IPVersion, config.SupportedSpectrumXIPVersions)
 	}
-	if opts.NetworkOperatorRelease != "" {
+	if opts.SPCXVersion != "" && opts.NetworkOperatorRelease != "" {
 		allowed := config.SPCXVersionAllowedReleases[opts.SPCXVersion]
 		if !slices.Contains(allowed, opts.NetworkOperatorRelease) {
 			return fmt.Errorf("--spectrum-x %s requires --network-operator-release in %v, got %s",

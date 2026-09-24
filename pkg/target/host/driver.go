@@ -255,6 +255,7 @@ func cloneOptions(in options.Options) options.Options {
 	out.NetworkNamespaces = append([]string(nil), in.NetworkNamespaces...)
 	out.EnabledPlugins = append([]string(nil), in.EnabledPlugins...)
 	out.Groups = append([]string(nil), in.Groups...)
+	out.ConfigInputs = in.ConfigInputs.Clone()
 	if in.EnableDocaDriver != nil {
 		value := *in.EnableDocaDriver
 		out.EnableDocaDriver = &value

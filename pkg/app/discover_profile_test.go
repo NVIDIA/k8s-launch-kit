@@ -13,6 +13,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,6 +101,36 @@ func TestDiscoverFreshConfigIgnoresReferenceProfile(t *testing.T) {
 	assert.NotContains(t, string(data), "currentNetworkNamespace:")
 }
 
+func TestDiscoverFreshEmbeddedDefaultsHardwareReleaseAboveCanonical(t *testing.T) {
+	t.Chdir(t.TempDir())
+	outputConfig := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	launcher := newProfileDiscoveryLauncher(options.Options{
+		SaveClusterConfig: outputConfig,
+		ConfigDir:         t.TempDir(),
+		SpectrumX:         true,
+		SPCXVersion:       "RA2.1",
+		TopologyScheme:    config.SpectrumXTopology2Tier,
+	}, []config.ClusterConfig{{
+		Identifier:  "group-a",
+		GPUType:     "NVIDIA-H100",
+		LinkType:    "Ethernet",
+		WorkerNodes: []string{"worker-a"},
+		PFs: []config.PFConfig{{
+			DeviceID: "1023",
+			Traffic:  "east-west",
+		}},
+	}})
+
+	require.NoError(t, launcher.discoverClusterConfig())
+	got, err := config.LoadFullConfig(outputConfig, launcher.logger)
+	require.NoError(t, err)
+	require.NotNil(t, got.NetworkOperator)
+	assert.Equal(t, "26.1", got.NetworkOperator.SelectedRelease)
+	require.NotNil(t, got.Profile)
+	require.NotNil(t, got.Profile.SpectrumX)
+	assert.Equal(t, "RA2.1", got.Profile.SpectrumX.SPCXVersion)
+}
+
 func TestDiscoverPreservesUserConfigOutsideClusterConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	inputConfig := filepath.Join(tmpDir, "input.yaml")
@@ -168,6 +199,7 @@ clusterConfig:
 	require.NotNil(t, got.Validation)
 	require.NotNil(t, got.Validation.Connectivity)
 	assert.False(t, *got.Validation.Connectivity)
+	assert.Empty(t, got.Validation.Checks)
 	assert.False(t, got.Validation.GPUDirect.Enabled)
 	require.NotNil(t, got.Profile)
 	assert.Empty(t, got.Profile.Fabric)
@@ -176,6 +208,51 @@ clusterConfig:
 	assert.True(t, got.Profile.MultirailSet)
 	require.Len(t, got.ClusterConfig, 1)
 	assert.Equal(t, "group-a", got.ClusterConfig[0].Identifier)
+}
+
+func TestDiscoverPreservesUserFieldPresenceAcrossRefreshes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	source := []byte(`networkOperator:
+  selectedRelease: "" # custom coordinates
+  version: custom
+docaDriver:
+  version: custom
+nvIpam:
+  offset: 0
+profile:
+  fabric: ethernet
+validation:
+  checks: []
+extension:
+  userOwned: keep-me
+`)
+	require.NoError(t, os.WriteFile(path, source, 0o600))
+	before, err := config.DecodeInput(source, path)
+	require.NoError(t, err)
+	expected, err := resolve.Resolve(resolve.Request{Input: before, ApplyHardwareDefaults: true})
+	require.NoError(t, err)
+	groups := []config.ClusterConfig{{Identifier: "fresh", LinkType: "Ethernet"}}
+	for range 2 {
+		launcher := newProfileDiscoveryLauncher(options.Options{UserConfig: path}, groups)
+		require.NoError(t, launcher.discoverClusterConfig())
+		after, err := config.LoadInput(path, launcher.logger)
+		require.NoError(t, err)
+		for field := range before.Present {
+			assert.True(t, after.Present.Has(field), "lost explicit field %s", field)
+		}
+		for _, field := range []string{"docaDriver.enable", "profile.deployment", "profile.multirail"} {
+			assert.False(t, after.Present.Has(field), "invented explicit field %s", field)
+		}
+		actual, err := resolve.Resolve(resolve.Request{Input: after, ApplyHardwareDefaults: true})
+		require.NoError(t, err)
+		assert.Equal(t, expected.Config.NetworkOperator, actual.Config.NetworkOperator)
+		assert.Equal(t, expected.Config.DOCADriver, actual.Config.DOCADriver)
+		assert.Equal(t, expected.Config.Profile, actual.Config.Profile)
+		assert.Equal(t, expected.Config.NvIpam, actual.Config.NvIpam)
+		assert.Equal(t, groups[0].Identifier, actual.Config.ClusterConfig[0].Identifier)
+		assert.Contains(t, string(after.SourceYAML), "# custom coordinates")
+		assert.Contains(t, string(after.SourceYAML), "userOwned: keep-me")
+	}
 }
 
 func TestDiscoverCLIOverridesPersistAndRemainStableOnRerun(t *testing.T) {
@@ -247,7 +324,7 @@ func TestDiscoverPersistsSpectrumXHardwareDefaults(t *testing.T) {
 	assert.Equal(t, 2, got.Profile.SpectrumX.NumberOfPlanes)
 }
 
-func TestDiscoverDoesNotCreateProfileForUserConfig(t *testing.T) {
+func TestDiscoverDoesNotCreateMissingProfileForUserConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	inputConfig := filepath.Join(tmpDir, "input.yaml")
 	outputConfig := filepath.Join(tmpDir, "output.yaml")
@@ -263,6 +340,51 @@ func TestDiscoverDoesNotCreateProfileForUserConfig(t *testing.T) {
 	got, err := config.LoadFullConfig(outputConfig, launcher.logger)
 	require.NoError(t, err)
 	assert.Nil(t, got.Profile)
+}
+
+func TestDiscoverPreservesExplicitFalseFromReferenceConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "l8k-config.yaml"), []byte(`docaDriver:
+  enable: false
+`), 0o600))
+	t.Chdir(tmpDir)
+	outputConfig := filepath.Join(tmpDir, "output.yaml")
+	launcher := newProfileDiscoveryLauncher(options.Options{SaveClusterConfig: outputConfig},
+		[]config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet"}})
+
+	require.NoError(t, launcher.discoverClusterConfig())
+	got, err := config.LoadInput(outputConfig, launcher.logger)
+	require.NoError(t, err)
+	assert.False(t, got.Config.DOCADriver.Enable)
+}
+
+func TestDiscoverAppliesCLIOverrideBeforeNormalization(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputConfig := filepath.Join(tmpDir, "input.yaml")
+	outputConfig := filepath.Join(tmpDir, "output.yaml")
+	require.NoError(t, os.WriteFile(inputConfig, []byte(`profile:
+  fabric: ethernet
+  deployment: sriov
+  multirail: true
+  spectrumX:
+    enable: true
+    spcxVersion: RA2.2
+    multiplaneMode: none
+    numberOfPlanes: 1
+    topologyType: invalid-old-value
+networkOperator:
+  selectedRelease: "26.4"
+`), 0o600))
+	launcher := newProfileDiscoveryLauncher(options.Options{
+		UserConfig:        inputConfig,
+		SaveClusterConfig: outputConfig,
+		TopologyScheme:    config.SpectrumXTopology2Tier,
+	}, []config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet"}})
+
+	require.NoError(t, launcher.discoverClusterConfig())
+	got, err := config.LoadInput(outputConfig, launcher.logger)
+	require.NoError(t, err)
+	assert.Equal(t, config.SpectrumXTopology2Tier, got.Config.Profile.SpectrumX.TopologyType)
 }
 
 func TestDiscoverAppliesCLIProfileOverridesWhenUserProfileIsMissing(t *testing.T) {
@@ -290,4 +412,41 @@ func TestDiscoverAppliesCLIProfileOverridesWhenUserProfileIsMissing(t *testing.T
 	assert.False(t, got.Profile.Multirail)
 	assert.True(t, got.Profile.MultirailSet)
 	assert.Empty(t, got.Profile.Routing)
+}
+
+func TestDiscoverPersistsSpectrumXConfigMapOverride(t *testing.T) {
+	dir := t.TempDir()
+	inputPath := filepath.Join(dir, "cluster-config.yaml")
+	profilePath := filepath.Join(dir, "profile.yaml")
+	require.NoError(t, os.WriteFile(inputPath, []byte(`networkOperator:
+  selectedRelease: "26.7"
+profile:
+  multirail: true
+  spectrumX:
+    enable: true
+    spcxVersion: RA2.3
+    multiplaneMode: none
+    numberOfPlanes: 1
+    topologyType: 2-tier
+`), 0o600))
+	require.NoError(t, os.WriteFile(profilePath, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site-ra23-profile
+data:
+  profile: |
+    useSoftwareCCAlgorithm: true
+`), 0o600))
+	launcher := newProfileDiscoveryLauncher(options.Options{
+		UserConfig:        inputPath,
+		SaveClusterConfig: inputPath,
+		SpectrumXConfig:   profilePath,
+	}, []config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet"}})
+	require.NoError(t, launcher.discoverClusterConfig())
+	got, err := config.LoadInput(inputPath, launcher.logger)
+	require.NoError(t, err)
+	assert.Equal(t, "site-ra23-profile", got.Config.Profile.SpectrumX.ConfigMapName)
+	assert.Equal(t, "useSoftwareCCAlgorithm: true\n", got.Config.Profile.SpectrumX.Profile)
+	assert.False(t, got.Present.Has("networkOperator.version"))
+	assert.False(t, got.Present.Has("profile.deployment"))
 }

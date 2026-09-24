@@ -16,7 +16,11 @@
 
 package options
 
-import "time"
+import (
+	"time"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/configinput"
+)
 
 // Options holds all the configuration parameters for the application
 type Options struct {
@@ -39,7 +43,7 @@ type Options struct {
 	// cluster-config.yaml and never errors on "no profile selected".
 	DiscoverOnly             bool
 	SaveClusterConfig        string // Path to save discovered config
-	NetworkOperatorNamespace string // Override namespace for Network Operator (optional; ignored by `discover`)
+	NetworkOperatorNamespace string `flag:"network-operator-namespace" config:"networkOperator.namespace" scopes:"root,generate,discover" usage:"Override the Network Operator namespace from the config file"`
 	// KeepNamespace, when true, suppresses teardown of the
 	// nvidia-k8s-launch-kit bootstrap namespace at the end of `discover` —
 	// useful for debugging a failed run.
@@ -52,18 +56,18 @@ type Options struct {
 	// NetworkOperatorRelease is a MAJOR.MINOR catalog key (e.g. "26.4"), not
 	// a full semver. Selects component image tags + repository from the
 	// embedded releases catalog and drives version-gated template sections.
-	NetworkOperatorRelease string
-	ImagePullSecrets       []string // Image pull secret names for Network Operator components and Helm repository authentication
+	NetworkOperatorRelease string   `flag:"network-operator-release" config:"networkOperator.selectedRelease,networkOperator.version,networkOperator.componentVersion,networkOperator.repository,networkOperator.operatorRepository,networkOperator.helmRepoURL,docaDriver.version" resolve:"network-operator-release" scopes:"root,generate,discover" usage:"Network Operator release line to deploy (MAJOR.MINOR); selects catalog-managed component versions and repositories"`
+	ImagePullSecrets       []string `flag:"image-pull-secrets" config:"networkOperator.imagePullSecrets" scopes:"root,generate,discover" usage:"Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)"`
 	// SkipNetworkOperatorHelm disables values.yaml generation, Network Operator
 	// Helm installation, and Helm-specific validation. The Set companion keeps
 	// an omitted flag distinct from --skip-network-operator-helm=false.
-	SkipNetworkOperatorHelm    bool
+	SkipNetworkOperatorHelm    bool `flag:"skip-network-operator-helm" config:"networkOperator.skipHelmChart" scopes:"root,generate" usage:"Skip Network Operator Helm values generation, chart installation, and Helm-specific validation"`
 	SkipNetworkOperatorHelmSet bool
 
 	// Phase 2: Deployment Generation
-	Fabric         string // Fabric type to deploy
-	DeploymentType string // Deployment type to deploy
-	Multirail      bool   // Whether to deploy with multirail
+	Fabric         string `flag:"fabric" config:"profile.fabric" scopes:"root,generate,discover" usage:"Fabric type: ethernet or infiniband"`
+	DeploymentType string `flag:"deployment-type" config:"profile.deployment" scopes:"root,generate,discover" usage:"Deployment type: sriov, rdma_shared, or host_device"`
+	Multirail      bool   `flag:"multirail" config:"profile.multirail" scopes:"root,generate,discover" usage:"Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)"`
 	// MultirailSet is true when the user explicitly passed `--multirail`
 	// (regardless of value). Without it, the bool zero value can't be
 	// distinguished from "not passed", which matters once
@@ -73,24 +77,24 @@ type Options struct {
 	// correctly opts out. YAML presence is tracked separately by
 	// `config.Profile.MultirailSet`.
 	MultirailSet bool
-	Routing      string // destination-based or source-based routing for generated secondary networks
-	IgnoreARP    bool   // Whether to add ARP ownership tuning to generated secondary networks
+	Routing      string `flag:"routing" config:"profile.routing" scopes:"root,generate,discover" usage:"Secondary-network routing mode: destination-based or source-based"`
+	IgnoreARP    bool   `flag:"ignore-arp" config:"profile.ignoreARP" scopes:"root,generate,discover" usage:"Chain the tuning CNI meta-plugin to prevent ARP flux across pod rails"`
 	// IgnoreARPSet is true when the user explicitly passed `--ignore-arp`
 	// (including `--ignore-arp=false`). This prevents the bool zero value from
 	// clobbering profile.ignoreARP from the config when the flag is omitted.
 	IgnoreARPSet   bool
 	SpectrumX      bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
-	SPCXVersion    string // Spectrum-X RA version (the value of --spectrum-x; empty = disabled)
-	MultiplaneMode string // Spectrum-X multiplane mode (platform/NIC-derived when empty)
-	NumberOfPlanes int    // Number of planes for Spectrum-X (platform/NIC-derived when zero)
-	TopologyScheme string // Spectrum-X topology scheme: 2-tier or 3-tier
-	IPVersion      string // Spectrum-X address family: ipv4 or ipv6
-	TopologyFile   string // Path to spcx-gen/reference-generator or NVIDIA AIR topology JSON for Spectrum-X CIDRPool generation
+	SPCXVersion    string `flag:"spectrum-x" config:"profile.spectrumX.enable,profile.spectrumX.spcxVersion" resolve:"spectrum-x" scopes:"root,generate,discover" usage:"Enable Spectrum-X by passing the SPC-X RA version"`
+	MultiplaneMode string `flag:"multiplane-mode" config:"profile.spectrumX.multiplaneMode" scopes:"root,generate,discover" usage:"Spectrum-X multiplane mode: none, swplb, or hwplb"`
+	NumberOfPlanes int    `flag:"number-of-planes" config:"profile.spectrumX.numberOfPlanes" scopes:"root,generate,discover" usage:"Spectrum-X plane count: 1, 2, or 4"`
+	TopologyScheme string `flag:"topology-scheme" config:"profile.spectrumX.topologyType" scopes:"root,generate,discover" usage:"Spectrum-X topology scheme: 2-tier or 3-tier"`
+	IPVersion      string `flag:"ip-version" config:"profile.spectrumX.ipVersion" scopes:"root,generate,discover" usage:"Spectrum-X address family: ipv4 or ipv6"`
+	TopologyFile   string `flag:"topology-file" config:"profile.spectrumX.topologyFile" scopes:"root,generate,discover" usage:"Path to a Spectrum-X reference-generator or NVIDIA AIR topology JSON file"`
 	// SpectrumXConfig is a path to either a full Spectrum-X profile ConfigMap
 	// YAML or the raw data.profile YAML body. SpectrumXConfigMapName is required
 	// only when SpectrumXConfig contains the raw profile body.
-	SpectrumXConfig        string
-	SpectrumXConfigMapName string
+	SpectrumXConfig        string `flag:"spectrum-x-config" config:"profile.spectrumX.profile,profile.spectrumX.configMapName" resolve:"spectrum-x-config" scopes:"root,generate,discover" usage:"Path to a full Spectrum-X profile ConfigMap or raw data.profile YAML"`
+	SpectrumXConfigMapName string `flag:"spectrum-x-configmap-name" config:"profile.spectrumX.configMapName" scopes:"root,generate,discover" usage:"ConfigMap name used when --spectrum-x-config contains raw data.profile YAML"`
 	// Groups limits `l8k generate` to the named source groups (matched
 	// case-sensitively against `clusterConfig[].identifier`). Comma-separated
 	// on the CLI (`--groups a,b`). Mutually exclusive with GpuType.
@@ -108,16 +112,21 @@ type Options struct {
 	// NetworkNamespaces is the comma-separated list from --network-namespaces:
 	// the namespaces the secondary-network CRs + example test DaemonSets are
 	// rendered into (one copy per namespace). Empty defaults to "default".
-	NetworkNamespaces   []string
-	SaveDeploymentFiles string // Directory to save generated files
+	NetworkNamespaces   []string `flag:"network-namespaces" config:"networkNamespaces" scopes:"root,generate" usage:"Namespaces for secondary-network resources and example workloads (comma-separated)"`
+	SaveDeploymentFiles string   // Directory to save generated files
 
 	EnabledPlugins []string // Enabled plugins
 
 	// Workload
-	WorkloadManifest string // Path to user-defined workload manifest
+	WorkloadManifest string `flag:"workload-manifest" config:"workload.manifest" scopes:"root,generate" usage:"Path to a custom workload manifest YAML"`
 
 	// DOCA Driver
-	EnableDocaDriver *bool // Override docaDriver.enable from config (nil = use config value)
+	EnableDocaDriver *bool `flag:"enable-doca-driver" config:"docaDriver.enable" scopes:"root,generate" usage:"Enable or disable DOCA driver deployment"`
+
+	// ConfigInputs is populated from the tags above by pkg/configflags. It
+	// records flag presence separately from Go zero values, so false, zero, and
+	// empty explicit values retain normal CLI precedence.
+	ConfigInputs configinput.Values
 
 	// Phase 3: Cluster Deployment
 	Deploy     bool   // Whether to deploy to cluster
