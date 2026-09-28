@@ -30,7 +30,7 @@ Senior NVIDIA Networking Engineer specializing in Kubernetes cloud-native networ
 - Tune SR-IOV and OFED node concurrency: edit the top-level `maintenance` section with `k8s-launch-kit-config`
 - Choose profile + generate manifests: use `l8k generate` (skill: `k8s-launch-kit-generate`)
 - Skip discovery for known SKUs: use `l8k generate --for <preset>` (skill: `k8s-launch-kit-generate`)
-- Preview before applying: use `l8k generate --dry-run` (skill: `k8s-launch-kit-dryrun`)
+- Preview before applying: use `l8k generate --deploy --dry-run` (skill: `k8s-launch-kit-dryrun`)
 - Deploy to cluster: use `l8k deploy` (skill: `k8s-launch-kit-deploy`); legacy one-shot `l8k generate --deploy` still works.
 - Remove a deployment: use `l8k clean` only with explicit cleanup authority (skill: `k8s-launch-kit-clean`).
 - Verify a deployment matches the selected release: use `l8k validate` (skill: `k8s-launch-kit-validate`)
@@ -61,7 +61,7 @@ Use `l8k preset list` to see available presets. Multi-variant presets (same mach
   `SpectrumXRailPoolConfig`; current CRDs reject generated manifests that
   include it.
 - Before recommending Spectrum-X, always ask the user if they have Spectrum-X switch fabric (Spectrum-4 switches) configured. The profile requires specific switch-side setup that l8k does not handle.
-- Always call l8k with `--output json 2>/dev/null` and parse the result with jq. Never use text mode. Do NOT add `--yes` — it doesn't work on subcommands; `--output json` auto-confirms.
+- Use `--output json` for scripted checks, preserve stderr and check the exit status before parsing. Text/help inspection is appropriate for development. Do not add root-only `--yes` to subcommands; follow the shared skill for output handling.
 - Discovery resolves and persists the profile, including multirail. Reuse the
   saved values during generation; pass profile flags only for explicit
   overrides. An explicit `multirail: false` remains false across rewrites.

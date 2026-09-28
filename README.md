@@ -1610,6 +1610,11 @@ Don't forget to enable `--net=host` and mount the necessary directories for inpu
 
 ## Development
 
+Start with the [development guide](AGENTS.md) and
+[contribution workflow](CONTRIBUTING.md). Code changes must include updates to
+relevant documentation sections, examples and skills in the same PR; see the
+[documentation requirements](AGENTS.md#required-documentation-updates).
+
 ### Building
 
 ```bash

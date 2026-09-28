@@ -9,6 +9,17 @@ The repository includes task-specific `SKILL.md` playbooks that help compatible 
 
 AI skills are documentation for an agent. They are not Launch Kit runtime plugins and do not change the `l8k` binary.
 
+## Developing Launch Kit
+
+For source changes, start with the repository's
+[AGENTS.md](https://github.com/NVIDIA/k8s-launch-kit/blob/main/AGENTS.md).
+It covers development workflow, package boundaries, verification and required
+documentation updates. `CLAUDE.md` points to that shared guide.
+
+Use operational skills from the checkout being changed when testing CLI
+workflows. Source development can use `make build` and `./build/l8k` from the
+repository root; a global installation and cluster access are not prerequisites.
+
 ## Skill Catalog
 
 | Skill | Agent task |
@@ -98,13 +109,16 @@ For subcommands, JSON mode keeps the final result on stdout and sends human-read
 ```bash
 l8k discover \
   --save-cluster-config ./cluster-config.yaml \
-  --output json 2>/dev/null | jq .
+  --output json >discover.json 2>discover.log
 
 l8k generate \
   --user-config ./cluster-config.yaml \
   --save-deployment-files ./deployment \
-  --output json 2>/dev/null | jq .
+  --output json >generate.json 2>generate.log
 ```
+
+Check each command's exit status before parsing its result, and retain stderr
+for diagnosis.
 
 Do not add `--yes` to subcommands. `--output json` is the portable non-interactive path for those commands.
 
@@ -148,4 +162,5 @@ DaemonSet, collect a sosreport, and identify the first failed stage.
 
 ## Maintaining Skills
 
-Update the corresponding skill whenever a CLI workflow, flag, default, exit code, or safety requirement changes. Keep examples aligned with `l8k schema` and command help, and keep shared behavior in `k8s-launch-kit-shared` instead of duplicating it across every phase.
+Update relevant documentation sections, the corresponding skill and its bundled
+references in the same PR whenever a CLI workflow, flag, default, exit code, or safety requirement changes. Keep examples aligned with `l8k schema` and command help, and keep shared behavior in `k8s-launch-kit-shared` instead of duplicating it across every phase.

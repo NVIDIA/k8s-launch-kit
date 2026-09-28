@@ -6,15 +6,20 @@ description: "k8s-launch-kit (l8k) CLI: Shared patterns for binary location, glo
 
 # l8k — Shared Reference
 
-## Installation
+## Source Development and Installation
+
+For source changes, read the checkout's [AGENTS.md](../../AGENTS.md). Build
+and test that checkout from its repository root:
 
 ```bash
-# Build and install (production — copies binary + profiles)
-make build && sudo scripts/install.sh
-
-# Development (symlinks into source tree)
-make build && scripts/install.sh --dev-env
+make build
+./build/l8k schema
 ```
+
+Global installation is optional for development. When installation is requested,
+`make install` copies the binary and assets, while `make dev-install` links
+assets into the source tree. Both use `scripts/install-local.sh`, can download
+supporting assets and can write system paths; inspect the targets first.
 
 ## Install Paths
 
@@ -22,21 +27,18 @@ make build && scripts/install.sh --dev-env
 |------|----------|
 | `/usr/local/bin/l8k` | CLI binary (on PATH) |
 | `/usr/local/share/l8k/profiles/` | Go template profiles |
-| `/usr/local/share/l8k/presets/` | Topology presets (per `(machineType, gpuType)` directories) |
-| `/usr/local/share/l8k/l8k-config.yaml` | Default config |
+| `/usr/local/share/l8k/scripts/kubectl-netop_sosreport` | Diagnostic helper |
 
-After installation, `l8k` is available system-wide.
+After installation, `l8k` is available system-wide. Default configuration and
+topology presets are embedded; existing filesystem overrides are preserved.
 
 ## Binary Discovery (for AI agents)
 
-**CRITICAL — follow these steps exactly:**
-1. Run `which l8k` in a single Bash call. If it returns a path, use it. Done.
-2. If `which l8k` fails (exit code 1), tell the user l8k is not installed. Point them to: `make build && sudo scripts/install.sh`. **Stop — do not proceed.**
-3. **NEVER** do any of the following to find l8k:
-   - `find` or `ls` commands
-   - Spawn a subagent to locate the binary
-   - Check multiple paths or directories
-   - Explore the repo contents
+For installed CLI workflows, use `command -v l8k`. If it is unavailable,
+report the missing prerequisite and use the installation guidance above when
+installation is within the user's request. For source development, use
+`./build/l8k` after `make build`; do not substitute an unrelated installed
+binary for the checkout being tested.
 
 ## Available Commands
 
@@ -88,7 +90,7 @@ package ownership, artifacts, or external integration boundaries.
 | `--log-level <LEVEL>` | Enable logs at `trace`, `debug`, `info`, `warn`, or `error`. Debug shows structured progress; trace also shows bounded command output. |
 | `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`). **No-op for `l8k discover`** — discover always bootstraps into `nvidia-k8s-launch-kit`; the flag still applies to `l8k generate` / `l8k deploy` / `l8k clean` / `l8k validate`. |
 | `--network-namespaces <NS,...>` | Comma-separated namespaces for the secondary-network CRs + example test DaemonSets; one copy rendered per namespace (shared resources like IPPools/NodePolicies are NOT duplicated). Default: `default` |
-| `--node-selector <LABELS>` | Restrict to nodes matching labels (comma-separated, ANDed) |
+| `--node-selector <LABELS>` | Persist the deployment node selector (comma-separated, ANDed); does not restrict discovery scheduling |
 | `--image-pull-secrets <NAMES>` | Image pull secret names for Network Operator components and authenticated Helm chart downloads (comma-separated) |
 | `--skip-network-operator-helm` | On generate/deploy/validate and the root pipeline, skip Network Operator Helm values, installation, and Helm-specific validation while retaining custom-resource handling |
 
@@ -103,27 +105,28 @@ policy or `--keep-helm-chart` for an explicit retention-only override.
 reuses them unless another explicit CLI override is supplied.
 
 For automation, `l8k schema` exposes `configPaths` on config-backed flags. The
-metadata comes from the same registry that applies explicit flag values, so use
+metadata comes from the shared option bindings used during resolution, so use
 it instead of maintaining a separate CLI-to-YAML mapping.
 
 ## Agent / JSON Mode
 
-**RULE: AI agents MUST always use `--output json 2>/dev/null` when calling any l8k subcommand.** Never use text mode — it produces unstructured output with spinners and ANSI codes that is hard to parse.
+Use `--output json` for scripted assertions. Preserve stderr for diagnosis and
+check the process exit status before parsing output. Read the command's actual
+result shape; do not assume every command emits exactly one `JSONResult`.
+Text/help/schema inspection is appropriate when testing those interfaces.
 
-**Do NOT use `--yes` with subcommands** — it only exists on the root command and will cause "unknown flag" errors. `--output json` already auto-confirms all prompts (no interactive input needed).
+**Do not use `--yes` with subcommands.** It exists only on the root command.
+JSON mode is non-interactive, so confirm that the operation is within the
+user's existing authorization before running it.
 
 ```bash
-# Correct
-l8k discover --output json 2>/dev/null
-l8k generate --output json 2>/dev/null
-
-# WRONG — --yes is not a valid flag on subcommands
-l8k discover --output json --yes 2>/dev/null
+l8k generate --user-config ./cluster-config.yaml \
+  --save-deployment-files ./deployment \
+  --output json >generate.json 2>generate.log
 ```
 
-- **stdout**: Exactly one JSON object (`JSONResult`) at completion
-- **stderr**: Human-readable log lines
-- Pipe with `jq` for downstream processing: `l8k discover ... --output json 2>/dev/null | jq .success`
+Inspect the exit status, then parse `generate.json`; retain `generate.log` if
+there is a failure. Avoid pipelines that hide the CLI's failure status.
 
 ## Exit Codes
 
@@ -169,9 +172,19 @@ deployment types, flags, exit codes, and output formats.
 
 ## Security Rules
 
-- Confirm with the user before executing `--deploy` on a production cluster
-- Prefer `--dry-run` for destructive operations
-- Never expose kubeconfig contents in output
+- Verify the target/context and stay within the user's existing authorization
+  for live changes. A skill does not grant deployment or cleanup authority.
+- Use deployment dry-run to preview changes where supported. Discovery and
+  connectivity checks create cluster resources; root pipeline `--dry-run`
+  does not make every phase read-only. `clean` has no dry-run mode.
+- Never expose credentials or kubeconfig contents in output.
+
+## Maintaining This Guidance
+
+When behavior changes, update the affected documentation sections, phase skills
+and bundled references in the same PR. Follow the
+[documentation requirements](../../AGENTS.md#required-documentation-updates),
+check examples against schema/help, and keep shared rules here.
 
 ## Network Operator Namespace Resolution
 

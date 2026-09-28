@@ -74,9 +74,9 @@ l8k --discover-cluster-config \
   --kubeconfig ~/.kube/config \
   --fabric ethernet --deployment-type sriov \
   --save-deployment-files ./output --deploy \
-  --output json --yes 2>/dev/null
+  --output json --yes
 
-# Pipeline with dry-run (validate everything, apply nothing)
+# Pipeline with deployment dry-run (discovery still creates cluster resources)
 l8k --discover-cluster-config \
   --kubeconfig ~/.kube/config \
   --fabric ethernet --deployment-type sriov \
@@ -125,7 +125,9 @@ apply and reconcile the generated custom resources.
 If any phase fails, subsequent phases are skipped. The JSON output includes which phase failed.
 
 > [!CAUTION]
-> The full pipeline includes deployment — confirm with the user before running on production. Use `--dry-run` to preview first.
+> The full pipeline includes deployment. Verify the context and stay within the
+> user's existing live-operation authorization. `--dry-run` previews deployment;
+> discovery still creates temporary cluster resources, so the pipeline is not read-only.
 
 ## See Also
 

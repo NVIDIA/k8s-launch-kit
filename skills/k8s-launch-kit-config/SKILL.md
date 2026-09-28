@@ -129,13 +129,11 @@ pfs:
 ## Common Edits
 
 ```yaml
-# Change VF count per PF
+# Change VF count per PF and fabric-specific MTUs
 sriov:
   numVfs: 16
-
-# Change MTU
-sriov:
-  mtu: 9000
+  ethernetMtu: 9000
+  infinibandMtu: 4000
 
 # Set the DOCA driver version. Advanced users can also forward literal
 # environment variables through the generated NicClusterPolicy or
@@ -156,11 +154,8 @@ maintenance:
   maxNodeMaintenanceTimeSeconds: 3600
   maxParallelUpgrades: 4
 
-# Override the helm chart repository URL (rarely needed — the embedded
-# release catalog supplies the right URL for each MAJOR.MINOR release).
-# Useful only for mirrors or private chart hosts.
+# The selected release supplies the Helm repository URL.
 networkOperator:
-  helmRepoURL: "https://my-mirror.example.com/charts"
   # Keep generating/applying Network Operator CRs but let another system own
   # the Helm release. Generate/deploy/validate have the equivalent CLI flag
   # --skip-network-operator-helm; clean reads this persistent ownership setting
@@ -171,8 +166,7 @@ networkOperator:
 nvIpam:
   perNodeBlockSize: 10
   subnets:
-    - name: "rail-0-subnet"
-      cidr: "10.10.0.0/16"
+    - subnet: "10.10.0.0/16"
       gateway: "10.10.0.1"
 
 # Namespaces for the secondary-network CRs + example test DaemonSets.

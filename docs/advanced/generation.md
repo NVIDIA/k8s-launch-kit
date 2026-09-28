@@ -17,11 +17,19 @@ l8k generate \
 
 Profile settings use this precedence:
 
-1. Hardware-derived values and Launch Kit defaults.
-2. Values persisted in the configuration file.
-3. Explicit CLI flags.
+1. Canonical Launch Kit defaults.
+2. Hardware-derived defaults.
+3. Values supplied in the configuration file.
+4. Explicit CLI flags.
 
-When generation uses a file-backed config, resolved defaults and CLI overrides are written back to the same file while comments and file permissions are preserved. This makes the reviewed file the input for deploy and validation.
+Explicit false, zero and empty values override defaults; YAML `null` means
+unset. The selected release supplies catalog-managed coordinates after merging.
+See [Configuration](../reference/configuration.md) for the full contract.
+
+Generation preserves the source YAML. It writes the effective configuration to
+`<output>/.l8k/resolved-config.yaml`. Deploy and validate use an explicit user
+config when supplied, then this sidecar when present, before legacy fallback.
+Review both the generated artifacts and effective configuration before deployment.
 
 If hardware groups disagree on fabric, or discovery cannot resolve a configured link layer, generation requires `--fabric`.
 
@@ -42,7 +50,7 @@ See [Deployment Profiles](../user/profiles.md) for the fabric and deployment-typ
 
 ## Bundle Layout
 
-Launch Kit cleans the selected plugin output directory before every render and writes Network Operator files under:
+Launch Kit writes Network Operator files under the selected output directory:
 
 Rendered files are structurally checked after ownership annotations and
 before the output directory is cleaned. If this check fails, the previous
@@ -51,6 +59,8 @@ combined generate/deploy run uses the same checked snapshot.
 
 ```text
 deployment/
+|-- .l8k/
+|   `-- resolved-config.yaml
 `-- network-operator/
     |-- values.yaml
     |-- 10-nicclusterpolicy.yaml
