@@ -8,7 +8,11 @@ description: "k8s-launch-kit (l8k) CLI: Shared patterns for binary location, glo
 
 ## Source Development and Installation
 
-For source changes, read the checkout's [AGENTS.md](../../AGENTS.md). Build
+For source changes, read the checkout's [AGENTS.md](../../AGENTS.md) and the
+applicable [extension contracts](../../openspec/README.md). Their scenarios guide
+integration verification; their baseline exceptions identify existing limits.
+Update shared contracts when their promises change, and affected docs/skills with
+behavior changes. Routine conforming additions need no separate spec. Build
 and test that checkout from its repository root:
 
 ```bash

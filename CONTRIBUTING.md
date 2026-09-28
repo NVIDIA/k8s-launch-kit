@@ -12,6 +12,14 @@ Read [AGENTS.md](AGENTS.md) for repository navigation, behavior contracts,
 build and test guidance, and the development workflow. These shared rules also
 apply to agent-assisted contributions; `CLAUDE.md` points to the same guide.
 
+### Extension Contracts
+
+Use the [contract index](openspec/README.md) to identify the integration boundaries
+of a change. Explain relevant extension decisions and verification in the PR;
+update specs when shared behavior or a documented exception changes. Ordinary
+conforming changes do not require a new spec or an OpenSpec proposal. See the
+index for optional pinned structural validation and its limits.
+
 ### Documentation in Every Change
 
 Update the relevant documentation sections in the same PR when changing

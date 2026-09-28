@@ -16,6 +16,15 @@ For source changes, start with the repository's
 It covers development workflow, package boundaries, verification and required
 documentation updates. `CLAUDE.md` points to that shared guide.
 
+For extension work, consult the
+[contract index](https://github.com/NVIDIA/k8s-launch-kit/blob/main/openspec/README.md).
+It defines reusable integration decisions and scenarios for configuration,
+discovery, lifecycle, platform, profile, artifact, Kind, ownership, connectivity
+and output changes. Read the applicable baseline exceptions; specs do not imply
+that every scenario is already enforced. Update a contract when its shared promise
+changes, and update the affected user guide/skill alongside implementation.
+Routine conforming additions do not need a new spec or proposal.
+
 Use operational skills from the checkout being changed when testing CLI
 workflows. Source development can use `make build` and `./build/l8k` from the
 repository root; a global installation and cluster access are not prerequisites.
