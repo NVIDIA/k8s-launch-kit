@@ -17,6 +17,8 @@ operation through the target registry; command syntax and artifacts are
 unchanged.
 
 Generate Kubernetes YAML manifests for NVIDIA networking from a cluster config and profile selection.
+Review the effective config and generated resources using
+`docs/advanced/generation.md#review-the-bundle` before applying them.
 
 Generation validates all rendered YAML after annotation and before replacing
 the output directory. A malformed resource reports its filename/document and

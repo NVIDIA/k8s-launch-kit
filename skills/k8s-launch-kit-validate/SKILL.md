@@ -19,6 +19,8 @@ are unchanged.
 Verify that a previously generated and deployed NVIDIA networking
 deployment is correctly applied and matches the selected Network
 Operator release.
+Apply `docs/user/validation.md#worked-acceptance-decisions` to the report;
+compare intended and completed worker/rail coverage before acceptance.
 
 ## What it checks
 

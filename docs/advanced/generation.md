@@ -52,6 +52,28 @@ l8k generate \
 
 See [Deployment Profiles](../user/profiles.md) for the fabric and deployment-type matrix. See [Spectrum-X](../user/spectrum-x.md) for the Spectrum-X cohort flags and required RA2.3 inputs.
 
+## Review the bundle
+
+Before deploying, inspect both the generated resource directory and
+`<deployment-dir>/.l8k/resolved-config.yaml`. Compare them with the approved
+site intent:
+
+| Review | Confirm |
+| --- | --- |
+| Target and profile | Selected operator release, platform flavor, fabric, deployment type, groups, workers, NIC PCI selectors, rails and namespaces. |
+| Network | IP pool subnet/gateway/exclusions, MTU, VF count, device resource names, and routing against other site networks and switch configuration. |
+| Driver and maintenance | Enabled driver and module-unload controls, current storage/RDMA users, maintenance concurrency and unavailable-node budget. |
+| Ownership | `values.yaml` is present only when Launch Kit owns Helm; rendered resource identities match the intended cluster inventory. |
+| Validation | Example DaemonSets and selected test families cover the intended workers and rails. |
+
+Generation validates artifact structure; it does not reserve addresses outside
+the bundle, ask the Kubernetes API to admit resources, or establish live
+readiness. See [Deployment](deployment.md#server-side-dry-run) for the preview
+and [Configuration](../reference/configuration.md) for field semantics. Keep
+the complete bundle together for later validation. A regeneration replaces its
+output directory, so use a new directory when comparing a proposed change
+with a deployed baseline.
+
 ## Bundle Layout
 
 Launch Kit renders and checks the complete artifact set before replacing the

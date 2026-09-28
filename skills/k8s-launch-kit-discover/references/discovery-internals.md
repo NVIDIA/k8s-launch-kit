@@ -173,25 +173,16 @@ bus address. Rail numbers are per-group (each group starts at rail 0).
 
 ---
 
-## OFED Dependent Module Probing
+## Driver Module Safety
 
-After the NIC configuration daemon pods are running, discovery execs into each pod to
-inspect kernel module dependencies:
-
-```
-/sys/module/<module>/holders/
-```
-
-For each MLX kernel module (mlx5_core, mlx5_ib, etc.), discovery checks the `holders`
-directory to find modules that depend on OFED. Common dependents include:
-
-- `nv_peer_mem` -- legacy GPUDirect RDMA peer memory module.
-- `nvidia_peermem` -- modern GPUDirect RDMA peer memory module.
-- `mlx5_vdpa` -- vDPA offload module.
-
-The discovered dependents are saved per group as `thirdPartyRDMAModules`. These are used
-during manifest generation to configure the NicClusterPolicy's `ofedDriver` section
-with the correct secondary module list.
+Discovery does not walk `/sys/module/*/holders/`. That probe was removed
+because it could consume excessive memory on large nodes. The generated
+driver policy enables both storage and third-party RDMA unload controls by
+default. The per-group `storageModules` and `thirdPartyRDMAModules` fields
+remain available for explicit site input and safety warnings; their absence
+does not mean that no dependent modules exist. Review running storage and RDMA
+workloads before deployment. The canonical behavior is in
+`docs/user/discovery.md#driver-module-safety`.
 
 ---
 
@@ -212,7 +203,7 @@ Two groups are eligible for merging if:
 
 - Worker node lists are concatenated.
 - Node selectors are updated to cover all merged nodes.
-- `thirdPartyRDMAModules` are merged as a **union** (all unique modules from both groups).
+- Explicitly supplied `thirdPartyRDMAModules` values are merged as a **union**.
 
 ### Merge Exceptions
 

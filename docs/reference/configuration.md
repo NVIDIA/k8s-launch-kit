@@ -18,10 +18,6 @@ file contains the selected release and its matching catalog versions. An
 explicit release in `--user-config` remains pinned unless a CLI release
 override is supplied.
 
-After changing the repository-root defaults, run `go generate ./pkg/config`
-to refresh the byte-for-byte copy compiled into the binary. The config tests
-fail when the generated copy and `cluster-config.yaml` differ.
-
 For generation, configuration source precedence is:
 
 1. Canonical defaults from the repository-root `cluster-config.yaml`.
@@ -53,13 +49,8 @@ value from the YAML file.
 
 `--config-dir/presets/` replaces the embedded preset catalog. It does not merge with it.
 
-Config-backed CLI flags are declared on `options.Options` with `flag`,
-`config`, and command-scope tags. Direct scalar and string-list flags are
-registered and mapped automatically. Coordinated flags such as
-`--network-operator-release`, `--spectrum-x`, and `--spectrum-x-config` emit
-typed resolver requests handled by domain-specific code. Validation of enums
-runs at CLI binding time; cross-field validation runs only after the effective
-configuration is resolved.
+Invalid enum values are rejected when CLI inputs are bound. Cross-field
+requirements are checked after the effective configuration is resolved.
 
 ## Deploy And Validate Config Lookup
 

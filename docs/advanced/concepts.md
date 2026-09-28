@@ -7,6 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 Launch Kit translates discovered server hardware and deployment intent into Network Operator resources. These terms describe the data model used across discovery, generation, deployment, and validation.
 
+The [planning guide](../user/profiles.md) uses these terms to choose a
+deployment. An `l8k` binary version, a Network Operator release line, a
+Spectrum-X RA version, a Kubernetes/OpenShift flavor, a deployment profile,
+and a topology preset describe different choices. Pinning one does not pin the
+others. The `host` target covers the current lifecycle; the reserved `dpf`
+target has no available phases.
+
 ## Hardware
 
 | Term | Meaning |

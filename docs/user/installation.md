@@ -5,16 +5,28 @@ SPDX-License-Identifier: Apache-2.0
 
 # Installation
 
-Install the latest `l8k` binary, then select the target Network Operator release with `--network-operator-release`. A single current `l8k` binary carries the release catalog for older supported Network Operator lines.
+Install a published `l8k` binary, then select a Network Operator release with
+`--network-operator-release` or configuration. The current binary carries its
+embedded release catalog; use `l8k schema` to see the release lines that **your
+installed binary** recognizes. Complete [deployment planning](profiles.md)
+before using cluster credentials.
+
+This website is published from the repository's `main` branch. For a pinned
+binary, read the documentation at its repository release tag when you need the
+exact behavior of that version. Record the `l8k version` output and the
+selected Network Operator release with your deployment artifacts.
 
 ## Prerequisites
 
 - Linux or macOS on `amd64` or `arm64`.
-- Kubernetes credentials for discovery, deployment, validation, and sosreport collection.
 - `kubectl` is recommended for inspection and troubleshooting.
 - `curl` for the install script, Homebrew for the formula, or Docker/Podman for the container method.
 
 A pre-installed Network Operator and NFD are not required for discovery. `l8k deploy` can install the selected Network Operator Helm chart from the generated `values.yaml`.
+Cluster permissions, privileged admission, image access, and the site's
+network inputs depend on the intended workflow; check
+[prerequisites and ownership](profiles.md#check-prerequisites-and-site-inputs)
+before the first live command.
 
 ## Install Script
 
@@ -109,19 +121,10 @@ l8k preset list --config-dir /etc/l8k
 
 Script, Homebrew, and source installs also place the profile templates under `<prefix>/share/l8k/profiles/`. Existing `l8k-config.yaml` and `presets/` overrides under the share directory are preserved during upgrades and can still be selected implicitly.
 
-Without `--config-dir`, presets resolve from `./presets`, then
-`/usr/local/share/l8k/presets`, then the binary-relative
-`../share/l8k/presets`, and finally the embedded catalog. An explicit
-`--config-dir` selects its `presets/` when present and the embedded catalog
-otherwise. It never merges catalogs. Run `l8k preset list` with the same flags
-as the intended workflow to see the selected source.
-
-Generation without `--user-config` first checks `./cluster-config.yaml`, then
-local and installed `l8k-config.yaml` fallbacks when no `--config-dir` is set.
-`--for` can use embedded defaults when no file is found. Deploy and validate
-first check bundle metadata and adjacent configs; see
-[configuration lookup](../reference/configuration.md#deploy-and-validate-config-lookup).
-An old filesystem override can therefore outlive a binary upgrade.
+Local and installed overrides can outlive a binary upgrade. Run `l8k preset
+list` with the same flags as the intended workflow to inspect the selected
+catalog. See [configuration lookup](../reference/configuration.md#deploy-and-validate-config-lookup)
+and [topology presets](presets.md) for the complete precedence rules.
 
 Profile templates remain filesystem assets: `./profiles` takes precedence over
 `/usr/local/share/l8k/profiles`, followed by the binary-relative share directory.

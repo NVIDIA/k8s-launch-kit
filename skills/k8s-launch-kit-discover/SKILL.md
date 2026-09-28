@@ -17,6 +17,9 @@ operation through the target registry; command syntax and artifacts are
 unchanged.
 
 Discover cluster hardware and produce a `cluster-config.yaml` describing NICs, GPUs, rails, and node groups.
+Use `docs/user/profiles.md#check-prerequisites-and-site-inputs` for the
+site-owned decisions and `docs/user/discovery.md#review-saved-inventory` for
+the post-discovery review before generation.
 
 Three things to know about the saved file:
 - **Fresh discovery persists a resolved profile.** Without `--user-config`,
