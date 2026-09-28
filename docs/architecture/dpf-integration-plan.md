@@ -88,9 +88,8 @@ PR #165 delivered the compatibility-first command boundary:
 - the original host command bodies remained unchanged at that foundation
   stage.
 
-The follow-on HostTarget migration is implemented on the current feature
-branch and pending pull-request review. Every lifecycle phase now binds a
-typed, immutable Host request through the registry and executes a concrete
+The follow-on HostTarget migration is implemented in main. Every lifecycle
+phase now binds a typed, immutable Host request through the registry and executes a concrete
 Host operation. Standalone deploy and validate orchestration live outside
 Cobra, process exit remains at the command boundary, and DPF is rejected
 before any Host dependency is constructed.
@@ -275,7 +274,7 @@ Delivered by PR #165:
 - unavailable DPF guard;
 - compatibility-oriented tests and documentation.
 
-### Stage 1: Finish HostTarget execution — implemented, pending review
+### Stage 1: Finish HostTarget execution — implemented
 
 Follow the [HostTarget migration plan](host-target-migration-plan.md):
 

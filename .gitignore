@@ -60,6 +60,7 @@ scripts/kubectl-netop_sosreport
 
 claude.md
 CLAUDE.md
+!/CLAUDE.md
 licenses.csv
 licenses_raw.csv
 modules.csv

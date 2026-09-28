@@ -89,7 +89,7 @@ l8k deploy --deployment-files ./output --kubeconfig ~/.kube/config \
   --overwrite-existing
 
 # Agent mode
-l8k deploy --output json --yes 2>/dev/null
+l8k deploy --output json
 
 # Legacy single-shot: generate + deploy in one invocation
 l8k generate --user-config cluster-config.yaml \

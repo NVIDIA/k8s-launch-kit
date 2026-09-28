@@ -6,6 +6,29 @@ NVIDIA Kubernetes Launch Kit is [Apache 2.0 licensed](LICENSE) and accepts contr
 This document outlines some of the conventions on development workflow, commit message formatting,
 contact points and other resources to make it easier to get your contribution accepted.
 
+## Development Guide
+
+Read [AGENTS.md](AGENTS.md) for repository navigation, behavior contracts,
+build and test guidance, and the development workflow. These shared rules also
+apply to agent-assisted contributions; `CLAUDE.md` points to the same guide.
+
+### Documentation in Every Change
+
+Update the relevant documentation sections in the same PR when changing
+behavior, commands, configuration, interfaces or development procedures. Use
+the [documentation impact map](AGENTS.md#required-documentation-updates) to
+identify affected guides, README examples, architecture diagrams and skill
+playbooks, including their bundled references.
+
+Before opening a PR:
+
+- Update existing sections and examples to describe the resulting behavior.
+- Check examples, links and any affected generated documentation.
+- For site changes, install `requirements-docs.txt` in an isolated Python
+  environment and run `mkdocs build --strict`.
+- List documentation updates and validation in the PR description. If no
+  documentation update is needed, explain why existing guidance remains accurate.
+
 ## Coding Style
 
 Please follows the standard formatting recommendations and language idioms set out in [Effective Go](https://golang.org/doc/effective_go.html) and in the [Go Code Review Comments wiki](https://github.com/golang/go/wiki/CodeReviewComments).

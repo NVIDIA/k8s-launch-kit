@@ -76,7 +76,7 @@ kubectl get pods -A -o wide | grep -E 'ContainerCreating|Init'
 | `preset has no capabilities block` | Preset YAML used by `--for` is missing `capabilities.nodes.{sriov,rdma,ib}` | Add the block to the preset's `topology.yaml`. Discovery-time overlay does not require it; only `--for` does. |
 | `unknown field "productType"` in YAML | Hand-authored config still uses the old key name | Rename `productType:` to `gpuType:` (the field was renamed). |
 
-For detailed triage workflow, read `references/troubleshooting-guide.md`.
+For detailed triage workflow, read `references/common-failures.md`.
 
 ## sosreport Analysis
 
@@ -103,7 +103,7 @@ sosreport/
 
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — Exit codes and error structure
 - [k8s-launch-kit-discover](../k8s-launch-kit-discover/SKILL.md) — Re-discover to verify hardware state
-- `references/troubleshooting-guide.md` — Detailed triage workflow
+- `references/common-failures.md` — Detailed triage workflow
 
 ## OpenShift
 

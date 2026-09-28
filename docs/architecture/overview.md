@@ -51,8 +51,10 @@ flowchart TB
         subgraph application["Host application orchestration"]
             launcher["pkg/app Launcher\nworkflow state · JSON result · context"]
             opts["pkg/options\nHost CLI option model"]
-            config["pkg/config\ncluster-config schema + defaults"]
-            resolve["pkg/resolve\nhardware defaults + resolved validation"]
+            config["pkg/config\nschema · defaults · YAML presence"]
+            resolve["pkg/resolve\nconfig precedence + resolved validation"]
+            cfgoverrides["pkg/configflags\noption tags · bindings · explicit inputs"]
+            configinput["pkg/configinput\nexplicit CLI values + typed requests"]
             assets["pkg/assets\nconfig-dir and installed assets"]
             profiles["pkg/profiles\nprofile metadata and matching"]
             presets["pkg/presets + pkg/presetmatch\ncertified topology catalog and drift"]
@@ -60,7 +62,6 @@ flowchart TB
 
         subgraph netop["Network Operator domain — pkg/networkoperatorplugin"]
             plugin["plugin.Plugin implementation"]
-            cfgoverrides["CLI-to-config override registry\nflag · config paths · explicit setter"]
             discovery["Discovery\nbootstrap daemon · inventory · grouping · node labels"]
             rendering["Generation\nprofile selection · templates · render plan"]
             releases["Embedded release catalog"]
@@ -127,9 +128,11 @@ flowchart TB
     launcher --> plugin
 
     flags --> cfgoverrides
-    hostpaths --> cfgoverrides
-    plugin --> cfgoverrides
-    cfgoverrides --> config
+    hostpaths --> resolve
+    resolve --> cfgoverrides
+    resolve --> configinput
+    resolve --> config
+    cfgoverrides --> opts
     plugin --> discovery
     plugin --> rendering
     plugin --> deploy
@@ -233,13 +236,17 @@ Network Operator manifest, component-version, stray-resource, data-plane, and
 custom-resource cleanup paths. Cleanup reads the persistent config setting to
 avoid removing a release owned by another system.
 
-Config-backed Host flags are registered once in the Network Operator plugin's
-CLI-to-config override registry. Each entry owns the CLI flag name, the YAML
-path or paths it controls, explicit-value detection, and the setter. Discover,
-generate, standalone deploy, and standalone validate all call the same
-`ApplyCLIConfigOverrides` boundary after loading configuration. `l8k schema`
-publishes the same registry metadata as `flags[].configPaths`, so routing and
-automation do not maintain a second flag-to-config table.
+Config-backed Host flags are described by tags on `pkg/options.Options` and
+bound through `pkg/configflags`. `pkg/configinput` carries explicit CLI values
+and coordinated resolver requests. `pkg/config.Input` retains YAML presence so
+explicit false, zero and empty values remain distinguishable from omitted fields. `pkg/resolve` combines canonical defaults, hardware defaults, user
+values and explicit CLI inputs, then applies release and flavor rules and
+validates the result. Coordinated inputs use typed resolver requests.
+
+Discover, generate, standalone deploy and standalone validate use this shared
+resolution path. The Network Operator plugin retains compatibility helpers;
+it does not own a separate canonical flag-to-config registry. `l8k schema`
+exposes the same bindings as `flags[].configPaths` for automation.
 
 ## Target binding and execution
 
@@ -314,8 +321,9 @@ flowchart TB
 | `pkg/target` | Names, phases, capabilities, common invocation policy, registry, operation contract | Cobra, Host options, DPF options, Kubernetes clients |
 | `pkg/target/host` | Typed Host requests, explicit-value semantics, Host path/config resolution, phase services | DPF implementation or cross-target composition |
 | `pkg/app` | Discover/generate/root workflow state and Network Operator plugin coordination | CLI parsing or process exit |
-| `pkg/networkoperatorplugin` | Host CLI-to-config override registry, discovery, rendering, deployment state machine, validation primitives | Target selection |
-| `pkg/config`, `pkg/options` | Existing Host configuration and option models | A universal union of Host and DPF configuration |
+| `pkg/networkoperatorplugin` | Discovery, rendering, deployment state machine, validation primitives | Target selection |
+| `pkg/config`, `pkg/options` | Host configuration, YAML presence and option models | A universal union of Host and DPF configuration |
+| `pkg/configflags`, `pkg/configinput`, `pkg/resolve` | Shared option bindings, explicit CLI inputs, configuration resolution and validation | CLI process exit or cluster orchestration |
 | `pkg/ui`, `pkg/errors`, `pkg/log` | Presentation, structured failures, and logging | Domain decisions |
 
 ## Build, release, and documentation supply chain

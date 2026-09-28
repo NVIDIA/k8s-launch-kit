@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # HostTarget migration plan
 
-**Status:** Implemented on the feature branch; pending pull-request review
+**Status:** Implemented; retained as design and migration history
 
 **Date:** 2026-08-07
 
@@ -436,7 +436,7 @@ Each routing PR runs:
 
 ```bash
 CGO_ENABLED=0 go test -count=1 ./...
-CGO_ENABLED=0 go test -race -count=1 ./...
+go test -race -count=1 ./... # requires CGO enabled
 CGO_ENABLED=0 go vet ./...
 CGO_ENABLED=0 go build ./...
 golangci-lint run ./...

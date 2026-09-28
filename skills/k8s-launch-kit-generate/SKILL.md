@@ -85,7 +85,7 @@ l8k generate --user-config cluster-config.yaml \
 l8k generate --user-config cluster-config.yaml \
   --fabric ethernet --deployment-type sriov \
   --save-deployment-files ./output \
-  --output json 2>/dev/null
+  --output json
 
 # Generate from a known server SKU (no cluster discovery required)
 l8k preset list   # see available presets
@@ -129,7 +129,7 @@ re-run discovery so the config reflects the host state.
 | Spectrum-X | `--spectrum-x` | AI cloud, multi-tenant GPU networking |
 
 For detailed profile selection guidance (NIC constraints, multiplane modes, when to use each),
-read `references/profile-decision-tree.md`.
+read `../k8s-network-engineer/references/profile-decision-tree.md`.
 
 ## Output
 
