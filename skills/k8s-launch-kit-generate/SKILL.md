@@ -253,7 +253,7 @@ win when a one-off override is needed.
 
 ## OpenShift
 
-`--flavor ocp` selects separate OpenShift profiles and generates no Helm values. Hardware policies and optional NIC interface naming templates select each worker by hostname so workers sharing a machine label can retain distinct PCI layouts. Compatible groups share a network per GPU type and rail count. Custom workloads render once per shared network and workload namespace, referencing that namespace's NAD and the `openshift.io` SR-IOV resource. Verify each worker selector and PCI address before deployment.
+`--flavor ocp` selects separate OpenShift profiles and generates no Helm values. Hardware policies use the same bucket and source-group render scopes as Kubernetes; optional NIC interface naming templates render per source group. Compatible groups share a network per GPU type and rail count. Custom workloads render once per shared network and workload namespace, referencing that namespace's NAD and the `openshift.io` SR-IOV resource. Verify each policy selector and PCI address against every targeted worker before deployment.
 See `docs/user/openshift.md` for the required external operators and full
 generate-to-acceptance procedure.
 

@@ -14,7 +14,7 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-func TestOpenShiftSharesNetworkButKeepsNodePoliciesPerSource(t *testing.T) {
+func TestOpenShiftSharesNetworkAndHardwarePoliciesByBucket(t *testing.T) {
 	cfg, err := config.LoadFullConfig(filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
 	require.NoError(t, err)
 	cfg.Flavor = config.FlavorOCP
@@ -40,7 +40,7 @@ func TestOpenShiftSharesNetworkButKeepsNodePoliciesPerSource(t *testing.T) {
 	require.Len(t, fileNamesMatching(rendered, "50-sriovnetwork"), 1)
 	require.Len(t, fileNamesMatching(rendered, "60-example-daemonset"), 1)
 
-	require.Len(t, fileNamesMatching(rendered, "40-sriovnetworknodepolicy"), 2)
+	require.Len(t, fileNamesMatching(rendered, "40-sriovnetworknodepolicy"), 1)
 
 	_, pool := fileMatching(t, rendered, "20-ippool")
 	_, network := fileMatching(t, rendered, "50-sriovnetwork")
@@ -54,14 +54,10 @@ func TestOpenShiftSharesNetworkButKeepsNodePoliciesPerSource(t *testing.T) {
 	require.Contains(t, network, `"poolName": "nv-ipam-pool-gpu-model-y"`)
 	require.Contains(t, workload, "sriov-network-gpu-model-y")
 
-	policy66 := rendered["40-sriovnetworknodepolicy-group-0.yaml"]
-	policy67 := rendered["40-sriovnetworknodepolicy-group-1.yaml"]
-	require.Contains(t, policy66, "cloud-dev-66")
-	require.Contains(t, policy66, "0000:19:00.0")
-	require.NotContains(t, policy66, "0000:1a:00.0")
-	require.Contains(t, policy67, "cloud-dev-67")
-	require.Contains(t, policy67, "0000:1a:00.0")
-	require.NotContains(t, policy67, "0000:19:00.0")
+	policy := rendered["40-sriovnetworknodepolicy-gpu-model-y.yaml"]
+	require.Contains(t, policy, config.GPULabelKey)
+	require.Contains(t, policy, "0000:19:00.0")
+	require.NotContains(t, policy, "kubernetes.io/hostname")
 
 	workloadPath := filepath.Join(t.TempDir(), "workload.yaml")
 	require.NoError(t, os.WriteFile(workloadPath, []byte("apiVersion: v1\nkind: Pod\nmetadata:\n  name: custom\nspec:\n  containers:\n  - name: test\n    image: busybox:1.36\n"), 0600))
@@ -117,7 +113,7 @@ func TestOpenShiftSharesNetworkButKeepsNodePoliciesPerSource(t *testing.T) {
 	require.ErrorContains(t, err, "requires nodeSelector")
 }
 
-func TestOpenShiftRendersIdenticalMachineGroupsOnExactWorkers(t *testing.T) {
+func TestOpenShiftBucketsSameMachineGroups(t *testing.T) {
 	cfg, err := config.LoadFullConfig(filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
 	require.NoError(t, err)
 	cfg.Flavor = config.FlavorOCP
@@ -143,46 +139,21 @@ func TestOpenShiftRendersIdenticalMachineGroupsOnExactWorkers(t *testing.T) {
 	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
 		loadProfileFromDir(t, "sriov-ethernet-rdma-ocp"), cfg)
 	require.NoError(t, err)
-	require.Len(t, fileNamesMatching(rendered, "40-sriovnetworknodepolicy"), 2)
-	require.Len(t, fileNamesMatching(rendered, "11-nicnodepolicy"), 2)
+	require.Len(t, fileNamesMatching(rendered, "40-sriovnetworknodepolicy"), 1)
+	require.Len(t, fileNamesMatching(rendered, "11-nicnodepolicy"), 1)
 	require.Len(t, fileNamesMatching(rendered, "35-sriovnetworkpoolconfig"), 1)
 	require.Len(t, fileNamesMatching(rendered, "20-ippool"), 1)
 	require.Len(t, fileNamesMatching(rendered, "50-sriovnetwork"), 1)
 	require.Len(t, fileNamesMatching(rendered, "60-example-daemonset"), 1)
-	cfg.Profile.Multirail = true
-	cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate = true
-	named, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
-		loadProfileFromDir(t, "sriov-ethernet-rdma-ocp"), cfg)
-	require.NoError(t, err)
-	require.Len(t, fileNamesMatching(named, "30-nicinterfacenametemplate"), 2)
-	for name, content := range named {
-		if strings.Contains(name, "30-nicinterfacenametemplate") {
-			require.Contains(t, content, "kubernetes.io/hostname")
-			require.True(t, strings.Contains(content, "worker-a") != strings.Contains(content, "worker-b"))
-		}
-	}
-	cfg.Profile.Multirail = false
-	cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate = false
 	_, pool := fileMatching(t, rendered, "35-sriovnetworkpoolconfig")
 	require.Contains(t, pool, "maxUnavailable: 0")
 	require.Contains(t, pool, "worker-a")
 	require.Contains(t, pool, "worker-b")
 	require.NotContains(t, pool, "worker-c")
-	for _, worker := range []struct{ name, pci string }{
-		{name: "worker-a", pci: "0000:19:00.0"},
-		{name: "worker-b", pci: "0000:1a:00.0"},
-	} {
-		found := false
-		for name, policy := range rendered {
-			if !strings.HasPrefix(name, "40-sriovnetworknodepolicy-") || !strings.Contains(policy, worker.name) {
-				continue
-			}
-			found = true
-			require.Contains(t, policy, worker.pci)
-			require.NotContains(t, policy, map[string]string{"worker-a": "worker-b", "worker-b": "worker-a"}[worker.name])
-		}
-		require.True(t, found, "missing policy for %s", worker.name)
-	}
+	_, policy := fileMatching(t, rendered, "40-sriovnetworknodepolicy")
+	require.Contains(t, policy, config.GPULabelKey)
+	require.Contains(t, policy, "0000:19:00.0")
+	require.NotContains(t, policy, "kubernetes.io/hostname")
 	cfg.Profile.Fabric = "infiniband"
 	ibRendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
 		loadProfileFromDir(t, "sriov-ib-rdma-ocp"), cfg)
@@ -190,19 +161,6 @@ func TestOpenShiftRendersIdenticalMachineGroupsOnExactWorkers(t *testing.T) {
 	require.Len(t, fileNamesMatching(ibRendered, "35-sriovnetworkpoolconfig"), 1)
 	_, ibPool := fileMatching(t, ibRendered, "35-sriovnetworkpoolconfig")
 	require.Contains(t, ibPool, "maxUnavailable: 0")
-}
-
-func TestOpenShiftSplitsMultiWorkerHardwareGroup(t *testing.T) {
-	sources := []config.ClusterConfig{{
-		Identifier: "machine-a", WorkerNodes: []string{"worker-a", "worker-b"},
-		NodeSelector: map[string]string{config.MachineLabelKey: "machine-a"},
-	}}
-	scoped, err := ocpWorkerPolicySources(sources)
-	require.NoError(t, err)
-	require.Len(t, scoped, 2)
-	require.NotEqual(t, scoped[0].Identifier, scoped[1].Identifier)
-	require.Equal(t, map[string]string{"kubernetes.io/hostname": "worker-a"}, scoped[0].NodeSelector)
-	require.Equal(t, map[string]string{"kubernetes.io/hostname": "worker-b"}, scoped[1].NodeSelector)
 }
 
 func TestOpenShiftNamesSameGPUBucketsByRailCount(t *testing.T) {
@@ -252,7 +210,7 @@ func TestOpenShiftRendersSameGPUWithDifferentRailCounts(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, fileNamesMatching(rendered, "90-workload"), 2)
 	require.Len(t, fileNamesMatching(rendered, "50-sriovnetwork"), 2)
-	require.Len(t, fileNamesMatching(rendered, "40-sriovnetworknodepolicy"), 4)
+	require.Len(t, fileNamesMatching(rendered, "40-sriovnetworknodepolicy"), 2)
 	require.Contains(t, rendered, "90-workload-gpu-model-y-r1.yaml")
 	require.Contains(t, rendered, "90-workload-gpu-model-y-r2.yaml")
 	require.Contains(t, rendered["90-workload-gpu-model-y-r1.yaml"], "sriov-network-rail-0-gpu-model-y-r1")
