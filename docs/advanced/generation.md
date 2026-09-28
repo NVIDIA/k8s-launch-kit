@@ -228,6 +228,8 @@ and per network namespace.
 
 Replacing the example removes the default connectivity DaemonSet. Even a custom
 DaemonSet in a `90-workload-*.yaml` file is outside connectivity selection.
+Follow the [application walkthrough](../user/workloads.md) to preserve matching
+example fixtures before rendering a custom workload and restore them afterward.
 For connectivity, provide a separate `*example*.yaml` `apps/v1` DaemonSet with
 the required route/RDMA containers, namespace, and network resources described
 in [Validation](../user/validation.md#connectivity-only-validation). Keep those

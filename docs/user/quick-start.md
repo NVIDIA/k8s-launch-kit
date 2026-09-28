@@ -88,7 +88,7 @@ l8k validate \
 
 Open `deployment/network-operator/k8s-launch-kit-validation-report.html`. For this two-worker example, verify that both intended workers contributed usable test pods, the intended manifests are ready, the required static checks completed, and every selected data-plane check family has gating tests on the expected rails. Review skipped checks, missing endpoints, and non-gating cross-rail observations. A Kubernetes full-validation process can exit `0` while resources are in progress or connectivity is skipped; the wait deadline alone does not change that rule. Apply the [acceptance outcomes](validation.md#acceptance-outcomes) to the report before declaring the deployment ready.
 
-If the report is incomplete or failed, retain it and follow [Troubleshooting](troubleshooting.md). After network acceptance, use the generated network in the intended workload or [plan a change](maintenance.md).
+If the report is incomplete or failed, retain it and follow [Troubleshooting](troubleshooting.md). After network acceptance, [connect an application](workloads.md) or [plan a change](maintenance.md).
 
 ## Common Variants
 

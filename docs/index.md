@@ -30,6 +30,7 @@ The lifecycle commands operate on the `host` target by default. The reserved
 | Integrator adding an infrastructure target | [Target-aware CLI](advanced/targets.md) |
 | AI agent integrator | [AI Skills](integrator/ai-skills.md) |
 | Operator confirming a deployment is ready for use | [Validation](user/validation.md) |
+| Application owner connecting a workload | [Use the network in an application](user/workloads.md) |
 | Operator changing an existing deployment | [Change and upgrade](user/maintenance.md) |
 | Operator removing a deployment | [Cleanup](user/cleanup.md) |
 | Operator investigating a failed stage | [Troubleshooting](user/troubleshooting.md) |

@@ -181,3 +181,4 @@ these by applying `MaintenanceOperatorConfig` alone.
 ## OpenShift
 
 OpenShift deploy requires certified operator installations, uses OLM CSV/API checks, and configures existing operators. Helm values in the deployment directory are rejected. IPPool dry-run checks may be deferred until NCP installs NV-IPAM.
+Use `docs/user/openshift.md` for the operator ownership and acceptance workflow.

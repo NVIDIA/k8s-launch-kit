@@ -5,10 +5,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # Remove a Network Operator Deployment
 
-Use `l8k clean` to tear down the Network Operator deployment on one Kubernetes
+Use `l8k clean` to tear down the Network Operator deployment on one **Kubernetes**
 cluster. The command removes custom resources first so the installed
 controllers can process their finalizers, then uninstalls the Helm release
 unless the resolved config marks it externally owned.
+
+Before running it, confirm the current kubeconfig context, intended operator namespace, live custom-resource inventory, and whether the Helm release is externally owned. The deletion scope includes **every** custom resource in the operator namespace and the five listed cluster-scoped kinds across the cluster, including manual or other-cohort instances. There is no cleanup dry run. Record approved identities and preserve the generated bundle and validation evidence. For OpenShift, use the [reviewed identity procedure](openshift.md#remove-the-intended-resources); `l8k clean` rejects that flavor.
 
 ```bash
 l8k clean --kubeconfig ~/.kube/config

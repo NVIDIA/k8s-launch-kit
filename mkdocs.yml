@@ -96,6 +96,7 @@ nav:
       - Deploy Spectrum-X networking: user/spectrum-x.md
       - Deploy to mixed hardware: user/heterogeneous-clusters.md
       - Use topology presets: user/presets.md
+      - Use the network in an application: user/workloads.md
   - Operate:
       - Validate and accept a deployment: user/validation.md
       - Change and upgrade a deployment: user/maintenance.md

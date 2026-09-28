@@ -24,6 +24,7 @@ This documentation covers the `l8k` CLI for deploying NVIDIA cloud-native networ
 - Deploy Spectrum-X networking: /k8s-launch-kit/user/spectrum-x/
 - Deploy to mixed hardware: /k8s-launch-kit/user/heterogeneous-clusters/
 - Use topology presets: /k8s-launch-kit/user/presets/
+- Use the network in an application: /k8s-launch-kit/user/workloads/
 
 ## Operate
 

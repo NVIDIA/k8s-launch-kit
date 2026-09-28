@@ -256,4 +256,4 @@ live (collapsed) classification is kept (a preset-deviation warning is emitted).
 
 ## OpenShift
 
-On OpenShift, pass `--flavor ocp`. Use explicit `clusterConfig[].workerNodes` in `--user-config` to bound discovery; the temporary discovery ServiceAccount gets privileged SCC use in its own namespace.
+On OpenShift, pass `--flavor ocp`. Use explicit `clusterConfig[].workerNodes` in `--user-config` to bound discovery; the temporary discovery ServiceAccount gets privileged SCC use in its own namespace. Follow the complete prerequisite and review sequence in `docs/user/openshift.md`.
