@@ -13,7 +13,7 @@ Before generating, the fabric owner must confirm a configured Spectrum-X switch 
 
 ## Deploy RA2.3
 
-1. [Discover](discovery.md) and review the intended hardware in `./cluster-config.yaml`, or use a complete, reviewed source config for that cluster. Confirm east-west PF identity, rails, worker groups, networking settings, and maintenance budget. Obtain a validated `./site-ra23-profile.yaml` from the hardware owner and, if using topology-derived pools, a matching `./topology.json`.
+1. [Discover](discovery.md) and review the intended hardware in `./cluster-config.yaml`, or use a complete, reviewed source config for that cluster. Confirm east-west PF identity, rails, worker groups, networking settings, and maintenance budget. Obtain a validated **full ConfigMap** at `./site-ra23-profile.yaml` from the hardware owner and a matching `./topology.json` for topology-derived pools. A raw `data.profile` file needs the additional `--spectrum-x-configmap-name` option described [below](#ra23-profile-configmap).
 2. Generate into a new directory. This example uses topology-derived pools; the profile and topology files must already exist:
 
    ```bash

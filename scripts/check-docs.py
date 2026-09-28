@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 
@@ -131,13 +132,16 @@ def check_syntax(binary):
 
 def check_index():
     nav = (ROOT / "mkdocs.yml").read_text().split("\nnav:\n", 1)[1]
-    paths = re.findall(r"^\s*- [^\n]+: ([\w./-]+\.md)$", nav, re.MULTILINE)
+    nav_paths = set(re.findall(r"^\s*- [^\n]+: ([\w./-]+\.md)$", nav, re.MULTILINE))
+    paths = {str(path.relative_to(ROOT / "docs")) for path in (ROOT / "docs").rglob("*.md")}
     index = (ROOT / "docs/llms.txt").read_text()
+    for path in nav_paths - paths:
+        raise ValueError(f"navigation points to missing {path}")
     for path in paths:
         route = "/k8s-launch-kit/" + ("" if path == "index.md" else path[:-3] + "/")
         if route not in index:
             raise ValueError(f"llms.txt is missing {route}")
-    print(f"Navigation: all {len(paths)} published pages are listed in llms.txt")
+    print(f"Navigation: all {len(paths)} published pages, including linked plans, are listed in llms.txt")
 
 
 def check_offline_examples(binary):
@@ -156,18 +160,41 @@ def check_offline_examples(binary):
             raise ValueError("documented Profile YAML must render without changing its source")
         if not (output / ".l8k/resolved-config.yaml").is_file():
             raise ValueError("documented effective-config sidecar is missing")
-        workload = base / "workload.yaml"
-        workload.write_text("apiVersion: v1\nkind: Pod\nmetadata:\n  name: docs-example\n"
-                            "spec:\n  containers:\n    - name: app\n      image: example.invalid/app:latest\n")
-        run(binary, *common, "--save-deployment-files", str(output),
+        fixtures = list((output / "network-operator").glob("*example*.yaml"))
+        if not fixtures:
+            raise ValueError("standard rendering has no connectivity fixtures to preserve")
+        saved_fixtures = base / "validation-fixtures"
+        saved_fixtures.mkdir()
+        for fixture in fixtures:
+            shutil.copy2(fixture, saved_fixtures / fixture.name)
+        workload = ROOT / "docs/examples/workloads/rdma-client.yaml"
+        sample = workload.read_text()
+        if "kind: Deployment" not in sample or "image: " not in sample or ":latest" in sample:
+            raise ValueError("published custom workload must be a complete versioned Deployment")
+        custom_output = base / "application-deployment"
+        run(binary, *common, "--save-deployment-files", str(custom_output),
             "--workload-manifest", str(workload), "--network-namespaces", "training,inference")
-        resources = output / "network-operator"
+        resources = custom_output / "network-operator"
         custom = list(resources.glob("90-workload*.yaml"))
-        if len(custom) != 1 or "namespace: training" not in custom[0].read_text():
-            raise ValueError("documented Kubernetes custom-workload namespace behavior changed")
+        if len(custom) != 1:
+            raise ValueError("published workload must render once per Kubernetes source group")
+        rendered = custom[0].read_text()
+        for expected in ("kind: Deployment", "namespace: training", "rdma-client",
+                         "k8s.v1.cni.cncf.io/networks", "resources:", "requests:"):
+            if expected not in rendered:
+                raise ValueError(f"published workload render is missing {expected}")
         if list(resources.glob("*example*.yaml")):
             raise ValueError("custom workload no longer replaces default connectivity fixtures")
-    print("Offline rendering: published Profile YAML, unchanged source, sidecar, and custom workload passed")
+        sidecar = (custom_output / ".l8k/resolved-config.yaml").read_bytes()
+        for fixture in saved_fixtures.iterdir():
+            shutil.copy2(fixture, resources / fixture.name)
+        if not list(resources.glob("*example*.yaml")) or not custom[0].is_file():
+            raise ValueError("application bundle must retain both workload and restored fixtures")
+        if (custom_output / ".l8k/resolved-config.yaml").read_bytes() != sidecar:
+            raise ValueError("restoring fixtures must not change effective config")
+        if workload.read_text() != sample:
+            raise ValueError("rendering changed the published source workload")
+    print("Offline rendering: published Profile and workload, effective config, and fixture retention passed")
 
 
 def main():

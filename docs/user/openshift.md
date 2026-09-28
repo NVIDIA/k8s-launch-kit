@@ -9,13 +9,14 @@ This procedure prepares **SR-IOV Ethernet RDMA** on an existing OpenShift cluste
 
 ## Before you start
 
-Install the certified [NVIDIA Network Operator for OpenShift](https://docs.nvidia.com/networking/display/kubernetes2670/openshift/deployment-guide-openshift.html), the [Red Hat SR-IOV Network Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/networking_operators/sr-iov-operator), Node Feature Discovery, and NVIDIA Maintenance Operator through their own installation workflows. Launch Kit configures those installations; it does not install their Helm charts. Check the successful CSVs, required APIs, and the NVIDIA Network Operator OLM Subscription before continuing. The Subscription may have any name if its `spec.name` selects the NVIDIA package. Launch Kit persists maintenance settings through it, and configuration changes can roll controllers.
+Install the certified [NVIDIA Network Operator for OpenShift](https://docs.nvidia.com/networking/display/kubernetes2670/openshift/deployment-guide-openshift.html), the [Red Hat SR-IOV Network Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/networking_operators/sr-iov-operator), [Node Feature Discovery](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/pdf/hardware_accelerators/index), and [NVIDIA Maintenance Operator](https://github.com/Mellanox/maintenance-operator#deployment) through their own installation workflows. Confirm release compatibility with the operator owners. Launch Kit configures those installations; it does not install their Helm charts. Check the successful CSVs, required APIs, and the NVIDIA Network Operator OLM Subscription before continuing. The Subscription may have any name if its `spec.name` selects the NVIDIA package. Launch Kit persists maintenance settings through it, and configuration changes can roll controllers.
 
 ```bash
 oc config current-context
 oc get nodes -o wide
 oc get csv -A
 oc get subscriptions.operators.coreos.com -A
+oc api-resources | grep -E 'NicClusterPolicy|SriovNetworkNodePolicy|NodeFeatureDiscovery'
 l8k version
 ```
 

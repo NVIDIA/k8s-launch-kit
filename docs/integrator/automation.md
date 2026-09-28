@@ -9,15 +9,35 @@ SPDX-License-Identifier: Apache-2.0
 
 For repository-provided AI-agent playbooks, see [AI Skills](ai-skills.md).
 
+## GitOps Pattern
+
+Choose the owners before building a pipeline: who renders, who manages the Network Operator Helm release, who applies custom resources, and who signs off the validation report. A GitOps controller is an external apply owner; its ordering, readiness, retry, and pruning policy must satisfy the generated resources' dependencies. This repository does not claim an Argo CD or Flux integration.
+
+1. Pin the installed `l8k` version and selected Network Operator release. Review discovery output and commit the intended `cluster-config.yaml`. Archive the exact referenced Spectrum-X profile, topology, preset/template override, and custom workload files or immutable revisions. Review network addresses, target cohort, credentials, and ownership before CI renders.
+2. Render offline in CI where inputs allow it. Capture output and diagnostics separately and fail the job with the original CLI status:
+
+   ```bash
+   status=0
+   l8k generate --user-config ./cluster-config.yaml \
+     --save-deployment-files ./deployment --output json \
+     >generation.json 2>generation.log || status=$?
+   if [ "$status" -ne 0 ]; then
+     cat generation.log >&2
+     exit "$status"
+   fi
+   jq . generation.json
+   ```
+
+   Pass the same pinned profile, `--config-dir`, topology, and workload options used in the approved input record. Offline generation with a preset does not qualify live hardware; compare the preset against the target cluster before apply.
+3. Review the complete `deployment/` output, especially `.l8k/resolved-config.yaml`, resource identities, Helm values, selectors, addresses, driver/maintenance settings, and resources that would disappear. Retain the **whole** directory as one immutable artifact. Publishing only `network-operator/` loses generation-time overrides and exact effective configuration.
+4. Create a separate apply set for the external controller. `values.yaml` is Helm input for the Helm owner; `.l8k/` is metadata for Launch Kit; `*example*.yaml` files are validation fixtures. Apply only approved operational Kubernetes resources in dependency order. If Helm is externally owned, set `networkOperator.skipHelmChart: true` before generation. Avoid a controller prune policy that could delete other cohorts or manually owned resources; compare the complete desired/live inventory.
+5. After the external controller reports reconciliation, retrieve the **same complete artifact** and run `l8k validate --deployment-files ./deployment --wait 10m`. Omit `--user-config` so validation uses the saved effective configuration. Keep the HTML report and apply the [acceptance outcomes](../user/validation.md#acceptance-outcomes); process success alone can leave incomplete connectivity coverage.
+
+The reproduction record should contain the CLI version/build, selected operator release, source configuration, every referenced profile/topology/workload file, preset or template revision/digest, all render options, complete generated bundle and sidecar, apply owner/revision, and validation report. Mutable local paths alone cannot reproduce a render. The site follows development `main`; use the documentation at the installed release's tag or commit when operating an older binary.
+
 ## JSON Mode
 
-Use JSON mode when a pipeline or agent needs structured output:
-
-```bash
-l8k discover --output json 2>/dev/null | jq .
-l8k generate --output json 2>/dev/null | jq .
-l8k validate --output json 2>/dev/null | jq .
-```
+Use JSON mode when a pipeline or agent needs structured output. Capture the command and check its status before parsing, as in the [GitOps recipe](#gitops-pattern) and [validation capture](#capture-results-without-losing-the-exit-status).
 
 Output contracts differ by command:
 
@@ -48,18 +68,20 @@ on shell pipeline options and preserves diagnostic stderr:
 status=0
 l8k validate --deployment-files ./deployment --output json \
   >validation.jsonl 2>validation.log || status=$?
+if [ "$status" -ne 0 ]; then
+  cat validation.log >&2
+  exit "$status"
+fi
 jq -s . validation.jsonl >validation-results.json
 # Read reportPath from whichever object carries it.
 jq -r 'select(has("reportPath")) | .reportPath' validation.jsonl
-exit "$status"
 ```
 
 An empty stream or absence of a `reportPath` is possible on an early failure.
 The manifest object's `summary.success` covers that summary, not later
 connectivity or every final acceptance gate. Inspect the HTML report and
 [coverage outcomes](../user/validation.md#acceptance-outcomes) as well as the
-exit status. For display-only `l8k … | jq …` examples, Bash automation must
-enable `set -o pipefail` to propagate a failing `l8k` status.
+exit status. Interactive display pipelines can use `set -o pipefail` in Bash. CI examples above preserve the command status explicitly and keep diagnostic stderr.
 
 ## Structured Results
 
@@ -162,32 +184,6 @@ l8k validate \
 
 Without `--log-file`, logs use `stderr`. Do not merge `stderr` into `stdout` in a parser-facing pipeline.
 
-## GitOps Pattern
-
-1. Run discovery on a representative cluster and commit the reviewed `cluster-config.yaml`.
-2. Generate manifests in CI:
-
-   ```bash
-   l8k generate \
-     --user-config cluster-config.yaml \
-     --save-deployment-files ./deployment \
-     --output json 2>/dev/null
-   ```
-
-3. Retain the complete `deployment/` directory as one versioned CI artifact,
-   including `.l8k/resolved-config.yaml`. Publish only the intended Kubernetes
-   resources to the GitOps controller; exclude `*example*.yaml`, treat
-   `values.yaml` as Helm input, and never apply the `.l8k` metadata envelope.
-4. After the controller applies the resources, retrieve that same complete
-   artifact and run `l8k validate --deployment-files ./deployment`. Omit
-   `--user-config` to use the effective configuration recorded during rendering.
-   Confirm completed acceptance coverage, not only an exit code.
-
-Copying only `network-operator/` loses generation-time CLI overrides and exact
-resolved configuration. If another system owns Helm, set
-`networkOperator.skipHelmChart: true` before generation so l8k skips its
-Helm-specific acceptance checks.
-
 ## Offline Preset Pattern
 
 For known SKUs, avoid cluster access during render:
@@ -200,10 +196,13 @@ l8k generate \
   --deployment-type sriov \
   --network-operator-release 26.4 \
   --save-deployment-files ./deployment \
-  --output json 2>/dev/null
+  --output json >generation.json 2>generation.log &&
+  jq . generation.json
 ```
 
-Use `--config-dir` to test a custom preset catalog in CI.
+The `&&` preserves a failed generation status and avoids parsing a partial
+result. Retain `generation.log` on failure; use the fuller [capture pattern](#gitops-pattern)
+in CI. Use `--config-dir` to test a custom preset catalog in CI.
 
 ## Release Selection
 
