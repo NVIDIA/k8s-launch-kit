@@ -24,7 +24,32 @@ maintenance:
 | `maxNodeMaintenanceTimeSeconds` | `3600` | Cleanup delay for a Ready `NodeMaintenance` request. |
 | `maxParallelUpgrades` | `4` | Legacy OFED upgrade limit for Network Operator releases before `26.1`. |
 
-Two limits apply together in requestor mode: a request starts only when both `maxParallelOperations` and `maxUnavailable` have capacity.
+Omitted fields receive the defaults above; explicit zeros are preserved.
+Integer-or-percentage values must be YAML integers or percentage strings such
+as `"25%"`. Numeric strings such as `"4"`, fractions such as `1.5`, and
+percentages outside `1%`–`100%` are rejected. Only `maxParallelOperations` and
+`maxUnavailable` accept percentages.
+
+| Setting | Operational meaning |
+| --- | --- |
+| `maxParallelOperations: 0` | Rejected by l8k; the scheduler would have no available work slots. |
+| `maxUnavailable: 0` | Pauses new maintenance work. |
+| `maxNodeMaintenanceTimeSeconds: 0` | Makes a Ready request immediately eligible for collection; it neither disables cleanup nor sets an operation timeout. |
+| `maxParallelUpgrades: 0` | Unlimited upgrades on the legacy pre-26.1 OFED path; ignored by requestor mode. |
+
+Maintenance Operator computes parallel-operation percentages from all cluster
+nodes, rounding up. It computes unavailable-node percentages from all cluster
+nodes, rounding down; nodes already cordoned or NotReady consume the budget
+even when another controller made them unavailable. The upstream native SR-IOV drain
+path computes its percentage from the selected pool and rounds down. A small
+percentage may therefore allow zero unavailable nodes. For an externally
+installed OpenShift SR-IOV Operator, confirm its version's pool-budget
+semantics before choosing a percentage.
+
+Two limits apply together in requestor mode: a request starts only when both
+have capacity. With `maxUnavailable: 4` and two nodes already unavailable, at
+most two more nodes may become unavailable. Keep the Ready-request cleanup
+delay below the idle interval of any cluster autoscaler.
 
 ## Release Behavior
 
@@ -37,7 +62,14 @@ OpenShift profiles use the Red Hat SR-IOV Operator's native drain controller for
 
 ## Upgrade Existing Releases
 
-Requestor mode is partially configured through Helm values. Applying only generated CRs cannot enable the requestors.
+On Kubernetes, requestor mode is partially configured through Helm values.
+Applying only generated CRs cannot enable the requestors. The SR-IOV handoff
+requires both `operator.maintenanceOperator.useDrainControllerRequestor` and
+`sriov-network-operator.operator.externalDrainer.enabled`; do not enable only
+one side. OpenShift uses its separate certified-operator configuration path.
+
+Before using overwrite, review the [stray deletion boundary](../advanced/deployment.md#stray-resource-deletion-boundary);
+it can delete manual resources and resources from other cohorts.
 
 Regenerate and deploy with overwrite when the existing Helm release has different values:
 

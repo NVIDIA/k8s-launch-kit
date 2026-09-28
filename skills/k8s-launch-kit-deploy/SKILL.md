@@ -69,7 +69,7 @@ l8k generate --user-config <CONFIG> --fabric <FABRIC> --deployment-type <TYPE> -
 | `--deployment-files` | — | Directory with manifests to apply (default `./deployment`) |
 | `--kubeconfig` | — | Path to kubeconfig with cluster-admin access (falls back to `$KUBECONFIG`) |
 | `--dry-run` | — | Server-side dry-run (`client.DryRunAll`) — cluster validates without persisting |
-| `--overwrite-existing` | — | Converge detected l8k-owned drift: upgrade a mismatched Helm release, delete conflicting generated-resource kinds, and rewrite owned policy fields. Spectrum-X operator-generated child resources are excluded from conflicts. |
+| `--overwrite-existing` | — | Upgrade conflicting Helm chart/values and delete every reported stray CR in the checked kinds/scopes, even without l8k ownership annotations. Other cohorts and manual resources can be affected; recognized Spectrum-X children are excluded. |
 | `--skip-network-operator-helm` | — | Skip Network Operator chart install/upgrade and Helm preflight checks; still deploy the generated CRs. |
 
 ## Examples
@@ -90,6 +90,7 @@ l8k deploy --deployment-files ./output --kubeconfig ~/.kube/config \
 
 # Agent mode
 l8k deploy --output json
+# Standalone deploy has no success JSON envelope; check its exit status.
 
 # Legacy single-shot: generate + deploy in one invocation
 l8k generate --user-config cluster-config.yaml \
@@ -102,12 +103,23 @@ l8k generate --user-config cluster-config.yaml \
 
 l8k applies resources in dependency order:
 
-1. **NicClusterPolicy** (cluster-wide: Multus, CNI, NV-IPAM, operators) — wait for ready before continuing
-2. **NicNodePolicy** per group (OFED driver, device plugins) — wait for each
-3. Network resources (SriovNetwork / HostDeviceNetwork / MacvlanNetwork / IPoIBNetwork)
-4. **IPPool** (NV-IPAM address allocation)
-5. **NicInterfaceNameTemplate** (when needed)
-6. Example workload DaemonSets (optional)
+1. Install/check Helm and perform preflight as applicable.
+2. Apply **NicClusterPolicy**, then wait for readiness.
+3. Apply each generated **NicNodePolicy**, waiting for each.
+4. Apply the remaining operational resources, then verify reconciliation.
+
+Example validation files are excluded. Custom `90-workload-*.yaml` files are
+operational resources and are applied. Host-device keeps its driver and device
+plugin in the singleton NicClusterPolicy and has no NicNodePolicy template.
+
+Deploy/validate prefer `.l8k/resolved-config.yaml` from the bundle unless
+`--user-config` explicitly overrides it. Retain that metadata with the files.
+
+Before `--overwrite-existing`, inspect the entire preflight inventory. Stray
+checks enumerate the documented kinds cluster-wide or in the operator
+namespace, without checking l8k ownership annotations. `--groups` does not
+isolate deletion to the chosen cohort. Follow the exact boundary in
+`docs/advanced/deployment.md#stray-resource-deletion-boundary`.
 
 ## Post-Deploy Verification
 

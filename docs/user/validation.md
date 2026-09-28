@@ -5,16 +5,24 @@ SPDX-License-Identifier: Apache-2.0
 
 # Validation
 
-`l8k validate` is the final acceptance stage of the deployment workflow. It verifies that generated manifests match the live cluster, runs configurable data-plane checks, and produces the report used to green-light the deployment.
+`l8k validate` checks generated manifests against the live cluster, runs
+configured data-plane checks, and writes an acceptance report. Read the
+[acceptance outcomes](#acceptance-outcomes) together with the test coverage:
+exit `0` alone does not prove that every requested stage ran.
 
 ```bash
 l8k validate \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --kubeconfig "$KUBECONFIG"
 ```
 
-When `--user-config` is omitted, Launch Kit checks `./cluster-config.yaml`, the parent of `--deployment-files`, and then the deployment directory. It uses that file for the selected release, operator namespace, profile, discovered groups, and validation settings. Connectivity validation requires one of these user-owned files; installed and embedded defaults do not satisfy that requirement.
+When `--user-config` is omitted, deploy and validate prefer the bundle's
+`.l8k/resolved-config.yaml` over conventional cluster config files. See the
+[exact lookup order](../reference/configuration.md#deploy-and-validate-config-lookup).
+The sidecar preserves the release, namespace, profile, groups, and validation
+settings used during generation. Connectivity accepts this resolved metadata
+or a user-owned configuration with the required explicit decisions; installed
+and embedded defaults alone do not satisfy that requirement.
 
 ## Connectivity-Only Validation
 
@@ -108,7 +116,7 @@ or the destination interface for destination-based routing.
 
 Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a relevant device condition with a stale `observedGeneration` remains `IN-PROGRESS`. `NicConfigurationTemplate` considers `FirmwareUpdateInProgress` relevant only when the matched device has `spec.firmware`; a stale firmware condition cannot block a configuration-only deployment. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
 
-Preflight uses the same checks as deployment: Helm chart version, generated Helm values, component versions, and stray l8k-managed CRs. SR-IOV pool configs, node policies, and OVS networks labeled with `spectrumx.nvidia.com/owner-name` are controller-owned outputs of `SpectrumXRailPoolConfig`, so they are not reported as strays. Validation never remediates drift.
+Preflight uses the same checks as deployment: Helm chart version, generated Helm values, component versions, and stray CRs from the [enumerated networking kinds and scopes](../advanced/deployment.md#stray-resource-deletion-boundary), without an l8k ownership requirement. SR-IOV pool configs, node policies, and OVS networks labeled with `spectrumx.nvidia.com/owner-name` are controller-owned outputs of `SpectrumXRailPoolConfig`, so they are not reported as strays. Validation never remediates drift.
 
 The Helm chart/version checks are omitted when Helm management is disabled;
 component and stray-resource checks remain active.
@@ -270,11 +278,25 @@ The report is one HTML file with inline styling and no external runtime dependen
 
 ## Acceptance Outcomes
 
-- Exit `0`: all gating checks passed.
-- Exit `0` with warnings: no error/missing resources, but at least one resource is still in progress and `--wait` was not used. Connectivity is skipped.
-- Exit `4`: a manifest is missing or errored; release, values, or component checks mismatch; stray resources exist; certified preset topology differs; a gating connectivity check fails; or a connectivity-only matrix is skipped or empty.
+| Invocation | Exit and coverage behavior |
+| --- | --- |
+| Full Kubernetes validation | Failed static gates or gating connectivity tests return `4`. In-progress manifests can return `0` with warnings and skip connectivity. A skipped matrix (for example, fewer than two usable pods) or missing selected-family coverage does not independently fail this mode. |
+| Connectivity-only validation | Requires at least one gating test for every selected family and all gating tests to pass. Skipped, empty, or incomplete coverage returns `4`. |
+| OpenShift with connectivity enabled | Enforces the same per-family coverage requirement; in-progress manifests that prevent connectivity return `4`. |
+| `--connectivity=false` | Runs static checks only. Success supplies no data-plane evidence. |
 
-Use `--wait <duration>` to turn an in-progress snapshot into a bounded acceptance wait.
+Missing/errored manifests, release or values/component mismatches, stray
+resources, and certified-preset deviations are failure gates in full
+validation. Missing or malformed test DaemonSets are input errors (exit `2`)
+when connectivity is enabled, before cluster checks. `validation.checks: []`
+disables all test families; it does not demonstrate connectivity.
+
+Use `--wait <duration>` to poll in-progress manifests. Kubernetes resources
+still in progress after that wait remain warnings under the current behavior;
+the wait deadline alone is not a failure gate. Before accepting a deployment,
+require the report to show the intended manifests ready, the required static
+checks completed, and gating tests for every required data-plane family.
+Review skipped stages and non-gating cross-rail observations separately.
 
 ## When Validation Does Not Pass
 

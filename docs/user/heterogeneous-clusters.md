@@ -78,6 +78,13 @@ l8k generate \
 
 `--groups` and `--gpu-type` are mutually exclusive. Launch Kit reports an error when a requested identifier or GPU type does not match, including the available values.
 
+A group filter controls rendering, not deployment ownership. A subset bundle
+can make resources from excluded groups appear as strays during deploy.
+`--overwrite-existing` deletes those conflicts even when they lack l8k
+ownership annotations. Review the complete desired inventory and the
+[deletion boundary](../advanced/deployment.md#stray-resource-deletion-boundary)
+before using subset output for a staged rollout.
+
 ## Example Cluster Shapes
 
 ### Two GPU Types
@@ -238,7 +245,7 @@ Review generated interface templates whenever a merged bucket spans different ma
 
 ```bash
 find deployment/network-operator \
-  -name '*nic-interface-name-template*.yaml' \
+  -name '*nicinterfacenametemplate*.yaml' \
   -print
 ```
 

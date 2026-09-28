@@ -38,13 +38,16 @@ l8k generate \
   --save-deployment-files ./deployment
 ```
 
-Generation writes the Network Operator bundle to `deployment/network-operator/`. When the config came from a file, `l8k` writes resolved defaults and explicit CLI overrides back to the same file while preserving comments.
+Generation writes manifests to `deployment/network-operator/` and the exact
+effective configuration to `deployment/.l8k/resolved-config.yaml`. The source
+`cluster-config.yaml` remains unchanged. Keep both output directories together;
+the deploy and validate commands below automatically use the sidecar, including
+the CLI overrides supplied during generation.
 
 ## 3. Deploy
 
 ```bash
 l8k deploy \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --kubeconfig "$KUBECONFIG"
 ```
@@ -66,7 +69,6 @@ Preview the server-side apply without persisting resources:
 
 ```bash
 l8k deploy \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --kubeconfig "$KUBECONFIG" \
   --dry-run
@@ -76,12 +78,15 @@ l8k deploy \
 
 ```bash
 l8k validate \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --kubeconfig "$KUBECONFIG"
 ```
 
-Validation is the final acceptance stage of the normal workflow. It checks Helm release metadata, rendered values, component versions, manifest state, preflight drift, and data-plane connectivity. A successful run gives the deployment a green light and writes the supporting HTML report to:
+Validation is the final acceptance stage of the normal workflow. It checks Helm release metadata, rendered values, component versions, manifest state, preflight drift, and data-plane connectivity. Review the report for ready manifests, completed checks, and the required
+connectivity coverage before accepting the deployment. Full Kubernetes
+validation can return success with skipped connectivity or resources still
+reconciling; see [acceptance outcomes](validation.md#acceptance-outcomes).
+The supporting HTML report is written to:
 
 ```text
 deployment/network-operator/k8s-launch-kit-validation-report.html

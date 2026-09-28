@@ -77,7 +77,14 @@ canonical component and data-flow diagrams live in
 `docs/architecture/overview.md`; update them with any change to lifecycle,
 package ownership, artifacts, or external integration boundaries.
 
-## Global Flags
+## Common Flags And Command Scope
+
+Use command help for applicability; these are not all inherited flags. The
+complete matrix is in `docs/reference/cli.md`. `--yes` and `--quiet` are
+root-only, `--deploy-timeout` belongs to root/standalone deploy, and
+`--overwrite-existing` belongs to generate/standalone deploy.
+
+### Common Flag Reference
 
 | Flag | Description |
 |------|-------------|
@@ -90,7 +97,7 @@ package ownership, artifacts, or external integration boundaries.
 | `--log-level <LEVEL>` | Enable logs at `trace`, `debug`, `info`, `warn`, or `error`. Debug shows structured progress; trace also shows bounded command output. |
 | `--network-operator-namespace <NS>` | Override network operator namespace (default: `nvidia-network-operator`). **No-op for `l8k discover`** — discover always bootstraps into `nvidia-k8s-launch-kit`; the flag still applies to `l8k generate` / `l8k deploy` / `l8k clean` / `l8k validate`. |
 | `--network-namespaces <NS,...>` | Comma-separated namespaces for the secondary-network CRs + example test DaemonSets; one copy rendered per namespace (shared resources like IPPools/NodePolicies are NOT duplicated). Default: `default` |
-| `--node-selector <LABELS>` | Persist the deployment node selector (comma-separated, ANDed); does not restrict discovery scheduling |
+| `--node-selector <LABELS>` | Deployment selector (comma-separated, ANDed); does not restrict Kubernetes discovery scheduling. Required for offline `--for` generation. |
 | `--image-pull-secrets <NAMES>` | Image pull secret names for Network Operator components and authenticated Helm chart downloads (comma-separated) |
 | `--skip-network-operator-helm` | On generate/deploy/validate and the root pipeline, skip Network Operator Helm values, installation, and Helm-specific validation while retaining custom-resource handling |
 
@@ -110,23 +117,31 @@ it instead of maintaining a separate CLI-to-YAML mapping.
 
 ## Agent / JSON Mode
 
-Use `--output json` for scripted assertions. Preserve stderr for diagnosis and
-check the process exit status before parsing output. Read the command's actual
-result shape; do not assume every command emits exactly one `JSONResult`.
-Text/help/schema inspection is appropriate when testing those interfaces.
+Use `--output json` for lifecycle commands. Root/discover/generate produce a
+single result envelope; clean produces a cleanup result. Standalone deploy
+has no finalized success envelope: use its exit status. Validate emits a stream
+of result objects, including a separate `reportPath` object when written.
+`schema` and `version --output json` each return one object. Preset commands
+and sosreport emit text on success even with the inherited output flag.
 
-**Do not use `--yes` with subcommands.** It exists only on the root command.
-JSON mode is non-interactive, so confirm that the operation is within the
-user's existing authorization before running it.
+Do not pass `--yes` to subcommands; it is root-only. Lifecycle JSON mode already
+auto-confirms prompts; keep the operation within the user's existing authorization.
+Text/help/schema inspection is appropriate when testing those interfaces. Preserve stderr as diagnostic evidence. Capture status
+before parsing instead of letting a successful `jq` mask a failing command:
 
 ```bash
-l8k generate --user-config ./cluster-config.yaml \
-  --save-deployment-files ./deployment \
-  --output json >generate.json 2>generate.log
+status=0
+l8k validate --deployment-files ./deployment --output json \
+  >validation.jsonl 2>validation.log || status=$?
+jq -s . validation.jsonl
+exit "$status"
 ```
 
-Inspect the exit status, then parse `generate.json`; retain `generate.log` if
-there is a failure. Avoid pipelines that hide the CLI's failure status.
+`summary.success` in validation's manifest object is not the final acceptance
+verdict. Check the process status, report, skipped stages, and required test
+coverage. Full Kubernetes validation can succeed with incomplete connectivity;
+connectivity-only and OpenShift runs enforce selected-family coverage. See
+`docs/integrator/automation.md` and `docs/user/validation.md` for the contracts.
 
 ## Exit Codes
 

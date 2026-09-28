@@ -13,6 +13,7 @@ from the same field tags that register the flags and apply explicit values.
 
 | Command | Purpose |
 | --- | --- |
+| `l8k [flags]` | Root pipeline: generate, optionally discover first with `--discover-cluster-config` and deploy with `--deploy`. Bare `l8k` prints help. |
 | `l8k discover` | Discover cluster network hardware and write `cluster-config.yaml`. |
 | `l8k generate` | Generate deployment manifests for a selected profile. |
 | `l8k deploy` | Apply previously generated manifests to a cluster. |
@@ -44,13 +45,15 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | Flag | Applies to | Target scope | Description |
 | --- | --- | --- | --- |
 | `--target` | discover, generate, deploy, validate, root pipeline | target-agnostic | Target name. Defaults to `host`. |
-| `--kubeconfig` | discover, deploy, clean, validate | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
-| `--user-config` | discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace and Helm-ownership resolution. |
+| `--kubeconfig` | root, discover, generate with deploy, deploy, clean, validate, sosreport | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
+| `--user-config` | root, discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace and Helm-ownership resolution. |
 | `--config-dir` | all | host | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
-| `--network-operator-release` | discover, generate | host | Release line such as `26.1`, `26.4`, or `26.7`. |
-| `--network-operator-namespace` | generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
+| `--network-operator-release` | root, discover, generate | host | Release line such as `26.1`, `26.4`, or `26.7`. |
+| `--network-operator-namespace` | root, discover, generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--skip-network-operator-helm` | generate, deploy, validate, root pipeline | host | Skip `values.yaml` generation, Network Operator chart installation, and Helm-specific validation. Custom-resource handling remains enabled. |
-| `--output json` | all | target-agnostic | Emit a single JSON result to stdout for automation. |
+| `--flavor` | root, discover, generate, deploy, validate, clean | host | `k8s` or `ocp`, overriding config. Clean accepts the flag to reject OpenShift cleanup explicitly. |
+| `--output json` | all (inherited) | target-agnostic | Command-specific output; validation emits a stream, preset/sosreport success remains text, and standalone deploy has no success envelope. See [Automation](../integrator/automation.md#json-mode). |
+| `--yes`, `-y` | root pipeline only | target-agnostic | Auto-confirm root prompts. Subcommands reject this flag; lifecycle JSON mode auto-confirms. |
 | `--quiet` | root pipeline | target-agnostic | Suppress informational output. |
 | `--log-level` | all | target-agnostic | Enable `trace`, `debug`, `info`, `warn`, or `error` logging. `debug` shows structured progress; `trace` also shows bounded command output. |
 | `--log-file` | all | target-agnostic | Write logs to a file instead of `stderr`. |
@@ -59,6 +62,41 @@ The public host config remains the flat `cluster-config.yaml` schema. Generated
 manifests remain under `deployment/network-operator/`; the exact resolved
 configuration is stored separately at
 `deployment/.l8k/resolved-config.yaml`. Generation does not rewrite its input.
+
+## Lifecycle Flag Applicability
+
+Flags are not interchangeable between standalone commands and the root
+pipeline. The following matrix records the registered lifecycle flags; the
+command help remains authoritative. `yes` means accepted, and `—` means absent.
+Inherited `--config-dir`, `--output`, `--log-level`, and `--log-file` are
+available throughout the command tree.
+
+| Flags | Root | Discover | Generate | Deploy | Validate | Clean |
+| --- | --- | --- | --- | --- | --- | --- |
+| `--target` | yes | yes | yes | yes | yes | — |
+| `--kubeconfig`, `--user-config`, `--flavor`, `--network-operator-namespace` | yes | yes | yes | yes | yes | yes |
+| `--network-operator-release`, `--image-pull-secrets`, profile/Spectrum-X flags | yes | yes | yes | — | — | — |
+| `--enabled-plugins` | yes | yes | yes | — | — | — |
+| `--node-selector` | yes | yes | yes (`--for`) | — | — | — |
+| `--save-cluster-config`, `--collapse-nic-rails` | yes | yes | — | — | — | — |
+| `--keep-namespace` | — | yes | — | — | — | — |
+| `--discover-cluster-config` | yes | — | — | — | — | — |
+| `--groups`, `--gpu-type`, `--for` | yes | — | yes | — | — | — |
+| `--save-deployment-files`, `--network-namespaces`, `--workload-manifest`, `--enable-doca-driver` | yes | — | yes | — | — | — |
+| `--deploy` | yes | — | yes | — | — | — |
+| `--dry-run` | yes | — | yes | yes | — | — |
+| `--deploy-timeout` | yes | — | — | yes | — | — |
+| `--overwrite-existing` | — | — | yes | yes | — | — |
+| `--skip-network-operator-helm` | yes | — | yes | yes | yes | — |
+| `--deployment-files` | — | — | — | yes | yes | — |
+| `--yes`, `--quiet` | yes | — | — | — | — | — |
+| Validation flags below | — | — | — | — | yes | — |
+| `--keep-helm-chart` | — | — | — | — | — | yes |
+
+Root discovery still mutates bootstrap resources and node labels when
+`--dry-run` is supplied; that flag previews only deployment. Generate without
+`--deploy` renders locally. For a bounded generate/deploy workflow, use separate
+commands and pass `--deploy-timeout` to standalone deploy.
 
 ## Discover Flags
 
@@ -89,7 +127,8 @@ the rest of the supplied configuration.
 | `--gpu-type` | Render all source groups whose GPU type matches. |
 | `--for` | Generate from a topology preset. Requires `--node-selector`. |
 
-`--groups`, `--gpu-type`, and `--for` apply to generation. The remaining profile flags apply to discovery and generation.
+`--groups`, `--gpu-type`, and `--for` apply to standalone generation and the
+root pipeline. The remaining profile flags also apply to discovery.
 
 ## Spectrum-X Flags
 
@@ -125,8 +164,8 @@ the rest of the supplied configuration.
 | --- | --- |
 | `--deployment-files` | Directory containing generated manifests. Defaults to `./deployment`. |
 | `--dry-run` | Use server-side dry run. |
-| `--deploy-timeout` | End-to-end deploy timeout. `0` means unbounded. |
-| `--overwrite-existing` | Allow Helm upgrade when an existing Network Operator release has different values. |
+| `--deploy-timeout` | End-to-end deploy timeout, accepted by standalone deploy and the root pipeline. `0` means unbounded. Not available on `generate --deploy`. |
+| `--overwrite-existing` | Upgrade conflicting Helm chart/values and delete reported stray CRs, including resources without l8k ownership annotations. See the [deletion boundary](../advanced/deployment.md#stray-resource-deletion-boundary). |
 | `--skip-network-operator-helm` | Skip chart installation and Helm chart-version/values preflight checks; still apply manifests and check component versions and strays. |
 
 ## Clean Flags

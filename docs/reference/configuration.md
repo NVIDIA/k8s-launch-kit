@@ -61,6 +61,38 @@ typed resolver requests handled by domain-specific code. Validation of enums
 runs at CLI binding time; cross-field validation runs only after the effective
 configuration is resolved.
 
+## Deploy And Validate Config Lookup
+
+Standalone deploy and validate choose the first existing candidate in this order:
+
+1. Explicit `--user-config` (selected even when unreadable; no lower path is tried).
+2. `<deployment-files>/.l8k/resolved-config.yaml`.
+3. `<deployment-files>/../.l8k/resolved-config.yaml`.
+4. `<deployment-files>/../cluster-config.yaml`.
+5. `<deployment-files>/cluster-config.yaml`.
+6. `./cluster-config.yaml`.
+7. With explicit `--config-dir`, only its `l8k-config.yaml` is considered as a
+   default fallback; if absent, no local/share default file is selected. With
+   no `--config-dir`, try `./l8k-config.yaml`, then the installation
+   share-directory `l8k-config.yaml`.
+
+The two sidecar locations support passing either the bundle root or its
+`network-operator/` directory. Effective metadata is loaded without applying
+defaults or expanding the release catalog again. Explicit deploy/validate CLI
+overrides still apply. An explicit `--user-config` bypasses the sidecar and
+resolves that file; use it only when intentionally changing the configuration
+used to interpret the bundle. Connectivity validation requires a sidecar or
+user-owned config from steps 1–6, not the installed/default fallback.
+
+A configuration load error prevents connectivity validation. Static-only
+validation can continue with configuration-dependent version checks skipped;
+inspect the report before interpreting it as complete acceptance.
+
+Keep `.l8k/resolved-config.yaml` in its reserved path. It is a versioned metadata
+envelope, not a Kubernetes manifest or an ordinary flat cluster config.
+Generation still takes a flat config; edit that source and regenerate when the
+deployment intent changes.
+
 ## Top-Level Sections
 
 | Section | Purpose |
@@ -150,7 +182,14 @@ workload:
   manifest: ./workloads/rdma-test.yaml
 ```
 
-Secondary-network CRs and example workloads render once per network namespace. Shared policy and pool resources do not. `workload.manifest` is equivalent to `--workload-manifest`.
+Secondary-network CRs and default example workloads render once per network
+namespace outside Spectrum-X, which uses the first namespace. Shared policy
+and pool resources do not fan out. `workload.manifest` is equivalent to
+`--workload-manifest`: it replaces the example with an operational
+`90-workload-*.yaml` deployment input. Kubernetes custom workloads use the first
+namespace only; OpenShift custom workloads fan out per network bucket and
+namespace. See [custom workload lifecycle](../advanced/generation.md#custom-workload-manifest)
+for the resulting connectivity-fixture requirement.
 
 ## Validation
 
@@ -340,14 +379,6 @@ profile:
   ignoreARP: false
   spectrumX:
     enable: false
-    spcxVersion: RA2.3
-    multiplaneMode: swplb
-    numberOfPlanes: 4
-    topologyType: 2-tier
-    ipVersion: ipv4
-    topologyFile: ./topology.json
-    configMapName: site-ra23-profile
-    useDRA: false
 ```
 
 | Field | Meaning |
@@ -366,7 +397,13 @@ profile:
 | `spectrumX.hostFirstOctet` | Config-only first octet for generated IPv4 topology addressing. |
 | `spectrumX.topologyFile` | Path to spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from its structure; relative paths resolve from the config file. |
 | `spectrumX.configMapName` / `profile` | RA2.3 ConfigMap name and embedded profile data. |
-| `spectrumX.useDRA` | Render DRA `ResourceClaimTemplate` workload allocation. |
+| `spectrumX.useDRA` | Render DRA `ResourceClaimTemplate` workload allocation; see [prerequisites](../user/spectrum-x.md#dra-workload-allocation). |
+
+The example above is a standard profile. When Spectrum-X is disabled, omit
+its RA, mode, plane, topology, and ConfigMap fields; setting them is an error.
+For an enabled RA2.3 profile, start with the
+[full ConfigMap generation example](../user/spectrum-x.md#ra23-profile-configmap),
+which supplies the required profile payload as well as the RA/release pair.
 
 ## Hardware Groups
 

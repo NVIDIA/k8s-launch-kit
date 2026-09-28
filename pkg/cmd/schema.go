@@ -138,7 +138,7 @@ var schemaCmd = &cobra.Command{
 				"--discover-cluster-config": {
 					Type:        "bool",
 					Default:     "false",
-					Description: "Deploy a thin Network Operator profile to discover cluster capabilities",
+					Description: "Bootstrap a private NIC Configuration Daemon to discover cluster capabilities",
 				},
 				"--user-config": {
 					Type:        "string",

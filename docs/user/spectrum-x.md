@@ -259,7 +259,10 @@ by a `(+N more)` count, so generation failures remain readable.
 
 ## DRA Workload Allocation
 
-For RA2.2 and RA2.3, set `profile.spectrumX.useDRA: true` to render ResourceClaimTemplate-based workload allocation.
+For RA2.2 and RA2.3, set `profile.spectrumX.useDRA: true` in an otherwise
+complete Spectrum-X configuration to render ResourceClaimTemplate-based
+allocation. The snippet below is an overlay, not a complete RA2.3 input; the
+[profile ConfigMap](#ra23-profile-configmap) is still required.
 
 ```yaml
 profile:
@@ -268,6 +271,49 @@ profile:
     spcxVersion: RA2.3
     useDRA: true
 ```
+
+Before deployment, verify these prerequisites in the target cluster:
+
+- The `resource.k8s.io/v1` ResourceClaim and ResourceClaimTemplate APIs are
+  served. Use a Kubernetes and driver combination supported by the operators
+  installed at the site. The CLI toggle is not a compatibility qualification.
+- A GPU DRA driver publishes the `gpu.nvidia.com` DeviceClass and devices.
+  Launch Kit does not install that driver.
+- The SR-IOV operator supports DRA and publishes the
+  `sriovnetwork.k8snetworkplumbingwg.io` DeviceClass and VF resources. l8k enables
+  its `dynamicResourceAllocation` feature gate in generated Helm values and
+  sets `SpectrumXRailPoolConfig.spec.draEnabled: true`. If Helm is externally
+  managed, apply equivalent settings through that owner.
+
+Inspect availability before submitting workloads:
+
+```bash
+kubectl api-resources --api-group=resource.k8s.io
+kubectl get deviceclasses gpu.nvidia.com sriovnetwork.k8snetworkplumbingwg.io
+kubectl get resourceslices
+```
+
+Generated claims request a GPU plus VFs matching the rail resource name. When
+PF/GPU PCI addresses are known, they also constrain
+`resource.kubernetes.io/pcieRoot`. Review those addresses against the selected
+nodes: this is a PCI-root constraint, not proof of a closer PCI-switch or NUMA
+relationship. `swplb` creates one claim per rail/plane; the other modes create
+one per rail with the required VF count. The example workload uses resource
+claims instead of device-plugin limits.
+
+After applying an application or running validation, inspect its claims and
+scheduling events in the first configured network namespace:
+
+```bash
+kubectl get resourceclaimtemplates,resourceclaims -n <network-namespace>
+kubectl describe resourceclaim -n <network-namespace> <claim-name>
+kubectl describe pod -n <network-namespace> <pod-name>
+```
+
+Check allocation status, device selections, and pod scheduling before testing
+traffic. Successful rendering proves the manifest shape only; qualify GPU/VF
+allocation and connectivity on the intended hardware. Spectrum-X has no
+qualified OpenShift profile in this build.
 
 ## Deployment Notes
 

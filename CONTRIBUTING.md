@@ -24,6 +24,8 @@ Before opening a PR:
 
 - Update existing sections and examples to describe the resulting behavior.
 - Check examples, links and any affected generated documentation.
+- Run `make build` and `python3 scripts/check-docs.py --binary build/l8k` to
+  check documented flags, navigation and offline generation examples.
 - For site changes, install `requirements-docs.txt` in an isolated Python
   environment and run `mkdocs build --strict`.
 - List documentation updates and validation in the PR description. If no

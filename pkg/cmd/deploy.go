@@ -55,7 +55,8 @@ and applies them in four phases:
   1. NicClusterPolicy   — apply, wait until ready (upstream of everything)
   2. NicNodePolicies    — apply each + wait per policy (per-node gating)
   3. Remaining manifests — apply ALL in one pass (networks, IP pools,
-     SR-IOV/Spectrum-X policies, example workloads). Controllers
+     SR-IOV/Spectrum-X policies, custom workloads). Example validation
+     files are excluded. Controllers
      reconcile concurrently, so we don't serialize on each.
   4. Verify             — poll each manifest applied in phase 3 until it
      reaches a terminal state (success/error).
@@ -110,7 +111,7 @@ func init() {
 	// the Host deploy service. It drives the Phase 0 Helm target, Phase 0.5
 	// preflight scope, and downstream options that read the namespace.
 	deployCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
-	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-discovered from ./cluster-config.yaml or <deployment-files>/../cluster-config.yaml). Used to resolve the network-operator release for Phase 0 helm install and Phase 0.5 preflight checks.")
+	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "Explicit config override; otherwise prefer deployment .l8k/resolved-config.yaml, then adjacent/CWD cluster-config.yaml and default config fallbacks. Resolves release and preflight settings.")
 	deployCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (overrides config)")
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
 	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state. Useful for matching a maintenance window when SR-IOV reconciliation on a large cluster can take an hour or more.")

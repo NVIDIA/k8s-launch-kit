@@ -15,7 +15,7 @@ Fabric describes the physical transport (`ethernet` or `infiniband`). Deployment
 | --- | --- | --- | --- |
 | SR-IOV Ethernet RDMA | Ethernet | `sriov` | `SriovNetworkPoolConfig`, `SriovNetworkNodePolicy`, `SriovNetwork`, `NicNodePolicy` |
 | SR-IOV InfiniBand RDMA | InfiniBand | `sriov` | `SriovNetworkPoolConfig`, `SriovNetworkNodePolicy`, `SriovIBNetwork`, `NicNodePolicy` |
-| Host Device RDMA | Ethernet or InfiniBand | `host_device` | `HostDeviceNetwork`, `NicNodePolicy` |
+| Host Device RDMA | Ethernet or InfiniBand | `host_device` | `HostDeviceNetwork`; driver and device plugin remain in the singleton `NicClusterPolicy` |
 | Macvlan RDMA shared | Ethernet | `rdma_shared` | `MacvlanNetwork`, RDMA shared device plugin, `NicNodePolicy` |
 | IPoIB RDMA shared | InfiniBand | `rdma_shared` | `IPoIBNetwork`, RDMA shared device plugin, `NicNodePolicy` |
 | Spectrum-X RA2.1 | Ethernet | `sriov` | RA2.1 SR-IOV operator chain plus v1alpha1 `SpectrumXRailPoolConfig` |
@@ -127,6 +127,11 @@ Replace the default example DaemonSet with a workload manifest:
 l8k generate --workload-manifest ./workloads/rdma-test-daemonset.yaml
 ```
 
-`l8k validate` consumes generated example workloads for connectivity tests. `l8k deploy` skips example workloads and applies only the operational manifests.
+The custom manifest renders as `90-workload-*.yaml` and is applied by
+`l8k deploy`. It replaces the default example DaemonSet, so it also removes the
+automatic connectivity fixture. Validation only consumes `*example*.yaml`
+DaemonSets; provide a separate test fixture when replacing the example.
+Kubernetes custom workloads use the first network namespace; OpenShift custom
+workloads fan out per shared network bucket and namespace.
 
 For bundle layout and custom workload mutation, see [Manifest Generation](../advanced/generation.md).

@@ -96,6 +96,38 @@ pfs:
 
 The `capabilities.nodes` block is required for `--for` because profile selection happens without live discovery.
 
+## Author A Preset
+
+1. Collect topology on a representative node for the exact machine/GPU pair.
+   Record every PF, including north-south interfaces, and confirm its PCI
+   address, device ID, traffic role, rail, NUMA node, and GPU association.
+2. Set `machineType` to the existing `nvidia.com/gpu.machine` label, or the
+   discovered `/sys/class/dmi/id/product_name` value with spaces normalized to
+   dashes. Set `gpuType` to `nvidia.com/gpu.product` or the sanitized GPU product
+   name from discovery. Copy the persisted values from `cluster-config.yaml`
+   when available; matching is exact and case-sensitive.
+3. Create `presets/<unique-machine-gpu-variant>/topology.yaml`. Include both
+   matching keys and `capabilities.nodes` for offline `--for` use. Keep rail
+   assignments and `connectedGPU: GPU<N>` consistent with the physical layout;
+   do not infer a missing association as GPU0.
+4. Put the candidate under a dedicated config directory and test it locally:
+
+   ```bash
+   l8k preset list --config-dir ./preset-review
+   l8k generate --config-dir ./preset-review \
+     --for MyServer-H200 --node-selector rack=42 \
+     --fabric ethernet --deployment-type sriov \
+     --save-deployment-files ./preset-review-output --output json
+   ```
+
+   These examples expect `preset-review/presets/MyServer-H200/topology.yaml`.
+   The override replaces the catalog, so include every preset needed for the
+   review. Inspect networks, resource names, selectors, and GPU requests in
+   the rendered output. Rendering does not certify the hardware.
+5. Verify the complete PF inventory against representative live discovery and
+   inspect any preset deviations. Submit the preset and its evidence through
+   the repository contribution process.
+
 ## Validation And Deviations
 
 Preset lookup is an exact match on `(machineType, gpuType)`. After lookup, Launch Kit compares:
