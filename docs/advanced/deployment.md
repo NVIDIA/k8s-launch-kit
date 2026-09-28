@@ -9,7 +9,6 @@ SPDX-License-Identifier: Apache-2.0
 
 ```bash
 l8k deploy \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --kubeconfig "$KUBECONFIG"
 ```
@@ -52,14 +51,36 @@ Before applying custom resources, Launch Kit compares the bundle with the cluste
 | Helm chart version | Installed chart differs from the selected release. |
 | Helm values | Installed user values differ from generated `values.yaml`. |
 | Component versions | Live `NicClusterPolicy` component versions differ from the release catalog. |
-| Stray resources | l8k-managed Network Operator CRs exist but are not in the generated bundle. Spectrum-X operator-generated `SriovNetworkPoolConfig`, `SriovNetworkNodePolicy`, and `OVSNetwork` objects are excluded. |
+| Stray resources | Instances of the enumerated networking CR kinds exist in the checked scope but are absent from the generated bundle, regardless of who created them. Recognized Spectrum-X controller children are excluded. |
 
 The two Helm rows are reported as skipped when Network Operator Helm
 management is disabled. The remaining rows still gate deployment.
 
 Without `--overwrite-existing`, any mismatch stops deployment and all detected drift is reported together.
 
-With `--overwrite-existing`, Launch Kit authorizes the Helm upgrade, deletes stray managed CRs, and lets server-side apply converge owned `NicClusterPolicy` fields. This can remove resources, so inspect the preflight report before enabling it.
+With `--overwrite-existing`, Launch Kit authorizes the Helm upgrade, deletes
+every reported stray CR, and lets server-side apply converge policy fields.
+Stray detection does **not** require an l8k ownership annotation. Manually
+created resources and resources from another generated cohort can be deleted.
+
+### Stray Resource Deletion Boundary
+
+| Scope | Kinds checked |
+| --- | --- |
+| Cluster-wide | `NicClusterPolicy`, `NicNodePolicy`, `NicConfigurationTemplate`, `NicInterfaceNameTemplate` |
+| Resolved Network Operator namespace | `SriovNetworkNodePolicy`, `SriovNetwork`, `SriovIBNetwork`, `SriovNetworkPoolConfig`, `OVSNetwork`, `IPPool`, `CIDRPool`, `MacvlanNetwork`, `IPoIBNetwork`, `HostDeviceNetwork`, `SpectrumXRailPoolConfig` (v1alpha1/v1alpha2) |
+
+The expected bundle identities are retained. `NicDevice`,
+`SriovNetworkNodeState`, and `SriovOperatorConfig` are outside this check.
+Spectrum-X children have the exception described below. This boundary differs
+from [clean](../user/cleanup.md), which performs broader removal.
+
+Review the complete conflict list before approving overwrite, including
+cluster-scoped resources. A bundle generated with `--groups` or `--gpu-type`
+does not create an independent ownership boundary: resources from omitted
+groups may be classified as strays. Use a combined intended inventory for
+convergence, or apply an explicitly reviewed subset through a separately
+managed deployment process without l8k stray remediation.
 
 The Spectrum-X operator labels the SR-IOV pool configs, node policies, and OVS
 networks it derives from `SpectrumXRailPoolConfig` with
@@ -117,7 +138,6 @@ Other manifests have no independent per-manifest deadline.
 
 ```bash
 l8k deploy \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --dry-run
 ```
@@ -132,4 +152,6 @@ kubectl get nicnodepolicy -o yaml
 kubectl get pods -n nvidia-network-operator -o wide
 ```
 
-Finish every applied deployment with [Validation](../user/validation.md). Validation is a separate acceptance stage and produces the green-light report.
+Finish every applied deployment with [Validation](../user/validation.md). Review the report's readiness and connectivity coverage using the
+[acceptance criteria](../user/validation.md#acceptance-outcomes); exit success
+alone does not guarantee complete coverage.

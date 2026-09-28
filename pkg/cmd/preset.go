@@ -49,8 +49,7 @@ var presetListCmd = &cobra.Command{
 	Short: "List available presets",
 	Long:  "List topology presets from --config-dir, the legacy local directory, or the embedded catalog.",
 	Example: `  l8k preset list
-	  l8k preset list --config-dir /etc/l8k
-	  l8k preset list --output json`,
+	  l8k preset list --config-dir /etc/l8k`,
 	Run: func(cmd *cobra.Command, args []string) {
 		catalog, _, err := presetCatalogForConfigDir(configDir)
 		if err != nil {

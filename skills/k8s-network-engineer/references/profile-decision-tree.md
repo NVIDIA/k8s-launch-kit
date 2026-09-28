@@ -15,7 +15,7 @@ profile's `profileRequirements`.
   communication over Ethernet
 - **Performance**: >10 Gbps per VF, hardware-offloaded packet processing
 - **Templates**: NicClusterPolicy, IPPool, SriovNetworkNodePolicy, SriovNetwork,
-  NicInterfaceNameTemplate, test Pod
+  NicInterfaceNameTemplate, test DaemonSet
 - **Keywords**: GPU, ML, AI, SR-IOV, Ethernet, RDMA, HPC, distributed training
 
 ### 2. Host Device RDMA
@@ -27,7 +27,7 @@ profile's `profileRequirements`.
   that need full NIC control
 - **Performance**: Full line rate, no virtualization overhead
 - **Templates**: NicClusterPolicy, IPPool, HostDeviceNetwork,
-  NicInterfaceNameTemplate, test Pod
+  NicInterfaceNameTemplate, test DaemonSet
 - **Keywords**: host device, DPDK, direct access, PCI passthrough, legacy
 
 ### 3. MacVLAN RDMA Shared
@@ -39,7 +39,7 @@ profile's `profileRequirements`.
   resources, workloads needing network isolation without SR-IOV overhead
 - **Performance**: Good throughput with shared RDMA HCA (up to `hcaMax` pods)
 - **Templates**: NicClusterPolicy, IPPool, MacvlanNetwork,
-  NicInterfaceNameTemplate, test Pod
+  NicInterfaceNameTemplate, test DaemonSet
 - **Keywords**: macvlan, shared, multi-tenant, Ethernet, many pods
 
 ### 4. IPoIB RDMA Shared
@@ -51,7 +51,7 @@ profile's `profileRequirements`.
   IB, multi-pod IB workloads
 - **Performance**: >50 Gbps, InfiniBand native performance with sharing
 - **Templates**: NicClusterPolicy, IPPool, IPoIBNetwork,
-  NicInterfaceNameTemplate, test Pod
+  NicInterfaceNameTemplate, test DaemonSet
 - **Keywords**: InfiniBand, IB, IPoIB, shared RDMA, storage
 
 ### 5. SR-IOV InfiniBand RDMA
@@ -63,10 +63,10 @@ profile's `profileRequirements`.
   performance IB workloads
 - **Performance**: >100 Gbps, hardware-virtualized IB with dedicated VFs
 - **Templates**: NicClusterPolicy, IPPool, SriovNetworkNodePolicy,
-  SriovIBNetwork, NicInterfaceNameTemplate, test Pod
+  SriovIBNetwork, NicInterfaceNameTemplate, test DaemonSet
 - **Keywords**: InfiniBand, IB, SR-IOV, HPC, AI training, large-scale
 
-### 6. Spectrum-X Multi-Rail (RA2.3, Network Operator 26.7+)
+### 6. Spectrum-X Multi-Rail (RA2.3, Network Operator 26.7)
 
 - **Directory**: `profiles/spectrum-x/`
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
@@ -128,7 +128,7 @@ profile's `profileRequirements`.
 - Multiplane mode: **must be `none`**
 - Number of planes: **must be 1**
 - Single-plane operation only; no multiplane support in BF3 hardware
-- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7+
+- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7
 
 ### ConnectX-8 (deviceID: 1023) / ConnectX-9 (deviceID: 1025)
 
@@ -141,7 +141,7 @@ profile's `profileRequirements`.
 - B300/GB300 default to `swplb` / 2. Pass 4 explicitly for quad-plane B300.
 - Platform type cannot distinguish `swplb` from `hwplb`; both are supported on
   B300 and GB300, so `hwplb` must be selected explicitly.
-- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7+
+- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7
 
 ### Multiplane Mode Selection Guide
 

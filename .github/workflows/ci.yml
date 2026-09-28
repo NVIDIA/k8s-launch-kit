@@ -30,6 +30,9 @@ jobs:
       - name: Build binary
         run: make build
 
+      - name: Check documentation examples and CLI contract
+        run: python3 scripts/check-docs.py --binary build/l8k
+
       - name: Build all platforms
         run: make build-all
 

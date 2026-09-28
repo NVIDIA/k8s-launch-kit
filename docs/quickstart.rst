@@ -19,8 +19,9 @@ are preserved, and explicit CLI flags take precedence over both.
    l8k generate --user-config ./cluster-config.yaml \
      --save-deployment-files ./deployment
 
-When ``generate`` uses a file-backed config, it writes resolved defaults and
-explicit CLI overrides back to that same file before rendering manifests.
+When ``generate`` uses a file-backed config, it records resolved defaults and
+explicit CLI overrides to the deployment sidecar at
+``<deployment-dir>/.l8k/resolved-config.yaml``. The source file is unchanged.
 Comments in the original YAML are preserved.
 
 When a selected hardware group has ``netplanManaged: true``, generation stops

@@ -310,8 +310,8 @@ spectrumX:
 # ============================================================================
 # Profile Selection
 # Determines which manifest templates are rendered.
-# `l8k discover` fills missing values, preserves values already in
-# --user-config, applies explicit CLI overrides, and writes the final block.
+# Fresh discovery fills missing profile values. A --user-config refresh
+# preserves non-hardware settings and applies only explicit CLI overrides.
 # ============================================================================
 profile:
   # string | default: unanimous discovered linkType (when confirmed)
@@ -338,24 +338,24 @@ profile:
     # same flag.
     enable: false
 
-    # string | default: "RA2.2"
+    # string | no default: select an RA when enabling Spectrum-X
     # Spectrum-X reference architecture version. Supported: RA2.1 (Network
-    # Operator 26.1 only) or RA2.2 (Network Operator 26.4+). Set via the
+    # Operator 26.1), RA2.2 (26.4), or RA2.3 (26.7; requires profile data). Set via the
     # value of --spectrum-x on the CLI.
-    spcxVersion: "RA2.2"
+    # spcxVersion: "RA2.2"
 
     # string | default: derived from GPU platform + east-west NIC device ID
     # Multiplane mode: "none", "swplb" (software PLB), or "hwplb"
     # (hardware PLB). When Spectrum-X is enabled and this is absent,
     # H100/H200/B200/GB200 default to none; B300/GB300 default to the
     # GA swplb path. Platform type cannot select hwplb; override explicitly.
-    multiplaneMode: swplb
+    # multiplaneMode: swplb
 
     # int | default: derived from GPU platform + east-west NIC device ID
     # Number of network planes (1, 2, or 4). Also used as pfsPerNic for
     # Spectrum-X. Single-plane platforms default to 1; B300/GB300 default
     # to 2. Set 4 explicitly for a quad-plane B300 topology.
-    numberOfPlanes: 2
+    # numberOfPlanes: 2
 
 # ============================================================================
 # Validation Configuration

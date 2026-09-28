@@ -104,7 +104,11 @@ Skills complement the CLI's structured interface. They instruct agents to inspec
 l8k schema | jq .
 ```
 
-For subcommands, JSON mode keeps the final result on stdout and sends human-readable logs to stderr:
+Lifecycle JSON mode sends human-readable logs to stderr. Root, discover, and
+generate use one result envelope; validation emits a stream. Standalone deploy
+has no finalized success envelope, and preset/sosreport success remains text.
+Use the [command-specific contract](automation.md#json-mode) and preserve the
+process exit status before parsing:
 
 ```bash
 l8k discover \
@@ -131,7 +135,7 @@ An AI agent should:
 - Use `l8k deploy --dry-run` for a server-side preview.
 - Require clear authority before changing a live cluster.
 - Treat cleanup as destructive: verify the kubeconfig and resolved operator namespace before running `l8k clean`.
-- Treat `--overwrite-existing` as an explicit decision after reviewing Helm value drift.
+- Treat `--overwrite-existing` as an explicit decision after reviewing Helm drift and every stray deletion, including resources without l8k ownership annotations.
 - Run `l8k validate` as the normal acceptance stage after deployment.
 - Use `l8k sosreport` and focused Kubernetes inspection when acceptance fails.
 

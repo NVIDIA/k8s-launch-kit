@@ -27,3 +27,11 @@ This documentation covers the `l8k` CLI for deploying NVIDIA cloud-native networ
 - Automation: /k8s-launch-kit/integrator/automation/
 - AI Skills: /k8s-launch-kit/integrator/ai-skills/
 - CLI Reference: /k8s-launch-kit/reference/cli/
+- OpenShift: /k8s-launch-kit/user/openshift/
+- Cleanup: /k8s-launch-kit/user/cleanup/
+- Target-aware CLI: /k8s-launch-kit/advanced/targets/
+- Architecture: /k8s-launch-kit/architecture/overview/
+- Artifact Bundle: /k8s-launch-kit/architecture/artifact-bundle/
+- DPF Integration Roadmap: /k8s-launch-kit/architecture/dpf-integration-plan/
+- HostTarget Migration Plan: /k8s-launch-kit/architecture/host-target-migration-plan/
+- Documentation Publishing: /k8s-launch-kit/reference/docs-publishing/

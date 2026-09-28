@@ -221,7 +221,7 @@ Merging is **skipped** in the following cases:
 - **Spectrum-X fabric**: Spectrum-X deployments require per-switch-group policies, so
   groups must remain separate.
 - **Single group**: Nothing to merge.
-- **`--group` filter active**: When the user targets a specific group by name, merging
+- **`--groups` filter active**: When the user targets a specific group by name, merging
   is disabled to preserve the explicit selection.
 
 ---

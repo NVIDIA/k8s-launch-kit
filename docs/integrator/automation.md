@@ -19,18 +19,52 @@ l8k generate --output json 2>/dev/null | jq .
 l8k validate --output json 2>/dev/null | jq .
 ```
 
-In JSON mode:
+Output contracts differ by command:
 
-- `stdout` contains one final JSON object.
-- Human-readable logs go to `stderr`.
-- Prompts are auto-confirmed.
-- Timestamped progress messages are collected under `messages`.
+| Command | Successful stdout with `--output json` |
+| --- | --- |
+| Root pipeline, `discover`, `generate` | One `JSONResult` envelope, including collected `messages`. |
+| `clean` | One result with a `cleanup` summary. |
+| Standalone `deploy` | No finalized success JSON envelope. Use the process exit status; progress is sent to stderr. |
+| `validate` | A sequence of JSON objects: manifest/version summary when full validation runs, connectivity when run, and `reportPath` when the HTML report is written. Do not parse the stream as one document. |
+| `schema` | One capability object; this command always emits JSON. |
+| `version` | One version/build object. |
+| `preset list`, `preset update`, `sosreport` | Text output; these commands do not provide a JSON success contract despite accepting the inherited flag. |
 
-Do not combine `--yes` with subcommands unless the specific command accepts it. `--output json` is the portable automation path.
+Lifecycle JSON mode sends human-readable progress to stderr and auto-confirms
+prompts. Structured error objects may be emitted on failures; early Cobra flag
+parse errors can instead write text to stderr. Validation can emit partial
+results before a failure. Always check the process exit status.
+
+`--yes` is root-only. Use `--output json` for non-interactive lifecycle
+subcommands, with particular care for destructive cleanup and deployment.
+
+### Capture Results Without Losing The Exit Status
+
+Capture the command first, then parse its output. This works without relying
+on shell pipeline options and preserves diagnostic stderr:
+
+```bash
+status=0
+l8k validate --deployment-files ./deployment --output json \
+  >validation.jsonl 2>validation.log || status=$?
+jq -s . validation.jsonl >validation-results.json
+# Read reportPath from whichever object carries it.
+jq -r 'select(has("reportPath")) | .reportPath' validation.jsonl
+exit "$status"
+```
+
+An empty stream or absence of a `reportPath` is possible on an early failure.
+The manifest object's `summary.success` covers that summary, not later
+connectivity or every final acceptance gate. Inspect the HTML report and
+[coverage outcomes](../user/validation.md#acceptance-outcomes) as well as the
+exit status. For display-only `l8k … | jq …` examples, Bash automation must
+enable `set -o pipefail` to propagate a failing `l8k` status.
 
 ## Structured Results
 
-A successful command can include its phase, resolved profile, generated file list, deploy status, dry-run status, and collected messages:
+A successful generation or root pipeline result can include its phase,
+resolved profile, generated files, deploy/dry-run status, and messages:
 
 ```json
 {
@@ -140,8 +174,19 @@ Without `--log-file`, logs use `stderr`. Do not merge `stderr` into `stdout` in 
      --output json 2>/dev/null
    ```
 
-3. Diff or publish `deployment/network-operator/` to the GitOps repository.
-4. Run `l8k validate` after the GitOps controller applies the bundle.
+3. Retain the complete `deployment/` directory as one versioned CI artifact,
+   including `.l8k/resolved-config.yaml`. Publish only the intended Kubernetes
+   resources to the GitOps controller; exclude `*example*.yaml`, treat
+   `values.yaml` as Helm input, and never apply the `.l8k` metadata envelope.
+4. After the controller applies the resources, retrieve that same complete
+   artifact and run `l8k validate --deployment-files ./deployment`. Omit
+   `--user-config` to use the effective configuration recorded during rendering.
+   Confirm completed acceptance coverage, not only an exit code.
+
+Copying only `network-operator/` loses generation-time CLI overrides and exact
+resolved configuration. If another system owns Helm, set
+`networkOperator.skipHelmChart: true` before generation so l8k skips its
+Helm-specific acceptance checks.
 
 ## Offline Preset Pattern
 

@@ -155,6 +155,7 @@ and required gates.
 ```sh
 make build                            # produces build/l8k with version metadata
 ./build/l8k schema                    # inspect this checkout's capabilities
+python3 scripts/check-docs.py --binary build/l8k  # offline documentation contracts
 # Replace the placeholder with each affected package:
 go test ./pkg/<affected-package>/... -count=1
 make test                             # repository-wide tests

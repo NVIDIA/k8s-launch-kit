@@ -50,6 +50,7 @@ A **topology preset** is a certified hardware description for a known `(machineT
 | `cluster-config.yaml` | Discovery and user | Hardware inventory plus resolved deployment intent. |
 | `deployment/network-operator/values.yaml` | Generation | Helm values for the Network Operator release. |
 | Generated YAML manifests | Generation | Declarative resources applied in dependency order. |
+| `deployment/.l8k/resolved-config.yaml` | Generation | Exact effective configuration consumed by deploy/validate unless explicitly overridden. Keep it with the bundle; do not apply it to Kubernetes. |
 | Validation HTML report | Validation | Acceptance evidence for release, live resource state, topology, and data-plane checks. |
 
 For the detailed behavior behind these concepts, continue with [Cluster Discovery](../user/discovery.md), [Manifest Generation](generation.md), and [Heterogeneous Clusters](../user/heterogeneous-clusters.md).

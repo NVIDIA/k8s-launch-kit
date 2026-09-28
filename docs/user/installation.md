@@ -107,7 +107,25 @@ l8k preset list --config-dir /etc/l8k
 
 `--user-config <file>` has higher precedence than `--config-dir/l8k-config.yaml`. A `presets/` directory in `--config-dir` replaces the embedded preset catalog instead of merging with it.
 
-Script, Homebrew, and source installs also place the profile templates under `<prefix>/share/l8k/profiles/`. Existing `l8k-config.yaml` and `presets/` overrides under the share directory are preserved during upgrades and are selected only when passed through `--config-dir`.
+Script, Homebrew, and source installs also place the profile templates under `<prefix>/share/l8k/profiles/`. Existing `l8k-config.yaml` and `presets/` overrides under the share directory are preserved during upgrades and can still be selected implicitly.
+
+Without `--config-dir`, presets resolve from `./presets`, then
+`/usr/local/share/l8k/presets`, then the binary-relative
+`../share/l8k/presets`, and finally the embedded catalog. An explicit
+`--config-dir` selects its `presets/` when present and the embedded catalog
+otherwise. It never merges catalogs. Run `l8k preset list` with the same flags
+as the intended workflow to see the selected source.
+
+Generation without `--user-config` first checks `./cluster-config.yaml`, then
+local and installed `l8k-config.yaml` fallbacks when no `--config-dir` is set.
+`--for` can use embedded defaults when no file is found. Deploy and validate
+first check bundle metadata and adjacent configs; see
+[configuration lookup](../reference/configuration.md#deploy-and-validate-config-lookup).
+An old filesystem override can therefore outlive a binary upgrade.
+
+Profile templates remain filesystem assets: `./profiles` takes precedence over
+`/usr/local/share/l8k/profiles`, followed by the binary-relative share directory.
+Build-only users should run from the repository root or install the profiles.
 
 Release artifacts also contain the Network Operator sosreport helper. The
 installers place it at

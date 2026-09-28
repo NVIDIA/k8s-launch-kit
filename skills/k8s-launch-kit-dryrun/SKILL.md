@@ -63,8 +63,8 @@ l8k schema
 {
   "success": true,
   "phase": "generate",
-  "profile": {"fabric": "ethernet", "deploymentType": "sriov"},
-  "generatedFiles": ["output/group-0/nicclusterpolicy.yaml", "..."],
+  "profile": {"fabric": "ethernet", "deployment": "sriov"},
+  "generatedFiles": ["output/network-operator/10-nicclusterpolicy.yaml", "output/.l8k/resolved-config.yaml"],
   "deployed": false,
   "dryRun": true
 }

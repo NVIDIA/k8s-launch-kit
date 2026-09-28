@@ -86,8 +86,11 @@ skills, which wrap the deterministic CLI commands.
 
 ### Generate Deployment Files
 Based on the discovered/provided configuration, generate a complete set of YAML deployment files tailored to your selected network profile.
-When generation uses a file-backed config, resolved defaults and CLI overrides
-are written back to that same file while its comments are preserved.
+Generation leaves the source file unchanged. It saves the effective configuration
+at `<deployment-dir>/.l8k/resolved-config.yaml` beside the manifest directory.
+Retain the complete deployment directory, and omit `--user-config` from later
+`deploy` and `validate` commands to reuse that exact configuration. An explicit
+`--user-config` intentionally overrides the sidecar.
 
 Set `networkOperator.skipHelmChart: true` or pass
 `--skip-network-operator-helm` when another system manages the Network
@@ -212,10 +215,10 @@ docker run --net=host \
 K8s Launch Kit (l8k) is a CLI tool for deploying and managing NVIDIA cloud-native solutions on Kubernetes. The tool helps provide flexible deployment workflows for optimal network performance with SR-IOV, RDMA, and other networking technologies.
 
 ### Discover Cluster Configuration
-Deploy a minimal Network Operator profile to automatically discover your cluster's
-network capabilities and hardware configuration by using --discover-cluster-config.
+Bootstrap a private NIC Configuration Daemon to discover your cluster's
+network capabilities and hardware configuration with --discover-cluster-config.
 This phase can be skipped if you provide your own configuration file by using --user-config.
-This phase requires --kubeconfig to be specified.
+This phase resolves credentials from --kubeconfig, $KUBECONFIG, or ~/.kube/config.
 Fresh discovery fills profile settings from the detected hardware and built-in
 defaults. With --user-config, discovery replaces only clusterConfig and preserves
 all other settings. Explicit CLI overrides apply in both modes.
@@ -228,10 +231,11 @@ The profile is defined with --fabric, --deployment-type and --multirail flags,
 or via a profile section in the user-config file.
 
 ### Deploy to Cluster
-Apply the generated deployment files to your Kubernetes cluster by using --deploy. This phase requires --kubeconfig and can be skipped if --deploy is not specified.
+Apply the generated deployment files to your Kubernetes cluster by using --deploy. Credentials resolve from --kubeconfig, $KUBECONFIG, or ~/.kube/config. Skip this phase by omitting --deploy.
 
 ### AI Agent / Automation Support
-Use --output json for structured machine-readable output (single JSON object to stdout).
+Use --output json for a structured result from this root pipeline.
+Subcommands have their own output contracts; validate emits a JSON stream.
 Use --yes to auto-confirm prompts, --quiet to suppress informational output, and --dry-run to preview deployments.
 Use 'l8k schema' to discover tool capabilities programmatically.
 
@@ -255,8 +259,8 @@ Examples:
     --network-operator-release 26.7 --deploy --output json --yes
 
   # Dry-run: preview what would be deployed
-  l8k --user-config cluster-config.yaml --spectrum-x --deploy \
-    --dry-run --output json
+  l8k --user-config cluster-config.yaml --fabric ethernet \
+    --deployment-type sriov --deploy --dry-run --output json
 
   # Get tool capabilities as JSON (for AI agents)
   l8k schema
@@ -280,44 +284,45 @@ Target Selection Flags:
 Host Target Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides
       --enabled-plugins string              Comma-separated list of plugins to enable (default "network-operator")
+      --flavor string                       Cluster flavor: k8s or ocp (overrides config)
       --image-pull-secrets strings          Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)
       --kubeconfig string                   Path to kubeconfig file for cluster deployment (required when using --deploy; falls back to $KUBECONFIG, then ~/.kube/config)
-      --network-operator-namespace string   Override the network operator namespace from the config file
-      --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR). Selects component image tags + repository from a built-in catalog and drives version-gated template sections. Supported: 26.1, 26.4, 26.7
+      --network-operator-namespace string   Override the Network Operator namespace from the config file
+      --network-operator-release string     Network Operator release line to deploy (MAJOR.MINOR); selects catalog-managed component versions and repositories
       --node-selector string                Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and discoverable NICs are detected via sysfs; restricted BlueFields are excluded (default "feature.node.kubernetes.io/pci-15b3.present=true")
       --skip-network-operator-helm          Skip Network Operator Helm values generation, chart installation, and Helm-specific validation
       --user-config string                  Use provided cluster configuration file (as base config for discovery or as full config without discovery)
 
 Host Target Discovery Flags:
       --collapse-nic-rails           Advertise one rail per NIC: collapse a NIC's multi-plane PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set to false to keep the legacy one-rail-per-PF behaviour (dev setups). (default true)
-      --discover-cluster-config      Deploy a thin Network Operator profile to discover cluster capabilities
+      --discover-cluster-config      Bootstrap a private NIC Configuration Daemon to discover cluster capabilities
       --save-cluster-config string   Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)
 
 Host Target Profile Selection Flags:
-      --deployment-type string   Select the deployment type (sriov, rdma_shared, host_device)
-      --fabric string            Select the fabric type to deploy (infiniband, ethernet)
+      --deployment-type string   Deployment type: sriov, rdma_shared, or host_device
+      --fabric string            Fabric type: ethernet or infiniband
       --for string               Generate for a known server preset (replaces clusterConfig from the preset). Requires --node-selector. Run 'l8k preset list' with the same --config-dir to list available names.
       --gpu-type string          Generate manifests only for source groups whose gpuType matches (case-insensitive). Mutually exclusive with --groups.
       --groups strings           Generate manifests only for the named source groups (comma-separated identifiers from cluster-config.yaml). Mutually exclusive with --gpu-type.
       --ignore-arp               Chain the tuning CNI meta-plugin to prevent ARP flux across pod rails
       --multirail                Override multirail deployment (defaults to true when absent; use --multirail=false to opt out)
-      --routing string           Secondary-network routing mode: destination-based or source-based. source-based chains the automatic sbr CNI meta-plugin.
-      --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version (folds in the legacy --spcx-version). Supported: [RA2.1 RA2.2 RA2.3]
+      --routing string           Secondary-network routing mode: destination-based or source-based
+      --spectrum-x string        Enable Spectrum-X by passing the SPC-X RA version
 
 Host Target Spectrum-X Flags:
-      --ip-version string                  Spectrum-X IP version for guide-based allocation: ipv4 or ipv6 (requires --spectrum-x)
-      --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, hwplb (requires --spectrum-x)
-      --number-of-planes int               Number of planes for Spectrum-X (requires --spectrum-x)
-      --spectrum-x-config string           Path to full Spectrum-X profile ConfigMap YAML or raw data.profile YAML (required for SPC-X RA versions newer than RA2.2)
-      --spectrum-x-configmap-name string   Spectrum-X profile ConfigMap name when --spectrum-x-config contains raw data.profile YAML
-      --topology-file string               Path to spcx-gen/reference-generator or NVIDIA AIR topology JSON for Spectrum-X CIDRPool generation (requires --spectrum-x)
-      --topology-scheme string             Spectrum-X topology scheme for guide-based IP allocation: 2-tier or 3-tier (requires --spectrum-x)
+      --ip-version string                  Spectrum-X address family: ipv4 or ipv6
+      --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, or hwplb
+      --number-of-planes int               Spectrum-X plane count: 1, 2, or 4
+      --spectrum-x-config string           Path to a full Spectrum-X profile ConfigMap or raw data.profile YAML
+      --spectrum-x-configmap-name string   ConfigMap name used when --spectrum-x-config contains raw data.profile YAML
+      --topology-file string               Path to a Spectrum-X reference-generator or NVIDIA AIR topology JSON file
+      --topology-scheme string             Spectrum-X topology scheme: 2-tier or 3-tier
 
 Host Target Generation Output Flags:
-      --enable-doca-driver             Enable DOCA driver deployment (overrides config file docaDriver.enable)
-      --network-namespaces strings     Comma-separated namespaces for the secondary-network CRs and example test DaemonSets. One independent copy is rendered per namespace (shared resources like IPPools and NodePolicies are NOT duplicated). Overrides config networkNamespaces; default: 'default'.
+      --enable-doca-driver             Enable or disable DOCA driver deployment
+      --network-namespaces strings     Namespaces for secondary-network resources and example workloads (comma-separated)
       --save-deployment-files string   Save generated deployment files to the specified directory (default "./deployment")
-      --workload-manifest string       Path to a custom workload manifest YAML (replaces the profile's default example workload)
+      --workload-manifest string       Path to a custom workload manifest YAML
 
 Target-Agnostic Execution Flags:
       --deploy                    Deploy the generated files to the Kubernetes cluster
@@ -682,12 +687,12 @@ then writes that exact result to
 
 ### Generate Deployment Files for a Specific Node Group
 
-In heterogeneous clusters, discovery produces multiple node groups. Use `--group` to generate manifests for a single group:
+In heterogeneous clusters, discovery produces multiple node groups. Use `--groups` to generate manifests for a single group:
 
 ```bash
 l8k generate --user-config ./config.yaml \
     --fabric infiniband --deployment-type sriov --multirail \
-    --group group-0 \
+    --groups group-0 \
     --save-deployment-files ./deployments
 ```
 
@@ -707,7 +712,7 @@ l8k generate \
     --save-deployment-files ./deployments
 ```
 
-The preset YAML must declare a `capabilities.nodes.{sriov,rdma,ib}` block to be usable with `--for`; presets shipped with l8k already have one. See [docs/presets.rst](docs/presets.rst) for the full preset format and how to add new ones.
+The preset YAML must declare a `capabilities.nodes.{sriov,rdma,ib}` block to be usable with `--for`; presets shipped with l8k already have one. See [Topology Presets](docs/user/presets.md#author-a-preset) for the format and authoring workflow.
 
 ### Remove a Network Operator Deployment
 
@@ -759,7 +764,10 @@ reasoning.
 
 ### AI Agent / Automation Usage
 
-l8k supports structured output for AI agents and CI/CD pipelines. Use `--output json` to get machine-readable output and auto-confirm subcommand prompts; `--yes` is available on the root pipeline. Use `--dry-run` to preview deployment changes safely. Because `l8k clean` has no dry-run mode, verify its kubeconfig and resolved namespace before using JSON mode.
+l8k supports command-specific output for AI agents and CI/CD pipelines.
+See [Automation](docs/integrator/automation.md#json-mode) for JSON envelopes,
+validation streams, text-only exceptions, and exit-status-safe parsing.
+Use `--output json` to auto-confirm lifecycle subcommand prompts; `--yes` is available on the root pipeline. Use `--dry-run` to preview deployment changes safely. Because `l8k clean` has no dry-run mode, verify its kubeconfig and resolved namespace before using JSON mode.
 
 #### Structured JSON Output
 
@@ -768,7 +776,7 @@ l8k supports structured output for AI agents and CI/CD pipelines. Use `--output 
 l8k generate --user-config ./config.yaml \
     --fabric ethernet --deployment-type sriov --multirail \
     --save-deployment-files ./deployments \
-    --output json --yes 2>/dev/null | jq .
+    --output json 2>/dev/null | jq .
 ```
 
 Example JSON output:
@@ -797,7 +805,7 @@ Example JSON output:
 Preview what would be deployed without making changes:
 
 ```bash
-l8k generate --user-config ./config.yaml --spectrum-x --deploy \
+l8k generate --user-config ./config.yaml --fabric ethernet --deployment-type sriov --deploy \
     --dry-run --output json --kubeconfig ~/.kube/config
 ```
 
@@ -822,7 +830,7 @@ This outputs a JSON description of available phases, fabrics, deployment types, 
 | 4 | Deployment error (apply failed) |
 | 5 | Partial success (discovery ok but deploy failed) |
 
-In JSON mode, errors include structured fields (`code`, `category`, `transient`, `suggestion`) to help agents decide whether to retry or fix input.
+Errors emitted through the JSON result writer include structured fields (`code`, `category`, `transient`, `suggestion`). Early argument/config errors can still be text; always check the exit status. See [output contracts](docs/integrator/automation.md#json-mode).
 
 ## Configuration file
 
@@ -835,7 +843,7 @@ refresh replaces only `clusterConfig`; every other section stays as supplied,
 except for values selected by explicit CLI flags. Generation treats that file
 as immutable input and records the resolved result in the deployment bundle.
 
-The tool resolves configuration and profile paths in order: local directory first (`./l8k-config.yaml`, `./profiles`), then installed location (`/usr/local/share/l8k/`), then binary-relative.
+Configuration, profiles, and presets have separate lookup rules. Deploy and validate prefer the bundle sidecar unless `--user-config` is explicit; generation can use a local or installed default config. See [configuration lookup](docs/reference/configuration.md#deploy-and-validate-config-lookup) and [installation paths](docs/user/installation.md#installed-assets) for the complete precedence.
 
 ### Network Operator release selection
 
@@ -857,11 +865,11 @@ l8k generate --user-config cluster-config.yaml \
 l8k schema | jq '.supportedNetworkOperatorReleases'
 ```
 
-The release identifier is also used to gate version-specific template sections. **NicNodePolicy** is rendered only for `26.4+`; under older releases the OFED driver and the appropriate device plugin (`rdmaSharedDevicePlugin` for ipoib/macvlan, `sriovDevicePlugin` for host-device) are emitted in `NicClusterPolicy` instead, matching the legacy 26.1 model.
+The release identifier also gates version-specific template sections. The ipoib and macvlan profiles render **NicNodePolicy** for `26.4+`; on `26.1`, the OFED driver and RDMA shared device plugin remain in **NicClusterPolicy**. The host-device profile keeps its OFED driver and SR-IOV device plugin in **NicClusterPolicy** across supported releases. See the [profile matrix](docs/user/profiles.md).
 
 There are three **Spectrum-X** profiles, picked by the value of `--spectrum-x`:
 
-- **`spectrum-x`** — RA2.3 on `26.7+`. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` and deploys the Spectrum-X profile through a ConfigMap consumed by NIC Configuration Operator. Selected for `--spectrum-x RA2.3`.
+- **`spectrum-x`** — RA2.3 on `26.7`. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` and deploys the Spectrum-X profile through a ConfigMap consumed by NIC Configuration Operator. Selected for `--spectrum-x RA2.3`.
 - **`spectrum-x-ra2.2`** — RA2.2 on `26.4` only. Uses the v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]` to consolidate rail wiring. Selected for `--spectrum-x RA2.2`.
 - **`spectrum-x-ra2.1`** — RA2.1 on `26.1` only (pinned via `min`/`maxNetworkOperatorRelease: "26.1"`). Renders the full SR-IOV operator chain: per-group `SriovNetworkPoolConfig` + per-rail `SriovNetworkNodePolicy` + `OVSNetwork` + nv-ipam `CIDRPool` + a v1alpha1 glue `SpectrumXRailPoolConfig`. Selected for `--spectrum-x RA2.1`.
 
@@ -997,7 +1005,7 @@ release-appropriate SR-IOV drain path described above.
 Changing to requestor mode modifies Helm values and operator Deployment
 environment variables. Upgrade an existing release with
 `--overwrite-existing`; applying only the generated custom resources cannot
-enable requestor mode. See [Maintenance and upgrade concurrency](docs/maintenance.rst)
+enable requestor mode. See [Maintenance and upgrade concurrency](docs/user/maintenance.md)
 for value restrictions, zero-value behavior, and release-specific details.
 
 ### DOCA Driver

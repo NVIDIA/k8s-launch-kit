@@ -61,7 +61,7 @@ Use `l8k preset list` to see available presets. Multi-variant presets (same mach
   `SpectrumXRailPoolConfig`; current CRDs reject generated manifests that
   include it.
 - Before recommending Spectrum-X, always ask the user if they have Spectrum-X switch fabric (Spectrum-4 switches) configured. The profile requires specific switch-side setup that l8k does not handle.
-- Use `--output json` for scripted checks, preserve stderr and check the exit status before parsing. Text/help inspection is appropriate for development. Do not add root-only `--yes` to subcommands; follow the shared skill for output handling.
+- Use lifecycle JSON output, preserve stderr, and check the command exit status before parsing. Text/help inspection is appropriate for development. Validate emits a JSON stream; standalone deploy has no finalized success envelope. Preset commands and sosreport have text success output. Follow the shared skill's command-specific output contract. Do not add root-only `--yes` to subcommands; lifecycle JSON mode auto-confirms.
 - Discovery resolves and persists the profile, including multirail. Reuse the
   saved values during generation; pass profile flags only for explicit
   overrides. An explicit `multirail: false` remains false across rewrites.

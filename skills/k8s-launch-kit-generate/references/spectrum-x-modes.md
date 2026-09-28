@@ -113,18 +113,19 @@ choice. Unknown platforms retain the NIC-family fallback in the table above.
 
 ## Version
 
-Two RA versions are supported, picked by the value of `--spectrum-x` together with
+Three RA versions are supported, picked by the value of `--spectrum-x` together with
 `--network-operator-release`:
 
 | Version | Network Operator | Profile               | Rail wiring                                                      |
 |---------|------------------|-----------------------|------------------------------------------------------------------|
-| `RA2.2` | 26.4+            | `spectrum-x`          | Single v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]`  |
+| `RA2.3` | 26.7 only        | `spectrum-x` | v1alpha2 rail pool plus required profile ConfigMap |
+| `RA2.2` | 26.4 only        | `spectrum-x-ra2.2`          | Single v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]`  |
 | `RA2.1` | 26.1 only        | `spectrum-x-ra2.1`    | Full SR-IOV operator chain + v1alpha1 `SpectrumXRailPoolConfig`  |
 
-Both profiles support three multiplane modes (`none`, `swplb`, `hwplb`).
+All three profiles support three multiplane modes (`none`, `swplb`, `hwplb`).
 Selecting a mismatched `(spcxVersion, network-operator-release)`
-pair (e.g. `RA2.1` with `26.4`) causes the matcher to skip both profiles and
-fall through to a non-Spectrum-X profile or error out.
+pair (e.g. `RA2.1` with `26.4`) fails resolved-configuration validation.
+RA2.3 requires a Spectrum-X profile ConfigMap input.
 
 The v1alpha2 rail-pool template omits the removed `spec.withBCM` field.
 Current `SpectrumXRailPoolConfig` CRDs reject that field during strict

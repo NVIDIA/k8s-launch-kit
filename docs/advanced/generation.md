@@ -26,9 +26,13 @@ Explicit false, zero and empty values override defaults; YAML `null` means
 unset. The selected release supplies catalog-managed coordinates after merging.
 See [Configuration](../reference/configuration.md) for the full contract.
 
-Generation preserves the source YAML. It writes the effective configuration to
-`<output>/.l8k/resolved-config.yaml`. Deploy and validate use an explicit user
-config when supplied, then this sidecar when present, before legacy fallback.
+Generation leaves the input file unchanged and records the effective result at
+`<deployment-dir>/.l8k/resolved-config.yaml`. This includes defaults and explicit
+CLI overrides. Retain this metadata with the manifests and omit `--user-config`
+from later deploy and validate commands to reuse the rendered configuration.
+Passing `--user-config` again intentionally replaces that metadata; the original
+file does not contain generation-only CLI overrides. See
+[configuration lookup](../reference/configuration.md#deploy-and-validate-config-lookup).
 Review both the generated artifacts and effective configuration before deployment.
 
 If hardware groups disagree on fabric, or discovery cannot resolve a configured link layer, generation requires `--fabric`.
@@ -50,12 +54,14 @@ See [Deployment Profiles](../user/profiles.md) for the fabric and deployment-typ
 
 ## Bundle Layout
 
-Launch Kit writes Network Operator files under the selected output directory:
+Launch Kit renders and checks the complete artifact set before replacing the
+selected plugin output directory.
 
 Rendered files are structurally checked after ownership annotations and
 before the output directory is cleaned. If this check fails, the previous
 output remains in place. Successful output keeps the rendered bytes, and a
-combined generate/deploy run uses the same checked snapshot.
+combined generate/deploy run uses the same checked snapshot. Network Operator
+files use this layout:
 
 ```text
 deployment/
@@ -81,7 +87,8 @@ The exact files depend on the profile and Helm-management setting:
 | `11` | Per-group `NicNodePolicy` resources where the release/profile uses them. |
 | `20` | NV-IPAM `IPPool` resources. |
 | `25` through `40` | NIC naming/configuration templates and SR-IOV pool or node policies. |
-| `50` through `80` | Secondary networks, Spectrum-X `CIDRPool`, DRA, and rail-pool resources. |
+| `50` through `80` | Secondary networks, Spectrum-X `CIDRPool`, and rail-pool resources. |
+| `85` | Optional Spectrum-X DRA `ResourceClaimTemplate` resources. |
 | `40`, `60`, or `90` example | Temporary workload consumed by validation, depending on profile. |
 
 Group and namespace suffixes are added when one render produces multiple copies.
@@ -99,8 +106,8 @@ l8k generate \
 ```
 
 The equivalent persistent setting is
-`networkOperator.skipHelmChart: true`. The plugin output directory is cleaned
-before rendering, so a `values.yaml` from an earlier run cannot remain in the
+`networkOperator.skipHelmChart: true`. The plugin output directory is replaced
+after successful rendering and structural validation, so a `values.yaml` from an earlier run cannot remain in the
 new bundle.
 
 ## Generate Without Discovery
@@ -153,7 +160,7 @@ Spectrum-X resources render into the first configured network namespace.
 
 ## Custom Workload Manifest
 
-Replace the profile's example DaemonSet:
+Render an application workload instead of the profile's example DaemonSet:
 
 ```bash
 l8k generate \
@@ -188,7 +195,26 @@ spec:
           nvidia.com/sriov_resource_rail_1: "1"
 ```
 
-Review the rendered manifest after patching. `l8k deploy` skips files with `example` in the filename, while `l8k validate` applies them temporarily for connectivity checks.
+The replacement is written as `90-workload-<group>.yaml`, so `l8k deploy`
+applies it as an operational resource. It is not a temporary validation
+fixture. Inspect the patched manifest before deployment.
+
+On Kubernetes, custom workloads render per source group into the first network
+namespace only. Standard secondary networks still fan out to all requested
+namespaces. On OpenShift, custom workloads render per shared network bucket
+and per network namespace.
+
+Replacing the example removes the default connectivity DaemonSet. Even a custom
+DaemonSet in a `90-workload-*.yaml` file is outside connectivity selection.
+For connectivity, provide a separate `*example*.yaml` `apps/v1` DaemonSet with
+the required route/RDMA containers, namespace, and network resources described
+in [Validation](../user/validation.md#connectivity-only-validation). Keep those
+fixtures outside generated output and copy them into the manifest directory
+after each successful generation, which replaces that directory. Deployment
+skips example files; validation temporarily applies their test DaemonSets.
+Without a test DaemonSet, default connectivity validation returns a validation
+error. `--connectivity=false` runs static validation only and supplies no
+data-plane acceptance evidence.
 
 ## Generate And Deploy
 
@@ -200,7 +226,6 @@ l8k generate \
   --save-deployment-files ./deployment
 
 l8k deploy \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment
 ```
 

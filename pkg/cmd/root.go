@@ -84,10 +84,10 @@ var rootCmd = &cobra.Command{
 K8s Launch Kit (l8k) is a CLI tool for deploying and managing NVIDIA cloud-native solutions on Kubernetes. The tool helps provide flexible deployment workflows for optimal network performance with SR-IOV, RDMA, and other networking technologies.
 
 ### Discover Cluster Configuration
-Deploy a minimal Network Operator profile to automatically discover your cluster's
-network capabilities and hardware configuration by using --discover-cluster-config.
+Bootstrap a private NIC Configuration Daemon to discover your cluster's
+network capabilities and hardware configuration with --discover-cluster-config.
 This phase can be skipped if you provide your own configuration file by using --user-config.
-This phase requires --kubeconfig to be specified.
+This phase resolves credentials from --kubeconfig, $KUBECONFIG, or ~/.kube/config.
 Fresh discovery fills profile settings from the detected hardware and built-in
 defaults. With --user-config, discovery replaces only clusterConfig and preserves
 all other settings. Explicit CLI overrides apply in both modes.
@@ -100,10 +100,11 @@ The profile is defined with --fabric, --deployment-type and --multirail flags,
 or via a profile section in the user-config file.
 
 ### Deploy to Cluster
-Apply the generated deployment files to your Kubernetes cluster by using --deploy. This phase requires --kubeconfig and can be skipped if --deploy is not specified.
+Apply the generated deployment files to your Kubernetes cluster by using --deploy. Credentials resolve from --kubeconfig, $KUBECONFIG, or ~/.kube/config. Skip this phase by omitting --deploy.
 
 ### AI Agent / Automation Support
-Use --output json for structured machine-readable output (single JSON object to stdout).
+Use --output json for a structured result from this root pipeline.
+Subcommands have their own output contracts; validate emits a JSON stream.
 Use --yes to auto-confirm prompts, --quiet to suppress informational output, and --dry-run to preview deployments.
 Use 'l8k schema' to discover tool capabilities programmatically.`,
 	Example: `  # Discover cluster and generate SR-IOV ethernet deployment
@@ -121,8 +122,8 @@ Use 'l8k schema' to discover tool capabilities programmatically.`,
     --network-operator-release 26.7 --deploy --output json --yes
 
   # Dry-run: preview what would be deployed
-  l8k --user-config cluster-config.yaml --spectrum-x --deploy \
-    --dry-run --output json
+  l8k --user-config cluster-config.yaml --fabric ethernet \
+    --deployment-type sriov --deploy --dry-run --output json
 
   # Get tool capabilities as JSON (for AI agents)
   l8k schema`,
@@ -185,7 +186,7 @@ func init() {
 	rootCmd.Flags().StringVar(&enabledPlugins, "enabled-plugins", "network-operator", "Comma-separated list of plugins to enable")
 
 	// Phase 1: Cluster discovery flags
-	rootCmd.Flags().BoolVar(&discoverClusterConfig, "discover-cluster-config", false, "Deploy a thin Network Operator profile to discover cluster capabilities")
+	rootCmd.Flags().BoolVar(&discoverClusterConfig, "discover-cluster-config", false, "Bootstrap a private NIC Configuration Daemon to discover cluster capabilities")
 	rootCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "", "Save discovered cluster configuration to the specified path (defaults to --user-config path if set, otherwise ./cluster-config.yaml)")
 	rootCmd.Flags().StringVar(&userConfig, "user-config", "", "Use provided cluster configuration file (as base config for discovery or as full config without discovery)")
 	mustBindConfigFlags(rootCmd, &rootConfigOptions, configflags.ScopeRoot)

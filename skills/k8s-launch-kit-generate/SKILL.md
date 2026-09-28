@@ -252,3 +252,17 @@ win when a one-off override is needed.
 ## OpenShift
 
 `--flavor ocp` selects separate OpenShift profiles and generates no Helm values. Hardware policies and optional NIC interface naming templates select each worker by hostname so workers sharing a machine label can retain distinct PCI layouts. Compatible groups share a network per GPU type and rail count. Custom workloads render once per shared network and workload namespace, referencing that namespace's NAD and the `openshift.io` SR-IOV resource. Verify each worker selector and PCI address before deployment.
+
+## Custom Workloads And Validation
+
+`--workload-manifest` replaces example DaemonSet templates with operational
+`90-workload-*.yaml` files applied by deploy. It does not make the custom Pod,
+Deployment, or DaemonSet a connectivity fixture. Supply separate `*example*.yaml`
+DaemonSets with the required validation containers after each render, or run
+static-only validation with `--connectivity=false` and report that limitation.
+Kubernetes custom workloads use the first network namespace; OpenShift renders
+per shared network bucket and namespace. See `docs/advanced/generation.md`.
+
+Subset rendering does not isolate deployment deletion scope. Before overwrite,
+review all stray CRs, including other cohorts and manual resources. DRA setup
+requires the APIs/drivers/DeviceClasses documented in `docs/user/spectrum-x.md`.

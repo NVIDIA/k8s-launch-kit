@@ -164,7 +164,7 @@ l8k validate --user-config ./cluster-config.yaml \
   --deployment-files ./connectivity-test \
   --kubeconfig ~/.kube/config
 
-# Agent mode (single JSON object on stdout, logs on stderr)
+# Agent mode (JSON objects on stdout, logs on stderr; preserve l8k status)
 l8k validate --output json 2>/dev/null | jq '.summary'
 
 # Diagnose stage or batch progress without raw command output
@@ -200,8 +200,17 @@ Manifests
 Summary: 1/3 ready, 1 in-progress, 0 error, 1 missing; version: match; topology mismatches: 0 group(s)
 ```
 
-JSON mode (`--output json`) emits one object with `versionCheck`,
-`manifests`, and `summary` fields.
+JSON mode emits a sequence of objects. Full validation emits `versionCheck`,
+`manifests`, and `summary`; connectivity and the HTML `reportPath` are separate
+objects when those stages run. Parse with `jq -s` or a streaming parser and
+preserve the process exit status. `summary.success` is not the final verdict.
+Full Kubernetes validation can return success with skipped/incomplete
+connectivity; require explicit coverage evidence before accepting deployment.
+See `docs/user/validation.md#acceptance-outcomes`.
+
+Omit `--user-config` to reuse the bundle's `.l8k/resolved-config.yaml`. An
+explicit config overrides that metadata. Connectivity accepts the sidecar or
+a user-owned config with explicit routing and GPUDirect decisions.
 
 ## When this skill activates
 
@@ -218,4 +227,13 @@ expected vs deployed state.
 
 ## OpenShift
 
-OpenShift validation checks Network Operator CSV version and uses an ordinary workload namespace with temporary dedicated ServiceAccount/SCC/RBAC. Two-node connectivity requires two usable endpoints; report any API outage or deferred check as incomplete.
+OpenShift validation checks Network Operator CSV version and creates a
+temporary `l8k-validation-*` namespace for each source workload namespace. It
+copies required NADs and image pull secrets and creates dedicated
+ServiceAccount/SCC/RBAC there. The kubeconfig needs namespace/SCC creation and
+source NAD/Secret read permissions. Cleanup removes the temporary resources;
+`--keep` retains them. Inspect exact retained names after interrupted cleanup.
+OpenShift with connectivity enabled requires at least one gating test per
+selected family; in-progress manifests and incomplete coverage fail. Other
+profiles beyond SR-IOV Ethernet still need live hardware qualification; see
+`docs/user/openshift.md`.

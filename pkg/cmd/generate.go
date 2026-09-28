@@ -73,7 +73,7 @@ Optionally deploy the generated manifests with --deploy.`,
   l8k generate --user-config cluster-config.yaml \
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output \
-    --output json --yes 2>/dev/null
+    --output json 2>/dev/null
 
   # Generate from a known server preset using the embedded default config
   l8k generate \

@@ -62,7 +62,7 @@ Each stage is independently invocable:
 - `l8k discover` bootstraps a private NIC discovery daemon and writes `cluster-config.yaml`.
 - `l8k generate` renders a profile-specific manifest bundle under `deployment/network-operator/`.
 - `l8k deploy` installs or upgrades the Network Operator Helm chart, applies CRs in dependency order, and waits for reconciliation.
-- `l8k validate` runs the deployment acceptance checks and produces the report used to green-light the deployment.
+- `l8k validate` runs deployment checks and produces a report. Review its completed checks and connectivity coverage before acceptance; [exit success alone is insufficient](user/validation.md#acceptance-outcomes).
 - `l8k clean` removes Network Operator custom resources and uninstalls its Helm release unless config marks the chart externally owned.
 
 ## Links

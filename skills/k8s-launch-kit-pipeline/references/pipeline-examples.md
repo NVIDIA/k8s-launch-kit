@@ -78,7 +78,7 @@ docker run --net=host \
 
 ---
 
-## 3. Heterogeneous Cluster with --group
+## 3. Heterogeneous Cluster with --groups
 
 When a cluster has multiple hardware groups (e.g., A100 nodes and H100 nodes), target a
 specific group:
@@ -88,7 +88,7 @@ specific group:
 ```bash
 ./build/l8k \
   --user-config cluster-config.yaml \
-  --group group-0 \
+  --groups group-0 \
   --fabric ethernet \
   --deployment-type sriov \
   --multirail \
@@ -106,7 +106,7 @@ docker run --net=host \
   -v /tmp/l8k-output:/output \
   nvcr.io/nvidia/cloud-native/k8s-launch-kit:v26.1.0 \
     --user-config /config/cluster-config.yaml \
-    --group group-0 \
+    --groups group-0 \
     --fabric ethernet \
     --deployment-type sriov \
     --multirail \
@@ -115,7 +115,7 @@ docker run --net=host \
     --kubeconfig /kube/config
 ```
 
-Repeat with `--group group-1` for the second hardware group. Each group may use a
+Repeat with `--groups group-1` for the second hardware group. Each group may use a
 different fabric or deployment type.
 
 ---

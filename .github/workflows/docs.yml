@@ -19,18 +19,8 @@ name: Docs
 on:
   pull_request:
     branches: [main]
-    paths:
-      - docs/**
-      - mkdocs.yml
-      - requirements-docs.txt
-      - .github/workflows/docs.yml
   push:
     branches: [main]
-    paths:
-      - docs/**
-      - mkdocs.yml
-      - requirements-docs.txt
-      - .github/workflows/docs.yml
   workflow_dispatch:
 
 permissions:

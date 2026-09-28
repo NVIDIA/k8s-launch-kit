@@ -26,7 +26,6 @@ Allow in-progress manifests to finish before treating them as failures:
 
 ```bash
 l8k validate \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --wait 10m
 ```
@@ -35,7 +34,6 @@ Keep the connectivity test DaemonSet for inspection:
 
 ```bash
 l8k validate \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --keep
 ```
@@ -44,7 +42,6 @@ Use JSON output in automation:
 
 ```bash
 l8k validate \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --output json 2>/dev/null | jq .
 ```
@@ -103,12 +100,13 @@ Preview the Kubernetes apply without persisting changes:
 
 ```bash
 l8k deploy \
-  --user-config ./cluster-config.yaml \
   --deployment-files ./deployment \
   --dry-run
 ```
 
-Preflight reports installed Helm value drift and unmanaged or stray custom resources that could make the apply ambiguous. Review the diff before using `--overwrite-existing`; the flag authorizes a Helm upgrade to the generated values.
+Preflight reports installed Helm value drift and unmanaged or stray custom resources that could make the apply ambiguous. Review the diff before using `--overwrite-existing`; the flag authorizes a Helm upgrade and deletion of every reported stray CR,
+including manually created instances and other cohorts in the checked scope.
+See the [deletion boundary](../advanced/deployment.md#stray-resource-deletion-boundary).
 
 ## Operator And Data-Plane Checks
 
