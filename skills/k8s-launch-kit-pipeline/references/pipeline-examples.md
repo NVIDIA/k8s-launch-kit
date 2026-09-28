@@ -6,7 +6,10 @@ Eight common l8k invocation patterns, each shown with both local and container c
 
 ## 1. Spectrum-X Full Pipeline
 
-Discover hardware, generate Spectrum-X manifests, and deploy.
+Discover hardware, generate Spectrum-X manifests, and deploy. Obtain an
+approved `topology.json` for the **same workers** being discovered; its host
+endpoint names must match the Kubernetes worker names. These commands assume
+a 2-tier fabric. Use the topology scheme approved for your actual fabric.
 
 **Local:**
 
@@ -14,7 +17,8 @@ Discover hardware, generate Spectrum-X manifests, and deploy.
 ./build/l8k \
   --discover-cluster-config \
   --save-cluster-config ./cluster-config.yaml \
-  --fabric spectrum-x \
+  --fabric ethernet --spectrum-x RA2.1 --network-operator-release 26.1 \
+  --topology-scheme 2-tier --topology-file ./topology.json \
   --deployment-type sriov \
   --multirail \
   --save-deployment-files ./output \
@@ -28,10 +32,12 @@ Discover hardware, generate Spectrum-X manifests, and deploy.
 docker run --net=host \
   -v ~/.kube:/kube:ro \
   -v /tmp/l8k-output:/output \
+  -v /path/to/topology.json:/input/topology.json:ro \
   nvcr.io/nvidia/cloud-native/k8s-launch-kit:v26.1.0 \
     --discover-cluster-config \
     --save-cluster-config /output/cluster-config.yaml \
-    --fabric spectrum-x \
+    --fabric ethernet --spectrum-x RA2.1 --network-operator-release 26.1 \
+    --topology-scheme 2-tier --topology-file /input/topology.json \
     --deployment-type sriov \
     --multirail \
     --save-deployment-files /output/manifests \
@@ -163,95 +169,48 @@ docker run --net=host \
 
 ## 5. CI/CD with JSON Output
 
-Full pipeline in a CI job, capturing structured JSON for downstream processing:
-
-**Local:**
+Pin the target image/build and preserve both the CLI exit status and diagnostic stderr. This local example uses explicit files; review the generated bundle and apply scope before allowing `--deploy` in a job:
 
 ```bash
-OUTPUT=$(./build/l8k \
-  --discover-cluster-config \
-  --save-cluster-config ./cluster-config.yaml \
-  --fabric ethernet \
-  --deployment-type sriov \
-  --multirail \
-  --save-deployment-files ./output \
-  --deploy \
-  --kubeconfig ~/.kube/config \
-  --output json --yes 2>/dev/null)
-
-EXIT_CODE=$?
-echo "$OUTPUT" | jq .
-
-if [ $EXIT_CODE -ne 0 ]; then
-  echo "Pipeline failed with exit code $EXIT_CODE"
-  echo "$OUTPUT" | jq '.errors[]?'
-  exit $EXIT_CODE
+status=0
+./build/l8k --user-config ./cluster-config.yaml \
+  --save-deployment-files ./output --deploy \
+  --kubeconfig ~/.kube/config --output json \
+  >pipeline.json 2>pipeline.log || status=$?
+if [ "$status" -ne 0 ]; then
+  cat pipeline.log >&2
+  exit "$status"
 fi
+jq . pipeline.json
 ```
 
-**Container:**
+For a container job, mount the approved source config and kubeconfig read-only, and the output directory read-write. Use the same capture rule:
 
 ```bash
-OUTPUT=$(docker run --net=host \
+status=0
+docker run --net=host \
   -v ~/.kube:/kube:ro \
+  -v /path/to/cluster-config.yaml:/config/cluster-config.yaml:ro \
   -v /tmp/l8k-output:/output \
   nvcr.io/nvidia/cloud-native/k8s-launch-kit:v26.1.0 \
-    --discover-cluster-config \
-    --save-cluster-config /output/cluster-config.yaml \
-    --fabric ethernet \
-    --deployment-type sriov \
-    --multirail \
-    --save-deployment-files /output/manifests \
-    --deploy \
-    --kubeconfig /kube/config \
-    --output json --yes 2>/dev/null)
-
-echo "$OUTPUT" | jq .
+    --user-config /config/cluster-config.yaml \
+    --save-deployment-files /output/manifests --deploy \
+    --kubeconfig /kube/config --output json \
+    >pipeline.json 2>pipeline.log || status=$?
+if [ "$status" -ne 0 ]; then
+  cat pipeline.log >&2
+  exit "$status"
+fi
+jq . pipeline.json
 ```
+
+The image tag is an example; pin the approved image digest and the matching documentation for production. The process status remains authoritative if JSON is partial or absent.
 
 ---
 
 ## 6. Dry-Run Validation Pipeline
 
-Validate the full pipeline without applying anything to the cluster. Useful in PR checks:
-
-**Local:**
-
-```bash
-./build/l8k \
-  --discover-cluster-config \
-  --save-cluster-config ./cluster-config.yaml \
-  --fabric ethernet \
-  --deployment-type sriov \
-  --multirail \
-  --save-deployment-files ./output \
-  --deploy \
-  --dry-run \
-  --kubeconfig ~/.kube/config \
-  --output json --yes 2>/dev/null | jq .
-```
-
-**Container:**
-
-```bash
-docker run --net=host \
-  -v ~/.kube:/kube:ro \
-  -v /tmp/l8k-output:/output \
-  nvcr.io/nvidia/cloud-native/k8s-launch-kit:v26.1.0 \
-    --discover-cluster-config \
-    --save-cluster-config /output/cluster-config.yaml \
-    --fabric ethernet \
-    --deployment-type sriov \
-    --multirail \
-    --save-deployment-files /output/manifests \
-    --deploy \
-    --dry-run \
-    --kubeconfig /kube/config \
-    --output json --yes 2>/dev/null | jq .
-```
-
-Dry-run performs server-side validation against the cluster API without creating or
-modifying any resources.
+A dry run contacts the cluster API for server-side checks. It does not apply resources or establish controller readiness or traffic. Reuse the approved input and capture pattern above, replacing `--deploy` with `--deploy --dry-run` in the intended local or container command. Do not treat this as a disconnected CI check; it needs kubeconfig and target-cluster API access.
 
 ---
 

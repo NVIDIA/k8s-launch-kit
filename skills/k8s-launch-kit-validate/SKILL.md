@@ -19,6 +19,8 @@ are unchanged.
 Verify that a previously generated and deployed NVIDIA networking
 deployment is correctly applied and matches the selected Network
 Operator release.
+Apply `docs/user/validation.md#worked-acceptance-decisions` to the report;
+compare intended and completed worker/rail coverage before acceptance.
 
 ## What it checks
 
@@ -165,7 +167,8 @@ l8k validate --user-config ./cluster-config.yaml \
   --kubeconfig ~/.kube/config
 
 # Agent mode (JSON objects on stdout, logs on stderr; preserve l8k status)
-l8k validate --output json 2>/dev/null | jq '.summary'
+l8k validate --output json >validation.jsonl 2>validation.log &&
+  jq -s . validation.jsonl
 
 # Diagnose stage or batch progress without raw command output
 l8k validate --log-level debug

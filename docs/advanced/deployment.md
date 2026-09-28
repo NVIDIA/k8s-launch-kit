@@ -7,6 +7,26 @@ SPDX-License-Identifier: Apache-2.0
 
 `l8k deploy` applies a generated bundle in dependency order and waits for controller reconciliation.
 
+## Before applying
+
+Confirm the intended kubeconfig context, [operator ownership](../user/profiles.md#choose-a-platform-and-operating-model), and the reviewed [bundle](generation.md#review-the-bundle). A generated bundle is tied to its effective configuration; keep `deployment/.l8k/resolved-config.yaml` with the manifests. If another system owns Helm, configure `networkOperator.skipHelmChart: true` before generation. If another system applies custom resources, use its [artifact handoff](../integrator/automation.md#gitops-pattern) rather than this command.
+
+Preview the same directory that will be applied:
+
+```bash
+l8k deploy \
+  --deployment-files ./deployment \
+  --kubeconfig "$KUBECONFIG" \
+  --dry-run
+```
+
+Dry run asks the API server and Helm to validate their proposed operations
+without persisting them. It reports preflight effects but cannot establish
+reconciliation or data-plane readiness. Review every conflict and intended
+resource identity before using the real command.
+
+## Apply the reviewed bundle
+
 ```bash
 l8k deploy \
   --deployment-files ./deployment \
@@ -136,13 +156,9 @@ Other manifests have no independent per-manifest deadline.
 
 ## Server-Side Dry Run
 
-```bash
-l8k deploy \
-  --deployment-files ./deployment \
-  --dry-run
-```
-
-Dry run sends resources through Kubernetes server-side validation without persisting them, runs Helm in dry-run mode, reports preflight effects, and skips reconciliation polling.
+Use the [preview before application](#before-applying). Dry run sends resources
+through Kubernetes server-side validation without persisting them, runs Helm in
+dry-run mode, reports preflight effects, and skips reconciliation polling.
 
 ## Manual Inspection
 

@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 Validation is the normal deployment acceptance stage. When it does not produce a green-light report, use its failed checks and captured live state as the starting evidence for troubleshooting.
 
+For an incomplete change, retain both generated bundles and follow the [phase-specific recovery steps](maintenance.md#recover-from-an-incomplete-change). A validation report records observed checks; inspect the missing workers, rails, and selected families before changing cluster resources.
+
 ## Start With The Failed Stage
 
 | Failure area | First checks |
@@ -43,8 +45,12 @@ Use JSON output in automation:
 ```bash
 l8k validate \
   --deployment-files ./deployment \
-  --output json 2>/dev/null | jq .
+  --output json >validation.jsonl 2>validation.log &&
+  jq -s . validation.jsonl
 ```
+
+Check the `l8k` exit status before parsing in automation and retain
+`validation.log`; use the [status-preserving recipe](../integrator/automation.md#capture-results-without-losing-the-exit-status).
 
 The HTML report includes manifest classifications, live YAML, release checks, topology comparisons, and connectivity matrices. Preserve it with the generated bundle.
 

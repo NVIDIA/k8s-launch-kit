@@ -7,27 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 
 `l8k discover` inventories NVIDIA NICs and GPUs, groups nodes with compatible hardware, and writes an editable `cluster-config.yaml`. Fresh discovery resolves a profile; a `--user-config` refresh preserves its non-hardware settings.
 
-```bash
-l8k discover \
-  --kubeconfig "$KUBECONFIG" \
-  --save-cluster-config ./cluster-config.yaml
-```
-
-Discovery is self-contained. It does not require Node Feature Discovery (NFD) or a pre-installed Network Operator.
-
-## How Discovery Works
-
-1. Selects Kubernetes nodes that are Ready and schedulable.
-2. Prepares the private `nvidia-k8s-launch-kit` namespace.
-3. Creates the NIC Configuration Operator CRDs only when they are missing.
-4. Runs a temporary NIC Configuration Daemon on the eligible nodes.
-5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe and excludes BlueFields whose host trust level is `restricted`.
-6. Reads the published `NicDevice` resources and probes GPU, NIC, fabric, module, NUMA, and rail data.
-7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, only `clusterConfig` is replaced.
-8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
-
-The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
-
 ## Requirements
 
 - Kubernetes access through `--kubeconfig`, `$KUBECONFIG`, or `~/.kube/config`.
@@ -50,6 +29,42 @@ If the same node has another non-restricted NVIDIA NIC, that node remains in
 the wait set and its published devices are discovered normally. A failed or
 unrecognized trust query is treated as non-restricted, matching NIC
 Configuration Operator behavior.
+
+## Run discovery
+
+```bash
+l8k discover \
+  --kubeconfig "$KUBECONFIG" \
+  --save-cluster-config ./cluster-config.yaml
+```
+
+Discovery is self-contained. It does not require Node Feature Discovery (NFD) or a pre-installed Network Operator.
+
+## Review saved inventory
+
+Open `cluster-config.yaml` before generation. Confirm the intended workers and
+source groups, east-west PF PCI addresses and rails, any north-south devices,
+the chosen profile and release, and the node labels used for later selection.
+Check the proposed network and driver settings against the site's approved
+inputs in [Plan your deployment](profiles.md#check-prerequisites-and-site-inputs).
+Discovery does not prove that a subnet or maintenance budget is safe for the
+site. Correct the editable source config before generation if needed.
+
+If a worker is missing, check its readiness, image pull, discovery pod,
+`NicDevice` publication, and zero-trust status. See [Troubleshooting](troubleshooting.md#discovery-failures).
+
+## How Discovery Works
+
+1. Selects Kubernetes nodes that are Ready and schedulable.
+2. Prepares the private `nvidia-k8s-launch-kit` namespace.
+3. Creates the NIC Configuration Operator CRDs only when they are missing.
+4. Runs a temporary NIC Configuration Daemon on the eligible nodes.
+5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe and excludes BlueFields whose host trust level is `restricted`.
+6. Reads the published `NicDevice` resources and probes GPU, NIC, fabric, NUMA, and rail data. It does not walk kernel-module holder graphs.
+7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, only `clusterConfig` is replaced.
+8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
+
+The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
 
 ## Hardware And GPU Topology
 

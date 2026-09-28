@@ -17,6 +17,8 @@ service through the target registry; command syntax and apply ordering are
 unchanged.
 
 Apply previously generated NVIDIA networking manifests to a Kubernetes cluster.
+Use `docs/advanced/deployment.md#before-applying` for the ownership, artifact
+review, and preview sequence; resolve preflight conflicts before a real apply.
 
 Deploy loads and validates the entire flat artifact directory before Helm,
 preflight remediation, or apply. Only exact `values.yaml` is Helm input;
@@ -179,3 +181,4 @@ these by applying `MaintenanceOperatorConfig` alone.
 ## OpenShift
 
 OpenShift deploy requires certified operator installations, uses OLM CSV/API checks, and configures existing operators. Helm values in the deployment directory are rejected. IPPool dry-run checks may be deferred until NCP installs NV-IPAM.
+Use `docs/user/openshift.md` for the operator ownership and acceptance workflow.

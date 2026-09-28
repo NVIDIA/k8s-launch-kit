@@ -17,6 +17,8 @@ operation through the target registry; command syntax and artifacts are
 unchanged.
 
 Generate Kubernetes YAML manifests for NVIDIA networking from a cluster config and profile selection.
+Review the effective config and generated resources using
+`docs/advanced/generation.md#review-the-bundle` before applying them.
 
 Generation validates all rendered YAML after annotation and before replacing
 the output directory. A malformed resource reports its filename/document and
@@ -252,6 +254,8 @@ win when a one-off override is needed.
 ## OpenShift
 
 `--flavor ocp` selects separate OpenShift profiles and generates no Helm values. Hardware policies and optional NIC interface naming templates select each worker by hostname so workers sharing a machine label can retain distinct PCI layouts. Compatible groups share a network per GPU type and rail count. Custom workloads render once per shared network and workload namespace, referencing that namespace's NAD and the `openshift.io` SR-IOV resource. Verify each worker selector and PCI address before deployment.
+See `docs/user/openshift.md` for the required external operators and full
+generate-to-acceptance procedure.
 
 ## Custom Workloads And Validation
 
@@ -262,6 +266,8 @@ DaemonSets with the required validation containers after each render, or run
 static-only validation with `--connectivity=false` and report that limitation.
 Kubernetes custom workloads use the first network namespace; OpenShift renders
 per shared network bucket and namespace. See `docs/advanced/generation.md`.
+For a complete fixture retention and workload example, use
+`docs/user/workloads.md`.
 
 Subset rendering does not isolate deployment deletion scope. Before overwrite,
 review all stray CRs, including other cohorts and manual resources. DRA setup

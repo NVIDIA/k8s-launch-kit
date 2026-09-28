@@ -7,6 +7,29 @@ SPDX-License-Identifier: Apache-2.0
 
 Spectrum-X profiles render multi-rail AI interconnect manifests. The selected RA version and Network Operator release determine the manifest shape.
 
+## Required inputs and owners
+
+Before generating, the fabric owner must confirm a configured Spectrum-X switch fabric, rails/planes, non-overlapping address allocations, and the selected workers and east-west PFs. The hardware/operator owner must confirm the Network Operator release and RA pairing in the [version matrix](#version-matrix), driver and maintenance policy, and a **validated Spectrum-X profile** for the exact hardware and RA. RA2.3 needs that profile as a full ConfigMap or raw `data.profile` YAML; a schema illustration is not a site-approved profile. Where topology-derived CIDRPools are used, obtain a matching [topology JSON export](#topology-driven-cidrpools) from the fabric owner before generation. DRA requires the separate [allocation driver prerequisites](#dra-workload-allocation).
+
+## Deploy RA2.3
+
+1. [Discover](discovery.md) and review the intended hardware in `./cluster-config.yaml`, or use a complete, reviewed source config for that cluster. Confirm east-west PF identity, rails, worker groups, networking settings, and maintenance budget. Obtain a validated **full ConfigMap** at `./site-ra23-profile.yaml` from the hardware owner and a matching `./topology.json` for topology-derived pools. A raw `data.profile` file needs the additional `--spectrum-x-configmap-name` option described [below](#ra23-profile-configmap).
+2. Generate into a new directory. This example uses topology-derived pools; the profile and topology files must already exist:
+
+   ```bash
+   l8k generate --user-config ./cluster-config.yaml \
+     --network-operator-release 26.7 --spectrum-x RA2.3 \
+     --spectrum-x-config ./site-ra23-profile.yaml \
+     --topology-scheme 2-tier --topology-file ./topology.json \
+     --save-deployment-files ./deployment-ra23
+   ```
+
+3. Review `deployment-ra23/.l8k/resolved-config.yaml`, the generated ConfigMap, `NicConfigurationTemplate` NIC type **and** PCI address selectors, rail/plane resources, per-host IP assignments, workload namespaces, and Helm values. Compare selected workers with topology host endpoints exactly, including case and FQDN form. Resolve unmatched workers, overlap, missing allocations, and any stray-resource preflight finding before apply.
+4. Preview with `l8k deploy --deployment-files ./deployment-ra23 --dry-run`. After site approval, run `l8k deploy --deployment-files ./deployment-ra23`. Treat dry-run as admission/preflight evidence; it does not prove reconciliation or traffic.
+5. Run `l8k validate --deployment-files ./deployment-ra23 --wait 10m`. Review the [acceptance outcomes](validation.md#acceptance-outcomes), including intended workers, rails, completed gating families, and exclusions. Retain the full bundle and report.
+
+For a profile/schema failure, compare the supplied ConfigMap with the [RA2.3 contract](#ra23-profile-configmap). For host matching and allocation failures, use [topology diagnostics](#topology-driven-cidrpools). For controller or traffic failures, use [Troubleshooting](troubleshooting.md). The existence of generated YAML or a successful server dry-run does not establish hardware qualification.
+
 ## Version Matrix
 
 | RA version | Network Operator release | Profile path | Notes |
@@ -19,13 +42,7 @@ RA2.2 and RA2.3 output does not include the removed `spec.withBCM` field.
 Adding it causes the v1alpha2 CRD to reject the manifest during strict
 decoding.
 
-Select the release line explicitly:
-
-```bash
-l8k generate \
-  --network-operator-release 26.7 \
-  --spectrum-x RA2.3
-```
+Select the release line explicitly when generating, as in the [RA2.3 procedure](#deploy-ra23).
 
 ## Multiplane Modes
 

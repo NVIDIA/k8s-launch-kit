@@ -58,6 +58,8 @@ North-south PFs do not contribute to the merge rail count.
 
 ## Select Groups
 
+Before selecting a subset for an existing deployment, compare all live cohorts and the [stray deletion boundary](../advanced/deployment.md#stray-resource-deletion-boundary). A render filter limits output, not ownership of shared or cluster-wide resources. Follow the [change procedure](maintenance.md#change-a-deployment) when applying a subset to a live cluster.
+
 Use `--gpu-type` to render every source group with a matching GPU type. Matching is case-insensitive:
 
 ```bash

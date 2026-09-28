@@ -17,6 +17,9 @@ operation through the target registry; command syntax and artifacts are
 unchanged.
 
 Discover cluster hardware and produce a `cluster-config.yaml` describing NICs, GPUs, rails, and node groups.
+Use `docs/user/profiles.md#check-prerequisites-and-site-inputs` for the
+site-owned decisions and `docs/user/discovery.md#review-saved-inventory` for
+the post-discovery review before generation.
 
 Three things to know about the saved file:
 - **Fresh discovery persists a resolved profile.** Without `--user-config`,
@@ -41,8 +44,11 @@ fields come from `l8k-config.yaml`).
 l8k discover \
   --kubeconfig ~/.kube/config \
   --save-cluster-config ./cluster-config.yaml \
-  --output json 2>/dev/null | jq .
+  --output json >discovery.json 2>discovery.log &&
+  jq . discovery.json
 ```
+
+Check the `l8k` exit status before parsing; retain `discovery.log` on failure.
 
 ## Usage (human-interactive)
 
@@ -102,7 +108,7 @@ l8k discover \
 l8k discover \
   --kubeconfig ~/.kube/config \
   --save-cluster-config ./cluster-config.yaml \
-  --output json 2>/dev/null
+  --output json >discovery.json 2>discovery.log
 ```
 
 ## Output Format
@@ -253,4 +259,4 @@ live (collapsed) classification is kept (a preset-deviation warning is emitted).
 
 ## OpenShift
 
-On OpenShift, pass `--flavor ocp`. Use explicit `clusterConfig[].workerNodes` in `--user-config` to bound discovery; the temporary discovery ServiceAccount gets privileged SCC use in its own namespace.
+On OpenShift, pass `--flavor ocp`. Use explicit `clusterConfig[].workerNodes` in `--user-config` to bound discovery; the temporary discovery ServiceAccount gets privileged SCC use in its own namespace. Follow the complete prerequisite and review sequence in `docs/user/openshift.md`.

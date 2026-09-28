@@ -5,9 +5,26 @@ SPDX-License-Identifier: Apache-2.0
 
 # OpenShift host deployments
 
-Set `flavor: ocp` in the host configuration or pass `--flavor ocp` to discover, generate, deploy, and validate. The CLI flag overrides the file. The default remains `k8s`. OpenShift uses separate profile directories and never installs or upgrades the Network Operator Helm chart. Remove old `values.yaml` files before deploying generated OpenShift output.
+This procedure prepares **SR-IOV Ethernet RDMA** on an existing OpenShift cluster. Ethernet SR-IOV was exercised on a two-node OpenShift 4.22 cluster. Other standard OpenShift profiles passed rendering and server dry-run but still need live integration qualification. Spectrum-X has no OpenShift variant. The example uses Network Operator release `26.7`; confirm its suitability for the site before proceeding.
 
-Install the NVIDIA Network Operator through the certified Operators catalog before running l8k. Install the Red Hat SR-IOV Network Operator for SR-IOV profiles, Node Feature Discovery, and NVIDIA Maintenance Operator separately. l8k checks the expected successful CSV and required API, then configures their existing installations. Network Operator deployment requires an OLM Subscription so l8k can persist its maintenance environment settings; the Subscription may have any name when its `spec.name` selects the NVIDIA Network Operator package. Configuration changes may roll operator controllers. SR-IOV uses the Red Hat operator's native drain behavior; the NVIDIA external SR-IOV drainer integration is unavailable in that operator build. The Maintenance Operator still coordinates supported Network Operator driver operations.
+## Before you start
+
+Install the certified [NVIDIA Network Operator for OpenShift](https://docs.nvidia.com/networking/display/kubernetes2670/openshift/deployment-guide-openshift.html), the [Red Hat SR-IOV Network Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/networking_operators/sr-iov-operator), [Node Feature Discovery](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/pdf/hardware_accelerators/index), and [NVIDIA Maintenance Operator](https://github.com/Mellanox/maintenance-operator#deployment) through their own installation workflows. Confirm release compatibility with the operator owners. Launch Kit configures those installations; it does not install their Helm charts. Check the successful CSVs, required APIs, and the NVIDIA Network Operator OLM Subscription before continuing. The Subscription may have any name if its `spec.name` selects the NVIDIA package. Launch Kit persists maintenance settings through it, and configuration changes can roll controllers.
+
+```bash
+oc config current-context
+oc get nodes -o wide
+oc get csv -A
+oc get subscriptions.operators.coreos.com -A
+oc api-resources | grep -E 'NicClusterPolicy|SriovNetworkNodePolicy|NodeFeatureDiscovery'
+l8k version
+```
+
+Confirm permission to run privileged discovery, create the generated resources, and later create temporary validation namespaces and SCCs. Obtain approved worker/PF scope, switch settings, unused addressing, VF capacity, MTU, and maintenance limits from the site owners. See [deployment planning](profiles.md#check-prerequisites-and-site-inputs). Resolve failed CSVs, absent APIs, and admission restrictions with the operator owners first.
+
+## 1. Discover the intended workers
+
+Prepare a site-owned seed configuration. This illustrates the required scope, **not** a complete hardware inventory; discovery supplies NIC and GPU details. Replace the worker names and namespaces with site values:
 
 ```yaml
 flavor: ocp
@@ -26,16 +43,61 @@ networkNamespaces:
 clusterConfig:
   - identifier: worker-a
     workerNodes: [worker-a]
+    nodeSelector:
+      kubernetes.io/hostname: worker-a
   - identifier: worker-b
     workerNodes: [worker-b]
+    nodeSelector:
+      kubernetes.io/hostname: worker-b
 ```
 
-Use `clusterConfig[].workerNodes` to limit discovery. Each OpenShift source group must also have a node selector; generation rejects either field when empty. Hardware policies select each listed worker by hostname, so servers with the same machine/GPU label can retain distinct PCI layouts. Compatible groups with the same GPU type and east-west rail count share an IP pool, secondary network, SR-IOV drain pool, and validation DaemonSet so their pods can communicate. The shared resources select the exact union of those groups' `workerNodes` by hostname. The SR-IOV drain pool applies `maintenance.maxUnavailable` to Red Hat's native drainer. The generated `SriovNetworkNodePolicy`, `SriovNetworkPoolConfig`, and `SriovNetwork` live in the SR-IOV operator namespace. NV-IPAM pools live in the Network Operator namespace, which its node daemon watches. The `SriovNetwork` creates its NAD in each requested workload namespace and requests `openshift.io/<resourceName>`.
+Each source group needs nonempty `workerNodes` and `nodeSelector`; hardware policies select each worker by hostname even if machine/GPU labels match. Preserve the seed file and merge live hardware into another file:
 
-l8k configures NFD's PCI `deviceLabelFields` as `[vendor]` to produce the `pci-15b3` labels required by the networking operators. This replaces any existing PCI label-field selection; other NFD sources and PCI class whitelists are retained. Optional NIC interface naming templates are scoped to each selected worker, even when several workers share a machine label. Buckets with the same GPU type and different rail counts receive distinct network names. A custom `workload.manifest` is rendered once per shared network bucket and workload namespace, with the matching network name, OpenShift SR-IOV resource prefix, and hostname affinity restricted to that bucket's selected workers. Existing workload affinity is retained. The supplied manifest must meet the workload namespace's pod security requirements.
+```bash
+l8k discover --flavor ocp \
+  --user-config ./cluster-config.yaml \
+  --save-cluster-config ./discovered-cluster-config.yaml
+```
 
-The current OpenShift profiles cover SR-IOV Ethernet RDMA, SR-IOV InfiniBand RDMA, host device RDMA, macvlan with RDMA shared devices, and IPoIB with RDMA shared devices. Ethernet SR-IOV was exercised on a two-node OpenShift 4.22 cluster. The other profiles passed rendering and server dry-run, but need live integration qualification on suitable hardware. Spectrum-X profiles have no OpenShift variant: RA2.1 requires Red Hat `OVSNetwork` and `SriovNetworkPoolConfig` alongside `SpectrumXRailPoolConfig` v1alpha1, while RA2.2/RA2.3 require `SpectrumXRailPoolConfig` v1alpha2 and the Network Operator's `spectrumXOperator` path (RA2.3 can also use DRA). Those controller/API combinations were not qualified with the certified bundle on this cluster. Generation fails clearly for these combinations; the missing profile is a qualification gap, not proof that a particular CRD is absent.
+Review workers, PFs, rails, labels, profile, release, and namespaces in the discovered file. Set site-approved IP ranges, gateways, driver settings, and maintenance budget before generation; discovery cannot prove that a default range is unused elsewhere.
 
-For connectivity validation, l8k creates a temporary `l8k-validation-*` namespace for each workload namespace. It copies only the required network attachments and image pull secrets, then creates the validation ServiceAccount, narrow SCC, Role, RoleBinding, and example DaemonSets there. This keeps the SCC identity outside the workload project. By default, l8k removes the test objects and namespaces after the run; `--keep` retains them for inspection. Validation needs permission to create namespaces and SCCs and to read the source network attachments and any image pull secrets. An OpenShift validation run fails if manifests are still reconciling and connectivity cannot run, no tests are planned, or a selected check family has no gating test. If the API becomes unreachable during cleanup, inspect and remove the exact temporary objects after access returns.
+## 2. Generate and review
 
-`l8k clean` rejects an OpenShift flavor or cluster because its broad Kubernetes cleanup could remove external operator resources. Delete only the intended generated resources through normal OpenShift administration. Server dry-run can defer IPPool checks until NicClusterPolicy has installed the NV-IPAM API; a deferred check is not a successful validation.
+```bash
+l8k generate --flavor ocp \
+  --user-config ./discovered-cluster-config.yaml \
+  --fabric ethernet --deployment-type sriov \
+  --save-deployment-files ./ocp-deployment
+```
+
+Compatible groups with the same GPU type and east-west rail count share a pool, network, drain pool, and validation DaemonSet across their exact worker union. Groups with different rail counts get distinct networks. SR-IOV CRs live in the Red Hat operator namespace; NV-IPAM pools live in the NVIDIA operator namespace. The `SriovNetwork` creates NADs in requested workload namespaces and requests `openshift.io/<resourceName>`. The drain pool carries `maintenance.maxUnavailable` to Red Hat's native drainer.
+
+Launch Kit sets NFD PCI `deviceLabelFields` to `[vendor]`, replacing the old field selection while retaining other NFD sources and PCI class whitelists. Review this change with the NFD owner. The Red Hat operator uses native draining; the NVIDIA external SR-IOV drainer integration is unavailable in that build. The Maintenance Operator coordinates supported driver operations.
+
+Keep `ocp-deployment/.l8k/resolved-config.yaml` with the generated manifests. Check the `SriovNetworkNodePolicy`, `SriovNetworkPoolConfig`, `SriovNetwork`, NV-IPAM pools, exact worker selectors, resource names, namespaces, NFD change, and any custom workload. OpenShift output must have no `values.yaml`; if one remains, regenerate into a clean directory with `--flavor ocp`. The generation [bundle checklist](../advanced/generation.md#review-the-bundle) gives the common review points.
+
+## 3. Preview and deploy
+
+```bash
+l8k deploy --flavor ocp --deployment-files ./ocp-deployment --dry-run
+```
+
+Review admission and preflight findings. Server dry-run neither waits for reconciliation nor proves traffic. After approval, apply the same bundle:
+
+```bash
+l8k deploy --flavor ocp --deployment-files ./ocp-deployment
+```
+
+If the operator, admission, or SR-IOV node state fails, retain the bundle and inspect the failed CSV/Subscription, controller events, and [stage-specific checks](troubleshooting.md).
+
+## 4. Validate and decide
+
+```bash
+l8k validate --flavor ocp --deployment-files ./ocp-deployment --wait 10m
+```
+
+Read `ocp-deployment/k8s-launch-kit-validation-report.html` against the [acceptance outcomes](validation.md#acceptance-outcomes). Validation creates temporary `l8k-validation-*` namespaces per workload namespace, copies required NADs and image pull secrets, and creates a validation ServiceAccount, narrow SCC, Role, RoleBinding, and example DaemonSets. It needs namespace/SCC creation and source NAD/secret read permission. An OpenShift run fails if resources are still reconciling and connectivity cannot run, no tests are planned, or a selected family has no gating test. The tool normally removes these test resources; `--keep` retains them for inspection. Record skipped families and missing worker/rail endpoints before accepting the result.
+
+## Remove the intended resources
+
+`l8k clean` rejects OpenShift. Preserve the externally installed operators and their Subscriptions. From the reviewed bundle and live inventory, list generated resources by **kind, name, and namespace**; confirm whether each is shared with another workload or cohort. Remove only approved identities through the site's OpenShift change process, wait for finalizers, and record what remains externally owned. Do not substitute the broad [Kubernetes cleanup](cleanup.md) command. If validation cleanup was interrupted, separately inspect `l8k-validation-*` namespaces and remove the exact retained test objects after API access returns.

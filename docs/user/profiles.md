@@ -3,11 +3,72 @@ SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Deployment Profiles
+# Plan your deployment
 
 A profile maps discovered hardware and user intent to a complete set of Kubernetes manifests. Profile selection is driven by `profile.fabric`, `profile.deployment`, `profile.multirail`, and optional Spectrum-X settings.
 
 Fabric describes the physical transport (`ethernet` or `infiniband`). Deployment type describes how Kubernetes exposes that transport to workloads (`sriov`, `rdma_shared`, or `host_device`).
+
+Decide the platform, operator ownership, and site network inputs before using
+the [first deployment walkthrough](quick-start.md). Hardware discovery can
+describe NICs; it cannot determine whether a subnet is free, a switch fabric is
+configured, or a maintenance window is acceptable.
+
+## Choose a platform and operating model
+
+| Environment | Who installs or applies resources | Continue with |
+| --- | --- | --- |
+| Kubernetes, Launch Kit managed | `l8k deploy` installs or verifies the selected Network Operator Helm release, applies generated custom resources, and waits for reconciliation. | [First deployment](quick-start.md) |
+| Kubernetes, external Helm | Your Helm owner installs the Network Operator. Set `networkOperator.skipHelmChart: true`; Launch Kit still generates, applies, and validates custom resources. | [Generation](../advanced/generation.md#skip-network-operator-helm-artifacts) and [Deployment](../advanced/deployment.md#helm-install-or-upgrade) |
+| Kubernetes, external resource application | Your controller owns Helm and custom-resource application. Generate and retain the complete bundle; apply only the intended resources in dependency order. | [CI/CD and GitOps](../integrator/automation.md#gitops-pattern) |
+| OpenShift | Install the certified NVIDIA Network Operator, Red Hat SR-IOV Network Operator, NFD, and NVIDIA Maintenance Operator separately. Launch Kit configures the installed operators and generates platform-specific resources; it does not install their Helm charts. | [Deploy on OpenShift](openshift.md) |
+
+The site operator owns the Kubernetes cluster and required API permissions.
+The network/fabric owner provides routing, unused address ranges, switch
+configuration, and MTU. The driver/operator owner approves changes to driver
+modules and maintenance budgets. The application owner selects networks,
+resource requests, and workload namespaces. Launch Kit resolves those inputs,
+renders resources, and reports its observed deployment checks. A site owner
+decides which checks and coverage constitute acceptance for the workload.
+
+## Availability and evidence
+
+| Workflow | Documented implementation | Recorded verification |
+| --- | --- | --- |
+| Kubernetes standard profiles below | Generation, deployment, and validation paths are documented. | Consult the relevant release/hardware qualification record; this guide does not establish live qualification for every combination. |
+| OpenShift SR-IOV Ethernet | OpenShift-specific generation, deployment, and validation. | Exercised on a two-node OpenShift 4.22 cluster. |
+| Other OpenShift standard profiles | Rendering and server dry-run. | Live integration qualification on suitable hardware remains to be recorded. |
+| OpenShift Spectrum-X | No generated OpenShift variant. | Unavailable; see [OpenShift qualification](openshift.md). |
+| Kubernetes Spectrum-X RA2.1, RA2.2, RA2.3 | Release-specific profile generation as shown in the [version matrix](spectrum-x.md#version-matrix). | Confirm the exact hardware, RA, operator release, and validated site profile with the responsible owner. |
+
+Rendering, API dry-run, live deployment, and a formal support commitment are
+different evidence. The table describes what this repository documents; it
+does not extend qualification to an untested platform or hardware combination.
+The reserved `dpf` target has no available lifecycle phases.
+
+## Check prerequisites and site inputs
+
+Before discovery, confirm API access to create its temporary namespace,
+cluster-scoped bootstrap RBAC and missing NIC CRDs, run a privileged daemon
+with host access on eligible workers, and write the Launch Kit node labels.
+Eligible nodes need a discoverable NVIDIA NIC and image-pull access. Discovery
+does not require a preinstalled Network Operator or NFD; later deployment and
+validation have additional permissions. [Discovery](discovery.md#requirements)
+and [OpenShift](openshift.md) give phase-specific details.
+
+Record these decisions before generation and check them again in
+`cluster-config.yaml` and the generated effective configuration:
+
+| Decision | Site check before deployment |
+| --- | --- |
+| Target scope | Intended cluster context, workers, east-west PFs, and any excluded or separately managed cohorts. |
+| Fabric and addressing | Ethernet/InfiniBand link layer, switch/VLAN/rail setup, non-overlapping subnet and gateway, routing, and MTU. NV-IPAM only prevents overlap **within one generated bundle**; it cannot reserve other site networks. |
+| Workload resources | VF count or shared-device capacity, network names, namespaces, image access, and application placement. |
+| Driver and disruption | Current storage/RDMA module users, driver changes, maintenance concurrency, and acceptable node unavailability. The default driver unload controls are enabled; review their effect. |
+| Lifecycle owner | Who owns the Network Operator release, custom resources, acceptance report, and eventual removal. |
+
+Local installation and version selection are in [Install Launch Kit](installation.md).
+For explicit values and precedence, use the [configuration reference](../reference/configuration.md).
 
 ## Profile Matrix
 
