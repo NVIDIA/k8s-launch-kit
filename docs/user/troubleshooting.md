@@ -45,8 +45,12 @@ Use JSON output in automation:
 ```bash
 l8k validate \
   --deployment-files ./deployment \
-  --output json 2>/dev/null | jq .
+  --output json >validation.jsonl 2>validation.log &&
+  jq -s . validation.jsonl
 ```
+
+Check the `l8k` exit status before parsing in automation and retain
+`validation.log`; use the [status-preserving recipe](../integrator/automation.md#capture-results-without-losing-the-exit-status).
 
 The HTML report includes manifest classifications, live YAML, release checks, topology comparisons, and connectivity matrices. Preserve it with the generated bundle.
 

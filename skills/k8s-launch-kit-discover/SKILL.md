@@ -44,8 +44,11 @@ fields come from `l8k-config.yaml`).
 l8k discover \
   --kubeconfig ~/.kube/config \
   --save-cluster-config ./cluster-config.yaml \
-  --output json 2>/dev/null | jq .
+  --output json >discovery.json 2>discovery.log &&
+  jq . discovery.json
 ```
+
+Check the `l8k` exit status before parsing; retain `discovery.log` on failure.
 
 ## Usage (human-interactive)
 
@@ -105,7 +108,7 @@ l8k discover \
 l8k discover \
   --kubeconfig ~/.kube/config \
   --save-cluster-config ./cluster-config.yaml \
-  --output json 2>/dev/null
+  --output json >discovery.json 2>discovery.log
 ```
 
 ## Output Format

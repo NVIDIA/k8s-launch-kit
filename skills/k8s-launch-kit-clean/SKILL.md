@@ -40,7 +40,8 @@ An AI agent uses JSON mode after the user authorizes the exact target:
 l8k clean \
   --kubeconfig <PATH> \
   --network-operator-namespace <NAMESPACE> \
-  --output json 2>/dev/null | jq .
+  --output json >cleanup.json 2>cleanup.log &&
+  jq . cleanup.json
 ```
 
 Omit `--network-operator-namespace` only when the user expects l8k to resolve
@@ -57,11 +58,14 @@ l8k clean \
   --kubeconfig <PATH> \
   --network-operator-namespace <NAMESPACE> \
   --keep-helm-chart \
-  --output json 2>/dev/null | jq .
+  --output json >cleanup.json 2>cleanup.log &&
+  jq . cleanup.json
 ```
 
 JSON mode auto-confirms. Do not invoke it until the read-only target checks and
 authorization are complete. `l8k clean` has no dry-run mode.
+Check the command status before parsing and retain `cleanup.log` on failure;
+see the capture recipe in `docs/integrator/automation.md`.
 
 ## Deletion Semantics
 

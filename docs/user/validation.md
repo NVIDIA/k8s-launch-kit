@@ -67,10 +67,12 @@ coverage against that intended scope.
 
 ## Report
 
-By default, validation writes a self-contained HTML report beside the generated manifests:
+By default, validation writes a self-contained HTML report at the root of
+`--deployment-files` (default `./deployment`), even when generated manifests
+are under its `network-operator/` subdirectory:
 
 ```text
-deployment/network-operator/k8s-launch-kit-validation-report.html
+deployment/k8s-launch-kit-validation-report.html
 ```
 
 Override or disable it:

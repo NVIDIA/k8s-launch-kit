@@ -114,8 +114,14 @@ JSON output is non-interactive and auto-confirms the cleanup. Use it only when
 the target has already been reviewed:
 
 ```bash
-l8k clean --kubeconfig ~/.kube/config --output json 2>/dev/null | jq .
+l8k clean --kubeconfig ~/.kube/config \
+  --output json >cleanup.json 2>cleanup.log &&
+  jq . cleanup.json
 ```
+
+Check the cleanup process status before parsing and retain `cleanup.log`.
+The [automation capture pattern](../integrator/automation.md#gitops-pattern)
+shows how to propagate a failed command in a script.
 
 A successful result includes the resolved namespace, the number of deleted
 custom resources, whether Helm removed a release, and the effective Helm
