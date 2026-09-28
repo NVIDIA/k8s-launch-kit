@@ -58,6 +58,21 @@ operating `l8k`; they do not require a deployed cluster or installed binary for 
 Prefer the skill source in the checkout under development over a machine-local adapter pointing at
 another checkout.
 
+## Extension contracts
+
+Read the applicable [extension contracts](openspec/README.md) before changing an
+integration boundary. They cover configuration, discovery, workflows, platforms,
+profiles, artifacts, resource kinds, effects, connectivity and outcomes. Select
+only the contracts relevant to the change; record integration decisions and map
+affected scenarios to verification. Check each contract's baseline exceptions
+before claiming conformance.
+
+Update the relevant spec when a shared promise or documented exception changes.
+A routine field/flag/Kind addition that follows existing contracts does not require
+a new permanent spec or edits to every contract. Continue updating affected user
+documentation and skills in the same PR. OpenSpec structural validation does not
+replace implementation tests or live qualification.
+
 ## Sources and behavior to preserve
 
 Code and tests show current implementation; reviewed requirements describe intended behavior. If

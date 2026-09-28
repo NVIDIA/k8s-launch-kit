@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+schema: spec-driven
+context: |
+  Launch Kit is a Go CLI for discovery, configuration, generation, deployment and validation.
+  Read AGENTS.md and openspec/README.md before changes.
+  Preserve the distinction between extension requirements and documented baseline exceptions.
+  Use existing integration seams; specs do not imply new plugin registries.
+  Update relevant documentation and skills with behavior changes.
+  Structural spec validation is separate from code tests and live qualification.

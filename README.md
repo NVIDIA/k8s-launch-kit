@@ -1623,6 +1623,10 @@ Start with the [development guide](AGENTS.md) and
 relevant documentation sections, examples and skills in the same PR; see the
 [documentation requirements](AGENTS.md#required-documentation-updates).
 
+The [extension contracts](openspec/README.md) define how new configuration,
+probes, profiles, resource kinds and checks integrate with existing workflows.
+They include conformance scenarios, code/test pointers and current limitations.
+
 ### Building
 
 ```bash
