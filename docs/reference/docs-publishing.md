@@ -22,7 +22,23 @@ docs/
 `-- assets/
 ```
 
-The old RST files under `docs/` are retained for compatibility, but the GitHub Pages site uses the Markdown pages listed in `mkdocs.yml`.
+The old RST files under `docs/` are retained for compatibility, but the GitHub Pages site uses the Markdown pages listed in `mkdocs.yml`. The DPF roadmap and HostTarget migration history are published and linked from [Architecture](../architecture/overview.md), outside the primary navigation. Keep their status labels and `llms.txt` entries current.
+
+## Content Ownership
+
+Each customer behavior has one primary explanation. Planning owns scenario and
+profile choice; Discovery owns inventory effects; Configuration owns field
+defaults and lookup; Generation owns bundle output and workload transformation;
+Deployment and Cleanup own their respective deletion scopes; Validation owns
+acceptance; and Automation owns JSON and shell failure handling. Keep short
+links and consequential warnings at the action rather than repeating full
+contracts in README or skills.
+
+Task articles should state the outcome, applicability, inputs and permissions,
+ordered actions, expected evidence, and failure/next step. Reference articles
+optimize lookup; architecture and design plans describe implementation or
+future work. Label snippets that are illustrative or partial so readers do not
+mistake them for a runnable, qualified site configuration.
 
 ## Local Build
 

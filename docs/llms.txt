@@ -7,31 +7,49 @@ SPDX-License-Identifier: Apache-2.0
 
 This documentation covers the `l8k` CLI for deploying NVIDIA cloud-native networking on Kubernetes.
 
-## Key Pages
+## Start
 
-- Introduction: /k8s-launch-kit/
+- Overview: /k8s-launch-kit/
+- Plan your deployment: /k8s-launch-kit/user/profiles/
 - Installation: /k8s-launch-kit/user/installation/
-- Quick Start: /k8s-launch-kit/user/quick-start/
-- Deployment Profiles: /k8s-launch-kit/user/profiles/
-- Spectrum-X: /k8s-launch-kit/user/spectrum-x/
-- Validation: /k8s-launch-kit/user/validation/
-- Troubleshooting: /k8s-launch-kit/user/troubleshooting/
-- Advanced Concepts: /k8s-launch-kit/advanced/concepts/
-- Cluster Discovery: /k8s-launch-kit/user/discovery/
-- Manifest Generation: /k8s-launch-kit/advanced/generation/
-- Deployment Mechanics: /k8s-launch-kit/advanced/deployment/
-- Heterogeneous Clusters: /k8s-launch-kit/user/heterogeneous-clusters/
-- Topology Presets: /k8s-launch-kit/user/presets/
-- Maintenance and Upgrades: /k8s-launch-kit/user/maintenance/
-- Configuration File: /k8s-launch-kit/reference/configuration/
-- Automation: /k8s-launch-kit/integrator/automation/
-- AI Skills: /k8s-launch-kit/integrator/ai-skills/
-- CLI Reference: /k8s-launch-kit/reference/cli/
-- OpenShift: /k8s-launch-kit/user/openshift/
-- Cleanup: /k8s-launch-kit/user/cleanup/
-- Target-aware CLI: /k8s-launch-kit/advanced/targets/
+- First deployment: SR-IOV Ethernet: /k8s-launch-kit/user/quick-start/
+- Networking concepts: /k8s-launch-kit/advanced/concepts/
+
+## Deploy
+
+- Discover cluster hardware: /k8s-launch-kit/user/discovery/
+- Generate and review manifests: /k8s-launch-kit/advanced/generation/
+- Deploy manifests: /k8s-launch-kit/advanced/deployment/
+- Deploy on OpenShift: /k8s-launch-kit/user/openshift/
+- Deploy Spectrum-X networking: /k8s-launch-kit/user/spectrum-x/
+- Deploy to mixed hardware: /k8s-launch-kit/user/heterogeneous-clusters/
+- Use topology presets: /k8s-launch-kit/user/presets/
+
+## Operate
+
+- Validate and accept a deployment: /k8s-launch-kit/user/validation/
+- Change and upgrade a deployment: /k8s-launch-kit/user/maintenance/
+- Troubleshoot and collect evidence: /k8s-launch-kit/user/troubleshooting/
+- Remove a deployment: /k8s-launch-kit/user/cleanup/
+
+## Automate
+
+- CI/CD and GitOps: /k8s-launch-kit/integrator/automation/
+- Use AI agent skills: /k8s-launch-kit/integrator/ai-skills/
+
+## Reference
+
+- CLI reference: /k8s-launch-kit/reference/cli/
+- Configuration reference: /k8s-launch-kit/reference/configuration/
+
+## Contribute
+
 - Architecture: /k8s-launch-kit/architecture/overview/
-- Artifact Bundle: /k8s-launch-kit/architecture/artifact-bundle/
-- DPF Integration Roadmap: /k8s-launch-kit/architecture/dpf-integration-plan/
-- HostTarget Migration Plan: /k8s-launch-kit/architecture/host-target-migration-plan/
-- Documentation Publishing: /k8s-launch-kit/reference/docs-publishing/
+- Artifact bundle internals: /k8s-launch-kit/architecture/artifact-bundle/
+- Extend deployment targets: /k8s-launch-kit/advanced/targets/
+- Maintain and publish documentation: /k8s-launch-kit/reference/docs-publishing/
+
+## Design plans and history
+
+- DPF integration roadmap (in progress): /k8s-launch-kit/architecture/dpf-integration-plan/
+- HostTarget migration plan (implemented history): /k8s-launch-kit/architecture/host-target-migration-plan/

@@ -10,6 +10,10 @@ documents the repository boundaries, lifecycle data flow, external systems,
 and the target extension seam. Pull requests that change any of those areas
 must update this page in the same change.
 
+The [DPF integration roadmap](dpf-integration-plan.md) describes work in
+progress. The [HostTarget migration plan](host-target-migration-plan.md) is
+retained as implemented design history. Neither is a customer deployment guide.
+
 ## Complete component map
 
 The Host artifact boundary is described in [Artifact bundle](artifact-bundle.md).
@@ -374,6 +378,57 @@ The packaged binary embeds its default configuration, profile templates,
 topology presets, release catalog, and discovery workload. A release or sync
 change therefore belongs in this architecture even when it does not modify a
 runtime Go package.
+
+## Go discovery library
+
+The Helm-free `pkg/networkoperatorplugin/discovery` package is the Go entry
+point for applications that need Launch Kit's hardware inventory without the
+CLI. It bootstraps the discovery daemon, fills a `*config.LaunchKitConfig`, and
+writes the `nvidia.kubernetes-launch-kit.machine` and `.gpu` labels. It also
+patches an existing `NicClusterPolicy` when needed; the call changes cluster
+state. See [Cluster Discovery](../user/discovery.md) for prerequisites and
+bootstrap effects.
+
+After creating a controller-runtime `client.Client` and matching
+`*rest.Config`, a caller can use the embedded defaults:
+
+```go
+import (
+    "path/filepath"
+
+    l8kconfig "github.com/nvidia/k8s-launch-kit/pkg/config"
+    l8kdisc "github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/discovery"
+)
+
+cfg, err := l8kconfig.DefaultLaunchKitConfig()
+if err != nil { return err }
+
+cfg, err = l8kdisc.Discover(ctx, kubeClient, restConfig, cfg,
+    l8kdisc.WithRelease("26.4"),
+    l8kdisc.WithPresetsDir(filepath.Join(configDir, "presets")),
+)
+if err != nil { return err }
+```
+
+The release option is optional; otherwise the supplied config's release is
+used. `WithPresetsDir` selects one authoritative catalog for this call; it does
+not merge with embedded presets. To load a filesystem config first, call
+`l8kconfig.LoadFullConfig(path, logger)` and pass the result to `Discover`.
+`Discover` mutates that config in place and returns the same pointer. Use a
+non-nil REST config for the normal CLI-equivalent NIC probe path; a nil REST
+config uses a reduced library fallback, including label-based node filtering.
+
+`WithLogger` routes discovery logs through a caller-supplied `logr.Logger` by
+setting controller-runtime's process-global logger. Coordinate its use if
+other goroutines configure logging concurrently. The release catalog is in
+`pkg/networkoperatorplugin/releases` (`LookupRelease`, `SupportedReleases`).
+The deploy and validation entry points are in the parent
+`pkg/networkoperatorplugin` package.
+
+For new per-PF host probes, extend the batched sysfs path in
+`pkg/networkoperatorplugin/discovery/gputopology.go`: `pfDiscoveryProbeCmd`,
+`parsePFDiscoveryBlock`, and `applyPFDiscoveryAttributes`. NUMA is persisted
+per PF; MACs are used transiently for the group's netplan decision.
 
 ## Updating this architecture
 

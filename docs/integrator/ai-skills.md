@@ -9,26 +9,6 @@ The repository includes task-specific `SKILL.md` playbooks that help compatible 
 
 AI skills are documentation for an agent. They are not Launch Kit runtime plugins and do not change the `l8k` binary.
 
-## Developing Launch Kit
-
-For source changes, start with the repository's
-[AGENTS.md](https://github.com/NVIDIA/k8s-launch-kit/blob/main/AGENTS.md).
-It covers development workflow, package boundaries, verification and required
-documentation updates. `CLAUDE.md` points to that shared guide.
-
-For extension work, consult the
-[contract index](https://github.com/NVIDIA/k8s-launch-kit/blob/main/openspec/README.md).
-It defines reusable integration decisions and scenarios for configuration,
-discovery, lifecycle, platform, profile, artifact, Kind, ownership, connectivity
-and output changes. Read the applicable baseline exceptions; specs do not imply
-that every scenario is already enforced. Update a contract when its shared promise
-changes, and update the affected user guide/skill alongside implementation.
-Routine conforming additions do not need a new spec or proposal.
-
-Use operational skills from the checkout being changed when testing CLI
-workflows. Source development can use `make build` and `./build/l8k` from the
-repository root; a global installation and cluster access are not prerequisites.
-
 ## Skill Catalog
 
 | Skill | Agent task |
@@ -172,6 +152,19 @@ Acceptance and triage:
 Run the normal validation workflow. If it does not pass, retain the test
 DaemonSet, collect a sosreport, and identify the first failed stage.
 ```
+
+## Developing Launch Kit
+
+For source changes, start with the repository's
+[AGENTS.md](https://github.com/NVIDIA/k8s-launch-kit/blob/main/AGENTS.md).
+It covers development workflow, package boundaries, verification and required
+documentation updates. `CLAUDE.md` points to that shared guide.
+
+For extension work, consult the [contract index](https://github.com/NVIDIA/k8s-launch-kit/blob/main/openspec/README.md). It defines shared integration behavior and scenarios for configuration, discovery, lifecycle, platform, profile, artifacts, resource kinds, ownership, connectivity, and output. Read the applicable baseline exceptions; the specs do not imply that every scenario is already enforced. Update a contract when its shared promise changes, and update the affected user guide and skill alongside implementation. Routine conforming additions do not need a new spec or proposal.
+
+Use operational skills from the checkout being changed when testing CLI
+workflows. Source development can use `make build` and `./build/l8k` from the
+repository root; a global installation and cluster access are not prerequisites.
 
 ## Maintaining Skills
 
