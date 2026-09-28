@@ -93,6 +93,7 @@ nav:
   - Advanced:
       - Concepts: advanced/concepts.md
       - Architecture: architecture/overview.md
+      - Artifact Bundle: architecture/artifact-bundle.md
       - Target-aware CLI: advanced/targets.md
       - Architecture Plans:
           - DPF Integration Roadmap: architecture/dpf-integration-plan.md

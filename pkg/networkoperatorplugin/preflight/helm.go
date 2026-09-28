@@ -151,11 +151,14 @@ func CheckHelmValues(ctx context.Context, in Inputs) Result {
 		return r
 	}
 
-	generated, err := helmclient.UnmarshalValues(in.GeneratedValuesYAML)
-	if err != nil {
-		r.Skipped = true
-		r.Reason = fmt.Sprintf("parse generated values.yaml: %v", err)
-		return r
+	generated := in.GeneratedValues
+	if generated == nil {
+		generated, err = helmclient.UnmarshalValues(in.GeneratedValuesYAML)
+		if err != nil {
+			r.Skipped = true
+			r.Reason = fmt.Sprintf("parse generated values.yaml: %v", err)
+			return r
+		}
 	}
 	diffs := DeepEqualValues(deployed, generated)
 	if len(diffs) == 0 {

@@ -35,6 +35,14 @@ manifest, Launch Kit runs the complete deployment-validation pipeline and then
 connectivity. A `cluster-config.yaml` stored in the same directory is treated
 as configuration, not as a deployment manifest.
 
+Validation checks every artifact file before connecting to the cluster.
+Malformed or nameless resources fail with a file and document number, even
+when they are example support resources. `values.yaml` is the only Helm values
+filename; `values.yml` and case variants need renaming. Desired manifests
+stay fixed during `--wait` and connectivity checks, while live cluster state
+continues to refresh. An explicit HTML report path still receives a partial
+report when artifact loading fails.
+
 Connectivity requires these explicit decisions even though the remaining
 validation settings have defaults:
 

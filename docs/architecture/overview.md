@@ -12,6 +12,10 @@ must update this page in the same change.
 
 ## Complete component map
 
+The Host artifact boundary is described in [Artifact bundle](artifact-bundle.md).
+Generation, deployment, preflight, validation, connectivity, and reporting
+consume its validated snapshot; each keeps its own operational policy.
+
 ```mermaid
 flowchart TB
     actor["Operator / automation / AI agent"]

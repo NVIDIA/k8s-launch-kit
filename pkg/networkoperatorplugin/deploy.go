@@ -21,11 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	pkgerrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
@@ -34,19 +33,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	yaml "sigs.k8s.io/yaml"
 )
-
-// helmValuesFile is the on-disk filename `l8k generate` writes per profile
-// (when a 00-values.yaml template is present). `ApplyManifestsFromDir`
-// looks for this exact filename in the deployment directory to drive the
-// Phase 0 helm install. The filename matches the helm convention so users
-// can also `helm install -f values.yaml` by hand if needed.
-const helmValuesFile = "values.yaml"
 
 // defaultHelmInstallTimeout caps the helm install/upgrade wait when the
 // caller doesn't supply a budget via DeployOptions.HelmTimeout. Kept on the
@@ -125,7 +115,15 @@ type appliedManifest struct {
 // by the launcher after ApplyOptionsToConfig has settled the config).
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
 	_ = profile
-	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, DeployOptions{
+	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, p.deployOptions())
+}
+
+func (p *NetworkOperatorPlugin) DeployBundle(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle) error {
+	return ApplyBundle(ctx, kubeClient, artifacts, p.deployOptions())
+}
+
+func (p *NetworkOperatorPlugin) deployOptions() DeployOptions {
+	return DeployOptions{
 		Config:            p.LaunchKitConfig,
 		LaunchKitVersion:  p.LaunchKitVersion,
 		DryRun:            p.DryRun,
@@ -134,7 +132,7 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 		RestConfig:        p.RESTConfig,
 		NetworkOperator:   p.NetworkOperator,
 		DOCAVersion:       p.DOCAVersion,
-	})
+	}
 }
 
 // ApplyManifestsFromDir reads Kubernetes manifests from manifestsDir and
@@ -175,17 +173,37 @@ func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *prof
 // persisting them; phase 4 is skipped entirely. Phase 0's helm install
 // also runs in dry-run mode (action.Install.DryRun).
 func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manifestsDir string, opts DeployOptions) error {
+	return applyManifestsFromDirWithInstaller(ctx, kubeClient, manifestsDir, opts, installOrUpgradeValues)
+}
+
+type helmValuesInstaller func(context.Context, *rest.Config, *config.NetworkOperatorConfig, []byte, map[string]any, string, bool, time.Duration, bool) error
+
+func applyManifestsFromDirWithInstaller(ctx context.Context, kubeClient client.Client, manifestsDir string, opts DeployOptions, install helmValuesInstaller) error {
+	artifacts, err := bundle.Load(os.DirFS(manifestsDir))
+	if err != nil {
+		return pkgerrors.NewValidationError("invalid deployment artifacts", err, "Correct the named file and rerun deploy")
+	}
+	return applyBundleWithInstaller(ctx, kubeClient, artifacts, opts, install)
+}
+
+func ApplyBundle(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions) error {
+	return applyBundleWithInstaller(ctx, kubeClient, artifacts, opts, installOrUpgradeValues)
+}
+
+func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, install helmValuesInstaller) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	uiOutput := ui.FromContext(ctx)
 	ocp := opts.Config != nil && opts.Config.Flavor == config.FlavorOCP
+	selected, err := prepareDeploymentObjects(artifacts, ocp)
+	if err != nil {
+		return pkgerrors.NewValidationError("invalid deployment artifacts", err, "Correct the generated manifests and rerun deploy")
+	}
 	if ocp {
-		if _, err := os.Stat(filepath.Join(manifestsDir, helmValuesFile)); err == nil {
-			return fmt.Errorf("OpenShift deployment contains values.yaml; regenerate with --flavor ocp and remove stale Helm values")
-		} else if !os.IsNotExist(err) {
-			return err
+		if _, present := artifacts.ValuesContent(); present {
+			return pkgerrors.NewValidationError("OpenShift deployment contains values.yaml; regenerate with --flavor ocp and remove stale Helm values", nil, "Remove stale values.yaml")
 		}
 		if err := CheckOCPOperators(ctx, kubeClient, opts.Config, true); err != nil {
 			return err
@@ -197,7 +215,7 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	// values.yaml is present and the caller supplied the helm-install
 	// metadata. Skipped silently otherwise so users managing the chart
 	// out of band can keep using the standalone `l8k deploy`.
-	if err := runHelmInstallPhase(ctx, manifestsDir, opts, uiOutput); err != nil {
+	if err := runHelmInstallPhaseWithInstaller(ctx, artifacts, opts, uiOutput, install); err != nil {
 		return err
 	}
 
@@ -206,55 +224,18 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	// Without --overwrite-existing: fail fast with all failures listed.
 	// With it: log + remediate strays (helm + NCP drift are resolved by
 	// the Phase 0 install and the Phase 1 SSA apply respectively).
-	if err := runPreflightPhase(ctx, kubeClient, manifestsDir, opts, uiOutput); err != nil {
+	if err := runPreflightPhase(ctx, kubeClient, artifacts, opts, uiOutput); err != nil {
 		return err
 	}
 
-	// Read & triage manifest docs from the deployment directory.
-	nicDoc, nnpDocs, otherDocs, err := readManifestDir(manifestsDir)
-	if err != nil {
-		return err
-	}
-	var operatorDocs [][]byte
+	ncpObj, nnpObjs, otherDocs := selected.ncp, selected.nnps, selected.others
 	if ocp {
-		remaining := make([][]byte, 0, len(otherDocs))
-		for _, doc := range otherDocs {
-			obj, err := decodeUnstructured(doc)
-			if err != nil {
-				return err
-			}
-			if isOCPOperatorConfig(obj) {
-				operatorDocs = append(operatorDocs, doc)
-			} else {
-				remaining = append(remaining, doc)
-			}
-		}
-		otherDocs = remaining
-		if err := applyOCPOperatorConfiguration(ctx, kubeClient, opts.Config, operatorDocs, opts.DryRun); err != nil {
+		if err := applyOCPOperatorConfiguration(ctx, kubeClient, opts.Config, selected.operatorConfigs, opts.DryRun); err != nil {
 			return err
 		}
 	}
 
 	dryRun := opts.DryRun
-
-	// Pre-decode NCP / NNP so any YAML error surfaces before we start
-	// touching the cluster. The "other" docs are decoded lazily inside
-	// phase 3 so a Pod retry can re-use the same Unstructured object.
-	var ncpObj *unstructured.Unstructured
-	if len(nicDoc) != 0 {
-		ncpObj, err = decodeUnstructured(nicDoc)
-		if err != nil {
-			return fmt.Errorf("decode NicClusterPolicy: %w", err)
-		}
-	}
-	nnpObjs := make([]*unstructured.Unstructured, 0, len(nnpDocs))
-	for i, b := range nnpDocs {
-		obj, err := decodeUnstructured(b)
-		if err != nil {
-			return fmt.Errorf("decode NicNodePolicy manifest %d: %w", i+1, err)
-		}
-		nnpObjs = append(nnpObjs, obj)
-	}
 
 	registry := crstate.NewDefault()
 
@@ -298,11 +279,7 @@ func ApplyManifestsFromDir(ctx context.Context, kubeClient client.Client, manife
 	var deferred []string
 	if len(otherDocs) > 0 {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Applying %d additional manifest(s)", phases.next(), phases.total, len(otherDocs)))
-		for i, b := range otherDocs {
-			obj, err := decodeUnstructured(b)
-			if err != nil {
-				return fmt.Errorf("decode manifest: %w", err)
-			}
+		for i, obj := range otherDocs {
 			label := manifestLabel(obj, i+1, len(otherDocs))
 
 			// Pre-apply Get: capture the existing object's
@@ -393,82 +370,6 @@ func retryDependentAPI(ctx context.Context, c client.Client, obj *unstructured.U
 		case <-ticker.C:
 		}
 	}
-}
-
-// readManifestDir reads every YAML doc under manifestsDir (non-recursive)
-// and triages them into the three deploy buckets. Files matching the
-// example-manifest naming pattern (see isExampleManifest) are skipped —
-// they're test fixtures consumed by `l8k validate --connectivity` to
-// stand up a temporary ping-matrix DaemonSet, not part of the actual
-// network-operator surface that `l8k deploy` should apply.
-func readManifestDir(manifestsDir string) (nicDoc []byte, nnpDocs [][]byte, otherDocs [][]byte, err error) {
-	entries, err := os.ReadDir(manifestsDir)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	filePaths := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		ext := filepath.Ext(e.Name())
-		if ext != ".yaml" && ext != ".yml" {
-			continue
-		}
-		if isExampleManifest(e.Name()) {
-			log.Log.V(1).Info("Skipping example manifest at deploy time", "file", e.Name())
-			continue
-		}
-		// values.yaml is consumed by Phase 0 (helm install) — not a K8s
-		// manifest, must not flow into Phase 1/2/3 apply.
-		if e.Name() == helmValuesFile {
-			log.Log.V(1).Info("Skipping helm values file at apply phase", "file", e.Name())
-			continue
-		}
-		filePaths = append(filePaths, filepath.Join(manifestsDir, e.Name()))
-	}
-	sort.Strings(filePaths)
-
-	for _, p := range filePaths {
-		content, rErr := os.ReadFile(p)
-		if rErr != nil {
-			return nil, nil, nil, rErr
-		}
-		for _, doc := range splitYAMLDocuments(string(content)) {
-			if strings.TrimSpace(doc) == "" {
-				continue
-			}
-			b := []byte(doc)
-			switch {
-			case containsNicClusterPolicyKind(b):
-				if len(nicDoc) != 0 {
-					return nil, nil, nil, fmt.Errorf("multiple NicClusterPolicy manifests found; only one is allowed")
-				}
-				nicDoc = b
-			case containsNicNodePolicyKind(b):
-				nnpDocs = append(nnpDocs, b)
-			default:
-				otherDocs = append(otherDocs, b)
-			}
-		}
-	}
-	return nicDoc, nnpDocs, otherDocs, nil
-}
-
-// decodeUnstructured parses a YAML document into an Unstructured object
-// and ensures its GroupVersionKind is set so server-side apply works.
-func decodeUnstructured(doc []byte) (*unstructured.Unstructured, error) {
-	obj := &unstructured.Unstructured{}
-	if err := yaml.Unmarshal(doc, obj); err != nil {
-		return nil, err
-	}
-	if apiv, kind := obj.GetAPIVersion(), obj.GetKind(); apiv != "" && kind != "" {
-		gv, err := schema.ParseGroupVersion(apiv)
-		if err == nil {
-			obj.SetGroupVersionKind(gv.WithKind(kind))
-		}
-	}
-	return obj, nil
 }
 
 // applyAndWait applies obj and then polls until the registry reports a
@@ -787,7 +688,7 @@ func (p *phaseCounter) next() int {
 	return p.current
 }
 
-func computePhases(ncp *unstructured.Unstructured, nnps []*unstructured.Unstructured, others [][]byte, dryRun bool) *phaseCounter {
+func computePhases(ncp *unstructured.Unstructured, nnps []*unstructured.Unstructured, others []*unstructured.Unstructured, dryRun bool) *phaseCounter {
 	pc := &phaseCounter{}
 	if ncp != nil {
 		pc.total++
@@ -830,55 +731,12 @@ func btoi(b bool) int {
 	return 0
 }
 
-func containsNicClusterPolicyKind(b []byte) bool {
-	return sniffKind(b) == "NicClusterPolicy"
-}
-
-func containsNicNodePolicyKind(b []byte) bool {
-	return sniffKind(b) == "NicNodePolicy"
-}
-
-// sniffKind extracts the Kind field from a YAML document without full parsing.
-func sniffKind(b []byte) string {
-	type metaOnly struct {
-		Kind string `yaml:"kind"`
-	}
-	var mo metaOnly
-	if err := yaml.Unmarshal(b, &mo); err != nil {
-		return ""
-	}
-	return mo.Kind
-}
-
 func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured, dryRun bool) error {
-	// kubectl-style server-side apply. dryRun appends client.DryRunAll so the
-	// cluster validates the object without persisting it.
 	opts := []client.ApplyOption{client.FieldOwner("l8k"), client.ForceOwnership}
 	if dryRun {
 		opts = append(opts, client.DryRunAll)
 	}
 	return c.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj), opts...)
-}
-
-// splitYAMLDocuments splits a YAML stream by lines that start with '---' (doc separators)
-func splitYAMLDocuments(s string) []string {
-	var docs []string
-	var cur []string
-	lines := strings.Split(s, "\n")
-	for _, ln := range lines {
-		if strings.HasPrefix(strings.TrimSpace(ln), "---") {
-			if len(cur) > 0 {
-				docs = append(docs, strings.Join(cur, "\n"))
-				cur = nil
-			}
-			continue
-		}
-		cur = append(cur, ln)
-	}
-	if len(cur) > 0 {
-		docs = append(docs, strings.Join(cur, "\n"))
-	}
-	return docs
 }
 
 // runHelmInstallPhase performs Phase 0: install (or upgrade) the
@@ -891,21 +749,20 @@ func splitYAMLDocuments(s string) []string {
 //
 // A value-conflict against an existing release surfaces as a
 // DeploymentError pointing at --overwrite-existing.
-func runHelmInstallPhase(ctx context.Context, manifestsDir string, opts DeployOptions, uiOutput ui.Output) error {
+func runHelmInstallPhase(ctx context.Context, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output) error {
+	return runHelmInstallPhaseWithInstaller(ctx, artifacts, opts, uiOutput, installOrUpgradeValues)
+}
+
+func runHelmInstallPhaseWithInstaller(ctx context.Context, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output, install helmValuesInstaller) error {
 	if opts.SkipHelmChart {
 		log.Log.V(1).Info("Network Operator Helm management disabled; skipping operator install")
 		return nil
 	}
 
-	valuesPath := filepath.Join(manifestsDir, helmValuesFile)
-	valuesYAML, err := os.ReadFile(valuesPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Log.V(1).Info("No helm values file found; skipping operator install",
-				"path", valuesPath)
-			return nil
-		}
-		return fmt.Errorf("read helm values file %s: %w", valuesPath, err)
+	valuesYAML, present := artifacts.ValuesContent()
+	if !present {
+		log.Log.V(1).Info("No helm values file found; skipping operator install")
+		return nil
 	}
 
 	if opts.RestConfig == nil || opts.NetworkOperator == nil ||
@@ -932,7 +789,8 @@ func runHelmInstallPhase(ctx context.Context, manifestsDir string, opts DeployOp
 		}
 	}
 
-	err = InstallOrUpgrade(ctx, opts.RestConfig, opts.NetworkOperator, valuesYAML, opts.LaunchKitVersion, opts.OverwriteExisting, timeout, opts.DryRun)
+	values, _ := artifacts.ValuesCopy()
+	err := install(ctx, opts.RestConfig, opts.NetworkOperator, []byte(valuesYAML), values, opts.LaunchKitVersion, opts.OverwriteExisting, timeout, opts.DryRun)
 	if err == nil {
 		if opts.DryRun {
 			uiOutput.Success("Dry-run: helm install would create network-operator release in namespace %s",
@@ -988,8 +846,8 @@ func runHelmInstallPhase(ctx context.Context, manifestsDir string, opts DeployOp
 // Phase 0.5 is a no-op when no preflight check is actionable — typically a
 // standalone `l8k deploy` with no l8k-config.yaml and no helm release in
 // the namespace yet.
-func runPreflightPhase(ctx context.Context, kubeClient client.Client, manifestsDir string, opts DeployOptions, uiOutput ui.Output) error {
-	in, err := buildPreflightInputs(kubeClient, manifestsDir, opts)
+func runPreflightPhase(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output) error {
+	in, err := buildPreflightInputs(kubeClient, artifacts, opts)
 	if err != nil {
 		return err
 	}
@@ -1053,7 +911,7 @@ func runPreflightPhase(ctx context.Context, kubeClient client.Client, manifestsD
 // buildPreflightInputs assembles the Inputs the four checks need from the
 // deploy-level opts + manifestsDir. Unresolvable fields are left empty —
 // individual checks soft-skip when an input is missing.
-func buildPreflightInputs(kubeClient client.Client, manifestsDir string, opts DeployOptions) (preflight.Inputs, error) {
+func buildPreflightInputs(kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions) (preflight.Inputs, error) {
 	in := preflight.Inputs{
 		KubeClient:     kubeClient,
 		RestConfig:     opts.RestConfig,
@@ -1070,20 +928,16 @@ func buildPreflightInputs(kubeClient client.Client, manifestsDir string, opts De
 		in.ExpectedDOCAVersion = opts.DOCAVersion
 	}
 
-	// Best-effort: read values.yaml when Helm management is enabled (helm
-	// checks soft-skip if absent).
 	if !opts.SkipHelmChart {
-		if b, err := os.ReadFile(filepath.Join(manifestsDir, helmValuesFile)); err == nil {
-			in.GeneratedValuesYAML = b
+		if raw, present := artifacts.ValuesContent(); present {
+			in.GeneratedValuesYAML = []byte(raw)
+			in.GeneratedValues, _ = artifacts.ValuesCopy()
 		}
 	}
 
-	// Best-effort: scan manifests dir for rendered object refs (stray
-	// check needs this — an unreadable dir is a hard error since the
-	// rest of deploy wouldn't survive it either).
-	refs, err := preflight.ScanGeneratedManifests(manifestsDir)
+	refs, err := preflight.GeneratedManifestRefs(artifacts)
 	if err != nil {
-		return in, fmt.Errorf("scan generated manifests for preflight: %w", err)
+		return in, fmt.Errorf("project generated manifests for preflight: %w", err)
 	}
 	in.GeneratedManifests = refs
 	return in, nil

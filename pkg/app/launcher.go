@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/assets"
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
@@ -43,19 +44,22 @@ import (
 
 // Launcher represents the main application launcher
 type Launcher struct {
-	options       options.Options
-	logger        logr.Logger
-	plugins       map[string]plugin.Plugin
-	kubeClient    client.Client
-	restConfig    *rest.Config
-	ui            ui.Output
-	jsonOutput    *ui.JSONOutput     // non-nil only in JSON mode
-	result        *ui.JSONResult     // accumulated result for JSON output
-	foundProfiles []profiles.Profile // populated by executeGeneration, consumed by executeDeploy
-	configAssets  assets.ConfigDir
-	presetCatalog *presets.Catalog
-	context       context.Context
+	options          options.Options
+	logger           logr.Logger
+	plugins          map[string]plugin.Plugin
+	kubeClient       client.Client
+	restConfig       *rest.Config
+	ui               ui.Output
+	jsonOutput       *ui.JSONOutput     // non-nil only in JSON mode
+	result           *ui.JSONResult     // accumulated result for JSON output
+	foundProfiles    []profiles.Profile // populated by executeGeneration, consumed by executeDeploy
+	generatedBundles map[generatedProfileKey]*bundle.Bundle
+	configAssets     assets.ConfigDir
+	presetCatalog    *presets.Catalog
+	context          context.Context
 }
+
+type generatedProfileKey struct{ Plugin, Name string }
 
 // New creates a new Launcher instance with the given options
 func New(opts options.Options) *Launcher {
@@ -93,6 +97,8 @@ func (l *Launcher) RunContext(ctx context.Context) error {
 		return fmt.Errorf("launcher context must not be nil")
 	}
 	l.context = ctx
+	l.generatedBundles = nil
+	l.foundProfiles = nil
 	if l.options.LogLevel != "" {
 		if err := applog.SetLogLevel(l.options.LogLevel); err != nil {
 			return fmt.Errorf("failed to set log level: %w", err)

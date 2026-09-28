@@ -19,10 +19,12 @@ package connectivity
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
@@ -133,6 +135,17 @@ type DaemonSetReport struct {
 // All UI output flows through `uiOutput` (caller passes
 // ui.FromContext(ctx)). Logs go to controller-runtime's logr.
 func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, uiOutput ui.Output, opts Options) (*MatrixResult, error) {
+	artifacts, err := bundle.Load(os.DirFS(opts.ManifestDir))
+	if err != nil {
+		return nil, err
+	}
+	return RunMatrixBundle(ctx, c, restConfig, uiOutput, artifacts, opts)
+}
+
+func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Config, uiOutput ui.Output, artifacts *bundle.Bundle, opts Options) (*MatrixResult, error) {
+	if artifacts == nil {
+		return nil, fmt.Errorf("connectivity artifact bundle is nil")
+	}
 	runStarted := time.Now()
 	if opts.Timeout < 0 {
 		return nil, fmt.Errorf("connectivity timeout must be greater than or equal to zero")
@@ -191,7 +204,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 	hasICMP := checksContain(opts.Checks, CheckICMP)
 	hasRDMA := checksContain(opts.Checks, CheckRPing) || checksContain(opts.Checks, CheckIBWriteBW) || checksContain(opts.Checks, CheckGPUDirectDMABuf)
 	loadStarted := time.Now()
-	objs, refs, err := LoadExampleDaemonSets(opts.ManifestDir)
+	objs, refs, err := ExampleDaemonSets(artifacts)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +267,7 @@ func RunMatrix(ctx context.Context, c client.Client, restConfig *rest.Config, ui
 			"duration", time.Since(cleanupStarted).Round(time.Millisecond).String())
 	}()
 	if opts.OpenShift {
-		support, err := LoadOpenShiftExampleSupport(opts.ManifestDir)
+		support, err := OpenShiftExampleSupport(artifacts)
 		if err != nil {
 			return nil, err
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -120,7 +121,7 @@ func TestGenerateProfileSkipsHelmValuesButKeepsManifests(t *testing.T) {
 }
 
 func TestRunHelmInstallPhaseSkipsBeforeReadingValues(t *testing.T) {
-	err := runHelmInstallPhase(context.Background(), filepath.Join(t.TempDir(), "missing"), DeployOptions{
+	err := runHelmInstallPhase(context.Background(), nil, DeployOptions{
 		SkipHelmChart: true,
 	}, ui.NewSilent())
 
@@ -128,7 +129,9 @@ func TestRunHelmInstallPhaseSkipsBeforeReadingValues(t *testing.T) {
 }
 
 func TestBuildPreflightInputsSkipsOnlyHelmChecks(t *testing.T) {
-	in, err := buildPreflightInputs(nil, t.TempDir(), DeployOptions{
+	artifacts, err := bundle.FromFiles(nil)
+	require.NoError(t, err)
+	in, err := buildPreflightInputs(nil, artifacts, DeployOptions{
 		SkipHelmChart: true,
 		NetworkOperator: &config.NetworkOperatorConfig{
 			Version:          "v26.7.0",

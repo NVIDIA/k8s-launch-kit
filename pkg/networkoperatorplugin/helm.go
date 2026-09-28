@@ -150,6 +150,22 @@ func InstallOrUpgrade(
 	timeout time.Duration,
 	dryRun bool,
 ) error {
+	return installOrUpgradeValues(ctx, restConfig, cfg, valuesYAML, nil, launchKitVersion, overwriteExisting, timeout, dryRun)
+}
+
+// installOrUpgradeValues accepts the parsed bundle map when available. The
+// public byte API keeps its previous parse point after Helm setup.
+func installOrUpgradeValues(
+	ctx context.Context,
+	restConfig *rest.Config,
+	cfg *config.NetworkOperatorConfig,
+	valuesYAML []byte,
+	parsed map[string]any,
+	launchKitVersion string,
+	overwriteExisting bool,
+	timeout time.Duration,
+	dryRun bool,
+) error {
 	if cfg == nil {
 		return pkgerrors.NewValidationError(
 			"helm install requires NetworkOperator config",
@@ -187,13 +203,16 @@ func InstallOrUpgrade(
 		)
 	}
 
-	generated, err := helmclient.UnmarshalValues(valuesYAML)
-	if err != nil {
-		return pkgerrors.NewValidationError(
-			"failed to parse generated values.yaml",
-			err,
-			"re-run `l8k generate` to recreate values.yaml",
-		)
+	generated := parsed
+	if generated == nil {
+		generated, err = helmclient.UnmarshalValues(valuesYAML)
+		if err != nil {
+			return pkgerrors.NewValidationError(
+				"failed to parse generated values.yaml",
+				err,
+				"re-run `l8k generate` to recreate values.yaml",
+			)
+		}
 	}
 
 	loadChart := func() (*chart.Chart, error) {

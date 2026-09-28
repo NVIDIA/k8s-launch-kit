@@ -6,9 +6,10 @@ package preflight
 
 import (
 	"context"
+
 	"fmt"
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -17,7 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // kindInfo describes one Kind the stray-CRs check enumerates.
@@ -217,93 +217,15 @@ func scopeLabel(k kindInfo) string {
 	return "namespaced"
 }
 
-// ScanGeneratedManifests walks the deployment directory and returns one
-// ObjectRef per K8s manifest document found. Skips workload-example
-// manifests and the helm values.yaml — same filter the deploy phase
-// uses. The caller passes the result as Inputs.GeneratedManifests.
-//
-// Errors when manifestsDir is unreadable; on a per-file decode failure
-// the file is logged and skipped (so a single broken doc doesn't kill
-// the whole stray check).
+// ScanGeneratedManifests loads a complete snapshot before deriving expected refs.
+// The empty path preserves its historical no-op behavior.
 func ScanGeneratedManifests(manifestsDir string) ([]ObjectRef, error) {
 	if manifestsDir == "" {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(manifestsDir)
+	artifacts, err := bundle.Load(os.DirFS(manifestsDir))
 	if err != nil {
-		return nil, fmt.Errorf("read deployment dir %s: %w", manifestsDir, err)
+		return nil, fmt.Errorf("load deployment artifacts: %w", err)
 	}
-	var out []ObjectRef
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		ext := filepath.Ext(name)
-		if ext != ".yaml" && ext != ".yml" {
-			continue
-		}
-		if name == "values.yaml" {
-			// helm values, not a K8s manifest
-			continue
-		}
-		if strings.Contains(strings.ToLower(name), "example") {
-			// example workload manifest — not part of the
-			// network-operator surface
-			continue
-		}
-		path := filepath.Join(manifestsDir, name)
-		content, rerr := os.ReadFile(path)
-		if rerr != nil {
-			log.Log.V(1).Info("ScanGeneratedManifests: read failed", "file", path, "error", rerr.Error())
-			continue
-		}
-		for _, doc := range splitYAMLDocs(string(content)) {
-			if strings.TrimSpace(doc) == "" {
-				continue
-			}
-			obj := &unstructured.Unstructured{}
-			if err := sigsyaml.Unmarshal([]byte(doc), obj); err != nil {
-				log.Log.V(1).Info("ScanGeneratedManifests: decode failed", "file", path, "error", err.Error())
-				continue
-			}
-			if obj.GetKind() == "" {
-				continue
-			}
-			gv, perr := schema.ParseGroupVersion(obj.GetAPIVersion())
-			if perr != nil {
-				log.Log.V(1).Info("ScanGeneratedManifests: bad apiVersion", "file", path, "apiVersion", obj.GetAPIVersion())
-				continue
-			}
-			out = append(out, ObjectRef{
-				GVK:       gv.WithKind(obj.GetKind()),
-				Namespace: obj.GetNamespace(),
-				Name:      obj.GetName(),
-			})
-		}
-	}
-	return out, nil
-}
-
-// splitYAMLDocs splits a multi-document YAML string on `---` separators.
-// Inlined here (rather than importing the existing one in
-// pkg/networkoperatorplugin) to keep preflight a leaf package with no
-// cycle back into networkoperatorplugin.
-func splitYAMLDocs(s string) []string {
-	var docs []string
-	var cur []string
-	for _, ln := range strings.Split(s, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(ln), "---") {
-			if len(cur) > 0 {
-				docs = append(docs, strings.Join(cur, "\n"))
-				cur = nil
-			}
-			continue
-		}
-		cur = append(cur, ln)
-	}
-	if len(cur) > 0 {
-		docs = append(docs, strings.Join(cur, "\n"))
-	}
-	return docs
+	return GeneratedManifestRefs(artifacts)
 }

@@ -30,7 +30,7 @@ func isOCPOperatorConfig(obj *unstructured.Unstructured) bool {
 
 // applyOCPOperatorConfiguration changes only fields rendered by l8k. The
 // Subscription and pre-existing configuration objects keep unrelated fields.
-func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, docs [][]byte, dryRun bool) error {
+func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, docs []*unstructured.Unstructured, dryRun bool) error {
 	if cfg.NetworkOperator == nil {
 		return fmt.Errorf("networkOperator config is required")
 	}
@@ -59,11 +59,7 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 		"MAINTENANCE_OPERATOR_ENABLED":             "true",
 		"MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE": maintenanceNamespace,
 	}
-	for _, doc := range docs {
-		desired, err := decodeUnstructured(doc)
-		if err != nil {
-			return err
-		}
+	for _, desired := range docs {
 		if !isOCPOperatorConfig(desired) {
 			return fmt.Errorf("unexpected OpenShift operator configuration %s", desired.GetKind())
 		}

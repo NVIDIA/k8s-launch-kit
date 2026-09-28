@@ -17,10 +17,9 @@
 package host
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,25 +27,18 @@ import (
 )
 
 func TestHasDeploymentValidationInputs(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "60-example-daemonset.yaml"), []byte("example"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "cluster-config.yaml"), []byte("config"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("notes"), 0o600))
-
-	hasInputs, err := hasDeploymentValidationInputs(dir)
+	example := bundle.File{Name: "60-example-daemonset.yaml", Content: "apiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: example\n"}
+	artifacts, err := bundle.FromFiles([]bundle.File{example, {Name: "cluster-config.yaml", Content: "config"}, {Name: "notes.txt", Content: "notes"}})
 	require.NoError(t, err)
-	assert.False(t, hasInputs)
+	assert.False(t, hasDeploymentValidationInputsBundle(artifacts))
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "values.yaml"), []byte("operator: {}"), 0o600))
-	hasInputs, err = hasDeploymentValidationInputs(dir)
+	artifacts, err = bundle.FromFiles([]bundle.File{example, {Name: "values.yaml", Content: ""}})
 	require.NoError(t, err)
-	assert.True(t, hasInputs)
+	assert.True(t, hasDeploymentValidationInputsBundle(artifacts))
 
-	require.NoError(t, os.Remove(filepath.Join(dir, "values.yaml")))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "20-sriov-network.yaml"), []byte("kind: SriovNetwork"), 0o600))
-	hasInputs, err = hasDeploymentValidationInputs(dir)
+	artifacts, err = bundle.FromFiles([]bundle.File{example, {Name: "20-sriov-network.yaml", Content: ""}})
 	require.NoError(t, err)
-	assert.True(t, hasInputs)
+	assert.True(t, hasDeploymentValidationInputsBundle(artifacts))
 }
 
 func TestValidateConnectivityDaemonSets(t *testing.T) {

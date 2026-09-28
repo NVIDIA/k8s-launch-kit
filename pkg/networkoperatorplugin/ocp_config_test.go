@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -118,7 +119,10 @@ func TestOpenShiftRequiresSubscriptionBeforeConfigurationWrites(t *testing.T) {
 	c := fake.NewClientBuilder().Build()
 	cfg := &config.LaunchKitConfig{Flavor: config.FlavorOCP, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-ns"}}
 	doc := []byte("apiVersion: nfd.openshift.io/v1\nkind: NodeFeatureDiscovery\nmetadata:\n  name: nfd-instance\n  namespace: nfd-ns\nspec:\n  workerConfig:\n    configData: 'sources: {}'")
-	err := applyOCPOperatorConfiguration(ctx, c, cfg, [][]byte{doc}, false)
+	artifacts, decodeErr := bundle.FromFiles([]bundle.File{{Name: "30-nfd.yaml", Content: string(doc)}})
+	require.NoError(t, decodeErr)
+	obj := artifacts.Documents()[0].ObjectCopy()
+	err := applyOCPOperatorConfiguration(ctx, c, cfg, []*unstructured.Unstructured{obj}, false)
 	require.ErrorContains(t, err, "Subscription is required")
 	nfd := ocpTestObject("nfd.openshift.io/v1", "NodeFeatureDiscovery", "nfd-ns", "nfd-instance", nil)
 	require.True(t, apierrors.IsNotFound(c.Get(ctx, types.NamespacedName{Namespace: "nfd-ns", Name: "nfd-instance"}, nfd)))

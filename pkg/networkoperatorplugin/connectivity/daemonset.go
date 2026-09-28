@@ -18,9 +18,10 @@ package connectivity
 
 import (
 	"context"
+
 	"fmt"
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,10 +29,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	yaml "sigs.k8s.io/yaml"
 )
 
 const (
@@ -50,101 +49,59 @@ type DaemonSetRef struct {
 	SourceFile    string // file the DS was loaded from (for log breadcrumbs)
 }
 
-// LoadExampleDaemonSets reads every `*example*.yaml` manifest under
-// manifestDir, decodes it as a DaemonSet, and returns one DaemonSetRef
-// per file. Multi-doc YAMLs are walked; non-DaemonSet docs are skipped
-// (the file pattern is descriptive, not enforced, so we tolerate a
-// ConfigMap or two beside the DS).
+// LoadExampleDaemonSets is the directory compatibility entrypoint.
 func LoadExampleDaemonSets(manifestDir string) ([]*unstructured.Unstructured, []DaemonSetRef, error) {
-	entries, err := os.ReadDir(manifestDir)
+	artifacts, err := bundle.Load(os.DirFS(manifestDir))
 	if err != nil {
-		return nil, nil, fmt.Errorf("read manifest dir %s: %w", manifestDir, err)
+		return nil, nil, err
+	}
+	return ExampleDaemonSets(artifacts)
+}
+
+func ExampleDaemonSets(artifacts *bundle.Bundle) ([]*unstructured.Unstructured, []DaemonSetRef, error) {
+	if artifacts == nil {
+		return nil, nil, fmt.Errorf("connectivity artifact bundle is nil")
 	}
 	var objs []*unstructured.Unstructured
 	var refs []DaemonSetRef
-	for _, e := range entries {
-		if e.IsDir() {
+	for _, doc := range artifacts.Documents() {
+		if doc.Role() != bundle.Validation {
 			continue
 		}
-		ext := filepath.Ext(e.Name())
-		if ext != ".yaml" && ext != ".yml" {
+		obj := doc.ObjectCopy()
+		if obj.GetKind() != "DaemonSet" {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(e.Name()), "example") {
-			continue
-		}
-		full := filepath.Join(manifestDir, e.Name())
-		content, rErr := os.ReadFile(full)
-		if rErr != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", full, rErr)
-		}
-		for _, doc := range splitYAMLDocs(string(content)) {
-			if strings.TrimSpace(doc) == "" {
-				continue
-			}
-			obj := &unstructured.Unstructured{}
-			if err := yaml.Unmarshal([]byte(doc), obj); err != nil {
-				continue
-			}
-			if obj.GetKind() != "DaemonSet" || obj.GetName() == "" {
-				continue
-			}
-			if apiv := obj.GetAPIVersion(); apiv != "" {
-				if gv, err := schema.ParseGroupVersion(apiv); err == nil {
-					obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
-				}
-			}
-			rdmaContainer, icmpContainer := testContainerNames(obj)
-			objs = append(objs, obj)
-			refs = append(refs, DaemonSetRef{
-				Namespace:     obj.GetNamespace(),
-				Name:          obj.GetName(),
-				Container:     rdmaContainer,
-				RDMAContainer: rdmaContainer,
-				ICMPContainer: icmpContainer,
-				SourceFile:    e.Name(),
-			})
-		}
+		rdmaContainer, icmpContainer := testContainerNames(obj)
+		objs = append(objs, obj)
+		refs = append(refs, DaemonSetRef{Namespace: obj.GetNamespace(), Name: obj.GetName(),
+			Container: rdmaContainer, RDMAContainer: rdmaContainer,
+			ICMPContainer: icmpContainer, SourceFile: doc.Source().File})
 	}
 	return objs, refs, nil
 }
 
-// LoadOpenShiftExampleSupport reads only the four temporary resource kinds
-// used by the OpenShift validation workload.
 func LoadOpenShiftExampleSupport(manifestDir string) ([]*unstructured.Unstructured, error) {
-	entries, err := os.ReadDir(manifestDir)
+	artifacts, err := bundle.Load(os.DirFS(manifestDir))
 	if err != nil {
 		return nil, err
 	}
+	return OpenShiftExampleSupport(artifacts)
+}
+
+func OpenShiftExampleSupport(artifacts *bundle.Bundle) ([]*unstructured.Unstructured, error) {
+	if artifacts == nil {
+		return nil, fmt.Errorf("connectivity artifact bundle is nil")
+	}
 	var out []*unstructured.Unstructured
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.Contains(strings.ToLower(entry.Name()), "example") {
+	for _, doc := range artifacts.Documents() {
+		if doc.Role() != bundle.Validation {
 			continue
 		}
-		if ext := filepath.Ext(entry.Name()); ext != ".yaml" && ext != ".yml" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(manifestDir, entry.Name()))
-		if err != nil {
-			return nil, err
-		}
-		for _, doc := range splitYAMLDocs(string(data)) {
-			if strings.TrimSpace(doc) == "" {
-				continue
-			}
-			obj := &unstructured.Unstructured{}
-			if err := yaml.Unmarshal([]byte(doc), obj); err != nil {
-				return nil, err
-			}
-			switch obj.GetKind() {
-			case "SecurityContextConstraints", "ServiceAccount", "Role", "RoleBinding":
-				gv, err := schema.ParseGroupVersion(obj.GetAPIVersion())
-				if err != nil {
-					return nil, err
-				}
-				obj.SetGroupVersionKind(gv.WithKind(obj.GetKind()))
-				out = append(out, obj)
-			}
+		obj := doc.ObjectCopy()
+		switch obj.GetKind() {
+		case "SecurityContextConstraints", "ServiceAccount", "Role", "RoleBinding":
+			out = append(out, obj)
 		}
 	}
 	return out, nil
@@ -315,27 +272,4 @@ func testContainerNames(ds *unstructured.Unstructured) (rdmaContainer, icmpConta
 		}
 	}
 	return rdmaContainer, icmpContainer
-}
-
-// splitYAMLDocs is a minimal local copy of the YAML doc splitter in
-// pkg/networkoperatorplugin/deploy.go. Duplicated to keep the
-// connectivity package self-contained (no upward dependency on the
-// parent package).
-func splitYAMLDocs(s string) []string {
-	var docs []string
-	var cur []string
-	for _, ln := range strings.Split(s, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(ln), "---") {
-			if len(cur) > 0 {
-				docs = append(docs, strings.Join(cur, "\n"))
-				cur = nil
-			}
-			continue
-		}
-		cur = append(cur, ln)
-	}
-	if len(cur) > 0 {
-		docs = append(docs, strings.Join(cur, "\n"))
-	}
-	return docs
 }

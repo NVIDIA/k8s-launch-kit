@@ -11,6 +11,7 @@ package helmclient
 import (
 	"fmt"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"helm.sh/helm/v3/pkg/action"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery"
@@ -19,7 +20,6 @@ import (
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // StorageDriver selects how Helm persists release metadata in the cluster.
@@ -64,17 +64,7 @@ func NewActionConfig(restConfig *rest.Config, namespace, helmDriver string) (*ac
 // the Phase 0 conflict check and the preflight values check so the two
 // flows can't disagree about how to interpret malformed input.
 func UnmarshalValues(b []byte) (map[string]interface{}, error) {
-	if len(b) == 0 {
-		return map[string]interface{}{}, nil
-	}
-	out := map[string]interface{}{}
-	if err := sigsyaml.Unmarshal(b, &out); err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = map[string]interface{}{}
-	}
-	return out, nil
+	return bundle.ParseValues(b)
 }
 
 // debugNoop discards helm-internal debug logging. l8k's structured logger

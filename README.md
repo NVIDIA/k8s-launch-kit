@@ -13,6 +13,10 @@ instead of executing host logic. See the
 [complete component map](docs/architecture/overview.md), and run `l8k schema`
 for machine-readable target, phase, and flag ownership information.
 
+Host generation, deployment, and validation share a [validated artifact
+bundle](docs/architecture/artifact-bundle.md). Invalid generated manifests
+are reported with a source filename before deployment actions begin.
+
 ## Documentation
 
 Standalone documentation is published from this repository to GitHub Pages:

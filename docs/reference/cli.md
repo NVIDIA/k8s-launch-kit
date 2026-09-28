@@ -24,6 +24,11 @@ from the same field tags that register the flags and apply explicit values.
 | `l8k schema` | Print JSON capabilities for automation. |
 | `l8k version` | Print version information. |
 
+Host generate, deploy, and validate check the complete flat artifact bundle.
+Malformed YAML, missing resource identities, duplicate declared resources,
+and noncanonical Helm values filenames are validation errors (exit code `2`)
+with a source filename and document number where applicable.
+
 ## Target selection and flag ownership
 
 Omitting `--target` selects `host`; adding `--target host` follows the same

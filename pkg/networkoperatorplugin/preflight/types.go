@@ -156,6 +156,9 @@ type Inputs struct {
 	// <deployment-files>/values.yaml). Empty when the chart is managed
 	// out of band — the helm-values check soft-skips in that case.
 	GeneratedValuesYAML []byte
+	// GeneratedValues is the already parsed snapshot. Nil preserves the
+	// byte-only API; a nonnil empty map represents valid empty values.
+	GeneratedValues map[string]any
 
 	// GeneratedManifests is the list of object refs l8k just rendered
 	// (or would render). Used by the stray-CRs check to subtract

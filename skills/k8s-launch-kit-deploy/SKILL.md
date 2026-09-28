@@ -18,6 +18,11 @@ unchanged.
 
 Apply previously generated NVIDIA networking manifests to a Kubernetes cluster.
 
+Deploy loads and validates the entire flat artifact directory before Helm,
+preflight remediation, or apply. Only exact `values.yaml` is Helm input;
+`values.yml` and case variants must be renamed. Malformed or duplicate
+resources fail with source details and exit code 2.
+
 ## Usage
 
 The standalone subcommand (preferred):
