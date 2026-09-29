@@ -51,7 +51,7 @@ clusterConfig:
       kubernetes.io/hostname: worker-b
 ```
 
-Each source group needs nonempty `workerNodes` and `nodeSelector`; hardware policies select each worker by hostname even if machine/GPU labels match. Preserve the seed file and merge live hardware into another file:
+The seed entries identify workers for discovery. Discovery replaces them with hardware groups and assigns each group a node selector. A group can contain multiple workers. Preserve the seed file and merge live hardware into another file:
 
 ```bash
 l8k discover --flavor ocp \
@@ -70,11 +70,11 @@ l8k generate --flavor ocp \
   --save-deployment-files ./ocp-deployment
 ```
 
-Compatible groups with the same GPU type and east-west rail count share a pool, network, drain pool, and validation DaemonSet across their exact worker union. Groups with different rail counts get distinct networks. SR-IOV CRs live in the Red Hat operator namespace; NV-IPAM pools live in the NVIDIA operator namespace. The `SriovNetwork` creates NADs in requested workload namespaces and requests `openshift.io/<resourceName>`. The drain pool carries `maintenance.maxUnavailable` to Red Hat's native drainer.
+Compatible groups with the same GPU type and east-west rail count share a pool, network, drain pool, and validation DaemonSet across their exact worker union. Hardware policies follow the same render scope as Kubernetes: one per compatible bucket, or one per selected source group for a strict subset. A group with multiple workers does not produce one policy per hostname. Groups with different rail counts get distinct networks. SR-IOV CRs live in the Red Hat operator namespace; NV-IPAM pools live in the NVIDIA operator namespace. The `SriovNetwork` creates NADs in requested workload namespaces and requests `openshift.io/<resourceName>`. The drain pool carries `maintenance.maxUnavailable` to Red Hat's native drainer.
 
 Launch Kit sets NFD PCI `deviceLabelFields` to `[vendor]`, replacing the old field selection while retaining other NFD sources and PCI class whitelists. Review this change with the NFD owner. The Red Hat operator uses native draining; the NVIDIA external SR-IOV drainer integration is unavailable in that build. The Maintenance Operator coordinates supported driver operations.
 
-Keep `ocp-deployment/.l8k/resolved-config.yaml` with the generated manifests. Check the `SriovNetworkNodePolicy`, `SriovNetworkPoolConfig`, `SriovNetwork`, NV-IPAM pools, exact worker selectors, resource names, namespaces, NFD change, and any custom workload. OpenShift output must have no `values.yaml`; if one remains, regenerate into a clean directory with `--flavor ocp`. The generation [bundle checklist](../advanced/generation.md#review-the-bundle) gives the common review points.
+Keep `ocp-deployment/.l8k/resolved-config.yaml` with the generated manifests. Check the `NicNodePolicy` and `SriovNetworkNodePolicy` selectors and PCI addresses against every worker they target. Also check the `SriovNetworkPoolConfig`, `SriovNetwork`, NV-IPAM pools, resource names, namespaces, NFD change, and any custom workload. OpenShift output must have no `values.yaml`; if one remains, regenerate into a clean directory with `--flavor ocp`. The generation [bundle checklist](../advanced/generation.md#review-the-bundle) gives the common review points.
 
 ## 3. Preview and deploy
 

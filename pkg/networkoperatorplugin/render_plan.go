@@ -432,12 +432,7 @@ func renderForScope(
 	}
 	scope := ScopeForKind(kind)
 	if cfg.Flavor == config.FlavorOCP {
-		// Hardware policies select exact workers. A discovered machine label
-		// can be shared by sources with different PCI layouts.
-		switch kind {
-		case "NicNodePolicy", "SriovNetworkNodePolicy":
-			scope = ScopePerSource
-		case "SriovNetworkPoolConfig":
+		if kind == "SriovNetworkPoolConfig" {
 			scope = ScopeBucketed
 		}
 	}
@@ -518,32 +513,8 @@ func renderForScope(
 
 	case ScopePerSource:
 		var netplanManagedGroups []config.ClusterConfig
-		var ocpWorkerSources [][]config.ClusterConfig
-		if cfg.Flavor == config.FlavorOCP && (kind == "NicNodePolicy" || kind == "SriovNetworkNodePolicy" || kind == "NicInterfaceNameTemplate") {
-			var allSources []config.ClusterConfig
-			for _, plan := range plans {
-				allSources = append(allSources, plan.Sources...)
-			}
-			allWorkers, err := ocpWorkerPolicySources(allSources)
-			if err != nil {
-				return nil, err
-			}
-			ocpWorkerSources = make([][]config.ClusterConfig, len(plans))
-			cursor := 0
-			for i, plan := range plans {
-				for _, source := range plan.Sources {
-					count := len(source.WorkerNodes)
-					ocpWorkerSources[i] = append(ocpWorkerSources[i], allWorkers[cursor:cursor+count]...)
-					cursor += count
-				}
-			}
-		}
 		for i, plan := range plans {
-			sources := plan.Sources
-			if ocpWorkerSources != nil {
-				sources = ocpWorkerSources[i]
-			}
-			for _, src := range sources {
+			for _, src := range plan.Sources {
 				renderCfg := withClusterConfig(cfg, []config.ClusterConfig{src}, subnetsAt(planSubnets, i))
 				rendered, err := ProcessTemplate(templatePath, renderCfg, "")
 				if err != nil {
@@ -573,42 +544,6 @@ func renderForScope(
 	}
 
 	return results, nil
-}
-
-// ocpWorkerPolicySources keeps each hardware policy on the worker whose PCI
-// layout was discovered. Machine/GPU labels can be identical across sources,
-// so they cannot select a source policy safely on OpenShift.
-func ocpWorkerPolicySources(sources []config.ClusterConfig) ([]config.ClusterConfig, error) {
-	identifierCount := make(map[string]int, len(sources))
-	for _, source := range sources {
-		identifierCount[source.Identifier]++
-	}
-	workers := make(map[string]bool)
-	identifiers := make(map[string]bool)
-	var scoped []config.ClusterConfig
-	for _, source := range sources {
-		if len(source.WorkerNodes) == 0 {
-			return nil, fmt.Errorf("OpenShift group %q requires workerNodes for hardware policies", source.Identifier)
-		}
-		for _, worker := range source.WorkerNodes {
-			if worker == "" || workers[worker] {
-				return nil, fmt.Errorf("OpenShift worker %q is empty or belongs to multiple hardware groups", worker)
-			}
-			workers[worker] = true
-			one := source
-			one.WorkerNodes = []string{worker}
-			one.NodeSelector = map[string]string{"kubernetes.io/hostname": worker}
-			if len(source.WorkerNodes) > 1 || identifierCount[source.Identifier] > 1 {
-				one.Identifier = config.SanitizeIdentifier(source.Identifier + "-" + worker)
-			}
-			if identifiers[one.Identifier] {
-				return nil, fmt.Errorf("OpenShift hardware policy identifier %q is duplicated", one.Identifier)
-			}
-			identifiers[one.Identifier] = true
-			scoped = append(scoped, one)
-		}
-	}
-	return scoped, nil
 }
 
 func newNetplanInterfaceNameConflictError(groups []config.ClusterConfig) error {
