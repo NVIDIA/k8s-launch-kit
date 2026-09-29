@@ -51,7 +51,7 @@ func TestDiscoverReadOnlyDoesNotMutateCluster(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "nic-configuration-daemon-worker-0",
-			Namespace: nicconfigdaemon.Namespace,
+			Namespace: "nvidia-network-operator",
 			OwnerReferences: []metav1.OwnerReference{
 				{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName},
 			},
@@ -61,7 +61,9 @@ func TestDiscoverReadOnlyDoesNotMutateCluster(t *testing.T) {
 			{Type: corev1.PodReady, Status: corev1.ConditionTrue},
 		}},
 	}
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-0"}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-0", Labels: map[string]string{
+		"nvidia.com/gpu.product": "NVIDIA-H100",
+	}}}
 	device := &nicop.NicDevice{
 		ObjectMeta: metav1.ObjectMeta{Name: "worker-0-device", Namespace: "default"},
 		Status: nicop.NicDeviceStatus{
@@ -75,14 +77,19 @@ func TestDiscoverReadOnlyDoesNotMutateCluster(t *testing.T) {
 			}},
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, node, device).Build()
+	stale := &nicop.NicDevice{ObjectMeta: metav1.ObjectMeta{Name: "stale-device", Namespace: "default"},
+		Status: nicop.NicDeviceStatus{Node: "removed-worker", Type: "1023"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, node, device, stale).Build()
 
 	cfg, err := DiscoverReadOnly(context.Background(), c)
 
 	require.NoError(t, err)
 	require.Len(t, cfg.ClusterConfig, 1)
 	assert.Equal(t, "worker-0", cfg.ClusterConfig[0].WorkerNodes[0])
-	assert.Empty(t, node.Labels, "read-only discovery must not write Launch Kit labels")
+	assert.Equal(t, map[string]string{"nvidia.com/gpu.product": "NVIDIA-H100"},
+		cfg.ClusterConfig[0].NodeSelector)
+	assert.Equal(t, map[string]string{"nvidia.com/gpu.product": "NVIDIA-H100"}, node.Labels,
+		"read-only discovery must not write Launch Kit labels")
 	assert.False(t, hasNamespace(t, c, nicconfigdaemon.Namespace),
 		"read-only discovery must not create or delete the daemon namespace")
 }

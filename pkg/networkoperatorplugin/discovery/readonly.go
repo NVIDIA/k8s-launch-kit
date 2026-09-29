@@ -20,12 +20,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -48,8 +50,8 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.La
 		return nil, errors.New("DiscoverReadOnly: kubeClient must not be nil")
 	}
 
-	if _, err := checkDaemonSetPodsReady(ctx, kubeClient,
-		nicconfigdaemon.Namespace, nicconfigdaemon.DaemonSetName); err != nil {
+	namespace, err := findDaemonSetNamespace(ctx, kubeClient, nicconfigdaemon.DaemonSetName)
+	if err != nil {
 		if errors.Is(err, ErrNotInstalled) {
 			return nil, err
 		}
@@ -57,7 +59,7 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.La
 	}
 
 	expectedNodes, _, _, err := waitForDaemonSetPods(ctx, kubeClient, ui.FromContext(ctx),
-		nicconfigdaemon.Namespace, nicconfigdaemon.DaemonSetName, 5*time.Minute)
+		namespace, nicconfigdaemon.DaemonSetName, 5*time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: wait for existing daemon: %w", err)
 	}
@@ -66,15 +68,32 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.La
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: list nodes: %w", err)
 	}
-	if err := waitNicDevicesDiscovered(ctx, kubeClient, expectedNodes); err != nil {
-		return nil, fmt.Errorf("DiscoverReadOnly: wait for NicDevice resources: %w", err)
-	}
-
 	devices := &nicop.NicDeviceList{}
 	if err := kubeClient.List(ctx, devices); err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: list NicDevice resources: %w", err)
 	}
+	readyNodes := make(map[string]bool, len(expectedNodes))
+	for _, node := range expectedNodes {
+		readyNodes[node] = true
+	}
+	filtered := devices.Items[:0]
+	for _, device := range devices.Items {
+		if readyNodes[device.Status.Node] {
+			filtered = append(filtered, device)
+		}
+	}
+	devices.Items = filtered
+	if len(devices.Items) == 0 {
+		return nil, fmt.Errorf("DiscoverReadOnly: no NicDevice resources found on ready daemon nodes")
+	}
 	clusterConfig, warnings := buildClusterConfig(devices.Items, nodeLabels, nil, true)
+	if len(clusterConfig) == 1 && len(clusterConfig[0].NodeSelector) == 0 {
+		selector := readOnlyNodeSelector(clusterConfig[0].WorkerNodes, nodeLabels)
+		if len(selector) == 0 {
+			return nil, fmt.Errorf("DiscoverReadOnly: unable to derive a node selector for the discovered group")
+		}
+		clusterConfig[0].NodeSelector = selector
+	}
 	for _, warning := range warnings {
 		ui.FromContext(ctx).Warning("%s", warning)
 	}
@@ -85,4 +104,43 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.La
 	}
 	cfg.ClusterConfig = clusterConfig
 	return cfg, nil
+}
+
+func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName string) (string, error) {
+	pods := &corev1.PodList{}
+	if err := c.List(ctx, pods); err != nil {
+		return "", err
+	}
+	namespaces := make(map[string]bool)
+	for _, pod := range pods.Items {
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == "DaemonSet" && owner.Name == daemonSetName {
+				namespaces[pod.Namespace] = true
+				break
+			}
+		}
+	}
+	if len(namespaces) == 0 {
+		return "", fmt.Errorf("%w: DaemonSet %q was not found", ErrNotInstalled, daemonSetName)
+	}
+	ordered := make([]string, 0, len(namespaces))
+	for namespace := range namespaces {
+		ordered = append(ordered, namespace)
+	}
+	sort.Strings(ordered)
+	return ordered[0], nil
+}
+
+func readOnlyNodeSelector(nodes []string, nodeLabels map[string]map[string]string) map[string]string {
+	common := computeCommonLabels(nodes, nodeLabels)
+	for _, key := range []string{config.MachineLabelKey, config.GPULabelKey,
+		"nvidia.com/gpu.product", "nvidia.com/gpu.machine"} {
+		if value := common[key]; value != "" {
+			return map[string]string{key: value}
+		}
+	}
+	if len(nodes) == 1 {
+		return map[string]string{"kubernetes.io/hostname": nodes[0]}
+	}
+	return nil
 }
