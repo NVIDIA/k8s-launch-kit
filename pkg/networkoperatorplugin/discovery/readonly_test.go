@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,38 @@ func TestDiscoverReadOnlyRequiresExistingDaemon(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotInstalled))
+}
+
+func TestReadOnlyNodeSelectorsTryLaterUniqueCandidate(t *testing.T) {
+	nodes := []string{"worker-0", "worker-1"}
+	labels := map[string]map[string]string{
+		"worker-0": {config.MachineLabelKey: "shared", config.GPULabelKey: "group"},
+		"worker-1": {config.MachineLabelKey: "shared", config.GPULabelKey: "group"},
+		"worker-2": {config.MachineLabelKey: "shared", config.GPULabelKey: "other"},
+	}
+
+	var selected map[string]string
+	for _, candidate := range readOnlyNodeSelectors(nodes, labels) {
+		if selectorMatchesOnlyNodes(candidate, nodes, labels) {
+			selected = candidate
+			break
+		}
+	}
+
+	assert.Equal(t, map[string]string{config.GPULabelKey: "group"}, selected)
+}
+
+func TestReadOnlyNodeSelectorsFailWhenNoCandidateIsSafe(t *testing.T) {
+	nodes := []string{"worker-0", "worker-1"}
+	labels := map[string]map[string]string{
+		"worker-0": {config.MachineLabelKey: "shared", config.GPULabelKey: "group"},
+		"worker-1": {config.MachineLabelKey: "shared", config.GPULabelKey: "group"},
+		"worker-2": {config.MachineLabelKey: "shared", config.GPULabelKey: "group"},
+	}
+
+	for _, candidate := range readOnlyNodeSelectors(nodes, labels) {
+		assert.False(t, selectorMatchesOnlyNodes(candidate, nodes, labels))
+	}
 }
 
 func TestFindDaemonSetNamespacePrefersNetworkOperator(t *testing.T) {

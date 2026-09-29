@@ -97,11 +97,14 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.La
 	}
 	clusterConfig, warnings := buildClusterConfig(devices.Items, nodeLabels, nil, true)
 	if len(clusterConfig) == 1 && len(clusterConfig[0].NodeSelector) == 0 {
-		selector := readOnlyNodeSelector(clusterConfig[0].WorkerNodes, nodeLabels)
-		if len(selector) == 0 {
-			return nil, fmt.Errorf("DiscoverReadOnly: unable to derive a node selector for the discovered group")
+		var selector map[string]string
+		for _, candidate := range readOnlyNodeSelectors(clusterConfig[0].WorkerNodes, nodeLabels) {
+			if selectorMatchesOnlyNodes(candidate, clusterConfig[0].WorkerNodes, nodeLabels) {
+				selector = candidate
+				break
+			}
 		}
-		if !selectorMatchesOnlyNodes(selector, clusterConfig[0].WorkerNodes, nodeLabels) {
+		if len(selector) == 0 {
 			return nil, fmt.Errorf("DiscoverReadOnly: derived node selector matches nodes outside the discovered group")
 		}
 		clusterConfig[0].NodeSelector = selector
@@ -134,18 +137,19 @@ func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName 
 	return "", fmt.Errorf("%w: DaemonSet %q was not found in known operator namespaces", ErrNotInstalled, daemonSetName)
 }
 
-func readOnlyNodeSelector(nodes []string, nodeLabels map[string]map[string]string) map[string]string {
+func readOnlyNodeSelectors(nodes []string, nodeLabels map[string]map[string]string) []map[string]string {
 	common := computeCommonLabels(nodes, nodeLabels)
+	selectors := make([]map[string]string, 0, 5)
 	for _, key := range []string{config.MachineLabelKey, config.GPULabelKey,
 		"nvidia.com/gpu.product", "nvidia.com/gpu.machine"} {
 		if value := common[key]; value != "" {
-			return map[string]string{key: value}
+			selectors = append(selectors, map[string]string{key: value})
 		}
 	}
 	if len(nodes) == 1 {
-		return map[string]string{"kubernetes.io/hostname": nodes[0]}
+		selectors = append(selectors, map[string]string{"kubernetes.io/hostname": nodes[0]})
 	}
-	return nil
+	return selectors
 }
 
 func selectorMatchesOnlyNodes(selector map[string]string, groupNodes []string, nodeLabels map[string]map[string]string) bool {
