@@ -12,6 +12,14 @@ Read [AGENTS.md](AGENTS.md) for repository navigation, behavior contracts,
 build and test guidance, and the development workflow. These shared rules also
 apply to agent-assisted contributions; `CLAUDE.md` points to the same guide.
 
+### Continuous integration
+
+Build, test, and lint jobs use `Mellanox/cloud-orchestration-reusable-workflows`.
+Go and golangci-lint versions are selected centrally. CI retains documentation
+contract checks and cross-platform builds, and combines race detection and
+coverage in one test run. `make lint` installs a versioned local binary;
+`GOLANGCILINT_VERSION` can select the same version used by CI.
+
 ### Extension Contracts
 
 Use the [contract index](openspec/README.md) to identify the integration boundaries
