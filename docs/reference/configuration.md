@@ -12,7 +12,8 @@ binary. Generation records the effective result in
 `<deployment-dir>/.l8k/resolved-config.yaml`; deploy and validate use that
 bundle metadata when no explicit `--user-config` is supplied.
 
-The canonical default release is `26.7`. A compatible Spectrum-X release
+The canonical default release is `26.7`. The `26.10` catalog entry selects
+Network Operator `v26.10.0-beta.1` when requested. A compatible Spectrum-X release
 selected during fresh discovery takes precedence over that default; the saved
 file contains the selected release and its matching catalog versions. An
 explicit release in `--user-config` remains pinned unless a CLI release
@@ -115,6 +116,7 @@ Supported release lines are currently:
 - `26.1`
 - `26.4`
 - `26.7`
+- `26.10` (`v26.10.0-beta.1`)
 
 The release line fills Network Operator versions, component image tags, DOCA driver version, full-runtime validation image, repositories, Helm repository URL, and version-gated template behavior. Spectrum-X releases also carry a manually maintained xPlane repository and version used in `spectrumXOperator.xPlane` instead of reusing the generic component tag.
 
