@@ -84,16 +84,23 @@ deps:
 	$(GOMOD) download
 	$(GOMOD) tidy
 
-## Run linter (requires golangci-lint)
-lint:
-	golangci-lint run ./...
+# CI supplies this environment variable from the reusable workflow.
+GOLANGCILINT_VERSION ?= v2.14.0
+GOLANGCI_LINT = $(CURDIR)/bin/golangci-lint-$(GOLANGCILINT_VERSION)
 
-## Install golangci-lint if not present
-install-lint:
-	@which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
+## Run linter
+lint: install-lint
+	$(GOLANGCI_LINT) run ./...
+
+## Install the selected golangci-lint version locally
+install-lint: $(GOLANGCI_LINT)
+$(GOLANGCI_LINT):
+	mkdir -p $(CURDIR)/bin
+	GOBIN=$(CURDIR)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCILINT_VERSION)
+	mv $(CURDIR)/bin/golangci-lint $(GOLANGCI_LINT)
 
 ## Run linter with installation check
-lint-check: install-lint lint
+lint-check: lint
 
 ## Build Docker image
 docker-build:

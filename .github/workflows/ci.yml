@@ -11,69 +11,13 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v7
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Build binary
-        run: make build
-
-      - name: Check documentation examples and CLI contract
-        run: python3 scripts/check-docs.py --binary build/l8k
-
-      - name: Build all platforms
-        run: make build-all
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v7
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run tests
-        run: go test -v -race -count=1 ./...
-
-      - name: Run tests with coverage
-        run: |
-          go test -coverprofile=coverage.out ./...
-          go tool cover -func=coverage.out
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v7
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.11
+  ci:
+    uses: Mellanox/cloud-orchestration-reusable-workflows/.github/workflows/go-ci-reusable.yml@main
+    with:
+      build-command: |
+        make build
+        python3 scripts/check-docs.py --binary build/l8k
+        make build-all
+      test-command: |
+        go test -v -race -count=1 -coverprofile=coverage.out ./...
+        go tool cover -func=coverage.out
