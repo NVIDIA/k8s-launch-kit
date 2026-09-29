@@ -78,8 +78,14 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		return nil, fmt.Errorf("DiscoverReadOnly: inspect existing daemon: %w", err)
 	}
 
-	expectedNodes, _, _, err := waitForDaemonSetPods(ctx, kubeClient, ui.FromContext(ctx),
-		namespace, nicconfigdaemon.DaemonSetName, 5*time.Minute)
+	var expectedNodes []string
+	if options.networkOperatorNamespace != "" {
+		expectedNodes, _, _, err = waitForDaemonSetPodsInNamespace(ctx, kubeClient, ui.FromContext(ctx),
+			namespace, nicconfigdaemon.DaemonSetName, 5*time.Minute)
+	} else {
+		expectedNodes, _, _, err = waitForDaemonSetPods(ctx, kubeClient, ui.FromContext(ctx),
+			namespace, nicconfigdaemon.DaemonSetName, 5*time.Minute)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: wait for existing daemon: %w", err)
 	}
@@ -149,19 +155,25 @@ func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName,
 		namespaces = []string{"nvidia-network-operator", "network-operator", nicconfigdaemon.Namespace}
 	}
 	var lastErr error
+	var firstWithPods string
 	for _, namespace := range namespaces {
 		readiness, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName)
 		if err == nil && readiness.ready > 0 {
 			return namespace, nil
 		}
-		if err != nil && !errors.Is(err, ErrNotInstalled) {
+		if err == nil {
+			if firstWithPods == "" {
+				firstWithPods = namespace
+			}
+		} else if !errors.Is(err, ErrNotInstalled) && lastErr == nil {
 			lastErr = err
-		} else if err == nil {
-			lastErr = fmt.Errorf("DaemonSet %q in namespace %q has no ready pods", daemonSetName, namespace)
 		}
 	}
 	if lastErr != nil {
 		return "", lastErr
+	}
+	if firstWithPods != "" {
+		return firstWithPods, nil
 	}
 	return "", fmt.Errorf("%w: DaemonSet %q was not found in usable operator namespaces", ErrNotInstalled, daemonSetName)
 }

@@ -752,7 +752,18 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 // Ready node names, the Ready pods (for pod exec), the namespace they were
 // found in, and an error.
 func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
-	altNS := alternateNamespace(namespace)
+	return waitForDaemonSetPodsWithFallback(parentCtx, c, uiOutput, namespace, daemonSetName, timeout, true)
+}
+
+func waitForDaemonSetPodsInNamespace(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
+	return waitForDaemonSetPodsWithFallback(parentCtx, c, uiOutput, namespace, daemonSetName, timeout, false)
+}
+
+func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration, allowFallback bool) ([]string, []corev1.Pod, string, error) {
+	altNS := ""
+	if allowFallback {
+		altNS = alternateNamespace(namespace)
+	}
 	progressLabel := fmt.Sprintf("Waiting for %s pods in namespace %q (timeout: %s)", daemonSetName, namespace, timeout.Truncate(time.Second))
 	if altNS != "" {
 		progressLabel = fmt.Sprintf("Waiting for %s pods in namespace %q (also polling fallback %q; timeout: %s)", daemonSetName, namespace, altNS, timeout.Truncate(time.Second))
