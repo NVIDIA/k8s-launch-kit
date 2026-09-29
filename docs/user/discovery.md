@@ -47,12 +47,15 @@ Configuration Daemon can call `networkoperatorplugin.DiscoverReadOnly`. The
 function reads
 the existing daemon pods, nodes, and `NicDevice` resources and returns a
 `LaunchKitConfig` without creating, patching, or deleting Kubernetes resources.
-It locates the existing daemon by its DaemonSet owner in the known Network
-Operator and Launch Kit namespaces, preferring the Network Operator namespace
-when both installations are present.
+It locates the existing daemon by its DaemonSet owner in the configured
+Network Operator namespace when `WithReadOnlyNetworkOperatorNamespace` is
+provided. Without that option, it checks the standard Network Operator and
+Launch Kit namespaces, preferring a usable Network Operator daemon when both
+installations are present.
 It returns `networkoperatorplugin.ErrNotInstalled` when the discovery daemon is
-not already running. Callers need permission to list daemon pods in the
-candidate operator namespace, cluster-scoped read access to nodes, and
+not already running. With the configured-namespace option, callers need pod
+read access only in that namespace; otherwise they need pod-list access in all
+fallback namespaces. Both paths need cluster-scoped read access to nodes and
 all-namespaces read permission for the namespaced `NicDevice` resources. Use
 `discovery.Discover` when the caller is responsible for bootstrapping the
 temporary daemon.
