@@ -50,9 +50,11 @@ the automatic ``sbr`` CNI meta-plugin on generated non-Spectrum-X secondary
 networks so traffic sourced from a rail IP exits through that rail's interface
 and gateway. ``--ignore-arp`` chains the ``tuning`` CNI meta-plugin before
 ``sbr`` and sets ``arp_ignore=1``, ``arp_announce=2``, and ``rp_filter=0`` at
-both ``all`` and ``IFNAME`` scopes. This is useful when pod rails can observe
-ARP for each other: Linux can otherwise answer ARP for a rail-0 IP from a
-rail-3 VF MAC inside the same network namespace, sending RoCE traffic to the
+both ``all`` and ``IFNAME`` scopes on Kubernetes, or only ``IFNAME``
+scope on OpenShift. The latter requires matching Multus sysctl allowlist entries.
+This is useful when pod rails can observe ARP for each other: Linux can otherwise
+answer ARP for a rail-0 IP from a rail-3 VF MAC inside the same network
+namespace, sending RoCE traffic to the
 wrong HCA even though the IP destination is correct. These settings apply to
 SR-IOV, SR-IOV IB, host-device, Macvlan RDMA-shared, and IPoIB RDMA-shared
 profiles; they do not apply to Spectrum-X profiles.

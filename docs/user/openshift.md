@@ -22,6 +22,22 @@ l8k version
 
 Confirm permission to run privileged discovery, create the generated resources, and later create temporary validation namespaces and SCCs. Obtain approved worker/PF scope, switch settings, unused addressing, VF capacity, MTU, and maintenance limits from the site owners. See [deployment planning](profiles.md#check-prerequisites-and-site-inputs). Resolve failed CSVs, absent APIs, and admission restrictions with the operator owners first.
 
+For `profile.ignoreARP: true`, check the Multus sysctl allowlist before
+deploying workloads:
+
+```bash
+oc -n openshift-multus get configmap cni-sysctl-allowlist -o yaml
+```
+
+The allowlist must admit
+`^net.ipv4.conf.IFNAME.arp_ignore$`,
+`^net.ipv4.conf.IFNAME.arp_announce$`, and
+`^net.ipv4.conf.IFNAME.rp_filter$`. Have the cluster administrator add any
+missing expressions through the site's OpenShift configuration process.
+Otherwise pod attachment can fail even when the generated resources reconcile.
+Launch Kit renders these interface sysctls for OpenShift and omits the
+`net.ipv4.conf.all.*` entries used by the Kubernetes flavor.
+
 ## 1. Discover the intended workers
 
 Prepare a site-owned seed configuration. This illustrates the required scope, **not** a complete hardware inventory; discovery supplies NIC and GPU details. Replace the worker names and namespaces with site values:
@@ -75,6 +91,10 @@ Compatible groups with the same GPU type and east-west rail count share a pool, 
 Launch Kit sets NFD PCI `deviceLabelFields` to `[vendor]`, replacing the old field selection while retaining other NFD sources and PCI class whitelists. Review this change with the NFD owner. The Red Hat operator uses native draining; the NVIDIA external SR-IOV drainer integration is unavailable in that build. The Maintenance Operator coordinates supported driver operations.
 
 Keep `ocp-deployment/.l8k/resolved-config.yaml` with the generated manifests. Check the `NicNodePolicy` and `SriovNetworkNodePolicy` selectors and PCI addresses against every worker they target. Also check the `SriovNetworkPoolConfig`, `SriovNetwork`, NV-IPAM pools, resource names, namespaces, NFD change, and any custom workload. OpenShift output must have no `values.yaml`; if one remains, regenerate into a clean directory with `--flavor ocp`. The generation [bundle checklist](../advanced/generation.md#review-the-bundle) gives the common review points.
+
+If `profile.ignoreARP` and source-based routing are enabled, each secondary
+network's `metaPlugins` should contain interface-only `tuning` sysctls
+followed by `sbr`. Check that no `net.ipv4.conf.all.*` key appears there.
 
 ## 3. Preview and deploy
 

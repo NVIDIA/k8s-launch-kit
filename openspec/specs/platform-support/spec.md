@@ -48,6 +48,11 @@ Platform adaptations SHALL preserve explicit supported user values and use durab
 - **WHEN** the selected platform requires an externally installed operator
 - **THEN** deployment honors that installation boundary and reports missing prerequisites rather than claiming it installed the operator.
 
+#### Scenario: OpenShift interface tuning
+
+- **WHEN** `ignoreARP` is enabled for a supported OpenShift secondary network
+- **THEN** generation emits only interface-scoped ARP and reverse-path sysctls in its tuning meta-plugin, retains source-based routing order when selected, and documents the Multus allowlist prerequisite.
+
 ### Requirement: Qualification claims
 
 Support claims MUST identify the platform, profile, hardware and phases actually verified. Rendering, simulated tests, server dry-run and live validation SHALL be distinguished.
