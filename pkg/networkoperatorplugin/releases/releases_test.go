@@ -17,6 +17,7 @@
 package releases
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/Masterminds/semver/v3"
@@ -25,7 +26,7 @@ import (
 )
 
 func TestLookupRelease_Known(t *testing.T) {
-	for _, key := range []string{"26.1", "26.4", "26.7"} {
+	for _, key := range []string{"26.1", "26.4", "26.7", "26.10"} {
 		r, ok := LookupRelease(key)
 		require.True(t, ok, "expected catalog entry for %q", key)
 		assert.NotEmpty(t, r.NetworkOperator.Version, "key %s: networkOperator.version", key)
@@ -62,7 +63,7 @@ func TestLookupRelease_ArtifactDestinationsMatchVersion(t *testing.T) {
 }
 
 func TestLookupRelease_XPlaneArtifactsAreIndependent(t *testing.T) {
-	for _, key := range []string{"26.4", "26.7"} {
+	for _, key := range []string{"26.4", "26.7", "26.10"} {
 		r, ok := LookupRelease(key)
 		require.True(t, ok, "expected catalog entry for %q", key)
 		assert.NotEmpty(t, r.XPlane.Repository, "key %s: xPlane.repository", key)
@@ -98,9 +99,20 @@ func TestSupportedReleases_SortedAndContainsKnownKeys(t *testing.T) {
 	assert.Contains(t, got, "26.1")
 	assert.Contains(t, got, "26.4")
 	assert.Contains(t, got, "26.7")
+	assert.Contains(t, got, "26.10")
 
-	// Ensure ascending order.
+	// Ensure numeric version order; string order places 26.10 before 26.7.
 	for i := 1; i < len(got); i++ {
-		assert.Less(t, got[i-1], got[i], "expected sorted output")
+		previous, err := semver.NewVersion(got[i-1] + ".0")
+		require.NoError(t, err)
+		current, err := semver.NewVersion(got[i] + ".0")
+		require.NoError(t, err)
+		assert.True(t, previous.LessThan(current), "expected numeric version order: %v", got)
 	}
+}
+
+func TestReleaseKeyLessOrdersMalformedAndNumericKeysConsistently(t *testing.T) {
+	keys := []string{"26.7", "bad-z", "26.10", "bad-a", "26.1"}
+	sort.Slice(keys, func(i, j int) bool { return releaseKeyLess(keys[i], keys[j]) })
+	assert.Equal(t, []string{"bad-a", "bad-z", "26.1", "26.7", "26.10"}, keys)
 }

@@ -55,3 +55,17 @@ releases:
       version: doca-3.5.0
     validation:
       image: nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.4.0-runtime-host
+  "26.10":
+    networkOperator:
+      version: v26.10.0-beta.1
+      componentVersion: network-operator-v26.10.0-beta.1
+      repository: nvcr.io/nvstaging/mellanox
+      operatorRepository: nvcr.io/nvstaging/mellanox
+      helmRepoURL: https://helm.ngc.nvidia.com/nvstaging/mellanox
+    docaDriver:
+      version: doca3.6.0-26.10-028000-0
+    xPlane:
+      repository: nvcr.io/nvstaging/doca
+      version: 3.5.0041
+    validation:
+      image: nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.4.0-runtime-host

@@ -36,6 +36,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/Masterminds/semver/v3"
 	"gopkg.in/yaml.v2"
 )
 
@@ -125,7 +126,7 @@ func LookupRelease(release string) (Release, bool) {
 	return r, ok
 }
 
-// SupportedReleases returns the catalog keys sorted ascending. Used in flag
+// SupportedReleases returns the catalog keys sorted by version. Used in flag
 // help text and validation error messages.
 func SupportedReleases() []string {
 	m, err := loadReleases()
@@ -136,6 +137,26 @@ func SupportedReleases() []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(i, j int) bool {
+		return releaseKeyLess(keys[i], keys[j])
+	})
 	return keys
+}
+
+func releaseKeyLess(leftKey, rightKey string) bool {
+	left, leftErr := semver.NewVersion(leftKey + ".0")
+	right, rightErr := semver.NewVersion(rightKey + ".0")
+	if leftErr != nil && rightErr != nil {
+		return leftKey < rightKey
+	}
+	if leftErr != nil {
+		return true
+	}
+	if rightErr != nil {
+		return false
+	}
+	if left.Equal(right) {
+		return leftKey < rightKey
+	}
+	return left.LessThan(right)
 }
