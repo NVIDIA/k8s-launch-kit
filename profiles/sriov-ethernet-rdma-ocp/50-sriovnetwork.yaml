@@ -1,4 +1,4 @@
-{{- $metaPlugins := secondaryNetworkMetaPlugins .Profile -}}
+{{- $metaPlugins := secondaryNetworkMetaPlugins .Profile .Flavor -}}
 {{- if .Profile.Multirail -}}
 {{- /* Create separate SR-IOV Ethernet networks for each PF interface */ -}}
 {{- range $i, $pf := .ClusterConfig.PFs}}

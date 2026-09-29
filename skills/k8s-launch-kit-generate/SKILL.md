@@ -254,6 +254,13 @@ win when a one-off override is needed.
 ## OpenShift
 
 `--flavor ocp` selects separate OpenShift profiles and generates no Helm values. Hardware policies use the same bucket and source-group render scopes as Kubernetes; optional NIC interface naming templates render per source group. Compatible groups share a network per GPU type and rail count. Custom workloads render once per shared network and workload namespace, referencing that namespace's NAD and the `openshift.io` SR-IOV resource. Verify each policy selector and PCI address against every targeted worker before deployment.
+
+With `profile.ignoreARP: true`, generated `tuning` meta-plugins use only
+`net.ipv4.conf.IFNAME.*` sysctls; the Kubernetes flavor also emits
+`net.ipv4.conf.all.*`. Confirm that OpenShift's
+`openshift-multus/cni-sysctl-allowlist` admits the three IFNAME entries before
+workload validation. With source-based routing, `sbr` follows `tuning`.
+
 See `docs/user/openshift.md` for the required external operators and full
 generate-to-acceptance procedure.
 

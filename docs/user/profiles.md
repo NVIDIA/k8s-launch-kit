@@ -170,7 +170,7 @@ l8k generate \
   --ignore-arp
 ```
 
-`--ignore-arp` chains the `tuning` CNI meta-plugin and sets interface-local ARP sysctls to prevent ARP flux between rails. These options apply to SR-IOV, SR-IOV IB, host-device, Macvlan RDMA-shared, and IPoIB RDMA-shared profiles. They do not apply to Spectrum-X.
+`--ignore-arp` chains the `tuning` CNI meta-plugin and sets interface-local ARP sysctls to prevent ARP flux between rails. Kubernetes output also sets the matching `all` scope sysctls; OpenShift output uses only `IFNAME` scope and requires those entries in the Multus sysctl allowlist. These options apply to SR-IOV, SR-IOV IB, host-device, Macvlan RDMA-shared, and IPoIB RDMA-shared profiles. They do not apply to Spectrum-X. See the [OpenShift prerequisites](openshift.md#before-you-start) for the allowlist check.
 
 ## Network Namespaces
 
