@@ -43,6 +43,24 @@ func TestDiscoverReadOnlyRequiresExistingDaemon(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrNotInstalled))
 }
 
+func TestFindDaemonSetNamespacePrefersNetworkOperator(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	operatorPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "operator-daemon", Namespace: "nvidia-network-operator", OwnerReferences: owner,
+	}}
+	launchKitPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "launch-kit-daemon", Namespace: nicconfigdaemon.Namespace, OwnerReferences: owner,
+	}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(operatorPod, launchKitPod).Build()
+
+	namespace, err := findDaemonSetNamespace(context.Background(), c, nicconfigdaemon.DaemonSetName)
+
+	require.NoError(t, err)
+	assert.Equal(t, "nvidia-network-operator", namespace)
+}
+
 func TestDiscoverReadOnlyDoesNotMutateCluster(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))

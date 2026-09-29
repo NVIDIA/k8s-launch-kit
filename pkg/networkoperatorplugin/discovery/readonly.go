@@ -20,14 +20,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
-	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -121,33 +119,19 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.La
 }
 
 func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName string) (string, error) {
-	pods := &corev1.PodList{}
-	if err := c.List(ctx, pods); err != nil {
-		return "", err
-	}
-	namespaces := make(map[string]bool)
-	for _, pod := range pods.Items {
-		for _, owner := range pod.OwnerReferences {
-			if owner.Kind == "DaemonSet" && owner.Name == daemonSetName {
-				namespaces[pod.Namespace] = true
-				break
-			}
-		}
-	}
-	if len(namespaces) == 0 {
-		return "", fmt.Errorf("%w: DaemonSet %q was not found", ErrNotInstalled, daemonSetName)
-	}
-	ordered := make([]string, 0, len(namespaces))
-	for namespace := range namespaces {
-		ordered = append(ordered, namespace)
-	}
-	sort.Strings(ordered)
-	for _, namespace := range ordered {
-		if namespace != nicconfigdaemon.Namespace {
+	namespaces := []string{"nvidia-network-operator", "network-operator", nicconfigdaemon.Namespace}
+	var lastErr error
+	for _, namespace := range namespaces {
+		if _, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName); err == nil {
 			return namespace, nil
+		} else if !errors.Is(err, ErrNotInstalled) {
+			lastErr = err
 		}
 	}
-	return ordered[0], nil
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("%w: DaemonSet %q was not found in known operator namespaces", ErrNotInstalled, daemonSetName)
 }
 
 func readOnlyNodeSelector(nodes []string, nodeLabels map[string]map[string]string) map[string]string {
