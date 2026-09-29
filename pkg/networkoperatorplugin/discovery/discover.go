@@ -721,9 +721,9 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 
 	if len(dsPods) == 0 {
 		return dsReadiness{}, fmt.Errorf(
-			"no pods found for DaemonSet %q in namespace %q; "+
+			"%w: no pods found for DaemonSet %q in namespace %q; "+
 				"use --network-operator-namespace to specify the correct namespace",
-			daemonSetName, namespace)
+			ErrNotInstalled, daemonSetName, namespace)
 	}
 
 	st := dsReadiness{total: len(dsPods)}

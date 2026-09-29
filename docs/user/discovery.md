@@ -40,6 +40,18 @@ l8k discover \
 
 Discovery is self-contained. It does not require Node Feature Discovery (NFD) or a pre-installed Network Operator.
 
+## Read-only library discovery
+
+Library consumers that only need the inventory from an already-running NIC
+Configuration Daemon can call `networkoperatorplugin.DiscoverReadOnly`. The
+function reads
+the existing daemon pods, nodes, and `NicDevice` resources and returns a
+`LaunchKitConfig` without creating, patching, or deleting Kubernetes resources.
+It returns `networkoperatorplugin.ErrNotInstalled` when the Launch Kit discovery daemon is
+not already running. Callers should grant only the read permissions needed for
+the daemon-pod, node, and `NicDevice` lists; use `discovery.Discover` when the
+caller is responsible for bootstrapping the temporary daemon.
+
 ## Review saved inventory
 
 Open `cluster-config.yaml` before generation. Confirm the intended workers and
