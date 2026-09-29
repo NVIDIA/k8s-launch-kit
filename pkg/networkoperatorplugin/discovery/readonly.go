@@ -33,6 +33,24 @@ import (
 // for a read-only discovery request.
 var ErrNotInstalled = errors.New("nic configuration daemon is not installed")
 
+// ReadOnlyOption configures read-only discovery without changing the existing
+// two-argument DiscoverReadOnly call.
+type ReadOnlyOption func(*readOnlyOptions)
+
+type readOnlyOptions struct {
+	networkOperatorNamespace string
+}
+
+// WithReadOnlyNetworkOperatorNamespace restricts daemon lookup to the
+// configured Network Operator namespace. Supplying it avoids probing fallback
+// namespaces and is the least-privilege path for callers with namespace-scoped
+// pod permissions.
+func WithReadOnlyNetworkOperatorNamespace(namespace string) ReadOnlyOption {
+	return func(options *readOnlyOptions) {
+		options.networkOperatorNamespace = namespace
+	}
+}
+
 // DiscoverReadOnly reads hardware discovered by an existing NIC Configuration
 // Daemon and returns it as a LaunchKitConfig. It never creates, patches, or
 // deletes Kubernetes resources. The daemon must already be running; callers
@@ -43,12 +61,16 @@ var ErrNotInstalled = errors.New("nic configuration daemon is not installed")
 // operator has already performed the privileged hardware inspection. This
 // keeps the API usable with read-only RBAC and avoids granting a consumer
 // permission to create bootstrap resources.
-func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.LaunchKitConfig, error) {
+func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
 	if kubeClient == nil {
 		return nil, errors.New("DiscoverReadOnly: kubeClient must not be nil")
 	}
 
-	namespace, err := findDaemonSetNamespace(ctx, kubeClient, nicconfigdaemon.DaemonSetName)
+	options := readOnlyOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	namespace, err := findDaemonSetNamespace(ctx, kubeClient, nicconfigdaemon.DaemonSetName, options.networkOperatorNamespace)
 	if err != nil {
 		if errors.Is(err, ErrNotInstalled) {
 			return nil, err
@@ -121,20 +143,27 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.La
 	return cfg, nil
 }
 
-func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName string) (string, error) {
-	namespaces := []string{"nvidia-network-operator", "network-operator", nicconfigdaemon.Namespace}
+func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName, configuredNamespace string) (string, error) {
+	namespaces := []string{configuredNamespace}
+	if configuredNamespace == "" {
+		namespaces = []string{"nvidia-network-operator", "network-operator", nicconfigdaemon.Namespace}
+	}
 	var lastErr error
 	for _, namespace := range namespaces {
-		if _, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName); err == nil {
+		readiness, err := checkDaemonSetPodsReady(ctx, c, namespace, daemonSetName)
+		if err == nil && readiness.ready > 0 {
 			return namespace, nil
-		} else if !errors.Is(err, ErrNotInstalled) {
+		}
+		if err != nil && !errors.Is(err, ErrNotInstalled) {
 			lastErr = err
+		} else if err == nil {
+			lastErr = fmt.Errorf("DaemonSet %q in namespace %q has no ready pods", daemonSetName, namespace)
 		}
 	}
 	if lastErr != nil {
 		return "", lastErr
 	}
-	return "", fmt.Errorf("%w: DaemonSet %q was not found in known operator namespaces", ErrNotInstalled, daemonSetName)
+	return "", fmt.Errorf("%w: DaemonSet %q was not found in usable operator namespaces", ErrNotInstalled, daemonSetName)
 }
 
 func readOnlyNodeSelectors(nodes []string, nodeLabels map[string]map[string]string) []map[string]string {

@@ -28,9 +28,16 @@ import (
 // for a read-only discovery request.
 var ErrNotInstalled = discovery.ErrNotInstalled
 
+// ReadOnlyOption configures read-only discovery.
+type ReadOnlyOption = discovery.ReadOnlyOption
+
+// WithReadOnlyNetworkOperatorNamespace restricts read-only daemon lookup to
+// the configured Network Operator namespace.
+var WithReadOnlyNetworkOperatorNamespace = discovery.WithReadOnlyNetworkOperatorNamespace
+
 // DiscoverReadOnly inspects an existing NIC Configuration Daemon and returns
 // the discovered topology without creating, patching, or deleting resources.
 // It returns ErrNotInstalled when the daemon is not already running.
-func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.LaunchKitConfig, error) {
-	return discovery.DiscoverReadOnly(ctx, kubeClient)
+func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
+	return discovery.DiscoverReadOnly(ctx, kubeClient, opts...)
 }
