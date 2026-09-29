@@ -77,20 +77,34 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client) (*config.La
 		readyNodes[node] = true
 	}
 	filtered := devices.Items[:0]
+	deviceNodes := make(map[string]bool, len(devices.Items))
 	for _, device := range devices.Items {
 		if readyNodes[device.Status.Node] {
 			filtered = append(filtered, device)
+			deviceNodes[device.Status.Node] = true
 		}
 	}
 	devices.Items = filtered
 	if len(devices.Items) == 0 {
 		return nil, fmt.Errorf("DiscoverReadOnly: no NicDevice resources found on ready daemon nodes")
 	}
+	var missingNodes []string
+	for _, node := range expectedNodes {
+		if !deviceNodes[node] {
+			missingNodes = append(missingNodes, node)
+		}
+	}
+	if len(missingNodes) > 0 {
+		return nil, fmt.Errorf("DiscoverReadOnly: NicDevice resources are missing for ready daemon nodes: %v", missingNodes)
+	}
 	clusterConfig, warnings := buildClusterConfig(devices.Items, nodeLabels, nil, true)
 	if len(clusterConfig) == 1 && len(clusterConfig[0].NodeSelector) == 0 {
 		selector := readOnlyNodeSelector(clusterConfig[0].WorkerNodes, nodeLabels)
 		if len(selector) == 0 {
 			return nil, fmt.Errorf("DiscoverReadOnly: unable to derive a node selector for the discovered group")
+		}
+		if !selectorMatchesOnlyNodes(selector, clusterConfig[0].WorkerNodes, nodeLabels) {
+			return nil, fmt.Errorf("DiscoverReadOnly: derived node selector matches nodes outside the discovered group")
 		}
 		clusterConfig[0].NodeSelector = selector
 	}
@@ -128,6 +142,11 @@ func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName 
 		ordered = append(ordered, namespace)
 	}
 	sort.Strings(ordered)
+	for _, namespace := range ordered {
+		if namespace != nicconfigdaemon.Namespace {
+			return namespace, nil
+		}
+	}
 	return ordered[0], nil
 }
 
@@ -143,4 +162,24 @@ func readOnlyNodeSelector(nodes []string, nodeLabels map[string]map[string]strin
 		return map[string]string{"kubernetes.io/hostname": nodes[0]}
 	}
 	return nil
+}
+
+func selectorMatchesOnlyNodes(selector map[string]string, groupNodes []string, nodeLabels map[string]map[string]string) bool {
+	wanted := make(map[string]bool, len(groupNodes))
+	for _, node := range groupNodes {
+		wanted[node] = true
+	}
+	for node, labels := range nodeLabels {
+		matches := true
+		for key, value := range selector {
+			if labels[key] != value {
+				matches = false
+				break
+			}
+		}
+		if matches != wanted[node] {
+			return false
+		}
+	}
+	return true
 }

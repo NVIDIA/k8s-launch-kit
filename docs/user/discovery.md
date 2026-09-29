@@ -50,9 +50,9 @@ the existing daemon pods, nodes, and `NicDevice` resources and returns a
 It locates the existing daemon by its DaemonSet owner across namespaces, so the
 operator namespace is supported as well as the Launch Kit bootstrap namespace.
 It returns `networkoperatorplugin.ErrNotInstalled` when the discovery daemon is
-not already running. Callers need namespace-scoped read access to daemon pods,
-cluster-scoped read access to nodes, and all-namespaces read permission for the
-namespaced `NicDevice` resources. Use `discovery.Discover` when the caller is
+not already running. Callers need permission to list daemon pods across
+namespaces, cluster-scoped read access to nodes, and all-namespaces read
+permission for the namespaced `NicDevice` resources. Use `discovery.Discover` when the caller is
 responsible for bootstrapping the temporary daemon.
 
 ## Review saved inventory
