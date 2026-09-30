@@ -15,7 +15,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Build the image
-FROM golang:1.27 AS builder
+ARG BASE_IMAGE_GO_BUILDER=golang:1.27
+FROM ${BASE_IMAGE_GO_BUILDER} AS builder
 
 ARG GOPROXY
 ENV GOPROXY=$GOPROXY

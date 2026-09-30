@@ -20,6 +20,11 @@ contract checks and cross-platform builds, and combines race detection and
 coverage in one test run. `make lint` installs a versioned local binary;
 `GOLANGCILINT_VERSION` can select the same version used by CI.
 
+Release image builds also resolve their Go builder image from the shared
+`go-builder-images-reusable.yml` workflow and pass `BASE_IMAGE_GO_BUILDER`
+to Docker. Builder tags are maintained centrally through Dependabot. The
+Dockerfile default is a fallback for standalone local builds.
+
 ### Extension Contracts
 
 Use the [contract index](openspec/README.md) to identify the integration boundaries
