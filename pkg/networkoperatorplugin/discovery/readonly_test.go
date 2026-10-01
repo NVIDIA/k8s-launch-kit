@@ -44,6 +44,27 @@ func TestDiscoverReadOnlyRequiresExistingDaemon(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrNotInstalled))
 }
 
+type errorListClient struct {
+	client.Client
+	err error
+}
+
+func (c errorListClient) List(context.Context, client.ObjectList, ...client.ListOption) error {
+	return c.err
+}
+
+func TestWaitNicDevicesDiscoveredReturnsListError(t *testing.T) {
+	listErr := errors.New("forbidden: cannot list NicDevice resources")
+	c := errorListClient{
+		Client: fake.NewClientBuilder().Build(),
+		err:    listErr,
+	}
+
+	err := waitNicDevicesDiscovered(context.Background(), c, []string{"worker-0"})
+
+	require.ErrorIs(t, err, listErr)
+}
+
 func TestReadOnlyNodeSelectorsTryLaterUniqueCandidate(t *testing.T) {
 	nodes := []string{"worker-0", "worker-1"}
 	labels := map[string]map[string]string{

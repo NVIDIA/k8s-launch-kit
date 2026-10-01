@@ -891,29 +891,32 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expect
 
 	for {
 		list := &nicop.NicDeviceList{}
-		if err := c.List(ctx, list); err == nil {
-			discoveredNodes := make(map[string]bool)
-			for _, d := range list.Items {
-				if d.Status.Node != "" {
-					discoveredNodes[d.Status.Node] = true
-				}
-			}
-
-			allFound := true
-			for node := range expectedSet {
-				if !discoveredNodes[node] {
-					allFound = false
-					break
-				}
-			}
-
-			if allFound && len(discoveredNodes) > 0 {
-				progress.Success(fmt.Sprintf("Found %d device(s) on %d node(s)", len(list.Items), len(discoveredNodes)))
-				return nil
-			}
-
-			progress.Update(fmt.Sprintf("Discovered devices on %d/%d node(s)...", len(discoveredNodes), len(expectedSet)))
+		if err := c.List(ctx, list); err != nil {
+			progress.Fail("Unable to list NicDevice resources")
+			return fmt.Errorf("list NicDevice resources: %w", err)
 		}
+
+		discoveredNodes := make(map[string]bool)
+		for _, d := range list.Items {
+			if d.Status.Node != "" {
+				discoveredNodes[d.Status.Node] = true
+			}
+		}
+
+		allFound := true
+		for node := range expectedSet {
+			if !discoveredNodes[node] {
+				allFound = false
+				break
+			}
+		}
+
+		if allFound && len(discoveredNodes) > 0 {
+			progress.Success(fmt.Sprintf("Found %d device(s) on %d node(s)", len(list.Items), len(discoveredNodes)))
+			return nil
+		}
+
+		progress.Update(fmt.Sprintf("Discovered devices on %d/%d node(s)...", len(discoveredNodes), len(expectedSet)))
 
 		select {
 		case <-ctx.Done():
