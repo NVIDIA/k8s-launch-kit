@@ -873,6 +873,10 @@ func alternateNamespace(current string) string {
 // daemon writes status into them in their original namespace rather than into
 // the launch-kit bootstrap namespace.
 func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expectedNodes []string) error {
+	return waitNicDevicesDiscoveredWithInterval(parentCtx, c, expectedNodes, 10*time.Second)
+}
+
+func waitNicDevicesDiscoveredWithInterval(parentCtx context.Context, c client.Client, expectedNodes []string, pollInterval time.Duration) error {
 	uiOutput := ui.FromContext(parentCtx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Discovering network devices on %d node(s) (timeout: 10 min)", len(expectedNodes)))
 
@@ -889,7 +893,7 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expect
 		expectedSet[n] = true
 	}
 
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -55,6 +56,30 @@ func (c errorListClient) List(context.Context, client.ObjectList, ...client.List
 	return c.err
 }
 
+type sequenceListClient struct {
+	client.Client
+	errors        []error
+	persistentErr error
+	items         []nicop.NicDevice
+	calls         int
+}
+
+func (c *sequenceListClient) List(_ context.Context, out client.ObjectList, _ ...client.ListOption) error {
+	c.calls++
+	if len(c.errors) > 0 {
+		err := c.errors[0]
+		c.errors = c.errors[1:]
+		return err
+	}
+	if c.persistentErr != nil {
+		return c.persistentErr
+	}
+	if list, ok := out.(*nicop.NicDeviceList); ok {
+		list.Items = append([]nicop.NicDevice(nil), c.items...)
+	}
+	return nil
+}
+
 func TestWaitNicDevicesDiscoveredReturnsListError(t *testing.T) {
 	listErr := errors.New("forbidden: cannot list NicDevice resources")
 	c := errorListClient{
@@ -65,6 +90,47 @@ func TestWaitNicDevicesDiscoveredReturnsListError(t *testing.T) {
 	err := waitNicDevicesDiscovered(context.Background(), c, []string{"worker-0"})
 
 	require.ErrorIs(t, err, listErr)
+}
+
+func TestWaitNicDevicesDiscoveredRetriesTransientListError(t *testing.T) {
+	c := &sequenceListClient{
+		Client: fake.NewClientBuilder().Build(),
+		errors: []error{apierrors.NewServiceUnavailable("apiserver restarting")},
+		items:  []nicop.NicDevice{{Status: nicop.NicDeviceStatus{Node: "worker-0"}}},
+	}
+
+	err := waitNicDevicesDiscoveredWithInterval(context.Background(), c, []string{"worker-0"}, time.Millisecond)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, c.calls)
+}
+
+func TestWaitNicDevicesDiscoveredTransientErrorsEndAtContextDeadline(t *testing.T) {
+	listErr := apierrors.NewTooManyRequests("apiserver throttled", 1)
+	c := &sequenceListClient{
+		Client:        fake.NewClientBuilder().Build(),
+		persistentErr: listErr,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+
+	err := waitNicDevicesDiscoveredWithInterval(ctx, c, []string{"worker-0"}, time.Millisecond)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout waiting for NicDevice resources")
+	assert.Greater(t, c.calls, 1)
+}
+
+func TestWaitNicDevicesDiscoveredSucceedsWhenDevicesAlreadyExist(t *testing.T) {
+	c := &sequenceListClient{
+		Client: fake.NewClientBuilder().Build(),
+		items:  []nicop.NicDevice{{Status: nicop.NicDeviceStatus{Node: "worker-0"}}},
+	}
+
+	err := waitNicDevicesDiscoveredWithInterval(context.Background(), c, []string{"worker-0"}, time.Millisecond)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, c.calls)
 }
 
 func TestRetryableNicDeviceListError(t *testing.T) {
