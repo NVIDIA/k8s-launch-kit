@@ -19,7 +19,9 @@ package discovery
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -34,6 +36,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -892,31 +895,34 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expect
 	for {
 		list := &nicop.NicDeviceList{}
 		if err := c.List(ctx, list); err != nil {
-			progress.Fail("Unable to list NicDevice resources")
-			return fmt.Errorf("list NicDevice resources: %w", err)
-		}
-
-		discoveredNodes := make(map[string]bool)
-		for _, d := range list.Items {
-			if d.Status.Node != "" {
-				discoveredNodes[d.Status.Node] = true
+			if !retryableNicDeviceListError(err) {
+				progress.Fail("Unable to list NicDevice resources")
+				return fmt.Errorf("list NicDevice resources: %w", err)
 			}
-		}
-
-		allFound := true
-		for node := range expectedSet {
-			if !discoveredNodes[node] {
-				allFound = false
-				break
+			progress.Update(fmt.Sprintf("Retrying NicDevice discovery after list error: %v", err))
+		} else {
+			discoveredNodes := make(map[string]bool)
+			for _, d := range list.Items {
+				if d.Status.Node != "" {
+					discoveredNodes[d.Status.Node] = true
+				}
 			}
-		}
 
-		if allFound && len(discoveredNodes) > 0 {
-			progress.Success(fmt.Sprintf("Found %d device(s) on %d node(s)", len(list.Items), len(discoveredNodes)))
-			return nil
-		}
+			allFound := true
+			for node := range expectedSet {
+				if !discoveredNodes[node] {
+					allFound = false
+					break
+				}
+			}
 
-		progress.Update(fmt.Sprintf("Discovered devices on %d/%d node(s)...", len(discoveredNodes), len(expectedSet)))
+			if allFound && len(discoveredNodes) > 0 {
+				progress.Success(fmt.Sprintf("Found %d device(s) on %d node(s)", len(list.Items), len(discoveredNodes)))
+				return nil
+			}
+
+			progress.Update(fmt.Sprintf("Discovered devices on %d/%d node(s)...", len(discoveredNodes), len(expectedSet)))
+		}
 
 		select {
 		case <-ctx.Done():
@@ -925,6 +931,19 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expect
 		case <-ticker.C:
 		}
 	}
+}
+
+func retryableNicDeviceListError(err error) bool {
+	if apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsInternalError(err) {
+		return true
+	}
+
+	var netErr net.Error
+	return errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())
 }
 
 // pfFingerprint identifies a PF by its device ID and PCI address (ignoring RDMA/net names).

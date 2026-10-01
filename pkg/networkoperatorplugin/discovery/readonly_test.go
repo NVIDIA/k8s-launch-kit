@@ -27,8 +27,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -63,6 +65,24 @@ func TestWaitNicDevicesDiscoveredReturnsListError(t *testing.T) {
 	err := waitNicDevicesDiscovered(context.Background(), c, []string{"worker-0"})
 
 	require.ErrorIs(t, err, listErr)
+}
+
+func TestRetryableNicDeviceListError(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		retry bool
+	}{
+		{name: "service unavailable", err: apierrors.NewServiceUnavailable("apiserver restarting"), retry: true},
+		{name: "server timeout", err: apierrors.NewServerTimeout(schema.GroupResource{Group: "nic.nvidia.com", Resource: "nicdevices"}, "list", 1), retry: true},
+		{name: "forbidden", err: apierrors.NewForbidden(nicop.GroupVersion.WithResource("nicdevices").GroupResource(), "worker-0", errors.New("denied")), retry: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.retry, retryableNicDeviceListError(tt.err))
+		})
+	}
 }
 
 func TestReadOnlyNodeSelectorsTryLaterUniqueCandidate(t *testing.T) {
