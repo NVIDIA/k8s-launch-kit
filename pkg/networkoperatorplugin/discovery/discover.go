@@ -895,6 +895,7 @@ func waitNicDevicesDiscoveredWithInterval(parentCtx context.Context, c client.Cl
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	var lastRetryableListErr error
 
 	for {
 		list := &nicop.NicDeviceList{}
@@ -903,8 +904,10 @@ func waitNicDevicesDiscoveredWithInterval(parentCtx context.Context, c client.Cl
 				progress.Fail("Unable to list NicDevice resources")
 				return fmt.Errorf("list NicDevice resources: %w", err)
 			}
+			lastRetryableListErr = err
 			progress.Update(fmt.Sprintf("Retrying NicDevice discovery after list error: %v", err))
 		} else {
+			lastRetryableListErr = nil
 			discoveredNodes := make(map[string]bool)
 			for _, d := range list.Items {
 				if d.Status.Node != "" {
@@ -931,6 +934,9 @@ func waitNicDevicesDiscoveredWithInterval(parentCtx context.Context, c client.Cl
 		select {
 		case <-ctx.Done():
 			progress.Fail("Timeout waiting for devices")
+			if lastRetryableListErr != nil {
+				return fmt.Errorf("timeout waiting for NicDevice resources from all expected nodes: %w", lastRetryableListErr)
+			}
 			return fmt.Errorf("timeout waiting for NicDevice resources from all expected nodes")
 		case <-ticker.C:
 		}
