@@ -62,6 +62,30 @@ Profiles SHALL emit native chart/API value shapes and declare the tools, images,
 - **WHEN** a profile advertises a check needing a tool or device
 - **THEN** its workload provides the declared prerequisite or explicitly reports that check unsupported.
 
+### Requirement: Opt-in standard NIC configuration
+
+Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-disabled NIC configuration template option on Kubernetes and OpenShift. Enabled templates SHALL target each selected source group's east-west NIC type and PCI addresses, route VF count from SR-IOV settings and link type from the resolved fabric, and configure PCI and Baremetal GPUDirect optimizations. Ethernet SHALL additionally configure DSCP trust and priority-3 PFC; InfiniBand SHALL omit RoCE settings. Only SR-IOV profiles SHALL disable the Mellanox plugin, preserving unrelated OCP disabled plugins. Spectrum-X SHALL reject the new option.
+
+#### Scenario: Default or explicit opt-out
+
+- **WHEN** the option is omitted or explicitly false
+- **THEN** no standard NIC configuration template or new plugin-disable request is rendered.
+
+#### Scenario: Standard profile selection
+
+- **WHEN** the option is enabled for a supported standard profile and selected hardware groups
+- **THEN** NCO is enabled independently of naming and templates retain exact per-source selectors, fabric-appropriate settings and configured VF count.
+
+#### Scenario: Operator configuration ownership
+
+- **WHEN** enabled SR-IOV configuration is applied to OpenShift with other plugins already disabled
+- **THEN** mellanox is added without removing the existing disabled plugins; RDMA-shared and host-device profiles do not request this operator setting.
+
+#### Scenario: Spectrum-X conflict
+
+- **WHEN** the new option is enabled with Spectrum-X
+- **THEN** configuration is rejected without changing Spectrum-X templates.
+
 ## Baseline and limits
 
 Current profile lookup is first-match; this spec does not introduce universal ambiguity rejection. Existing render maps do not universally detect pre-overwrite collisions: the collision requirement is an extension obligation, with legacy coverage to be assessed when touched. `ScopeClusterWide` may render a namespaced ConfigMap, while SCCs may render per workload namespace. [Resource kinds](../resource-kinds/spec.md) owns API/readiness integration; [artifacts](../artifact-handoff/spec.md) owns post-render structural validation.

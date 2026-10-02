@@ -10,6 +10,7 @@ description: |
   SR-IOV Ethernet RDMA profile offers high-performance virtualized networking with hardware acceleration
 deploymentGuide: sriov-ethernet-rdma.rst
 templates:
+  - ../sriov-ethernet-rdma/30-nicconfigurationtemplate.yaml
   - 01-sriovoperatorconfig.yaml
   - 02-maintenanceoperatorconfig.yaml
   - 03-nodefeaturediscovery.yaml

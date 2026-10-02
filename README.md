@@ -1,6 +1,8 @@
 # NVIDIA Kubernetes Launch Kit
 
 Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on Kubernetes and OpenShift clusters. It discovers NIC and GPU topology, generates reviewable Network Operator resources, deploys them in dependency order, and validates their state and data-plane connectivity. It supports SR-IOV, RDMA shared-device, host-device, InfiniBand, and Spectrum-X profiles; [Plan your deployment](docs/user/profiles.md) explains applicability and prerequisites.
+Standard SR-IOV, RDMA-shared and host-device profiles can opt into NIC tuning with `--deploy-nic-configuration-template`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
+
 
 The current lifecycle uses the `host` target by default. The reserved `dpf` target does not have available lifecycle phases; see [target extension](docs/advanced/targets.md) for its implementation status.
 

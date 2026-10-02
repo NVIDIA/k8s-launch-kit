@@ -134,6 +134,9 @@ var templateFuncs = template.FuncMap{
 		_, netdevPrefix := config.SpectrumXInterfaceNamePrefixes(settings, multiplaneMode)
 		return netdevPrefix
 	},
+	"nicConfigurationType":           nicConfigurationType,
+	"nicConfigurationPCIAddresses":   spectrumXPCIAddresses,
+	"nicConfigurationLinkType":       nicConfigurationLinkType,
 	"spectrumXNicType":               spectrumXNicType,
 	"spectrumXPCIAddresses":          spectrumXPCIAddresses,
 	"spectrumXProfileConfigRequired": config.SpectrumXProfileConfigRequired,
@@ -300,6 +303,26 @@ func spectrumXPCIAddresses(group *config.ClusterConfig) ([]string, error) {
 		return nil, fmt.Errorf("group %q has no east-west PFs", group.Identifier)
 	}
 	return addresses, nil
+}
+
+// nicConfigurationType requires explicit node and NIC selectors for opt-in tuning.
+func nicConfigurationType(group *config.ClusterConfig) (string, error) {
+	if group == nil || len(group.NodeSelector) == 0 {
+		return "", fmt.Errorf("NIC configuration requires a source group nodeSelector")
+	}
+	return spectrumXNicType(group)
+}
+
+// nicConfigurationLinkType maps resolved fabric intent to the NCO API enum.
+func nicConfigurationLinkType(fabric string) (string, error) {
+	switch fabric {
+	case "ethernet":
+		return "Ethernet", nil
+	case "infiniband":
+		return "Infiniband", nil
+	default:
+		return "", fmt.Errorf("NIC configuration requires fabric ethernet or infiniband, got %q", fabric)
+	}
 }
 
 func secondaryNetworkMetaPlugins(profile *config.Profile, flavor ...string) string {

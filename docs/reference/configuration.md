@@ -99,7 +99,7 @@ deployment intent changes.
 | `maintenance` | Maintenance Operator and upgrade concurrency limits. |
 | `nvIpam` | IPPool per-node block allocation, subnet generation, manual subnets, and exclusions. |
 | `sriov`, `hostdev`, `rdmaShared`, `ipoib`, `macvlan` | Profile-specific resource and network naming. |
-| `nicConfigurationOperator` | Interface and RDMA device naming templates. |
+| `nicConfigurationOperator` | Optional NIC firmware/runtime tuning and interface naming templates. |
 | `spectrumX` | Spectrum-X naming defaults. |
 | `profile` | Selected fabric, deployment, routing, ARP, and Spectrum-X options. |
 | `clusterConfig` | Discovered or preset-provided hardware groups. |
@@ -321,10 +321,11 @@ Automatic subnet allocation is precomputed across all final heterogeneous render
 
 When multirail is enabled, Launch Kit adds rail suffixes to generated resource and network names.
 
-## NIC Naming
+## NIC Configuration And Naming
 
 ```yaml
 nicConfigurationOperator:
+  deployNicConfigurationTemplate: false
   deployNicInterfaceNameTemplate: true
   rdmaPrefix: "rdma_r%rail_id%"
   netdevPrefix: "eth_r%rail_id%"
@@ -345,6 +346,7 @@ spectrumX:
 
 | Field | Meaning |
 | --- | --- |
+| `deployNicConfigurationTemplate` | Default `false`; opt into standard-profile NIC tuning independently of interface naming. CLI: `--deploy-nic-configuration-template[=false]` on root, generate and discover. |
 | `deployNicInterfaceNameTemplate` | Allows per-source interface-name templates when profile or PCI-layout rules require stable names. |
 | `rdmaPrefix` / `netdevPrefix` | Standard-profile names. Multirail values require a rail placeholder. |
 | `updateFW` | Enables firmware staging storage in generated Network Operator configuration. |
@@ -352,6 +354,38 @@ spectrumX:
 | `spectrumX.singlePlane` | Prefix block selected by `none`; defaults both device types to rail-only names. |
 | `spectrumX.hwplb` | Prefix block selected by `hwplb`; defaults RDMA to rail-only and NET to rail-plane names. |
 | `spectrumX.swplb` | Prefix block selected by `swplb`; defaults both device types to rail-plane names. |
+
+For standard SR-IOV, RDMA-shared (Macvlan/IPoIB), and host-device profiles on
+Kubernetes and OpenShift, `deployNicConfigurationTemplate: true` enables NCO
+and emits one `NicConfigurationTemplate` per source hardware group. It uses
+that group's node selector, east-west NIC type and exact PCI addresses. Missing
+selectors or mixed east-west NIC types within one group are rejected. The
+setting is independent of `deployNicInterfaceNameTemplate` and `updateFW`;
+Spectrum-X already owns its NIC configuration and rejects this new opt-in.
+
+The template routes `numVfs` from `sriov.numVfs` for all these profiles and maps
+`profile.fabric` to `Ethernet` or `Infiniband`. It enables PCI performance tuning
+with `maxReadRequest: 4096` and `gpuDirectOptimized` for `Baremetal`. Ethernet
+also enables `roceOptimized` with DSCP trust and PFC `"0,0,0,1,0,0,0,0"`;
+InfiniBand omits that block. NCO settings operate on whole NICs, so confirm that
+all ports of each selected NIC are within the intended configuration scope.
+
+Only SR-IOV profiles disable the SR-IOV operator's `mellanox` plugin when this
+option is enabled: through Helm values on Kubernetes, and through
+`SriovOperatorConfig` on OpenShift. OCP adds the entry without removing other
+disabled plugins. Turning the option off stops rendering its template and
+plugin-disable request; it does not delete existing templates or undo NIC
+settings. OCP also preserves an existing `disablePlugins` value. With
+`skipHelmChart: true` on Kubernetes, the externally managed SR-IOV operator must
+be configured separately to disable `mellanox` before applying the template.
+RDMA-shared and host-device profiles do not change SR-IOV operator settings.
+
+Deploy and validate monitor all matched `NicDevice` objects and require current
+`ConfigUpdateInProgress` conditions with `reason: UpdateSuccessful` and
+`status: "False"`. Missing, stale or partial status remains in progress; runtime
+or firmware configuration failures are reported. Confirm NCO/DOCA/RHCOS runtime
+RoCE support for the selected release before enabling this option on OCP; offline
+rendering and tests do not establish live qualification.
 
 Spectrum-X `NicConfigurationTemplate.spec.nicSelector` is not a separate
 configuration input. Launch Kit renders one template per source hardware group

@@ -82,6 +82,7 @@ available throughout the command tree.
 | `--keep-namespace` | — | yes | — | — | — | — |
 | `--discover-cluster-config` | yes | — | — | — | — | — |
 | `--groups`, `--gpu-type`, `--for` | yes | — | yes | — | — | — |
+| `--deploy-nic-configuration-template` | yes | yes | yes | — | — | — |
 | `--save-deployment-files`, `--network-namespaces`, `--workload-manifest`, `--enable-doca-driver` | yes | — | yes | — | — | — |
 | `--deploy` | yes | — | yes | — | — | — |
 | `--dry-run` | yes | — | yes | yes | — | — |
@@ -122,6 +123,7 @@ the rest of the supplied configuration.
 | `--deployment-type` | `sriov`, `rdma_shared`, or `host_device`. |
 | `--multirail` | Override multirail deployment. Explicit `--multirail=false` is preserved. |
 | `--routing` | `destination-based` or `source-based`. |
+| `--deploy-nic-configuration-template` | Opt into standard-profile NIC tuning; supports explicit `=false`. Available on root, generate and discover; deploy/validate consume generated templates. Spectrum-X rejects it. |
 | `--ignore-arp` | Add tuning CNI sysctls to avoid ARP flux across pod rails. |
 | `--groups` | Render only named source groups. Mutually exclusive with `--gpu-type`. |
 | `--gpu-type` | Render all source groups whose GPU type matches. |

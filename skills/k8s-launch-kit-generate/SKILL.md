@@ -279,3 +279,23 @@ For a complete fixture retention and workload example, use
 Subset rendering does not isolate deployment deletion scope. Before overwrite,
 review all stray CRs, including other cohorts and manual resources. DRA setup
 requires the APIs/drivers/DeviceClasses documented in `docs/user/spectrum-x.md`.
+
+## Optional standard NIC tuning
+
+`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to false.
+Root, generate and discover accept `--deploy-nic-configuration-template[=false]`.
+It enables NCO independently of interface naming and renders per-source,
+east-west PCI-scoped templates for standard SR-IOV, RDMA-shared and host-device
+profiles on k8s/OCP. VF count comes from `sriov.numVfs`; link type comes from
+`profile.fabric`. Ethernet gets DSCP trust and priority-3 PFC; InfiniBand omits
+RoCE tuning. Spectrum-X rejects this option. Only SR-IOV disables the Mellanox
+plugin (Helm values on k8s, additive `disablePlugins` merge on OCP). Kubernetes
+external Helm owners must configure that plugin themselves.
+
+Deploy and validate consume the generated template and require all matched
+NicDevices to report current `ConfigUpdateInProgress=False` with reason
+`UpdateSuccessful`; stale/partial status waits and failures surface. Disabling
+the generation option does not remove existing templates or undo applied NIC
+settings; OCP preserves existing disabled plugins. Review whole-NIC scope and
+qualify runtime RoCE support for the installed NCO/DOCA/RHCOS versions before
+live use. See `docs/reference/configuration.md#nic-configuration-and-naming`.

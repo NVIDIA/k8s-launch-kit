@@ -121,6 +121,7 @@ func init() {
 	setFlagGroup(discoverCmd, "multirail", GroupProfile)
 	setFlagGroup(discoverCmd, "routing", GroupProfile)
 	setFlagGroup(discoverCmd, "ignore-arp", GroupProfile)
+	setFlagGroup(discoverCmd, "deploy-nic-configuration-template", GroupProfile)
 	setFlagGroup(discoverCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(discoverCmd, "multiplane-mode", GroupSpectrumX)
 	setFlagGroup(discoverCmd, "number-of-planes", GroupSpectrumX)

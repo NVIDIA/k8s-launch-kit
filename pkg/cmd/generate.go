@@ -146,6 +146,7 @@ func init() {
 	setFlagGroup(generateCmd, "multirail", GroupProfile)
 	setFlagGroup(generateCmd, "routing", GroupProfile)
 	setFlagGroup(generateCmd, "ignore-arp", GroupProfile)
+	setFlagGroup(generateCmd, "deploy-nic-configuration-template", GroupProfile)
 	setFlagGroup(generateCmd, "spectrum-x", GroupProfile)
 	setFlagGroup(generateCmd, "groups", GroupProfile)
 	setFlagGroup(generateCmd, "gpu-type", GroupProfile)
