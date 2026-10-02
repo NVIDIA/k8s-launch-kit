@@ -19,6 +19,7 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -55,7 +56,7 @@ func NewValidateRunner() ValidateRunner {
 	}
 }
 
-func (runner validateRunner) Run(operationContext context.Context, request ValidateRequest) error {
+func (runner validateRunner) Run(operationContext context.Context, request ValidateRequest) (runErr error) {
 	skipNetworkOperatorHelm := request.SkipNetworkOperatorHelm.Set && request.SkipNetworkOperatorHelm.Value
 
 	// State accumulated during the run. exitWithReport captures it by
@@ -78,6 +79,34 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		cfgPath           string
 		operatorNamespace = defaultOperatorNamespace
 	)
+
+	junitStarted := time.Now()
+	junit := junitInput{}
+	// The service returns errors; the outer CLI owns os.Exit. A deferred writer
+	// therefore covers every return, including partial initialization failures.
+	defer func() {
+		if request.JUnitPath == "" {
+			return
+		}
+		junit.Data = connectivity.ReportData{
+			Release: versionCheck, ComponentCheck: componentCheck,
+			HelmValues: helmValuesCheck, StrayCRs: strayCheck,
+			Manifests: results, Matrix: matrix, PresetMatches: presetResults,
+		}
+		junit.RunError = runErr
+		junit.Duration = time.Since(junitStarted)
+		if err := writeJUnitReport(request.JUnitPath, junit); err != nil {
+			if runErr == nil {
+				runErr = apperrors.NewGeneralError("failed to write JUnit report", err)
+			} else {
+				// Preserve the original category/status, including silent exit
+				// statuses; report the additional artifact failure on stderr.
+				reportErr := fmt.Errorf("failed to write JUnit report %q: %w", request.JUnitPath, err)
+				fmt.Fprintf(os.Stderr, "Error: %v\n", reportErr)
+				runErr = errors.Join(runErr, reportErr)
+			}
+		}
+	}()
 
 	// exitWithReport flushes the HTML report synchronously (best-effort) before
 	// returning the structured error, so the operator gets a partial report on
@@ -193,6 +222,18 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 
 	connectivityEnabled := validationConnectivityEnabled(validationCfg)
 	connectivityChecks := connectivityChecksFromConfig(validationCfg)
+	junit.Configured = true
+	junit.Enabled = connectivityEnabled
+	junit.Checks = connectivityChecks
+	junit.RequireCoverage = ocp && connectivityEnabled
+	junit.Fabric, _ = junitFabric(cfg)
+	if request.JUnitPath != "" && connectivityEnabled {
+		junit.Fabric, err = junitFabric(cfg)
+		if err != nil {
+			return exitWithReport(apperrors.NewValidationError("JUnit connectivity naming requires a fabric", err,
+				"Set profile.fabric to ethernet or infiniband in the cluster config"))
+		}
+	}
 	connectivityOnly := false
 	if connectivityEnabled {
 		if cfgErr != nil {
@@ -226,6 +267,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		}
 		hasDeploymentInputs := hasDeploymentValidationInputsBundle(reportBundle)
 		connectivityOnly = !hasDeploymentInputs
+		junit.RequireCoverage = junit.RequireCoverage || connectivityOnly
 	}
 
 	if !connectivityOnly && cfgErr == nil && cfg != nil {

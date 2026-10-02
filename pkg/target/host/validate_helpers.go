@@ -190,6 +190,18 @@ func connectivityOnlyVerdict(
 	matrix *connectivity.MatrixResult,
 	selectedChecks []connectivity.Check,
 ) connectivity.OverallVerdict {
+	out := connectivityCoverageVerdict(matrix, selectedChecks)
+	if matrix != nil && matrix.Summary.Failed > 0 {
+		out.Pass = false
+		out.Reasons = append(out.Reasons,
+			fmt.Sprintf("%d connectivity test(s) failed in the connectivity matrix", matrix.Summary.Failed))
+	}
+	return out
+}
+
+// connectivityCoverageVerdict assesses coverage independently of probe verdicts
+// so every failing acceptance gate remains visible in reports.
+func connectivityCoverageVerdict(matrix *connectivity.MatrixResult, selectedChecks []connectivity.Check) connectivity.OverallVerdict {
 	out := connectivity.OverallVerdict{Pass: true}
 	switch {
 	case matrix == nil:
@@ -231,11 +243,6 @@ func connectivityOnlyVerdict(
 			fmt.Sprintf("selected connectivity check %q did not produce any gating tests", check))
 	}
 
-	if matrix.Summary.Failed > 0 {
-		out.Pass = false
-		out.Reasons = append(out.Reasons,
-			fmt.Sprintf("%d connectivity test(s) failed in the connectivity matrix", matrix.Summary.Failed))
-	}
 	return out
 }
 

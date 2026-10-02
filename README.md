@@ -85,6 +85,9 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 ### AI Agent / Automation Support
 Use --output json for a structured result from this root pipeline.
 Subcommands have their own output contracts; validate emits a JSON stream.
+Use `l8k validate --junit-path ./reports/validation.xml` to also produce
+[JUnit results](docs/user/validation.md#junit-xml), with a suite per connectivity
+family and a testcase per directional pod/rail probe.
 Use --yes to auto-confirm prompts, --quiet to suppress informational output, and --dry-run to preview deployments.
 Use 'l8k schema' to discover tool capabilities programmatically.
 

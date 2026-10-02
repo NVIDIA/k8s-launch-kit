@@ -327,18 +327,31 @@ func TestTargetCLIProcess(t *testing.T) {
 
 	t.Run("early validate failure writes a partial report without panicking", func(t *testing.T) {
 		reportPath := filepath.Join(t.TempDir(), "partial-report.html")
+		junitPath := filepath.Join(t.TempDir(), "partial-report.xml")
 		output, exitCode := runCLIHelper(t,
 			"validate",
 			"--kubeconfig", filepath.Join(t.TempDir(), "missing-kubeconfig"),
 			"--deployment-files", filepath.Join(t.TempDir(), "missing-deployment"),
 			"--report-path", reportPath,
+			"--junit-path", junitPath,
 		)
 
 		assert.Equal(t, 2, exitCode)
 		assert.Contains(t, output, "deployment files directory not found")
 		assert.NotContains(t, output, "panic:")
 		assert.FileExists(t, reportPath)
+		assert.FileExists(t, junitPath)
 	})
+	t.Run("JUnit write failure preserves validation exit code", func(t *testing.T) {
+		output, exitCode := runCLIHelper(t, "validate", "--output", "json",
+			"--kubeconfig", "missing-kubeconfig", "--deployment-files", filepath.Join(t.TempDir(), "missing"),
+			"--report-path=-", "--junit-path", t.TempDir())
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "deployment files directory not found")
+		assert.Contains(t, output, "failed to write JUnit report")
+		assert.Contains(t, output, "VALIDATION_ERROR")
+	})
+
 }
 
 func TestTargetCLIHelperProcess(t *testing.T) {

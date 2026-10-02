@@ -218,6 +218,7 @@ requires a user-owned config with explicit `profile.routing` and
 | `--rdma-ib-write-size` | Override `validation.rdma.ibWriteSize`. |
 | `--rdma-ib-write-min-bandwidth-gbps` | Minimum `ib_write_bw` peak bandwidth. |
 | `--report-path` | HTML report path. Use `-` to disable. |
+| `--junit-path` | Optional JUnit XML file alongside text/JSON; connectivity requires a configured fabric. |
 | `--keep` | Keep the test DaemonSet after validation. |
 | `--wait` | Wait for in-progress manifests to reach a terminal state. |
 | `--skip-network-operator-helm` | Skip Helm release version and values checks; retain component, manifest, stray-resource, and connectivity checks. |
