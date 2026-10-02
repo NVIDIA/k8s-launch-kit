@@ -33,6 +33,7 @@ var (
 	validateConnectivityTimeout time.Duration
 	validateWait                time.Duration
 	validateReportPath          string
+	validateJUnitPath           string
 	validateMode                string
 	validateChecks              []string
 	validateRDMAIterations      int
@@ -150,6 +151,7 @@ func newHostValidateRequest(cmd *cobra.Command) hosttarget.ValidateRequest {
 		},
 		Wait:       validateWait,
 		ReportPath: validateReportPath,
+		JUnitPath:  validateJUnitPath,
 		Version:    Version,
 	}
 }
@@ -175,6 +177,7 @@ func init() {
 	validateCmd.Flags().DurationVar(&validateWait, "wait", 0, "Block validate up to this duration waiting for in-progress manifests to reach a terminal state. 0 (default) returns immediately on the first snapshot.")
 	validateCmd.Flags().StringVar(&validateReportPath, "report-path", "", "Write the HTML validation report to this path. When empty (default), writes to <deployment-files>/k8s-launch-kit-validation-report.html. Pass '-' to skip the report file entirely.")
 
+	validateCmd.Flags().StringVar(&validateJUnitPath, "junit-path", "", "Write JUnit XML to this file alongside text/JSON output (disabled when omitted).")
 	setFlagGroup(validateCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(validateCmd, "user-config", GroupCommon)
 	setFlagGroup(validateCmd, "flavor", GroupCommon)
@@ -191,5 +194,6 @@ func init() {
 	setFlagGroup(validateCmd, "rdma-ib-write-min-bandwidth-gbps", GroupValidation)
 	setFlagGroup(validateCmd, "wait", GroupValidation)
 	setFlagGroup(validateCmd, "report-path", GroupValidation)
+	setFlagGroup(validateCmd, "junit-path", GroupValidation)
 	markValidateTargetScopes()
 }

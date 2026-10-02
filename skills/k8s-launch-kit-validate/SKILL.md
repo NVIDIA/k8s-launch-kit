@@ -103,6 +103,7 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 | `--rdma-rping-iterations` | `validation.rdma.rpingIterations` | rping client iteration count |
 | `--rdma-ib-write-size` | `validation.rdma.ibWriteSize` | ib_write_bw message size |
 | `--rdma-ib-write-min-bandwidth-gbps` | `validation.rdma.ibWriteMinBandwidthGbps` | Minimum peak Gbps; `0` disables bandwidth gating |
+| `--junit-path` | disabled | Write JUnit XML alongside text/JSON; connectivity needs `profile.fabric: ethernet` or `infiniband` |
 | `--log-level` | disabled | `debug` for structured progress and timing; `trace` also includes bounded command output |
 
 ## Connectivity Modes
@@ -182,6 +183,18 @@ static checks, stages, RDMA batches, cleanup, report writes, elapsed time, and
 remaining timeout. Trace adds bounded commands and per-test stdout/stderr.
 Failed RDMA server logs are collected before the temporary files and test
 workload are removed. Add `--keep` only when follow-up pod inspection is needed.
+
+## JUnit report
+
+Use `l8k validate --output json --junit-path ./reports/validation.xml` to
+retain both formats. The XML has a suite per catalog connectivity family,
+with individual directional pod/rail testcase children and suite counters.
+Disabled or unexecuted checks are skipped with reasons; existing gating
+semantics apply. Reports retain partial results and execution errors. A write
+failure fails an otherwise successful command; existing validation failure
+codes are preserved. Coverage failures remain visible alongside other failures,
+and preset cases include matching and skipped groups. See `docs/user/validation.md#junit-xml` for names,
+timing and interpretation. Preserve the process exit status.
 
 ## Output
 

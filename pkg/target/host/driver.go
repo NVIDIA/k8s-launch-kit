@@ -84,6 +84,7 @@ type ValidateRequest struct {
 	RDMAMinBandwidth Explicit[float64]
 	Wait             time.Duration
 	ReportPath       string
+	JUnitPath        string
 	Version          string
 	OutputFormat     string
 	Quiet            bool

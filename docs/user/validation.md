@@ -96,6 +96,59 @@ The report includes release checks, component checks, manifest state, live YAML 
 
 The report is one HTML file with inline styling and no external runtime dependency, so it can be opened offline or attached to an approved diagnostic record.
 
+## JUnit XML
+
+Write a JUnit report alongside text, JSON and the HTML report:
+
+```bash
+l8k validate --output json --junit-path ./reports/validation.xml > validation.jsonl
+```
+
+`--junit-path` is opt-in and independent of `--report-path`. Parent directories
+are created. The file is replaced atomically after validation, including early
+errors and partial results. Failure to write a requested file fails an otherwise successful command; if
+validation already failed, its original exit code is preserved and the write
+error is logged separately.
+Preserve the exit status as well as the report. The existing JSON stream is
+unchanged; XML is written only to the requested file.
+
+Connectivity reporting requires `profile.fabric: ethernet` or `infiniband`
+in the resolved cluster config. No fabric is guessed from the probe command.
+Each family uses the corresponding catalog name from Network Test Discussion Notes:
+
+| Probe | Suite name (append `-ethernet` or `-infiniband`) |
+| --- | --- |
+| ICMP | `K8sEastWestNetworkICMPPing` |
+| RDMA ping | `K8sEastWestNetworkRDMAPing` |
+| Host-memory bandwidth | `K8sEastWestNetworkIBWriteBandwidth` |
+| GPUDirect DMA-BUF bandwidth | `K8sEastWestNetworkDMABufBandwidth` |
+
+The root is `<testsuites name="l8k validation tests">`. Each family is a direct
+`<testsuite>` child with `tests`, `failures`, `errors`, `skipped` and `time`
+attributes. Each directional pod/rail probe is a direct `<testcase>` child,
+named `FamilyName::source→destination`; endpoint names include node, rail, pod
+and IP to distinguish probes. There is no extra aggregate testcase. Counters
+count the child cases once. This structure is readable by ai-cloud-validation's
+JUnit parser; nested `<testcase>` elements would hide the individual results.
+
+Suite time is measured wall-clock seconds for the family stage, including route
+checks. Individual probe times are omitted because batched RDMA execution does
+not measure each probe separately. Unexecuted suites have time `0.000`.
+`system-out` carries structured probe evidence (including expectations,
+observations, endpoints, bandwidth and command output); `system-err` carries
+stderr. Failures use the existing expectation-aware verdict: expected isolation
+can pass, and observe-only disconnections do not independently fail validation.
+
+Disabled families and families without executed probes have an explicit skipped
+case with a reason. A missing selected-family coverage gate is recorded as a
+separate `ConnectivityCoverage` failure when the existing validation policy
+requires coverage, even if another check also failed. Completed probes
+survive execution errors. Other checks and execution errors are recorded in
+`network/validation`; in-progress manifests are skipped, not passed. Each evaluated preset group has
+a `TopologyPresets::group` case: matches pass, deviations fail, and missing or
+skipped presets are skipped with their reason. The report
+preserves the existing mode/flavor acceptance rules described below.
+
 ## Check Stages
 
 | Stage | What it verifies |

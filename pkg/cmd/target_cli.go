@@ -328,5 +328,5 @@ func markValidateTargetScopes() {
 		"flavor", "kubeconfig", "deployment-files", "user-config", "network-operator-namespace", "skip-network-operator-helm", "connectivity",
 		"keep", "connectivity-timeout", "validation-mode", "validation-checks",
 		"rdma-rping-iterations", "rdma-ib-write-size", "rdma-ib-write-min-bandwidth-gbps",
-		"wait", "report-path")
+		"wait", "report-path", "junit-path")
 }

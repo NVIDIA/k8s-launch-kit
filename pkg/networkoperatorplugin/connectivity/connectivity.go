@@ -86,6 +86,9 @@ type Options struct {
 // MatrixResult is the aggregate output of one connectivity run. It's
 // what the validate CLI prints (or marshals to JSON) at the end.
 type MatrixResult struct {
+	// StageDurations retains measured wall time for JUnit family suites.
+	StageDurations map[Check]time.Duration `json:"-"`
+
 	// DaemonSets is one entry per applied example DS — typically
 	// one per merged group.
 	DaemonSets []DaemonSetReport
@@ -587,6 +590,10 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 			}
 		}
 		result.PingResults = append(result.PingResults, stageResults...)
+		if result.StageDurations == nil {
+			result.StageDurations = make(map[Check]time.Duration)
+		}
+		result.StageDurations[stage.check] = time.Since(stageStarted)
 		passed, failed := resultCounts(stageResults)
 		logger.V(1).Info("connectivity stage completed",
 			"stage", stage.check,
