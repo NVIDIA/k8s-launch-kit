@@ -220,3 +220,29 @@ metadata:
 	assert.Equal(t, "pool-0", refs[0].Name)
 	assert.Equal(t, "pool-1", refs[1].Name)
 }
+
+func TestCheckStrayCRs_OmittedNicConfigurationTemplate(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "configuration.net.nvidia.com", Version: "v1alpha1", Kind: "NicConfigurationTemplate"}
+	live := newCR(gvk, "nvidia-network-operator", "nic-configuration-group-a")
+	for _, included := range []bool{false, true} {
+		name := "omitted by opt-out or group subset"
+		var generated []ObjectRef
+		if included {
+			name = "included in generation"
+			generated = []ObjectRef{{GVK: gvk, Namespace: live.GetNamespace(), Name: live.GetName()}}
+		}
+		t.Run(name, func(t *testing.T) {
+			r := CheckStrayCRs(context.Background(), Inputs{
+				KubeClient:        newFakeClientWith(t, live.DeepCopy()).Build(),
+				OperatorNamespace: live.GetNamespace(), GeneratedManifests: generated,
+			})
+			require.False(t, r.Skipped)
+			if included {
+				require.Empty(t, r.Mismatches)
+			} else {
+				require.Len(t, r.Mismatches, 1)
+				require.Contains(t, r.Mismatches[0].Path, live.GetName())
+			}
+		})
+	}
+}

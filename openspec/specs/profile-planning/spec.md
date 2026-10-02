@@ -95,3 +95,13 @@ Current profile lookup is first-match; this spec does not introduce universal am
 - Implementation: [profile selection](../../../pkg/profiles), [profile metadata/templates](../../../profiles), [scope registry](../../../pkg/networkoperatorplugin/scopes.go), [render plan](../../../pkg/networkoperatorplugin/render_plan.go), [templates](../../../pkg/networkoperatorplugin/templates.go).
 - Existing suite: [template generation](../../../pkg/networkoperatorplugin/templates_test.go); extend it with collision and full/subset integration cases, not just file counts.
 - User documentation: [generation](../../../docs/advanced/generation.md), [heterogeneous clusters](../../../docs/user/heterogeneous-clusters.md).
+
+#### Scenario: Whole-NIC scope protection
+
+- **WHEN** an enabled standard template selects an east-west PF whose source inventory includes an excluded PF on the same PCI device
+- **THEN** generation rejects the configuration before filtering out excluded PFs; unselected source groups do not affect the selected subset.
+
+#### Scenario: Previously deployed template omitted
+
+- **WHEN** opt-out or subset generation omits a previously deployed standard NIC configuration template
+- **THEN** Kubernetes deploy preflight treats it as a stray, blocking unless overwrite-existing authorizes deletion; OCP preserves it, and neither platform automatically restores applied NIC settings.

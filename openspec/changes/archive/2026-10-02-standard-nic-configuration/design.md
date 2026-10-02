@@ -17,3 +17,8 @@ NIC changes can require reboot; existing maintenance/reconciliation applies. Run
 ## Verification
 
 Test omitted/true/false precedence and root/generate/discover routing; render every standard profile/fabric/flavor in enabled and disabled modes; verify typed payload and exact selectors, subset scope, independent NCO enablement, SR-IOV-only plugin setting and Spectrum-X rejection. Test OCP plugin union/idempotence and shared deploy/validate registry classification, including contradictory status and stale/partial evidence. Run build, unit/race tests, lint, documentation checks and strict OpenSpec validation. No real-cluster discovery, deploy or validate.
+
+## Review refinements
+
+- Validate mixed-traffic PCI siblings in selected source inventories before PF filtering: NCO changes the whole NIC. Inventory without all ports, or NICs spanning different PCI devices, still requires site scope validation.
+- Retain existing platform cleanup behavior: omitted templates are Kubernetes preflight strays, blocked unless overwrite-existing authorizes deletion. OCP preserves them. Opt-out does not restore applied NIC settings.

@@ -23,3 +23,13 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-di
 
 - **WHEN** the new option is enabled with Spectrum-X
 - **THEN** configuration is rejected without changing Spectrum-X templates.
+
+#### Scenario: Whole-NIC scope protection
+
+- **WHEN** an enabled standard template selects an east-west PF whose source inventory includes an excluded PF on the same PCI device
+- **THEN** generation rejects the configuration before filtering out excluded PFs; unselected source groups do not affect the selected subset.
+
+#### Scenario: Previously deployed template omitted
+
+- **WHEN** opt-out or subset generation omits a previously deployed standard NIC configuration template
+- **THEN** Kubernetes deploy preflight treats it as a stray, blocking unless overwrite-existing authorizes deletion; OCP preserves it, and neither platform automatically restores applied NIC settings.

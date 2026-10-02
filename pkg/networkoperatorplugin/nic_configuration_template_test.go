@@ -310,6 +310,36 @@ func TestStandardNicConfigurationInvalidSelection(t *testing.T) {
 	}
 }
 
+func TestStandardNicConfigurationMixedTrafficNIC(t *testing.T) {
+	for _, flavor := range []string{config.FlavorK8s, config.FlavorOCP} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/enabled=%t", flavor, enabled), func(t *testing.T) {
+				cfg := standardNicConfigurationConfig(t, flavor, "ethernet", "sriov", enabled)
+				// Keep both functions in the source inventory. Per-template PF
+				// filtering must not hide the excluded sibling from validation.
+				cfg.ClusterConfig[0].PFs[0].PciAddress = "0000:AB:00.0"
+				cfg.ClusterConfig[0].PFs = append(cfg.ClusterConfig[0].PFs, config.PFConfig{
+					PciAddress: " 0000:ab:00.1 ", Traffic: "north-south", DeviceID: "a2dc",
+				})
+				profileName := "sriov-ethernet-rdma"
+				if flavor == config.FlavorOCP {
+					profileName += "-ocp"
+				}
+				profile := loadProfileFromDir(t, profileName)
+				_, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+				if enabled {
+					require.ErrorContains(t, err, "whole-NIC tuning requires all ports to be in scope")
+				} else {
+					require.NoError(t, err)
+				}
+				// A source group outside the requested subset does not block it.
+				_, err = (&NetworkOperatorPlugin{Groups: []string{cfg.ClusterConfig[1].Identifier}}).GenerateProfileDeploymentFiles(profile, cfg)
+				require.NoError(t, err)
+			})
+		}
+	}
+}
+
 func TestStandardNicConfigurationSubsetScope(t *testing.T) {
 	cfg := standardNicConfigurationConfig(t, config.FlavorK8s, "ethernet", "sriov", true)
 	profile := loadProfileFromDir(t, "sriov-ethernet-rdma")

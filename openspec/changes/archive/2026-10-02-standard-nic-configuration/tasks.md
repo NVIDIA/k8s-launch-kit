@@ -22,3 +22,6 @@
 - Readiness: `TestStandardNicConfigurationDeployValidateConvergence` exercises the actual deploy poll and standalone validation against fake API state on both flavors; existing matched-device, payload, generation and partial-device tests remain passing. Contradictory success statuses are covered in `TestNicConfigurationTemplate_AllReasonsClassified`.
 - Offline gates: build, full race suite (follow-up command tests after fixing the new flag's help group), lint, documentation contract checks, strict MkDocs, strict OpenSpec validation.
 - No real cluster tests. Hosted CI and review are tracked by the PR, separately from this implementation checklist.
+
+- Review scope protection: `TestStandardNicConfigurationMixedTrafficNIC` rejects represented excluded siblings on both flavors, preserves opt-out, and permits a subset excluding the conflicting source group.
+- Review cleanup contract: `TestCheckStrayCRs_OmittedNicConfigurationTemplate` verifies included templates are expected and omitted templates are strays; documentation states Kubernetes overwrite deletion and OCP preservation explicitly.

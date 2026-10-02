@@ -217,8 +217,10 @@ external Helm owners must configure that plugin themselves.
 
 Deploy and validate consume the generated template and require all matched
 NicDevices to report current `ConfigUpdateInProgress=False` with reason
-`UpdateSuccessful`; stale/partial status waits and failures surface. Disabling
-the generation option does not remove existing templates or undo applied NIC
-settings; OCP preserves existing disabled plugins. Review whole-NIC scope and
-qualify runtime RoCE support for the installed NCO/DOCA/RHCOS versions before
-live use. See `docs/reference/configuration.md#nic-configuration-and-naming`.
+`UpdateSuccessful`; stale/partial status waits and failures surface. Opting out
+does not restore applied NIC settings. On k8s, omitted templates (also for
+unselected groups) block deploy preflight unless `--overwrite-existing` is used,
+which deletes them. OCP preserves existing templates and disabled plugins.
+Generation rejects inventory with selected and excluded ports on the same PCI
+device. Review whole-NIC scope, including ports absent from inventory, and qualify
+runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. See `docs/reference/configuration.md#nic-configuration-and-naming`.

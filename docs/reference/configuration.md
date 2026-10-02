@@ -369,13 +369,21 @@ with `maxReadRequest: 4096` and `gpuDirectOptimized` for `Baremetal`. Ethernet
 also enables `roceOptimized` with DSCP trust and PFC `"0,0,0,1,0,0,0,0"`;
 InfiniBand omits that block. NCO settings operate on whole NICs, so confirm that
 all ports of each selected NIC are within the intended configuration scope.
+Generation rejects inventory that assigns east-west and excluded ports to the
+same PCI device (domain:bus:device). This check cannot identify omitted ports or
+NICs spanning different PCI devices; inventory and site validation must cover
+those cases.
 
 Only SR-IOV profiles disable the SR-IOV operator's `mellanox` plugin when this
 option is enabled: through Helm values on Kubernetes, and through
 `SriovOperatorConfig` on OpenShift. OCP adds the entry without removing other
 disabled plugins. Turning the option off stops rendering its template and
-plugin-disable request; it does not delete existing templates or undo NIC
-settings. OCP also preserves an existing `disablePlugins` value. With
+plugin-disable request, but does not restore applied NIC settings. On Kubernetes,
+deploy preflight treats omitted templates (including unselected groups in a
+subset deployment) as stray resources: deployment blocks without
+`--overwrite-existing`, and deletes them with that flag. Review the deletion
+scope before an opt-out or subset deployment. OCP preserves existing templates
+and `disablePlugins` values; cleanup requires an explicit action. With
 `skipHelmChart: true` on Kubernetes, the externally managed SR-IOV operator must
 be configured separately to disable `mellanox` before applying the template.
 RDMA-shared and host-device profiles do not change SR-IOV operator settings.
