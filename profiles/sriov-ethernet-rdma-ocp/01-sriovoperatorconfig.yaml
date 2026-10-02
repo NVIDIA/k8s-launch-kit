@@ -11,3 +11,7 @@ spec:
     network.nvidia.com/operator.mofed.wait: "false"
     {{- end }}
   disableDrain: false
+  {{- if and .NicConfigurationOperator .NicConfigurationOperator.DeployNicConfigurationTemplate }}
+  disablePlugins:
+    - mellanox
+  {{- end }}

@@ -38,18 +38,20 @@ func TestDescriptorDeclaresHostLifecycle(t *testing.T) {
 
 func TestLauncherAdapterSnapshotsRequestAndAppliesCommonPolicy(t *testing.T) {
 	enableDriver := true
+	enableNicConfiguration := true
 	request := LauncherRequest{Options: options.Options{
-		Groups:              []string{"machine-a"},
-		ImagePullSecrets:    []string{"registry-a"},
-		NetworkNamespaces:   []string{"workloads"},
-		EnabledPlugins:      []string{"network-operator"},
-		EnableDocaDriver:    &enableDriver,
-		OutputFormat:        "stale",
-		Yes:                 false,
-		Quiet:               false,
-		DryRun:              false,
-		DeployTimeout:       0,
-		SaveDeploymentFiles: "./deployment",
+		Groups:                         []string{"machine-a"},
+		ImagePullSecrets:               []string{"registry-a"},
+		NetworkNamespaces:              []string{"workloads"},
+		EnabledPlugins:                 []string{"network-operator"},
+		EnableDocaDriver:               &enableDriver,
+		DeployNicConfigurationTemplate: &enableNicConfiguration,
+		OutputFormat:                   "stale",
+		Yes:                            false,
+		Quiet:                          false,
+		DryRun:                         false,
+		DeployTimeout:                  0,
+		SaveDeploymentFiles:            "./deployment",
 	}}
 
 	var captured options.Options
@@ -66,6 +68,7 @@ func TestLauncherAdapterSnapshotsRequestAndAppliesCommonPolicy(t *testing.T) {
 	request.Options.NetworkNamespaces[0] = "mutated"
 	request.Options.EnabledPlugins[0] = "mutated"
 	*request.Options.EnableDocaDriver = false
+	*request.Options.DeployNicConfigurationTemplate = false
 
 	invocation := target.Invocation{
 		Target: target.Host,
@@ -90,6 +93,8 @@ func TestLauncherAdapterSnapshotsRequestAndAppliesCommonPolicy(t *testing.T) {
 	assert.Equal(t, []string{"network-operator"}, captured.EnabledPlugins)
 	require.NotNil(t, captured.EnableDocaDriver)
 	assert.True(t, *captured.EnableDocaDriver)
+	require.NotNil(t, captured.DeployNicConfigurationTemplate)
+	assert.True(t, *captured.DeployNicConfigurationTemplate)
 	assert.Equal(t, "json", captured.OutputFormat)
 	assert.True(t, captured.Quiet)
 	assert.True(t, captured.Yes)

@@ -121,6 +121,9 @@ type Options struct {
 	// Workload
 	WorkloadManifest string `flag:"workload-manifest" config:"workload.manifest" scopes:"root,generate" usage:"Path to a custom workload manifest YAML"`
 
+	// NIC configuration for standard profiles; nil preserves the YAML setting.
+	DeployNicConfigurationTemplate *bool `flag:"deploy-nic-configuration-template" config:"nicConfigurationOperator.deployNicConfigurationTemplate" scopes:"root,generate,discover" usage:"Deploy NIC configuration for standard profiles and disable the Mellanox plugin for SR-IOV"`
+
 	// DOCA Driver
 	EnableDocaDriver *bool `flag:"enable-doca-driver" config:"docaDriver.enable" scopes:"root,generate" usage:"Enable or disable DOCA driver deployment"`
 

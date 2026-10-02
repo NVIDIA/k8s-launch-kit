@@ -13,9 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	"github.com/nvidia/k8s-launch-kit/pkg/configinput"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/spf13/pflag"
 )
 
 func TestResolvePrecedenceAndInputImmutability(t *testing.T) {
@@ -358,4 +360,41 @@ func TestResolveReleaseSelectionWithCanonicalDefaults(t *testing.T) {
 			assert.Equal(t, catalog.DOCADriver.Version, result.Config.DOCADriver.Version)
 		})
 	}
+}
+
+func TestNicConfigurationFlagResolutionAcrossCommands(t *testing.T) {
+	for _, scope := range []configflags.Scope{configflags.ScopeRoot, configflags.ScopeGenerate, configflags.ScopeDiscover} {
+		for _, tc := range []struct {
+			name string
+			yaml string
+			args []string
+			want bool
+		}{
+			{"default", "{}", nil, false},
+			{"yaml enabled", "nicConfigurationOperator: {deployNicConfigurationTemplate: true}", nil, true},
+			{"cli enabled", "nicConfigurationOperator: {deployNicConfigurationTemplate: false}", []string{"--deploy-nic-configuration-template"}, true},
+			{"cli disabled", "nicConfigurationOperator: {deployNicConfigurationTemplate: true}", []string{"--deploy-nic-configuration-template=false"}, false},
+		} {
+			t.Run(string(scope)+"/"+tc.name, func(t *testing.T) {
+				var opts options.Options
+				flags := pflag.NewFlagSet(string(scope), pflag.ContinueOnError)
+				require.NoError(t, configflags.Bind(flags, &opts, scope))
+				require.NoError(t, flags.Parse(tc.args))
+				require.NoError(t, configflags.Collect(flags, &opts))
+				input, err := config.DecodeInput([]byte(tc.yaml), "user.yaml")
+				require.NoError(t, err)
+				result, err := Resolve(Request{Input: input, Options: opts})
+				require.NoError(t, err)
+				require.Equal(t, tc.want, result.Config.NicConfigurationOperator.DeployNicConfigurationTemplate)
+			})
+		}
+	}
+}
+
+func TestNicConfigurationRejectsSpectrumX(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		Profile:                  &config.Profile{Fabric: "ethernet", Deployment: "sriov", SpectrumX: &config.ProfileSpectrumX{Enable: true}},
+		NicConfigurationOperator: &config.NicConfigurationOperatorConfig{DeployNicConfigurationTemplate: true},
+	}
+	require.ErrorContains(t, ValidateResolvedConfig(cfg), "not Spectrum-X")
 }

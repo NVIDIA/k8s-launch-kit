@@ -263,9 +263,13 @@ macvlan:
 
 # ============================================================================
 # NIC Configuration Operator
-# Controls NIC interface renaming via NicConfigurationTemplate CRs.
+# Controls optional NIC tuning and NicInterfaceNameTemplate interface naming.
 # ============================================================================
 nicConfigurationOperator:
+  # bool | default: false; standard profiles only, excluding Spectrum-X.
+  # CLI: --deploy-nic-configuration-template[=false] (root/generate/discover).
+  deployNicConfigurationTemplate: false
+
   # bool | default: true
   # Enable NIC interface name templates. Only takes effect when:
   # 1. Merged groups have cross-rail PCI address conflicts, OR

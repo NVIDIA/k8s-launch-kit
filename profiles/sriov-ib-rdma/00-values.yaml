@@ -75,6 +75,10 @@ sriov-network-operator:
 {{- end }}
   sriovOperatorConfig:
     deploy: true
+    {{- if and .NicConfigurationOperator .NicConfigurationOperator.DeployNicConfigurationTemplate }}
+    disablePlugins:
+      - mellanox
+    {{- end }}
     # See sriov-ethernet-rdma's 00-values.yaml for the rationale: both
     # optional helpers (auto-resource injector + validating webhook)
     # require TLS secrets that the subchart's post-install Job creates,

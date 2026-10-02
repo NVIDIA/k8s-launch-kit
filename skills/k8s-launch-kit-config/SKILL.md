@@ -202,3 +202,25 @@ networkNamespaces: ["my-namespace"]
 ## OpenShift
 
 OpenShift configuration uses top-level `flavor: ocp`, `sriov.operatorNamespace`, `nfd.operatorNamespace`, `nfd.configurationName`, and `maintenance.operatorNamespace`. Install operator packages externally; l8k configures existing installations.
+
+## Optional standard NIC tuning
+
+`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to false.
+Root, generate and discover accept `--deploy-nic-configuration-template[=false]`.
+It enables NCO independently of interface naming and renders per-source,
+east-west PCI-scoped templates for standard SR-IOV, RDMA-shared and host-device
+profiles on k8s/OCP. VF count comes from `sriov.numVfs`; link type comes from
+`profile.fabric`. Ethernet gets DSCP trust and priority-3 PFC; InfiniBand omits
+RoCE tuning. Spectrum-X rejects this option. Only SR-IOV disables the Mellanox
+plugin (Helm values on k8s, additive `disablePlugins` merge on OCP). Kubernetes
+external Helm owners must configure that plugin themselves.
+
+Deploy and validate consume the generated template and require all matched
+NicDevices to report current `ConfigUpdateInProgress=False` with reason
+`UpdateSuccessful`; stale/partial status waits and failures surface. Opting out
+does not restore applied NIC settings. On k8s, omitted templates (also for
+unselected groups) block deploy preflight unless `--overwrite-existing` is used,
+which deletes them. OCP preserves existing templates and disabled plugins.
+Generation rejects inventory with selected and excluded ports on the same PCI
+device. Review whole-NIC scope, including ports absent from inventory, and qualify
+runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. See `docs/reference/configuration.md#nic-configuration-and-naming`.

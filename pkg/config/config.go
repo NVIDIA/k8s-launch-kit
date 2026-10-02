@@ -464,6 +464,7 @@ func defaultSpectrumXInterfaceNamePrefixes() (*SpectrumXConfig, error) {
 }
 
 type NicConfigurationOperatorConfig struct {
+	DeployNicConfigurationTemplate bool   `yaml:"deployNicConfigurationTemplate"`
 	DeployNicInterfaceNameTemplate bool   `yaml:"deployNicInterfaceNameTemplate"`
 	RdmaPrefix                     string `yaml:"rdmaPrefix"`   // e.g., "rdma_r%rail_id%"
 	NetdevPrefix                   string `yaml:"netdevPrefix"` // e.g., "eth_r%rail_id%"

@@ -132,6 +132,14 @@ func mergeOCPSpec(current, desired *unstructured.Unstructured) error {
 		have["workerConfig"] = existingWorker
 	} else {
 		for k, v := range want {
+			if desired.GetKind() == "SriovOperatorConfig" && k == "disablePlugins" {
+				merged, err := mergeOCPStringList(have[k], v)
+				if err != nil {
+					return fmt.Errorf("merge SR-IOV disablePlugins: %w", err)
+				}
+				have[k] = merged
+				continue
+			}
 			have[k] = v
 		}
 	}
@@ -163,7 +171,7 @@ func mergeNFDConfigData(existing, desired string) (string, error) {
 	}
 	for k, v := range wantedPCI {
 		if k == "deviceClassWhitelist" {
-			merged, err := mergeNFDStringList(existingPCI[k], v)
+			merged, err := mergeOCPStringList(existingPCI[k], v)
 			if err != nil {
 				return "", fmt.Errorf("merge NFD sources.pci.%s: %w", k, err)
 			}
@@ -181,7 +189,7 @@ func mergeNFDConfigData(existing, desired string) (string, error) {
 	return string(out), err
 }
 
-func mergeNFDStringList(existing, desired interface{}) ([]interface{}, error) {
+func mergeOCPStringList(existing, desired interface{}) ([]interface{}, error) {
 	merged := []interface{}{}
 	seen := map[string]bool{}
 	for _, value := range []interface{}{existing, desired} {

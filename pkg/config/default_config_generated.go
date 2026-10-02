@@ -152,6 +152,8 @@ var defaultConfigYAML = []byte(
 	"    netdevPrefix: \"eth_r%rail_id%_p%plane_id%\"\n" +
 	"    rdmaPrefix: \"roce_r%rail_id%_p%plane_id%\"\n" +
 	"nicConfigurationOperator:\n" +
+	"  # Opt in to NIC firmware/runtime tuning for standard profiles (not Spectrum-X).\n" +
+	"  deployNicConfigurationTemplate: false\n" +
 	"  deployNicInterfaceNameTemplate: true\n" +
 	"  rdmaPrefix: rdma_r%rail_id%\n" +
 	"  netdevPrefix: eth_r%rail_id%\n" +

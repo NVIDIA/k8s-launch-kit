@@ -134,6 +134,9 @@ var templateFuncs = template.FuncMap{
 		_, netdevPrefix := config.SpectrumXInterfaceNamePrefixes(settings, multiplaneMode)
 		return netdevPrefix
 	},
+	"nicConfigurationType":           nicConfigurationType,
+	"nicConfigurationPCIAddresses":   spectrumXPCIAddresses,
+	"nicConfigurationLinkType":       nicConfigurationLinkType,
 	"spectrumXNicType":               spectrumXNicType,
 	"spectrumXPCIAddresses":          spectrumXPCIAddresses,
 	"spectrumXProfileConfigRequired": config.SpectrumXProfileConfigRequired,
@@ -300,6 +303,51 @@ func spectrumXPCIAddresses(group *config.ClusterConfig) ([]string, error) {
 		return nil, fmt.Errorf("group %q has no east-west PFs", group.Identifier)
 	}
 	return addresses, nil
+}
+
+// nicConfigurationType requires explicit node and NIC selectors for opt-in tuning.
+func nicConfigurationType(group *config.ClusterConfig) (string, error) {
+	if group == nil || len(group.NodeSelector) == 0 {
+		return "", fmt.Errorf("NIC configuration requires a source group nodeSelector")
+	}
+	return spectrumXNicType(group)
+}
+
+// validateNicConfigurationScope checks the unfiltered source inventory because
+// NCO tunes the whole NIC even when only one of its PCI functions is selected.
+func validateNicConfigurationScope(groups []config.ClusterConfig) error {
+	for _, group := range groups {
+		selected := make(map[string]string)
+		for _, pf := range pfutil.FilterEastWestPFs(group.PFs) {
+			address := strings.ToLower(strings.TrimSpace(pf.PciAddress))
+			if prefix, ok := pfutil.PciBusDevicePrefix(address); ok {
+				selected[prefix] = address
+			}
+		}
+		for _, pf := range group.PFs {
+			if pf.Traffic == "east-west" {
+				continue
+			}
+			address := strings.ToLower(strings.TrimSpace(pf.PciAddress))
+			prefix, ok := pfutil.PciBusDevicePrefix(address)
+			if selectedAddress, found := selected[prefix]; ok && found {
+				return fmt.Errorf("NIC configuration for group %q selects east-west PF %s but excludes PF %s on the same NIC; whole-NIC tuning requires all ports to be in scope", group.Identifier, selectedAddress, address)
+			}
+		}
+	}
+	return nil
+}
+
+// nicConfigurationLinkType maps resolved fabric intent to the NCO API enum.
+func nicConfigurationLinkType(fabric string) (string, error) {
+	switch fabric {
+	case "ethernet":
+		return "Ethernet", nil
+	case "infiniband":
+		return "Infiniband", nil
+	default:
+		return "", fmt.Errorf("NIC configuration requires fabric ethernet or infiniband, got %q", fabric)
+	}
 }
 
 func secondaryNetworkMetaPlugins(profile *config.Profile, flavor ...string) string {
@@ -978,6 +1026,11 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	filtered, err := applyGroupFilter(cfg.ClusterConfig, p.Groups, p.GpuType)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.NicConfigurationOperator != nil && cfg.NicConfigurationOperator.DeployNicConfigurationTemplate && !isSpectrumX(cfg) {
+		if err := validateNicConfigurationScope(filtered); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.Flavor == config.FlavorOCP {
 		for _, group := range filtered {

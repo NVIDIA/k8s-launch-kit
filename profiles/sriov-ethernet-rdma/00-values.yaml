@@ -75,6 +75,10 @@ sriov-network-operator:
 {{- end }}
   sriovOperatorConfig:
     deploy: true
+    {{- if and .NicConfigurationOperator .NicConfigurationOperator.DeployNicConfigurationTemplate }}
+    disablePlugins:
+      - mellanox
+    {{- end }}
     # Both optional helpers are turned off:
     #   - network-resources-injector: rewrites pod specs to add resource
     #     requests from net-attach-def annotations. l8k renders resource

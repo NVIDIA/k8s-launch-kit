@@ -10,7 +10,7 @@ spec:
       - "{{ . }}"
     {{- end }}
   {{- end }}
-  {{- if and .NicConfigurationOperator (or .NicConfigurationOperator.DeployNicInterfaceNameTemplate .NicConfigurationOperator.UpdateFW) }}
+  {{- if and .NicConfigurationOperator (or .NicConfigurationOperator.DeployNicConfigurationTemplate .NicConfigurationOperator.DeployNicInterfaceNameTemplate .NicConfigurationOperator.UpdateFW) }}
   nicConfigurationOperator:
     operator:
       image: nic-configuration-operator

@@ -38,6 +38,9 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 	}
 
 	if cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable {
+		if cfg.NicConfigurationOperator != nil && cfg.NicConfigurationOperator.DeployNicConfigurationTemplate {
+			return fmt.Errorf("nicConfigurationOperator.deployNicConfigurationTemplate is only supported for standard profiles, not Spectrum-X")
+		}
 		return validateSpectrumXCohort(cfg)
 	}
 

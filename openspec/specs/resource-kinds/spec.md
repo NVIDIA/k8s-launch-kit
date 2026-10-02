@@ -62,6 +62,20 @@ Deploy and standalone validate SHALL share readiness meaning for equivalent evid
 - **WHEN** deploy and validate observe equivalent desired/live state
 - **THEN** their classifiers agree, except for a documented freshness adaptation that depends on deployment history.
 
+### Requirement: NIC configuration success condition
+
+Deploy and validate SHALL accept NIC configuration convergence only when each matched device has current desired configuration and a current ConfigUpdateInProgress condition with reason UpdateSuccessful and status False. Existing firmware gates SHALL still apply when firmware configuration is present.
+
+#### Scenario: Contradictory success condition
+
+- **WHEN** a matched NicDevice reports UpdateSuccessful but ConfigUpdateInProgress is True, Unknown or absent
+- **THEN** configuration is not classified as successful.
+
+#### Scenario: All selected devices converged
+
+- **WHEN** all matched devices carry current configuration and ConfigUpdateInProgress=False with reason UpdateSuccessful and any required firmware gate passes
+- **THEN** deploy and validate classify the template as ready.
+
 ## Baseline and limits
 
 Unregistered GVKs currently default to existence-only; some scope handling also has legacy fallback. OCP operator configuration has specialized validation outside the registry. `NeedsObservationGate` uses resource-version changes as a heuristic, not universal observed-generation proof; standalone validation lacks apply history. These are not upgraded by this documentation. [Managed effects](../managed-effects/spec.md) owns mutation/deletion policy, and [outcomes](../outcomes-evidence/spec.md) owns aggregate acceptance.

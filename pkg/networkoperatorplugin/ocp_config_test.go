@@ -10,6 +10,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -147,4 +148,37 @@ func TestOpenShiftRetryWaitsForSubscriptionAdoption(t *testing.T) {
 	defer cancel()
 	err := applyOCPOperatorConfiguration(ctx, c, cfg, nil, false)
 	require.ErrorContains(t, err, "did not adopt maintenance settings")
+}
+
+func TestOCPDisabledPluginsPreservedAndValidated(t *testing.T) {
+	desired := ocpTestObject("sriovnetwork.openshift.io/v1", "SriovOperatorConfig", "sriov-ns", "default", map[string]interface{}{
+		"spec": map[string]interface{}{"disablePlugins": []interface{}{"mellanox"}},
+	})
+	current := desired.DeepCopy()
+	require.NoError(t, unstructured.SetNestedStringSlice(current.Object, []string{"virtual"}, "spec", "disablePlugins"))
+	require.NoError(t, unstructured.SetNestedField(current.Object, true, "spec", "enableInjector"))
+	require.NoError(t, mergeOCPSpec(current, desired))
+	plugins, _, _ := unstructured.NestedStringSlice(current.Object, "spec", "disablePlugins")
+	require.Equal(t, []string{"virtual", "mellanox"}, plugins)
+	injector, _, _ := unstructured.NestedBool(current.Object, "spec", "enableInjector")
+	require.True(t, injector)
+	before := current.DeepCopy()
+	require.NoError(t, mergeOCPSpec(current, desired))
+	require.Equal(t, before.Object, current.Object)
+	data, err := current.MarshalJSON()
+	require.NoError(t, err)
+	// Validate with the generated minimum, allowing the site's extra plugin.
+	desiredData, err := desired.MarshalJSON()
+	require.NoError(t, err)
+	artifacts, err := bundle.FromFiles([]bundle.File{{Name: "01-config.yaml", Content: string(desiredData)}})
+	require.NoError(t, err)
+	results, err := ValidateBundle(context.Background(), fake.NewClientBuilder().WithObjects(current.DeepCopy()).Build(), artifacts, config.FlavorOCP)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, crstate.StateSuccess, results[0].State, string(data))
+	unstructured.RemoveNestedField(desired.Object, "spec", "disablePlugins")
+	require.NoError(t, mergeOCPSpec(current, desired))
+	require.Equal(t, before.Object, current.Object, "opt-out preserves existing plugin ownership")
+	require.NoError(t, unstructured.SetNestedField(desired.Object, "malformed", "spec", "disablePlugins"))
+	require.ErrorContains(t, mergeOCPSpec(current, desired), "merge SR-IOV disablePlugins")
 }

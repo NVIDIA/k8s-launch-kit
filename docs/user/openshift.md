@@ -96,6 +96,14 @@ If `profile.ignoreARP` and source-based routing are enabled, each secondary
 network's `metaPlugins` should contain interface-only `tuning` sysctls
 followed by `sbr`. Check that no `net.ipv4.conf.all.*` key appears there.
 
+For standard profiles, `--deploy-nic-configuration-template` opts into
+[host NIC tuning](../reference/configuration.md#nic-configuration-and-naming).
+It enables NCO and emits per-source NIC configuration; Ethernet includes RoCE
+QoS, InfiniBand does not. Only SR-IOV adds `mellanox` to
+`SriovOperatorConfig.spec.disablePlugins`, retaining other disabled plugins.
+RDMA-shared and host-device do not change that setting. This new path has offline
+coverage only; qualify runtime tuning with the site's NCO/DOCA/RHCOS releases.
+
 ## 3. Preview and deploy
 
 ```bash

@@ -576,6 +576,10 @@ func classifyConfiguration(device *unstructured.Unstructured, byType map[string]
 		message, _, _ := unstructured.NestedString(cond, "message")
 		switch reason {
 		case consts.UpdateSuccessfulReason:
+			status, _, _ := unstructured.NestedString(cond, "status")
+			if status != "False" {
+				return StateInProgress, fmt.Sprintf("ConfigUpdateInProgress=%s with reason UpdateSuccessful; waiting for status False", status)
+			}
 			// proceed to firmware check below if present
 		case consts.UpdateStartedReason, consts.PendingRebootReason:
 			return StateInProgress, fallbackMessage(message, "config update in progress: "+reason)
