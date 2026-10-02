@@ -10,7 +10,7 @@ description: |
   IP over Infiniband with RDMA sharev device profile offers InfiniBand networking with shared RDMA resources.
 deploymentGuide: ipoib-rdma-shared.rst
 templates:
-  - ../sriov-ethernet-rdma/30-nicconfigurationtemplate.yaml
+  - 30-nicconfigurationtemplate.yaml
   - 00-values.yaml
   - 10-nicclusterpolicy.yaml
   - 11-nicnodepolicy.yaml

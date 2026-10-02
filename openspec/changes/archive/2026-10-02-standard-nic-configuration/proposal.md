@@ -25,4 +25,4 @@ None.
 
 ## Impact
 
-Config schema/defaults and tagged CLI routing; ten standard profile variants and one shared template; OCP configuration merge; shared readiness classifier. Existing NCO APIs and registry scopes are reused. No dependency changes or real-cluster execution. Configuration presence, platform ownership and managed-effects contracts also apply.
+Config schema/defaults and tagged CLI routing; ten standard profile variants with a local template in each profile directory; OCP configuration merge; shared readiness classifier. Existing NCO APIs and registry scopes are reused. No dependency changes or real-cluster execution. Configuration presence, platform ownership and managed-effects contracts also apply.

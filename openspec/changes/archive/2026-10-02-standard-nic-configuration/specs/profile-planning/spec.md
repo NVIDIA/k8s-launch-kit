@@ -9,6 +9,11 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-di
 - **WHEN** the option is omitted or explicitly false
 - **THEN** no standard NIC configuration template or new plugin-disable request is rendered.
 
+#### Scenario: Profile-owned NIC configuration templates
+
+- **WHEN** a standard profile loads its NIC configuration template
+- **THEN** it loads a template file from its own directory without referencing another profile.
+
 #### Scenario: Standard profile selection
 
 - **WHEN** the option is enabled for a supported standard profile and selected hardware groups

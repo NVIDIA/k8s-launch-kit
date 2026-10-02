@@ -71,6 +71,11 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-di
 - **WHEN** the option is omitted or explicitly false
 - **THEN** no standard NIC configuration template or new plugin-disable request is rendered.
 
+#### Scenario: Profile-owned NIC configuration templates
+
+- **WHEN** a standard profile loads its NIC configuration template
+- **THEN** it loads a template file from its own directory without referencing another profile.
+
 #### Scenario: Standard profile selection
 
 - **WHEN** the option is enabled for a supported standard profile and selected hardware groups
@@ -86,16 +91,6 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-di
 - **WHEN** the new option is enabled with Spectrum-X
 - **THEN** configuration is rejected without changing Spectrum-X templates.
 
-## Baseline and limits
-
-Current profile lookup is first-match; this spec does not introduce universal ambiguity rejection. Existing render maps do not universally detect pre-overwrite collisions: the collision requirement is an extension obligation, with legacy coverage to be assessed when touched. `ScopeClusterWide` may render a namespaced ConfigMap, while SCCs may render per workload namespace. [Resource kinds](../resource-kinds/spec.md) owns API/readiness integration; [artifacts](../artifact-handoff/spec.md) owns post-render structural validation.
-
-## Integration and evidence
-
-- Implementation: [profile selection](../../../pkg/profiles), [profile metadata/templates](../../../profiles), [scope registry](../../../pkg/networkoperatorplugin/scopes.go), [render plan](../../../pkg/networkoperatorplugin/render_plan.go), [templates](../../../pkg/networkoperatorplugin/templates.go).
-- Existing suite: [template generation](../../../pkg/networkoperatorplugin/templates_test.go); extend it with collision and full/subset integration cases, not just file counts.
-- User documentation: [generation](../../../docs/advanced/generation.md), [heterogeneous clusters](../../../docs/user/heterogeneous-clusters.md).
-
 #### Scenario: Whole-NIC scope protection
 
 - **WHEN** an enabled standard template selects an east-west PF whose source inventory includes an excluded PF on the same PCI device
@@ -105,3 +100,13 @@ Current profile lookup is first-match; this spec does not introduce universal am
 
 - **WHEN** opt-out or subset generation omits a previously deployed standard NIC configuration template
 - **THEN** Kubernetes deploy preflight treats it as a stray, blocking unless overwrite-existing authorizes deletion; OCP preserves it, and neither platform automatically restores applied NIC settings.
+
+## Baseline and limits
+
+Current profile lookup is first-match; this spec does not introduce universal ambiguity rejection. Existing render maps do not universally detect pre-overwrite collisions: the collision requirement is an extension obligation, with legacy coverage to be assessed when touched. `ScopeClusterWide` may render a namespaced ConfigMap, while SCCs may render per workload namespace. [Resource kinds](../resource-kinds/spec.md) owns API/readiness integration; [artifacts](../artifact-handoff/spec.md) owns post-render structural validation.
+
+## Integration and evidence
+
+- Implementation: [profile selection](../../../pkg/profiles), [profile metadata/templates](../../../profiles), [scope registry](../../../pkg/networkoperatorplugin/scopes.go), [render plan](../../../pkg/networkoperatorplugin/render_plan.go), [templates](../../../pkg/networkoperatorplugin/templates.go).
+- Existing suite: [template generation](../../../pkg/networkoperatorplugin/templates_test.go); extend it with collision and full/subset integration cases, not just file counts.
+- User documentation: [generation](../../../docs/advanced/generation.md), [heterogeneous clusters](../../../docs/user/heterogeneous-clusters.md).

@@ -1,0 +1,33 @@
+{{- /* Copyright 2026 NVIDIA CORPORATION & AFFILIATES; SPDX-License-Identifier: Apache-2.0 */ -}}
+{{- if and .NicConfigurationOperator .NicConfigurationOperator.DeployNicConfigurationTemplate }}
+apiVersion: configuration.net.nvidia.com/v1alpha1
+kind: NicConfigurationTemplate
+metadata:
+  name: nic-configuration{{suffix .ClusterConfig.Identifier}}
+  namespace: "{{.NetworkOperator.Namespace}}"
+spec:
+  nodeSelector:
+    {{- range $key, $value := .ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  nicSelector:
+    nicType: "{{nicConfigurationType .ClusterConfig}}"
+    pciAddresses: [{{- $first := true }}{{- range $addr := nicConfigurationPCIAddresses .ClusterConfig }}{{- if not $first }}, {{ end }}{{- $first = false }}"{{$addr}}"{{- end }}]
+  resetToDefault: false
+  template:
+    numVfs: {{.Sriov.NumVfs}}
+    linkType: {{nicConfigurationLinkType .Profile.Fabric}}
+    pciPerformanceOptimized:
+      enabled: true
+      maxReadRequest: 4096
+    gpuDirectOptimized:
+      enabled: true
+      env: Baremetal
+    {{- if eq .Profile.Fabric "ethernet" }}
+    roceOptimized:
+      enabled: true
+      qos:
+        trust: dscp
+        pfc: "0,0,0,1,0,0,0,0"
+    {{- end }}
+{{- end }}

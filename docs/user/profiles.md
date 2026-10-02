@@ -199,6 +199,8 @@ For bundle layout and custom workload mutation, see [Manifest Generation](../adv
 
 ## Optional NIC configuration
 
+Each standard profile owns a local `30-nicconfigurationtemplate.yaml` file.
+
 Standard SR-IOV, RDMA-shared and host-device profiles on both flavors support
 `nicConfigurationOperator.deployNicConfigurationTemplate: true` (CLI:
 `--deploy-nic-configuration-template`). It defaults to false and is independent

@@ -25,3 +25,5 @@
 
 - Review scope protection: `TestStandardNicConfigurationMixedTrafficNIC` rejects represented excluded siblings on both flavors, preserves opt-out, and permits a subset excluding the conflicting source group.
 - Review cleanup contract: `TestCheckStrayCRs_OmittedNicConfigurationTemplate` verifies included templates are expected and omitted templates are strays; documentation states Kubernetes overwrite deletion and OCP preservation explicitly.
+
+- Profile ownership: the 48-case `TestStandardNicConfigurationProfiles` matrix requires the template path to be local to each profile and validates its rendered payload.

@@ -184,7 +184,11 @@ func TestStandardNicConfigurationProfiles(t *testing.T) {
 						if flavor == config.FlavorOCP {
 							profileName += "-ocp"
 						}
-						rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, profileName), cfg)
+						profile := loadProfileFromDir(t, profileName)
+						localTemplate, err := filepath.Abs(filepath.Join("..", "..", "profiles", profileName, "30-nicconfigurationtemplate.yaml"))
+						require.NoError(t, err)
+						require.Contains(t, profile.Templates, localTemplate, "each profile must own its NIC configuration template")
+						rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
 						require.NoError(t, err)
 						files := make([]bundle.File, 0, len(rendered))
 						for name, content := range rendered {
