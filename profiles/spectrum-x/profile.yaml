@@ -11,6 +11,7 @@ profileRequirements:
   # available in Network Operator 26.4+. RA2.3 also requires the
   # ConfigMap-backed Spectrum-X profile support shipped in 26.7+.
   minNetworkOperatorRelease: "26.7"
+  maxNetworkOperatorRelease: "26.7"
 nodeCapabilities:
     sriov: true
     rdma: true

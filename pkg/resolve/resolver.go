@@ -72,6 +72,7 @@ func Resolve(request Request) (*Result, error) {
 		}
 	}
 
+	config.PopulateSpectrumXPlatforms(effective.ClusterConfig)
 	var decisions []DefaultDecision
 	if request.ApplyHardwareDefaults {
 		decisions = ApplyHardwareDefaultsWithPresence(effective, request.Options, present)

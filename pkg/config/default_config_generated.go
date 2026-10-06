@@ -141,6 +141,8 @@ var defaultConfigYAML = []byte(
 	"macvlan:\n" +
 	"  networkName: macvlan-network # with multiple networks, -rail-0, -rail-1, etc. suffixes are added to the network name\n" +
 	"spectrumX:\n" +
+	"  # RA2.4 optional ovs-vswitchd other_config overrides. Omitted keys use operator defaults.\n" +
+	"  ovsConfig: {}\n" +
 	"  overlay: none\n" +
 	"  singlePlane:\n" +
 	"    netdevPrefix: \"eth_r%rail_id%\"\n" +

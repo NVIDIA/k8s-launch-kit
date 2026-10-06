@@ -1,0 +1,15 @@
+# Synthetic archive for structural and rendering tests only.
+# Empty recipe data does not qualify hardware or runtime reconciliation.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-dospcx-data
+  namespace: source-namespace
+  annotations:
+    configuration.net.nvidia.com/dospcx-data-commit: test-commit
+    configuration.net.nvidia.com/dospcx-data-ref: test-ref
+    configuration.net.nvidia.com/dospcx-data-tree: test-tree
+data:
+  format: dospcx-data.tar.gz/v1
+binaryData:
+  dospcx-data.tar.gz: H4sIAAAAAAAC/+3X3wqCMByG4R13Fd2ANdsfr+eHzRJmk7lBEt17VmcRQeJG0Pec6JkHn+/QPQXasrT4pFLqcZ28Xt/ca600WyuWQRwC+emR7D/t7/s3hkL0Ztj+yP4ll5XE/tn2771rWvtL+yteYv9s+wfT9ZZCqhdgxv5aof98+5uzqWNo3ak4eBf7YTNSZ5fdX0v5YX/xsr/gSrA1x/7JXa4rBv/r+f3nfBctLd39/P5LodE/+oc8/R9rKsLYm0QHwIz+peDoH/1Dnv//Iw2mqN2paQ8JjoDv+9/xSqN/9A95+rcU7v8AiT4CZvSvdiX6R/8AAAAAAACwlBsDKBEMACgAAA==

@@ -66,12 +66,13 @@ profile's `profileRequirements`.
   SriovIBNetwork, NicInterfaceNameTemplate, test DaemonSet
 - **Keywords**: InfiniBand, IB, SR-IOV, HPC, AI training, large-scale
 
-### 6. Spectrum-X Multi-Rail (RA2.3, Network Operator 26.7)
+### 6. Spectrum-X Multi-Rail (RA2.3 and RA2.4)
 
-- **Directory**: `profiles/spectrum-x/`
+- **Directory**: `profiles/spectrum-x/` for RA2.3, `profiles/spectrum-x-ra2.4/` for RA2.4
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
-  `spectrumX.spcxVersion=RA2.3`, `spectrumX.multiplaneMode` in
-  `[swplb, hwplb, none]`, `minNetworkOperatorRelease=26.7`
+  `spectrumX.spcxVersion` in `[RA2.3, RA2.4]`, `spectrumX.multiplaneMode` in
+  `[swplb, hwplb, none]`. RA2.3 requires Network Operator 26.7;
+  RA2.4 requires 26.10 or a newer catalogued release and a full doSPCX bundle.
 - **Node capabilities**: `sriov: true`, `rdma: true`
 - **Use cases**: Multi-tenant AI cloud, Spectrum-X ethernet fabric with OVS
   hardware offload, BF3 SuperNIC deployments, CX8 with any multiplane mode
@@ -128,7 +129,7 @@ profile's `profileRequirements`.
 - Multiplane mode: **must be `none`**
 - Number of planes: **must be 1**
 - Single-plane operation only; no multiplane support in BF3 hardware
-- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7
+- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, `RA2.3` on 26.7, or `RA2.4` on 26.10 and newer catalogued releases
 
 ### ConnectX-8 (deviceID: 1023) / ConnectX-9 (deviceID: 1025)
 
@@ -141,7 +142,7 @@ profile's `profileRequirements`.
 - B300/GB300 default to `swplb` / 2. Pass 4 explicitly for quad-plane B300.
 - Platform type cannot distinguish `swplb` from `hwplb`; both are supported on
   B300 and GB300, so `hwplb` must be selected explicitly.
-- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, or `RA2.3` on 26.7
+- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, `RA2.3` on 26.7, or `RA2.4` on 26.10 and newer catalogued releases
 
 ### Multiplane Mode Selection Guide
 
@@ -187,3 +188,31 @@ guide profile selection:
 3. What is the deployment type? `sriov`, `rdma_shared`, or `host_device`
 4. Match against profile requirements
 5. If no exact match, suggest the closest profile and explain the gap
+
+## RA2.4 integration
+
+RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
+accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+binaryData and annotations and rendering in the resolved operator namespace.
+26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
+implementation and matching CRDs before deployment. Deploy checks the served
+NCT schema after policy bootstrap and blocks additional resource apply when
+platformType support is absent or cannot be inspected. External Helm, overwrite,
+and dry-run do not bypass this check; dry-run needs APIs installed already.
+
+Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
+substring from the internal doSPCX platform list in gpuType. No preset or mapping
+setting is needed. Discovery saves empty values and warns; generation rejects
+unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
+clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
+zero, and must agree across merged groups. Refresh preserves explicit plane
+assignments only for unchanged source/rail hardware and verified unchanged worker
+membership (ordering does not matter). Changed or unknown membership drops prior
+assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
+sources must have the same effective layout. Merged GPU selectors must not include
+excluded same-GPU sources in other buckets; select one source in that case.
+One physical NIC cannot span rails
+(the current ThinkSystem-SR650-V4-RTX-PRO-6000 preset has this unsupported layout). Multiple hardware partitions
+inside one logical rail are outside this layout. Feature gates are not added.

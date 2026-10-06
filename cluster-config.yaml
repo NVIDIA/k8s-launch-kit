@@ -132,6 +132,8 @@ ipoib:
 macvlan:
   networkName: macvlan-network # with multiple networks, -rail-0, -rail-1, etc. suffixes are added to the network name
 spectrumX:
+  # RA2.4 optional ovs-vswitchd other_config overrides. Omitted keys use operator defaults.
+  ovsConfig: {}
   overlay: none
   singlePlane:
     netdevPrefix: "eth_r%rail_id%"

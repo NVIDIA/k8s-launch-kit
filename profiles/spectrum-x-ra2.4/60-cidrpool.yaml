@@ -1,0 +1,30 @@
+{{- /* .ClusterConfig.PFs keeps this template in per-group render mode. */ -}}
+{{- $pools := spectrumXCIDRPools . .ClusterConfig }}
+{{- range $idx, $pool := $pools }}
+{{ if $idx }}---
+{{ end -}}
+apiVersion: nv-ipam.nvidia.com/v1alpha1
+kind: CIDRPool
+metadata:
+  name: {{$pool.Name}}
+  namespace: "{{$.NetworkOperator.Namespace}}"
+spec:
+  cidr: {{$pool.CIDR}}
+  gatewayIndex: {{$pool.GatewayIndex}}
+  perNodeNetworkPrefix: {{$pool.PerNodeNetworkPrefix}}
+  perNodeExclusions:
+  {{- range $exclusion := $pool.PerNodeExclusions }}
+    - startIndex: {{$exclusion.StartIndex}}
+      endIndex: {{$exclusion.EndIndex}}
+  {{- end }}
+  routes:
+  {{- range $route := $pool.Routes }}
+    - dst: {{$route}}
+  {{- end }}
+  staticAllocations:
+  {{- range $allocation := $pool.StaticAllocations }}
+    - gateway: {{$allocation.Gateway}}
+      nodeName: {{$allocation.NodeName}}
+      prefix: {{$allocation.Prefix}}
+  {{- end }}
+{{- end }}

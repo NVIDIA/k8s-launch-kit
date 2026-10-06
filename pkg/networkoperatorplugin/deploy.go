@@ -268,6 +268,14 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		}
 	}
 
+	// NCO's CRDs are installed by NCP reconciliation. Check them only after
+	// bootstrap, but before applying the doSPCX bundle or any NIC templates.
+	// Dry-run cannot install missing APIs and must pass this live check too.
+	if err := validateSpectrumXDeploymentAPI(ctx, kubeClient, otherDocs); err != nil {
+		return pkgerrors.NewDeploymentError("Spectrum-X API compatibility check failed", err,
+			"Install a compatible Network Operator/NIC Configuration Operator build and matching CRDs, then retry. Dry-run requires those APIs to be installed already; --overwrite-existing cannot bypass this check.")
+	}
+
 	// Phase 3 — apply remaining manifests, no per-manifest wait.
 	// Per manifest we capture (a) the pre-apply generation so the
 	// verify phase knows whether the spec actually changed, and

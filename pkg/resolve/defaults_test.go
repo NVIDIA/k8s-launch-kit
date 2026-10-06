@@ -133,6 +133,35 @@ func TestApplyHardwareDefaultsRecordsSpectrumXMultirailReason(t *testing.T) {
 	assert.Equal(t, "implied by --spectrum-x", multirailDecisions[0].Reason)
 }
 
+func TestApplyHardwareDefaultsUsesEffectiveRAForRTX(t *testing.T) {
+	for _, tc := range []struct {
+		name, configuredRA, cliRA, mode string
+		planes                          int
+	}{
+		{"RA2.4 YAML", "RA2.4", "", "none", 1},
+		{"RA2.3 YAML", "RA2.3", "", "swplb", 2},
+		{"CLI overrides RA2.4 with RA2.3", "RA2.4", "RA2.3", "swplb", 2},
+		{"CLI overrides RA2.3 with RA2.4", "RA2.3", "RA2.4", "none", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.LaunchKitConfig{
+				Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+					Enable: true, SPCXVersion: tc.configuredRA,
+					MultiplaneMode: "", NumberOfPlanes: 0,
+				}},
+				ClusterConfig: []config.ClusterConfig{
+					spectrumXTestGroup("group-a", "", "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition", "1023"),
+				},
+			}
+			ApplyHardwareDefaults(cfg, options.Options{SpectrumX: true, SPCXVersion: tc.cliRA})
+			assert.Equal(t, tc.mode, cfg.Profile.SpectrumX.MultiplaneMode)
+			assert.Equal(t, tc.planes, cfg.Profile.SpectrumX.NumberOfPlanes)
+			assert.Equal(t, tc.configuredRA, cfg.Profile.SpectrumX.SPCXVersion,
+				"defaults use effective CLI intent without applying the override")
+		})
+	}
+}
+
 func TestSpectrumXDefaultsForHardwareUsesPlatformAndNIC(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -136,6 +136,61 @@ func TestGenerateLeavesSourceUntouchedAndWritesEffectiveConfig(t *testing.T) {
 	assert.Equal(t, source, string(secondUpdate), "repeated generation must leave source YAML untouched")
 }
 
+func TestRA24UnknownPlatformGenerationPreservesSourceAndExistingOutput(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	t.Chdir(filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..")))
+
+	cfg, err := config.DefaultLaunchKitConfig()
+	require.NoError(t, err)
+	cfg.NetworkOperator.SelectedRelease = "26.10"
+	cfg.Profile = &config.Profile{
+		Fabric: "ethernet", Deployment: "sriov", Multirail: true,
+		SpectrumX: &config.ProfileSpectrumX{
+			Enable: true, SPCXVersion: "RA2.4", MultiplaneMode: "none",
+			NumberOfPlanes: 1, TopologyType: config.SpectrumXTopology2Tier,
+		},
+	}
+	profileData, err := os.ReadFile(filepath.Join("pkg", "config", "testdata", "dospcx-configmap.yaml"))
+	require.NoError(t, err)
+	cfg.Profile.SpectrumX.Profile = string(profileData)
+	require.NoError(t, config.NormalizeSpectrumXProfileConfig(cfg.Profile.SpectrumX))
+	rail := 0
+	cfg.ClusterConfig = []config.ClusterConfig{{
+		Identifier: "unknown-platform", GPUType: "NVIDIA-Unknown-GPU", LinkType: "Ethernet",
+		WorkerNodes:  []string{"worker-0"},
+		Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Sriov: true, Rdma: true}},
+		PFs:          []config.PFConfig{{DeviceID: "1023", PciAddress: "0000:05:00.0", Traffic: "east-west", Rail: &rail}},
+	}}
+	raw, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+	source := append([]byte("# preserve this user configuration\n"), raw...)
+	configPath := filepath.Join(t.TempDir(), "cluster-config.yaml")
+	require.NoError(t, os.WriteFile(configPath, source, 0o600))
+	outputDir := filepath.Join(t.TempDir(), "deployment")
+	pluginDir := filepath.Join(outputDir, networkoperatorplugin.PluginName)
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+	sentinel := filepath.Join(pluginDir, "previous-manifest.yaml")
+	previous := []byte("previous generated contents\n")
+	require.NoError(t, os.WriteFile(sentinel, previous, 0o600))
+
+	launcher := New(options.Options{SaveDeploymentFiles: outputDir})
+	launcher.ui = ui.NewSilent()
+	launcher.plugins[networkoperatorplugin.PluginName] = &networkoperatorplugin.NetworkOperatorPlugin{}
+	err = launcher.executeGeneration(configPath)
+	require.ErrorContains(t, err, "unresolved doSPCX platform")
+	require.ErrorContains(t, err, `"unknown-platform"`)
+	require.ErrorContains(t, err, `"NVIDIA-Unknown-GPU"`)
+	require.Equal(t, source, mustRead(t, configPath))
+	require.Equal(t, previous, mustRead(t, sentinel))
+	entries, err := os.ReadDir(pluginDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "failure must not replace or append generated manifests")
+	_, err = os.Stat(config.EffectiveConfigPath(outputDir))
+	require.True(t, os.IsNotExist(err), "failure must not write resolved bundle metadata")
+	require.Empty(t, launcher.generatedBundles)
+}
+
 func TestResolveSpectrumXTopologyFile(t *testing.T) {
 	t.Run("config relative path resolves from config directory", func(t *testing.T) {
 		configPath := filepath.Join(t.TempDir(), "configs", "cluster-config.yaml")

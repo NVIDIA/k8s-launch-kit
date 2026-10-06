@@ -101,6 +101,39 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-di
 - **WHEN** opt-out or subset generation omits a previously deployed standard NIC configuration template
 - **THEN** Kubernetes deploy preflight treats it as a stray, blocking unless overwrite-existing authorizes deletion; OCP preserves it, and neither platform automatically restores applied NIC settings.
 
+### Requirement: RA2.4 Spectrum-X planning
+
+RA2.3 SHALL be limited to Network Operator 26.7. RA2.4 SHALL support catalogued
+releases >=26.10 with a stable default of 26.10. RA2.4 SHALL render one doSPCX
+bundle in the resolved operator namespace, architecture version RA2.4 and
+per-source platformType. Platform resolution SHALL select the unique longest
+case-insensitive supported platform substring in GPUType without requiring a preset.
+
+#### Scenario: Unresolved discovery and generation
+
+- **WHEN** a discovered GPU product has no unambiguous supported platform substring
+- **THEN** discovery saves an empty platform and warns, while generation rejects unresolved selected RA2.4 groups before replacing output.
+
+#### Scenario: Software-plane merge conflict
+
+- **WHEN** source groups in one RA2.4 render bucket have different effective HWPLB software-plane assignments
+- **THEN** generation rejects the merge rather than losing either assignment.
+
+#### Scenario: Incompatible source rail layouts
+
+- **WHEN** selected RA2.4 sources lack complete dense rail IDs, have nonuniform NICs per rail or an invalid planes-per-NIC ratio, assign one physical NIC to multiple rails, or a merged cohort has differing effective rail layouts
+- **THEN** generation rejects the selection before rendering even without software-plane overrides; differing PCI addresses alone do not prevent a compatible merge.
+
+#### Scenario: Merged RA2.4 selector includes excluded sources
+
+- **WHEN** a selected merged RA2.4 cohort shares its GPU selector with an excluded source from another bucket
+- **THEN** generation rejects the selection rather than configuring excluded workers; selecting one source remains supported.
+
+#### Scenario: Multiple RA2.4 rail-pool parents
+
+- **WHEN** RA2.4 scope planning would emit multiple rail-pool parents through a multi-source strict subset or multiple buckets
+- **THEN** generation rejects the selection before rendering or replacing output because operator-created children share rail names; a complete compatible cohort or a single selected source remains supported.
+
 ## Baseline and limits
 
 Current profile lookup is first-match; this spec does not introduce universal ambiguity rejection. Existing render maps do not universally detect pre-overwrite collisions: the collision requirement is an extension obligation, with legacy coverage to be assessed when touched. `ScopeClusterWide` may render a namespaced ConfigMap, while SCCs may render per workload namespace. [Resource kinds](../resource-kinds/spec.md) owns API/readiness integration; [artifacts](../artifact-handoff/spec.md) owns post-render structural validation.

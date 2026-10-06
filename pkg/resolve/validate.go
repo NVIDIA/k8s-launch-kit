@@ -185,19 +185,18 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 	}
 
 	// Cross-validate (RA version, network-operator-release).
-	allowed := config.SPCXVersionAllowedReleases[spcx.SPCXVersion]
 	currentRelease := ""
 	if cfg.NetworkOperator != nil {
 		currentRelease = cfg.NetworkOperator.SelectedRelease
 	}
 	if currentRelease == "" {
-		return fmt.Errorf("--network-operator-release is required when --spectrum-x is set; "+
-			"--spectrum-x %s requires --network-operator-release in %v",
-			spcx.SPCXVersion, allowed)
+		return fmt.Errorf("--network-operator-release is required when --spectrum-x is set")
 	}
-	if !slices.Contains(allowed, currentRelease) {
-		return fmt.Errorf("--spectrum-x %s requires --network-operator-release in %v, got %s",
-			spcx.SPCXVersion, allowed, currentRelease)
+	if err := config.ValidateSPCXRelease(spcx.SPCXVersion, currentRelease); err != nil {
+		return err
+	}
+	if err := config.ValidateSpectrumXProfileFormat(spcx); err != nil {
+		return err
 	}
 
 	return nil

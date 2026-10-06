@@ -341,3 +341,6 @@ ibv_devices
 - [NVIDIA Network Operator Documentation](https://docs.nvidia.com/networking/display/COKAN10)
 - [Spectrum-X Architecture Guide](https://docs.nvidia.com/networking/display/SpectrumX)
 - [NIC Configuration Operator](https://github.com/Mellanox/nic-configuration-operator)
+
+RA2.3 is restricted to Network Operator 26.7. For 26.10 and newer, use the
+[RA2.4 profile](../spectrum-x-ra2.4/README.md) and a doSPCX bundle.

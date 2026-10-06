@@ -6,6 +6,12 @@ Standard SR-IOV, RDMA-shared and host-device profiles can opt into NIC tuning wi
 
 The current lifecycle uses the `host` target by default. The reserved `dpf` target does not have available lifecycle phases; see [target extension](docs/advanced/targets.md) for its implementation status.
 
+Spectrum-X RA2.4 supports Network Operator 26.10 and newer catalogued releases;
+RA2.3 is limited to 26.7. RA2.4 uses a doSPCX bundle, derives per-group platform
+from GPU-product substrings, and accepts optional HWPLB software-plane and OVS
+settings. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
+including the required NCO implementation/CRDs beyond the current 26.10 beta.2 package.
+
 ## Documentation
 
 The [Launch Kit documentation](https://nvidia.github.io/k8s-launch-kit/) is the operational guide. Start with [planning](docs/user/profiles.md), [installation](docs/user/installation.md), and the [SR-IOV Ethernet walkthrough](docs/user/quick-start.md). OpenShift and Spectrum-X have [separate](docs/user/openshift.md) [guides](docs/user/spectrum-x.md). The [CLI](docs/reference/cli.md) and [configuration](docs/reference/configuration.md) references cover exact inputs.
@@ -167,7 +173,7 @@ Host Target Spectrum-X Flags:
       --ip-version string                  Spectrum-X address family: ipv4 or ipv6
       --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, or hwplb
       --number-of-planes int               Spectrum-X plane count: 1, 2, or 4
-      --spectrum-x-config string           Path to a full Spectrum-X profile ConfigMap or raw data.profile YAML
+      --spectrum-x-config string           Path to RA2.3 legacy profile (ConfigMap or raw data.profile) or RA2.4 full doSPCX ConfigMap
       --spectrum-x-configmap-name string   ConfigMap name used when --spectrum-x-config contains raw data.profile YAML
       --topology-file string               Path to a Spectrum-X reference-generator or NVIDIA AIR topology JSON file
       --topology-scheme string             Spectrum-X topology scheme: 2-tier or 3-tier

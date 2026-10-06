@@ -229,7 +229,7 @@ the single CLI gateway: a non-empty value sets `enable: true` AND populates
 | Field            | Type   | Default  | CLI Override                                         | Description                            |
 |------------------|--------|----------|------------------------------------------------------|----------------------------------------|
 | `enable`         | bool   | `false`  | derived from `--spectrum-x` (true when value is set) | Enable Spectrum-X profile              |
-| `spcxVersion`    | string | unset  | value of `--spectrum-x`                              | Spectrum-X RA version: RA2.1/26.1, RA2.2/26.4, or RA2.3/26.7. RA2.3 requires profile ConfigMap data; omit this field while disabled. |
+| `spcxVersion`    | string | unset  | value of `--spectrum-x`                              | Spectrum-X RA version: RA2.1/26.1, RA2.2/26.4, RA2.3/26.7, or RA2.4/26.10 and newer catalogued releases. RA2.3 requires legacy profile data; RA2.4 requires a full doSPCX ConfigMap. Omit this field while disabled. |
 | `multiplaneMode` | string | platform/NIC-derived | `--multiplane-mode`                         | H100/H200/B200/GB200 use `none`; B300/GB300 use GA `swplb`; select `hwplb` explicitly |
 | `numberOfPlanes` | int    | platform/NIC-derived | `--number-of-planes`                         | Single-plane platforms use 1; B300/GB300 use 2; pass 4 explicitly for quad-plane B300 |
 
@@ -306,3 +306,31 @@ clusterConfig:
     nodeSelector:
       feature.node.kubernetes.io/pci-15b3.present: "true"
 ```
+
+## RA2.4 integration
+
+RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
+accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+binaryData and annotations and rendering in the resolved operator namespace.
+26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
+implementation and matching CRDs before deployment. Deploy checks the served
+NCT schema after policy bootstrap and blocks additional resource apply when
+platformType support is absent or cannot be inspected. External Helm, overwrite,
+and dry-run do not bypass this check; dry-run needs APIs installed already.
+
+Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
+substring from the internal doSPCX platform list in gpuType. No preset or mapping
+setting is needed. Discovery saves empty values and warns; generation rejects
+unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
+clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
+zero, and must agree across merged groups. Refresh preserves explicit plane
+assignments only for unchanged source/rail hardware and verified unchanged worker
+membership (ordering does not matter). Changed or unknown membership drops prior
+assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
+sources must have the same effective layout. Merged GPU selectors must not include
+excluded same-GPU sources in other buckets; select one source in that case.
+One physical NIC cannot span rails
+(the current ThinkSystem-SR650-V4-RTX-PRO-6000 preset has this unsupported layout). Multiple hardware partitions
+inside one logical rail are outside this layout. Feature gates are not added.

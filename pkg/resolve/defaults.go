@@ -215,7 +215,11 @@ func applySpectrumXHardwareDefaults(
 		needsHardwareMode := modeUnset && effectivePlanes != 1
 		needsHardwarePlanes := planesUnset && effectiveMode != "none"
 		if needsHardwareMode || needsHardwarePlanes {
-			mode, planes, ok, reason = spectrumXDefaultsForHardware(cfg.ClusterConfig)
+			effectiveRA := cfg.Profile.SpectrumX.SPCXVersion
+			if opts.SPCXVersion != "" {
+				effectiveRA = opts.SPCXVersion
+			}
+			mode, planes, ok, reason = spectrumXDefaultsForHardware(cfg.ClusterConfig, effectiveRA == "RA2.4")
 		}
 
 		modeReason := reason
@@ -327,7 +331,7 @@ func dominantLinkType(groups []config.ClusterConfig) (linkType string, ok bool, 
 // systems. Platform does not distinguish swplb from hwplb: both are available
 // on B300 and GB300, so l8k defaults to the GA swplb path and requires an
 // explicit override for tech-preview hwplb.
-func spectrumXDefaultsForHardware(groups []config.ClusterConfig) (mode string, planes int, ok bool, reason string) {
+func spectrumXDefaultsForHardware(groups []config.ClusterConfig, ra24 ...bool) (mode string, planes int, ok bool, reason string) {
 	if len(groups) == 0 {
 		return "", 0, false, "no clusterConfig groups"
 	}
@@ -351,6 +355,9 @@ func spectrumXDefaultsForHardware(groups []config.ClusterConfig) (mode string, p
 			return "", 0, false, idErr.Error()
 		}
 		platform := spectrumXGPUPlatform(g)
+		if len(ra24) > 0 && ra24[0] {
+			platform = strings.ToUpper(config.SpectrumXPlatformForGPUProduct(g.GPUType))
+		}
 		groupMode, groupPlanes, groupReason := spectrumXDefaultForDeviceAndPlatform(deviceID, platform)
 		if groupMode == "" {
 			return "", 0, false, groupReason
@@ -378,7 +385,7 @@ func spectrumXDefaultForDeviceAndPlatform(deviceID, platform string) (mode strin
 		return "none", 1, "ConnectX-7 (deviceID 1021)"
 	case "1023":
 		switch platform {
-		case "H100", "H200", "B200", "GB200":
+		case "H100", "H200", "B200", "GB200", "RTX":
 			return "none", 1, fmt.Sprintf("%s is a single-plane GPU platform (ConnectX-8 deviceID 1023)", platform)
 		case "B300":
 			return "swplb", 2, "B300 conservative dual-plane SWPLB default; pass 4 explicitly for quad-plane"

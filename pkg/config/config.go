@@ -380,6 +380,8 @@ type SriovConfig struct {
 }
 
 type SpectrumXConfig struct {
+	// OVSConfig overrides ovs-vswitchd other_config entries for RA2.4.
+	OVSConfig   map[string]string                   `yaml:"ovsConfig,omitempty"`
 	Overlay     string                              `yaml:"overlay"` // "none"
 	SinglePlane *SpectrumXInterfaceNamePrefixConfig `yaml:"singlePlane,omitempty"`
 	HWPLB       *SpectrumXInterfaceNamePrefixConfig `yaml:"hwplb,omitempty"`
@@ -742,23 +744,30 @@ func (p Profile) MarshalYAML() (interface{}, error) {
 
 type ProfileSpectrumX struct {
 	Enable               bool   `yaml:"enable"`         // must be true for Spectrum-X profiles to match
-	SPCXVersion          string `yaml:"spcxVersion"`    // e.g., "RA2.2"
+	SPCXVersion          string `yaml:"spcxVersion"`    // RA2.1, RA2.2, RA2.3 or RA2.4
 	MultiplaneMode       string `yaml:"multiplaneMode"` // none, swplb, hwplb
-	NumberOfPlanes       int    `yaml:"numberOfPlanes"` // 2 or 4
+	NumberOfPlanes       int    `yaml:"numberOfPlanes"` // 1, 2 or 4
 	TopologyType         string `yaml:"topologyType,omitempty"`
 	IPVersion            string `yaml:"ipVersion,omitempty"`
 	HostFirstOctet       int    `yaml:"hostFirstOctet,omitempty"`
 	TopologyFile         string `yaml:"topologyFile,omitempty"`
 	ResolvedTopologyFile string `yaml:"-"`
-	UseDRA               bool   `yaml:"useDRA"` // enable DRA ResourceClaimTemplate-based workload allocation
-	ConfigMapName        string `yaml:"configMapName,omitempty"`
-	Profile              string `yaml:"profile,omitempty"`
+	UseDRA               bool   `yaml:"useDRA"`                  // enable DRA ResourceClaimTemplate-based workload allocation
+	ConfigMapName        string `yaml:"configMapName,omitempty"` // inferred from full ConfigMap input; required for raw RA2.3 data
+	Profile              string `yaml:"profile,omitempty"`       // legacy RA2.3 profile body or full RA2.4 doSPCX ConfigMap
+}
+
+// SpectrumXGroupConfig combines derived platform metadata and explicit rail assignments.
+type SpectrumXGroupConfig struct {
+	PlatformType  string      `yaml:"platformType"`            // derived from GPUType; recomputed during discovery and resolution
+	SwPlaneByRail map[int]int `yaml:"swPlaneByRail,omitempty"` // RA2.4 software-plane assignments keyed by existing east-west rail ID
 }
 
 type ClusterConfig struct {
-	Identifier  string `yaml:"identifier"`
-	MachineType string `yaml:"machineType,omitempty"`
-	GPUType     string `yaml:"gpuType,omitempty"`
+	SpectrumX   *SpectrumXGroupConfig `yaml:"spectrumX,omitempty"`
+	Identifier  string                `yaml:"identifier"`
+	MachineType string                `yaml:"machineType,omitempty"`
+	GPUType     string                `yaml:"gpuType,omitempty"`
 	// LinkType is the fabric type discovered for the group's east-west PFs:
 	// "Ethernet" or "InfiniBand". Set only when *every* east-west PF probe
 	// returns a confirmed verdict (port ACTIVE + matching link_layer + for
@@ -1076,9 +1085,9 @@ func validateDOCADriverConfig(driver *DOCADriverConfig) error {
 }
 
 // SupportedSPCXVersions lists the Spectrum-X RA versions for which l8k can
-// emit non-`none` multiplane configurations. RA2.1 ships on Network Operator
-// 26.1; RA2.2 on 26.4+. Order is preserved in error messages.
-var SupportedSPCXVersions = []string{"RA2.1", "RA2.2", "RA2.3"}
+// emit non-`none` multiplane configurations. Release compatibility and defaults
+// are defined by the shared SPC-X release policy. Order is preserved in errors.
+var SupportedSPCXVersions = []string{"RA2.1", "RA2.2", "RA2.3", "RA2.4"}
 
 // SupportedMultiplaneModes lists the Spectrum-X multiplane modes the CLI
 // accepts. `none` collapses to one plane; `swplb` and `hwplb` require
@@ -1091,33 +1100,6 @@ var SupportedNumberOfPlanes = []int{1, 2, 4}
 var SupportedSpectrumXTopologyTypes = []string{SpectrumXTopology2Tier, SpectrumXTopology3Tier}
 
 var SupportedSpectrumXIPVersions = []string{SpectrumXIPVersionIPv4, SpectrumXIPVersionIPv6}
-
-// SPCXVersionAllowedReleases is the authoritative mapping from SPC-X RA
-// version to the Network Operator releases that ship that version's CRD
-// set. When a future release line picks up an existing RA version (e.g.
-// 27.0 continues to ship the v1alpha2 SpectrumXRailPoolConfig), append
-// it to the matching slice. When a future RA version arrives, add a
-// new key. Lives in pkg/config because it's shared between Phase 1
-// syntax checks (pkg/cmd) and Phase 2 cohort validation +
-// hardware-defaulting (pkg/resolve).
-var SPCXVersionAllowedReleases = map[string][]string{
-	"RA2.1": {"26.1"},
-	"RA2.2": {"26.4"},
-	"RA2.3": {"26.7"},
-}
-
-// DefaultSPCXReleaseFor returns the canonical (first-listed) Network
-// Operator release for an SPC-X RA version, or "" when the RA is not
-// registered. Used by `pkg/resolve.ApplyHardwareDefaults` to fill
-// `--network-operator-release` when the user passes `--spectrum-x`
-// without an explicit release.
-func DefaultSPCXReleaseFor(ra string) string {
-	releases, ok := SPCXVersionAllowedReleases[ra]
-	if !ok || len(releases) == 0 {
-		return ""
-	}
-	return releases[0]
-}
 
 // validateSpectrumXTemplates validates that Spectrum-X templates have required placeholders
 func validateSpectrumXTemplates(config *LaunchKitConfig) error {
