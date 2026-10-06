@@ -66,6 +66,9 @@ func DecodeInput(source []byte, sourcePath string) (*Input, error) {
 	if err := yamlv3.Unmarshal(source, &document); err != nil {
 		return nil, fmt.Errorf("failed to inspect cluster config YAML %s: %w", displaySource(sourcePath), err)
 	}
+	if err := validateSpectrumXSwPlaneKeys(&document, "", map[*yamlv3.Node]bool{}); err != nil {
+		return nil, fmt.Errorf("failed to inspect cluster config YAML %s: %w", displaySource(sourcePath), err)
+	}
 	expanded, err := expandYAMLNode(&document, map[*yamlv3.Node]bool{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to expand cluster config YAML %s: %w", displaySource(sourcePath), err)
@@ -79,6 +82,69 @@ func DecodeInput(source []byte, sourcePath string) (*Input, error) {
 		SourcePath: sourcePath,
 		SourceYAML: append([]byte(nil), source...),
 	}, nil
+}
+
+// Check explicit rail keys before merge expansion discards duplicates. YAML
+// merges may deliberately overlap inherited keys; only duplicates in the same
+// explicit mapping are invalid. Following aliases at their usage path also
+// checks rail maps inherited through group or Spectrum-X configuration merges.
+func validateSpectrumXSwPlaneKeys(node *yamlv3.Node, path string, active map[*yamlv3.Node]bool) error {
+	if node == nil {
+		return nil
+	}
+	if active[node] {
+		return fmt.Errorf("cyclic YAML alias")
+	}
+	active[node] = true
+	defer delete(active, node)
+	if node.Kind == yamlv3.AliasNode {
+		return validateSpectrumXSwPlaneKeys(node.Alias, path, active)
+	}
+	if node.Kind == yamlv3.MappingNode {
+		seen := map[int]int{}
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key, value := node.Content[i], node.Content[i+1]
+			if key.Tag == "!!merge" {
+				merged := []*yamlv3.Node{value}
+				if value.Kind == yamlv3.SequenceNode {
+					merged = value.Content
+				}
+				for _, mapping := range merged {
+					if err := validateSpectrumXSwPlaneKeys(mapping, path, active); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if path == "clusterConfig[].spectrumX.swPlaneByRail" {
+				var rail int
+				if err := key.Decode(&rail); err != nil {
+					return fmt.Errorf("invalid swPlaneByRail rail key %q at line %d: %w", key.Value, key.Line, err)
+				}
+				if line, exists := seen[rail]; exists {
+					return fmt.Errorf("duplicate swPlaneByRail rail key %d at line %d (previously at line %d)", rail, key.Line, line)
+				}
+				seen[rail] = key.Line
+			}
+			childPath := key.Value
+			if path != "" {
+				childPath = path + "." + childPath
+			}
+			if err := validateSpectrumXSwPlaneKeys(value, childPath, active); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if node.Kind == yamlv3.SequenceNode {
+		path += "[]"
+	}
+	for _, child := range node.Content {
+		if err := validateSpectrumXSwPlaneKeys(child, path, active); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // LoadInput reads a user config. An empty path represents an empty user layer;

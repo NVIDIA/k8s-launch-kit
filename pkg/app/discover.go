@@ -156,6 +156,10 @@ func (l *Launcher) discoverClusterConfig() error {
 		return fmt.Errorf("copy discovery input: %w", err)
 	}
 	finalInput.Config.ClusterConfig = discoveryConfig.ClusterConfig
+	if l.options.UserConfig != "" {
+		preserveSpectrumXRailAssignments(rawInput.Config.ClusterConfig, finalInput.Config.ClusterConfig, l.ui)
+	}
+	config.PopulateSpectrumXPlatforms(finalInput.Config.ClusterConfig)
 	var finalConfig *config.LaunchKitConfig
 	if l.options.UserConfig == "" {
 		// A reference config contributes defaults but its sample profile is not
@@ -235,6 +239,7 @@ func (l *Launcher) discoverClusterConfig() error {
 	l.ui.Success("Configuration saved: %s", savePath)
 	l.logger.Info("Discovered cluster config saved", "path", savePath)
 
+	warnSpectrumXPlatforms(finalConfig.ClusterConfig, l.ui)
 	warnThirdPartyRDMAModules(finalConfig, "discover", l.ui)
 	warnStorageModules(finalConfig, "discover", l.ui)
 

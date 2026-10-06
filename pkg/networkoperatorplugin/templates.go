@@ -140,6 +140,8 @@ var templateFuncs = template.FuncMap{
 	"spectrumXNicType":               spectrumXNicType,
 	"spectrumXPCIAddresses":          spectrumXPCIAddresses,
 	"spectrumXProfileConfigRequired": config.SpectrumXProfileConfigRequired,
+	"dospcxConfigMap":                config.RenderDospcxConfigMap,
+	"spectrumXSwPlane":               spectrumXSwPlane,
 	"spectrumXCIDRPools": func(root any, clusterConfig *config.ClusterConfig) ([]spectrumxaddressing.CIDRPool, error) {
 		var cfg *config.LaunchKitConfig
 		switch v := root.(type) {
@@ -158,6 +160,9 @@ var templateFuncs = template.FuncMap{
 	"spectrumXVersionRef": func(spcx *config.ProfileSpectrumX) string {
 		if spcx == nil {
 			return ""
+		}
+		if spcx.SPCXVersion == "RA2.4" {
+			return spcx.SPCXVersion
 		}
 		if config.SpectrumXProfileConfigRequired(spcx.SPCXVersion) {
 			return spcx.ConfigMapName
@@ -1018,6 +1023,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		return nil, fmt.Errorf("copy resolved configuration: %w", err)
 	}
 	cfg = resolved
+	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
 	cfg.CurrentNetworkNamespace = cfg.NetworkNamespaces[0]
 
 	// Apply --groups / --gpu-type filter to source groups before merging.
@@ -1025,6 +1031,9 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	// and is a no-op when neither flag is set.
 	filtered, err := applyGroupFilter(cfg.ClusterConfig, p.Groups, p.GpuType)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateSpectrumXGeneration(cfg, filtered); err != nil {
 		return nil, err
 	}
 	if cfg.NicConfigurationOperator != nil && cfg.NicConfigurationOperator.DeployNicConfigurationTemplate && !isSpectrumX(cfg) {
@@ -1076,6 +1085,9 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	// comparing to the original (pre-filter) bucket. The plans drive
 	// the per-template scope dispatch below.
 	plans, _ := planRender(cfg.ClusterConfig, filtered)
+	if err := validateSpectrumXPlaneBuckets(cfg, plans); err != nil {
+		return nil, err
+	}
 	if cfg.Flavor == config.FlavorOCP {
 		disambiguateOCPSameGPUBuckets(plans)
 	}
@@ -1562,6 +1574,7 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 		Identifier:            config.SanitizeIdentifier(gpuType),
 		MachineType:           first.MachineType,
 		GPUType:               gpuType,
+		SpectrumX:             cloneSpectrumXGroup(first.SpectrumX),
 		LinkType:              first.LinkType,
 		Capabilities:          caps,
 		PFs:                   first.PFs, // Representative PFs from first group

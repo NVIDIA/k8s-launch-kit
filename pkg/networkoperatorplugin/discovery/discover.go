@@ -269,6 +269,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 
 	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, opts.NodeSelector, opts.CollapseNicRails)
 	cfg.ClusterConfig = clusterConfig
+	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
 
 	for _, w := range nsWarnings {
 		uiOutput.Warning("%s", w)

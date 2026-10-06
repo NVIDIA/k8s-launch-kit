@@ -17,6 +17,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -26,6 +27,8 @@ import (
 const (
 	SpectrumXProfileLabel            = "network.nvidia.com/operator.nic-configuration.spectrum-x-profile"
 	SpectrumXProfileConfigMapDataKey = "profile"
+	DospcxDataFormat                 = "dospcx-data.tar.gz/v1"
+	DospcxArchiveKey                 = "dospcx-data.tar.gz"
 )
 
 // SpectrumXProfileConfigRequired reports whether the RA version must be
@@ -39,10 +42,11 @@ func SpectrumXProfileConfigRequired(ra string) bool {
 	}
 }
 
-// NormalizeSpectrumXProfileConfig accepts either a full Spectrum-X profile
-// ConfigMap YAML or the raw data.profile body. Full ConfigMaps contribute their
-// metadata.name; rendered manifests always supply the canonical namespace and
-// label themselves.
+// NormalizeSpectrumXProfileConfig accepts a legacy profile ConfigMap or raw
+// data.profile body, or a full doSPCX data-bundle ConfigMap. Legacy inputs are
+// normalized to the profile body; doSPCX inputs retain their complete manifest.
+// Full ConfigMaps contribute metadata.name; rendering supplies the resolved
+// operator namespace and required label. RA compatibility is validated later.
 func NormalizeSpectrumXProfileConfig(spcx *ProfileSpectrumX) error {
 	if spcx == nil {
 		return nil
@@ -79,7 +83,7 @@ func NormalizeSpectrumXProfileConfig(spcx *ProfileSpectrumX) error {
 	if strings.TrimSpace(cm.Metadata.Name) == "" {
 		return fmt.Errorf("spectrum-x profile ConfigMap input is missing metadata.name")
 	}
-	if strings.TrimSpace(cm.Data[SpectrumXProfileConfigMapDataKey]) == "" {
+	if cm.Data["format"] == "" && len(cm.BinaryData) == 0 && strings.TrimSpace(cm.Data[SpectrumXProfileConfigMapDataKey]) == "" {
 		return fmt.Errorf("spectrum-x profile ConfigMap input is missing non-empty data.%s", SpectrumXProfileConfigMapDataKey)
 	}
 	if spcx.ConfigMapName != "" && spcx.ConfigMapName != cm.Metadata.Name {
@@ -88,7 +92,9 @@ func NormalizeSpectrumXProfileConfig(spcx *ProfileSpectrumX) error {
 	}
 
 	spcx.ConfigMapName = cm.Metadata.Name
-	spcx.Profile = cm.Data[SpectrumXProfileConfigMapDataKey]
+	if cm.Data["format"] == "" && len(cm.BinaryData) == 0 {
+		spcx.Profile = cm.Data[SpectrumXProfileConfigMapDataKey]
+	}
 	return nil
 }
 
@@ -127,9 +133,13 @@ type spectrumXProfileConfigMap struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
 	Metadata   struct {
-		Name string `yaml:"name"`
+		Name        string            `yaml:"name"`
+		Namespace   string            `yaml:"namespace,omitempty"`
+		Labels      map[string]string `yaml:"labels,omitempty"`
+		Annotations map[string]string `yaml:"annotations,omitempty"`
 	} `yaml:"metadata"`
-	Data map[string]string `yaml:"data"`
+	Data       map[string]string `yaml:"data"`
+	BinaryData map[string]string `yaml:"binaryData,omitempty"`
 }
 
 func parseSpectrumXProfileConfigMap(raw string) (*spectrumXProfileConfigMap, bool, error) {
@@ -145,4 +155,53 @@ func parseSpectrumXProfileConfigMap(raw string) (*spectrumXProfileConfigMap, boo
 		return nil, false, fmt.Errorf("spectrum-x profile input kind must be ConfigMap, got %q", cm.Kind)
 	}
 	return &cm, true, nil
+}
+
+// ValidateSpectrumXProfileFormat runs after final RA/CLI precedence is resolved.
+func ValidateSpectrumXProfileFormat(spcx *ProfileSpectrumX) error {
+	if spcx == nil {
+		return nil
+	}
+	cm, full, err := parseSpectrumXProfileConfigMap(spcx.Profile)
+	if err != nil {
+		return err
+	}
+	if spcx.SPCXVersion != "RA2.4" {
+		if full && (cm.Data["format"] != "" || len(cm.BinaryData) > 0) {
+			return fmt.Errorf("doSPCX ConfigMap requires RA2.4")
+		}
+		return nil
+	}
+	if !full || cm.APIVersion != "v1" || cm.Kind != "ConfigMap" || cm.Data["format"] != DospcxDataFormat || cm.Metadata.Name == "" {
+		return fmt.Errorf("RA2.4 requires a full v1 ConfigMap with data.format: %s", DospcxDataFormat)
+	}
+	if cm.Metadata.Name != spcx.ConfigMapName {
+		return fmt.Errorf("doSPCX ConfigMap name %q does not match configMapName %q", cm.Metadata.Name, spcx.ConfigMapName)
+	}
+	archive, err := base64.StdEncoding.DecodeString(cm.BinaryData[DospcxArchiveKey])
+	if err != nil || len(archive) == 0 {
+		return fmt.Errorf("RA2.4 requires nonempty base64 binaryData.%s", DospcxArchiveKey)
+	}
+	return validateDospcxArchive(archive)
+}
+
+// RenderDospcxConfigMap preserves data/provenance but owns namespace and selector label.
+func RenderDospcxConfigMap(spcx *ProfileSpectrumX, namespace string) (string, error) {
+	if spcx == nil || spcx.SPCXVersion != "RA2.4" {
+		return "", fmt.Errorf("RA2.4 doSPCX profile is required")
+	}
+	if err := ValidateSpectrumXProfileFormat(spcx); err != nil {
+		return "", err
+	}
+	cm, _, err := parseSpectrumXProfileConfigMap(spcx.Profile)
+	if err != nil {
+		return "", err
+	}
+	cm.Metadata.Namespace = namespace
+	if cm.Metadata.Labels == nil {
+		cm.Metadata.Labels = map[string]string{}
+	}
+	cm.Metadata.Labels[SpectrumXProfileLabel] = ""
+	data, err := yaml.Marshal(cm)
+	return string(data), err
 }

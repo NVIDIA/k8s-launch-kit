@@ -204,3 +204,14 @@ which deletes them. OCP preserves existing templates and disabled plugins.
 Generation rejects inventory with selected and excluded ports on the same PCI
 device. Review whole-NIC scope, including ports absent from inventory, and qualify
 runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. See `docs/reference/configuration.md#nic-configuration-and-naming`.
+
+## RA2.4 API compatibility
+
+For RA2.4 NIC templates, deploy checks the live NCO CRD after NCP/NNP bootstrap
+and before applying the doSPCX ConfigMap or NIC templates. The manifest's served
+API version must define platformType as a string; missing APIs and failed
+inspection stop deployment. This check also covers standalone/configless deploy,
+external Helm, overwrite and dry-run. Dry-run cannot install dependent CRDs.
+Read access to the cluster-scoped NCT CRD is required. Existing Helm, preflight
+remediation and policy-bootstrap effects are retained if the check fails.
+See `docs/user/spectrum-x.md#ra24-dospcx-profile` for compatible-build requirements.

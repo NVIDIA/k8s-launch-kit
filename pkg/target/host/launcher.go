@@ -228,10 +228,8 @@ func ValidateSpectrumXSyntax(opts *options.Options) error {
 		return fmt.Errorf("invalid --ip-version %q; supported: %v", opts.IPVersion, config.SupportedSpectrumXIPVersions)
 	}
 	if opts.SPCXVersion != "" && opts.NetworkOperatorRelease != "" {
-		allowed := config.SPCXVersionAllowedReleases[opts.SPCXVersion]
-		if !slices.Contains(allowed, opts.NetworkOperatorRelease) {
-			return fmt.Errorf("--spectrum-x %s requires --network-operator-release in %v, got %s",
-				opts.SPCXVersion, allowed, opts.NetworkOperatorRelease)
+		if err := config.ValidateSPCXRelease(opts.SPCXVersion, opts.NetworkOperatorRelease); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -112,12 +112,22 @@ the normal conflict check.
 
 ## Apply Order
 
-After Helm and preflight, deployment proceeds in four manifest phases:
+After Helm and preflight, deployment follows this order:
 
 1. Apply `NicClusterPolicy` and wait for a terminal state.
 2. Apply each `NicNodePolicy` and wait for each policy.
-3. Apply every remaining manifest without serial waits so controllers reconcile concurrently.
-4. Poll each phase-3 resource until it is `READY` or `ERROR`.
+3. For RA2.4 NIC templates, verify the live NCO CRD's served version includes
+   the `platformType` string field. This runs after policy bootstrap installs the
+   CRD and before applying any remaining manifests. Missing APIs or failed reads
+   stop deployment, including dry-run, external Helm and overwrite modes.
+4. Apply every remaining manifest without serial waits so controllers reconcile concurrently.
+5. Poll each applied additional resource until it is `READY` or `ERROR`.
+
+The RA2.4 capability check requires read access to the cluster-scoped
+`nicconfigurationtemplates.configuration.net.nvidia.com` CRD. Dry-run cannot
+install a missing CRD through policy reconciliation. A failed capability check
+can follow Helm changes, ordinary stray remediation and policy bootstrap; those
+effects are retained. See [RA2.4 prerequisites](../user/spectrum-x.md#ra24-dospcx-profile).
 
 Launch Kit gates changed resources on controller observation, avoiding a false success from stale status left by an earlier generation.
 
@@ -138,7 +148,7 @@ Kind-specific checks include per-component Network Operator state, SR-IOV per-no
 
 For `NicConfigurationTemplate` and `NicFirmwareTemplate`, Launch Kit first waits for the operator to publish matched device names in `status.nicDevices` and for that name set to reflect the current `nodeSelector`, NIC type, PCI-address, serial-number, and part-number selectors. It then evaluates only those `NicDevice` objects and waits for the corresponding `spec.configuration` or `spec.firmware` field to reflect the current template payload. A successful device condition is accepted only after its `observedGeneration` catches up with the `NicDevice` generation. A configuration template checks `FirmwareUpdateInProgress` only when the matched device carries `spec.firmware`; without a deployed firmware template, a stale firmware condition from an older device generation does not block configuration reconciliation. Other discovered NICs do not block on configuration or firmware state. Changed templates are also observation-gated before this status is accepted, so status left by an earlier generation cannot produce a false success.
 
-For `NicInterfaceNameTemplate`, `InterfaceNameMismatch` is retryable because the NIC configuration daemon can publish it while newly-written udev rules are still taking effect. Launch Kit starts a five-minute retry window when it first observes that mismatch. Initial device discovery and other ordinary in-progress states remain unbounded. Since phase-4 verification is ordered, the template gates later checks during this window. A persistent mismatch fails deployment after the local timeout and retains the per-node and per-port mismatch details.
+For `NicInterfaceNameTemplate`, `InterfaceNameMismatch` is retryable because the NIC configuration daemon can publish it while newly-written udev rules are still taking effect. Launch Kit starts a five-minute retry window when it first observes that mismatch. Initial device discovery and other ordinary in-progress states remain unbounded. Since additional-resource verification is ordered, the template gates later checks during this window. A persistent mismatch fails deployment after the local timeout and retains the per-node and per-port mismatch details.
 
 ## Timeout
 

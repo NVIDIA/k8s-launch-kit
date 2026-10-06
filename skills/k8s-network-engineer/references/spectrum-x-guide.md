@@ -9,10 +9,12 @@ qualification boundaries. The configuration resolver enforces these pairs:
 | RA2.1 | 26.1 | `profiles/spectrum-x-ra2.1/` | SR-IOV/OVS chain and v1alpha1 rail-pool CR |
 | RA2.2 | 26.4 | `profiles/spectrum-x-ra2.2/` | v1alpha2 rail-pool CR |
 | RA2.3 | 26.7 | `profiles/spectrum-x/` | v1alpha2 rail-pool CR and profile ConfigMap |
+| RA2.4 | 26.10 and newer catalogued releases | `profiles/spectrum-x-ra2.4/` | v1alpha2 rail-pool CR, doSPCX bundle and per-source platformType |
 
 Spectrum-X requires Ethernet, SR-IOV, and multirail. An invalid RA/release pair
 fails validation; it does not fall back to an ordinary profile. RA2.3 requires
-a full profile ConfigMap or raw profile YAML plus a ConfigMap name.
+a full profile ConfigMap or raw profile YAML plus a ConfigMap name. RA2.4
+requires a full doSPCX ConfigMap and the matching NCO implementation and CRDs.
 
 ## Mode Selection
 
@@ -66,3 +68,31 @@ Inspect full preflight conflicts before overwrite; scope is not restricted to
 l8k-owned annotations or the selected groups. Qualification requires successful
 allocation and the intended connectivity coverage on the target hardware.
 Spectrum-X has no qualified OpenShift profile in this build.
+
+## RA2.4 integration
+
+RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
+accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+binaryData and annotations and rendering in the resolved operator namespace.
+26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
+implementation and matching CRDs before deployment. Deploy checks the served
+NCT schema after policy bootstrap and blocks additional resource apply when
+platformType support is absent or cannot be inspected. External Helm, overwrite,
+and dry-run do not bypass this check; dry-run needs APIs installed already.
+
+Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
+substring from the internal doSPCX platform list in gpuType. No preset or mapping
+setting is needed. Discovery saves empty values and warns; generation rejects
+unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
+clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
+zero, and must agree across merged groups. Refresh preserves explicit plane
+assignments only for unchanged source/rail hardware and verified unchanged worker
+membership (ordering does not matter). Changed or unknown membership drops prior
+assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
+sources must have the same effective layout. Merged GPU selectors must not include
+excluded same-GPU sources in other buckets; select one source in that case.
+One physical NIC cannot span rails
+(the current ThinkSystem-SR650-V4-RTX-PRO-6000 preset has this unsupported layout). Multiple hardware partitions
+inside one logical rail are outside this layout. Feature gates are not added.

@@ -194,7 +194,7 @@ func TestApplySpectrumXDefaults_AcceptsNoneWithSinglePlane(t *testing.T) {
 func TestApplySpectrumXDefaults_DefaultsNetworkOperatorReleaseFromRA(t *testing.T) {
 	// Unit 8: when --spectrum-x is set without --network-operator-release,
 	// the release auto-defaults from the canonical (RA → release) map in
-	// `config.SPCXVersionAllowedReleases`. The user no longer has to pass
+	// `config.ValidateSPCXRelease`. The user no longer has to pass
 	// the release explicitly.
 	for ra, release := range map[string]string{"RA2.1": "26.1", "RA2.2": "26.4"} {
 		t.Run(ra, func(t *testing.T) {

@@ -424,14 +424,14 @@ profile:
 | `routing` | `destination-based` or `source-based`; source-based adds the `sbr` CNI plugin outside Spectrum-X. |
 | `ignoreARP` | Adds `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` through the `tuning` CNI plugin outside Spectrum-X. Kubernetes renders both `all` and `IFNAME` scopes; OpenShift renders `IFNAME` only and requires those keys in the Multus sysctl allowlist. |
 | `spectrumX.enable` | Select a Spectrum-X profile. |
-| `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, or `RA2.3`. |
+| `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, `RA2.3`, or `RA2.4`; RA2.3 requires 26.7, RA2.4 requires 26.10 or a newer catalogued release. |
 | `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. When absent, H100/H200/B200/GB200 default to `none`; B300/GB300 default to the GA `swplb` path. Platform type cannot distinguish `swplb` from `hwplb`, so `hwplb` must be selected explicitly. |
 | `spectrumX.numberOfPlanes` | `1`, `2`, or `4`. Single-plane platforms default to 1; B300/GB300 default to 2. Pass 4 explicitly for quad-plane B300. |
 | `spectrumX.topologyType` | `2-tier` or `3-tier`. |
 | `spectrumX.ipVersion` | `ipv4` for per-node `/31` allocation or `ipv6` for per-node `/64` allocation. |
 | `spectrumX.hostFirstOctet` | Config-only first octet for generated IPv4 topology addressing. |
 | `spectrumX.topologyFile` | Path to spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from its structure; relative paths resolve from the config file. |
-| `spectrumX.configMapName` / `profile` | RA2.3 ConfigMap name and embedded profile data. |
+| `spectrumX.configMapName` / `profile` | RA2.3 legacy ConfigMap name/data, or RA2.4 full doSPCX ConfigMap (including binaryData). Rendering always uses the operator namespace. |
 | `spectrumX.useDRA` | Render DRA `ResourceClaimTemplate` workload allocation; see [prerequisites](../user/spectrum-x.md#dra-workload-allocation). |
 
 The example above is a standard profile. When Spectrum-X is disabled, omit
@@ -439,6 +439,14 @@ its RA, mode, plane, topology, and ConfigMap fields; setting them is an error.
 For an enabled RA2.3 profile, start with the
 [full ConfigMap generation example](../user/spectrum-x.md#ra23-profile-configmap),
 which supplies the required profile payload as well as the RA/release pair.
+
+RA2.4 additionally accepts `spectrumX.ovsConfig` (a default-empty string map)
+and per-group `clusterConfig[].spectrumX.swPlaneByRail` (a default-empty
+integer map for existing HWPLB rails). Discovery and resolution write derived
+`clusterConfig[].spectrumX.platformType` using the longest case-insensitive
+doSPCX platform substring in `gpuType`; unresolved discovery warns, while
+RA2.4 generation fails. See the [RA2.4 contract](../user/spectrum-x.md#ra24-dospcx-profile)
+for release prerequisites, merging, defaults and supported layouts.
 
 ## Hardware Groups
 
