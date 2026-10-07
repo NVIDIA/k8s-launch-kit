@@ -33,6 +33,11 @@ import (
 // for a read-only discovery request.
 var ErrNotInstalled = errors.New("nic configuration daemon is not installed")
 
+const (
+	readOnlyNICOperatorLabel = "network.nvidia.com/operator.mlnx-nic"
+	readOnlySriovCapableLabel = "feature.node.kubernetes.io/pci-15b3.sriov.capable"
+)
+
 // ReadOnlyOption configures read-only discovery without changing the existing
 // two-argument DiscoverReadOnly call.
 type ReadOnlyOption func(*readOnlyOptions)
@@ -114,28 +119,22 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	if len(devices.Items) == 0 {
 		return nil, fmt.Errorf("DiscoverReadOnly: no NicDevice resources found on ready daemon nodes")
 	}
+	publisherNodes, excludedNodes := readOnlyPublisherNodes(expectedNodes, nodeLabels, deviceNodes)
+	if len(excludedNodes) > 0 {
+		ui.FromContext(ctx).Warning("Excluding %d ready daemon node(s) with no NicDevice and no read-only NIC-publisher label", len(excludedNodes))
+	}
 	var missingNodes []string
-	for _, node := range expectedNodes {
+	for _, node := range publisherNodes {
 		if !deviceNodes[node] {
 			missingNodes = append(missingNodes, node)
 		}
 	}
 	if len(missingNodes) > 0 {
-		return nil, fmt.Errorf("DiscoverReadOnly: NicDevice resources are missing for ready daemon nodes: %v", missingNodes)
+		return nil, fmt.Errorf("DiscoverReadOnly: NicDevice resources are missing for eligible publisher nodes: %v", missingNodes)
 	}
 	clusterConfig, warnings := buildClusterConfig(devices.Items, nodeLabels, nil, true)
-	if len(clusterConfig) == 1 && len(clusterConfig[0].NodeSelector) == 0 {
-		var selector map[string]string
-		for _, candidate := range readOnlyNodeSelectors(clusterConfig[0].WorkerNodes, nodeLabels) {
-			if selectorMatchesOnlyNodes(candidate, clusterConfig[0].WorkerNodes, nodeLabels) {
-				selector = candidate
-				break
-			}
-		}
-		if len(selector) == 0 {
-			return nil, fmt.Errorf("DiscoverReadOnly: derived node selector matches nodes outside the discovered group")
-		}
-		clusterConfig[0].NodeSelector = selector
+	if err := ensureReadOnlyNodeSelectors(clusterConfig, nodeLabels); err != nil {
+		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
 	}
 	for _, warning := range warnings {
 		ui.FromContext(ctx).Warning("%s", warning)
@@ -178,14 +177,60 @@ func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName,
 	return "", fmt.Errorf("%w: DaemonSet %q was not found in usable operator namespaces", ErrNotInstalled, daemonSetName)
 }
 
+func readOnlyPublisherNodes(expectedNodes []string, nodeLabels map[string]map[string]string, deviceNodes map[string]bool) ([]string, []string) {
+	publishers := make([]string, 0, len(expectedNodes))
+	excluded := make([]string, 0)
+	for _, node := range expectedNodes {
+		labels := nodeLabels[node]
+		advertisesPublisher := labels[readOnlyNICOperatorLabel] == "true" ||
+			labels[readOnlySriovCapableLabel] == "true"
+		if deviceNodes[node] || advertisesPublisher {
+			publishers = append(publishers, node)
+			continue
+		}
+		excluded = append(excluded, node)
+	}
+	return publishers, excluded
+}
+
+func ensureReadOnlyNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]map[string]string) error {
+	for i := range groups {
+		if len(groups[i].NodeSelector) > 0 &&
+			selectorMatchesOnlyNodes(groups[i].NodeSelector, groups[i].WorkerNodes, nodeLabels) {
+			continue
+		}
+
+		var selector map[string]string
+		for _, candidate := range readOnlyNodeSelectors(groups[i].WorkerNodes, nodeLabels) {
+			if selectorMatchesOnlyNodes(candidate, groups[i].WorkerNodes, nodeLabels) {
+				selector = candidate
+				break
+			}
+		}
+		if len(selector) == 0 {
+			return fmt.Errorf("could not derive a safe node selector for discovered group %q", groups[i].Identifier)
+		}
+		groups[i].NodeSelector = selector
+	}
+	return nil
+}
+
 func readOnlyNodeSelectors(nodes []string, nodeLabels map[string]map[string]string) []map[string]string {
 	common := computeCommonLabels(nodes, nodeLabels)
-	selectors := make([]map[string]string, 0, 5)
+	selectors := make([]map[string]string, 0, 8)
 	for _, key := range []string{config.MachineLabelKey, config.GPULabelKey,
-		"nvidia.com/gpu.product", "nvidia.com/gpu.machine"} {
+		"nvidia.com/gpu.product", "nvidia.com/gpu.machine",
+		readOnlyNICOperatorLabel, readOnlySriovCapableLabel} {
 		if value := common[key]; value != "" {
 			selectors = append(selectors, map[string]string{key: value})
 		}
+	}
+	if len(common) > 0 {
+		combined := make(map[string]string, len(common))
+		for key, value := range common {
+			combined[key] = value
+		}
+		selectors = append(selectors, combined)
 	}
 	if len(nodes) == 1 {
 		selectors = append(selectors, map[string]string{"kubernetes.io/hostname": nodes[0]})
