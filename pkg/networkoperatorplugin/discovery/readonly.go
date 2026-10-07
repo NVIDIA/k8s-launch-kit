@@ -100,10 +100,10 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	var expectedNodes []string
 	var daemonPods []corev1.Pod
 	if options.networkOperatorNamespace != "" {
-		expectedNodes, daemonPods, _, err = waitForDaemonSetPodsInNamespace(ctx, kubeClient, ui.FromContext(ctx),
+		expectedNodes, daemonPods, namespace, err = waitForDaemonSetPodsInNamespace(ctx, kubeClient, ui.FromContext(ctx),
 			namespace, nicconfigdaemon.DaemonSetName, 5*time.Minute)
 	} else {
-		expectedNodes, daemonPods, _, err = waitForDaemonSetPods(ctx, kubeClient, ui.FromContext(ctx),
+		expectedNodes, daemonPods, namespace, err = waitForDaemonSetPods(ctx, kubeClient, ui.FromContext(ctx),
 			namespace, nicconfigdaemon.DaemonSetName, 5*time.Minute)
 	}
 	if err != nil {

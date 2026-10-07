@@ -27,6 +27,7 @@ import (
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -387,6 +388,31 @@ func TestFindDaemonSetNamespaceSkipsUnreadyPreferredNamespace(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, nicconfigdaemon.Namespace, namespace)
+}
+
+func TestWaitForDaemonSetPodsReturnsFallbackNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "fallback-daemon", Namespace: "network-operator", OwnerReferences: owner,
+		},
+		Spec: corev1.PodSpec{NodeName: "worker-0"},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+			Type: corev1.PodReady, Status: corev1.ConditionTrue,
+		}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+
+	nodes, pods, namespace, err := waitForDaemonSetPods(
+		context.Background(), c, ui.NewSilent(), "nvidia-network-operator", nicconfigdaemon.DaemonSetName, time.Second,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"worker-0"}, nodes)
+	assert.Len(t, pods, 1)
+	assert.Equal(t, "network-operator", namespace)
 }
 
 func TestDiscoverReadOnlyDoesNotMutateCluster(t *testing.T) {
