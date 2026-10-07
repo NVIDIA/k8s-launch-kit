@@ -35,9 +35,16 @@ type ReadOnlyOption = discovery.ReadOnlyOption
 // the configured Network Operator namespace.
 var WithReadOnlyNetworkOperatorNamespace = discovery.WithReadOnlyNetworkOperatorNamespace
 
+// WithReadOnlyRESTConfig supplies credentials to inspect existing daemon pods
+// when a Ready daemon node has not published a NicDevice.
+var WithReadOnlyRESTConfig = discovery.WithReadOnlyRESTConfig
+
 // DiscoverReadOnly inspects an existing NIC Configuration Daemon and returns
 // the discovered topology without creating, patching, or deleting resources.
 // It returns ErrNotInstalled when the daemon is not already running.
+// Pass WithReadOnlyRESTConfig when a Ready daemon node has not published a
+// NicDevice; otherwise the function returns an error rather than guessing that
+// the node cannot publish one.
 func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
 	return discovery.DiscoverReadOnly(ctx, kubeClient, opts...)
 }

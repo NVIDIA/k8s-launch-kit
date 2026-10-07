@@ -60,6 +60,18 @@ all-namespaces read permission for the namespaced `NicDevice` resources. Use
 `discovery.Discover` when the caller is responsible for bootstrapping the
 temporary daemon.
 
+The function does not use node labels to guess whether a daemon node can
+publish a `NicDevice`. If every Ready daemon node already has a device, no pod
+execution is needed. If any device is missing, pass
+`networkoperatorplugin.WithReadOnlyRESTConfig` with the REST config for the
+cluster. The function then runs the existing read-only NIC and BlueField trust
+probe in that node's daemon pod. It excludes nodes with no discoverable NIC or
+only restricted BlueFields, and reports a missing device for a verified NIC
+publisher. It returns inspection and permission errors instead of treating
+them as absent hardware. This fallback needs `pods/exec` permission in the
+daemon namespace; without a REST config, discovery returns an error rather than
+silently returning an incomplete inventory.
+
 ## Review saved inventory
 
 Open `cluster-config.yaml` before generation. Confirm the intended workers and

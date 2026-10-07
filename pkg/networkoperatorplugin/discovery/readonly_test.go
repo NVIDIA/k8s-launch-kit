@@ -19,9 +19,10 @@ package discovery
 import (
 	"context"
 	"errors"
+	"net"
+	"syscall"
 	"testing"
 	"time"
-	"syscall"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -203,6 +204,8 @@ func TestRetryableNicDeviceListError(t *testing.T) {
 		{name: "service unavailable", err: apierrors.NewServiceUnavailable("apiserver restarting"), retry: true},
 		{name: "server timeout", err: apierrors.NewServerTimeout(schema.GroupResource{Group: "nic.nvidia.com", Resource: "nicdevices"}, "list", 1), retry: true},
 		{name: "transport timeout", err: timeoutOnlyError{}, retry: true},
+		{name: "temporary DNS failure", err: &net.DNSError{Err: "temporary failure", Name: "api.example", IsTemporary: true}, retry: true},
+		{name: "permanent DNS failure", err: &net.DNSError{Err: "no such host", Name: "api.example", IsNotFound: true}, retry: false},
 		{name: "connection reset", err: syscall.ECONNRESET, retry: true},
 		{name: "connection refused", err: syscall.ECONNREFUSED, retry: true},
 		{name: "broken pipe", err: syscall.EPIPE, retry: true},
@@ -217,19 +220,38 @@ func TestRetryableNicDeviceListError(t *testing.T) {
 }
 
 func TestReadOnlyPublisherNodesDistinguishesExcludedAndMissing(t *testing.T) {
-	expectedNodes := []string{"with-device", "labeled-missing", "daemon-only", "restricted-only"}
-	nodeLabels := map[string]map[string]string{
-		"with-device":    {readOnlyNICOperatorLabel: "true"},
-		"labeled-missing": {readOnlyNICOperatorLabel: "true"},
-		"daemon-only":     {},
-		"restricted-only": {},
-	}
+	expectedNodes := []string{"with-device", "missing-device", "no-nic", "restricted-only"}
 	deviceNodes := map[string]bool{"with-device": true}
+	probeResults := map[string]mellanoxNICProbeResult{
+		"missing-device":  mellanoxNICProbePresent,
+		"no-nic":          mellanoxNICProbeNone,
+		"restricted-only": mellanoxNICProbeRestricted,
+	}
 
-	publishers, excluded := readOnlyPublisherNodes(expectedNodes, nodeLabels, deviceNodes)
+	publishers, excluded, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
 
-	assert.Equal(t, []string{"with-device", "labeled-missing"}, publishers)
-	assert.Equal(t, []string{"daemon-only", "restricted-only"}, excluded)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"with-device", "missing-device"}, publishers)
+	assert.Equal(t, []string{"no-nic", "restricted-only"}, excluded)
+}
+
+func TestReadOnlyPublisherNodesRejectsUnverifiedMissingDevice(t *testing.T) {
+	publishers, excluded, err := readOnlyPublisherNodes(
+		[]string{"worker-without-device"}, nil, nil,
+	)
+
+	require.ErrorContains(t, err, "NIC publisher eligibility on node")
+	assert.Nil(t, publishers)
+	assert.Nil(t, excluded)
+}
+
+func TestProbeMissingReadOnlyPublishersRequiresRESTConfig(t *testing.T) {
+	results, err := probeMissingReadOnlyPublishers(
+		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil,
+	)
+
+	require.ErrorContains(t, err, "pass WithReadOnlyRESTConfig")
+	assert.Nil(t, results)
 }
 
 func TestReadOnlyNodeSelectorsSupportNICOnlyWorkers(t *testing.T) {

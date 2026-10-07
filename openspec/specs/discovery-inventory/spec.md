@@ -34,6 +34,16 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **WHEN** a worker is outside the declared eligible set
 - **THEN** discovery does not wait for that worker to publish the new observation.
 
+#### Scenario: Read-only publisher eligibility is unknown
+
+- **WHEN** a Ready existing-daemon node has no `NicDevice` and discovery cannot inspect its NIC eligibility
+- **THEN** read-only discovery returns an inspection error instead of guessing from optional labels or returning an incomplete inventory.
+
+#### Scenario: Read-only publisher is verified absent
+
+- **WHEN** the existing daemon probe confirms that a node has no discoverable NIC or only restricted BlueFields
+- **THEN** read-only discovery excludes that node from the required publisher set; probe and permission errors remain errors.
+
 ### Requirement: Aggregation and provenance
 
 A group property MUST declare its aggregation policy for disagreement and incomplete membership. Live/preset precedence and deviation handling SHALL preserve the information required by consumers. Host-specific observations MUST NOT be persisted as universal group facts without a justified aggregation rule.

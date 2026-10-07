@@ -21,9 +21,10 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"syscall"
+	"net"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
@@ -954,6 +955,10 @@ func retryableNicDeviceListError(err error) bool {
 
 	var timeoutErr interface{ Timeout() bool }
 	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && (dnsErr.IsTimeout || dnsErr.IsTemporary) {
 		return true
 	}
 
