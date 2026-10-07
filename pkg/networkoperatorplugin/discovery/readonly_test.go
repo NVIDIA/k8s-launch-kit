@@ -21,6 +21,7 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"syscall"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -188,6 +189,11 @@ func TestWaitNicDevicesDiscoveredSucceedsWhenDevicesAlreadyExist(t *testing.T) {
 	assert.Equal(t, 1, c.calls)
 }
 
+type timeoutOnlyError struct{}
+
+func (timeoutOnlyError) Error() string { return "transport timeout" }
+func (timeoutOnlyError) Timeout() bool { return true }
+
 func TestRetryableNicDeviceListError(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -196,6 +202,10 @@ func TestRetryableNicDeviceListError(t *testing.T) {
 	}{
 		{name: "service unavailable", err: apierrors.NewServiceUnavailable("apiserver restarting"), retry: true},
 		{name: "server timeout", err: apierrors.NewServerTimeout(schema.GroupResource{Group: "nic.nvidia.com", Resource: "nicdevices"}, "list", 1), retry: true},
+		{name: "transport timeout", err: timeoutOnlyError{}, retry: true},
+		{name: "connection reset", err: syscall.ECONNRESET, retry: true},
+		{name: "connection refused", err: syscall.ECONNREFUSED, retry: true},
+		{name: "broken pipe", err: syscall.EPIPE, retry: true},
 		{name: "forbidden", err: apierrors.NewForbidden(nicop.GroupVersion.WithResource("nicdevices").GroupResource(), "worker-0", errors.New("denied")), retry: false},
 	}
 
@@ -204,6 +214,74 @@ func TestRetryableNicDeviceListError(t *testing.T) {
 			assert.Equal(t, tt.retry, retryableNicDeviceListError(tt.err))
 		})
 	}
+}
+
+func TestReadOnlyPublisherNodesDistinguishesExcludedAndMissing(t *testing.T) {
+	expectedNodes := []string{"with-device", "labeled-missing", "daemon-only", "restricted-only"}
+	nodeLabels := map[string]map[string]string{
+		"with-device":    {readOnlyNICOperatorLabel: "true"},
+		"labeled-missing": {readOnlyNICOperatorLabel: "true"},
+		"daemon-only":     {},
+		"restricted-only": {},
+	}
+	deviceNodes := map[string]bool{"with-device": true}
+
+	publishers, excluded := readOnlyPublisherNodes(expectedNodes, nodeLabels, deviceNodes)
+
+	assert.Equal(t, []string{"with-device", "labeled-missing"}, publishers)
+	assert.Equal(t, []string{"daemon-only", "restricted-only"}, excluded)
+}
+
+func TestReadOnlyNodeSelectorsSupportNICOnlyWorkers(t *testing.T) {
+	nodes := []string{"worker-0", "worker-1"}
+	labels := map[string]map[string]string{
+		"worker-0": {readOnlyNICOperatorLabel: "true"},
+		"worker-1": {readOnlyNICOperatorLabel: "true"},
+	}
+
+	var selected map[string]string
+	for _, candidate := range readOnlyNodeSelectors(nodes, labels) {
+		if selectorMatchesOnlyNodes(candidate, nodes, labels) {
+			selected = candidate
+			break
+		}
+	}
+
+	assert.Equal(t, map[string]string{readOnlyNICOperatorLabel: "true"}, selected)
+}
+
+func TestEnsureReadOnlyNodeSelectorsRepairsUnsafeMultiGroupSelectors(t *testing.T) {
+	groups := []config.ClusterConfig{
+		{Identifier: "group-a", WorkerNodes: []string{"worker-a"}, NodeSelector: map[string]string{"pool": "shared"}},
+		{Identifier: "group-b", WorkerNodes: []string{"worker-b"}, NodeSelector: map[string]string{"pool": "shared"}},
+	}
+	labels := map[string]map[string]string{
+		"worker-a": {config.MachineLabelKey: "machine-a", "pool": "shared", "kubernetes.io/hostname": "worker-a"},
+		"worker-b": {config.MachineLabelKey: "machine-b", "pool": "shared", "kubernetes.io/hostname": "worker-b"},
+		"worker-c": {config.MachineLabelKey: "machine-c", "pool": "shared", "kubernetes.io/hostname": "worker-c"},
+	}
+
+	require.NoError(t, ensureReadOnlyNodeSelectors(groups, labels))
+	assert.Equal(t, map[string]string{config.MachineLabelKey: "machine-a"}, groups[0].NodeSelector)
+	assert.Equal(t, map[string]string{config.MachineLabelKey: "machine-b"}, groups[1].NodeSelector)
+}
+
+func TestEnsureReadOnlyNodeSelectorsRejectsSelectorMatchingOutsideNode(t *testing.T) {
+	groups := []config.ClusterConfig{{
+		Identifier:   "group-a",
+		WorkerNodes:  []string{"worker-a", "worker-b"},
+		NodeSelector: map[string]string{"pool": "shared"},
+	}}
+	labels := map[string]map[string]string{
+		"worker-a": {config.MachineLabelKey: "same", "pool": "shared"},
+		"worker-b": {config.MachineLabelKey: "same", "pool": "shared"},
+		"worker-c": {config.MachineLabelKey: "same", "pool": "shared"},
+	}
+
+	err := ensureReadOnlyNodeSelectors(groups, labels)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not derive a safe node selector")
 }
 
 func TestReadOnlyNodeSelectorsTryLaterUniqueCandidate(t *testing.T) {
