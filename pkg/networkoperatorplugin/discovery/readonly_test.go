@@ -35,6 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -248,7 +249,7 @@ func TestReadOnlyPublisherNodesRejectsUnverifiedMissingDevice(t *testing.T) {
 
 func TestProbeMissingReadOnlyPublishersRequiresRESTConfig(t *testing.T) {
 	results, err := probeMissingReadOnlyPublishers(
-		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil,
+		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil, nil,
 	)
 
 	require.ErrorContains(t, err, "pass WithReadOnlyRESTConfig")
@@ -413,6 +414,80 @@ func TestWaitForDaemonSetPodsReturnsFallbackNamespace(t *testing.T) {
 	assert.Equal(t, []string{"worker-0"}, nodes)
 	assert.Len(t, pods, 1)
 	assert.Equal(t, "network-operator", namespace)
+}
+
+type daemonNamespaceFallbackClient struct {
+	client.Client
+	primaryPod  corev1.Pod
+	fallback    []corev1.Pod
+	primaryCall int
+}
+
+func (c *daemonNamespaceFallbackClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	pods, ok := list.(*corev1.PodList)
+	if !ok {
+		return c.Client.List(ctx, list, opts...)
+	}
+	listOpts := &client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(listOpts)
+	}
+	switch listOpts.Namespace {
+	case "nvidia-network-operator":
+		c.primaryCall++
+		if c.primaryCall == 1 {
+			pods.Items = []corev1.Pod{c.primaryPod}
+		}
+	case "network-operator":
+		pods.Items = append([]corev1.Pod(nil), c.fallback...)
+	}
+	return nil
+}
+
+func TestDiscoverReadOnlyProbesInSelectedFallbackNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, nicop.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	readyPod := func(name, namespace, node string) corev1.Pod {
+		return corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, OwnerReferences: owner},
+			Spec:       corev1.PodSpec{NodeName: node},
+			Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+				Type: corev1.PodReady, Status: corev1.ConditionTrue,
+			}}},
+		}
+	}
+	primaryPod := readyPod("primary-daemon", "nvidia-network-operator", "primary-worker")
+	fallbackPods := []corev1.Pod{
+		readyPod("fallback-worker-0", "network-operator", "worker-0"),
+		readyPod("fallback-worker-1", "network-operator", "worker-1"),
+	}
+	device := &nicop.NicDevice{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-1-device", Namespace: "default"},
+		Status: nicop.NicDeviceStatus{
+			Node: "worker-1", Type: "1023", PartNumber: "pn-test",
+			Ports: []nicop.NicDevicePortSpec{{PCI: "0000:18:00.0", RdmaInterface: "mlx5_0", NetworkInterface: "eth0"}},
+		},
+	}
+	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-0"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+		device,
+	).Build()
+	c := &daemonNamespaceFallbackClient{Client: baseClient, primaryPod: primaryPod, fallback: fallbackPods}
+	var execNamespace string
+
+	_, err := DiscoverReadOnly(context.Background(), c,
+		WithReadOnlyRESTConfig(&rest.Config{}),
+		withReadOnlyPodExec(func(_ context.Context, _ *rest.Config, namespace, _, _ string, _ []string) (string, error) {
+			execNamespace = namespace
+			return "present\n", nil
+		}),
+	)
+
+	require.ErrorContains(t, err, "NicDevice resources are missing for eligible publisher nodes")
+	assert.Equal(t, "network-operator", execNamespace)
 }
 
 func TestDiscoverReadOnlyDoesNotMutateCluster(t *testing.T) {

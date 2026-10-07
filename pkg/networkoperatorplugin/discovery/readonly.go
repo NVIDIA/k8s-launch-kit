@@ -45,9 +45,12 @@ const (
 // two-argument DiscoverReadOnly call.
 type ReadOnlyOption func(*readOnlyOptions)
 
+type readOnlyPodExec func(context.Context, *rest.Config, string, string, string, []string) (string, error)
+
 type readOnlyOptions struct {
 	networkOperatorNamespace string
 	restConfig               *rest.Config
+	podExec                  readOnlyPodExec
 }
 
 // WithReadOnlyNetworkOperatorNamespace restricts daemon lookup to the
@@ -67,6 +70,12 @@ func WithReadOnlyNetworkOperatorNamespace(namespace string) ReadOnlyOption {
 func WithReadOnlyRESTConfig(restConfig *rest.Config) ReadOnlyOption {
 	return func(options *readOnlyOptions) {
 		options.restConfig = restConfig
+	}
+}
+
+func withReadOnlyPodExec(exec readOnlyPodExec) ReadOnlyOption {
+	return func(options *readOnlyOptions) {
+		options.podExec = exec
 	}
 }
 
@@ -134,7 +143,8 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	if len(devices.Items) == 0 {
 		return nil, fmt.Errorf("DiscoverReadOnly: no NicDevice resources found on ready daemon nodes")
 	}
-	probeResults, err := probeMissingReadOnlyPublishers(ctx, options.restConfig, namespace, expectedNodes, daemonPods, deviceNodes)
+	probeResults, err := probeMissingReadOnlyPublishers(ctx, options.restConfig, namespace,
+		expectedNodes, daemonPods, deviceNodes, options.podExec)
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: determine NIC publisher eligibility: %w", err)
 	}
@@ -200,7 +210,7 @@ func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName,
 }
 
 func probeMissingReadOnlyPublishers(ctx context.Context, restConfig *rest.Config, namespace string,
-	expectedNodes []string, daemonPods []corev1.Pod, deviceNodes map[string]bool,
+	expectedNodes []string, daemonPods []corev1.Pod, deviceNodes map[string]bool, podExec readOnlyPodExec,
 ) (map[string]mellanoxNICProbeResult, error) {
 	results := make(map[string]mellanoxNICProbeResult)
 	for _, node := range expectedNodes {
@@ -218,7 +228,10 @@ func probeMissingReadOnlyPublishers(ctx context.Context, restConfig *rest.Config
 		if len(pod.Spec.Containers) > 0 {
 			containerName = pod.Spec.Containers[0].Name
 		}
-		output, err := execInPod(ctx, restConfig, namespace, pod.Name, containerName,
+		if podExec == nil {
+			podExec = execInPod
+		}
+		output, err := podExec(ctx, restConfig, namespace, pod.Name, containerName,
 			[]string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd})
 		if err != nil {
 			return nil, fmt.Errorf("inspect NIC publisher eligibility on node %q: %w", node, err)
