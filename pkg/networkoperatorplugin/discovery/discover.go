@@ -21,7 +21,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"net"
+	"syscall"
 	"slices"
 	"strings"
 	"time"
@@ -952,8 +952,14 @@ func retryableNicDeviceListError(err error) bool {
 		return true
 	}
 
-	var netErr net.Error
-	return errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())
+	var timeoutErr interface{ Timeout() bool }
+	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		return true
+	}
+
+	return errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.EPIPE)
 }
 
 // pfFingerprint identifies a PF by its device ID and PCI address (ignoring RDMA/net names).
