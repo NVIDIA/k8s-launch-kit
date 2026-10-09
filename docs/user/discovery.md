@@ -40,6 +40,38 @@ l8k discover \
 
 Discovery is self-contained. It does not require Node Feature Discovery (NFD) or a pre-installed Network Operator.
 
+## Read-only library discovery
+
+Library consumers that only need the inventory from an already-running NIC
+Configuration Daemon can call `networkoperatorplugin.DiscoverReadOnly`. The
+function reads
+the existing daemon pods, nodes, and `NicDevice` resources and returns a
+`LaunchKitConfig` without creating, patching, or deleting Kubernetes resources.
+It locates the existing daemon by its DaemonSet owner in the configured
+Network Operator namespace when `WithReadOnlyNetworkOperatorNamespace` is
+provided. Without that option, it checks the standard Network Operator and
+Launch Kit namespaces, preferring a usable Network Operator daemon when both
+installations are present.
+It returns `networkoperatorplugin.ErrNotInstalled` when the discovery daemon is
+not already running. With the configured-namespace option, callers need pod
+read access only in that namespace; otherwise they need pod-list access in all
+fallback namespaces. Both paths need cluster-scoped read access to nodes and
+all-namespaces read permission for the namespaced `NicDevice` resources. Use
+`discovery.Discover` when the caller is responsible for bootstrapping the
+temporary daemon.
+
+The function does not use node labels to guess whether a daemon node can
+publish a `NicDevice`. If every Ready daemon node already has a device, no pod
+execution is needed. If any device is missing, pass
+`networkoperatorplugin.WithReadOnlyRESTConfig` with the REST config for the
+cluster. The function then runs the existing read-only NIC and BlueField trust
+probe in that node's daemon pod. It excludes nodes with no discoverable NIC or
+only restricted BlueFields, and reports a missing device for a verified NIC
+publisher. It returns inspection and permission errors instead of treating
+them as absent hardware. This fallback needs `pods/exec` permission in the
+daemon namespace; without a REST config, discovery returns an error rather than
+silently returning an incomplete inventory.
+
 ## Review saved inventory
 
 Open `cluster-config.yaml` before generation. Confirm the intended workers and
