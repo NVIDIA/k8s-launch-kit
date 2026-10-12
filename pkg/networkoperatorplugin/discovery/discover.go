@@ -1925,12 +1925,18 @@ for d in "$pci_devices_path"/*; do
     exit 1
   fi
   if ! v=$(cat "$d/vendor"); then
+    if [ ! -e "$d" ]; then
+      continue
+    fi
     printf 'cannot read PCI vendor attribute: %s/vendor\n' "$d" >&2
     exit 1
   fi
   [ "$v" = "0x15b3" ] || continue
 
   if ! device_id=$(cat "$d/device"); then
+    if [ ! -e "$d" ]; then
+      continue
+    fi
     printf 'cannot read PCI device attribute: %s/device\n' "$d" >&2
     exit 1
   fi
