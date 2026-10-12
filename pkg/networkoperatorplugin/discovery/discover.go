@@ -21,6 +21,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"strings"
@@ -962,7 +963,10 @@ func retryableNicDeviceListError(err error) bool {
 		return true
 	}
 
-	return errors.Is(err, syscall.ECONNRESET) ||
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, syscall.EPIPE)
 }
@@ -1902,16 +1906,34 @@ done`
 // If mlxprivhost fails or returns unrecognised output, the device remains
 // discoverable, matching the operator's fail-open behaviour. Output is
 // "present" when any discoverable device exists, "restricted" when the node
-// has only restricted BlueFields, and empty when no NVIDIA NIC is present.
-// The command always exits 0.
+// has only restricted BlueFields, and empty when no NVIDIA NIC is present. It
+// exits non-zero if it cannot inspect the PCI device directory or read the
+// vendor/device attributes needed to establish absence.
 const sysfsMellanoxNICPresentCmd = `pci_devices_path=${1:-/sys/bus/pci/devices}
 mlxprivhost_bin=${2:-mlxprivhost}
 restricted_found=false
+if [ ! -d "$pci_devices_path" ] || [ ! -r "$pci_devices_path" ]; then
+  printf 'cannot inspect PCI device directory: %s\n' "$pci_devices_path" >&2
+  exit 1
+fi
 for d in "$pci_devices_path"/*; do
-  v=$(cat "$d/vendor" 2>/dev/null)
+  if [ ! -e "$d" ] && [ ! -L "$d" ]; then
+    continue
+  fi
+  if [ ! -d "$d" ]; then
+    printf 'cannot inspect PCI device entry: %s\n' "$d" >&2
+    exit 1
+  fi
+  if ! v=$(cat "$d/vendor"); then
+    printf 'cannot read PCI vendor attribute: %s/vendor\n' "$d" >&2
+    exit 1
+  fi
   [ "$v" = "0x15b3" ] || continue
 
-  device_id=$(cat "$d/device" 2>/dev/null)
+  if ! device_id=$(cat "$d/device"); then
+    printf 'cannot read PCI device attribute: %s/device\n' "$d" >&2
+    exit 1
+  fi
   case "$device_id" in
     0xa2d6|0xa2d9|0xa2dc|0xa2df)
       pci=${d##*/}

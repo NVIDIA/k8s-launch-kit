@@ -19,6 +19,8 @@ package discovery
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"syscall"
 	"testing"
@@ -110,6 +112,19 @@ func TestWaitNicDevicesDiscoveredRetriesTransientListError(t *testing.T) {
 	c := &sequenceListClient{
 		Client: fake.NewClientBuilder().Build(),
 		errors: []error{apierrors.NewServiceUnavailable("apiserver restarting")},
+		items:  []nicop.NicDevice{{Status: nicop.NicDeviceStatus{Node: "worker-0"}}},
+	}
+
+	err := waitNicDevicesDiscoveredWithInterval(context.Background(), c, []string{"worker-0"}, time.Millisecond)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, c.calls)
+}
+
+func TestWaitNicDevicesDiscoveredRetriesUnexpectedEOF(t *testing.T) {
+	c := &sequenceListClient{
+		Client: fake.NewClientBuilder().Build(),
+		errors: []error{fmt.Errorf("decode NicDevice response: %w", io.ErrUnexpectedEOF)},
 		items:  []nicop.NicDevice{{Status: nicop.NicDeviceStatus{Node: "worker-0"}}},
 	}
 
@@ -211,6 +226,9 @@ func TestRetryableNicDeviceListError(t *testing.T) {
 		{name: "connection reset", err: syscall.ECONNRESET, retry: true},
 		{name: "connection refused", err: syscall.ECONNREFUSED, retry: true},
 		{name: "broken pipe", err: syscall.EPIPE, retry: true},
+		{name: "end of file", err: io.EOF, retry: true},
+		{name: "unexpected end of file", err: io.ErrUnexpectedEOF, retry: true},
+		{name: "connection aborted", err: syscall.ECONNABORTED, retry: true},
 		{name: "forbidden", err: apierrors.NewForbidden(nicop.GroupVersion.WithResource("nicdevices").GroupResource(), "worker-0", errors.New("denied")), retry: false},
 	}
 

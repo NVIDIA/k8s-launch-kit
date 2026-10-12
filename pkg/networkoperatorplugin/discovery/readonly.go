@@ -84,11 +84,12 @@ func withReadOnlyPodExec(exec readOnlyPodExec) ReadOnlyOption {
 // deletes Kubernetes resources. The daemon must already be running; callers
 // that need Launch Kit to bootstrap a temporary daemon should use Discover.
 //
-// The read-only path intentionally consumes the NicDevice resources already
-// published by the operator. Pod execution is not required because the
-// operator has already performed the privileged hardware inspection. This
-// keeps the API usable with read-only RBAC and avoids granting a consumer
-// permission to create bootstrap resources.
+// The read-only path consumes NicDevice resources already published by the
+// operator. If a Ready daemon node has not published a device, it probes that
+// node's existing daemon pod to distinguish an eligible publisher from a node
+// with no discoverable NIC or only restricted BlueFields. That fallback needs
+// a REST config and pods/exec permission. The function never creates bootstrap
+// resources.
 func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
 	if kubeClient == nil {
 		return nil, errors.New("DiscoverReadOnly: kubeClient must not be nil")
