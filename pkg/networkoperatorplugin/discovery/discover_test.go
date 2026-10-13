@@ -504,6 +504,67 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 	}
 }
 
+func TestSysfsMellanoxNICPresentCmdFailsOnIncompleteInspection(t *testing.T) {
+	t.Run("missing PCI root", func(t *testing.T) {
+		//nolint:gosec // fixed repository probe command and temporary path
+		cmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd,
+			"nic-probe", filepath.Join(t.TempDir(), "missing"), "mlxprivhost")
+		output, err := cmd.CombinedOutput()
+
+		require.Error(t, err)
+		assert.Contains(t, string(output), "cannot inspect PCI device directory")
+	})
+
+	t.Run("vendor read error", func(t *testing.T) {
+		pciRoot := t.TempDir()
+		deviceDir := filepath.Join(pciRoot, "0000:01:00.0")
+		require.NoError(t, os.MkdirAll(deviceDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(deviceDir, "vendor"), []byte("0x15b3\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(deviceDir, "device"), []byte("0x1023\n"), 0o644))
+
+		binDir := t.TempDir()
+		cat := filepath.Join(binDir, "cat")
+		require.NoError(t, os.WriteFile(cat, []byte("#!/bin/sh\ncase \"$1\" in */vendor) exit 1;; esac\nexec /bin/cat \"$@\"\n"), 0o755))
+
+		//nolint:gosec // fixed probe command; PATH shim forces a deterministic read error
+		cmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd,
+			"nic-probe", pciRoot, "mlxprivhost")
+		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"))
+		output, err := cmd.CombinedOutput()
+
+		require.Error(t, err)
+		assert.Contains(t, string(output), "cannot read PCI vendor attribute")
+	})
+
+	t.Run("device disappears during vendor read", func(t *testing.T) {
+		pciRoot := t.TempDir()
+		firstTarget := filepath.Join(t.TempDir(), "0000:01:00.0")
+		require.NoError(t, os.MkdirAll(firstTarget, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(firstTarget, "vendor"), []byte("0x15b3\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(firstTarget, "device"), []byte("0x1023\n"), 0o644))
+		require.NoError(t, os.Symlink(firstTarget, filepath.Join(pciRoot, "0000:01:00.0")))
+
+		secondDevice := filepath.Join(pciRoot, "0000:02:00.0")
+		require.NoError(t, os.MkdirAll(secondDevice, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(secondDevice, "vendor"), []byte("0x15b3\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(secondDevice, "device"), []byte("0x1023\n"), 0o644))
+
+		binDir := t.TempDir()
+		cat := filepath.Join(binDir, "cat")
+		catScript := "#!/bin/sh\ncase \"$1\" in\n\t\"$PCI_ROOT/0000:01:00.0/vendor\") /bin/rm \"$PCI_ROOT/0000:01:00.0\"; exit 1 ;;\nesac\nexec /bin/cat \"$@\"\n"
+		require.NoError(t, os.WriteFile(cat, []byte(catScript), 0o755))
+
+		//nolint:gosec // fixed probe command; PATH shim removes only a temporary PCI entry
+		cmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd,
+			"nic-probe", pciRoot, "mlxprivhost")
+		cmd.Env = append(os.Environ(), "PCI_ROOT="+pciRoot, "PATH="+binDir+":"+os.Getenv("PATH"))
+		output, err := cmd.CombinedOutput()
+
+		require.NoError(t, err, "probe output: %s", output)
+		assert.Equal(t, "present", strings.TrimSpace(string(output)))
+	})
+}
+
 func TestFindDaemonPod(t *testing.T) {
 	pods := []corev1.Pod{
 		{

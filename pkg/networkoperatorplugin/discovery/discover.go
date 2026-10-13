@@ -19,9 +19,13 @@ package discovery
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
@@ -34,6 +38,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -722,9 +727,9 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 
 	if len(dsPods) == 0 {
 		return dsReadiness{}, fmt.Errorf(
-			"no pods found for DaemonSet %q in namespace %q; "+
+			"%w: no pods found for DaemonSet %q in namespace %q; "+
 				"use --network-operator-namespace to specify the correct namespace",
-			daemonSetName, namespace)
+			ErrNotInstalled, daemonSetName, namespace)
 	}
 
 	st := dsReadiness{total: len(dsPods)}
@@ -753,7 +758,18 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 // Ready node names, the Ready pods (for pod exec), the namespace they were
 // found in, and an error.
 func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
-	altNS := alternateNamespace(namespace)
+	return waitForDaemonSetPodsWithFallback(parentCtx, c, uiOutput, namespace, daemonSetName, timeout, true)
+}
+
+func waitForDaemonSetPodsInNamespace(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
+	return waitForDaemonSetPodsWithFallback(parentCtx, c, uiOutput, namespace, daemonSetName, timeout, false)
+}
+
+func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration, allowFallback bool) ([]string, []corev1.Pod, string, error) {
+	altNS := ""
+	if allowFallback {
+		altNS = alternateNamespace(namespace)
+	}
 	progressLabel := fmt.Sprintf("Waiting for %s pods in namespace %q (timeout: %s)", daemonSetName, namespace, timeout.Truncate(time.Second))
 	if altNS != "" {
 		progressLabel = fmt.Sprintf("Waiting for %s pods in namespace %q (also polling fallback %q; timeout: %s)", daemonSetName, namespace, altNS, timeout.Truncate(time.Second))
@@ -860,6 +876,10 @@ func alternateNamespace(current string) string {
 // daemon writes status into them in their original namespace rather than into
 // the launch-kit bootstrap namespace.
 func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expectedNodes []string) error {
+	return waitNicDevicesDiscoveredWithInterval(parentCtx, c, expectedNodes, 10*time.Second)
+}
+
+func waitNicDevicesDiscoveredWithInterval(parentCtx context.Context, c client.Client, expectedNodes []string, pollInterval time.Duration) error {
 	uiOutput := ui.FromContext(parentCtx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Discovering network devices on %d node(s) (timeout: 10 min)", len(expectedNodes)))
 
@@ -876,12 +896,21 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expect
 		expectedSet[n] = true
 	}
 
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	var lastRetryableListErr error
 
 	for {
 		list := &nicop.NicDeviceList{}
-		if err := c.List(ctx, list); err == nil {
+		if err := c.List(ctx, list); err != nil {
+			if !retryableNicDeviceListError(err) {
+				progress.Fail("Unable to list NicDevice resources")
+				return fmt.Errorf("list NicDevice resources: %w", err)
+			}
+			lastRetryableListErr = err
+			progress.Update(fmt.Sprintf("Retrying NicDevice discovery after list error: %v", err))
+		} else {
+			lastRetryableListErr = nil
 			discoveredNodes := make(map[string]bool)
 			for _, d := range list.Items {
 				if d.Status.Node != "" {
@@ -908,10 +937,39 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expect
 		select {
 		case <-ctx.Done():
 			progress.Fail("Timeout waiting for devices")
+			if lastRetryableListErr != nil {
+				return fmt.Errorf("timeout waiting for NicDevice resources from all expected nodes: %w", lastRetryableListErr)
+			}
 			return fmt.Errorf("timeout waiting for NicDevice resources from all expected nodes")
 		case <-ticker.C:
 		}
 	}
+}
+
+func retryableNicDeviceListError(err error) bool {
+	if apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsInternalError(err) {
+		return true
+	}
+
+	var timeoutErr interface{ Timeout() bool }
+	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && (dnsErr.IsTimeout || dnsErr.IsTemporary) {
+		return true
+	}
+
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.EPIPE)
 }
 
 // pfFingerprint identifies a PF by its device ID and PCI address (ignoring RDMA/net names).
@@ -1849,16 +1907,40 @@ done`
 // If mlxprivhost fails or returns unrecognised output, the device remains
 // discoverable, matching the operator's fail-open behaviour. Output is
 // "present" when any discoverable device exists, "restricted" when the node
-// has only restricted BlueFields, and empty when no NVIDIA NIC is present.
-// The command always exits 0.
+// has only restricted BlueFields, and empty when no NVIDIA NIC is present. It
+// exits non-zero if it cannot inspect the PCI device directory or read the
+// vendor/device attributes needed to establish absence.
 const sysfsMellanoxNICPresentCmd = `pci_devices_path=${1:-/sys/bus/pci/devices}
 mlxprivhost_bin=${2:-mlxprivhost}
 restricted_found=false
+if [ ! -d "$pci_devices_path" ] || [ ! -r "$pci_devices_path" ]; then
+  printf 'cannot inspect PCI device directory: %s\n' "$pci_devices_path" >&2
+  exit 1
+fi
 for d in "$pci_devices_path"/*; do
-  v=$(cat "$d/vendor" 2>/dev/null)
+  if [ ! -e "$d" ] && [ ! -L "$d" ]; then
+    continue
+  fi
+  if [ ! -d "$d" ]; then
+    printf 'cannot inspect PCI device entry: %s\n' "$d" >&2
+    exit 1
+  fi
+  if ! v=$(cat "$d/vendor"); then
+    if [ ! -e "$d" ]; then
+      continue
+    fi
+    printf 'cannot read PCI vendor attribute: %s/vendor\n' "$d" >&2
+    exit 1
+  fi
   [ "$v" = "0x15b3" ] || continue
 
-  device_id=$(cat "$d/device" 2>/dev/null)
+  if ! device_id=$(cat "$d/device"); then
+    if [ ! -e "$d" ]; then
+      continue
+    fi
+    printf 'cannot read PCI device attribute: %s/device\n' "$d" >&2
+    exit 1
+  fi
   case "$device_id" in
     0xa2d6|0xa2d9|0xa2dc|0xa2df)
       pci=${d##*/}

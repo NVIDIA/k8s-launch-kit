@@ -256,6 +256,7 @@ live (collapsed) classification is kept (a preset-deviation warning is emitted).
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — Global flags and output modes
 - [k8s-launch-kit-config](../k8s-launch-kit-config/SKILL.md) — Understand the config file discovery produces
 - [k8s-launch-kit-generate](../k8s-launch-kit-generate/SKILL.md) — Generate manifests from cluster config
+- [Read-only library discovery](../../docs/user/discovery.md#read-only-library-discovery) — Existing-daemon inventory and publisher-inspection permissions
 
 ## OpenShift
 
