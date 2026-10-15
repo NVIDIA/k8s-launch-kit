@@ -17,6 +17,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -640,8 +641,10 @@ func TestDiscoverReadOnlyRequiresOptInForMissingSafeSelector(t *testing.T) {
 
 	t.Run("returns inventory when opted in", func(t *testing.T) {
 		c := readOnlyClientWithNoSafeGroupSelectors(t)
+		var warnings bytes.Buffer
+		ctx := ui.WithOutput(context.Background(), ui.NewWithWriter(&warnings))
 
-		cfg, err := DiscoverReadOnly(context.Background(), c, WithReadOnlyAllowMissingNodeSelector())
+		cfg, err := DiscoverReadOnly(ctx, c, WithReadOnlyAllowMissingNodeSelector())
 
 		require.NoError(t, err)
 		require.Len(t, cfg.ClusterConfig, 2)
@@ -649,11 +652,14 @@ func TestDiscoverReadOnlyRequiresOptInForMissingSafeSelector(t *testing.T) {
 		for _, group := range cfg.ClusterConfig {
 			groupsByWorkers[strings.Join(group.WorkerNodes, ",")] = group
 		}
-		for _, workers := range []string{"worker-a,worker-b", "worker-outlier"} {
+		for i, workers := range []string{"worker-a,worker-b", "worker-outlier"} {
 			group, ok := groupsByWorkers[workers]
 			require.True(t, ok, "expected discovered group with workers %s", workers)
 			assert.Empty(t, group.NodeSelector)
+			assert.Contains(t, warnings.String(), fmt.Sprintf("group %q", group.Identifier))
+			assert.Equal(t, fmt.Sprintf("group-%d", i), group.Identifier)
 		}
+		assert.Equal(t, 2, strings.Count(warnings.String(), "WorkerNodes is authoritative"))
 	})
 }
 
