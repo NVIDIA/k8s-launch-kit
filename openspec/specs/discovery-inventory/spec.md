@@ -44,6 +44,12 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **WHEN** the existing daemon probe confirms that a node has no discoverable NIC or only restricted BlueFields
 - **THEN** read-only discovery excludes that node from the required publisher set; probe and permission errors remain errors.
 
+#### Scenario: Inventory-only read-only discovery cannot derive a safe selector
+
+- **WHEN** a caller opts in to allow missing read-only node selectors and a group's workers cannot be selected without matching nodes outside the group
+- **THEN** discovery returns the inventory with that group's `NodeSelector` empty, warns that `WorkerNodes` is authoritative, and does not relax errors for missing or unverified `NicDevice` resources.
+- **AND** without the opt-in, discovery continues to return an error for that group.
+
 ### Requirement: Aggregation and provenance
 
 A group property MUST declare its aggregation policy for disagreement and incomplete membership. Live/preset precedence and deviation handling SHALL preserve the information required by consumers. Host-specific observations MUST NOT be persisted as universal group facts without a justified aggregation rule.
