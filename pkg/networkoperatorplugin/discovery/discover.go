@@ -844,6 +844,9 @@ func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client
 		}
 
 		if err == nil {
+			// Keep the pod results if the follow-up node lookup hits the child
+			// timeout; the Ready subset is still usable while the caller is active.
+			last, lastNS = st, foundNS
 			if classifyErr := excludePodsOnNotReadyNodes(ctx, c, &st); classifyErr != nil {
 				err = classifyErr
 			}

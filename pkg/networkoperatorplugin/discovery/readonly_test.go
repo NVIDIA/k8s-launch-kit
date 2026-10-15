@@ -446,6 +446,20 @@ func (c *deadlineRecordingClient) List(ctx context.Context, list client.ObjectLi
 	return c.Client.List(ctx, list, opts...)
 }
 
+type deadlineNodeListClient struct {
+	client.Client
+	nodeListCalls int
+}
+
+func (c *deadlineNodeListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if _, ok := list.(*corev1.NodeList); ok {
+		c.nodeListCalls++
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
 func TestWaitForDaemonSetPodsAppliesTimeoutWithParentDeadline(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
@@ -515,6 +529,34 @@ func TestWaitForDaemonSetPodsPreservesPartialResultsOnItsOwnTimeout(t *testing.T
 	require.Len(t, pods, 1)
 	assert.Equal(t, []string{"ready-daemon"}, []string{pods[0].Name})
 	assert.Equal(t, []string{"ready-node"}, nodes)
+	assert.Equal(t, "network-operator", namespace)
+}
+
+func TestWaitForDaemonSetPodsPreservesReadyPodsWhenNodeLookupTimesOut(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "pending-node"},
+	}
+	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending).Build()
+	c := &deadlineNodeListClient{Client: base}
+
+	nodes, pods, namespace, err := waitForDaemonSetPods(
+		context.Background(), c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, 20*time.Millisecond,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, c.nodeListCalls)
+	assert.Equal(t, []string{"ready-node"}, nodes)
+	require.Len(t, pods, 1)
+	assert.Equal(t, "ready-daemon", pods[0].Name)
 	assert.Equal(t, "network-operator", namespace)
 }
 
