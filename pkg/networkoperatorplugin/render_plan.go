@@ -513,6 +513,7 @@ func renderForScope(
 
 	case ScopePerSource:
 		var netplanManagedGroups []config.ClusterConfig
+		var netplanUnknownGroups []config.ClusterConfig
 		for i, plan := range plans {
 			for _, src := range plan.Sources {
 				renderCfg := withClusterConfig(cfg, []config.ClusterConfig{src}, subnetsAt(planSubnets, i))
@@ -534,6 +535,8 @@ func renderForScope(
 				// exact boundary where NicInterfaceNameTemplate is actually used.
 				if kind == "NicInterfaceNameTemplate" && len(rendered) > 0 && src.NetplanManaged {
 					netplanManagedGroups = append(netplanManagedGroups, src)
+				} else if kind == "NicInterfaceNameTemplate" && len(rendered) > 0 && src.NetplanManagementUnknown {
+					netplanUnknownGroups = append(netplanUnknownGroups, src)
 				}
 				merge(rendered)
 			}
@@ -541,9 +544,29 @@ func renderForScope(
 		if len(netplanManagedGroups) > 0 {
 			return nil, newNetplanInterfaceNameConflictError(netplanManagedGroups)
 		}
+		if len(netplanUnknownGroups) > 0 {
+			return nil, newNetplanInterfaceNameUnknownError(netplanUnknownGroups)
+		}
 	}
 
 	return results, nil
+}
+
+func newNetplanInterfaceNameUnknownError(groups []config.ClusterConfig) error {
+	labels := make([]string, 0, len(groups))
+	for _, group := range groups {
+		labels = append(labels, templateGroupLabel(group))
+	}
+	slices.Sort(labels)
+
+	return apperrors.NewValidationError(
+		fmt.Sprintf(
+			"cannot generate NicInterfaceNameTemplate: netplan management could not be verified for NICs being configured for %s",
+			strings.Join(labels, ", "),
+		),
+		nil,
+		"Resolve the netplan discovery warning, re-run 'l8k discover', then retry 'l8k generate'.",
+	)
 }
 
 func newNetplanInterfaceNameConflictError(groups []config.ClusterConfig) error {

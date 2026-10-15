@@ -59,14 +59,47 @@ func TestGenerateRejectsNetplanManagedInterfaceNameTemplates(t *testing.T) {
 	assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
 }
 
-func TestGenerateAllowsInterfaceNameTemplatesWhenAffectedGroupIsFilteredOut(t *testing.T) {
+func TestGenerateRejectsInterfaceNameTemplatesWhenNetplanManagementIsUnknown(t *testing.T) {
 	cfg := loadNetplanManagedRenderConfig(t)
-	cfg.ClusterConfig[0].NetplanManaged = true
+	cfg.ClusterConfig[0].NetplanManagementUnknown = true
 
-	rendered, err := (&NetworkOperatorPlugin{Groups: []string{"group-1", "group-2"}}).
-		GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
-	require.NoError(t, err)
-	assert.Len(t, fileNamesMatching(rendered, "30-nicinterfacenametemplate"), 2)
+	_, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
+		loadProfileFromDir(t, "sriov-ethernet-rdma"),
+		cfg,
+	)
+	require.Error(t, err)
+
+	var structured *apperrors.StructuredError
+	require.True(t, errors.As(err, &structured))
+	assert.Equal(t, apperrors.ExitValidation, structured.ExitCode)
+	assert.Contains(t, structured.Message, "netplan management could not be verified")
+	assert.Contains(t, structured.Message, `clusterConfig group "group-0"`)
+	assert.Equal(t,
+		"Resolve the netplan discovery warning, re-run 'l8k discover', then retry 'l8k generate'.",
+		structured.Suggestion,
+	)
+}
+
+func TestGenerateAllowsInterfaceNameTemplatesWhenAffectedGroupIsFilteredOut(t *testing.T) {
+	t.Run("managed group", func(t *testing.T) {
+		cfg := loadNetplanManagedRenderConfig(t)
+		cfg.ClusterConfig[0].NetplanManaged = true
+
+		rendered, err := (&NetworkOperatorPlugin{Groups: []string{"group-1", "group-2"}}).
+			GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
+		require.NoError(t, err)
+		assert.Len(t, fileNamesMatching(rendered, "30-nicinterfacenametemplate"), 2)
+	})
+
+	t.Run("unknown group", func(t *testing.T) {
+		cfg := loadNetplanManagedRenderConfig(t)
+		cfg.ClusterConfig[0].NetplanManagementUnknown = true
+
+		rendered, err := (&NetworkOperatorPlugin{Groups: []string{"group-1", "group-2"}}).
+			GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
+		require.NoError(t, err)
+		assert.Len(t, fileNamesMatching(rendered, "30-nicinterfacenametemplate"), 2)
+	})
 }
 
 func TestGenerateAllowsNetplanManagedGroupWhenInterfaceNameTemplateIsNotRendered(t *testing.T) {
@@ -95,12 +128,39 @@ func TestGenerateAllowsNetplanManagedGroupWhenInterfaceNameTemplateIsNotRendered
 		require.NoError(t, err)
 		assert.Empty(t, fileNamesMatching(rendered, "30-nicinterfacenametemplate"))
 	})
+
+	t.Run("unknown status when interface naming is disabled", func(t *testing.T) {
+		cfg := loadNetplanManagedRenderConfig(t)
+		cfg.ClusterConfig[0].NetplanManagementUnknown = true
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate = false
+
+		rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
+			loadProfileFromDir(t, "sriov-ethernet-rdma"),
+			cfg,
+		)
+		require.NoError(t, err)
+		assert.Empty(t, fileNamesMatching(rendered, "30-nicinterfacenametemplate"))
+	})
 }
 
 func TestGenerateRejectsUnconditionallyRenderedSpectrumXInterfaceNameTemplate(t *testing.T) {
-	cfg := loadNetplanManagedRenderConfig(t)
-	cfg.ClusterConfig = cfg.ClusterConfig[:1]
-	cfg.ClusterConfig[0].NetplanManaged = true
+	t.Run("managed", func(t *testing.T) {
+		cfg := loadNetplanManagedRenderConfig(t)
+		cfg.ClusterConfig = cfg.ClusterConfig[:1]
+		cfg.ClusterConfig[0].NetplanManaged = true
+		assertSpectrumXInterfaceNameTemplateRejected(t, cfg)
+	})
+
+	t.Run("unknown", func(t *testing.T) {
+		cfg := loadNetplanManagedRenderConfig(t)
+		cfg.ClusterConfig = cfg.ClusterConfig[:1]
+		cfg.ClusterConfig[0].NetplanManagementUnknown = true
+		assertSpectrumXInterfaceNameTemplateRejected(t, cfg)
+	})
+}
+
+func assertSpectrumXInterfaceNameTemplateRejected(t *testing.T, cfg *config.LaunchKitConfig) {
+	t.Helper()
 	cfg.Profile = &config.Profile{
 		Fabric:     "ethernet",
 		Deployment: "sriov",

@@ -412,6 +412,9 @@ clusterConfig:
 
     # bool — Netplan set-name selects an NVIDIA PF; blocks an NCO interface-name template for this group
     netplanManaged: false
+    # bool, omitted unless unknown — at least one worker could not be checked;
+    # also blocks interface-name generation
+    # netplanManagementUnknown: true
 
     capabilities:
       nodes:

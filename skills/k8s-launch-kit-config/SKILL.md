@@ -82,6 +82,9 @@ Each `clusterConfig[]` entry has these key fields:
   host-specific MACs are not persisted. If generation would emit a
   `NicInterfaceNameTemplate` for this group, clean up the affected `set-name`
   stanzas and re-run discovery instead of editing this flag by hand.
+- `netplanManagementUnknown` — true when discovery found no match but could not
+  verify every worker. Generation rejects interface-name rules for this group
+  until the discovery warning is resolved and discovery is re-run.
 - `capabilities.nodes.{sriov,rdma,ib}` — what the underlying hardware supports.
 - `pfs[]` — physical function list with PCI address, device ID, RDMA device,
   network interface, traffic class, rail, NUMA, GPU affinity, and `model` (the

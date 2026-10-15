@@ -114,10 +114,14 @@ the host netplan `set-name` rule can conflict with NCO's udev naming rule for
 the same NIC. Clean up the affected `set-name` stanzas in the host netplan
 configuration, re-run `l8k discover`, and then retry `l8k generate`.
 
+Discovery also sets `clusterConfig[].netplanManagementUnknown` when no match was
+found but it could not inspect every worker. Generation fails closed for those
+groups until the discovery warning is resolved and discovery is re-run.
+
 The check follows the actual render plan: a group excluded with `--groups` or
 `--gpu-type` does not block generation, and neither does a group for which no
-`NicInterfaceNameTemplate` is rendered. Do not clear `netplanManaged` by hand;
-re-run discovery so the config reflects the host state.
+`NicInterfaceNameTemplate` is rendered. Do not clear either netplan field by
+hand; re-run discovery so the config reflects the host state.
 
 ## Profile Quick Reference
 

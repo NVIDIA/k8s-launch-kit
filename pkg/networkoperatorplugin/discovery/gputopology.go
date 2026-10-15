@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
 // gpuTopologyProbeCmd emits the nvidia-smi-owned part of the batched topology
@@ -76,21 +77,35 @@ for d in /sys/bus/pci/devices/*; do
 done`
 
 const (
-	netplanMarker     = "---NETPLAN---"
-	netplanFileMarker = "---NETPLAN-FILE---"
+	netplanMarker                      = "---NETPLAN---"
+	netplanFileMarker                  = "---NETPLAN-FILE---"
+	netplanDirectoryAvailableMarker    = "---NETPLAN-AVAILABLE---"
+	netplanDirectoryUnavailableMarker  = "---NETPLAN-UNAVAILABLE---"
+	netplanObservationIncompleteMarker = "---NETPLAN-INCOMPLETE---"
 )
 
-// netplanDiscoveryProbeCmd emits a sanitized structural projection of the
-// host's netplan files. Only empty mapping keys, YAML document separators,
-// match.macaddress, and set-name values leave the node; unrelated settings
-// (including credentials) are never copied into the exec response.
+// netplanDiscoveryProbeCmd emits the host netplan-directory status and a
+// sanitized structural projection of its files. Only empty mapping keys, YAML
+// document separators, match.macaddress, and set-name values leave the node;
+// unrelated settings (including credentials) are never copied into the exec
+// response. Unavailable paths and failed file projections have explicit
+// markers so an incomplete check cannot be mistaken for a negative result.
 //
 // The Go parser uses the retained YAML indentation to determine whether a MAC
 // match and set-name belong to the same netplan device stanza.
-const netplanDiscoveryProbeCmd = `echo '---NETPLAN---'
+const netplanDiscoveryProbeCmd = `echo '` + netplanMarker + `'
+if [ ! -d /host/etc/netplan ]; then
+  echo '` + netplanDirectoryUnavailableMarker + `'
+  exit 0
+fi
+echo '` + netplanDirectoryAvailableMarker + `'
 for netplan_file in /host/etc/netplan/*.yaml /host/etc/netplan/*.yml; do
-  [ -r "$netplan_file" ] || continue
-  echo '---NETPLAN-FILE---'
+  [ -e "$netplan_file" ] || [ -L "$netplan_file" ] || continue
+  if [ ! -r "$netplan_file" ]; then
+    echo '` + netplanObservationIncompleteMarker + `'
+    continue
+  fi
+  echo '` + netplanFileMarker + `'
   awk '
     {
       line = $0
@@ -101,7 +116,7 @@ for netplan_file in /host/etc/netplan/*.yaml /host/etc/netplan/*.yml; do
         print line
       }
     }
-  ' "$netplan_file" 2>/dev/null || true
+  ' "$netplan_file" 2>/dev/null || echo '` + netplanObservationIncompleteMarker + `'
 done`
 
 // nodePFDiscoveryProbeCmd is the reusable node-local probe for per-PF
@@ -187,6 +202,13 @@ type topoData struct {
 	// netplanSetNameMACs contains canonical MAC addresses from netplan device
 	// stanzas that have both match.macaddress and a non-empty set-name.
 	netplanSetNameMACs map[string]struct{}
+	// netplanDirectoryChecked and netplanDirectoryAvailable distinguish a
+	// confirmed empty netplan directory from an unavailable host observation.
+	netplanDirectoryChecked   bool
+	netplanDirectoryAvailable bool
+	// netplanObservationIncomplete is true when any discovered file could not
+	// be read or projected, so a negative match is not conclusive.
+	netplanObservationIncomplete bool
 	// netplanParseErrors counts malformed sanitized YAML documents. Parsing is
 	// best-effort, so valid files and documents still contribute matches.
 	netplanParseErrors int
@@ -272,8 +294,21 @@ func parseTopologyProbe(output string) topoData {
 	parseGPUQuery(queryBlock, data.gpuPCI)
 	parseTopoMatrix(topoBlock, data.matrix)
 	parsePFDiscoveryBlock(pfBlock, data.pfAttributes)
+	data.netplanDirectoryChecked = hasNetplanProbeMarker(netplanBlock, netplanDirectoryAvailableMarker) ||
+		hasNetplanProbeMarker(netplanBlock, netplanDirectoryUnavailableMarker)
+	data.netplanDirectoryAvailable = hasNetplanProbeMarker(netplanBlock, netplanDirectoryAvailableMarker)
+	data.netplanObservationIncomplete = hasNetplanProbeMarker(netplanBlock, netplanObservationIncompleteMarker)
 	data.netplanParseErrors = parseNetplanSetNameMACs(netplanBlock, data.netplanSetNameMACs)
 	return data
+}
+
+func hasNetplanProbeMarker(block, marker string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		if strings.TrimSpace(line) == marker {
+			return true
+		}
+	}
+	return false
 }
 
 // parseGPUQuery parses lines like "0, 00000000:18:00.0" (CSV, whitespace-padded).
@@ -556,6 +591,43 @@ func hasNetplanManagedPF(data topoData) bool {
 	return false
 }
 
+// recordNetplanProbeResult aggregates one worker's netplan observation into
+// the group-level guard. A positive match proves the group is managed even if
+// another worker could not be inspected; otherwise, any incomplete observation
+// keeps the result explicitly unknown so generation can fail closed.
+func recordNetplanProbeResult(ctx context.Context, group *config.ClusterConfig, node string, data topoData) bool {
+	if data.netplanParseErrors > 0 {
+		log.Log.Info("Some netplan files could not be parsed during discovery",
+			"group", group.Identifier,
+			"node", node,
+			"parseErrors", data.netplanParseErrors)
+	}
+	if hasNetplanManagedPF(data) {
+		group.NetplanManaged = true
+		group.NetplanManagementUnknown = false
+		log.Log.Info("Detected netplan-managed NVIDIA PF naming",
+			"group", group.Identifier,
+			"node", node)
+		return true
+	}
+	if !data.netplanDirectoryChecked || !data.netplanDirectoryAvailable || data.netplanObservationIncomplete || data.netplanParseErrors > 0 {
+		group.NetplanManagementUnknown = true
+		ui.FromContext(ctx).Warning(
+			"Netplan management could not be verified on node %q; resolve the discovery warning and re-run discovery before generating interface-name rules",
+			node,
+		)
+	}
+	return false
+}
+
+func recordUnavailableNetplanProbe(ctx context.Context, group *config.ClusterConfig, node, reason string) {
+	if group.NetplanManaged {
+		return
+	}
+	group.NetplanManagementUnknown = true
+	ui.FromContext(ctx).Warning("Netplan management could not be verified on node %q: %s", node, reason)
+}
+
 // applyPFDiscoveryAttributes is the schema boundary for per-PF probe data.
 // The parser above is intentionally generic; this function validates and maps
 // only attributes supported by PFConfig. Add future per-PF fields here rather
@@ -690,10 +762,11 @@ func podContainerName(pod *corev1.Pod) string {
 	return pod.Spec.Containers[0].Name
 }
 
-// discoverGroupNetplanManagement checks every worker because both PF MAC
-// addresses and netplan files are node-local. The group-level flag is an OR:
-// one matching set-name rule is sufficient to indicate a potential naming
-// conflict with NCO-managed udev rules.
+// discoverGroupNetplanManagement checks workers until it finds a match or has
+// a conclusive observation for every worker because both PF MAC addresses and
+// netplan files are node-local. The group-level flag is an OR: one matching
+// set-name rule is sufficient to indicate a potential naming conflict with
+// NCO-managed udev rules.
 //
 // representativeData is reused from topologyProbeCmd to avoid probing that
 // node twice. When the representative probe failed, pass nil and every worker
@@ -704,17 +777,7 @@ func discoverGroupNetplanManagement(ctx context.Context, restConfig *rest.Config
 
 	checkedRepresentative := representativePod != nil && representativeData != nil
 	if checkedRepresentative {
-		if representativeData.netplanParseErrors > 0 {
-			log.Log.Info("Some netplan files could not be parsed during discovery",
-				"group", group.Identifier,
-				"node", representativePod.Spec.NodeName,
-				"parseErrors", representativeData.netplanParseErrors)
-		}
-		if hasNetplanManagedPF(*representativeData) {
-			group.NetplanManaged = true
-			log.Log.Info("Detected netplan-managed NVIDIA PF naming",
-				"group", group.Identifier,
-				"node", representativePod.Spec.NodeName)
+		if recordNetplanProbeResult(ctx, group, representativePod.Spec.NodeName, *representativeData) {
 			return
 		}
 	}
@@ -727,6 +790,7 @@ func discoverGroupNetplanManagement(ctx context.Context, restConfig *rest.Config
 		if pod == nil {
 			log.Log.Info("No nic-configuration-daemon pod found; netplan management could not be checked",
 				"group", group.Identifier, "node", node)
+			recordUnavailableNetplanProbe(ctx, group, node, "the nic-configuration-daemon pod was not available")
 			continue
 		}
 
@@ -735,21 +799,12 @@ func discoverGroupNetplanManagement(ctx context.Context, restConfig *rest.Config
 		if err != nil {
 			log.Log.Error(err, "failed to exec per-PF netplan discovery probe",
 				"group", group.Identifier, "node", node, "pod", pod.Name)
+			recordUnavailableNetplanProbe(ctx, group, node, "the nic-configuration-daemon probe failed")
 			continue
 		}
 
 		data := parseTopologyProbe(output)
-		if data.netplanParseErrors > 0 {
-			log.Log.Info("Some netplan files could not be parsed during discovery",
-				"group", group.Identifier,
-				"node", node,
-				"parseErrors", data.netplanParseErrors)
-		}
-		if hasNetplanManagedPF(data) {
-			group.NetplanManaged = true
-			log.Log.Info("Detected netplan-managed NVIDIA PF naming",
-				"group", group.Identifier,
-				"node", node)
+		if recordNetplanProbeResult(ctx, group, node, data) {
 			return
 		}
 	}
@@ -773,11 +828,15 @@ func discoverGPUTopology(ctx context.Context, restConfig *rest.Config,
 		return
 	}
 	group.NetplanManaged = false
+	group.NetplanManagementUnknown = false
 
 	targetPod := findDaemonPod(group.WorkerNodes, dsPods)
 	if targetPod == nil {
 		log.Log.Info("No nic-configuration-daemon pod found on group nodes; skipping host topology probing",
 			"group", group.Identifier)
+		for _, node := range group.WorkerNodes {
+			recordUnavailableNetplanProbe(ctx, group, node, "the nic-configuration-daemon pod was not available")
+		}
 		return
 	}
 

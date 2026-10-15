@@ -25,6 +25,10 @@ The objects created by `Ensure(ctx, c, opts)` (`pkg/nicconfigdaemon/`) on every 
 | `ConfigMap` | `nic-configuration-operator-supported-nic-firmware` (empty `data: {}`) | namespaced | empty stand-in so the daemon's startup Get succeeds; deleted by namespace cascade |
 | `DaemonSet` | `nic-configuration-daemon` | namespaced | image = `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`; **no NFD `nodeSelector`** + tolerates all taints + node-name affinity for nodes that are Ready and schedulable; deleted by namespace cascade |
 
+The bootstrap daemon mounts host `/etc` read-only at `/host/etc`. Mounting the
+parent directory lets the probe detect a missing `/etc/netplan` without
+`DirectoryOrCreate` mutating the node or preventing the daemon from starting.
+
 ### Why renamed RBAC
 
 The upstream nic-configuration-operator Helm chart uses cluster-scoped names
@@ -105,8 +109,12 @@ for host attributes that `NicDevice` does not publish:
 NUMA and current netdevice MAC address use this path today. MACs are compared
 with a sanitized projection of host netplan device stanzas; a
 `match.macaddress` plus non-empty `set-name` match sets the group's
-`netplanManaged` flag. Every worker is probed because MACs and netplan files are
-node-local, and the group flag is true if any worker matches. The representative
+`netplanManaged` flag. Workers are probed until a match is found or each has a
+conclusive observation because MACs and netplan files are node-local; the group
+flag is true if any worker matches. If no worker
+matches but any observation is unavailable or incomplete, discovery sets
+`netplanManagementUnknown` and warns; generation rejects interface-name rules
+for that group until discovery can verify the host state. The representative
 worker combines this with the GPU probe; other workers run only the smaller
 per-PF/netplan probe.
 
