@@ -196,11 +196,11 @@ Do not add GPU counts or resource maps under `clusterConfig`.
   selected by a host netplan `match.macaddress` plus `set-name` rule. Discovery
   checks worker nodes until it finds a match or has a conclusive observation
   for each, and uses PF MACs only transiently; they are not saved in the shared
-  group config. When no match is found but any worker cannot be
-  checked, discovery warns and sets `clusterConfig[].netplanManagementUnknown`
-  instead of treating the result as a confirmed negative. If generation would
-  emit a
-  `NicInterfaceNameTemplate` for an affected group, clean up the host's
+  group config. When no match is found but a worker observation is incomplete,
+  including a missing current MAC for an expected PF, discovery warns and sets
+  `clusterConfig[].netplanManagementUnknown` instead of treating the result as
+  a confirmed negative. If generation would emit a `NicInterfaceNameTemplate`
+  for an affected group, clean up the host's
   `set-name` stanzas or resolve the warning and re-run discovery before
   retrying generation; do not clear either field manually. Refresh configs
   created before this unknown-state field was added.

@@ -113,10 +113,11 @@ addresses transiently. Discovery mounts the host's `/etc` read-only and checks
 worker nodes until it finds a match or has a conclusive observation for each.
 If any NVIDIA PF matches a netplan
 `match.macaddress` plus non-empty `set-name` rule, the group has
-`netplanManaged: true`. If a worker cannot be checked and no match is found, the
-group has `netplanManagementUnknown: true` and discovery warns; an absent
-directory is not treated as a verified negative. Neither flag persists
-host-unique MAC addresses. If `l8k generate` would emit a
+`netplanManaged: true`. If no match is found but a worker's observation is
+incomplete—including when an expected PF has no readable current MAC—the group
+has `netplanManagementUnknown: true` and discovery warns. An absent directory
+is not treated as a verified negative. Neither flag persists host-unique MAC
+addresses. If `l8k generate` would emit a
 `NicInterfaceNameTemplate` for a group that is managed or unknown, it returns a
 validation error rather than risking conflicting NCO naming rules. Resolve the
 discovery warning and re-run discovery, or remove the affected `set-name`

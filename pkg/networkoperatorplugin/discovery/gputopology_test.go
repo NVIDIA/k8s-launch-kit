@@ -294,17 +294,42 @@ func TestRecordNetplanProbeResultFailsClosedForUnknownObservations(t *testing.T)
 	assert.False(t, group.NetplanManaged)
 	assert.True(t, group.NetplanManagementUnknown, "a known negative on one worker cannot erase another worker's unknown result")
 
+	group.PFs = []config.PFConfig{
+		{PciAddress: "0000:19:00.0"},
+		{PciAddress: "0000:5a:00.0"},
+	}
 	recorded = recordNetplanProbeResult(ctx, group, "worker-1", topoData{
 		netplanDirectoryChecked:   true,
 		netplanDirectoryAvailable: true,
 		pfAttributes: map[string]map[string]string{
 			"0000:19:00.0": {pfAttributeMACAddress: "02:00:00:00:00:19"},
+			"0000:5a:00.0": {pfAttributeNUMANode: "0"},
 		},
 		netplanSetNameMACs: map[string]struct{}{"02:00:00:00:00:19": {}},
 	})
 	assert.True(t, recorded)
 	assert.True(t, group.NetplanManaged)
 	assert.False(t, group.NetplanManagementUnknown)
+}
+
+func TestRecordNetplanProbeResultMarksMissingExpectedPFMACUnknown(t *testing.T) {
+	group := &config.ClusterConfig{
+		Identifier: "group-0",
+		PFs:        []config.PFConfig{{PciAddress: "0000:19:00.0"}},
+	}
+	data := parseTopologyProbe(`---PF---
+0000:19:00.0|numaNode=0
+---NETPLAN---
+---NETPLAN-AVAILABLE---`)
+
+	recorded := recordNetplanProbeResult(
+		ui.WithOutput(context.Background(), ui.NewSilent()), group, "worker-0", data,
+	)
+
+	assert.False(t, recorded)
+	assert.False(t, group.NetplanManaged)
+	assert.True(t, group.NetplanManagementUnknown,
+		"a missing MAC for an expected PF cannot prove netplan is unmanaged")
 }
 
 func TestHasNetplanManagedPF(t *testing.T) {

@@ -591,6 +591,25 @@ func hasNetplanManagedPF(data topoData) bool {
 	return false
 }
 
+// hasCompletePFMACObservation reports whether every expected PF and every PF
+// returned by the host probe has a usable MAC. A negative netplan result is
+// only conclusive when all expected interfaces could be matched to netplan.
+func hasCompletePFMACObservation(expectedPFs []config.PFConfig, data topoData) bool {
+	for _, pf := range expectedPFs {
+		pci := normalizePCI(pf.PciAddress)
+		attributes, ok := data.pfAttributes[pci]
+		if pci == "" || !ok || normalizeMAC(attributes[pfAttributeMACAddress]) == "" {
+			return false
+		}
+	}
+	for _, attributes := range data.pfAttributes {
+		if normalizeMAC(attributes[pfAttributeMACAddress]) == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // recordNetplanProbeResult aggregates one worker's netplan observation into
 // the group-level guard. A positive match proves the group is managed even if
 // another worker could not be inspected; otherwise, any incomplete observation
@@ -610,7 +629,10 @@ func recordNetplanProbeResult(ctx context.Context, group *config.ClusterConfig, 
 			"node", node)
 		return true
 	}
-	if !data.netplanDirectoryChecked || !data.netplanDirectoryAvailable || data.netplanObservationIncomplete || data.netplanParseErrors > 0 {
+	netplanObservationIncomplete := !data.netplanDirectoryChecked || !data.netplanDirectoryAvailable ||
+		data.netplanObservationIncomplete || data.netplanParseErrors > 0
+	pfMACObservationIncomplete := !hasCompletePFMACObservation(group.PFs, data)
+	if netplanObservationIncomplete || pfMACObservationIncomplete {
 		group.NetplanManagementUnknown = true
 		ui.FromContext(ctx).Warning(
 			"Netplan management could not be verified on node %q; resolve the discovery warning and re-run discovery before generating interface-name rules",
