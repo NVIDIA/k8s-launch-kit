@@ -216,11 +216,13 @@ Do not add GPU counts or resource maps under `clusterConfig`.
 - Before bootstrapping, discovery pre-cleans the `nvidia-k8s-launch-kit` namespace
   (deletes any leftover DaemonSet/pods/NicDevice CRs from a crashed prior run and
   waits up to 2 min for it to clear) so a fresh daemon is never layered on stale state.
-- Discovery waits up to 5 minutes for daemon pods to be Ready, but tolerates
-  stuck pods: if some pods are wedged (e.g. ImagePullBackOff/CrashLoopBackOff on
-  an unrelated node) it proceeds with the Ready ones rather than blocking the
-  whole window, and only aborts if **no** pod ever becomes Ready. Common causes
-  of a total failure: image tag missing in your registry, pull-secret missing.
+- Discovery waits up to 5 minutes for daemon pods to be Ready. It proceeds with
+  the Ready pods when other daemon pods are on NotReady nodes, are stuck (e.g.
+  ImagePullBackOff/CrashLoopBackOff), or the wait timeout expires while the
+  caller's context remains active. If the caller context is cancelled or reaches
+  its deadline first, discovery returns that context error. It aborts if **no**
+  pod ever becomes Ready. Common causes of a total failure: image tag missing in
+  your registry, pull-secret missing.
 - If discovery reports "no nodes with an NVIDIA NIC (PCI vendor 15b3) were found",
   the daemon ran but no node's sysfs exposed a `0x15b3` device (no Mellanox/NVIDIA
   NICs, or `/sys` not mounted/readable in the pod).
