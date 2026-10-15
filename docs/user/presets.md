@@ -94,7 +94,10 @@ pfs:
     gpuProximity: PIX
 ```
 
-The `capabilities.nodes` block is required for `--for` because profile selection happens without live discovery.
+The `capabilities.nodes` block is required for `--for` because profile selection happens
+without live discovery. If you select InfiniBand with `--fabric infiniband`, set
+`capabilities.nodes.ib: true`; profile selection rejects the request when that capability is
+false or omitted.
 
 ## Author A Preset
 

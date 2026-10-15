@@ -194,6 +194,10 @@ func (p *Profile) Validate(requirements *config.Profile, capabilities *config.Cl
 		return false, fmt.Sprintf("selected deployment type does not match profile requirements: %s", p.ProfileRequirements.Deployment)
 	}
 
+	if requirements.Fabric == "infiniband" && !capabilities.Nodes.Ib {
+		return false, "selected InfiniBand fabric requires cluster ib capability to be true"
+	}
+
 	if p.ProfileRequirements.Multirail != nil && *p.ProfileRequirements.Multirail != requirements.Multirail {
 		return false, fmt.Sprintf("selected multirail setting does not match profile requirements: %t", *p.ProfileRequirements.Multirail)
 	}
