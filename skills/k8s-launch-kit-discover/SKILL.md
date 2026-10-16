@@ -38,6 +38,12 @@ is set). The daemon image is pulled from `<networkOperator.repository>/
 nic-configuration-operator-daemon:<networkOperator.componentVersion>` (both
 fields come from `l8k-config.yaml`).
 
+For library consumers, read-only discovery is separate from `l8k discover`.
+`DiscoverReadOnly` requires a safe group selector by default; inventory-only
+callers can opt in to empty selectors and use `WorkerNodes` as the group
+membership source. See the read-only library discovery contract in the user
+guide before using that option.
+
 ## Usage (from AI agent)
 
 ```bash
