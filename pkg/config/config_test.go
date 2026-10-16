@@ -431,19 +431,26 @@ func TestDefaultConfigYAMLReturnsFreshCopy(t *testing.T) {
 }
 
 func TestClusterConfigNetplanManagedYAMLRoundTrip(t *testing.T) {
-	input := ClusterConfig{NetplanManaged: true}
+	input := ClusterConfig{NetplanManaged: true, NetplanManagementUnknown: true}
 
 	marshaled, err := yaml.Marshal(input)
 	require.NoError(t, err)
 	assert.Contains(t, string(marshaled), "netplanManaged: true")
+	assert.Contains(t, string(marshaled), "netplanManagementUnknown: true")
 
 	var reloaded ClusterConfig
 	require.NoError(t, yaml.Unmarshal(marshaled, &reloaded))
 	assert.True(t, reloaded.NetplanManaged)
+	assert.True(t, reloaded.NetplanManagementUnknown)
 
 	marshaled, err = yaml.Marshal(ClusterConfig{NetplanManaged: false})
 	require.NoError(t, err)
 	assert.Contains(t, string(marshaled), "netplanManaged: false")
+	assert.NotContains(t, string(marshaled), "netplanManagementUnknown")
+
+	var legacy ClusterConfig
+	require.NoError(t, yaml.Unmarshal([]byte("netplanManaged: false\n"), &legacy))
+	assert.False(t, legacy.NetplanManagementUnknown, "legacy configs keep their previous default")
 }
 
 func TestNormalizeSpectrumXProfileConfigFromFullConfigMap(t *testing.T) {

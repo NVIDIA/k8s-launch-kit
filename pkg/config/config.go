@@ -780,9 +780,15 @@ type ClusterConfig struct {
 	// match.macaddress stanza with a non-empty set-name. Such naming may
 	// conflict with udev rules deployed by NIC Configuration Operator, so
 	// generation is rejected when a NicInterfaceNameTemplate would configure
-	// this group.
+	// this group. A false value is confirmed only when
+	// NetplanManagementUnknown is false.
 	NetplanManaged bool `yaml:"netplanManaged"`
-	PresetApplied  bool `yaml:"presetApplied,omitempty"`
+	// NetplanManagementUnknown is true when discovery could not verify netplan
+	// management on every worker in this group. Generation fails closed if it
+	// would otherwise emit a NicInterfaceNameTemplate for the group. Omitted
+	// values in existing configs retain their prior behavior.
+	NetplanManagementUnknown bool `yaml:"netplanManagementUnknown,omitempty"`
+	PresetApplied            bool `yaml:"presetApplied,omitempty"`
 	// PresetDeviation lists discrepancies between the matched preset and
 	// the cluster's actually-discovered hardware. When non-empty, the
 	// preset was applied (so rail/NUMA topology fields are populated) but

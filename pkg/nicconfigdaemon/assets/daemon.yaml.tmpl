@@ -231,7 +231,16 @@ spec:
             - name: sys
               mountPath: /sys
               readOnly: false
+            # Mount /etc rather than /etc/netplan so discovery can distinguish
+            # a missing netplan directory without creating anything on the host.
+            - name: host-etc
+              mountPath: /host/etc
+              readOnly: true
       volumes:
         - name: sys
           hostPath:
             path: /sys
+        - name: host-etc
+          hostPath:
+            path: /etc
+            type: Directory
