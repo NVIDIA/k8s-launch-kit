@@ -51,6 +51,7 @@ type readOnlyOptions struct {
 	networkOperatorNamespace string
 	restConfig               *rest.Config
 	podExec                  readOnlyPodExec
+	assumeUnverifiedExcluded bool
 }
 
 // WithReadOnlyNetworkOperatorNamespace restricts daemon lookup to the
@@ -65,11 +66,22 @@ func WithReadOnlyNetworkOperatorNamespace(namespace string) ReadOnlyOption {
 
 // WithReadOnlyRESTConfig supplies the credentials needed to inspect an
 // existing daemon pod when a Ready daemon node has not published a NicDevice.
-// Without it, discovery fails rather than treating an uninspected node as a
-// non-NIC node.
+// Without it, discovery fails by default rather than treating an uninspected
+// node as a non-NIC node. Use WithReadOnlyAssumeUnverifiedExcluded to opt in to
+// excluding such nodes with a warning.
 func WithReadOnlyRESTConfig(restConfig *rest.Config) ReadOnlyOption {
 	return func(options *readOnlyOptions) {
 		options.restConfig = restConfig
+	}
+}
+
+// WithReadOnlyAssumeUnverifiedExcluded allows discovery without a REST config
+// to exclude Ready daemon nodes that have not published a NicDevice. Their NIC
+// publisher status is unknown, so discovery emits a warning. This option does
+// not suppress errors when a supplied REST config cannot inspect a node.
+func WithReadOnlyAssumeUnverifiedExcluded() ReadOnlyOption {
+	return func(options *readOnlyOptions) {
+		options.assumeUnverifiedExcluded = true
 	}
 }
 
@@ -88,8 +100,10 @@ func withReadOnlyPodExec(exec readOnlyPodExec) ReadOnlyOption {
 // operator. If a Ready daemon node has not published a device, it probes that
 // node's existing daemon pod to distinguish an eligible publisher from a node
 // with no discoverable NIC or only restricted BlueFields. That fallback needs
-// a REST config and pods/exec permission. The function never creates bootstrap
-// resources.
+// a REST config and pods/exec permission. Without a REST config, discovery
+// fails unless WithReadOnlyAssumeUnverifiedExcluded is set; that option excludes
+// the unverified nodes and warns that the returned inventory may be incomplete.
+// Probe errors remain errors. The function never creates bootstrap resources.
 func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
 	if kubeClient == nil {
 		return nil, errors.New("DiscoverReadOnly: kubeClient must not be nil")
@@ -145,19 +159,26 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		return nil, fmt.Errorf("DiscoverReadOnly: no NicDevice resources found on ready daemon nodes")
 	}
 	probeResults, err := probeMissingReadOnlyPublishers(ctx, options.restConfig, namespace,
-		expectedNodes, daemonPods, deviceNodes, options.podExec)
+		expectedNodes, daemonPods, deviceNodes, options.podExec, options.assumeUnverifiedExcluded)
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: determine NIC publisher eligibility: %w", err)
 	}
-	publisherNodes, excludedNodes, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
+	selection, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: determine NIC publisher eligibility: %w", err)
 	}
-	if len(excludedNodes) > 0 {
-		ui.FromContext(ctx).Warning("Excluding %d ready daemon node(s) with no discoverable or only restricted NVIDIA NICs", len(excludedNodes))
+	if len(selection.excludedNodes) > 0 {
+		ui.FromContext(ctx).Warning("Excluding %d ready daemon node(s) with no discoverable or only restricted NVIDIA NICs", len(selection.excludedNodes))
+	}
+	if len(selection.unverifiedNodes) > 0 {
+		ui.FromContext(ctx).Warning(
+			"Excluding %d ready daemon node(s) with unverified NicDevice publisher status; "+
+				"pass WithReadOnlyRESTConfig to inspect them (inventory may be incomplete)",
+			len(selection.unverifiedNodes),
+		)
 	}
 	var missingNodes []string
-	for _, node := range publisherNodes {
+	for _, node := range selection.publisherNodes {
 		if !deviceNodes[node] {
 			missingNodes = append(missingNodes, node)
 		}
@@ -212,6 +233,7 @@ func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName,
 
 func probeMissingReadOnlyPublishers(ctx context.Context, restConfig *rest.Config, namespace string,
 	expectedNodes []string, daemonPods []corev1.Pod, deviceNodes map[string]bool, podExec readOnlyPodExec,
+	assumeUnverifiedExcluded bool,
 ) (map[string]mellanoxNICProbeResult, error) {
 	results := make(map[string]mellanoxNICProbeResult)
 	for _, node := range expectedNodes {
@@ -219,6 +241,10 @@ func probeMissingReadOnlyPublishers(ctx context.Context, restConfig *rest.Config
 			continue
 		}
 		if restConfig == nil {
+			if assumeUnverifiedExcluded {
+				results[node] = mellanoxNICProbeUnverified
+				continue
+			}
 			return nil, fmt.Errorf("cannot verify whether daemon node %q can publish NicDevice without a REST config; pass WithReadOnlyRESTConfig", node)
 		}
 		pod := findDaemonPod([]string{node}, daemonPods)
@@ -246,30 +272,41 @@ func probeMissingReadOnlyPublishers(ctx context.Context, restConfig *rest.Config
 	return results, nil
 }
 
+type readOnlyPublisherSelection struct {
+	publisherNodes  []string
+	excludedNodes   []string
+	unverifiedNodes []string
+}
+
 func readOnlyPublisherNodes(expectedNodes []string, deviceNodes map[string]bool,
 	probeResults map[string]mellanoxNICProbeResult,
-) ([]string, []string, error) {
-	publishers := make([]string, 0, len(expectedNodes))
-	excluded := make([]string, 0)
+) (readOnlyPublisherSelection, error) {
+	selection := readOnlyPublisherSelection{
+		publisherNodes:  make([]string, 0, len(expectedNodes)),
+		excludedNodes:   make([]string, 0),
+		unverifiedNodes: make([]string, 0),
+	}
 	for _, node := range expectedNodes {
 		if deviceNodes[node] {
-			publishers = append(publishers, node)
+			selection.publisherNodes = append(selection.publisherNodes, node)
 			continue
 		}
 		result, probed := probeResults[node]
 		if !probed {
-			return nil, nil, fmt.Errorf("NIC publisher eligibility on node %q was not verified", node)
+			return readOnlyPublisherSelection{}, fmt.Errorf("NIC publisher eligibility on node %q was not verified", node)
 		}
 		switch result {
 		case mellanoxNICProbePresent:
-			publishers = append(publishers, node)
+			selection.publisherNodes = append(selection.publisherNodes, node)
 		case mellanoxNICProbeNone, mellanoxNICProbeRestricted:
-			excluded = append(excluded, node)
+			selection.excludedNodes = append(selection.excludedNodes, node)
+		case mellanoxNICProbeUnverified:
+			selection.unverifiedNodes = append(selection.unverifiedNodes, node)
 		default:
-			return nil, nil, fmt.Errorf("unknown NIC publisher probe result %q on node %q", result, node)
+			return readOnlyPublisherSelection{}, fmt.Errorf("unknown NIC publisher probe result %q on node %q", result, node)
 		}
 	}
-	return publishers, excluded, nil
+	return selection, nil
 }
 
 func ensureReadOnlyNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]map[string]string) error {
