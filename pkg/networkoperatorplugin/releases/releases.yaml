@@ -43,8 +43,8 @@ releases:
       image: nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.4.0-runtime-host
   "26.7":
     networkOperator:
-      version: v26.7.0
-      componentVersion: network-operator-v26.7.0
+      version: v26.7.1
+      componentVersion: network-operator-v26.7.1
       repository: nvcr.io/nvidia/mellanox
       operatorRepository: nvcr.io/nvidia/cloud-native
       helmRepoURL: https://helm.ngc.nvidia.com/nvidia
