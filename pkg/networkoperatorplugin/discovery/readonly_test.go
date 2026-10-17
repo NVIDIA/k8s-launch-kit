@@ -434,6 +434,163 @@ func TestWaitForDaemonSetPodsReturnsFallbackNamespace(t *testing.T) {
 	assert.Equal(t, "network-operator", namespace)
 }
 
+type deadlineRecordingClient struct {
+	client.Client
+	deadline time.Time
+}
+
+func (c *deadlineRecordingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		c.deadline = deadline
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+type deadlineNodeListClient struct {
+	client.Client
+	nodeListCalls int
+}
+
+func (c *deadlineNodeListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if _, ok := list.(*corev1.NodeList); ok {
+		c.nodeListCalls++
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+func TestWaitForDaemonSetPodsAppliesTimeoutWithParentDeadline(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "ready-daemon", Namespace: "network-operator",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}},
+		},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	c := &deadlineRecordingClient{Client: base}
+	parentDeadline := time.Now().Add(time.Hour)
+	parentCtx, cancel := context.WithDeadline(context.Background(), parentDeadline)
+	defer cancel()
+
+	_, _, _, err := waitForDaemonSetPods(
+		parentCtx, c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, time.Minute,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, c.deadline.Before(parentDeadline), "the daemon wait should retain its own timeout")
+}
+
+func TestWaitForDaemonSetPodsDoesNotReturnPartialSuccessAfterParentDeadline(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending).Build()
+	parentCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(25*time.Millisecond))
+	defer cancel()
+
+	_, _, _, err := waitForDaemonSetPods(
+		parentCtx, c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, time.Minute,
+	)
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestWaitForDaemonSetPodsPreservesPartialResultsOnItsOwnTimeout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending).Build()
+
+	nodes, pods, namespace, err := waitForDaemonSetPods(
+		context.Background(), c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, 20*time.Millisecond,
+	)
+
+	require.NoError(t, err)
+	require.Len(t, pods, 1)
+	assert.Equal(t, []string{"ready-daemon"}, []string{pods[0].Name})
+	assert.Equal(t, []string{"ready-node"}, nodes)
+	assert.Equal(t, "network-operator", namespace)
+}
+
+func TestWaitForDaemonSetPodsPreservesReadyPodsWhenNodeLookupTimesOut(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "pending-node"},
+	}
+	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending).Build()
+	c := &deadlineNodeListClient{Client: base}
+
+	nodes, pods, namespace, err := waitForDaemonSetPods(
+		context.Background(), c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, 20*time.Millisecond,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, c.nodeListCalls)
+	assert.Equal(t, []string{"ready-node"}, nodes)
+	require.Len(t, pods, 1)
+	assert.Equal(t, "ready-daemon", pods[0].Name)
+	assert.Equal(t, "network-operator", namespace)
+}
+
+func TestWaitForDaemonSetPodsSkipsPodsOnNotReadyNodes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "not-ready-node"},
+	}
+	notReadyNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "not-ready-node"},
+		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending, notReadyNode).Build()
+
+	st, err := checkDaemonSetPodsReady(context.Background(), c, "network-operator", nicconfigdaemon.DaemonSetName)
+	require.NoError(t, err)
+	require.NoError(t, excludePodsOnNotReadyNodes(context.Background(), c, &st))
+
+	assert.Equal(t, 2, st.total)
+	assert.Equal(t, 1, st.ready)
+	assert.Equal(t, 1, st.notReadyNodePods)
+	assert.True(t, st.canProceed())
+	assert.Equal(t, st.total, st.ready+st.stuck+st.notReadyNodePods,
+		"a pod on a NotReady node should not keep the readiness wait open")
+}
+
 type daemonNamespaceFallbackClient struct {
 	client.Client
 	primaryPod  corev1.Pod
