@@ -723,3 +723,31 @@ var sr680aProbeOutput = strings.Join([]string{
 	`0000:cb:00.0|1`,
 	`0000:d8:00.0|1`,
 }, "\n")
+
+func TestReclassifyAndReassignRails_DualPortBlueField3(t *testing.T) {
+	for _, proximity := range []string{"", "PIX"} {
+		t.Run("workload proximity="+proximity, func(t *testing.T) {
+			oldRail := 3
+			pfs := []config.PFConfig{
+				{DeviceID: "a2dc", Model: "BlueField-3 DPU dual-port QSFP112", PciAddress: "0000:0d:00.0", Traffic: "north-south", GPUProximity: "PIX", Rail: &oldRail},
+				{DeviceID: "a2dc", Model: "BlueField-3 SuperNIC single-port QSFP112", PciAddress: "0000:37:00.0", Traffic: "east-west", GPUProximity: proximity, ConnectedGPU: "GPU0"},
+			}
+			pixCount := pixOverridePFCount(pfs)
+			expectedCount := 0
+			expectedWorkloadReason := "part-number heuristic"
+			if proximity == "PIX" {
+				expectedCount = 1
+				expectedWorkloadReason = "PIX to GPU0"
+			}
+			assert.Equal(t, expectedCount, pixCount, "a dual-port BF3 must not activate the override or its log")
+			assert.Equal(t, "physical dual-port BlueField-3", topologyRailReason(pfs[0], pixCount > 0))
+			assert.Equal(t, expectedWorkloadReason, topologyRailReason(pfs[1], pixCount > 0))
+			reclassifyAndReassignRails(pfs)
+			assert.Equal(t, "north-south", pfs[0].Traffic)
+			assert.Nil(t, pfs[0].Rail)
+			assert.Equal(t, "east-west", pfs[1].Traffic)
+			require.NotNil(t, pfs[1].Rail)
+			assert.Equal(t, 0, *pfs[1].Rail)
+		})
+	}
+}

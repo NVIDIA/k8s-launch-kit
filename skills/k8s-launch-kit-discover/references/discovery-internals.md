@@ -144,16 +144,18 @@ the same groups in the same order.
 
 ## North-South Detection
 
-BlueField DPU devices are identified by matching their **OPN (Orderable Part Number)**
-against a built-in product-ID list maintained in the l8k source code. This list covers
-all BlueField-2 and BlueField-3 SKUs.
+North-south classification uses the operator's `NicDevice.status.dpu` flag, a
+built-in positive-only DPU product-ID list, or a BlueField-3 device ID (`a2dc` /
+`a2d9`) with a VPD model identifying two physical ports (`dual-port` / `2-port`).
+The list is not exhaustive. The physical dual-port rule applies even when the
+operator reports `dpu=false` in NIC mode and is preserved during GPU PIX
+reclassification. Multiple PCI functions do not prove physical port count.
 
 Devices classified as north-south:
 
 - Are excluded from generated manifests (no SriovNetworkNodePolicy, no
   MacvlanNetwork, etc.).
-- Are still recorded in the cluster config under a `northSouthDevices` field for
-  informational purposes.
+- Remain in a mixed group's `pfs` with `traffic: north-south` and no rail.
 - Do not contribute to rail numbering.
 
 If a node has only north-south devices and no east-west devices, that node is excluded
