@@ -641,10 +641,23 @@ func abs(x int) int {
 	return x
 }
 
+// pixOverridePFCount counts PFs that can activate topology-based classification.
+// Classification and its diagnostics must use the same physical-role exclusions.
+func pixOverridePFCount(pfs []config.PFConfig) int {
+	count := 0
+	for i := range pfs {
+		if pfs[i].GPUProximity == "PIX" && !isDualPortBlueField3(pfs[i].DeviceID, pfs[i].Model) {
+			count++
+		}
+	}
+	return count
+}
+
 // reclassifyAndReassignRails applies the PIX-gate rule for E/W-vs-N/S and then
 // renumbers rails sequentially over the E/W set.
 //
-// PIX-gate: if any PF has GPUProximity == "PIX", topology is discriminating —
+// Physical dual-port BF3s always remain N/S and cannot activate the PIX gate.
+// PIX-gate: if any other PF has GPUProximity == "PIX", topology is discriminating —
 // rewrite every PF's Traffic based on whether it has PIX (PIX => E/W,
 // otherwise => N/S). When no PF has PIX (flat-topology box or nvidia-smi
 // absent), Traffic is left intact so the upstream part-number heuristic still
@@ -655,15 +668,11 @@ func abs(x int) int {
 //
 // Idempotent: safe to call multiple times.
 func reclassifyAndReassignRails(pfs []config.PFConfig) {
-	hasPIX := false
+	hasPIX := pixOverridePFCount(pfs) > 0
 	for i := range pfs {
-		if pfs[i].GPUProximity == "PIX" {
-			hasPIX = true
-			break
-		}
-	}
-	if hasPIX {
-		for i := range pfs {
+		if isDualPortBlueField3(pfs[i].DeviceID, pfs[i].Model) {
+			pfs[i].Traffic = "north-south"
+		} else if hasPIX {
 			if pfs[i].GPUProximity == "PIX" {
 				pfs[i].Traffic = "east-west"
 			} else {
@@ -680,6 +689,19 @@ func reclassifyAndReassignRails(pfs []config.PFConfig) {
 		} else {
 			pfs[i].Rail = nil
 		}
+	}
+}
+
+func topologyRailReason(pf config.PFConfig, hasPIX bool) string {
+	switch {
+	case isDualPortBlueField3(pf.DeviceID, pf.Model):
+		return "physical dual-port BlueField-3"
+	case hasPIX && pf.GPUProximity == "PIX":
+		return "PIX to " + pf.ConnectedGPU
+	case hasPIX:
+		return "no PIX to any GPU (topology override)"
+	default:
+		return "part-number heuristic"
 	}
 }
 
@@ -877,14 +899,8 @@ func discoverGPUTopology(ctx context.Context, restConfig *rest.Config,
 
 	// Step 4: PIX-gate reclassification (Traffic + Rails together).
 	// Log the decision and each PF's final rail reason at debug level.
-	hasPIX := false
-	pixCount := 0
-	for i := range group.PFs {
-		if group.PFs[i].GPUProximity == "PIX" {
-			hasPIX = true
-			pixCount++
-		}
-	}
+	pixCount := pixOverridePFCount(group.PFs)
+	hasPIX := pixCount > 0
 	if hasPIX {
 		log.Log.V(1).Info("GPU topology: PIX detected — overriding part-number traffic classification",
 			"group", group.Identifier, "pixPFs", pixCount, "totalPFs", len(group.PFs))
@@ -899,15 +915,7 @@ func discoverGPUTopology(ctx context.Context, restConfig *rest.Config,
 	// at a glance why a device got a rail (or didn't).
 	for i := range group.PFs {
 		pf := &group.PFs[i]
-		var reason string
-		switch {
-		case hasPIX && pf.GPUProximity == "PIX":
-			reason = "PIX to " + pf.ConnectedGPU
-		case hasPIX && pf.GPUProximity != "PIX":
-			reason = "no PIX to any GPU (topology override)"
-		default:
-			reason = "part-number heuristic"
-		}
+		reason := topologyRailReason(*pf, hasPIX)
 		if pf.Rail != nil {
 			log.Log.V(1).Info("Rail assigned",
 				"group", group.Identifier,

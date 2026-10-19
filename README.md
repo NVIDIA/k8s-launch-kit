@@ -31,6 +31,10 @@ l8k schema
 
 ### Discover Cluster Configuration
 
+Physically dual-port BlueField-3 NICs are classified as north-south even in NIC
+mode or with an unlisted SKU. Groups containing only north-south NICs are omitted
+from the saved inventory; see [traffic classification](docs/user/discovery.md#east-west-and-north-south-nics).
+
 `l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. A normal CLI `--node-selector` value is saved for deployment-time selection; it does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
 
 ### Select the Deployment Profile

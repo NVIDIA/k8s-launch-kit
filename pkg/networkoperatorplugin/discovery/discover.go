@@ -81,10 +81,22 @@ func parseNSProductIDs(data string) map[string]bool {
 // BlueField DPU (non-SuperNIC) product ID from the ns-product-ids file. The
 // table is positive-only: a hit means the device is definitely a DPU; a miss
 // carries no information (the table doesn't enumerate every shipped SKU).
-// Combined with NicDevice.Status.DPU (operator-read INTERNAL_CPU_MODEL via
-// mlxconfig) for a more complete "definitely north-south" signal.
+// Combined with NicDevice.Status.DPU (operator-read INTERNAL_CPU_OFFLOAD_ENGINE
+// via mlxconfig) and physical dual-port BF3 detection for a more complete signal.
 func isNorthSouthDevice(partNumber string) bool {
 	return nsProductIDs[partNumber]
+}
+
+// isDualPortBlueField3 identifies physical dual-port BF3 hardware independently
+// of its operating mode or SKU. Multiple PCI functions can be planes of a single
+// physical port, so only the VPD model establishes dual-port topology.
+func isDualPortBlueField3(deviceID, model string) bool {
+	switch strings.TrimPrefix(strings.ToLower(strings.TrimSpace(deviceID)), "0x") {
+	case "a2dc", "a2d9":
+		return pfutil.IsDualPortModel(model)
+	default:
+		return false
+	}
 }
 
 // DiscoverClusterConfig walks the cluster and populates cfg with the
@@ -1194,23 +1206,25 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			nodeMap[nodeName] = &nodeInfo{}
 		}
 		ni := nodeMap[nodeName]
-		// Stage 1 classification (operator-authoritative signals first):
-		//   - NicDevice.Status.DPU == true OR part number in ns-product-ids →
-		//     BlueField DPU → north-south. Either signal alone is sufficient;
-		//     the operator reads INTERNAL_CPU_MODEL via mlxconfig
-		//     (EMBEDDED_CPU(1) ⇒ DPU), and the part-number table is positive-
-		//     only — together they cover the SKUs the table doesn't list
-		//     plus the rare CRs where the operator couldn't probe.
+		// Stage 1 classification (physical role and operator signals first):
+		//   - Physical dual-port BF3 OR NicDevice.Status.DPU == true OR
+		//     part number in ns-product-ids → north-south. The operator's DPU
+		//     flag reflects INTERNAL_CPU_OFFLOAD_ENGINE, so it can be false
+		//     for DPU hardware in NIC mode. VPD physical port count covers
+		//     those dual-port BF3s even when their SKU is not in the table.
 		//   - NicDevice.Status.SuperNIC == true (and not a DPU per above) →
 		//     explicit east-west pin. Replaces the prior chip-ID heuristic
 		//     ("BF3 deviceID a2dc + not in DPU table ⇒ SuperNIC"), which
 		//     misclassified DPU SKUs whose part numbers weren't in the table.
 		//   - Anything else → unclassified (default east-west, may be
 		//     reclassified by the frequency heuristic in Stage 1.5).
-		isDPU := d.Status.DPU || isNorthSouthDevice(d.Status.PartNumber)
+		isDualPortBF3 := isDualPortBlueField3(d.Status.Type, d.Status.ModelName)
+		isDPU := isDualPortBF3 || d.Status.DPU || isNorthSouthDevice(d.Status.PartNumber)
 		isSuperNIC := !isDPU && d.Status.SuperNIC
 		var classification string
 		switch {
+		case isDualPortBF3:
+			classification = "north-south (physical dual-port BlueField-3)"
 		case isDPU:
 			classification = "north-south (Status.DPU or ns-product-ids match)"
 		case isSuperNIC:

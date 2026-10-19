@@ -58,6 +58,11 @@ A group property MUST declare its aggregation policy for disagreement and incomp
 - **WHEN** live topology deviates from a candidate preset
 - **THEN** the matching/deviation path retains the applicable live topology rather than asserting an exact match.
 
+#### Scenario: Dual-port BlueField-3 in NIC mode
+
+- **WHEN** a BlueField-3 reports a VPD model with two physical ports, even with `status.dpu=false` or an unlisted SKU
+- **THEN** live discovery classifies its PFs as north-south, preserves that classification during GPU PIX probing, and assigns no east-west rails; a group containing only north-south NICs is omitted.
+
 ### Requirement: Fresh and refresh behavior
 
 An inventory extension MUST cover fresh discovery and existing-config refresh. Refresh SHALL replace inventory and explicit CLI-targeted fields while preserving unrelated source fields, comments, omissions and explicit values.

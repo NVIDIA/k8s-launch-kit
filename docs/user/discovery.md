@@ -123,8 +123,9 @@ clear the saved group state before retrying generation.
 
 GPU topology probing adds connected GPU, GPU PCI address, and proximity data
 per PF. A PIX-proximate NIC-to-GPU path can override heuristic traffic
-classification and trigger rail reassignment. Probe failures are non-fatal;
-discovery keeps the hardware data it can confirm.
+classification and trigger rail reassignment. Physically dual-port BlueField-3
+NICs remain north-south even when PIX-proximate to a GPU. Probe failures are
+non-fatal; discovery keeps the hardware data it can confirm.
 
 ## Profile Resolution
 
@@ -200,6 +201,11 @@ The top-level profile fabric is defaulted only when every source group has a non
 
 Launch Kit generates networking resources from east-west NICs:
 
+- BlueField-3 NICs whose VPD model identifies two physical ports (`dual-port` or
+  `2-port`) are classified as north-south, including when `NicDevice.status.dpu`
+  is false or their SKU is absent from the built-in DPU list. Multiple PCI
+  functions alone do not establish physical port count; single-port multi-plane
+  SuperNICs continue to use the existing classification rules.
 - A group containing only north-south NICs is omitted from `cluster-config.yaml`.
 - In a mixed group, north-south PFs remain visible in the inventory but are not rendered into networking manifests.
 
