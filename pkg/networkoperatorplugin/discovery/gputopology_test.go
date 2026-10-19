@@ -17,6 +17,8 @@
 package discovery
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
 func TestNormalizePCI(t *testing.T) {
@@ -163,6 +166,170 @@ func TestNetplanDiscoveryProbeCmdSanitizesHostConfig(t *testing.T) {
 
 	data := parseTopologyProbe("---PF---\n0000:19:00.0|macAddress=02:00:00:00:00:19\n" + string(output))
 	assert.True(t, hasNetplanManagedPF(data))
+	assert.True(t, data.netplanDirectoryChecked)
+	assert.True(t, data.netplanDirectoryAvailable)
+}
+
+func TestNetplanDiscoveryProbeReportsMissingDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("probe contract requires POSIX sh and awk")
+	}
+
+	netplanDir := filepath.Join(t.TempDir(), "missing-netplan")
+	probe := strings.ReplaceAll(netplanDiscoveryProbeCmd, "/host/etc/netplan", netplanDir)
+	command := exec.Command("/bin/sh", "-c", probe) //nolint:gosec // fixed test command with a temp path
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "probe output: %s", output)
+	assert.Contains(t, string(output), netplanDirectoryUnavailableMarker)
+
+	data := parseTopologyProbe(string(output))
+	assert.True(t, data.netplanDirectoryChecked)
+	assert.False(t, data.netplanDirectoryAvailable)
+	assert.False(t, hasNetplanManagedPF(data))
+	group := &config.ClusterConfig{Identifier: "group-0"}
+	var warnings bytes.Buffer
+	ctx := ui.WithOutput(context.Background(), ui.NewWithWriter(&warnings))
+	assert.False(t, recordNetplanProbeResult(ctx, group, "worker-0", data))
+	assert.True(t, group.NetplanManagementUnknown)
+	assert.Contains(t, warnings.String(), "Netplan management could not be verified")
+}
+
+func TestNetplanDiscoveryProbeConfirmsEmptyDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("probe contract requires POSIX sh and awk")
+	}
+
+	netplanDir := t.TempDir()
+	probe := strings.ReplaceAll(netplanDiscoveryProbeCmd, "/host/etc/netplan", netplanDir)
+	command := exec.Command("/bin/sh", "-c", probe) //nolint:gosec // fixed test command with a temp path
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "probe output: %s", output)
+
+	data := parseTopologyProbe(string(output))
+	assert.True(t, data.netplanDirectoryChecked)
+	assert.True(t, data.netplanDirectoryAvailable)
+	assert.Equal(t, 0, data.netplanParseErrors)
+
+	group := &config.ClusterConfig{Identifier: "group-0"}
+	assert.False(t, recordNetplanProbeResult(ui.WithOutput(context.Background(), ui.NewSilent()), group, "worker-0", data))
+	assert.False(t, group.NetplanManagementUnknown)
+}
+
+func TestNetplanDiscoveryProbeReportsIncompleteFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("probe contract requires POSIX sh and awk")
+	}
+
+	netplanDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(netplanDir, "50-fabric.yaml"), []byte("network:\n"), 0o600))
+	fakeBin := filepath.Join(t.TempDir(), "bin")
+	require.NoError(t, os.Mkdir(fakeBin, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(fakeBin, "awk"), []byte("#!/bin/sh\nexit 1\n"), 0o700))
+	probe := strings.ReplaceAll(netplanDiscoveryProbeCmd, "/host/etc/netplan", netplanDir)
+	command := exec.Command("/bin/sh", "-c", probe) //nolint:gosec // fixed test command with a temp path
+	command.Env = []string{"PATH=" + fakeBin + ":" + os.Getenv("PATH")}
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "probe output: %s", output)
+
+	data := parseTopologyProbe(string(output))
+	assert.True(t, data.netplanDirectoryAvailable)
+	assert.True(t, data.netplanObservationIncomplete)
+	group := &config.ClusterConfig{Identifier: "group-0"}
+	assert.False(t, recordNetplanProbeResult(ui.WithOutput(context.Background(), ui.NewSilent()), group, "worker-0", data))
+	assert.True(t, group.NetplanManagementUnknown)
+}
+
+func TestNetplanDiscoveryProbeReportsDanglingFileSymlinkAsIncomplete(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("probe contract requires POSIX sh and symlinks")
+	}
+
+	netplanDir := t.TempDir()
+	link := filepath.Join(netplanDir, "50-fabric.yaml")
+	require.NoError(t, os.Symlink(filepath.Join(netplanDir, "missing-target.yaml"), link))
+	probe := strings.ReplaceAll(netplanDiscoveryProbeCmd, "/host/etc/netplan", netplanDir)
+	command := exec.Command("/bin/sh", "-c", probe) //nolint:gosec // fixed test command with a temp path
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "probe output: %s", output)
+
+	data := parseTopologyProbe(string(output))
+	assert.True(t, data.netplanDirectoryAvailable)
+	assert.True(t, data.netplanObservationIncomplete)
+	group := &config.ClusterConfig{Identifier: "group-0"}
+	assert.False(t, recordNetplanProbeResult(ui.WithOutput(context.Background(), ui.NewSilent()), group, "worker-0", data))
+	assert.True(t, group.NetplanManagementUnknown)
+}
+
+func TestParseTopologyProbeIgnoresMarkerTextInsideNetplanValues(t *testing.T) {
+	data := parseTopologyProbe(`---NETPLAN---
+---NETPLAN-AVAILABLE---
+---NETPLAN-FILE---
+network:
+  ethernets:
+    fabric0:
+      set-name: ---NETPLAN-INCOMPLETE---
+`)
+
+	assert.True(t, data.netplanDirectoryChecked)
+	assert.True(t, data.netplanDirectoryAvailable)
+	assert.False(t, data.netplanObservationIncomplete)
+}
+
+func TestRecordNetplanProbeResultFailsClosedForUnknownObservations(t *testing.T) {
+	ctx := ui.WithOutput(context.Background(), ui.NewSilent())
+	group := &config.ClusterConfig{Identifier: "group-0"}
+
+	recorded := recordNetplanProbeResult(ctx, group, "worker-0", topoData{
+		netplanDirectoryChecked: true,
+	})
+	assert.False(t, recorded)
+	assert.False(t, group.NetplanManaged)
+	assert.True(t, group.NetplanManagementUnknown)
+
+	recorded = recordNetplanProbeResult(ctx, group, "worker-1", topoData{
+		netplanDirectoryChecked:   true,
+		netplanDirectoryAvailable: true,
+	})
+	assert.False(t, recorded)
+	assert.False(t, group.NetplanManaged)
+	assert.True(t, group.NetplanManagementUnknown, "a known negative on one worker cannot erase another worker's unknown result")
+
+	group.PFs = []config.PFConfig{
+		{PciAddress: "0000:19:00.0"},
+		{PciAddress: "0000:5a:00.0"},
+	}
+	recorded = recordNetplanProbeResult(ctx, group, "worker-1", topoData{
+		netplanDirectoryChecked:   true,
+		netplanDirectoryAvailable: true,
+		pfAttributes: map[string]map[string]string{
+			"0000:19:00.0": {pfAttributeMACAddress: "02:00:00:00:00:19"},
+			"0000:5a:00.0": {pfAttributeNUMANode: "0"},
+		},
+		netplanSetNameMACs: map[string]struct{}{"02:00:00:00:00:19": {}},
+	})
+	assert.True(t, recorded)
+	assert.True(t, group.NetplanManaged)
+	assert.False(t, group.NetplanManagementUnknown)
+}
+
+func TestRecordNetplanProbeResultMarksMissingExpectedPFMACUnknown(t *testing.T) {
+	group := &config.ClusterConfig{
+		Identifier: "group-0",
+		PFs:        []config.PFConfig{{PciAddress: "0000:19:00.0"}},
+	}
+	data := parseTopologyProbe(`---PF---
+0000:19:00.0|numaNode=0
+---NETPLAN---
+---NETPLAN-AVAILABLE---`)
+
+	recorded := recordNetplanProbeResult(
+		ui.WithOutput(context.Background(), ui.NewSilent()), group, "worker-0", data,
+	)
+
+	assert.False(t, recorded)
+	assert.False(t, group.NetplanManaged)
+	assert.True(t, group.NetplanManagementUnknown,
+		"a missing MAC for an expected PF cannot prove netplan is unmanaged")
 }
 
 func TestHasNetplanManagedPF(t *testing.T) {

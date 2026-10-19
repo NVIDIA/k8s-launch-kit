@@ -53,6 +53,15 @@ A group property MUST declare its aggregation policy for disagreement and incomp
 - **WHEN** eligible workers in one group report different capabilities
 - **THEN** the declared aggregation rule determines the group result and preserves actionable disagreement diagnostics.
 
+#### Scenario: Netplan observation is incomplete on a worker
+
+- **WHEN** discovery finds no netplan naming match but cannot inspect the netplan
+  directory, obtain a current MAC for every expected PF, or parse a worker's
+  observation
+- **THEN** it records `netplanManagementUnknown`, warns, and rejects generation
+  of a `NicInterfaceNameTemplate` for that group until discovery is rerun with a
+  complete observation; a positive match on any worker remains `netplanManaged`.
+
 #### Scenario: Preset mismatch
 
 - **WHEN** live topology deviates from a candidate preset
