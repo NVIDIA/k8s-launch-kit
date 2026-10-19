@@ -183,15 +183,18 @@ these by applying `MaintenanceOperatorConfig` alone.
 OpenShift deploy requires certified operator installations, uses OLM CSV/API checks, and configures existing operators. Helm values in the deployment directory are rejected. IPPool dry-run checks may be deferred until NCP installs NV-IPAM.
 Use `docs/user/openshift.md` for the operator ownership and acceptance workflow.
 
-## Optional standard NIC tuning
+## Standard NIC tuning
 
-`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to false.
+`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to true.
+Set it to false or pass `--deploy-nic-configuration-template=false` to opt out;
+explicit YAML and CLI false values are preserved.
 Root, generate and discover accept `--deploy-nic-configuration-template[=false]`.
 It enables NCO independently of interface naming and renders per-source,
 east-west PCI-scoped templates for standard SR-IOV, RDMA-shared and host-device
 profiles on k8s/OCP. VF count comes from `sriov.numVfs`; link type comes from
 `profile.fabric`. Ethernet gets DSCP trust and priority-3 PFC; InfiniBand omits
-RoCE tuning. Spectrum-X rejects this option. Only SR-IOV disables the Mellanox
+RoCE tuning. Spectrum-X keeps its dedicated required templates independently
+of this standard-profile toggle. Only SR-IOV disables the Mellanox
 plugin (Helm values on k8s, additive `disablePlugins` merge on OCP). Kubernetes
 external Helm owners must configure that plugin themselves.
 

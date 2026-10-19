@@ -14,5 +14,5 @@ spec:
   rdmaDevicePrefix: "{{.NicConfigurationOperator.RdmaPrefix}}"
   netDevicePrefix: "{{.NicConfigurationOperator.NetdevPrefix}}"
   pfsPerNic: {{pfsPerNic .ClusterConfig.PFs}}
-  railPciAddresses: [{{- $first := true }}{{- range $railIdx, $rail := .ClusterConfig.PFs }}{{- if eq $rail.Traffic "east-west" }}{{- if not $first }}, {{end}}{{- $first = false }}["{{$rail.PciAddress}}"]{{- end }}{{- end }}]
+  railPciAddresses: [{{- $first := true }}{{- range $railIdx, $rail := standardNamingPFs .ClusterConfig.PFs }}{{- if eq $rail.Traffic "east-west" }}{{- if not $first }}, {{end}}{{- $first = false }}["{{$rail.PciAddress}}"]{{- end }}{{- end }}]
 {{- end }}

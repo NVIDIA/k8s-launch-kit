@@ -325,7 +325,7 @@ When multirail is enabled, Launch Kit adds rail suffixes to generated resource a
 
 ```yaml
 nicConfigurationOperator:
-  deployNicConfigurationTemplate: false
+  deployNicConfigurationTemplate: true
   deployNicInterfaceNameTemplate: true
   rdmaPrefix: "rdma_r%rail_id%"
   netdevPrefix: "eth_r%rail_id%"
@@ -346,8 +346,8 @@ spectrumX:
 
 | Field | Meaning |
 | --- | --- |
-| `deployNicConfigurationTemplate` | Default `false`; opt into standard-profile NIC tuning independently of interface naming. CLI: `--deploy-nic-configuration-template[=false]` on root, generate and discover. |
-| `deployNicInterfaceNameTemplate` | Allows per-source interface-name templates when profile or PCI-layout rules require stable names. |
+| `deployNicConfigurationTemplate` | Default `true`; standard-profile NIC tuning independently of interface naming. Explicit `false` opts out. CLI: `--deploy-nic-configuration-template[=false]` on root, generate and discover. |
+| `deployNicInterfaceNameTemplate` | Default `true`; renders interface-name templates for every selected source group in standard multirail profiles, including a single selected group. Explicit `false` disables naming. |
 | `rdmaPrefix` / `netdevPrefix` | Standard-profile names. Multirail values require a rail placeholder. |
 | `updateFW` | Enables firmware staging storage in generated Network Operator configuration. |
 | `spectrumX.overlay` | Spectrum-X overlay mode. |
@@ -361,7 +361,20 @@ and emits one `NicConfigurationTemplate` per source hardware group. It uses
 that group's node selector, east-west NIC type and exact PCI addresses. Missing
 selectors or mixed east-west NIC types within one group are rejected. The
 setting is independent of `deployNicInterfaceNameTemplate` and `updateFW`;
-Spectrum-X already owns its NIC configuration and rejects this new opt-in.
+Spectrum-X owns its required NIC configuration templates independently of this
+standard-profile toggle, so either value leaves those templates enabled.
+For standard profiles, omitted tuning settings default to true; explicit YAML
+`false` or `--deploy-nic-configuration-template=false` opts out.
+
+Standard interface naming orders NICs by their configured rail numbers so generated
+names match policy selectors. Rail numbers must be contiguous from zero, with one
+east-west PF per rail; invalid mappings fail generation.
+
+Standard interface naming rejects an emitted mapping that places PCI functions
+of one physical NIC in different rails. NCO stores one rail index per physical
+NIC; the resulting names would not match the generated policy selectors. This
+check applies only to selected groups whose naming template is emitted and
+does not silently turn off naming.
 
 The template routes `numVfs` from `sriov.numVfs` for all these profiles and maps
 `profile.fabric` to `Ethernet` or `Infiniband`. It enables PCI performance tuning

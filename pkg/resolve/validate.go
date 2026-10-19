@@ -38,9 +38,8 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 	}
 
 	if cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable {
-		if cfg.NicConfigurationOperator != nil && cfg.NicConfigurationOperator.DeployNicConfigurationTemplate {
-			return fmt.Errorf("nicConfigurationOperator.deployNicConfigurationTemplate is only supported for standard profiles, not Spectrum-X")
-		}
+		// Spectrum-X owns its required NIC templates independently of the
+		// standard-profile toggle, which is enabled by canonical defaults.
 		return validateSpectrumXCohort(cfg)
 	}
 

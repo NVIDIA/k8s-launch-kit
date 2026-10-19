@@ -52,6 +52,32 @@ l8k generate \
 
 See [Deployment Profiles](../user/profiles.md) for the fabric and deployment-type matrix. See [Spectrum-X](../user/spectrum-x.md) for the Spectrum-X cohort flags and required RA2.3 inputs.
 
+## NIC Templates And Selected Groups
+
+Standard profiles enable NIC configuration templates by default. Omitted
+`nicConfigurationOperator.deployNicConfigurationTemplate` resolves to true;
+explicit YAML false or `--deploy-nic-configuration-template=false` opts out.
+
+Interface naming is controlled separately by
+`nicConfigurationOperator.deployNicInterfaceNameTemplate` (default true).
+For standard multirail profiles, every selected source group receives a
+`NicInterfaceNameTemplate`, including a single-group inventory or a single
+group selected with `--groups` or `--gpu-type`. Group count does not override
+the setting. Selected groups remain subject to the netplan conflict checks.
+
+Standard interface naming orders NICs by their configured rail numbers so generated
+names match policy selectors. Singleton host-device and legacy RDMA-shared
+policies use these configured names too, rather than saved inventory names. Rail numbers must be contiguous from zero, with one
+east-west PF per rail; invalid mappings fail generation.
+
+Generation also checks the emitted standard naming template: one physical NIC
+(`domain:bus:device`) cannot appear in multiple `railPciAddresses` outer lists.
+NCO stores one rail index per physical NIC, so its functions cannot receive
+names for different rails. Unsupported layouts fail before output replacement;
+generation does not silently disable naming. Excluded groups do not block a
+valid selection. If interface naming is explicitly disabled, standard profiles
+retain their existing PCI-selector behavior.
+
 ## Review the bundle
 
 Before deploying, inspect both the generated resource directory and

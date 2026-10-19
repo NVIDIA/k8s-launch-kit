@@ -1,7 +1,7 @@
 # NVIDIA Kubernetes Launch Kit
 
 Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on Kubernetes and OpenShift clusters. It discovers NIC and GPU topology, generates reviewable Network Operator resources, deploys them in dependency order, and validates their state and data-plane connectivity. It supports SR-IOV, RDMA shared-device, host-device, InfiniBand, and Spectrum-X profiles; [Plan your deployment](docs/user/profiles.md) explains applicability and prerequisites.
-Standard SR-IOV, RDMA-shared and host-device profiles can opt into NIC tuning with `--deploy-nic-configuration-template`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
+Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
 The current lifecycle uses the `host` target by default. The reserved `dpf` target does not have available lifecycle phases; see [target extension](docs/advanced/targets.md) for its implementation status.
@@ -36,6 +36,10 @@ mode or with an unlisted SKU. Groups containing only north-south NICs are omitte
 from the saved inventory; see [traffic classification](docs/user/discovery.md#east-west-and-north-south-nics).
 
 `l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. A normal CLI `--node-selector` value is saved for deployment-time selection; it does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
+
+Enabled interface naming renders for supported single-group layouts. Generation
+rejects naming layouts that split a physical NIC across rails; see
+[NIC templates and selected groups](docs/advanced/generation.md#nic-templates-and-selected-groups).
 
 ### Select the Deployment Profile
 

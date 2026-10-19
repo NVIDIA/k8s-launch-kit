@@ -181,7 +181,7 @@ rules participate naturally. Routing diagnostics compare the selected device
 with the profile expectation: the source interface for source-based routing,
 or the destination interface for destination-based routing.
 
-NIC configuration success requires `ConfigUpdateInProgress` with `reason: UpdateSuccessful` and `status: "False"` on every matched device; a contradictory True/Unknown status remains `IN-PROGRESS`. This applies to both deployment waiting and standalone validation, including opt-in standard-profile templates.
+NIC configuration success requires `ConfigUpdateInProgress` with `reason: UpdateSuccessful` and `status: "False"` on every matched device; a contradictory True/Unknown status remains `IN-PROGRESS`. This applies to both deployment waiting and standalone validation, including standard-profile templates, which are enabled by default.
 
 Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a relevant device condition with a stale `observedGeneration` remains `IN-PROGRESS`. `NicConfigurationTemplate` considers `FirmwareUpdateInProgress` relevant only when the matched device has `spec.firmware`; a stale firmware condition cannot block a configuration-only deployment. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
 

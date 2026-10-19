@@ -117,6 +117,7 @@ var templateFuncs = template.FuncMap{
 	"pfsPerNic": func(pfs []config.PFConfig) int {
 		return pfsPerNic(pfs)
 	},
+	"standardNamingPFs": standardNamingPFs,
 	"railPciGroups": func(pfs []config.PFConfig, planes int) [][]string {
 		return railPciGroups(pfs, planes)
 	},
@@ -810,6 +811,26 @@ const templateGroupDiagnosticLimit = 8
 // .ClusterConfig are rendered once per group (producing separate files),
 // while other templates are rendered once.
 func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilter string) (map[string]string, error) {
+	// Singleton policies and per-group resources must use the same names as
+	// the naming template. Work on a copy so rendering preserves saved inventory.
+	if cfg != nil && cfg.NicConfigurationOperator != nil &&
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate &&
+		cfg.Profile != nil && cfg.Profile.Multirail && !isSpectrumX(cfg) {
+		resolved, err := config.CloneConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("copy interface naming configuration: %w", err)
+		}
+		cfg = resolved
+		for i := range cfg.ClusterConfig {
+			for j := range cfg.ClusterConfig[i].PFs {
+				pf := &cfg.ClusterConfig[i].PFs[j]
+				if pf.Traffic == "east-west" && pf.Rail != nil {
+					pf.NetworkInterface = applyPrefix(cfg.NicConfigurationOperator.NetdevPrefix, 0, 0, *pf.Rail)
+					pf.RdmaDevice = applyPrefix(cfg.NicConfigurationOperator.RdmaPrefix, 0, 0, *pf.Rail)
+				}
+			}
+		}
+	}
 	// Read the template file
 	templateContent, err := os.ReadFile(templatePath)
 	if err != nil {
@@ -917,23 +938,6 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilt
 		// Filter out north-south PFs so templates only see east-west devices.
 		// This keeps indices sequential for naming (a, b, c, d instead of a, d, e, f).
 		renderGroup.PFs = pfutil.FilterEastWestPFs(renderGroup.PFs)
-
-		// For non-Spectrum-X profiles with NicInterfaceNameTemplate enabled,
-		// pre-compute NetworkInterface and RdmaDevice names on each PF.
-		// Templates use $pf.NetworkInterface for pfNames selectors.
-		if cfg.NicConfigurationOperator != nil &&
-			cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate &&
-			!isSpectrumX(cfg) {
-			for j := range renderGroup.PFs {
-				if renderGroup.PFs[j].Rail != nil {
-					rail := *renderGroup.PFs[j].Rail
-					renderGroup.PFs[j].NetworkInterface = applyPrefix(
-						cfg.NicConfigurationOperator.NetdevPrefix, 0, 0, rail)
-					renderGroup.PFs[j].RdmaDevice = applyPrefix(
-						cfg.NicConfigurationOperator.RdmaPrefix, 0, 0, rail)
-				}
-			}
-		}
 
 		// When auto-generating subnets, give each group its own unique slice
 		// so subnets don't overlap between groups.
@@ -1065,21 +1069,6 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		}
 	}
 
-	// Temporary workaround for the NicInterfaceNameTemplate collision
-	// case: when a single physical NIC has multiple PFs and l8k wants
-	// them on different rails, the nic-configuration-operator's data
-	// model can't express it (one NicDevice → one railIndex), and the
-	// rendered udev rules give every PF on that NIC the same name
-	// (e.g. both 08:00.0 and 08:00.1 → "eth_r0"). Detection of that
-	// specific case is non-trivial; for now we skip the template when
-	// there's only one source group to render — the PF layout is
-	// homogeneous across the group's nodes, so PCI-based selectors in
-	// the SR-IOV / Network CRs are stable. Exception: rdma_shared
-	// profiles whose ifNames selector has no PCI fallback — keep the
-	// template enabled there so the rdmaSharedDevicePlugin can still
-	// find its NICs.
-	cfg = maybeDisableInterfaceNameTemplate(cfg, filtered)
-
 	// Bucket the filtered set by (gpuType, railCount), build the merged
 	// ClusterConfig per bucket, and decide Mode A vs B per bucket by
 	// comparing to the original (pre-filter) bucket. The plans drive
@@ -1178,74 +1167,6 @@ func annotateGeneratedResources(results map[string]string, launchKitVersion stri
 		results[filename] = string(annotated)
 	}
 	return nil
-}
-
-// hasEmptyNetworkInterfaceNames returns true if any east-west PF across all
-// groups has an empty NetworkInterface. This happens when discovery finds
-// multiple nodes per group and omits device names for safety. In rdma_shared
-// deployments the rdmaSharedDevicePlugin needs interface names (ifNames
-// selector), so NicInterfaceNameTemplate must be enabled to provide them.
-func hasEmptyNetworkInterfaceNames(groups []config.ClusterConfig) bool {
-	for i := range groups {
-		for _, pf := range pfutil.FilterEastWestPFs(groups[i].PFs) {
-			if pf.NetworkInterface == "" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// isRdmaShared returns true if the config targets an rdma_shared deployment.
-func isRdmaShared(cfg *config.LaunchKitConfig) bool {
-	return cfg.Profile != nil && cfg.Profile.Deployment == "rdma_shared"
-}
-
-// maybeDisableInterfaceNameTemplate returns a (possibly shallow-copied)
-// cfg with NicConfigurationOperator.DeployNicInterfaceNameTemplate forced
-// to false when there's exactly one source group to render and the
-// profile can fall back to PCI-based selectors. See the long comment at
-// the call site for the rationale. Returns the original cfg unmodified
-// when the workaround doesn't apply.
-func maybeDisableInterfaceNameTemplate(cfg *config.LaunchKitConfig, filteredGroups []config.ClusterConfig) *config.LaunchKitConfig {
-	if cfg.NicConfigurationOperator == nil || !cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate {
-		return cfg
-	}
-	if len(filteredGroups) != 1 {
-		return cfg
-	}
-	// Spectrum-X uses a distinct rendering path that always needs the
-	// template — don't touch it.
-	if isSpectrumX(cfg) {
-		return cfg
-	}
-	// rdma_shared profiles select PFs via `ifNames` (no PCI fallback in
-	// the device-plugin selector), so the template is the only way to
-	// give the plugin a stable name when discovery didn't already
-	// populate one (multi-node groups). Skip the workaround when the
-	// template is the only source of names.
-	if isRdmaShared(cfg) && hasEmptyNetworkInterfaceNames(filteredGroups) {
-		return cfg
-	}
-
-	log.Log.Info("Disabling NicInterfaceNameTemplate: single source group, PCI-based selectors are sufficient",
-		"group", filteredGroups[0].Identifier,
-		"deployment", profileDeploymentName(cfg))
-
-	// Shallow-copy cfg and the operator struct so we don't mutate the
-	// caller's config.
-	ncoCopy := *cfg.NicConfigurationOperator
-	ncoCopy.DeployNicInterfaceNameTemplate = false
-	cfgCopy := *cfg
-	cfgCopy.NicConfigurationOperator = &ncoCopy
-	return &cfgCopy
-}
-
-func profileDeploymentName(cfg *config.LaunchKitConfig) string {
-	if cfg == nil || cfg.Profile == nil {
-		return ""
-	}
-	return cfg.Profile.Deployment
 }
 
 // isSpectrumX returns true if the config targets a Spectrum-X profile.

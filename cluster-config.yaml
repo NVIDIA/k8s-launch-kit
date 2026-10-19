@@ -145,8 +145,9 @@ spectrumX:
     netdevPrefix: "eth_r%rail_id%_p%plane_id%"
     rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
 nicConfigurationOperator:
-  # Opt in to NIC firmware/runtime tuning for standard profiles (not Spectrum-X).
-  deployNicConfigurationTemplate: false
+  # NIC firmware/runtime tuning is enabled by default for standard profiles.
+  # Set false to opt out. Spectrum-X uses its own required templates.
+  deployNicConfigurationTemplate: true
   deployNicInterfaceNameTemplate: true
   rdmaPrefix: rdma_r%rail_id%
   netdevPrefix: eth_r%rail_id%

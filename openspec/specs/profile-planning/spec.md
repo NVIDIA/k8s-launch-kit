@@ -62,13 +62,18 @@ Profiles SHALL emit native chart/API value shapes and declare the tools, images,
 - **WHEN** a profile advertises a check needing a tool or device
 - **THEN** its workload provides the declared prerequisite or explicitly reports that check unsupported.
 
-### Requirement: Opt-in standard NIC configuration
+### Requirement: Standard NIC configuration
 
-Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-disabled NIC configuration template option on Kubernetes and OpenShift. Enabled templates SHALL target each selected source group's east-west NIC type and PCI addresses, route VF count from SR-IOV settings and link type from the resolved fabric, and configure PCI and Baremetal GPUDirect optimizations. Ethernet SHALL additionally configure DSCP trust and priority-3 PFC; InfiniBand SHALL omit RoCE settings. Only SR-IOV profiles SHALL disable the Mellanox plugin, preserving unrelated OCP disabled plugins. Spectrum-X SHALL reject the new option.
+Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-enabled NIC configuration template option on Kubernetes and OpenShift. Enabled templates SHALL target each selected source group's east-west NIC type and PCI addresses, route VF count from SR-IOV settings and link type from the resolved fabric, and configure PCI and Baremetal GPUDirect optimizations. Ethernet SHALL additionally configure DSCP trust and priority-3 PFC; InfiniBand SHALL omit RoCE settings. Only SR-IOV profiles SHALL disable the Mellanox plugin, preserving unrelated OCP disabled plugins. Spectrum-X SHALL keep its required templates independently of this standard-profile option.
 
-#### Scenario: Default or explicit opt-out
+#### Scenario: Default standard NIC configuration
 
-- **WHEN** the option is omitted or explicitly false
+- **WHEN** the option is omitted for a standard profile
+- **THEN** NIC configuration templates and the profile-appropriate plugin-disable request are rendered.
+
+#### Scenario: Explicit opt-out
+
+- **WHEN** the option is explicitly false in YAML or on the CLI
 - **THEN** no standard NIC configuration template or new plugin-disable request is rendered.
 
 #### Scenario: Profile-owned NIC configuration templates
@@ -86,10 +91,25 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-di
 - **WHEN** enabled SR-IOV configuration is applied to OpenShift with other plugins already disabled
 - **THEN** mellanox is added without removing the existing disabled plugins; RDMA-shared and host-device profiles do not request this operator setting.
 
-#### Scenario: Spectrum-X conflict
+#### Scenario: Spectrum-X owns NIC configuration
 
-- **WHEN** the new option is enabled with Spectrum-X
-- **THEN** configuration is rejected without changing Spectrum-X templates.
+- **WHEN** the standard-profile option is true or false with Spectrum-X
+- **THEN** Spectrum-X retains its required NIC configuration templates.
+
+#### Scenario: Single selected source receives interface naming
+
+- **WHEN** a standard multirail profile has interface naming enabled and a single source group is selected from any inventory
+- **THEN** its interface-name template retains that source's node selector and east-west rail PCI addresses; group count does not disable naming.
+
+#### Scenario: Standard naming follows configured rail order
+
+- **WHEN** selected east-west PFs have configured rails in a different order from their inventory entries
+- **THEN** the naming template orders PCI addresses by rail number, matching policy selectors without mutating inventory; rail IDs must be contiguous from zero, with one east-west PF per rail.
+
+#### Scenario: Unsupported standard naming layout
+
+- **WHEN** an emitted standard interface-name template places PCI functions of one physical NIC in multiple rail lists
+- **THEN** generation rejects that layout before output replacement, regardless of inventory Rail metadata or group count; it does not silently disable naming or let excluded sources block a supported selection.
 
 #### Scenario: Whole-NIC scope protection
 

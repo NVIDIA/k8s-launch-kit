@@ -422,3 +422,76 @@ func TestStandardNicConfigurationDeployValidateConvergence(t *testing.T) {
 		}
 	}
 }
+
+func TestStandardInterfaceNamingForSingleSelectedGroup(t *testing.T) {
+	for _, flavor := range []string{config.FlavorK8s, config.FlavorOCP} {
+		for _, profileName := range []string{"sriov-ethernet-rdma", "host-device-rdma", "macvlan-rdma-shared"} {
+			for _, selection := range []string{"single inventory", "groups", "gpu type"} {
+				for _, enabled := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/%s/%s/naming=%t", flavor, profileName, selection, enabled), func(t *testing.T) {
+						deployment := "sriov"
+						switch profileName {
+						case "host-device-rdma":
+							deployment = "host_device"
+						case "macvlan-rdma-shared":
+							deployment = "rdma_shared"
+						}
+						cfg := standardNicConfigurationConfig(t, flavor, "ethernet", deployment, true)
+						cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate = enabled
+						// A supported source has one physical NIC per emitted rail.
+						// Leave excluded groups unchanged to verify filter isolation.
+						for i := range cfg.ClusterConfig[0].PFs {
+							if cfg.ClusterConfig[0].PFs[i].Traffic == "east-west" {
+								cfg.ClusterConfig[0].PFs[i].PciAddress = fmt.Sprintf("0000:%02x:00.0", 0x20+i)
+							}
+						}
+						selected := cfg.ClusterConfig[0]
+						plugin := &NetworkOperatorPlugin{}
+						switch selection {
+						case "single inventory":
+							cfg.ClusterConfig = cfg.ClusterConfig[:1]
+						case "groups":
+							plugin.Groups = []string{selected.Identifier}
+						case "gpu type":
+							cfg.ClusterConfig[0].GPUType = "gpu-selected"
+							plugin.GpuType = "gpu-selected"
+						}
+						dir := profileName
+						if flavor == config.FlavorOCP {
+							dir += "-ocp"
+						}
+						rendered, err := plugin.GenerateProfileDeploymentFiles(loadProfileFromDir(t, dir), cfg)
+						require.NoError(t, err)
+						artifacts := make([]bundle.File, 0, len(rendered))
+						for name, content := range rendered {
+							artifacts = append(artifacts, bundle.File{Name: name, Content: content})
+						}
+						_, err = bundle.FromFiles(artifacts)
+						require.NoError(t, err)
+						files := fileNamesMatching(rendered, "nicinterfacenametemplate")
+						if !enabled {
+							require.Empty(t, files)
+							return
+						}
+						require.Len(t, files, 1)
+						var obj unstructured.Unstructured
+						require.NoError(t, yaml.Unmarshal([]byte(rendered[files[0]]), &obj.Object))
+						selector, _, err := unstructured.NestedStringMap(obj.Object, "spec", "nodeSelector")
+						require.NoError(t, err)
+						require.Equal(t, selected.NodeSelector, selector)
+						rails, _, err := unstructured.NestedSlice(obj.Object, "spec", "railPciAddresses")
+						require.NoError(t, err)
+						var expected []interface{}
+						for _, pf := range selected.PFs {
+							if pf.Traffic == "east-west" {
+								expected = append(expected, []interface{}{pf.PciAddress})
+							}
+						}
+						require.Equal(t, expected, rails)
+						require.Equal(t, enabled, cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate, "rendering must preserve the input setting")
+					})
+				}
+			}
+		}
+	}
+}
