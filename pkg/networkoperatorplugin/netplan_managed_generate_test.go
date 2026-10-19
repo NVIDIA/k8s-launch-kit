@@ -70,18 +70,6 @@ func TestGenerateAllowsInterfaceNameTemplatesWhenAffectedGroupIsFilteredOut(t *t
 }
 
 func TestGenerateAllowsNetplanManagedGroupWhenInterfaceNameTemplateIsNotRendered(t *testing.T) {
-	t.Run("single source group uses PCI fallback", func(t *testing.T) {
-		cfg := loadNetplanManagedRenderConfig(t)
-		cfg.ClusterConfig = cfg.ClusterConfig[:1]
-		cfg.ClusterConfig[0].NetplanManaged = true
-
-		rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
-			loadProfileFromDir(t, "sriov-ethernet-rdma"),
-			cfg,
-		)
-		require.NoError(t, err)
-		assert.Empty(t, fileNamesMatching(rendered, "30-nicinterfacenametemplate"))
-	})
 
 	t.Run("interface naming is disabled", func(t *testing.T) {
 		cfg := loadNetplanManagedRenderConfig(t)
@@ -122,4 +110,20 @@ func TestGenerateRejectsUnconditionallyRenderedSpectrumXInterfaceNameTemplate(t 
 	_, err = (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
 	require.Error(t, err)
 	assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
+}
+
+func TestGenerateRejectsNetplanManagedSingleSelectedGroup(t *testing.T) {
+	for _, filtered := range []bool{false, true} {
+		cfg := loadNetplanManagedRenderConfig(t)
+		cfg.ClusterConfig[0].NetplanManaged = true
+		plugin := &NetworkOperatorPlugin{}
+		if filtered {
+			plugin.Groups = []string{cfg.ClusterConfig[0].Identifier}
+		} else {
+			cfg.ClusterConfig = cfg.ClusterConfig[:1]
+		}
+		_, err := plugin.GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
+		require.ErrorContains(t, err, "conflicting netplan configuration")
+		assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
+	}
 }

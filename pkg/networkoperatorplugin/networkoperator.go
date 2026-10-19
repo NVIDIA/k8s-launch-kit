@@ -161,6 +161,7 @@ func (p *NetworkOperatorPlugin) ApplyOptionsToConfig(options options.Options, fu
 	// Default NicConfigurationOperator if not set
 	if fullConfig.NicConfigurationOperator == nil {
 		fullConfig.NicConfigurationOperator = &config.NicConfigurationOperatorConfig{
+			DeployNicConfigurationTemplate: true,
 			DeployNicInterfaceNameTemplate: true,
 			RdmaPrefix:                     "rdma_r%rail_id%",
 			NetdevPrefix:                   "eth_r%rail_id%",

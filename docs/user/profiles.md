@@ -198,13 +198,15 @@ workloads fan out per shared network bucket and namespace.
 
 For bundle layout and custom workload mutation, see [Manifest Generation](../advanced/generation.md).
 
-## Optional NIC configuration
+## NIC configuration
 
 Each standard profile owns a local `30-nicconfigurationtemplate.yaml` file.
 
 Standard SR-IOV, RDMA-shared and host-device profiles on both flavors support
 `nicConfigurationOperator.deployNicConfigurationTemplate: true` (CLI:
-`--deploy-nic-configuration-template`). It defaults to false and is independent
+`--deploy-nic-configuration-template`). It defaults to true; set the field or
+CLI flag to false to opt out. It is independent
 of interface naming. See [NIC configuration](../reference/configuration.md#nic-configuration-and-naming)
 for VF/link routing, Ethernet-only RoCE tuning, SR-IOV plugin ownership, exact
-hardware selectors and readiness. Spectrum-X is excluded from this option.
+hardware selectors and readiness. Spectrum-X uses its own required templates
+independently of this standard-profile setting.

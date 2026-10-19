@@ -263,17 +263,17 @@ macvlan:
 
 # ============================================================================
 # NIC Configuration Operator
-# Controls optional NIC tuning and NicInterfaceNameTemplate interface naming.
+# Controls NIC tuning and NicInterfaceNameTemplate interface naming.
 # ============================================================================
 nicConfigurationOperator:
-  # bool | default: false; standard profiles only, excluding Spectrum-X.
+  # bool | default: true; standard profiles only. Set false to opt out.
+  # Spectrum-X uses its own required templates independently.
   # CLI: --deploy-nic-configuration-template[=false] (root/generate/discover).
-  deployNicConfigurationTemplate: false
+  deployNicConfigurationTemplate: true
 
   # bool | default: true
-  # Enable NIC interface name templates. Only takes effect when:
-  # 1. Merged groups have cross-rail PCI address conflicts, OR
-  # 2. Deployment is rdma_shared and PFs have empty NetworkInterface fields.
+  # Enable interface-name templates for every selected source group in
+  # standard multirail profiles, including a single selected group.
   deployNicInterfaceNameTemplate: true
 
   # string | default: "rdma_r%rail_id%"

@@ -527,13 +527,16 @@ func renderForScope(
 						}
 					}
 				}
-				// Check the rendered result rather than only the config switch:
-				// non-Spectrum-X templates can render empty after the single-group
-				// fallback disables interface naming, while Spectrum-X templates
-				// emit this CR independently of that switch. This is therefore the
-				// exact boundary where NicInterfaceNameTemplate is actually used.
-				if kind == "NicInterfaceNameTemplate" && len(rendered) > 0 && src.NetplanManaged {
-					netplanManagedGroups = append(netplanManagedGroups, src)
+				// Validate only a naming template that is actually emitted for a
+				// selected source. Spectrum-X retains its own layout validation.
+				if kind == "NicInterfaceNameTemplate" && len(rendered) > 0 {
+					if src.NetplanManaged {
+						netplanManagedGroups = append(netplanManagedGroups, src)
+					} else if !isSpectrumX(cfg) {
+						if err := validateInterfaceNamingLayout(src, rendered); err != nil {
+							return nil, err
+						}
+					}
 				}
 				merge(rendered)
 			}

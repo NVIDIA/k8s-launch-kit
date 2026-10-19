@@ -66,9 +66,10 @@ func TestGenerateLeavesSourceUntouchedAndWritesEffectiveConfig(t *testing.T) {
 	cfg, err := config.DefaultLaunchKitConfig()
 	require.NoError(t, err)
 	cfg.ClusterConfig = []config.ClusterConfig{{
-		Identifier:  "test-group",
-		LinkType:    "Ethernet",
-		WorkerNodes: []string{"worker-0"},
+		Identifier:   "test-group",
+		LinkType:     "Ethernet",
+		WorkerNodes:  []string{"worker-0"},
+		NodeSelector: map[string]string{"kubernetes.io/hostname": "worker-0"},
 		Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{
 			Sriov: true,
 			Rdma:  true,

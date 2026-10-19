@@ -123,7 +123,7 @@ the rest of the supplied configuration.
 | `--deployment-type` | `sriov`, `rdma_shared`, or `host_device`. |
 | `--multirail` | Override multirail deployment. Explicit `--multirail=false` is preserved. |
 | `--routing` | `destination-based` or `source-based`. |
-| `--deploy-nic-configuration-template` | Opt into standard-profile NIC tuning; supports explicit `=false`. Available on root, generate and discover; deploy/validate consume generated templates. Spectrum-X rejects it. |
+| `--deploy-nic-configuration-template` | Standard-profile NIC tuning is enabled by default; explicit `=false` opts out. Available on root, generate and discover; deploy/validate consume generated templates. Spectrum-X keeps its own required templates. |
 | `--ignore-arp` | Add tuning CNI sysctls to avoid ARP flux across pod rails. |
 | `--groups` | Render only named source groups. Mutually exclusive with `--gpu-type`. |
 | `--gpu-type` | Render all source groups whose GPU type matches. |
