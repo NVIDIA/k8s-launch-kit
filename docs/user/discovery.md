@@ -69,8 +69,15 @@ probe in that node's daemon pod. It excludes nodes with no discoverable NIC or
 only restricted BlueFields, and reports a missing device for a verified NIC
 publisher. It returns inspection and permission errors instead of treating
 them as absent hardware. This fallback needs `pods/exec` permission in the
-daemon namespace; without a REST config, discovery returns an error rather than
-silently returning an incomplete inventory.
+daemon namespace.
+
+Without a REST config, discovery returns an error by default. A caller that
+accepts an incomplete inventory can opt in with
+`networkoperatorplugin.WithReadOnlyAssumeUnverifiedExcluded()`. Ready daemon
+nodes without a `NicDevice` are then excluded and a warning reports that their
+publisher status is unverified. This option does not suppress errors from a
+probe attempted with a REST config. At least one `NicDevice` on a Ready daemon
+node is still required to construct an inventory.
 
 ## Review saved inventory
 
