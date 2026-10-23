@@ -257,7 +257,12 @@ There is no machine-only or any-GPU fallback. If no exact pair matches, discover
 
 ## Preserve Bootstrap Resources
 
-Discovery normally waits up to five minutes for daemon pods. It can continue with the Ready pods if some eligible nodes fail, but it stops if no daemon pod becomes Ready.
+Discovery waits up to five minutes for daemon pods. It can proceed with the Ready
+pods when other daemon pods are on nodes that are not Ready, or when the wait
+timeout expires while the caller's context is still active. If the caller's
+context is cancelled or reaches its deadline first, discovery returns that
+context error instead of continuing with an expired context. Discovery stops if
+no daemon pod becomes Ready.
 
 Keep the namespace when investigating image pulls, scheduling, or daemon startup:
 
