@@ -72,6 +72,14 @@ them as absent hardware. This fallback needs `pods/exec` permission in the
 daemon namespace; without a REST config, discovery returns an error rather than
 silently returning an incomplete inventory.
 
+By default, read-only discovery also fails if it cannot derive a node selector
+that matches only a group's workers. Inventory-only callers can pass
+`networkoperatorplugin.WithReadOnlyAllowMissingNodeSelector()` to return the
+topology in that case. The affected group's `NodeSelector` is left empty and
+`WorkerNodes` is authoritative; do not use that empty selector for workload
+placement. This option does not relax errors for missing or unverified
+`NicDevice` resources.
+
 ## Review saved inventory
 
 Open `cluster-config.yaml` before generation. Confirm the intended workers and

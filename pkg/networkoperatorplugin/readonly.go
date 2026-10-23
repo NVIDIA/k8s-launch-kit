@@ -39,12 +39,19 @@ var WithReadOnlyNetworkOperatorNamespace = discovery.WithReadOnlyNetworkOperator
 // when a Ready daemon node has not published a NicDevice.
 var WithReadOnlyRESTConfig = discovery.WithReadOnlyRESTConfig
 
+// WithReadOnlyAllowMissingNodeSelector permits inventory when a safe group
+// selector cannot be derived. Consumers must use WorkerNodes for membership.
+var WithReadOnlyAllowMissingNodeSelector = discovery.WithReadOnlyAllowMissingNodeSelector
+
 // DiscoverReadOnly inspects an existing NIC Configuration Daemon and returns
 // the discovered topology without creating, patching, or deleting resources.
 // It returns ErrNotInstalled when the daemon is not already running.
 // Pass WithReadOnlyRESTConfig when a Ready daemon node has not published a
 // NicDevice; otherwise the function returns an error rather than guessing that
-// the node cannot publish one.
+// the node cannot publish one. By default, it also returns an error when a
+// group's node selector cannot be derived safely. Callers that only need the
+// inventory can opt in with WithReadOnlyAllowMissingNodeSelector; those groups
+// then have an empty NodeSelector and WorkerNodes remains authoritative.
 func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
 	return discovery.DiscoverReadOnly(ctx, kubeClient, opts...)
 }
