@@ -185,6 +185,18 @@ Do not add GPU counts or resource maps under `clusterConfig`.
 
 ## Tips
 
+- GPU topology uses the NIC daemon's available `nvidia-smi`, then a verified
+  same-node GPU Operator `gpu-feature-discovery` main container. The fallback
+  needs pod read/exec and DaemonSet read permissions; it does not change runtime
+  classes, inject GPUs into NIC pods, or start probe pods. Missing labels are
+  not proof of CPU-only hardware. Full host GPU PCI/query/matrix coverage and
+  all-worker/raw-PF agreement are required before publishing topology.
+- Read-only GPU enrichment additionally requires
+  `WithReadOnlyGPUTopology("<gpu-operator-namespace>")` and REST credentials.
+  Default/REST-only calls acquire no GPU probes. Consume the library's context
+  UI sink for unavailable-evidence warnings. GPU probing does not run netplan
+  discovery. Missing/denied/partial observations keep hardware/preset fallback;
+  caller cancellation returns an error. Qualify the actual GPU stack live.
 - Fresh profile precedence is `hardware/default < explicit CLI`. On a rerun
   with `--user-config`, no profile fields are recalculated; explicit CLI flags
   still override their corresponding values.
