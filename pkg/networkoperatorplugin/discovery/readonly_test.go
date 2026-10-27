@@ -17,6 +17,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -240,37 +241,70 @@ func TestRetryableNicDeviceListError(t *testing.T) {
 }
 
 func TestReadOnlyPublisherNodesDistinguishesExcludedAndMissing(t *testing.T) {
-	expectedNodes := []string{"with-device", "missing-device", "no-nic", "restricted-only"}
+	expectedNodes := []string{"with-device", "missing-device", "no-nic", "restricted-only", "unverified"}
 	deviceNodes := map[string]bool{"with-device": true}
 	probeResults := map[string]mellanoxNICProbeResult{
 		"missing-device":  mellanoxNICProbePresent,
 		"no-nic":          mellanoxNICProbeNone,
 		"restricted-only": mellanoxNICProbeRestricted,
+		"unverified":      mellanoxNICProbeUnverified,
 	}
 
-	publishers, excluded, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
+	selection, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"with-device", "missing-device"}, publishers)
-	assert.Equal(t, []string{"no-nic", "restricted-only"}, excluded)
+	assert.Equal(t, []string{"with-device", "missing-device"}, selection.publisherNodes)
+	assert.Equal(t, []string{"no-nic", "restricted-only"}, selection.excludedNodes)
+	assert.Equal(t, []string{"unverified"}, selection.unverifiedNodes)
 }
 
 func TestReadOnlyPublisherNodesRejectsUnverifiedMissingDevice(t *testing.T) {
-	publishers, excluded, err := readOnlyPublisherNodes(
+	selection, err := readOnlyPublisherNodes(
 		[]string{"worker-without-device"}, nil, nil,
 	)
 
 	require.ErrorContains(t, err, "NIC publisher eligibility on node")
-	assert.Nil(t, publishers)
-	assert.Nil(t, excluded)
+	assert.Empty(t, selection.publisherNodes)
+	assert.Empty(t, selection.excludedNodes)
+	assert.Empty(t, selection.unverifiedNodes)
 }
 
 func TestProbeMissingReadOnlyPublishersRequiresRESTConfig(t *testing.T) {
 	results, err := probeMissingReadOnlyPublishers(
-		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil, nil,
+		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil, nil, false,
 	)
 
 	require.ErrorContains(t, err, "pass WithReadOnlyRESTConfig")
+	assert.Nil(t, results)
+}
+
+func TestProbeMissingReadOnlyPublishersCanExcludeWithoutRESTConfig(t *testing.T) {
+	results, err := probeMissingReadOnlyPublishers(
+		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil, nil, true,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, mellanoxNICProbeUnverified, results["worker-0"])
+}
+
+func TestProbeMissingReadOnlyPublishersDoesNotSuppressProbeErrors(t *testing.T) {
+	probeErr := errors.New("pods/exec is forbidden")
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "daemon-worker-0", Namespace: "network-operator"},
+		Spec: corev1.PodSpec{
+			NodeName:   "worker-0",
+			Containers: []corev1.Container{{Name: "daemon"}},
+		},
+	}
+	results, err := probeMissingReadOnlyPublishers(
+		context.Background(), &rest.Config{}, "network-operator", []string{"worker-0"},
+		[]corev1.Pod{pod}, nil,
+		func(context.Context, *rest.Config, string, string, string, []string) (string, error) {
+			return "", probeErr
+		}, true,
+	)
+
+	require.ErrorIs(t, err, probeErr)
 	assert.Nil(t, results)
 }
 
@@ -557,6 +591,60 @@ func TestDiscoverReadOnlyDoesNotMutateCluster(t *testing.T) {
 		"read-only discovery must not write Launch Kit labels")
 	assert.False(t, hasNamespace(t, c, nicconfigdaemon.Namespace),
 		"read-only discovery must not create or delete the daemon namespace")
+}
+
+func TestDiscoverReadOnlyCanExcludeUnverifiedPublishers(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, nicop.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	readyPod := func(name, node string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            name,
+				Namespace:       "nvidia-network-operator",
+				OwnerReferences: owner,
+			},
+			Spec: corev1.PodSpec{NodeName: node},
+			Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+				Type: corev1.PodReady, Status: corev1.ConditionTrue,
+			}}},
+		}
+	}
+	device := &nicop.NicDevice{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-0-device", Namespace: "default"},
+		Status: nicop.NicDeviceStatus{
+			Node:       "worker-0",
+			Type:       "1023",
+			PartNumber: "pn-test",
+			Ports: []nicop.NicDevicePortSpec{{
+				PCI:              "0000:18:00.0",
+				RdmaInterface:    "mlx5_0",
+				NetworkInterface: "eth0",
+			}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		readyPod("daemon-worker-0", "worker-0"),
+		readyPod("daemon-worker-1", "worker-1"),
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-0", Labels: map[string]string{
+			"nvidia.com/gpu.product": "NVIDIA-H100",
+		}}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+		device,
+	).Build()
+	var output bytes.Buffer
+	ctx := ui.WithOutput(context.Background(), ui.NewWithWriter(&output))
+
+	_, err := DiscoverReadOnly(ctx, c)
+	require.ErrorContains(t, err, "pass WithReadOnlyRESTConfig")
+
+	cfg, err := DiscoverReadOnly(ctx, c, WithReadOnlyAssumeUnverifiedExcluded())
+
+	require.NoError(t, err)
+	require.Len(t, cfg.ClusterConfig, 1)
+	assert.Equal(t, []string{"worker-0"}, cfg.ClusterConfig[0].WorkerNodes)
+	assert.Contains(t, output.String(), "unverified")
 }
 
 func hasNamespace(t *testing.T, c client.Client, name string) bool {

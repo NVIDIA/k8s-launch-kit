@@ -1985,6 +1985,7 @@ const (
 	mellanoxNICProbeNone       mellanoxNICProbeResult = ""
 	mellanoxNICProbePresent    mellanoxNICProbeResult = "present"
 	mellanoxNICProbeRestricted mellanoxNICProbeResult = "restricted"
+	mellanoxNICProbeUnverified mellanoxNICProbeResult = "unverified"
 )
 
 // parseMellanoxNICProbeResult interprets the controlled marker emitted by the

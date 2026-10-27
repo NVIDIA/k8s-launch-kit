@@ -34,10 +34,15 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **WHEN** a worker is outside the declared eligible set
 - **THEN** discovery does not wait for that worker to publish the new observation.
 
-#### Scenario: Read-only publisher eligibility is unknown
+#### Scenario: Read-only publisher eligibility is unknown by default
 
 - **WHEN** a Ready existing-daemon node has no `NicDevice` and discovery cannot inspect its NIC eligibility
 - **THEN** read-only discovery returns an inspection error instead of guessing from optional labels or returning an incomplete inventory.
+
+#### Scenario: Read-only caller explicitly excludes an unverified publisher
+
+- **WHEN** a Ready existing-daemon node has no `NicDevice`, no REST config is supplied, and the caller opts in to excluding unverified publishers
+- **THEN** read-only discovery excludes that node and warns that the returned inventory may be incomplete; errors from an attempted probe remain errors.
 
 #### Scenario: Read-only publisher is verified absent
 

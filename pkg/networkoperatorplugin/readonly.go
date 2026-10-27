@@ -39,12 +39,17 @@ var WithReadOnlyNetworkOperatorNamespace = discovery.WithReadOnlyNetworkOperator
 // when a Ready daemon node has not published a NicDevice.
 var WithReadOnlyRESTConfig = discovery.WithReadOnlyRESTConfig
 
+// WithReadOnlyAssumeUnverifiedExcluded opts in to excluding daemon nodes with
+// no NicDevice when their publisher status cannot be inspected. Discovery
+// warns that the resulting inventory may be incomplete.
+var WithReadOnlyAssumeUnverifiedExcluded = discovery.WithReadOnlyAssumeUnverifiedExcluded
+
 // DiscoverReadOnly inspects an existing NIC Configuration Daemon and returns
 // the discovered topology without creating, patching, or deleting resources.
 // It returns ErrNotInstalled when the daemon is not already running.
 // Pass WithReadOnlyRESTConfig when a Ready daemon node has not published a
-// NicDevice; otherwise the function returns an error rather than guessing that
-// the node cannot publish one.
+// NicDevice; otherwise the function returns an error by default. Callers may
+// opt in to excluding unverified nodes with WithReadOnlyAssumeUnverifiedExcluded.
 func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
 	return discovery.DiscoverReadOnly(ctx, kubeClient, opts...)
 }
