@@ -24,6 +24,29 @@ settings used during generation. Connectivity accepts this resolved metadata
 or a user-owned configuration with the required explicit decisions; installed
 and embedded defaults alone do not satisfy that requirement.
 
+## InfiniBand partition diagnostics
+
+During connectivity setup, validation reads the P_Key table for each selected
+IPoIB interface in the test pods, including SR-IOV VFs. It uses the interface's
+unique direct RDMA device mapping and zero-based `dev_port` to select the port;
+it does not substitute the host PF table or guess from rail ordering.
+Ethernet interfaces are excluded. Static validation does not run this probe.
+
+A table containing only limited membership keys (for example `0x7fff`) produces
+an advisory warning: two limited members cannot communicate within the same
+partition (see [NVIDIA partition membership semantics](https://networking-docs.nvidia.com/nvidiainfinibandsecurityoverviewandguidelines/security-in-infiniband)).
+Ask the subnet manager administrator to grant appropriate full membership to the intended host/VF GUIDs. Empty slots are ignored; an entirely
+empty table also warns. Missing or ambiguous mappings, unreadable sysfs data,
+malformed tables and exec failures are reported as **unverified**, never healthy.
+The read-only probe has a five-second budget per pod and requires no extra pods.
+
+Warnings appear in terminal output, the JSON connectivity object's
+`PartitionWarnings`, and the HTML warnings section, including when subsequent
+connectivity tests fail. They do not change exit status: limited-to-full traffic
+can be valid, and a full key in an unrelated partition does not prove connectivity.
+No warning is a substitute for checking the intended partition and testing the
+actual data path. Interfaces excluded from the matrix are not inspected.
+
 ## Acceptance Outcomes
 
 | Invocation | Exit and coverage behavior |
