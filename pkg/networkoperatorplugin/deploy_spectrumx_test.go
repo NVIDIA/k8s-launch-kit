@@ -115,10 +115,13 @@ var _ = ginkgo.Describe("Spectrum-X deployment API compatibility", func() {
 		gomega.Expect(validateSpectrumXDeploymentAPI(context.Background(), nil, []*unstructured.Unstructured{nct})).To(gomega.Succeed())
 	})
 
-	ginkgo.It("detects RA2.4 even before a platformType is supplied", func() {
-		nct := ra24DeploymentNCT()
-		unstructured.RemoveNestedField(nct.Object, "spec", "template", "spectrumXOptimized", "platformType")
-		gomega.Expect(validateSpectrumXDeploymentAPI(context.Background(), nil, []*unstructured.Unstructured{nct})).To(gomega.HaveOccurred())
+	ginkgo.It("detects doSPCX versions even before a platformType is supplied", func() {
+		for _, ra := range []string{"RA2.4", "RA3.1"} {
+			nct := ra24DeploymentNCT()
+			gomega.Expect(unstructured.SetNestedField(nct.Object, ra, "spec", "template", "spectrumXOptimized", "version")).To(gomega.Succeed())
+			unstructured.RemoveNestedField(nct.Object, "spec", "template", "spectrumXOptimized", "platformType")
+			gomega.Expect(validateSpectrumXDeploymentAPI(context.Background(), nil, []*unstructured.Unstructured{nct})).To(gomega.HaveOccurred())
+		}
 	})
 
 	ginkgo.It("also detects platformType without a version", func() {

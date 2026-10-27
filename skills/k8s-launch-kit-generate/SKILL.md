@@ -42,9 +42,9 @@ its source file unchanged and writes the exact effective configuration to
 |------|----------|--------|-------------|
 | `--fabric` | Auto-defaulted | `ethernet`, `infiniband` | Network fabric. Auto-defaults from the cluster's unanimous `linkType` when omitted (Unit 5 fabric probe); skipped+warned when groups disagree or any has unverified linkType. |
 | `--deployment-type` | Auto-defaulted | `sriov`, `rdma_shared`, `host_device` | Deployment type. Auto-defaults to `sriov`. |
-| `--spectrum-x` | — | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
+| `--spectrum-x` | — | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4`, `RA3.1` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
 | `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from GPU platform plus east-west PF deviceID: H100/H200/B200/GB200 → `none`; B300/GB300 → the GA `swplb` path. Platform cannot identify `hwplb`; select it explicitly. Unknown platforms fall back to NIC family. |
-| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4` | Single-plane platforms → 1; B300/GB300 → 2. Pass 4 explicitly for quad-plane B300. An explicit `none` also implies 1, and an explicit 1 implies `none`. |
+| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4`, `8` | Single-plane platforms → 1; B300/GB300 → 2. Pass 4 explicitly for quad-plane B300. An explicit `none` also implies 1, and an explicit 1 implies `none`. |
 | `--topology-scheme` | Required with `--spectrum-x` | `2-tier`, `3-tier` | Selects the Spectrum-X topology addressing scheme. |
 | `--ip-version` | Required with `--spectrum-x` | `ipv4`, `ipv6` | Selects per-node IPv4 `/31` or IPv6 `/64` CIDRPool allocation. |
 | `--topology-file` | Required with `--spectrum-x` | path | spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from the JSON structure. |
@@ -321,11 +321,15 @@ Generation rejects inventory with selected and excluded ports on the same PCI
 device. Review whole-NIC scope, including ports absent from inventory, and qualify
 runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. See `docs/reference/configuration.md#nic-configuration-and-naming`.
 
-## RA2.4 integration
+## RA2.4 and RA3.1 integration
 
-RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
-accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
+accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
+For VR HWPLB, explicitly select `--spectrum-x RA3.1 --multiplane-mode hwplb
+--number-of-planes 8`. Two NICs per rail render `pfsPerNic: 4`; input NIC order
+is preserved. Use a compatible NCO and doSPCX bundle; rendering is not live
+hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when
@@ -333,15 +337,17 @@ platformType support is absent or cannot be inspected. External Helm, overwrite,
 and dry-run do not bypass this check; dry-run needs APIs installed already.
 
 Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
-substring from the internal doSPCX platform list in gpuType. No preset or mapping
+substring from the internal doSPCX platform list in gpuType. A machineType
+containing `VR` (case-insensitive) takes precedence and selects `vr`, even with
+an empty gpuType. No preset or mapping
 setting is needed. Discovery saves empty values and warns; generation rejects
-unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+unresolved selected RA2.4/RA3.1 groups. RTX/CX8 defaults to none/one plane. Mapping does
 not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
 clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
 zero, and must agree across merged groups. Refresh preserves explicit plane
 assignments only for unchanged source/rail hardware and verified unchanged worker
 membership (ordering does not matter). Changed or unknown membership drops prior
-assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+assignments with a review/reapply warning. Every selected RA2.4/RA3.1 source needs complete
 dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
 sources must have the same effective layout. Merged GPU selectors must not include
 excluded same-GPU sources in other buckets; select one source in that case.
@@ -349,6 +355,6 @@ One physical NIC cannot span rails
 (the current ThinkSystem-SR650-V4-RTX-PRO-6000 preset has this unsupported layout). Multiple hardware partitions
 inside one logical rail are outside this layout. Feature gates are not added.
 
-RA2.4 generation permits a complete compatible GPU/rail-count cohort or a
+RA2.4/RA3.1 generation permits a complete compatible GPU/rail-count cohort or a
 single selected source. Multiple rail-pool parents are rejected because the
 operator-created child policies and OVSNetworks would reuse rail names.

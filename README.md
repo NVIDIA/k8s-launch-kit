@@ -6,10 +6,10 @@ Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by defau
 
 The current lifecycle uses the `host` target by default. The reserved `dpf` target does not have available lifecycle phases; see [target extension](docs/advanced/targets.md) for its implementation status.
 
-Spectrum-X RA2.4 supports Network Operator 26.10 and newer catalogued releases;
-RA2.3 is limited to 26.7. RA2.4 uses a doSPCX bundle, derives per-group platform
-from GPU-product substrings, and accepts optional HWPLB software-plane and OVS
-settings. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
+Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued releases;
+RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
+from GPU-product substrings or VR machine types, and accept optional HWPLB
+software-plane and OVS settings. VR HWPLB accepts an explicit eight-plane layout. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
 including the required NCO implementation/CRDs beyond the current 26.10 beta.2 package.
 
 ## Documentation
@@ -180,8 +180,8 @@ Host Target Profile Selection Flags:
 Host Target Spectrum-X Flags:
       --ip-version string                  Spectrum-X address family: ipv4 or ipv6
       --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, or hwplb
-      --number-of-planes int               Spectrum-X plane count: 1, 2, or 4
-      --spectrum-x-config string           Path to RA2.3 legacy profile (ConfigMap or raw data.profile) or RA2.4 full doSPCX ConfigMap
+      --number-of-planes int               Spectrum-X plane count: 1, 2, 4, or 8
+      --spectrum-x-config string           Path to RA2.3 legacy profile (ConfigMap or raw data.profile) or RA2.4/RA3.1 full doSPCX ConfigMap
       --spectrum-x-configmap-name string   ConfigMap name used when --spectrum-x-config contains raw data.profile YAML
       --topology-file string               Path to a Spectrum-X reference-generator or NVIDIA AIR topology JSON file
       --topology-scheme string             Spectrum-X topology scheme: 2-tier or 3-tier

@@ -219,7 +219,7 @@ func applySpectrumXHardwareDefaults(
 			if opts.SPCXVersion != "" {
 				effectiveRA = opts.SPCXVersion
 			}
-			mode, planes, ok, reason = spectrumXDefaultsForHardware(cfg.ClusterConfig, effectiveRA == "RA2.4")
+			mode, planes, ok, reason = spectrumXDefaultsForHardware(cfg.ClusterConfig, config.SpectrumXUsesDospcx(effectiveRA))
 		}
 
 		modeReason := reason
@@ -331,7 +331,7 @@ func dominantLinkType(groups []config.ClusterConfig) (linkType string, ok bool, 
 // systems. Platform does not distinguish swplb from hwplb: both are available
 // on B300 and GB300, so l8k defaults to the GA swplb path and requires an
 // explicit override for tech-preview hwplb.
-func spectrumXDefaultsForHardware(groups []config.ClusterConfig, ra24 ...bool) (mode string, planes int, ok bool, reason string) {
+func spectrumXDefaultsForHardware(groups []config.ClusterConfig, dospcx ...bool) (mode string, planes int, ok bool, reason string) {
 	if len(groups) == 0 {
 		return "", 0, false, "no clusterConfig groups"
 	}
@@ -355,8 +355,8 @@ func spectrumXDefaultsForHardware(groups []config.ClusterConfig, ra24 ...bool) (
 			return "", 0, false, idErr.Error()
 		}
 		platform := spectrumXGPUPlatform(g)
-		if len(ra24) > 0 && ra24[0] {
-			platform = strings.ToUpper(config.SpectrumXPlatformForGPUProduct(g.GPUType))
+		if len(dospcx) > 0 && dospcx[0] {
+			platform = strings.ToUpper(config.SpectrumXPlatformForGroup(g))
 		}
 		groupMode, groupPlanes, groupReason := spectrumXDefaultForDeviceAndPlatform(deviceID, platform)
 		if groupMode == "" {

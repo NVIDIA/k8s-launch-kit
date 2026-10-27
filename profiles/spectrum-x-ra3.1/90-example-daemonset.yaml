@@ -1,0 +1,131 @@
+# Example multi-rail DaemonSet with Spectrum-X networking
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+  namespace: "{{$.CurrentNetworkNamespace}}"
+spec:
+  selector:
+    matchLabels:
+      app: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+  template:
+    metadata:
+      labels:
+        app: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
+      annotations:
+        {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
+        {{- $railCount := railCount .ClusterConfig.PFs $planes }}
+        {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
+        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail{{$railIdx}}p{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail{{$railIdx}}{{- end }}{{- end }}
+    spec:
+      {{- if $.NetworkOperator.ImagePullSecrets }}
+      imagePullSecrets:
+        {{- range $.NetworkOperator.ImagePullSecrets }}
+      - name: "{{ . }}"
+        {{- end }}
+      {{- end }}
+      {{- if or .ClusterConfig.SourceMachineLabels .ClusterConfig.NodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              {{- if .ClusterConfig.SourceMachineLabels }}
+              - key: nvidia.kubernetes-launch-kit.machine
+                operator: In
+                values:
+                {{- range .ClusterConfig.SourceMachineLabels }}
+                - "{{ . }}"
+                {{- end }}
+              {{- else }}
+              {{- range $key, $value := .ClusterConfig.NodeSelector }}
+              - key: {{ $key }}
+                {{- if ne $value "" }}
+                operator: In
+                values:
+                - "{{ printf "%v" $value }}"
+                {{- else }}
+                operator: Exists
+                {{- end }}
+              {{- end }}
+              {{- end }}
+      {{- end }}
+      containers:
+      - name: spectrum-x-test
+        image: {{validationImage $.NetworkOperator}}
+        {{- if $.Validation.GPUDirect.Enabled }}
+        env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/mpi/gcc/openmpi-current/lib:/usr/local/cuda/lib64
+        {{- end }}
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK", "NET_RAW"]
+        {{- if spectrumXUseDRA .Profile }}
+        resources:
+          claims:
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+          - name: rail-{{$railIdx}}-plane-{{$planeIdx}}
+            {{- end }}
+            {{- else }}
+          - name: rail-{{$railIdx}}
+            {{- end }}
+            {{- end }}
+          {{- if $.Validation.GPUDirect.Enabled }}
+          requests:
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+          limits:
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+          {{- end }}
+        {{- else }}
+        resources:
+          requests:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+            nvidia.com/rail{{$railIdx}}p{{$planeIdx}}: "1"
+            {{- end }}
+            {{- else }}
+            nvidia.com/rail{{$railIdx}}: "1"
+            {{- end }}
+            {{- end }}
+          limits:
+            {{- if $.Validation.GPUDirect.Enabled }}
+            "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
+            {{- end }}
+            {{- range $railIdx := untilStep 0 $railCount 1 }}
+            {{- if $swplb }}
+            {{- range $planeIdx := untilStep 0 $planes 1 }}
+            nvidia.com/rail{{$railIdx}}p{{$planeIdx}}: "1"
+            {{- end }}
+            {{- else }}
+            nvidia.com/rail{{$railIdx}}: "1"
+            {{- end }}
+            {{- end }}
+        {{- end }}
+        command: ["/bin/bash", "-c", "sleep infinity"]
+      - name: netshoot
+        image: nicolaka/netshoot:latest
+        command: ["/bin/bash", "-c", "trap 'exit 0' TERM INT; while true; do while wait -n 2>/dev/null; do :; done; sleep 1 & wait $! || true; done"]
+        securityContext:
+          capabilities:
+            add: ["NET_RAW"]
+      {{- if spectrumXUseDRA .Profile }}
+      resourceClaims:
+        {{- range $railIdx := untilStep 0 $railCount 1 }}
+        {{- if $swplb }}
+        {{- range $planeIdx := untilStep 0 $planes 1 }}
+      - name: rail-{{$railIdx}}-plane-{{$planeIdx}}
+        resourceClaimTemplateName: rail-{{$railIdx}}-plane-{{$planeIdx}}-template{{boundedSuffix 32 $.ClusterConfig.MergedIdentifier}}
+        {{- end }}
+        {{- else }}
+      - name: rail-{{$railIdx}}
+        resourceClaimTemplateName: rail-{{$railIdx}}-template{{boundedSuffix 38 $.ClusterConfig.MergedIdentifier}}
+        {{- end }}
+        {{- end }}
+      {{- end }}

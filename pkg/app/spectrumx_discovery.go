@@ -16,7 +16,7 @@ import (
 func warnSpectrumXPlatforms(groups []config.ClusterConfig, output ui.Output) {
 	for _, group := range groups {
 		if group.SpectrumX != nil && group.SpectrumX.PlatformType == "" {
-			output.Warning("Group %q GPU product %q has no unambiguous doSPCX platform match; saved spectrumX.platformType as empty. RA2.4 generation requires a supported GPU product.", group.Identifier, group.GPUType)
+			output.Warning("Group %q machine type %q GPU product %q has no unambiguous doSPCX platform match; saved spectrumX.platformType as empty. RA2.4/RA3.1 generation requires a supported machine or GPU product.", group.Identifier, group.MachineType, group.GPUType)
 		}
 	}
 }

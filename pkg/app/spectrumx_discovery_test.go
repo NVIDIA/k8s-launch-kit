@@ -137,3 +137,30 @@ func TestDiscoveryRefreshRailAssignmentsFollowWorkerMembership(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscoverySavesVRPlatformWithoutGPU(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		t.Run(map[bool]string{false: "fresh", true: "refresh"}[refresh], func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			path := filepath.Join(dir, "cluster-config.yaml")
+			opts := options.Options{SaveClusterConfig: path}
+			if refresh {
+				require.NoError(t, os.WriteFile(path, []byte(profileDiscoveryBaseConfig), 0600))
+				opts.UserConfig = path
+			}
+			l := newProfileDiscoveryLauncher(opts, []config.ClusterConfig{{
+				Identifier: "machine-vr", MachineType: "machine-VR", GPUType: "", LinkType: "Ethernet",
+			}})
+			output := ui.NewJSON(io.Discard, io.Discard)
+			l.ui = output
+			require.NoError(t, l.discoverClusterConfig())
+			got, err := config.LoadFullConfig(path, l.logger)
+			require.NoError(t, err)
+			require.Equal(t, "vr", got.ClusterConfig[0].SpectrumX.PlatformType)
+			for _, message := range output.Messages() {
+				require.NotContains(t, message.Message, "no unambiguous doSPCX platform match")
+			}
+		})
+	}
+}

@@ -162,7 +162,7 @@ var templateFuncs = template.FuncMap{
 		if spcx == nil {
 			return ""
 		}
-		if spcx.SPCXVersion == "RA2.4" {
+		if config.SpectrumXUsesDospcx(spcx.SPCXVersion) {
 			return spcx.SPCXVersion
 		}
 		if config.SpectrumXProfileConfigRequired(spcx.SPCXVersion) {

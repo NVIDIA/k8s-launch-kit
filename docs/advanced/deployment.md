@@ -116,7 +116,7 @@ After Helm and preflight, deployment follows this order:
 
 1. Apply `NicClusterPolicy` and wait for a terminal state.
 2. Apply each `NicNodePolicy` and wait for each policy.
-3. For RA2.4 NIC templates, verify the live NCO CRD's served version includes
+3. For RA2.4/RA3.1 NIC templates, verify the live NCO CRD's served version includes
    the `platformType` string field. This runs after policy bootstrap installs the
    CRD and before applying any remaining manifests. Missing APIs or failed reads
    stop deployment, including dry-run, external Helm and overwrite modes.

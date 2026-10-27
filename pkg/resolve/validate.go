@@ -180,7 +180,7 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 		return fmt.Errorf("--multiplane-mode none requires --number-of-planes 1, got %d", spcx.NumberOfPlanes)
 	}
 	if spcx.MultiplaneMode != "none" && spcx.NumberOfPlanes == 1 {
-		return fmt.Errorf("--multiplane-mode %s requires --number-of-planes 2 or 4, got 1", spcx.MultiplaneMode)
+		return fmt.Errorf("--multiplane-mode %s requires --number-of-planes 2, 4 or 8, got 1", spcx.MultiplaneMode)
 	}
 
 	// Cross-validate (RA version, network-operator-release).

@@ -172,7 +172,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--spectrum-x": {
 					Type:        "string",
-					Description: "Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2, RA2.3, RA2.4). Implies ethernet, sriov, and multirail; hardware-derived mode and plane defaults are persisted by discover.",
+					Description: "Enable Spectrum-X by passing the SPC-X RA version (e.g. RA2.1, RA2.2, RA2.3, RA2.4, RA3.1). Implies ethernet, sriov, and multirail; hardware-derived mode and plane defaults are persisted by discover.",
 				},
 				"--multiplane-mode": {
 					Type:        "string",
@@ -180,7 +180,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--number-of-planes": {
 					Type:        "int",
-					Description: "Spectrum-X plane count override: 1, 2, or 4. Auto-derived from NIC device ID when omitted.",
+					Description: "Spectrum-X plane count override: 1, 2, 4, or 8. Auto-derived from NIC device ID when omitted.",
 				},
 				"--topology-scheme": {
 					Type:        "string",
@@ -197,7 +197,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--spectrum-x-config": {
 					Type:        "string",
-					Description: "RA2.3 accepts a legacy ConfigMap or raw data.profile YAML; RA2.4 requires a full doSPCX ConfigMap. Required for SPC-X RA versions newer than RA2.2.",
+					Description: "RA2.3 accepts a legacy ConfigMap or raw data.profile YAML; RA2.4 and RA3.1 require a full doSPCX ConfigMap. Required for SPC-X RA versions newer than RA2.2.",
 				},
 				"--spectrum-x-configmap-name": {
 					Type:        "string",
