@@ -145,6 +145,18 @@ If a worker is missing, check its readiness, image pull, discovery pod,
 
 The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
 
+Discovery reports each confirmed host-restricted BlueField PCI function with its
+node and PCI address in normal CLI output, before deleting the bootstrap namespace.
+The NIC-probe summary logs `restrictedDevicesSkipped`; this counts PCI functions,
+not physical cards, separately from `northSouthPFsFiltered` (published devices
+removed during group classification). Mixed nodes are scanned fully, so a usable
+ConnectX does not hide a restricted BlueField later in PCI order. Restricted devices
+remain absent from the saved configuration because the daemon does not publish them.
+A failed or unrecognized trust query is not evidence of restriction and is not counted.
+If the scan fails after verifying a usable NIC, the node remains eligible and a
+warning marks exclusion reporting as incomplete. Read-only publisher eligibility
+probes retain their early-exit behavior and do not collect this full inventory.
+
 ## Hardware And GPU Topology
 
 For each NIC, discovery records the device ID, PCI address, RDMA device,

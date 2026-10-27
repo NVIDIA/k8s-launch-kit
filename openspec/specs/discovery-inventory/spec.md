@@ -34,6 +34,12 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **WHEN** a worker is outside the declared eligible set
 - **THEN** discovery does not wait for that worker to publish the new observation.
 
+#### Scenario: Restricted BlueField alongside a usable NIC
+
+- **WHEN** bootstrap discovery verifies host-restricted BlueField PCI functions, including on a node with usable NICs
+- **THEN** normal CLI output identifies their node and PCI addresses and reports a PCI-function count before namespace teardown; those devices remain excluded from saved inventory.
+- **AND** a later PCI scan failure retains an already-verified publisher and warns that exclusion reporting is incomplete; read-only eligibility probes retain their existing failure policy.
+
 #### Scenario: Read-only publisher eligibility is unknown by default
 
 - **WHEN** a Ready existing-daemon node has no `NicDevice` and discovery cannot inspect its NIC eligibility

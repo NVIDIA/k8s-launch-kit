@@ -234,7 +234,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	if restConfig != nil {
 		var restrictedOnlyNodes []string
 		expectedNodes, restrictedOnlyNodes = filterNodesWithNICs(ctx, restConfig,
-			nicconfigdaemon.Namespace, expectedNodes, dsPods)
+			nicconfigdaemon.Namespace, expectedNodes, dsPods, uiOutput, execInPod)
 		if len(restrictedOnlyNodes) > 0 {
 			uiOutput.Warning("Excluding %d node(s) whose detected BlueField devices are all in zero-trust (restricted) mode; those devices do not publish NicDevice resources",
 				len(restrictedOnlyNodes))
@@ -1849,12 +1849,17 @@ done`
 // If mlxprivhost fails or returns unrecognised output, the device remains
 // discoverable, matching the operator's fail-open behaviour. Output is
 // "present" when any discoverable device exists, "restricted" when the node
-// has only restricted BlueFields, and empty when no NVIDIA NIC is present. It
+// has only restricted BlueFields, and empty when no NVIDIA NIC is present.
+// With the third argument "report-restricted", each restricted PCI function
+// also emits "restricted-pci <address>" and the scan continues after finding a
+// discoverable NIC. Otherwise it stops at the first discoverable NIC. It
 // exits non-zero if it cannot inspect the PCI device directory or read the
 // vendor/device attributes needed to establish absence.
 const sysfsMellanoxNICPresentCmd = `pci_devices_path=${1:-/sys/bus/pci/devices}
 mlxprivhost_bin=${2:-mlxprivhost}
+report_restricted=${3:-}
 restricted_found=false
+present_found=false
 if [ ! -d "$pci_devices_path" ] || [ ! -r "$pci_devices_path" ]; then
   printf 'cannot inspect PCI device directory: %s\n' "$pci_devices_path" >&2
   exit 1
@@ -1890,16 +1895,24 @@ for d in "$pci_devices_path"/*; do
       trust_rc=$?
       if [ "$trust_rc" -eq 0 ] && printf '%s\n' "$trust_output" | grep -iq '^[[:space:]]*level[[:space:]]*:[[:space:]]*restricted'; then
         restricted_found=true
+        if [ "$report_restricted" = report-restricted ]; then
+          printf 'restricted-pci %s\n' "$pci"
+        fi
         continue
       fi
       ;;
   esac
 
-  echo present
-  exit 0
+  if [ "$present_found" = false ]; then
+    echo present
+  fi
+  if [ "$report_restricted" != report-restricted ]; then
+    exit 0
+  fi
+  present_found=true
 done
 
-if [ "$restricted_found" = true ]; then
+if [ "$present_found" = false ] && [ "$restricted_found" = true ]; then
   echo restricted
 fi`
 
@@ -1929,17 +1942,38 @@ func parseMellanoxNICProbeResult(output string) mellanoxNICProbeResult {
 	return result
 }
 
+// reportRestrictedNICs surfaces probe observations before the bootstrap namespace
+// is removed. Addresses describe PCI functions, not deduplicated physical cards.
+func reportRestrictedNICs(output, node string, uiOutput ui.Output) int {
+	count := 0
+	for line := range strings.SplitSeq(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "restricted-pci" {
+			continue
+		}
+		uiOutput.Info("Excluded host-restricted BlueField %s on %s; not configurable from host", fields[1], node)
+		log.Log.Info("Excluded host-restricted BlueField; not configurable from host", "node", node, "pciAddress", fields[1])
+		count++
+	}
+	return count
+}
+
 // filterNodesWithNICs returns the subset of candidateNodes that have an NVIDIA
 // NIC expected to publish a NicDevice, plus nodes whose only detected NVIDIA
 // devices are restricted BlueFields. Nodes without a daemon pod, or whose
-// probe errors or reports no NIC, are dropped. This replaces the NFD-label
+// probe fails before verifying a usable NIC or reports no NIC, are dropped.
+// A later failure retains the verified publisher with incomplete diagnostics.
+// This replaces the NFD-label
 // filter (filterNodesByLabels) so discovery works before NFD is installed and
 // avoids waiting for NicDevices that zero-trust devices will never publish.
 func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
-	namespace string, candidateNodes []string, dsPods []corev1.Pod) ([]string, []string) {
+	namespace string, candidateNodes []string, dsPods []corev1.Pod, uiOutput ui.Output,
+	podExec func(context.Context, *rest.Config, string, string, string, []string) (string, error),
+) ([]string, []string) {
 
 	var withNICs []string
 	var restrictedOnly []string
+	restrictedDevicesSkipped := 0
 	for _, node := range candidateNodes {
 		pod := findDaemonPod([]string{node}, dsPods)
 		if pod == nil {
@@ -1950,14 +1984,23 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 		if len(pod.Spec.Containers) > 0 {
 			containerName = pod.Spec.Containers[0].Name
 		}
-		output, err := execInPod(ctx, restConfig, namespace, pod.Name, containerName,
-			[]string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd})
-		if err != nil {
-			log.Log.Error(err, "failed to probe node for NVIDIA NIC; excluding from wait set",
-				"node", node, "pod", pod.Name)
-			continue
-		}
+		output, err := podExec(ctx, restConfig, namespace, pod.Name, containerName,
+			[]string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", "", "", "report-restricted"})
 		probeResult := parseMellanoxNICProbeResult(output)
+		// A scan can fail after confirming a restricted device. Report that
+		// observation even when the node itself remains unverified.
+		restrictedDevicesSkipped += reportRestrictedNICs(output, node, uiOutput)
+		if err != nil {
+			if probeResult != mellanoxNICProbePresent {
+				log.Log.Error(err, "failed to probe node for NVIDIA NIC; excluding from wait set",
+					"node", node, "pod", pod.Name)
+				continue
+			}
+			// A usable NIC was already verified. A later scan failure must not
+			// remove this publisher merely because exclusion reporting is partial.
+			log.Log.Error(err, "incomplete restricted NIC scan; retaining verified publisher", "node", node)
+			uiOutput.Warning("Could not inspect all PCI devices on %s; restricted BlueField reporting may be incomplete", node)
+		}
 		log.Log.V(1).Info("Probed node for discoverable NVIDIA NIC via sysfs and BlueField trust mode",
 			"node", node, "pod", pod.Name, "result", string(probeResult))
 		switch probeResult {
@@ -1969,7 +2012,10 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 	}
 	log.Log.Info("Filtered nodes by discoverable NVIDIA NIC presence",
 		"candidates", len(candidateNodes), "withNICs", len(withNICs),
-		"restrictedOnly", len(restrictedOnly))
+		"restrictedOnly", len(restrictedOnly), "restrictedDevicesSkipped", restrictedDevicesSkipped)
+	if restrictedDevicesSkipped > 0 {
+		uiOutput.Info("Excluded %d host-restricted BlueField PCI function(s) from discovery", restrictedDevicesSkipped)
+	}
 	return withNICs, restrictedOnly
 }
 

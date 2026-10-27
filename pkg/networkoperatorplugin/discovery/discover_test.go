@@ -17,7 +17,9 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,8 +34,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -604,7 +608,7 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
 			},
 			mlxprivhostRun: "printf 'level: restricted\\n'",
-			want:           "restricted",
+			want:           "restricted-pci 0000:01:00.0\nrestricted",
 		},
 		{
 			name: "privileged BF3",
@@ -631,7 +635,7 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 				{name: "0000:04:00.0", vendorID: "0x15b3", deviceID: "0xa2df"},
 			},
 			mlxprivhostRun: "printf 'level: restricted\\n'",
-			want:           "restricted",
+			want:           "restricted-pci 0000:01:00.0\nrestricted-pci 0000:02:00.0\nrestricted-pci 0000:03:00.0\nrestricted-pci 0000:04:00.0\nrestricted",
 		},
 		{
 			name: "restricted BF3 plus regular NIC",
@@ -640,6 +644,22 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 				{name: "0000:02:00.0", vendorID: "0x15b3", deviceID: "0x1023"},
 			},
 			mlxprivhostRun: "printf 'level: restricted\\n'",
+			want:           "restricted-pci 0000:01:00.0\npresent",
+		},
+		{
+			name: "regular NIC before restricted BF3",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0x1023"},
+				{name: "0000:02:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
+				{name: "0000:02:00.1", vendorID: "0x15b3", deviceID: "0xa2dc"},
+			},
+			mlxprivhostRun: "printf 'level: restricted\\n'",
+			want:           "present\nrestricted-pci 0000:02:00.0\nrestricted-pci 0000:02:00.1",
+		},
+		{
+			name:           "unrecognized trust output remains discoverable",
+			devices:        []fakePCIDevice{{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"}},
+			mlxprivhostRun: "printf 'unknown\\n'",
 			want:           "present",
 		},
 	}
@@ -660,10 +680,35 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 
 			//nolint:gosec // fixed test command and script; temp paths are positional parameters
 			cmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd,
-				"nic-probe", pciRoot, mlxprivhost)
+				"nic-probe", pciRoot, mlxprivhost, "report-restricted")
 			output, err := cmd.CombinedOutput()
 			require.NoError(t, err, "probe output: %s", output)
 			assert.Equal(t, tt.want, strings.TrimSpace(string(output)))
+			var messages bytes.Buffer
+			uiOutput := ui.NewWithWriter(&messages)
+			count := reportRestrictedNICs(string(output), "worker-0", uiOutput)
+			assert.Equal(t, strings.Count(tt.want, "restricted-pci "), count)
+			for _, line := range strings.Split(tt.want, "\n") {
+				if pci, ok := strings.CutPrefix(line, "restricted-pci "); ok {
+					assert.Contains(t, messages.String(), "Excluded host-restricted BlueField "+pci+" on worker-0; not configurable from host")
+				}
+			}
+			if count == 0 {
+				assert.Empty(t, messages.String())
+			}
+			wantEligibility := mellanoxNICProbeNone
+			if strings.Contains(tt.want, "present") {
+				wantEligibility = mellanoxNICProbePresent
+			} else if strings.Contains(tt.want, "restricted") {
+				wantEligibility = mellanoxNICProbeRestricted
+			}
+			assert.Equal(t, wantEligibility, parseMellanoxNICProbeResult(string(output)))
+			// Read-only eligibility probes keep their original marker-only protocol.
+			//nolint:gosec // fixed test command and positional temporary paths
+			eligibilityCmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", pciRoot, mlxprivhost)
+			eligibilityOutput, err := eligibilityCmd.CombinedOutput()
+			require.NoError(t, err)
+			assert.Equal(t, string(wantEligibility), strings.TrimSpace(string(eligibilityOutput)))
 		})
 	}
 }
@@ -727,6 +772,23 @@ func TestSysfsMellanoxNICPresentCmdFailsOnIncompleteInspection(t *testing.T) {
 		require.NoError(t, err, "probe output: %s", output)
 		assert.Equal(t, "present", strings.TrimSpace(string(output)))
 	})
+}
+
+func TestRestrictedNICScanPreservesPresenceBeforeReadFailure(t *testing.T) {
+	pciRoot := t.TempDir()
+	for _, address := range []string{"0000:01:00.0", "0000:02:00.0"} {
+		dir := filepath.Join(pciRoot, address)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "vendor"), []byte("0x15b3"), 0o644))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(pciRoot, "0000:01:00.0", "device"), []byte("0x1023"), 0o644))
+	// The later device is deliberately missing its device attribute.
+	//nolint:gosec // fixed test command and positional temporary path
+	cmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", pciRoot, "mlxprivhost", "report-restricted")
+	output, err := cmd.CombinedOutput()
+	require.Error(t, err)
+	assert.Contains(t, string(output), "cannot read PCI device attribute")
+	assert.Equal(t, mellanoxNICProbePresent, parseMellanoxNICProbeResult(string(output)))
 }
 
 func TestFindDaemonPod(t *testing.T) {
@@ -924,5 +986,45 @@ func TestNormalizeLinkLayer(t *testing.T) {
 	}
 	for in, want := range cases {
 		assert.Equalf(t, want, normalizeLinkLayer(in), "normalizeLinkLayer(%q)", in)
+	}
+}
+
+func TestFilterNodesWithNICsReportsRestrictions(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		output         string
+		err            error
+		wantPresent    bool
+		wantRestricted bool
+		wantWarning    bool
+	}{
+		{"mixed", "present\nrestricted-pci 0000:02:00.0\n", nil, true, false, false},
+		{"restricted only", "restricted-pci 0000:02:00.0\nrestricted\n", nil, false, true, false},
+		{"no NIC", "", nil, false, false, false},
+		{"inspection failure", "", errors.New("read failed"), false, false, false},
+		{"failure after restricted NIC", "restricted-pci 0000:02:00.0\n", errors.New("read failed"), false, false, false},
+		{"failure after usable NIC", "present\nrestricted-pci 0000:02:00.0\n", errors.New("read failed"), true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var messages bytes.Buffer
+			pods := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "daemon"}, Spec: corev1.PodSpec{NodeName: "worker-0", Containers: []corev1.Container{{Name: "daemon"}}}}}
+			present, restricted := filterNodesWithNICs(context.Background(), &rest.Config{}, "bootstrap", []string{"worker-0"}, pods, ui.NewWithWriter(&messages),
+				func(_ context.Context, _ *rest.Config, namespace, pod, container string, command []string) (string, error) {
+					assert.Equal(t, "bootstrap", namespace)
+					assert.Equal(t, "daemon", pod)
+					assert.Equal(t, "daemon", container)
+					assert.Equal(t, []string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", "", "", "report-restricted"}, command)
+					return tc.output, tc.err
+				})
+			assert.Equal(t, tc.wantPresent, slices.Contains(present, "worker-0"))
+			assert.Equal(t, tc.wantRestricted, slices.Contains(restricted, "worker-0"))
+			assert.Equal(t, tc.wantWarning, strings.Contains(messages.String(), "reporting may be incomplete"))
+			if strings.Contains(tc.output, "restricted-pci") {
+				assert.Contains(t, messages.String(), "Excluded host-restricted BlueField 0000:02:00.0 on worker-0")
+				assert.Contains(t, messages.String(), "Excluded 1 host-restricted BlueField PCI function(s)")
+			} else {
+				assert.NotContains(t, messages.String(), "Excluded")
+			}
+		})
 	}
 }
