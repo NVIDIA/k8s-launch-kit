@@ -27,6 +27,15 @@ rollouts, ownership/coverage errors, or UNVERIFIED evidence. Non-detection and
 denied optional health reads do not prove missing networking or successful
 readiness. See [external prerequisites](../../docs/user/validation.md#external-networking-prerequisites).
 
+## InfiniBand partition diagnostics
+
+Connectivity setup inspects selected IPoIB interfaces in test pods and warns
+about limited-only or empty P_Key tables. Unavailable or ambiguous evidence is
+reported as unverified. These advisory diagnostics appear in text, JSON and HTML;
+they do not change exit status or run during static validation. Follow the
+[partition diagnostic guidance](../../docs/user/validation.md#infiniband-partition-diagnostics)
+for scope, limitations and subnet manager remediation.
+
 ## What it checks
 
 1. **Network Operator Helm release version.** Reads the chart's
