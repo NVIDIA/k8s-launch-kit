@@ -83,6 +83,13 @@ and non-gating cross-rail observations do not count. Version checks soft-skip
 when prerequisites are absent, but connectivity requires a user-owned cluster
 config.
 
+The Helm version check selects the highest revision of the exact
+`network-operator` release before considering names that contain
+`network-operator` (case-insensitive). A single custom-named release remains a
+fallback; multiple fallback releases produce a skipped check with an ambiguity
+reason. A skipped check is not a verified version match. Values validation still
+uses the exact `network-operator` release.
+
 If `networkOperator.skipHelmChart: true` is set, or the user passes
 `--skip-network-operator-helm`, both Helm release/version and values checks are
 reported as skipped. Component-version, manifest, stray-resource, connectivity,

@@ -176,6 +176,15 @@ preserves the existing mode/flavor acceptance rules described below.
 | Preflight | Stray CRs and Helm value drift that can make the apply path ambiguous. |
 | Connectivity | ICMP, `rping`, host-memory `ib_write_bw`, and optional GPUDirect DMA-BUF bandwidth checks between generated test DaemonSet pods. |
 
+The Helm version check prefers the exact release name `network-operator` and
+reads its highest revision, so a sibling release such as `network-operator-post`
+cannot override it. If the exact name is absent, the check retains compatibility
+with a single release whose name contains `network-operator` (case-insensitive).
+Multiple such fallback releases are ambiguous: the version check is reported as
+skipped with a reason, not as a verified match. Revisions from different releases
+are never compared. The check compares chart `appVersion` with the catalog;
+Helm values validation continues to use the exact `network-operator` release.
+
 When another system owns the Network Operator Helm release, set
 `networkOperator.skipHelmChart: true` or pass
 `--skip-network-operator-helm`. The Helm release/version and values checks are
