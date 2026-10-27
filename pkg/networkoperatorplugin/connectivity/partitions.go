@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"k8s.io/client-go/rest"
@@ -99,6 +100,20 @@ func partitionWarning(output string) (string, error) {
 
 type partitionExec func(context.Context, []string) (kubeclient.ExecResult, error)
 
+const partitionStderrLimit = 256
+
+func boundedPartitionStderr(stderr string) string {
+	stderr = strings.Join(strings.Fields(stderr), " ")
+	if len(stderr) <= partitionStderrLimit {
+		return stderr
+	}
+	cut := partitionStderrLimit
+	for cut > 0 && !utf8.RuneStart(stderr[cut]) {
+		cut--
+	}
+	return stderr[:cut] + "..."
+}
+
 func collectPartitionWarnings(ctx context.Context, pod TestPod, exec partitionExec) []string {
 	// One shared budget per pod bounds diagnostic cost even with many rails.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -113,19 +128,28 @@ func collectPartitionWarnings(ctx context.Context, pod TestPod, exec partitionEx
 		iface := pod.InterfacesByRail[rail]
 		prefix := fmt.Sprintf("Node %s pod %s/%s rail %s interface %s: ", pod.Node, pod.Namespace, pod.Name, rail, iface)
 		// Positional arguments avoid interpolating network annotation values into shell code.
-		var warning string
-		var err error
 		if iface == "" || iface == "." || iface == ".." || strings.ContainsAny(iface, "/\x00") {
-			err = fmt.Errorf("invalid interface name")
-		} else {
-			var res kubeclient.ExecResult
-			res, err = exec(ctx, []string{"/bin/sh", "-c", partitionProbe, "l8k-pkeys", "/sys", iface})
-			if err != nil {
-				err = fmt.Errorf("%w (stderr: %s)", err, boundedTraceOutput(res.Stderr))
-			} else {
-				warning, err = partitionWarning(res.Stdout)
-			}
+			warnings = append(warnings, prefix+"P_Key membership unverified: invalid interface name")
+			continue
 		}
+		command := []string{"/bin/sh", "-c", partitionProbe, "l8k-pkeys", "/sys", iface}
+		res, err := exec(ctx, command)
+		if err != nil {
+			connectivityLogger().V(2).Info("partition probe failed", "node", pod.Node,
+				"namespace", pod.Namespace, "pod", pod.Name, "rail", rail, "interface", iface,
+				"command", command, "error", boundedTraceOutput(err.Error()),
+				"stderr", boundedTraceOutput(res.Stderr))
+			reason := "pod exec failed"
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				reason = ctxErr.Error()
+			}
+			if stderr := boundedPartitionStderr(res.Stderr); stderr != "" {
+				reason += ": " + stderr
+			}
+			warnings = append(warnings, prefix+"P_Key membership unverified: "+reason)
+			continue
+		}
+		warning, err := partitionWarning(res.Stdout)
 		if err != nil {
 			warning = "P_Key membership unverified: " + err.Error()
 		}

@@ -21,11 +21,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/stretchr/testify/require"
@@ -128,22 +130,40 @@ func TestPartitionWarningsRetainEvidenceAndReports(t *testing.T) {
 			require.Equal(t, "net1", command[len(command)-1])
 			return kubeclient.ExecResult{Stdout: "mlx5_0 1 0x7fff"}, nil
 		}
-		return kubeclient.ExecResult{Stderr: "permission denied"}, errors.New("exec failed")
+		return kubeclient.ExecResult{Stderr: "permission denied"}, fmt.Errorf("exec [/bin/sh -c %s] (stderr: permission denied): failed", partitionProbe)
 	})
 	require.Len(t, warnings, 2)
 	require.Contains(t, warnings[0], "Node worker pod test-ns/test-pod rail rail-0 interface net1")
 	require.Contains(t, warnings[0], "Two limited members cannot communicate")
 	require.Contains(t, warnings[1], "unverified")
 	require.Contains(t, warnings[1], "permission denied")
+	require.NotContains(t, warnings[1], "set -eu")
+	require.Equal(t, 1, strings.Count(warnings[1], "permission denied"))
 	matrix := &MatrixResult{PartitionWarnings: warnings}
 	encoded, err := json.Marshal(matrix)
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), "PartitionWarnings")
+	require.NotContains(t, string(encoded), "set -eu")
 	var html bytes.Buffer
 	require.NoError(t, RenderHTML(&html, ReportData{Matrix: matrix}))
 	require.Contains(t, html.String(), "only limited-membership")
 	require.Contains(t, html.String(), "permission denied")
+	require.NotContains(t, html.String(), "set -eu")
 	require.Equal(t, 0, matrix.Summary.Failed)
+}
+
+func TestPartitionProbeFailureBoundsStderr(t *testing.T) {
+	stderr := "\n" + strings.Repeat("é", 130) + "\n" + strings.Repeat("x", 4096)
+	pod := TestPod{InterfacesByRail: map[string]string{"rail-0": "net1"}}
+	warnings := collectPartitionWarnings(context.Background(), pod, func(context.Context, []string) (kubeclient.ExecResult, error) {
+		return kubeclient.ExecResult{Stderr: stderr}, errors.New("opaque exec failure")
+	})
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "pod exec failed: ")
+	require.NotContains(t, warnings[0], "opaque exec failure")
+	require.NotContains(t, warnings[0], strings.Repeat("x", 4096))
+	require.True(t, utf8.ValidString(warnings[0]))
+	require.Less(t, len(warnings[0]), 400)
 }
 
 func TestPartitionProbeArgumentsAndCancellation(t *testing.T) {
