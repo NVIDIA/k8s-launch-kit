@@ -49,12 +49,14 @@ func (d DefaultDecision) String() string {
 //	                       H100/H200/B200/GB200 → "none"
 //	                       B300/GB300 → "swplb" (the GA default;
 //	                       hwplb remains an explicit opt-in)
+//	                       VR with ConnectX-9 → "hwplb" on doSPCX RAs.
 //	                       Unknown platforms fall back to the NIC family.
 //	                       Skipped+warned when groups need different defaults.
 //	--number-of-planes    ← per platform + deviceID (only when
 //	                       --spectrum-x): single-plane platforms → 1;
 //	                       B300/GB300 → 2 (pass 4 explicitly for a
-//	                       quad-plane B300 topology); CX9 fallback → 4.
+//	                       quad-plane B300 topology); VR with CX9 → 8 on
+//	                       doSPCX RAs; CX9 fallback → 4.
 //	--network-operator-release ← `config.DefaultSPCXReleaseFor(SPCXVersion)`
 //	                            (only when --spectrum-x is set).
 //
@@ -220,6 +222,12 @@ func applySpectrumXHardwareDefaults(
 				effectiveRA = opts.SPCXVersion
 			}
 			mode, planes, ok, reason = spectrumXDefaultsForHardware(cfg.ClusterConfig, config.SpectrumXUsesDospcx(effectiveRA))
+			// The VR eight-plane default describes HWPLB. Preserve the CX9
+			// four-plane fallback when the user explicitly selects SWPLB.
+			if ok && mode == "hwplb" && planes == 8 && effectiveMode == "swplb" {
+				planes = 4
+				reason = "ConnectX-9 four-plane fallback for explicit SWPLB"
+			}
 		}
 
 		modeReason := reason
@@ -395,6 +403,9 @@ func spectrumXDefaultForDeviceAndPlatform(deviceID, platform string) (mode strin
 			return "swplb", 2, "ConnectX-8 (deviceID 1023) fallback; SWPLB is the GA default"
 		}
 	case "1025":
+		if platform == "VR" {
+			return "hwplb", 8, "VR eight-plane platform (ConnectX-9 deviceID 1025)"
+		}
 		return "hwplb", 4, "ConnectX-9 (deviceID 1025)"
 	case "a2dc":
 		return "none", 1, "BF3 SuperNIC (deviceID a2dc)"

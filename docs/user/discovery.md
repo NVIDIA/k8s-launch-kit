@@ -127,6 +127,37 @@ classification and trigger rail reassignment. Physically dual-port BlueField-3
 NICs remain north-south even when PIX-proximate to a GPU. Probe failures are
 non-fatal; discovery keeps the hardware data it can confirm.
 
+### VR NetworkBay rails
+
+For platform `vr`, discovery requires eight east-west ASIC NICs in four
+complete NetworkBay pairs on each worker. A compatible NIC Configuration
+Daemon and served `NicDevice` CRD must expose `status.networkBay.asic` and
+`status.networkBay.peerPci`. Each pair must have reciprocal peer PCI addresses
+and one first ASIC (`asic: 1`) and one second ASIC (`asic: 0`).
+Discovery creates missing CRDs but does not upgrade an installed CRD. If an
+existing operator manages `NicDevice`, its owner must update the daemon and
+CRD to versions that publish and retain NetworkBay status before VR discovery.
+
+NetworkBays are numbered 1–4 by the ascending PCI address of their first ASIC.
+Discovery assigns the following zero-based rails:
+
+| Rail | Members |
+| --- | --- |
+| 0 | NetworkBay 1 first ASIC + NetworkBay 2 second ASIC |
+| 1 | NetworkBay 2 first ASIC + NetworkBay 1 second ASIC |
+| 2 | NetworkBay 3 first ASIC + NetworkBay 4 second ASIC |
+| 3 | NetworkBay 4 first ASIC + NetworkBay 3 second ASIC |
+
+The mapping is finalized after GPU topology and preset enrichment and is also
+used by read-only discovery. Existing PF order is preserved; this mapping
+does not require a particular ASIC order within a rail. Missing, malformed or
+incomplete NetworkBay status, or differing mappings among workers in a group,
+stops discovery before inventory is saved. Non-VR rail assignment is unchanged.
+
+With RA2.4/RA3.1 and ConnectX-9, fresh profile resolution defaults to `hwplb`
+and eight planes. Explicit YAML/CLI settings take precedence; an existing-config
+refresh preserves its profile settings as described below.
+
 ## Profile Resolution
 
 Fresh discovery persists a resolved `profile` block in `cluster-config.yaml`.

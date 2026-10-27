@@ -63,6 +63,12 @@ A group property MUST declare its aggregation policy for disagreement and incomp
 - **WHEN** a BlueField-3 reports a VPD model with two physical ports, even with `status.dpu=false` or an unlisted SKU
 - **THEN** live discovery classifies its PFs as north-south, preserves that classification during GPU PIX probing, and assigns no east-west rails; a group containing only north-south NICs is omitted.
 
+#### Scenario: VR NetworkBay rail membership
+
+- **WHEN** normal or read-only discovery resolves a VR group
+- **THEN** each worker must report eight east-west ASIC NICs forming four complete reciprocal NetworkBay pairs, each with ASIC 1 and ASIC 0; NetworkBays ordered by ASIC 1 PCI address form rails by crossing opposite ASICs between NetworkBays 1/2 and 3/4, after GPU/preset enrichment, without changing PF order.
+- **AND** missing, invalid or incomplete status, or differing worker mappings, stops discovery before saving inventory rather than falling back to sequential rails.
+
 ### Requirement: Fresh and refresh behavior
 
 An inventory extension MUST cover fresh discovery and existing-config refresh. Refresh SHALL replace inventory and explicit CLI-targeted fields while preserving unrelated source fields, comments, omissions and explicit values.

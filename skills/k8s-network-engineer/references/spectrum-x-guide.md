@@ -23,7 +23,7 @@ requires a full doSPCX ConfigMap and the matching NCO implementation and CRDs.
 | --- | --- | --- |
 | `none` | 1 | Per rail |
 | `swplb` | 2 or 4 | Per rail and plane |
-| `hwplb` | 2 or 4 | Per rail, grouping planes |
+| `hwplb` | 2, 4, or 8 | Per rail, grouping planes; VR/CX9 defaults to 8 on RA2.4/RA3.1 |
 
 Hardware defaults combine GPU platform and east-west NIC device ID.
 H100/H200/B200/GB200 default to `none` with one plane; B300/GB300 default to
@@ -75,10 +75,15 @@ Spectrum-X has no qualified OpenShift profile in this build.
 RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
 accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
-For VR HWPLB, explicitly select `--spectrum-x RA3.1 --multiplane-mode hwplb
---number-of-planes 8`. Two NICs per rail render `pfsPerNic: 4`; input NIC order
-is preserved. Use a compatible NCO and doSPCX bundle; rendering is not live
-hardware qualification.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
+status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
+compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when

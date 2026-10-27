@@ -414,6 +414,10 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		}
 	}
 
+	if err := assignVRRails(cfg.ClusterConfig, devices.Items); err != nil {
+		return err
+	}
+
 	// Now that machineType and gpuType are settled (either from labels or
 	// from the per-group hardware probes), assign each group a stable
 	// machine label. This replaces the differential-label nodeSelector

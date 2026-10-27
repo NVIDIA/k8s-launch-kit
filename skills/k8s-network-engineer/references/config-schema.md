@@ -230,8 +230,8 @@ the single CLI gateway: a non-empty value sets `enable: true` AND populates
 |------------------|--------|----------|------------------------------------------------------|----------------------------------------|
 | `enable`         | bool   | `false`  | derived from `--spectrum-x` (true when value is set) | Enable Spectrum-X profile              |
 | `spcxVersion`    | string | unset  | value of `--spectrum-x`                              | Spectrum-X RA version: RA2.1/26.1, RA2.2/26.4, RA2.3/26.7, or RA2.4 or RA3.1/26.10 and newer catalogued releases. RA2.3 requires legacy profile data; RA2.4 and RA3.1 require a full doSPCX ConfigMap. Omit this field while disabled. |
-| `multiplaneMode` | string | platform/NIC-derived | `--multiplane-mode`                         | H100/H200/B200/GB200 use `none`; B300/GB300 use GA `swplb`; select `hwplb` explicitly |
-| `numberOfPlanes` | int    | platform/NIC-derived | `--number-of-planes`                         | Single-plane platforms use 1; B300/GB300 use 2; pass 4 explicitly for quad-plane B300 |
+| `multiplaneMode` | string | platform/NIC-derived | `--multiplane-mode`                         | H100/H200/B200/GB200 use `none`; B300/GB300 use GA `swplb`; VR/CX9 uses `hwplb` on RA2.4/RA3.1 |
+| `numberOfPlanes` | int    | platform/NIC-derived | `--number-of-planes`                         | Single-plane platforms use 1; B300/GB300 use 2; VR/CX9 HWPLB uses 8 on RA2.4/RA3.1; pass 4 explicitly for quad-plane B300 |
 
 CLI flags always override config file values for all profile fields.
 
@@ -312,10 +312,15 @@ clusterConfig:
 RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
 accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
-For VR HWPLB, explicitly select `--spectrum-x RA3.1 --multiplane-mode hwplb
---number-of-planes 8`. Two NICs per rail render `pfsPerNic: 4`; input NIC order
-is preserved. Use a compatible NCO and doSPCX bundle; rendering is not live
-hardware qualification.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
+status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
+compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when
