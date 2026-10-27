@@ -1243,6 +1243,11 @@ type nodeInfo struct {
 // PF slice and the number of PFs dropped; when nothing is collapsed it returns
 // the input unchanged.
 func collapseGroupRails(pfs []config.PFConfig) ([]config.PFConfig, int) {
+	kept, dropped, _ := collapseGroupRailsWithMembers(pfs)
+	return kept, dropped
+}
+
+func collapseGroupRailsWithMembers(pfs []config.PFConfig) ([]config.PFConfig, int, map[string][]string) {
 	var ew, ns []config.PFConfig
 	for _, pf := range pfs {
 		if pf.Traffic == "east-west" {
@@ -1251,18 +1256,33 @@ func collapseGroupRails(pfs []config.PFConfig) ([]config.PFConfig, int) {
 			ns = append(ns, pf)
 		}
 	}
-	collapsedEW, dropped := pfutil.CollapsePFsToOnePerNIC(ew)
+	collapsedEW, dropped, rawMembers := pfutil.CollapsePFsToOnePerNICWithMembers(ew)
+	members := make(map[string][]string, len(pfs))
+	for retained, raw := range rawMembers {
+		for _, pci := range raw {
+			members[normalizePCI(retained)] = append(members[normalizePCI(retained)], normalizePCI(pci))
+		}
+	}
+	for _, pf := range ns {
+		members[normalizePCI(pf.PciAddress)] = []string{normalizePCI(pf.PciAddress)}
+	}
 	if dropped == 0 {
-		return pfs, 0
+		return pfs, 0, members
 	}
 	out := append(collapsedEW, ns...)
 	slices.SortFunc(out, func(a, b config.PFConfig) int {
 		return strings.Compare(a.PciAddress, b.PciAddress)
 	})
-	return out, dropped
+	return out, dropped, members
 }
 
 func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, nodeSelector map[string]string, collapseNicRails bool) ([]config.ClusterConfig, []string) {
+	groups, warnings, _ := buildClusterConfigWithMembers(devices, nodeLabels, nodeSelector, collapseNicRails)
+	return groups, warnings
+}
+
+func buildClusterConfigWithMembers(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, nodeSelector map[string]string, collapseNicRails bool) ([]config.ClusterConfig, []string, groupPFMembers) {
+	members := groupPFMembers{}
 	// Step 1: Build per-node PF map and track capabilities per node
 	nodeMap := map[string]*nodeInfo{}
 
@@ -1466,8 +1486,14 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		// other NIC drops all but its master PF, since its sibling PFs are
 		// planes of a single rail. North-south PFs are left untouched.
 		// --collapse-nic-rails=false skips this and keeps one rail per PF.
+
+		projection := make(map[string][]string, len(pfs))
+		for _, pf := range pfs {
+			projection[normalizePCI(pf.PciAddress)] = []string{normalizePCI(pf.PciAddress)}
+		}
 		if collapseNicRails {
-			collapsed, dropped := collapseGroupRails(pfs)
+			collapsed, dropped, collapsedMembers := collapseGroupRailsWithMembers(pfs)
+			projection = collapsedMembers
 			if dropped > 0 {
 				pfs = collapsed
 				log.Log.Info("Collapsed multi-plane PFs to one rail per NIC; pass --collapse-nic-rails=false to keep one rail per PF",
@@ -1510,6 +1536,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			WorkerNodes: g.nodes,
 		}
 
+		members[groupWorkerKey(cc.WorkerNodes)] = projection
 		groups = append(groups, cc)
 	}
 
@@ -1519,7 +1546,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		computeNodeSelectors(groups, nodeLabels)
 	}
 
-	return groups, nsWarnings
+	return groups, nsWarnings, members
 }
 
 // computeNodeSelectors assigns NodeSelectors to each group using ALL label keys
