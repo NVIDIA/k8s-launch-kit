@@ -42,6 +42,42 @@ with the file and document number in the error. Only `values.yaml` is treated
 as Helm values; rename `values.yml` or case variants to `values.yaml`. The
 expected preflight inventory and applied objects come from that same snapshot.
 
+## Secondary-network ownership guard
+
+Before Helm, preflight remediation, or apply, an affected `NicClusterPolicy`
+bundle requires a live read of the policy. Removing an existing Multus or CNI
+plugin section is blocked because the operator can delete its managed
+children. If a rendered section requests installation, recognized installers
+are inspected across namespaces; foreign or ambiguous ownership, or failed
+inspection, blocks deployment. `--overwrite-existing`, external Helm, and
+dry-run cannot bypass this guard. Ownership is checked again immediately
+before every NCP apply, including a polling retry after the policy disappears.
+Retries use the retained desired artifact rather than component intent returned
+by the API server; installer health still uses the operation's configured workers. With overwrite enabled, the guard also inspects differently
+named NCPs that stray remediation would delete, even when their installer
+DaemonSets are missing. An NCP with a managed Multus or reference-plugin section
+requires a separately controlled migration, rather than automatic deletion.
+Ordinary NCP strays without either managed section remain eligible for removal.
+The exact policy deletion candidates are read again before any remediation
+delete; UID/resource-version preconditions reject a changed or replaced policy.
+The API does not provide a transaction excluding all concurrent platform changes.
+
+For omitted external components, installer health inspection is optional.
+No recognized API installer or a denied health read produces an unverified
+warning, since platform binaries may be host-installed. A denied live-NCP
+read still blocks deployment. Recognized installers excluding required workers
+or still reconciling stop deployment until repaired/ready. Ready installer
+pods and current DaemonSet status establish API-level coverage only, not host
+binary/configuration correctness. Without configured worker names, coverage
+remains unverified. Non-overwrite bundles without an NCP add no networking-inspection reads.
+Overwrite adds mandatory NCP candidate-list reads only when the existing stray
+check has an actionable operator namespace; denied inspection blocks before Helm.
+
+See [component policy](../reference/configuration.md#secondary-network-ownership)
+for automatic and explicit ownership. The guard does not change the documented
+broad stray-resource deletion scope below; review the complete inventory before
+authorizing overwrite.
+
 ## Helm Install Or Upgrade
 
 When the bundle contains `values.yaml` and the selected release supplies a Helm repository URL, Launch Kit uses the Helm Go SDK to manage the `network-operator` release:

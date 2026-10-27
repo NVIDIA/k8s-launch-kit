@@ -25,6 +25,7 @@ import (
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/secondarynetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
@@ -202,6 +203,10 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		return nil, fmt.Errorf("DiscoverReadOnly: load default config: %w", err)
 	}
 	cfg.ClusterConfig = clusterConfig
+	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, kubeClient)
+	if err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 

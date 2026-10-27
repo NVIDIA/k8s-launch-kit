@@ -1,3 +1,4 @@
+{{- $secondary := secondaryNetwork . -}}
 apiVersion: mellanox.com/v1alpha1
 kind: NicClusterPolicy
 metadata:
@@ -35,15 +36,21 @@ spec:
     version: "{{.NetworkOperator.ComponentVersion}}"
     imagePullSecrets: []
     enableWebhook: false
+  {{- if or $secondary.Multus $secondary.CNIPlugins }}
   secondaryNetwork:
+    {{- if $secondary.CNIPlugins }}
     cniPlugins:
       image: plugins
       repository: "{{.NetworkOperator.Repository}}"
       version: "{{.NetworkOperator.ComponentVersion}}"
+    {{- end }}
+    {{- if $secondary.Multus }}
     multus:
       image: multus-cni
       repository: "{{.NetworkOperator.Repository}}"
       version: "{{.NetworkOperator.ComponentVersion}}"
+    {{- end }}
+  {{- end }}
   {{- /* Keep the host-device OFED driver and SR-IOV device plugin in the
          cluster-wide NicClusterPolicy. legacySriovDevicePluginConfigList
          aggregates east-west PFs across all groups since NCP is a singleton. */}}

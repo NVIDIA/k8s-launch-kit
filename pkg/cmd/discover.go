@@ -40,7 +40,7 @@ NicDevice CRs, and torn down when discovery finishes.
 
 Discovery groups nodes by hardware, detects east-west vs north-south
 NICs, and probes OFED-dependent modules. With --user-config, it replaces
-only clusterConfig and then applies explicit CLI overrides.`,
+clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.`,
 		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
@@ -48,7 +48,7 @@ only clusterConfig and then applies explicit CLI overrides.`,
   # Uses $KUBECONFIG if set
   l8k discover --save-cluster-config ./cluster-config.yaml
 
-  # Refresh only clusterConfig in an existing config
+  # Refresh hardware and networking observations in an existing config
   l8k discover --user-config my-config.yaml \
     --save-cluster-config ./cluster-config.yaml
 

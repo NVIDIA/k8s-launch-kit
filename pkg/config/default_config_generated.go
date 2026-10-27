@@ -26,6 +26,11 @@ var defaultConfigYAML = []byte(
 	"  componentVersion: network-operator-v26.7.0\n" +
 	"  selectedRelease: \"26.7\"\n" +
 	"  skipHelmChart: false\n" +
+	"  # Independent ownership of Multus and reference CNI binaries. auto uses\n" +
+	"  # discovery evidence; managed installs via NCP; external omits the section.\n" +
+	"  secondaryNetwork:\n" +
+	"    multus: auto\n" +
+	"    cniPlugins: auto\n" +
 	"  # repository — registry path for COMPONENT images managed by the operator\n" +
 	"  # (ofedDriver, nvIpam, multus, device plugins, …). Rendered into\n" +
 	"  # NicClusterPolicy / NicNodePolicy.\n" +

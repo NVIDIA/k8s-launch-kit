@@ -36,7 +36,7 @@ Fresh discovery treats the selected reference file as a user layer except for
 its sample `profile`, which is discarded before hardware defaults are derived.
 Explicit non-profile values such as `docaDriver.enable: false` are preserved.
 
-Discovery with `--user-config` replaces only `clusterConfig`, preserves every
+Discovery with `--user-config` replaces `clusterConfig` and `discoveredSecondaryNetwork`, preserves every
 other loaded section, and then applies explicit CLI flags. It does not fill
 missing profile fields, recompute validation settings, or expand a release
 selected only in YAML.
@@ -91,7 +91,7 @@ deployment intent changes.
 | --- | --- |
 | `flavor` | `k8s` (default) or `ocp`; selects profile and operator integration. |
 | `nfd` | OpenShift NFD configuration object namespace and name. |
-| `networkOperator` | Release line, image repositories, Helm repository, namespace, and image pull secrets. |
+| `networkOperator` | Release line, image repositories, Helm repository, namespace, image pull secrets, and secondary-network ownership. |
 | `networkNamespaces` | Namespaces that receive secondary network CRs and example DaemonSets. |
 | `workload` | Optional custom workload manifest. |
 | `validation` | Connectivity mode, enabled checks, and RDMA parameters. |
@@ -103,6 +103,54 @@ deployment intent changes.
 | `spectrumX` | Spectrum-X naming defaults. |
 | `profile` | Selected fabric, deployment, routing, ARP, and Spectrum-X options. |
 | `clusterConfig` | Discovered or preset-provided hardware groups. |
+| `discoveredSecondaryNetwork` | Optional read-only API observations of Multus and reference CNI plugin installers; separate from desired policy. |
+
+## Secondary-network ownership
+
+Multus and the reference CNI plugin suite are independent components. A platform
+Multus installation does not prove that `tuning`, `sbr`, `host-device`, or other
+reference CNI binaries are installed. These policies control only the NCP
+`multus` and `cniPlugins` sections; profile-required components such as
+`secondaryNetwork.ipoib` remain configured. Configure each owner separately:
+
+```yaml
+networkOperator:
+  secondaryNetwork:
+    multus: auto
+    cniPlugins: external
+```
+
+Each field accepts `auto` (default), `managed`, or `external`. Omitted, null,
+and empty values mean auto for compatibility. Managed renders the component
+in `NicClusterPolicy`; external omits it. Auto uses
+`discoveredSecondaryNetwork`: recognized external installers cause omission,
+and a verified NCP-owned installer preserves managed rendering. Unavailable
+or ambiguous evidence stops automatic generation until the operator chooses
+explicit ownership or obtains usable evidence. An offline config with no
+observation preserves managed rendering and reports ownership as unverified;
+deploy must inspect the live cluster before installing it.
+
+Discovery records `notDetected`, `operatorManaged`, `external`, `ambiguous`,
+or `unavailable` per component, with reasons and installer names/UIDs. It never
+rewrites desired `auto` into `external`. Detection recognizes API-visible
+Multus executable/image signatures and reference `plugins`/`cni-plugins`
+images with writable host CNI-directory mounts. Names and the NAD CRD alone
+are not proof. Custom host-only installers can be invisible: choose explicit
+external ownership after checking the site's prerequisites. Generation does
+not contact the cluster or prove installer health.
+
+OpenShift always uses external Multus and reference plugins; explicit managed
+ownership is rejected. Helm ownership (`skipHelmChart`) remains independent
+of component ownership.
+
+Deploy blocks collisions and implicit managed-to-external transitions before
+Helm or resource mutations. Removing an existing NCP section can cause the
+Network Operator to delete its networking children. An ownership migration
+requires a separately reviewed operator-controlled procedure; changing this
+field or using `--overwrite-existing` does not authorize that migration. This
+also protects differently named NCPs selected for overwrite deletion, independently
+of installer DaemonSet presence. Policies without managed Multus/CNI sections
+retain ordinary stray-remediation behavior.
 
 ## Release Catalog
 

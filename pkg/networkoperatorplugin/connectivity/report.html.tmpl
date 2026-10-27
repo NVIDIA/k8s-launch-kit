@@ -834,7 +834,7 @@ footer strong { color: var(--text-muted); }
         {{- $details := .Details}}
         {{- $hasExpand := or $details .LiveYAML}}
         <tr class="{{stateClass .State}}{{if $hasExpand}} manifest-row-has-expand{{end}}">
-          <td><span class="badge {{stateClass .State}}">{{stateLabel .State}}</span></td>
+          <td><span class="badge {{stateClass .State}}">{{if .Skipped}}UNVERIFIED{{else}}{{stateLabel .State}}{{end}}</span></td>
           <td><code>{{.Kind}}</code></td>
           <td>{{or .Namespace "—"}}</td>
           <td><code>{{.Name}}</code></td>

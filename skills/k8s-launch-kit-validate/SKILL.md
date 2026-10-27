@@ -22,6 +22,11 @@ Operator release.
 Apply `docs/user/validation.md#worked-acceptance-decisions` to the report;
 compare intended and completed worker/rail coverage before acceptance.
 
+External Multus/CNI prerequisite rows report API-level coverage, in-progress
+rollouts, ownership/coverage errors, or UNVERIFIED evidence. Non-detection and
+denied optional health reads do not prove missing networking or successful
+readiness. See [external prerequisites](../../docs/user/validation.md#external-networking-prerequisites).
+
 ## What it checks
 
 1. **Network Operator Helm release version.** Reads the chart's
