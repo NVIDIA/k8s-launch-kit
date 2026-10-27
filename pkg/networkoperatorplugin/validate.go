@@ -694,7 +694,7 @@ func findNetworkOperatorHelmRelease(ctx context.Context, c client.Client, namesp
 	if err := c.List(ctx, &secrets, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("list secrets in %s: %w", namespace, err)
 	}
-	var matched []corev1.Secret
+	latestByRelease := make(map[string]corev1.Secret)
 	for _, s := range secrets.Items {
 		if string(s.Type) != helmReleaseSecretType {
 			continue
@@ -706,15 +706,29 @@ func findNetworkOperatorHelmRelease(ctx context.Context, c client.Client, namesp
 		if !strings.Contains(strings.ToLower(releaseName), "network-operator") {
 			continue
 		}
-		matched = append(matched, s)
+		// Revisions are comparable only within the same release.
+		previous, found := latestByRelease[releaseName]
+		if !found || helmRevisionFromName(s.Name) > helmRevisionFromName(previous.Name) {
+			latestByRelease[releaseName] = s
+		}
 	}
-	if len(matched) == 0 {
+	if len(latestByRelease) == 0 {
 		return nil, fmt.Errorf("no Helm release Secret containing 'network-operator' in namespace %s", namespace)
 	}
-	sort.Slice(matched, func(i, j int) bool {
-		return helmRevisionFromName(matched[i].Name) > helmRevisionFromName(matched[j].Name)
-	})
-	latest := matched[0]
+	// Prefer the release that deploy and values validation manage. Preserve
+	// legacy custom-name lookup only when it identifies a single release.
+	latest, found := latestByRelease[helmclient.DefaultReleaseName]
+	if !found {
+		names := make([]string, 0, len(latestByRelease))
+		for name := range latestByRelease {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		if len(names) > 1 {
+			return nil, fmt.Errorf("ambiguous Helm releases in namespace %s: %s", namespace, strings.Join(names, ", "))
+		}
+		latest = latestByRelease[names[0]]
+	}
 	info, err := decodeHelmRelease(latest.Data["release"])
 	if err != nil {
 		return nil, fmt.Errorf("decode %s: %w", latest.Name, err)
