@@ -184,7 +184,10 @@ hostname for a singleton, rather than a broad PCI-vendor selector.
   `feature.node.kubernetes.io/pci-15b3.present` label. BlueFields for which
   `mlxprivhost` reports `level: restricted` are excluded because the daemon
   will not publish `NicDevice` resources for them. Mixed nodes remain eligible
-  when they have at least one non-restricted NVIDIA NIC.
+  when they have at least one non-restricted NVIDIA NIC. Normal CLI output
+  reports each confirmed restricted PCI function by node/address and a total;
+  the probe summary logs `restrictedDevicesSkipped` separately from published
+  north-south filtering. Restricted devices remain absent from the saved config.
 - Image-pull access from every worker node to
   `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`.
   Use `--image-pull-secrets <name>` (or `networkOperator.imagePullSecrets`
