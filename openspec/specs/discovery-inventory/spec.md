@@ -79,6 +79,12 @@ A group property MUST declare its aggregation policy for disagreement and incomp
 - **THEN** each worker must report eight east-west ASIC NICs forming four complete reciprocal NetworkBay pairs, each with ASIC 1 and ASIC 0; NetworkBays ordered by ASIC 1 PCI address form rails by crossing opposite ASICs between NetworkBays 1/2 and 3/4, after GPU/preset enrichment, without changing PF order.
 - **AND** missing, invalid or incomplete status, or differing worker mappings, stops discovery before saving inventory rather than falling back to sequential rails.
 
+#### Scenario: Explicit read-only fabric enrichment
+
+- **WHEN** a read-only caller enables fabric discovery with REST credentials
+- **THEN** only existing daemon pods are executed, and every selected worker, raw PF represented by a retained rail, and completely enumerated port must report a unanimous configured link layer before group fabric is published.
+- **AND** missing, partial, denied or conflicting optional observations remain unknown with diagnostics; caller cancellation remains fatal, and existing no-option/REST-only calls acquire no enrichment execs.
+
 ### Requirement: Fresh and refresh behavior
 
 An inventory extension MUST cover fresh discovery and existing-config refresh. Refresh SHALL replace inventory and explicit CLI-targeted fields while preserving unrelated source fields, comments, omissions and explicit values.

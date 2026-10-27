@@ -6,6 +6,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -324,4 +325,49 @@ clusterConfig:
 	// Generation must fail before producing any manifests.
 	_, statErr := os.Stat(outputDir)
 	assert.True(t, os.IsNotExist(statErr), "no deployment files should be written when validation fails")
+}
+
+func TestGenerateIPoIBInboxAdvisoryWorksOfflineAndPreservesCapabilityGate(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	t.Chdir(filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..")))
+	for _, preset := range []bool{false, true} {
+		t.Run(fmt.Sprintf("preset-%t", preset), func(t *testing.T) {
+			cfg, err := config.DefaultLaunchKitConfig()
+			require.NoError(t, err)
+			cfg.Profile = &config.Profile{Fabric: "infiniband", Deployment: "rdma_shared"}
+			cfg.DOCADriver.Enable = false
+			cfg.ClusterConfig = []config.ClusterConfig{{Identifier: "inbox", WorkerNodes: []string{"worker-0"}, NodeSelector: map[string]string{"group": "inbox"}, Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Ib: true, Rdma: true, Sriov: true}}, PFs: []config.PFConfig{{PciAddress: "0000:18:00.0", DeviceID: "1023", Traffic: "east-west"}}}}
+			raw, err := yaml.Marshal(cfg)
+			require.NoError(t, err)
+			path := filepath.Join(t.TempDir(), "cluster-config.yaml")
+			require.NoError(t, os.WriteFile(path, raw, 0o600))
+			opts := options.Options{SaveDeploymentFiles: filepath.Join(t.TempDir(), "output")}
+			if preset {
+				opts.ForPreset = "GB300-DGX-Station-NVIDIA-GB300"
+				opts.NodeSelector = "group=inbox"
+			}
+			launcher := New(opts)
+			launcher.plugins[networkoperatorplugin.PluginName] = &networkoperatorplugin.NetworkOperatorPlugin{}
+			launcher.presetCatalog, err = presets.EmbeddedCatalog()
+			require.NoError(t, err)
+			out := &testOutput{}
+			launcher.ui = out
+			require.NoError(t, launcher.executeGeneration(path))
+			assert.Len(t, out.warnings, 1)
+			assert.Contains(t, out.warnings[0], "IPoIB")
+			// A file-backed invalid capability must still fail profile selection before
+			// emitting a host-readiness advisory; #303 remains authoritative.
+			if !preset {
+				cfg.ClusterConfig[0].Capabilities.Nodes.Ib = false
+				raw, err = yaml.Marshal(cfg)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(path, raw, 0o600))
+				out.warnings = nil
+				err = launcher.executeGeneration(path)
+				require.Error(t, err)
+				assert.Empty(t, out.warnings)
+			}
+		})
+	}
 }

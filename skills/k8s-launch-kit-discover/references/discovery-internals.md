@@ -118,6 +118,27 @@ suppress the other attributes or PF records.
 
 ---
 
+## Fabric observations
+
+`discovery/fabric.go` collects configured `link_layer` independently of link-up
+state. Grouping preserves the actual retained-to-raw PF collapse projection in
+transient `groupPFMembers`, associated with the sorted worker set so group
+filtering, identifiers or ordering cannot misassociate it. `buildNodePFIdentities`
+joins raw NicDevice records by node/normalized PCI; aliases stay transient.
+
+The probe resolves RDMA mappings through each PCI sysfs subtree, completes the
+port manifest for every expected PCI, then returns one result per manifest entry
+and terminal counts. Missing/duplicate/truncated/failed records make coverage
+unknown. Every selected worker, projected sibling PF and enumerated port must
+agree before group LinkType is saved. No default port-1 or representative-only
+success is used. An observed IB PF without a netdev emits a host-provisioning
+warning without pretending the RDMA shared plugin is ready.
+
+Normal discovery enables this collector; read-only discovery requires explicit
+`WithReadOnlyFabricDiscovery()` and REST credentials. No-option and REST-only
+read-only calls gain no fabric execs. Collection uses at most four goroutines,
+ten seconds per worker, no timeout retries and fatal caller cancellation.
+
 ## Node Grouping Algorithm
 
 Nodes are grouped by their **physical-function layout**. Two nodes belong to the same

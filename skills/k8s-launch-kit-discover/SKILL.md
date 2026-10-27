@@ -197,6 +197,14 @@ Do not add GPU counts or resource maps under `clusterConfig`.
 - A fresh discovery ignores the example profile in the installed reference
   config. Supplying that file explicitly through `--user-config` makes its
   profile values user input and therefore preserves them.
+- Fabric is published only after every selected worker/PF/port agrees, including
+  raw sibling PFs behind collapsed rails. Probes use node-local PCI identity;
+  saved representative RDMA names are not universal aliases. Normal discovery
+  batches one exec per worker, at most four concurrently with ten seconds each.
+- Read-only library discovery enables this work only through
+  `WithReadOnlyFabricDiscovery()` plus `WithReadOnlyRESTConfig`; REST-only callers
+  retain publisher verification without fabric enrichment. Permission/partial
+  failures leave fabric unknown; caller cancellation returns an error.
 - If fabric probes are mixed or unconfirmed, discovery still writes the file
   with an empty `profile.fabric`; set `--fabric` on discovery or generation.
 - `clusterConfig[].netplanManaged` is true when any worker has an NVIDIA PF

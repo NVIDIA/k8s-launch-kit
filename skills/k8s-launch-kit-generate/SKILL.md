@@ -43,6 +43,12 @@ Profile flags remain available as generation-time overrides. Generation keeps
 its source file unchanged and writes the exact effective configuration to
 `<OUTPUT_DIR>/.l8k/resolved-config.yaml` for later deploy and validation.
 
+For InfiniBand `rdma_shared` with the DOCA driver disabled, generation warns
+that host IPoIB netdevs and the shared-plugin `rdma_cm`, `umad` and `uverbs`
+character devices must be provisioned by the host owner. Check
+[IPoIB prerequisites](../../docs/user/profiles.md#ipoib-with-inbox-drivers);
+generated names and loaded-module lists do not prove host readiness.
+
 ## Profile Selection Flags
 
 | Flag | Required | Values | Description |

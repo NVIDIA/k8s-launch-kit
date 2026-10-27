@@ -53,6 +53,7 @@ type readOnlyOptions struct {
 	restConfig               *rest.Config
 	podExec                  readOnlyPodExec
 	assumeUnverifiedExcluded bool
+	fabricDiscovery          bool
 }
 
 // WithReadOnlyNetworkOperatorNamespace restricts daemon lookup to the
@@ -86,6 +87,13 @@ func WithReadOnlyAssumeUnverifiedExcluded() ReadOnlyOption {
 	}
 }
 
+// WithReadOnlyFabricDiscovery enables optional fabric probing in existing daemon
+// pods. Requires WithReadOnlyRESTConfig and pods/exec permission; no resources or
+// host configuration are modified. Incomplete observations leave LinkType unset.
+func WithReadOnlyFabricDiscovery() ReadOnlyOption {
+	return func(options *readOnlyOptions) { options.fabricDiscovery = true }
+}
+
 func withReadOnlyPodExec(exec readOnlyPodExec) ReadOnlyOption {
 	return func(options *readOnlyOptions) {
 		options.podExec = exec
@@ -113,6 +121,9 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	options := readOnlyOptions{}
 	for _, opt := range opts {
 		opt(&options)
+	}
+	if options.fabricDiscovery && options.restConfig == nil {
+		return nil, errors.New("DiscoverReadOnly: WithReadOnlyFabricDiscovery requires WithReadOnlyRESTConfig")
 	}
 	namespace, err := findDaemonSetNamespace(ctx, kubeClient, nicconfigdaemon.DaemonSetName, options.networkOperatorNamespace)
 	if err != nil {
@@ -187,7 +198,7 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	if len(missingNodes) > 0 {
 		return nil, fmt.Errorf("DiscoverReadOnly: NicDevice resources are missing for eligible publisher nodes: %v", missingNodes)
 	}
-	clusterConfig, warnings := buildClusterConfig(devices.Items, nodeLabels, nil, true)
+	clusterConfig, warnings, members := buildClusterConfigWithMembers(devices.Items, nodeLabels, nil, true)
 	if err := assignVRRails(clusterConfig, devices.Items); err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
 	}
@@ -198,6 +209,11 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		ui.FromContext(ctx).Warning("%s", warning)
 	}
 
+	if options.fabricDiscovery {
+		if err := discoverFabric(ctx, options.restConfig, namespace, clusterConfig, devices.Items, members, daemonPods, options.podExec); err != nil {
+			return nil, fmt.Errorf("DiscoverReadOnly: discover fabric: %w", err)
+		}
+	}
 	cfg, err := config.DefaultLaunchKitConfig()
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: load default config: %w", err)
