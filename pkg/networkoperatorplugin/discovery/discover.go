@@ -423,7 +423,9 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	// algorithm: every node in the group is patched with
 	// `nvidia.kubernetes-launch-kit.machine: <generated-identifier>` and the
 	// group's Identifier + NodeSelector are aligned with that value.
-	applyMachineLabelToGroups(ctx, c, cfg.ClusterConfig)
+	if err := applyMachineLabelToGroups(ctx, c, cfg.ClusterConfig); err != nil {
+		return fmt.Errorf("publish discovered node selectors: %w", err)
+	}
 
 	// Persist the automatic GPUDirect decision in the generated config. The
 	// test is enabled only when the configured extended GPU resource can
@@ -558,66 +560,103 @@ func resolvePresetCatalog(opts Options) (*presets.Catalog, error) {
 	return presets.DefaultCatalog()
 }
 
-// applyMachineLabelToGroups walks each group and writes two l8k-specific
-// labels onto every node in the group:
-//
-//   - MachineLabelKey = the generated per-source-group identifier, written
-//     when both machineType and gpuType are resolved.
-//   - GPULabelKey = `<gpuType>` literal — written when gpuType is resolved.
-//     Used as the merged-group NodeSelector when source groups span
-//     machineTypes but share a GPU type.
-//
-// Machine labels and generated group identifiers share the same lowercase,
-// vendor-free value, bounded to 30 bytes with balanced machine/GPU prefixes
-// and a deterministic hash. GPU labels retain their original case and vendor
-// segment and continue to use Kubernetes' 63-byte label-value limit.
-//
-// Groups whose machine label can't be computed (one input missing) keep
-// their fallback identifier ("group-N") and an empty NodeSelector. The
-// GPU label is still written when gpuType alone is resolved, so
-// merged-group selection still works.
-func applyMachineLabelToGroups(ctx context.Context, c client.Client, groups []config.ClusterConfig) {
-	for i := range groups {
-		g := &groups[i]
-		groupIdentifier := config.GeneratedGroupIdentifier(g.MachineType, g.GPUType)
-		gpuLabel := config.GPULabelValue(g.GPUType)
-
-		if groupIdentifier == "" {
-			log.Log.V(1).Info("Skipping machine label: machineType/gpuType unresolved",
-				"group", g.Identifier,
-				"machineType", g.MachineType,
-				"gpuType", g.GPUType)
-		} else {
-			log.Log.V(1).Info("Assigning machine label to group",
-				"originalIdentifier", g.Identifier,
-				"machineType", g.MachineType,
-				"gpuType", g.GPUType,
-				"labelValue", groupIdentifier,
-				"nodes", len(g.WorkerNodes))
-			g.Identifier = groupIdentifier
-			g.NodeSelector = map[string]string{config.MachineLabelKey: groupIdentifier}
-		}
-
-		labels := map[string]string{}
-		if groupIdentifier != "" {
-			labels[config.MachineLabelKey] = groupIdentifier
-		}
-		if gpuLabel != "" {
-			labels[config.GPULabelKey] = gpuLabel
-		}
-		if len(labels) == 0 {
-			continue
-		}
-		for _, nodeName := range g.WorkerNodes {
-			if err := patchNodeLabels(ctx, c, nodeName, labels); err != nil {
-				log.Log.Error(err, "failed to patch node labels",
-					"node", nodeName, "labels", labels)
-				continue
-			}
-			log.Log.V(1).Info("Wrote labels to node",
-				"node", nodeName, "labels", labels)
+// applyMachineLabelToGroups validates the entire proposed label layout before
+// writing labels. Selectors are published only after a fresh full-node read proves
+// exact membership. Completed patches remain on error; retry revalidates them.
+func applyMachineLabelToGroups(ctx context.Context, c client.Client, groups []config.ClusterConfig) error {
+	nodeLabels, err := fetchNodeLabels(ctx, c)
+	if err != nil {
+		return err
+	}
+	proposedLabels := make(map[string]map[string]string, len(nodeLabels))
+	for node, labels := range nodeLabels {
+		proposedLabels[node] = make(map[string]string, len(labels)+2)
+		for key, value := range labels {
+			proposedLabels[node][key] = value
 		}
 	}
+	planned := append([]config.ClusterConfig(nil), groups...)
+	identities := map[string]bool{}
+	workers := map[string]bool{}
+	patches := map[string]map[string]string{}
+	gpuWorkers := map[string][]string{}
+	for i := range planned {
+		group := &planned[i]
+		identifier := config.GeneratedGroupIdentifier(group.MachineType, group.GPUType)
+		if identifier != "" {
+			group.Identifier = identifier
+			group.NodeSelector = map[string]string{config.MachineLabelKey: identifier}
+		}
+		if (group.Identifier == "" && len(planned) != 1) || identities[group.Identifier] {
+			return fmt.Errorf("empty or colliding source group identifier %q; distinguish source identities before discovery", group.Identifier)
+		}
+		identities[group.Identifier] = true
+		if len(group.WorkerNodes) == 0 {
+			return fmt.Errorf("group %q has no workers", group.Identifier)
+		}
+		gpuLabel := config.GPULabelValue(group.GPUType)
+		for _, node := range group.WorkerNodes {
+			if node == "" || workers[node] {
+				return fmt.Errorf("empty or duplicate discovered worker %q", node)
+			}
+			workers[node] = true
+			labels, exists := proposedLabels[node]
+			if !exists {
+				return fmt.Errorf("discovered worker %q is missing from live nodes", node)
+			}
+			patch := map[string]string{}
+			if identifier != "" {
+				patch[config.MachineLabelKey] = identifier
+			}
+			if gpuLabel != "" {
+				patch[config.GPULabelKey] = gpuLabel
+				gpuWorkers[gpuLabel] = append(gpuWorkers[gpuLabel], node)
+			}
+			for key, value := range patch {
+				labels[key] = value
+			}
+			patches[node] = patch
+		}
+	}
+	for _, group := range planned {
+		if config.GeneratedGroupIdentifier(group.MachineType, group.GPUType) != "" && !selectorMatchesOnlyNodes(group.NodeSelector, group.WorkerNodes, proposedLabels) {
+			return fmt.Errorf("group %q machine label selects nodes outside discovered inventory; inspect stale labels before retrying", group.Identifier)
+		}
+	}
+	if err := ensureReadOnlyNodeSelectors(planned, proposedLabels); err != nil {
+		return err
+	}
+	for gpu, nodes := range gpuWorkers {
+		if !selectorMatchesOnlyNodes(map[string]string{config.GPULabelKey: gpu}, nodes, proposedLabels) {
+			return fmt.Errorf("GPU label %q selects nodes outside discovered inventory; inspect stale labels before retrying", gpu)
+		}
+	}
+	for _, group := range planned {
+		for _, node := range group.WorkerNodes {
+			if err := patchNodeLabels(ctx, c, node, patches[node]); err != nil {
+				return fmt.Errorf("patch labels on node %q: %w", node, err)
+			}
+		}
+	}
+	refreshed, err := fetchNodeLabels(ctx, c)
+	if err != nil {
+		return err
+	}
+	for _, group := range planned {
+		if !selectorMatchesOnlyNodes(group.NodeSelector, group.WorkerNodes, refreshed) {
+			return fmt.Errorf("group %q selector does not match exactly its workers after labeling", group.Identifier)
+		}
+	}
+	for gpu, nodes := range gpuWorkers {
+		if !selectorMatchesOnlyNodes(map[string]string{config.GPULabelKey: gpu}, nodes, refreshed) {
+			return fmt.Errorf("GPU label %q no longer matches exactly its discovered workers", gpu)
+		}
+	}
+	for i := range groups {
+		groups[i].Identifier = planned[i].Identifier
+		groups[i].NodeSelector = planned[i].NodeSelector
+	}
+	return nil
 }
 
 // patchNodeLabels applies one or more labels to a node via a

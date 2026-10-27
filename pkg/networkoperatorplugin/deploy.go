@@ -95,7 +95,7 @@ const deployPollInterval = 3 * time.Second
 // deploy-wide context. A shorter deploy-wide context deadline still wins.
 const nicInterfaceNameTemplateReconcileTimeout = 5 * time.Minute
 
-// appliedManifest pairs an applied "other" manifest with the
+// appliedManifest pairs immutable desired intent for an applied "other" manifest with the
 // information phase 4 needs to gate on controller observation:
 // awaitObservationAfterRV holds the resourceVersion the server
 // returned from our Patch when the apply bumped .metadata.generation
@@ -105,7 +105,7 @@ const nicInterfaceNameTemplateReconcileTimeout = 5 * time.Minute
 // stale `status: ready` from the previous reconcile and declare
 // success before the operator had even noticed the new spec.
 type appliedManifest struct {
-	obj                     *unstructured.Unstructured
+	desired                 *unstructured.Unstructured
 	awaitObservationAfterRV string
 }
 
@@ -200,6 +200,9 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	selected, err := prepareDeploymentObjects(artifacts, ocp)
 	if err != nil {
 		return pkgerrors.NewValidationError("invalid deployment artifacts", err, "Correct the generated manifests and rerun deploy")
+	}
+	if err := checkBundleTargetScopes(ctx, kubeClient, artifacts, opts.Config); err != nil {
+		return pkgerrors.NewValidationError("invalid hardware target scope", err, "Correct selectors and worker inventory, or regenerate legacy artifacts")
 	}
 	if ocp {
 		if _, present := artifacts.ValuesContent(); present {
@@ -317,18 +320,25 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 				preApplyGen = pre.GetGeneration()
 			}
 
+			if _, err := inspectDesiredTargetScope(ctx, kubeClient, obj, opts.Config); err != nil {
+				return fmt.Errorf("%s target scope: %w", label, err)
+			}
 			uiOutput.Info("Applying %s", label)
 			log.Log.Info("Applying manifest",
 				"kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace(),
 				"index", i+1, "total", len(otherDocs))
-			if err := applyUnstructuredWithRetry(ctx, kubeClient, obj, dryRun); err != nil {
+			// Apply decodes its server response into the supplied object. Keep
+			// desired selectors/source metadata immutable for polling and reapply.
+			applied := obj.DeepCopy()
+			if err := applyUnstructuredWithRetry(ctx, kubeClient, applied, dryRun); err != nil {
 				if ocp && meta.IsNoMatchError(err) && obj.GetAPIVersion() == "nv-ipam.nvidia.com/v1alpha1" && obj.GetKind() == "IPPool" && ncpObj != nil {
 					if dryRun {
 						deferred = append(deferred, label)
 						uiOutput.Warning("Deferred dry-run API validation for %s until NicClusterPolicy installs NV-IPAM", label)
 						continue
 					}
-					if retryErr := retryDependentAPI(ctx, kubeClient, obj); retryErr == nil {
+					if retried, retryErr := retryDependentAPI(ctx, kubeClient, obj, opts.Config); retryErr == nil {
+						applied = retried
 						err = nil
 					} else {
 						err = retryErr
@@ -340,9 +350,9 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 				}
 			}
 
-			am := appliedManifest{obj: obj}
-			if obj.GetGeneration() > preApplyGen && crstate.NeedsObservationGate(obj.GroupVersionKind()) {
-				am.awaitObservationAfterRV = obj.GetResourceVersion()
+			am := appliedManifest{desired: obj}
+			if applied.GetGeneration() > preApplyGen && crstate.NeedsObservationGate(obj.GroupVersionKind()) {
+				am.awaitObservationAfterRV = applied.GetResourceVersion()
 			}
 			appliedOthers = append(appliedOthers, am)
 		}
@@ -361,8 +371,8 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	if len(appliedOthers) > 0 {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Verifying %d manifest(s) reconcile", phases.next(), phases.total, len(appliedOthers)))
 		for i, am := range appliedOthers {
-			if err := pollUntilTerminal(ctx, kubeClient, registry, am.obj,
-				manifestLabel(am.obj, i+1, len(appliedOthers)), am.awaitObservationAfterRV, opts.Config); err != nil {
+			if err := pollUntilTerminal(ctx, kubeClient, registry, am.desired,
+				manifestLabel(am.desired, i+1, len(appliedOthers)), am.awaitObservationAfterRV, opts.Config); err != nil {
 				return err
 			}
 		}
@@ -372,24 +382,37 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	return nil
 }
 
-func retryDependentAPI(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
+func retryDependentAPI(ctx context.Context, c client.Client, desired *unstructured.Unstructured, cfg *config.LaunchKitConfig) (*unstructured.Unstructured, error) {
+	return retryDependentAPIWithInterval(ctx, c, desired, cfg, 3*time.Second)
+}
+
+func retryDependentAPIWithInterval(ctx context.Context, c client.Client, desired *unstructured.Unstructured, cfg *config.LaunchKitConfig, interval time.Duration) (*unstructured.Unstructured, error) {
 	deadline := time.NewTimer(5 * time.Minute)
 	defer deadline.Stop()
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		err := applyUnstructured(ctx, c, obj, false)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Node labels can change while waiting for an API to be installed. Every
+		// attempt uses original intent and a fresh pre-write membership check.
+		if _, err := inspectDesiredTargetScope(ctx, c, desired, cfg); err != nil {
+			return nil, fmt.Errorf("%s/%s target scope: %w", desired.GetKind(), desired.GetName(), err)
+		}
+		applied := desired.DeepCopy()
+		err := applyUnstructured(ctx, c, applied, false)
 		if err == nil {
-			return nil
+			return applied, nil
 		}
 		if !meta.IsNoMatchError(err) {
-			return err
+			return nil, err
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("timed out waiting for %s API after NicClusterPolicy: %w", obj.GetKind(), err)
+			return nil, fmt.Errorf("timed out waiting for %s API after NicClusterPolicy: %w", desired.GetKind(), err)
 		case <-ticker.C:
 		}
 	}
@@ -529,6 +552,7 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 	}()
 
 	var lastReason string
+	scopeWarningReported := false
 	reportProgress := func(reason string) {
 		if reason == lastReason || reason == "" {
 			return
@@ -627,6 +651,26 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 			}
 		}
 
+		scopeMessage, scopeErr := inspectLiveTargetScope(ctx, c, obj, sourceConfig)
+		if scopeErr != nil {
+			if err := ctx.Err(); err != nil {
+				progress.Fail(err.Error())
+				return err
+			}
+			if isRetryableTargetScopeReadError(scopeErr) {
+				reportProgress(fmt.Sprintf("target scope unverified; retrying temporary read failure: %v", scopeErr))
+				if err := waitForNextPoll(); err != nil {
+					return err
+				}
+				continue
+			}
+			progress.Fail(scopeErr.Error())
+			return fmt.Errorf("%s target scope: %w", label, scopeErr)
+		}
+		if scopeMessage == selectorOnlyWarning && !scopeWarningReported {
+			uiOutput.Warning("%s: %s", label, scopeMessage)
+			scopeWarningReported = true
+		}
 		res, err := registry.Validate(ctx, c, obj)
 		if err != nil {
 			log.Log.V(1).Info("Validate transient failure",
@@ -657,6 +701,10 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 				uiOutput.Warning("%s went missing mid-flight; re-applying", label)
 				log.Log.Info("Manifest reported not-deployed; re-applying",
 					"kind", obj.GetKind(), "name", obj.GetName())
+				if _, err := inspectDesiredTargetScope(ctx, c, obj, sourceConfig); err != nil {
+					progress.Fail(err.Error())
+					return fmt.Errorf("%s target scope: %w", label, err)
+				}
 				if isNicClusterPolicy(obj) {
 					if err := checkSecondaryNetworkDeployment(ctx, c, obj, sourceConfig); err != nil {
 						progress.Fail(fmt.Sprintf("Re-apply of %s blocked: %v", label, err))

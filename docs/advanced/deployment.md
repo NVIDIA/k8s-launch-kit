@@ -169,6 +169,37 @@ Launch Kit gates changed resources on controller observation, avoiding a false s
 
 Example workload manifests are not part of deployment. Files with `example` in the name are reserved for `l8k validate`.
 
+## Hardware target scope
+
+Before Helm, stray remediation or manifest writes, Launch Kit checks the desired
+selectors of SR-IOV node policies and NV-IPAM IPPools against the worker inventory
+referenced by their source-group annotations. It reads Nodes and requires exact
+membership, rejecting missing workers, extra CPU/DPU nodes and empty selectors.
+It repeats the check before affected resource apply/reapply, and checks live
+selectors during reconciliation. `--overwrite-existing`, external Helm and
+server dry-run do not bypass the check. Node-label changes are not transactional;
+recheck the resulting deployment after concurrent cluster changes.
+
+During reconciliation polling, temporary API timeouts, throttling and connection
+failures retry within the existing deployment timeout. Scope remains unverified
+and readiness is not evaluated until a fresh inspection succeeds. Denied reads,
+invalid source metadata and selector mismatches still stop deployment; failures
+of a pre-write inspection still prevent the write.
+
+Explicit user config takes precedence over the resolved sidecar. Annotated
+resources require all source IDs to resolve. `[""]` explicitly references an
+unnamed source only when it is the sole configured source; its worker inventory
+is checked normally and its configuration remains required. Mixed populated/empty worker lists,
+duplicate source IDs or worker memberships, and ambiguous legacy multi-source
+inventory are errors. Regenerate legacy manifests to add source metadata; only a
+single configured source has an unambiguous legacy association.
+
+Preset/manual resources whose sources all omit worker inventory, and unannotated
+artifact-only workflows, retain selector-only operation with a visible
+**target scope unverified** diagnostic. They do not establish inventory membership.
+This warning does not weaken PF or controller readiness failures. An annotated
+resource with missing configuration fails rather than falling back to this mode.
+
 ## Terminal State
 
 The shared resource-state registry classifies generated objects as:

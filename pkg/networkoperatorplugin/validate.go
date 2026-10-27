@@ -193,7 +193,9 @@ func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bund
 	return ValidateBundleWithConfig(ctx, c, artifacts, nil, flavor...)
 }
 
-// ValidateBundleWithConfig additionally checks external installer worker coverage.
+// ValidateBundleWithConfig checks external installer worker coverage and live
+// resource selectors against intended source inventory. Legacy callers retain
+// the existing configuration-free compatibility behavior.
 func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *bundle.Bundle, cfg *config.LaunchKitConfig, flavor ...string) ([]ValidationResult, error) {
 	if artifacts == nil {
 		return nil, fmt.Errorf("validation artifact bundle is nil")
@@ -243,6 +245,14 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 			continue
 		}
 
+		scopeMessage, scopeErr := inspectLiveTargetScope(ctx, c, obj, cfg)
+		if scopeErr != nil {
+			r.State = crstate.StateError
+			r.Reason = "target scope: " + scopeErr.Error()
+			applyLegacyFlags(&r)
+			results = append(results, r)
+			continue
+		}
 		res, vErr := registry.Validate(ctx, c, obj)
 		if vErr != nil {
 			// Transport error — treat as error state. Use the
@@ -262,6 +272,15 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 			r.State, r.Reason = validateOCPNetworkAttachment(ctx, c, obj)
 		}
 		r.Details = res.Details
+		if scopeMessage != "" {
+			if r.Details == nil {
+				r.Details = map[string]string{}
+			}
+			r.Details["targetScope"] = scopeMessage
+			if scopeMessage == selectorOnlyWarning {
+				r.Reason += "; " + scopeMessage
+			}
+		}
 		// Best-effort capture of the live object for the
 		// HTML report's "Live YAML" dropdown. Skip when the
 		// validator says the object isn't deployed — there's

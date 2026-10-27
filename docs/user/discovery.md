@@ -21,7 +21,7 @@ l8k discover \
   --save-cluster-config ./cluster-config.yaml
 ```
 
-The default `--node-selector` value is written to the saved configuration for deployment-time resource selection. It does not limit which nodes run the discovery daemon.
+The `--node-selector` value seeds deployment selection; it does not limit which nodes run the discovery daemon. Discovery derives an exact selector for each discovered worker group. An explicit CLI override is still user intent and is checked against saved worker membership at deployment.
 
 Before waiting for `NicDevice` resources, Launch Kit checks BlueField trust
 mode with `mlxprivhost`. A restricted BlueField is excluded from the wait set.
@@ -243,8 +243,18 @@ balanced machine/GPU prefixes plus a 6-character deterministic hash; unused
 prefix space moves to the longer component. GPU-only labels preserve the
 discovered case and `NVIDIA` segment, using the Kubernetes 63-byte limit and the
 existing 8-character shortening hash. If the machine or GPU type cannot be
-resolved, discovery uses a fallback `group-N` identifier and writes only the
-labels it can construct.
+resolved, discovery preserves the unnamed identifier for a sole source, or uses
+`group-N` for multiple sources, and writes only labels it can construct. Either
+case still requires a proven exact selector.
+
+Before writing labels, discovery checks all proposed source identities and worker
+memberships for collisions. It publishes selectors only after labeling succeeds
+and a fresh list of every Node proves exact membership. Unresolved hardware
+identities require another proven selector, such as the hostname of a singleton;
+a broad PCI-vendor label is insufficient. Failed label writes or stale Launch Kit
+machine/GPU labels on excluded nodes stop discovery. Inspect and correct those
+labels deliberately before retrying; discovery does not remove unrelated labels.
+Completed patches may remain after an error, so retries revalidate live labels.
 
 See [Heterogeneous Clusters](heterogeneous-clusters.md) for group merging and targeted generation.
 

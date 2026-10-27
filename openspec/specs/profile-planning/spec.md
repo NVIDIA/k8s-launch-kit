@@ -161,6 +161,24 @@ SHALL retain the CX9 four-plane fallback; defaults do not qualify a fabric recip
 - **WHEN** RA2.4 scope planning would emit multiple rail-pool parents through a multi-source strict subset or multiple buckets
 - **THEN** generation rejects the selection before rendering or replacing output because operator-created children share rail names; a complete compatible cohort or a single selected source remains supported.
 
+### Requirement: Hardware source identity is explicit
+
+SR-IOV policy and IPPool rendering SHALL preserve exact selected source identifiers
+through full-bucket and strict-subset generation. Duplicate source identifiers SHALL
+be rejected at the plugin boundary as well as application entrypoints. The
+established unnamed sole source SHALL retain its empty ID through explicit
+`[""]` source metadata rather than receiving a synthetic name.
+
+#### Scenario: Unnamed sole source
+
+- **WHEN** a valid single-source input has an empty identifier
+- **THEN** rendering preserves the identifier and records `[""]`; scope checking requires exactly one unnamed configured source and its worker inventory, and missing configuration cannot downgrade the check.
+
+#### Scenario: One GPU type spans separate buckets
+
+- **WHEN** selected sources sharing a GPU label have different rail-count buckets
+- **THEN** each resource retains only its intended source IDs, enabling deployment to reject a shared selector that includes another bucket's workers.
+
 ## Baseline and limits
 
 Current profile lookup is first-match; this spec does not introduce universal ambiguity rejection. Existing render maps do not universally detect pre-overwrite collisions: the collision requirement is an extension obligation, with legacy coverage to be assessed when touched. `ScopeClusterWide` may render a namespaced ConfigMap, while SCCs may render per workload namespace. [Resource kinds](../resource-kinds/spec.md) owns API/readiness integration; [artifacts](../artifact-handoff/spec.md) owns post-render structural validation.
