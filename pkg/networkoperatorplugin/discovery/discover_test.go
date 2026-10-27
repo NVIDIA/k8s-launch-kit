@@ -21,9 +21,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -34,6 +36,168 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+// The second-ASIC PCI order deliberately differs from first-ASIC order, so
+// sorting NetworkBays by minimum sibling PCI would produce different rails.
+func vrRailTestDevices(node string) []nicop.NicDevice {
+	pairs := [][2]string{
+		{"0000:30:00.0", "0000:04:00.0"},
+		{"0000:40:00.0", "0000:01:00.0"},
+		{"0000:50:00.0", "0000:03:00.0"},
+		{"0000:60:00.0", "0000:02:00.0"},
+	}
+	var devices []nicop.NicDevice
+	for _, pair := range pairs {
+		for i, pci := range pair {
+			devices = append(devices, nicop.NicDevice{
+				ObjectMeta: metav1.ObjectMeta{Name: node + "-" + strings.ReplaceAll(pci, ":", "-"), Namespace: "default"},
+				Status: nicop.NicDeviceStatus{
+					Node: node, Type: "1025", SuperNIC: true,
+					Ports:      []nicop.NicDevicePortSpec{{PCI: pci}},
+					NetworkBay: &nicop.NicDeviceNetworkBayStatus{Asic: 1 - i, PeerPCI: pair[1-i]},
+				},
+			})
+		}
+	}
+	return devices
+}
+
+func vrRailTestGroup(devices []nicop.NicDevice, nodes ...string) config.ClusterConfig {
+	group := config.ClusterConfig{Identifier: "vr-test", MachineType: "VR", WorkerNodes: nodes}
+	for _, device := range devices {
+		for _, port := range device.Status.Ports {
+			rail := 99 // Prior GPU/preset assignments must be replaced.
+			group.PFs = append(group.PFs, config.PFConfig{PciAddress: port.PCI, DeviceID: "1025", Traffic: "east-west", Rail: &rail})
+		}
+	}
+	slices.SortFunc(group.PFs, func(a, b config.PFConfig) int { return strings.Compare(a.PciAddress, b.PciAddress) })
+	return group
+}
+
+func assertVRTestRails(t *testing.T, group config.ClusterConfig) {
+	t.Helper()
+	want := map[string]int{
+		"0000:30:00.0": 0, "0000:01:00.0": 0,
+		"0000:04:00.0": 1, "0000:40:00.0": 1,
+		"0000:50:00.0": 2, "0000:02:00.0": 2,
+		"0000:03:00.0": 3, "0000:60:00.0": 3,
+	}
+	for _, pf := range group.PFs {
+		require.NotNil(t, pf.Rail)
+		assert.Equal(t, want[pf.PciAddress], *pf.Rail, pf.PciAddress)
+	}
+}
+
+func TestAssignVRRailsUsesFirstASICOrderAndPreservesPFOrder(t *testing.T) {
+	devices := vrRailTestDevices("worker-a")
+	groups := []config.ClusterConfig{vrRailTestGroup(devices, "worker-a", "worker-b")}
+	before := slices.Clone(groups[0].PFs)
+	devices = append(devices, vrRailTestDevices("worker-b")...)
+	slices.Reverse(devices) // API list order must not affect the result.
+	require.NoError(t, assignVRRails(groups, devices))
+	assertVRTestRails(t, groups[0])
+	for i := range before {
+		assert.Equal(t, before[i].PciAddress, groups[0].PFs[i].PciAddress)
+	}
+	// In this order, ASIC0 precedes ASIC1 within rail 0. Membership is the
+	// only requested change; discovery must not impose an ASIC-index order.
+	assert.Equal(t, "0000:01:00.0", groups[0].PFs[0].PciAddress)
+}
+
+func TestAssignVRRailsRejectsInvalidTopologyWithoutPartialMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*config.ClusterConfig, []nicop.NicDevice) []nicop.NicDevice
+		want   string
+	}{
+		{"missing status", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[0].Status.NetworkBay = nil
+			return d
+		}, "daemon and installed NicDevice CRD"},
+		{"missing peer", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[1].Status.NetworkBay.PeerPCI = ""
+			return d
+		}, "invalid NetworkBay peer"},
+		{"self peer", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[1].Status.NetworkBay.PeerPCI = d[1].Status.Ports[0].PCI
+			return d
+		}, "distinct east-west"},
+		{"unknown peer", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[1].Status.NetworkBay.PeerPCI = "0000:ff:00.0"
+			return d
+		}, "distinct east-west"},
+		{"nonreciprocal peer", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[0].Status.NetworkBay.PeerPCI = d[3].Status.Ports[0].PCI
+			return d
+		}, "reciprocal"},
+		{"same ASIC", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[0].Status.NetworkBay.Asic = 0
+			return d
+		}, "complementary ASICs"},
+		{"invalid ASIC", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[1].Status.NetworkBay.Asic = 2
+			return d
+		}, "invalid NetworkBay ASIC"},
+		{"missing device", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice { return append(d[:3], d[4:]...) }, "no NicDevice status"},
+		{"duplicate device", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice { return append(d, d[0]) }, "duplicate NicDevice"},
+		{"no worker", func(g *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice { g.WorkerNodes = nil; return d }, "no worker nodes"},
+		{"partial EW selection", func(g *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			g.PFs[0].Traffic = "north-south"
+			return d
+		}, "expected eight east-west ASIC NICs"},
+		{"malformed PCI", func(g *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			g.PFs[0].PciAddress = "bad"
+			return d
+		}, "invalid PCI address"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			good := vrRailTestDevices("good-worker")
+			bad := vrRailTestDevices("bad-worker")
+			groups := []config.ClusterConfig{vrRailTestGroup(good, "good-worker"), vrRailTestGroup(bad, "bad-worker")}
+			bad = tt.mutate(&groups[1], bad)
+			err := assignVRRails(groups, append(good, bad...))
+			require.ErrorContains(t, err, tt.want)
+			for _, group := range groups {
+				for _, pf := range group.PFs {
+					assert.Equal(t, 99, *pf.Rail, "neither the valid nor invalid group may be partially updated")
+				}
+			}
+		})
+	}
+}
+
+func TestAssignVRRailsRejectsDifferentWorkerLayouts(t *testing.T) {
+	first, second := vrRailTestDevices("worker-a"), vrRailTestDevices("worker-b")
+	// Exchange the second ASIC between NetworkBay 1 and 3 on worker-b, keeping
+	// each physical pair reciprocal and otherwise valid.
+	second[0].Status.NetworkBay.PeerPCI, second[4].Status.NetworkBay.PeerPCI = second[4].Status.NetworkBay.PeerPCI, second[0].Status.NetworkBay.PeerPCI
+	second[1].Status.NetworkBay.PeerPCI, second[5].Status.NetworkBay.PeerPCI = second[5].Status.NetworkBay.PeerPCI, second[1].Status.NetworkBay.PeerPCI
+	groups := []config.ClusterConfig{vrRailTestGroup(first, "worker-a", "worker-b")}
+	require.ErrorContains(t, assignVRRails(groups, append(first, second...)), "different NetworkBay rail layout")
+	for _, pf := range groups[0].PFs {
+		assert.Equal(t, 99, *pf.Rail)
+	}
+}
+
+func TestAssignVRRailsHandlesSplitFunctionsAndLeavesOtherTrafficUntouched(t *testing.T) {
+	devices := vrRailTestDevices("worker-a")
+	devices[0].Status.Ports = append(devices[0].Status.Ports, nicop.NicDevicePortSpec{PCI: "0000:30:00.1"})
+	group := vrRailTestGroup(devices, "worker-a")
+	devices = append(devices, nicop.NicDevice{Status: nicop.NicDeviceStatus{Node: "worker-a", Ports: []nicop.NicDevicePortSpec{{PCI: "unavailable"}}}})
+	group.PFs = append(group.PFs, config.PFConfig{PciAddress: "0000:70:00.0", Traffic: "north-south", Rail: nil})
+	other := config.ClusterConfig{MachineType: "B300", PFs: []config.PFConfig{{PciAddress: "unknown", Traffic: "east-west", Rail: nil}}}
+	groups := []config.ClusterConfig{group, other}
+	require.NoError(t, assignVRRails(groups, devices))
+	for _, pf := range groups[0].PFs {
+		if strings.HasPrefix(pf.PciAddress, "0000:30:00.") {
+			require.NotNil(t, pf.Rail)
+			assert.Zero(t, *pf.Rail)
+		}
+	}
+	assert.Equal(t, group.PFs[len(group.PFs)-1], groups[0].PFs[len(group.PFs)-1])
+	assert.Equal(t, other, groups[1])
+}
 
 func TestGPUDirectAvailableOnAllGroupNodes(t *testing.T) {
 	groups := []config.ClusterConfig{

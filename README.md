@@ -9,7 +9,8 @@ The current lifecycle uses the `host` target by default. The reserved `dpf` targ
 Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued releases;
 RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
 from GPU-product substrings or VR machine types, and accept optional HWPLB
-software-plane and OVS settings. VR HWPLB accepts an explicit eight-plane layout. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
+software-plane and OVS settings. VR with ConnectX-9 defaults to eight-plane HWPLB;
+discovery derives its four rails from NetworkBay peer status. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
 including the required NCO implementation/CRDs beyond the current 26.10 beta.2 package.
 
 ## Documentation

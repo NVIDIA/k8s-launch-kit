@@ -166,6 +166,9 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		return nil, fmt.Errorf("DiscoverReadOnly: NicDevice resources are missing for eligible publisher nodes: %v", missingNodes)
 	}
 	clusterConfig, warnings := buildClusterConfig(devices.Items, nodeLabels, nil, true)
+	if err := assignVRRails(clusterConfig, devices.Items); err != nil {
+		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
+	}
 	if err := ensureReadOnlyNodeSelectors(clusterConfig, nodeLabels); err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
 	}

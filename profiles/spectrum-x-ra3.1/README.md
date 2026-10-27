@@ -34,7 +34,12 @@ sources must share that layout. This excludes the current
 Discovery refresh retains explicit software-plane assignments only for verified
 unchanged worker membership and rail hardware; otherwise it drops them and warns.
 
-For VR HWPLB, explicitly use eight planes. Two NICs per rail produce
-`pfsPerNic: 4` and eight PF names; master PCI addresses retain input order
-(ASIC1 first, ASIC0 second). NCO and the supplied doSPCX bundle must support
-this layout. Generation alone does not qualify runtime support.
+VR with ConnectX-9 defaults to HWPLB and eight planes, preserving explicit
+YAML/CLI values. Explicit SWPLB with an omitted plane count retains the CX9
+four-plane fallback; this does not qualify that recipe.
+[VR discovery](../../docs/user/discovery.md#vr-networkbay-rails) requires four
+complete NetworkBay pairs and crosses opposite ASICs between adjacent NetworkBays,
+numbered by ascending first-ASIC PCI. Two NICs per rail produce `pfsPerNic: 4`
+and eight PF names; master PCI addresses retain input order without an imposed
+ASIC order. NCO and the supplied doSPCX bundle must support this layout.
+Generation alone does not qualify runtime support.

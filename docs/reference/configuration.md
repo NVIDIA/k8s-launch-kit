@@ -438,8 +438,8 @@ profile:
 | `ignoreARP` | Adds `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` through the `tuning` CNI plugin outside Spectrum-X. Kubernetes renders both `all` and `IFNAME` scopes; OpenShift renders `IFNAME` only and requires those keys in the Multus sysctl allowlist. |
 | `spectrumX.enable` | Select a Spectrum-X profile. |
 | `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4`, or `RA3.1`; RA2.3 requires 26.7, RA2.4 and RA3.1 require 26.10 or a newer catalogued release. |
-| `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. When absent, H100/H200/B200/GB200 default to `none`; B300/GB300 default to the GA `swplb` path. Platform type cannot distinguish `swplb` from `hwplb`, so `hwplb` must be selected explicitly. |
-| `spectrumX.numberOfPlanes` | `1`, `2`, `4`, or `8`. Single-plane platforms default to 1; B300/GB300 default to 2. Pass 4 explicitly for quad-plane B300. |
+| `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. When absent, H100/H200/B200/GB200 default to `none`; B300/GB300 default to the GA `swplb` path. B300/GB300 require explicit `hwplb`; VR with ConnectX-9 defaults to `hwplb` on RA2.4/RA3.1. |
+| `spectrumX.numberOfPlanes` | `1`, `2`, `4`, or `8`. Single-plane platforms default to 1; B300/GB300 default to 2; VR/CX9 HWPLB defaults to 8 on RA2.4/RA3.1. Pass 4 explicitly for quad-plane B300. |
 | `spectrumX.topologyType` | `2-tier` or `3-tier`. |
 | `spectrumX.ipVersion` | `ipv4` for per-node `/31` allocation or `ipv6` for per-node `/64` allocation. |
 | `spectrumX.hostFirstOctet` | Config-only first octet for generated IPv4 topology addressing. |
@@ -462,8 +462,10 @@ RA2.4/RA3.1 generation fails. See the [RA2.4 contract](../user/spectrum-x.md#ra2
 for release prerequisites, merging, defaults and supported layouts.
 
 A `machineType` containing `VR` (case-insensitive) selects platform `vr` before
-GPU-product matching, including when `gpuType` is empty. For VR HWPLB, set
-`multiplaneMode: hwplb` and `numberOfPlanes: 8` explicitly.
+GPU-product matching, including when `gpuType` is empty. With ConnectX-9 and
+RA2.4/RA3.1, omitted mode/planes default to `hwplb`/8. Explicit `swplb` with no
+plane count retains the CX9 four-plane fallback. See [VR discovery](../user/discovery.md#vr-networkbay-rails)
+for the NetworkBay-derived rail mapping and discovery prerequisites.
 
 ## Hardware Groups
 

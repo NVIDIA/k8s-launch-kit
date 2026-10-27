@@ -641,3 +641,53 @@ func TestVRRA31EightPlaneGeneration(t *testing.T) {
 		})
 	}
 }
+
+func TestVRNetworkBayRailsRenderEightPlanes(t *testing.T) {
+	cfg, profile := dospcxConfigAndProfile(t, "RA3.1", "hwplb", 8)
+	cfg.ClusterConfig = cfg.ClusterConfig[:1]
+	group := &cfg.ClusterConfig[0]
+	group.MachineType, group.GPUType = "machine-VR", ""
+	group.PFs = nil
+	// Discovery preserves PCI order; rail membership crosses adjacent NetworkBays.
+	for _, nic := range []struct {
+		pci  string
+		rail int
+	}{
+		{"0001:03:00.0", 0}, {"0003:01:00.0", 1},
+		{"0004:03:00.0", 1}, {"0006:01:00.0", 0},
+		{"0009:03:00.0", 2}, {"000b:01:00.0", 3},
+		{"000c:03:00.0", 3}, {"000e:01:00.0", 2},
+	} {
+		rail := nic.rail
+		group.PFs = append(group.PFs, config.PFConfig{PciAddress: nic.pci, DeviceID: "1025", Traffic: "east-west", Rail: &rail})
+	}
+	cfg.Profile.SpectrumX.TopologyFile = writeSpectrumXTopology(t, cfg, 8)
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+	require.NoError(t, err)
+	files := []bundle.File{}
+	found := false
+	for name, content := range rendered {
+		files = append(files, bundle.File{Name: name, Content: content})
+		var obj struct {
+			Kind string `yaml:"kind"`
+			Spec struct {
+				PFsPerNIC int        `yaml:"pfsPerNic"`
+				Rails     [][]string `yaml:"railPciAddresses"`
+			} `yaml:"spec"`
+		}
+		require.NoError(t, yaml.Unmarshal([]byte(content), &obj))
+		if obj.Kind == "NicInterfaceNameTemplate" {
+			found = true
+			require.Equal(t, 4, obj.Spec.PFsPerNIC)
+			require.Equal(t, [][]string{
+				{"0001:03:00.0", "0006:01:00.0"},
+				{"0003:01:00.0", "0004:03:00.0"},
+				{"0009:03:00.0", "000e:01:00.0"},
+				{"000b:01:00.0", "000c:03:00.0"},
+			}, obj.Spec.Rails)
+		}
+	}
+	require.True(t, found)
+	_, err = bundle.FromFiles(files)
+	require.NoError(t, err)
+}

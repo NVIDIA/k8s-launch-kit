@@ -33,3 +33,10 @@ sources must share that layout. This excludes the current
 `ThinkSystem-SR650-V4-RTX-PRO-6000` preset, which splits one NIC across rails.
 Discovery refresh retains explicit software-plane assignments only for verified
 unchanged worker membership and rail hardware; otherwise it drops them and warns.
+
+VR with ConnectX-9 defaults to HWPLB and eight planes, preserving explicit
+YAML/CLI values. Explicit SWPLB with an omitted plane count retains the CX9
+four-plane fallback; this does not qualify that recipe. See the
+[VR discovery contract](../../docs/user/discovery.md#vr-networkbay-rails) for
+NetworkBay status prerequisites and rail membership. NCO and the supplied
+doSPCX bundle must support the layout; generation does not qualify runtime use.

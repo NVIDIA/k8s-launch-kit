@@ -132,6 +132,9 @@ except that a case-insensitive VR substring in MachineType SHALL take precedence
 and resolve to vr, including when GPUType is empty. RA3.1 SHALL preserve the
 RA2.4 rail-layout and merge safeguards. Eight-plane HWPLB generation SHALL
 retain two-NIC input order and emit four PFs per NIC when each rail has two NICs.
+VR with ConnectX-9 SHALL default to HWPLB with eight planes for RA2.4/RA3.1,
+preserving explicit YAML/CLI values. An explicit SWPLB mode with no plane count
+SHALL retain the CX9 four-plane fallback; defaults do not qualify a fabric recipe.
 
 #### Scenario: Unresolved discovery and generation
 

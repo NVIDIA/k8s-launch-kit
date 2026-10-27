@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/Mellanox/network-operator v1.4.1-0.20260415085747-fd00b67fe97a
-	github.com/Mellanox/nic-configuration-operator v1.3.1
+	github.com/Mellanox/nic-configuration-operator v1.3.2-0.20261027094742-6806232e532b
 	github.com/go-logr/logr v1.4.4
 	github.com/go-logr/zapr v1.3.0
 	github.com/mitchellh/copystructure v1.2.0
@@ -121,7 +121,7 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

@@ -354,13 +354,14 @@ profile:
     # Multiplane mode: "none", "swplb" (software PLB), or "hwplb"
     # (hardware PLB). When Spectrum-X is enabled and this is absent,
     # H100/H200/B200/GB200 default to none; B300/GB300 default to the
-    # GA swplb path. Platform type cannot select hwplb; override explicitly.
+    # GA swplb path. VR/CX9 on RA2.4/RA3.1 defaults to hwplb and 8 planes.
     # multiplaneMode: swplb
 
     # int | default: derived from GPU platform + east-west NIC device ID
-    # Number of network planes (1, 2, 4, or 8). Also used as pfsPerNic for
-    # Spectrum-X. Single-plane platforms default to 1; B300/GB300 default
-    # to 2. Set 4 explicitly for a quad-plane B300 topology.
+    # Number of network planes (1, 2, 4, or 8). With two NICs per rail,
+    # pfsPerNic is half this value. Single-plane platforms default to 1;
+    # B300/GB300 default to 2; VR/CX9 HWPLB on RA2.4/RA3.1 defaults to 8.
+    # Set 4 explicitly for a quad-plane B300 topology.
     # numberOfPlanes: 2
 
 # ============================================================================
@@ -455,10 +456,15 @@ clusterConfig:
 RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
 accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
-For VR HWPLB, explicitly select `--spectrum-x RA3.1 --multiplane-mode hwplb
---number-of-planes 8`. Two NICs per rail render `pfsPerNic: 4`; input NIC order
-is preserved. Use a compatible NCO and doSPCX bundle; rendering is not live
-hardware qualification.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
+status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
+compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when

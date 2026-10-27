@@ -59,14 +59,16 @@ Select the release line explicitly when generating, as in the [RA2.3 procedure](
 When `multiplaneMode` or `numberOfPlanes` is absent, l8k combines the
 discovered GPU platform with the east-west NIC device ID:
 
-| GPU platform | Default mode | Default planes | Notes |
+| Platform | Default mode | Default planes | Notes |
 | --- | --- | --- | --- |
 | H100, H200, B200, GB200 | `none` | 1 | Single-plane architecture. |
 | B300 | `swplb` | 2 | Conservative dual-plane default; pass 4 explicitly for a quad-plane topology. |
 | GB300 | `swplb` | 2 | Dual-plane architecture. |
+| VR with ConnectX-9 | `hwplb` | 8 | RA2.4/RA3.1; explicit `swplb` retains the CX9 four-plane fallback when its plane count is omitted. |
 
 The platform is read from `clusterConfig[].gpuType`, with `machineType` as a
-fallback. `--for` presets participate in the same resolution before manifests
+fallback. On RA2.4/RA3.1, a `machineType` containing `VR` takes precedence,
+including without a GPU product. `--for` presets participate in the same resolution before manifests
 are rendered.
 
 The generated `NicConfigurationTemplate` derives both
@@ -191,12 +193,15 @@ The current `ThinkSystem-SR650-V4-RTX-PRO-6000` preset splits functions of one
 physical NIC across rails. RA2.4 rejects that layout because NCO assigns one rail
 per physical NIC; it requires a representable layout before generation can proceed.
 
-For VR HWPLB, explicitly pass `--spectrum-x RA3.1 --multiplane-mode hwplb
---number-of-planes 8`. With two NICs per rail, naming emits `pfsPerNic: 4`
-and eight logical PF names per rail. NICs retain their first-seen input order
-inside each rail; do not sort the two master PCI addresses to change that order.
-The site inventory must put ASIC1 first (`nic_index_in_rail=0`), then ASIC0
-(`nic_index_in_rail=1`). Hardware defaults do not infer this eight-plane layout.
+For VR with ConnectX-9, RA2.4/RA3.1 defaults to `hwplb` and eight planes when
+those settings are omitted. Explicit YAML and CLI values take precedence. An
+explicit `swplb` with an omitted plane count keeps the CX9 four-plane fallback;
+that fallback does not establish a supported fabric recipe.
+[VR discovery](discovery.md#vr-networkbay-rails) derives four rails from eight
+east-west ASIC NICs using their NetworkBay peer status. With two NICs per rail,
+naming emits `pfsPerNic: 4` and eight logical PF names per rail. NICs retain
+their first-seen input order inside each rail; discovery assigns membership
+without imposing an ASIC order within a rail.
 The deployed NCO must accept eight planes and the doSPCX bundle must support
 RA3.1/VR; a successful render does not verify either prerequisite. Eight-plane
 SWPLB with IPv4 is still limited by the allocator's two-bit plane field.

@@ -564,3 +564,42 @@ func hasNamespace(t *testing.T, c client.Client, name string) bool {
 	ns := &corev1.Namespace{}
 	return c.Get(context.Background(), client.ObjectKey{Name: name}, ns) == nil
 }
+
+func TestDiscoverReadOnlyAssignsVRRailsFromNetworkBayStatus(t *testing.T) {
+	for _, missingStatus := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing-status-%t", missingStatus), func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, corev1.AddToScheme(scheme))
+			require.NoError(t, nicop.AddToScheme(scheme))
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{"nvidia.com/gpu.machine": "VR"}}}
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "daemon-worker-a", Namespace: "nvidia-network-operator",
+					OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}},
+				},
+				Spec: corev1.PodSpec{NodeName: "worker-a"},
+				Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
+					{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+				}},
+			}
+			devices := vrRailTestDevices("worker-a")
+			if missingStatus {
+				devices[0].Status.NetworkBay = nil
+			}
+			objects := []client.Object{node, pod}
+			for i := range devices {
+				objects = append(objects, &devices[i])
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+			cfg, err := DiscoverReadOnly(context.Background(), c)
+			if missingStatus {
+				require.ErrorContains(t, err, "no NetworkBay status")
+				require.Nil(t, cfg)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, cfg.ClusterConfig, 1)
+			assertVRTestRails(t, cfg.ClusterConfig[0])
+		})
+	}
+}

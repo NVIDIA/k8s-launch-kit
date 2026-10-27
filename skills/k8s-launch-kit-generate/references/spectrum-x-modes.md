@@ -63,7 +63,7 @@ ovs-network-plane-1-rail-0
 ## Mode: hwplb (Hardware Plane Load Balancing)
 
 - **NIC type**: ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
-- **Number of planes**: 2 or 4, selected explicitly with `hwplb`
+- **Number of planes**: 2, 4, or 8; VR/CX9 defaults to 8 with RA2.4/RA3.1
 - **Profile**: `spectrum-x` (base Spectrum-X profile)
 - **Resource naming**: Per-rail only (hardware handles plane distribution)
 
@@ -102,6 +102,7 @@ choice. Unknown platforms retain the NIC-family fallback in the table above.
 | H100/H200/B200/GB200 | `none` | 1 | Single-plane architecture |
 | B300 | `swplb` | 2 | Pass 4 explicitly for quad-plane |
 | GB300 | `swplb` | 2 | Dual-plane architecture |
+| VR with CX9 | `hwplb` | 8 | RA2.4/RA3.1; explicit SWPLB retains the four-plane fallback |
 
 ## Number of Planes Rules
 
@@ -109,7 +110,7 @@ choice. Unknown platforms retain the NIC-family fallback in the table above.
 |-----------|-------------|---------|----------------------------------------|
 | `none`    | 1           | 1       | CX7/BF3, single plane                  |
 | `swplb`   | 2, 4        | 2 on B300/GB300 | Pass 4 explicitly for quad-plane B300 |
-| `hwplb`   | 2, 4        | explicit | Platform type cannot select the mode |
+| `hwplb`   | 2, 4, 8     | VR/CX9: 8 on RA2.4/RA3.1 | B300/GB300 require explicit mode selection |
 
 ## Version
 
@@ -161,10 +162,15 @@ error message.
 RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
 accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
-For VR HWPLB, explicitly select `--spectrum-x RA3.1 --multiplane-mode hwplb
---number-of-planes 8`. Two NICs per rail render `pfsPerNic: 4`; input NIC order
-is preserved. Use a compatible NCO and doSPCX bundle; rendering is not live
-hardware qualification.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
+status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
+compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when

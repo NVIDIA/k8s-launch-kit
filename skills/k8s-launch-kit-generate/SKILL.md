@@ -43,8 +43,8 @@ its source file unchanged and writes the exact effective configuration to
 | `--fabric` | Auto-defaulted | `ethernet`, `infiniband` | Network fabric. Auto-defaults from the cluster's unanimous `linkType` when omitted (Unit 5 fabric probe); skipped+warned when groups disagree or any has unverified linkType. |
 | `--deployment-type` | Auto-defaulted | `sriov`, `rdma_shared`, `host_device` | Deployment type. Auto-defaults to `sriov`. |
 | `--spectrum-x` | — | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4`, `RA3.1` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
-| `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from GPU platform plus east-west PF deviceID: H100/H200/B200/GB200 → `none`; B300/GB300 → the GA `swplb` path. Platform cannot identify `hwplb`; select it explicitly. Unknown platforms fall back to NIC family. |
-| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4`, `8` | Single-plane platforms → 1; B300/GB300 → 2. Pass 4 explicitly for quad-plane B300. An explicit `none` also implies 1, and an explicit 1 implies `none`. |
+| `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from GPU platform plus east-west PF deviceID: H100/H200/B200/GB200 → `none`; B300/GB300 → the GA `swplb` path. Select `hwplb` explicitly for B300/GB300; VR/CX9 defaults to `hwplb` on RA2.4/RA3.1. Unknown platforms fall back to NIC family. |
+| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4`, `8` | Single-plane platforms → 1; B300/GB300 → 2; VR/CX9 HWPLB on RA2.4/RA3.1 → 8. Pass 4 explicitly for quad-plane B300. An explicit `none` also implies 1, and an explicit 1 implies `none`. |
 | `--topology-scheme` | Required with `--spectrum-x` | `2-tier`, `3-tier` | Selects the Spectrum-X topology addressing scheme. |
 | `--ip-version` | Required with `--spectrum-x` | `ipv4`, `ipv6` | Selects per-node IPv4 `/31` or IPv6 `/64` CIDRPool allocation. |
 | `--topology-file` | Required with `--spectrum-x` | path | spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from the JSON structure. |
@@ -326,10 +326,15 @@ runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. 
 RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
 accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
-For VR HWPLB, explicitly select `--spectrum-x RA3.1 --multiplane-mode hwplb
---number-of-planes 8`. Two NICs per rail render `pfsPerNic: 4`; input NIC order
-is preserved. Use a compatible NCO and doSPCX bundle; rendering is not live
-hardware qualification.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
+status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
+compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when
