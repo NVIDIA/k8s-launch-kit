@@ -36,6 +36,12 @@ type nodePFIdentity struct {
 // buildNodePFIdentities establishes expected membership before observing probe
 // successes. A missing/ambiguous raw record remains an explicit expected entry.
 func buildNodePFIdentities(groups []config.ClusterConfig, devices []nicop.NicDevice, members groupPFMembers) []nodePFIdentity {
+	return buildPFIdentities(groups, devices, members, false)
+}
+
+// GPU classification must also observe north-south PFs: complete PIX evidence
+// may change the heuristic classification. Fabric keeps its east-west scope.
+func buildPFIdentities(groups []config.ClusterConfig, devices []nicop.NicDevice, members groupPFMembers, includeNorthSouth bool) []nodePFIdentity {
 	type alias struct{ rdma, net string }
 	inventory := map[string]map[string][]alias{}
 	for _, d := range devices {
@@ -51,7 +57,7 @@ func buildNodePFIdentities(groups []config.ClusterConfig, devices []nicop.NicDev
 	for i, group := range groups {
 		projection := members[groupWorkerKey(group.WorkerNodes)]
 		for _, pf := range group.PFs {
-			if pf.Traffic != "east-west" {
+			if !includeNorthSouth && pf.Traffic != "east-west" {
 				continue
 			}
 			retained := normalizePCI(pf.PciAddress)

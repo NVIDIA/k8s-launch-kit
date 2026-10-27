@@ -18,7 +18,6 @@ package discovery
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"sort"
@@ -32,16 +31,6 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 )
-
-// gpuTopologyProbeCmd emits the nvidia-smi-owned part of the batched topology
-// probe. Missing or crashing nvidia-smi keeps the overall exit code at 0 so
-// the independent per-PF sysfs discovery still runs.
-const gpuTopologyProbeCmd = `if [ -x /host/usr/bin/nvidia-smi ]; then
-  export LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH
-  /host/usr/bin/nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader 2>/dev/null || true
-  echo '---TOPO---'
-  /host/usr/bin/nvidia-smi topo -mp 2>/dev/null || true
-fi`
 
 // pfDiscoveryProbeCmd is the integration point for host attributes that are
 // unavailable from NicDevice. It walks every NVIDIA/Mellanox physical PCI
@@ -109,17 +98,6 @@ done`
 // every worker in a hardware group because MAC addresses and netplan files are
 // node-specific.
 const nodePFDiscoveryProbeCmd = pfDiscoveryProbeCmd + "\n" + netplanDiscoveryProbeCmd
-
-// topologyProbeCmd runs the representative node's GPU and node-local discovery
-// families in one pod exec. It emits four blocks (some may be empty):
-//  1. nvidia-smi --query-gpu CSV: "<index>, <pci.bus_id>"
-//     --- TOPO --- marker
-//  2. nvidia-smi topo -mp output (matrix + NIC legend)
-//     --- PF --- marker
-//  3. Per-PF key=value records emitted by pfDiscoveryProbeCmd.
-//     --- NETPLAN --- marker
-//  4. Sanitized per-file netplan projections.
-const topologyProbeCmd = gpuTopologyProbeCmd + "\n" + nodePFDiscoveryProbeCmd
 
 const (
 	pfAttributeNUMANode   = "numaNode"
@@ -226,7 +204,7 @@ func busOf(pciAddr string) int {
 	return int(bus)
 }
 
-// parseTopologyProbe parses the four-block output emitted by topologyProbeCmd.
+// parseTopologyProbe parses host PF/netplan output and captured legacy GPU blocks.
 // All blocks are optional; a missing block produces an empty map on the
 // corresponding field. Unparseable per-PF lines are ignored, while malformed
 // netplan documents are counted so callers can log the partial result.
@@ -717,7 +695,7 @@ func podContainerName(pod *corev1.Pod) string {
 // one matching set-name rule is sufficient to indicate a potential naming
 // conflict with NCO-managed udev rules.
 //
-// representativeData is reused from topologyProbeCmd to avoid probing that
+// representativeData is reused from nodePFDiscoveryProbeCmd to avoid probing that
 // node twice. When the representative probe failed, pass nil and every worker
 // is checked with the smaller nodePFDiscoveryProbeCmd.
 func discoverGroupNetplanManagement(ctx context.Context, restConfig *rest.Config,
@@ -777,159 +755,26 @@ func discoverGroupNetplanManagement(ctx context.Context, restConfig *rest.Config
 	}
 }
 
-// discoverGPUTopology execs a combined GPU/per-PF probe in one representative
-// nic-configuration-daemon pod, parses the output, and enriches the group's PFs
-// with the generic per-PF sysfs attributes plus ConnectedGPU and GPUProximity.
-// It also checks every other worker with the smaller node-local probe to derive
-// the group-level NetplanManaged flag without persisting host-specific MACs. If
-// the PIX-gate fires it additionally rewrites Traffic and re-runs rail
-// numbering.
-//
-// All failures are non-fatal: logged, the corresponding fields stay empty,
-// and Traffic/Rail continue to reflect whatever the part-number heuristic
-// assigned in buildClusterConfig.
-func discoverGPUTopology(ctx context.Context, restConfig *rest.Config,
+// discoverPFAttributes retains NIC-daemon ownership of sysfs/netplan reads.
+// GPU acquisition runs separately in a verified same-node source.
+func discoverPFAttributes(ctx context.Context, restConfig *rest.Config,
 	namespace string, group *config.ClusterConfig, dsPods []corev1.Pod) {
-
 	if group == nil || len(group.PFs) == 0 {
 		return
 	}
 	group.NetplanManaged = false
-
 	targetPod := findDaemonPod(group.WorkerNodes, dsPods)
 	if targetPod == nil {
-		log.Log.Info("No nic-configuration-daemon pod found on group nodes; skipping host topology probing",
-			"group", group.Identifier)
 		return
 	}
-
 	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, podContainerName(targetPod),
-		[]string{"/bin/sh", "-c", topologyProbeCmd})
+		[]string{"/bin/sh", "-c", nodePFDiscoveryProbeCmd})
 	if err != nil {
-		log.Log.Error(err, "failed to exec representative host topology probe", "pod", targetPod.Name)
+		log.Log.Error(err, "failed to exec representative PF probe", "pod", targetPod.Name)
 		discoverGroupNetplanManagement(ctx, restConfig, namespace, group, dsPods, targetPod, nil)
 		return
 	}
-
 	data := parseTopologyProbe(output)
 	discoverGroupNetplanManagement(ctx, restConfig, namespace, group, dsPods, targetPod, &data)
-
-	// Step 1: generic per-PF sysfs enrichment. Works with or without
-	// nvidia-smi and is the integration point for attributes NicDevice does
-	// not expose.
 	applyPFDiscoveryAttributes(group.PFs, data.pfAttributes)
-	for i := range group.PFs {
-		pf := &group.PFs[i]
-		if pf.NumaNode == nil {
-			continue
-		}
-		log.Log.V(1).Info("PF sysfs attributes discovered",
-			"group", group.Identifier,
-			"pci", pf.PciAddress,
-			"numaNode", strconv.Itoa(*pf.NumaNode))
-	}
-
-	// Step 2: if no matrix or no GPUs, topology enrichment stops here.
-	if len(data.matrix) == 0 || len(data.gpuPCI) == 0 {
-		log.Log.V(1).Info("GPU topology: nvidia-smi produced no matrix; preserving heuristic classification",
-			"group", group.Identifier)
-		return
-	}
-
-	// Step 3: per-PF proximity + GPU pairing. PFs are already PCI-sorted
-	// (see buildClusterConfig), so iteration order is deterministic.
-	usage := map[int]int{}
-	for i := range group.PFs {
-		pf := &group.PFs[i]
-		if pf.RdmaDevice == "" {
-			log.Log.V(1).Info("GPU topology: skipping PF with no RDMA device",
-				"group", group.Identifier, "pci", pf.PciAddress)
-			continue
-		}
-		row, ok := data.matrix[pf.RdmaDevice]
-		if !ok {
-			log.Log.V(1).Info("GPU topology: PF's RDMA device not present in nvidia-smi matrix (port likely down)",
-				"group", group.Identifier, "pci", pf.PciAddress, "rdma", pf.RdmaDevice)
-			continue
-		}
-
-		best := proxUnknown
-		var candidates []int
-		for gpuIdx, p := range row {
-			if p == proxUnknown {
-				continue
-			}
-			if best == proxUnknown || p < best {
-				best = p
-				candidates = []int{gpuIdx}
-			} else if p == best {
-				candidates = append(candidates, gpuIdx)
-			}
-		}
-		if best == proxUnknown || len(candidates) == 0 {
-			log.Log.V(1).Info("GPU topology: no proximity data for PF",
-				"group", group.Identifier, "pci", pf.PciAddress, "rdma", pf.RdmaDevice)
-			continue
-		}
-
-		chosen := pickConnectedGPU(candidates, pf.PciAddress,
-			data.gpuPCI, usage)
-		if chosen < 0 {
-			continue
-		}
-		usage[chosen]++
-
-		pf.ConnectedGPU = fmt.Sprintf("GPU%d", chosen)
-		pf.ConnectedGPUPCIAddress = data.gpuPCI[chosen]
-		pf.GPUProximity = best.String()
-
-		numaStr := "unknown"
-		if pf.NumaNode != nil {
-			numaStr = fmt.Sprintf("%d", *pf.NumaNode)
-		}
-		log.Log.V(1).Info("GPU topology: PF connectivity discovered",
-			"group", group.Identifier,
-			"pci", pf.PciAddress,
-			"rdma", pf.RdmaDevice,
-			"connectedGPU", pf.ConnectedGPU,
-			"proximity", pf.GPUProximity,
-			"numa", numaStr,
-			"tiedCandidates", len(candidates))
-	}
-
-	// Step 4: PIX-gate reclassification (Traffic + Rails together).
-	// Log the decision and each PF's final rail reason at debug level.
-	pixCount := pixOverridePFCount(group.PFs)
-	hasPIX := pixCount > 0
-	if hasPIX {
-		log.Log.V(1).Info("GPU topology: PIX detected — overriding part-number traffic classification",
-			"group", group.Identifier, "pixPFs", pixCount, "totalPFs", len(group.PFs))
-	} else {
-		log.Log.V(1).Info("GPU topology: no PIX detected — preserving part-number traffic classification",
-			"group", group.Identifier, "totalPFs", len(group.PFs))
-	}
-
-	reclassifyAndReassignRails(group.PFs)
-
-	// Explain each PF's final rail decision. The "reason" lets operators see
-	// at a glance why a device got a rail (or didn't).
-	for i := range group.PFs {
-		pf := &group.PFs[i]
-		reason := topologyRailReason(*pf, hasPIX)
-		if pf.Rail != nil {
-			log.Log.V(1).Info("Rail assigned",
-				"group", group.Identifier,
-				"pci", pf.PciAddress,
-				"rdma", pf.RdmaDevice,
-				"traffic", pf.Traffic,
-				"rail", *pf.Rail,
-				"reason", reason)
-		} else {
-			log.Log.V(1).Info("No rail (north-south)",
-				"group", group.Identifier,
-				"pci", pf.PciAddress,
-				"rdma", pf.RdmaDevice,
-				"reason", reason)
-		}
-	}
 }

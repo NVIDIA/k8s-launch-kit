@@ -55,6 +55,8 @@ type readOnlyOptions struct {
 	podExec                  readOnlyPodExec
 	assumeUnverifiedExcluded bool
 	fabricDiscovery          bool
+	gpuTopology              bool
+	gpuOperatorNamespace     string
 }
 
 // WithReadOnlyNetworkOperatorNamespace restricts daemon lookup to the
@@ -95,6 +97,19 @@ func WithReadOnlyFabricDiscovery() ReadOnlyOption {
 	return func(options *readOnlyOptions) { options.fabricDiscovery = true }
 }
 
+// WithReadOnlyGPUTopology enables optional product/topology observations in
+// existing NIC daemon and same-node GPU Operator feature-discovery containers.
+// Requires a nonempty GPU Operator namespace, WithReadOnlyRESTConfig, pod and
+// DaemonSet read access, and pods/exec permission. No resources are modified.
+// Incomplete evidence keeps hardware fallback and emits warnings through the
+// context's UI sink; callers must consume that sink to inspect probe failures.
+func WithReadOnlyGPUTopology(gpuOperatorNamespace string) ReadOnlyOption {
+	return func(options *readOnlyOptions) {
+		options.gpuTopology = true
+		options.gpuOperatorNamespace = strings.TrimSpace(gpuOperatorNamespace)
+	}
+}
+
 func withReadOnlyPodExec(exec readOnlyPodExec) ReadOnlyOption {
 	return func(options *readOnlyOptions) {
 		options.podExec = exec
@@ -125,6 +140,9 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	}
 	if options.fabricDiscovery && options.restConfig == nil {
 		return nil, errors.New("DiscoverReadOnly: WithReadOnlyFabricDiscovery requires WithReadOnlyRESTConfig")
+	}
+	if options.gpuTopology && (options.restConfig == nil || options.gpuOperatorNamespace == "") {
+		return nil, errors.New("DiscoverReadOnly: WithReadOnlyGPUTopology requires a GPU Operator namespace and WithReadOnlyRESTConfig")
 	}
 	namespace, err := findDaemonSetNamespace(ctx, kubeClient, nicconfigdaemon.DaemonSetName, options.networkOperatorNamespace)
 	if err != nil {
@@ -200,6 +218,14 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		return nil, fmt.Errorf("DiscoverReadOnly: NicDevice resources are missing for eligible publisher nodes: %v", missingNodes)
 	}
 	clusterConfig, warnings, members := buildClusterConfigWithMembers(devices.Items, nodeLabels, nil, true)
+	if options.gpuTopology {
+		observations, identities, err := discoverGPUObservations(ctx, kubeClient, options.restConfig, options.gpuOperatorNamespace,
+			clusterConfig, nodeLabels, devices.Items, members, daemonPods, options.podExec)
+		if err != nil {
+			return nil, fmt.Errorf("DiscoverReadOnly: discover GPU topology: %w", err)
+		}
+		applyGPUObservations(ctx, clusterConfig, identities, observations)
+	}
 	if err := assignVRRails(clusterConfig, devices.Items); err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
 	}
