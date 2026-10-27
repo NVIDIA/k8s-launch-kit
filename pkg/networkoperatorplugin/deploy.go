@@ -211,6 +211,21 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		opts.SkipHelmChart = true
 	}
 
+	// Inspect networking ownership before Helm or overwrite remediation.
+	if err := checkSecondaryNetworkDeployment(ctx, kubeClient, selected.ncp, opts.Config); err != nil {
+		return err
+	}
+
+	if opts.OverwriteExisting && !ocp {
+		in, err := buildPreflightInputs(kubeClient, artifacts, opts)
+		if err != nil {
+			return err
+		}
+		if err := preflight.CheckSecondaryNetworkRemovals(ctx, in); err != nil {
+			return fmt.Errorf("secondary-network ownership check before overwrite: %w", err)
+		}
+	}
+
 	// Phase 0 — helm install/upgrade the network-operator chart when
 	// values.yaml is present and the caller supplied the helm-install
 	// metadata. Skipped silently otherwise so users managing the chart
@@ -253,7 +268,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	// Phase 1 — NicClusterPolicy.
 	if ncpObj != nil {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — NicClusterPolicy", phases.next(), phases.total))
-		if err := applyAndWait(ctx, kubeClient, registry, ncpObj, dryRun, manifestLabel(ncpObj, 0, 0)); err != nil {
+		if err := applyAndWait(ctx, kubeClient, registry, ncpObj, dryRun, manifestLabel(ncpObj, 0, 0), opts.Config); err != nil {
 			return err
 		}
 	}
@@ -262,7 +277,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	if len(nnpObjs) > 0 {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — NicNodePolicies (%d)", phases.next(), phases.total, len(nnpObjs)))
 		for i, obj := range nnpObjs {
-			if err := applyAndWait(ctx, kubeClient, registry, obj, dryRun, manifestLabel(obj, i+1, len(nnpObjs))); err != nil {
+			if err := applyAndWait(ctx, kubeClient, registry, obj, dryRun, manifestLabel(obj, i+1, len(nnpObjs)), opts.Config); err != nil {
 				return err
 			}
 		}
@@ -347,7 +362,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Verifying %d manifest(s) reconcile", phases.next(), phases.total, len(appliedOthers)))
 		for i, am := range appliedOthers {
 			if err := pollUntilTerminal(ctx, kubeClient, registry, am.obj,
-				manifestLabel(am.obj, i+1, len(appliedOthers)), am.awaitObservationAfterRV); err != nil {
+				manifestLabel(am.obj, i+1, len(appliedOthers)), am.awaitObservationAfterRV, opts.Config); err != nil {
 				return err
 			}
 		}
@@ -394,7 +409,7 @@ func retryDependentAPI(ctx context.Context, c client.Client, obj *unstructured.U
 // even started. Network Operator's NicClusterPolicyStatus carries no
 // `observedGeneration`, so this resourceVersion-bump heuristic is the
 // closest signal we have that the controller has reacted.
-func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, dryRun bool, label string) error {
+func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, dryRun bool, label string, cfg ...*config.LaunchKitConfig) error {
 	uiOutput := ui.FromContext(ctx)
 
 	// Pre-apply observation: capture the object's current
@@ -408,9 +423,21 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 		preApplyGen = pre.GetGeneration()
 	}
 
+	var sourceConfig *config.LaunchKitConfig
+	if len(cfg) > 0 {
+		sourceConfig = cfg[0]
+	}
+	if isNicClusterPolicy(obj) {
+		if err := checkSecondaryNetworkDeployment(ctx, c, obj, sourceConfig); err != nil {
+			return err
+		}
+	}
+	// Keep desired intent immutable: Apply replaces this separate object
+	// with the server response, whose metadata supplies observation gates.
+	applied := obj.DeepCopy()
 	progress := uiOutput.StartProgress(fmt.Sprintf("Applying %s", label))
 	log.Log.Info("Applying manifest", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
-	if err := applyUnstructured(ctx, c, obj, dryRun); err != nil {
+	if err := applyUnstructured(ctx, c, applied, dryRun); err != nil {
 		progress.Fail(fmt.Sprintf("Failed to apply %s: %v", label, err))
 		return err
 	}
@@ -421,26 +448,26 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 	}
 
 	// applyUnstructured does a server-side apply that returns the
-	// server-decided object on `obj`. Its current resourceVersion
+	// server-decided object on `applied`. Its current resourceVersion
 	// is "the version right after our apply". If the spec changed
 	// AND this Kind's validator reads .status from the CR itself
 	// (vs from companion CRs), any subsequent live RV != this
 	// value means the controller has written status since.
 	awaitObservationAfterRV := ""
-	if obj.GetGeneration() > preApplyGen && crstate.NeedsObservationGate(obj.GroupVersionKind()) {
-		awaitObservationAfterRV = obj.GetResourceVersion()
+	if applied.GetGeneration() > preApplyGen && crstate.NeedsObservationGate(obj.GroupVersionKind()) {
+		awaitObservationAfterRV = applied.GetResourceVersion()
 		log.Log.V(1).Info("Spec changed; gating poll on controller observation",
 			"kind", obj.GetKind(), "name", obj.GetName(),
 			"preApplyGeneration", preApplyGen,
-			"appliedGeneration", obj.GetGeneration(),
+			"appliedGeneration", applied.GetGeneration(),
 			"appliedResourceVersion", awaitObservationAfterRV)
 	}
-	return pollUntilTerminal(ctx, c, registry, obj, label, awaitObservationAfterRV)
+	return pollUntilTerminal(ctx, c, registry, obj, label, awaitObservationAfterRV, cfg...)
 }
 
 // pollUntilTerminal polls the registry's Validator for obj until it
 // reports StateSuccess or StateError. not-deployed transitions trigger a
-// single re-apply (object vanished between apply and poll). Besides a terminal
+// re-apply (object vanished between apply and poll). Besides a terminal
 // state or ctx.Done(), retryable errors with a configured local window exit if
 // they do not reconcile before that window expires.
 //
@@ -462,10 +489,10 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // onto the same row. The reason is deduped against the previous tick
 // so a noisy 3-second polling loop only emits a fresh line when
 // something actually changed.
-func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string) error {
+func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string, cfg ...*config.LaunchKitConfig) error {
 	return pollUntilTerminalWithRetryableErrorTimeout(
 		ctx, c, registry, obj, label, awaitObservationAfterRV,
-		manifestRetryableErrorTimeout(obj), deployPollInterval,
+		manifestRetryableErrorTimeout(obj), deployPollInterval, cfg...,
 	)
 }
 
@@ -477,7 +504,12 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 	label, awaitObservationAfterRV string,
 	retryableErrorTimeout time.Duration,
 	pollInterval time.Duration,
+	cfg ...*config.LaunchKitConfig,
 ) error {
+	var sourceConfig *config.LaunchKitConfig
+	if len(cfg) > 0 {
+		sourceConfig = cfg[0]
+	}
 	uiOutput := ui.FromContext(ctx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
 	log.Log.Info("Waiting for manifest to reconcile", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
@@ -620,14 +652,27 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 			case crstate.StateNotDeployed:
 				stopRetryableErrorTimer()
 				// Object vanished between apply and poll (admission
-				// webhook race, manual kubectl delete). Re-apply once
-				// and continue polling.
+				// webhook race, manual kubectl delete). Refresh effect
+				// authorization before reapplying the retained desired object.
 				uiOutput.Warning("%s went missing mid-flight; re-applying", label)
 				log.Log.Info("Manifest reported not-deployed; re-applying",
 					"kind", obj.GetKind(), "name", obj.GetName())
-				if err := applyUnstructured(ctx, c, obj, false); err != nil {
+				if isNicClusterPolicy(obj) {
+					if err := checkSecondaryNetworkDeployment(ctx, c, obj, sourceConfig); err != nil {
+						progress.Fail(fmt.Sprintf("Re-apply of %s blocked: %v", label, err))
+						return err
+					}
+				}
+				applied := obj.DeepCopy()
+				if err := applyUnstructured(ctx, c, applied, false); err != nil {
 					progress.Fail(fmt.Sprintf("Re-apply of %s failed: %v", label, err))
 					return err
+				}
+				// The vanished instance's observation is obsolete. A restored
+				// policy must be observed after this new apply response.
+				awaitObservationAfterRV = ""
+				if applied.GetGeneration() > 0 && crstate.NeedsObservationGate(obj.GroupVersionKind()) {
+					awaitObservationAfterRV = applied.GetResourceVersion()
 				}
 				reportProgress("re-applied after disappearance")
 			case crstate.StateInProgress:

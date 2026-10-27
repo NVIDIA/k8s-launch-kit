@@ -13,6 +13,12 @@ metadata:
 
 Understand, create, or edit l8k configuration files.
 
+Desired `networkOperator.secondaryNetwork.multus` and `.cniPlugins` each
+accept auto/managed/external (empty/omitted/null means auto). Discovery writes
+`discoveredSecondaryNetwork` evidence without replacing desired policy. Multus
+does not prove reference plugin binaries exist. See
+[ownership rules](../../docs/reference/configuration.md#secondary-network-ownership).
+
 ## File Types
 
 | File | Source | Purpose |

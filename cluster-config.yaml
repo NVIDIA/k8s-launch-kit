@@ -17,6 +17,11 @@ networkOperator:
   componentVersion: network-operator-v26.7.0
   selectedRelease: "26.7"
   skipHelmChart: false
+  # Independent ownership of Multus and reference CNI binaries. auto uses
+  # discovery evidence; managed installs via NCP; external omits the section.
+  secondaryNetwork:
+    multus: auto
+    cniPlugins: auto
   # repository — registry path for COMPONENT images managed by the operator
   # (ofedDriver, nvIpam, multus, device plugins, …). Rendered into
   # NicClusterPolicy / NicNodePolicy.

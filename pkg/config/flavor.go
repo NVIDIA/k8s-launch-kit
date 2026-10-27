@@ -78,6 +78,9 @@ func ApplyFlavorDefaults(cfg *LaunchKitConfig) error {
 	if cfg.Flavor != FlavorK8s && cfg.Flavor != FlavorOCP {
 		return fmt.Errorf("flavor must be %q or %q, got %q", FlavorK8s, FlavorOCP, cfg.Flavor)
 	}
+	if err := ValidateSecondaryNetworkConfig(cfg); err != nil {
+		return err
+	}
 	if cfg.Flavor != FlavorOCP {
 		if cfg.Sriov != nil && !cfg.namespacePresence.sriov && cfg.Sriov.OperatorNamespace == DefaultSriovOperatorNamespace {
 			cfg.Sriov.OperatorNamespace = ""

@@ -89,8 +89,8 @@ network capabilities and hardware configuration with --discover-cluster-config.
 This phase can be skipped if you provide your own configuration file by using --user-config.
 This phase resolves credentials from --kubeconfig, $KUBECONFIG, or ~/.kube/config.
 Fresh discovery fills profile settings from the detected hardware and built-in
-defaults. With --user-config, discovery replaces only clusterConfig and preserves
-all other settings. Explicit CLI overrides apply in both modes.
+defaults. With --user-config, discovery replaces clusterConfig and
+discoveredSecondaryNetwork while preserving other settings. Explicit CLI overrides apply in both modes.
 
 ### Generate Deployment Files
 Based on the discovered or provided configuration,

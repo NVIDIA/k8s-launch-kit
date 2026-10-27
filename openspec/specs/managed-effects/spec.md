@@ -48,6 +48,14 @@ New or changed preflight/ownership logic MUST distinguish verified absence from 
 - **WHEN** a pipeline previews deployment after discovery
 - **THEN** documentation and tests account for discovery resources independently of the deploy preview.
 
+#### Scenario: Secondary-network installer ownership
+
+- **WHEN** a bundle requests Multus/CNI installation or omits a live managed section
+- **THEN** deploy inspects ownership before Helm/remediation/apply, rejects foreign installation and implicit managed-to-external migration, and does not let overwrite bypass the guard.
+- **AND** polling retries after NCP disappearance recheck ownership and prerequisites using retained desired intent and configured worker membership; admission/apply responses do not replace desired intent.
+- **AND** differently named NCP deletion candidates with managed Multus/CNI sections are protected even if their child installers are absent; exact candidates are rechecked before any remediation deletion, and changed policy identity/version cannot authorize a stale delete.
+- **AND** omitted external prerequisites with unavailable optional health evidence remain unverified; mandatory live-policy inspection failures remain errors.
+
 ### Requirement: Teardown and partial failure
 
 An effect extension MUST specify cleanup after partial setup, cancellation and rerun, including dependency ordering, finalizers, retained resources and failure evidence. Cleanup SHALL honor the documented operation scope and retention policy without promising transactions or success during API outage.

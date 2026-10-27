@@ -111,6 +111,7 @@ var templateFuncs = template.FuncMap{
 	// tuning fixes per-interface ARP ownership before sbr installs
 	// source-selected route tables.
 	"secondaryNetworkMetaPlugins": secondaryNetworkMetaPlugins,
+	"secondaryNetwork":            secondaryNetworkRendering,
 	// pfsPerNic computes how many PFs share the same physical NIC by grouping
 	// east-west PFs by PCI bus:device prefix (everything before the last ".").
 	// E.g., 8 PFs across 8 NICs → 1; 8 PFs across 4 NICs → 2.
@@ -1012,6 +1013,9 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	if cfg == nil {
 		return nil, fmt.Errorf("configuration must not be nil")
 	}
+	if err := config.ValidateSecondaryNetworkConfig(cfg); err != nil {
+		return nil, err
+	}
 	if len(cfg.NetworkNamespaces) == 0 {
 		return nil, fmt.Errorf("networkNamespaces must contain at least one namespace")
 	}
@@ -1505,4 +1509,15 @@ func buildMergedGroup(groups []config.ClusterConfig, indices []int) config.Clust
 		NodeSelector:          map[string]string{config.GPULabelKey: gpuType},
 		RailPciAddresses:      railPciAddresses,
 	}
+}
+
+// secondaryNetworkRendering emits ownership diagnostics at the NCP render boundary.
+func secondaryNetworkRendering(cfg *config.LaunchKitConfig) (config.SecondaryNetworkDecision, error) {
+	decision, err := config.ResolveSecondaryNetworkRendering(cfg)
+	if err == nil {
+		for _, note := range decision.Notes {
+			log.Log.Info("Secondary-network ownership", "note", note)
+		}
+	}
+	return decision, err
 }

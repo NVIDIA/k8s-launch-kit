@@ -24,7 +24,7 @@ the post-discovery review before generation.
 Four things to know about the saved file:
 - **Fresh discovery persists a resolved profile.** Without `--user-config`,
   discovery fills profile fields from hardware/defaults and applies explicit
-  CLI overrides last. With `--user-config`, it replaces only `clusterConfig`,
+  CLI overrides last. With `--user-config`, it replaces `clusterConfig` and `discoveredSecondaryNetwork`,
   preserves every other section, and then applies explicit CLI overrides.
 - **North-south-only groups are dropped.** A node group whose NICs are all north-south (BlueField DPUs / OOB NICs) produces no manifests and is omitted from `cluster-config.yaml` (it would otherwise consume an NV-IPAM subnet slice and shift the per-rail pools). North-south NICs alongside east-west NICs in a mixed group are still listed.
 - **Dual-port BlueField-3 NICs are north-south.** Physical port count comes from the VPD model (`dual-port` / `2-port`), not PCI function count. This rule overrides a false `status.dpu`, an unlisted SKU, and GPU PIX proximity. Single-port multi-plane SuperNICs keep their existing classification.
@@ -38,6 +38,12 @@ daemon, then tears the namespace down on exit (unless `--keep-namespace`
 is set). The daemon image is pulled from `<networkOperator.repository>/
 nic-configuration-operator-daemon:<networkOperator.componentVersion>` (both
 fields come from `l8k-config.yaml`).
+
+Discovery refresh also replaces `discoveredSecondaryNetwork`, preserving
+component ownership policy. Known API-visible installer inspection is read-only;
+unavailable evidence still saves hardware inventory, but automatic generation
+requires usable ownership evidence. Unknown host-only installers need an explicit
+site decision. See [platform observations](../../docs/user/discovery.md#platform-networking-observations).
 
 ## Usage (from AI agent)
 

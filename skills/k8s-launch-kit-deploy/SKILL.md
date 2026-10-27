@@ -25,6 +25,17 @@ preflight remediation, or apply. Only exact `values.yaml` is Helm input;
 `values.yml` and case variants must be renamed. Malformed or duplicate
 resources fail with source details and exit code 2.
 
+An NCP bundle gets a secondary-network ownership check before Helm or
+remediation, refreshed before every NCP apply, including disappearance retries.
+Retries retain desired component intent independently of API responses and use
+the configured worker set for external installer coverage. Foreign installer collisions and removal
+of a live managed section block deployment, including overwrite/dry-run. External
+health non-detection or denied optional reads remain unverified; failed mandatory
+NCP inspection blocks. Overwrite also protects differently named NCP deletion
+candidates with managed sections, even when their installer is absent; candidates
+are refreshed before any delete and checked by UID/resource-version preconditions.
+Policy strays without either managed section retain normal remediation. See [ownership guard](../../docs/advanced/deployment.md#secondary-network-ownership-guard).
+
 ## Usage
 
 The standalone subcommand (preferred):

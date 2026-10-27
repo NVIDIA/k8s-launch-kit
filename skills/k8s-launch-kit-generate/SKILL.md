@@ -24,6 +24,13 @@ Generation validates all rendered YAML after annotation and before replacing
 the output directory. A malformed resource reports its filename/document and
 leaves the previous output directory in place.
 
+Multus and CNI plugin ownership are independent YAML controls under
+`networkOperator.secondaryNetwork`. Auto uses discovery evidence, external omits
+the component, and managed renders it. Automatic generation rejects ambiguous or
+unavailable observations. Offline configurations retain managed rendering with
+unverified ownership; deployment still performs live checks. See
+[ownership rules](../../docs/reference/configuration.md#secondary-network-ownership).
+
 ## Usage
 
 ```bash

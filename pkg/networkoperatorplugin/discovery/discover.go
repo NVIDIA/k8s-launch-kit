@@ -33,6 +33,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/secondarynetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
@@ -445,6 +446,13 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		} else {
 			uiOutput.Info("GPUDirect DMA-BUF validation disabled: %s cannot satisfy the topology-derived request on every discovered worker", resourceType)
 		}
+	}
+
+	// Networking evidence is optional inventory; inspection failures remain
+	// explicit so generation cannot turn uncertainty into installation consent.
+	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, c)
+	if err != nil {
+		return err
 	}
 
 	// Phase summary — counts surfaced at info level so the default UX shows

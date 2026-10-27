@@ -100,7 +100,7 @@ If a worker is missing, check its readiness, image pull, discovery pod,
 4. Runs a temporary NIC Configuration Daemon on the eligible nodes.
 5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe and excludes BlueFields whose host trust level is `restricted`.
 6. Reads the published `NicDevice` resources and probes GPU, NIC, fabric, NUMA, and rail data. It does not walk kernel-module holder graphs.
-7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, only `clusterConfig` is replaced.
+7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, `clusterConfig` and `discoveredSecondaryNetwork` are replaced.
 8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
 
 The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
@@ -193,7 +193,7 @@ l8k discover \
 
 On a fresh run without `--user-config`, the example profile in the installed
 reference configuration is ignored. With `--user-config`, discovery replaces
-only `clusterConfig`. It preserves every other loaded section and value,
+`clusterConfig` and `discoveredSecondaryNetwork`. It preserves every other loaded section and value,
 including explicit `false` values, and then applies explicit CLI overrides.
 Missing profile values are not filled during this refresh; supply them in the
 file or through CLI flags if they are needed.
@@ -331,7 +331,7 @@ Debug logs include node eligibility, sysfs NIC and BlueField trust probing, mach
 
 If `--save-cluster-config` is omitted, discovery rewrites the `--user-config`
 file or creates `cluster-config.yaml` in the current directory. For a user
-config refresh, only `clusterConfig` and explicit CLI overrides change. Source
+config refresh, only `clusterConfig`, `discoveredSecondaryNetwork`, and explicit CLI overrides change. Source
 comments are retained where possible, and a generated-file banner identifies
 the discovery output.
 
@@ -342,3 +342,18 @@ l8k generate \
   --user-config ./cluster-config.yaml \
   --save-deployment-files ./deployment
 ```
+
+## Platform networking observations
+
+Both ordinary and read-only discovery inspect known API-visible Multus and
+reference CNI plugin installers and save `discoveredSecondaryNetwork`. This
+adds cluster-wide DaemonSet list reads and NCP GETs for candidate controller
+references, without pods/exec or resource mutation. If optional inspection is
+denied or unavailable, hardware inventory is still saved with `unavailable`
+evidence; cancellation remains an error. Fresh and user-config refresh preserve
+desired component policies separately. Auto generation rejects ambiguous or
+unavailable evidence rather than treating failed inspection as permission to
+install. Review [secondary-network ownership](../reference/configuration.md#secondary-network-ownership)
+before selecting explicit managed/external policy. Unsupported or host-only
+installers can remain undetected; Multus detection does not imply plugin-suite
+presence.

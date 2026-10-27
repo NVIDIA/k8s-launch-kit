@@ -46,6 +46,23 @@ require the report to show the intended manifests ready, the required static
 checks completed, and gating tests for every required data-plane family.
 Review skipped stages and non-gating cross-rail observations separately.
 
+## External networking prerequisites
+
+For NCP bundles, validation checks live Multus/CNI ownership independently of
+catalog versions. An omitted section with a still-managed live section is an
+ownership conflict. Supported external installers are checked against configured
+worker names: incompatible node selectors are errors; missing Ready pods or
+stale DaemonSet rollout status are in-progress. Ready pods on all required
+workers plus current DaemonSet readiness establish API-level installer coverage.
+
+No recognized API installer, failed optional health inspection, or unavailable
+worker inventory is **UNVERIFIED**, with a reason in text, JSON (`Skipped:
+true`), HTML, and JUnit. It is neither missing networking nor a successful
+health check and does not alone fail static validation. Failed mandatory
+ownership inspection is an error. The report lists external prerequisite rows
+separately from NCP-managed catalog-version checks. Host CNI binaries,
+configuration, and data-plane behavior still require runtime qualification.
+
 ## Worked acceptance decisions
 
 The following examples are illustrative decisions, not records of a live

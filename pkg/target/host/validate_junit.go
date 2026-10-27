@@ -160,7 +160,7 @@ func buildJUnit(input junitInput) junitDocument {
 	}
 	for _, v := range d.Manifests {
 		static.Cases = append(static.Cases, junitStatus(v.Kind+"/"+v.Namespace+"/"+v.Name,
-			v.State == crstate.StateSuccess, v.State == crstate.StateInProgress, v.Reason, v))
+			v.State == crstate.StateSuccess, v.Skipped || v.State == crstate.StateInProgress, v.Reason, v))
 	}
 	for _, match := range d.PresetMatches {
 		static.Cases = append(static.Cases, junitStatus("TopologyPresets::"+match.Group,

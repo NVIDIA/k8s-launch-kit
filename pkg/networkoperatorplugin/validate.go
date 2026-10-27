@@ -68,6 +68,8 @@ type ValidationResult struct {
 	// in-progress / success). Reason/Details carry the validator's
 	// per-Kind human-readable summary and per-companion-CR breakdown
 	// (e.g. per-node SriovNetworkNodeState states).
+	// Skipped denotes an unverified external prerequisite, with no readiness claim.
+	Skipped bool `json:",omitempty"`
 	State   crstate.CRState
 	Reason  string
 	Details map[string]string
@@ -188,6 +190,11 @@ func ValidateManifests(ctx context.Context, c client.Client, manifestDir string,
 }
 
 func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bundle, flavor ...string) ([]ValidationResult, error) {
+	return ValidateBundleWithConfig(ctx, c, artifacts, nil, flavor...)
+}
+
+// ValidateBundleWithConfig additionally checks external installer worker coverage.
+func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *bundle.Bundle, cfg *config.LaunchKitConfig, flavor ...string) ([]ValidationResult, error) {
 	if artifacts == nil {
 		return nil, fmt.Errorf("validation artifact bundle is nil")
 	}
@@ -199,6 +206,13 @@ func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bund
 			continue
 		}
 		obj := doc.ObjectCopy()
+		if isNicClusterPolicy(obj) {
+			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, checks...)
+		}
 		r := ValidationResult{
 			Kind: obj.GetKind(), APIVersion: obj.GetAPIVersion(),
 			Name: obj.GetName(), Namespace: obj.GetNamespace(),

@@ -408,7 +408,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		if cfg != nil {
 			validationFlavor = cfg.Flavor
 		}
-		results, valErr = networkoperatorplugin.ValidateBundle(ctx, k8sClient, reportBundle, validationFlavor)
+		results, valErr = networkoperatorplugin.ValidateBundleWithConfig(ctx, k8sClient, reportBundle, cfg, validationFlavor)
 		log.Log.V(1).Info("validation check completed", "check", "manifest readiness",
 			"success", valErr == nil, "objects", len(results),
 			"duration", time.Since(checkStarted).Round(time.Millisecond).String())
@@ -424,7 +424,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		// loop re-runs the registry-backed validate every 10s. The
 		// final results / verdict are emitted normally below.
 		if request.Wait > 0 {
-			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), reportBundle, results, request.Wait, validationFlavor)
+			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), reportBundle, results, request.Wait, validationFlavor, cfg)
 		}
 
 		verdict = emitValidationReport(versionCheck, results, presetDeviations, request.OutputFormat)

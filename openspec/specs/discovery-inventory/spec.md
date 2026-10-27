@@ -49,6 +49,11 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **WHEN** the existing daemon probe confirms that a node has no discoverable NIC or only restricted BlueFields
 - **THEN** read-only discovery excludes that node from the required publisher set; probe and permission errors remain errors.
 
+#### Scenario: Platform networking inspection unavailable
+
+- **WHEN** optional API installer inspection is unavailable or ambiguous
+- **THEN** fresh and refreshed discovery save hardware inventory and separate networking observations without changing desired component ownership; automatic generation rejects unresolved ownership evidence.
+
 ### Requirement: Aggregation and provenance
 
 A group property MUST declare its aggregation policy for disagreement and incomplete membership. Live/preset precedence and deviation handling SHALL preserve the information required by consumers. Host-specific observations MUST NOT be persisted as universal group facts without a justified aggregation rule.

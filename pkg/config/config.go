@@ -262,16 +262,18 @@ type LaunchKitConfig struct {
 	// computes the largest GPU prefix required across every source group in a
 	// DaemonSet render bucket so endpoint-specific CUDA indices remain visible
 	// after compatible groups are merged. It is never persisted in user config.
-	ValidationGPUResourceCount int               `yaml:"-"`
-	Workload                   *WorkloadConfig   `yaml:"workload,omitempty"`
-	Validation                 *ValidationConfig `yaml:"validation,omitempty"`
-	Profile                    *Profile          `yaml:"profile,omitempty"`
-	ClusterConfig              []ClusterConfig   `yaml:"clusterConfig,omitempty"`
+	ValidationGPUResourceCount int                          `yaml:"-"`
+	Workload                   *WorkloadConfig              `yaml:"workload,omitempty"`
+	Validation                 *ValidationConfig            `yaml:"validation,omitempty"`
+	Profile                    *Profile                     `yaml:"profile,omitempty"`
+	ClusterConfig              []ClusterConfig              `yaml:"clusterConfig,omitempty"`
+	DiscoveredSecondaryNetwork *SecondaryNetworkObservation `yaml:"discoveredSecondaryNetwork,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
-	Version          string `yaml:"version"`
-	ComponentVersion string `yaml:"componentVersion"`
+	SecondaryNetwork *SecondaryNetworkPolicy `yaml:"secondaryNetwork,omitempty"`
+	Version          string                  `yaml:"version"`
+	ComponentVersion string                  `yaml:"componentVersion"`
 	// SkipHelmChart disables l8k's Network Operator Helm boundary. Generate
 	// omits values.yaml, deploy skips chart installation and Helm preflight
 	// checks, validate skips Helm release version and values checks, and clean
