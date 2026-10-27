@@ -681,14 +681,20 @@ type dsReadiness struct {
 	// readyNodes / readyPods are the nodes and pods whose pod is Ready (only
 	// these can be exec'd into for the sysfs NIC probe and later hardware
 	// probes).
-	readyNodes []string
-	readyPods  []corev1.Pod
-	total      int // total DS pods found (Ready or not)
-	ready      int // Ready pod count
+	readyNodes  []string
+	readyPods   []corev1.Pod
+	pendingPods []corev1.Pod
+	total       int // total DS pods found (Ready or not)
+	ready       int // Ready pod count
 	// stuck counts not-Ready pods in a waiting state that won't clear on its
 	// own within our window (ImagePullBackOff, CrashLoopBackOff, …). Used to
 	// stop waiting on unrelated nodes that will never become Ready.
-	stuck int
+	stuck            int
+	notReadyNodePods int // not-Ready pods scheduled to nodes that are not Ready
+}
+
+func (st dsReadiness) canProceed() bool {
+	return st.ready >= 1 && st.ready+st.stuck+st.notReadyNodePods == st.total
 }
 
 // stuckWaitingReasons are container waiting reasons that won't resolve without
@@ -759,20 +765,61 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 			}
 		} else if podStuck(&pod) {
 			st.stuck++
+		} else {
+			st.pendingPods = append(st.pendingPods, pod)
 		}
 	}
 
 	return st, nil
 }
 
+// excludePodsOnNotReadyNodes identifies daemon pods that cannot become Ready
+// while their node is NotReady. Missing Nodes remain pending because their
+// readiness cannot be established safely.
+func excludePodsOnNotReadyNodes(ctx context.Context, c client.Client, st *dsReadiness) error {
+	if len(st.pendingPods) == 0 {
+		return nil
+	}
+
+	needsNodeStatus := false
+	for i := range st.pendingPods {
+		if st.pendingPods[i].Spec.NodeName != "" {
+			needsNodeStatus = true
+			break
+		}
+	}
+	if !needsNodeStatus {
+		return nil
+	}
+
+	nodeList := &corev1.NodeList{}
+	if err := c.List(ctx, nodeList); err != nil {
+		return fmt.Errorf("list nodes while checking daemon pod readiness: %w", err)
+	}
+
+	nodes := make(map[string]*corev1.Node, len(nodeList.Items))
+	for i := range nodeList.Items {
+		nodes[nodeList.Items[i].Name] = &nodeList.Items[i]
+	}
+	for i := range st.pendingPods {
+		pod := &st.pendingPods[i]
+		if node := nodes[pod.Spec.NodeName]; pod.Spec.NodeName != "" && node != nil && !nodeReady(node) {
+			st.notReadyNodePods++
+		}
+	}
+
+	return nil
+}
+
 // waitForDaemonSetPods polls until the given DaemonSet's pods are ready enough
 // to proceed, or the timeout fires. "Ready enough" means either every pod is
-// Ready, or every not-Ready pod is stuck (won't recover) and at least one pod
-// is Ready — so an unrelated node that can't start the daemon doesn't block
-// discovery. On timeout it still proceeds with whatever Ready pods exist
-// (warning), and only hard-fails when no pod ever became Ready. Returns the
-// Ready node names, the Ready pods (for pod exec), the namespace they were
-// found in, and an error.
+// Ready, or every remaining not-Ready pod is stuck or scheduled on a NotReady
+// node and at least one pod is Ready. An unrelated node that cannot run the
+// daemon therefore does not block discovery. On its own timeout, the helper can
+// proceed with Ready pods if the caller's context is still active. Caller
+// cancellation and deadlines are returned as errors. Returns the Ready node
+// names, the Ready pods (for pod exec), the namespace they were found in, and
+// an error.
 func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
 	return waitForDaemonSetPodsWithFallback(parentCtx, c, uiOutput, namespace, daemonSetName, timeout, true)
 }
@@ -792,12 +839,8 @@ func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client
 	}
 	progress := uiOutput.StartProgress(progressLabel)
 
-	ctx := parentCtx
-	if _, hasDeadline := parentCtx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(parentCtx, timeout)
-		defer cancel()
-	}
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
+	defer cancel()
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -817,18 +860,36 @@ func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client
 		}
 
 		if err == nil {
+			// Keep the pod results if the follow-up node lookup hits the child
+			// timeout; the Ready subset is still usable while the caller is active.
+			last, lastNS = st, foundNS
+			if classifyErr := excludePodsOnNotReadyNodes(ctx, c, &st); classifyErr != nil {
+				err = classifyErr
+			}
+		}
+		if parentErr := parentCtx.Err(); parentErr != nil {
+			progress.Fail("Discovery context ended while waiting for daemon pods")
+			return nil, nil, "", fmt.Errorf("context ended while waiting for %s pods in namespace %q: %w", daemonSetName, namespace, parentErr)
+		}
+
+		if err == nil {
 			allReady := st.total > 0 && st.ready == st.total
 			// Every remaining not-Ready pod is stuck and we already have a
-			// node to probe — no point waiting out the timeout.
-			blockedByStuck := st.ready >= 1 && st.ready+st.stuck == st.total
+			// node to probe, or is scheduled on a NotReady node — no point
+			// waiting out the timeout.
 			switch {
 			case allReady:
 				progress.Success(fmt.Sprintf("Found %d ready pod(s) in namespace %q", st.ready, foundNS))
 				return st.readyNodes, st.readyPods, foundNS, nil
-			case blockedByStuck:
+			case st.canProceed():
 				progress.Success(fmt.Sprintf("Proceeding with %d ready pod(s) in namespace %q", st.ready, foundNS))
-				uiOutput.Warning("%d %s pod(s) are stuck (e.g. ImagePullBackOff) and excluded from discovery; proceeding with %d ready node(s)",
-					st.stuck, daemonSetName, st.ready)
+				if st.notReadyNodePods > 0 {
+					uiOutput.Warning("%d %s pod(s) are on NotReady nodes and %d are stuck; proceeding with %d ready node(s)",
+						st.notReadyNodePods, daemonSetName, st.stuck, st.ready)
+				} else {
+					uiOutput.Warning("%d %s pod(s) are stuck (e.g. ImagePullBackOff/CrashLoopBackOff) and excluded from discovery; proceeding with %d ready node(s)",
+						st.stuck, daemonSetName, st.ready)
+				}
 				return st.readyNodes, st.readyPods, foundNS, nil
 			default:
 				last, lastNS = st, foundNS
@@ -840,6 +901,10 @@ func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client
 
 		select {
 		case <-ctx.Done():
+			if err := parentCtx.Err(); err != nil {
+				progress.Fail("Discovery context ended while waiting for daemon pods")
+				return nil, nil, "", fmt.Errorf("context ended while waiting for %s pods in namespace %q: %w", daemonSetName, namespace, err)
+			}
 			// Don't fail outright if some pods are Ready — a slow or stuck
 			// unrelated node shouldn't abort discovery. NicDevice CRs are
 			// awaited separately (10 min) downstream.
