@@ -357,6 +357,12 @@ Reserved first/last IPs are merged with explicit exclusions for every subnet.
 
 Automatic subnet allocation is precomputed across all final heterogeneous render buckets to avoid overlap within the generated bundle.
 
+These ranges are configurable defaults, not cluster-reserved address space.
+Launch Kit does not currently compare them with cluster pod or service CIDRs.
+Choose `startingSubnet` or explicit `subnets` that do not overlap those CIDRs
+or other site networks before deploying; discovery does not certify that the
+chosen address space is available.
+
 ## Profile Resource Settings
 
 | Section | Fields |

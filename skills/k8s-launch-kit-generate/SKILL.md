@@ -230,6 +230,13 @@ not control requestor-mode concurrency.
 `generate` without profile flags to reuse them; explicit generate flags still
 win when a one-off override is needed.
 
+## SR-IOV admission helpers
+
+SR-IOV and Spectrum-X chart values disable both admission helpers through
+`sriov-network-operator.operator.admissionControllers.enabled: false`.
+Do not put `enableInjector` or `enableOperatorWebhook` under the chart
+`sriovOperatorConfig` values: these are CR fields, not chart overrides.
+
 ## Common Mistakes
 
 - **There is no `--profile` flag.** Profiles are selected via `--fabric` + `--deployment-type` (or `--spectrum-x`). Do NOT invent flags.
