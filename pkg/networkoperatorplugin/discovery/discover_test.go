@@ -1002,6 +1002,7 @@ func TestFilterNodesWithNICsReportsRestrictions(t *testing.T) {
 		{"restricted only", "restricted-pci 0000:02:00.0\nrestricted\n", nil, false, true, false},
 		{"no NIC", "", nil, false, false, false},
 		{"inspection failure", "", errors.New("read failed"), false, false, false},
+		{"failure after restricted NIC", "restricted-pci 0000:02:00.0\n", errors.New("read failed"), false, false, false},
 		{"failure after usable NIC", "present\nrestricted-pci 0000:02:00.0\n", errors.New("read failed"), true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

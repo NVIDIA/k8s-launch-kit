@@ -2062,6 +2062,9 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 		output, err := podExec(ctx, restConfig, namespace, pod.Name, containerName,
 			[]string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", "", "", "report-restricted"})
 		probeResult := parseMellanoxNICProbeResult(output)
+		// A scan can fail after confirming a restricted device. Report that
+		// observation even when the node itself remains unverified.
+		restrictedDevicesSkipped += reportRestrictedNICs(output, node, uiOutput)
 		if err != nil {
 			if probeResult != mellanoxNICProbePresent {
 				log.Log.Error(err, "failed to probe node for NVIDIA NIC; excluding from wait set",
@@ -2073,7 +2076,6 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 			log.Log.Error(err, "incomplete restricted NIC scan; retaining verified publisher", "node", node)
 			uiOutput.Warning("Could not inspect all PCI devices on %s; restricted BlueField reporting may be incomplete", node)
 		}
-		restrictedDevicesSkipped += reportRestrictedNICs(output, node, uiOutput)
 		log.Log.V(1).Info("Probed node for discoverable NVIDIA NIC via sysfs and BlueField trust mode",
 			"node", node, "pod", pod.Name, "result", string(probeResult))
 		switch probeResult {
