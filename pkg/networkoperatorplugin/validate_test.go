@@ -208,7 +208,11 @@ func TestCheckHelmReleaseVersionSelection(t *testing.T) {
 			secrets: func(t *testing.T) []client.Object {
 				broken := helmVersionSecret(t, "network-operator", 2, expectedVersion)
 				broken.Data["release"] = []byte("invalid")
-				return []client.Object{broken, helmVersionSecret(t, "network-operator-post", 4, expectedVersion)}
+				return []client.Object{
+					helmVersionSecret(t, "network-operator", 1, expectedVersion),
+					broken,
+					helmVersionSecret(t, "network-operator-post", 4, expectedVersion),
+				}
 			}, reason: "decode sh.helm.release.v1.network-operator.v2",
 		},
 		{
