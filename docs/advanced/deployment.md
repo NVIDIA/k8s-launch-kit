@@ -167,6 +167,15 @@ effects are retained. See [RA2.4 prerequisites](../user/spectrum-x.md#ra24-dospc
 
 Launch Kit gates changed resources on controller observation, avoiding a false success from stale status left by an earlier generation.
 
+IPPool application follows the NicClusterPolicy readiness gate when the bundle
+contains that policy. On Kubernetes this is not a separate wait for the
+`ippools.nv-ipam.nvidia.com` CRD to become established: an unavailable API still
+fails the apply. A bundle without NicClusterPolicy relies on prior operator
+bootstrap, and dry-run cannot create missing APIs. External Helm installers
+must stage dependent IPPools after NV-IPAM bootstrap themselves; filename order
+alone does not establish readiness. Validation reports missing APIs and does not
+install them.
+
 Example workload manifests are not part of deployment. Files with `example` in the name are reserved for `l8k validate`.
 
 ## Hardware target scope

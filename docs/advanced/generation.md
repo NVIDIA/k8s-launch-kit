@@ -311,3 +311,13 @@ l8k generate \
 ```
 
 Add `--dry-run` for a server-side preview and `--overwrite-existing` only after reviewing preflight drift.
+
+## SR-IOV admission helpers
+
+SR-IOV and Spectrum-X Helm values explicitly set
+`sriov-network-operator.operator.admissionControllers.enabled: false`.
+This chart value controls both the resource injector and the operator admission
+webhook, including their certificate setup. Generated example workloads include
+explicit resource requests. The similarly named `enableInjector` and
+`enableOperatorWebhook` are fields of the `SriovOperatorConfig` resource, not
+supported overrides under the chart's `sriovOperatorConfig` values.

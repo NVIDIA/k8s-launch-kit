@@ -172,10 +172,11 @@ func TestMaintenanceRequestorModeProfileMatrix(t *testing.T) {
 				if requestorMode && profile.wantExternalDrain {
 					require.True(t, hasSriovSubchart)
 					require.Equal(t, map[string]any{
-						"externalDrainer": map[string]any{"enabled": true},
+						"externalDrainer":      map[string]any{"enabled": true},
+						"admissionControllers": map[string]any{"enabled": false},
 					}, sriovSubchart["operator"])
 				} else if hasSriovSubchart {
-					require.NotContains(t, sriovSubchart, "operator")
+					require.Equal(t, map[string]any{"admissionControllers": map[string]any{"enabled": false}}, sriovSubchart["operator"])
 				}
 
 				operatorConfig := nestedMaintenanceMap(t, values, "maintenance-operator-chart", "operatorConfig")
@@ -360,4 +361,23 @@ func TestGenerateProfileDeploymentFilesRejectsUnresolvedCollectionsAndDoesNotDef
 	_, err = plugin.GenerateProfileDeploymentFiles(profile, cfg)
 	require.ErrorContains(t, err, "perNodeBlockSize must be > 0 before rendering")
 	require.Zero(t, cfg.NvIpam.PerNodeBlockSize)
+}
+
+func TestSriovAdmissionControllerValues(t *testing.T) {
+	for _, profile := range []string{
+		"sriov-ethernet-rdma", "sriov-ib-rdma", "spectrum-x-ra2.1",
+		"spectrum-x-ra2.2", "spectrum-x", "spectrum-x-ra2.4", "spectrum-x-ra3.1",
+	} {
+		for _, release := range []string{"25.10", "26.1", "26.7", "26.10"} {
+			t.Run(profile+"/"+release, func(t *testing.T) {
+				values := renderProfileValuesForMaintenance(t, profile, release, true, "")
+				admission := nestedMaintenanceMap(t, values, "sriov-network-operator", "operator", "admissionControllers")
+				require.Equal(t, false, admission["enabled"])
+				operatorConfig := nestedMaintenanceMap(t, values, "sriov-network-operator", "sriovOperatorConfig")
+				require.Equal(t, true, operatorConfig["deploy"])
+				require.NotContains(t, operatorConfig, "enableInjector", "CR fields are not chart values")
+				require.NotContains(t, operatorConfig, "enableOperatorWebhook", "CR fields are not chart values")
+			})
+		}
+	}
 }
