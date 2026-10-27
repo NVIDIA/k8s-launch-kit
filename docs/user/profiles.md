@@ -39,7 +39,7 @@ decides which checks and coverage constitute acceptance for the workload.
 | OpenShift SR-IOV Ethernet | OpenShift-specific generation, deployment, and validation. | Exercised on a two-node OpenShift 4.22 cluster. |
 | Other OpenShift standard profiles | Rendering and server dry-run. | Live integration qualification on suitable hardware remains to be recorded. |
 | OpenShift Spectrum-X | No generated OpenShift variant. | Unavailable; see [OpenShift qualification](openshift.md). |
-| Kubernetes Spectrum-X RA2.1, RA2.2, RA2.3, RA2.4 | Release-specific profile generation as shown in the [version matrix](spectrum-x.md#version-matrix). | Confirm the exact hardware, RA, operator release, and validated site profile with the responsible owner. |
+| Kubernetes Spectrum-X RA2.1, RA2.2, RA2.3, RA2.4, RA3.1 | Release-specific profile generation as shown in the [version matrix](spectrum-x.md#version-matrix). | Confirm the exact hardware, RA, operator release, and validated site profile with the responsible owner. |
 
 Rendering, API dry-run, live deployment, and a formal support commitment are
 different evidence. The table describes what this repository documents; it
@@ -83,6 +83,7 @@ For explicit values and precedence, use the [configuration reference](../referen
 | Spectrum-X RA2.2 | Ethernet | `sriov` | v1alpha2 `SpectrumXRailPoolConfig` |
 | Spectrum-X RA2.3 | Ethernet | `sriov` | Network Operator 26.7 only; legacy profile ConfigMap |
 | Spectrum-X RA2.4 | Ethernet | `sriov` | Network Operator >=26.10; doSPCX bundle, platformType, optional swPlane/OVS settings; see release prerequisites |
+| Spectrum-X RA3.1 | Ethernet | `sriov` | Same doSPCX contract; eight-plane VR HWPLB generation with compatible NCO and bundle |
 
 ## Selection Guidance
 

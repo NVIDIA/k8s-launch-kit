@@ -121,13 +121,17 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-en
 - **WHEN** opt-out or subset generation omits a previously deployed standard NIC configuration template
 - **THEN** Kubernetes deploy preflight treats it as a stray, blocking unless overwrite-existing authorizes deletion; OCP preserves it, and neither platform automatically restores applied NIC settings.
 
-### Requirement: RA2.4 Spectrum-X planning
+### Requirement: doSPCX Spectrum-X planning
 
-RA2.3 SHALL be limited to Network Operator 26.7. RA2.4 SHALL support catalogued
-releases >=26.10 with a stable default of 26.10. RA2.4 SHALL render one doSPCX
-bundle in the resolved operator namespace, architecture version RA2.4 and
+RA2.3 SHALL be limited to Network Operator 26.7. RA2.4 and RA3.1 SHALL support catalogued
+releases >=26.10 with a stable default of 26.10. Both SHALL render one doSPCX
+bundle in the resolved operator namespace, the selected architecture version and
 per-source platformType. Platform resolution SHALL select the unique longest
-case-insensitive supported platform substring in GPUType without requiring a preset.
+case-insensitive supported platform substring in GPUType without requiring a preset,
+except that a case-insensitive VR substring in MachineType SHALL take precedence
+and resolve to vr, including when GPUType is empty. RA3.1 SHALL preserve the
+RA2.4 rail-layout and merge safeguards. Eight-plane HWPLB generation SHALL
+retain two-NIC input order and emit four PFs per NIC when each rail has two NICs.
 
 #### Scenario: Unresolved discovery and generation
 

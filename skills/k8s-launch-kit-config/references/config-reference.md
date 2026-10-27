@@ -346,7 +346,7 @@ profile:
     # string | no default: select an RA when enabling Spectrum-X
     # Spectrum-X reference architecture version. Supported: RA2.1 (Network
     # Operator 26.1), RA2.2 (26.4), RA2.3 (26.7; legacy profile data), or
-    # RA2.4 (26.10 and newer catalogued releases; full doSPCX bundle). Set via the
+    # RA2.4 and RA3.1 (26.10 and newer catalogued releases; full doSPCX bundle). Set via the
     # value of --spectrum-x on the CLI.
     # spcxVersion: "RA2.2"
 
@@ -358,7 +358,7 @@ profile:
     # multiplaneMode: swplb
 
     # int | default: derived from GPU platform + east-west NIC device ID
-    # Number of network planes (1, 2, or 4). Also used as pfsPerNic for
+    # Number of network planes (1, 2, 4, or 8). Also used as pfsPerNic for
     # Spectrum-X. Single-plane platforms default to 1; B300/GB300 default
     # to 2. Set 4 explicitly for a quad-plane B300 topology.
     # numberOfPlanes: 2
@@ -450,11 +450,15 @@ clusterConfig:
     #   - nvidia_peermem
 ```
 
-## RA2.4 integration
+## RA2.4 and RA3.1 integration
 
-RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
-accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
+accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
+For VR HWPLB, explicitly select `--spectrum-x RA3.1 --multiplane-mode hwplb
+--number-of-planes 8`. Two NICs per rail render `pfsPerNic: 4`; input NIC order
+is preserved. Use a compatible NCO and doSPCX bundle; rendering is not live
+hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when
@@ -462,15 +466,17 @@ platformType support is absent or cannot be inspected. External Helm, overwrite,
 and dry-run do not bypass this check; dry-run needs APIs installed already.
 
 Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
-substring from the internal doSPCX platform list in gpuType. No preset or mapping
+substring from the internal doSPCX platform list in gpuType. A machineType
+containing `VR` (case-insensitive) takes precedence and selects `vr`, even with
+an empty gpuType. No preset or mapping
 setting is needed. Discovery saves empty values and warns; generation rejects
-unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+unresolved selected RA2.4/RA3.1 groups. RTX/CX8 defaults to none/one plane. Mapping does
 not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
 clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
 zero, and must agree across merged groups. Refresh preserves explicit plane
 assignments only for unchanged source/rail hardware and verified unchanged worker
 membership (ordering does not matter). Changed or unknown membership drops prior
-assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+assignments with a review/reapply warning. Every selected RA2.4/RA3.1 source needs complete
 dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
 sources must have the same effective layout. Merged GPU selectors must not include
 excluded same-GPU sources in other buckets; select one source in that case.

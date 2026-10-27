@@ -447,3 +447,16 @@ func TestResolveKubeconfig(t *testing.T) {
 		assert.Contains(t, err.Error(), "no kubeconfig found")
 	})
 }
+
+func TestSpectrumXRA31EightPlaneSyntax(t *testing.T) {
+	opts := minSpectrumXOpts()
+	opts.SPCXVersion = "RA3.1"
+	opts.NetworkOperatorRelease = "26.10"
+	opts.NumberOfPlanes = 8
+	require.NoError(t, applySpectrumXSyntaxChecks(opts))
+	opts.NumberOfPlanes = 3
+	require.ErrorContains(t, applySpectrumXSyntaxChecks(opts), "number-of-planes")
+	opts.NumberOfPlanes = 8
+	opts.NetworkOperatorRelease = "26.7"
+	require.ErrorContains(t, applySpectrumXSyntaxChecks(opts), "26.10")
+}

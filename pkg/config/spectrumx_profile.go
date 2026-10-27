@@ -31,6 +31,11 @@ const (
 	DospcxArchiveKey                 = "dospcx-data.tar.gz"
 )
 
+// SpectrumXUsesDospcx reports whether an RA uses the doSPCX bundle contract.
+func SpectrumXUsesDospcx(ra string) bool {
+	return ra == "RA2.4" || ra == "RA3.1"
+}
+
 // SpectrumXProfileConfigRequired reports whether the RA version must be
 // supplied to NIC Configuration Operator via a profile ConfigMap.
 func SpectrumXProfileConfigRequired(ra string) bool {
@@ -166,29 +171,29 @@ func ValidateSpectrumXProfileFormat(spcx *ProfileSpectrumX) error {
 	if err != nil {
 		return err
 	}
-	if spcx.SPCXVersion != "RA2.4" {
+	if !SpectrumXUsesDospcx(spcx.SPCXVersion) {
 		if full && (cm.Data["format"] != "" || len(cm.BinaryData) > 0) {
-			return fmt.Errorf("doSPCX ConfigMap requires RA2.4")
+			return fmt.Errorf("doSPCX ConfigMap requires RA2.4 or RA3.1")
 		}
 		return nil
 	}
 	if !full || cm.APIVersion != "v1" || cm.Kind != "ConfigMap" || cm.Data["format"] != DospcxDataFormat || cm.Metadata.Name == "" {
-		return fmt.Errorf("RA2.4 requires a full v1 ConfigMap with data.format: %s", DospcxDataFormat)
+		return fmt.Errorf("%s requires a full v1 ConfigMap with data.format: %s", spcx.SPCXVersion, DospcxDataFormat)
 	}
 	if cm.Metadata.Name != spcx.ConfigMapName {
 		return fmt.Errorf("doSPCX ConfigMap name %q does not match configMapName %q", cm.Metadata.Name, spcx.ConfigMapName)
 	}
 	archive, err := base64.StdEncoding.DecodeString(cm.BinaryData[DospcxArchiveKey])
 	if err != nil || len(archive) == 0 {
-		return fmt.Errorf("RA2.4 requires nonempty base64 binaryData.%s", DospcxArchiveKey)
+		return fmt.Errorf("%s requires nonempty base64 binaryData.%s", spcx.SPCXVersion, DospcxArchiveKey)
 	}
 	return validateDospcxArchive(archive)
 }
 
 // RenderDospcxConfigMap preserves data/provenance but owns namespace and selector label.
 func RenderDospcxConfigMap(spcx *ProfileSpectrumX, namespace string) (string, error) {
-	if spcx == nil || spcx.SPCXVersion != "RA2.4" {
-		return "", fmt.Errorf("RA2.4 doSPCX profile is required")
+	if spcx == nil || !SpectrumXUsesDospcx(spcx.SPCXVersion) {
+		return "", fmt.Errorf("RA2.4 or RA3.1 doSPCX profile is required")
 	}
 	if err := ValidateSpectrumXProfileFormat(spcx); err != nil {
 		return "", err

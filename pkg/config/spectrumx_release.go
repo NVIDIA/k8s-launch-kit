@@ -18,6 +18,7 @@ var spcxReleasePolicies = map[string]SPCXReleasePolicy{
 	"RA2.2": {"26.4", "26.4", "26.4"},
 	"RA2.3": {"26.7", "26.7", "26.7"},
 	"RA2.4": {DefaultRelease: "26.10", MinRelease: "26.10"},
+	"RA3.1": {DefaultRelease: "26.10", MinRelease: "26.10"},
 }
 
 // DefaultSPCXReleaseFor keeps the default independent of future catalog additions.

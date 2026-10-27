@@ -210,7 +210,7 @@ runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. 
 
 ## RA2.4 API compatibility
 
-For RA2.4 NIC templates, deploy checks the live NCO CRD after NCP/NNP bootstrap
+For RA2.4/RA3.1 NIC templates, deploy checks the live NCO CRD after NCP/NNP bootstrap
 and before applying the doSPCX ConfigMap or NIC templates. The manifest's served
 API version must define platformType as a string; missing APIs and failed
 inspection stop deployment. This check also covers standalone/configless deploy,

@@ -87,14 +87,14 @@ type Options struct {
 	SpectrumX      bool   // True when --spectrum-x is set; derived from SPCXVersion != ""
 	SPCXVersion    string `flag:"spectrum-x" config:"profile.spectrumX.enable,profile.spectrumX.spcxVersion" resolve:"spectrum-x" scopes:"root,generate,discover" usage:"Enable Spectrum-X by passing the SPC-X RA version"`
 	MultiplaneMode string `flag:"multiplane-mode" config:"profile.spectrumX.multiplaneMode" scopes:"root,generate,discover" usage:"Spectrum-X multiplane mode: none, swplb, or hwplb"`
-	NumberOfPlanes int    `flag:"number-of-planes" config:"profile.spectrumX.numberOfPlanes" scopes:"root,generate,discover" usage:"Spectrum-X plane count: 1, 2, or 4"`
+	NumberOfPlanes int    `flag:"number-of-planes" config:"profile.spectrumX.numberOfPlanes" scopes:"root,generate,discover" usage:"Spectrum-X plane count: 1, 2, 4, or 8"`
 	TopologyScheme string `flag:"topology-scheme" config:"profile.spectrumX.topologyType" scopes:"root,generate,discover" usage:"Spectrum-X topology scheme: 2-tier or 3-tier"`
 	IPVersion      string `flag:"ip-version" config:"profile.spectrumX.ipVersion" scopes:"root,generate,discover" usage:"Spectrum-X address family: ipv4 or ipv6"`
 	TopologyFile   string `flag:"topology-file" config:"profile.spectrumX.topologyFile" scopes:"root,generate,discover" usage:"Path to a Spectrum-X reference-generator or NVIDIA AIR topology JSON file"`
 	// SpectrumXConfig points to a legacy ConfigMap or raw data.profile YAML for
-	// RA2.3, or a full doSPCX data-bundle ConfigMap for RA2.4.
+	// RA2.3, or a full doSPCX data-bundle ConfigMap for RA2.4 and RA3.1.
 	// SpectrumXConfigMapName is required only for a raw legacy profile body.
-	SpectrumXConfig        string `flag:"spectrum-x-config" config:"profile.spectrumX.profile,profile.spectrumX.configMapName" resolve:"spectrum-x-config" scopes:"root,generate,discover" usage:"Path to RA2.3 legacy profile (ConfigMap or raw data.profile) or RA2.4 full doSPCX ConfigMap"`
+	SpectrumXConfig        string `flag:"spectrum-x-config" config:"profile.spectrumX.profile,profile.spectrumX.configMapName" resolve:"spectrum-x-config" scopes:"root,generate,discover" usage:"Path to RA2.3 legacy profile (ConfigMap or raw data.profile) or RA2.4/RA3.1 full doSPCX ConfigMap"`
 	SpectrumXConfigMapName string `flag:"spectrum-x-configmap-name" config:"profile.spectrumX.configMapName" scopes:"root,generate,discover" usage:"ConfigMap name used when --spectrum-x-config contains raw data.profile YAML"`
 	// Groups limits `l8k generate` to the named source groups (matched
 	// case-sensitively against `clusterConfig[].identifier`). Comma-separated

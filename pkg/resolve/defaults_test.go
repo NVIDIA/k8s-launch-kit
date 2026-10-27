@@ -139,6 +139,8 @@ func TestApplyHardwareDefaultsUsesEffectiveRAForRTX(t *testing.T) {
 		planes                          int
 	}{
 		{"RA2.4 YAML", "RA2.4", "", "none", 1},
+		{"RA3.1 YAML", "RA3.1", "", "none", 1},
+		{"CLI overrides RA2.3 with RA3.1", "RA2.3", "RA3.1", "none", 1},
 		{"RA2.3 YAML", "RA2.3", "", "swplb", 2},
 		{"CLI overrides RA2.4 with RA2.3", "RA2.4", "RA2.3", "swplb", 2},
 		{"CLI overrides RA2.3 with RA2.4", "RA2.3", "RA2.4", "none", 1},

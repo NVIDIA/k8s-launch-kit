@@ -110,3 +110,38 @@ func TestDerivedPlatformPreservesRailIntentAndCloneIsolation(t *testing.T) {
 	require.Equal(t, "stale", cfg.ClusterConfig[0].SpectrumX.PlatformType)
 	require.Equal(t, 1, cfg.ClusterConfig[0].SpectrumX.SwPlaneByRail[1])
 }
+
+func TestSpectrumXVRMachinePlatform(t *testing.T) {
+	for _, tc := range []struct{ machine, gpu, want string }{
+		{"machine-VR", "", "vr"},
+		{"machine-vr-rack", "unknown", "vr"},
+		{"machine-Vr", "NVIDIA-GB300", "vr"},
+		{"machine-a", "NVIDIA-GB300", "gb300"},
+		{"machine-a", "", ""},
+	} {
+		t.Run(tc.machine+tc.gpu, func(t *testing.T) {
+			groups := []ClusterConfig{{MachineType: tc.machine, GPUType: tc.gpu,
+				SpectrumX: &SpectrumXGroupConfig{PlatformType: "stale", SwPlaneByRail: map[int]int{0: 1}}}}
+			require.Equal(t, tc.want, SpectrumXPlatformForGroup(groups[0]))
+			PopulateSpectrumXPlatforms(groups)
+			require.Equal(t, tc.want, groups[0].SpectrumX.PlatformType)
+			require.Equal(t, map[int]int{0: 1}, groups[0].SpectrumX.SwPlaneByRail)
+		})
+	}
+}
+
+func TestRA31DospcxProfileContract(t *testing.T) {
+	raw, err := os.ReadFile("testdata/dospcx-configmap.yaml")
+	require.NoError(t, err)
+	spcx := &ProfileSpectrumX{SPCXVersion: "RA3.1", Profile: string(raw)}
+	require.NoError(t, NormalizeSpectrumXProfileConfig(spcx))
+	rendered, err := RenderDospcxConfigMap(spcx, "operator-override")
+	require.NoError(t, err)
+	require.Contains(t, rendered, "namespace: operator-override")
+	require.Contains(t, rendered, "binaryData:")
+	spcx.Profile = "useSoftwareCCAlgorithm: true\n"
+	require.ErrorContains(t, ValidateSpectrumXProfileFormat(spcx), "RA3.1 requires a full v1 ConfigMap")
+	require.Equal(t, "26.10", DefaultSPCXReleaseFor("RA3.1"))
+	require.NoError(t, ValidateSPCXRelease("RA3.1", "26.10"))
+	require.Error(t, ValidateSPCXRelease("RA3.1", "26.7"))
+}

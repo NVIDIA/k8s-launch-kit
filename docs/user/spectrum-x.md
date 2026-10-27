@@ -38,6 +38,7 @@ For a profile/schema failure, compare the supplied ConfigMap with the [RA2.3 con
 | RA2.2 | `26.4` | `spectrum-x-ra2.2` | Uses v1alpha2 `SpectrumXRailPoolConfig`. |
 | RA2.3 | `26.7` only | `spectrum-x` | Uses v1alpha2 `SpectrumXRailPoolConfig` and a legacy profile ConfigMap. |
 | RA2.4 | `26.10` and newer catalogued releases | `spectrum-x-ra2.4` | Uses a doSPCX data-bundle ConfigMap and per-group platformType. |
+| RA3.1 | `26.10` and newer catalogued releases | `spectrum-x-ra3.1` | Uses the same doSPCX bundle contract; permits eight-plane VR HWPLB generation. |
 
 RA2.2 and RA2.3 output does not include the removed `spec.withBCM` field.
 Adding it causes the v1alpha2 CRD to reject the manifest during strict
@@ -153,19 +154,19 @@ The generated ConfigMap uses the label expected by the NIC Configuration Operato
 
 ## RA2.4 doSPCX profile
 
-RA2.4 defaults to Network Operator 26.10 and accepts newer catalogued releases.
+RA2.4 and RA3.1 default to Network Operator 26.10 and accept newer catalogued releases.
 RA2.3 is restricted to 26.7. Supply a validated full doSPCX ConfigMap with
 `data.format: dospcx-data.tar.gz/v1` and base64
 `binaryData.dospcx-data.tar.gz` through `--spectrum-x-config` or
-`profile.spectrumX.profile`. Raw legacy `data.profile` is not accepted for RA2.4.
+`profile.spectrumX.profile`. Raw legacy `data.profile` is not accepted for RA2.4 or RA3.1.
 The generated singleton retains bundle bytes and source annotations; its
 namespace always matches the resolved Network Operator namespace, including
 `--network-operator-namespace` overrides. The NIC template receives
-`version: RA2.4`, independently of the ConfigMap name.
+`version: RA2.4` or `version: RA3.1` as selected, independently of the ConfigMap name.
 
 **Release prerequisite:** Network Operator v26.10.0-beta.2 includes the rail-pool
 `swPlane` and `ovsConfig` fields, but its packaged NCO CRD lacks `platformType`.
-RA2.4 deployment requires a 26.10-or-newer operator build that includes the
+RA2.4/RA3.1 deployment requires a 26.10-or-newer operator build that includes the
 doSPCX NCO implementation and matching CRDs. Generation alone does not establish
 that the selected published chart satisfies this prerequisite. Deploy reads the
 live NCO CRD after NicClusterPolicy/NicNodePolicy bootstrap and requires the NIC
@@ -177,17 +178,28 @@ Helm, ordinary preflight remediation and policy bootstrap may already have run
 when this check fails; deployment does not roll those operations back.
 
 Platform is derived into `clusterConfig[].spectrumX.platformType` from the raw
-GPU product label. Launch Kit matches `h100`, `h200`, `b200`, `gb200`, `b300`,
+GPU product label, except that a `machineType` containing `VR` (case-insensitive)
+takes precedence and selects `vr` even when `gpuType` is empty. Launch Kit matches `h100`, `h200`, `b200`, `gb200`, `b300`,
 `gb300`, `vr`, and `rtx` as case-insensitive substrings; the longest match wins
 (`GB300` selects `gb300`). Equal-length conflicting matches and no matches
 produce an empty value. No preset or custom mapping table is required. Discovery
-saves empty values and warns; RA2.4 generation rejects unresolved selected groups
+saves empty values and warns; RA2.4/RA3.1 generation rejects unresolved selected groups
 before replacing output. Saved platform values are recomputed, not user overrides.
 An RTX product selects `rtx`; with ConnectX-8 it defaults to `none` and one plane.
 Mapping a family does not qualify every GPU variant or NIC layout for that recipe.
 The current `ThinkSystem-SR650-V4-RTX-PRO-6000` preset splits functions of one
 physical NIC across rails. RA2.4 rejects that layout because NCO assigns one rail
 per physical NIC; it requires a representable layout before generation can proceed.
+
+For VR HWPLB, explicitly pass `--spectrum-x RA3.1 --multiplane-mode hwplb
+--number-of-planes 8`. With two NICs per rail, naming emits `pfsPerNic: 4`
+and eight logical PF names per rail. NICs retain their first-seen input order
+inside each rail; do not sort the two master PCI addresses to change that order.
+The site inventory must put ASIC1 first (`nic_index_in_rail=0`), then ASIC0
+(`nic_index_in_rail=1`). Hardware defaults do not infer this eight-plane layout.
+The deployed NCO must accept eight planes and the doSPCX bundle must support
+RA3.1/VR; a successful render does not verify either prerequisite. Eight-plane
+SWPLB with IPv4 is still limited by the allocator's two-bit plane field.
 
 Optional configuration:
 
@@ -211,7 +223,7 @@ assigns software-plane offsets to existing HWPLB rails, defaulting to zero.
 Use actual dense zero-based east-west rail IDs. Nonzero assignments require
 HWPLB; unknown rails and negative values are rejected. Groups merged into one
 rail pool must agree on effective assignments and rail layouts. Every selected
-RA2.4 group requires complete dense rail IDs and a uniform master NIC count per
+RA2.4/RA3.1 group requires complete dense rail IDs and a uniform master NIC count per
 rail that divides `numberOfPlanes`. Merged groups must have the same rail count
 and NICs per rail; machine-specific PCI addresses may differ. Functions of one
 physical NIC must remain in the same rail. These checks also
@@ -224,10 +236,10 @@ and warns; review the current cohort and reapply the intended values before
 generation. Omitted assignments otherwise resolve to zero.
 The operator computes `plane_id = len(pfNames) * swPlane + PF index`.
 Multiple hardware partitions inside one logical rail are not supported by this
-configuration. Both optional settings require RA2.4. Existing DRA configuration
+configuration. Both optional settings require RA2.4 or RA3.1. Existing DRA configuration
 continues through `profile.spectrumX.useDRA`.
 
-RA2.4 generation currently permits one rail-pool parent: a complete compatible
+RA2.4/RA3.1 generation currently permits one rail-pool parent: a complete compatible
 GPU/rail-count cohort, or one source selected with `--groups`. A strict subset
 containing multiple sources or multiple buckets is rejected before replacing
 output. A merged cohort is also rejected if its GPU selector would include an
