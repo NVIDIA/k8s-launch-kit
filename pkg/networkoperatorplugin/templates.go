@@ -1016,6 +1016,9 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	if err := config.ValidateSecondaryNetworkConfig(cfg); err != nil {
 		return nil, err
 	}
+	if err := config.ValidateClusterConfigIdentifiers(cfg.ClusterConfig); err != nil {
+		return nil, err
+	}
 	if len(cfg.NetworkNamespaces) == 0 {
 		return nil, fmt.Errorf("networkNamespaces must contain at least one namespace")
 	}

@@ -88,6 +88,14 @@ If `networkOperator.skipHelmChart: true` is set, or the user passes
 reported as skipped. Component-version, manifest, stray-resource, connectivity,
 and report stages still run.
 
+SR-IOV policy and IPPool checks compare live selectors against workers from the
+intended bundle's source-group metadata and effective config; live annotations
+cannot redefine intent. Scope drift or denied reads fails inspection. All-empty
+preset/manual inventory remains visibly target-scope-unverified alongside device
+readiness; do not interpret READY as inventory-scope proof. Missing expected PFs
+remain errors and empty SR-IOV interface status remains in progress. Preserve the
+resolved sidecar, or supply explicit config whose source IDs match the bundle.
+
 ## Usage
 
 ```bash

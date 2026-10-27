@@ -29,6 +29,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -381,17 +382,14 @@ func readOnlyNodeSelectors(nodes []string, nodeLabels map[string]map[string]stri
 func selectorMatchesOnlyNodes(selector map[string]string, groupNodes []string, nodeLabels map[string]map[string]string) bool {
 	wanted := make(map[string]bool, len(groupNodes))
 	for _, node := range groupNodes {
+		if _, exists := nodeLabels[node]; !exists {
+			return false
+		}
 		wanted[node] = true
 	}
-	for node, labels := range nodeLabels {
-		matches := true
-		for key, value := range selector {
-			if labels[key] != value {
-				matches = false
-				break
-			}
-		}
-		if matches != wanted[node] {
+	matcher := labels.SelectorFromSet(selector)
+	for node, values := range nodeLabels {
+		if matcher.Matches(labels.Set(values)) != wanted[node] {
 			return false
 		}
 	}

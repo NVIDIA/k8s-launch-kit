@@ -78,6 +78,27 @@ generation does not silently disable naming. Excluded groups do not block a
 valid selection. If interface naming is explicitly disabled, standard profiles
 retain their existing PCI-selector behavior.
 
+## Hardware target membership
+
+Generated `SriovNetworkNodePolicy` and NV-IPAM `IPPool` resources carry the
+`nvidia.kubernetes-launch-kit.source-groups` annotation: a JSON array of the
+source identifiers selected for that artifact. Keep the annotation and
+`.l8k/resolved-config.yaml` together. Full merged buckets record all their
+sources; strict subsets record only their selected sources. Source identifiers
+must be unique, including for direct library rendering. The established unnamed
+single-source configuration keeps its empty identifier and is represented by the
+explicit annotation `[""]`. It resolves only when the supplied configuration has
+exactly that one unnamed source; missing config or multiple sources fails rather
+than downgrading targeting to selector-only.
+
+Generation is offline and preserves the configured selectors. For populated
+`workerNodes`, deployment requires the selector's live Node set to equal the
+referenced worker union. Node roles do not exclude an intended GPU worker.
+Configurations whose referenced sources all have empty `workerNodes` retain a
+selector-only contract: targeting is explicitly unverified, and strict device
+readiness checks still apply. Empty inventory does not establish that a broad
+selector is appropriate. Supply discovered worker inventory for stronger checks.
+
 ## Review the bundle
 
 Before deploying, inspect both the generated resource directory and

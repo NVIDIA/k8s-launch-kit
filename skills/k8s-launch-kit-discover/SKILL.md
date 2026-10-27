@@ -73,7 +73,7 @@ l8k discover --save-cluster-config <OUTPUT> [--kubeconfig <PATH>]
 | `--collapse-nic-rails` | — | `true` | Advertise one rail per NIC: collapse a NIC's multi-plane east-west PFs to its master PF, keeping a rail per port only for NICs whose VPD model is genuinely dual-port ("2-port"/"Dual-port"). Set `=false` to keep one rail per PF (dev setups). See "Rail collapsing" below. |
 | `--network-operator-namespace` | — | — | **Deprecated for `discover`**: accepted but ignored. The daemon always runs in `nvidia-k8s-launch-kit`. Still used by `l8k generate` / `l8k deploy`. |
 | `--user-config` | — | — | Config whose `clusterConfig` is refreshed; all other sections are preserved unless explicitly overridden by a CLI flag |
-| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Value written into the **saved** `cluster-config.yaml` `nodeSelector` (for deploy time). It does **not** gate discovery scheduling or the NicDevice wait set — the daemon is restricted to Ready schedulable nodes and discoverable NICs are detected via sysfs; restricted BlueFields are excluded. |
+| `--node-selector` | — | `feature.node.kubernetes.io/pci-15b3.present=true` | Deployment selector seed; discovery derives exact per-group selectors, while an explicit CLI override remains user intent checked against worker inventory at deployment. It does **not** gate discovery scheduling or the NicDevice wait set — the daemon is restricted to Ready schedulable nodes and discoverable NICs are detected via sysfs; restricted BlueFields are excluded. |
 | `--image-pull-secrets` | — | — | Image pull secret names (comma-separated). Forwarded to the discovery DaemonSet and persisted for generated policies, Network Operator Helm values, and authenticated chart downloads during deploy. |
 | `--fabric` | — | discovered unanimous link type | Fabric override: `ethernet` or `infiniband`. |
 | `--deployment-type` | — | `sriov` | Deployment override: `sriov`, `rdma_shared`, or `host_device`. |
@@ -162,8 +162,16 @@ bounded to 30 bytes; long values retain balanced machine/GPU prefixes plus a
 GPU-only labels retain their discovered case and vendor segment, use Kubernetes'
 63-byte limit, and keep the existing 8-character shortening hash. When `machineType`
 or `gpuType` couldn't be resolved (GPU operator labels absent and hardware probe
-failed), a fallback `group-N` identifier is used and the machine label is not written;
+failed), a sole source keeps an empty identifier and multiple sources use
+`group-N`; the machine label is not written. Exact selector proof is still required;
 the GPU label is still written when `gpuType` alone is resolved.
+
+Discovery validates all proposed source identities before label writes and
+publishes selectors only after a fresh full-node read proves exact worker
+membership. Patch failures, duplicate identities and stale machine/GPU labels on
+excluded nodes stop discovery; completed patches may remain. Inspect stale labels
+before retrying. Unresolved identity requires another proven selector, including
+hostname for a singleton, rather than a broad PCI-vendor selector.
 
 ## Prerequisites
 

@@ -36,6 +36,19 @@ candidates with managed sections, even when their installer is absent; candidate
 are refreshed before any delete and checked by UID/resource-version preconditions.
 Policy strays without either managed section retain normal remediation. See [ownership guard](../../docs/advanced/deployment.md#secondary-network-ownership-guard).
 
+Before Helm/remediation/writes, affected SR-IOV policy and IPPool selectors must
+match exactly the worker union referenced by intended source metadata. Node-list
+permission errors, extra/missing nodes, duplicate IDs/workers, mixed empty/full
+inventories and annotated resources without resolved source config block deploy.
+Overwrite and dry-run cannot bypass this. Legacy multi-source inventory needs
+regeneration; a single source is unambiguous. All-empty preset/manual inventory
+retains a visible target-scope-unverified warning and strict PF readiness.
+Checks repeat before affected apply/reapply and against live selectors while waiting.
+Temporary live-scope read failures retry within the deployment budget, without
+evaluating readiness until inspection succeeds. Denied reads, invalid metadata
+and scope mismatches remain terminal; pre-write checks continue to block writes
+when inspection fails.
+
 ## Usage
 
 The standalone subcommand (preferred):

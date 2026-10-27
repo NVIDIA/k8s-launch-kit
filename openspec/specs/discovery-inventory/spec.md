@@ -85,6 +85,20 @@ A group property MUST declare its aggregation policy for disagreement and incomp
 - **THEN** only existing daemon pods are executed, and every selected worker, raw PF represented by a retained rail, and completely enumerated port must report a unanimous configured link layer before group fabric is published.
 - **AND** missing, partial, denied or conflicting optional observations remain unknown with diagnostics; caller cancellation remains fatal, and existing no-option/REST-only calls acquire no enrichment execs.
 
+### Requirement: Truthful worker selectors
+
+Discovery SHALL validate proposed identities and membership before node-label writes
+and publish a selector only after successful writes and refreshed exact-set verification.
+It SHALL reject collisions, failed label writes and stale labels that broaden selection,
+without automatically deleting labels from excluded nodes. An unresolved sole
+source SHALL preserve its existing empty identifier when an exact selector is
+provable; unresolved product identity alone SHALL NOT prevent publication.
+
+#### Scenario: Label publication fails
+
+- **WHEN** a patch fails or refreshed labels select another worker
+- **THEN** discovery fails without publishing the planned selector; completed patches may remain for a retry to revalidate.
+
 ### Requirement: Fresh and refresh behavior
 
 An inventory extension MUST cover fresh discovery and existing-config refresh. Refresh SHALL replace inventory and explicit CLI-targeted fields while preserving unrelated source fields, comments, omissions and explicit values.

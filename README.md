@@ -36,7 +36,7 @@ Physically dual-port BlueField-3 NICs are classified as north-south even in NIC
 mode or with an unlisted SKU. Groups containing only north-south NICs are omitted
 from the saved inventory; see [traffic classification](docs/user/discovery.md#east-west-and-north-south-nics).
 
-`l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. A normal CLI `--node-selector` value is saved for deployment-time selection; it does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
+`l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. Discovery verifies exact group selectors; an explicit CLI `--node-selector` override remains user intent and is checked against worker inventory during deployment. The flag does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
 
 Enabled interface naming renders for supported single-group layouts. Generation
 rejects naming layouts that split a physical NIC across rails; see
@@ -50,7 +50,7 @@ The profile describes fabric, workload device exposure, multirail and optional S
 
 ### Generate Deployment Files
 
-`l8k generate` leaves the input YAML unchanged and writes manifests plus `.l8k/resolved-config.yaml` under the deployment directory. Review both before applying; keep the complete directory for later deploy and validation. See [generation](docs/advanced/generation.md).
+`l8k generate` leaves the input YAML unchanged and writes manifests plus `.l8k/resolved-config.yaml` under the deployment directory. Review both before applying; keep the complete directory for later deploy and validation. Generated SR-IOV policies and IPPools retain their source groups; deploy checks exact worker membership and validate detects live selector drift. Preset-only inputs remain visibly unverified. See [generation](docs/advanced/generation.md).
 
 Platforms providing Multus or reference CNI binaries can set each component's
 [secondary-network ownership](docs/reference/configuration.md#secondary-network-ownership)

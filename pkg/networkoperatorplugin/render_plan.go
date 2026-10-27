@@ -430,6 +430,12 @@ func renderForScope(
 		log.Log.V(1).Info("template kind unrecognized; using legacy render path",
 			"template", templatePath, "err", kerr.Error())
 	}
+	if kind == "SriovNetworkNodePolicy" || kind == "IPPool" {
+		if err := config.ValidateClusterConfigIdentifiers(cfg.ClusterConfig); err != nil {
+			return nil, err
+		}
+	}
+
 	scope := ScopeForKind(kind)
 	if cfg.Flavor == config.FlavorOCP {
 		if kind == "SriovNetworkPoolConfig" {
@@ -486,6 +492,9 @@ func renderForScope(
 				if err != nil {
 					return nil, err
 				}
+				if err := annotateTargetSources(rendered, plan.Sources, kind, cfg); err != nil {
+					return nil, err
+				}
 				merge(suffixFilenamesWithNamespace(rendered, ns, multiNS))
 			}
 		}
@@ -499,12 +508,18 @@ func renderForScope(
 					if err != nil {
 						return nil, err
 					}
+					if err := annotateTargetSources(rendered, []config.ClusterConfig{src}, kind, cfg); err != nil {
+						return nil, err
+					}
 					merge(rendered)
 				}
 			} else {
 				renderCfg := withClusterConfig(cfg, []config.ClusterConfig{plan.Merged}, subnetsAt(planSubnets, i))
 				rendered, err := ProcessTemplate(templatePath, renderCfg, "")
 				if err != nil {
+					return nil, err
+				}
+				if err := annotateTargetSources(rendered, plan.Sources, kind, cfg); err != nil {
 					return nil, err
 				}
 				merge(rendered)
@@ -537,6 +552,9 @@ func renderForScope(
 							return nil, err
 						}
 					}
+				}
+				if err := annotateTargetSources(rendered, []config.ClusterConfig{src}, kind, cfg); err != nil {
+					return nil, err
 				}
 				merge(rendered)
 			}

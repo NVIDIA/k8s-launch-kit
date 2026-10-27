@@ -225,18 +225,16 @@ Two groups are eligible for merging if:
 ### Merge Behavior
 
 - Worker node lists are concatenated.
-- Node selectors are updated to cover all merged nodes.
+- Node selectors are updated to cover merged nodes; generated hardware resources also retain source-group IDs. Deploy checks exact membership against effective worker inventory.
 - Explicitly supplied `thirdPartyRDMAModules` values are merged as a **union**.
 
-### Merge Exceptions
+### Selected-source ownership
 
-Merging is **skipped** in the following cases:
-
-- **Spectrum-X fabric**: Spectrum-X deployments require per-switch-group policies, so
-  groups must remain separate.
-- **Single group**: Nothing to merge.
-- **`--groups` filter active**: When the user targets a specific group by name, merging
-  is disabled to preserve the explicit selection.
+Buckets retain their original source groups. A strict subset keeps shared bucket
+resources but emits flat-selector policies per selected source. Source identifiers
+must be unique. Generated SR-IOV policies and IPPools record those source IDs;
+readiness evaluates live selectors against the intended worker union. Empty preset
+worker lists are explicitly selector-only and unverified.
 
 ---
 

@@ -202,6 +202,17 @@ NIC configuration success requires `ConfigUpdateInProgress` with `reason: Update
 
 Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a relevant device condition with a stale `observedGeneration` remains `IN-PROGRESS`. `NicConfigurationTemplate` considers `FirmwareUpdateInProgress` relevant only when the matched device has `spec.firmware`; a stale firmware condition cannot block a configuration-only deployment. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
 
+SR-IOV node-policy and NV-IPAM IPPool validation compares the **live** selector
+with the intended workers from the bundle's source-group annotation and effective
+configuration. Live annotation edits cannot redefine that membership. Missing or
+extra nodes are target-scope errors, even when controllers report ready. Missing
+live resources remain missing; denied reads remain inspection failures. Preset or
+legacy configurations with no worker inventory retain a visible **target scope
+unverified** warning alongside ordinary readiness. An intended worker missing a
+required PF still fails; empty SR-IOV interface status remains in progress.
+See [hardware target scope](../advanced/deployment.md#hardware-target-scope) for
+legacy compatibility and configuration requirements.
+
 Preflight uses the same checks as deployment: Helm chart version, generated Helm values, component versions, and stray CRs from the [enumerated networking kinds and scopes](../advanced/deployment.md#stray-resource-deletion-boundary), without an l8k ownership requirement. SR-IOV pool configs, node policies, and OVS networks labeled with `spectrumx.nvidia.com/owner-name` are controller-owned outputs of `SpectrumXRailPoolConfig`, so they are not reported as strays. Validation never remediates drift.
 
 The Helm chart/version checks are omitted when Helm management is disabled;

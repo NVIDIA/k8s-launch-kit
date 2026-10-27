@@ -131,7 +131,7 @@ func TestOpenShiftBucketsSameMachineGroups(t *testing.T) {
 		group.PFs = group.PFs[:1]
 		group.MachineType = "machine-a"
 		group.GPUType = "gpu-model-y"
-		group.Identifier = identifier
+		group.Identifier = identifier + "-" + string(rune('a'+i))
 		group.WorkerNodes = []string{worker}
 		group.NodeSelector = map[string]string{config.MachineLabelKey: identifier}
 	}
@@ -199,7 +199,6 @@ func TestOpenShiftRendersSameGPUWithDifferentRailCounts(t *testing.T) {
 			groups[i].PFs = groups[i].PFs[:2]
 		}
 	}
-	groups[2].Identifier = groups[0].Identifier // Same source identity in different rail-count buckets.
 	cfg.ClusterConfig = groups
 	workloadPath := filepath.Join(t.TempDir(), "workload.yaml")
 	require.NoError(t, os.WriteFile(workloadPath, []byte("apiVersion: v1\nkind: Pod\nmetadata:\n  name: custom\nspec:\n  containers:\n  - name: test\n    image: busybox:1.36\n"), 0600))

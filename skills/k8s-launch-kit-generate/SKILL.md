@@ -235,6 +235,15 @@ win when a one-off override is needed.
 - **There is no `--profile` flag.** Profiles are selected via `--fabric` + `--deployment-type` (or `--spectrum-x`). Do NOT invent flags.
 - **The multiplane flag is `--multiplane-mode`**, not `--spcx-multiplane` or `--multiplane`.
 
+Generated SR-IOV node policies and NV-IPAM IPPools carry
+`nvidia.kubernetes-launch-kit.source-groups` as a JSON array of selected source
+IDs. IDs must be unique. The existing unnamed sole source keeps its empty ID and
+uses explicit `[""]`; deploy/validate still require exactly one unnamed configured
+source and check its workers. Preserve this metadata and the resolved sidecar.
+Generation does not prove live targeting: deploy requires exact selector-to-worker
+membership when inventory is populated. Preset-only empty worker lists retain a
+visible selector-only, target-scope-unverified contract.
+
 ## Tips
 
 - Default to SR-IOV Ethernet for new GPU cluster deployments unless told otherwise.
