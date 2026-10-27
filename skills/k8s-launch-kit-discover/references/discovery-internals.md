@@ -106,15 +106,48 @@ NUMA and current netdevice MAC address use this path today. MACs are compared
 with a sanitized projection of host netplan device stanzas; a
 `match.macaddress` plus non-empty `set-name` match sets the group's
 `netplanManaged` flag. Every worker is probed because MACs and netplan files are
-node-local, and the group flag is true if any worker matches. The representative
-worker combines this with the GPU probe; other workers run only the smaller
-per-PF/netplan probe.
+node-local, and the group flag is true if any worker matches. These PF/netplan
+reads stay in the NIC daemon, independently of GPU source selection.
 
 To integrate a new per-PF field, add its best-effort read to
 `pfDiscoveryProbeCmd`, decide whether its lifetime permits persistence in
 `PFConfig` or requires transient aggregation, and extend parser/consumer tests.
-Do not add a second PCI walk on the same worker. One missing attribute must not
-suppress the other attributes or PF records.
+Reuse this walk for related host attributes. The GPU physical-device denominator
+is a separate complete inventory check, not a best-effort attribute. One missing
+optional attribute must not suppress other attributes or PF records.
+
+### GPU source ownership and completeness
+
+`gpuprobe.go` acquires GPU product/query/matrix observations first from the
+NIC daemon (local injected executable, then legacy host path), with an existing
+same-node GPU Operator GFD main container as fallback. It checks Ready state,
+DaemonSet owner UID, real host `/sys` backing, pod identity and container lifetime.
+It never modifies pod runtime classes or schedules GPU workloads. Normal lookup
+is across namespaces; read-only callers provide the GPU Operator namespace via
+`WithReadOnlyGPUTopology` plus REST credentials. GFD fallback requires pod
+read/exec and DaemonSet read permissions. No-option/REST-only library calls keep
+their previous behavior; consume the context UI sink for optional-failure warnings.
+
+`gpuobservation.go` validates the GPU query against independently enumerated
+physical host GPU PCIs, unique indices and full matrix coverage. Missing GPU
+labels remain unknown, and only a complete empty host inventory without
+conflicting labels allows skipping GPU execution. Restricted/MIG/vGPU visibility
+that cannot be reconciled with physical devices is unavailable topology.
+`gpuenrichment.go` joins node-local PCI/RDMA identities and requires agreement
+for every worker/raw PF in the actual rail-collapse projection. Incomplete matrix
+coverage cannot demote unobserved NICs through the PIX gate. Aliases and source
+details stay transient. It intersects siblings' nearest-GPU candidates at a
+common proximity before balancing once per retained rail on each node; it does
+not balance individual collapsed planes. The per-node collector also owns the
+sysfs/pci.ids product fallback. Missing or conflicting worker products remain
+unknown before preset lookup; no later representative product fallback can
+overwrite that evidence. Preset precedence and final VR rail assignment remain
+unchanged; stale measured GPU PCI addresses are cleared/reconciled after presets.
+
+The collector bounds concurrency to four and each node to 30 seconds, with one
+bounded GFD lookup and no retries. Optional failures retain hardware/preset
+fallback with warnings; parent cancellation is fatal. Hardware/runtime/image
+qualification remains separate from parser and fake-client validation.
 
 ---
 

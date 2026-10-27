@@ -48,6 +48,10 @@ var WithReadOnlyAssumeUnverifiedExcluded = discovery.WithReadOnlyAssumeUnverifie
 // pods. It requires WithReadOnlyRESTConfig and pods/exec permission.
 var WithReadOnlyFabricDiscovery = discovery.WithReadOnlyFabricDiscovery
 
+// WithReadOnlyGPUTopology opts into existing-pod GPU observations. Requires a
+// GPU Operator namespace and REST credentials; optional failures use UI warnings.
+var WithReadOnlyGPUTopology = discovery.WithReadOnlyGPUTopology
+
 // DiscoverReadOnly inspects an existing NIC Configuration Daemon and returns
 // the discovered topology without creating, patching, or deleting resources.
 // It returns ErrNotInstalled when the daemon is not already running.

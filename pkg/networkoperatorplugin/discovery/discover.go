@@ -293,41 +293,27 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		uiOutput.Warning("%s", w)
 	}
 
-	// Discover OFED-dependent kernel modules per group via pod exec.
-	// Results are classified into third-party RDMA vs storage modules and
-	// saved to config for user inspection. mlx5-prefixed modules (NVIDIA's own)
-	// are silently filtered out.
 	if restConfig != nil {
+		gpuObservations, gpuIdentities, err := discoverGPUObservations(ctx, c, restConfig, "", cfg.ClusterConfig, nodeLabels, devices.Items, members, dsPods, nil)
+		if err != nil {
+			return fmt.Errorf("discover GPU topology: %w", err)
+		}
+		applyGPUObservations(ctx, cfg.ClusterConfig, gpuIdentities, gpuObservations)
 		for i := range cfg.ClusterConfig {
 			group := &cfg.ClusterConfig[i]
 
-			// Fill in missing machine/GPU product types by probing hardware
-			// directly when GPU operator node labels are absent.
-			needMachine := group.MachineType == ""
-			needProduct := group.GPUType == ""
-			if needMachine || needProduct {
-				machine, product := discoverHardwareTypes(ctx, restConfig,
-					nicconfigdaemon.Namespace, group.WorkerNodes, dsPods,
-					needMachine, needProduct)
-				if needMachine && machine != "" {
+			// GPU product fallback is owned by per-node collection and
+			// all-worker aggregation above. DMI remains representative.
+			if group.MachineType == "" {
+				if machine := discoverMachineType(ctx, restConfig, nicconfigdaemon.Namespace, group.WorkerNodes, dsPods); machine != "" {
 					group.MachineType = machine
 					uiOutput.Info("Discovered machine type for group %s: %s", group.Identifier, machine)
 				}
-				if needProduct && product != "" {
-					group.GPUType = product
-					uiOutput.Info("Discovered GPU product type for group %s: %s", group.Identifier, product)
-				}
 			}
 
-			// Probe GPU topology plus node-local per-PF attributes. This
-			// populates NumaNode, ConnectedGPU, and GPUProximity per PF and
-			// derives the group-level NetplanManaged flag without persisting
-			// host-specific MACs. If any PF has PIX to a GPU, the PIX-gate
-			// override rewrites Traffic and re-runs rails. Failures are
-			// non-fatal; when nvidia-smi is absent, today's part-number
-			// classification continues to govern.
-			discoverGPUTopology(ctx, restConfig,
-				nicconfigdaemon.Namespace, group, dsPods)
+			// PF attributes and netplan are observed in the NIC daemon,
+			// independently of the GPU runtime source.
+			discoverPFAttributes(ctx, restConfig, nicconfigdaemon.Namespace, group, dsPods)
 
 			// Try to enrich with a predefined topology preset for this
 			// (machine, GPU) pair. presetmatch.MatchGroup runs the
@@ -394,6 +380,8 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 				// machineType / gpuType wasn't discovered. Discovery
 				// already logs this via the hardware-type probes.
 			}
+
+			reconcileGPUPCIAddresses(group, gpuObservations)
 
 			// OFED-dependent kernel module discovery was previously run here:
 			// it execs a sysfs holder-graph walk into a daemon pod and auto-
@@ -1785,84 +1773,21 @@ func parseGPUProductFromNvidiaSmi(output string) string {
 	return ""
 }
 
-// discoverHardwareTypes attempts to discover machineType and gpuType by
-// probing hardware directly when label-derived values are empty. It execs into
-// a nic-configuration-daemon pod on one of the group's nodes.
-// Returns (machineType, gpuType) — either or both may still be empty if
-// discovery fails or hardware info is unavailable.
-func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
-	namespace string, groupNodes []string, dsPods []corev1.Pod,
-	needMachine, needProduct bool) (machineType, gpuType string) {
-
+// discoverMachineType retains the representative DMI fallback. GPU products
+// are resolved per node by the GPU collector before all-worker aggregation.
+func discoverMachineType(ctx context.Context, restConfig *rest.Config,
+	namespace string, groupNodes []string, dsPods []corev1.Pod) string {
 	targetPod := findDaemonPod(groupNodes, dsPods)
 	if targetPod == nil {
-		log.Log.Info("No nic-configuration-daemon pod found on group nodes; skipping hardware type probing")
-		return "", ""
+		return ""
 	}
-
-	containerName := ""
-	if len(targetPod.Spec.Containers) > 0 {
-		containerName = targetPod.Spec.Containers[0].Name
+	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, podContainerName(targetPod),
+		[]string{"/bin/sh", "-c", "cat /sys/class/dmi/id/product_name 2>/dev/null"})
+	if err != nil {
+		log.Log.Error(err, "failed to read machine type from DMI", "pod", targetPod.Name)
+		return ""
 	}
-
-	if needMachine {
-		const dmiCmd = "cat /sys/class/dmi/id/product_name 2>/dev/null"
-		log.Log.V(1).Info("Probing machine type via DMI",
-			"pod", targetPod.Name, "command", dmiCmd)
-		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", dmiCmd})
-		if err != nil {
-			log.Log.Error(err, "failed to read machine type from DMI", "pod", targetPod.Name)
-		} else {
-			machineType = parseMachineTypeFromDMI(output)
-			log.Log.V(1).Info("Probed machine type from DMI",
-				"pod", targetPod.Name,
-				"rawOutput", truncateForLog(output, 200),
-				"parsed", machineType)
-		}
-	}
-
-	if needProduct {
-		// Wrap nvidia-smi so the shell always exits 0: if the binary is absent
-		// or crashes, stdout is simply empty and we fall through to the sysfs
-		// fallback below instead of surfacing an Error-level exec failure.
-		nvidiaSmiCmd := `if [ -x /host/usr/bin/nvidia-smi ]; then ` +
-			`LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH ` +
-			`/host/usr/bin/nvidia-smi -q 2>/dev/null || true; fi`
-		log.Log.V(1).Info("Probing GPU product type via nvidia-smi", "pod", targetPod.Name)
-		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", nvidiaSmiCmd})
-		if err != nil {
-			log.Log.Error(err, "failed to exec nvidia-smi probe", "pod", targetPod.Name)
-		} else {
-			gpuType = parseGPUProductFromNvidiaSmi(output)
-			log.Log.V(1).Info("Probed GPU product type via nvidia-smi",
-				"pod", targetPod.Name,
-				"parsed", gpuType,
-				"willFallBackToSysfs", gpuType == "")
-		}
-
-		if gpuType == "" {
-			log.Log.V(1).Info("Falling back to sysfs/pci.ids for GPU product type", "pod", targetPod.Name)
-			sysfsOutput, sysfsErr := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-				[]string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
-			if sysfsErr != nil {
-				log.Log.Error(sysfsErr, "failed to exec sysfs GPU probe", "pod", targetPod.Name)
-			} else {
-				gpuType = parseGPUProductFromSysfs(sysfsOutput)
-				log.Log.V(1).Info("Probed GPU product type via sysfs/pci.ids",
-					"pod", targetPod.Name,
-					"sysfsID", strings.TrimSpace(sysfsOutput),
-					"parsed", gpuType)
-				if gpuType == "" && strings.TrimSpace(sysfsOutput) != "" {
-					log.Log.Info("GPU product type not resolved from sysfs device ID",
-						"pod", targetPod.Name, "unresolvedID", strings.TrimSpace(sysfsOutput))
-				}
-			}
-		}
-	}
-
-	return machineType, gpuType
+	return parseMachineTypeFromDMI(output)
 }
 
 // truncateForLog clips a string to maxLen characters and appends "…" when

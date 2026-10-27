@@ -85,6 +85,25 @@ A group property MUST declare its aggregation policy for disagreement and incomp
 - **THEN** only existing daemon pods are executed, and every selected worker, raw PF represented by a retained rail, and completely enumerated port must report a unanimous configured link layer before group fabric is published.
 - **AND** missing, partial, denied or conflicting optional observations remain unknown with diagnostics; caller cancellation remains fatal, and existing no-option/REST-only calls acquire no enrichment execs.
 
+#### Scenario: GPU observations with containerized drivers
+
+- **WHEN** the NIC daemon cannot provide complete GPU observations
+- **THEN** discovery may use the Ready main container of an existing same-node GPU Operator feature-discovery DaemonSet after verifying ownership, host sysfs backing and source lifetime, without creating or modifying GPU workloads.
+- **AND** physical host GPU PCI inventory, query indices and matrix coverage must agree before topology is accepted; absent labels do not establish CPU-only hardware, and unavailable optional evidence is diagnosed explicitly.
+
+#### Scenario: GPU observations represent the whole retained PF
+
+- **WHEN** GPU topology is attached to a group PF
+- **THEN** every worker and raw PCI represented by its actual collapse projection must agree on the GPU tuple; node-local RDMA names remain transient.
+- **AND** collapsed siblings must share a nearest GPU at a common proximity before balancing once per retained rail, and per-node product fallback must be aggregated without replacing known worker disagreement with a representative product.
+- **AND** incomplete relevant PF coverage cannot trigger PIX-based traffic reassignment, preset precedence remains authoritative, measured GPU PCI addresses remain consistent with the final GPU index, and VR NetworkBay rails are assigned last.
+
+#### Scenario: Explicit read-only GPU enrichment
+
+- **WHEN** a caller enables GPU topology with REST credentials and a GPU Operator namespace
+- **THEN** only existing pods are executed, no resources or host settings are changed, and netplan probing is not implicitly enabled.
+- **AND** default and REST-only callers acquire no GPU probes; optional failures use the context UI warning sink, while caller cancellation remains fatal.
+
 ### Requirement: Truthful worker selectors
 
 Discovery SHALL validate proposed identities and membership before node-label writes

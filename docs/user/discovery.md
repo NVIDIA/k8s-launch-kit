@@ -106,6 +106,19 @@ coverage of a successfully enumerated sysfs snapshot, not absent kernel hardware
 or deployment readiness. No host modules, node labels or Kubernetes resources are
 changed by read-only discovery.
 
+GPU product/topology enrichment is separately opt-in:
+`networkoperatorplugin.WithReadOnlyGPUTopology("gpu-operator")` requires the
+actual GPU Operator namespace and `WithReadOnlyRESTConfig(restConfig)`.
+Default calls and REST-only calls do not acquire GPU probes. This option reads
+host PCI identities in existing NIC daemon pods and tries `nvidia-smi` there,
+then uses a verified same-node GPU Operator `gpu-feature-discovery` container
+when necessary. It does not run the netplan workflow or modify either daemon.
+Callers need pod read/exec access in both namespaces and DaemonSet read access
+in the GPU Operator namespace. Missing namespace or REST credentials fails
+before cluster reads. Optional failures leave unavailable GPU fields unset;
+caller cancellation remains an error. Supply and consume a `pkg/ui` context
+sink to receive these warnings; the library's default sink is silent.
+
 ## Review saved inventory
 
 Open `cluster-config.yaml` before generation. Confirm the intended workers and
@@ -139,8 +152,15 @@ network interface, VPD identifiers, model, traffic direction, and rail. GPU and
 host details use layered sources:
 
 1. Existing `nvidia.com/gpu.machine` and `nvidia.com/gpu.product` node labels.
-2. DMI data and `nvidia-smi` from the temporary daemon pod.
+2. DMI data from the temporary daemon and GPU product observations from the
+   same-node GPU sources described below.
 3. Sysfs PCI data and the embedded NVIDIA subset of `pci.ids` when `nvidia-smi` is unavailable.
+
+When GPU product labels are absent, each worker resolves its own `nvidia-smi`
+or sysfs product before group aggregation. A product is saved only when all
+workers agree. Missing or conflicting products leave `gpuType` unset with a
+warning, so exact GPU-specific preset lookup is skipped; a representative
+worker's fallback never replaces a known disagreement.
 
 The same batched sysfs probe adds the NUMA node and reads current PF MAC
 addresses transiently. On every worker, discovery compares those addresses
@@ -155,11 +175,43 @@ instead of generating conflicting NCO naming rules. Remove the affected
 `set-name` stanzas from the host netplan configuration and re-run discovery to
 clear the saved group state before retrying generation.
 
-GPU topology probing adds connected GPU, GPU PCI address, and proximity data
-per PF. A PIX-proximate NIC-to-GPU path can override heuristic traffic
-classification and trigger rail reassignment. Physically dual-port BlueField-3
-NICs remain north-south even when PIX-proximate to a GPU. Probe failures are
-non-fatal; discovery keeps the hardware data it can confirm.
+GPU product and topology probing first tries a runtime-injected `nvidia-smi`
+in the NIC daemon, then its legacy `/host/usr/bin/nvidia-smi` path when the
+local observation is unavailable. If both observations are unavailable, discovery
+selects the Ready main container of a same-node GPU Operator
+`gpu-feature-discovery` DaemonSet, checking its owner UID and actual host `/sys`
+mount. It rejects ambiguous sources and observations spanning a pod replacement
+or container restart. Normal discovery looks up GFD across namespaces; that
+fallback needs pod-list/read, DaemonSet-read, and `pods/exec` permissions.
+It never injects a runtime class, allocates GPUs, or creates GPU probe pods.
+Existing GPU runtime setup remains the cluster owner's responsibility.
+
+The GPU query must cover an independently enumerated physical GPU PCI set from
+the NIC daemon's host sysfs, and its indices must match the complete matrix.
+Restricted or unresolvable MIG/vGPU views are unavailable topology. Missing
+GPU labels are not proof of a CPU-only node: unlabeled host-driver nodes retain
+the local product probe. Only a complete zero-GPU host enumeration without
+conflicting GPU labels permits skipping GPU probing.
+
+Connected GPU, GPU PCI address and proximity are saved only when every worker
+and raw sibling PF represented by a retained PF agrees. NIC names are resolved
+by node and PCI; representative RDMA aliases are not reused across workers.
+Collapsed siblings must share a nearest GPU at the same proximity; overlapping
+nearest-GPU ties are compatible. GPU balancing then chooses once per retained
+rail on each node, so sibling planes do not consume extra assignments.
+Only complete relevant PF coverage permits a PIX-based traffic override and
+rail reassignment; physically dual-port BlueField-3 NICs stay north-south.
+Incomplete or conflicting results emit warnings, leave unavailable fields
+unset, and preserve hardware/preset fallback. Presets remain authoritative;
+their GPU index retains a measured PCI address only when all workers confirm it.
+VR NetworkBay rails are finalized afterward.
+
+Collection uses up to four workers, with a 30-second budget per node and one
+bounded GFD lookup per invocation. Source failures do not retry. NIC PF/NUMA
+and netplan reads remain separate in the NIC daemon. Local tests verify source,
+coverage and failure handling; each actual driver/toolkit/image/runtime stack
+still needs live qualification. An accepted topology observation does not
+establish GPU or network deployment readiness.
 
 ### VR NetworkBay rails
 
