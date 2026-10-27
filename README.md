@@ -44,6 +44,8 @@ rejects naming layouts that split a physical NIC across rails; see
 
 ### Select the Deployment Profile
 
+IPoIB shared RDMA with the DOCA driver disabled requires owner-provisioned host netdevs and RDMA character devices; see [IPoIB prerequisites](docs/user/profiles.md#ipoib-with-inbox-drivers).
+
 The profile describes fabric, workload device exposure, multirail and optional Spectrum-X behavior. Use [planning and profile choice](docs/user/profiles.md) before overriding a discovered profile.
 
 ### Generate Deployment Files

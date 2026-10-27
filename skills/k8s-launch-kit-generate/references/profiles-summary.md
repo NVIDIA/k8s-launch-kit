@@ -36,6 +36,12 @@ DRA support and the DeviceClasses described in the
 
 ### `ipoib-rdma-shared`
 
+With the DOCA driver disabled, the host owner must provision IPoIB netdevs and
+RDMA shared-plugin character devices (`rdma_cm`, `umad`, `uverbs`). Generation
+emits an advisory, including offline preset generation; it does not inspect or
+load host modules. See the [IPoIB prerequisites](../../../docs/user/profiles.md#ipoib-with-inbox-drivers).
+
+
 - `00-values.yaml`
 - `10-nicclusterpolicy.yaml`
 - `11-nicnodepolicy.yaml`

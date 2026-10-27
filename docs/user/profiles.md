@@ -70,6 +70,21 @@ Record these decisions before generation and check them again in
 Local installation and version selection are in [Install Launch Kit](installation.md).
 For explicit values and precedence, use the [configuration reference](../reference/configuration.md).
 
+### IPoIB with inbox drivers
+
+When selecting InfiniBand `rdma_shared` with `docaDriver.enable: false`, provision
+host IPoIB netdevs for every selected PF before deployment. The RDMA shared device
+plugin also requires `/dev/infiniband` interfaces for `rdma_cm`, `umad` and `uverbs`.
+Common inbox-driver modules are `ib_ipoib`, `rdma_ucm`, `ib_umad` and `ib_uverbs`;
+platform kernel packaging can provide these drivers built in. The host/platform
+owner controls provisioning. A module name in `lsmod` alone does not prove readiness.
+
+Launch Kit emits an advisory during generation, including offline preset generation.
+Generated interface names describe desired naming; omitted saved names do not prove
+that netdevs are absent, and generation does not inspect or change host modules.
+Check the selected PCI-to-netdev mapping and required character devices using the
+[IPoIB troubleshooting steps](troubleshooting.md#ipoib-shared-rdma-with-inbox-drivers).
+
 ## Profile Matrix
 
 | Profile | Fabric | Deployment | Main resources |

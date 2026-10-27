@@ -44,6 +44,10 @@ var WithReadOnlyRESTConfig = discovery.WithReadOnlyRESTConfig
 // warns that the resulting inventory may be incomplete.
 var WithReadOnlyAssumeUnverifiedExcluded = discovery.WithReadOnlyAssumeUnverifiedExcluded
 
+// WithReadOnlyFabricDiscovery enables optional fabric probes in existing daemon
+// pods. It requires WithReadOnlyRESTConfig and pods/exec permission.
+var WithReadOnlyFabricDiscovery = discovery.WithReadOnlyFabricDiscovery
+
 // DiscoverReadOnly inspects an existing NIC Configuration Daemon and returns
 // the discovered topology without creating, patching, or deleting resources.
 // It returns ErrNotInstalled when the daemon is not already running.

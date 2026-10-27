@@ -284,7 +284,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		devices.Items = filtered
 	}
 
-	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, opts.NodeSelector, opts.CollapseNicRails)
+	clusterConfig, nsWarnings, members := buildClusterConfigWithMembers(devices.Items, nodeLabels, opts.NodeSelector, opts.CollapseNicRails)
 	cfg.ClusterConfig = clusterConfig
 	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
 
@@ -326,14 +326,6 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 			// non-fatal; when nvidia-smi is absent, today's part-number
 			// classification continues to govern.
 			discoverGPUTopology(ctx, restConfig,
-				nicconfigdaemon.Namespace, group, dsPods)
-
-			// Probe per-PF fabric type from active port state + subnet
-			// manager presence (more reliable than firmware link_layer
-			// alone). Populates PFConfig.LinkType / LinkTypeSource. Used by
-			// the declarative defaults in `l8k generate` (Unit 8) to fill
-			// `--fabric` from the discovered group.
-			discoverGroupFabric(ctx, restConfig,
 				nicconfigdaemon.Namespace, group, dsPods)
 
 			// Try to enrich with a predefined topology preset for this
@@ -411,6 +403,12 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 			// redundant. Per-group ThirdPartyRDMAModules / StorageModules
 			// fields stay in the config schema for users who want to populate
 			// them by hand and surface them via the safety warnings.
+		}
+	}
+
+	if restConfig != nil {
+		if err := discoverFabric(ctx, restConfig, nicconfigdaemon.Namespace, cfg.ClusterConfig, devices.Items, members, dsPods, nil); err != nil {
+			return fmt.Errorf("discover fabric: %w", err)
 		}
 	}
 
@@ -1242,11 +1240,6 @@ type nodeInfo struct {
 // per-port PFs and leaving north-south PFs untouched. It returns the re-sorted
 // PF slice and the number of PFs dropped; when nothing is collapsed it returns
 // the input unchanged.
-func collapseGroupRails(pfs []config.PFConfig) ([]config.PFConfig, int) {
-	kept, dropped, _ := collapseGroupRailsWithMembers(pfs)
-	return kept, dropped
-}
-
 func collapseGroupRailsWithMembers(pfs []config.PFConfig) ([]config.PFConfig, int, map[string][]string) {
 	var ew, ns []config.PFConfig
 	for _, pf := range pfs {
@@ -1487,10 +1480,7 @@ func buildClusterConfigWithMembers(devices []nicop.NicDevice, nodeLabels map[str
 		// planes of a single rail. North-south PFs are left untouched.
 		// --collapse-nic-rails=false skips this and keeps one rail per PF.
 
-		projection := make(map[string][]string, len(pfs))
-		for _, pf := range pfs {
-			projection[normalizePCI(pf.PciAddress)] = []string{normalizePCI(pf.PciAddress)}
-		}
+		var projection map[string][]string
 		if collapseNicRails {
 			collapsed, dropped, collapsedMembers := collapseGroupRailsWithMembers(pfs)
 			projection = collapsedMembers
@@ -1499,6 +1489,11 @@ func buildClusterConfigWithMembers(devices []nicop.NicDevice, nodeLabels map[str
 				log.Log.Info("Collapsed multi-plane PFs to one rail per NIC; pass --collapse-nic-rails=false to keep one rail per PF",
 					"groupIndex", i, "identifier", identifier,
 					"droppedPFs", dropped, "eastWestRails", len(pfutil.FilterEastWestPFs(pfs)))
+			}
+		} else {
+			projection = make(map[string][]string, len(pfs))
+			for _, pf := range pfs {
+				projection[normalizePCI(pf.PciAddress)] = []string{normalizePCI(pf.PciAddress)}
 			}
 		}
 
@@ -1832,141 +1827,6 @@ func truncateForLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "…"
-}
-
-// discoverGroupFabric probes the InfiniBand sysfs entries on a representative
-// daemon pod for every east-west PF in `group` that has an RdmaDevice and,
-// when the per-port verdicts unanimously agree on a value, sets
-// `group.LinkType`. Otherwise the field is left empty — discovery couldn't
-// determine the fabric type, and downstream code treats absence as
-// "unknown".
-//
-// The verdict is the port's configured `link_layer` (sysfs file) — what
-// the firmware says the port is wired for, regardless of whether the
-// netdev is currently up. We deliberately ignore `state` (ACTIVE vs
-// DOWN) and `sm_lid` (IB subnet manager presence) here: requiring an
-// active link broke discovery on freshly-provisioned clusters where
-// the switch wasn't yet plugged in, and the configured link_layer is
-// what every downstream template needs anyway. An operator who
-// reflashes a card to a different fabric needs to re-run discover, but
-// that's the only failure mode we accept in exchange for the
-// "discover before the cluster is wired up" win.
-//
-// Multi-node groups whose RdmaDevice is empty (per the existing
-// per-node-vs-group safety rule) skip the probe — there's no ibdev name
-// to point sysfs at — but other PFs in the group can still contribute.
-func discoverGroupFabric(ctx context.Context, restConfig *rest.Config,
-	namespace string, group *config.ClusterConfig, dsPods []corev1.Pod) {
-
-	if restConfig == nil {
-		return
-	}
-	targetPod := findDaemonPod(group.WorkerNodes, dsPods)
-	if targetPod == nil {
-		log.Log.V(1).Info("Skipping fabric probe: no daemon pod on group nodes",
-			"group", group.Identifier)
-		return
-	}
-	containerName := ""
-	if len(targetPod.Spec.Containers) > 0 {
-		containerName = targetPod.Spec.Containers[0].Name
-	}
-
-	verdicts := map[string]int{} // linkType -> count of contributing PFs
-	probed := 0
-	for _, pf := range group.PFs {
-		if pf.Traffic != "east-west" || pf.RdmaDevice == "" {
-			continue
-		}
-		probed++
-		linkType, raw, err := discoverPortFabric(ctx, restConfig, namespace,
-			targetPod.Name, containerName, pf.RdmaDevice, 1)
-		if err != nil {
-			log.Log.V(1).Info("Fabric probe failed",
-				"group", group.Identifier,
-				"pod", targetPod.Name,
-				"pci", pf.PciAddress,
-				"rdmaDevice", pf.RdmaDevice,
-				"error", err.Error())
-			continue
-		}
-		log.Log.V(1).Info("Fabric port probe",
-			"group", group.Identifier,
-			"pod", targetPod.Name,
-			"pci", pf.PciAddress,
-			"rdmaDevice", pf.RdmaDevice,
-			"linkType", linkType,
-			"raw", raw)
-		if linkType != "" {
-			verdicts[linkType]++
-		}
-	}
-
-	switch {
-	case len(verdicts) == 1:
-		for k := range verdicts {
-			group.LinkType = k
-			log.Log.V(1).Info("Group fabric resolved",
-				"group", group.Identifier,
-				"linkType", k,
-				"probedPFs", probed,
-				"contributingPFs", verdicts[k])
-		}
-	case len(verdicts) > 1:
-		log.Log.V(1).Info("Group fabric ambiguous (probes disagree); leaving linkType unset",
-			"group", group.Identifier,
-			"probedPFs", probed,
-			"verdicts", verdicts)
-	default:
-		log.Log.V(1).Info("Group fabric unresolved (no port reported a recognised link_layer); leaving linkType unset",
-			"group", group.Identifier,
-			"probedPFs", probed)
-	}
-}
-
-// discoverPortFabric reads
-// /sys/class/infiniband/<rdmaDevice>/ports/<port>/link_layer inside the
-// daemon pod and returns the configured fabric for that port —
-// "Ethernet", "InfiniBand", or "" when the file is empty / unreadable /
-// unrecognised. The port's runtime state (ACTIVE / DOWN) is
-// intentionally NOT consulted: discovery has to work on freshly
-// provisioned clusters where the switch isn't yet plugged in.
-//
-// Tries `/sys/class/infiniband/...` first (works when the daemon pod
-// shares host pid+net namespace and exposes the host sysfs at /sys),
-// then falls back to `/host/sys/class/infiniband/...` for daemons that
-// mount the host filesystem under /host (matches consts.HostPath =
-// "/host" used by the rest of nic-configuration-operator). The first
-// path that yields a recognised link_layer wins.
-func discoverPortFabric(ctx context.Context, restConfig *rest.Config,
-	namespace, podName, containerName, rdmaDevice string, port int) (string, string, error) {
-	var lastErr error
-	for _, base := range []string{
-		fmt.Sprintf("/sys/class/infiniband/%s/ports/%d/link_layer", rdmaDevice, port),
-		fmt.Sprintf("/host/sys/class/infiniband/%s/ports/%d/link_layer", rdmaDevice, port),
-	} {
-		cmd := fmt.Sprintf("cat %s", base)
-		output, err := execInPod(ctx, restConfig, namespace, podName, containerName,
-			[]string{"/bin/sh", "-c", cmd})
-		if err != nil {
-			lastErr = err
-			log.Log.V(1).Info("Fabric port probe: read failed at this base",
-				"rdmaDevice", rdmaDevice, "port", port, "base", base,
-				"execErr", err.Error())
-			continue
-		}
-		linkType, raw := parsePortFabricVerdict(output)
-		if linkType != "" {
-			return linkType, raw, nil
-		}
-		log.Log.V(1).Info("Fabric port probe: link_layer at this base not recognised",
-			"rdmaDevice", rdmaDevice, "port", port, "base", base,
-			"raw", raw)
-	}
-	if lastErr != nil {
-		return "", "", lastErr
-	}
-	return "", "", nil
 }
 
 // parsePortFabricVerdict normalises a sysfs `link_layer` read into the

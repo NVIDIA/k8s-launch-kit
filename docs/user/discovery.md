@@ -79,6 +79,33 @@ publisher status is unverified. This option does not suppress errors from a
 probe attempted with a REST config. At least one `NicDevice` on a Ready daemon
 node is still required to construct an inventory.
 
+For optional fabric enrichment, pass both
+`networkoperatorplugin.WithReadOnlyRESTConfig(restConfig)` and
+`networkoperatorplugin.WithReadOnlyFabricDiscovery()`. This explicitly permits
+read-only execs in the existing daemon pods and needs `pods/exec` permission in
+the selected daemon namespace. Supplying only a REST config retains the existing
+publisher-verification behavior and does not enable fabric probes. The fabric
+option without a REST config fails before cluster reads.
+
+Fabric enrichment checks every selected worker and east-west PF, including sibling
+PFs represented by a collapsed rail. One batched command per worker confirms
+PCI-local RDMA names, enumerates all ports and reads their configured `link_layer`.
+Only complete, unanimous observations set a group's `linkType`; partial, denied,
+unreadable or conflicting observations leave it unknown with diagnostics. Link
+state and subnet-manager presence do not gate fabric detection. An InfiniBand PF
+without a netdev gets a separate IPoIB host-provisioning warning.
+
+Normal discovery uses the same all-worker fabric check. Collection allows four
+concurrent workers with a ten-second deadline per worker and no timeout retry.
+Its optional worst-case budget is approximately `ceil(selected workers / 4) * 10s`
+plus API/dispatch overhead, capped by the caller's deadline. Internal probe
+failures leave fabric unknown; caller cancellation or deadline returns an error.
+Neither optional enrichment nor partial-inventory opt-in suppresses publisher
+inspection errors when REST credentials are supplied. These observations prove
+coverage of a successfully enumerated sysfs snapshot, not absent kernel hardware
+or deployment readiness. No host modules, node labels or Kubernetes resources are
+changed by read-only discovery.
+
 ## Review saved inventory
 
 Open `cluster-config.yaml` before generation. Confirm the intended workers and
