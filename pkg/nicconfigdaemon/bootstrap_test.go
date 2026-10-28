@@ -222,6 +222,32 @@ func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	require.NotNil(t, container.SecurityContext)
 	require.NotNil(t, container.SecurityContext.Privileged)
 	assert.True(t, *container.SecurityContext.Privileged)
+
+	// Netplan discovery reads /host/etc/netplan. Mount the host's always-present
+	// /etc directory read-only so a missing netplan directory can be reported as
+	// unknown without creating it on the host.
+	var etcMount *corev1.VolumeMount
+	for i := range container.VolumeMounts {
+		if container.VolumeMounts[i].Name == "host-etc" {
+			etcMount = &container.VolumeMounts[i]
+			break
+		}
+	}
+	require.NotNil(t, etcMount)
+	assert.Equal(t, "/host/etc", etcMount.MountPath)
+	assert.True(t, etcMount.ReadOnly)
+
+	var etcVolume *corev1.Volume
+	for i := range ds.Spec.Template.Spec.Volumes {
+		if ds.Spec.Template.Spec.Volumes[i].Name == "host-etc" {
+			etcVolume = &ds.Spec.Template.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, etcVolume)
+	require.NotNil(t, etcVolume.HostPath)
+	assert.Equal(t, "/etc", etcVolume.HostPath.Path)
+	assert.Equal(t, corev1.HostPathDirectory, *etcVolume.HostPath.Type)
 }
 
 func TestEnsure_AppliesDaemonSetWithNodeNameAffinity(t *testing.T) {

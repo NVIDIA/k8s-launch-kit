@@ -232,11 +232,18 @@ Do not add GPU counts or resource maps under `clusterConfig`.
   with an empty `profile.fabric`; set `--fabric` on discovery or generation.
 - `clusterConfig[].netplanManaged` is true when any worker has an NVIDIA PF
   selected by a host netplan `match.macaddress` plus `set-name` rule. Discovery
-  checks every worker and uses PF MACs only transiently; they are not saved in
-  the shared group config. If generation would emit a
-  `NicInterfaceNameTemplate` for an affected group, clean up the host's
-  `set-name` stanzas and re-run discovery before retrying generation; do not
-  clear the field manually.
+  checks worker nodes until it finds a match or has a conclusive observation
+  for each, and uses PF MACs only transiently; they are not saved in the shared
+  group config. A readable host `/etc` without a netplan directory, or a
+  complete readable configuration without MAC-based `set-name` rules, is a
+  confirmed negative and does not require PF MACs. When no match is found but a
+  worker observation is unavailable or incomplete, or a MAC-based rule cannot
+  be checked because an expected PF MAC is missing, discovery warns and sets
+  `clusterConfig[].netplanManagementUnknown`. If generation would emit a `NicInterfaceNameTemplate`
+  for an affected group, clean up the host's
+  `set-name` stanzas or resolve the warning and re-run discovery before
+  retrying generation; do not clear either field manually. Refresh configs
+  created before this unknown-state field was added.
 
 - The bootstrap namespace is **always** `nvidia-k8s-launch-kit` — not configurable. The
   daemon's SA / ClusterRole / ClusterRoleBinding are renamed to

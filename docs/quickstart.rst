@@ -24,8 +24,9 @@ explicit CLI overrides to the deployment sidecar at
 ``<deployment-dir>/.l8k/resolved-config.yaml``. The source file is unchanged.
 Comments in the original YAML are preserved.
 
-When a selected hardware group has ``netplanManaged: true``, generation stops
-if the chosen profile would emit a ``NicInterfaceNameTemplate`` for that group.
+When a selected hardware group has ``netplanManaged: true`` or
+``netplanManagementUnknown: true``, generation stops if the chosen profile would
+emit a ``NicInterfaceNameTemplate`` for that group.
 The existing netplan ``set-name`` rule can conflict with the udev naming rule
 deployed by NIC Configuration Operator. Remove the affected ``set-name``
 stanzas from the host netplan configuration, re-run ``l8k discover``, and then

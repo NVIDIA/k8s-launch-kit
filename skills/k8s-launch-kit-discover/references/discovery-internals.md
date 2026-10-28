@@ -25,6 +25,10 @@ The objects created by `Ensure(ctx, c, opts)` (`pkg/nicconfigdaemon/`) on every 
 | `ConfigMap` | `nic-configuration-operator-supported-nic-firmware` (empty `data: {}`) | namespaced | empty stand-in so the daemon's startup Get succeeds; deleted by namespace cascade |
 | `DaemonSet` | `nic-configuration-daemon` | namespaced | image = `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`; **no NFD `nodeSelector`** + tolerates all taints + node-name affinity for nodes that are Ready and schedulable; deleted by namespace cascade |
 
+The bootstrap daemon mounts host `/etc` read-only at `/host/etc`. Mounting the
+parent directory lets the probe detect a missing `/etc/netplan` without
+`DirectoryOrCreate` mutating the node or preventing the daemon from starting.
+
 ### Why renamed RBAC
 
 The upstream nic-configuration-operator Helm chart uses cluster-scoped names
@@ -119,7 +123,13 @@ with a sanitized projection of host netplan device stanzas; a
 `match.macaddress` plus non-empty `set-name` match sets the group's
 `netplanManaged` flag. Every worker is probed because MACs and netplan files are
 node-local, and the group flag is true if any worker matches. These PF/netplan
-reads stay in the NIC daemon, independently of GPU source selection.
+reads stay in the NIC daemon, independently of GPU source selection. A readable
+host `/etc` with no netplan directory, or a complete readable configuration
+with no MAC-based `set-name` rule, is a confirmed negative and does not require
+PF MACs. Unavailable or incomplete observations remain unknown; when a
+MAC-based `set-name` rule exists, missing PF MACs also leave the result unknown.
+Generation rejects interface-name rules for that group until the host state can
+be verified.
 
 To integrate a new per-PF field, add its best-effort read to
 `pfDiscoveryProbeCmd`, decide whether its lifetime permits persistence in

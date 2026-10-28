@@ -531,6 +531,9 @@ clusterConfig:
     machineType: PowerEdge-XE9680
     gpuType: NVIDIA-H200
     netplanManaged: true
+    # Discovery adds this when no match is found but at least one worker could
+    # not be verified
+    # netplanManagementUnknown: true
     capabilities:
       nodes:
         sriov: true
@@ -554,7 +557,8 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 | `identifier` | Lowercase resource-name form of machine/GPU identity with complete `NVIDIA` segments removed and common machine segments shortened (`ThinkSystem` → `ts`, `PowerEdge` → `pe`), bounded to 30 bytes with balanced machine/GPU prefixes and a 6-character deterministic hash when needed, or `group-N` fallback. The Launch Kit machine node label uses the same value. |
 | `machineType` / `gpuType` | Discovered hardware identity. |
 | `linkType` | Per-group `Ethernet` or `InfiniBand` result when fabric probes agree. |
-| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`. Generation fails if a `NicInterfaceNameTemplate` would configure this group; remove the affected `set-name` stanzas and re-run discovery before retrying generation. |
+| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`. |
+| `netplanManagementUnknown` | `true` when no match was found but a worker's netplan observation was unavailable or incomplete, or a MAC-based `set-name` rule could not be checked because an expected PF MAC was unreadable. A readable `/etc` without a netplan directory, or a complete configuration without MAC-based `set-name` rules, is a verified negative. Generation fails if a `NicInterfaceNameTemplate` would configure a group where either this field or `netplanManaged` is true. Resolve the discovery warning and re-run discovery; existing configs should be refreshed with discovery to populate this field. |
 | `presetApplied` | An exact topology preset was applied. |
 | `presetDeviation` | PF count, PCI address, or device ID drift from a matched preset. |
 | `capabilities.nodes` | Group-level SR-IOV, RDMA, and InfiniBand capability flags. |

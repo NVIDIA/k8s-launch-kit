@@ -411,8 +411,11 @@ clusterConfig:
   - # string — Group identifier/machine label (vendor-free; common machine aliases; max 30 bytes)
     identifier: ""
 
-    # bool — Netplan set-name selects an NVIDIA PF; blocks an NCO interface-name template for this group
+    # bool — a netplan MAC-based set-name selects an NVIDIA PF; blocks an NCO interface-name template for this group
     netplanManaged: false
+    # bool, omitted unless unknown — a worker observation is incomplete or a
+    # MAC-based set-name rule cannot be checked; also blocks interface naming
+    # netplanManagementUnknown: true
 
     capabilities:
       nodes:

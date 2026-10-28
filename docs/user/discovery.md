@@ -175,17 +175,22 @@ warning, so exact GPU-specific preset lookup is skipped; a representative
 worker's fallback never replaces a known disagreement.
 
 The same batched sysfs probe adds the NUMA node and reads current PF MAC
-addresses transiently. On every worker, discovery compares those addresses
-with host netplan device stanzas that contain both `match.macaddress` and a
-non-empty `set-name`. If any NVIDIA PF matches on any worker in a hardware
-group, the saved group has `netplanManaged: true`; otherwise it is `false`.
-This flags a potential conflict between netplan naming and udev rules deployed
-by NIC Configuration Operator without storing host-unique MAC addresses in the
-shared group configuration. If `l8k generate` would emit a
-`NicInterfaceNameTemplate` for an affected group, it returns a validation error
-instead of generating conflicting NCO naming rules. Remove the affected
-`set-name` stanzas from the host netplan configuration and re-run discovery to
-clear the saved group state before retrying generation.
+addresses transiently. Discovery mounts the host's `/etc` read-only and checks
+worker nodes until it finds a match or has a conclusive observation for each.
+If any NVIDIA PF matches a netplan
+`match.macaddress` plus non-empty `set-name` rule, the group has
+`netplanManaged: true`. If no match is found but a worker's observation is
+unavailable or incomplete, the group has `netplanManagementUnknown: true` and
+discovery warns. A readable host `/etc` with no netplan directory, or a complete
+readable configuration with no MAC-based `set-name` rules, is a verified
+negative and does not require PF MACs. When a MAC-based `set-name` rule exists,
+an unreadable expected PF MAC also leaves the result unknown. Neither flag
+persists host-unique MAC addresses. If `l8k generate` would emit a
+`NicInterfaceNameTemplate` for a group that is managed or unknown, it returns a
+validation error rather than risking conflicting NCO naming rules. Resolve the
+discovery warning and re-run discovery, or remove the affected `set-name`
+stanzas and re-run discovery, before retrying generation. Re-run discovery for
+configs created before `netplanManagementUnknown` was available.
 
 GPU product and topology probing first tries a runtime-injected `nvidia-smi`
 in the NIC daemon, then its legacy `/host/usr/bin/nvidia-smi` path when the
