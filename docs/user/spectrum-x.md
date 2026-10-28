@@ -485,3 +485,15 @@ qualified OpenShift profile in this build.
 - North-south-only groups are not written to `cluster-config.yaml`; they do not produce Spectrum-X manifests.
 - Spectrum-X rendering participates in heterogeneous group merging when source groups share GPU type and rail count.
 - `--network-namespaces` does not fan out Spectrum-X resources; Spectrum-X renders into the first configured namespace.
+
+### Migrating existing VR rail groups
+
+The per-NIC layout changes generated resource names. For an existing deployment,
+back up the current rail pool and its generated resources before applying the new
+manifests. Superseded SR-IOV policies can overlap the new PF/VF selectors and
+prevent reconciliation. Remove only the old policies and OVSNetworks owned by
+that rail pool, then verify the new per-NIC resources reconcile. Retire the old
+rail bridges and their patch ports after confirming ownership and that no
+workloads use them; preserve the shared XPlane bridge and new per-NIC bridges.
+This cleanup is an operator-managed migration, not an automatic Launch Kit step.
+Check SR-IOV node status, XPlane startup, and workload networking separately.
