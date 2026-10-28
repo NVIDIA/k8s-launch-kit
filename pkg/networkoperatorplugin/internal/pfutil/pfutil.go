@@ -121,6 +121,14 @@ func IsDualPortModel(model string) bool {
 // manifests anyway). A PF with a malformed PCI address (no function
 // suffix) is always kept, never silently dropped.
 func CollapsePFsToOnePerNIC(pfs []config.PFConfig) (kept []config.PFConfig, dropped int) {
+	kept, dropped, _ = CollapsePFsToOnePerNICWithMembers(pfs)
+	return kept, dropped
+}
+
+// CollapsePFsToOnePerNICWithMembers also returns the raw PF addresses represented
+// by each retained PF. It records the collapse decision itself, so node-local
+// enrichment need not reconstruct rail membership from the reduced inventory.
+func CollapsePFsToOnePerNICWithMembers(pfs []config.PFConfig) (kept []config.PFConfig, dropped int, members map[string][]string) {
 	type nicInfo struct {
 		dualPort bool
 		master   string
@@ -144,18 +152,25 @@ func CollapsePFsToOnePerNIC(pfs []config.PFConfig) (kept []config.PFConfig, drop
 	}
 
 	kept = make([]config.PFConfig, 0, len(pfs))
+	members = make(map[string][]string, len(pfs))
 	for i := range pfs {
 		prefix, ok := PciBusDevicePrefix(pfs[i].PciAddress)
 		if !ok {
 			kept = append(kept, pfs[i])
+			members[pfs[i].PciAddress] = append(members[pfs[i].PciAddress], pfs[i].PciAddress)
 			continue
 		}
 		info := nics[prefix]
+		retained := info.master
+		if info.dualPort {
+			retained = pfs[i].PciAddress
+		}
+		members[retained] = append(members[retained], pfs[i].PciAddress)
 		if info.dualPort || pfs[i].PciAddress == info.master {
 			kept = append(kept, pfs[i])
 		} else {
 			dropped++
 		}
 	}
-	return kept, dropped
+	return kept, dropped, members
 }

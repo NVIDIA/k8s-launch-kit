@@ -62,13 +62,18 @@ Profiles SHALL emit native chart/API value shapes and declare the tools, images,
 - **WHEN** a profile advertises a check needing a tool or device
 - **THEN** its workload provides the declared prerequisite or explicitly reports that check unsupported.
 
-### Requirement: Opt-in standard NIC configuration
+### Requirement: Standard NIC configuration
 
-Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-disabled NIC configuration template option on Kubernetes and OpenShift. Enabled templates SHALL target each selected source group's east-west NIC type and PCI addresses, route VF count from SR-IOV settings and link type from the resolved fabric, and configure PCI and Baremetal GPUDirect optimizations. Ethernet SHALL additionally configure DSCP trust and priority-3 PFC; InfiniBand SHALL omit RoCE settings. Only SR-IOV profiles SHALL disable the Mellanox plugin, preserving unrelated OCP disabled plugins. Spectrum-X SHALL reject the new option.
+Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-enabled NIC configuration template option on Kubernetes and OpenShift. Enabled templates SHALL target each selected source group's east-west NIC type and PCI addresses, route VF count from SR-IOV settings and link type from the resolved fabric, and configure PCI and Baremetal GPUDirect optimizations. Ethernet SHALL additionally configure DSCP trust and priority-3 PFC; InfiniBand SHALL omit RoCE settings. Only SR-IOV profiles SHALL disable the Mellanox plugin, preserving unrelated OCP disabled plugins. Spectrum-X SHALL keep its required templates independently of this standard-profile option.
 
-#### Scenario: Default or explicit opt-out
+#### Scenario: Default standard NIC configuration
 
-- **WHEN** the option is omitted or explicitly false
+- **WHEN** the option is omitted for a standard profile
+- **THEN** NIC configuration templates and the profile-appropriate plugin-disable request are rendered.
+
+#### Scenario: Explicit opt-out
+
+- **WHEN** the option is explicitly false in YAML or on the CLI
 - **THEN** no standard NIC configuration template or new plugin-disable request is rendered.
 
 #### Scenario: Profile-owned NIC configuration templates
@@ -86,10 +91,25 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-di
 - **WHEN** enabled SR-IOV configuration is applied to OpenShift with other plugins already disabled
 - **THEN** mellanox is added without removing the existing disabled plugins; RDMA-shared and host-device profiles do not request this operator setting.
 
-#### Scenario: Spectrum-X conflict
+#### Scenario: Spectrum-X owns NIC configuration
 
-- **WHEN** the new option is enabled with Spectrum-X
-- **THEN** configuration is rejected without changing Spectrum-X templates.
+- **WHEN** the standard-profile option is true or false with Spectrum-X
+- **THEN** Spectrum-X retains its required NIC configuration templates.
+
+#### Scenario: Single selected source receives interface naming
+
+- **WHEN** a standard multirail profile has interface naming enabled and a single source group is selected from any inventory
+- **THEN** its interface-name template retains that source's node selector and east-west rail PCI addresses; group count does not disable naming.
+
+#### Scenario: Standard naming follows configured rail order
+
+- **WHEN** selected east-west PFs have configured rails in a different order from their inventory entries
+- **THEN** the naming template orders PCI addresses by rail number, matching policy selectors without mutating inventory; rail IDs must be contiguous from zero, with one east-west PF per rail.
+
+#### Scenario: Unsupported standard naming layout
+
+- **WHEN** an emitted standard interface-name template places PCI functions of one physical NIC in multiple rail lists
+- **THEN** generation rejects that layout before output replacement, regardless of inventory Rail metadata or group count; it does not silently disable naming or let excluded sources block a supported selection.
 
 #### Scenario: Whole-NIC scope protection
 
@@ -101,13 +121,20 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-di
 - **WHEN** opt-out or subset generation omits a previously deployed standard NIC configuration template
 - **THEN** Kubernetes deploy preflight treats it as a stray, blocking unless overwrite-existing authorizes deletion; OCP preserves it, and neither platform automatically restores applied NIC settings.
 
-### Requirement: RA2.4 Spectrum-X planning
+### Requirement: doSPCX Spectrum-X planning
 
-RA2.3 SHALL be limited to Network Operator 26.7. RA2.4 SHALL support catalogued
-releases >=26.10 with a stable default of 26.10. RA2.4 SHALL render one doSPCX
-bundle in the resolved operator namespace, architecture version RA2.4 and
+RA2.3 SHALL be limited to Network Operator 26.7. RA2.4 and RA3.1 SHALL support catalogued
+releases >=26.10 with a stable default of 26.10. Both SHALL render one doSPCX
+bundle in the resolved operator namespace, the selected architecture version and
 per-source platformType. Platform resolution SHALL select the unique longest
-case-insensitive supported platform substring in GPUType without requiring a preset.
+case-insensitive supported platform substring in GPUType without requiring a preset,
+except that a case-insensitive VR substring in MachineType SHALL take precedence
+and resolve to vr, including when GPUType is empty. RA3.1 SHALL preserve the
+RA2.4 rail-layout and merge safeguards. Eight-plane HWPLB generation SHALL
+retain two-NIC input order and emit four PFs per NIC when each rail has two NICs.
+VR with ConnectX-9 SHALL default to HWPLB with eight planes for RA2.4/RA3.1,
+preserving explicit YAML/CLI values. An explicit SWPLB mode with no plane count
+SHALL retain the CX9 four-plane fallback; defaults do not qualify a fabric recipe.
 
 #### Scenario: Unresolved discovery and generation
 
@@ -133,6 +160,24 @@ case-insensitive supported platform substring in GPUType without requiring a pre
 
 - **WHEN** RA2.4 scope planning would emit multiple rail-pool parents through a multi-source strict subset or multiple buckets
 - **THEN** generation rejects the selection before rendering or replacing output because operator-created children share rail names; a complete compatible cohort or a single selected source remains supported.
+
+### Requirement: Hardware source identity is explicit
+
+SR-IOV policy and IPPool rendering SHALL preserve exact selected source identifiers
+through full-bucket and strict-subset generation. Duplicate source identifiers SHALL
+be rejected at the plugin boundary as well as application entrypoints. The
+established unnamed sole source SHALL retain its empty ID through explicit
+`[""]` source metadata rather than receiving a synthetic name.
+
+#### Scenario: Unnamed sole source
+
+- **WHEN** a valid single-source input has an empty identifier
+- **THEN** rendering preserves the identifier and records `[""]`; scope checking requires exactly one unnamed configured source and its worker inventory, and missing configuration cannot downgrade the check.
+
+#### Scenario: One GPU type spans separate buckets
+
+- **WHEN** selected sources sharing a GPU label have different rail-count buckets
+- **THEN** each resource retains only its intended source IDs, enabling deployment to reject a shared selector that includes another bucket's workers.
 
 ## Baseline and limits
 

@@ -17,6 +17,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -240,37 +241,70 @@ func TestRetryableNicDeviceListError(t *testing.T) {
 }
 
 func TestReadOnlyPublisherNodesDistinguishesExcludedAndMissing(t *testing.T) {
-	expectedNodes := []string{"with-device", "missing-device", "no-nic", "restricted-only"}
+	expectedNodes := []string{"with-device", "missing-device", "no-nic", "restricted-only", "unverified"}
 	deviceNodes := map[string]bool{"with-device": true}
 	probeResults := map[string]mellanoxNICProbeResult{
 		"missing-device":  mellanoxNICProbePresent,
 		"no-nic":          mellanoxNICProbeNone,
 		"restricted-only": mellanoxNICProbeRestricted,
+		"unverified":      mellanoxNICProbeUnverified,
 	}
 
-	publishers, excluded, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
+	selection, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"with-device", "missing-device"}, publishers)
-	assert.Equal(t, []string{"no-nic", "restricted-only"}, excluded)
+	assert.Equal(t, []string{"with-device", "missing-device"}, selection.publisherNodes)
+	assert.Equal(t, []string{"no-nic", "restricted-only"}, selection.excludedNodes)
+	assert.Equal(t, []string{"unverified"}, selection.unverifiedNodes)
 }
 
 func TestReadOnlyPublisherNodesRejectsUnverifiedMissingDevice(t *testing.T) {
-	publishers, excluded, err := readOnlyPublisherNodes(
+	selection, err := readOnlyPublisherNodes(
 		[]string{"worker-without-device"}, nil, nil,
 	)
 
 	require.ErrorContains(t, err, "NIC publisher eligibility on node")
-	assert.Nil(t, publishers)
-	assert.Nil(t, excluded)
+	assert.Empty(t, selection.publisherNodes)
+	assert.Empty(t, selection.excludedNodes)
+	assert.Empty(t, selection.unverifiedNodes)
 }
 
 func TestProbeMissingReadOnlyPublishersRequiresRESTConfig(t *testing.T) {
 	results, err := probeMissingReadOnlyPublishers(
-		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil, nil,
+		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil, nil, false,
 	)
 
 	require.ErrorContains(t, err, "pass WithReadOnlyRESTConfig")
+	assert.Nil(t, results)
+}
+
+func TestProbeMissingReadOnlyPublishersCanExcludeWithoutRESTConfig(t *testing.T) {
+	results, err := probeMissingReadOnlyPublishers(
+		context.Background(), nil, "network-operator", []string{"worker-0"}, nil, nil, nil, true,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, mellanoxNICProbeUnverified, results["worker-0"])
+}
+
+func TestProbeMissingReadOnlyPublishersDoesNotSuppressProbeErrors(t *testing.T) {
+	probeErr := errors.New("pods/exec is forbidden")
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "daemon-worker-0", Namespace: "network-operator"},
+		Spec: corev1.PodSpec{
+			NodeName:   "worker-0",
+			Containers: []corev1.Container{{Name: "daemon"}},
+		},
+	}
+	results, err := probeMissingReadOnlyPublishers(
+		context.Background(), &rest.Config{}, "network-operator", []string{"worker-0"},
+		[]corev1.Pod{pod}, nil,
+		func(context.Context, *rest.Config, string, string, string, []string) (string, error) {
+			return "", probeErr
+		}, true,
+	)
+
+	require.ErrorIs(t, err, probeErr)
 	assert.Nil(t, results)
 }
 
@@ -434,6 +468,163 @@ func TestWaitForDaemonSetPodsReturnsFallbackNamespace(t *testing.T) {
 	assert.Equal(t, "network-operator", namespace)
 }
 
+type deadlineRecordingClient struct {
+	client.Client
+	deadline time.Time
+}
+
+func (c *deadlineRecordingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		c.deadline = deadline
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+type deadlineNodeListClient struct {
+	client.Client
+	nodeListCalls int
+}
+
+func (c *deadlineNodeListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if _, ok := list.(*corev1.NodeList); ok {
+		c.nodeListCalls++
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+func TestWaitForDaemonSetPodsAppliesTimeoutWithParentDeadline(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "ready-daemon", Namespace: "network-operator",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}},
+		},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	c := &deadlineRecordingClient{Client: base}
+	parentDeadline := time.Now().Add(time.Hour)
+	parentCtx, cancel := context.WithDeadline(context.Background(), parentDeadline)
+	defer cancel()
+
+	_, _, _, err := waitForDaemonSetPods(
+		parentCtx, c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, time.Minute,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, c.deadline.Before(parentDeadline), "the daemon wait should retain its own timeout")
+}
+
+func TestWaitForDaemonSetPodsDoesNotReturnPartialSuccessAfterParentDeadline(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending).Build()
+	parentCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(25*time.Millisecond))
+	defer cancel()
+
+	_, _, _, err := waitForDaemonSetPods(
+		parentCtx, c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, time.Minute,
+	)
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestWaitForDaemonSetPodsPreservesPartialResultsOnItsOwnTimeout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending).Build()
+
+	nodes, pods, namespace, err := waitForDaemonSetPods(
+		context.Background(), c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, 20*time.Millisecond,
+	)
+
+	require.NoError(t, err)
+	require.Len(t, pods, 1)
+	assert.Equal(t, []string{"ready-daemon"}, []string{pods[0].Name})
+	assert.Equal(t, []string{"ready-node"}, nodes)
+	assert.Equal(t, "network-operator", namespace)
+}
+
+func TestWaitForDaemonSetPodsPreservesReadyPodsWhenNodeLookupTimesOut(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "pending-node"},
+	}
+	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending).Build()
+	c := &deadlineNodeListClient{Client: base}
+
+	nodes, pods, namespace, err := waitForDaemonSetPods(
+		context.Background(), c, ui.NewSilent(), "network-operator", nicconfigdaemon.DaemonSetName, 20*time.Millisecond,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, c.nodeListCalls)
+	assert.Equal(t, []string{"ready-node"}, nodes)
+	require.Len(t, pods, 1)
+	assert.Equal(t, "ready-daemon", pods[0].Name)
+	assert.Equal(t, "network-operator", namespace)
+}
+
+func TestWaitForDaemonSetPodsSkipsPodsOnNotReadyNodes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "ready-node"},
+		Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-daemon", Namespace: "network-operator", OwnerReferences: owner},
+		Spec:       corev1.PodSpec{NodeName: "not-ready-node"},
+	}
+	notReadyNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "not-ready-node"},
+		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending, notReadyNode).Build()
+
+	st, err := checkDaemonSetPodsReady(context.Background(), c, "network-operator", nicconfigdaemon.DaemonSetName)
+	require.NoError(t, err)
+	require.NoError(t, excludePodsOnNotReadyNodes(context.Background(), c, &st))
+
+	assert.Equal(t, 2, st.total)
+	assert.Equal(t, 1, st.ready)
+	assert.Equal(t, 1, st.notReadyNodePods)
+	assert.True(t, st.canProceed())
+	assert.Equal(t, st.total, st.ready+st.stuck+st.notReadyNodePods,
+		"a pod on a NotReady node should not keep the readiness wait open")
+}
+
 type daemonNamespaceFallbackClient struct {
 	client.Client
 	primaryPod  corev1.Pod
@@ -559,8 +750,101 @@ func TestDiscoverReadOnlyDoesNotMutateCluster(t *testing.T) {
 		"read-only discovery must not create or delete the daemon namespace")
 }
 
+func TestDiscoverReadOnlyCanExcludeUnverifiedPublishers(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, nicop.AddToScheme(scheme))
+	owner := []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}}
+	readyPod := func(name, node string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            name,
+				Namespace:       "nvidia-network-operator",
+				OwnerReferences: owner,
+			},
+			Spec: corev1.PodSpec{NodeName: node},
+			Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+				Type: corev1.PodReady, Status: corev1.ConditionTrue,
+			}}},
+		}
+	}
+	device := &nicop.NicDevice{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-0-device", Namespace: "default"},
+		Status: nicop.NicDeviceStatus{
+			Node:       "worker-0",
+			Type:       "1023",
+			PartNumber: "pn-test",
+			Ports: []nicop.NicDevicePortSpec{{
+				PCI:              "0000:18:00.0",
+				RdmaInterface:    "mlx5_0",
+				NetworkInterface: "eth0",
+			}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		readyPod("daemon-worker-0", "worker-0"),
+		readyPod("daemon-worker-1", "worker-1"),
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-0", Labels: map[string]string{
+			"nvidia.com/gpu.product": "NVIDIA-H100",
+		}}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}},
+		device,
+	).Build()
+	var output bytes.Buffer
+	ctx := ui.WithOutput(context.Background(), ui.NewWithWriter(&output))
+
+	_, err := DiscoverReadOnly(ctx, c)
+	require.ErrorContains(t, err, "pass WithReadOnlyRESTConfig")
+
+	cfg, err := DiscoverReadOnly(ctx, c, WithReadOnlyAssumeUnverifiedExcluded())
+
+	require.NoError(t, err)
+	require.Len(t, cfg.ClusterConfig, 1)
+	assert.Equal(t, []string{"worker-0"}, cfg.ClusterConfig[0].WorkerNodes)
+	assert.Contains(t, output.String(), "unverified")
+}
+
 func hasNamespace(t *testing.T, c client.Client, name string) bool {
 	t.Helper()
 	ns := &corev1.Namespace{}
 	return c.Get(context.Background(), client.ObjectKey{Name: name}, ns) == nil
+}
+
+func TestDiscoverReadOnlyAssignsVRRailsFromNetworkBayStatus(t *testing.T) {
+	for _, missingStatus := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing-status-%t", missingStatus), func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, corev1.AddToScheme(scheme))
+			require.NoError(t, nicop.AddToScheme(scheme))
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{"nvidia.com/gpu.machine": "VR"}}}
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "daemon-worker-a", Namespace: "nvidia-network-operator",
+					OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: nicconfigdaemon.DaemonSetName}},
+				},
+				Spec: corev1.PodSpec{NodeName: "worker-a"},
+				Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
+					{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+				}},
+			}
+			devices := vrRailTestDevices("worker-a")
+			if missingStatus {
+				devices[0].Status.NetworkBay = nil
+			}
+			objects := []client.Object{node, pod}
+			for i := range devices {
+				objects = append(objects, &devices[i])
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+			cfg, err := DiscoverReadOnly(context.Background(), c)
+			if missingStatus {
+				require.ErrorContains(t, err, "no NetworkBay status")
+				require.Nil(t, cfg)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, cfg.ClusterConfig, 1)
+			assertVRTestRails(t, cfg.ClusterConfig[0])
+		})
+	}
 }

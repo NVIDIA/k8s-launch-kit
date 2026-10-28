@@ -223,6 +223,9 @@ type NodeInfo struct {
 // parse / execute failure; the writer is not flushed (callers
 // typically pass an *os.File which the OS will flush on Close).
 func RenderHTML(w io.Writer, data ReportData) error {
+	if data.Matrix != nil {
+		data.Warnings = append(append([]string(nil), data.Warnings...), data.Matrix.PartitionWarnings...)
+	}
 	tmpl, err := template.New("validation-report").
 		Funcs(reportFuncMap()).
 		Parse(reportTemplate)

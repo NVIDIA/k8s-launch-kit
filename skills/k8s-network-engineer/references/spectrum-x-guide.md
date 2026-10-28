@@ -10,6 +10,7 @@ qualification boundaries. The configuration resolver enforces these pairs:
 | RA2.2 | 26.4 | `profiles/spectrum-x-ra2.2/` | v1alpha2 rail-pool CR |
 | RA2.3 | 26.7 | `profiles/spectrum-x/` | v1alpha2 rail-pool CR and profile ConfigMap |
 | RA2.4 | 26.10 and newer catalogued releases | `profiles/spectrum-x-ra2.4/` | v1alpha2 rail-pool CR, doSPCX bundle and per-source platformType |
+| RA3.1 | 26.10 and newer catalogued releases | `profiles/spectrum-x-ra3.1/` | v1alpha2 rail-pool CR, doSPCX bundle and per-source platformType |
 
 Spectrum-X requires Ethernet, SR-IOV, and multirail. An invalid RA/release pair
 fails validation; it does not fall back to an ordinary profile. RA2.3 requires
@@ -22,7 +23,7 @@ requires a full doSPCX ConfigMap and the matching NCO implementation and CRDs.
 | --- | --- | --- |
 | `none` | 1 | Per rail |
 | `swplb` | 2 or 4 | Per rail and plane |
-| `hwplb` | 2 or 4 | Per rail, grouping planes |
+| `hwplb` | 2, 4, or 8 | Per rail, grouping planes; VR/CX9 defaults to 8 on RA2.4/RA3.1 |
 
 Hardware defaults combine GPU platform and east-west NIC device ID.
 H100/H200/B200/GB200 default to `none` with one plane; B300/GB300 default to
@@ -69,11 +70,20 @@ l8k-owned annotations or the selected groups. Qualification requires successful
 allocation and the intended connectivity coverage on the target hardware.
 Spectrum-X has no qualified OpenShift profile in this build.
 
-## RA2.4 integration
+## RA2.4 and RA3.1 integration
 
-RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
-accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
+accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
+status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
+compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when
@@ -81,15 +91,17 @@ platformType support is absent or cannot be inspected. External Helm, overwrite,
 and dry-run do not bypass this check; dry-run needs APIs installed already.
 
 Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
-substring from the internal doSPCX platform list in gpuType. No preset or mapping
+substring from the internal doSPCX platform list in gpuType. A machineType
+containing `VR` (case-insensitive) takes precedence and selects `vr`, even with
+an empty gpuType. No preset or mapping
 setting is needed. Discovery saves empty values and warns; generation rejects
-unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+unresolved selected RA2.4/RA3.1 groups. RTX/CX8 defaults to none/one plane. Mapping does
 not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
 clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
 zero, and must agree across merged groups. Refresh preserves explicit plane
 assignments only for unchanged source/rail hardware and verified unchanged worker
 membership (ordering does not matter). Changed or unknown membership drops prior
-assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+assignments with a review/reapply warning. Every selected RA2.4/RA3.1 source needs complete
 dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
 sources must have the same effective layout. Merged GPU selectors must not include
 excluded same-GPU sources in other buckets; select one source in that case.

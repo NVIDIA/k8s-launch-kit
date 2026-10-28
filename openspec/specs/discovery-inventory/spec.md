@@ -34,15 +34,31 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **WHEN** a worker is outside the declared eligible set
 - **THEN** discovery does not wait for that worker to publish the new observation.
 
-#### Scenario: Read-only publisher eligibility is unknown
+#### Scenario: Restricted BlueField alongside a usable NIC
+
+- **WHEN** bootstrap discovery verifies host-restricted BlueField PCI functions, including on a node with usable NICs
+- **THEN** normal CLI output identifies their node and PCI addresses and reports a PCI-function count before namespace teardown; those devices remain excluded from saved inventory.
+- **AND** a later PCI scan failure retains an already-verified publisher and warns that exclusion reporting is incomplete; read-only eligibility probes retain their existing failure policy.
+
+#### Scenario: Read-only publisher eligibility is unknown by default
 
 - **WHEN** a Ready existing-daemon node has no `NicDevice` and discovery cannot inspect its NIC eligibility
 - **THEN** read-only discovery returns an inspection error instead of guessing from optional labels or returning an incomplete inventory.
+
+#### Scenario: Read-only caller explicitly excludes an unverified publisher
+
+- **WHEN** a Ready existing-daemon node has no `NicDevice`, no REST config is supplied, and the caller opts in to excluding unverified publishers
+- **THEN** read-only discovery excludes that node and warns that the returned inventory may be incomplete; errors from an attempted probe remain errors.
 
 #### Scenario: Read-only publisher is verified absent
 
 - **WHEN** the existing daemon probe confirms that a node has no discoverable NIC or only restricted BlueFields
 - **THEN** read-only discovery excludes that node from the required publisher set; probe and permission errors remain errors.
+
+#### Scenario: Platform networking inspection unavailable
+
+- **WHEN** optional API installer inspection is unavailable or ambiguous
+- **THEN** fresh and refreshed discovery save hardware inventory and separate networking observations without changing desired component ownership; automatic generation rejects unresolved ownership evidence.
 
 ### Requirement: Aggregation and provenance
 
@@ -56,16 +72,73 @@ A group property MUST declare its aggregation policy for disagreement and incomp
 #### Scenario: Netplan observation is incomplete on a worker
 
 - **WHEN** discovery finds no netplan naming match but cannot inspect the netplan
-  directory, obtain a current MAC for every expected PF, or parse a worker's
-  observation
+  directory, parse a worker's observation, or obtain current PF MACs while
+  checking a MAC-based `set-name` rule
 - **THEN** it records `netplanManagementUnknown`, warns, and rejects generation
   of a `NicInterfaceNameTemplate` for that group until discovery is rerun with a
   complete observation; a positive match on any worker remains `netplanManaged`.
+
+#### Scenario: Netplan naming rules are conclusively absent
+
+- **WHEN** host `/etc` is readable but has no netplan directory, or a complete
+  readable configuration contains no MAC-based `set-name` rules
+- **THEN** discovery records a verified negative without requiring PF MACs and
+  does not set `netplanManagementUnknown`.
 
 #### Scenario: Preset mismatch
 
 - **WHEN** live topology deviates from a candidate preset
 - **THEN** the matching/deviation path retains the applicable live topology rather than asserting an exact match.
+
+#### Scenario: Dual-port BlueField-3 in NIC mode
+
+- **WHEN** a BlueField-3 reports a VPD model with two physical ports, even with `status.dpu=false` or an unlisted SKU
+- **THEN** live discovery classifies its PFs as north-south, preserves that classification during GPU PIX probing, and assigns no east-west rails; a group containing only north-south NICs is omitted.
+
+#### Scenario: VR NetworkBay rail membership
+
+- **WHEN** normal or read-only discovery resolves a VR group
+- **THEN** each worker must report eight east-west ASIC NICs forming four complete reciprocal NetworkBay pairs, each with ASIC 1 and ASIC 0; NetworkBays ordered by ASIC 1 PCI address form rails by crossing opposite ASICs between NetworkBays 1/2 and 3/4, after GPU/preset enrichment, without changing PF order.
+- **AND** missing, invalid or incomplete status, or differing worker mappings, stops discovery before saving inventory rather than falling back to sequential rails.
+
+#### Scenario: Explicit read-only fabric enrichment
+
+- **WHEN** a read-only caller enables fabric discovery with REST credentials
+- **THEN** only existing daemon pods are executed, and every selected worker, raw PF represented by a retained rail, and completely enumerated port must report a unanimous configured link layer before group fabric is published.
+- **AND** missing, partial, denied or conflicting optional observations remain unknown with diagnostics; caller cancellation remains fatal, and existing no-option/REST-only calls acquire no enrichment execs.
+
+#### Scenario: GPU observations with containerized drivers
+
+- **WHEN** the NIC daemon cannot provide complete GPU observations
+- **THEN** discovery may use the Ready main container of an existing same-node GPU Operator feature-discovery DaemonSet after verifying ownership, host sysfs backing and source lifetime, without creating or modifying GPU workloads.
+- **AND** physical host GPU PCI inventory, query indices and matrix coverage must agree before topology is accepted; absent labels do not establish CPU-only hardware, and unavailable optional evidence is diagnosed explicitly.
+
+#### Scenario: GPU observations represent the whole retained PF
+
+- **WHEN** GPU topology is attached to a group PF
+- **THEN** every worker and raw PCI represented by its actual collapse projection must agree on the GPU tuple; node-local RDMA names remain transient.
+- **AND** collapsed siblings must share a nearest GPU at a common proximity before balancing once per retained rail, and per-node product fallback must be aggregated without replacing known worker disagreement with a representative product.
+- **AND** incomplete relevant PF coverage cannot trigger PIX-based traffic reassignment, preset precedence remains authoritative, measured GPU PCI addresses remain consistent with the final GPU index, and VR NetworkBay rails are assigned last.
+
+#### Scenario: Explicit read-only GPU enrichment
+
+- **WHEN** a caller enables GPU topology with REST credentials and a GPU Operator namespace
+- **THEN** only existing pods are executed, no resources or host settings are changed, and netplan probing is not implicitly enabled.
+- **AND** default and REST-only callers acquire no GPU probes; optional failures use the context UI warning sink, while caller cancellation remains fatal.
+
+### Requirement: Truthful worker selectors
+
+Discovery SHALL validate proposed identities and membership before node-label writes
+and publish a selector only after successful writes and refreshed exact-set verification.
+It SHALL reject collisions, failed label writes and stale labels that broaden selection,
+without automatically deleting labels from excluded nodes. An unresolved sole
+source SHALL preserve its existing empty identifier when an exact selector is
+provable; unresolved product identity alone SHALL NOT prevent publication.
+
+#### Scenario: Label publication fails
+
+- **WHEN** a patch fails or refreshed labels select another worker
+- **THEN** discovery fails without publishing the planned selector; completed patches may remain for a retry to revalidate.
 
 ### Requirement: Fresh and refresh behavior
 

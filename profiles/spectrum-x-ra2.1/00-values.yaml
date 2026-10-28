@@ -75,19 +75,16 @@ sriov-network-operator:
     - "{{ . }}"
 {{- end }}
 {{- end }}
-{{- if versionGE .NetworkOperator.SelectedRelease "26.1" }}
   operator:
+    # One chart value controls both SR-IOV admission helpers and their TLS setup.
+    admissionControllers:
+      enabled: false
+{{- if versionGE .NetworkOperator.SelectedRelease "26.1" }}
     externalDrainer:
       enabled: true
 {{- end }}
   sriovOperatorConfig:
     deploy: true
-    # See sriov-ethernet-rdma's 00-values.yaml for the rationale: both
-    # optional helpers (auto-resource injector + validating webhook)
-    # depend on TLS secrets the subchart's post-install Job creates,
-    # which doesn't always re-run on cross-profile upgrades.
-    enableInjector: false
-    enableOperatorWebhook: false
     featureGates:
       manageSoftwareBridges: true
     disablePlugins:

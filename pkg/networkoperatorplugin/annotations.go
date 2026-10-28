@@ -32,6 +32,12 @@ func (r annotationPostRenderer) Run(renderedManifests *bytes.Buffer) (*bytes.Buf
 // annotateResources adds the Launch Kit version annotation to every resource
 // in a YAML stream while preserving existing annotations.
 func annotateResources(stream []byte, version string) ([]byte, error) {
+	return annotateResourcesWithAnnotation(stream, launchKitVersionAnnotation, version)
+}
+
+// annotateResourcesWithAnnotation preserves existing YAML, including comments,
+// while adding one annotation at the common resource metadata boundary.
+func annotateResourcesWithAnnotation(stream []byte, key, value string) ([]byte, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(stream))
 	documents := []yaml.Node{}
 	for {
@@ -71,7 +77,7 @@ func annotateResources(stream []byte, version string) ([]byte, error) {
 		} else if annotations.Kind != yaml.MappingNode {
 			return nil, fmt.Errorf("YAML document %d metadata.annotations must be a mapping", i+1)
 		}
-		setYAMLMappingString(annotations, launchKitVersionAnnotation, version)
+		setYAMLMappingString(annotations, key, value)
 	}
 
 	var output bytes.Buffer

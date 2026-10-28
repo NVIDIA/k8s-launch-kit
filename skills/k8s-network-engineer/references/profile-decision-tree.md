@@ -66,13 +66,13 @@ profile's `profileRequirements`.
   SriovIBNetwork, NicInterfaceNameTemplate, test DaemonSet
 - **Keywords**: InfiniBand, IB, SR-IOV, HPC, AI training, large-scale
 
-### 6. Spectrum-X Multi-Rail (RA2.3 and RA2.4)
+### 6. Spectrum-X Multi-Rail (RA2.3, RA2.4, and RA3.1)
 
-- **Directory**: `profiles/spectrum-x/` for RA2.3, `profiles/spectrum-x-ra2.4/` for RA2.4
+- **Directory**: `profiles/spectrum-x/` for RA2.3, `profiles/spectrum-x-ra2.4/` for RA2.4, `profiles/spectrum-x-ra3.1/` for RA3.1
 - **Requirements**: `fabric=ethernet`, `deployment=sriov`, `multirail=true`,
-  `spectrumX.spcxVersion` in `[RA2.3, RA2.4]`, `spectrumX.multiplaneMode` in
+  `spectrumX.spcxVersion` in `[RA2.3, RA2.4, RA3.1]`, `spectrumX.multiplaneMode` in
   `[swplb, hwplb, none]`. RA2.3 requires Network Operator 26.7;
-  RA2.4 requires 26.10 or a newer catalogued release and a full doSPCX bundle.
+  RA2.4 and RA3.1 require 26.10 or a newer catalogued release and a full doSPCX bundle.
 - **Node capabilities**: `sriov: true`, `rdma: true`
 - **Use cases**: Multi-tenant AI cloud, Spectrum-X ethernet fabric with OVS
   hardware offload, BF3 SuperNIC deployments, CX8 with any multiplane mode
@@ -129,20 +129,20 @@ profile's `profileRequirements`.
 - Multiplane mode: **must be `none`**
 - Number of planes: **must be 1**
 - Single-plane operation only; no multiplane support in BF3 hardware
-- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, `RA2.3` on 26.7, or `RA2.4` on 26.10 and newer catalogued releases
+- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, `RA2.3` on 26.7, or `RA2.4`/`RA3.1` on 26.10 and newer catalogued releases
 
 ### ConnectX-8 (deviceID: 1023) / ConnectX-9 (deviceID: 1025)
 
 - Multiplane modes: `swplb` or `hwplb`
 - Number of planes:
   - `swplb`: 2 or 4 (B300/GB300 default: 2)
-  - `hwplb`: 2 or 4 (explicit site-topology choice)
+  - `hwplb`: 2, 4, or 8 (VR/CX9 defaults to 8 on RA2.4/RA3.1)
 - H100/H200/B200/GB200 default to single-plane `none` / 1 even when the
   east-west NIC is CX8.
 - B300/GB300 default to `swplb` / 2. Pass 4 explicitly for quad-plane B300.
 - Platform type cannot distinguish `swplb` from `hwplb`; both are supported on
   B300 and GB300, so `hwplb` must be selected explicitly.
-- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, `RA2.3` on 26.7, or `RA2.4` on 26.10 and newer catalogued releases
+- Version: `RA2.1` on Network Operator 26.1, `RA2.2` on 26.4, `RA2.3` on 26.7, or `RA2.4`/`RA3.1` on 26.10 and newer catalogued releases
 
 ### Multiplane Mode Selection Guide
 
@@ -158,7 +158,7 @@ profile's `profileRequirements`.
 |-----------|-------------|---------|--------------------------------|
 | `none`    | 1           | 1       | CX7/BF3, no planes             |
 | `swplb`   | 2, 4        | 2 on B300/GB300 | Pass 4 explicitly for quad-plane B300 |
-| `hwplb`   | 2, 4        | explicit | Select from site topology, not platform type |
+| `hwplb`   | 2, 4, 8     | VR/CX9: 8 on RA2.4/RA3.1 | Select B300/GB300 mode from site topology |
 
 ## Keyword Matching Heuristics
 
@@ -189,11 +189,20 @@ guide profile selection:
 4. Match against profile requirements
 5. If no exact match, suggest the closest profile and explain the gap
 
-## RA2.4 integration
+## RA2.4 and RA3.1 integration
 
-RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
-accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
+accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
+status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
+compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when
@@ -201,15 +210,17 @@ platformType support is absent or cannot be inspected. External Helm, overwrite,
 and dry-run do not bypass this check; dry-run needs APIs installed already.
 
 Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
-substring from the internal doSPCX platform list in gpuType. No preset or mapping
+substring from the internal doSPCX platform list in gpuType. A machineType
+containing `VR` (case-insensitive) takes precedence and selects `vr`, even with
+an empty gpuType. No preset or mapping
 setting is needed. Discovery saves empty values and warns; generation rejects
-unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+unresolved selected RA2.4/RA3.1 groups. RTX/CX8 defaults to none/one plane. Mapping does
 not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
 clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
 zero, and must agree across merged groups. Refresh preserves explicit plane
 assignments only for unchanged source/rail hardware and verified unchanged worker
 membership (ordering does not matter). Changed or unknown membership drops prior
-assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+assignments with a review/reapply warning. Every selected RA2.4/RA3.1 source needs complete
 dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
 sources must have the same effective layout. Merged GPU selectors must not include
 excluded same-GPU sources in other buckets; select one source in that case.

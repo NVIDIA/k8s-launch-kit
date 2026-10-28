@@ -123,7 +123,7 @@ the rest of the supplied configuration.
 | `--deployment-type` | `sriov`, `rdma_shared`, or `host_device`. |
 | `--multirail` | Override multirail deployment. Explicit `--multirail=false` is preserved. |
 | `--routing` | `destination-based` or `source-based`. |
-| `--deploy-nic-configuration-template` | Opt into standard-profile NIC tuning; supports explicit `=false`. Available on root, generate and discover; deploy/validate consume generated templates. Spectrum-X rejects it. |
+| `--deploy-nic-configuration-template` | Standard-profile NIC tuning is enabled by default; explicit `=false` opts out. Available on root, generate and discover; deploy/validate consume generated templates. Spectrum-X keeps its own required templates. |
 | `--ignore-arp` | Add tuning CNI sysctls to avoid ARP flux across pod rails. |
 | `--groups` | Render only named source groups. Mutually exclusive with `--gpu-type`. |
 | `--gpu-type` | Render all source groups whose GPU type matches. |
@@ -136,13 +136,13 @@ root pipeline. The remaining profile flags also apply to discovery.
 
 | Flag | Description |
 | --- | --- |
-| `--spectrum-x` | Enable Spectrum-X and select `RA2.1`, `RA2.2`, `RA2.3`, or `RA2.4`. RA2.3 requires 26.7; RA2.4 requires 26.10 or a newer catalogued release. |
-| `--multiplane-mode` | `none`, `swplb`, or `hwplb`. Defaults from GPU platform and east-west NIC: single-plane H100/H200/B200/GB200 use `none`; B300/GB300 use the GA `swplb` default. Select `hwplb` explicitly. |
-| `--number-of-planes` | Plane count for Spectrum-X. Defaults to 1 for single-plane platforms and 2 for B300/GB300; pass 4 explicitly for quad-plane B300. |
+| `--spectrum-x` | Enable Spectrum-X and select `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4`, or `RA3.1`. RA2.3 requires 26.7; RA2.4 and RA3.1 require 26.10 or a newer catalogued release. |
+| `--multiplane-mode` | `none`, `swplb`, or `hwplb`. Defaults from GPU platform and east-west NIC: single-plane H100/H200/B200/GB200 use `none`; B300/GB300 use the GA `swplb` default. Select `hwplb` explicitly for B300/GB300; VR/CX9 defaults to `hwplb` on RA2.4/RA3.1. |
+| `--number-of-planes` | Plane count for Spectrum-X: 1, 2, 4, or 8. VR/CX9 HWPLB defaults to 8 on RA2.4/RA3.1; explicit `swplb` with no count retains the CX9 fallback of 4. Defaults to 1 for single-plane platforms and 2 for B300/GB300; pass 4 explicitly for quad-plane B300. |
 | `--topology-scheme` | `2-tier` or `3-tier` for topology-driven CIDRPool allocation. |
 | `--ip-version` | `ipv4` for per-node `/31` allocation or `ipv6` for per-node `/64` allocation. |
 | `--topology-file` | Path to spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from its structure. |
-| `--spectrum-x-config` | Required for RA2.3 and RA2.4. RA2.3 accepts a legacy ConfigMap or raw `data.profile` YAML; RA2.4 requires a full doSPCX ConfigMap. |
+| `--spectrum-x-config` | Required for RA2.3, RA2.4, and RA3.1. RA2.3 accepts a legacy ConfigMap or raw `data.profile` YAML; RA2.4 and RA3.1 require a full doSPCX ConfigMap. |
 | `--spectrum-x-configmap-name` | ConfigMap name when `--spectrum-x-config` is raw profile YAML. |
 
 ## Generate Flags

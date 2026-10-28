@@ -6,7 +6,8 @@ Use a full doSPCX ConfigMap with `data.format: dospcx-data.tar.gz/v1` and
 NCO receives version RA2.4 and each source group's derived platformType.
 
 Platform selection uses the longest case-insensitive doSPCX platform substring
-in gpuType, without requiring a preset. Unresolved discovery warns and saves;
+in gpuType, without requiring a preset. A machineType containing VR
+(case-insensitive) takes precedence and selects vr, including without a GPU product. Unresolved discovery warns and saves;
 unresolved selected RA2.4 generation fails. Optional spectrumX.ovsConfig is a
 string map. Per-group spectrumX.swPlaneByRail assigns offsets to existing
 HWPLB rails; merged groups must agree. Multiple hardware partitions within a
@@ -32,3 +33,10 @@ sources must share that layout. This excludes the current
 `ThinkSystem-SR650-V4-RTX-PRO-6000` preset, which splits one NIC across rails.
 Discovery refresh retains explicit software-plane assignments only for verified
 unchanged worker membership and rail hardware; otherwise it drops them and warns.
+
+VR with ConnectX-9 defaults to HWPLB and eight planes, preserving explicit
+YAML/CLI values. Explicit SWPLB with an omitted plane count retains the CX9
+four-plane fallback; this does not qualify that recipe. See the
+[VR discovery contract](../../docs/user/discovery.md#vr-networkbay-rails) for
+NetworkBay status prerequisites and rail membership. NCO and the supplied
+doSPCX bundle must support the layout; generation does not qualify runtime use.

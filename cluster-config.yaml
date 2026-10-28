@@ -17,6 +17,11 @@ networkOperator:
   componentVersion: network-operator-v26.7.0
   selectedRelease: "26.7"
   skipHelmChart: false
+  # Independent ownership of Multus and reference CNI binaries. auto uses
+  # discovery evidence; managed installs via NCP; external omits the section.
+  secondaryNetwork:
+    multus: auto
+    cniPlugins: auto
   # repository — registry path for COMPONENT images managed by the operator
   # (ofedDriver, nvIpam, multus, device plugins, …). Rendered into
   # NicClusterPolicy / NicNodePolicy.
@@ -132,7 +137,7 @@ ipoib:
 macvlan:
   networkName: macvlan-network # with multiple networks, -rail-0, -rail-1, etc. suffixes are added to the network name
 spectrumX:
-  # RA2.4 optional ovs-vswitchd other_config overrides. Omitted keys use operator defaults.
+  # RA2.4/RA3.1 optional ovs-vswitchd other_config overrides. Omitted keys use operator defaults.
   ovsConfig: {}
   overlay: none
   singlePlane:
@@ -145,8 +150,9 @@ spectrumX:
     netdevPrefix: "eth_r%rail_id%_p%plane_id%"
     rdmaPrefix: "roce_r%rail_id%_p%plane_id%"
 nicConfigurationOperator:
-  # Opt in to NIC firmware/runtime tuning for standard profiles (not Spectrum-X).
-  deployNicConfigurationTemplate: false
+  # NIC firmware/runtime tuning is enabled by default for standard profiles.
+  # Set false to opt out. Spectrum-X uses its own required templates.
+  deployNicConfigurationTemplate: true
   deployNicInterfaceNameTemplate: true
   rdmaPrefix: rdma_r%rail_id%
   netdevPrefix: eth_r%rail_id%

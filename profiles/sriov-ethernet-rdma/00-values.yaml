@@ -68,8 +68,11 @@ sriov-network-operator:
     - "{{ . }}"
 {{- end }}
 {{- end }}
-{{- if versionGE .NetworkOperator.SelectedRelease "26.1" }}
   operator:
+    # One chart value controls both SR-IOV admission helpers and their TLS setup.
+    admissionControllers:
+      enabled: false
+{{- if versionGE .NetworkOperator.SelectedRelease "26.1" }}
     externalDrainer:
       enabled: true
 {{- end }}
@@ -79,16 +82,3 @@ sriov-network-operator:
     disablePlugins:
       - mellanox
     {{- end }}
-    # Both optional helpers are turned off:
-    #   - network-resources-injector: rewrites pod specs to add resource
-    #     requests from net-attach-def annotations. l8k renders resource
-    #     requests explicitly in its example DaemonSets, so the injector
-    #     is unused — and its admission webhook requires a TLS secret the
-    #     subchart's post-install Job creates, which doesn't always re-run
-    #     across cross-profile upgrades (e.g. macvlan→sriov), leading to a
-    #     stuck Reconcile loop with a `<nil>` secretName error.
-    #   - operator validating webhook: validates SriovNetworkNodePolicy on
-    #     admission. l8k pre-validates via the crstate registry, so this is
-    #     redundant and brings the same TLS-secret fragility.
-    enableInjector: false
-    enableOperatorWebhook: false

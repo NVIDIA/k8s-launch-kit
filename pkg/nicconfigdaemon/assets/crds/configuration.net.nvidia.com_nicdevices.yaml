@@ -352,6 +352,25 @@ spec:
                 description: ModelName is the model name of the device, e.g. ConnectX-6
                   or BlueField-3
                 type: string
+              # Additive discovery status from NCO 6806232e532b; retain existing spec validation.
+              networkBay:
+                description: |-
+                  NetworkBay holds ConnectX-9 NetworkBay identity for the device.
+                  Set only when the device is detected as part of a Network Bay card.
+                properties:
+                  asic:
+                    description: Asic is the networkBay ASIC index (0 or 1) inferred from
+                      the MGIR.ga register field.
+                    type: integer
+                  peerPci:
+                    description: |-
+                      PeerPCI is the PCI address of the sibling ASIC in the same Network Bay card
+                      (the other device sharing this device's serial number). Empty if the peer
+                      could not be resolved.
+                    type: string
+                required:
+                - asic
+                type: object
               node:
                 description: Node where the device is located
                 type: string

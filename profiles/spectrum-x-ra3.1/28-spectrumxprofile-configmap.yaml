@@ -1,0 +1,1 @@
+{{ dospcxConfigMap .Profile.SpectrumX .NetworkOperator.Namespace }}

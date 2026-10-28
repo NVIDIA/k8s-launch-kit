@@ -86,6 +86,9 @@ type Options struct {
 // MatrixResult is the aggregate output of one connectivity run. It's
 // what the validate CLI prints (or marshals to JSON) at the end.
 type MatrixResult struct {
+	// PartitionWarnings retains advisory IPoIB membership and unavailable-evidence diagnostics.
+	PartitionWarnings []string `json:"PartitionWarnings,omitempty"`
+
 	// StageDurations retains measured wall time for JUnit family suites.
 	StageDurations map[Check]time.Duration `json:"-"`
 
@@ -391,6 +394,11 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 				tp.RDMADevsByRail = DiscoverRDMADevices(runCtx, restConfig, p.pod.Namespace, p.pod.Name, p.ref.RDMAContainer, ifaceByRail)
 			}
 			tp.InterfacesByRail = ifaceByRail
+			partitionWarnings := probePartitionWarnings(runCtx, restConfig, tp, p.ref.ICMPContainer)
+			result.PartitionWarnings = append(result.PartitionWarnings, partitionWarnings...)
+			for _, warning := range partitionWarnings {
+				uiOutput.Warning("%s", warning)
+			}
 			PopulateGPUTopology(&tp, opts.ClusterConfig)
 			logger.V(1).Info("connectivity endpoint discovered",
 				"namespace", tp.Namespace,

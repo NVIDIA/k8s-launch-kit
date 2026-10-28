@@ -18,7 +18,6 @@ package discovery
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"sort"
@@ -33,16 +32,6 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
-
-// gpuTopologyProbeCmd emits the nvidia-smi-owned part of the batched topology
-// probe. Missing or crashing nvidia-smi keeps the overall exit code at 0 so
-// the independent per-PF sysfs discovery still runs.
-const gpuTopologyProbeCmd = `if [ -x /host/usr/bin/nvidia-smi ]; then
-  export LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH
-  /host/usr/bin/nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader 2>/dev/null || true
-  echo '---TOPO---'
-  /host/usr/bin/nvidia-smi topo -mp 2>/dev/null || true
-fi`
 
 // pfDiscoveryProbeCmd is the integration point for host attributes that are
 // unavailable from NicDevice. It walks every NVIDIA/Mellanox physical PCI
@@ -80,6 +69,7 @@ const (
 	netplanMarker                      = "---NETPLAN---"
 	netplanFileMarker                  = "---NETPLAN-FILE---"
 	netplanDirectoryAvailableMarker    = "---NETPLAN-AVAILABLE---"
+	netplanDirectoryAbsentMarker       = "---NETPLAN-ABSENT---"
 	netplanDirectoryUnavailableMarker  = "---NETPLAN-UNAVAILABLE---"
 	netplanObservationIncompleteMarker = "---NETPLAN-INCOMPLETE---"
 )
@@ -94,11 +84,23 @@ const (
 // The Go parser uses the retained YAML indentation to determine whether a MAC
 // match and set-name belong to the same netplan device stanza.
 const netplanDiscoveryProbeCmd = `echo '` + netplanMarker + `'
-if [ ! -d /host/etc/netplan ]; then
+if [ ! -d /host/etc ] || [ ! -r /host/etc ] || [ ! -x /host/etc ]; then
   echo '` + netplanDirectoryUnavailableMarker + `'
   exit 0
 fi
+if [ ! -d /host/etc/netplan ]; then
+  if [ -e /host/etc/netplan ] || [ -L /host/etc/netplan ]; then
+    echo '` + netplanObservationIncompleteMarker + `'
+  else
+    echo '` + netplanDirectoryAbsentMarker + `'
+  fi
+  exit 0
+fi
 echo '` + netplanDirectoryAvailableMarker + `'
+if [ ! -r /host/etc/netplan ] || [ ! -x /host/etc/netplan ]; then
+  echo '` + netplanObservationIncompleteMarker + `'
+  exit 0
+fi
 for netplan_file in /host/etc/netplan/*.yaml /host/etc/netplan/*.yml; do
   [ -e "$netplan_file" ] || [ -L "$netplan_file" ] || continue
   if [ ! -r "$netplan_file" ]; then
@@ -124,17 +126,6 @@ done`
 // every worker in a hardware group because MAC addresses and netplan files are
 // node-specific.
 const nodePFDiscoveryProbeCmd = pfDiscoveryProbeCmd + "\n" + netplanDiscoveryProbeCmd
-
-// topologyProbeCmd runs the representative node's GPU and node-local discovery
-// families in one pod exec. It emits four blocks (some may be empty):
-//  1. nvidia-smi --query-gpu CSV: "<index>, <pci.bus_id>"
-//     --- TOPO --- marker
-//  2. nvidia-smi topo -mp output (matrix + NIC legend)
-//     --- PF --- marker
-//  3. Per-PF key=value records emitted by pfDiscoveryProbeCmd.
-//     --- NETPLAN --- marker
-//  4. Sanitized per-file netplan projections.
-const topologyProbeCmd = gpuTopologyProbeCmd + "\n" + nodePFDiscoveryProbeCmd
 
 const (
 	pfAttributeNUMANode   = "numaNode"
@@ -202,10 +193,11 @@ type topoData struct {
 	// netplanSetNameMACs contains canonical MAC addresses from netplan device
 	// stanzas that have both match.macaddress and a non-empty set-name.
 	netplanSetNameMACs map[string]struct{}
-	// netplanDirectoryChecked and netplanDirectoryAvailable distinguish a
-	// confirmed empty netplan directory from an unavailable host observation.
+	// netplanDirectoryAbsent records a conclusive negative when readable /etc
+	// has no netplan directory. Unavailable or incomplete paths remain unknown.
 	netplanDirectoryChecked   bool
 	netplanDirectoryAvailable bool
+	netplanDirectoryAbsent    bool
 	// netplanObservationIncomplete is true when any discovered file could not
 	// be read or projected, so a negative match is not conclusive.
 	netplanObservationIncomplete bool
@@ -248,7 +240,7 @@ func busOf(pciAddr string) int {
 	return int(bus)
 }
 
-// parseTopologyProbe parses the four-block output emitted by topologyProbeCmd.
+// parseTopologyProbe parses host PF/netplan output and captured legacy GPU blocks.
 // All blocks are optional; a missing block produces an empty map on the
 // corresponding field. Unparseable per-PF lines are ignored, while malformed
 // netplan documents are counted so callers can log the partial result.
@@ -295,8 +287,10 @@ func parseTopologyProbe(output string) topoData {
 	parseTopoMatrix(topoBlock, data.matrix)
 	parsePFDiscoveryBlock(pfBlock, data.pfAttributes)
 	data.netplanDirectoryChecked = hasNetplanProbeMarker(netplanBlock, netplanDirectoryAvailableMarker) ||
+		hasNetplanProbeMarker(netplanBlock, netplanDirectoryAbsentMarker) ||
 		hasNetplanProbeMarker(netplanBlock, netplanDirectoryUnavailableMarker)
 	data.netplanDirectoryAvailable = hasNetplanProbeMarker(netplanBlock, netplanDirectoryAvailableMarker)
+	data.netplanDirectoryAbsent = hasNetplanProbeMarker(netplanBlock, netplanDirectoryAbsentMarker)
 	data.netplanObservationIncomplete = hasNetplanProbeMarker(netplanBlock, netplanObservationIncompleteMarker)
 	data.netplanParseErrors = parseNetplanSetNameMACs(netplanBlock, data.netplanSetNameMACs)
 	return data
@@ -592,8 +586,8 @@ func hasNetplanManagedPF(data topoData) bool {
 }
 
 // hasCompletePFMACObservation reports whether every expected PF and every PF
-// returned by the host probe has a usable MAC. A negative netplan result is
-// only conclusive when all expected interfaces could be matched to netplan.
+// returned by the host probe has a usable MAC. A negative netplan result needs
+// PF identity only when a MAC-based set-name rule exists to compare against.
 func hasCompletePFMACObservation(expectedPFs []config.PFConfig, data topoData) bool {
 	for _, pf := range expectedPFs {
 		pci := normalizePCI(pf.PciAddress)
@@ -629,10 +623,11 @@ func recordNetplanProbeResult(ctx context.Context, group *config.ClusterConfig, 
 			"node", node)
 		return true
 	}
-	netplanObservationIncomplete := !data.netplanDirectoryChecked || !data.netplanDirectoryAvailable ||
-		data.netplanObservationIncomplete || data.netplanParseErrors > 0
-	pfMACObservationIncomplete := !hasCompletePFMACObservation(group.PFs, data)
-	if netplanObservationIncomplete || pfMACObservationIncomplete {
+	netplanObservationComplete := data.netplanDirectoryChecked &&
+		(data.netplanDirectoryAvailable || data.netplanDirectoryAbsent) &&
+		!data.netplanObservationIncomplete && data.netplanParseErrors == 0
+	pfMACObservationIncomplete := len(data.netplanSetNameMACs) > 0 && !hasCompletePFMACObservation(group.PFs, data)
+	if !netplanObservationComplete || pfMACObservationIncomplete {
 		group.NetplanManagementUnknown = true
 		ui.FromContext(ctx).Warning(
 			"Netplan management could not be verified on node %q; resolve the discovery warning and re-run discovery before generating interface-name rules",
@@ -735,10 +730,23 @@ func abs(x int) int {
 	return x
 }
 
+// pixOverridePFCount counts PFs that can activate topology-based classification.
+// Classification and its diagnostics must use the same physical-role exclusions.
+func pixOverridePFCount(pfs []config.PFConfig) int {
+	count := 0
+	for i := range pfs {
+		if pfs[i].GPUProximity == "PIX" && !isDualPortBlueField3(pfs[i].DeviceID, pfs[i].Model) {
+			count++
+		}
+	}
+	return count
+}
+
 // reclassifyAndReassignRails applies the PIX-gate rule for E/W-vs-N/S and then
 // renumbers rails sequentially over the E/W set.
 //
-// PIX-gate: if any PF has GPUProximity == "PIX", topology is discriminating —
+// Physical dual-port BF3s always remain N/S and cannot activate the PIX gate.
+// PIX-gate: if any other PF has GPUProximity == "PIX", topology is discriminating —
 // rewrite every PF's Traffic based on whether it has PIX (PIX => E/W,
 // otherwise => N/S). When no PF has PIX (flat-topology box or nvidia-smi
 // absent), Traffic is left intact so the upstream part-number heuristic still
@@ -749,15 +757,11 @@ func abs(x int) int {
 //
 // Idempotent: safe to call multiple times.
 func reclassifyAndReassignRails(pfs []config.PFConfig) {
-	hasPIX := false
+	hasPIX := pixOverridePFCount(pfs) > 0
 	for i := range pfs {
-		if pfs[i].GPUProximity == "PIX" {
-			hasPIX = true
-			break
-		}
-	}
-	if hasPIX {
-		for i := range pfs {
+		if isDualPortBlueField3(pfs[i].DeviceID, pfs[i].Model) {
+			pfs[i].Traffic = "north-south"
+		} else if hasPIX {
 			if pfs[i].GPUProximity == "PIX" {
 				pfs[i].Traffic = "east-west"
 			} else {
@@ -777,6 +781,19 @@ func reclassifyAndReassignRails(pfs []config.PFConfig) {
 	}
 }
 
+func topologyRailReason(pf config.PFConfig, hasPIX bool) string {
+	switch {
+	case isDualPortBlueField3(pf.DeviceID, pf.Model):
+		return "physical dual-port BlueField-3"
+	case hasPIX && pf.GPUProximity == "PIX":
+		return "PIX to " + pf.ConnectedGPU
+	case hasPIX:
+		return "no PIX to any GPU (topology override)"
+	default:
+		return "part-number heuristic"
+	}
+}
+
 func podContainerName(pod *corev1.Pod) string {
 	if pod == nil || len(pod.Spec.Containers) == 0 {
 		return ""
@@ -790,7 +807,7 @@ func podContainerName(pod *corev1.Pod) string {
 // set-name rule is sufficient to indicate a potential naming conflict with
 // NCO-managed udev rules.
 //
-// representativeData is reused from topologyProbeCmd to avoid probing that
+// representativeData is reused from nodePFDiscoveryProbeCmd to avoid probing that
 // node twice. When the representative probe failed, pass nil and every worker
 // is checked with the smaller nodePFDiscoveryProbeCmd.
 func discoverGroupNetplanManagement(ctx context.Context, restConfig *rest.Config,
@@ -832,20 +849,10 @@ func discoverGroupNetplanManagement(ctx context.Context, restConfig *rest.Config
 	}
 }
 
-// discoverGPUTopology execs a combined GPU/per-PF probe in one representative
-// nic-configuration-daemon pod, parses the output, and enriches the group's PFs
-// with the generic per-PF sysfs attributes plus ConnectedGPU and GPUProximity.
-// It also checks every other worker with the smaller node-local probe to derive
-// the group-level NetplanManaged flag without persisting host-specific MACs. If
-// the PIX-gate fires it additionally rewrites Traffic and re-runs rail
-// numbering.
-//
-// All failures are non-fatal: logged, the corresponding fields stay empty,
-// and Traffic/Rail continue to reflect whatever the part-number heuristic
-// assigned in buildClusterConfig.
-func discoverGPUTopology(ctx context.Context, restConfig *rest.Config,
+// discoverPFAttributes retains NIC-daemon ownership of sysfs/netplan reads.
+// GPU acquisition runs separately in a verified same-node source.
+func discoverPFAttributes(ctx context.Context, restConfig *rest.Config,
 	namespace string, group *config.ClusterConfig, dsPods []corev1.Pod) {
-
 	if group == nil || len(group.PFs) == 0 {
 		return
 	}
@@ -861,148 +868,14 @@ func discoverGPUTopology(ctx context.Context, restConfig *rest.Config,
 		}
 		return
 	}
-
 	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, podContainerName(targetPod),
-		[]string{"/bin/sh", "-c", topologyProbeCmd})
+		[]string{"/bin/sh", "-c", nodePFDiscoveryProbeCmd})
 	if err != nil {
-		log.Log.Error(err, "failed to exec representative host topology probe", "pod", targetPod.Name)
+		log.Log.Error(err, "failed to exec representative PF probe", "pod", targetPod.Name)
 		discoverGroupNetplanManagement(ctx, restConfig, namespace, group, dsPods, targetPod, nil)
 		return
 	}
-
 	data := parseTopologyProbe(output)
 	discoverGroupNetplanManagement(ctx, restConfig, namespace, group, dsPods, targetPod, &data)
-
-	// Step 1: generic per-PF sysfs enrichment. Works with or without
-	// nvidia-smi and is the integration point for attributes NicDevice does
-	// not expose.
 	applyPFDiscoveryAttributes(group.PFs, data.pfAttributes)
-	for i := range group.PFs {
-		pf := &group.PFs[i]
-		if pf.NumaNode == nil {
-			continue
-		}
-		log.Log.V(1).Info("PF sysfs attributes discovered",
-			"group", group.Identifier,
-			"pci", pf.PciAddress,
-			"numaNode", strconv.Itoa(*pf.NumaNode))
-	}
-
-	// Step 2: if no matrix or no GPUs, topology enrichment stops here.
-	if len(data.matrix) == 0 || len(data.gpuPCI) == 0 {
-		log.Log.V(1).Info("GPU topology: nvidia-smi produced no matrix; preserving heuristic classification",
-			"group", group.Identifier)
-		return
-	}
-
-	// Step 3: per-PF proximity + GPU pairing. PFs are already PCI-sorted
-	// (see buildClusterConfig), so iteration order is deterministic.
-	usage := map[int]int{}
-	for i := range group.PFs {
-		pf := &group.PFs[i]
-		if pf.RdmaDevice == "" {
-			log.Log.V(1).Info("GPU topology: skipping PF with no RDMA device",
-				"group", group.Identifier, "pci", pf.PciAddress)
-			continue
-		}
-		row, ok := data.matrix[pf.RdmaDevice]
-		if !ok {
-			log.Log.V(1).Info("GPU topology: PF's RDMA device not present in nvidia-smi matrix (port likely down)",
-				"group", group.Identifier, "pci", pf.PciAddress, "rdma", pf.RdmaDevice)
-			continue
-		}
-
-		best := proxUnknown
-		var candidates []int
-		for gpuIdx, p := range row {
-			if p == proxUnknown {
-				continue
-			}
-			if best == proxUnknown || p < best {
-				best = p
-				candidates = []int{gpuIdx}
-			} else if p == best {
-				candidates = append(candidates, gpuIdx)
-			}
-		}
-		if best == proxUnknown || len(candidates) == 0 {
-			log.Log.V(1).Info("GPU topology: no proximity data for PF",
-				"group", group.Identifier, "pci", pf.PciAddress, "rdma", pf.RdmaDevice)
-			continue
-		}
-
-		chosen := pickConnectedGPU(candidates, pf.PciAddress,
-			data.gpuPCI, usage)
-		if chosen < 0 {
-			continue
-		}
-		usage[chosen]++
-
-		pf.ConnectedGPU = fmt.Sprintf("GPU%d", chosen)
-		pf.ConnectedGPUPCIAddress = data.gpuPCI[chosen]
-		pf.GPUProximity = best.String()
-
-		numaStr := "unknown"
-		if pf.NumaNode != nil {
-			numaStr = fmt.Sprintf("%d", *pf.NumaNode)
-		}
-		log.Log.V(1).Info("GPU topology: PF connectivity discovered",
-			"group", group.Identifier,
-			"pci", pf.PciAddress,
-			"rdma", pf.RdmaDevice,
-			"connectedGPU", pf.ConnectedGPU,
-			"proximity", pf.GPUProximity,
-			"numa", numaStr,
-			"tiedCandidates", len(candidates))
-	}
-
-	// Step 4: PIX-gate reclassification (Traffic + Rails together).
-	// Log the decision and each PF's final rail reason at debug level.
-	hasPIX := false
-	pixCount := 0
-	for i := range group.PFs {
-		if group.PFs[i].GPUProximity == "PIX" {
-			hasPIX = true
-			pixCount++
-		}
-	}
-	if hasPIX {
-		log.Log.V(1).Info("GPU topology: PIX detected — overriding part-number traffic classification",
-			"group", group.Identifier, "pixPFs", pixCount, "totalPFs", len(group.PFs))
-	} else {
-		log.Log.V(1).Info("GPU topology: no PIX detected — preserving part-number traffic classification",
-			"group", group.Identifier, "totalPFs", len(group.PFs))
-	}
-
-	reclassifyAndReassignRails(group.PFs)
-
-	// Explain each PF's final rail decision. The "reason" lets operators see
-	// at a glance why a device got a rail (or didn't).
-	for i := range group.PFs {
-		pf := &group.PFs[i]
-		var reason string
-		switch {
-		case hasPIX && pf.GPUProximity == "PIX":
-			reason = "PIX to " + pf.ConnectedGPU
-		case hasPIX && pf.GPUProximity != "PIX":
-			reason = "no PIX to any GPU (topology override)"
-		default:
-			reason = "part-number heuristic"
-		}
-		if pf.Rail != nil {
-			log.Log.V(1).Info("Rail assigned",
-				"group", group.Identifier,
-				"pci", pf.PciAddress,
-				"rdma", pf.RdmaDevice,
-				"traffic", pf.Traffic,
-				"rail", *pf.Rail,
-				"reason", reason)
-		} else {
-			log.Log.V(1).Info("No rail (north-south)",
-				"group", group.Identifier,
-				"pci", pf.PciAddress,
-				"rdma", pf.RdmaDevice,
-				"reason", reason)
-		}
-	}
 }

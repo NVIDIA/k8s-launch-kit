@@ -63,7 +63,7 @@ ovs-network-plane-1-rail-0
 ## Mode: hwplb (Hardware Plane Load Balancing)
 
 - **NIC type**: ConnectX-8 (deviceID `1023`) or ConnectX-9 (deviceID `1025`)
-- **Number of planes**: 2 or 4, selected explicitly with `hwplb`
+- **Number of planes**: 2, 4, or 8; VR/CX9 defaults to 8 with RA2.4/RA3.1
 - **Profile**: `spectrum-x` (base Spectrum-X profile)
 - **Resource naming**: Per-rail only (hardware handles plane distribution)
 
@@ -102,6 +102,7 @@ choice. Unknown platforms retain the NIC-family fallback in the table above.
 | H100/H200/B200/GB200 | `none` | 1 | Single-plane architecture |
 | B300 | `swplb` | 2 | Pass 4 explicitly for quad-plane |
 | GB300 | `swplb` | 2 | Dual-plane architecture |
+| VR with CX9 | `hwplb` | 8 | RA2.4/RA3.1; explicit SWPLB retains the four-plane fallback |
 
 ## Number of Planes Rules
 
@@ -109,7 +110,7 @@ choice. Unknown platforms retain the NIC-family fallback in the table above.
 |-----------|-------------|---------|----------------------------------------|
 | `none`    | 1           | 1       | CX7/BF3, single plane                  |
 | `swplb`   | 2, 4        | 2 on B300/GB300 | Pass 4 explicitly for quad-plane B300 |
-| `hwplb`   | 2, 4        | explicit | Platform type cannot select the mode |
+| `hwplb`   | 2, 4, 8     | VR/CX9: 8 on RA2.4/RA3.1 | B300/GB300 require explicit mode selection |
 
 ## Version
 
@@ -119,6 +120,7 @@ Four RA versions are supported, picked by the value of `--spectrum-x` together w
 | Version | Network Operator | Profile               | Rail wiring                                                      |
 |---------|------------------|-----------------------|------------------------------------------------------------------|
 | `RA2.4` | 26.10 and newer catalogued releases | `spectrum-x-ra2.4` | v1alpha2 rail pool plus required doSPCX bundle and per-source platformType |
+| `RA3.1` | 26.10 and newer catalogued releases | `spectrum-x-ra3.1` | v1alpha2 rail pool plus required doSPCX bundle and per-source platformType |
 | `RA2.3` | 26.7 only        | `spectrum-x` | v1alpha2 rail pool plus required profile ConfigMap |
 | `RA2.2` | 26.4 only        | `spectrum-x-ra2.2`          | Single v1alpha2 `SpectrumXRailPoolConfig` with `railTopology[]`  |
 | `RA2.1` | 26.1 only        | `spectrum-x-ra2.1`    | Full SR-IOV operator chain + v1alpha1 `SpectrumXRailPoolConfig`  |
@@ -126,7 +128,7 @@ Four RA versions are supported, picked by the value of `--spectrum-x` together w
 All four profiles support three multiplane modes (`none`, `swplb`, `hwplb`).
 Selecting a mismatched `(spcxVersion, network-operator-release)`
 pair (e.g. `RA2.1` with `26.4`) fails resolved-configuration validation.
-RA2.3 requires a legacy Spectrum-X profile ConfigMap input; RA2.4 requires a full doSPCX ConfigMap.
+RA2.3 requires a legacy Spectrum-X profile ConfigMap input; RA2.4 and RA3.1 require a full doSPCX ConfigMap.
 
 The v1alpha2 rail-pool template omits the removed `spec.withBCM` field.
 Current `SpectrumXRailPoolConfig` CRDs reject that field during strict
@@ -148,18 +150,27 @@ l8k validates the mode and planes combination at startup:
 
 1. Mode must be `none`, `swplb`, or `hwplb`
 2. If mode is `none`, planes must be 1
-3. Number of planes must be 1, 2, or 4
+3. Number of planes must be 1, 2, 4, or 8
 4. Version must be `RA2.1` (with `--network-operator-release 26.1`) or
    `RA2.2` (with `--network-operator-release 26.4` or higher / no release pinned)
 
 Validation failures produce exit code 2 (validation error) with a descriptive
 error message.
 
-## RA2.4 integration
+## RA2.4 and RA3.1 integration
 
-RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
-accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
+accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
+status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
+compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when
@@ -167,15 +178,17 @@ platformType support is absent or cannot be inspected. External Helm, overwrite,
 and dry-run do not bypass this check; dry-run needs APIs installed already.
 
 Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
-substring from the internal doSPCX platform list in gpuType. No preset or mapping
+substring from the internal doSPCX platform list in gpuType. A machineType
+containing `VR` (case-insensitive) takes precedence and selects `vr`, even with
+an empty gpuType. No preset or mapping
 setting is needed. Discovery saves empty values and warns; generation rejects
-unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+unresolved selected RA2.4/RA3.1 groups. RTX/CX8 defaults to none/one plane. Mapping does
 not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
 clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
 zero, and must agree across merged groups. Refresh preserves explicit plane
 assignments only for unchanged source/rail hardware and verified unchanged worker
 membership (ordering does not matter). Changed or unknown membership drops prior
-assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+assignments with a review/reapply warning. Every selected RA2.4/RA3.1 source needs complete
 dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
 sources must have the same effective layout. Merged GPU selectors must not include
 excluded same-GPU sources in other buckets; select one source in that case.
@@ -183,6 +196,6 @@ One physical NIC cannot span rails
 (the current ThinkSystem-SR650-V4-RTX-PRO-6000 preset has this unsupported layout). Multiple hardware partitions
 inside one logical rail are outside this layout. Feature gates are not added.
 
-RA2.4 generation permits a complete compatible GPU/rail-count cohort or a
+RA2.4/RA3.1 generation permits a complete compatible GPU/rail-count cohort or a
 single selected source. Multiple rail-pool parents are rejected because the
 operator-created child policies and OVSNetworks would reuse rail names.

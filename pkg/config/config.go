@@ -262,16 +262,18 @@ type LaunchKitConfig struct {
 	// computes the largest GPU prefix required across every source group in a
 	// DaemonSet render bucket so endpoint-specific CUDA indices remain visible
 	// after compatible groups are merged. It is never persisted in user config.
-	ValidationGPUResourceCount int               `yaml:"-"`
-	Workload                   *WorkloadConfig   `yaml:"workload,omitempty"`
-	Validation                 *ValidationConfig `yaml:"validation,omitempty"`
-	Profile                    *Profile          `yaml:"profile,omitempty"`
-	ClusterConfig              []ClusterConfig   `yaml:"clusterConfig,omitempty"`
+	ValidationGPUResourceCount int                          `yaml:"-"`
+	Workload                   *WorkloadConfig              `yaml:"workload,omitempty"`
+	Validation                 *ValidationConfig            `yaml:"validation,omitempty"`
+	Profile                    *Profile                     `yaml:"profile,omitempty"`
+	ClusterConfig              []ClusterConfig              `yaml:"clusterConfig,omitempty"`
+	DiscoveredSecondaryNetwork *SecondaryNetworkObservation `yaml:"discoveredSecondaryNetwork,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
-	Version          string `yaml:"version"`
-	ComponentVersion string `yaml:"componentVersion"`
+	SecondaryNetwork *SecondaryNetworkPolicy `yaml:"secondaryNetwork,omitempty"`
+	Version          string                  `yaml:"version"`
+	ComponentVersion string                  `yaml:"componentVersion"`
 	// SkipHelmChart disables l8k's Network Operator Helm boundary. Generate
 	// omits values.yaml, deploy skips chart installation and Helm preflight
 	// checks, validate skips Helm release version and values checks, and clean
@@ -380,7 +382,7 @@ type SriovConfig struct {
 }
 
 type SpectrumXConfig struct {
-	// OVSConfig overrides ovs-vswitchd other_config entries for RA2.4.
+	// OVSConfig overrides ovs-vswitchd other_config entries for RA2.4 and RA3.1.
 	OVSConfig   map[string]string                   `yaml:"ovsConfig,omitempty"`
 	Overlay     string                              `yaml:"overlay"` // "none"
 	SinglePlane *SpectrumXInterfaceNamePrefixConfig `yaml:"singlePlane,omitempty"`
@@ -744,9 +746,9 @@ func (p Profile) MarshalYAML() (interface{}, error) {
 
 type ProfileSpectrumX struct {
 	Enable               bool   `yaml:"enable"`         // must be true for Spectrum-X profiles to match
-	SPCXVersion          string `yaml:"spcxVersion"`    // RA2.1, RA2.2, RA2.3 or RA2.4
+	SPCXVersion          string `yaml:"spcxVersion"`    // RA2.1, RA2.2, RA2.3, RA2.4 or RA3.1
 	MultiplaneMode       string `yaml:"multiplaneMode"` // none, swplb, hwplb
-	NumberOfPlanes       int    `yaml:"numberOfPlanes"` // 1, 2 or 4
+	NumberOfPlanes       int    `yaml:"numberOfPlanes"` // 1, 2, 4 or 8
 	TopologyType         string `yaml:"topologyType,omitempty"`
 	IPVersion            string `yaml:"ipVersion,omitempty"`
 	HostFirstOctet       int    `yaml:"hostFirstOctet,omitempty"`
@@ -754,13 +756,13 @@ type ProfileSpectrumX struct {
 	ResolvedTopologyFile string `yaml:"-"`
 	UseDRA               bool   `yaml:"useDRA"`                  // enable DRA ResourceClaimTemplate-based workload allocation
 	ConfigMapName        string `yaml:"configMapName,omitempty"` // inferred from full ConfigMap input; required for raw RA2.3 data
-	Profile              string `yaml:"profile,omitempty"`       // legacy RA2.3 profile body or full RA2.4 doSPCX ConfigMap
+	Profile              string `yaml:"profile,omitempty"`       // legacy RA2.3 profile body or full RA2.4/RA3.1 doSPCX ConfigMap
 }
 
 // SpectrumXGroupConfig combines derived platform metadata and explicit rail assignments.
 type SpectrumXGroupConfig struct {
-	PlatformType  string      `yaml:"platformType"`            // derived from GPUType; recomputed during discovery and resolution
-	SwPlaneByRail map[int]int `yaml:"swPlaneByRail,omitempty"` // RA2.4 software-plane assignments keyed by existing east-west rail ID
+	PlatformType  string      `yaml:"platformType"`            // derived from MachineType/GPUType; recomputed during discovery and resolution
+	SwPlaneByRail map[int]int `yaml:"swPlaneByRail,omitempty"` // RA2.4/RA3.1 software-plane assignments keyed by existing east-west rail ID
 }
 
 type ClusterConfig struct {
@@ -1093,7 +1095,7 @@ func validateDOCADriverConfig(driver *DOCADriverConfig) error {
 // SupportedSPCXVersions lists the Spectrum-X RA versions for which l8k can
 // emit non-`none` multiplane configurations. Release compatibility and defaults
 // are defined by the shared SPC-X release policy. Order is preserved in errors.
-var SupportedSPCXVersions = []string{"RA2.1", "RA2.2", "RA2.3", "RA2.4"}
+var SupportedSPCXVersions = []string{"RA2.1", "RA2.2", "RA2.3", "RA2.4", "RA3.1"}
 
 // SupportedMultiplaneModes lists the Spectrum-X multiplane modes the CLI
 // accepts. `none` collapses to one plane; `swplb` and `hwplb` require
@@ -1101,7 +1103,7 @@ var SupportedSPCXVersions = []string{"RA2.1", "RA2.2", "RA2.3", "RA2.4"}
 var SupportedMultiplaneModes = []string{"none", "swplb", "hwplb"}
 
 // SupportedNumberOfPlanes lists the values numberOfPlanes can take.
-var SupportedNumberOfPlanes = []int{1, 2, 4}
+var SupportedNumberOfPlanes = []int{1, 2, 4, 8}
 
 var SupportedSpectrumXTopologyTypes = []string{SpectrumXTopology2Tier, SpectrumXTopology3Tier}
 

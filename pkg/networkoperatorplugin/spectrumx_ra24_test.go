@@ -21,11 +21,16 @@ import (
 
 func ra24ConfigAndProfile(t *testing.T, mode string, planes int) (*config.LaunchKitConfig, *profiles.Profile) {
 	t.Helper()
+	return dospcxConfigAndProfile(t, "RA2.4", mode, planes)
+}
+
+func dospcxConfigAndProfile(t *testing.T, ra, mode string, planes int) (*config.LaunchKitConfig, *profiles.Profile) {
+	t.Helper()
 	cfg, err := config.LoadFullConfig(filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
 	require.NoError(t, err)
 	cfg.NetworkOperator.SelectedRelease = "26.10"
 	cfg.NetworkOperator.Namespace = "operator-override"
-	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: true, SpectrumX: &config.ProfileSpectrumX{Enable: true, SPCXVersion: "RA2.4", MultiplaneMode: mode, NumberOfPlanes: planes, TopologyType: config.SpectrumXTopology2Tier}}
+	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: true, SpectrumX: &config.ProfileSpectrumX{Enable: true, SPCXVersion: ra, MultiplaneMode: mode, NumberOfPlanes: planes, TopologyType: config.SpectrumXTopology2Tier}}
 	raw, err := os.ReadFile(filepath.Join("..", "config", "testdata", "dospcx-configmap.yaml"))
 	require.NoError(t, err)
 	cfg.Profile.SpectrumX.Profile = string(raw)
@@ -34,21 +39,27 @@ func ra24ConfigAndProfile(t *testing.T, mode string, planes int) (*config.Launch
 		cfg.ClusterConfig[i].GPUType = "NVIDIA-GB300"
 	}
 	cfg.Profile.SpectrumX.TopologyFile = writeSpectrumXTopology(t, cfg, planes)
-	raw, err = os.ReadFile(filepath.Join("..", "..", "profiles", "spectrum-x-ra2.4", "profile.yaml"))
+	raw, err = os.ReadFile(filepath.Join("..", "..", "profiles", "spectrum-x-"+strings.ToLower(ra), "profile.yaml"))
 	require.NoError(t, err)
 	p := &profiles.Profile{}
 	require.NoError(t, yaml.Unmarshal(raw, p))
-	p.UpdateManifestsPaths(filepath.Join("..", "..", "profiles", "spectrum-x-ra2.4"))
+	p.UpdateManifestsPaths(filepath.Join("..", "..", "profiles", "spectrum-x-"+strings.ToLower(ra)))
 	return cfg, p
 }
 
-func TestRA24ProfileBundleModes(t *testing.T) {
+func TestDospcxProfileBundleModes(t *testing.T) {
+	for _, ra := range []string{"RA2.4", "RA3.1"} {
+		t.Run(ra, func(t *testing.T) { testDospcxProfileBundleModes(t, ra) })
+	}
+}
+
+func testDospcxProfileBundleModes(t *testing.T, ra string) {
 	for _, tc := range []struct {
 		mode   string
 		planes int
 	}{{"none", 1}, {"swplb", 2}, {"hwplb", 4}} {
 		t.Run(tc.mode, func(t *testing.T) {
-			cfg, p := ra24ConfigAndProfile(t, tc.mode, tc.planes)
+			cfg, p := dospcxConfigAndProfile(t, ra, tc.mode, tc.planes)
 			cfg.SpectrumX.OVSConfig = map[string]string{"max-idle": "0", "custom": "false", "empty": "", "escaped": "quotes\" and \\ slashes"}
 			if tc.mode == "hwplb" {
 				for i := range cfg.ClusterConfig {
@@ -70,7 +81,7 @@ func TestRA24ProfileBundleModes(t *testing.T) {
 				if strings.Contains(content, "kind: NicConfigurationTemplate") {
 					nctCount++
 					require.Contains(t, content, `platformType: "gb300"`)
-					require.Contains(t, content, `version: "RA2.4"`)
+					require.Contains(t, content, fmt.Sprintf("version: %q", ra))
 				}
 				if strings.Contains(content, "kind: SpectrumXRailPoolConfig") {
 					poolCount++
@@ -562,4 +573,121 @@ func TestRA24OVSDefaultAndLegacySettingsRejected(t *testing.T) {
 	cfg.SpectrumX.OVSConfig = nil
 	cfg.ClusterConfig[0].SpectrumX = &config.SpectrumXGroupConfig{SwPlaneByRail: map[int]int{0: 0}}
 	require.ErrorContains(t, validateSpectrumXGeneration(cfg, cfg.ClusterConfig), "swPlaneByRail requires RA2.4")
+}
+
+func TestVRRA31EightPlaneGeneration(t *testing.T) {
+	for _, ra := range []string{"RA2.4", "RA3.1"} {
+		t.Run(ra, func(t *testing.T) {
+			cfg, p := dospcxConfigAndProfile(t, ra, "hwplb", 8)
+			cfg.ClusterConfig = cfg.ClusterConfig[:1]
+			group := &cfg.ClusterConfig[0]
+			group.MachineType, group.GPUType = "machine-VR", ""
+			group.PFs = nil
+			// First NIC is ASIC1 (nic_index_in_rail=0), second is ASIC0.
+			// Keep this order even though the PCI addresses sort differently.
+			for _, slot := range []string{"0000:92:00", "0000:13:00"} {
+				for function := 0; function < 4; function++ {
+					rail := 0
+					group.PFs = append(group.PFs, config.PFConfig{PciAddress: fmt.Sprintf("%s.%d", slot, function),
+						DeviceID: "1023", Traffic: "east-west", Rail: &rail})
+				}
+			}
+			cfg.Profile.SpectrumX.SPCXVersion = ra
+			cfg.Profile.SpectrumX.TopologyFile = writeSpectrumXTopology(t, cfg, 8)
+			valid, reason := p.Validate(cfg.Profile, config.AggregateCapabilities(cfg.ClusterConfig), cfg.NetworkOperator.SelectedRelease)
+			require.True(t, valid, reason)
+			rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(p, cfg)
+			require.NoError(t, err)
+			files := []bundle.File{}
+			kinds := map[string]int{}
+			for name, content := range rendered {
+				files = append(files, bundle.File{Name: name, Content: content})
+				var obj struct {
+					Kind string `yaml:"kind"`
+					Spec struct {
+						PfsPerNic        int        `yaml:"pfsPerNic"`
+						RailPciAddresses [][]string `yaml:"railPciAddresses"`
+						Rails            []struct {
+							Selector struct {
+								PFNames []string `yaml:"pfNames"`
+							} `yaml:"nicSelector"`
+						} `yaml:"railTopology"`
+					} `yaml:"spec"`
+				}
+				require.NoError(t, yaml.Unmarshal([]byte(content), &obj))
+				kinds[obj.Kind]++
+				switch obj.Kind {
+				case "NicConfigurationTemplate":
+					require.Contains(t, content, `platformType: "vr"`)
+					require.Contains(t, content, fmt.Sprintf("version: %q", ra))
+					require.Contains(t, content, "numberOfPlanes: 8")
+				case "NicInterfaceNameTemplate":
+					require.Equal(t, 4, obj.Spec.PfsPerNic)
+					require.Equal(t, [][]string{{"0000:92:00.0", "0000:13:00.0"}}, obj.Spec.RailPciAddresses)
+				case "SpectrumXRailPoolConfig":
+					require.Len(t, obj.Spec.Rails, 1)
+					require.Equal(t, []string{"eth_r0_p0", "eth_r0_p1", "eth_r0_p2", "eth_r0_p3", "eth_r0_p4", "eth_r0_p5", "eth_r0_p6", "eth_r0_p7"}, obj.Spec.Rails[0].Selector.PFNames)
+				}
+			}
+			for _, kind := range []string{"NicConfigurationTemplate", "NicInterfaceNameTemplate", "SpectrumXRailPoolConfig", "ConfigMap"} {
+				require.Equal(t, 1, kinds[kind], kind)
+			}
+			_, err = bundle.FromFiles(files)
+			require.NoError(t, err)
+			// New RA versions must retain strict rail validation.
+			group.PFs[0].Rail = nil
+			_, err = (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(p, cfg)
+			require.ErrorContains(t, err, "requires complete east-west rail metadata")
+		})
+	}
+}
+
+func TestVRNetworkBayRailsRenderEightPlanes(t *testing.T) {
+	cfg, profile := dospcxConfigAndProfile(t, "RA3.1", "hwplb", 8)
+	cfg.ClusterConfig = cfg.ClusterConfig[:1]
+	group := &cfg.ClusterConfig[0]
+	group.MachineType, group.GPUType = "machine-VR", ""
+	group.PFs = nil
+	// Discovery preserves PCI order; rail membership crosses adjacent NetworkBays.
+	for _, nic := range []struct {
+		pci  string
+		rail int
+	}{
+		{"0001:03:00.0", 0}, {"0003:01:00.0", 1},
+		{"0004:03:00.0", 1}, {"0006:01:00.0", 0},
+		{"0009:03:00.0", 2}, {"000b:01:00.0", 3},
+		{"000c:03:00.0", 3}, {"000e:01:00.0", 2},
+	} {
+		rail := nic.rail
+		group.PFs = append(group.PFs, config.PFConfig{PciAddress: nic.pci, DeviceID: "1025", Traffic: "east-west", Rail: &rail})
+	}
+	cfg.Profile.SpectrumX.TopologyFile = writeSpectrumXTopology(t, cfg, 8)
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+	require.NoError(t, err)
+	files := []bundle.File{}
+	found := false
+	for name, content := range rendered {
+		files = append(files, bundle.File{Name: name, Content: content})
+		var obj struct {
+			Kind string `yaml:"kind"`
+			Spec struct {
+				PFsPerNIC int        `yaml:"pfsPerNic"`
+				Rails     [][]string `yaml:"railPciAddresses"`
+			} `yaml:"spec"`
+		}
+		require.NoError(t, yaml.Unmarshal([]byte(content), &obj))
+		if obj.Kind == "NicInterfaceNameTemplate" {
+			found = true
+			require.Equal(t, 4, obj.Spec.PFsPerNIC)
+			require.Equal(t, [][]string{
+				{"0001:03:00.0", "0006:01:00.0"},
+				{"0003:01:00.0", "0004:03:00.0"},
+				{"0009:03:00.0", "000e:01:00.0"},
+				{"000b:01:00.0", "000c:03:00.0"},
+			}, obj.Spec.Rails)
+		}
+	}
+	require.True(t, found)
+	_, err = bundle.FromFiles(files)
+	require.NoError(t, err)
 }

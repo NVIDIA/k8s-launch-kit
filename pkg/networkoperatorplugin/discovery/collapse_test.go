@@ -162,3 +162,58 @@ func TestBuildClusterConfig_DropsNorthSouthOnlyGroups(t *testing.T) {
 		assert.Positive(t, ns, "mixed group must still record its north-south PFs")
 	})
 }
+
+func TestBuildClusterConfig_DualPortBlueField3(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		deviceID string
+		model    string
+		wantNS   bool
+	}{
+		{"BF3 dual-port", "a2dc", "BlueField-3 P-Series DPU dual-port QSFP-DD112", true},
+		{"BF3 2-port", "a2dc", "BlueField-3 DPU 2-port QSFP112", true},
+		{"BF3 Lx dual-port", "a2d9", "BlueField-3 Lx DPU dual-port QSFP112", true},
+		{"BF3 single-port with multiple PFs", "a2dc", "BlueField-3 SuperNIC single-port QSFP112", false},
+		{"BF3 unknown physical port count", "a2dc", "BlueField-3", false},
+		{"ConnectX dual-port", "1021", "ConnectX-7 dual-port QSFP112", false},
+		{"BF2 dual-port", "a2d6", "BlueField-2 dual-port QSFP112", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, collapse := range []bool{false, true} {
+				device := nicDeviceWithPorts("worker-0", tc.deviceID, "pn-unlisted", tc.model, "0000:0d:00")
+				device.Status.DPU = false
+				// The physical dual-port rule must also win over a contradictory
+				// SuperNIC flag, without changing other adapters' classification.
+				device.Status.SuperNIC = true
+				groups, _ := buildClusterConfig([]nicop.NicDevice{device}, nil, nil, collapse)
+				if tc.wantNS {
+					assert.Empty(t, groups, "a dual-port BF3-only group must be omitted")
+				} else {
+					require.Len(t, groups, 1)
+					assert.NotEmpty(t, eastWestPFsOf(groups[0]))
+				}
+			}
+		})
+	}
+
+	t.Run("mixed group retains dual-port BF3 ports without rails", func(t *testing.T) {
+		devices := []nicop.NicDevice{
+			nicDeviceWithPorts("worker-0", "a2dc", "pn-unlisted", "BlueField-3 DPU dual-port QSFP112", "0000:0d:00"),
+			nicDeviceWithPorts("worker-0", "a2dc", "pn-test-rdma", "BlueField-3 SuperNIC single-port QSFP112", "0000:37:00"),
+		}
+		devices[1].Status.SuperNIC = true
+		groups, _ := buildClusterConfig(devices, nil, nil, true)
+		require.Len(t, groups, 1)
+		require.Len(t, groups[0].PFs, 3)
+		ew := eastWestPFsOf(groups[0])
+		require.Len(t, ew, 1)
+		require.NotNil(t, ew[0].Rail)
+		assert.Equal(t, 0, *ew[0].Rail)
+		for _, pf := range groups[0].PFs {
+			if pf.PartNumber == "pn-unlisted" {
+				assert.Equal(t, "north-south", pf.Traffic)
+				assert.Nil(t, pf.Rail)
+			}
+		}
+	})
+}

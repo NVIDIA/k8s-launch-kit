@@ -22,6 +22,20 @@ Operator release.
 Apply `docs/user/validation.md#worked-acceptance-decisions` to the report;
 compare intended and completed worker/rail coverage before acceptance.
 
+External Multus/CNI prerequisite rows report API-level coverage, in-progress
+rollouts, ownership/coverage errors, or UNVERIFIED evidence. Non-detection and
+denied optional health reads do not prove missing networking or successful
+readiness. See [external prerequisites](../../docs/user/validation.md#external-networking-prerequisites).
+
+## InfiniBand partition diagnostics
+
+Connectivity setup inspects selected IPoIB interfaces in test pods and warns
+about limited-only or empty P_Key tables. Unavailable or ambiguous evidence is
+reported as unverified. These advisory diagnostics appear in text, JSON and HTML;
+they do not change exit status or run during static validation. Follow the
+[partition diagnostic guidance](../../docs/user/validation.md#infiniband-partition-diagnostics)
+for scope, limitations and subnet manager remediation.
+
 ## What it checks
 
 1. **Network Operator Helm release version.** Reads the chart's
@@ -78,10 +92,25 @@ and non-gating cross-rail observations do not count. Version checks soft-skip
 when prerequisites are absent, but connectivity requires a user-owned cluster
 config.
 
+The Helm version check selects the highest revision of the exact
+`network-operator` release before considering names that contain
+`network-operator` (case-insensitive). A single custom-named release remains a
+fallback; multiple fallback releases produce a skipped check with an ambiguity
+reason. A skipped check is not a verified version match. Values validation still
+uses the exact `network-operator` release.
+
 If `networkOperator.skipHelmChart: true` is set, or the user passes
 `--skip-network-operator-helm`, both Helm release/version and values checks are
 reported as skipped. Component-version, manifest, stray-resource, connectivity,
 and report stages still run.
+
+SR-IOV policy and IPPool checks compare live selectors against workers from the
+intended bundle's source-group metadata and effective config; live annotations
+cannot redefine intent. Scope drift or denied reads fails inspection. All-empty
+preset/manual inventory remains visibly target-scope-unverified alongside device
+readiness; do not interpret READY as inventory-scope proof. Missing expected PFs
+remain errors and empty SR-IOV interface status remains in progress. Preserve the
+resolved sidecar, or supply explicit config whose source IDs match the bundle.
 
 ## Usage
 
@@ -254,15 +283,18 @@ selected family; in-progress manifests and incomplete coverage fail. Other
 profiles beyond SR-IOV Ethernet still need live hardware qualification; see
 `docs/user/openshift.md`.
 
-## Optional standard NIC tuning
+## Standard NIC tuning
 
-`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to false.
+`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to true.
+Set it to false or pass `--deploy-nic-configuration-template=false` to opt out;
+explicit YAML and CLI false values are preserved.
 Root, generate and discover accept `--deploy-nic-configuration-template[=false]`.
 It enables NCO independently of interface naming and renders per-source,
 east-west PCI-scoped templates for standard SR-IOV, RDMA-shared and host-device
 profiles on k8s/OCP. VF count comes from `sriov.numVfs`; link type comes from
 `profile.fabric`. Ethernet gets DSCP trust and priority-3 PFC; InfiniBand omits
-RoCE tuning. Spectrum-X rejects this option. Only SR-IOV disables the Mellanox
+RoCE tuning. Spectrum-X keeps its dedicated required templates independently
+of this standard-profile toggle. Only SR-IOV disables the Mellanox
 plugin (Helm values on k8s, additive `disablePlugins` merge on OCP). Kubernetes
 external Helm owners must configure that plugin themselves.
 

@@ -370,7 +370,9 @@ func TestNicConfigurationFlagResolutionAcrossCommands(t *testing.T) {
 			args []string
 			want bool
 		}{
-			{"default", "{}", nil, false},
+			{"default", "{}", nil, true},
+			{"yaml disabled", "nicConfigurationOperator: {deployNicConfigurationTemplate: false}", nil, false},
+			{"empty section", "nicConfigurationOperator: {}", nil, true},
 			{"yaml enabled", "nicConfigurationOperator: {deployNicConfigurationTemplate: true}", nil, true},
 			{"cli enabled", "nicConfigurationOperator: {deployNicConfigurationTemplate: false}", []string{"--deploy-nic-configuration-template"}, true},
 			{"cli disabled", "nicConfigurationOperator: {deployNicConfigurationTemplate: true}", []string{"--deploy-nic-configuration-template=false"}, false},
@@ -391,10 +393,19 @@ func TestNicConfigurationFlagResolutionAcrossCommands(t *testing.T) {
 	}
 }
 
-func TestNicConfigurationRejectsSpectrumX(t *testing.T) {
-	cfg := &config.LaunchKitConfig{
-		Profile:                  &config.Profile{Fabric: "ethernet", Deployment: "sriov", SpectrumX: &config.ProfileSpectrumX{Enable: true}},
-		NicConfigurationOperator: &config.NicConfigurationOperatorConfig{DeployNicConfigurationTemplate: true},
+func TestNicConfigurationToggleDoesNotRejectSpectrumX(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		cfg := &config.LaunchKitConfig{
+			NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.4"},
+			Profile: &config.Profile{
+				Fabric: "ethernet", Deployment: "sriov", Multirail: true,
+				SpectrumX: &config.ProfileSpectrumX{
+					Enable: true, SPCXVersion: "RA2.2", MultiplaneMode: "hwplb",
+					NumberOfPlanes: 2, TopologyType: config.SpectrumXTopology2Tier,
+				},
+			},
+			NicConfigurationOperator: &config.NicConfigurationOperatorConfig{DeployNicConfigurationTemplate: enabled},
+		}
+		require.NoError(t, ValidateResolvedConfig(cfg))
 	}
-	require.ErrorContains(t, ValidateResolvedConfig(cfg), "not Spectrum-X")
 }

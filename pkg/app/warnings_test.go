@@ -278,3 +278,35 @@ func TestWarnStorageModules_DriverDisabled(t *testing.T) {
 	warnStorageModules(cfg, "discover", out)
 	assert.Empty(t, out.warnings)
 }
+
+func TestWarnIPoIBHostPrerequisites(t *testing.T) {
+	for _, tc := range []struct {
+		name, fabric, deployment string
+		driver, warn             bool
+	}{
+		{"IPoIB inbox", "infiniband", "rdma_shared", false, true},
+		{"IPoIB managed driver", "infiniband", "rdma_shared", true, false},
+		{"Ethernet shared", "ethernet", "rdma_shared", false, false},
+		{"IB SRIOV", "infiniband", "sriov", false, false},
+		{"IB host device", "infiniband", "host_device", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := &testOutput{}
+			cfg := &config.LaunchKitConfig{Profile: &config.Profile{Fabric: tc.fabric, Deployment: tc.deployment}, DOCADriver: &config.DOCADriverConfig{Enable: tc.driver}}
+			warnIPoIBHostPrerequisites(cfg, out)
+			if tc.warn {
+				assert.Len(t, out.warnings, 1)
+				assert.Contains(t, out.warnings[0], "IPoIB netdevs")
+				assert.Contains(t, out.warnings[0], "rdma_cm, umad and uverbs")
+				assert.Contains(t, out.warnings[0], "built in")
+			} else {
+				assert.Empty(t, out.warnings)
+			}
+		})
+	}
+	for _, cfg := range []*config.LaunchKitConfig{nil, {}, {Profile: &config.Profile{Fabric: "infiniband", Deployment: "rdma_shared"}}} {
+		out := &testOutput{}
+		warnIPoIBHostPrerequisites(cfg, out)
+		assert.Empty(t, out.warnings)
+	}
+}
