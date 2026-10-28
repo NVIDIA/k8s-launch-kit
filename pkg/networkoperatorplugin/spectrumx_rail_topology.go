@@ -52,8 +52,12 @@ func validateSpectrumXGeneration(cfg *config.LaunchKitConfig, groups []config.Cl
 			unresolved = append(unresolved, fmt.Sprintf("%q (machine type %q, GPU product %q)", group.Identifier, group.MachineType, group.GPUType))
 			continue
 		}
-		if _, err := spectrumXRailLayout(group, cfg.Profile.SpectrumX.NumberOfPlanes); err != nil {
+		layout, err := spectrumXRailLayout(group, cfg.Profile.SpectrumX.NumberOfPlanes)
+		if err != nil {
 			return err
+		}
+		if platform == "vr" && !slices.Equal(layout, []int{2, 2, 2, 2}) {
+			return fmt.Errorf("RA2.4/RA3.1 VR group %q requires four rails with two physical NICs per rail, got master NIC counts %v; re-run discovery with NetworkBay status instead of assigning one rail per NIC", group.Identifier, layout)
 		}
 		if platform == "rtx" {
 			id, _, err := config.EastWestDeviceID(group)

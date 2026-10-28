@@ -43,3 +43,7 @@ numbered by ascending first-ASIC PCI. Two NICs per rail produce `pfsPerNic: 4`
 and eight PF names; master PCI addresses retain input order without an imposed
 ASIC order. NCO and the supplied doSPCX bundle must support this layout.
 Generation alone does not qualify runtime support.
+
+Generation rejects VR inventories unless they contain four dense rails with two
+physical NICs each. Re-run discovery with NetworkBay status for old configs that
+assigned one rail per NIC; generation does not guess the pairing from PCI order.

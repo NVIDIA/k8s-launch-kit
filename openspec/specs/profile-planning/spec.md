@@ -136,6 +136,11 @@ VR with ConnectX-9 SHALL default to HWPLB with eight planes for RA2.4/RA3.1,
 preserving explicit YAML/CLI values. An explicit SWPLB mode with no plane count
 SHALL retain the CX9 four-plane fallback; defaults do not qualify a fabric recipe.
 
+#### Scenario: Stale VR rail inventory
+
+- **WHEN** selected RA2.4/RA3.1 VR inventory does not contain four dense rails with two physical NICs per rail
+- **THEN** generation rejects the inventory and requests NetworkBay discovery instead of inferring pairs from PCI order.
+
 #### Scenario: Unresolved discovery and generation
 
 - **WHEN** a discovered GPU product has no unambiguous supported platform substring

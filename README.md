@@ -10,7 +10,10 @@ Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued r
 RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
 from GPU-product substrings or VR machine types, and accept optional HWPLB
 software-plane and OVS settings. VR with ConnectX-9 defaults to eight-plane HWPLB;
-discovery derives its four rails from NetworkBay peer status. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
+discovery derives its four rails from NetworkBay peer status.
+Generation rejects VR inventories unless they contain four dense rails with two
+physical NICs each. Re-run discovery with NetworkBay status for old configs that
+assigned one rail per NIC; generation does not guess the pairing from PCI order. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
 including the required NCO implementation/CRDs beyond the current 26.10 beta.2 package.
 
 ## Documentation

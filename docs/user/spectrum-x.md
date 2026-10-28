@@ -202,6 +202,9 @@ east-west ASIC NICs using their NetworkBay peer status. With two NICs per rail,
 naming emits `pfsPerNic: 4` and eight logical PF names per rail. NICs retain
 their first-seen input order inside each rail; discovery assigns membership
 without imposing an ASIC order within a rail.
+Generation rejects VR inventories unless they contain four dense rails with two
+physical NICs each. Re-run discovery with NetworkBay status for old configs that
+assigned one rail per NIC; generation does not guess the pairing from PCI order.
 The deployed NCO must accept eight planes and the doSPCX bundle must support
 RA3.1/VR; a successful render does not verify either prerequisite. Eight-plane
 SWPLB with IPv4 is still limited by the allocator's two-bit plane field.

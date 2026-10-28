@@ -40,3 +40,7 @@ four-plane fallback; this does not qualify that recipe. See the
 [VR discovery contract](../../docs/user/discovery.md#vr-networkbay-rails) for
 NetworkBay status prerequisites and rail membership. NCO and the supplied
 doSPCX bundle must support the layout; generation does not qualify runtime use.
+
+Generation rejects VR inventories unless they contain four dense rails with two
+physical NICs each. Re-run discovery with NetworkBay status for old configs that
+assigned one rail per NIC; generation does not guess the pairing from PCI order.
