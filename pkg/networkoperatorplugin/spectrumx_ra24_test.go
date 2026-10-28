@@ -645,33 +645,54 @@ func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool) {
 			require.EqualValues(t, 8, vrManifestField(t, obj.Object, "spec", "template", "spectrumXOptimized", "numberOfPlanes"))
 		case "NicInterfaceNameTemplate":
 			require.EqualValues(t, 4, vrManifestField(t, obj.Object, "spec", "pfsPerNic"))
-			require.Equal(t, []any{
-				[]any{"0001:03:00.0", "0006:01:00.0"},
-				[]any{"0003:01:00.0", "0004:03:00.0"},
-				[]any{"0009:03:00.0", "000e:01:00.0"},
-				[]any{"000b:01:00.0", "000c:03:00.0"},
-			}, vrManifestField(t, obj.Object, "spec", "railPciAddresses"))
+			rail := kinds["NicInterfaceNameTemplate"] - 1
+			expected := [][]any{
+				{"0001:03:00.0", "0006:01:00.0"},
+				{"0003:01:00.0", "0004:03:00.0"},
+				{"0009:03:00.0", "000e:01:00.0"},
+				{"000b:01:00.0", "000c:03:00.0"},
+			}
+			require.Equal(t, []any{expected[rail]}, vrManifestField(t, obj.Object, "spec", "railPciAddresses"))
+			require.Equal(t, fmt.Sprintf("roce_r%d_n%%nic_id%%", rail), vrManifestField(t, obj.Object, "spec", "rdmaDevicePrefix"))
+			require.Equal(t, fmt.Sprintf("eth_r%d_p%%plane_id%%", rail), vrManifestField(t, obj.Object, "spec", "netDevicePrefix"))
 		case "SpectrumXRailPoolConfig":
 			rails := vrManifestField(t, obj.Object, "spec", "railTopology").([]any)
-			require.Len(t, rails, 4)
-			for rail, raw := range rails {
+			require.Len(t, rails, 8)
+			for index, raw := range rails {
+				rail, nic := index/2, index%2
 				entry := raw.(map[string]any)
-				require.Equal(t, fmt.Sprintf("rail%d", rail), entry["name"])
+				require.Equal(t, fmt.Sprintf("rail%dnic%d", rail, nic), entry["name"])
 				poolRefs = append(poolRefs, entry["cidrPoolRef"].(string))
 				want := []any{}
-				for plane := 0; plane < 8; plane++ {
+				require.EqualValues(t, nic, entry["swPlane"])
+				for plane := nic * 4; plane < (nic+1)*4; plane++ {
 					want = append(want, fmt.Sprintf("eth_r%d_p%d", rail, plane))
 				}
 				require.Equal(t, want, vrManifestField(t, entry, "nicSelector", "pfNames"))
 			}
 		case "CIDRPool":
-			// Check rail references only: the generic allocator does not yet
-			// implement VR's two separately addressed NIC endpoints per rail.
 			poolNames = append(poolNames, obj.GetName())
 		case "ResourceClaimTemplate":
 			claimNames = append(claimNames, obj.GetName())
+			requests := vrManifestField(t, obj.Object, "spec", "spec", "devices", "requests").([]any)
+			require.Len(t, requests, 3)
+			for i, raw := range requests {
+				request := raw.(map[string]any)
+				require.EqualValues(t, 1, vrManifestField(t, request, "exactly", "count"))
+				if i == 0 {
+					require.Equal(t, "gpu", request["name"])
+				} else {
+					require.Equal(t, fmt.Sprintf("vf%d", i-1), request["name"])
+					rail := kinds["ResourceClaimTemplate"] - 1
+					roots := [][]string{{"pci0001:00", "pci0006:00"}, {"pci0003:00", "pci0004:00"}, {"pci0009:00", "pci000e:00"}, {"pci000b:00", "pci000c:00"}}
+					selectors := vrManifestField(t, request, "exactly", "selectors").([]any)
+					require.Len(t, selectors, 2)
+					require.Equal(t, fmt.Sprintf(`device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail%dnic%d"`, rail, i-1), vrManifestField(t, selectors[0].(map[string]any), "cel", "expression"))
+					require.Equal(t, fmt.Sprintf(`device.attributes["resource.kubernetes.io"].pcieRoot == %q`, roots[rail][i-1]), vrManifestField(t, selectors[1].(map[string]any), "cel", "expression"))
+				}
+			}
 		case "DaemonSet":
-			require.Equal(t, "rail0,rail1,rail2,rail3", vrManifestField(t, obj.Object,
+			require.Equal(t, "rail0nic0,rail0nic1,rail1nic0,rail1nic1,rail2nic0,rail2nic1,rail3nic0,rail3nic1", vrManifestField(t, obj.Object,
 				"spec", "template", "metadata", "annotations", "k8s.v1.cni.cncf.io/networks"))
 			if dra {
 				claims := vrManifestField(t, obj.Object, "spec", "template", "spec", "resourceClaims").([]any)
@@ -682,17 +703,20 @@ func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool) {
 			} else {
 				containers := vrManifestField(t, obj.Object, "spec", "template", "spec", "containers").([]any)
 				limits := vrManifestField(t, containers[0].(map[string]any), "resources", "limits").(map[string]any)
-				require.Len(t, limits, 4)
+				require.Len(t, limits, 8)
 				for rail := 0; rail < 4; rail++ {
-					require.Equal(t, "1", limits[fmt.Sprintf("nvidia.com/rail%d", rail)])
+					for nic := 0; nic < 2; nic++ {
+						require.Equal(t, "1", limits[fmt.Sprintf("nvidia.com/rail%dnic%d", rail, nic)])
+					}
 				}
 			}
 		}
 	}
-	for _, kind := range []string{"NicConfigurationTemplate", "NicInterfaceNameTemplate", "SpectrumXRailPoolConfig", "ConfigMap", "DaemonSet"} {
+	for _, kind := range []string{"NicConfigurationTemplate", "SpectrumXRailPoolConfig", "ConfigMap", "DaemonSet"} {
 		require.Equal(t, 1, kinds[kind], kind)
 	}
-	require.Len(t, poolNames, 4)
+	require.Equal(t, 4, kinds["NicInterfaceNameTemplate"])
+	require.Len(t, poolNames, 8)
 	require.ElementsMatch(t, poolNames, poolRefs)
 	require.ElementsMatch(t, claimNames, claimRefs)
 	if dra {
@@ -737,4 +761,19 @@ func TestVRGenerationPreservesNICOrderWithinRails(t *testing.T) {
 		}
 	}
 	t.Fatal("missing NicInterfaceNameTemplate")
+}
+
+func TestVRCustomInterfacePrefixes(t *testing.T) {
+	cfg, profile := vrConfigAndProfile(t, "RA3.1", false)
+	cfg.SpectrumX.HWPLB = &config.SpectrumXInterfaceNamePrefixConfig{NetdevPrefix: "net_r%rail_id%_n%nic_id%_p%plane_id%", RdmaPrefix: "rdma_r%rail_id%_n%nic_id%"}
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+	require.NoError(t, err)
+	for name, content := range rendered {
+		if strings.Contains(name, "railpool") {
+			require.Contains(t, content, "net_r0_n1_p4")
+		}
+	}
+	cfg.SpectrumX.HWPLB.RdmaPrefix = "rdma_r%rail_id%_p%plane_id%"
+	_, err = (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+	require.ErrorContains(t, err, "requires a %nic_id% placeholder and no plane placeholder")
 }

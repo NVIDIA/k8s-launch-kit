@@ -90,15 +90,17 @@ type topologyEndpoint struct {
 }
 
 type topologyAttributes struct {
-	Role     string `json:"role"`
-	Plane    int    `json:"plane"`
-	Pod      int    `json:"pod"`
-	SU       int    `json:"su"`
-	Rail     int    `json:"rail"`
-	HasPlane bool
-	HasPod   bool
-	HasSU    bool
-	HasRail  bool
+	Role         string `json:"role"`
+	Plane        int    `json:"plane"`
+	Pod          int    `json:"pod"`
+	SU           int    `json:"su"`
+	Rail         int    `json:"rail"`
+	HostIndex    int    `json:"host_index"`
+	HasHostIndex bool
+	HasPlane     bool
+	HasPod       bool
+	HasSU        bool
+	HasRail      bool
 }
 
 func (a *topologyAttributes) UnmarshalJSON(data []byte) error {
@@ -123,6 +125,9 @@ func (a *topologyAttributes) UnmarshalJSON(data []byte) error {
 	if err := decodeOptionalInt(raw, "rail", &a.Rail, &a.HasRail); err != nil {
 		return err
 	}
+	if err := decodeOptionalInt(raw, "host_index", &a.HostIndex, &a.HasHostIndex); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -139,6 +144,7 @@ func decodeOptionalInt(raw map[string]json.RawMessage, key string, out *int, pre
 }
 
 type hostLink struct {
+	vr        bool
 	node      string
 	plane     int
 	pod       int
@@ -150,6 +156,8 @@ type hostLink struct {
 }
 
 type poolKey struct {
+	vr    bool
+	nic   int
 	rail  int
 	plane int
 }
@@ -182,12 +190,18 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 	if err != nil {
 		return nil, err
 	}
-	links, err := hostLinks(topology, spcx)
+	vr := config.SpectrumXPlatformForGroup(group) == "vr"
+	allowedNodes := nodeSet(group.WorkerNodes)
+	links, err := hostLinks(topology, spcx, vr, allowedNodes)
 	if err != nil {
 		return nil, err
 	}
 
-	allowedNodes := nodeSet(group.WorkerNodes)
+	if vr {
+		if err := validateVRTopology(links, allowedNodes); err != nil {
+			return nil, err
+		}
+	}
 	allocations := allocationsByPool(links, allowedNodes, spcx)
 	poolKeys := sortedPoolKeys(allocations)
 	if len(poolKeys) == 0 {
@@ -206,7 +220,15 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 					topologyPath, formatMissingCoverage(missing, coverage, spcx), topologyAttributeHint(spcx))
 			}
 		}
-		cidr := poolCIDR(staticAllocations[0].Prefix, spcx)
+		var cidr string
+		var routes []string
+		if key.vr {
+			cidr = supernet(staticAllocations[0].Prefix, 11)
+			routes = []string{cidr, supernet(cidr, 8)}
+		} else {
+			cidr = poolCIDR(staticAllocations[0].Prefix, spcx)
+			routes = poolRoutes(cidr, spcx)
+		}
 		settings := poolSettings(spcx)
 		pools = append(pools, CIDRPool{
 			Name:                 poolName(key, group.MergedIdentifier, spcx),
@@ -214,7 +236,7 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 			GatewayIndex:         settings.gatewayIndex,
 			PerNodeNetworkPrefix: settings.perNodeNetworkPrefix,
 			PerNodeExclusions:    settings.perNodeExclusions,
-			Routes:               poolRoutes(cidr, spcx),
+			Routes:               routes,
 			StaticAllocations:    staticAllocations,
 		})
 	}
@@ -236,9 +258,10 @@ func loadTopology(path, topologyType string) (*topologyFile, error) {
 	return topology, nil
 }
 
-func hostLinks(topology *topologyFile, spcx *config.ProfileSpectrumX) ([]hostLink, error) {
+func hostLinks(topology *topologyFile, spcx *config.ProfileSpectrumX, vr bool, allowedNodes map[string]struct{}) ([]hostLink, error) {
 	var links []hostLink
 	hostIndexes := map[string]int{}
+	seenLeafPorts := map[string]bool{}
 	for linkIdx, link := range topology.Links {
 		if len(link) == 0 {
 			continue
@@ -263,6 +286,11 @@ func hostLinks(topology *topologyFile, spcx *config.ProfileSpectrumX) ([]hostLin
 			return nil, fmt.Errorf("topology host link %d has no leaf endpoint", linkIdx)
 		}
 		host := link[hostIdx]
+		if vr && len(allowedNodes) > 0 {
+			if _, ok := allowedNodes[host.Node]; !ok {
+				continue
+			}
+		}
 		leaf := link[leafIdx]
 		if !host.Attrs.HasRail {
 			return nil, fmt.Errorf("topology host link %d endpoint %s/%s is missing attributes.rail",
@@ -276,25 +304,48 @@ func hostLinks(topology *topologyFile, spcx *config.ProfileSpectrumX) ([]hostLin
 			return nil, fmt.Errorf("topology host link %d endpoint %s/%s is missing attributes.pod for 3-tier allocation",
 				linkIdx, host.Node, host.Interface)
 		}
+		if vr {
+			leafPort := leaf.Node + "/" + leaf.Interface
+			if seenLeafPorts[leafPort] {
+				return nil, fmt.Errorf("VR topology repeats switch port %s", leafPort)
+			}
+			seenLeafPorts[leafPort] = true
+			if !host.Attrs.HasHostIndex && host.HostIndex == nil {
+				return nil, fmt.Errorf("VR topology host %s requires explicit attributes.host_index (zero-based) or an AIR host ordinal", host.Node)
+			}
+		}
 		key := hostIndexKey(host.Attrs)
 		index, ok := hostIndexes[key+"|"+host.Node]
+		if vr && ok && host.Attrs.HasHostIndex && index != host.Attrs.HostIndex {
+			return nil, fmt.Errorf("VR topology host %s has inconsistent host_index values", host.Node)
+		}
 		if !ok {
-			if host.HostIndex != nil {
+			if vr && host.Attrs.HasHostIndex {
+				index = host.Attrs.HostIndex
+			} else if host.HostIndex != nil {
 				index = *host.HostIndex
 			} else {
 				index = countHostIndex(hostIndexes, key)
 			}
 			hostIndexes[key+"|"+host.Node] = index
 		}
-		addressPlane := leaf.Attrs.Plane
-		if spcx.MultiplaneMode != "swplb" {
-			addressPlane = 0
+
+		var hostIP, leafIP netip.Addr
+		var err error
+		if vr {
+			hostIP, leafIP, err = allocateVRHostLeaf(spcx, leaf.Attrs.Plane, host.Attrs.Rail, host.Attrs.Pod, host.Attrs.SU, index)
+		} else {
+			addressPlane := leaf.Attrs.Plane
+			if spcx.MultiplaneMode != "swplb" {
+				addressPlane = 0
+			}
+			hostIP, leafIP, err = allocateHostLeaf(spcx, addressPlane, host.Attrs.Rail, host.Attrs.Pod, host.Attrs.SU, index)
 		}
-		hostIP, leafIP, err := allocateHostLeaf(spcx, addressPlane, host.Attrs.Rail, host.Attrs.Pod, host.Attrs.SU, index)
 		if err != nil {
 			return nil, fmt.Errorf("topology host link %d endpoint %s/%s: %w", linkIdx, host.Node, host.Interface, err)
 		}
 		links = append(links, hostLink{
+			vr:        vr,
 			node:      host.Node,
 			plane:     leaf.Attrs.Plane,
 			pod:       host.Attrs.Pod,
@@ -485,6 +536,11 @@ func allocationsByPool(links []hostLink, allowedNodes map[string]struct{}, spcx 
 
 func poolKeyForLink(link hostLink, spcx *config.ProfileSpectrumX) poolKey {
 	key := poolKey{rail: link.rail}
+	if link.vr {
+		key.vr = true
+		key.nic = link.plane / 4
+		return key
+	}
 	if spcx.MultiplaneMode == "swplb" {
 		key.plane = link.plane
 	}
@@ -500,6 +556,9 @@ func sortedPoolKeys(allocations map[poolKey][]StaticAllocation) []poolKey {
 		if keys[i].rail != keys[j].rail {
 			return keys[i].rail < keys[j].rail
 		}
+		if keys[i].nic != keys[j].nic {
+			return keys[i].nic < keys[j].nic
+		}
 		return keys[i].plane < keys[j].plane
 	})
 	return keys
@@ -507,7 +566,9 @@ func sortedPoolKeys(allocations map[poolKey][]StaticAllocation) []poolKey {
 
 func poolName(key poolKey, suffix string, spcx *config.ProfileSpectrumX) string {
 	name := fmt.Sprintf("rail-%d", key.rail)
-	if spcx.MultiplaneMode == "swplb" {
+	if key.vr {
+		name = fmt.Sprintf("%s-nic-%d", name, key.nic)
+	} else if spcx.MultiplaneMode == "swplb" {
 		name = fmt.Sprintf("%s-plane-%d", name, key.plane)
 	}
 	if suffix != "" {

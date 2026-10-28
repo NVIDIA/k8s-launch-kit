@@ -20,7 +20,8 @@ description: |
   configuration supplied via a doSPCX data-bundle ConfigMap. Supports swplb,
   hwplb, and none multiplane modes. In swplb the railTopology splits
   each rail into per-plane entries; in other modes one entry per rail groups
-  all planes together.
+  all planes together. VR HWPLB uses two four-PF NIC groups per logical rail,
+  each with a separately addressed workload endpoint.
 deploymentGuide: spectrum-x.rst
 templates:
   - 00-values.yaml

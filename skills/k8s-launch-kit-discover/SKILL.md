@@ -314,8 +314,22 @@ VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
 pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
 rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
 status fails discovery. See `docs/user/discovery.md` for the rail mapping.
-Two NICs per rail render `pfsPerNic: 4`; input NIC order is preserved. Use a
-compatible NCO and doSPCX bundle; rendering is not live hardware qualification.
+VR generation supports IPv4 HWPLB with eight planes on four dual-NIC rails.
+It emits four per-rail naming templates (`pfsPerNic: 4`), eight per-NIC
+`railRnicN` topology entries and CIDRPools, and eight workload attachments.
+Each NIC endpoint has four PFs, one schedulable VF and its own /31. DRA uses
+one claim per logical rail with one GPU and two VF requests. NIC input order
+is preserved; it must agree with the physical switch topology. RDMA names
+are `roce_rR_n0`/`roce_rR_n1`; custom RDMA prefixes require `%nic_id%` and no
+plane placeholder. Compatible NCO must support disjoint PCI naming templates.
+Reference topology JSON must include all eight planes per rail and explicit
+zero-based host `attributes.host_index`; AIR uses its parsed host ordinal.
+VR IPv4 defaults to site-zero `240.0.0.0/8`, with NIC(1), rail(2), POD(5),
+SU(7), host(8), peer(1) bits after the first octet. Eight-plane POD is always
+zero and host index is at most 251. Pools are per NIC/rail /11, allocations
+are /31 with even host and odd gateway, and routes cover /11 and /8.
+IPv6, non-HWPLB VR, incomplete topology, and extra software-plane offsets
+are rejected. Generation does not qualify runtime support or configure switches.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when

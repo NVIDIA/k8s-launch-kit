@@ -59,6 +59,16 @@ func validateSpectrumXGeneration(cfg *config.LaunchKitConfig, groups []config.Cl
 		if platform == "vr" && !slices.Equal(layout, []int{2, 2, 2, 2}) {
 			return fmt.Errorf("RA2.4/RA3.1 VR group %q requires four rails with two physical NICs per rail, got master NIC counts %v; re-run discovery with NetworkBay status instead of assigning one rail per NIC", group.Identifier, layout)
 		}
+		if platform == "vr" && (cfg.Profile.SpectrumX.MultiplaneMode != "hwplb" || cfg.Profile.SpectrumX.NumberOfPlanes != 8) {
+			return fmt.Errorf("RA2.4/RA3.1 VR group %q requires HWPLB with eight planes across four dual-NIC rails", group.Identifier)
+		}
+		if platform == "vr" && group.SpectrumX != nil {
+			for rail, swPlane := range group.SpectrumX.SwPlaneByRail {
+				if swPlane != 0 {
+					return fmt.Errorf("VR group %q rail %d requires swPlaneByRail=0; NIC plane offsets are generated automatically", group.Identifier, rail)
+				}
+			}
+		}
 		if platform == "rtx" {
 			id, _, err := config.EastWestDeviceID(group)
 			if err != nil {

@@ -193,21 +193,62 @@ The current `ThinkSystem-SR650-V4-RTX-PRO-6000` preset splits functions of one
 physical NIC across rails. RA2.4 rejects that layout because NCO assigns one rail
 per physical NIC; it requires a representable layout before generation can proceed.
 
-For VR with ConnectX-9, RA2.4/RA3.1 defaults to `hwplb` and eight planes when
-those settings are omitted. Explicit YAML and CLI values take precedence. An
-explicit `swplb` with an omitted plane count keeps the CX9 four-plane fallback;
-that fallback does not establish a supported fabric recipe.
-[VR discovery](discovery.md#vr-networkbay-rails) derives four rails from eight
-east-west ASIC NICs using their NetworkBay peer status. With two NICs per rail,
-naming emits `pfsPerNic: 4` and eight logical PF names per rail. NICs retain
-their first-seen input order inside each rail; discovery assigns membership
-without imposing an ASIC order within a rail.
-Generation rejects VR inventories unless they contain four dense rails with two
-physical NICs each. Re-run discovery with NetworkBay status for old configs that
-assigned one rail per NIC; generation does not guess the pairing from PCI order.
-The deployed NCO must accept eight planes and the doSPCX bundle must support
-RA3.1/VR; a successful render does not verify either prerequisite. Eight-plane
-SWPLB with IPv4 is still limited by the allocator's two-bit plane field.
+### VR dual-NIC rails
+
+[VR discovery](discovery.md#vr-networkbay-rails) derives four logical rails
+from eight east-west NICs. Each rail has two four-PF NICs; their first-seen
+inventory order selects NIC 0 and NIC 1 and must match the switch topology.
+Generation rejects old inventories with one rail per NIC instead of guessing
+physical pairing from PCI addresses. Re-run NetworkBay discovery for those inputs.
+
+VR generation supports IPv4 HWPLB with eight planes on four dual-NIC rails.
+It emits four per-rail naming templates (`pfsPerNic: 4`), eight per-NIC
+`railRnicN` topology entries and CIDRPools, and eight workload attachments.
+Each NIC endpoint has four PFs, one schedulable VF and its own /31. DRA uses
+one claim per logical rail with one GPU and two VF requests. NIC input order
+is preserved; it must agree with the physical switch topology. RDMA names
+are `roce_rR_n0`/`roce_rR_n1`; custom RDMA prefixes require `%nic_id%` and no
+plane placeholder. Compatible NCO must support disjoint PCI naming templates.
+Reference topology JSON must include all eight planes per rail and explicit
+zero-based host `attributes.host_index`; AIR uses its parsed host ordinal.
+VR IPv4 defaults to site-zero `240.0.0.0/8`, with NIC(1), rail(2), POD(5),
+SU(7), host(8), peer(1) bits after the first octet. Eight-plane POD is always
+zero and host index is at most 251. Pools are per NIC/rail /11, allocations
+are /31 with even host and odd gateway, and routes cover /11 and /8.
+IPv6, non-HWPLB VR, incomplete topology, and extra software-plane offsets
+are rejected. Generation does not qualify runtime support or configure switches.
+
+`SpectrumXRailPoolConfig.spec.railTopology` contains **eight NIC groups**, named
+`rail0nic0`, `rail0nic1`, through `rail3nic1`. These are four logical rails,
+not eight independent rails. NIC 0 selects planes 0–3 with `swPlane: 0`; NIC 1
+selects planes 4–7 with `swPlane: 1`. This matches XPlane's per-NIC group and
+single-VF model. The corresponding pools are `rail-0-nic-0` through
+`rail-3-nic-1`. Applying only four eight-PF groups exposes only one workload
+endpoint per rail and loses the second NIC's independently addressed endpoint.
+
+Example reference-generator link (repeat for all physical PF links):
+
+```json
+[
+  {"node":"worker-a","interface":"eth_r0_p4",
+   "attributes":{"role":"host","rail":0,"pod":0,"su":0,"host_index":1}},
+  {"node":"leaf-a","interface":"swp3s0",
+   "attributes":{"role":"leaf","plane":4}}
+]
+```
+
+This endpoint is rail 0, NIC 1: host `240.128.0.2/31`, gateway `240.128.0.3`.
+The site is `hostFirstOctet - 240` (0–15); `hostFirstOctet` defaults to 240 for
+VR and must be 240–255. Explicit host indices prevent a topology list reorder
+from changing assigned addresses. Missing NIC planes, reused switch ports,
+conflicting coordinates, or two workers sharing an address coordinate are errors.
+The topology must reflect actual cabling; generation cannot verify live LLDP.
+
+Existing deployments need an explicit migration plan: the new per-NIC policies
+and networks replace old per-rail endpoints. Retain tested operator images and
+custom profile data, preserve active naming identities where specs match, and
+review resource pruning before applying. Correct host pools alone do not update
+switch addresses, routing filters, Class E support, or workload attachments.
 
 Optional configuration:
 
