@@ -61,6 +61,8 @@ func assertTraditionalSpectrumXManifests(t *testing.T, platform, ra, mode string
 		for _, doc := range b.Documents() {
 			o := doc.ObjectCopy()
 			switch o.GetKind() {
+			case "NicConfigurationTemplate":
+				require.Equal(t, platform, vrManifestField(t, o.Object, "spec", "template", "spectrumXOptimized", "platformType"))
 			case "SpectrumXRailPoolConfig":
 				railPools++
 				rails := vrManifestField(t, o.Object, "spec", "railTopology").([]any)
