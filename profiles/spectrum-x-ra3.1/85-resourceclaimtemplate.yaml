@@ -1,0 +1,39 @@
+{{- if spectrumXUseDRA .Profile }}
+{{- range $idx, $claim := spectrumXClaims (spectrumXEndpoints .Profile .SpectrumX .ClusterConfig) }}
+{{- if $idx }}---
+{{ end -}}
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: {{$claim.Name}}-template{{boundedSuffix $claim.SuffixLimit $.ClusterConfig.MergedIdentifier}}
+  namespace: "{{$.CurrentNetworkNamespace}}"
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          count: 1
+          {{- $gpuRoot := pcieRoot $claim.GPUPCI }}
+          {{- if $gpuRoot }}
+          selectors:
+          - cel:
+              expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "{{$gpuRoot}}"'
+          {{- end }}
+      {{- range $endpoint := $claim.Endpoints }}
+      - name: {{$endpoint.VFRequestName}}
+        exactly:
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
+          count: {{$endpoint.VFCount}}
+          selectors:
+          - cel:
+              expression: 'device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/{{$endpoint.Name}}"'
+          {{- $vfRoot := pcieRoot $endpoint.PF.PciAddress }}
+          {{- if $vfRoot }}
+          - cel:
+              expression: 'device.attributes["resource.kubernetes.io"].pcieRoot == "{{$vfRoot}}"'
+          {{- end }}
+      {{- end }}
+{{ end }}
+{{- end }}

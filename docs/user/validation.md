@@ -24,6 +24,29 @@ settings used during generation. Connectivity accepts this resolved metadata
 or a user-owned configuration with the required explicit decisions; installed
 and embedded defaults alone do not satisfy that requirement.
 
+## InfiniBand partition diagnostics
+
+During connectivity setup, validation reads the P_Key table for each selected
+IPoIB interface in the test pods, including SR-IOV VFs. It uses the interface's
+unique direct RDMA device mapping and zero-based `dev_port` to select the port;
+it does not substitute the host PF table or guess from rail ordering.
+Ethernet interfaces are excluded. Static validation does not run this probe.
+
+A table containing only limited membership keys (for example `0x7fff`) produces
+an advisory warning: two limited members cannot communicate within the same
+partition (see [NVIDIA partition membership semantics](https://networking-docs.nvidia.com/nvidiainfinibandsecurityoverviewandguidelines/security-in-infiniband)).
+Ask the subnet manager administrator to grant appropriate full membership to the intended host/VF GUIDs. Empty slots are ignored; an entirely
+empty table also warns. Missing or ambiguous mappings, unreadable sysfs data,
+malformed tables and exec failures are reported as **unverified**, never healthy.
+The read-only probe has a five-second budget per pod and requires no extra pods.
+
+Warnings appear in terminal output, the JSON connectivity object's
+`PartitionWarnings`, and the HTML warnings section, including when subsequent
+connectivity tests fail. They do not change exit status: limited-to-full traffic
+can be valid, and a full key in an unrelated partition does not prove connectivity.
+No warning is a substitute for checking the intended partition and testing the
+actual data path. Interfaces excluded from the matrix are not inspected.
+
 ## Acceptance Outcomes
 
 | Invocation | Exit and coverage behavior |
@@ -45,6 +68,23 @@ the wait deadline alone is not a failure gate. Before accepting a deployment,
 require the report to show the intended manifests ready, the required static
 checks completed, and gating tests for every required data-plane family.
 Review skipped stages and non-gating cross-rail observations separately.
+
+## External networking prerequisites
+
+For NCP bundles, validation checks live Multus/CNI ownership independently of
+catalog versions. An omitted section with a still-managed live section is an
+ownership conflict. Supported external installers are checked against configured
+worker names: incompatible node selectors are errors; missing Ready pods or
+stale DaemonSet rollout status are in-progress. Ready pods on all required
+workers plus current DaemonSet readiness establish API-level installer coverage.
+
+No recognized API installer, failed optional health inspection, or unavailable
+worker inventory is **UNVERIFIED**, with a reason in text, JSON (`Skipped:
+true`), HTML, and JUnit. It is neither missing networking nor a successful
+health check and does not alone fail static validation. Failed mandatory
+ownership inspection is an error. The report lists external prerequisite rows
+separately from NCP-managed catalog-version checks. Host CNI binaries,
+configuration, and data-plane behavior still require runtime qualification.
 
 ## Worked acceptance decisions
 
@@ -159,6 +199,15 @@ preserves the existing mode/flavor acceptance rules described below.
 | Preflight | Stray CRs and Helm value drift that can make the apply path ambiguous. |
 | Connectivity | ICMP, `rping`, host-memory `ib_write_bw`, and optional GPUDirect DMA-BUF bandwidth checks between generated test DaemonSet pods. |
 
+The Helm version check prefers the exact release name `network-operator` and
+reads its highest revision, so a sibling release such as `network-operator-post`
+cannot override it. If the exact name is absent, the check retains compatibility
+with a single release whose name contains `network-operator` (case-insensitive).
+Multiple such fallback releases are ambiguous: the version check is reported as
+skipped with a reason, not as a verified match. Revisions from different releases
+are never compared. The check compares chart `appVersion` with the catalog;
+Helm values validation continues to use the exact `network-operator` release.
+
 When another system owns the Network Operator Helm release, set
 `networkOperator.skipHelmChart: true` or pass
 `--skip-network-operator-helm`. The Helm release/version and values checks are
@@ -181,9 +230,20 @@ rules participate naturally. Routing diagnostics compare the selected device
 with the profile expectation: the source interface for source-based routing,
 or the destination interface for destination-based routing.
 
-NIC configuration success requires `ConfigUpdateInProgress` with `reason: UpdateSuccessful` and `status: "False"` on every matched device; a contradictory True/Unknown status remains `IN-PROGRESS`. This applies to both deployment waiting and standalone validation, including opt-in standard-profile templates.
+NIC configuration success requires `ConfigUpdateInProgress` with `reason: UpdateSuccessful` and `status: "False"` on every matched device; a contradictory True/Unknown status remains `IN-PROGRESS`. This applies to both deployment waiting and standalone validation, including standard-profile templates, which are enabled by default.
 
 Manifest-state checks for `NicConfigurationTemplate` and `NicFirmwareTemplate` use the operator-populated `status.nicDevices` list as the matched device set. An empty list, a list that does not yet reflect the current node, NIC type, PCI-address, serial-number, and part-number selectors, a missing named `NicDevice`, a device spec that does not yet reflect the current template payload, or a relevant device condition with a stale `observedGeneration` remains `IN-PROGRESS`. `NicConfigurationTemplate` considers `FirmwareUpdateInProgress` relevant only when the matched device has `spec.firmware`; a stale firmware condition cannot block a configuration-only deployment. Unrelated discovered devices are used only to verify selector freshness; their configuration and firmware state is ignored.
+
+SR-IOV node-policy and NV-IPAM IPPool validation compares the **live** selector
+with the intended workers from the bundle's source-group annotation and effective
+configuration. Live annotation edits cannot redefine that membership. Missing or
+extra nodes are target-scope errors, even when controllers report ready. Missing
+live resources remain missing; denied reads remain inspection failures. Preset or
+legacy configurations with no worker inventory retain a visible **target scope
+unverified** warning alongside ordinary readiness. An intended worker missing a
+required PF still fails; empty SR-IOV interface status remains in progress.
+See [hardware target scope](../advanced/deployment.md#hardware-target-scope) for
+legacy compatibility and configuration requirements.
 
 Preflight uses the same checks as deployment: Helm chart version, generated Helm values, component versions, and stray CRs from the [enumerated networking kinds and scopes](../advanced/deployment.md#stray-resource-deletion-boundary), without an l8k ownership requirement. SR-IOV pool configs, node policies, and OVS networks labeled with `spectrumx.nvidia.com/owner-name` are controller-owned outputs of `SpectrumXRailPoolConfig`, so they are not reported as strays. Validation never remediates drift.
 

@@ -30,6 +30,9 @@ import (
 // Returns a single error describing the first violation. Caller wraps
 // this in a structured ValidationError for the user.
 func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
+	if err := config.ValidateSecondaryNetworkConfig(cfg); err != nil {
+		return err
+	}
 	if cfg == nil || cfg.Profile == nil {
 		return nil
 	}
@@ -38,9 +41,8 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 	}
 
 	if cfg.Profile.SpectrumX != nil && cfg.Profile.SpectrumX.Enable {
-		if cfg.NicConfigurationOperator != nil && cfg.NicConfigurationOperator.DeployNicConfigurationTemplate {
-			return fmt.Errorf("nicConfigurationOperator.deployNicConfigurationTemplate is only supported for standard profiles, not Spectrum-X")
-		}
+		// Spectrum-X owns its required NIC templates independently of the
+		// standard-profile toggle, which is enabled by canonical defaults.
 		return validateSpectrumXCohort(cfg)
 	}
 
@@ -181,7 +183,7 @@ func validateSpectrumXCohort(cfg *config.LaunchKitConfig) error {
 		return fmt.Errorf("--multiplane-mode none requires --number-of-planes 1, got %d", spcx.NumberOfPlanes)
 	}
 	if spcx.MultiplaneMode != "none" && spcx.NumberOfPlanes == 1 {
-		return fmt.Errorf("--multiplane-mode %s requires --number-of-planes 2 or 4, got 1", spcx.MultiplaneMode)
+		return fmt.Errorf("--multiplane-mode %s requires --number-of-planes 2, 4 or 8, got 1", spcx.MultiplaneMode)
 	}
 
 	// Cross-validate (RA version, network-operator-release).

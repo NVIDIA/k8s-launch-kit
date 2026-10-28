@@ -25,6 +25,10 @@ The objects created by `Ensure(ctx, c, opts)` (`pkg/nicconfigdaemon/`) on every 
 | `ConfigMap` | `nic-configuration-operator-supported-nic-firmware` (empty `data: {}`) | namespaced | empty stand-in so the daemon's startup Get succeeds; deleted by namespace cascade |
 | `DaemonSet` | `nic-configuration-daemon` | namespaced | image = `<networkOperator.repository>/nic-configuration-operator-daemon:<networkOperator.componentVersion>`; **no NFD `nodeSelector`** + tolerates all taints + node-name affinity for nodes that are Ready and schedulable; deleted by namespace cascade |
 
+The bootstrap daemon mounts host `/etc` read-only at `/host/etc`. Mounting the
+parent directory lets the probe detect a missing `/etc/netplan` without
+`DirectoryOrCreate` mutating the node or preventing the daemon from starting.
+
 ### Why renamed RBAC
 
 The upstream nic-configuration-operator Helm chart uses cluster-scoped names
@@ -77,6 +81,18 @@ wait — it only populates the **saved** `cluster-config.yaml` `nodeSelector` fo
 deploy time. (Fallback: when no REST config is available for pod exec, the
 legacy `--node-selector` label filter is used instead.)
 
+Discovery reports each confirmed host-restricted BlueField PCI function with its
+node and PCI address in normal CLI output, before deleting the bootstrap namespace.
+The NIC-probe summary logs `restrictedDevicesSkipped`; this counts PCI functions,
+not physical cards, separately from `northSouthPFsFiltered` (published devices
+removed during group classification). Mixed nodes are scanned fully, so a usable
+ConnectX does not hide a restricted BlueField later in PCI order. Restricted devices
+remain absent from the saved configuration because the daemon does not publish them.
+A failed or unrecognized trust query is not evidence of restriction and is not counted.
+If the scan fails after verifying a usable NIC, the node remains eligible and a
+warning marks exclusion reporting as incomplete. Read-only publisher eligibility
+probes retain their early-exit behavior and do not collect this full inventory.
+
 ### Leftover pre-clean
 
 Teardown runs in a `defer`, so a crashed/killed run can leave the namespace
@@ -106,17 +122,77 @@ NUMA and current netdevice MAC address use this path today. MACs are compared
 with a sanitized projection of host netplan device stanzas; a
 `match.macaddress` plus non-empty `set-name` match sets the group's
 `netplanManaged` flag. Every worker is probed because MACs and netplan files are
-node-local, and the group flag is true if any worker matches. The representative
-worker combines this with the GPU probe; other workers run only the smaller
-per-PF/netplan probe.
+node-local, and the group flag is true if any worker matches. These PF/netplan
+reads stay in the NIC daemon, independently of GPU source selection. A readable
+host `/etc` with no netplan directory, or a complete readable configuration
+with no MAC-based `set-name` rule, is a confirmed negative and does not require
+PF MACs. Unavailable or incomplete observations remain unknown; when a
+MAC-based `set-name` rule exists, missing PF MACs also leave the result unknown.
+Generation rejects interface-name rules for that group until the host state can
+be verified.
 
 To integrate a new per-PF field, add its best-effort read to
 `pfDiscoveryProbeCmd`, decide whether its lifetime permits persistence in
 `PFConfig` or requires transient aggregation, and extend parser/consumer tests.
-Do not add a second PCI walk on the same worker. One missing attribute must not
-suppress the other attributes or PF records.
+Reuse this walk for related host attributes. The GPU physical-device denominator
+is a separate complete inventory check, not a best-effort attribute. One missing
+optional attribute must not suppress other attributes or PF records.
+
+### GPU source ownership and completeness
+
+`gpuprobe.go` acquires GPU product/query/matrix observations first from the
+NIC daemon (local injected executable, then legacy host path), with an existing
+same-node GPU Operator GFD main container as fallback. It checks Ready state,
+DaemonSet owner UID, real host `/sys` backing, pod identity and container lifetime.
+It never modifies pod runtime classes or schedules GPU workloads. Normal lookup
+is across namespaces; read-only callers provide the GPU Operator namespace via
+`WithReadOnlyGPUTopology` plus REST credentials. GFD fallback requires pod
+read/exec and DaemonSet read permissions. No-option/REST-only library calls keep
+their previous behavior; consume the context UI sink for optional-failure warnings.
+
+`gpuobservation.go` validates the GPU query against independently enumerated
+physical host GPU PCIs, unique indices and full matrix coverage. Missing GPU
+labels remain unknown, and only a complete empty host inventory without
+conflicting labels allows skipping GPU execution. Restricted/MIG/vGPU visibility
+that cannot be reconciled with physical devices is unavailable topology.
+`gpuenrichment.go` joins node-local PCI/RDMA identities and requires agreement
+for every worker/raw PF in the actual rail-collapse projection. Incomplete matrix
+coverage cannot demote unobserved NICs through the PIX gate. Aliases and source
+details stay transient. It intersects siblings' nearest-GPU candidates at a
+common proximity before balancing once per retained rail on each node; it does
+not balance individual collapsed planes. The per-node collector also owns the
+sysfs/pci.ids product fallback. Missing or conflicting worker products remain
+unknown before preset lookup; no later representative product fallback can
+overwrite that evidence. Preset precedence and final VR rail assignment remain
+unchanged; stale measured GPU PCI addresses are cleared/reconciled after presets.
+
+The collector bounds concurrency to four and each node to 30 seconds, with one
+bounded GFD lookup and no retries. Optional failures retain hardware/preset
+fallback with warnings; parent cancellation is fatal. Hardware/runtime/image
+qualification remains separate from parser and fake-client validation.
 
 ---
+
+## Fabric observations
+
+`discovery/fabric.go` collects configured `link_layer` independently of link-up
+state. Grouping preserves the actual retained-to-raw PF collapse projection in
+transient `groupPFMembers`, associated with the sorted worker set so group
+filtering, identifiers or ordering cannot misassociate it. `buildNodePFIdentities`
+joins raw NicDevice records by node/normalized PCI; aliases stay transient.
+
+The probe resolves RDMA mappings through each PCI sysfs subtree, completes the
+port manifest for every expected PCI, then returns one result per manifest entry
+and terminal counts. Missing/duplicate/truncated/failed records make coverage
+unknown. Every selected worker, projected sibling PF and enumerated port must
+agree before group LinkType is saved. No default port-1 or representative-only
+success is used. An observed IB PF without a netdev emits a host-provisioning
+warning without pretending the RDMA shared plugin is ready.
+
+Normal discovery enables this collector; read-only discovery requires explicit
+`WithReadOnlyFabricDiscovery()` and REST credentials. No-option and REST-only
+read-only calls gain no fabric execs. Collection uses at most four goroutines,
+ten seconds per worker, no timeout retries and fatal caller cancellation.
 
 ## Node Grouping Algorithm
 
@@ -144,16 +220,18 @@ the same groups in the same order.
 
 ## North-South Detection
 
-BlueField DPU devices are identified by matching their **OPN (Orderable Part Number)**
-against a built-in product-ID list maintained in the l8k source code. This list covers
-all BlueField-2 and BlueField-3 SKUs.
+North-south classification uses the operator's `NicDevice.status.dpu` flag, a
+built-in positive-only DPU product-ID list, or a BlueField-3 device ID (`a2dc` /
+`a2d9`) with a VPD model identifying two physical ports (`dual-port` / `2-port`).
+The list is not exhaustive. The physical dual-port rule applies even when the
+operator reports `dpu=false` in NIC mode and is preserved during GPU PIX
+reclassification. Multiple PCI functions do not prove physical port count.
 
 Devices classified as north-south:
 
 - Are excluded from generated manifests (no SriovNetworkNodePolicy, no
   MacvlanNetwork, etc.).
-- Are still recorded in the cluster config under a `northSouthDevices` field for
-  informational purposes.
+- Remain in a mixed group's `pfs` with `traffic: north-south` and no rail.
 - Do not contribute to rail numbering.
 
 If a node has only north-south devices and no east-west devices, that node is excluded
@@ -202,18 +280,16 @@ Two groups are eligible for merging if:
 ### Merge Behavior
 
 - Worker node lists are concatenated.
-- Node selectors are updated to cover all merged nodes.
+- Node selectors are updated to cover merged nodes; generated hardware resources also retain source-group IDs. Deploy checks exact membership against effective worker inventory.
 - Explicitly supplied `thirdPartyRDMAModules` values are merged as a **union**.
 
-### Merge Exceptions
+### Selected-source ownership
 
-Merging is **skipped** in the following cases:
-
-- **Spectrum-X fabric**: Spectrum-X deployments require per-switch-group policies, so
-  groups must remain separate.
-- **Single group**: Nothing to merge.
-- **`--groups` filter active**: When the user targets a specific group by name, merging
-  is disabled to preserve the explicit selection.
+Buckets retain their original source groups. A strict subset keeps shared bucket
+resources but emits flat-selector policies per selected source. Source identifiers
+must be unique. Generated SR-IOV policies and IPPools record those source IDs;
+readiness evaluates live selectors against the intended worker union. Empty preset
+worker lists are explicitly selector-only and unverified.
 
 ---
 

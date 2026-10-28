@@ -6,8 +6,10 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -449,4 +451,45 @@ data:
 	assert.Equal(t, "useSoftwareCCAlgorithm: true\n", got.Config.Profile.SpectrumX.Profile)
 	assert.False(t, got.Present.Has("networkOperator.version"))
 	assert.False(t, got.Present.Has("profile.deployment"))
+}
+
+func TestDiscoverSavesUncertainSecondaryNetworkEvidence(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		for _, status := range []string{config.InstallerUnavailable, config.InstallerAmbiguous} {
+			t.Run(fmt.Sprintf("refresh=%t/%s", refresh, status), func(t *testing.T) {
+				tmp := t.TempDir()
+				t.Chdir(tmp)
+				input := filepath.Join(tmp, "input.yaml")
+				output := filepath.Join(tmp, "output.yaml")
+				source := profileDiscoveryBaseConfig + "# retain custom state\ncustomKey: keep-me\n"
+				source = strings.Replace(source, "networkOperator:\n", "networkOperator:\n  secondaryNetwork:\n    multus: auto\n    cniPlugins: external\n", 1)
+				require.NoError(t, os.WriteFile(input, []byte(source), 0o600))
+				opts := options.Options{SaveClusterConfig: output}
+				if refresh {
+					opts.UserConfig = input
+				} else {
+					require.NoError(t, os.WriteFile(filepath.Join(tmp, "l8k-config.yaml"), []byte(source), 0o600))
+				}
+				launcher := newProfileDiscoveryLauncher(opts, []config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet"}})
+				launcher.plugins[networkoperatorplugin.PluginName].(*fakeProfileDiscoveryPlugin).mutateConfig = func(cfg *config.LaunchKitConfig) {
+					cfg.DiscoveredSecondaryNetwork = &config.SecondaryNetworkObservation{Multus: config.ComponentObservation{Status: status, Reason: "fixture uncertainty"}, CNIPlugins: config.ComponentObservation{Status: config.InstallerNotDetected}}
+				}
+				require.NoError(t, launcher.discoverClusterConfig())
+				got, err := config.LoadFullConfig(output, launcher.logger)
+				require.NoError(t, err)
+				require.NotNil(t, got.DiscoveredSecondaryNetwork)
+				assert.Equal(t, status, got.DiscoveredSecondaryNetwork.Multus.Status)
+				assert.Equal(t, config.ManagementAuto, got.NetworkOperator.SecondaryNetwork.Multus)
+				assert.Equal(t, config.ManagementExternal, got.NetworkOperator.SecondaryNetwork.CNIPlugins)
+				if refresh {
+					raw, readErr := os.ReadFile(output)
+					require.NoError(t, readErr)
+					assert.Contains(t, string(raw), "customKey: keep-me")
+					assert.Contains(t, string(raw), "# retain custom state")
+				}
+				_, err = config.ResolveSecondaryNetworkRendering(got)
+				require.ErrorContains(t, err, "cannot resolve automatic multus ownership")
+			})
+		}
+	}
 }

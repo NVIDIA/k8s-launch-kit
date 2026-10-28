@@ -13,10 +13,9 @@ spec:
       labels:
         app: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
       annotations:
-        {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
-        {{- $railCount := railCount .ClusterConfig.PFs $planes }}
-        {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
-        k8s.v1.cni.cncf.io/networks: {{ $first := true }}{{- range $railIdx := untilStep 0 $railCount 1 }}{{- if $swplb }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $first }},{{ end }}{{- $first = false }}rail{{$railIdx}}p{{$planeIdx}}{{- end }}{{- else }}{{- if not $first }},{{ end }}{{- $first = false }}rail{{$railIdx}}{{- end }}{{- end }}
+        {{- $endpoints := spectrumXEndpoints .Profile .SpectrumX .ClusterConfig }}
+        {{- $claims := spectrumXClaims $endpoints }}
+        k8s.v1.cni.cncf.io/networks: {{range $i, $endpoint := $endpoints}}{{if $i}},{{end}}{{$endpoint.Name}}{{end}}
     spec:
       {{- if $.NetworkOperator.ImagePullSecrets }}
       imagePullSecrets:
@@ -64,14 +63,8 @@ spec:
         {{- if spectrumXUseDRA .Profile }}
         resources:
           claims:
-            {{- range $railIdx := untilStep 0 $railCount 1 }}
-            {{- if $swplb }}
-            {{- range $planeIdx := untilStep 0 $planes 1 }}
-          - name: rail-{{$railIdx}}-plane-{{$planeIdx}}
-            {{- end }}
-            {{- else }}
-          - name: rail-{{$railIdx}}
-            {{- end }}
+            {{- range $claim := $claims }}
+          - name: {{$claim.Name}}
             {{- end }}
           {{- if $.Validation.GPUDirect.Enabled }}
           requests:
@@ -85,27 +78,15 @@ spec:
             {{- if $.Validation.GPUDirect.Enabled }}
             "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
             {{- end }}
-            {{- range $railIdx := untilStep 0 $railCount 1 }}
-            {{- if $swplb }}
-            {{- range $planeIdx := untilStep 0 $planes 1 }}
-            nvidia.com/rail{{$railIdx}}p{{$planeIdx}}: "1"
-            {{- end }}
-            {{- else }}
-            nvidia.com/rail{{$railIdx}}: "1"
-            {{- end }}
+            {{- range $endpoint := $endpoints }}
+            nvidia.com/{{$endpoint.Name}}: "1"
             {{- end }}
           limits:
             {{- if $.Validation.GPUDirect.Enabled }}
             "{{$.Validation.GPUDirect.GPUResourceType}}": "{{gpuResourceCount $.ValidationGPUResourceCount $.ClusterConfig.PFs}}"
             {{- end }}
-            {{- range $railIdx := untilStep 0 $railCount 1 }}
-            {{- if $swplb }}
-            {{- range $planeIdx := untilStep 0 $planes 1 }}
-            nvidia.com/rail{{$railIdx}}p{{$planeIdx}}: "1"
-            {{- end }}
-            {{- else }}
-            nvidia.com/rail{{$railIdx}}: "1"
-            {{- end }}
+            {{- range $endpoint := $endpoints }}
+            nvidia.com/{{$endpoint.Name}}: "1"
             {{- end }}
         {{- end }}
         command: ["/bin/bash", "-c", "sleep infinity"]
@@ -117,15 +98,8 @@ spec:
             add: ["NET_RAW"]
       {{- if spectrumXUseDRA .Profile }}
       resourceClaims:
-        {{- range $railIdx := untilStep 0 $railCount 1 }}
-        {{- if $swplb }}
-        {{- range $planeIdx := untilStep 0 $planes 1 }}
-      - name: rail-{{$railIdx}}-plane-{{$planeIdx}}
-        resourceClaimTemplateName: rail-{{$railIdx}}-plane-{{$planeIdx}}-template{{boundedSuffix 32 $.ClusterConfig.MergedIdentifier}}
-        {{- end }}
-        {{- else }}
-      - name: rail-{{$railIdx}}
-        resourceClaimTemplateName: rail-{{$railIdx}}-template{{boundedSuffix 38 $.ClusterConfig.MergedIdentifier}}
-        {{- end }}
+        {{- range $claim := $claims }}
+      - name: {{$claim.Name}}
+        resourceClaimTemplateName: {{$claim.Name}}-template{{boundedSuffix $claim.SuffixLimit $.ClusterConfig.MergedIdentifier}}
         {{- end }}
       {{- end }}

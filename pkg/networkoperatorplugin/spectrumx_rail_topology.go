@@ -30,30 +30,44 @@ func spectrumXSwPlane(group *config.ClusterConfig, rail int) int {
 
 // Generation-only checks run after source filtering, never during discovery.
 func validateSpectrumXGeneration(cfg *config.LaunchKitConfig, groups []config.ClusterConfig) error {
-	ra24 := isSpectrumX(cfg) && cfg.Profile.SpectrumX.SPCXVersion == "RA2.4"
-	if cfg.SpectrumX != nil && len(cfg.SpectrumX.OVSConfig) > 0 && !ra24 {
-		return fmt.Errorf("spectrumX.ovsConfig requires RA2.4")
+	dospcx := isSpectrumX(cfg) && config.SpectrumXUsesDospcx(cfg.Profile.SpectrumX.SPCXVersion)
+	if cfg.SpectrumX != nil && len(cfg.SpectrumX.OVSConfig) > 0 && !dospcx {
+		return fmt.Errorf("spectrumX.ovsConfig requires RA2.4 or RA3.1")
 	}
 	var unresolved []string
 	for _, group := range groups {
 		if group.SpectrumX != nil && len(group.SpectrumX.SwPlaneByRail) > 0 {
-			if !ra24 {
-				return fmt.Errorf("group %q swPlaneByRail requires RA2.4", group.Identifier)
+			if !dospcx {
+				return fmt.Errorf("group %q swPlaneByRail requires RA2.4 or RA3.1", group.Identifier)
 			}
 			if err := validateSpectrumXSwPlanes(group, cfg.Profile.SpectrumX.MultiplaneMode); err != nil {
 				return err
 			}
 		}
-		if !ra24 {
+		if !dospcx {
 			continue
 		}
-		platform := config.SpectrumXPlatformForGPUProduct(group.GPUType)
+		platform := config.SpectrumXPlatformForGroup(group)
 		if platform == "" {
-			unresolved = append(unresolved, fmt.Sprintf("%q (GPU product %q)", group.Identifier, group.GPUType))
+			unresolved = append(unresolved, fmt.Sprintf("%q (machine type %q, GPU product %q)", group.Identifier, group.MachineType, group.GPUType))
 			continue
 		}
-		if _, err := spectrumXRailLayout(group, cfg.Profile.SpectrumX.NumberOfPlanes); err != nil {
+		layout, err := spectrumXRailLayout(group, cfg.Profile.SpectrumX.NumberOfPlanes)
+		if err != nil {
 			return err
+		}
+		if platform == "vr" && !slices.Equal(layout, []int{2, 2, 2, 2}) {
+			return fmt.Errorf("RA2.4/RA3.1 VR group %q requires four rails with two physical NICs per rail, got master NIC counts %v; re-run discovery with NetworkBay status instead of assigning one rail per NIC", group.Identifier, layout)
+		}
+		if platform == "vr" && (cfg.Profile.SpectrumX.MultiplaneMode != "hwplb" || cfg.Profile.SpectrumX.NumberOfPlanes != 8) {
+			return fmt.Errorf("RA2.4/RA3.1 VR group %q requires HWPLB with eight planes across four dual-NIC rails", group.Identifier)
+		}
+		if platform == "vr" && group.SpectrumX != nil {
+			for rail, swPlane := range group.SpectrumX.SwPlaneByRail {
+				if swPlane != 0 {
+					return fmt.Errorf("VR group %q rail %d requires swPlaneByRail=0; NIC plane offsets are generated automatically", group.Identifier, rail)
+				}
+			}
 		}
 		if platform == "rtx" {
 			id, _, err := config.EastWestDeviceID(group)
@@ -61,26 +75,26 @@ func validateSpectrumXGeneration(cfg *config.LaunchKitConfig, groups []config.Cl
 				return err
 			}
 			if id != "1023" || cfg.Profile.SpectrumX.MultiplaneMode != "none" || cfg.Profile.SpectrumX.NumberOfPlanes != 1 {
-				return fmt.Errorf("RA2.4 rtx group %q requires ConnectX-8 (1023), multiplaneMode=none and numberOfPlanes=1", group.Identifier)
+				return fmt.Errorf("RA2.4/RA3.1 rtx group %q requires ConnectX-8 (1023), multiplaneMode=none and numberOfPlanes=1", group.Identifier)
 			}
 		}
 	}
 	if len(unresolved) > 0 {
-		return fmt.Errorf("cannot generate RA2.4: unresolved doSPCX platform for groups %s; verify GPU products or add support to Launch Kit's internal platform list", strings.Join(unresolved, ", "))
+		return fmt.Errorf("cannot generate RA2.4/RA3.1: unresolved doSPCX platform for groups %s; verify machine types and GPU products or add support to Launch Kit's internal platform list", strings.Join(unresolved, ", "))
 	}
-	if ra24 {
+	if dospcx {
 		return config.ValidateSpectrumXProfileFormat(cfg.Profile.SpectrumX)
 	}
 	return nil
 }
 
 // spectrumXRailLayout describes the effective NIC naming layout, independent
-// of machine-specific PCI addresses. RA2.4 must not use the legacy chunking
+// of machine-specific PCI addresses. RA2.4/RA3.1 must not use the legacy chunking
 // fallback: a missing Rail on one PF otherwise changes every rendered rail.
 func spectrumXRailLayout(group config.ClusterConfig, planes int) ([]int, error) {
 	ewPFs := pfutil.FilterEastWestPFs(group.PFs)
 	if !allHaveRail(ewPFs) {
-		return nil, fmt.Errorf("RA2.4 group %q requires complete east-west rail metadata", group.Identifier)
+		return nil, fmt.Errorf("RA2.4/RA3.1 group %q requires complete east-west rail metadata", group.Identifier)
 	}
 	// NCO assigns one rail index to a physical NIC. Its PCI functions
 	// cannot name distinct rails even when both functions are discovered.
@@ -88,10 +102,10 @@ func spectrumXRailLayout(group config.ClusterConfig, planes int) ([]int, error) 
 	for _, pf := range ewPFs {
 		nic, ok := pfutil.PciBusDevicePrefix(pf.PciAddress)
 		if !ok {
-			return nil, fmt.Errorf("RA2.4 group %q has invalid east-west PCI address %q", group.Identifier, pf.PciAddress)
+			return nil, fmt.Errorf("RA2.4/RA3.1 group %q has invalid east-west PCI address %q", group.Identifier, pf.PciAddress)
 		}
 		if previous, exists := nicRails[nic]; exists && previous != *pf.Rail {
-			return nil, fmt.Errorf("RA2.4 group %q assigns physical NIC %q to multiple rails (%d and %d); all PFs of one NIC must share one rail", group.Identifier, nic, previous, *pf.Rail)
+			return nil, fmt.Errorf("RA2.4/RA3.1 group %q assigns physical NIC %q to multiple rails (%d and %d); all PFs of one NIC must share one rail", group.Identifier, nic, previous, *pf.Rail)
 		}
 		nicRails[nic] = *pf.Rail
 	}
@@ -99,18 +113,18 @@ func spectrumXRailLayout(group config.ClusterConfig, planes int) ([]int, error) 
 	layout := make([]int, len(order))
 	for index, rail := range order {
 		if rail != index {
-			return nil, fmt.Errorf("RA2.4 group %q requires dense zero-based rail IDs", group.Identifier)
+			return nil, fmt.Errorf("RA2.4/RA3.1 group %q requires dense zero-based rail IDs", group.Identifier)
 		}
 		layout[index] = len(masterPFsByNIC(rails[rail]))
 		if layout[index] == 0 {
-			return nil, fmt.Errorf("RA2.4 group %q rail %d has no valid master NIC PCI addresses", group.Identifier, rail)
+			return nil, fmt.Errorf("RA2.4/RA3.1 group %q rail %d has no valid master NIC PCI addresses", group.Identifier, rail)
 		}
 		if layout[index] != layout[0] {
-			return nil, fmt.Errorf("RA2.4 group %q requires uniform master NIC counts across rails: rail 0 has %d, rail %d has %d", group.Identifier, layout[0], rail, layout[index])
+			return nil, fmt.Errorf("RA2.4/RA3.1 group %q requires uniform master NIC counts across rails: rail 0 has %d, rail %d has %d", group.Identifier, layout[0], rail, layout[index])
 		}
 	}
 	if planes < 1 || planes%layout[0] != 0 {
-		return nil, fmt.Errorf("RA2.4 group %q requires numberOfPlanes (%d) to be a positive multiple of master NICs per rail (%d)", group.Identifier, planes, layout[0])
+		return nil, fmt.Errorf("RA2.4/RA3.1 group %q requires numberOfPlanes (%d) to be a positive multiple of master NICs per rail (%d)", group.Identifier, planes, layout[0])
 	}
 	return layout, nil
 }
@@ -145,7 +159,7 @@ func validateSpectrumXSwPlanes(group config.ClusterConfig, mode string) error {
 }
 
 func validateSpectrumXPlaneBuckets(cfg *config.LaunchKitConfig, plans []RenderBucket) error {
-	if !isSpectrumX(cfg) || cfg.Profile.SpectrumX.SPCXVersion != "RA2.4" {
+	if !isSpectrumX(cfg) || !config.SpectrumXUsesDospcx(cfg.Profile.SpectrumX.SPCXVersion) {
 		return nil
 	}
 	// Rail names are also operator-created child policy and network names.
@@ -161,7 +175,7 @@ func validateSpectrumXPlaneBuckets(cfg *config.LaunchKitConfig, plans []RenderBu
 		}
 	}
 	if parentCount > 1 {
-		return fmt.Errorf("cannot generate RA2.4: %d SpectrumXRailPoolConfig parents would cause child-name collisions for shared rail names; select the full source cohort of one GPU/rail-count bucket, or select a single source with --groups", parentCount)
+		return fmt.Errorf("cannot generate RA2.4/RA3.1: %d SpectrumXRailPoolConfig parents would cause child-name collisions for shared rail names; select the full source cohort of one GPU/rail-count bucket, or select a single source with --groups", parentCount)
 	}
 	for _, plan := range plans {
 		if len(plan.Sources) == 0 {
@@ -178,7 +192,7 @@ func validateSpectrumXPlaneBuckets(cfg *config.LaunchKitConfig, plans []RenderBu
 			}
 			for _, source := range cfg.ClusterConfig {
 				if source.GPUType == first.GPUType && !selected[source.Identifier] {
-					return fmt.Errorf("cannot generate RA2.4: merged GPU selector for %q would include excluded group %q; select a single source with --groups", first.GPUType, source.Identifier)
+					return fmt.Errorf("cannot generate RA2.4/RA3.1: merged GPU selector for %q would include excluded group %q; select a single source with --groups", first.GPUType, source.Identifier)
 				}
 			}
 		}

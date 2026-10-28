@@ -32,12 +32,21 @@ func SpectrumXPlatformForGPUProduct(product string) string {
 	return best
 }
 
+// SpectrumXPlatformForGroup recognizes VR machines even without a GPU product.
+// Machine identity takes precedence; other machines retain GPU-based matching.
+func SpectrumXPlatformForGroup(group ClusterConfig) string {
+	if strings.Contains(strings.ToLower(group.MachineType), "vr") {
+		return "vr"
+	}
+	return SpectrumXPlatformForGPUProduct(group.GPUType)
+}
+
 // PopulateSpectrumXPlatforms recomputes derived metadata, preserving rail intent.
 func PopulateSpectrumXPlatforms(groups []ClusterConfig) {
 	for i := range groups {
 		if groups[i].SpectrumX == nil {
 			groups[i].SpectrumX = &SpectrumXGroupConfig{}
 		}
-		groups[i].SpectrumX.PlatformType = SpectrumXPlatformForGPUProduct(groups[i].GPUType)
+		groups[i].SpectrumX.PlatformType = SpectrumXPlatformForGroup(groups[i])
 	}
 }

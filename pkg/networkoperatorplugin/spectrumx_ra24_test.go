@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
@@ -21,11 +23,16 @@ import (
 
 func ra24ConfigAndProfile(t *testing.T, mode string, planes int) (*config.LaunchKitConfig, *profiles.Profile) {
 	t.Helper()
+	return dospcxConfigAndProfile(t, "RA2.4", mode, planes)
+}
+
+func dospcxConfigAndProfile(t *testing.T, ra, mode string, planes int) (*config.LaunchKitConfig, *profiles.Profile) {
+	t.Helper()
 	cfg, err := config.LoadFullConfig(filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
 	require.NoError(t, err)
 	cfg.NetworkOperator.SelectedRelease = "26.10"
 	cfg.NetworkOperator.Namespace = "operator-override"
-	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: true, SpectrumX: &config.ProfileSpectrumX{Enable: true, SPCXVersion: "RA2.4", MultiplaneMode: mode, NumberOfPlanes: planes, TopologyType: config.SpectrumXTopology2Tier}}
+	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: true, SpectrumX: &config.ProfileSpectrumX{Enable: true, SPCXVersion: ra, MultiplaneMode: mode, NumberOfPlanes: planes, TopologyType: config.SpectrumXTopology2Tier}}
 	raw, err := os.ReadFile(filepath.Join("..", "config", "testdata", "dospcx-configmap.yaml"))
 	require.NoError(t, err)
 	cfg.Profile.SpectrumX.Profile = string(raw)
@@ -34,21 +41,27 @@ func ra24ConfigAndProfile(t *testing.T, mode string, planes int) (*config.Launch
 		cfg.ClusterConfig[i].GPUType = "NVIDIA-GB300"
 	}
 	cfg.Profile.SpectrumX.TopologyFile = writeSpectrumXTopology(t, cfg, planes)
-	raw, err = os.ReadFile(filepath.Join("..", "..", "profiles", "spectrum-x-ra2.4", "profile.yaml"))
+	raw, err = os.ReadFile(filepath.Join("..", "..", "profiles", "spectrum-x-"+strings.ToLower(ra), "profile.yaml"))
 	require.NoError(t, err)
 	p := &profiles.Profile{}
 	require.NoError(t, yaml.Unmarshal(raw, p))
-	p.UpdateManifestsPaths(filepath.Join("..", "..", "profiles", "spectrum-x-ra2.4"))
+	p.UpdateManifestsPaths(filepath.Join("..", "..", "profiles", "spectrum-x-"+strings.ToLower(ra)))
 	return cfg, p
 }
 
-func TestRA24ProfileBundleModes(t *testing.T) {
+func TestDospcxProfileBundleModes(t *testing.T) {
+	for _, ra := range []string{"RA2.4", "RA3.1"} {
+		t.Run(ra, func(t *testing.T) { testDospcxProfileBundleModes(t, ra) })
+	}
+}
+
+func testDospcxProfileBundleModes(t *testing.T, ra string) {
 	for _, tc := range []struct {
 		mode   string
 		planes int
 	}{{"none", 1}, {"swplb", 2}, {"hwplb", 4}} {
 		t.Run(tc.mode, func(t *testing.T) {
-			cfg, p := ra24ConfigAndProfile(t, tc.mode, tc.planes)
+			cfg, p := dospcxConfigAndProfile(t, ra, tc.mode, tc.planes)
 			cfg.SpectrumX.OVSConfig = map[string]string{"max-idle": "0", "custom": "false", "empty": "", "escaped": "quotes\" and \\ slashes"}
 			if tc.mode == "hwplb" {
 				for i := range cfg.ClusterConfig {
@@ -70,7 +83,7 @@ func TestRA24ProfileBundleModes(t *testing.T) {
 				if strings.Contains(content, "kind: NicConfigurationTemplate") {
 					nctCount++
 					require.Contains(t, content, `platformType: "gb300"`)
-					require.Contains(t, content, `version: "RA2.4"`)
+					require.Contains(t, content, fmt.Sprintf("version: %q", ra))
 				}
 				if strings.Contains(content, "kind: SpectrumXRailPoolConfig") {
 					poolCount++
@@ -562,4 +575,205 @@ func TestRA24OVSDefaultAndLegacySettingsRejected(t *testing.T) {
 	cfg.SpectrumX.OVSConfig = nil
 	cfg.ClusterConfig[0].SpectrumX = &config.SpectrumXGroupConfig{SwPlaneByRail: map[int]int{0: 0}}
 	require.ErrorContains(t, validateSpectrumXGeneration(cfg, cfg.ClusterConfig), "swPlaneByRail requires RA2.4")
+}
+
+func vrConfigAndProfile(t *testing.T, ra string, split bool) (*config.LaunchKitConfig, *profiles.Profile) {
+	t.Helper()
+	cfg, profile := dospcxConfigAndProfile(t, ra, "hwplb", 8)
+	cfg.ClusterConfig = cfg.ClusterConfig[:1]
+	group := &cfg.ClusterConfig[0]
+	group.MachineType, group.GPUType = "machine-VR", ""
+	group.PFs = nil
+	// Discovery preserves PCI order; rail membership crosses adjacent NetworkBays.
+	for _, nic := range []struct {
+		pci  string
+		rail int
+	}{
+		{"0001:03:00.0", 0}, {"0003:01:00.0", 1},
+		{"0004:03:00.0", 1}, {"0006:01:00.0", 0},
+		{"0009:03:00.0", 2}, {"000b:01:00.0", 3},
+		{"000c:03:00.0", 3}, {"000e:01:00.0", 2},
+	} {
+		rail := nic.rail
+		functions := 1
+		if split {
+			functions = 4
+		}
+		for function := 0; function < functions; function++ {
+			pci := strings.TrimSuffix(nic.pci, "0") + fmt.Sprint(function)
+			group.PFs = append(group.PFs, config.PFConfig{PciAddress: pci, DeviceID: "1025", Traffic: "east-west", Rail: &rail})
+		}
+	}
+	cfg.Profile.SpectrumX.TopologyFile = writeSpectrumXTopology(t, cfg, 8)
+	return cfg, profile
+}
+
+func TestVRNetworkBayRailsRenderEightPlanes(t *testing.T) {
+	for _, ra := range []string{"RA2.4", "RA3.1"} {
+		for _, split := range []bool{false, true} {
+			for _, dra := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/split=%v/dra=%v", ra, split, dra), func(t *testing.T) {
+					testVRNetworkBayManifestRails(t, ra, split, dra)
+				})
+			}
+		}
+	}
+}
+
+func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool) {
+	t.Helper()
+	cfg, profile := vrConfigAndProfile(t, ra, split)
+	cfg.Profile.SpectrumX.UseDRA = dra
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+	require.NoError(t, err)
+	files := []bundle.File{}
+	for name, content := range rendered {
+		files = append(files, bundle.File{Name: name, Content: content})
+	}
+	b, err := bundle.FromFiles(files)
+	require.NoError(t, err)
+	kinds := map[string]int{}
+	poolNames, poolRefs := []string{}, []string{}
+	claimNames, claimRefs := []string{}, []string{}
+	for _, document := range b.Documents() {
+		obj := document.ObjectCopy()
+		kinds[obj.GetKind()]++
+		switch obj.GetKind() {
+		case "NicConfigurationTemplate":
+			require.Equal(t, "vr", vrManifestField(t, obj.Object, "spec", "template", "spectrumXOptimized", "platformType"))
+			require.Equal(t, ra, vrManifestField(t, obj.Object, "spec", "template", "spectrumXOptimized", "version"))
+			require.EqualValues(t, 8, vrManifestField(t, obj.Object, "spec", "template", "spectrumXOptimized", "numberOfPlanes"))
+		case "NicInterfaceNameTemplate":
+			require.EqualValues(t, 4, vrManifestField(t, obj.Object, "spec", "pfsPerNic"))
+			rail := kinds["NicInterfaceNameTemplate"] - 1
+			expected := [][]any{
+				{"0001:03:00.0", "0006:01:00.0"},
+				{"0003:01:00.0", "0004:03:00.0"},
+				{"0009:03:00.0", "000e:01:00.0"},
+				{"000b:01:00.0", "000c:03:00.0"},
+			}
+			require.Equal(t, []any{expected[rail]}, vrManifestField(t, obj.Object, "spec", "railPciAddresses"))
+			require.Equal(t, fmt.Sprintf("roce_r%d_n%%nic_id%%", rail), vrManifestField(t, obj.Object, "spec", "rdmaDevicePrefix"))
+			require.Equal(t, fmt.Sprintf("eth_r%d_p%%plane_id%%", rail), vrManifestField(t, obj.Object, "spec", "netDevicePrefix"))
+		case "SpectrumXRailPoolConfig":
+			rails := vrManifestField(t, obj.Object, "spec", "railTopology").([]any)
+			require.Len(t, rails, 8)
+			for index, raw := range rails {
+				rail, nic := index/2, index%2
+				entry := raw.(map[string]any)
+				require.Equal(t, fmt.Sprintf("rail%dnic%d", rail, nic), entry["name"])
+				poolRefs = append(poolRefs, entry["cidrPoolRef"].(string))
+				want := []any{}
+				require.EqualValues(t, nic, entry["swPlane"])
+				for plane := nic * 4; plane < (nic+1)*4; plane++ {
+					want = append(want, fmt.Sprintf("eth_r%d_p%d", rail, plane))
+				}
+				require.Equal(t, want, vrManifestField(t, entry, "nicSelector", "pfNames"))
+			}
+		case "CIDRPool":
+			poolNames = append(poolNames, obj.GetName())
+		case "ResourceClaimTemplate":
+			claimNames = append(claimNames, obj.GetName())
+			requests := vrManifestField(t, obj.Object, "spec", "spec", "devices", "requests").([]any)
+			require.Len(t, requests, 3)
+			for i, raw := range requests {
+				request := raw.(map[string]any)
+				require.EqualValues(t, 1, vrManifestField(t, request, "exactly", "count"))
+				if i == 0 {
+					require.Equal(t, "gpu", request["name"])
+				} else {
+					require.Equal(t, fmt.Sprintf("vf%d", i-1), request["name"])
+					rail := kinds["ResourceClaimTemplate"] - 1
+					roots := [][]string{{"pci0001:00", "pci0006:00"}, {"pci0003:00", "pci0004:00"}, {"pci0009:00", "pci000e:00"}, {"pci000b:00", "pci000c:00"}}
+					selectors := vrManifestField(t, request, "exactly", "selectors").([]any)
+					require.Len(t, selectors, 2)
+					require.Equal(t, fmt.Sprintf(`device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rail%dnic%d"`, rail, i-1), vrManifestField(t, selectors[0].(map[string]any), "cel", "expression"))
+					require.Equal(t, fmt.Sprintf(`device.attributes["resource.kubernetes.io"].pcieRoot == %q`, roots[rail][i-1]), vrManifestField(t, selectors[1].(map[string]any), "cel", "expression"))
+				}
+			}
+		case "DaemonSet":
+			require.Equal(t, "rail0nic0,rail0nic1,rail1nic0,rail1nic1,rail2nic0,rail2nic1,rail3nic0,rail3nic1", vrManifestField(t, obj.Object,
+				"spec", "template", "metadata", "annotations", "k8s.v1.cni.cncf.io/networks"))
+			if dra {
+				claims := vrManifestField(t, obj.Object, "spec", "template", "spec", "resourceClaims").([]any)
+				require.Len(t, claims, 4)
+				for _, claim := range claims {
+					claimRefs = append(claimRefs, claim.(map[string]any)["resourceClaimTemplateName"].(string))
+				}
+			} else {
+				containers := vrManifestField(t, obj.Object, "spec", "template", "spec", "containers").([]any)
+				limits := vrManifestField(t, containers[0].(map[string]any), "resources", "limits").(map[string]any)
+				require.Len(t, limits, 8)
+				for rail := 0; rail < 4; rail++ {
+					for nic := 0; nic < 2; nic++ {
+						require.Equal(t, "1", limits[fmt.Sprintf("nvidia.com/rail%dnic%d", rail, nic)])
+					}
+				}
+			}
+		}
+	}
+	for _, kind := range []string{"NicConfigurationTemplate", "SpectrumXRailPoolConfig", "ConfigMap", "DaemonSet"} {
+		require.Equal(t, 1, kinds[kind], kind)
+	}
+	require.Equal(t, 4, kinds["NicInterfaceNameTemplate"])
+	require.Len(t, poolNames, 8)
+	require.ElementsMatch(t, poolNames, poolRefs)
+	require.ElementsMatch(t, claimNames, claimRefs)
+	if dra {
+		require.Len(t, claimNames, 4)
+	} else {
+		require.Empty(t, claimNames)
+	}
+}
+
+func vrManifestField(t *testing.T, object map[string]any, fields ...string) any {
+	t.Helper()
+	value, found, err := unstructured.NestedFieldNoCopy(object, fields...)
+	require.NoError(t, err)
+	require.True(t, found, "missing %v", fields)
+	return value
+}
+
+func TestVRGenerationRejectsStaleSingleNICRails(t *testing.T) {
+	for _, ra := range []string{"RA2.4", "RA3.1"} {
+		t.Run(ra, func(t *testing.T) {
+			cfg, profile := vrConfigAndProfile(t, ra, false)
+			for i := range cfg.ClusterConfig[0].PFs {
+				cfg.ClusterConfig[0].PFs[i].Rail = intPtr(i)
+			}
+			rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+			require.ErrorContains(t, err, "requires four rails with two physical NICs per rail")
+			require.Empty(t, rendered)
+		})
+	}
+}
+
+func TestVRGenerationPreservesNICOrderWithinRails(t *testing.T) {
+	cfg, profile := vrConfigAndProfile(t, "RA3.1", false)
+	pfs := cfg.ClusterConfig[0].PFs
+	pfs[0], pfs[3] = pfs[3], pfs[0]
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+	require.NoError(t, err)
+	for name, content := range rendered {
+		if strings.Contains(name, "nicinterfacenametemplate") {
+			require.Contains(t, content, `["0006:01:00.0", "0001:03:00.0"]`)
+			return
+		}
+	}
+	t.Fatal("missing NicInterfaceNameTemplate")
+}
+
+func TestVRCustomInterfacePrefixes(t *testing.T) {
+	cfg, profile := vrConfigAndProfile(t, "RA3.1", false)
+	cfg.SpectrumX.HWPLB = &config.SpectrumXInterfaceNamePrefixConfig{NetdevPrefix: "net_r%rail_id%_n%nic_id%_p%plane_id%", RdmaPrefix: "rdma_r%rail_id%_n%nic_id%"}
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+	require.NoError(t, err)
+	for name, content := range rendered {
+		if strings.Contains(name, "railpool") {
+			require.Contains(t, content, "net_r0_n1_p4")
+		}
+	}
+	cfg.SpectrumX.HWPLB.RdmaPrefix = "rdma_r%rail_id%_p%plane_id%"
+	_, err = (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
+	require.ErrorContains(t, err, "requires a %nic_id% placeholder and no plane placeholder")
 }

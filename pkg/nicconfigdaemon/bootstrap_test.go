@@ -27,7 +27,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
+	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -219,6 +222,32 @@ func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	require.NotNil(t, container.SecurityContext)
 	require.NotNil(t, container.SecurityContext.Privileged)
 	assert.True(t, *container.SecurityContext.Privileged)
+
+	// Netplan discovery reads /host/etc/netplan. Mount the host's always-present
+	// /etc directory read-only so a missing netplan directory can be reported as
+	// unknown without creating it on the host.
+	var etcMount *corev1.VolumeMount
+	for i := range container.VolumeMounts {
+		if container.VolumeMounts[i].Name == "host-etc" {
+			etcMount = &container.VolumeMounts[i]
+			break
+		}
+	}
+	require.NotNil(t, etcMount)
+	assert.Equal(t, "/host/etc", etcMount.MountPath)
+	assert.True(t, etcMount.ReadOnly)
+
+	var etcVolume *corev1.Volume
+	for i := range ds.Spec.Template.Spec.Volumes {
+		if ds.Spec.Template.Spec.Volumes[i].Name == "host-etc" {
+			etcVolume = &ds.Spec.Template.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, etcVolume)
+	require.NotNil(t, etcVolume.HostPath)
+	assert.Equal(t, "/etc", etcVolume.HostPath.Path)
+	assert.Equal(t, corev1.HostPathDirectory, *etcVolume.HostPath.Type)
 }
 
 func TestEnsure_AppliesDaemonSetWithNodeNameAffinity(t *testing.T) {
@@ -327,5 +356,25 @@ func TestRenderDaemonManifests_AllExpectedKindsPresent(t *testing.T) {
 	}
 	for _, expected := range []string{"namespace", "serviceaccount", "clusterrole", "clusterrolebinding", "daemonset"} {
 		assert.True(t, kinds[expected], "expected manifest kind %q to be rendered", expected)
+	}
+}
+
+// Network Bay discovery requires the API server to retain both ASIC identity
+// and peer PCI. A typed Go API update alone cannot prevent status pruning.
+func TestEmbeddedNicDeviceSchemaRetainsNetworkBayStatus(t *testing.T) {
+	data, err := fs.ReadFile(assets.CRDs, "crds/configuration.net.nvidia.com_nicdevices.yaml")
+	require.NoError(t, err)
+	var crd apiextv1.CustomResourceDefinition
+	require.NoError(t, yaml.Unmarshal(data, &crd))
+	require.Len(t, crd.Spec.Versions, 1)
+	var schema apiextensions.JSONSchemaProps
+	require.NoError(t, apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(crd.Spec.Versions[0].Schema.OpenAPIV3Schema, &schema, nil))
+	structural, err := structuralschema.NewStructural(&schema)
+	require.NoError(t, err)
+	for _, asic := range []int64{0, 1} {
+		bay := map[string]interface{}{"asic": asic, "peerPci": "0003:01:00.0"}
+		obj := map[string]interface{}{"status": map[string]interface{}{"networkBay": bay, "unknownField": "prune me"}}
+		pruning.Prune(obj, structural, true)
+		assert.Equal(t, map[string]interface{}{"status": map[string]interface{}{"networkBay": map[string]interface{}{"asic": asic, "peerPci": "0003:01:00.0"}}}, obj)
 	}
 }

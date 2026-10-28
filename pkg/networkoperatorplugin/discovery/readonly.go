@@ -25,9 +25,11 @@ import (
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/secondarynetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -52,6 +54,10 @@ type readOnlyOptions struct {
 	restConfig               *rest.Config
 	podExec                  readOnlyPodExec
 	allowMissingNodeSelector bool
+	assumeUnverifiedExcluded bool
+	fabricDiscovery          bool
+	gpuTopology              bool
+	gpuOperatorNamespace     string
 }
 
 // WithReadOnlyNetworkOperatorNamespace restricts daemon lookup to the
@@ -66,8 +72,9 @@ func WithReadOnlyNetworkOperatorNamespace(namespace string) ReadOnlyOption {
 
 // WithReadOnlyRESTConfig supplies the credentials needed to inspect an
 // existing daemon pod when a Ready daemon node has not published a NicDevice.
-// Without it, discovery fails rather than treating an uninspected node as a
-// non-NIC node.
+// Without it, discovery fails by default rather than treating an uninspected
+// node as a non-NIC node. Use WithReadOnlyAssumeUnverifiedExcluded to opt in to
+// excluding such nodes with a warning.
 func WithReadOnlyRESTConfig(restConfig *rest.Config) ReadOnlyOption {
 	return func(options *readOnlyOptions) {
 		options.restConfig = restConfig
@@ -82,6 +89,36 @@ func WithReadOnlyRESTConfig(restConfig *rest.Config) ReadOnlyOption {
 func WithReadOnlyAllowMissingNodeSelector() ReadOnlyOption {
 	return func(options *readOnlyOptions) {
 		options.allowMissingNodeSelector = true
+	}
+}
+
+// WithReadOnlyAssumeUnverifiedExcluded allows discovery without a REST config
+// to exclude Ready daemon nodes that have not published a NicDevice. Their NIC
+// publisher status is unknown, so discovery emits a warning. This option does
+// not suppress errors when a supplied REST config cannot inspect a node.
+func WithReadOnlyAssumeUnverifiedExcluded() ReadOnlyOption {
+	return func(options *readOnlyOptions) {
+		options.assumeUnverifiedExcluded = true
+	}
+}
+
+// WithReadOnlyFabricDiscovery enables optional fabric probing in existing daemon
+// pods. Requires WithReadOnlyRESTConfig and pods/exec permission; no resources or
+// host configuration are modified. Incomplete observations leave LinkType unset.
+func WithReadOnlyFabricDiscovery() ReadOnlyOption {
+	return func(options *readOnlyOptions) { options.fabricDiscovery = true }
+}
+
+// WithReadOnlyGPUTopology enables optional product/topology observations in
+// existing NIC daemon and same-node GPU Operator feature-discovery containers.
+// Requires a nonempty GPU Operator namespace, WithReadOnlyRESTConfig, pod and
+// DaemonSet read access, and pods/exec permission. No resources are modified.
+// Incomplete evidence keeps hardware fallback and emits warnings through the
+// context's UI sink; callers must consume that sink to inspect probe failures.
+func WithReadOnlyGPUTopology(gpuOperatorNamespace string) ReadOnlyOption {
+	return func(options *readOnlyOptions) {
+		options.gpuTopology = true
+		options.gpuOperatorNamespace = strings.TrimSpace(gpuOperatorNamespace)
 	}
 }
 
@@ -100,8 +137,10 @@ func withReadOnlyPodExec(exec readOnlyPodExec) ReadOnlyOption {
 // operator. If a Ready daemon node has not published a device, it probes that
 // node's existing daemon pod to distinguish an eligible publisher from a node
 // with no discoverable NIC or only restricted BlueFields. That fallback needs
-// a REST config and pods/exec permission. The function never creates bootstrap
-// resources.
+// a REST config and pods/exec permission. Without a REST config, discovery
+// fails unless WithReadOnlyAssumeUnverifiedExcluded is set; that option excludes
+// the unverified nodes and warns that the returned inventory may be incomplete.
+// Probe errors remain errors. The function never creates bootstrap resources.
 func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
 	if kubeClient == nil {
 		return nil, errors.New("DiscoverReadOnly: kubeClient must not be nil")
@@ -110,6 +149,12 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	options := readOnlyOptions{}
 	for _, opt := range opts {
 		opt(&options)
+	}
+	if options.fabricDiscovery && options.restConfig == nil {
+		return nil, errors.New("DiscoverReadOnly: WithReadOnlyFabricDiscovery requires WithReadOnlyRESTConfig")
+	}
+	if options.gpuTopology && (options.restConfig == nil || options.gpuOperatorNamespace == "") {
+		return nil, errors.New("DiscoverReadOnly: WithReadOnlyGPUTopology requires a GPU Operator namespace and WithReadOnlyRESTConfig")
 	}
 	namespace, err := findDaemonSetNamespace(ctx, kubeClient, nicconfigdaemon.DaemonSetName, options.networkOperatorNamespace)
 	if err != nil {
@@ -157,19 +202,26 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		return nil, fmt.Errorf("DiscoverReadOnly: no NicDevice resources found on ready daemon nodes")
 	}
 	probeResults, err := probeMissingReadOnlyPublishers(ctx, options.restConfig, namespace,
-		expectedNodes, daemonPods, deviceNodes, options.podExec)
+		expectedNodes, daemonPods, deviceNodes, options.podExec, options.assumeUnverifiedExcluded)
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: determine NIC publisher eligibility: %w", err)
 	}
-	publisherNodes, excludedNodes, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
+	selection, err := readOnlyPublisherNodes(expectedNodes, deviceNodes, probeResults)
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: determine NIC publisher eligibility: %w", err)
 	}
-	if len(excludedNodes) > 0 {
-		ui.FromContext(ctx).Warning("Excluding %d ready daemon node(s) with no discoverable or only restricted NVIDIA NICs", len(excludedNodes))
+	if len(selection.excludedNodes) > 0 {
+		ui.FromContext(ctx).Warning("Excluding %d ready daemon node(s) with no discoverable or only restricted NVIDIA NICs", len(selection.excludedNodes))
+	}
+	if len(selection.unverifiedNodes) > 0 {
+		ui.FromContext(ctx).Warning(
+			"Excluding %d ready daemon node(s) with unverified NicDevice publisher status; "+
+				"pass WithReadOnlyRESTConfig to inspect them (inventory may be incomplete)",
+			len(selection.unverifiedNodes),
+		)
 	}
 	var missingNodes []string
-	for _, node := range publisherNodes {
+	for _, node := range selection.publisherNodes {
 		if !deviceNodes[node] {
 			missingNodes = append(missingNodes, node)
 		}
@@ -177,8 +229,19 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	if len(missingNodes) > 0 {
 		return nil, fmt.Errorf("DiscoverReadOnly: NicDevice resources are missing for eligible publisher nodes: %v", missingNodes)
 	}
-	clusterConfig, warnings := buildClusterConfig(devices.Items, nodeLabels, nil, true)
-	missingSelectorGroups, err := ensureReadOnlyNodeSelectors(clusterConfig, nodeLabels, options.allowMissingNodeSelector)
+	clusterConfig, warnings, members := buildClusterConfigWithMembers(devices.Items, nodeLabels, nil, true)
+	if options.gpuTopology {
+		observations, identities, err := discoverGPUObservations(ctx, kubeClient, options.restConfig, options.gpuOperatorNamespace,
+			clusterConfig, nodeLabels, devices.Items, members, daemonPods, options.podExec)
+		if err != nil {
+			return nil, fmt.Errorf("DiscoverReadOnly: discover GPU topology: %w", err)
+		}
+		applyGPUObservations(ctx, clusterConfig, identities, observations)
+	}
+	if err := assignVRRails(clusterConfig, devices.Items); err != nil {
+		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
+	}
+	missingSelectorGroups, err := ensureReadOnlyNodeSelectorsWithOption(clusterConfig, nodeLabels, options.allowMissingNodeSelector)
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
 	}
@@ -193,11 +256,20 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		ui.FromContext(ctx).Warning("%s", warning)
 	}
 
+	if options.fabricDiscovery {
+		if err := discoverFabric(ctx, options.restConfig, namespace, clusterConfig, devices.Items, members, daemonPods, options.podExec); err != nil {
+			return nil, fmt.Errorf("DiscoverReadOnly: discover fabric: %w", err)
+		}
+	}
 	cfg, err := config.DefaultLaunchKitConfig()
 	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: load default config: %w", err)
 	}
 	cfg.ClusterConfig = clusterConfig
+	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, kubeClient)
+	if err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -232,6 +304,7 @@ func findDaemonSetNamespace(ctx context.Context, c client.Client, daemonSetName,
 
 func probeMissingReadOnlyPublishers(ctx context.Context, restConfig *rest.Config, namespace string,
 	expectedNodes []string, daemonPods []corev1.Pod, deviceNodes map[string]bool, podExec readOnlyPodExec,
+	assumeUnverifiedExcluded bool,
 ) (map[string]mellanoxNICProbeResult, error) {
 	results := make(map[string]mellanoxNICProbeResult)
 	for _, node := range expectedNodes {
@@ -239,6 +312,10 @@ func probeMissingReadOnlyPublishers(ctx context.Context, restConfig *rest.Config
 			continue
 		}
 		if restConfig == nil {
+			if assumeUnverifiedExcluded {
+				results[node] = mellanoxNICProbeUnverified
+				continue
+			}
 			return nil, fmt.Errorf("cannot verify whether daemon node %q can publish NicDevice without a REST config; pass WithReadOnlyRESTConfig", node)
 		}
 		pod := findDaemonPod([]string{node}, daemonPods)
@@ -266,33 +343,49 @@ func probeMissingReadOnlyPublishers(ctx context.Context, restConfig *rest.Config
 	return results, nil
 }
 
+type readOnlyPublisherSelection struct {
+	publisherNodes  []string
+	excludedNodes   []string
+	unverifiedNodes []string
+}
+
 func readOnlyPublisherNodes(expectedNodes []string, deviceNodes map[string]bool,
 	probeResults map[string]mellanoxNICProbeResult,
-) ([]string, []string, error) {
-	publishers := make([]string, 0, len(expectedNodes))
-	excluded := make([]string, 0)
+) (readOnlyPublisherSelection, error) {
+	selection := readOnlyPublisherSelection{
+		publisherNodes:  make([]string, 0, len(expectedNodes)),
+		excludedNodes:   make([]string, 0),
+		unverifiedNodes: make([]string, 0),
+	}
 	for _, node := range expectedNodes {
 		if deviceNodes[node] {
-			publishers = append(publishers, node)
+			selection.publisherNodes = append(selection.publisherNodes, node)
 			continue
 		}
 		result, probed := probeResults[node]
 		if !probed {
-			return nil, nil, fmt.Errorf("NIC publisher eligibility on node %q was not verified", node)
+			return readOnlyPublisherSelection{}, fmt.Errorf("NIC publisher eligibility on node %q was not verified", node)
 		}
 		switch result {
 		case mellanoxNICProbePresent:
-			publishers = append(publishers, node)
+			selection.publisherNodes = append(selection.publisherNodes, node)
 		case mellanoxNICProbeNone, mellanoxNICProbeRestricted:
-			excluded = append(excluded, node)
+			selection.excludedNodes = append(selection.excludedNodes, node)
+		case mellanoxNICProbeUnverified:
+			selection.unverifiedNodes = append(selection.unverifiedNodes, node)
 		default:
-			return nil, nil, fmt.Errorf("unknown NIC publisher probe result %q on node %q", result, node)
+			return readOnlyPublisherSelection{}, fmt.Errorf("unknown NIC publisher probe result %q on node %q", result, node)
 		}
 	}
-	return publishers, excluded, nil
+	return selection, nil
 }
 
-func ensureReadOnlyNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]map[string]string, allowMissing bool) ([]config.ClusterConfig, error) {
+func ensureReadOnlyNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]map[string]string) error {
+	_, err := ensureReadOnlyNodeSelectorsWithOption(groups, nodeLabels, false)
+	return err
+}
+
+func ensureReadOnlyNodeSelectorsWithOption(groups []config.ClusterConfig, nodeLabels map[string]map[string]string, allowMissing bool) ([]config.ClusterConfig, error) {
 	var missing []config.ClusterConfig
 	for i := range groups {
 		if len(groups[i].NodeSelector) > 0 &&
@@ -346,17 +439,14 @@ func readOnlyNodeSelectors(nodes []string, nodeLabels map[string]map[string]stri
 func selectorMatchesOnlyNodes(selector map[string]string, groupNodes []string, nodeLabels map[string]map[string]string) bool {
 	wanted := make(map[string]bool, len(groupNodes))
 	for _, node := range groupNodes {
+		if _, exists := nodeLabels[node]; !exists {
+			return false
+		}
 		wanted[node] = true
 	}
-	for node, labels := range nodeLabels {
-		matches := true
-		for key, value := range selector {
-			if labels[key] != value {
-				matches = false
-				break
-			}
-		}
-		if matches != wanted[node] {
+	matcher := labels.SelectorFromSet(selector)
+	for node, values := range nodeLabels {
+		if matcher.Matches(labels.Set(values)) != wanted[node] {
 			return false
 		}
 	}

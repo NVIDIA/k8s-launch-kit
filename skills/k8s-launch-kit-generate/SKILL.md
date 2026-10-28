@@ -24,6 +24,13 @@ Generation validates all rendered YAML after annotation and before replacing
 the output directory. A malformed resource reports its filename/document and
 leaves the previous output directory in place.
 
+Multus and CNI plugin ownership are independent YAML controls under
+`networkOperator.secondaryNetwork`. Auto uses discovery evidence, external omits
+the component, and managed renders it. Automatic generation rejects ambiguous or
+unavailable observations. Offline configurations retain managed rendering with
+unverified ownership; deployment still performs live checks. See
+[ownership rules](../../docs/reference/configuration.md#secondary-network-ownership).
+
 ## Usage
 
 ```bash
@@ -36,15 +43,21 @@ Profile flags remain available as generation-time overrides. Generation keeps
 its source file unchanged and writes the exact effective configuration to
 `<OUTPUT_DIR>/.l8k/resolved-config.yaml` for later deploy and validation.
 
+For InfiniBand `rdma_shared` with the DOCA driver disabled, generation warns
+that host IPoIB netdevs and the shared-plugin `rdma_cm`, `umad` and `uverbs`
+character devices must be provisioned by the host owner. Check
+[IPoIB prerequisites](../../docs/user/profiles.md#ipoib-with-inbox-drivers);
+generated names and loaded-module lists do not prove host readiness.
+
 ## Profile Selection Flags
 
 | Flag | Required | Values | Description |
 |------|----------|--------|-------------|
 | `--fabric` | Auto-defaulted | `ethernet`, `infiniband` | Network fabric. Auto-defaults from the cluster's unanimous `linkType` when omitted (Unit 5 fabric probe); skipped+warned when groups disagree or any has unverified linkType. |
 | `--deployment-type` | Auto-defaulted | `sriov`, `rdma_shared`, `host_device` | Deployment type. Auto-defaults to `sriov`. |
-| `--spectrum-x` | — | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
-| `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from GPU platform plus east-west PF deviceID: H100/H200/B200/GB200 → `none`; B300/GB300 → the GA `swplb` path. Platform cannot identify `hwplb`; select it explicitly. Unknown platforms fall back to NIC family. |
-| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4` | Single-plane platforms → 1; B300/GB300 → 2. Pass 4 explicitly for quad-plane B300. An explicit `none` also implies 1, and an explicit 1 implies `none`. |
+| `--spectrum-x` | — | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4`, `RA3.1` | Enable Spectrum-X profile by passing the SPC-X RA version. Implies ethernet fabric, sriov deployment, and multirail. |
+| `--multiplane-mode` | Auto-defaulted with `--spectrum-x` | `none`, `swplb`, `hwplb` | Auto-defaults from GPU platform plus east-west PF deviceID: H100/H200/B200/GB200 → `none`; B300/GB300 → the GA `swplb` path. Select `hwplb` explicitly for B300/GB300; VR/CX9 defaults to `hwplb` on RA2.4/RA3.1. Unknown platforms fall back to NIC family. |
+| `--number-of-planes` | Auto-defaulted with `--spectrum-x` | `1`, `2`, `4`, `8` | Single-plane platforms → 1; B300/GB300 → 2; VR/CX9 HWPLB on RA2.4/RA3.1 → 8. Pass 4 explicitly for quad-plane B300. An explicit `none` also implies 1, and an explicit 1 implies `none`. |
 | `--topology-scheme` | Required with `--spectrum-x` | `2-tier`, `3-tier` | Selects the Spectrum-X topology addressing scheme. |
 | `--ip-version` | Required with `--spectrum-x` | `ipv4`, `ipv6` | Selects per-node IPv4 `/31` or IPv6 `/64` CIDRPool allocation. |
 | `--topology-file` | Required with `--spectrum-x` | path | spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from the JSON structure. |
@@ -105,6 +118,22 @@ l8k generate --user-config cluster-config.yaml \
 
 A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in its `topology.yaml`. All bundled presets do.
 
+## Interface Naming And Group Selection
+
+When `nicConfigurationOperator.deployNicInterfaceNameTemplate` and multirail
+are enabled, standard profiles render a `NicInterfaceNameTemplate` for every
+selected source group. A single-group inventory and a single group selected
+with `--groups` or `--gpu-type` receive the same naming template; group count
+does not disable it. An explicit `deployNicInterfaceNameTemplate: false`
+disables standard-profile naming.
+
+The emitted standard naming layout must assign each physical NIC
+(`domain:bus:device`) to only one outer `railPciAddresses` entry. Splitting its
+PCI functions across entries is rejected before replacing output, because NCO
+has only one rail index per physical NIC. This is a layout check, not a
+single-group fallback; excluded groups and explicitly disabled naming do not
+trigger it.
+
 ## Netplan Interface-Name Conflict
 
 Before emitting a `NicInterfaceNameTemplate`, generation checks
@@ -114,10 +143,14 @@ the host netplan `set-name` rule can conflict with NCO's udev naming rule for
 the same NIC. Clean up the affected `set-name` stanzas in the host netplan
 configuration, re-run `l8k discover`, and then retry `l8k generate`.
 
+Discovery also sets `clusterConfig[].netplanManagementUnknown` when no match was
+found but it could not inspect every worker. Generation fails closed for those
+groups until the discovery warning is resolved and discovery is re-run.
+
 The check follows the actual render plan: a group excluded with `--groups` or
 `--gpu-type` does not block generation, and neither does a group for which no
-`NicInterfaceNameTemplate` is rendered. Do not clear `netplanManaged` by hand;
-re-run discovery so the config reflects the host state.
+`NicInterfaceNameTemplate` is rendered. Do not clear either netplan field by
+hand; re-run discovery so the config reflects the host state.
 
 ## Profile Quick Reference
 
@@ -201,10 +234,26 @@ not control requestor-mode concurrency.
 `generate` without profile flags to reuse them; explicit generate flags still
 win when a one-off override is needed.
 
+## SR-IOV admission helpers
+
+SR-IOV and Spectrum-X chart values disable both admission helpers through
+`sriov-network-operator.operator.admissionControllers.enabled: false`.
+Do not put `enableInjector` or `enableOperatorWebhook` under the chart
+`sriovOperatorConfig` values: these are CR fields, not chart overrides.
+
 ## Common Mistakes
 
 - **There is no `--profile` flag.** Profiles are selected via `--fabric` + `--deployment-type` (or `--spectrum-x`). Do NOT invent flags.
 - **The multiplane flag is `--multiplane-mode`**, not `--spcx-multiplane` or `--multiplane`.
+
+Generated SR-IOV node policies and NV-IPAM IPPools carry
+`nvidia.kubernetes-launch-kit.source-groups` as a JSON array of selected source
+IDs. IDs must be unique. The existing unnamed sole source keeps its empty ID and
+uses explicit `[""]`; deploy/validate still require exactly one unnamed configured
+source and check its workers. Preserve this metadata and the resolved sidecar.
+Generation does not prove live targeting: deploy requires exact selector-to-worker
+membership when inventory is populated. Preset-only empty worker lists retain a
+visible selector-only, target-scope-unverified contract.
 
 ## Tips
 
@@ -280,15 +329,18 @@ Subset rendering does not isolate deployment deletion scope. Before overwrite,
 review all stray CRs, including other cohorts and manual resources. DRA setup
 requires the APIs/drivers/DeviceClasses documented in `docs/user/spectrum-x.md`.
 
-## Optional standard NIC tuning
+## Standard NIC tuning
 
-`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to false.
+`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to true.
+Set it to false or pass `--deploy-nic-configuration-template=false` to opt out;
+explicit YAML and CLI false values are preserved.
 Root, generate and discover accept `--deploy-nic-configuration-template[=false]`.
 It enables NCO independently of interface naming and renders per-source,
 east-west PCI-scoped templates for standard SR-IOV, RDMA-shared and host-device
 profiles on k8s/OCP. VF count comes from `sriov.numVfs`; link type comes from
 `profile.fabric`. Ethernet gets DSCP trust and priority-3 PFC; InfiniBand omits
-RoCE tuning. Spectrum-X rejects this option. Only SR-IOV disables the Mellanox
+RoCE tuning. Spectrum-X keeps its dedicated required templates independently
+of this standard-profile toggle. Only SR-IOV disables the Mellanox
 plugin (Helm values on k8s, additive `disablePlugins` merge on OCP). Kubernetes
 external Helm owners must configure that plugin themselves.
 
@@ -302,11 +354,36 @@ Generation rejects inventory with selected and excluded ports on the same PCI
 device. Review whole-NIC scope, including ports absent from inventory, and qualify
 runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. See `docs/reference/configuration.md#nic-configuration-and-naming`.
 
-## RA2.4 integration
+## RA2.4 and RA3.1 integration
 
-RA2.3 is limited to Network Operator 26.7; RA2.4 defaults to 26.10 and
-accepts newer catalogued releases. RA2.4 needs a full doSPCX ConfigMap, preserving
+RA2.3 is limited to Network Operator 26.7; RA2.4 and RA3.1 default to 26.10 and
+accept newer catalogued releases. RA2.4 and RA3.1 need a full doSPCX ConfigMap, preserving
 binaryData and annotations and rendering in the resolved operator namespace.
+With RA2.4/RA3.1, VR with ConnectX-9 defaults to `hwplb` and eight planes;
+explicit YAML and CLI values take precedence. Explicit `swplb` with an omitted
+plane count retains the CX9 four-plane fallback; this does not qualify that recipe.
+VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
+pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
+rails cross first/second ASICs between NetworkBays 1/2 and 3/4.
+Generation rejects VR inventories unless they contain four dense rails with two
+physical NICs each. Re-run discovery with NetworkBay status for old configs that
+assigned one rail per NIC; generation does not guess the pairing from PCI order. Missing or inconsistent status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+VR generation supports IPv4 HWPLB with eight planes on four dual-NIC rails.
+It emits four per-rail naming templates (`pfsPerNic: 4`), eight per-NIC
+`railRnicN` topology entries and CIDRPools, and eight workload attachments.
+Each NIC endpoint has four PFs, one schedulable VF and its own /31. DRA uses
+one claim per logical rail with one GPU and two VF requests. NIC input order
+is preserved; it must agree with the physical switch topology. RDMA names
+are `roce_rR_n0`/`roce_rR_n1`; custom RDMA prefixes require `%nic_id%` and no
+plane placeholder. Compatible NCO must support disjoint PCI naming templates.
+Reference topology JSON must include all eight planes per rail and explicit
+zero-based host `attributes.host_index`; AIR uses its parsed host ordinal.
+VR IPv4 defaults to site-zero `240.0.0.0/8`, with NIC(1), rail(2), POD(5),
+SU(7), host(8), peer(1) bits after the first octet. Eight-plane POD is always
+zero and host index is at most 251. Pools are per NIC/rail /11, allocations
+are /31 with even host and odd gateway, and routes cover /11 and /8.
+IPv6, non-HWPLB VR, incomplete topology, and extra software-plane offsets
+are rejected. Generation does not qualify runtime support or configure switches.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
 NCT schema after policy bootstrap and blocks additional resource apply when
@@ -314,15 +391,17 @@ platformType support is absent or cannot be inspected. External Helm, overwrite,
 and dry-run do not bypass this check; dry-run needs APIs installed already.
 
 Derived clusterConfig[].spectrumX.platformType uses the longest case-insensitive
-substring from the internal doSPCX platform list in gpuType. No preset or mapping
+substring from the internal doSPCX platform list in gpuType. A machineType
+containing `VR` (case-insensitive) takes precedence and selects `vr`, even with
+an empty gpuType. No preset or mapping
 setting is needed. Discovery saves empty values and warns; generation rejects
-unresolved selected RA2.4 groups. RTX/CX8 defaults to none/one plane. Mapping does
+unresolved selected RA2.4/RA3.1 groups. RTX/CX8 defaults to none/one plane. Mapping does
 not itself qualify hardware. Optional spectrumX.ovsConfig is a string map;
 clusterConfig[].spectrumX.swPlaneByRail assigns existing HWPLB rails, defaults to
 zero, and must agree across merged groups. Refresh preserves explicit plane
 assignments only for unchanged source/rail hardware and verified unchanged worker
 membership (ordering does not matter). Changed or unknown membership drops prior
-assignments with a review/reapply warning. Every selected RA2.4 source needs complete
+assignments with a review/reapply warning. Every selected RA2.4/RA3.1 source needs complete
 dense rail IDs, uniform NICs per rail, and a divisible planes/NIC ratio; merged
 sources must have the same effective layout. Merged GPU selectors must not include
 excluded same-GPU sources in other buckets; select one source in that case.
@@ -330,6 +409,6 @@ One physical NIC cannot span rails
 (the current ThinkSystem-SR650-V4-RTX-PRO-6000 preset has this unsupported layout). Multiple hardware partitions
 inside one logical rail are outside this layout. Feature gates are not added.
 
-RA2.4 generation permits a complete compatible GPU/rail-count cohort or a
+RA2.4/RA3.1 generation permits a complete compatible GPU/rail-count cohort or a
 single selected source. Multiple rail-pool parents are rejected because the
 operator-created child policies and OVSNetworks would reuse rail names.

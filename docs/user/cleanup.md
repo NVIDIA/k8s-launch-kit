@@ -88,6 +88,17 @@ chart-managed resource are removed with the release.
 Missing CRDs, custom resources, or the Helm release are treated as successful
 no-ops, making the command safe to re-run after a partial cleanup.
 
+## External Multus and CNI plugins
+
+Component ownership does not expand cleanup: Launch Kit adds no deletion of
+external DaemonSets or CNI host files. Removing an NCP still allows the Network
+Operator to garbage-collect its own children, including managed Multus/plugins.
+Explicit external settings do not turn those children into external resources
+or make NCP deletion a safe ownership migration. The broad custom-resource
+cleanup boundary above remains in effect; it can include NAD custom resources
+in the selected namespace. Preserve platform networking outside that boundary
+and review exact resources before cleanup.
+
 ## Keep the Helm Release
 
 When the resolved config sets `networkOperator.skipHelmChart: true`, cleanup

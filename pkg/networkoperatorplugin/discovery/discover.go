@@ -33,6 +33,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/secondarynetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
@@ -81,10 +82,22 @@ func parseNSProductIDs(data string) map[string]bool {
 // BlueField DPU (non-SuperNIC) product ID from the ns-product-ids file. The
 // table is positive-only: a hit means the device is definitely a DPU; a miss
 // carries no information (the table doesn't enumerate every shipped SKU).
-// Combined with NicDevice.Status.DPU (operator-read INTERNAL_CPU_MODEL via
-// mlxconfig) for a more complete "definitely north-south" signal.
+// Combined with NicDevice.Status.DPU (operator-read INTERNAL_CPU_OFFLOAD_ENGINE
+// via mlxconfig) and physical dual-port BF3 detection for a more complete signal.
 func isNorthSouthDevice(partNumber string) bool {
 	return nsProductIDs[partNumber]
+}
+
+// isDualPortBlueField3 identifies physical dual-port BF3 hardware independently
+// of its operating mode or SKU. Multiple PCI functions can be planes of a single
+// physical port, so only the VPD model establishes dual-port topology.
+func isDualPortBlueField3(deviceID, model string) bool {
+	switch strings.TrimPrefix(strings.ToLower(strings.TrimSpace(deviceID)), "0x") {
+	case "a2dc", "a2d9":
+		return pfutil.IsDualPortModel(model)
+	default:
+		return false
+	}
 }
 
 // DiscoverClusterConfig walks the cluster and populates cfg with the
@@ -221,7 +234,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	if restConfig != nil {
 		var restrictedOnlyNodes []string
 		expectedNodes, restrictedOnlyNodes = filterNodesWithNICs(ctx, restConfig,
-			nicconfigdaemon.Namespace, expectedNodes, dsPods)
+			nicconfigdaemon.Namespace, expectedNodes, dsPods, uiOutput, execInPod)
 		if len(restrictedOnlyNodes) > 0 {
 			uiOutput.Warning("Excluding %d node(s) whose detected BlueField devices are all in zero-trust (restricted) mode; those devices do not publish NicDevice resources",
 				len(restrictedOnlyNodes))
@@ -272,7 +285,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		devices.Items = filtered
 	}
 
-	clusterConfig, nsWarnings := buildClusterConfig(devices.Items, nodeLabels, opts.NodeSelector, opts.CollapseNicRails)
+	clusterConfig, nsWarnings, members := buildClusterConfigWithMembers(devices.Items, nodeLabels, opts.NodeSelector, opts.CollapseNicRails)
 	cfg.ClusterConfig = clusterConfig
 	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
 
@@ -280,49 +293,27 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		uiOutput.Warning("%s", w)
 	}
 
-	// Discover OFED-dependent kernel modules per group via pod exec.
-	// Results are classified into third-party RDMA vs storage modules and
-	// saved to config for user inspection. mlx5-prefixed modules (NVIDIA's own)
-	// are silently filtered out.
 	if restConfig != nil {
+		gpuObservations, gpuIdentities, err := discoverGPUObservations(ctx, c, restConfig, "", cfg.ClusterConfig, nodeLabels, devices.Items, members, dsPods, nil)
+		if err != nil {
+			return fmt.Errorf("discover GPU topology: %w", err)
+		}
+		applyGPUObservations(ctx, cfg.ClusterConfig, gpuIdentities, gpuObservations)
 		for i := range cfg.ClusterConfig {
 			group := &cfg.ClusterConfig[i]
 
-			// Fill in missing machine/GPU product types by probing hardware
-			// directly when GPU operator node labels are absent.
-			needMachine := group.MachineType == ""
-			needProduct := group.GPUType == ""
-			if needMachine || needProduct {
-				machine, product := discoverHardwareTypes(ctx, restConfig,
-					nicconfigdaemon.Namespace, group.WorkerNodes, dsPods,
-					needMachine, needProduct)
-				if needMachine && machine != "" {
+			// GPU product fallback is owned by per-node collection and
+			// all-worker aggregation above. DMI remains representative.
+			if group.MachineType == "" {
+				if machine := discoverMachineType(ctx, restConfig, nicconfigdaemon.Namespace, group.WorkerNodes, dsPods); machine != "" {
 					group.MachineType = machine
 					uiOutput.Info("Discovered machine type for group %s: %s", group.Identifier, machine)
 				}
-				if needProduct && product != "" {
-					group.GPUType = product
-					uiOutput.Info("Discovered GPU product type for group %s: %s", group.Identifier, product)
-				}
 			}
 
-			// Probe GPU topology plus node-local per-PF attributes. This
-			// populates NumaNode, ConnectedGPU, and GPUProximity per PF and
-			// derives the group-level NetplanManaged flag without persisting
-			// host-specific MACs. If any PF has PIX to a GPU, the PIX-gate
-			// override rewrites Traffic and re-runs rails. Failures are
-			// non-fatal; when nvidia-smi is absent, today's part-number
-			// classification continues to govern.
-			discoverGPUTopology(ctx, restConfig,
-				nicconfigdaemon.Namespace, group, dsPods)
-
-			// Probe per-PF fabric type from active port state + subnet
-			// manager presence (more reliable than firmware link_layer
-			// alone). Populates PFConfig.LinkType / LinkTypeSource. Used by
-			// the declarative defaults in `l8k generate` (Unit 8) to fill
-			// `--fabric` from the discovered group.
-			discoverGroupFabric(ctx, restConfig,
-				nicconfigdaemon.Namespace, group, dsPods)
+			// PF attributes and netplan are observed in the NIC daemon,
+			// independently of the GPU runtime source.
+			discoverPFAttributes(ctx, restConfig, nicconfigdaemon.Namespace, group, dsPods)
 
 			// Try to enrich with a predefined topology preset for this
 			// (machine, GPU) pair. presetmatch.MatchGroup runs the
@@ -390,6 +381,8 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 				// already logs this via the hardware-type probes.
 			}
 
+			reconcileGPUPCIAddresses(group, gpuObservations)
+
 			// OFED-dependent kernel module discovery was previously run here:
 			// it execs a sysfs holder-graph walk into a daemon pod and auto-
 			// enabled UnloadThirdPartyRDMAModules / UnloadStorageModules when
@@ -402,13 +395,25 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		}
 	}
 
+	if restConfig != nil {
+		if err := discoverFabric(ctx, restConfig, nicconfigdaemon.Namespace, cfg.ClusterConfig, devices.Items, members, dsPods, nil); err != nil {
+			return fmt.Errorf("discover fabric: %w", err)
+		}
+	}
+
+	if err := assignVRRails(cfg.ClusterConfig, devices.Items); err != nil {
+		return err
+	}
+
 	// Now that machineType and gpuType are settled (either from labels or
 	// from the per-group hardware probes), assign each group a stable
 	// machine label. This replaces the differential-label nodeSelector
 	// algorithm: every node in the group is patched with
 	// `nvidia.kubernetes-launch-kit.machine: <generated-identifier>` and the
 	// group's Identifier + NodeSelector are aligned with that value.
-	applyMachineLabelToGroups(ctx, c, cfg.ClusterConfig)
+	if err := applyMachineLabelToGroups(ctx, c, cfg.ClusterConfig); err != nil {
+		return fmt.Errorf("publish discovered node selectors: %w", err)
+	}
 
 	// Persist the automatic GPUDirect decision in the generated config. The
 	// test is enabled only when the configured extended GPU resource can
@@ -429,6 +434,13 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 		} else {
 			uiOutput.Info("GPUDirect DMA-BUF validation disabled: %s cannot satisfy the topology-derived request on every discovered worker", resourceType)
 		}
+	}
+
+	// Networking evidence is optional inventory; inspection failures remain
+	// explicit so generation cannot turn uncertainty into installation consent.
+	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, c)
+	if err != nil {
+		return err
 	}
 
 	// Phase summary — counts surfaced at info level so the default UX shows
@@ -536,66 +548,103 @@ func resolvePresetCatalog(opts Options) (*presets.Catalog, error) {
 	return presets.DefaultCatalog()
 }
 
-// applyMachineLabelToGroups walks each group and writes two l8k-specific
-// labels onto every node in the group:
-//
-//   - MachineLabelKey = the generated per-source-group identifier, written
-//     when both machineType and gpuType are resolved.
-//   - GPULabelKey = `<gpuType>` literal — written when gpuType is resolved.
-//     Used as the merged-group NodeSelector when source groups span
-//     machineTypes but share a GPU type.
-//
-// Machine labels and generated group identifiers share the same lowercase,
-// vendor-free value, bounded to 30 bytes with balanced machine/GPU prefixes
-// and a deterministic hash. GPU labels retain their original case and vendor
-// segment and continue to use Kubernetes' 63-byte label-value limit.
-//
-// Groups whose machine label can't be computed (one input missing) keep
-// their fallback identifier ("group-N") and an empty NodeSelector. The
-// GPU label is still written when gpuType alone is resolved, so
-// merged-group selection still works.
-func applyMachineLabelToGroups(ctx context.Context, c client.Client, groups []config.ClusterConfig) {
-	for i := range groups {
-		g := &groups[i]
-		groupIdentifier := config.GeneratedGroupIdentifier(g.MachineType, g.GPUType)
-		gpuLabel := config.GPULabelValue(g.GPUType)
-
-		if groupIdentifier == "" {
-			log.Log.V(1).Info("Skipping machine label: machineType/gpuType unresolved",
-				"group", g.Identifier,
-				"machineType", g.MachineType,
-				"gpuType", g.GPUType)
-		} else {
-			log.Log.V(1).Info("Assigning machine label to group",
-				"originalIdentifier", g.Identifier,
-				"machineType", g.MachineType,
-				"gpuType", g.GPUType,
-				"labelValue", groupIdentifier,
-				"nodes", len(g.WorkerNodes))
-			g.Identifier = groupIdentifier
-			g.NodeSelector = map[string]string{config.MachineLabelKey: groupIdentifier}
-		}
-
-		labels := map[string]string{}
-		if groupIdentifier != "" {
-			labels[config.MachineLabelKey] = groupIdentifier
-		}
-		if gpuLabel != "" {
-			labels[config.GPULabelKey] = gpuLabel
-		}
-		if len(labels) == 0 {
-			continue
-		}
-		for _, nodeName := range g.WorkerNodes {
-			if err := patchNodeLabels(ctx, c, nodeName, labels); err != nil {
-				log.Log.Error(err, "failed to patch node labels",
-					"node", nodeName, "labels", labels)
-				continue
-			}
-			log.Log.V(1).Info("Wrote labels to node",
-				"node", nodeName, "labels", labels)
+// applyMachineLabelToGroups validates the entire proposed label layout before
+// writing labels. Selectors are published only after a fresh full-node read proves
+// exact membership. Completed patches remain on error; retry revalidates them.
+func applyMachineLabelToGroups(ctx context.Context, c client.Client, groups []config.ClusterConfig) error {
+	nodeLabels, err := fetchNodeLabels(ctx, c)
+	if err != nil {
+		return err
+	}
+	proposedLabels := make(map[string]map[string]string, len(nodeLabels))
+	for node, labels := range nodeLabels {
+		proposedLabels[node] = make(map[string]string, len(labels)+2)
+		for key, value := range labels {
+			proposedLabels[node][key] = value
 		}
 	}
+	planned := append([]config.ClusterConfig(nil), groups...)
+	identities := map[string]bool{}
+	workers := map[string]bool{}
+	patches := map[string]map[string]string{}
+	gpuWorkers := map[string][]string{}
+	for i := range planned {
+		group := &planned[i]
+		identifier := config.GeneratedGroupIdentifier(group.MachineType, group.GPUType)
+		if identifier != "" {
+			group.Identifier = identifier
+			group.NodeSelector = map[string]string{config.MachineLabelKey: identifier}
+		}
+		if (group.Identifier == "" && len(planned) != 1) || identities[group.Identifier] {
+			return fmt.Errorf("empty or colliding source group identifier %q; distinguish source identities before discovery", group.Identifier)
+		}
+		identities[group.Identifier] = true
+		if len(group.WorkerNodes) == 0 {
+			return fmt.Errorf("group %q has no workers", group.Identifier)
+		}
+		gpuLabel := config.GPULabelValue(group.GPUType)
+		for _, node := range group.WorkerNodes {
+			if node == "" || workers[node] {
+				return fmt.Errorf("empty or duplicate discovered worker %q", node)
+			}
+			workers[node] = true
+			labels, exists := proposedLabels[node]
+			if !exists {
+				return fmt.Errorf("discovered worker %q is missing from live nodes", node)
+			}
+			patch := map[string]string{}
+			if identifier != "" {
+				patch[config.MachineLabelKey] = identifier
+			}
+			if gpuLabel != "" {
+				patch[config.GPULabelKey] = gpuLabel
+				gpuWorkers[gpuLabel] = append(gpuWorkers[gpuLabel], node)
+			}
+			for key, value := range patch {
+				labels[key] = value
+			}
+			patches[node] = patch
+		}
+	}
+	for _, group := range planned {
+		if config.GeneratedGroupIdentifier(group.MachineType, group.GPUType) != "" && !selectorMatchesOnlyNodes(group.NodeSelector, group.WorkerNodes, proposedLabels) {
+			return fmt.Errorf("group %q machine label selects nodes outside discovered inventory; inspect stale labels before retrying", group.Identifier)
+		}
+	}
+	if err := ensureReadOnlyNodeSelectors(planned, proposedLabels); err != nil {
+		return err
+	}
+	for gpu, nodes := range gpuWorkers {
+		if !selectorMatchesOnlyNodes(map[string]string{config.GPULabelKey: gpu}, nodes, proposedLabels) {
+			return fmt.Errorf("GPU label %q selects nodes outside discovered inventory; inspect stale labels before retrying", gpu)
+		}
+	}
+	for _, group := range planned {
+		for _, node := range group.WorkerNodes {
+			if err := patchNodeLabels(ctx, c, node, patches[node]); err != nil {
+				return fmt.Errorf("patch labels on node %q: %w", node, err)
+			}
+		}
+	}
+	refreshed, err := fetchNodeLabels(ctx, c)
+	if err != nil {
+		return err
+	}
+	for _, group := range planned {
+		if !selectorMatchesOnlyNodes(group.NodeSelector, group.WorkerNodes, refreshed) {
+			return fmt.Errorf("group %q selector does not match exactly its workers after labeling", group.Identifier)
+		}
+	}
+	for gpu, nodes := range gpuWorkers {
+		if !selectorMatchesOnlyNodes(map[string]string{config.GPULabelKey: gpu}, nodes, refreshed) {
+			return fmt.Errorf("GPU label %q no longer matches exactly its discovered workers", gpu)
+		}
+	}
+	for i := range groups {
+		groups[i].Identifier = planned[i].Identifier
+		groups[i].NodeSelector = planned[i].NodeSelector
+	}
+	return nil
 }
 
 // patchNodeLabels applies one or more labels to a node via a
@@ -665,14 +714,20 @@ type dsReadiness struct {
 	// readyNodes / readyPods are the nodes and pods whose pod is Ready (only
 	// these can be exec'd into for the sysfs NIC probe and later hardware
 	// probes).
-	readyNodes []string
-	readyPods  []corev1.Pod
-	total      int // total DS pods found (Ready or not)
-	ready      int // Ready pod count
+	readyNodes  []string
+	readyPods   []corev1.Pod
+	pendingPods []corev1.Pod
+	total       int // total DS pods found (Ready or not)
+	ready       int // Ready pod count
 	// stuck counts not-Ready pods in a waiting state that won't clear on its
 	// own within our window (ImagePullBackOff, CrashLoopBackOff, …). Used to
 	// stop waiting on unrelated nodes that will never become Ready.
-	stuck int
+	stuck            int
+	notReadyNodePods int // not-Ready pods scheduled to nodes that are not Ready
+}
+
+func (st dsReadiness) canProceed() bool {
+	return st.ready >= 1 && st.ready+st.stuck+st.notReadyNodePods == st.total
 }
 
 // stuckWaitingReasons are container waiting reasons that won't resolve without
@@ -743,20 +798,61 @@ func checkDaemonSetPodsReady(ctx context.Context, c client.Client, namespace, da
 			}
 		} else if podStuck(&pod) {
 			st.stuck++
+		} else {
+			st.pendingPods = append(st.pendingPods, pod)
 		}
 	}
 
 	return st, nil
 }
 
+// excludePodsOnNotReadyNodes identifies daemon pods that cannot become Ready
+// while their node is NotReady. Missing Nodes remain pending because their
+// readiness cannot be established safely.
+func excludePodsOnNotReadyNodes(ctx context.Context, c client.Client, st *dsReadiness) error {
+	if len(st.pendingPods) == 0 {
+		return nil
+	}
+
+	needsNodeStatus := false
+	for i := range st.pendingPods {
+		if st.pendingPods[i].Spec.NodeName != "" {
+			needsNodeStatus = true
+			break
+		}
+	}
+	if !needsNodeStatus {
+		return nil
+	}
+
+	nodeList := &corev1.NodeList{}
+	if err := c.List(ctx, nodeList); err != nil {
+		return fmt.Errorf("list nodes while checking daemon pod readiness: %w", err)
+	}
+
+	nodes := make(map[string]*corev1.Node, len(nodeList.Items))
+	for i := range nodeList.Items {
+		nodes[nodeList.Items[i].Name] = &nodeList.Items[i]
+	}
+	for i := range st.pendingPods {
+		pod := &st.pendingPods[i]
+		if node := nodes[pod.Spec.NodeName]; pod.Spec.NodeName != "" && node != nil && !nodeReady(node) {
+			st.notReadyNodePods++
+		}
+	}
+
+	return nil
+}
+
 // waitForDaemonSetPods polls until the given DaemonSet's pods are ready enough
 // to proceed, or the timeout fires. "Ready enough" means either every pod is
-// Ready, or every not-Ready pod is stuck (won't recover) and at least one pod
-// is Ready — so an unrelated node that can't start the daemon doesn't block
-// discovery. On timeout it still proceeds with whatever Ready pods exist
-// (warning), and only hard-fails when no pod ever became Ready. Returns the
-// Ready node names, the Ready pods (for pod exec), the namespace they were
-// found in, and an error.
+// Ready, or every remaining not-Ready pod is stuck or scheduled on a NotReady
+// node and at least one pod is Ready. An unrelated node that cannot run the
+// daemon therefore does not block discovery. On its own timeout, the helper can
+// proceed with Ready pods if the caller's context is still active. Caller
+// cancellation and deadlines are returned as errors. Returns the Ready node
+// names, the Ready pods (for pod exec), the namespace they were found in, and
+// an error.
 func waitForDaemonSetPods(parentCtx context.Context, c client.Client, uiOutput ui.Output, namespace, daemonSetName string, timeout time.Duration) ([]string, []corev1.Pod, string, error) {
 	return waitForDaemonSetPodsWithFallback(parentCtx, c, uiOutput, namespace, daemonSetName, timeout, true)
 }
@@ -776,12 +872,8 @@ func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client
 	}
 	progress := uiOutput.StartProgress(progressLabel)
 
-	ctx := parentCtx
-	if _, hasDeadline := parentCtx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(parentCtx, timeout)
-		defer cancel()
-	}
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
+	defer cancel()
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -801,18 +893,36 @@ func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client
 		}
 
 		if err == nil {
+			// Keep the pod results if the follow-up node lookup hits the child
+			// timeout; the Ready subset is still usable while the caller is active.
+			last, lastNS = st, foundNS
+			if classifyErr := excludePodsOnNotReadyNodes(ctx, c, &st); classifyErr != nil {
+				err = classifyErr
+			}
+		}
+		if parentErr := parentCtx.Err(); parentErr != nil {
+			progress.Fail("Discovery context ended while waiting for daemon pods")
+			return nil, nil, "", fmt.Errorf("context ended while waiting for %s pods in namespace %q: %w", daemonSetName, namespace, parentErr)
+		}
+
+		if err == nil {
 			allReady := st.total > 0 && st.ready == st.total
 			// Every remaining not-Ready pod is stuck and we already have a
-			// node to probe — no point waiting out the timeout.
-			blockedByStuck := st.ready >= 1 && st.ready+st.stuck == st.total
+			// node to probe, or is scheduled on a NotReady node — no point
+			// waiting out the timeout.
 			switch {
 			case allReady:
 				progress.Success(fmt.Sprintf("Found %d ready pod(s) in namespace %q", st.ready, foundNS))
 				return st.readyNodes, st.readyPods, foundNS, nil
-			case blockedByStuck:
+			case st.canProceed():
 				progress.Success(fmt.Sprintf("Proceeding with %d ready pod(s) in namespace %q", st.ready, foundNS))
-				uiOutput.Warning("%d %s pod(s) are stuck (e.g. ImagePullBackOff) and excluded from discovery; proceeding with %d ready node(s)",
-					st.stuck, daemonSetName, st.ready)
+				if st.notReadyNodePods > 0 {
+					uiOutput.Warning("%d %s pod(s) are on NotReady nodes and %d are stuck; proceeding with %d ready node(s)",
+						st.notReadyNodePods, daemonSetName, st.stuck, st.ready)
+				} else {
+					uiOutput.Warning("%d %s pod(s) are stuck (e.g. ImagePullBackOff/CrashLoopBackOff) and excluded from discovery; proceeding with %d ready node(s)",
+						st.stuck, daemonSetName, st.ready)
+				}
 				return st.readyNodes, st.readyPods, foundNS, nil
 			default:
 				last, lastNS = st, foundNS
@@ -824,6 +934,10 @@ func waitForDaemonSetPodsWithFallback(parentCtx context.Context, c client.Client
 
 		select {
 		case <-ctx.Done():
+			if err := parentCtx.Err(); err != nil {
+				progress.Fail("Discovery context ended while waiting for daemon pods")
+				return nil, nil, "", fmt.Errorf("context ended while waiting for %s pods in namespace %q: %w", daemonSetName, namespace, err)
+			}
 			// Don't fail outright if some pods are Ready — a slow or stuck
 			// unrelated node shouldn't abort discovery. NicDevice CRs are
 			// awaited separately (10 min) downstream.
@@ -1161,7 +1275,7 @@ type nodeInfo struct {
 // per-port PFs and leaving north-south PFs untouched. It returns the re-sorted
 // PF slice and the number of PFs dropped; when nothing is collapsed it returns
 // the input unchanged.
-func collapseGroupRails(pfs []config.PFConfig) ([]config.PFConfig, int) {
+func collapseGroupRailsWithMembers(pfs []config.PFConfig) ([]config.PFConfig, int, map[string][]string) {
 	var ew, ns []config.PFConfig
 	for _, pf := range pfs {
 		if pf.Traffic == "east-west" {
@@ -1170,18 +1284,33 @@ func collapseGroupRails(pfs []config.PFConfig) ([]config.PFConfig, int) {
 			ns = append(ns, pf)
 		}
 	}
-	collapsedEW, dropped := pfutil.CollapsePFsToOnePerNIC(ew)
+	collapsedEW, dropped, rawMembers := pfutil.CollapsePFsToOnePerNICWithMembers(ew)
+	members := make(map[string][]string, len(pfs))
+	for retained, raw := range rawMembers {
+		for _, pci := range raw {
+			members[normalizePCI(retained)] = append(members[normalizePCI(retained)], normalizePCI(pci))
+		}
+	}
+	for _, pf := range ns {
+		members[normalizePCI(pf.PciAddress)] = []string{normalizePCI(pf.PciAddress)}
+	}
 	if dropped == 0 {
-		return pfs, 0
+		return pfs, 0, members
 	}
 	out := append(collapsedEW, ns...)
 	slices.SortFunc(out, func(a, b config.PFConfig) int {
 		return strings.Compare(a.PciAddress, b.PciAddress)
 	})
-	return out, dropped
+	return out, dropped, members
 }
 
 func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, nodeSelector map[string]string, collapseNicRails bool) ([]config.ClusterConfig, []string) {
+	groups, warnings, _ := buildClusterConfigWithMembers(devices, nodeLabels, nodeSelector, collapseNicRails)
+	return groups, warnings
+}
+
+func buildClusterConfigWithMembers(devices []nicop.NicDevice, nodeLabels map[string]map[string]string, nodeSelector map[string]string, collapseNicRails bool) ([]config.ClusterConfig, []string, groupPFMembers) {
+	members := groupPFMembers{}
 	// Step 1: Build per-node PF map and track capabilities per node
 	nodeMap := map[string]*nodeInfo{}
 
@@ -1194,23 +1323,25 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			nodeMap[nodeName] = &nodeInfo{}
 		}
 		ni := nodeMap[nodeName]
-		// Stage 1 classification (operator-authoritative signals first):
-		//   - NicDevice.Status.DPU == true OR part number in ns-product-ids →
-		//     BlueField DPU → north-south. Either signal alone is sufficient;
-		//     the operator reads INTERNAL_CPU_MODEL via mlxconfig
-		//     (EMBEDDED_CPU(1) ⇒ DPU), and the part-number table is positive-
-		//     only — together they cover the SKUs the table doesn't list
-		//     plus the rare CRs where the operator couldn't probe.
+		// Stage 1 classification (physical role and operator signals first):
+		//   - Physical dual-port BF3 OR NicDevice.Status.DPU == true OR
+		//     part number in ns-product-ids → north-south. The operator's DPU
+		//     flag reflects INTERNAL_CPU_OFFLOAD_ENGINE, so it can be false
+		//     for DPU hardware in NIC mode. VPD physical port count covers
+		//     those dual-port BF3s even when their SKU is not in the table.
 		//   - NicDevice.Status.SuperNIC == true (and not a DPU per above) →
 		//     explicit east-west pin. Replaces the prior chip-ID heuristic
 		//     ("BF3 deviceID a2dc + not in DPU table ⇒ SuperNIC"), which
 		//     misclassified DPU SKUs whose part numbers weren't in the table.
 		//   - Anything else → unclassified (default east-west, may be
 		//     reclassified by the frequency heuristic in Stage 1.5).
-		isDPU := d.Status.DPU || isNorthSouthDevice(d.Status.PartNumber)
+		isDualPortBF3 := isDualPortBlueField3(d.Status.Type, d.Status.ModelName)
+		isDPU := isDualPortBF3 || d.Status.DPU || isNorthSouthDevice(d.Status.PartNumber)
 		isSuperNIC := !isDPU && d.Status.SuperNIC
 		var classification string
 		switch {
+		case isDualPortBF3:
+			classification = "north-south (physical dual-port BlueField-3)"
 		case isDPU:
 			classification = "north-south (Status.DPU or ns-product-ids match)"
 		case isSuperNIC:
@@ -1383,13 +1514,21 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		// other NIC drops all but its master PF, since its sibling PFs are
 		// planes of a single rail. North-south PFs are left untouched.
 		// --collapse-nic-rails=false skips this and keeps one rail per PF.
+
+		var projection map[string][]string
 		if collapseNicRails {
-			collapsed, dropped := collapseGroupRails(pfs)
+			collapsed, dropped, collapsedMembers := collapseGroupRailsWithMembers(pfs)
+			projection = collapsedMembers
 			if dropped > 0 {
 				pfs = collapsed
 				log.Log.Info("Collapsed multi-plane PFs to one rail per NIC; pass --collapse-nic-rails=false to keep one rail per PF",
 					"groupIndex", i, "identifier", identifier,
 					"droppedPFs", dropped, "eastWestRails", len(pfutil.FilterEastWestPFs(pfs)))
+			}
+		} else {
+			projection = make(map[string][]string, len(pfs))
+			for _, pf := range pfs {
+				projection[normalizePCI(pf.PciAddress)] = []string{normalizePCI(pf.PciAddress)}
 			}
 		}
 
@@ -1427,6 +1566,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 			WorkerNodes: g.nodes,
 		}
 
+		members[groupWorkerKey(cc.WorkerNodes)] = projection
 		groups = append(groups, cc)
 	}
 
@@ -1436,7 +1576,7 @@ func buildClusterConfig(devices []nicop.NicDevice, nodeLabels map[string]map[str
 		computeNodeSelectors(groups, nodeLabels)
 	}
 
-	return groups, nsWarnings
+	return groups, nsWarnings, members
 }
 
 // computeNodeSelectors assigns NodeSelectors to each group using ALL label keys
@@ -1633,84 +1773,21 @@ func parseGPUProductFromNvidiaSmi(output string) string {
 	return ""
 }
 
-// discoverHardwareTypes attempts to discover machineType and gpuType by
-// probing hardware directly when label-derived values are empty. It execs into
-// a nic-configuration-daemon pod on one of the group's nodes.
-// Returns (machineType, gpuType) — either or both may still be empty if
-// discovery fails or hardware info is unavailable.
-func discoverHardwareTypes(ctx context.Context, restConfig *rest.Config,
-	namespace string, groupNodes []string, dsPods []corev1.Pod,
-	needMachine, needProduct bool) (machineType, gpuType string) {
-
+// discoverMachineType retains the representative DMI fallback. GPU products
+// are resolved per node by the GPU collector before all-worker aggregation.
+func discoverMachineType(ctx context.Context, restConfig *rest.Config,
+	namespace string, groupNodes []string, dsPods []corev1.Pod) string {
 	targetPod := findDaemonPod(groupNodes, dsPods)
 	if targetPod == nil {
-		log.Log.Info("No nic-configuration-daemon pod found on group nodes; skipping hardware type probing")
-		return "", ""
+		return ""
 	}
-
-	containerName := ""
-	if len(targetPod.Spec.Containers) > 0 {
-		containerName = targetPod.Spec.Containers[0].Name
+	output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, podContainerName(targetPod),
+		[]string{"/bin/sh", "-c", "cat /sys/class/dmi/id/product_name 2>/dev/null"})
+	if err != nil {
+		log.Log.Error(err, "failed to read machine type from DMI", "pod", targetPod.Name)
+		return ""
 	}
-
-	if needMachine {
-		const dmiCmd = "cat /sys/class/dmi/id/product_name 2>/dev/null"
-		log.Log.V(1).Info("Probing machine type via DMI",
-			"pod", targetPod.Name, "command", dmiCmd)
-		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", dmiCmd})
-		if err != nil {
-			log.Log.Error(err, "failed to read machine type from DMI", "pod", targetPod.Name)
-		} else {
-			machineType = parseMachineTypeFromDMI(output)
-			log.Log.V(1).Info("Probed machine type from DMI",
-				"pod", targetPod.Name,
-				"rawOutput", truncateForLog(output, 200),
-				"parsed", machineType)
-		}
-	}
-
-	if needProduct {
-		// Wrap nvidia-smi so the shell always exits 0: if the binary is absent
-		// or crashes, stdout is simply empty and we fall through to the sysfs
-		// fallback below instead of surfacing an Error-level exec failure.
-		nvidiaSmiCmd := `if [ -x /host/usr/bin/nvidia-smi ]; then ` +
-			`LD_LIBRARY_PATH=/host/usr/lib/x86_64-linux-gnu:/host/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH ` +
-			`/host/usr/bin/nvidia-smi -q 2>/dev/null || true; fi`
-		log.Log.V(1).Info("Probing GPU product type via nvidia-smi", "pod", targetPod.Name)
-		output, err := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-			[]string{"/bin/sh", "-c", nvidiaSmiCmd})
-		if err != nil {
-			log.Log.Error(err, "failed to exec nvidia-smi probe", "pod", targetPod.Name)
-		} else {
-			gpuType = parseGPUProductFromNvidiaSmi(output)
-			log.Log.V(1).Info("Probed GPU product type via nvidia-smi",
-				"pod", targetPod.Name,
-				"parsed", gpuType,
-				"willFallBackToSysfs", gpuType == "")
-		}
-
-		if gpuType == "" {
-			log.Log.V(1).Info("Falling back to sysfs/pci.ids for GPU product type", "pod", targetPod.Name)
-			sysfsOutput, sysfsErr := execInPod(ctx, restConfig, namespace, targetPod.Name, containerName,
-				[]string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
-			if sysfsErr != nil {
-				log.Log.Error(sysfsErr, "failed to exec sysfs GPU probe", "pod", targetPod.Name)
-			} else {
-				gpuType = parseGPUProductFromSysfs(sysfsOutput)
-				log.Log.V(1).Info("Probed GPU product type via sysfs/pci.ids",
-					"pod", targetPod.Name,
-					"sysfsID", strings.TrimSpace(sysfsOutput),
-					"parsed", gpuType)
-				if gpuType == "" && strings.TrimSpace(sysfsOutput) != "" {
-					log.Log.Info("GPU product type not resolved from sysfs device ID",
-						"pod", targetPod.Name, "unresolvedID", strings.TrimSpace(sysfsOutput))
-				}
-			}
-		}
-	}
-
-	return machineType, gpuType
+	return parseMachineTypeFromDMI(output)
 }
 
 // truncateForLog clips a string to maxLen characters and appends "…" when
@@ -1722,141 +1799,6 @@ func truncateForLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "…"
-}
-
-// discoverGroupFabric probes the InfiniBand sysfs entries on a representative
-// daemon pod for every east-west PF in `group` that has an RdmaDevice and,
-// when the per-port verdicts unanimously agree on a value, sets
-// `group.LinkType`. Otherwise the field is left empty — discovery couldn't
-// determine the fabric type, and downstream code treats absence as
-// "unknown".
-//
-// The verdict is the port's configured `link_layer` (sysfs file) — what
-// the firmware says the port is wired for, regardless of whether the
-// netdev is currently up. We deliberately ignore `state` (ACTIVE vs
-// DOWN) and `sm_lid` (IB subnet manager presence) here: requiring an
-// active link broke discovery on freshly-provisioned clusters where
-// the switch wasn't yet plugged in, and the configured link_layer is
-// what every downstream template needs anyway. An operator who
-// reflashes a card to a different fabric needs to re-run discover, but
-// that's the only failure mode we accept in exchange for the
-// "discover before the cluster is wired up" win.
-//
-// Multi-node groups whose RdmaDevice is empty (per the existing
-// per-node-vs-group safety rule) skip the probe — there's no ibdev name
-// to point sysfs at — but other PFs in the group can still contribute.
-func discoverGroupFabric(ctx context.Context, restConfig *rest.Config,
-	namespace string, group *config.ClusterConfig, dsPods []corev1.Pod) {
-
-	if restConfig == nil {
-		return
-	}
-	targetPod := findDaemonPod(group.WorkerNodes, dsPods)
-	if targetPod == nil {
-		log.Log.V(1).Info("Skipping fabric probe: no daemon pod on group nodes",
-			"group", group.Identifier)
-		return
-	}
-	containerName := ""
-	if len(targetPod.Spec.Containers) > 0 {
-		containerName = targetPod.Spec.Containers[0].Name
-	}
-
-	verdicts := map[string]int{} // linkType -> count of contributing PFs
-	probed := 0
-	for _, pf := range group.PFs {
-		if pf.Traffic != "east-west" || pf.RdmaDevice == "" {
-			continue
-		}
-		probed++
-		linkType, raw, err := discoverPortFabric(ctx, restConfig, namespace,
-			targetPod.Name, containerName, pf.RdmaDevice, 1)
-		if err != nil {
-			log.Log.V(1).Info("Fabric probe failed",
-				"group", group.Identifier,
-				"pod", targetPod.Name,
-				"pci", pf.PciAddress,
-				"rdmaDevice", pf.RdmaDevice,
-				"error", err.Error())
-			continue
-		}
-		log.Log.V(1).Info("Fabric port probe",
-			"group", group.Identifier,
-			"pod", targetPod.Name,
-			"pci", pf.PciAddress,
-			"rdmaDevice", pf.RdmaDevice,
-			"linkType", linkType,
-			"raw", raw)
-		if linkType != "" {
-			verdicts[linkType]++
-		}
-	}
-
-	switch {
-	case len(verdicts) == 1:
-		for k := range verdicts {
-			group.LinkType = k
-			log.Log.V(1).Info("Group fabric resolved",
-				"group", group.Identifier,
-				"linkType", k,
-				"probedPFs", probed,
-				"contributingPFs", verdicts[k])
-		}
-	case len(verdicts) > 1:
-		log.Log.V(1).Info("Group fabric ambiguous (probes disagree); leaving linkType unset",
-			"group", group.Identifier,
-			"probedPFs", probed,
-			"verdicts", verdicts)
-	default:
-		log.Log.V(1).Info("Group fabric unresolved (no port reported a recognised link_layer); leaving linkType unset",
-			"group", group.Identifier,
-			"probedPFs", probed)
-	}
-}
-
-// discoverPortFabric reads
-// /sys/class/infiniband/<rdmaDevice>/ports/<port>/link_layer inside the
-// daemon pod and returns the configured fabric for that port —
-// "Ethernet", "InfiniBand", or "" when the file is empty / unreadable /
-// unrecognised. The port's runtime state (ACTIVE / DOWN) is
-// intentionally NOT consulted: discovery has to work on freshly
-// provisioned clusters where the switch isn't yet plugged in.
-//
-// Tries `/sys/class/infiniband/...` first (works when the daemon pod
-// shares host pid+net namespace and exposes the host sysfs at /sys),
-// then falls back to `/host/sys/class/infiniband/...` for daemons that
-// mount the host filesystem under /host (matches consts.HostPath =
-// "/host" used by the rest of nic-configuration-operator). The first
-// path that yields a recognised link_layer wins.
-func discoverPortFabric(ctx context.Context, restConfig *rest.Config,
-	namespace, podName, containerName, rdmaDevice string, port int) (string, string, error) {
-	var lastErr error
-	for _, base := range []string{
-		fmt.Sprintf("/sys/class/infiniband/%s/ports/%d/link_layer", rdmaDevice, port),
-		fmt.Sprintf("/host/sys/class/infiniband/%s/ports/%d/link_layer", rdmaDevice, port),
-	} {
-		cmd := fmt.Sprintf("cat %s", base)
-		output, err := execInPod(ctx, restConfig, namespace, podName, containerName,
-			[]string{"/bin/sh", "-c", cmd})
-		if err != nil {
-			lastErr = err
-			log.Log.V(1).Info("Fabric port probe: read failed at this base",
-				"rdmaDevice", rdmaDevice, "port", port, "base", base,
-				"execErr", err.Error())
-			continue
-		}
-		linkType, raw := parsePortFabricVerdict(output)
-		if linkType != "" {
-			return linkType, raw, nil
-		}
-		log.Log.V(1).Info("Fabric port probe: link_layer at this base not recognised",
-			"rdmaDevice", rdmaDevice, "port", port, "base", base,
-			"raw", raw)
-	}
-	if lastErr != nil {
-		return "", "", lastErr
-	}
-	return "", "", nil
 }
 
 // parsePortFabricVerdict normalises a sysfs `link_layer` read into the
@@ -1907,12 +1849,17 @@ done`
 // If mlxprivhost fails or returns unrecognised output, the device remains
 // discoverable, matching the operator's fail-open behaviour. Output is
 // "present" when any discoverable device exists, "restricted" when the node
-// has only restricted BlueFields, and empty when no NVIDIA NIC is present. It
+// has only restricted BlueFields, and empty when no NVIDIA NIC is present.
+// With the third argument "report-restricted", each restricted PCI function
+// also emits "restricted-pci <address>" and the scan continues after finding a
+// discoverable NIC. Otherwise it stops at the first discoverable NIC. It
 // exits non-zero if it cannot inspect the PCI device directory or read the
 // vendor/device attributes needed to establish absence.
 const sysfsMellanoxNICPresentCmd = `pci_devices_path=${1:-/sys/bus/pci/devices}
 mlxprivhost_bin=${2:-mlxprivhost}
+report_restricted=${3:-}
 restricted_found=false
+present_found=false
 if [ ! -d "$pci_devices_path" ] || [ ! -r "$pci_devices_path" ]; then
   printf 'cannot inspect PCI device directory: %s\n' "$pci_devices_path" >&2
   exit 1
@@ -1948,16 +1895,24 @@ for d in "$pci_devices_path"/*; do
       trust_rc=$?
       if [ "$trust_rc" -eq 0 ] && printf '%s\n' "$trust_output" | grep -iq '^[[:space:]]*level[[:space:]]*:[[:space:]]*restricted'; then
         restricted_found=true
+        if [ "$report_restricted" = report-restricted ]; then
+          printf 'restricted-pci %s\n' "$pci"
+        fi
         continue
       fi
       ;;
   esac
 
-  echo present
-  exit 0
+  if [ "$present_found" = false ]; then
+    echo present
+  fi
+  if [ "$report_restricted" != report-restricted ]; then
+    exit 0
+  fi
+  present_found=true
 done
 
-if [ "$restricted_found" = true ]; then
+if [ "$present_found" = false ] && [ "$restricted_found" = true ]; then
   echo restricted
 fi`
 
@@ -1967,6 +1922,7 @@ const (
 	mellanoxNICProbeNone       mellanoxNICProbeResult = ""
 	mellanoxNICProbePresent    mellanoxNICProbeResult = "present"
 	mellanoxNICProbeRestricted mellanoxNICProbeResult = "restricted"
+	mellanoxNICProbeUnverified mellanoxNICProbeResult = "unverified"
 )
 
 // parseMellanoxNICProbeResult interprets the controlled marker emitted by the
@@ -1986,17 +1942,38 @@ func parseMellanoxNICProbeResult(output string) mellanoxNICProbeResult {
 	return result
 }
 
+// reportRestrictedNICs surfaces probe observations before the bootstrap namespace
+// is removed. Addresses describe PCI functions, not deduplicated physical cards.
+func reportRestrictedNICs(output, node string, uiOutput ui.Output) int {
+	count := 0
+	for line := range strings.SplitSeq(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "restricted-pci" {
+			continue
+		}
+		uiOutput.Info("Excluded host-restricted BlueField %s on %s; not configurable from host", fields[1], node)
+		log.Log.Info("Excluded host-restricted BlueField; not configurable from host", "node", node, "pciAddress", fields[1])
+		count++
+	}
+	return count
+}
+
 // filterNodesWithNICs returns the subset of candidateNodes that have an NVIDIA
 // NIC expected to publish a NicDevice, plus nodes whose only detected NVIDIA
 // devices are restricted BlueFields. Nodes without a daemon pod, or whose
-// probe errors or reports no NIC, are dropped. This replaces the NFD-label
+// probe fails before verifying a usable NIC or reports no NIC, are dropped.
+// A later failure retains the verified publisher with incomplete diagnostics.
+// This replaces the NFD-label
 // filter (filterNodesByLabels) so discovery works before NFD is installed and
 // avoids waiting for NicDevices that zero-trust devices will never publish.
 func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
-	namespace string, candidateNodes []string, dsPods []corev1.Pod) ([]string, []string) {
+	namespace string, candidateNodes []string, dsPods []corev1.Pod, uiOutput ui.Output,
+	podExec func(context.Context, *rest.Config, string, string, string, []string) (string, error),
+) ([]string, []string) {
 
 	var withNICs []string
 	var restrictedOnly []string
+	restrictedDevicesSkipped := 0
 	for _, node := range candidateNodes {
 		pod := findDaemonPod([]string{node}, dsPods)
 		if pod == nil {
@@ -2007,14 +1984,23 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 		if len(pod.Spec.Containers) > 0 {
 			containerName = pod.Spec.Containers[0].Name
 		}
-		output, err := execInPod(ctx, restConfig, namespace, pod.Name, containerName,
-			[]string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd})
-		if err != nil {
-			log.Log.Error(err, "failed to probe node for NVIDIA NIC; excluding from wait set",
-				"node", node, "pod", pod.Name)
-			continue
-		}
+		output, err := podExec(ctx, restConfig, namespace, pod.Name, containerName,
+			[]string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", "", "", "report-restricted"})
 		probeResult := parseMellanoxNICProbeResult(output)
+		// A scan can fail after confirming a restricted device. Report that
+		// observation even when the node itself remains unverified.
+		restrictedDevicesSkipped += reportRestrictedNICs(output, node, uiOutput)
+		if err != nil {
+			if probeResult != mellanoxNICProbePresent {
+				log.Log.Error(err, "failed to probe node for NVIDIA NIC; excluding from wait set",
+					"node", node, "pod", pod.Name)
+				continue
+			}
+			// A usable NIC was already verified. A later scan failure must not
+			// remove this publisher merely because exclusion reporting is partial.
+			log.Log.Error(err, "incomplete restricted NIC scan; retaining verified publisher", "node", node)
+			uiOutput.Warning("Could not inspect all PCI devices on %s; restricted BlueField reporting may be incomplete", node)
+		}
 		log.Log.V(1).Info("Probed node for discoverable NVIDIA NIC via sysfs and BlueField trust mode",
 			"node", node, "pod", pod.Name, "result", string(probeResult))
 		switch probeResult {
@@ -2026,7 +2012,10 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 	}
 	log.Log.Info("Filtered nodes by discoverable NVIDIA NIC presence",
 		"candidates", len(candidateNodes), "withNICs", len(withNICs),
-		"restrictedOnly", len(restrictedOnly))
+		"restrictedOnly", len(restrictedOnly), "restrictedDevicesSkipped", restrictedDevicesSkipped)
+	if restrictedDevicesSkipped > 0 {
+		uiOutput.Info("Excluded %d host-restricted BlueField PCI function(s) from discovery", restrictedDevicesSkipped)
+	}
 	return withNICs, restrictedOnly
 }
 

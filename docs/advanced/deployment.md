@@ -42,6 +42,42 @@ with the file and document number in the error. Only `values.yaml` is treated
 as Helm values; rename `values.yml` or case variants to `values.yaml`. The
 expected preflight inventory and applied objects come from that same snapshot.
 
+## Secondary-network ownership guard
+
+Before Helm, preflight remediation, or apply, an affected `NicClusterPolicy`
+bundle requires a live read of the policy. Removing an existing Multus or CNI
+plugin section is blocked because the operator can delete its managed
+children. If a rendered section requests installation, recognized installers
+are inspected across namespaces; foreign or ambiguous ownership, or failed
+inspection, blocks deployment. `--overwrite-existing`, external Helm, and
+dry-run cannot bypass this guard. Ownership is checked again immediately
+before every NCP apply, including a polling retry after the policy disappears.
+Retries use the retained desired artifact rather than component intent returned
+by the API server; installer health still uses the operation's configured workers. With overwrite enabled, the guard also inspects differently
+named NCPs that stray remediation would delete, even when their installer
+DaemonSets are missing. An NCP with a managed Multus or reference-plugin section
+requires a separately controlled migration, rather than automatic deletion.
+Ordinary NCP strays without either managed section remain eligible for removal.
+The exact policy deletion candidates are read again before any remediation
+delete; UID/resource-version preconditions reject a changed or replaced policy.
+The API does not provide a transaction excluding all concurrent platform changes.
+
+For omitted external components, installer health inspection is optional.
+No recognized API installer or a denied health read produces an unverified
+warning, since platform binaries may be host-installed. A denied live-NCP
+read still blocks deployment. Recognized installers excluding required workers
+or still reconciling stop deployment until repaired/ready. Ready installer
+pods and current DaemonSet status establish API-level coverage only, not host
+binary/configuration correctness. Without configured worker names, coverage
+remains unverified. Non-overwrite bundles without an NCP add no networking-inspection reads.
+Overwrite adds mandatory NCP candidate-list reads only when the existing stray
+check has an actionable operator namespace; denied inspection blocks before Helm.
+
+See [component policy](../reference/configuration.md#secondary-network-ownership)
+for automatic and explicit ownership. The guard does not change the documented
+broad stray-resource deletion scope below; review the complete inventory before
+authorizing overwrite.
+
 ## Helm Install Or Upgrade
 
 When the bundle contains `values.yaml` and the selected release supplies a Helm repository URL, Launch Kit uses the Helm Go SDK to manage the `network-operator` release:
@@ -116,7 +152,7 @@ After Helm and preflight, deployment follows this order:
 
 1. Apply `NicClusterPolicy` and wait for a terminal state.
 2. Apply each `NicNodePolicy` and wait for each policy.
-3. For RA2.4 NIC templates, verify the live NCO CRD's served version includes
+3. For RA2.4/RA3.1 NIC templates, verify the live NCO CRD's served version includes
    the `platformType` string field. This runs after policy bootstrap installs the
    CRD and before applying any remaining manifests. Missing APIs or failed reads
    stop deployment, including dry-run, external Helm and overwrite modes.
@@ -131,7 +167,47 @@ effects are retained. See [RA2.4 prerequisites](../user/spectrum-x.md#ra24-dospc
 
 Launch Kit gates changed resources on controller observation, avoiding a false success from stale status left by an earlier generation.
 
+IPPool application follows the NicClusterPolicy readiness gate when the bundle
+contains that policy. On Kubernetes this is not a separate wait for the
+`ippools.nv-ipam.nvidia.com` CRD to become established: an unavailable API still
+fails the apply. A bundle without NicClusterPolicy relies on prior operator
+bootstrap, and dry-run cannot create missing APIs. External Helm installers
+must stage dependent IPPools after NV-IPAM bootstrap themselves; filename order
+alone does not establish readiness. Validation reports missing APIs and does not
+install them.
+
 Example workload manifests are not part of deployment. Files with `example` in the name are reserved for `l8k validate`.
+
+## Hardware target scope
+
+Before Helm, stray remediation or manifest writes, Launch Kit checks the desired
+selectors of SR-IOV node policies and NV-IPAM IPPools against the worker inventory
+referenced by their source-group annotations. It reads Nodes and requires exact
+membership, rejecting missing workers, extra CPU/DPU nodes and empty selectors.
+It repeats the check before affected resource apply/reapply, and checks live
+selectors during reconciliation. `--overwrite-existing`, external Helm and
+server dry-run do not bypass the check. Node-label changes are not transactional;
+recheck the resulting deployment after concurrent cluster changes.
+
+During reconciliation polling, temporary API timeouts, throttling and connection
+failures retry within the existing deployment timeout. Scope remains unverified
+and readiness is not evaluated until a fresh inspection succeeds. Denied reads,
+invalid source metadata and selector mismatches still stop deployment; failures
+of a pre-write inspection still prevent the write.
+
+Explicit user config takes precedence over the resolved sidecar. Annotated
+resources require all source IDs to resolve. `[""]` explicitly references an
+unnamed source only when it is the sole configured source; its worker inventory
+is checked normally and its configuration remains required. Mixed populated/empty worker lists,
+duplicate source IDs or worker memberships, and ambiguous legacy multi-source
+inventory are errors. Regenerate legacy manifests to add source metadata; only a
+single configured source has an unambiguous legacy association.
+
+Preset/manual resources whose sources all omit worker inventory, and unannotated
+artifact-only workflows, retain selector-only operation with a visible
+**target scope unverified** diagnostic. They do not establish inventory membership.
+This warning does not weaken PF or controller readiness failures. An annotated
+resource with missing configuration fails rather than falling back to this mode.
 
 ## Terminal State
 

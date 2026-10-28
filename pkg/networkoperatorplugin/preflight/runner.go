@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/secondarynetwork"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -91,33 +94,67 @@ type RemediationOptions struct {
 //   - STRAY_CRS has no other natural remediation — apply phases don't touch
 //     objects we don't render, so we delete each stray here.
 //
-// Returns the first deletion error encountered, or nil if every stray was
-// deleted (or DryRun=true).
+// Managed Multus/CNI policy teardown is rejected before any deletion. Safe NCP
+// deletions carry identity/version preconditions from a fresh inspection.
+// Returns the first inspection/deletion error, or nil if every eligible stray
+// was deleted (or only reported with DryRun=true).
 func Remediate(ctx context.Context, in Inputs, results []Result, opts RemediationOptions) error {
 	if in.KubeClient == nil {
 		return fmt.Errorf("remediate: no kube client supplied")
 	}
+	// Resolve the exact deletion set once, then inspect every policy before
+	// any delete. A late managed section must not be discovered only after
+	// earlier strays have already been removed.
+	var deletions []ObjectRef
 	for _, r := range results {
 		if r.Code != CodeStrayCRs || !r.Failed() {
 			continue
 		}
-		for _, m := range r.Mismatches {
-			ref, ok := parseStrayPath(m)
+		for _, mismatch := range r.Mismatches {
+			ref, ok := parseStrayPath(mismatch)
 			if !ok {
-				log.Log.V(1).Info("Remediate: skipping malformed stray mismatch", "path", m.Path)
+				log.Log.V(1).Info("Remediate: skipping malformed stray mismatch", "path", mismatch.Path)
 				continue
 			}
-			if opts.DryRun {
-				log.Log.Info("Remediate (dry-run): would delete stray CR",
-					"gvk", ref.GVK, "namespace", ref.Namespace, "name", ref.Name)
-				continue
-			}
-			if err := deleteOne(ctx, in.KubeClient, ref); err != nil {
-				return fmt.Errorf("delete stray %s: %w", m.Path, err)
-			}
-			log.Log.Info("Remediate: deleted stray CR",
-				"gvk", ref.GVK, "namespace", ref.Namespace, "name", ref.Name)
+			deletions = append(deletions, ref)
 		}
+	}
+	policies := map[string]*unstructured.Unstructured{}
+	for _, ref := range deletions {
+		if ref.GVK.GroupKind() != secondarynetwork.PolicyGVK.GroupKind() {
+			continue
+		}
+		policy, err := secondarynetwork.GetPolicy(ctx, in.KubeClient, ref.Name)
+		if err != nil {
+			return err
+		}
+		if err := secondarynetwork.CheckRemoval(policy); err != nil {
+			return err
+		}
+		policies[refKey(ref)] = policy
+	}
+	for _, ref := range deletions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var preconditions *metav1.Preconditions
+		if policy, checked := policies[refKey(ref)]; checked {
+			// A disappeared policy must not become a name-only deletion of
+			// a replacement. Changed live state fails the delete precondition.
+			if policy == nil {
+				continue
+			}
+			uid, version := policy.GetUID(), policy.GetResourceVersion()
+			preconditions = &metav1.Preconditions{UID: &uid, ResourceVersion: &version}
+		}
+		if opts.DryRun {
+			log.Log.Info("Remediate (dry-run): would delete stray CR", "gvk", ref.GVK, "namespace", ref.Namespace, "name", ref.Name)
+			continue
+		}
+		if err := deleteOne(ctx, in.KubeClient, ref, preconditions); err != nil {
+			return fmt.Errorf("delete stray %s: %w", strayPath(ref), err)
+		}
+		log.Log.Info("Remediate: deleted stray CR", "gvk", ref.GVK, "namespace", ref.Namespace, "name", ref.Name)
 	}
 	return nil
 }
@@ -167,14 +204,18 @@ func parseGVKFromDetail(detail string) (schema.GroupVersionKind, bool) {
 // (the default) — the operator's garbage-collector chains handle any
 // downstream sweeps. NotFound is tolerated so a stray that was already
 // deleted by a concurrent caller doesn't fail remediation.
-func deleteOne(ctx context.Context, c client.Client, ref ObjectRef) error {
+func deleteOne(ctx context.Context, c client.Client, ref ObjectRef, preconditions *metav1.Preconditions) error {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(ref.GVK)
 	obj.SetName(ref.Name)
 	if ref.Namespace != "" {
 		obj.SetNamespace(ref.Namespace)
 	}
-	if err := c.Delete(ctx, obj); err != nil {
+	options := []client.DeleteOption{}
+	if preconditions != nil {
+		options = append(options, client.Preconditions(*preconditions))
+	}
+	if err := c.Delete(ctx, obj, options...); err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			return nil
 		}
@@ -182,4 +223,3 @@ func deleteOne(ctx context.Context, c client.Client, ref ObjectRef) error {
 	}
 	return nil
 }
-

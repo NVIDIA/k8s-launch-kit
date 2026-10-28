@@ -40,3 +40,35 @@ func TestProfileSelectionSeparatesOpenShiftAndKubernetes(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "no applicable profile found"))
 }
+
+func TestProfileSelectionChecksInfiniBandCapability(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	t.Chdir(repoRoot)
+
+	for _, tc := range []struct {
+		name      string
+		fabric    string
+		ib        bool
+		wantError bool
+	}{
+		{name: "rejects InfiniBand without the capability", fabric: "infiniband", ib: false, wantError: true},
+		{name: "accepts InfiniBand with the capability", fabric: "infiniband", ib: true},
+		{name: "keeps Ethernet available without the capability", fabric: "ethernet", ib: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := &config.Profile{Fabric: tc.fabric, Deployment: "host_device"}
+			capabilities := &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Rdma: true, Ib: tc.ib}}
+
+			profile, err := FindApplicableProfile(requirements, capabilities, "network-operator", "", config.FlavorK8s)
+			if tc.wantError {
+				require.ErrorContains(t, err, "no applicable profile found")
+				require.ErrorContains(t, err, "selected InfiniBand fabric requires cluster ib capability to be true")
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, "Host device RDMA", profile.Name)
+		})
+	}
+}

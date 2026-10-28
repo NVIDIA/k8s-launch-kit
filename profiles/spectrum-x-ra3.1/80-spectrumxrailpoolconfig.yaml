@@ -1,0 +1,32 @@
+apiVersion: spectrumx.nvidia.com/v1alpha2
+kind: SpectrumXRailPoolConfig
+metadata:
+  name: rails{{suffix .ClusterConfig.Identifier}}
+  namespace: "{{.NetworkOperator.Namespace}}"
+spec:
+  draEnabled: {{ spectrumXUseDRA .Profile }}
+  {{- if .ClusterConfig.NodeSelector }}
+  nodeSelector:
+    {{- range $key, $value := .ClusterConfig.NodeSelector }}
+    {{ $key }}: "{{ $value }}"
+    {{- end }}
+  {{- end }}
+  networkNamespace: "{{.CurrentNetworkNamespace}}"
+  numVfs: 1
+  {{- if .SpectrumX.OVSConfig }}
+  ovsConfig:
+    {{- range $key, $value := .SpectrumX.OVSConfig }}
+    {{ printf "%q" $key }}: {{ printf "%q" $value }}
+    {{- end }}
+  {{- end }}
+  railTopology:
+  {{- range $endpoint := spectrumXEndpoints .Profile .SpectrumX .ClusterConfig }}
+  - name: {{$endpoint.Name}}
+    {{- if $endpoint.HardwarePLB }}
+    swPlane: {{$endpoint.SwPlane}}
+    {{- end }}
+    nicSelector:
+      pfNames: [{{- range $i, $name := $endpoint.PFNames }}{{if $i}}, {{end}}{{printf "%q" $name}}{{end}}]
+    cidrPoolRef: {{$endpoint.PoolName}}{{suffix $.ClusterConfig.MergedIdentifier}}
+    mtu: 9216
+  {{- end }}

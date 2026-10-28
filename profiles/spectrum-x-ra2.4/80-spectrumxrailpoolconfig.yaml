@@ -1,7 +1,3 @@
-{{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
-{{- $railCount := railCount .ClusterConfig.PFs $planes }}
-{{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
-{{- $netdevPrefix := spectrumXNetdevPrefix .SpectrumX .Profile.SpectrumX.MultiplaneMode }}
 apiVersion: spectrumx.nvidia.com/v1alpha2
 kind: SpectrumXRailPoolConfig
 metadata:
@@ -24,23 +20,13 @@ spec:
     {{- end }}
   {{- end }}
   railTopology:
-  {{- range $railIdx := untilStep 0 $railCount 1 }}
-  {{- if $swplb }}
-    {{- range $planeIdx := untilStep 0 $planes 1 }}
-  - name: rail{{$railIdx}}p{{$planeIdx}}
-    nicSelector:
-      pfNames: ["{{ replaceVars $netdevPrefix $railIdx $planeIdx $railIdx }}"]
-    cidrPoolRef: rail-{{$railIdx}}-plane-{{$planeIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
-    mtu: 9216
-    {{- end }}
-  {{- else }}
-  - name: rail{{$railIdx}}
-    {{- if eq $.Profile.SpectrumX.MultiplaneMode "hwplb" }}
-    swPlane: {{ spectrumXSwPlane $.ClusterConfig $railIdx }}
+  {{- range $endpoint := spectrumXEndpoints .Profile .SpectrumX .ClusterConfig }}
+  - name: {{$endpoint.Name}}
+    {{- if $endpoint.HardwarePLB }}
+    swPlane: {{$endpoint.SwPlane}}
     {{- end }}
     nicSelector:
-      pfNames: [{{- $firstPF := true }}{{- range $planeIdx := untilStep 0 $planes 1 }}{{- if not $firstPF }}, {{ end }}{{- $firstPF = false }}"{{ replaceVars $netdevPrefix $railIdx $planeIdx $railIdx }}"{{- end }}]
-    cidrPoolRef: rail-{{$railIdx}}{{suffix $.ClusterConfig.MergedIdentifier}}
+      pfNames: [{{- range $i, $name := $endpoint.PFNames }}{{if $i}}, {{end}}{{printf "%q" $name}}{{end}}]
+    cidrPoolRef: {{$endpoint.PoolName}}{{suffix $.ClusterConfig.MergedIdentifier}}
     mtu: 9216
-  {{- end }}
   {{- end }}

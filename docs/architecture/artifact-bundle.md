@@ -37,3 +37,16 @@ the output directory. It writes the original annotated bytes. A combined
 generate/deploy run passes that same bundle to the Network Operator plugin;
 standalone deploy and validate load their own snapshot. The configuration
 sidecar at `.l8k/resolved-config.yaml` remains on its existing path.
+
+Hardware resources (`SriovNetworkNodePolicy` and NV-IPAM `IPPool`) also retain
+selected source IDs in `nvidia.kubernetes-launch-kit.source-groups`. Their worker
+inventory stays in the effective configuration rather than being duplicated in
+each manifest. Deploy checks desired selectors before writes and readiness checks
+live selectors against intended source metadata. Library callers supply that
+configuration through `DeployOptions.Config` or
+`ValidateBundleWithConfig(ctx, client, bundle, config, flavor...)`. The existing
+`ValidateBundle` API remains available for legacy artifact-only inputs; annotated
+hardware resources require their configuration. The explicit `[""]` source reference
+preserves an unnamed sole source and resolves only against exactly one unnamed
+configured source. Selector-only preset inputs retain
+an explicit unverified-scope diagnostic, distinct from ordinary device readiness.

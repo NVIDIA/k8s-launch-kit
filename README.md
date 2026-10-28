@@ -1,15 +1,22 @@
 # NVIDIA Kubernetes Launch Kit
 
 Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on Kubernetes and OpenShift clusters. It discovers NIC and GPU topology, generates reviewable Network Operator resources, deploys them in dependency order, and validates their state and data-plane connectivity. It supports SR-IOV, RDMA shared-device, host-device, InfiniBand, and Spectrum-X profiles; [Plan your deployment](docs/user/profiles.md) explains applicability and prerequisites.
-Standard SR-IOV, RDMA-shared and host-device profiles can opt into NIC tuning with `--deploy-nic-configuration-template`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
+Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
 The current lifecycle uses the `host` target by default. The reserved `dpf` target does not have available lifecycle phases; see [target extension](docs/advanced/targets.md) for its implementation status.
 
-Spectrum-X RA2.4 supports Network Operator 26.10 and newer catalogued releases;
-RA2.3 is limited to 26.7. RA2.4 uses a doSPCX bundle, derives per-group platform
-from GPU-product substrings, and accepts optional HWPLB software-plane and OVS
-settings. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
+Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued releases;
+RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
+from GPU-product substrings or VR machine types, and accept optional HWPLB
+software-plane and OVS settings. VR with ConnectX-9 defaults to eight-plane HWPLB;
+discovery derives its four dual-NIC rails from NetworkBay peer status.
+VR IPv4 generation emits eight per-NIC XPlane groups, address pools and workload
+attachments; [VR topology inputs](docs/user/spectrum-x.md#vr-dual-nic-rails) require
+explicit host indices and must match physical cabling.
+Generation rejects VR inventories unless they contain four dense rails with two
+physical NICs each. Re-run discovery with NetworkBay status for old configs that
+assigned one rail per NIC; generation does not guess the pairing from PCI order. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
 including the required NCO implementation/CRDs beyond the current 26.10 beta.2 package.
 
 ## Documentation
@@ -31,15 +38,31 @@ l8k schema
 
 ### Discover Cluster Configuration
 
-`l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. A normal CLI `--node-selector` value is saved for deployment-time selection; it does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
+Physically dual-port BlueField-3 NICs are classified as north-south even in NIC
+mode or with an unlisted SKU. Groups containing only north-south NICs are omitted
+from the saved inventory; see [traffic classification](docs/user/discovery.md#east-west-and-north-south-nics).
+
+`l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. Discovery verifies exact group selectors; an explicit CLI `--node-selector` override remains user intent and is checked against worker inventory during deployment. The flag does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
+
+Enabled interface naming renders for supported single-group layouts. Generation
+rejects naming layouts that split a physical NIC across rails; see
+[NIC templates and selected groups](docs/advanced/generation.md#nic-templates-and-selected-groups).
 
 ### Select the Deployment Profile
+
+IPoIB shared RDMA with the DOCA driver disabled requires owner-provisioned host netdevs and RDMA character devices; see [IPoIB prerequisites](docs/user/profiles.md#ipoib-with-inbox-drivers).
 
 The profile describes fabric, workload device exposure, multirail and optional Spectrum-X behavior. Use [planning and profile choice](docs/user/profiles.md) before overriding a discovered profile.
 
 ### Generate Deployment Files
 
-`l8k generate` leaves the input YAML unchanged and writes manifests plus `.l8k/resolved-config.yaml` under the deployment directory. Review both before applying; keep the complete directory for later deploy and validation. See [generation](docs/advanced/generation.md).
+`l8k generate` leaves the input YAML unchanged and writes manifests plus `.l8k/resolved-config.yaml` under the deployment directory. Review both before applying; keep the complete directory for later deploy and validation. Generated SR-IOV policies and IPPools retain their source groups; deploy checks exact worker membership and validate detects live selector drift. Preset-only inputs remain visibly unverified. See [generation](docs/advanced/generation.md).
+
+Platforms providing Multus or reference CNI binaries can set each component's
+[secondary-network ownership](docs/reference/configuration.md#secondary-network-ownership)
+to `external`. Discovery records recognized installers without changing desired
+policy; deploy checks ownership before Helm and prevents implicit teardown of
+operator-managed networking.
 
 ## Usage
 
@@ -77,8 +100,8 @@ network capabilities and hardware configuration with --discover-cluster-config.
 This phase can be skipped if you provide your own configuration file by using --user-config.
 This phase resolves credentials from --kubeconfig, $KUBECONFIG, or ~/.kube/config.
 Fresh discovery fills profile settings from the detected hardware and built-in
-defaults. With --user-config, discovery replaces only clusterConfig and preserves
-all other settings. Explicit CLI overrides apply in both modes.
+defaults. With --user-config, discovery replaces clusterConfig and
+discoveredSecondaryNetwork while preserving other settings. Explicit CLI overrides apply in both modes.
 
 ### Generate Deployment Files
 Based on the discovered or provided configuration,
@@ -172,8 +195,8 @@ Host Target Profile Selection Flags:
 Host Target Spectrum-X Flags:
       --ip-version string                  Spectrum-X address family: ipv4 or ipv6
       --multiplane-mode string             Spectrum-X multiplane mode: none, swplb, or hwplb
-      --number-of-planes int               Spectrum-X plane count: 1, 2, or 4
-      --spectrum-x-config string           Path to RA2.3 legacy profile (ConfigMap or raw data.profile) or RA2.4 full doSPCX ConfigMap
+      --number-of-planes int               Spectrum-X plane count: 1, 2, 4, or 8
+      --spectrum-x-config string           Path to RA2.3 legacy profile (ConfigMap or raw data.profile) or RA2.4/RA3.1 full doSPCX ConfigMap
       --spectrum-x-configmap-name string   ConfigMap name used when --spectrum-x-config contains raw data.profile YAML
       --topology-file string               Path to a Spectrum-X reference-generator or NVIDIA AIR topology JSON file
       --topology-scheme string             Spectrum-X topology scheme: 2-tier or 3-tier

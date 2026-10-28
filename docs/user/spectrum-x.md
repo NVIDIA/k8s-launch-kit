@@ -38,6 +38,7 @@ For a profile/schema failure, compare the supplied ConfigMap with the [RA2.3 con
 | RA2.2 | `26.4` | `spectrum-x-ra2.2` | Uses v1alpha2 `SpectrumXRailPoolConfig`. |
 | RA2.3 | `26.7` only | `spectrum-x` | Uses v1alpha2 `SpectrumXRailPoolConfig` and a legacy profile ConfigMap. |
 | RA2.4 | `26.10` and newer catalogued releases | `spectrum-x-ra2.4` | Uses a doSPCX data-bundle ConfigMap and per-group platformType. |
+| RA3.1 | `26.10` and newer catalogued releases | `spectrum-x-ra3.1` | Uses the same doSPCX bundle contract; permits eight-plane VR HWPLB generation. |
 
 RA2.2 and RA2.3 output does not include the removed `spec.withBCM` field.
 Adding it causes the v1alpha2 CRD to reject the manifest during strict
@@ -58,14 +59,16 @@ Select the release line explicitly when generating, as in the [RA2.3 procedure](
 When `multiplaneMode` or `numberOfPlanes` is absent, l8k combines the
 discovered GPU platform with the east-west NIC device ID:
 
-| GPU platform | Default mode | Default planes | Notes |
+| Platform | Default mode | Default planes | Notes |
 | --- | --- | --- | --- |
 | H100, H200, B200, GB200 | `none` | 1 | Single-plane architecture. |
 | B300 | `swplb` | 2 | Conservative dual-plane default; pass 4 explicitly for a quad-plane topology. |
 | GB300 | `swplb` | 2 | Dual-plane architecture. |
+| VR with ConnectX-9 | `hwplb` | 8 | RA2.4/RA3.1; explicit `swplb` retains the CX9 four-plane fallback when its plane count is omitted. |
 
 The platform is read from `clusterConfig[].gpuType`, with `machineType` as a
-fallback. `--for` presets participate in the same resolution before manifests
+fallback. On RA2.4/RA3.1, a `machineType` containing `VR` takes precedence,
+including without a GPU product. `--for` presets participate in the same resolution before manifests
 are rendered.
 
 The generated `NicConfigurationTemplate` derives both
@@ -153,19 +156,19 @@ The generated ConfigMap uses the label expected by the NIC Configuration Operato
 
 ## RA2.4 doSPCX profile
 
-RA2.4 defaults to Network Operator 26.10 and accepts newer catalogued releases.
+RA2.4 and RA3.1 default to Network Operator 26.10 and accept newer catalogued releases.
 RA2.3 is restricted to 26.7. Supply a validated full doSPCX ConfigMap with
 `data.format: dospcx-data.tar.gz/v1` and base64
 `binaryData.dospcx-data.tar.gz` through `--spectrum-x-config` or
-`profile.spectrumX.profile`. Raw legacy `data.profile` is not accepted for RA2.4.
+`profile.spectrumX.profile`. Raw legacy `data.profile` is not accepted for RA2.4 or RA3.1.
 The generated singleton retains bundle bytes and source annotations; its
 namespace always matches the resolved Network Operator namespace, including
 `--network-operator-namespace` overrides. The NIC template receives
-`version: RA2.4`, independently of the ConfigMap name.
+`version: RA2.4` or `version: RA3.1` as selected, independently of the ConfigMap name.
 
 **Release prerequisite:** Network Operator v26.10.0-beta.2 includes the rail-pool
 `swPlane` and `ovsConfig` fields, but its packaged NCO CRD lacks `platformType`.
-RA2.4 deployment requires a 26.10-or-newer operator build that includes the
+RA2.4/RA3.1 deployment requires a 26.10-or-newer operator build that includes the
 doSPCX NCO implementation and matching CRDs. Generation alone does not establish
 that the selected published chart satisfies this prerequisite. Deploy reads the
 live NCO CRD after NicClusterPolicy/NicNodePolicy bootstrap and requires the NIC
@@ -177,17 +180,75 @@ Helm, ordinary preflight remediation and policy bootstrap may already have run
 when this check fails; deployment does not roll those operations back.
 
 Platform is derived into `clusterConfig[].spectrumX.platformType` from the raw
-GPU product label. Launch Kit matches `h100`, `h200`, `b200`, `gb200`, `b300`,
+GPU product label, except that a `machineType` containing `VR` (case-insensitive)
+takes precedence and selects `vr` even when `gpuType` is empty. Launch Kit matches `h100`, `h200`, `b200`, `gb200`, `b300`,
 `gb300`, `vr`, and `rtx` as case-insensitive substrings; the longest match wins
 (`GB300` selects `gb300`). Equal-length conflicting matches and no matches
 produce an empty value. No preset or custom mapping table is required. Discovery
-saves empty values and warns; RA2.4 generation rejects unresolved selected groups
+saves empty values and warns; RA2.4/RA3.1 generation rejects unresolved selected groups
 before replacing output. Saved platform values are recomputed, not user overrides.
 An RTX product selects `rtx`; with ConnectX-8 it defaults to `none` and one plane.
 Mapping a family does not qualify every GPU variant or NIC layout for that recipe.
 The current `ThinkSystem-SR650-V4-RTX-PRO-6000` preset splits functions of one
 physical NIC across rails. RA2.4 rejects that layout because NCO assigns one rail
 per physical NIC; it requires a representable layout before generation can proceed.
+
+### VR dual-NIC rails
+
+[VR discovery](discovery.md#vr-networkbay-rails) derives four logical rails
+from eight east-west NICs. Each rail has two four-PF NICs; their first-seen
+inventory order selects NIC 0 and NIC 1 and must match the switch topology.
+Generation rejects old inventories with one rail per NIC instead of guessing
+physical pairing from PCI addresses. Re-run NetworkBay discovery for those inputs.
+
+VR generation supports IPv4 HWPLB with eight planes on four dual-NIC rails.
+It emits four per-rail naming templates (`pfsPerNic: 4`), eight per-NIC
+`railRnicN` topology entries and CIDRPools, and eight workload attachments.
+Each NIC endpoint has four PFs, one schedulable VF and its own /31. DRA uses
+one claim per logical rail with one GPU and two VF requests. NIC input order
+is preserved; it must agree with the physical switch topology. RDMA names
+are `roce_rR_n0`/`roce_rR_n1`; custom RDMA prefixes require `%nic_id%` and no
+plane placeholder. Compatible NCO must support disjoint PCI naming templates.
+Reference topology JSON must include all eight planes per rail and explicit
+zero-based host `attributes.host_index`; AIR uses its parsed host ordinal.
+VR IPv4 defaults to site-zero `240.0.0.0/8`, with NIC(1), rail(2), POD(5),
+SU(7), host(8), peer(1) bits after the first octet. Eight-plane POD is always
+zero and host index is at most 251. Pools are per NIC/rail /11, allocations
+are /31 with even host and odd gateway, and routes cover /11 and /8.
+IPv6, non-HWPLB VR, incomplete topology, and extra software-plane offsets
+are rejected. Generation does not qualify runtime support or configure switches.
+
+`SpectrumXRailPoolConfig.spec.railTopology` contains **eight NIC groups**, named
+`rail0nic0`, `rail0nic1`, through `rail3nic1`. These are four logical rails,
+not eight independent rails. NIC 0 selects planes 0–3 with `swPlane: 0`; NIC 1
+selects planes 4–7 with `swPlane: 1`. This matches XPlane's per-NIC group and
+single-VF model. The corresponding pools are `rail-0-nic-0` through
+`rail-3-nic-1`. Applying only four eight-PF groups exposes only one workload
+endpoint per rail and loses the second NIC's independently addressed endpoint.
+
+Example reference-generator link (repeat for all physical PF links):
+
+```json
+[
+  {"node":"worker-a","interface":"eth_r0_p4",
+   "attributes":{"role":"host","rail":0,"pod":0,"su":0,"host_index":1}},
+  {"node":"leaf-a","interface":"swp3s0",
+   "attributes":{"role":"leaf","plane":4}}
+]
+```
+
+This endpoint is rail 0, NIC 1: host `240.128.0.2/31`, gateway `240.128.0.3`.
+The site is `hostFirstOctet - 240` (0–15); `hostFirstOctet` defaults to 240 for
+VR and must be 240–255. Explicit host indices prevent a topology list reorder
+from changing assigned addresses. Missing NIC planes, reused switch ports,
+conflicting coordinates, or two workers sharing an address coordinate are errors.
+The topology must reflect actual cabling; generation cannot verify live LLDP.
+
+Existing deployments need an explicit migration plan: the new per-NIC policies
+and networks replace old per-rail endpoints. Retain tested operator images and
+custom profile data, preserve active naming identities where specs match, and
+review resource pruning before applying. Correct host pools alone do not update
+switch addresses, routing filters, Class E support, or workload attachments.
 
 Optional configuration:
 
@@ -211,7 +272,7 @@ assigns software-plane offsets to existing HWPLB rails, defaulting to zero.
 Use actual dense zero-based east-west rail IDs. Nonzero assignments require
 HWPLB; unknown rails and negative values are rejected. Groups merged into one
 rail pool must agree on effective assignments and rail layouts. Every selected
-RA2.4 group requires complete dense rail IDs and a uniform master NIC count per
+RA2.4/RA3.1 group requires complete dense rail IDs and a uniform master NIC count per
 rail that divides `numberOfPlanes`. Merged groups must have the same rail count
 and NICs per rail; machine-specific PCI addresses may differ. Functions of one
 physical NIC must remain in the same rail. These checks also
@@ -224,10 +285,10 @@ and warns; review the current cohort and reapply the intended values before
 generation. Omitted assignments otherwise resolve to zero.
 The operator computes `plane_id = len(pfNames) * swPlane + PF index`.
 Multiple hardware partitions inside one logical rail are not supported by this
-configuration. Both optional settings require RA2.4. Existing DRA configuration
+configuration. Both optional settings require RA2.4 or RA3.1. Existing DRA configuration
 continues through `profile.spectrumX.useDRA`.
 
-RA2.4 generation currently permits one rail-pool parent: a complete compatible
+RA2.4/RA3.1 generation currently permits one rail-pool parent: a complete compatible
 GPU/rail-count cohort, or one source selected with `--groups`. A strict subset
 containing multiple sources or multiple buckets is rejected before replacing
 output. A merged cohort is also rejected if its GPU selector would include an
@@ -424,3 +485,15 @@ qualified OpenShift profile in this build.
 - North-south-only groups are not written to `cluster-config.yaml`; they do not produce Spectrum-X manifests.
 - Spectrum-X rendering participates in heterogeneous group merging when source groups share GPU type and rail count.
 - `--network-namespaces` does not fan out Spectrum-X resources; Spectrum-X renders into the first configured namespace.
+
+### Migrating existing VR rail groups
+
+The per-NIC layout changes generated resource names. For an existing deployment,
+back up the current rail pool and its generated resources before applying the new
+manifests. Superseded SR-IOV policies can overlap the new PF/VF selectors and
+prevent reconciliation. Remove only the old policies and OVSNetworks owned by
+that rail pool, then verify the new per-NIC resources reconcile. Retire the old
+rail bridges and their patch ports after confirming ownership and that no
+workloads use them; preserve the shared XPlane bridge and new per-NIC bridges.
+This cleanup is an operator-managed migration, not an automatic Launch Kit step.
+Check SR-IOV node status, XPlane startup, and workload networking separately.

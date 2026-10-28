@@ -36,7 +36,7 @@ Fresh discovery treats the selected reference file as a user layer except for
 its sample `profile`, which is discarded before hardware defaults are derived.
 Explicit non-profile values such as `docaDriver.enable: false` are preserved.
 
-Discovery with `--user-config` replaces only `clusterConfig`, preserves every
+Discovery with `--user-config` replaces `clusterConfig` and `discoveredSecondaryNetwork`, preserves every
 other loaded section, and then applies explicit CLI flags. It does not fill
 missing profile fields, recompute validation settings, or expand a release
 selected only in YAML.
@@ -91,7 +91,7 @@ deployment intent changes.
 | --- | --- |
 | `flavor` | `k8s` (default) or `ocp`; selects profile and operator integration. |
 | `nfd` | OpenShift NFD configuration object namespace and name. |
-| `networkOperator` | Release line, image repositories, Helm repository, namespace, and image pull secrets. |
+| `networkOperator` | Release line, image repositories, Helm repository, namespace, image pull secrets, and secondary-network ownership. |
 | `networkNamespaces` | Namespaces that receive secondary network CRs and example DaemonSets. |
 | `workload` | Optional custom workload manifest. |
 | `validation` | Connectivity mode, enabled checks, and RDMA parameters. |
@@ -103,6 +103,54 @@ deployment intent changes.
 | `spectrumX` | Spectrum-X naming defaults. |
 | `profile` | Selected fabric, deployment, routing, ARP, and Spectrum-X options. |
 | `clusterConfig` | Discovered or preset-provided hardware groups. |
+| `discoveredSecondaryNetwork` | Optional read-only API observations of Multus and reference CNI plugin installers; separate from desired policy. |
+
+## Secondary-network ownership
+
+Multus and the reference CNI plugin suite are independent components. A platform
+Multus installation does not prove that `tuning`, `sbr`, `host-device`, or other
+reference CNI binaries are installed. These policies control only the NCP
+`multus` and `cniPlugins` sections; profile-required components such as
+`secondaryNetwork.ipoib` remain configured. Configure each owner separately:
+
+```yaml
+networkOperator:
+  secondaryNetwork:
+    multus: auto
+    cniPlugins: external
+```
+
+Each field accepts `auto` (default), `managed`, or `external`. Omitted, null,
+and empty values mean auto for compatibility. Managed renders the component
+in `NicClusterPolicy`; external omits it. Auto uses
+`discoveredSecondaryNetwork`: recognized external installers cause omission,
+and a verified NCP-owned installer preserves managed rendering. Unavailable
+or ambiguous evidence stops automatic generation until the operator chooses
+explicit ownership or obtains usable evidence. An offline config with no
+observation preserves managed rendering and reports ownership as unverified;
+deploy must inspect the live cluster before installing it.
+
+Discovery records `notDetected`, `operatorManaged`, `external`, `ambiguous`,
+or `unavailable` per component, with reasons and installer names/UIDs. It never
+rewrites desired `auto` into `external`. Detection recognizes API-visible
+Multus executable/image signatures and reference `plugins`/`cni-plugins`
+images with writable host CNI-directory mounts. Names and the NAD CRD alone
+are not proof. Custom host-only installers can be invisible: choose explicit
+external ownership after checking the site's prerequisites. Generation does
+not contact the cluster or prove installer health.
+
+OpenShift always uses external Multus and reference plugins; explicit managed
+ownership is rejected. Helm ownership (`skipHelmChart`) remains independent
+of component ownership.
+
+Deploy blocks collisions and implicit managed-to-external transitions before
+Helm or resource mutations. Removing an existing NCP section can cause the
+Network Operator to delete its networking children. An ownership migration
+requires a separately reviewed operator-controlled procedure; changing this
+field or using `--overwrite-existing` does not authorize that migration. This
+also protects differently named NCPs selected for overwrite deletion, independently
+of installer DaemonSet presence. Policies without managed Multus/CNI sections
+retain ordinary stray-remediation behavior.
 
 ## Release Catalog
 
@@ -309,6 +357,12 @@ Reserved first/last IPs are merged with explicit exclusions for every subnet.
 
 Automatic subnet allocation is precomputed across all final heterogeneous render buckets to avoid overlap within the generated bundle.
 
+These ranges are configurable defaults, not cluster-reserved address space.
+Launch Kit does not currently compare them with cluster pod or service CIDRs.
+Choose `startingSubnet` or explicit `subnets` that do not overlap those CIDRs
+or other site networks before deploying; discovery does not certify that the
+chosen address space is available.
+
 ## Profile Resource Settings
 
 | Section | Fields |
@@ -325,7 +379,7 @@ When multirail is enabled, Launch Kit adds rail suffixes to generated resource a
 
 ```yaml
 nicConfigurationOperator:
-  deployNicConfigurationTemplate: false
+  deployNicConfigurationTemplate: true
   deployNicInterfaceNameTemplate: true
   rdmaPrefix: "rdma_r%rail_id%"
   netdevPrefix: "eth_r%rail_id%"
@@ -346,8 +400,8 @@ spectrumX:
 
 | Field | Meaning |
 | --- | --- |
-| `deployNicConfigurationTemplate` | Default `false`; opt into standard-profile NIC tuning independently of interface naming. CLI: `--deploy-nic-configuration-template[=false]` on root, generate and discover. |
-| `deployNicInterfaceNameTemplate` | Allows per-source interface-name templates when profile or PCI-layout rules require stable names. |
+| `deployNicConfigurationTemplate` | Default `true`; standard-profile NIC tuning independently of interface naming. Explicit `false` opts out. CLI: `--deploy-nic-configuration-template[=false]` on root, generate and discover. |
+| `deployNicInterfaceNameTemplate` | Default `true`; renders interface-name templates for every selected source group in standard multirail profiles, including a single selected group. Explicit `false` disables naming. |
 | `rdmaPrefix` / `netdevPrefix` | Standard-profile names. Multirail values require a rail placeholder. |
 | `updateFW` | Enables firmware staging storage in generated Network Operator configuration. |
 | `spectrumX.overlay` | Spectrum-X overlay mode. |
@@ -361,7 +415,20 @@ and emits one `NicConfigurationTemplate` per source hardware group. It uses
 that group's node selector, east-west NIC type and exact PCI addresses. Missing
 selectors or mixed east-west NIC types within one group are rejected. The
 setting is independent of `deployNicInterfaceNameTemplate` and `updateFW`;
-Spectrum-X already owns its NIC configuration and rejects this new opt-in.
+Spectrum-X owns its required NIC configuration templates independently of this
+standard-profile toggle, so either value leaves those templates enabled.
+For standard profiles, omitted tuning settings default to true; explicit YAML
+`false` or `--deploy-nic-configuration-template=false` opts out.
+
+Standard interface naming orders NICs by their configured rail numbers so generated
+names match policy selectors. Rail numbers must be contiguous from zero, with one
+east-west PF per rail; invalid mappings fail generation.
+
+Standard interface naming rejects an emitted mapping that places PCI functions
+of one physical NIC in different rails. NCO stores one rail index per physical
+NIC; the resulting names would not match the generated policy selectors. This
+check applies only to selected groups whose naming template is emitted and
+does not silently turn off naming.
 
 The template routes `numVfs` from `sriov.numVfs` for all these profiles and maps
 `profile.fabric` to `Ethernet` or `Infiniband`. It enables PCI performance tuning
@@ -424,14 +491,14 @@ profile:
 | `routing` | `destination-based` or `source-based`; source-based adds the `sbr` CNI plugin outside Spectrum-X. |
 | `ignoreARP` | Adds `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` through the `tuning` CNI plugin outside Spectrum-X. Kubernetes renders both `all` and `IFNAME` scopes; OpenShift renders `IFNAME` only and requires those keys in the Multus sysctl allowlist. |
 | `spectrumX.enable` | Select a Spectrum-X profile. |
-| `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, `RA2.3`, or `RA2.4`; RA2.3 requires 26.7, RA2.4 requires 26.10 or a newer catalogued release. |
-| `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. When absent, H100/H200/B200/GB200 default to `none`; B300/GB300 default to the GA `swplb` path. Platform type cannot distinguish `swplb` from `hwplb`, so `hwplb` must be selected explicitly. |
-| `spectrumX.numberOfPlanes` | `1`, `2`, or `4`. Single-plane platforms default to 1; B300/GB300 default to 2. Pass 4 explicitly for quad-plane B300. |
+| `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4`, or `RA3.1`; RA2.3 requires 26.7, RA2.4 and RA3.1 require 26.10 or a newer catalogued release. |
+| `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. When absent, H100/H200/B200/GB200 default to `none`; B300/GB300 default to the GA `swplb` path. B300/GB300 require explicit `hwplb`; VR with ConnectX-9 defaults to `hwplb` on RA2.4/RA3.1. |
+| `spectrumX.numberOfPlanes` | `1`, `2`, `4`, or `8`. Single-plane platforms default to 1; B300/GB300 default to 2; VR/CX9 HWPLB defaults to 8 on RA2.4/RA3.1. Pass 4 explicitly for quad-plane B300. |
 | `spectrumX.topologyType` | `2-tier` or `3-tier`. |
 | `spectrumX.ipVersion` | `ipv4` for per-node `/31` allocation or `ipv6` for per-node `/64` allocation. |
 | `spectrumX.hostFirstOctet` | Config-only first octet for generated IPv4 topology addressing. |
 | `spectrumX.topologyFile` | Path to spcx-gen/reference-generator or contract-compliant NVIDIA AIR topology JSON. The format is detected from its structure; relative paths resolve from the config file. |
-| `spectrumX.configMapName` / `profile` | RA2.3 legacy ConfigMap name/data, or RA2.4 full doSPCX ConfigMap (including binaryData). Rendering always uses the operator namespace. |
+| `spectrumX.configMapName` / `profile` | RA2.3 legacy ConfigMap name/data, or RA2.4/RA3.1 full doSPCX ConfigMap (including binaryData). Rendering always uses the operator namespace. |
 | `spectrumX.useDRA` | Render DRA `ResourceClaimTemplate` workload allocation; see [prerequisites](../user/spectrum-x.md#dra-workload-allocation). |
 
 The example above is a standard profile. When Spectrum-X is disabled, omit
@@ -440,13 +507,24 @@ For an enabled RA2.3 profile, start with the
 [full ConfigMap generation example](../user/spectrum-x.md#ra23-profile-configmap),
 which supplies the required profile payload as well as the RA/release pair.
 
-RA2.4 additionally accepts `spectrumX.ovsConfig` (a default-empty string map)
+RA2.4 and RA3.1 additionally accept `spectrumX.ovsConfig` (a default-empty string map)
 and per-group `clusterConfig[].spectrumX.swPlaneByRail` (a default-empty
 integer map for existing HWPLB rails). Discovery and resolution write derived
 `clusterConfig[].spectrumX.platformType` using the longest case-insensitive
 doSPCX platform substring in `gpuType`; unresolved discovery warns, while
-RA2.4 generation fails. See the [RA2.4 contract](../user/spectrum-x.md#ra24-dospcx-profile)
+RA2.4/RA3.1 generation fails. See the [RA2.4 contract](../user/spectrum-x.md#ra24-dospcx-profile)
 for release prerequisites, merging, defaults and supported layouts.
+
+VR generation currently supports IPv4, eight-plane HWPLB, four rails and two
+NICs per rail. It emits per-NIC pools/attachments and requires explicit host
+indices in reference topology JSON. See [VR addressing and naming](../user/spectrum-x.md#vr-dual-nic-rails)
+for field limits, custom prefix rules and migration requirements.
+
+A `machineType` containing `VR` (case-insensitive) selects platform `vr` before
+GPU-product matching, including when `gpuType` is empty. With ConnectX-9 and
+RA2.4/RA3.1, omitted mode/planes default to `hwplb`/8. Explicit `swplb` with no
+plane count retains the CX9 four-plane fallback. See [VR discovery](../user/discovery.md#vr-networkbay-rails)
+for the NetworkBay-derived rail mapping and discovery prerequisites.
 
 ## Hardware Groups
 
@@ -458,6 +536,9 @@ clusterConfig:
     machineType: PowerEdge-XE9680
     gpuType: NVIDIA-H200
     netplanManaged: true
+    # Discovery adds this when no match is found but at least one worker could
+    # not be verified
+    # netplanManagementUnknown: true
     capabilities:
       nodes:
         sriov: true
@@ -481,7 +562,8 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 | `identifier` | Lowercase resource-name form of machine/GPU identity with complete `NVIDIA` segments removed and common machine segments shortened (`ThinkSystem` → `ts`, `PowerEdge` → `pe`), bounded to 30 bytes with balanced machine/GPU prefixes and a 6-character deterministic hash when needed, or `group-N` fallback. The Launch Kit machine node label uses the same value. |
 | `machineType` / `gpuType` | Discovered hardware identity. |
 | `linkType` | Per-group `Ethernet` or `InfiniBand` result when fabric probes agree. |
-| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`. Generation fails if a `NicInterfaceNameTemplate` would configure this group; remove the affected `set-name` stanzas and re-run discovery before retrying generation. |
+| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`. |
+| `netplanManagementUnknown` | `true` when no match was found but a worker's netplan observation was unavailable or incomplete, or a MAC-based `set-name` rule could not be checked because an expected PF MAC was unreadable. A readable `/etc` without a netplan directory, or a complete configuration without MAC-based `set-name` rules, is a verified negative. Generation fails if a `NicInterfaceNameTemplate` would configure a group where either this field or `netplanManaged` is true. Resolve the discovery warning and re-run discovery; existing configs should be refreshed with discovery to populate this field. |
 | `presetApplied` | An exact topology preset was applied. |
 | `presetDeviation` | PF count, PCI address, or device ID drift from a matched preset. |
 | `capabilities.nodes` | Group-level SR-IOV, RDMA, and InfiniBand capability flags. |

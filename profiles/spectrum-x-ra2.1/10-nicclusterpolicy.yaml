@@ -1,3 +1,4 @@
+{{- $secondary := secondaryNetwork . -}}
 apiVersion: mellanox.com/v1alpha1
 kind: NicClusterPolicy
 metadata:
@@ -29,12 +30,18 @@ spec:
     image: spectrum-x-operator
     repository: "{{.NetworkOperator.Repository}}"
     version: "{{.NetworkOperator.ComponentVersion}}"
+  {{- if or $secondary.Multus $secondary.CNIPlugins }}
   secondaryNetwork:
+    {{- if $secondary.CNIPlugins }}
     cniPlugins:
       image: plugins
       repository: "{{.NetworkOperator.Repository}}"
       version: "{{.NetworkOperator.ComponentVersion}}"
+    {{- end }}
+    {{- if $secondary.Multus }}
     multus:
       image: multus-cni
       repository: "{{.NetworkOperator.Repository}}"
       version: "{{.NetworkOperator.ComponentVersion}}"
+    {{- end }}
+  {{- end }}

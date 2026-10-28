@@ -52,6 +52,53 @@ l8k generate \
 
 See [Deployment Profiles](../user/profiles.md) for the fabric and deployment-type matrix. See [Spectrum-X](../user/spectrum-x.md) for the Spectrum-X cohort flags and required RA2.3 inputs.
 
+## NIC Templates And Selected Groups
+
+Standard profiles enable NIC configuration templates by default. Omitted
+`nicConfigurationOperator.deployNicConfigurationTemplate` resolves to true;
+explicit YAML false or `--deploy-nic-configuration-template=false` opts out.
+
+Interface naming is controlled separately by
+`nicConfigurationOperator.deployNicInterfaceNameTemplate` (default true).
+For standard multirail profiles, every selected source group receives a
+`NicInterfaceNameTemplate`, including a single-group inventory or a single
+group selected with `--groups` or `--gpu-type`. Group count does not override
+the setting. Selected groups remain subject to the netplan conflict checks.
+
+Standard interface naming orders NICs by their configured rail numbers so generated
+names match policy selectors. Singleton host-device and legacy RDMA-shared
+policies use these configured names too, rather than saved inventory names. Rail numbers must be contiguous from zero, with one
+east-west PF per rail; invalid mappings fail generation.
+
+Generation also checks the emitted standard naming template: one physical NIC
+(`domain:bus:device`) cannot appear in multiple `railPciAddresses` outer lists.
+NCO stores one rail index per physical NIC, so its functions cannot receive
+names for different rails. Unsupported layouts fail before output replacement;
+generation does not silently disable naming. Excluded groups do not block a
+valid selection. If interface naming is explicitly disabled, standard profiles
+retain their existing PCI-selector behavior.
+
+## Hardware target membership
+
+Generated `SriovNetworkNodePolicy` and NV-IPAM `IPPool` resources carry the
+`nvidia.kubernetes-launch-kit.source-groups` annotation: a JSON array of the
+source identifiers selected for that artifact. Keep the annotation and
+`.l8k/resolved-config.yaml` together. Full merged buckets record all their
+sources; strict subsets record only their selected sources. Source identifiers
+must be unique, including for direct library rendering. The established unnamed
+single-source configuration keeps its empty identifier and is represented by the
+explicit annotation `[""]`. It resolves only when the supplied configuration has
+exactly that one unnamed source; missing config or multiple sources fails rather
+than downgrading targeting to selector-only.
+
+Generation is offline and preserves the configured selectors. For populated
+`workerNodes`, deployment requires the selector's live Node set to equal the
+referenced worker union. Node roles do not exclude an intended GPU worker.
+Configurations whose referenced sources all have empty `workerNodes` retain a
+selector-only contract: targeting is explicitly unverified, and strict device
+readiness checks still apply. Empty inventory does not establish that a broad
+selector is appropriate. Supply discovered worker inventory for stronger checks.
+
 ## Review the bundle
 
 Before deploying, inspect both the generated resource directory and
@@ -264,3 +311,13 @@ l8k generate \
 ```
 
 Add `--dry-run` for a server-side preview and `--overwrite-existing` only after reviewing preflight drift.
+
+## SR-IOV admission helpers
+
+SR-IOV and Spectrum-X Helm values explicitly set
+`sriov-network-operator.operator.admissionControllers.enabled: false`.
+This chart value controls both the resource injector and the operator admission
+webhook, including their certificate setup. Generated example workloads include
+explicit resource requests. The similarly named `enableInjector` and
+`enableOperatorWebhook` are fields of the `SriovOperatorConfig` resource, not
+supported overrides under the chart's `sriovOperatorConfig` values.

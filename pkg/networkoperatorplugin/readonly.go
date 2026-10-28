@@ -43,15 +43,29 @@ var WithReadOnlyRESTConfig = discovery.WithReadOnlyRESTConfig
 // selector cannot be derived. Consumers must use WorkerNodes for membership.
 var WithReadOnlyAllowMissingNodeSelector = discovery.WithReadOnlyAllowMissingNodeSelector
 
+// WithReadOnlyAssumeUnverifiedExcluded opts in to excluding daemon nodes with
+// no NicDevice when their publisher status cannot be inspected. Discovery
+// warns that the resulting inventory may be incomplete.
+var WithReadOnlyAssumeUnverifiedExcluded = discovery.WithReadOnlyAssumeUnverifiedExcluded
+
+// WithReadOnlyFabricDiscovery enables optional fabric probes in existing daemon
+// pods. It requires WithReadOnlyRESTConfig and pods/exec permission.
+var WithReadOnlyFabricDiscovery = discovery.WithReadOnlyFabricDiscovery
+
+// WithReadOnlyGPUTopology opts into existing-pod GPU observations. Requires a
+// GPU Operator namespace and REST credentials; optional failures use UI warnings.
+var WithReadOnlyGPUTopology = discovery.WithReadOnlyGPUTopology
+
 // DiscoverReadOnly inspects an existing NIC Configuration Daemon and returns
 // the discovered topology without creating, patching, or deleting resources.
 // It returns ErrNotInstalled when the daemon is not already running.
 // Pass WithReadOnlyRESTConfig when a Ready daemon node has not published a
-// NicDevice; otherwise the function returns an error rather than guessing that
-// the node cannot publish one. By default, it also returns an error when a
-// group's node selector cannot be derived safely. Callers that only need the
-// inventory can opt in with WithReadOnlyAllowMissingNodeSelector; those groups
-// then have an empty NodeSelector and WorkerNodes remains authoritative.
+// NicDevice; otherwise the function returns an error by default. Callers may
+// opt in to excluding unverified nodes with WithReadOnlyAssumeUnverifiedExcluded.
+// By default, it also returns an error when a group's node selector cannot be
+// derived safely. Inventory-only callers can opt in with
+// WithReadOnlyAllowMissingNodeSelector; those groups then have an empty
+// NodeSelector and WorkerNodes remains authoritative.
 func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...ReadOnlyOption) (*config.LaunchKitConfig, error) {
 	return discovery.DiscoverReadOnly(ctx, kubeClient, opts...)
 }

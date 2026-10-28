@@ -22,6 +22,29 @@ For an incomplete change, retain both generated bundles and follow the [phase-sp
 | Connectivity | Test DaemonSet pods, routes, interface addresses, RDMA devices, and the failed validation matrix cells. |
 | IP allocation | `IPPool` or `CIDRPool` capacity, overlap, static allocations, and NV-IPAM logs. |
 
+## IPoIB shared RDMA with inbox drivers
+
+If an IPoIB shared-plugin resource is missing when the DOCA driver is disabled,
+inspect each selected worker and PF through the site's approved host access:
+
+```sh
+# Substitute the selected PF's PCI address.
+ls -l /sys/bus/pci/devices/0000:18:00.0/infiniband/
+ls -l /sys/bus/pci/devices/0000:18:00.0/net/
+ls -l /dev/infiniband/
+```
+
+A configured InfiniBand `link_layer` does not require an active link, and does not
+prove that an IPoIB netdev or the shared-plugin character devices exist. Verify an
+IPoIB netdev for the PF and the `rdma_cm`, `umad*` and `uverbs*` character devices,
+then verify the plugin pod can see them. The host owner may need to provision
+`ib_ipoib`, `rdma_ucm`, `ib_umad` and `ib_uverbs`, depending on kernel packaging;
+built-in drivers need not appear in `lsmod`. Launch Kit does not load modules.
+
+NIC discovery can still identify the fabric when no IPoIB netdev exists. An
+explicit fabric observation warns about the affected node/PCI pair, but does not
+establish complete shared-plugin readiness. See [profile prerequisites](profiles.md#ipoib-with-inbox-drivers).
+
 ## Retain Validation Evidence
 
 Allow in-progress manifests to finish before treating them as failures:

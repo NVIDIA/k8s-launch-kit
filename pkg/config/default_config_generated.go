@@ -26,6 +26,11 @@ var defaultConfigYAML = []byte(
 	"  componentVersion: network-operator-v26.7.0\n" +
 	"  selectedRelease: \"26.7\"\n" +
 	"  skipHelmChart: false\n" +
+	"  # Independent ownership of Multus and reference CNI binaries. auto uses\n" +
+	"  # discovery evidence; managed installs via NCP; external omits the section.\n" +
+	"  secondaryNetwork:\n" +
+	"    multus: auto\n" +
+	"    cniPlugins: auto\n" +
 	"  # repository — registry path for COMPONENT images managed by the operator\n" +
 	"  # (ofedDriver, nvIpam, multus, device plugins, …). Rendered into\n" +
 	"  # NicClusterPolicy / NicNodePolicy.\n" +
@@ -141,7 +146,7 @@ var defaultConfigYAML = []byte(
 	"macvlan:\n" +
 	"  networkName: macvlan-network # with multiple networks, -rail-0, -rail-1, etc. suffixes are added to the network name\n" +
 	"spectrumX:\n" +
-	"  # RA2.4 optional ovs-vswitchd other_config overrides. Omitted keys use operator defaults.\n" +
+	"  # RA2.4/RA3.1 optional ovs-vswitchd other_config overrides. Omitted keys use operator defaults.\n" +
 	"  ovsConfig: {}\n" +
 	"  overlay: none\n" +
 	"  singlePlane:\n" +
@@ -154,8 +159,9 @@ var defaultConfigYAML = []byte(
 	"    netdevPrefix: \"eth_r%rail_id%_p%plane_id%\"\n" +
 	"    rdmaPrefix: \"roce_r%rail_id%_p%plane_id%\"\n" +
 	"nicConfigurationOperator:\n" +
-	"  # Opt in to NIC firmware/runtime tuning for standard profiles (not Spectrum-X).\n" +
-	"  deployNicConfigurationTemplate: false\n" +
+	"  # NIC firmware/runtime tuning is enabled by default for standard profiles.\n" +
+	"  # Set false to opt out. Spectrum-X uses its own required templates.\n" +
+	"  deployNicConfigurationTemplate: true\n" +
 	"  deployNicInterfaceNameTemplate: true\n" +
 	"  rdmaPrefix: rdma_r%rail_id%\n" +
 	"  netdevPrefix: eth_r%rail_id%\n" +

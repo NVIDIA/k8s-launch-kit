@@ -384,6 +384,9 @@ func emitComponentVersionReport(cv *networkoperatorplugin.ComponentVersionCheck,
 // report too keeps the file self-contained.
 func collectVerdictWarnings(v validationVerdict) []string {
 	var w []string
+	if v.SkippedCount > 0 {
+		w = append(w, fmt.Sprintf("%d external prerequisite(s) are unverified; inspect their reasons and qualify platform networking separately.", v.SkippedCount))
+	}
 	if v.HasInProgress {
 		w = append(w, fmt.Sprintf("%d manifest(s) still reconciling — re-run later or use --wait to block.", v.InProgressCount))
 	}
@@ -911,11 +914,15 @@ func nodeRoles(labels map[string]string) string {
 // Returns the most recent results regardless of which terminal
 // condition fired. Emits a one-line update only when the in-progress
 // count changes so we don't flood logs on long waits.
-func waitForReconcile(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string) []networkoperatorplugin.ValidationResult {
-	return waitForReconcileWithInterval(ctx, c, artifacts, initial, budget, flavor, 10*time.Second)
+func waitForReconcile(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string, cfg ...*config.LaunchKitConfig) []networkoperatorplugin.ValidationResult {
+	return waitForReconcileWithInterval(ctx, c, artifacts, initial, budget, flavor, 10*time.Second, cfg...)
 }
 
-func waitForReconcileWithInterval(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string, pollInterval time.Duration) []networkoperatorplugin.ValidationResult {
+func waitForReconcileWithInterval(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string, pollInterval time.Duration, cfg ...*config.LaunchKitConfig) []networkoperatorplugin.ValidationResult {
+	var effective *config.LaunchKitConfig
+	if len(cfg) > 0 {
+		effective = cfg[0]
+	}
 	deadline := time.Now().Add(budget)
 	results := initial
 	lastInProgress := -1
@@ -945,7 +952,7 @@ func waitForReconcileWithInterval(ctx context.Context, c ctrlclient.Client, arti
 		case <-time.After(pollInterval):
 		}
 
-		fresh, err := networkoperatorplugin.ValidateBundle(ctx, c, artifacts, flavor)
+		fresh, err := networkoperatorplugin.ValidateBundleWithConfig(ctx, c, artifacts, effective, flavor)
 		if err != nil {
 			// Transient — keep the previous snapshot and try again
 			// on the next tick.
@@ -984,6 +991,7 @@ type validationVerdict struct {
 	HasMissing      bool
 	HasInProgress   bool
 	VersionOK       bool
+	SkippedCount    int
 	SuccessCount    int
 	InProgressCount int
 	ErrorCount      int
@@ -997,6 +1005,10 @@ func aggregateVerdict(vc *networkoperatorplugin.VersionCheck, results []networko
 		VersionOK: vc == nil || vc.Skipped || vc.Match,
 	}
 	for _, r := range results {
+		if r.Skipped {
+			v.SkippedCount++
+			continue
+		}
 		switch r.State {
 		case crstate.StateSuccess:
 			v.SuccessCount++
@@ -1045,6 +1057,7 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 			"summary": map[string]any{
 				"totalManifests":   verdict.Total,
 				"successManifests": verdict.SuccessCount,
+				"skipped":          verdict.SkippedCount,
 				"inProgress":       verdict.InProgressCount,
 				"errorManifests":   verdict.ErrorCount,
 				"missingManifests": verdict.MissingCount,
@@ -1124,9 +1137,9 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 	}
 
 	fmt.Println()
-	fmt.Printf("Summary: %d/%d ready, %d in-progress, %d error, %d missing; version: %s; topology mismatches: %d group(s)\n",
+	fmt.Printf("Summary: %d/%d ready, %d in-progress, %d error, %d missing, %d unverified; version: %s; topology mismatches: %d group(s)\n",
 		verdict.SuccessCount, verdict.Total,
-		verdict.InProgressCount, verdict.ErrorCount, verdict.MissingCount,
+		verdict.InProgressCount, verdict.ErrorCount, verdict.MissingCount, verdict.SkippedCount,
 		versionStatusText(vc), len(presetDeviations))
 	return verdict
 }
@@ -1134,6 +1147,9 @@ func emitValidationReport(vc *networkoperatorplugin.VersionCheck, results []netw
 // validationStatusLabel maps the per-result state to the human-readable
 // label rendered in the text report.
 func validationStatusLabel(r networkoperatorplugin.ValidationResult) string {
+	if r.Skipped {
+		return "UNVERIFIED"
+	}
 	switch r.State {
 	case crstate.StateSuccess:
 		return "READY"

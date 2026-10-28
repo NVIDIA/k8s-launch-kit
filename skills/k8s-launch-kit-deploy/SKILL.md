@@ -25,6 +25,30 @@ preflight remediation, or apply. Only exact `values.yaml` is Helm input;
 `values.yml` and case variants must be renamed. Malformed or duplicate
 resources fail with source details and exit code 2.
 
+An NCP bundle gets a secondary-network ownership check before Helm or
+remediation, refreshed before every NCP apply, including disappearance retries.
+Retries retain desired component intent independently of API responses and use
+the configured worker set for external installer coverage. Foreign installer collisions and removal
+of a live managed section block deployment, including overwrite/dry-run. External
+health non-detection or denied optional reads remain unverified; failed mandatory
+NCP inspection blocks. Overwrite also protects differently named NCP deletion
+candidates with managed sections, even when their installer is absent; candidates
+are refreshed before any delete and checked by UID/resource-version preconditions.
+Policy strays without either managed section retain normal remediation. See [ownership guard](../../docs/advanced/deployment.md#secondary-network-ownership-guard).
+
+Before Helm/remediation/writes, affected SR-IOV policy and IPPool selectors must
+match exactly the worker union referenced by intended source metadata. Node-list
+permission errors, extra/missing nodes, duplicate IDs/workers, mixed empty/full
+inventories and annotated resources without resolved source config block deploy.
+Overwrite and dry-run cannot bypass this. Legacy multi-source inventory needs
+regeneration; a single source is unambiguous. All-empty preset/manual inventory
+retains a visible target-scope-unverified warning and strict PF readiness.
+Checks repeat before affected apply/reapply and against live selectors while waiting.
+Temporary live-scope read failures retry within the deployment budget, without
+evaluating readiness until inspection succeeds. Denied reads, invalid metadata
+and scope mismatches remain terminal; pre-write checks continue to block writes
+when inspection fails.
+
 ## Usage
 
 The standalone subcommand (preferred):
@@ -183,15 +207,18 @@ these by applying `MaintenanceOperatorConfig` alone.
 OpenShift deploy requires certified operator installations, uses OLM CSV/API checks, and configures existing operators. Helm values in the deployment directory are rejected. IPPool dry-run checks may be deferred until NCP installs NV-IPAM.
 Use `docs/user/openshift.md` for the operator ownership and acceptance workflow.
 
-## Optional standard NIC tuning
+## Standard NIC tuning
 
-`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to false.
+`nicConfigurationOperator.deployNicConfigurationTemplate` defaults to true.
+Set it to false or pass `--deploy-nic-configuration-template=false` to opt out;
+explicit YAML and CLI false values are preserved.
 Root, generate and discover accept `--deploy-nic-configuration-template[=false]`.
 It enables NCO independently of interface naming and renders per-source,
 east-west PCI-scoped templates for standard SR-IOV, RDMA-shared and host-device
 profiles on k8s/OCP. VF count comes from `sriov.numVfs`; link type comes from
 `profile.fabric`. Ethernet gets DSCP trust and priority-3 PFC; InfiniBand omits
-RoCE tuning. Spectrum-X rejects this option. Only SR-IOV disables the Mellanox
+RoCE tuning. Spectrum-X keeps its dedicated required templates independently
+of this standard-profile toggle. Only SR-IOV disables the Mellanox
 plugin (Helm values on k8s, additive `disablePlugins` merge on OCP). Kubernetes
 external Helm owners must configure that plugin themselves.
 
@@ -207,7 +234,7 @@ runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. 
 
 ## RA2.4 API compatibility
 
-For RA2.4 NIC templates, deploy checks the live NCO CRD after NCP/NNP bootstrap
+For RA2.4/RA3.1 NIC templates, deploy checks the live NCO CRD after NCP/NNP bootstrap
 and before applying the doSPCX ConfigMap or NIC templates. The manifest's served
 API version must define platformType as a string; missing APIs and failed
 inspection stop deployment. This check also covers standalone/configless deploy,

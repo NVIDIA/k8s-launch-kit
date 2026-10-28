@@ -21,7 +21,7 @@ l8k discover \
   --save-cluster-config ./cluster-config.yaml
 ```
 
-The default `--node-selector` value is written to the saved configuration for deployment-time resource selection. It does not limit which nodes run the discovery daemon.
+The `--node-selector` value seeds deployment selection; it does not limit which nodes run the discovery daemon. Discovery derives an exact selector for each discovered worker group. An explicit CLI override is still user intent and is checked against saved worker membership at deployment.
 
 Before waiting for `NicDevice` resources, Launch Kit checks BlueField trust
 mode with `mlxprivhost`. A restricted BlueField is excluded from the wait set.
@@ -69,8 +69,55 @@ probe in that node's daemon pod. It excludes nodes with no discoverable NIC or
 only restricted BlueFields, and reports a missing device for a verified NIC
 publisher. It returns inspection and permission errors instead of treating
 them as absent hardware. This fallback needs `pods/exec` permission in the
-daemon namespace; without a REST config, discovery returns an error rather than
-silently returning an incomplete inventory.
+daemon namespace.
+
+Without a REST config, discovery returns an error by default. A caller that
+accepts an incomplete inventory can opt in with
+`networkoperatorplugin.WithReadOnlyAssumeUnverifiedExcluded()`. Ready daemon
+nodes without a `NicDevice` are then excluded and a warning reports that their
+publisher status is unverified. This option does not suppress errors from a
+probe attempted with a REST config. At least one `NicDevice` on a Ready daemon
+node is still required to construct an inventory.
+
+For optional fabric enrichment, pass both
+`networkoperatorplugin.WithReadOnlyRESTConfig(restConfig)` and
+`networkoperatorplugin.WithReadOnlyFabricDiscovery()`. This explicitly permits
+read-only execs in the existing daemon pods and needs `pods/exec` permission in
+the selected daemon namespace. Supplying only a REST config retains the existing
+publisher-verification behavior and does not enable fabric probes. The fabric
+option without a REST config fails before cluster reads.
+
+Fabric enrichment checks every selected worker and east-west PF, including sibling
+PFs represented by a collapsed rail. One batched command per worker confirms
+PCI-local RDMA names, enumerates all ports and reads their configured `link_layer`.
+Only complete, unanimous observations set a group's `linkType`; partial, denied,
+unreadable or conflicting observations leave it unknown with diagnostics. Link
+state and subnet-manager presence do not gate fabric detection. An InfiniBand PF
+without a netdev gets a separate IPoIB host-provisioning warning.
+
+Normal discovery uses the same all-worker fabric check. Collection allows four
+concurrent workers with a ten-second deadline per worker and no timeout retry.
+Its optional worst-case budget is approximately `ceil(selected workers / 4) * 10s`
+plus API/dispatch overhead, capped by the caller's deadline. Internal probe
+failures leave fabric unknown; caller cancellation or deadline returns an error.
+Neither optional enrichment nor partial-inventory opt-in suppresses publisher
+inspection errors when REST credentials are supplied. These observations prove
+coverage of a successfully enumerated sysfs snapshot, not absent kernel hardware
+or deployment readiness. No host modules, node labels or Kubernetes resources are
+changed by read-only discovery.
+
+GPU product/topology enrichment is separately opt-in:
+`networkoperatorplugin.WithReadOnlyGPUTopology("gpu-operator")` requires the
+actual GPU Operator namespace and `WithReadOnlyRESTConfig(restConfig)`.
+Default calls and REST-only calls do not acquire GPU probes. This option reads
+host PCI identities in existing NIC daemon pods and tries `nvidia-smi` there,
+then uses a verified same-node GPU Operator `gpu-feature-discovery` container
+when necessary. It does not run the netplan workflow or modify either daemon.
+Callers need pod read/exec access in both namespaces and DaemonSet read access
+in the GPU Operator namespace. Missing namespace or REST credentials fails
+before cluster reads. Optional failures leave unavailable GPU fields unset;
+caller cancellation remains an error. Supply and consume a `pkg/ui` context
+sink to receive these warnings; the library's default sink is silent.
 
 By default, read-only discovery also fails if it cannot derive a node selector
 that matches only a group's workers. Inventory-only callers can pass
@@ -101,10 +148,22 @@ If a worker is missing, check its readiness, image pull, discovery pod,
 4. Runs a temporary NIC Configuration Daemon on the eligible nodes.
 5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe and excludes BlueFields whose host trust level is `restricted`.
 6. Reads the published `NicDevice` resources and probes GPU, NIC, fabric, NUMA, and rail data. It does not walk kernel-module holder graphs.
-7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, only `clusterConfig` is replaced.
+7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, `clusterConfig` and `discoveredSecondaryNetwork` are replaced.
 8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
 
 The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
+
+Discovery reports each confirmed host-restricted BlueField PCI function with its
+node and PCI address in normal CLI output, before deleting the bootstrap namespace.
+The NIC-probe summary logs `restrictedDevicesSkipped`; this counts PCI functions,
+not physical cards, separately from `northSouthPFsFiltered` (published devices
+removed during group classification). Mixed nodes are scanned fully, so a usable
+ConnectX does not hide a restricted BlueField later in PCI order. Restricted devices
+remain absent from the saved configuration because the daemon does not publish them.
+A failed or unrecognized trust query is not evidence of restriction and is not counted.
+If the scan fails after verifying a usable NIC, the node remains eligible and a
+warning marks exclusion reporting as incomplete. Read-only publisher eligibility
+probes retain their early-exit behavior and do not collect this full inventory.
 
 ## Hardware And GPU Topology
 
@@ -113,26 +172,102 @@ network interface, VPD identifiers, model, traffic direction, and rail. GPU and
 host details use layered sources:
 
 1. Existing `nvidia.com/gpu.machine` and `nvidia.com/gpu.product` node labels.
-2. DMI data and `nvidia-smi` from the temporary daemon pod.
+2. DMI data from the temporary daemon and GPU product observations from the
+   same-node GPU sources described below.
 3. Sysfs PCI data and the embedded NVIDIA subset of `pci.ids` when `nvidia-smi` is unavailable.
 
-The same batched sysfs probe adds the NUMA node and reads current PF MAC
-addresses transiently. On every worker, discovery compares those addresses
-with host netplan device stanzas that contain both `match.macaddress` and a
-non-empty `set-name`. If any NVIDIA PF matches on any worker in a hardware
-group, the saved group has `netplanManaged: true`; otherwise it is `false`.
-This flags a potential conflict between netplan naming and udev rules deployed
-by NIC Configuration Operator without storing host-unique MAC addresses in the
-shared group configuration. If `l8k generate` would emit a
-`NicInterfaceNameTemplate` for an affected group, it returns a validation error
-instead of generating conflicting NCO naming rules. Remove the affected
-`set-name` stanzas from the host netplan configuration and re-run discovery to
-clear the saved group state before retrying generation.
+When GPU product labels are absent, each worker resolves its own `nvidia-smi`
+or sysfs product before group aggregation. A product is saved only when all
+workers agree. Missing or conflicting products leave `gpuType` unset with a
+warning, so exact GPU-specific preset lookup is skipped; a representative
+worker's fallback never replaces a known disagreement.
 
-GPU topology probing adds connected GPU, GPU PCI address, and proximity data
-per PF. A PIX-proximate NIC-to-GPU path can override heuristic traffic
-classification and trigger rail reassignment. Probe failures are non-fatal;
-discovery keeps the hardware data it can confirm.
+The same batched sysfs probe adds the NUMA node and reads current PF MAC
+addresses transiently. Discovery mounts the host's `/etc` read-only and checks
+worker nodes until it finds a match or has a conclusive observation for each.
+If any NVIDIA PF matches a netplan
+`match.macaddress` plus non-empty `set-name` rule, the group has
+`netplanManaged: true`. If no match is found but a worker's observation is
+unavailable or incomplete, the group has `netplanManagementUnknown: true` and
+discovery warns. A readable host `/etc` with no netplan directory, or a complete
+readable configuration with no MAC-based `set-name` rules, is a verified
+negative and does not require PF MACs. When a MAC-based `set-name` rule exists,
+an unreadable expected PF MAC also leaves the result unknown. Neither flag
+persists host-unique MAC addresses. If `l8k generate` would emit a
+`NicInterfaceNameTemplate` for a group that is managed or unknown, it returns a
+validation error rather than risking conflicting NCO naming rules. Resolve the
+discovery warning and re-run discovery, or remove the affected `set-name`
+stanzas and re-run discovery, before retrying generation. Re-run discovery for
+configs created before `netplanManagementUnknown` was available.
+
+GPU product and topology probing first tries a runtime-injected `nvidia-smi`
+in the NIC daemon, then its legacy `/host/usr/bin/nvidia-smi` path when the
+local observation is unavailable. If both observations are unavailable, discovery
+selects the Ready main container of a same-node GPU Operator
+`gpu-feature-discovery` DaemonSet, checking its owner UID and actual host `/sys`
+mount. It rejects ambiguous sources and observations spanning a pod replacement
+or container restart. Normal discovery looks up GFD across namespaces; that
+fallback needs pod-list/read, DaemonSet-read, and `pods/exec` permissions.
+It never injects a runtime class, allocates GPUs, or creates GPU probe pods.
+Existing GPU runtime setup remains the cluster owner's responsibility.
+
+The GPU query must cover an independently enumerated physical GPU PCI set from
+the NIC daemon's host sysfs, and its indices must match the complete matrix.
+Restricted or unresolvable MIG/vGPU views are unavailable topology. Missing
+GPU labels are not proof of a CPU-only node: unlabeled host-driver nodes retain
+the local product probe. Only a complete zero-GPU host enumeration without
+conflicting GPU labels permits skipping GPU probing.
+
+Connected GPU, GPU PCI address and proximity are saved only when every worker
+and raw sibling PF represented by a retained PF agrees. NIC names are resolved
+by node and PCI; representative RDMA aliases are not reused across workers.
+Collapsed siblings must share a nearest GPU at the same proximity; overlapping
+nearest-GPU ties are compatible. GPU balancing then chooses once per retained
+rail on each node, so sibling planes do not consume extra assignments.
+Only complete relevant PF coverage permits a PIX-based traffic override and
+rail reassignment; physically dual-port BlueField-3 NICs stay north-south.
+Incomplete or conflicting results emit warnings, leave unavailable fields
+unset, and preserve hardware/preset fallback. Presets remain authoritative;
+their GPU index retains a measured PCI address only when all workers confirm it.
+VR NetworkBay rails are finalized afterward.
+
+Collection uses up to four workers, with a 30-second budget per node and one
+bounded GFD lookup per invocation. Source failures do not retry. NIC PF/NUMA
+and netplan reads remain separate in the NIC daemon. Local tests verify source,
+coverage and failure handling; each actual driver/toolkit/image/runtime stack
+still needs live qualification. An accepted topology observation does not
+establish GPU or network deployment readiness.
+
+### VR NetworkBay rails
+
+For platform `vr`, discovery requires eight east-west ASIC NICs in four
+complete NetworkBay pairs on each worker. A compatible NIC Configuration
+Daemon and served `NicDevice` CRD must expose `status.networkBay.asic` and
+`status.networkBay.peerPci`. Each pair must have reciprocal peer PCI addresses
+and one first ASIC (`asic: 1`) and one second ASIC (`asic: 0`).
+Discovery creates missing CRDs but does not upgrade an installed CRD. If an
+existing operator manages `NicDevice`, its owner must update the daemon and
+CRD to versions that publish and retain NetworkBay status before VR discovery.
+
+NetworkBays are numbered 1–4 by the ascending PCI address of their first ASIC.
+Discovery assigns the following zero-based rails:
+
+| Rail | Members |
+| --- | --- |
+| 0 | NetworkBay 1 first ASIC + NetworkBay 2 second ASIC |
+| 1 | NetworkBay 2 first ASIC + NetworkBay 1 second ASIC |
+| 2 | NetworkBay 3 first ASIC + NetworkBay 4 second ASIC |
+| 3 | NetworkBay 4 first ASIC + NetworkBay 3 second ASIC |
+
+The mapping is finalized after GPU topology and preset enrichment and is also
+used by read-only discovery. Existing PF order is preserved; this mapping
+does not require a particular ASIC order within a rail. Missing, malformed or
+incomplete NetworkBay status, or differing mappings among workers in a group,
+stops discovery before inventory is saved. Non-VR rail assignment is unchanged.
+
+With RA2.4/RA3.1 and ConnectX-9, fresh profile resolution defaults to `hwplb`
+and eight planes. Explicit YAML/CLI settings take precedence; an existing-config
+refresh preserves its profile settings as described below.
 
 ## Profile Resolution
 
@@ -162,7 +297,7 @@ l8k discover \
 
 On a fresh run without `--user-config`, the example profile in the installed
 reference configuration is ignored. With `--user-config`, discovery replaces
-only `clusterConfig`. It preserves every other loaded section and value,
+`clusterConfig` and `discoveredSecondaryNetwork`. It preserves every other loaded section and value,
 including explicit `false` values, and then applies explicit CLI overrides.
 Missing profile values are not filled during this refresh; supply them in the
 file or through CLI flags if they are needed.
@@ -185,8 +320,18 @@ balanced machine/GPU prefixes plus a 6-character deterministic hash; unused
 prefix space moves to the longer component. GPU-only labels preserve the
 discovered case and `NVIDIA` segment, using the Kubernetes 63-byte limit and the
 existing 8-character shortening hash. If the machine or GPU type cannot be
-resolved, discovery uses a fallback `group-N` identifier and writes only the
-labels it can construct.
+resolved, discovery preserves the unnamed identifier for a sole source, or uses
+`group-N` for multiple sources, and writes only labels it can construct. Either
+case still requires a proven exact selector.
+
+Before writing labels, discovery checks all proposed source identities and worker
+memberships for collisions. It publishes selectors only after labeling succeeds
+and a fresh list of every Node proves exact membership. Unresolved hardware
+identities require another proven selector, such as the hostname of a singleton;
+a broad PCI-vendor label is insufficient. Failed label writes or stale Launch Kit
+machine/GPU labels on excluded nodes stop discovery. Inspect and correct those
+labels deliberately before retrying; discovery does not remove unrelated labels.
+Completed patches may remain after an error, so retries revalidate live labels.
 
 See [Heterogeneous Clusters](heterogeneous-clusters.md) for group merging and targeted generation.
 
@@ -208,6 +353,11 @@ The top-level profile fabric is defaulted only when every source group has a non
 
 Launch Kit generates networking resources from east-west NICs:
 
+- BlueField-3 NICs whose VPD model identifies two physical ports (`dual-port` or
+  `2-port`) are classified as north-south, including when `NicDevice.status.dpu`
+  is false or their SKU is absent from the built-in DPU list. Multiple PCI
+  functions alone do not establish physical port count; single-port multi-plane
+  SuperNICs continue to use the existing classification rules.
 - A group containing only north-south NICs is omitted from `cluster-config.yaml`.
 - In a mixed group, north-south PFs remain visible in the inventory but are not rendered into networking manifests.
 
@@ -259,7 +409,12 @@ There is no machine-only or any-GPU fallback. If no exact pair matches, discover
 
 ## Preserve Bootstrap Resources
 
-Discovery normally waits up to five minutes for daemon pods. It can continue with the Ready pods if some eligible nodes fail, but it stops if no daemon pod becomes Ready.
+Discovery waits up to five minutes for daemon pods. It can proceed with the Ready
+pods when other daemon pods are on nodes that are not Ready, or when the wait
+timeout expires while the caller's context is still active. If the caller's
+context is cancelled or reaches its deadline first, discovery returns that
+context error instead of continuing with an expired context. Discovery stops if
+no daemon pod becomes Ready.
 
 Keep the namespace when investigating image pulls, scheduling, or daemon startup:
 
@@ -290,7 +445,7 @@ Debug logs include node eligibility, sysfs NIC and BlueField trust probing, mach
 
 If `--save-cluster-config` is omitted, discovery rewrites the `--user-config`
 file or creates `cluster-config.yaml` in the current directory. For a user
-config refresh, only `clusterConfig` and explicit CLI overrides change. Source
+config refresh, only `clusterConfig`, `discoveredSecondaryNetwork`, and explicit CLI overrides change. Source
 comments are retained where possible, and a generated-file banner identifies
 the discovery output.
 
@@ -301,3 +456,18 @@ l8k generate \
   --user-config ./cluster-config.yaml \
   --save-deployment-files ./deployment
 ```
+
+## Platform networking observations
+
+Both ordinary and read-only discovery inspect known API-visible Multus and
+reference CNI plugin installers and save `discoveredSecondaryNetwork`. This
+adds cluster-wide DaemonSet list reads and NCP GETs for candidate controller
+references, without pods/exec or resource mutation. If optional inspection is
+denied or unavailable, hardware inventory is still saved with `unavailable`
+evidence; cancellation remains an error. Fresh and user-config refresh preserve
+desired component policies separately. Auto generation rejects ambiguous or
+unavailable evidence rather than treating failed inspection as permission to
+install. Review [secondary-network ownership](../reference/configuration.md#secondary-network-ownership)
+before selecting explicit managed/external policy. Unsupported or host-only
+installers can remain undetected; Multus detection does not imply plugin-suite
+presence.

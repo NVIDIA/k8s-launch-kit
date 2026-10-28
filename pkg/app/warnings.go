@@ -79,3 +79,13 @@ func warnStorageModules(cfg *config.LaunchKitConfig, _ string, output ui.Output)
 			moduleList, group.Identifier)
 	}
 }
+
+// warnIPoIBHostPrerequisites explains host requirements that offline generation
+// cannot verify. Omitted group interface names are not proof of missing netdevs.
+func warnIPoIBHostPrerequisites(cfg *config.LaunchKitConfig, output ui.Output) {
+	if cfg == nil || cfg.Profile == nil || cfg.Profile.Fabric != "infiniband" ||
+		cfg.Profile.Deployment != "rdma_shared" || cfg.DOCADriver == nil || cfg.DOCADriver.Enable {
+		return
+	}
+	output.Warning("IPoIB with the DOCA driver disabled requires host IPoIB netdevs for the selected PFs and the RDMA shared plugin's /dev/infiniband rdma_cm, umad and uverbs devices. Check owner-managed host provisioning (commonly ib_ipoib, rdma_ucm, ib_umad and ib_uverbs; drivers may be built in). Generated interface names do not establish host readiness; see the IPoIB prerequisites in the profile guide.")
+}

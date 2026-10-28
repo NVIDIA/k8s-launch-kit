@@ -8,6 +8,11 @@ description: "Remove an NVIDIA Network Operator deployment from a Kubernetes clu
 Read `k8s-launch-kit-shared` first for binary discovery, JSON output, and error
 handling.
 
+Component external ownership adds no DaemonSet or host-file deletion. NCP
+removal still tears down its operator-owned children and is not a component
+ownership migration. The existing broad CR deletion boundary can include NADs
+in the selected namespace. See [external networking](../../docs/user/cleanup.md#external-multus-and-cni-plugins).
+
 ## Safety Boundary
 
 Treat cleanup as an irreversible live-cluster mutation. Require explicit user

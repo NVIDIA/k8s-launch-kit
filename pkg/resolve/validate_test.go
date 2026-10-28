@@ -17,6 +17,7 @@
 package resolve
 
 import (
+	"os"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -169,5 +170,23 @@ func TestValidateResolvedConfigRejectsMultiplaneModeWithOnePlane(t *testing.T) {
 	}
 
 	err := ValidateResolvedConfig(cfg)
-	require.ErrorContains(t, err, "--multiplane-mode swplb requires --number-of-planes 2 or 4")
+	require.ErrorContains(t, err, "--multiplane-mode swplb requires --number-of-planes 2, 4 or 8")
+}
+
+func TestValidateResolvedRA31EightPlanes(t *testing.T) {
+	raw, err := os.ReadFile("../config/testdata/dospcx-configmap.yaml")
+	require.NoError(t, err)
+	cfg, err := config.DefaultLaunchKitConfig()
+	require.NoError(t, err)
+	cfg.NetworkOperator.SelectedRelease = "26.10"
+	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: true,
+		SpectrumX: &config.ProfileSpectrumX{Enable: true, SPCXVersion: "RA3.1", MultiplaneMode: "hwplb",
+			NumberOfPlanes: 8, TopologyType: config.SpectrumXTopology2Tier, Profile: string(raw)}}
+	require.NoError(t, config.NormalizeSpectrumXProfileConfig(cfg.Profile.SpectrumX))
+	require.NoError(t, ValidateResolvedConfig(cfg))
+	cfg.Profile.SpectrumX.MultiplaneMode = "none"
+	require.ErrorContains(t, ValidateResolvedConfig(cfg), "requires --number-of-planes 1")
+	cfg.Profile.SpectrumX.MultiplaneMode = "hwplb"
+	cfg.Profile.SpectrumX.NumberOfPlanes = 3
+	require.ErrorContains(t, ValidateResolvedConfig(cfg), "invalid --number-of-planes 3")
 }

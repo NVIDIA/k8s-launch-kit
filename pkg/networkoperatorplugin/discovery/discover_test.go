@@ -17,23 +17,191 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+// The second-ASIC PCI order deliberately differs from first-ASIC order, so
+// sorting NetworkBays by minimum sibling PCI would produce different rails.
+func vrRailTestDevices(node string) []nicop.NicDevice {
+	pairs := [][2]string{
+		{"0000:30:00.0", "0000:04:00.0"},
+		{"0000:40:00.0", "0000:01:00.0"},
+		{"0000:50:00.0", "0000:03:00.0"},
+		{"0000:60:00.0", "0000:02:00.0"},
+	}
+	var devices []nicop.NicDevice
+	for _, pair := range pairs {
+		for i, pci := range pair {
+			devices = append(devices, nicop.NicDevice{
+				ObjectMeta: metav1.ObjectMeta{Name: node + "-" + strings.ReplaceAll(pci, ":", "-"), Namespace: "default"},
+				Status: nicop.NicDeviceStatus{
+					Node: node, Type: "1025", SuperNIC: true,
+					Ports:      []nicop.NicDevicePortSpec{{PCI: pci}},
+					NetworkBay: &nicop.NicDeviceNetworkBayStatus{Asic: 1 - i, PeerPCI: pair[1-i]},
+				},
+			})
+		}
+	}
+	return devices
+}
+
+func vrRailTestGroup(devices []nicop.NicDevice, nodes ...string) config.ClusterConfig {
+	group := config.ClusterConfig{Identifier: "vr-test", MachineType: "VR", WorkerNodes: nodes}
+	for _, device := range devices {
+		for _, port := range device.Status.Ports {
+			rail := 99 // Prior GPU/preset assignments must be replaced.
+			group.PFs = append(group.PFs, config.PFConfig{PciAddress: port.PCI, DeviceID: "1025", Traffic: "east-west", Rail: &rail})
+		}
+	}
+	slices.SortFunc(group.PFs, func(a, b config.PFConfig) int { return strings.Compare(a.PciAddress, b.PciAddress) })
+	return group
+}
+
+func assertVRTestRails(t *testing.T, group config.ClusterConfig) {
+	t.Helper()
+	want := map[string]int{
+		"0000:30:00.0": 0, "0000:01:00.0": 0,
+		"0000:04:00.0": 1, "0000:40:00.0": 1,
+		"0000:50:00.0": 2, "0000:02:00.0": 2,
+		"0000:03:00.0": 3, "0000:60:00.0": 3,
+	}
+	for _, pf := range group.PFs {
+		require.NotNil(t, pf.Rail)
+		assert.Equal(t, want[pf.PciAddress], *pf.Rail, pf.PciAddress)
+	}
+}
+
+func TestAssignVRRailsUsesFirstASICOrderAndPreservesPFOrder(t *testing.T) {
+	devices := vrRailTestDevices("worker-a")
+	groups := []config.ClusterConfig{vrRailTestGroup(devices, "worker-a", "worker-b")}
+	before := slices.Clone(groups[0].PFs)
+	devices = append(devices, vrRailTestDevices("worker-b")...)
+	slices.Reverse(devices) // API list order must not affect the result.
+	require.NoError(t, assignVRRails(groups, devices))
+	assertVRTestRails(t, groups[0])
+	for i := range before {
+		assert.Equal(t, before[i].PciAddress, groups[0].PFs[i].PciAddress)
+	}
+	// In this order, ASIC0 precedes ASIC1 within rail 0. Membership is the
+	// only requested change; discovery must not impose an ASIC-index order.
+	assert.Equal(t, "0000:01:00.0", groups[0].PFs[0].PciAddress)
+}
+
+func TestAssignVRRailsRejectsInvalidTopologyWithoutPartialMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*config.ClusterConfig, []nicop.NicDevice) []nicop.NicDevice
+		want   string
+	}{
+		{"missing status", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[0].Status.NetworkBay = nil
+			return d
+		}, "daemon and installed NicDevice CRD"},
+		{"missing peer", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[1].Status.NetworkBay.PeerPCI = ""
+			return d
+		}, "invalid NetworkBay peer"},
+		{"self peer", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[1].Status.NetworkBay.PeerPCI = d[1].Status.Ports[0].PCI
+			return d
+		}, "distinct east-west"},
+		{"unknown peer", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[1].Status.NetworkBay.PeerPCI = "0000:ff:00.0"
+			return d
+		}, "distinct east-west"},
+		{"nonreciprocal peer", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[0].Status.NetworkBay.PeerPCI = d[3].Status.Ports[0].PCI
+			return d
+		}, "reciprocal"},
+		{"same ASIC", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[0].Status.NetworkBay.Asic = 0
+			return d
+		}, "complementary ASICs"},
+		{"invalid ASIC", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			d[1].Status.NetworkBay.Asic = 2
+			return d
+		}, "invalid NetworkBay ASIC"},
+		{"missing device", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice { return append(d[:3], d[4:]...) }, "no NicDevice status"},
+		{"duplicate device", func(_ *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice { return append(d, d[0]) }, "duplicate NicDevice"},
+		{"no worker", func(g *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice { g.WorkerNodes = nil; return d }, "no worker nodes"},
+		{"partial EW selection", func(g *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			g.PFs[0].Traffic = "north-south"
+			return d
+		}, "expected eight east-west ASIC NICs"},
+		{"malformed PCI", func(g *config.ClusterConfig, d []nicop.NicDevice) []nicop.NicDevice {
+			g.PFs[0].PciAddress = "bad"
+			return d
+		}, "invalid PCI address"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			good := vrRailTestDevices("good-worker")
+			bad := vrRailTestDevices("bad-worker")
+			groups := []config.ClusterConfig{vrRailTestGroup(good, "good-worker"), vrRailTestGroup(bad, "bad-worker")}
+			bad = tt.mutate(&groups[1], bad)
+			err := assignVRRails(groups, append(good, bad...))
+			require.ErrorContains(t, err, tt.want)
+			for _, group := range groups {
+				for _, pf := range group.PFs {
+					assert.Equal(t, 99, *pf.Rail, "neither the valid nor invalid group may be partially updated")
+				}
+			}
+		})
+	}
+}
+
+func TestAssignVRRailsRejectsDifferentWorkerLayouts(t *testing.T) {
+	first, second := vrRailTestDevices("worker-a"), vrRailTestDevices("worker-b")
+	// Exchange the second ASIC between NetworkBay 1 and 3 on worker-b, keeping
+	// each physical pair reciprocal and otherwise valid.
+	second[0].Status.NetworkBay.PeerPCI, second[4].Status.NetworkBay.PeerPCI = second[4].Status.NetworkBay.PeerPCI, second[0].Status.NetworkBay.PeerPCI
+	second[1].Status.NetworkBay.PeerPCI, second[5].Status.NetworkBay.PeerPCI = second[5].Status.NetworkBay.PeerPCI, second[1].Status.NetworkBay.PeerPCI
+	groups := []config.ClusterConfig{vrRailTestGroup(first, "worker-a", "worker-b")}
+	require.ErrorContains(t, assignVRRails(groups, append(first, second...)), "different NetworkBay rail layout")
+	for _, pf := range groups[0].PFs {
+		assert.Equal(t, 99, *pf.Rail)
+	}
+}
+
+func TestAssignVRRailsHandlesSplitFunctionsAndLeavesOtherTrafficUntouched(t *testing.T) {
+	devices := vrRailTestDevices("worker-a")
+	devices[0].Status.Ports = append(devices[0].Status.Ports, nicop.NicDevicePortSpec{PCI: "0000:30:00.1"})
+	group := vrRailTestGroup(devices, "worker-a")
+	devices = append(devices, nicop.NicDevice{Status: nicop.NicDeviceStatus{Node: "worker-a", Ports: []nicop.NicDevicePortSpec{{PCI: "unavailable"}}}})
+	group.PFs = append(group.PFs, config.PFConfig{PciAddress: "0000:70:00.0", Traffic: "north-south", Rail: nil})
+	other := config.ClusterConfig{MachineType: "B300", PFs: []config.PFConfig{{PciAddress: "unknown", Traffic: "east-west", Rail: nil}}}
+	groups := []config.ClusterConfig{group, other}
+	require.NoError(t, assignVRRails(groups, devices))
+	for _, pf := range groups[0].PFs {
+		if strings.HasPrefix(pf.PciAddress, "0000:30:00.") {
+			require.NotNil(t, pf.Rail)
+			assert.Zero(t, *pf.Rail)
+		}
+	}
+	assert.Equal(t, group.PFs[len(group.PFs)-1], groups[0].PFs[len(group.PFs)-1])
+	assert.Equal(t, other, groups[1])
+}
 
 func TestGPUDirectAvailableOnAllGroupNodes(t *testing.T) {
 	groups := []config.ClusterConfig{
@@ -440,7 +608,7 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
 			},
 			mlxprivhostRun: "printf 'level: restricted\\n'",
-			want:           "restricted",
+			want:           "restricted-pci 0000:01:00.0\nrestricted",
 		},
 		{
 			name: "privileged BF3",
@@ -467,7 +635,7 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 				{name: "0000:04:00.0", vendorID: "0x15b3", deviceID: "0xa2df"},
 			},
 			mlxprivhostRun: "printf 'level: restricted\\n'",
-			want:           "restricted",
+			want:           "restricted-pci 0000:01:00.0\nrestricted-pci 0000:02:00.0\nrestricted-pci 0000:03:00.0\nrestricted-pci 0000:04:00.0\nrestricted",
 		},
 		{
 			name: "restricted BF3 plus regular NIC",
@@ -476,6 +644,22 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 				{name: "0000:02:00.0", vendorID: "0x15b3", deviceID: "0x1023"},
 			},
 			mlxprivhostRun: "printf 'level: restricted\\n'",
+			want:           "restricted-pci 0000:01:00.0\npresent",
+		},
+		{
+			name: "regular NIC before restricted BF3",
+			devices: []fakePCIDevice{
+				{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0x1023"},
+				{name: "0000:02:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"},
+				{name: "0000:02:00.1", vendorID: "0x15b3", deviceID: "0xa2dc"},
+			},
+			mlxprivhostRun: "printf 'level: restricted\\n'",
+			want:           "present\nrestricted-pci 0000:02:00.0\nrestricted-pci 0000:02:00.1",
+		},
+		{
+			name:           "unrecognized trust output remains discoverable",
+			devices:        []fakePCIDevice{{name: "0000:01:00.0", vendorID: "0x15b3", deviceID: "0xa2dc"}},
+			mlxprivhostRun: "printf 'unknown\\n'",
 			want:           "present",
 		},
 	}
@@ -496,10 +680,35 @@ func TestSysfsMellanoxNICPresentCmd(t *testing.T) {
 
 			//nolint:gosec // fixed test command and script; temp paths are positional parameters
 			cmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd,
-				"nic-probe", pciRoot, mlxprivhost)
+				"nic-probe", pciRoot, mlxprivhost, "report-restricted")
 			output, err := cmd.CombinedOutput()
 			require.NoError(t, err, "probe output: %s", output)
 			assert.Equal(t, tt.want, strings.TrimSpace(string(output)))
+			var messages bytes.Buffer
+			uiOutput := ui.NewWithWriter(&messages)
+			count := reportRestrictedNICs(string(output), "worker-0", uiOutput)
+			assert.Equal(t, strings.Count(tt.want, "restricted-pci "), count)
+			for _, line := range strings.Split(tt.want, "\n") {
+				if pci, ok := strings.CutPrefix(line, "restricted-pci "); ok {
+					assert.Contains(t, messages.String(), "Excluded host-restricted BlueField "+pci+" on worker-0; not configurable from host")
+				}
+			}
+			if count == 0 {
+				assert.Empty(t, messages.String())
+			}
+			wantEligibility := mellanoxNICProbeNone
+			if strings.Contains(tt.want, "present") {
+				wantEligibility = mellanoxNICProbePresent
+			} else if strings.Contains(tt.want, "restricted") {
+				wantEligibility = mellanoxNICProbeRestricted
+			}
+			assert.Equal(t, wantEligibility, parseMellanoxNICProbeResult(string(output)))
+			// Read-only eligibility probes keep their original marker-only protocol.
+			//nolint:gosec // fixed test command and positional temporary paths
+			eligibilityCmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", pciRoot, mlxprivhost)
+			eligibilityOutput, err := eligibilityCmd.CombinedOutput()
+			require.NoError(t, err)
+			assert.Equal(t, string(wantEligibility), strings.TrimSpace(string(eligibilityOutput)))
 		})
 	}
 }
@@ -563,6 +772,23 @@ func TestSysfsMellanoxNICPresentCmdFailsOnIncompleteInspection(t *testing.T) {
 		require.NoError(t, err, "probe output: %s", output)
 		assert.Equal(t, "present", strings.TrimSpace(string(output)))
 	})
+}
+
+func TestRestrictedNICScanPreservesPresenceBeforeReadFailure(t *testing.T) {
+	pciRoot := t.TempDir()
+	for _, address := range []string{"0000:01:00.0", "0000:02:00.0"} {
+		dir := filepath.Join(pciRoot, address)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "vendor"), []byte("0x15b3"), 0o644))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(pciRoot, "0000:01:00.0", "device"), []byte("0x1023"), 0o644))
+	// The later device is deliberately missing its device attribute.
+	//nolint:gosec // fixed test command and positional temporary path
+	cmd := exec.Command("/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", pciRoot, "mlxprivhost", "report-restricted")
+	output, err := cmd.CombinedOutput()
+	require.Error(t, err)
+	assert.Contains(t, string(output), "cannot read PCI device attribute")
+	assert.Equal(t, mellanoxNICProbePresent, parseMellanoxNICProbeResult(string(output)))
 }
 
 func TestFindDaemonPod(t *testing.T) {
@@ -760,5 +986,45 @@ func TestNormalizeLinkLayer(t *testing.T) {
 	}
 	for in, want := range cases {
 		assert.Equalf(t, want, normalizeLinkLayer(in), "normalizeLinkLayer(%q)", in)
+	}
+}
+
+func TestFilterNodesWithNICsReportsRestrictions(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		output         string
+		err            error
+		wantPresent    bool
+		wantRestricted bool
+		wantWarning    bool
+	}{
+		{"mixed", "present\nrestricted-pci 0000:02:00.0\n", nil, true, false, false},
+		{"restricted only", "restricted-pci 0000:02:00.0\nrestricted\n", nil, false, true, false},
+		{"no NIC", "", nil, false, false, false},
+		{"inspection failure", "", errors.New("read failed"), false, false, false},
+		{"failure after restricted NIC", "restricted-pci 0000:02:00.0\n", errors.New("read failed"), false, false, false},
+		{"failure after usable NIC", "present\nrestricted-pci 0000:02:00.0\n", errors.New("read failed"), true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var messages bytes.Buffer
+			pods := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "daemon"}, Spec: corev1.PodSpec{NodeName: "worker-0", Containers: []corev1.Container{{Name: "daemon"}}}}}
+			present, restricted := filterNodesWithNICs(context.Background(), &rest.Config{}, "bootstrap", []string{"worker-0"}, pods, ui.NewWithWriter(&messages),
+				func(_ context.Context, _ *rest.Config, namespace, pod, container string, command []string) (string, error) {
+					assert.Equal(t, "bootstrap", namespace)
+					assert.Equal(t, "daemon", pod)
+					assert.Equal(t, "daemon", container)
+					assert.Equal(t, []string{"/bin/sh", "-c", sysfsMellanoxNICPresentCmd, "nic-probe", "", "", "report-restricted"}, command)
+					return tc.output, tc.err
+				})
+			assert.Equal(t, tc.wantPresent, slices.Contains(present, "worker-0"))
+			assert.Equal(t, tc.wantRestricted, slices.Contains(restricted, "worker-0"))
+			assert.Equal(t, tc.wantWarning, strings.Contains(messages.String(), "reporting may be incomplete"))
+			if strings.Contains(tc.output, "restricted-pci") {
+				assert.Contains(t, messages.String(), "Excluded host-restricted BlueField 0000:02:00.0 on worker-0")
+				assert.Contains(t, messages.String(), "Excluded 1 host-restricted BlueField PCI function(s)")
+			} else {
+				assert.NotContains(t, messages.String(), "Excluded")
+			}
+		})
 	}
 }

@@ -285,6 +285,13 @@ Only east-west PFs produce rails and workload networking resources. North-south 
   </div>
 </figure>
 
+Hardware policies and IPPools preserve their selected source identifiers in an
+annotation. Deployment checks each resource selector against the exact union of
+those sources' `workerNodes`; validation repeats this against live selectors.
+This also detects stale shared GPU labels that include another rail-count bucket
+or a source excluded by `--groups`. Keep source IDs unique and retain the resolved
+sidecar; see [hardware target membership](../advanced/generation.md#hardware-target-membership).
+
 ## Operational Guidance
 
 - Re-run discovery after adding a new server model or changing NIC mode.

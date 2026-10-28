@@ -208,6 +208,7 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	// Store found profiles for deploy phase
 	l.foundProfiles = foundProfiles
 
+	warnIPoIBHostPrerequisites(fullConfig, l.ui)
 	warnNvIpamBlockSize(fullConfig, l.ui)
 	warnThirdPartyRDMAModules(fullConfig, "generate", l.ui)
 	warnStorageModules(fullConfig, "generate", l.ui)

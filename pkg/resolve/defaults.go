@@ -49,12 +49,14 @@ func (d DefaultDecision) String() string {
 //	                       H100/H200/B200/GB200 → "none"
 //	                       B300/GB300 → "swplb" (the GA default;
 //	                       hwplb remains an explicit opt-in)
+//	                       VR with ConnectX-9 → "hwplb" on doSPCX RAs.
 //	                       Unknown platforms fall back to the NIC family.
 //	                       Skipped+warned when groups need different defaults.
 //	--number-of-planes    ← per platform + deviceID (only when
 //	                       --spectrum-x): single-plane platforms → 1;
 //	                       B300/GB300 → 2 (pass 4 explicitly for a
-//	                       quad-plane B300 topology); CX9 fallback → 4.
+//	                       quad-plane B300 topology); VR with CX9 → 8 on
+//	                       doSPCX RAs; CX9 fallback → 4.
 //	--network-operator-release ← `config.DefaultSPCXReleaseFor(SPCXVersion)`
 //	                            (only when --spectrum-x is set).
 //
@@ -219,7 +221,13 @@ func applySpectrumXHardwareDefaults(
 			if opts.SPCXVersion != "" {
 				effectiveRA = opts.SPCXVersion
 			}
-			mode, planes, ok, reason = spectrumXDefaultsForHardware(cfg.ClusterConfig, effectiveRA == "RA2.4")
+			mode, planes, ok, reason = spectrumXDefaultsForHardware(cfg.ClusterConfig, config.SpectrumXUsesDospcx(effectiveRA))
+			// The VR eight-plane default describes HWPLB. Preserve the CX9
+			// four-plane fallback when the user explicitly selects SWPLB.
+			if ok && mode == "hwplb" && planes == 8 && effectiveMode == "swplb" {
+				planes = 4
+				reason = "ConnectX-9 four-plane fallback for explicit SWPLB"
+			}
 		}
 
 		modeReason := reason
@@ -331,7 +339,7 @@ func dominantLinkType(groups []config.ClusterConfig) (linkType string, ok bool, 
 // systems. Platform does not distinguish swplb from hwplb: both are available
 // on B300 and GB300, so l8k defaults to the GA swplb path and requires an
 // explicit override for tech-preview hwplb.
-func spectrumXDefaultsForHardware(groups []config.ClusterConfig, ra24 ...bool) (mode string, planes int, ok bool, reason string) {
+func spectrumXDefaultsForHardware(groups []config.ClusterConfig, dospcx ...bool) (mode string, planes int, ok bool, reason string) {
 	if len(groups) == 0 {
 		return "", 0, false, "no clusterConfig groups"
 	}
@@ -355,8 +363,8 @@ func spectrumXDefaultsForHardware(groups []config.ClusterConfig, ra24 ...bool) (
 			return "", 0, false, idErr.Error()
 		}
 		platform := spectrumXGPUPlatform(g)
-		if len(ra24) > 0 && ra24[0] {
-			platform = strings.ToUpper(config.SpectrumXPlatformForGPUProduct(g.GPUType))
+		if len(dospcx) > 0 && dospcx[0] {
+			platform = strings.ToUpper(config.SpectrumXPlatformForGroup(g))
 		}
 		groupMode, groupPlanes, groupReason := spectrumXDefaultForDeviceAndPlatform(deviceID, platform)
 		if groupMode == "" {
@@ -395,6 +403,9 @@ func spectrumXDefaultForDeviceAndPlatform(deviceID, platform string) (mode strin
 			return "swplb", 2, "ConnectX-8 (deviceID 1023) fallback; SWPLB is the GA default"
 		}
 	case "1025":
+		if platform == "VR" {
+			return "hwplb", 8, "VR eight-plane platform (ConnectX-9 deviceID 1025)"
+		}
 		return "hwplb", 4, "ConnectX-9 (deviceID 1025)"
 	case "a2dc":
 		return "none", 1, "BF3 SuperNIC (deviceID a2dc)"

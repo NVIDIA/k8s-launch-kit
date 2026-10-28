@@ -5,9 +5,11 @@
 package resolve
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/configinput"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,6 +141,8 @@ func TestApplyHardwareDefaultsUsesEffectiveRAForRTX(t *testing.T) {
 		planes                          int
 	}{
 		{"RA2.4 YAML", "RA2.4", "", "none", 1},
+		{"RA3.1 YAML", "RA3.1", "", "none", 1},
+		{"CLI overrides RA2.3 with RA3.1", "RA2.3", "RA3.1", "none", 1},
 		{"RA2.3 YAML", "RA2.3", "", "swplb", 2},
 		{"CLI overrides RA2.4 with RA2.3", "RA2.4", "RA2.3", "swplb", 2},
 		{"CLI overrides RA2.3 with RA2.4", "RA2.3", "RA2.4", "none", 1},
@@ -196,6 +200,109 @@ func TestSpectrumXDefaultsForHardwareUsesPlatformAndNIC(t *testing.T) {
 			assert.Contains(t, config.SupportedMultiplaneModes, mode)
 			assert.NotEmpty(t, reason)
 		})
+	}
+}
+
+func TestApplyHardwareDefaultsUsesEffectiveRAForVR(t *testing.T) {
+	for _, tc := range []struct {
+		name, machineType, configuredRA, cliRA string
+		planes                                 int
+	}{
+		{"RA3.1 without GPU product", "DGX-VR", "RA3.1", "", 8},
+		{"RA2.4 without GPU product", "DGX-VR", "RA2.4", "", 8},
+		{"case insensitive machine type", "dgx-vr", "RA3.1", "", 8},
+		{"CLI selects doSPCX", "DGX-VR", "RA2.3", "RA3.1", 8},
+		{"CLI selects legacy RA", "DGX-VR", "RA3.1", "RA2.3", 4},
+		{"legacy RA preserves CX9 fallback", "DGX-VR", "RA2.3", "", 4},
+		{"non-VR CX9 preserves fallback", "HGX", "RA3.1", "", 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.LaunchKitConfig{
+				Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+					Enable: true, SPCXVersion: tc.configuredRA,
+					MultiplaneMode: "", NumberOfPlanes: 0,
+				}},
+				ClusterConfig: []config.ClusterConfig{
+					spectrumXTestGroup("vr", tc.machineType, "", "1025"),
+				},
+			}
+			ApplyHardwareDefaults(cfg, options.Options{SpectrumX: true, SPCXVersion: tc.cliRA})
+			assert.Equal(t, "hwplb", cfg.Profile.SpectrumX.MultiplaneMode)
+			assert.Equal(t, tc.planes, cfg.Profile.SpectrumX.NumberOfPlanes)
+			assert.Equal(t, tc.configuredRA, cfg.Profile.SpectrumX.SPCXVersion,
+				"defaults must not apply the CLI override")
+		})
+	}
+}
+
+func TestResolveVRHardwareDefaultsPreservesExplicitInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings, wantMode string
+		cli                      options.Options
+		wantPlanes               int
+	}{
+		{name: "omitted", settings: "", wantMode: "hwplb", wantPlanes: 8},
+		{name: "null", settings: "    multiplaneMode: null\n    numberOfPlanes: null\n", wantMode: "hwplb", wantPlanes: 8},
+		{name: "explicit YAML", settings: "    multiplaneMode: swplb\n    numberOfPlanes: 2\n", wantMode: "swplb", wantPlanes: 2},
+		{name: "explicit YAML zero values", settings: "    multiplaneMode: ''\n    numberOfPlanes: 0\n", wantMode: "", wantPlanes: 0},
+		{name: "explicit single plane", settings: "    numberOfPlanes: 1\n", wantMode: "none", wantPlanes: 1},
+		{name: "YAML SWPLB retains four-plane fallback", settings: "    multiplaneMode: swplb\n", wantMode: "swplb", wantPlanes: 4},
+		{name: "CLI SWPLB retains four-plane fallback", settings: "",
+			cli: options.Options{MultiplaneMode: "swplb"}, wantMode: "swplb", wantPlanes: 4},
+		{name: "explicit HWPLB defaults to eight planes", settings: "    multiplaneMode: hwplb\n", wantMode: "hwplb", wantPlanes: 8},
+		{name: "explicit SWPLB plane count survives", settings: "    multiplaneMode: swplb\n    numberOfPlanes: 8\n", wantMode: "swplb", wantPlanes: 8},
+		{name: "CLI overrides YAML", settings: "    multiplaneMode: hwplb\n    numberOfPlanes: 8\n",
+			cli: options.Options{MultiplaneMode: "swplb", NumberOfPlanes: 2}, wantMode: "swplb", wantPlanes: 2},
+		{name: "CLI zero values", settings: "",
+			cli: options.Options{ConfigInputs: configinput.Values{Overrides: []configinput.Override{
+				{Flag: "multiplane-mode", Path: "profile.spectrumX.multiplaneMode", Value: ""},
+				{Flag: "number-of-planes", Path: "profile.spectrumX.numberOfPlanes", Value: 0},
+			}}}, wantMode: "", wantPlanes: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input, err := config.DecodeInput([]byte(fmt.Sprintf(`profile:
+  spectrumX:
+    enable: true
+    spcxVersion: RA3.1
+%s`, tc.settings)), "user.yaml")
+			require.NoError(t, err)
+			input.Config.ClusterConfig = []config.ClusterConfig{
+				spectrumXTestGroup("vr", "DGX-VR", "", "1025"),
+			}
+			defaults, err := config.DecodeInput([]byte("{}"), "defaults.yaml")
+			require.NoError(t, err)
+			original := *input.Config.Profile.SpectrumX
+
+			result, err := Resolve(Request{
+				Input: input, Defaults: defaults, Options: tc.cli,
+				ApplyHardwareDefaults: true, ValidateReady: false,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMode, result.Config.Profile.SpectrumX.MultiplaneMode)
+			assert.Equal(t, tc.wantPlanes, result.Config.Profile.SpectrumX.NumberOfPlanes)
+			assert.Equal(t, original, *input.Config.Profile.SpectrumX, "resolution must preserve caller input")
+		})
+	}
+}
+
+func TestApplyHardwareDefaultsDoesNotForceMixedVRAndNonVRDefaults(t *testing.T) {
+	cfg := &config.LaunchKitConfig{
+		Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{
+			Enable: true, SPCXVersion: "RA3.1", MultiplaneMode: "", NumberOfPlanes: 0,
+		}},
+		ClusterConfig: []config.ClusterConfig{
+			spectrumXTestGroup("vr", "DGX-VR", "", "1025"),
+			spectrumXTestGroup("other", "HGX", "", "1025"),
+		},
+	}
+
+	decisions := ApplyHardwareDefaults(cfg, options.Options{})
+
+	assert.Empty(t, cfg.Profile.SpectrumX.MultiplaneMode)
+	assert.Zero(t, cfg.Profile.SpectrumX.NumberOfPlanes)
+	for _, decision := range decisions {
+		assert.NotEqual(t, "--multiplane-mode", decision.Flag)
+		assert.NotEqual(t, "--number-of-planes", decision.Flag)
 	}
 }
 

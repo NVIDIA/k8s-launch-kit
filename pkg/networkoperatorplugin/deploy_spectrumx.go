@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
+
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,7 +35,7 @@ func validateSpectrumXDeploymentAPI(ctx context.Context, kubeClient client.Clien
 		if err != nil {
 			return fmt.Errorf("inspect %s Spectrum-X platformType: %w", obj.GetName(), err)
 		}
-		if ra != "RA2.4" && !hasPlatform {
+		if !config.SpectrumXUsesDospcx(ra) && !hasPlatform {
 			continue
 		}
 		version := obj.GroupVersionKind().Version
@@ -45,11 +47,11 @@ func validateSpectrumXDeploymentAPI(ctx context.Context, kubeClient client.Clien
 		return nil
 	}
 	if kubeClient == nil {
-		return fmt.Errorf("a Kubernetes client is required to verify the RA2.4 NIC Configuration Operator API")
+		return fmt.Errorf("a Kubernetes client is required to verify the RA2.4/RA3.1 NIC Configuration Operator API")
 	}
 	crd := &apiextv1.CustomResourceDefinition{}
 	if err := kubeClient.Get(ctx, client.ObjectKey{Name: spectrumXTemplateCRD}, crd); err != nil {
-		return fmt.Errorf("cannot verify RA2.4 support in CRD %s: %w", spectrumXTemplateCRD, err)
+		return fmt.Errorf("cannot verify RA2.4/RA3.1 support in CRD %s: %w", spectrumXTemplateCRD, err)
 	}
 	for _, requiredVersion := range versions {
 		supported := false
@@ -65,7 +67,7 @@ func validateSpectrumXDeploymentAPI(ctx context.Context, kubeClient client.Clien
 			break
 		}
 		if !supported {
-			return fmt.Errorf("installed NIC Configuration Operator CRD %s does not serve %s with string field spec.template.spectrumXOptimized.platformType; RA2.4 requires a compatible operator implementation and matching CRDs", spectrumXTemplateCRD, requiredVersion)
+			return fmt.Errorf("installed NIC Configuration Operator CRD %s does not serve %s with string field spec.template.spectrumXOptimized.platformType; RA2.4/RA3.1 requires a compatible operator implementation and matching CRDs", spectrumXTemplateCRD, requiredVersion)
 		}
 	}
 	return nil

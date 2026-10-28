@@ -430,6 +430,12 @@ func renderForScope(
 		log.Log.V(1).Info("template kind unrecognized; using legacy render path",
 			"template", templatePath, "err", kerr.Error())
 	}
+	if kind == "SriovNetworkNodePolicy" || kind == "IPPool" {
+		if err := config.ValidateClusterConfigIdentifiers(cfg.ClusterConfig); err != nil {
+			return nil, err
+		}
+	}
+
 	scope := ScopeForKind(kind)
 	if cfg.Flavor == config.FlavorOCP {
 		if kind == "SriovNetworkPoolConfig" {
@@ -486,6 +492,9 @@ func renderForScope(
 				if err != nil {
 					return nil, err
 				}
+				if err := annotateTargetSources(rendered, plan.Sources, kind, cfg); err != nil {
+					return nil, err
+				}
 				merge(suffixFilenamesWithNamespace(rendered, ns, multiNS))
 			}
 		}
@@ -499,6 +508,9 @@ func renderForScope(
 					if err != nil {
 						return nil, err
 					}
+					if err := annotateTargetSources(rendered, []config.ClusterConfig{src}, kind, cfg); err != nil {
+						return nil, err
+					}
 					merge(rendered)
 				}
 			} else {
@@ -507,12 +519,16 @@ func renderForScope(
 				if err != nil {
 					return nil, err
 				}
+				if err := annotateTargetSources(rendered, plan.Sources, kind, cfg); err != nil {
+					return nil, err
+				}
 				merge(rendered)
 			}
 		}
 
 	case ScopePerSource:
 		var netplanManagedGroups []config.ClusterConfig
+		var netplanUnknownGroups []config.ClusterConfig
 		for i, plan := range plans {
 			for _, src := range plan.Sources {
 				renderCfg := withClusterConfig(cfg, []config.ClusterConfig{src}, subnetsAt(planSubnets, i))
@@ -527,13 +543,20 @@ func renderForScope(
 						}
 					}
 				}
-				// Check the rendered result rather than only the config switch:
-				// non-Spectrum-X templates can render empty after the single-group
-				// fallback disables interface naming, while Spectrum-X templates
-				// emit this CR independently of that switch. This is therefore the
-				// exact boundary where NicInterfaceNameTemplate is actually used.
-				if kind == "NicInterfaceNameTemplate" && len(rendered) > 0 && src.NetplanManaged {
-					netplanManagedGroups = append(netplanManagedGroups, src)
+				if kind == "NicInterfaceNameTemplate" && len(rendered) > 0 {
+					switch {
+					case src.NetplanManaged:
+						netplanManagedGroups = append(netplanManagedGroups, src)
+					case src.NetplanManagementUnknown:
+						netplanUnknownGroups = append(netplanUnknownGroups, src)
+					case !isSpectrumX(cfg):
+						if err := validateInterfaceNamingLayout(src, rendered); err != nil {
+							return nil, err
+						}
+					}
+				}
+				if err := annotateTargetSources(rendered, []config.ClusterConfig{src}, kind, cfg); err != nil {
+					return nil, err
 				}
 				merge(rendered)
 			}
@@ -541,9 +564,29 @@ func renderForScope(
 		if len(netplanManagedGroups) > 0 {
 			return nil, newNetplanInterfaceNameConflictError(netplanManagedGroups)
 		}
+		if len(netplanUnknownGroups) > 0 {
+			return nil, newNetplanInterfaceNameUnknownError(netplanUnknownGroups)
+		}
 	}
 
 	return results, nil
+}
+
+func newNetplanInterfaceNameUnknownError(groups []config.ClusterConfig) error {
+	labels := make([]string, 0, len(groups))
+	for _, group := range groups {
+		labels = append(labels, templateGroupLabel(group))
+	}
+	slices.Sort(labels)
+
+	return apperrors.NewValidationError(
+		fmt.Sprintf(
+			"cannot generate NicInterfaceNameTemplate: netplan management could not be verified for NICs being configured for %s",
+			strings.Join(labels, ", "),
+		),
+		nil,
+		"Resolve the netplan discovery warning, re-run 'l8k discover', then retry 'l8k generate'.",
+	)
 }
 
 func newNetplanInterfaceNameConflictError(groups []config.ClusterConfig) error {
