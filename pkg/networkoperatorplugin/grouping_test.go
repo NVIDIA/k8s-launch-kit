@@ -149,10 +149,11 @@ func writeSpectrumXTopology(t *testing.T, cfg *config.LaunchKitConfig, planes in
 							Node:      workerNode,
 							Interface: fmt.Sprintf("eth_p%d_r%d", plane, rail),
 							Attrs: map[string]any{
-								"role": "host",
-								"rail": rail,
-								"pod":  0,
-								"su":   groupIdx,
+								"role":       "host",
+								"host_index": nodeIdx,
+								"rail":       rail,
+								"pod":        0,
+								"su":         groupIdx,
 							},
 						},
 					})

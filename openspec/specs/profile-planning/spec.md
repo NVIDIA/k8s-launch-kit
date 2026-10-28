@@ -136,6 +136,21 @@ VR with ConnectX-9 SHALL default to HWPLB with eight planes for RA2.4/RA3.1,
 preserving explicit YAML/CLI values. An explicit SWPLB mode with no plane count
 SHALL retain the CX9 four-plane fallback; defaults do not qualify a fabric recipe.
 
+#### Scenario: VR dual-NIC endpoint consistency
+
+- **WHEN** selected VR sources have four dual-NIC rails and a complete IPv4 eight-plane HWPLB topology
+- **THEN** naming preserves four logical rails, while rail topology, CIDRPools and workload attachments expose eight per-NIC endpoints; each endpoint selects its four PFs and one VF, and DRA shares one GPU claim between the two endpoints in a logical rail.
+
+#### Scenario: VR address coordinates
+
+- **WHEN** VR topology provides explicit host indices and all eight planes of each rail
+- **THEN** generation allocates a distinct NIC-index-aware /31 per NIC per worker with matching /11 and /8 routes; missing planes, conflicting coordinates, duplicated switch ports, and unsupported address modes are rejected before output replacement.
+
+#### Scenario: Stale VR rail inventory
+
+- **WHEN** selected RA2.4/RA3.1 VR inventory does not contain four dense rails with two physical NICs per rail
+- **THEN** generation rejects the inventory and requests NetworkBay discovery instead of inferring pairs from PCI order.
+
 #### Scenario: Unresolved discovery and generation
 
 - **WHEN** a discovered GPU product has no unambiguous supported platform substring

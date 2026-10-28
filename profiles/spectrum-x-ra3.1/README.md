@@ -34,12 +34,21 @@ sources must share that layout. This excludes the current
 Discovery refresh retains explicit software-plane assignments only for verified
 unchanged worker membership and rail hardware; otherwise it drops them and warns.
 
-VR with ConnectX-9 defaults to HWPLB and eight planes, preserving explicit
-YAML/CLI values. Explicit SWPLB with an omitted plane count retains the CX9
-four-plane fallback; this does not qualify that recipe.
-[VR discovery](../../docs/user/discovery.md#vr-networkbay-rails) requires four
-complete NetworkBay pairs and crosses opposite ASICs between adjacent NetworkBays,
-numbered by ascending first-ASIC PCI. Two NICs per rail produce `pfsPerNic: 4`
-and eight PF names; master PCI addresses retain input order without an imposed
-ASIC order. NCO and the supplied doSPCX bundle must support this layout.
-Generation alone does not qualify runtime support.
+VR generation supports IPv4 HWPLB with eight planes on four dual-NIC rails.
+It emits four per-rail naming templates (`pfsPerNic: 4`), eight per-NIC
+`railRnicN` topology entries and CIDRPools, and eight workload attachments.
+Each NIC endpoint has four PFs, one schedulable VF and its own /31. DRA uses
+one claim per logical rail with one GPU and two VF requests. NIC input order
+is preserved; it must agree with the physical switch topology. RDMA names
+are `roce_rR_n0`/`roce_rR_n1`; custom RDMA prefixes require `%nic_id%` and no
+plane placeholder. Compatible NCO must support disjoint PCI naming templates.
+Reference topology JSON must include all eight planes per rail and explicit
+zero-based host `attributes.host_index`; AIR uses its parsed host ordinal.
+VR IPv4 defaults to site-zero `240.0.0.0/8`, with NIC(1), rail(2), POD(5),
+SU(7), host(8), peer(1) bits after the first octet. Eight-plane POD is always
+zero and host index is at most 251. Pools are per NIC/rail /11, allocations
+are /31 with even host and odd gateway, and routes cover /11 and /8.
+IPv6, non-HWPLB VR, incomplete topology, and extra software-plane offsets
+are rejected. Generation does not qualify runtime support or configure switches.
+
+See [VR generation](../../docs/user/spectrum-x.md#vr-dual-nic-rails) for topology input and migration requirements.

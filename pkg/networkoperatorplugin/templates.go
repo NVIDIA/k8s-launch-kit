@@ -40,9 +40,14 @@ import (
 
 // templateFuncs provides helper functions for Go templates
 var templateFuncs = template.FuncMap{
-	"add": func(a, b int) int { return a + b },
-	"sub": func(a, b int) int { return a - b },
-	"gt":  func(a, b int) bool { return a > b },
+	"spectrumXEndpoints":    spectrumXEndpoints,
+	"spectrumXClaims":       spectrumXClaims,
+	"spectrumXPlatform":     config.SpectrumXPlatformForGroup,
+	"spectrumXRailPrefix":   spectrumXRailPrefix,
+	"spectrumXVRRdmaPrefix": spectrumXVRRdmaPrefix,
+	"add":                   func(a, b int) int { return a + b },
+	"sub":                   func(a, b int) int { return a - b },
+	"gt":                    func(a, b int) bool { return a > b },
 	"untilStep": func(start, stop, step int) []int {
 		result := []int{}
 		for i := start; i < stop; i += step {
