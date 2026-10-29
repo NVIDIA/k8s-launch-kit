@@ -215,6 +215,12 @@ a coordinated handoff and must not be separated. The generated
 `MaintenanceOperatorConfig` gets the global limits from the config's
 `maintenance` section.
 
+Numeric `maintenance.maxUnavailable` values render as unquoted integers across
+profiles; percentage values remain strings. Helm values retain the special
+string `"0"` because the upstream chart would omit numeric zero. The chart renders
+that value as integer `0` in the final `MaintenanceOperatorConfig`; OpenShift
+CRs and legacy SR-IOV pool configs render integer `0` directly.
+
 Generated values do not add
 `network.nvidia.com/operator.nic-configuration.wait` to the SR-IOV config
 daemon node selector. The daemon keeps the Network Operator chart's default

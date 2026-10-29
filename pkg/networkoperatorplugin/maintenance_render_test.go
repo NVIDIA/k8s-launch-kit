@@ -183,7 +183,7 @@ func TestMaintenanceRequestorModeProfileMatrix(t *testing.T) {
 				require.Equal(t, map[string]any{
 					"deploy":                        true,
 					"maxParallelOperations":         "4",
-					"maxUnavailable":                "4",
+					"maxUnavailable":                float64(4),
 					"maxNodeMaintenanceTimeSeconds": "3600",
 				}, operatorConfig)
 			})
@@ -377,6 +377,60 @@ func TestSriovAdmissionControllerValues(t *testing.T) {
 				require.Equal(t, true, operatorConfig["deploy"])
 				require.NotContains(t, operatorConfig, "enableInjector", "CR fields are not chart values")
 				require.NotContains(t, operatorConfig, "enableOperatorWebhook", "CR fields are not chart values")
+			})
+		}
+	}
+}
+
+// Check decoded scalar types, not just YAML text: numeric strings select the
+// percentage branch of Kubernetes IntOrString consumers.
+func TestMaxUnavailableScalarTypesAcrossProfiles(t *testing.T) {
+	profilesOnDisk, err := filepath.Glob(filepath.Join("..", "..", "profiles", "*", "profile.yaml"))
+	require.NoError(t, err)
+	for _, profilePath := range profilesOnDisk {
+		dir := filepath.Base(filepath.Dir(profilePath))
+		profile := loadProfileFromDir(t, dir)
+		for _, tc := range []struct {
+			name, input string
+			want        any
+		}{
+			{"integer", "4", float64(4)}, {"zero", "0", float64(0)}, {"percentage", "37%", "37%"},
+		} {
+			t.Run(dir+"/"+tc.name, func(t *testing.T) {
+				cfg := &config.LaunchKitConfig{
+					NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.7", Namespace: "network-operator"},
+					Maintenance:     maintenanceFromYAML(t, "maintenance:\n  maxUnavailable: "+tc.input+"\n"),
+				}
+				require.NoError(t, config.NormalizeMaintenance(cfg))
+				checked := false
+				for _, path := range profile.Templates {
+					name := filepath.Base(path)
+					if name != helmValuesTemplateName && !strings.Contains(name, "maintenanceoperatorconfig") {
+						continue
+					}
+					rendered, err := ProcessTemplate(path, cfg, "")
+					require.NoError(t, err)
+					require.Len(t, rendered, 1)
+					for _, content := range rendered {
+						var obj map[string]any
+						require.NoError(t, renderedyaml.UnmarshalStrict([]byte(content), &obj))
+						want := tc.want
+						var spec map[string]any
+						if name == helmValuesTemplateName {
+							spec = nestedMaintenanceMap(t, obj, "maintenance-operator-chart", "operatorConfig")
+							// The upstream chart's truthiness guard requires a non-empty
+							// string for zero; it renders this as an unquoted integer CR field.
+							if tc.input == "0" {
+								want = "0"
+							}
+						} else {
+							spec = nestedMaintenanceMap(t, obj, "spec")
+						}
+						require.Equal(t, want, spec["maxUnavailable"])
+						checked = true
+					}
+				}
+				require.True(t, checked, "profile must exercise maintenance rendering")
 			})
 		}
 	}
