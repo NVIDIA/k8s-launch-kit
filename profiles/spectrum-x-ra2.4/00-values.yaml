@@ -48,9 +48,9 @@ maintenance-operator-chart:
 {{- end }}
   operatorConfig:
     deploy: true
-    # Keep scalar overrides quoted: upstream truthiness guards omit numeric 0.
+    # maxUnavailable is numeric; quote zero to survive upstream truthiness guards.
     maxParallelOperations: "{{ .Maintenance.MaxParallelOperations.String }}"
-    maxUnavailable: "{{ .Maintenance.MaxUnavailable.String }}"
+    maxUnavailable: {{ if eq .Maintenance.MaxUnavailable.String "0" }}"0"{{ else }}{{ .Maintenance.MaxUnavailable.String }}{{ end }}
     maxNodeMaintenanceTimeSeconds: "{{ .Maintenance.MaxNodeMaintenanceTimeSeconds }}"
 
 sriovNetworkOperator:

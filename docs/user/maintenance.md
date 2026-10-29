@@ -64,6 +64,12 @@ as `"25%"`. Numeric strings such as `"4"`, fractions such as `1.5`, and
 percentages outside `1%`–`100%` are rejected. Only `maxParallelOperations` and
 `maxUnavailable` accept percentages.
 
+Numeric `maintenance.maxUnavailable` values render as unquoted integers across
+profiles; percentage values remain strings. Helm values retain the special
+string `"0"` because the upstream chart would omit numeric zero. The chart renders
+that value as integer `0` in the final `MaintenanceOperatorConfig`; OpenShift
+CRs and legacy SR-IOV pool configs render integer `0` directly.
+
 | Setting | Operational meaning |
 | --- | --- |
 | `maxParallelOperations: 0` | Rejected by l8k; the scheduler would have no available work slots. |
