@@ -96,10 +96,15 @@ Standard SR-IOV, RDMA-shared and host-device profiles SHALL support a default-en
 - **WHEN** the standard-profile option is true or false with Spectrum-X
 - **THEN** Spectrum-X retains its required NIC configuration templates.
 
-#### Scenario: Single selected source receives interface naming
+#### Scenario: Single selected source skips unnecessary naming
 
-- **WHEN** a standard multirail profile has interface naming enabled and a single source group is selected from any inventory
-- **THEN** its interface-name template retains that source's node selector and east-west rail PCI addresses; group count does not disable naming.
+- **WHEN** a standard multirail profile selects exactly one source from any inventory
+- **THEN** generation skips interface naming and uses PCI selectors or saved names, without mutating input or disabling NIC configuration templates; enabled RDMA-shared naming is retained when any selected east-west PF lacks an interface name, and Spectrum-X retains its required naming.
+
+#### Scenario: Multiple selected sources retain naming
+
+- **WHEN** a standard multirail profile has interface naming enabled and multiple source groups are selected
+- **THEN** each naming template retains its source node selector and east-west rail PCI addresses, even if sources merge into one render bucket.
 
 #### Scenario: Standard naming follows configured rail order
 

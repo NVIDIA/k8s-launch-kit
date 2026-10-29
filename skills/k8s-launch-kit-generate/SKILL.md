@@ -121,18 +121,19 @@ A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in 
 ## Interface Naming And Group Selection
 
 When `nicConfigurationOperator.deployNicInterfaceNameTemplate` and multirail
-are enabled, standard profiles render a `NicInterfaceNameTemplate` for every
-selected source group. A single-group inventory and a single group selected
-with `--groups` or `--gpu-type` receive the same naming template; group count
-does not disable it. An explicit `deployNicInterfaceNameTemplate: false`
-disables standard-profile naming.
+are enabled, standard profiles retain naming for multiple selected source groups.
+For a single-group inventory or one source selected with `--groups` / `--gpu-type`,
+they skip naming and use PCI selectors or saved interface names. RDMA-shared
+retains naming if any selected east-west PF lacks an interface name; Spectrum-X
+retains its required templates. Explicit `deployNicInterfaceNameTemplate: false`
+disables standard-profile naming. The fallback preserves saved configuration and
+leaves NIC configuration templates enabled independently.
 
 The emitted standard naming layout must assign each physical NIC
 (`domain:bus:device`) to only one outer `railPciAddresses` entry. Splitting its
 PCI functions across entries is rejected before replacing output, because NCO
-has only one rail index per physical NIC. This is a layout check, not a
-single-group fallback; excluded groups and explicitly disabled naming do not
-trigger it.
+has only one rail index per physical NIC. This check applies only to emitted
+naming templates; skipped naming and excluded groups do not trigger it.
 
 ## Netplan Interface-Name Conflict
 

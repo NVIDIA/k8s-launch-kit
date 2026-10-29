@@ -427,8 +427,11 @@ func TestStandardInterfaceNamingForSingleSelectedGroup(t *testing.T) {
 	for _, flavor := range []string{config.FlavorK8s, config.FlavorOCP} {
 		for _, profileName := range []string{"sriov-ethernet-rdma", "host-device-rdma", "macvlan-rdma-shared"} {
 			for _, selection := range []string{"single inventory", "groups", "gpu type"} {
-				for _, enabled := range []bool{false, true} {
-					t.Run(fmt.Sprintf("%s/%s/%s/naming=%t", flavor, profileName, selection, enabled), func(t *testing.T) {
+				for _, scenario := range []struct {
+					enabled, missingNames bool
+				}{{false, false}, {true, false}, {false, true}, {true, true}} {
+					enabled := scenario.enabled
+					t.Run(fmt.Sprintf("%s/%s/%s/naming=%t/missing=%t", flavor, profileName, selection, enabled, scenario.missingNames), func(t *testing.T) {
 						deployment := "sriov"
 						switch profileName {
 						case "host-device-rdma":
@@ -445,6 +448,15 @@ func TestStandardInterfaceNamingForSingleSelectedGroup(t *testing.T) {
 								cfg.ClusterConfig[0].PFs[i].PciAddress = fmt.Sprintf("0000:%02x:00.0", 0x20+i)
 							}
 						}
+						if scenario.missingNames {
+							for i := range cfg.ClusterConfig[0].PFs {
+								if cfg.ClusterConfig[0].PFs[i].Traffic == "east-west" {
+									cfg.ClusterConfig[0].PFs[i].NetworkInterface = ""
+								}
+							}
+						}
+						before, err := config.CloneConfig(cfg)
+						require.NoError(t, err)
 						selected := cfg.ClusterConfig[0]
 						plugin := &NetworkOperatorPlugin{}
 						switch selection {
@@ -469,8 +481,29 @@ func TestStandardInterfaceNamingForSingleSelectedGroup(t *testing.T) {
 						_, err = bundle.FromFiles(artifacts)
 						require.NoError(t, err)
 						files := fileNamesMatching(rendered, "nicinterfacenametemplate")
-						if !enabled {
+						require.Equal(t, before.NicConfigurationOperator, cfg.NicConfigurationOperator, "rendering must preserve the naming setting")
+						require.Equal(t, selected.PFs, cfg.ClusterConfig[0].PFs, "rendering must preserve inventory")
+						require.Len(t, fileNamesMatching(rendered, "nicconfigurationtemplate"), 1, "NIC tuning remains enabled")
+						if !enabled || deployment != "rdma_shared" || !scenario.missingNames {
 							require.Empty(t, files)
+							var policies string
+							for name, content := range rendered {
+								if strings.Contains(name, "policy") {
+									policies += content
+								}
+							}
+							for _, pf := range selected.PFs {
+								if pf.Traffic != "east-west" {
+									continue
+								}
+								if deployment == "rdma_shared" {
+									if !scenario.missingNames {
+										require.Contains(t, policies, pf.NetworkInterface)
+									}
+								} else {
+									require.Contains(t, policies, pf.PciAddress)
+								}
+							}
 							return
 						}
 						require.Len(t, files, 1)

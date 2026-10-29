@@ -401,7 +401,7 @@ spectrumX:
 | Field | Meaning |
 | --- | --- |
 | `deployNicConfigurationTemplate` | Default `true`; standard-profile NIC tuning independently of interface naming. Explicit `false` opts out. CLI: `--deploy-nic-configuration-template[=false]` on root, generate and discover. |
-| `deployNicInterfaceNameTemplate` | Default `true`; renders interface-name templates for every selected source group in standard multirail profiles, including a single selected group. Explicit `false` disables naming. |
+| `deployNicInterfaceNameTemplate` | Default `true`; standard multirail profiles skip naming for a single selected group unless RDMA-shared needs missing interface names. Multiple selected groups retain naming; Spectrum-X uses its required templates. Explicit `false` disables standard-profile naming. |
 | `rdmaPrefix` / `netdevPrefix` | Standard-profile names. Multirail values require a rail placeholder. |
 | `updateFW` | Enables firmware staging storage in generated Network Operator configuration. |
 | `spectrumX.overlay` | Spectrum-X overlay mode. |

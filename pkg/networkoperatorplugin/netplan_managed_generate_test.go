@@ -183,7 +183,7 @@ func assertSpectrumXInterfaceNameTemplateRejected(t *testing.T, cfg *config.Laun
 	assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
 }
 
-func TestGenerateRejectsNetplanManagedSingleSelectedGroup(t *testing.T) {
+func TestGenerateAllowsNetplanManagedSingleSelectedGroupWithoutRenaming(t *testing.T) {
 	for _, filtered := range []bool{false, true} {
 		cfg := loadNetplanManagedRenderConfig(t)
 		cfg.ClusterConfig[0].NetplanManaged = true
@@ -193,8 +193,24 @@ func TestGenerateRejectsNetplanManagedSingleSelectedGroup(t *testing.T) {
 		} else {
 			cfg.ClusterConfig = cfg.ClusterConfig[:1]
 		}
-		_, err := plugin.GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
-		require.ErrorContains(t, err, "conflicting netplan configuration")
-		assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
+		rendered, err := plugin.GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
+		require.NoError(t, err)
+		require.Empty(t, fileNamesMatching(rendered, "nicinterfacenametemplate"))
+	}
+}
+
+func TestSingleGroupRdmaSharedNamingRetainsNetplanChecks(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		cfg := loadNetplanManagedRenderConfig(t)
+		cfg.ClusterConfig = cfg.ClusterConfig[:1]
+		cfg.Profile.Deployment = "rdma_shared"
+		cfg.ClusterConfig[0].NetplanManaged = !unknown
+		cfg.ClusterConfig[0].NetplanManagementUnknown = unknown
+		for i := range cfg.ClusterConfig[0].PFs {
+			cfg.ClusterConfig[0].PFs[i].NetworkInterface = ""
+		}
+		_, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, "macvlan-rdma-shared"), cfg)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "netplan")
 	}
 }
