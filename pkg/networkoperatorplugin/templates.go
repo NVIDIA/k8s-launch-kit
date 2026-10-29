@@ -1081,6 +1081,16 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		}
 	}
 
+	// A single source has a homogeneous PCI layout and does not need renaming.
+	// Keep naming for Spectrum-X and RDMA-shared selectors without saved names.
+	// cfg is already cloned, so this rendering decision preserves caller input.
+	if cfg.NicConfigurationOperator != nil &&
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate &&
+		len(filtered) == 1 && !isSpectrumX(cfg) &&
+		!requiresRdmaSharedInterfaceNames(cfg, filtered[0]) {
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate = false
+	}
+
 	// Bucket the filtered set by (gpuType, railCount), build the merged
 	// ClusterConfig per bucket, and decide Mode A vs B per bucket by
 	// comparing to the original (pre-filter) bucket. The plans drive
@@ -1179,6 +1189,20 @@ func annotateGeneratedResources(results map[string]string, launchKitVersion stri
 		results[filename] = string(annotated)
 	}
 	return nil
+}
+
+// requiresRdmaSharedInterfaceNames reports whether the device plugin needs
+// naming templates because its ifNames selector cannot use PCI addresses.
+func requiresRdmaSharedInterfaceNames(cfg *config.LaunchKitConfig, group config.ClusterConfig) bool {
+	if cfg.Profile == nil || cfg.Profile.Deployment != "rdma_shared" {
+		return false
+	}
+	for _, pf := range group.PFs {
+		if pf.Traffic == "east-west" && pf.NetworkInterface == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // isSpectrumX returns true if the config targets a Spectrum-X profile.

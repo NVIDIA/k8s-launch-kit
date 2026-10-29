@@ -44,7 +44,8 @@ from the saved inventory; see [traffic classification](docs/user/discovery.md#ea
 
 `l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. Discovery verifies exact group selectors; an explicit CLI `--node-selector` override remains user intent and is checked against worker inventory during deployment. The flag does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
 
-Enabled interface naming renders for supported single-group layouts. Generation
+Standard profiles skip interface naming for a single selected group unless
+RDMA-shared needs names missing from inventory. Spectrum-X retains naming. Generation
 rejects naming layouts that split a physical NIC across rails; see
 [NIC templates and selected groups](docs/advanced/generation.md#nic-templates-and-selected-groups).
 

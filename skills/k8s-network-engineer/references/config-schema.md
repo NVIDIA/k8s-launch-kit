@@ -189,9 +189,10 @@ NIC Configuration Operator settings for interface naming.
 | `rdmaPrefix`                     | string | `rdma_r%rail_id%`        | Template for RDMA device names; `%rail_id%` is replaced |
 | `netdevPrefix`                   | string | `eth_r%rail_id%`         | Template for network interface names                  |
 
-NIC renaming is only activated when needed:
-1. Merged groups have cross-rail PCI address conflicts, OR
-2. Deployment is `rdma_shared` and PFs have empty `NetworkInterface` fields
+With naming enabled, standard multirail profiles retain naming for multiple
+selected source groups. A single selected group skips naming unless deployment
+is `rdma_shared` and an east-west PF has an empty `NetworkInterface` field.
+Spectrum-X retains its required naming templates.
 
 ## spectrumX
 

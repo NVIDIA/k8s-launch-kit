@@ -272,8 +272,8 @@ nicConfigurationOperator:
   deployNicConfigurationTemplate: true
 
   # bool | default: true
-  # Enable interface-name templates for every selected source group in
-  # standard multirail profiles, including a single selected group.
+  # Standard profiles skip naming for one selected source unless
+  # RDMA-shared needs missing interface names. Spectrum-X retains naming.
   deployNicInterfaceNameTemplate: true
 
   # string | default: "rdma_r%rail_id%"
