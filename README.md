@@ -4,7 +4,7 @@ Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on K
 Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
-The current lifecycle uses the `host` target by default. The reserved `dpf` target does not have available lifecycle phases; see [target extension](docs/advanced/targets.md) for its implementation status.
+The current lifecycle uses the `host` target by default. The `dpf` target provides an [experimental inventory discovery preview](docs/user/dpf-discovery.md); its provisioning phases remain unavailable.
 
 Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued releases;
 RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
@@ -162,7 +162,7 @@ Available Commands:
   version     Print the version number
 
 Target Selection Flags:
-      --target string   Deployment target: host (default) or dpf (reserved; phases are unavailable until the DPF driver is added) (default "host")
+      --target string   Deployment target: host (default) or dpf (experimental inventory discovery) (default "host")
 
 Host Target Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides

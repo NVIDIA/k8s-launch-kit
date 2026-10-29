@@ -29,15 +29,7 @@ Passing `--target host` is an explicit synonym:
 l8k generate --target host ...
 ```
 
-The `dpf` target name is reserved for the future DPU-plane workflow. Its
-phases are intentionally reported as unavailable until a typed DPF driver is
-installed. Launch Kit returns validation exit code `2` instead of falling
-through to host behavior:
-
-```console
-$ l8k discover --target dpf
-Error: invalid target invocation: target "dpf" does not implement phase "discover" ...
-```
+The `dpf` target implements an [experimental inventory discovery preview](../user/dpf-discovery.md). Its software collects candidate management/BMC facts; hardware qualification and management probe-image release gates are explicit. Other DPF phases remain unavailable and cannot fall through to Host execution.
 
 Use `l8k schema` to inspect target and phase availability programmatically.
 
@@ -103,8 +95,7 @@ binds through the registry and calls `Operation.Run(cmd.Context())` exactly
 once. Discover, generate, and the root pipeline reuse the Host application
 launcher; standalone deploy and validate are Host-owned services outside
 Cobra. Those services return errors, while `pkg/cmd` remains the only process
-termination boundary. The DPF target remains unavailable, so it cannot
-accidentally construct a Kubernetes client or execute Host logic.
+termination boundary. The DPF discovery branch binds its own typed request before collecting Host flags, and constructs only DPF dependencies.
 
 ## Registry guarantees
 
@@ -132,7 +123,7 @@ A target integration should:
    domain driver.
 5. Declare all four phase capabilities and their required logical cluster
    roles.
-6. Implement all four phases before marking them available in the schema.
+6. Mark only implemented phases available; document preview and qualification limits.
 7. Keep target artifacts separate; host output remains
    `deployment/network-operator/`.
 8. Add omitted-target and explicit-host compatibility tests before routing the

@@ -11,6 +11,8 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
+For the independent DPF preview, read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit management/BMC YAML. Keep the empty hardware/probe-image release gates visible; do not run Host discovery against the DPF estate.
+
 This workflow uses the default `host` target; `--target host` is equivalent.
 The CLI snapshots discovery arguments and runs the concrete Host discovery
 operation through the target registry; command syntax and artifacts are

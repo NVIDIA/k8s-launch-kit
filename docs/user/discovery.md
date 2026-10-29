@@ -471,3 +471,9 @@ install. Review [secondary-network ownership](../reference/configuration.md#seco
 before selecting explicit managed/external policy. Unsupported or host-only
 installers can remain undetected; Multus detection does not imply plugin-suite
 presence.
+
+## Independent DPF inventory
+
+For management-cluster and BMC discovery of the separate DPU estate, use the
+[DPF discovery preview](dpf-discovery.md). Its configuration, artifacts and
+qualification gates are independent of the Host workflow above.

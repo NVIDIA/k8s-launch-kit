@@ -250,7 +250,7 @@ func TestTargetDescriptors(t *testing.T) {
 	assert.Equal(t, target.DPF, descriptors[1].Name)
 	for _, phase := range target.PublicPhases() {
 		assert.True(t, descriptors[0].Capability(phase).Available)
-		assert.False(t, descriptors[1].Capability(phase).Available)
+		assert.Equal(t, phase == target.Discover, descriptors[1].Capability(phase).Available)
 		assert.NotEmpty(t, descriptors[1].Capability(phase).Reason)
 	}
 }
@@ -291,6 +291,9 @@ func TestTargetCLIProcess(t *testing.T) {
 	})
 
 	for _, phase := range target.PublicPhases() {
+		if phase == target.Discover {
+			continue
+		}
 		t.Run("dpf "+string(phase)+" capability error", func(t *testing.T) {
 			output, exitCode := runCLIHelper(t, string(phase), "--target", "dpf")
 			assert.Equal(t, 2, exitCode)
@@ -314,8 +317,8 @@ func TestTargetCLIProcess(t *testing.T) {
 	t.Run("dpf capability errors preserve json output mode", func(t *testing.T) {
 		output, exitCode := runCLIHelper(t, "discover", "--target", "dpf", "--output", "json")
 		assert.Equal(t, 2, exitCode)
-		assert.Contains(t, output, `"code": "VALIDATION_ERROR"`)
-		assert.Contains(t, output, `"success": false`)
+		assert.Contains(t, output, `"code":"INVALID_CONFIGURATION"`)
+		assert.Contains(t, output, `"target":"dpf"`)
 	})
 
 	t.Run("unknown target is distinct from unavailable phase", func(t *testing.T) {
