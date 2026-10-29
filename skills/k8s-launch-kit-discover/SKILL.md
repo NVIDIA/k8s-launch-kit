@@ -45,6 +45,12 @@ unavailable evidence still saves hardware inventory, but automatic generation
 requires usable ownership evidence. Unknown host-only installers need an explicit
 site decision. See [platform observations](../../docs/user/discovery.md#platform-networking-observations).
 
+For library consumers, read-only discovery is separate from `l8k discover`.
+`DiscoverReadOnly` requires a safe group selector by default; inventory-only
+callers can opt in to empty selectors and use `WorkerNodes` as the group
+membership source. See the read-only library discovery contract in the user
+guide before using that option.
+
 ## Usage (from AI agent)
 
 ```bash

@@ -53,6 +53,7 @@ type readOnlyOptions struct {
 	networkOperatorNamespace string
 	restConfig               *rest.Config
 	podExec                  readOnlyPodExec
+	allowMissingNodeSelector bool
 	assumeUnverifiedExcluded bool
 	fabricDiscovery          bool
 	gpuTopology              bool
@@ -77,6 +78,17 @@ func WithReadOnlyNetworkOperatorNamespace(namespace string) ReadOnlyOption {
 func WithReadOnlyRESTConfig(restConfig *rest.Config) ReadOnlyOption {
 	return func(options *readOnlyOptions) {
 		options.restConfig = restConfig
+	}
+}
+
+// WithReadOnlyAllowMissingNodeSelector lets read-only discovery return the
+// inventory when it cannot derive a selector that matches only a group's
+// workers. Such groups have an empty NodeSelector; callers must use WorkerNodes
+// as the authoritative membership list and must not use the empty selector for
+// workload placement.
+func WithReadOnlyAllowMissingNodeSelector() ReadOnlyOption {
+	return func(options *readOnlyOptions) {
+		options.allowMissingNodeSelector = true
 	}
 }
 
@@ -229,8 +241,16 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 	if err := assignVRRails(clusterConfig, devices.Items); err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
 	}
-	if err := ensureReadOnlyNodeSelectors(clusterConfig, nodeLabels); err != nil {
+	missingSelectorGroups, err := ensureReadOnlyNodeSelectorsWithOption(clusterConfig, nodeLabels, options.allowMissingNodeSelector)
+	if err != nil {
 		return nil, fmt.Errorf("DiscoverReadOnly: %w", err)
+	}
+	for _, group := range missingSelectorGroups {
+		groupName := group.Identifier
+		if groupName == "" {
+			groupName = strings.Join(group.WorkerNodes, ",")
+		}
+		ui.FromContext(ctx).Warning("Could not derive a safe node selector for discovered group %q; leaving NodeSelector empty. WorkerNodes is authoritative for this group", groupName)
 	}
 	for _, warning := range warnings {
 		ui.FromContext(ctx).Warning("%s", warning)
@@ -361,6 +381,12 @@ func readOnlyPublisherNodes(expectedNodes []string, deviceNodes map[string]bool,
 }
 
 func ensureReadOnlyNodeSelectors(groups []config.ClusterConfig, nodeLabels map[string]map[string]string) error {
+	_, err := ensureReadOnlyNodeSelectorsWithOption(groups, nodeLabels, false)
+	return err
+}
+
+func ensureReadOnlyNodeSelectorsWithOption(groups []config.ClusterConfig, nodeLabels map[string]map[string]string, allowMissing bool) ([]config.ClusterConfig, error) {
+	var missing []config.ClusterConfig
 	for i := range groups {
 		if len(groups[i].NodeSelector) > 0 &&
 			selectorMatchesOnlyNodes(groups[i].NodeSelector, groups[i].WorkerNodes, nodeLabels) {
@@ -375,11 +401,16 @@ func ensureReadOnlyNodeSelectors(groups []config.ClusterConfig, nodeLabels map[s
 			}
 		}
 		if len(selector) == 0 {
-			return fmt.Errorf("could not derive a safe node selector for discovered group %q", groups[i].Identifier)
+			groups[i].NodeSelector = nil
+			if allowMissing {
+				missing = append(missing, groups[i])
+				continue
+			}
+			return nil, fmt.Errorf("could not derive a safe node selector for discovered group %q", groups[i].Identifier)
 		}
 		groups[i].NodeSelector = selector
 	}
-	return nil
+	return missing, nil
 }
 
 func readOnlyNodeSelectors(nodes []string, nodeLabels map[string]map[string]string) []map[string]string {

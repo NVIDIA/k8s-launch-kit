@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -802,6 +803,83 @@ func TestDiscoverReadOnlyCanExcludeUnverifiedPublishers(t *testing.T) {
 	require.Len(t, cfg.ClusterConfig, 1)
 	assert.Equal(t, []string{"worker-0"}, cfg.ClusterConfig[0].WorkerNodes)
 	assert.Contains(t, output.String(), "unverified")
+}
+
+func readOnlyClientWithNoSafeGroupSelectors(t *testing.T) client.Client {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, nicop.AddToScheme(scheme))
+
+	objects := make([]client.Object, 0, 9)
+	for _, node := range []string{"worker-a", "worker-b", "worker-outlier"} {
+		objects = append(objects,
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: node, Labels: map[string]string{
+				"nvidia.com/gpu.product": "NVIDIA-H100",
+			}}},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "nic-configuration-daemon-" + node,
+					Namespace: "nvidia-network-operator",
+					OwnerReferences: []metav1.OwnerReference{{
+						Kind: "DaemonSet",
+						Name: nicconfigdaemon.DaemonSetName,
+					}},
+				},
+				Spec: corev1.PodSpec{NodeName: node},
+				Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+					Type: corev1.PodReady, Status: corev1.ConditionTrue,
+				}}},
+			},
+		)
+	}
+	objects = append(objects,
+		&nicop.NicDevice{ObjectMeta: metav1.ObjectMeta{Name: "worker-a-device"}, Status: nicop.NicDeviceStatus{
+			Node: "worker-a", Type: "1023", Ports: []nicop.NicDevicePortSpec{{PCI: "0000:18:00.0"}},
+		}},
+		&nicop.NicDevice{ObjectMeta: metav1.ObjectMeta{Name: "worker-b-device"}, Status: nicop.NicDeviceStatus{
+			Node: "worker-b", Type: "1023", Ports: []nicop.NicDevicePortSpec{{PCI: "0000:18:00.0"}},
+		}},
+		&nicop.NicDevice{ObjectMeta: metav1.ObjectMeta{Name: "worker-outlier-device"}, Status: nicop.NicDeviceStatus{
+			Node: "worker-outlier", Type: "1017", Ports: []nicop.NicDevicePortSpec{{PCI: "0000:51:00.0"}},
+		}},
+	)
+
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+}
+
+func TestDiscoverReadOnlyRequiresOptInForMissingSafeSelector(t *testing.T) {
+	t.Run("strict by default", func(t *testing.T) {
+		c := readOnlyClientWithNoSafeGroupSelectors(t)
+
+		_, err := DiscoverReadOnly(context.Background(), c)
+
+		require.ErrorContains(t, err, `could not derive a safe node selector for discovered group`)
+	})
+
+	t.Run("returns inventory when opted in", func(t *testing.T) {
+		c := readOnlyClientWithNoSafeGroupSelectors(t)
+		var warnings bytes.Buffer
+		ctx := ui.WithOutput(context.Background(), ui.NewWithWriter(&warnings))
+
+		cfg, err := DiscoverReadOnly(ctx, c, WithReadOnlyAllowMissingNodeSelector())
+
+		require.NoError(t, err)
+		require.Len(t, cfg.ClusterConfig, 2)
+		groupsByWorkers := make(map[string]config.ClusterConfig, len(cfg.ClusterConfig))
+		for _, group := range cfg.ClusterConfig {
+			groupsByWorkers[strings.Join(group.WorkerNodes, ",")] = group
+		}
+		for i, workers := range []string{"worker-a,worker-b", "worker-outlier"} {
+			group, ok := groupsByWorkers[workers]
+			require.True(t, ok, "expected discovered group with workers %s", workers)
+			assert.Empty(t, group.NodeSelector)
+			assert.Contains(t, warnings.String(), fmt.Sprintf("group %q", group.Identifier))
+			assert.Equal(t, fmt.Sprintf("group-%d", i), group.Identifier)
+		}
+		assert.Equal(t, 2, strings.Count(warnings.String(), "WorkerNodes is authoritative"))
+	})
 }
 
 func hasNamespace(t *testing.T, c client.Client, name string) bool {
