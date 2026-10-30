@@ -71,7 +71,7 @@ Review skipped stages and non-gating cross-rail observations separately.
 
 ## External networking prerequisites
 
-For NCP bundles, validation checks live Multus/CNI ownership independently of
+For Kubernetes NCP bundles, validation checks live Multus/CNI ownership independently of
 catalog versions. An omitted section with a still-managed live section is an
 ownership conflict. Supported external installers are checked against configured
 worker names: incompatible node selectors are errors; missing Ready pods or
@@ -85,6 +85,14 @@ health check and does not alone fail static validation. Failed mandatory
 ownership inspection is an error. The report lists external prerequisite rows
 separately from NCP-managed catalog-version checks. Host CNI binaries,
 configuration, and data-plane behavior still require runtime qualification.
+
+On OpenShift, Multus and the reference CNI plugins are platform-managed.
+Validation reports their external prerequisite rows as **UNVERIFIED** and
+does not inspect installer DaemonSets or gate on their count, selectors,
+pods, or rollout status. It still checks NCP ownership: managed sections in
+OpenShift artifacts, implicit managed-to-external transitions, and failed
+mandatory ownership reads remain errors. NCP readiness and connectivity
+checks still apply; skipped installer checks do not establish networking health.
 
 ## Worked acceptance decisions
 

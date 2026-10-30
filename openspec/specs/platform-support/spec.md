@@ -53,6 +53,11 @@ Platform adaptations SHALL preserve explicit supported user values and use durab
 - **WHEN** `ignoreARP` is enabled for a supported OpenShift secondary network
 - **THEN** generation emits the same global and interface-scoped ARP and reverse-path sysctls as Kubernetes, retains source-based routing order when selected, and OpenShift deploy patches the Multus allowlist before network application.
 
+#### Scenario: OpenShift external networking validation
+
+- **WHEN** validation checks an OpenShift bundle with externally managed Multus and reference CNI plugins
+- **THEN** their installer checks are reported as unverified without gating on platform DaemonSet topology or rollout status, while NCP ownership, resource readiness, and connectivity checks remain applicable.
+
 ### Requirement: Qualification claims
 
 Support claims MUST identify the platform, profile, hardware and phases actually verified. Rendering, simulated tests, server dry-run and live validation SHALL be distinguished.

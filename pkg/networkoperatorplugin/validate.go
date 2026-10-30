@@ -209,7 +209,7 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 		}
 		obj := doc.ObjectCopy()
 		if isNicClusterPolicy(obj) {
-			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File)
+			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File, flavor...)
 			if err != nil {
 				return nil, err
 			}

@@ -145,7 +145,9 @@ If the operator, admission, or SR-IOV node state fails, retain the bundle and in
 l8k validate --flavor ocp --deployment-files ./ocp-deployment --wait 10m
 ```
 
-Read `ocp-deployment/k8s-launch-kit-validation-report.html` against the [acceptance outcomes](validation.md#acceptance-outcomes). Validation creates temporary `l8k-validation-*` namespaces per workload namespace, copies required NADs and image pull secrets, and creates a validation ServiceAccount, narrow SCC, Role, RoleBinding, and example DaemonSets. It needs namespace/SCC creation and source NAD/secret read permission. An OpenShift run fails if resources are still reconciling and connectivity cannot run, no tests are planned, or a selected family has no gating test. The tool normally removes these test resources; `--keep` retains them for inspection. Record skipped families and missing worker/rail endpoints before accepting the result.
+Read `ocp-deployment/k8s-launch-kit-validation-report.html` against the [acceptance outcomes](validation.md#acceptance-outcomes). Platform-managed Multus and CNI plugin installer checks are reported as **UNVERIFIED** and do not fail validation; NCP ownership and readiness checks still apply. Use the connectivity results to assess runtime behavior; see [external networking prerequisites](validation.md#external-networking-prerequisites).
+
+Validation creates temporary `l8k-validation-*` namespaces per workload namespace, copies required NADs and image pull secrets, and creates a validation ServiceAccount, narrow SCC, Role, RoleBinding, and example DaemonSets. It needs namespace/SCC creation and source NAD/secret read permission. An OpenShift run fails if resources are still reconciling and connectivity cannot run, no tests are planned, or a selected family has no gating test. The tool normally removes these test resources; `--keep` retains them for inspection. Record skipped families and missing worker/rail endpoints before accepting the result.
 
 ## Remove the intended resources
 
