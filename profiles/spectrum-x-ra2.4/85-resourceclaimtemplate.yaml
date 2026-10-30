@@ -1,5 +1,5 @@
 {{- if spectrumXUseDRA .Profile }}
-{{- range $idx, $claim := spectrumXClaims (spectrumXEndpoints .Profile .SpectrumX .ClusterConfig) }}
+{{- range $idx, $claim := spectrumXClaims (spectrumXEndpoints .Profile .ClusterConfig) }}
 {{- if $idx }}---
 {{ end -}}
 apiVersion: resource.k8s.io/v1

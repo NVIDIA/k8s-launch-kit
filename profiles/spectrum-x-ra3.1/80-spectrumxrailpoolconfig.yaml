@@ -20,7 +20,7 @@ spec:
     {{- end }}
   {{- end }}
   railTopology:
-  {{- range $endpoint := spectrumXEndpoints .Profile .SpectrumX .ClusterConfig }}
+  {{- range $endpoint := spectrumXEndpoints .Profile .ClusterConfig }}
   - name: {{$endpoint.Name}}
     {{- if $endpoint.HardwarePLB }}
     swPlane: {{$endpoint.SwPlane}}

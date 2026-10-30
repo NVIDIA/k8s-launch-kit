@@ -100,6 +100,7 @@ func Resolve(request Request) (*Result, error) {
 	if err := config.NormalizeResolvedConfigWithPresence(effective, request.Input.SourcePath, present); err != nil {
 		return nil, err
 	}
+	config.PopulateSpectrumXInterfaceNames(effective)
 	if request.ValidateReady {
 		if err := ValidateResolvedConfig(effective); err != nil {
 			return nil, err

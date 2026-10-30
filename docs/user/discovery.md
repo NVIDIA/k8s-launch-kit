@@ -40,6 +40,11 @@ l8k discover \
 
 Discovery is self-contained. It does not require Node Feature Discovery (NFD) or a pre-installed Network Operator.
 
+For Spectrum-X, discovery also saves the platform- and mode-specific desired
+interface prefixes in `clusterConfig[].spectrumX.interfaceNames`. These do not
+replace observed PF names. See [Spectrum-X naming](spectrum-x.md#vr-dual-nic-rails)
+for VR differences, custom settings and regeneration behavior.
+
 ## Read-only library discovery
 
 Library consumers that only need the inventory from an already-running NIC

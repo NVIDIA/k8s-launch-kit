@@ -190,6 +190,8 @@ func (l *Launcher) discoverClusterConfig() error {
 		l.recordResolvedProfile(finalConfig)
 	}
 
+	config.PopulateSpectrumXInterfaceNames(finalConfig)
+
 	// Compute effective save path:
 	// 1. --save-cluster-config if explicitly provided
 	// 2. --user-config path (rewrite in place) if provided

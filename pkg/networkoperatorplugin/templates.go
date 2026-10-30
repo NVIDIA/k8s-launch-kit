@@ -133,6 +133,8 @@ var templateFuncs = template.FuncMap{
 	"spectrumXUseDRA": func(profile *config.Profile) bool {
 		return profile != nil && profile.SpectrumX != nil && profile.SpectrumX.UseDRA
 	},
+	// Retain the mode-only helpers for external profile templates. Built-in
+	// profiles consume resolved per-group names, including VR NIC identity.
 	"spectrumXRdmaPrefix": func(settings *config.SpectrumXConfig, multiplaneMode string) string {
 		rdmaPrefix, _ := config.SpectrumXInterfaceNamePrefixes(settings, multiplaneMode)
 		return rdmaPrefix
@@ -811,6 +813,15 @@ const templateGroupDiagnosticLimit = 8
 // .ClusterConfig are rendered once per group (producing separate files),
 // while other templates are rendered once.
 func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilter string) (map[string]string, error) {
+	// Direct library callers may supply inventory predating derived names.
+	if cfg != nil && isSpectrumX(cfg) {
+		resolved, err := config.CloneConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("copy Spectrum-X naming configuration: %w", err)
+		}
+		cfg = resolved
+		config.PopulateSpectrumXInterfaceNames(cfg)
+	}
 	// Singleton policies and per-group resources must use the same names as
 	// the naming template. Work on a copy so rendering preserves saved inventory.
 	if cfg != nil && cfg.NicConfigurationOperator != nil &&
@@ -1034,6 +1045,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	}
 	cfg = resolved
 	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
+	config.PopulateSpectrumXInterfaceNames(cfg)
 	cfg.CurrentNetworkNamespace = cfg.NetworkNamespaces[0]
 
 	// Apply --groups / --gpu-type filter to source groups before merging.
