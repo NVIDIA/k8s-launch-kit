@@ -58,10 +58,11 @@ New or changed preflight/ownership logic MUST distinguish verified absence from 
 
 ### Requirement: OpenShift tuning allowlist
 
-OpenShift deploy SHALL inspect desired secondary-network meta-plugins and ensure
-`openshift-multus/cni-sysctl-allowlist` permits ignoreARP tuning before network
-apply. It SHALL append missing entries from the standard interface and global
-ARP allowlist while preserving existing entries, unrelated fields and concurrent
+OpenShift generation with ignoreARP SHALL emit one
+`04-cni-sysctl-allowlist-patch.yaml` ConfigMap patch artifact. Deploy SHALL consume
+its entries to update `openshift-multus/cni-sysctl-allowlist` before network apply,
+without sending the patch through ordinary resource apply. It SHALL append
+missing artifact entries while preserving existing entries, unrelated fields and concurrent
 administrator changes. It SHALL require an existing platform ConfigMap and
 report inspection/patch failures. The shared configuration SHALL persist through
 cleanup; generation alone SHALL NOT modify it.
@@ -73,8 +74,13 @@ cleanup; generation alone SHALL NOT modify it.
 
 #### Scenario: No requested tuning
 
-- **WHEN** the desired networks omit ARP tuning or the platform is Kubernetes
-- **THEN** deployment does not inspect or patch the OpenShift allowlist.
+- **WHEN** the artifact is absent
+- **THEN** deployment does not inspect or patch the OpenShift allowlist; Kubernetes rejects an OCP patch artifact rather than applying it as an ordinary ConfigMap.
+
+#### Scenario: Patch artifact validation
+
+- **WHEN** a generated patch targets another resource or lacks an allowlist
+- **THEN** deployment rejects it before cluster mutations; runtime validation compares required entries while allowing extra site entries.
 
 ### Requirement: Teardown and partial failure
 

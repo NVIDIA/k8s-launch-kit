@@ -8,10 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -24,10 +28,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-func arpNetwork() *unstructured.Unstructured {
-	return ocpTestObject("sriovnetwork.openshift.io/v1", "SriovNetwork", "sriov-ns", "rdma", map[string]interface{}{
-		"spec": map[string]interface{}{"metaPlugins": secondaryNetworkMetaPlugins(&config.Profile{IgnoreARP: true})},
-	})
+const sysctlPatchFilename = "04-cni-sysctl-allowlist-patch.yaml"
+
+func sysctlPatch(t *testing.T) *unstructured.Unstructured {
+	t.Helper()
+	rendered, err := ProcessTemplate(filepath.Join("..", "..", "profiles", "sriov-ethernet-rdma-ocp", sysctlPatchFilename), &config.LaunchKitConfig{Profile: &config.Profile{IgnoreARP: true}}, "")
+	require.NoError(t, err)
+	artifacts, err := bundle.FromFiles([]bundle.File{{Name: sysctlPatchFilename, Content: rendered[sysctlPatchFilename]}})
+	require.NoError(t, err)
+	require.Len(t, artifacts.Documents(), 1)
+	return artifacts.Documents()[0].ObjectCopy()
 }
 
 func sysctlConfigMap() *corev1.ConfigMap {
@@ -58,8 +68,8 @@ func TestOCPSysctlAllowlistPreservesAndRetries(t *testing.T) {
 			return c.Patch(ctx, obj, patch, opts...)
 		},
 	}).Build()
-	docs := []*unstructured.Unstructured{arpNetwork()}
-	require.NoError(t, ensureOCPSysctlAllowlist(ctx, c, docs, false))
+	desired := sysctlPatch(t)
+	require.NoError(t, ensureOCPSysctlAllowlist(ctx, c, desired, false))
 	require.Equal(t, 2, attempts)
 	got := &corev1.ConfigMap{}
 	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(initial), got))
@@ -67,10 +77,12 @@ func TestOCPSysctlAllowlistPreservesAndRetries(t *testing.T) {
 	require.Equal(t, "keep", got.Data["unrelated"])
 	require.True(t, strings.HasPrefix(got.Data["allowlist.conf"], initial.Data["allowlist.conf"]))
 	require.Contains(t, got.Data["allowlist.conf"], "^net.ipv4.conf.IFNAME.concurrent$")
-	for _, line := range strings.Split(ocpIgnoreARPAllowlist, "\n") {
+	required, _, err := unstructured.NestedString(desired.Object, "data", "allowlist.conf")
+	require.NoError(t, err)
+	for _, line := range strings.Split(required, "\n") {
 		require.Equal(t, 1, strings.Count(got.Data["allowlist.conf"], line))
 	}
-	require.NoError(t, ensureOCPSysctlAllowlist(ctx, c, docs, false))
+	require.NoError(t, ensureOCPSysctlAllowlist(ctx, c, desired, false))
 	require.Equal(t, 2, attempts, "second deploy should not patch")
 }
 
@@ -108,7 +120,7 @@ func TestOCPSysctlAllowlistDryRunAndFailures(t *testing.T) {
 					return c.Patch(ctx, obj, patch, opts...)
 				},
 			}).Build()
-			err := ensureOCPSysctlAllowlist(context.Background(), c, []*unstructured.Unstructured{arpNetwork()}, mode == "dry-run")
+			err := ensureOCPSysctlAllowlist(context.Background(), c, sysctlPatch(t), mode == "dry-run")
 			switch mode {
 			case "missing", "get denied", "patch denied":
 				require.ErrorContains(t, err, "openshift-multus/cni-sysctl-allowlist")
@@ -125,32 +137,6 @@ func TestOCPSysctlAllowlistDryRunAndFailures(t *testing.T) {
 				} else {
 					require.Contains(t, got.Data["allowlist.conf"], "^net.ipv4.conf.all.arp_ignore$")
 				}
-			}
-		})
-	}
-}
-
-func TestOCPSysctlAllowlistUsesDesiredNetworks(t *testing.T) {
-	for _, tc := range []struct {
-		name, kind, group, meta string
-		want, wantErr           bool
-	}{
-		{"enabled", "SriovNetwork", "sriovnetwork.openshift.io/v1", secondaryNetworkMetaPlugins(&config.Profile{IgnoreARP: true}), true, false},
-		{"disabled", "SriovNetwork", "sriovnetwork.openshift.io/v1", "", false, false},
-		{"routing only", "SriovNetwork", "sriovnetwork.openshift.io/v1", `{"type":"sbr"}`, false, false},
-		{"spectrum x", "SriovNetwork", "sriovnetwork.openshift.io/v1", secondaryNetworkMetaPlugins(&config.Profile{IgnoreARP: true, SpectrumX: &config.ProfileSpectrumX{Enable: true}}), false, false},
-		{"unrelated object", "ConfigMap", "v1", `invalid`, false, false},
-		{"invalid meta", "SriovNetwork", "sriovnetwork.openshift.io/v1", `invalid`, false, true},
-		{"legacy IFNAME only", "MacvlanNetwork", "mellanox.com/v1alpha1", `{"type":"tuning","sysctl":{"net.ipv4.conf.IFNAME.arp_ignore":"1"}}`, true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			obj := ocpTestObject(tc.group, tc.kind, "network-ns", "test", map[string]interface{}{"spec": map[string]interface{}{"metaPlugins": tc.meta}})
-			got, err := networksNeedARPAllowlist([]*unstructured.Unstructured{obj})
-			require.Equal(t, tc.wantErr, err != nil)
-			require.Equal(t, tc.want, got)
-			if !tc.want && !tc.wantErr {
-				// A nil client proves disabled cases don't even inspect cluster state.
-				require.NoError(t, ensureOCPSysctlAllowlist(context.Background(), nil, []*unstructured.Unstructured{obj}, false))
 			}
 		})
 	}
@@ -177,13 +163,29 @@ func TestIgnoreARPMatchesAcrossFlavors(t *testing.T) {
 					}
 					rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, dir), cfg)
 					require.NoError(t, err)
+					patchContent, hasPatch := rendered[sysctlPatchFilename]
+					require.Equal(t, enabled && flavor == config.FlavorOCP, hasPatch)
+					if hasPatch {
+						artifacts, err := bundle.FromFiles([]bundle.File{{Name: sysctlPatchFilename, Content: patchContent}})
+						require.NoError(t, err)
+						selected, err := prepareDeploymentObjects(artifacts, true)
+						require.NoError(t, err)
+						require.Len(t, selected.operatorConfigs, 1)
+						require.Empty(t, selected.others, "patch must not enter ordinary resource apply")
+						require.True(t, isOCPSysctlAllowlistPatch(selected.operatorConfigs[0]))
+						entries, _, err := unstructured.NestedString(selected.operatorConfigs[0].Object, "data", "allowlist.conf")
+						require.NoError(t, err)
+						require.Len(t, strings.Split(strings.TrimSpace(entries), "\n"), 20)
+						for _, scope := range []string{"all", "IFNAME"} {
+							for _, key := range []string{"arp_ignore", "arp_announce", "rp_filter"} {
+								require.Contains(t, entries, "^net.ipv4.conf."+scope+"."+key+"$")
+							}
+						}
+					}
 					names := fileNamesMatching(rendered, profile.networkFile)
 					require.NotEmpty(t, names)
 					for _, name := range names {
 						for _, doc := range parseDocs(t, name, rendered[name]) {
-							needed, err := networksNeedARPAllowlist([]*unstructured.Unstructured{{Object: doc}})
-							require.NoError(t, err)
-							require.Equal(t, enabled, needed, "deploy must recognize rendered tuning for every network kind")
 							meta := specString(t, doc, "metaPlugins")
 							if previous != "" {
 								require.Equal(t, previous, meta)
@@ -211,4 +213,96 @@ func TestIgnoreARPMatchesAcrossFlavors(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestSysctlPatchArtifactRoundTripAndEdits(t *testing.T) {
+	desired := sysctlPatch(t)
+	custom := "^net.ipv4.conf.all.arp_ignore$\n^net.ipv4.conf.IFNAME.site_custom$"
+	require.NoError(t, unstructured.SetNestedField(desired.Object, custom, "data", "allowlist.conf"))
+	data, err := desired.MarshalJSON()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, sysctlPatchFilename), data, 0600))
+	artifacts, err := bundle.Load(os.DirFS(dir))
+	require.NoError(t, err)
+	_, err = prepareDeploymentObjects(artifacts, false)
+	require.ErrorContains(t, err, "requires flavor ocp")
+	selected, err := prepareDeploymentObjects(artifacts, true)
+	require.NoError(t, err)
+	require.Len(t, selected.operatorConfigs, 1)
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	initial := sysctlConfigMap()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(initial).Build()
+	require.NoError(t, ensureOCPSysctlAllowlist(context.Background(), c, selected.operatorConfigs[0], false))
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(desired.GroupVersionKind())
+	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(initial), current))
+	got, _, err := unstructured.NestedString(current.Object, "data", "allowlist.conf")
+	require.NoError(t, err)
+	require.Contains(t, got, "site_custom")
+	require.NotContains(t, got, "arp_announce", "deploy must use the artifact, not a hidden built-in list")
+	results, err := ValidateBundle(context.Background(), c, artifacts, config.FlavorOCP)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, crstate.StateSuccess, results[0].State)
+	live := &corev1.ConfigMap{}
+	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(initial), live))
+	live.Data["allowlist.conf"] = ""
+	require.NoError(t, c.Update(context.Background(), live))
+	results, err = ValidateBundle(context.Background(), c, artifacts, config.FlavorOCP)
+	require.NoError(t, err)
+	require.Equal(t, crstate.StateError, results[0].State)
+
+	before := current.DeepCopy()
+	require.NoError(t, mergeOCPConfiguration(current, selected.operatorConfigs[0]))
+	require.Equal(t, before.Object, current.Object, "validation accepts extra live entries")
+	require.NoError(t, unstructured.SetNestedField(current.Object, "", "data", "allowlist.conf"))
+	before = current.DeepCopy()
+	require.NoError(t, mergeOCPConfiguration(current, selected.operatorConfigs[0]))
+	require.NotEqual(t, before.Object, current.Object, "validation detects missing entries")
+}
+
+func TestSysctlPatchRejectsInvalidArtifacts(t *testing.T) {
+	for _, mode := range []string{"wrong target", "missing entries", "non-string entries"} {
+		t.Run(mode, func(t *testing.T) {
+			desired := sysctlPatch(t)
+			switch mode {
+			case "wrong target":
+				desired.SetNamespace("other")
+			case "missing entries":
+				unstructured.RemoveNestedField(desired.Object, "data", "allowlist.conf")
+			case "non-string entries":
+				require.NoError(t, unstructured.SetNestedField(desired.Object, int64(1), "data", "allowlist.conf"))
+			}
+			data, err := desired.MarshalJSON()
+			require.NoError(t, err)
+			artifacts, err := bundle.FromFiles([]bundle.File{{Name: sysctlPatchFilename, Content: string(data)}})
+			require.NoError(t, err)
+			_, err = prepareDeploymentObjects(artifacts, true)
+			require.ErrorContains(t, err, sysctlPatchFilename)
+		})
+	}
+}
+
+func TestOCPOperatorConfigurationConsumesSysctlPatch(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	sub := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", "operator-ns", "network-operator", map[string]interface{}{
+		"spec": map[string]interface{}{"name": "nvidia-network-operator"},
+	})
+	patches := 0
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sub, sysctlConfigMap()).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patches++
+			require.Equal(t, "cni-sysctl-allowlist", obj.GetName())
+			options := &client.PatchOptions{}
+			options.ApplyOptions(opts)
+			require.Equal(t, []string{metav1.DryRunAll}, options.DryRun)
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+	cfg := &config.LaunchKitConfig{Flavor: config.FlavorOCP, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-ns"}}
+	require.NoError(t, applyOCPOperatorConfiguration(context.Background(), c, cfg, []*unstructured.Unstructured{sysctlPatch(t)}, true))
+	require.Equal(t, 1, patches)
 }

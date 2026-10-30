@@ -5,125 +5,89 @@ package networkoperatorplugin
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Preserve the standard interface allowlist along with ignoreARP's global and
-// interface entries. This is shared platform configuration, not an l8k-owned CR.
-const ocpIgnoreARPAllowlist = `^net.ipv4.conf.all.arp_ignore$
-^net.ipv4.conf.all.arp_announce$
-^net.ipv4.conf.all.rp_filter$
-^net.ipv4.conf.IFNAME.accept_redirects$
-^net.ipv4.conf.IFNAME.accept_source_route$
-^net.ipv4.conf.IFNAME.arp_accept$
-^net.ipv4.conf.IFNAME.arp_announce$
-^net.ipv4.conf.IFNAME.arp_ignore$
-^net.ipv4.conf.IFNAME.arp_notify$
-^net.ipv4.conf.IFNAME.disable_policy$
-^net.ipv4.conf.IFNAME.rp_filter$
-^net.ipv4.conf.IFNAME.secure_redirects$
-^net.ipv4.conf.IFNAME.send_redirects$
-^net.ipv6.conf.IFNAME.accept_ra$
-^net.ipv6.conf.IFNAME.accept_redirects$
-^net.ipv6.conf.IFNAME.accept_source_route$
-^net.ipv6.conf.IFNAME.arp_accept$
-^net.ipv6.conf.IFNAME.arp_notify$
-^net.ipv6.neigh.IFNAME.base_reachable_time_ms$
-^net.ipv6.neigh.IFNAME.retrans_time_ms$`
+const ocpSysctlAllowlistPatchFilename = "04-cni-sysctl-allowlist-patch.yaml"
 
-// Inspect desired network artifacts rather than a possibly stale source config:
-// standalone deploy must prepare the allowlist for exactly what it will apply.
-func networksNeedARPAllowlist(docs []*unstructured.Unstructured) (bool, error) {
-	needed := false
-	for _, doc := range docs {
-		switch doc.GroupVersionKind().Group + "/" + doc.GetKind() {
-		case "sriovnetwork.openshift.io/SriovNetwork", "sriovnetwork.openshift.io/SriovIBNetwork",
-			"mellanox.com/HostDeviceNetwork", "mellanox.com/MacvlanNetwork", "mellanox.com/IPoIBNetwork":
-		default:
-			continue
-		}
-		raw, _, err := unstructured.NestedString(doc.Object, "spec", "metaPlugins")
-		if err != nil {
-			return false, fmt.Errorf("read %s %s metaPlugins: %w", doc.GetKind(), doc.GetName(), err)
-		}
-		if strings.TrimSpace(raw) == "" {
-			continue
-		}
-		var plugins []struct {
-			Type   string            `json:"type"`
-			Sysctl map[string]string `json:"sysctl"`
-		}
-		// Network CRs contain a comma-separated list of plugins, without brackets.
-		if err := json.Unmarshal([]byte("["+raw+"]"), &plugins); err != nil {
-			return false, fmt.Errorf("decode %s %s metaPlugins: %w", doc.GetKind(), doc.GetName(), err)
-		}
-		for _, plugin := range plugins {
-			if plugin.Type != "tuning" {
-				continue
-			}
-			for _, scope := range []string{"all", "IFNAME"} {
-				for _, name := range []string{"arp_ignore", "arp_announce", "rp_filter"} {
-					if _, ok := plugin.Sysctl["net.ipv4.conf."+scope+"."+name]; ok {
-						needed = true
-					}
-				}
-			}
-		}
-	}
-	return needed, nil
+func isOCPSysctlAllowlistPatch(obj *unstructured.Unstructured) bool {
+	return obj.GetAPIVersion() == "v1" && obj.GetKind() == "ConfigMap" &&
+		obj.GetNamespace() == "openshift-multus" && obj.GetName() == "cni-sysctl-allowlist"
 }
 
-func ensureOCPSysctlAllowlist(ctx context.Context, c client.Client, docs []*unstructured.Unstructured, dryRun bool) error {
-	needed, err := networksNeedARPAllowlist(docs)
-	if err != nil || !needed {
+func sysctlAllowlistPatchEntries(desired *unstructured.Unstructured) (string, error) {
+	required, found, err := unstructured.NestedString(desired.Object, "data", "allowlist.conf")
+	if err != nil {
+		return "", fmt.Errorf("read sysctl allowlist patch: %w", err)
+	}
+	if !found || strings.TrimSpace(required) == "" {
+		return "", fmt.Errorf("sysctl allowlist patch requires non-empty data[allowlist.conf]")
+	}
+	return required, nil
+}
+
+// mergeOCPSysctlAllowlist treats the generated ConfigMap as an additive patch.
+// Neither the artifact's metadata nor unrelated data keys claim platform ownership.
+func mergeOCPSysctlAllowlist(current, desired *unstructured.Unstructured) error {
+	required, err := sysctlAllowlistPatchEntries(desired)
+	if err != nil {
 		return err
 	}
-	key := types.NamespacedName{Namespace: "openshift-multus", Name: "cni-sysctl-allowlist"}
+	existing, _, err := unstructured.NestedString(current.Object, "data", "allowlist.conf")
+	if err != nil {
+		return fmt.Errorf("read existing sysctl allowlist: %w", err)
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(existing, "\n") {
+		seen[strings.TrimSpace(line)] = true
+	}
+	merged := existing
+	for _, line := range strings.Split(required, "\n") {
+		entry := strings.TrimSpace(line)
+		if entry == "" || seen[entry] {
+			continue
+		}
+		if merged != "" && !strings.HasSuffix(merged, "\n") {
+			merged += "\n"
+		}
+		merged += entry + "\n"
+		seen[entry] = true
+	}
+	if merged == existing {
+		return nil
+	}
+	return unstructured.SetNestedField(current.Object, merged, "data", "allowlist.conf")
+}
+
+func ensureOCPSysctlAllowlist(ctx context.Context, c client.Client, desired *unstructured.Unstructured, dryRun bool) error {
+	key := client.ObjectKeyFromObject(desired)
 	changed := false
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		changed = false
-		current := &corev1.ConfigMap{}
+		current := &unstructured.Unstructured{}
+		current.SetGroupVersionKind(desired.GroupVersionKind())
 		// Require the platform ConfigMap; absence or failed inspection is an error.
 		if err := c.Get(ctx, key, current); err != nil {
 			return err
 		}
 		before := current.DeepCopy()
-		existing := current.Data["allowlist.conf"]
-		seen := map[string]bool{}
-		for _, line := range strings.Split(existing, "\n") {
-			seen[strings.TrimSpace(line)] = true
+		if err := mergeOCPSysctlAllowlist(current, desired); err != nil {
+			return err
 		}
-		merged := existing
-		for _, entry := range strings.Split(ocpIgnoreARPAllowlist, "\n") {
-			if seen[entry] {
-				continue
-			}
-			if merged != "" && !strings.HasSuffix(merged, "\n") {
-				merged += "\n"
-			}
-			merged += entry + "\n"
-		}
-		if merged == existing {
+		if reflect.DeepEqual(before.Object, current.Object) {
 			return nil
 		}
-		if current.Data == nil {
-			current.Data = map[string]string{}
-		}
-		current.Data["allowlist.conf"] = merged
 		opts := []client.PatchOption{}
 		if dryRun {
 			opts = append(opts, client.DryRunAll)
 		}
-		// resourceVersion prevents overwriting an administrator's concurrent edit.
 		patch := client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})
 		if err := c.Patch(ctx, current, patch, opts...); err != nil {
 			return err

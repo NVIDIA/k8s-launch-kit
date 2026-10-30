@@ -1,0 +1,30 @@
+{{- if and .Profile .Profile.IgnoreARP }}
+# l8k deploy merges these entries into the existing shared ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cni-sysctl-allowlist
+  namespace: openshift-multus
+data:
+  allowlist.conf: |-
+    ^net.ipv4.conf.all.arp_ignore$
+    ^net.ipv4.conf.all.arp_announce$
+    ^net.ipv4.conf.all.rp_filter$
+    ^net.ipv4.conf.IFNAME.accept_redirects$
+    ^net.ipv4.conf.IFNAME.accept_source_route$
+    ^net.ipv4.conf.IFNAME.arp_accept$
+    ^net.ipv4.conf.IFNAME.arp_announce$
+    ^net.ipv4.conf.IFNAME.arp_ignore$
+    ^net.ipv4.conf.IFNAME.arp_notify$
+    ^net.ipv4.conf.IFNAME.disable_policy$
+    ^net.ipv4.conf.IFNAME.rp_filter$
+    ^net.ipv4.conf.IFNAME.secure_redirects$
+    ^net.ipv4.conf.IFNAME.send_redirects$
+    ^net.ipv6.conf.IFNAME.accept_ra$
+    ^net.ipv6.conf.IFNAME.accept_redirects$
+    ^net.ipv6.conf.IFNAME.accept_source_route$
+    ^net.ipv6.conf.IFNAME.arp_accept$
+    ^net.ipv6.conf.IFNAME.arp_notify$
+    ^net.ipv6.neigh.IFNAME.base_reachable_time_ms$
+    ^net.ipv6.neigh.IFNAME.retrans_time_ms$
+{{- end }}
