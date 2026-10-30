@@ -378,6 +378,16 @@ rails cross first/second ASICs between NetworkBays 1/2 and 3/4.
 Generation rejects VR inventories unless they contain four dense rails with two
 physical NICs each. Re-run discovery with NetworkBay status for old configs that
 assigned one rail per NIC; generation does not guess the pairing from PCI order. Missing or inconsistent status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+Discovery saves the effective RA naming in
+`clusterConfig[].spectrumX.interfaceNames` (`netdevPrefix` and `rdmaPrefix`).
+These are derived values: resolution refreshes them after mode or naming
+changes, including for older configs without this block. Change the existing
+`spectrumX.singlePlane`, `hwplb`, or `swplb` prefix settings for custom naming.
+PF inventory names remain observed values. Naming templates and PF selectors
+consume the same resolved per-group prefixes; standard profiles are unaffected.
+VR HWPLB uses `eth_r%rail_id%_p%plane_id%` and
+`roce_r%rail_id%_n%nic_id%`; traditional HWPLB retains `roce_r%rail_id%`.
+
 VR generation supports IPv4 and IPv6 HWPLB with eight planes on four dual-NIC rails.
 It emits four per-rail naming templates (`pfsPerNic: 4`), eight per-NIC
 `railRnicN` topology entries and CIDRPools, and eight workload attachments.

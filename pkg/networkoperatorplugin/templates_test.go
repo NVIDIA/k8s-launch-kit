@@ -206,6 +206,7 @@ func TestSpectrumXInterfaceNameTemplateModeDefaults(t *testing.T) {
 				SpectrumX: &config.SpectrumXConfig{},
 				Profile: &config.Profile{
 					SpectrumX: &config.ProfileSpectrumX{
+						Enable:         true,
 						MultiplaneMode: tc.mode,
 						NumberOfPlanes: tc.planes,
 					},
@@ -246,6 +247,7 @@ func TestSpectrumXInterfaceNameTemplateModeDefaults(t *testing.T) {
 			},
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
+					Enable:         true,
 					MultiplaneMode: "hwplb",
 					NumberOfPlanes: 2,
 				},

@@ -764,6 +764,9 @@ type ProfileSpectrumX struct {
 type SpectrumXGroupConfig struct {
 	PlatformType  string      `yaml:"platformType"`            // derived from MachineType/GPUType; recomputed during discovery and resolution
 	SwPlaneByRail map[int]int `yaml:"swPlaneByRail,omitempty"` // RA2.4/RA3.1 software-plane assignments keyed by existing east-west rail ID
+	// InterfaceNames is derived from the selected mode, naming overrides and
+	// platform. Discovery persists it; resolution refreshes it before rendering.
+	InterfaceNames *SpectrumXInterfaceNamePrefixConfig `yaml:"interfaceNames,omitempty"`
 }
 
 type ClusterConfig struct {

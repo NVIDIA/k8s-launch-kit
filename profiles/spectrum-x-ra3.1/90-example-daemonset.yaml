@@ -13,7 +13,7 @@ spec:
       labels:
         app: spectrum-x-test{{boundedSuffix 48 .ClusterConfig.Identifier}}
       annotations:
-        {{- $endpoints := spectrumXEndpoints .Profile .SpectrumX .ClusterConfig }}
+        {{- $endpoints := spectrumXEndpoints .Profile .ClusterConfig }}
         {{- $claims := spectrumXClaims $endpoints }}
         k8s.v1.cni.cncf.io/networks: {{range $i, $endpoint := $endpoints}}{{if $i}},{{end}}{{$endpoint.Name}}{{end}}
     spec:

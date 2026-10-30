@@ -515,6 +515,17 @@ doSPCX platform substring in `gpuType`; unresolved discovery warns, while
 RA2.4/RA3.1 generation fails. See the [RA2.4 contract](../user/spectrum-x.md#ra24-dospcx-profile)
 for release prerequisites, merging, defaults and supported layouts.
 
+Discovery saves the effective RA naming in
+`clusterConfig[].spectrumX.interfaceNames` (`netdevPrefix` and `rdmaPrefix`).
+These are derived values: resolution refreshes them after mode or naming
+changes, including for older configs without this block. Change the existing
+`spectrumX.singlePlane`, `hwplb`, or `swplb` prefix settings for custom naming.
+PF inventory names remain observed values. Naming templates and PF selectors
+consume the same resolved per-group prefixes; standard profiles are unaffected.
+VR HWPLB uses `eth_r%rail_id%_p%plane_id%` and
+`roce_r%rail_id%_n%nic_id%`; traditional HWPLB retains `roce_r%rail_id%`.
+
+
 VR generation supports IPv4/IPv6, eight-plane HWPLB, four rails and two
 NICs per rail. It emits per-NIC pools/attachments and requires explicit host
 indices in reference topology JSON. See [VR addressing and naming](../user/spectrum-x.md#vr-dual-nic-rails)
