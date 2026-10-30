@@ -515,10 +515,12 @@ doSPCX platform substring in `gpuType`; unresolved discovery warns, while
 RA2.4/RA3.1 generation fails. See the [RA2.4 contract](../user/spectrum-x.md#ra24-dospcx-profile)
 for release prerequisites, merging, defaults and supported layouts.
 
-VR generation currently supports IPv4, eight-plane HWPLB, four rails and two
+VR generation supports IPv4/IPv6, eight-plane HWPLB, four rails and two
 NICs per rail. It emits per-NIC pools/attachments and requires explicit host
 indices in reference topology JSON. See [VR addressing and naming](../user/spectrum-x.md#vr-dual-nic-rails)
 for field limits, custom prefix rules and migration requirements.
+`profile.spectrumX.ipv6SiteID` is a YAML-only integer from 0 to 15, defaulting
+to zero. Nonzero values apply only to VR IPv6; `hostFirstOctet` remains IPv4-only.
 
 A `machineType` containing `VR` (case-insensitive) selects platform `vr` before
 GPU-product matching, including when `gpuType` is empty. With ConnectX-9 and

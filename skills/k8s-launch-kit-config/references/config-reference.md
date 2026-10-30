@@ -466,10 +466,10 @@ VR discovery requires eight east-west ASIC NICs in four reciprocal NetworkBay
 pairs. NetworkBays are numbered by ascending first-ASIC (`asic: 1`) PCI address;
 rails cross first/second ASICs between NetworkBays 1/2 and 3/4. Missing or inconsistent
 status fails discovery. See `docs/user/discovery.md` for the rail mapping.
-VR generation supports IPv4 HWPLB with eight planes on four dual-NIC rails.
+VR generation supports IPv4 and IPv6 HWPLB with eight planes on four dual-NIC rails.
 It emits four per-rail naming templates (`pfsPerNic: 4`), eight per-NIC
 `railRnicN` topology entries and CIDRPools, and eight workload attachments.
-Each NIC endpoint has four PFs, one schedulable VF and its own /31. DRA uses
+Each NIC endpoint has four PFs, one schedulable VF and its own IPv4 /31 or IPv6 /64. DRA uses
 one claim per logical rail with one GPU and two VF requests. NIC input order
 is preserved; it must agree with the physical switch topology. RDMA names
 are `roce_rR_n0`/`roce_rR_n1`; custom RDMA prefixes require `%nic_id%` and no
@@ -480,7 +480,14 @@ VR IPv4 defaults to site-zero `240.0.0.0/8`, with NIC(1), rail(2), POD(5),
 SU(7), host(8), peer(1) bits after the first octet. Eight-plane POD is always
 zero and host index is at most 251. Pools are per NIC/rail /11, allocations
 are /31 with even host and odd gateway, and routes cover /11 and /8.
-IPv6, non-HWPLB VR, incomplete topology, and extra software-plane offsets
+VR IPv6 uses `fd02:000S:NRPP:UUHH::peer/64`: site nibble `S`, NIC nibble
+`N`, rail nibble `R`, POD byte `PP`, SU byte `UU`, and host byte `HH`.
+`profile.spectrumX.ipv6SiteID` selects site 0..15 (default 0; YAML-only).
+The two NICs use distinct per-NIC/rail /40 pools; each host gets a static /64,
+with host `::1`, gateway `::2` (excluded from allocation), and route `fd02::/28`.
+POD remains zero, SU is 0..127, and host index is 0..251. `hostFirstOctet`
+affects only IPv4; nonzero `ipv6SiteID` is rejected outside VR IPv6.
+Non-HWPLB VR, incomplete topology, and extra software-plane offsets
 are rejected. Generation does not qualify runtime support or configure switches.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served
