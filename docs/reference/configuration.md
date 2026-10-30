@@ -489,7 +489,7 @@ profile:
 | `deployment` | `sriov`, `rdma_shared`, or `host_device`. |
 | `multirail` | Enable more than one east-west rail. An explicit `false` is preserved. |
 | `routing` | `destination-based` or `source-based`; source-based adds the `sbr` CNI plugin outside Spectrum-X. |
-| `ignoreARP` | Adds `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` through the `tuning` CNI plugin outside Spectrum-X. Kubernetes renders both `all` and `IFNAME` scopes; OpenShift renders `IFNAME` only and requires those keys in the Multus sysctl allowlist. |
+| `ignoreARP` | Adds `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` through the `tuning` CNI plugin outside Spectrum-X. Both Kubernetes and OpenShift render `all` and `IFNAME` scopes. OpenShift deploy adds the corresponding Multus sysctl allowlist entries while preserving existing entries. |
 | `spectrumX.enable` | Select a Spectrum-X profile. |
 | `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4`, or `RA3.1`; RA2.3 requires 26.7, RA2.4 and RA3.1 require 26.10 or a newer catalogued release. |
 | `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. When absent, H100/H200/B200/GB200 default to `none`; B300/GB300 default to the GA `swplb` path. B300/GB300 require explicit `hwplb`; VR with ConnectX-9 defaults to `hwplb` on RA2.4/RA3.1. |

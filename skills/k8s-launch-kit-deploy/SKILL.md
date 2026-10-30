@@ -205,6 +205,14 @@ these by applying `MaintenanceOperatorConfig` alone.
 ## OpenShift
 
 OpenShift deploy requires certified operator installations, uses OLM CSV/API checks, and configures existing operators. Helm values in the deployment directory are rejected. IPPool dry-run checks may be deferred until NCP installs NV-IPAM.
+
+When the desired network meta-plugins contain ignoreARP tuning, deploy patches
+`openshift-multus/cni-sysctl-allowlist` before network apply. It appends missing
+global/interface ARP entries and the standard interface allowlist while preserving
+site entries and other ConfigMap fields. Requires get/patch permission and an
+existing ConfigMap; inspection or patch errors stop deploy. Server-side dry-run
+is honored. The shared platform configuration persists through cleanup, and
+node propagation/pod attachment still require workload validation.
 Use `docs/user/openshift.md` for the operator ownership and acceptance workflow.
 
 ## Standard NIC tuning

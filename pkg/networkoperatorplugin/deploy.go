@@ -248,6 +248,9 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 
 	ncpObj, nnpObjs, otherDocs := selected.ncp, selected.nnps, selected.others
 	if ocp {
+		if err := ensureOCPSysctlAllowlist(ctx, kubeClient, otherDocs, opts.DryRun); err != nil {
+			return err
+		}
 		if err := applyOCPOperatorConfiguration(ctx, kubeClient, opts.Config, selected.operatorConfigs, opts.DryRun); err != nil {
 			return err
 		}

@@ -56,6 +56,26 @@ New or changed preflight/ownership logic MUST distinguish verified absence from 
 - **AND** differently named NCP deletion candidates with managed Multus/CNI sections are protected even if their child installers are absent; exact candidates are rechecked before any remediation deletion, and changed policy identity/version cannot authorize a stale delete.
 - **AND** omitted external prerequisites with unavailable optional health evidence remain unverified; mandatory live-policy inspection failures remain errors.
 
+### Requirement: OpenShift tuning allowlist
+
+OpenShift deploy SHALL inspect desired secondary-network meta-plugins and ensure
+`openshift-multus/cni-sysctl-allowlist` permits ignoreARP tuning before network
+apply. It SHALL append missing entries from the standard interface and global
+ARP allowlist while preserving existing entries, unrelated fields and concurrent
+administrator changes. It SHALL require an existing platform ConfigMap and
+report inspection/patch failures. The shared configuration SHALL persist through
+cleanup; generation alone SHALL NOT modify it.
+
+#### Scenario: Repeat or dry-run deployment
+
+- **WHEN** the allowlist already contains all entries or deploy uses dry-run
+- **THEN** the complete allowlist is not rewritten, and needed dry-run patches use server-side dry-run without persistence.
+
+#### Scenario: No requested tuning
+
+- **WHEN** the desired networks omit ARP tuning or the platform is Kubernetes
+- **THEN** deployment does not inspect or patch the OpenShift allowlist.
+
 ### Requirement: Teardown and partial failure
 
 An effect extension MUST specify cleanup after partial setup, cancellation and rerun, including dependency ordering, finalizers, retained resources and failure evidence. Cleanup SHALL honor the documented operation scope and retention policy without promising transactions or success during API outage.
