@@ -5,13 +5,13 @@
 class L8k < Formula
   desc "CLI for deploying NVIDIA cloud-native networking on Kubernetes"
   homepage "https://github.com/nvidia/k8s-launch-kit"
-  version "26.10.0-rc.4"
+  version "26.10.0-rc.5"
   license "Apache-2.0"
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.10.0-rc.4/l8k_26.10.0-rc.4_darwin_amd64.tar.gz"
-      sha256 "d13543d11d7bcc21be86a1a86f00aeac0f1f39c8bbe698080168c3dd8c360066"
+      url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.10.0-rc.5/l8k_26.10.0-rc.5_darwin_amd64.tar.gz"
+      sha256 "b3f4dd14138378030404f0cc52d4403cac6406530e560d4a3ff628848dd416a6"
 
       define_method(:install) do
         bin.install "l8k"
@@ -20,8 +20,8 @@ class L8k < Formula
       end
     end
     if Hardware::CPU.arm?
-      url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.10.0-rc.4/l8k_26.10.0-rc.4_darwin_arm64.tar.gz"
-      sha256 "1940c4ec4f0d73fca67c8d3c982682070ccf47c4e94ed919b5253cb0479afd6c"
+      url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.10.0-rc.5/l8k_26.10.0-rc.5_darwin_arm64.tar.gz"
+      sha256 "062070a9468ed601c58652fb2f99fcd6e84c8efc06eb09385eb6380aaba52d15"
 
       define_method(:install) do
         bin.install "l8k"
@@ -33,8 +33,8 @@ class L8k < Formula
 
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
-      url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.10.0-rc.4/l8k_26.10.0-rc.4_linux_amd64.tar.gz"
-      sha256 "4e56332016721ca740e73175c1847434ccd940c4d537a62aeace83229a4c8a0a"
+      url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.10.0-rc.5/l8k_26.10.0-rc.5_linux_amd64.tar.gz"
+      sha256 "cf74631ba074e6c7b75c862887ebbecd737d4d178a5b6b8d913f064ece3f98c9"
       define_method(:install) do
         bin.install "l8k"
         (share/"l8k").install "profiles"
@@ -42,8 +42,8 @@ class L8k < Formula
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.10.0-rc.4/l8k_26.10.0-rc.4_linux_arm64.tar.gz"
-      sha256 "d76d258461310a655ed0237433627ca2b109aed2104cbaacce12276759ed213e"
+      url "https://github.com/NVIDIA/k8s-launch-kit/releases/download/v26.10.0-rc.5/l8k_26.10.0-rc.5_linux_arm64.tar.gz"
+      sha256 "1054795422fb397fd3e9d5ceef7179b569a0f2095623de3a92dec810093b508d"
       define_method(:install) do
         bin.install "l8k"
         (share/"l8k").install "profiles"
