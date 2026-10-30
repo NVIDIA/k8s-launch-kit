@@ -511,8 +511,8 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, serverNamespace 
 	// client when invoked with one. The server prints a banner and
 	// then waits; the client connects, runs the test, and both
 	// sides print the summary table.
-	serverCmd := fmt.Sprintf("nohup ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s >/tmp/ibwritebw-server.log 2>&1 & echo $!",
-		shellArg(test.DstRDMADev), size, port, shellArg(test.DstIP))
+	serverCmd := fmt.Sprintf("nohup ib_write_bw -d %s -R%s -s %d --report_gbits -p %d --bind_source_ip %s >/tmp/ibwritebw-server.log 2>&1 & echo $!",
+		shellArg(test.DstRDMADev), ipv6Flag(test.DstIP, " --ipv6 --ipv6-addr"), size, port, shellArg(test.DstIP))
 	srvRes, err := kubeclient.ExecInPod(tctx, restConfig, serverNamespace, serverPod, serverContainer, []string{"/bin/sh", "-c", serverCmd})
 	if err != nil {
 		r.Err = fmt.Errorf("ib_write_bw server start: %w (stderr: %s)", err, srvRes.Stderr)
@@ -529,8 +529,8 @@ func RunIbWriteBw(ctx context.Context, restConfig *rest.Config, serverNamespace 
 	}
 
 	clientCmd := shellWithTimeout(
-		fmt.Sprintf("ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s %s",
-			shellArg(test.SrcRDMADev), size, port, shellArg(test.SrcIP), shellArg(test.DstIP)),
+		fmt.Sprintf("ib_write_bw -d %s -R%s -s %d --report_gbits -p %d --bind_source_ip %s %s",
+			shellArg(test.SrcRDMADev), ipv6Flag(test.SrcIP, " --ipv6 --ipv6-addr"), size, port, shellArg(test.SrcIP), shellArg(test.DstIP)),
 		commandTimeoutFor(test, ibWriteBwCommandTimeout))
 	cliRes, cliErr := kubeclient.ExecInPod(tctx, restConfig, clientNamespace, clientPod, clientContainer, []string{"/bin/sh", "-c", clientCmd})
 	r.Stdout, r.Stderr = cliRes.Stdout, cliRes.Stderr
@@ -720,8 +720,8 @@ func ibWriteBwBatchServerCommandMode(tests []PingTest, size int, gpuDirect bool)
 		}
 		port := ibWriteBwBatchPort(i)
 		fmt.Fprintf(&b,
-			"nohup ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s%s >/tmp/l8k-ibwritebw-server-%d.log 2>&1 & ",
-			shellArg(test.DstRDMADev), size, port, shellArg(test.DstIP), cudaDMABufArgs(gpuDirect, test.DstGPUIndex), i)
+			"nohup ib_write_bw -d %s -R%s -s %d --report_gbits -p %d --bind_source_ip %s%s >/tmp/l8k-ibwritebw-server-%d.log 2>&1 & ",
+			shellArg(test.DstRDMADev), ipv6Flag(test.DstIP, " --ipv6 --ipv6-addr"), size, port, shellArg(test.DstIP), cudaDMABufArgs(gpuDirect, test.DstGPUIndex), i)
 	}
 	b.WriteString("echo ready")
 	return b.String()
@@ -745,9 +745,9 @@ func ibWriteBwBatchClientCommandMode(tests []PingTest, size int, gpuDirect bool)
 			continue
 		}
 		fmt.Fprintf(&b,
-			"run_with_timeout %d ib_write_bw -d %s -R -s %d --report_gbits -p %d --bind_source_ip %s%s %s >%s 2>%s; rc=$?; "+
+			"run_with_timeout %d ib_write_bw -d %s -R%s -s %d --report_gbits -p %d --bind_source_ip %s%s %s >%s 2>%s; rc=$?; "+
 				"echo %s %d $rc; echo %s %d; cat %s 2>/dev/null; echo; echo %s %d; cat %s 2>/dev/null; echo; echo %s %d; ",
-			timeoutSeconds, shellArg(test.SrcRDMADev), size, ibWriteBwBatchPort(i), shellArg(test.SrcIP), cudaDMABufArgs(gpuDirect, test.SrcGPUIndex), shellArg(test.DstIP),
+			timeoutSeconds, shellArg(test.SrcRDMADev), ipv6Flag(test.SrcIP, " --ipv6 --ipv6-addr"), size, ibWriteBwBatchPort(i), shellArg(test.SrcIP), cudaDMABufArgs(gpuDirect, test.SrcGPUIndex), shellArg(test.DstIP),
 			outFile, errFile,
 			ibWriteBwBatchResultMarker, i,
 			ibWriteBwBatchStdoutMarker, i, outFile,

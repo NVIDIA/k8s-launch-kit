@@ -101,13 +101,7 @@ func rdmaSettleDelayFor(test PingTest) time.Duration {
 
 func checkRoute(ctx context.Context, restConfig *rest.Config, namespace, pod, container string, test PingTest) RouteCheck {
 	started := time.Now()
-	cmd := fmt.Sprintf(
-		`ipcmd=""; for p in ip /sbin/ip /usr/sbin/ip /bin/ip /usr/bin/ip; do `+
-			`if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then ipcmd="$p"; break; fi; `+
-			`done; `+
-			`if [ -z "$ipcmd" ]; then echo %s; exit 0; fi; `+
-			`"$ipcmd" -o route get %s from %s`,
-		shellArg(routeSkipMarker), shellArg(test.DstIP), shellArg(test.SrcIP))
+	cmd := routeCommand(test)
 	out := RouteCheck{Command: cmd}
 	if test.SrcIP == "" || test.DstIP == "" {
 		out.Err = "missing source or destination IP"
@@ -231,4 +225,14 @@ func finalizeExpectedResult(r *PingResult, observedOK bool, observedErr error) {
 		r.OK = observedOK
 		r.Err = observedErr
 	}
+}
+
+func routeCommand(test PingTest) string {
+	return fmt.Sprintf(
+		`ipcmd=""; for p in ip /sbin/ip /usr/sbin/ip /bin/ip /usr/bin/ip; do `+
+			`if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then ipcmd="$p"; break; fi; `+
+			`done; `+
+			`if [ -z "$ipcmd" ]; then echo %s; exit 0; fi; `+
+			`"$ipcmd"%s -o route get %s from %s`,
+		shellArg(routeSkipMarker), ipv6Flag(test.SrcIP, " -6"), shellArg(test.DstIP), shellArg(test.SrcIP))
 }
