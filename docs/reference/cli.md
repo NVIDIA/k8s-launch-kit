@@ -33,9 +33,7 @@ with a source filename and document number where applicable.
 ## Target selection and flag ownership
 
 Omitting `--target` selects `host`; adding `--target host` follows the same
-code path. `dpf` is a recognized target name whose phases are unavailable in
-this build. Selecting it returns validation exit code `2`. This explicit
-capability error prevents DPF invocations from falling through to host logic.
+code path. `dpf` provides an [experimental discovery preview](../user/dpf-discovery.md). Its other phases remain unavailable and return exit `2`, without falling through to Host logic.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags

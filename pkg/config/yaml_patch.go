@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/yamlinput"
 	yaml3 "gopkg.in/yaml.v3"
 )
 
@@ -17,68 +18,8 @@ import (
 // expanded. YAML merges are shallow: an explicit mapping replaces the entire
 // inherited mapping at that key. Earlier mappings in a merge sequence win.
 // Sharing this expansion keeps presence tracking and source patches consistent.
-func expandYAMLNode(node *yaml3.Node, active map[*yaml3.Node]bool) (*yaml3.Node, error) {
-	if node == nil {
-		return nil, fmt.Errorf("missing YAML node")
-	}
-	if active[node] {
-		return nil, fmt.Errorf("cyclic YAML alias")
-	}
-	active[node] = true
-	defer delete(active, node)
-	if node.Kind == yaml3.AliasNode {
-		return expandYAMLNode(node.Alias, active)
-	}
-	copy := *node
-	copy.Anchor = ""
-	copy.Content = nil
-	for _, child := range node.Content {
-		expanded, err := expandYAMLNode(child, active)
-		if err != nil {
-			return nil, err
-		}
-		copy.Content = append(copy.Content, expanded)
-	}
-	if copy.Kind != yaml3.MappingNode {
-		return &copy, nil
-	}
-	entries := copy.Content
-	copy.Content = nil
-	for i := 0; i+1 < len(entries); i += 2 {
-		if entries[i].Tag != "!!merge" {
-			continue
-		}
-		mappings := []*yaml3.Node{entries[i+1]}
-		if entries[i+1].Kind == yaml3.SequenceNode {
-			mappings = entries[i+1].Content
-		}
-		for _, mapping := range mappings {
-			if mapping.Kind != yaml3.MappingNode {
-				return nil, fmt.Errorf("YAML merge value must be a mapping or sequence of mappings")
-			}
-			for j := 0; j+1 < len(mapping.Content); j += 2 {
-				putYAMLField(&copy, mapping.Content[j], mapping.Content[j+1], false)
-			}
-		}
-	}
-	for i := 0; i+1 < len(entries); i += 2 {
-		if entries[i].Tag != "!!merge" {
-			putYAMLField(&copy, entries[i], entries[i+1], true)
-		}
-	}
-	return &copy, nil
-}
-
-func putYAMLField(mapping, key, value *yaml3.Node, replace bool) {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key.Value {
-			if replace {
-				mapping.Content[i], mapping.Content[i+1] = key, value
-			}
-			return
-		}
-	}
-	mapping.Content = append(mapping.Content, key, value)
+func expandYAMLNode(node *yaml3.Node, _ map[*yaml3.Node]bool) (*yaml3.Node, error) {
+	return yamlinput.Expand(node)
 }
 
 // PatchConfigYAML updates only the requested YAML paths, preserving all other

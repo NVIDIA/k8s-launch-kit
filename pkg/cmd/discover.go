@@ -17,11 +17,13 @@
 package cmd
 
 import (
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	dpftarget "github.com/nvidia/k8s-launch-kit/pkg/target/dpf"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
@@ -40,7 +42,11 @@ NicDevice CRs, and torn down when discovery finishes.
 
 Discovery groups nodes by hardware, detects east-west vs north-south
 NICs, and probes OFED-dependent modules. With --user-config, it replaces
-clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.`,
+clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.
+
+With --target dpf, inspect the independent management/BMC estate using ordinary
+YAML. The inventory preview requires discovery.probes.mode: inventory; management
+probes and hardware support require qualified release assets.`,
 		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
@@ -67,6 +73,13 @@ clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI override
   l8k discover --save-cluster-config ./cluster-config.yaml \
     --output json 2>/dev/null`,
 		Run: func(cmd *cobra.Command, args []string) {
+			if targetName == string(target.DPF) && len(args) > 0 {
+				exitWithError(apperrors.NewValidationError("discover takes no positional arguments", nil, "Use --user-config"), outputFormat)
+			}
+			if targetName == string(target.DPF) {
+				runTargetCommand(cmd, target.Discover, dpftarget.NewDiscoverAdapter(dpftarget.Request{UserConfig: userConfig, OutputPath: saveClusterConfig, ExplicitOutput: cmd.Flags().Changed("save-cluster-config")}))
+				return
+			}
 			opts := mustCollectConfigFlags(cmd, discoverConfigOptions)
 			opts.ConfigDir = configDir
 			opts.DiscoverClusterConfig = true
