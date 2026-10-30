@@ -143,7 +143,7 @@ SHALL retain the CX9 four-plane fallback; defaults do not qualify a fabric recip
 
 #### Scenario: VR dual-NIC endpoint consistency
 
-- **WHEN** selected VR sources have four dual-NIC rails and a complete IPv4 eight-plane HWPLB topology
+- **WHEN** selected VR sources have four dual-NIC rails and a complete IPv4 or IPv6 eight-plane HWPLB topology
 - **THEN** naming preserves four logical rails, while rail topology, CIDRPools and workload attachments expose eight per-NIC endpoints; each endpoint selects its four PFs and one VF, and DRA shares one GPU claim between the two endpoints in a logical rail.
 
 #### Scenario: VR address coordinates

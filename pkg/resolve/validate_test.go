@@ -190,3 +190,8 @@ func TestValidateResolvedRA31EightPlanes(t *testing.T) {
 	cfg.Profile.SpectrumX.NumberOfPlanes = 3
 	require.ErrorContains(t, ValidateResolvedConfig(cfg), "invalid --number-of-planes 3")
 }
+
+func TestIPv6SiteIDRequiresSpectrumX(t *testing.T) {
+	cfg := &config.LaunchKitConfig{Profile: &config.Profile{SpectrumX: &config.ProfileSpectrumX{Enable: false, IPv6SiteID: 1}}}
+	require.ErrorContains(t, ValidateResolvedConfig(cfg), "ipv6SiteID is set but spectrumX.enable=false")
+}

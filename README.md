@@ -11,7 +11,7 @@ RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
 from GPU-product substrings or VR machine types, and accept optional HWPLB
 software-plane and OVS settings. VR with ConnectX-9 defaults to eight-plane HWPLB;
 discovery derives its four dual-NIC rails from NetworkBay peer status.
-VR IPv4 generation emits eight per-NIC XPlane groups, address pools and workload
+VR IPv4/IPv6 generation emits eight per-NIC XPlane groups, address pools and workload
 attachments; [VR topology inputs](docs/user/spectrum-x.md#vr-dual-nic-rails) require
 explicit host indices and must match physical cabling.
 Generation rejects VR inventories unless they contain four dense rails with two

@@ -752,6 +752,7 @@ type ProfileSpectrumX struct {
 	TopologyType         string `yaml:"topologyType,omitempty"`
 	IPVersion            string `yaml:"ipVersion,omitempty"`
 	HostFirstOctet       int    `yaml:"hostFirstOctet,omitempty"`
+	IPv6SiteID           int    `yaml:"ipv6SiteID,omitempty"` // VR IPv6 site nibble, 0..15
 	TopologyFile         string `yaml:"topologyFile,omitempty"`
 	ResolvedTopologyFile string `yaml:"-"`
 	UseDRA               bool   `yaml:"useDRA"`                  // enable DRA ResourceClaimTemplate-based workload allocation

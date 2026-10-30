@@ -613,17 +613,20 @@ func TestVRNetworkBayRailsRenderEightPlanes(t *testing.T) {
 		for _, split := range []bool{false, true} {
 			for _, dra := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/split=%v/dra=%v", ra, split, dra), func(t *testing.T) {
-					testVRNetworkBayManifestRails(t, ra, split, dra)
+					for _, ip := range []string{config.SpectrumXIPVersionIPv4, config.SpectrumXIPVersionIPv6} {
+						t.Run(ip, func(t *testing.T) { testVRNetworkBayManifestRails(t, ra, split, dra, ip) })
+					}
 				})
 			}
 		}
 	}
 }
 
-func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool) {
+func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool, ip string) {
 	t.Helper()
 	cfg, profile := vrConfigAndProfile(t, ra, split)
 	cfg.Profile.SpectrumX.UseDRA = dra
+	cfg.Profile.SpectrumX.IPVersion = ip
 	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
 	require.NoError(t, err)
 	files := []bundle.File{}
@@ -672,6 +675,11 @@ func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool) {
 			}
 		case "CIDRPool":
 			poolNames = append(poolNames, obj.GetName())
+			if ip == config.SpectrumXIPVersionIPv6 {
+				require.EqualValues(t, 64, vrManifestField(t, obj.Object, "spec", "perNodeNetworkPrefix"))
+				require.EqualValues(t, 2, vrManifestField(t, obj.Object, "spec", "gatewayIndex"))
+				require.Equal(t, []any{map[string]any{"dst": "fd02::/28"}}, vrManifestField(t, obj.Object, "spec", "routes"))
+			}
 		case "ResourceClaimTemplate":
 			claimNames = append(claimNames, obj.GetName())
 			requests := vrManifestField(t, obj.Object, "spec", "spec", "devices", "requests").([]any)

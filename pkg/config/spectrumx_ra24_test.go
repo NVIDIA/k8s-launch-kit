@@ -145,3 +145,14 @@ func TestRA31DospcxProfileContract(t *testing.T) {
 	require.NoError(t, ValidateSPCXRelease("RA3.1", "26.10"))
 	require.Error(t, ValidateSPCXRelease("RA3.1", "26.7"))
 }
+
+func TestVRIPv6SiteIDRoundTrip(t *testing.T) {
+	for _, site := range []int{0, 15} {
+		original := ProfileSpectrumX{Enable: true, IPVersion: SpectrumXIPVersionIPv6, IPv6SiteID: site}
+		encoded, err := yaml.Marshal(original)
+		require.NoError(t, err)
+		var decoded ProfileSpectrumX
+		require.NoError(t, yaml.Unmarshal(encoded, &decoded))
+		require.Equal(t, original, decoded)
+	}
+}

@@ -72,6 +72,9 @@ func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
 		if cfg.Profile.SpectrumX.HostFirstOctet != 0 {
 			return fmt.Errorf("hostFirstOctet is set but spectrumX.enable=false; remove the field or enable Spectrum-X")
 		}
+		if cfg.Profile.SpectrumX.IPv6SiteID != 0 {
+			return fmt.Errorf("ipv6SiteID is set but spectrumX.enable=false; remove the field or enable Spectrum-X")
+		}
 		if cfg.Profile.SpectrumX.UseDRA {
 			return fmt.Errorf("useDRA is true but spectrumX.enable=false; set useDRA: false or enable Spectrum-X")
 		}

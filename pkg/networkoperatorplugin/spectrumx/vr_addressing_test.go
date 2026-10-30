@@ -7,6 +7,7 @@ package spectrumx
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -117,7 +118,73 @@ func TestVRAddressBounds(t *testing.T) {
 	_, _, err = allocateVRHostLeaf(spcx, 0, 0, 0, 0, 1)
 	require.ErrorContains(t, err, "hostFirstOctet")
 	spcx.HostFirstOctet = 240
-	spcx.IPVersion = "ipv6"
+	spcx.IPVersion = "unsupported"
 	_, _, err = allocateVRHostLeaf(spcx, 0, 0, 0, 0, 1)
-	require.ErrorContains(t, err, "IPv4 only")
+	require.ErrorContains(t, err, "unsupported VR IP version")
+}
+
+func TestVRIPv6PoolsKeepNICsDistinct(t *testing.T) {
+	for _, tier := range []string{config.SpectrumXTopology2Tier, config.SpectrumXTopology3Tier} {
+		t.Run(tier, func(t *testing.T) {
+			cfg, group := vrAddressConfig(t, vrTopologyForTest(t))
+			cfg.Profile.SpectrumX.TopologyType = tier
+			cfg.Profile.SpectrumX.IPVersion = config.SpectrumXIPVersionIPv6
+			pools, err := BuildCIDRPools(cfg, group)
+			require.NoError(t, err)
+			prefixes := []string{"fd02::/40", "fd02:0:1000::/40", "fd02:0:100::/40", "fd02:0:1100::/40", "fd02:0:200::/40", "fd02:0:1200::/40", "fd02:0:300::/40", "fd02:0:1300::/40"}
+			require.Len(t, pools, len(prefixes))
+			for i, pool := range pools {
+				require.Equal(t, prefixes[i], pool.CIDR)
+				require.Equal(t, fmt.Sprintf("rail-%d-nic-%d", i/2, i%2), pool.Name)
+				require.Equal(t, []string{"fd02::/28"}, pool.Routes)
+				require.Equal(t, 64, pool.PerNodeNetworkPrefix)
+				require.Equal(t, 2, pool.GatewayIndex)
+				require.Equal(t, []PerNodeExclusion{{StartIndex: 2, EndIndex: 2}}, pool.PerNodeExclusions)
+				require.Len(t, pool.StaticAllocations, 2)
+				for n, allocation := range pool.StaticAllocations {
+					prefix := netip.MustParsePrefix(prefixes[i]).Addr().As16()
+					prefix[7] = byte(n + 1)
+					require.Equal(t, netip.PrefixFrom(netip.AddrFrom16(prefix), 64).String(), allocation.Prefix)
+					prefix[15] = 2
+					require.Equal(t, netip.AddrFrom16(prefix).String(), allocation.Gateway)
+					require.Equal(t, fmt.Sprintf("worker-%d", n+1), allocation.NodeName)
+				}
+			}
+		})
+	}
+}
+
+func TestVRIPv6AddressCoordinatesAndBounds(t *testing.T) {
+	spcx := &config.ProfileSpectrumX{MultiplaneMode: "hwplb", NumberOfPlanes: 8, TopologyType: config.SpectrumXTopology2Tier, IPVersion: config.SpectrumXIPVersionIPv6, IPv6SiteID: 15, HostFirstOctet: 172}
+	for _, plane := range []int{4, 5, 6, 7} {
+		host, leaf, err := allocateVRHostLeaf(spcx, plane, 3, 0, 127, 251)
+		require.NoError(t, err)
+		require.Equal(t, "fd02:f:1300:7ffb::1", host.String())
+		require.Equal(t, "fd02:f:1300:7ffb::2", leaf.String())
+	}
+	for _, site := range []int{-1, 16} {
+		spcx.IPv6SiteID = site
+		_, _, err := allocateVRHostLeaf(spcx, 0, 0, 0, 0, 0)
+		require.ErrorContains(t, err, "ipv6SiteID")
+	}
+	spcx.IPv6SiteID = 0
+	for _, coordinates := range [][5]int{{8, 0, 0, 0, 0}, {0, 4, 0, 0, 0}, {0, 0, 1, 0, 0}, {0, 0, 0, 128, 0}, {0, 0, 0, 0, 252}, {0, 0, 0, 0, -1}} {
+		_, _, err := allocateVRHostLeaf(spcx, coordinates[0], coordinates[1], coordinates[2], coordinates[3], coordinates[4])
+		require.Error(t, err)
+	}
+	host, leaf, err := allocateVRHostLeaf(spcx, 0, 0, 0, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, "fd02::1", host.String())
+	require.Equal(t, "fd02::2", leaf.String())
+}
+
+func TestIPv6SiteIDCannotSilentlyAffectOtherLayouts(t *testing.T) {
+	cfg, group := vrAddressConfig(t, vrTopologyForTest(t))
+	cfg.Profile.SpectrumX.IPv6SiteID = 1
+	_, err := BuildCIDRPools(cfg, group)
+	require.ErrorContains(t, err, "only for VR IPv6")
+	cfg.Profile.SpectrumX.IPVersion = config.SpectrumXIPVersionIPv6
+	group.MachineType, group.GPUType = "machine-a", "NVIDIA-GB300"
+	_, err = BuildCIDRPools(cfg, group)
+	require.ErrorContains(t, err, "only for VR IPv6")
 }
