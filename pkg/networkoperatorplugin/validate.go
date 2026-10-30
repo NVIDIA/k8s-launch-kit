@@ -230,7 +230,7 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 				continue
 			}
 			merged := live.DeepCopy()
-			if mergeErr := mergeOCPSpec(merged, obj); mergeErr != nil {
+			if mergeErr := mergeOCPConfiguration(merged, obj); mergeErr != nil {
 				r.State = crstate.StateError
 				r.Reason = mergeErr.Error()
 			} else if !reflect.DeepEqual(merged.Object, live.Object) {

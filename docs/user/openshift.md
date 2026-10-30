@@ -22,21 +22,42 @@ l8k version
 
 Confirm permission to run privileged discovery, create the generated resources, and later create temporary validation namespaces and SCCs. Obtain approved worker/PF scope, switch settings, unused addressing, VF capacity, MTU, and maintenance limits from the site owners. See [deployment planning](profiles.md#check-prerequisites-and-site-inputs). Resolve failed CSVs, absent APIs, and admission restrictions with the operator owners first.
 
-For `profile.ignoreARP: true`, check the Multus sysctl allowlist before
-deploying workloads:
+For `profile.ignoreARP: true`, Kubernetes and OpenShift emit the same tuning
+parameters: `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` under both
+`net.ipv4.conf.all` and `net.ipv4.conf.IFNAME`.
+
+Generation writes `network-operator/04-cni-sysctl-allowlist-patch.yaml` when
+`ignoreARP` is enabled. This ConfigMap patch contains only the six matching `ignoreARP` expressions
+in `data["allowlist.conf"]`. It is generated once for all selected groups and
+namespaces, and can be inspected or edited before deployment.
+
+During OpenShift deployment, Launch Kit consumes that artifact before changing
+SR-IOV, maintenance, NFD, or Subscription configuration and before applying
+network resources. It merges only the artifact's allowlist entries into the
+existing `openshift-multus/cni-sysctl-allowlist` ConfigMap. Existing site entries,
+comments, other data keys, and metadata are preserved; the generated metadata
+does not transfer ownership of the platform ConfigMap. Repeated deploys skip an
+already-complete allowlist, and concurrent changes are retried. Validation checks
+that the artifact's entries are present, allowing additional site entries.
+
+The deploying identity needs **get and patch** permission on that ConfigMap.
+The ConfigMap must already exist; missing resources and API/RBAC errors stop
+deployment. `--dry-run` uses a server-side dry-run patch and does not persist it.
+Generation alone does not patch the cluster. Kubernetes rejects this OCP-specific patch, and bundles without the patch
+do not touch this OpenShift resource. The shared allowlist additions
+persist after deployment and are not removed by `l8k clean`.
 
 ```bash
 oc -n openshift-multus get configmap cni-sysctl-allowlist -o yaml
 ```
 
-The allowlist must admit
-`^net.ipv4.conf.IFNAME.arp_ignore$`,
-`^net.ipv4.conf.IFNAME.arp_announce$`, and
-`^net.ipv4.conf.IFNAME.rp_filter$`. Have the cluster administrator add any
-missing expressions through the site's OpenShift configuration process.
-Otherwise pod attachment can fail even when the generated resources reconcile.
-Launch Kit renders these interface sysctls for OpenShift and omits the
-`net.ipv4.conf.all.*` entries used by the Kubernetes flavor.
+When applying generated manifests outside Launch Kit, the cluster administrator
+must merge the generated patch entries before workloads attach their networks.
+Directly applying the ConfigMap manifest can replace `allowlist.conf` and remove
+site entries; use Launch Kit deploy for the additive merge. Follow
+[Red Hat's sysctl allowlist procedure](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/nodes/working-with-containers).
+A successful ConfigMap patch does not prove propagation to each node or successful
+pod attachment; verify those during workload validation.
 
 ## 1. Discover the intended workers
 

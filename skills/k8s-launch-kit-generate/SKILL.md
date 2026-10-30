@@ -311,11 +311,14 @@ visible selector-only, target-scope-unverified contract.
 
 `--flavor ocp` selects separate OpenShift profiles and generates no Helm values. Hardware policies use the same bucket and source-group render scopes as Kubernetes; optional NIC interface naming templates render per source group. Compatible groups share a network per GPU type and rail count. Custom workloads render once per shared network and workload namespace, referencing that namespace's NAD and the `openshift.io` SR-IOV resource. Verify each policy selector and PCI address against every targeted worker before deployment.
 
-With `profile.ignoreARP: true`, generated `tuning` meta-plugins use only
-`net.ipv4.conf.IFNAME.*` sysctls; the Kubernetes flavor also emits
-`net.ipv4.conf.all.*`. Confirm that OpenShift's
-`openshift-multus/cni-sysctl-allowlist` admits the three IFNAME entries before
-workload validation. With source-based routing, `sbr` follows `tuning`.
+With `profile.ignoreARP: true`, Kubernetes and OpenShift emit identical
+`tuning` sysctls: `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` under both
+`net.ipv4.conf.all` and `net.ipv4.conf.IFNAME`. With source-based routing,
+`sbr` follows `tuning`. Generation emits one
+`network-operator/04-cni-sysctl-allowlist-patch.yaml` with only the six `ignoreARP` allowlist entries
+and makes no cluster changes. OpenShift deploy merges this artifact into
+`openshift-multus/cni-sysctl-allowlist` before applying networks; external manifest
+application must preserve existing site entries when merging the patch.
 
 See `docs/user/openshift.md` for the required external operators and full
 generate-to-acceptance procedure.

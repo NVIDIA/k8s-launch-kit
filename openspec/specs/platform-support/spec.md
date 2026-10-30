@@ -51,7 +51,7 @@ Platform adaptations SHALL preserve explicit supported user values and use durab
 #### Scenario: OpenShift interface tuning
 
 - **WHEN** `ignoreARP` is enabled for a supported OpenShift secondary network
-- **THEN** generation emits only interface-scoped ARP and reverse-path sysctls in its tuning meta-plugin, retains source-based routing order when selected, and documents the Multus allowlist prerequisite.
+- **THEN** generation emits the same global and interface-scoped ARP and reverse-path sysctls as Kubernetes, retains source-based routing order when selected, and OpenShift deploy patches the Multus allowlist before network application.
 
 ### Requirement: Qualification claims
 

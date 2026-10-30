@@ -362,7 +362,7 @@ func nicConfigurationLinkType(fabric string) (string, error) {
 	}
 }
 
-func secondaryNetworkMetaPlugins(profile *config.Profile, flavor ...string) string {
+func secondaryNetworkMetaPlugins(profile *config.Profile) string {
 	if profile == nil || (profile.SpectrumX != nil && profile.SpectrumX.Enable) {
 		return ""
 	}
@@ -370,18 +370,12 @@ func secondaryNetworkMetaPlugins(profile *config.Profile, flavor ...string) stri
 	plugins := make([]string, 0, 2)
 	if profile.IgnoreARP {
 		sysctls := []string{
+			`"net.ipv4.conf.all.arp_ignore": "1"`,
+			`"net.ipv4.conf.all.arp_announce": "2"`,
+			`"net.ipv4.conf.all.rp_filter": "0"`,
 			`"net.ipv4.conf.IFNAME.arp_ignore": "1"`,
 			`"net.ipv4.conf.IFNAME.arp_announce": "2"`,
 			`"net.ipv4.conf.IFNAME.rp_filter": "0"`,
-		}
-		// OpenShift requires the attached-interface entries to be allowlisted;
-		// keep the existing global settings for Kubernetes renders.
-		if len(flavor) == 0 || flavor[0] != config.FlavorOCP {
-			sysctls = append([]string{
-				`"net.ipv4.conf.all.arp_ignore": "1"`,
-				`"net.ipv4.conf.all.arp_announce": "2"`,
-				`"net.ipv4.conf.all.rp_filter": "0"`,
-			}, sysctls...)
 		}
 		plugins = append(plugins, fmt.Sprintf(`{
   "type": "tuning",
