@@ -53,9 +53,9 @@ type TestPod struct {
 	Name      string
 	Namespace string
 	Node      string
-	// IPsByRail is "<rail>" → IPv4 address (first IPv4 only — pods
-	// typically have one v4 per attachment). Rails that didn't yield
-	// an IP are absent from the map.
+	// IPsByRail is "<rail>" → IP address. IPv4 is preferred on dual-stack
+	// attachments; IPv6 is used for IPv6-only attachments. Rails without
+	// a usable unicast address are absent from the map.
 	IPsByRail map[string]string
 	// RDMADevsByRail is "<rail>" → RDMA device name (e.g.
 	// "mlx5_0") for the VF attached to that secondary network.

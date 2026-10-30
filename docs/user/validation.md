@@ -221,7 +221,15 @@ Each generated example DaemonSet declares two validation containers: the DOCA
 container runs `rping`, `ib_write_bw`, and DMA-BUF bandwidth, while the `netshoot` container runs
 ICMP and route checks from the same pod network namespace. Validation applies
 the generated DaemonSet as written; it does not inject a helper container at
-runtime. Before every same-rail and cross-rail ICMP probe in `quick`, `full`,
+runtime.
+
+Connectivity discovery supports IPv4-only and IPv6-only secondary attachments.
+On dual-stack attachments it retains IPv4 preference; it does not test both
+families. IPv6 uses `ping -6`, `ip -6 route get`, and
+`ib_write_bw --ipv6 --ipv6-addr` on both endpoints. `rping` accepts IPv6
+addresses directly. Link-local and malformed addresses are excluded.
+
+Before every same-rail and cross-rail ICMP probe in `quick`, `full`,
 and `strict` modes, validation runs `ip route get <dst> from <src>`. A route
 that does not select the requested source interface means that rail pair is not
 connected; validation does not force the packet onto that interface. When the

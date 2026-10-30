@@ -77,5 +77,5 @@ func finalizeICMPRouteError(result *PingResult) {
 }
 
 func icmpCommand(test PingTest) string {
-	return fmt.Sprintf("ping -c 1 -W 1 -I %s %s", shellArg(test.SrcIP), shellArg(test.DstIP))
+	return fmt.Sprintf("ping%s -c 1 -W 1 -I %s %s", ipv6Flag(test.SrcIP, " -6"), shellArg(test.SrcIP), shellArg(test.DstIP))
 }

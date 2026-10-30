@@ -144,6 +144,12 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 - `strict`: full matrix. Cross-rail gates by `profile.routing`: `source-based`
   must succeed, `destination-based` must stay isolated.
 
+Connectivity discovery supports IPv4-only and IPv6-only secondary attachments.
+On dual-stack attachments it retains IPv4 preference; it does not test both
+families. IPv6 uses `ping -6`, `ip -6 route get`, and
+`ib_write_bw --ipv6 --ipv6-addr` on both endpoints. `rping` accepts IPv6
+addresses directly. Link-local and malformed addresses are excluded.
+
 All checks are source-bound. Before every ICMP probe, validate confirms that
 `ip route get <dst> from <src>` selects the requested source interface. A route
 using another interface is reported as not connected for that rail pair rather
