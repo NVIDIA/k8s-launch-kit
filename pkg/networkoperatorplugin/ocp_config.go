@@ -56,12 +56,9 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 	if sub == nil {
 		return fmt.Errorf("network operator Subscription is required to configure OpenShift maintenance settings")
 	}
-	// Driver maintenance coordination is supported by the certified Network
-	// Operator's Subscription deployment config. SR-IOV retains native draining.
-	operatorEnv := map[string]string{
-		"MAINTENANCE_OPERATOR_ENABLED":             "true",
-		"MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE": maintenanceNamespace,
-	}
+	// Resolve the shared allowlist prerequisite before any operator writes,
+	// regardless of artifact filename order. Missing or denied patches must
+	// not leave SR-IOV, maintenance, NFD, or Subscription settings changed.
 	for _, desired := range docs {
 		if !isOCPOperatorConfig(desired) {
 			return fmt.Errorf("unexpected OpenShift operator configuration %s", desired.GetKind())
@@ -70,6 +67,17 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 			if err := ensureOCPSysctlAllowlist(ctx, c, desired, dryRun); err != nil {
 				return err
 			}
+		}
+	}
+
+	// Driver maintenance coordination is supported by the certified Network
+	// Operator's Subscription deployment config. SR-IOV retains native draining.
+	operatorEnv := map[string]string{
+		"MAINTENANCE_OPERATOR_ENABLED":             "true",
+		"MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE": maintenanceNamespace,
+	}
+	for _, desired := range docs {
+		if isOCPSysctlAllowlistPatch(desired) {
 			continue
 		}
 		key := types.NamespacedName{Namespace: desired.GetNamespace(), Name: desired.GetName()}

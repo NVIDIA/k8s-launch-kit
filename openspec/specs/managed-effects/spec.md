@@ -60,12 +60,18 @@ New or changed preflight/ownership logic MUST distinguish verified absence from 
 
 OpenShift generation with ignoreARP SHALL emit one
 `04-cni-sysctl-allowlist-patch.yaml` ConfigMap patch artifact. Deploy SHALL consume
-its entries to update `openshift-multus/cni-sysctl-allowlist` before network apply,
+its entries to update `openshift-multus/cni-sysctl-allowlist` before other operator
+configuration writes and network apply, regardless of filename order,
 without sending the patch through ordinary resource apply. It SHALL append
 missing artifact entries while preserving existing entries, unrelated fields and concurrent
 administrator changes. It SHALL require an existing platform ConfigMap and
 report inspection/patch failures. The shared configuration SHALL persist through
 cleanup; generation alone SHALL NOT modify it.
+
+#### Scenario: Allowlist prerequisite fails
+
+- **WHEN** the generated allowlist patch cannot read or patch its target ConfigMap
+- **THEN** deploy returns the error before creating or updating SR-IOV, maintenance, NFD, or Subscription configuration.
 
 #### Scenario: Repeat or dry-run deployment
 

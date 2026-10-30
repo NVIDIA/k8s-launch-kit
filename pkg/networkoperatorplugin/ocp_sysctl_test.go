@@ -306,3 +306,81 @@ func TestOCPOperatorConfigurationConsumesSysctlPatch(t *testing.T) {
 	require.NoError(t, applyOCPOperatorConfiguration(context.Background(), c, cfg, []*unstructured.Unstructured{sysctlPatch(t)}, true))
 	require.Equal(t, 1, patches)
 }
+
+func TestSysctlPatchPrecedesOperatorConfigurationWrites(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		for _, mode := range []string{"missing", "get denied", "patch denied", "dry-run success"} {
+			t.Run(fmt.Sprintf("%s/existing=%t", mode, existing), func(t *testing.T) {
+				ctx := context.Background()
+				scheme := runtime.NewScheme()
+				require.NoError(t, corev1.AddToScheme(scheme))
+				sub := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", "operator-ns", "network-operator", map[string]interface{}{
+					"spec": map[string]interface{}{"name": "nvidia-network-operator"},
+				})
+				// Match generated filename order: 01, 02, 03, then the 04 patch.
+				docs := []*unstructured.Unstructured{
+					ocpTestObject("sriovnetwork.openshift.io/v1", "SriovOperatorConfig", "sriov-ns", "default", map[string]interface{}{"spec": map[string]interface{}{"enableInjector": true}}),
+					ocpTestObject("maintenance.nvidia.com/v1alpha1", "MaintenanceOperatorConfig", "maintenance-ns", "default", map[string]interface{}{"spec": map[string]interface{}{"maxUnavailable": int64(4)}}),
+					ocpTestObject("nfd.openshift.io/v1", "NodeFeatureDiscovery", "nfd-ns", "nfd-instance", map[string]interface{}{"spec": map[string]interface{}{"workerConfig": map[string]interface{}{"configData": "sources: {}"}}}),
+					sysctlPatch(t),
+				}
+				objects := []client.Object{sub}
+				if mode != "missing" {
+					objects = append(objects, sysctlConfigMap())
+				}
+				if existing {
+					for _, desired := range docs[:3] {
+						current := desired.DeepCopy()
+						current.Object["spec"] = map[string]interface{}{}
+						objects = append(objects, current)
+					}
+				}
+				var writes []string
+				patchAttempts := 0
+				c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if key.Name == "cni-sysctl-allowlist" && mode == "get denied" {
+							return apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, key.Name, errors.New("denied"))
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+					Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+						patchAttempts++
+						require.Empty(t, writes, "allowlist patch must precede all other writes")
+						if mode == "patch denied" {
+							return apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, obj.GetName(), errors.New("denied"))
+						}
+						options := &client.PatchOptions{}
+						options.ApplyOptions(opts)
+						require.Equal(t, []string{metav1.DryRunAll}, options.DryRun)
+						writes = append(writes, "allowlist patch")
+						return c.Patch(ctx, obj, patch, opts...)
+					},
+					Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						writes = append(writes, obj.GetObjectKind().GroupVersionKind().Kind)
+						return c.Create(ctx, obj, opts...)
+					},
+					Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+						writes = append(writes, obj.GetObjectKind().GroupVersionKind().Kind)
+						return c.Update(ctx, obj, opts...)
+					},
+				}).Build()
+				cfg := &config.LaunchKitConfig{Flavor: config.FlavorOCP, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-ns"}}
+				err := applyOCPOperatorConfiguration(ctx, c, cfg, docs, mode == "dry-run success")
+				if mode == "dry-run success" {
+					require.NoError(t, err)
+					require.Equal(t, []string{"allowlist patch", "SriovOperatorConfig", "MaintenanceOperatorConfig", "NodeFeatureDiscovery", "Subscription"}, writes)
+					require.Equal(t, 1, patchAttempts)
+				} else {
+					require.ErrorContains(t, err, "openshift-multus/cni-sysctl-allowlist")
+					require.Empty(t, writes, "allowlist failure must leave operator configurations and Subscription unchanged")
+					if mode == "patch denied" {
+						require.Equal(t, 1, patchAttempts)
+					} else {
+						require.Zero(t, patchAttempts)
+					}
+				}
+			})
+		}
+	}
+}

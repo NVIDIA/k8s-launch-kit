@@ -31,7 +31,8 @@ Generation writes `network-operator/04-cni-sysctl-allowlist-patch.yaml` when
 in `data["allowlist.conf"]`. It is generated once for all selected groups and
 namespaces, and can be inspected or edited before deployment.
 
-During OpenShift deployment, Launch Kit consumes that artifact before applying
+During OpenShift deployment, Launch Kit consumes that artifact before changing
+SR-IOV, maintenance, NFD, or Subscription configuration and before applying
 network resources. It merges only the artifact's allowlist entries into the
 existing `openshift-multus/cni-sysctl-allowlist` ConfigMap. Existing site entries,
 comments, other data keys, and metadata are preserved; the generated metadata
