@@ -175,7 +175,7 @@ func TestIgnoreARPMatchesAcrossFlavors(t *testing.T) {
 						require.True(t, isOCPSysctlAllowlistPatch(selected.operatorConfigs[0]))
 						entries, _, err := unstructured.NestedString(selected.operatorConfigs[0].Object, "data", "allowlist.conf")
 						require.NoError(t, err)
-						require.Len(t, strings.Split(strings.TrimSpace(entries), "\n"), 20)
+						require.Len(t, strings.Split(strings.TrimSpace(entries), "\n"), 6)
 						for _, scope := range []string{"all", "IFNAME"} {
 							for _, key := range []string{"arp_ignore", "arp_announce", "rp_filter"} {
 								require.Contains(t, entries, "^net.ipv4.conf."+scope+"."+key+"$")

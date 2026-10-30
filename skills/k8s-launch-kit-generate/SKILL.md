@@ -315,7 +315,7 @@ With `profile.ignoreARP: true`, Kubernetes and OpenShift emit identical
 `tuning` sysctls: `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` under both
 `net.ipv4.conf.all` and `net.ipv4.conf.IFNAME`. With source-based routing,
 `sbr` follows `tuning`. Generation emits one
-`network-operator/04-cni-sysctl-allowlist-patch.yaml` with the allowlist entries
+`network-operator/04-cni-sysctl-allowlist-patch.yaml` with only the six `ignoreARP` allowlist entries
 and makes no cluster changes. OpenShift deploy merges this artifact into
 `openshift-multus/cni-sysctl-allowlist` before applying networks; external manifest
 application must preserve existing site entries when merging the patch.

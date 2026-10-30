@@ -27,9 +27,8 @@ parameters: `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` under both
 `net.ipv4.conf.all` and `net.ipv4.conf.IFNAME`.
 
 Generation writes `network-operator/04-cni-sysctl-allowlist-patch.yaml` when
-`ignoreARP` is enabled. This ConfigMap patch contains the six matching expressions
-plus the standard interface sysctl entries (including IPv6 neighbor timers) in
-`data["allowlist.conf"]`. It is generated once for all selected groups and
+`ignoreARP` is enabled. This ConfigMap patch contains only the six matching `ignoreARP` expressions
+in `data["allowlist.conf"]`. It is generated once for all selected groups and
 namespaces, and can be inspected or edited before deployment.
 
 During OpenShift deployment, Launch Kit consumes that artifact before applying
