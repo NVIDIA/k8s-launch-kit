@@ -350,6 +350,7 @@ flowchart LR
         release["GoReleaser packaging and release"]
         image["linux/amd64 container build and publish"]
         sync["Network Operator release synchronization"]
+        recreate["Manual latest-release recreation"]
     end
 
     pages["GitHub Pages documentation"]
@@ -372,12 +373,22 @@ flowchart LR
     upstream --> sync
     sync --> embedded
     sync --> ci
+    recreate --> releases
+    recreate --> release
+    recreate --> image
 ```
 
 The packaged binary embeds its default configuration, profile templates,
 topology presets, release catalog, and discovery workload. A release or sync
 change therefore belongs in this architecture even when it does not modify a
 runtime Go package.
+
+The manual `recreate-latest-release.yml` workflow replaces GitHub's latest
+release and its tag at the selected commit, preserving their names and generating
+new release notes. It dispatches the existing binary and image workflows at that
+tag; their completion is separate from release recreation. See the
+[maintainer procedure](https://github.com/NVIDIA/k8s-launch-kit/blob/main/CONTRIBUTING.md#recreate-the-latest-release)
+for effects, prerequisites and recovery.
 
 ## Go discovery library
 
