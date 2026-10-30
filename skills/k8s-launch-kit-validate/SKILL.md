@@ -284,6 +284,10 @@ copies required NADs and image pull secrets and creates dedicated
 ServiceAccount/SCC/RBAC there. The kubeconfig needs namespace/SCC creation and
 source NAD/Secret read permissions. Cleanup removes the temporary resources;
 `--keep` retains them. Inspect exact retained names after interrupted cleanup.
+Platform-managed Multus and reference CNI plugin installer rows are UNVERIFIED;
+their DaemonSet count, selectors, pods, and rollout status do not gate validation.
+NCP ownership checks still reject managed OpenShift artifacts, implicit ownership
+transitions, and failed mandatory reads. NCP readiness and connectivity still apply.
 OpenShift with connectivity enabled requires at least one gating test per
 selected family; in-progress manifests and incomplete coverage fail. Other
 profiles beyond SR-IOV Ethernet still need live hardware qualification; see

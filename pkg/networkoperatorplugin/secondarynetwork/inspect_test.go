@@ -141,6 +141,28 @@ var _ = Describe("known API installers", func() {
 })
 
 var _ = Describe("deployment ownership boundary", func() {
+	It("retains mandatory ownership checks when OpenShift installer inspection is skipped", func() {
+		ctx := context.Background()
+		for _, component := range []string{Multus, CNIPlugins} {
+			_, err := CheckPolicy(ctx, fixtureClient(), fixturePolicy(component), nil, config.FlavorOCP)
+			Expect(err).To(MatchError(component + " must be externally managed on OpenShift"))
+			_, err = CheckPolicy(ctx, fixtureClient(fixturePolicy(component)), fixturePolicy(), nil, config.FlavorOCP)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("managed-to-external " + component + " transition"))
+		}
+		_, err := CheckPolicy(ctx, deniedReader{Reader: fixtureClient(), errorGet: errors.New("get denied")}, fixturePolicy(), nil, config.FlavorOCP)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("get denied"))
+		policy := fixturePolicy()
+		Expect(unstructured.SetNestedField(policy.Object, "invalid", "spec", "secondaryNetwork", Multus)).To(Succeed())
+		_, err = CheckPolicy(ctx, fixtureClient(), policy, nil, config.FlavorOCP)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("must be a mapping"))
+		ctx, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = CheckPolicy(ctx, fixtureClient(), fixturePolicy(), nil, config.FlavorOCP)
+		Expect(err).To(MatchError(context.Canceled))
+	})
 	It("does not inspect an unrelated bundle", func() {
 		checks, err := CheckPolicy(context.Background(), nil, nil, nil)
 		Expect(err).NotTo(HaveOccurred())

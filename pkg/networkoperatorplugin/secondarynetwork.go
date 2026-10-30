@@ -49,8 +49,8 @@ func checkSecondaryNetworkDeployment(ctx context.Context, c client.Reader, ncp *
 	return nil
 }
 
-func secondaryNetworkValidation(ctx context.Context, c client.Reader, ncp *unstructured.Unstructured, cfg *config.LaunchKitConfig, source string) ([]ValidationResult, error) {
-	checks, err := secondarynetwork.CheckPolicy(ctx, c, ncp, secondaryNetworkWorkers(cfg))
+func secondaryNetworkValidation(ctx context.Context, c client.Reader, ncp *unstructured.Unstructured, cfg *config.LaunchKitConfig, source string, flavor ...string) ([]ValidationResult, error) {
+	checks, err := secondarynetwork.CheckPolicy(ctx, c, ncp, secondaryNetworkWorkers(cfg), flavor...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
