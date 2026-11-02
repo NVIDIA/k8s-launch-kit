@@ -26,6 +26,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -181,6 +182,113 @@ func TestValidatePassesOpenShiftFlavorToConnectivity(t *testing.T) {
 	})
 	require.ErrorIs(t, err, stop)
 	require.True(t, captured.OpenShift)
+}
+
+func TestOpenShiftExternalAppliedStatesDoNotFailValidationReport(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, managedState, policyReason       string
+		connectivityFailed, wantConnectivity, wantPass bool
+	}{
+		{name: "config flavor", source: "config", managedState: "ready", wantConnectivity: true, wantPass: true},
+		{name: "CLI flavor", source: "cli", managedState: "ready", wantConnectivity: true, wantPass: true},
+		{name: "resolved bundle flavor", source: "bundle", managedState: "ready", wantConnectivity: true, wantPass: true},
+		{name: "managed component error", source: "config", managedState: "error"},
+		{name: "missing managed state", source: "config"},
+		{name: "policy error", source: "config", managedState: "ready", policyReason: "policy reconciliation failed"},
+		{name: "connectivity still fails", source: "config", managedState: "ready", connectivityFailed: true, wantConnectivity: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deploymentDir, configPath := writeConnectivityOnlyInputs(t, config.RoutingSourceBased)
+			contents, err := os.ReadFile(configPath)
+			require.NoError(t, err)
+			prefix := "networkOperator:\n  selectedRelease: \"26.7\"\n"
+			if tc.source != "cli" {
+				prefix = "flavor: ocp\n" + prefix
+			}
+			contents = append([]byte(prefix), contents...)
+			require.NoError(t, os.WriteFile(configPath, contents, 0o600))
+			rel, ok := releases.LookupRelease("26.7")
+			require.True(t, ok)
+			ncp := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "mellanox.com/v1alpha1", "kind": "NicClusterPolicy",
+				"metadata": map[string]interface{}{"name": "nic-cluster-policy"},
+				"spec":     map[string]interface{}{"nvIpam": map[string]interface{}{"version": rel.NetworkOperator.ComponentVersion}},
+			}}
+			manifest, err := ncp.MarshalJSON()
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(deploymentDir, "10-nicclusterpolicy.yaml"), manifest, 0o600))
+			ncp.Object["status"] = map[string]interface{}{
+				"state": "notReady",
+				"appliedStates": []interface{}{
+					map[string]interface{}{"name": "state-multus-cni", "state": "error", "message": "platform installer is externally managed"},
+					map[string]interface{}{"name": "state-container-networking-plugins", "state": "notReady"},
+				},
+			}
+			if tc.managedState != "" {
+				states, _, readErr := unstructured.NestedSlice(ncp.Object, "status", "appliedStates")
+				require.NoError(t, readErr)
+				states = append(states, map[string]interface{}{"name": "state-nv-ipam-cni", "state": tc.managedState})
+				require.NoError(t, unstructured.SetNestedSlice(ncp.Object, states, "status", "appliedStates"))
+			}
+			if tc.policyReason != "" {
+				require.NoError(t, unstructured.SetNestedField(ncp.Object, tc.policyReason, "status", "reason"))
+			}
+			kubeClient := fake.NewClientBuilder().WithObjects(ncp).Build()
+			connectivityRan := false
+			runner := validateRunner{
+				newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) { return kubeClient, &rest.Config{}, nil },
+				runConnectivityMatrix: func(_ context.Context, _ ctrlclient.Client, _ *rest.Config, _ ui.Output, _ *bundle.Bundle, opts connectivity.Options) (*connectivity.MatrixResult, error) {
+					connectivityRan = true
+					require.True(t, opts.OpenShift)
+					matrix := &connectivity.MatrixResult{
+						PingResults: []connectivity.PingResult{
+							{Test: connectivity.PingTest{Kind: connectivity.ICMPSameRail}, OK: true},
+							{Test: connectivity.PingTest{Kind: connectivity.RDMAPingSameRail}, OK: true},
+							{Test: connectivity.PingTest{Kind: connectivity.RDMABwSameRail}, OK: true},
+						},
+						Summary: connectivity.MatrixSummary{TotalTests: 3, Passed: 3},
+					}
+					if tc.connectivityFailed {
+						matrix.PingResults[0].OK = false
+						matrix.Summary.Passed = 2
+						matrix.Summary.Failed = 1
+					}
+					return matrix, nil
+				},
+			}
+			reportPath := filepath.Join(t.TempDir(), "report.html")
+			request := ValidateRequest{
+				Kubeconfig: "test", DeploymentFiles: deploymentDir, UserConfig: configPath,
+				OutputFormat: "json", ReportPath: reportPath,
+			}
+			if tc.source == "cli" {
+				request.Flavor = config.FlavorOCP
+			}
+			if tc.source == "bundle" {
+				cfg, _, loadErr := LoadUserConfig(UserConfigInput{Explicit: configPath}, validationOptions(request))
+				require.NoError(t, loadErr)
+				_, writeErr := config.WriteEffectiveConfig(deploymentDir, cfg)
+				require.NoError(t, writeErr)
+				request.UserConfig = ""
+			}
+			err = runner.Run(context.Background(), request)
+			if tc.wantPass {
+				require.NoError(t, err)
+			} else {
+				require.Equal(t, apperrors.ExitDeployment, apperrors.ExitCodeFromError(err))
+			}
+			require.Equal(t, tc.wantConnectivity, connectivityRan)
+			report, err := os.ReadFile(reportPath)
+			require.NoError(t, err)
+			if tc.wantPass {
+				require.Contains(t, string(report), `class="verdict-banner verdict-pass"`)
+			} else {
+				require.Contains(t, string(report), `class="verdict-banner verdict-fail"`)
+			}
+			require.Contains(t, string(report), "UNVERIFIED")
+			require.Contains(t, string(report), "state-multus-cni")
+		})
+	}
 }
 
 func TestValidateCLIOverridesRepairInvalidYAMLBeforeValidation(t *testing.T) {

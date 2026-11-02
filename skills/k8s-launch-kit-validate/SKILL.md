@@ -288,6 +288,12 @@ Platform-managed Multus and reference CNI plugin installer rows are UNVERIFIED;
 their DaemonSet count, selectors, pods, and rollout status do not gate validation.
 NCP ownership checks still reject managed OpenShift artifacts, implicit ownership
 transitions, and failed mandatory reads. NCP readiness and connectivity still apply.
+NCP readiness also excludes non-ready Multus/CNI `appliedStates` when both
+desired and live specs leave them external. Every configured component in either
+spec must report ready; missing coverage and other component failures keep the
+aggregate error/progress state.
+Unknown spec fields, malformed/duplicate status, and policy-level reasons retain
+the original aggregate verdict. Live YAML keeps the raw controller status.
 OpenShift with connectivity enabled requires at least one gating test per
 selected family; in-progress manifests and incomplete coverage fail. Other
 profiles beyond SR-IOV Ethernet still need live hardware qualification; see
