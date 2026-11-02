@@ -145,8 +145,11 @@ the same NIC. Clean up the affected `set-name` stanzas in the host netplan
 configuration, re-run `l8k discover`, and then retry `l8k generate`.
 
 Discovery also sets `clusterConfig[].netplanManagementUnknown` when no match was
-found but it could not inspect every worker. Generation fails closed for those
-groups until the discovery warning is resolved and discovery is re-run.
+found but it could not inspect every worker. For those groups, generation emits
+a warning through the normal text or JSON output and continues to render naming
+templates. Review host netplan configuration and re-run discovery to resolve the
+warning. A confirmed match (`netplanManaged: true`) still blocks generation,
+including when both fields are true.
 
 The check follows the actual render plan: a group excluded with `--groups` or
 `--gpu-type` does not block generation, and neither does a group for which no

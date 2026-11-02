@@ -117,7 +117,7 @@ func renderProfileValuesForMaintenance(
 
 	templatePath, err := filepath.Abs(filepath.Join("..", "..", "profiles", dir, helmValuesTemplateName))
 	require.NoError(t, err)
-	rendered, err := renderForScope(templatePath, cfg, nil, nil)
+	rendered, err := (&NetworkOperatorPlugin{}).renderForScope(templatePath, cfg, nil, nil)
 	require.NoError(t, err)
 	require.Contains(t, rendered, helmValuesOutputName)
 

@@ -607,7 +607,8 @@ func hasCompletePFMACObservation(expectedPFs []config.PFConfig, data topoData) b
 // recordNetplanProbeResult aggregates one worker's netplan observation into
 // the group-level guard. A positive match proves the group is managed even if
 // another worker could not be inspected; otherwise, any incomplete observation
-// keeps the result explicitly unknown so generation can fail closed.
+// keeps the result explicitly unknown so generation can warn without treating
+// incomplete evidence as a confirmed naming conflict.
 func recordNetplanProbeResult(ctx context.Context, group *config.ClusterConfig, node string, data topoData) bool {
 	if data.netplanParseErrors > 0 {
 		log.Log.Info("Some netplan files could not be parsed during discovery",
@@ -630,7 +631,7 @@ func recordNetplanProbeResult(ctx context.Context, group *config.ClusterConfig, 
 	if !netplanObservationComplete || pfMACObservationIncomplete {
 		group.NetplanManagementUnknown = true
 		ui.FromContext(ctx).Warning(
-			"Netplan management could not be verified on node %q; resolve the discovery warning and re-run discovery before generating interface-name rules",
+			"Netplan management could not be verified on node %q; review host netplan configuration and re-run discovery to verify NIC naming",
 			node,
 		)
 	}

@@ -414,7 +414,7 @@ clusterConfig:
     # bool — a netplan MAC-based set-name selects an NVIDIA PF; blocks an NCO interface-name template for this group
     netplanManaged: false
     # bool, omitted unless unknown — a worker observation is incomplete or a
-    # MAC-based set-name rule cannot be checked; also blocks interface naming
+    # MAC-based set-name rule cannot be checked; warns without blocking interface naming
     # netplanManagementUnknown: true
 
     capabilities:

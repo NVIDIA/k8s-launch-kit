@@ -1124,7 +1124,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		if skipWorkloadTemplates && isWorkloadTemplate(filepath.Base(templatePath)) {
 			continue
 		}
-		rendered, err := renderForScope(templatePath, cfg, plans, planSubnets)
+		rendered, err := p.renderForScope(templatePath, cfg, plans, planSubnets)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process template %s: %w", templatePath, err)
 		}
