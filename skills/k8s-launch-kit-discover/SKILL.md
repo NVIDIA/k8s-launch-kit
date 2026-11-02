@@ -39,6 +39,9 @@ is set). The daemon image is pulled from `<networkOperator.repository>/
 nic-configuration-operator-daemon:<networkOperator.componentVersion>` (both
 fields come from `l8k-config.yaml`).
 
+The temporary discovery daemon requests 64 MiB of memory and has a 512 MiB
+limit to accommodate hardware probes on nodes with large PCI inventories.
+
 Discovery refresh also replaces `discoveredSecondaryNetwork`, preserving
 component ownership policy. Known API-visible installer inspection is read-only;
 unavailable evidence still saves hardware inventory, but automatic generation
