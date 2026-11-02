@@ -40,6 +40,9 @@ l8k discover \
 
 Discovery is self-contained. It does not require Node Feature Discovery (NFD) or a pre-installed Network Operator.
 
+The temporary discovery daemon requests 64 MiB of memory and has a 512 MiB
+limit to accommodate hardware probes on nodes with large PCI inventories.
+
 For Spectrum-X, discovery also saves the platform- and mode-specific desired
 interface prefixes in `clusterConfig[].spectrumX.interfaceNames`. These do not
 replace observed PF names. See [Spectrum-X naming](spectrum-x.md#vr-dual-nic-rails)
