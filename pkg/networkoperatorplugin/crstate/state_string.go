@@ -56,6 +56,14 @@ const (
 // NicClusterPolicy" don't have to kubectl get nicclusterpolicy -o yaml
 // just to find out the rdma-shared device plugin is the laggard.
 func statusStringValidator(ctx context.Context, c client.Client, obj *unstructured.Unstructured) (Result, error) {
+	return validateStatusString(ctx, c, obj, false)
+}
+
+func openShiftPolicyValidator(ctx context.Context, c client.Client, obj *unstructured.Unstructured) (Result, error) {
+	return validateStatusString(ctx, c, obj, true)
+}
+
+func validateStatusString(ctx context.Context, c client.Client, obj *unstructured.Unstructured, openShift bool) (Result, error) {
 	live := &unstructured.Unstructured{}
 	live.SetGroupVersionKind(obj.GroupVersionKind())
 	key := types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
@@ -67,10 +75,17 @@ func statusStringValidator(ctx context.Context, c client.Client, obj *unstructur
 		}
 		return Result{State: StateError, Reason: fmt.Sprintf("get error: %v", err), Source: src}, err
 	}
+	if openShift {
+		if result, ok := openShiftPolicyResult(live, obj); ok {
+			result.Source = src
+			return result, nil
+		}
+	}
 
 	state, _, _ := unstructured.NestedString(live.Object, "status", "state")
 	reason, _, _ := unstructured.NestedString(live.Object, "status", "reason")
-	componentSummary, componentDetails := summarizeAppliedStates(live)
+	raw, _, _ := unstructured.NestedSlice(live.Object, "status", "appliedStates")
+	componentSummary, componentDetails := summarizeAppliedStates(raw)
 
 	switch state {
 	case netopStateReady, netopStateIgnore:
@@ -117,9 +132,8 @@ func statusStringValidator(ctx context.Context, c client.Client, obj *unstructur
 //
 // Returns ("", nil) when appliedStates is absent (e.g. HostDeviceNetwork
 // status has no per-component sub-states).
-func summarizeAppliedStates(live *unstructured.Unstructured) (string, map[string]string) {
-	raw, found, _ := unstructured.NestedSlice(live.Object, "status", "appliedStates")
-	if !found || len(raw) == 0 {
+func summarizeAppliedStates(raw []interface{}) (string, map[string]string) {
+	if len(raw) == 0 {
 		return "", nil
 	}
 

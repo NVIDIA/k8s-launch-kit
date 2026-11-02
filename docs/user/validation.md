@@ -94,6 +94,16 @@ OpenShift artifacts, implicit managed-to-external transitions, and failed
 mandatory ownership reads remain errors. NCP readiness and connectivity
 checks still apply; skipped installer checks do not establish networking health.
 
+The same ownership boundary applies to NCP `status.appliedStates`: when both
+desired and live specs omit Multus/CNI ownership, their controller states are
+marked unverified and excluded from an otherwise non-ready NCP aggregate.
+Every configured component in either spec must still report `ready`; missing
+coverage and other component failures retain the aggregate error/progress state.
+Unknown spec fields,
+malformed or duplicate status entries, and policy-level reasons retain the
+controller's aggregate verdict. The report's live YAML preserves the original
+status. Connectivity runs only after the remaining managed resources are ready.
+
 ## Worked acceptance decisions
 
 The following examples are illustrative decisions, not records of a live

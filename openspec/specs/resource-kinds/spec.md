@@ -62,6 +62,11 @@ Deploy and standalone validate SHALL share readiness meaning for equivalent evid
 - **WHEN** deploy and validate observe equivalent desired/live state
 - **THEN** their classifiers agree, except for a documented freshness adaptation that depends on deployment history.
 
+#### Scenario: OpenShift NCP aggregate includes external networking states
+
+- **WHEN** both desired and live NCP specs leave Multus and reference CNI plugins external and those applied states make the aggregate non-ready
+- **THEN** deploy and validate exclude those states from managed readiness, require ready coverage for every configured component, preserve other component failures and unverified evidence, and retain the original controller status in live YAML.
+
 ### Requirement: NIC configuration success condition
 
 Deploy and validate SHALL accept NIC configuration convergence only when each matched device has current desired configuration and a current ConfigUpdateInProgress condition with reason UpdateSuccessful and status False. Existing firmware gates SHALL still apply when firmware configuration is present.

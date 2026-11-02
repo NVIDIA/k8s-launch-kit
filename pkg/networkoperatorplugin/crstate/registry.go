@@ -48,6 +48,15 @@ func NewDefault() *Registry {
 	return r
 }
 
+// NewOpenShift uses the standard validators with platform-managed Multus and
+// reference CNI states excluded from NicClusterPolicy readiness when both live
+// and desired specs leave them external. Managed-component coverage is required.
+func NewOpenShift() *Registry {
+	r := NewDefault()
+	r.Register(schema.GroupVersionKind{Group: "mellanox.com", Version: "v1alpha1", Kind: "NicClusterPolicy"}, openShiftPolicyValidator)
+	return r
+}
+
 // Register associates a Validator with a GVK. Re-registering overwrites
 // the previous entry; this is intentional so tests can swap validators.
 func (r *Registry) Register(gvk schema.GroupVersionKind, v Validator) {

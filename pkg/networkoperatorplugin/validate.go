@@ -201,7 +201,12 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 		return nil, fmt.Errorf("validation artifact bundle is nil")
 	}
 	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
-	registry := crstate.NewDefault()
+	var registry *crstate.Registry
+	if ocp {
+		registry = crstate.NewOpenShift()
+	} else {
+		registry = crstate.NewDefault()
+	}
 	var results []ValidationResult
 	for _, doc := range artifacts.Documents() {
 		if doc.Role() != bundle.Deployment {
