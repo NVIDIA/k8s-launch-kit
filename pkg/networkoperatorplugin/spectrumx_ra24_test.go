@@ -70,6 +70,8 @@ func testDospcxProfileBundleModes(t *testing.T, ra string) {
 			}
 			rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(p, cfg)
 			require.NoError(t, err)
+			require.NotContains(t, rendered[helmValuesOutputName], "staleNodeStateCleanupDelayMinutes",
+				"traditional platforms must retain the chart's cleanup delay")
 			files := []bundle.File{}
 			cmCount, nctCount, poolCount := 0, 0, 0
 			for name, content := range rendered {
@@ -622,6 +624,43 @@ func TestVRNetworkBayRailsRenderEightPlanes(t *testing.T) {
 	}
 }
 
+func TestVRStaleStateRetentionFollowsGroupSelection(t *testing.T) {
+	for _, ra := range []string{"RA2.4", "RA3.1"} {
+		t.Run(ra, func(t *testing.T) {
+			cfg, profile := vrConfigAndProfile(t, ra, false)
+			cfg.ClusterConfig[0].Identifier = "vr-group"
+			cfg.ClusterConfig[0].WorkerNodes = []string{"worker-vr"}
+			traditional, _ := dospcxConfigAndProfile(t, ra, "hwplb", 8)
+			cfg.ClusterConfig = append(cfg.ClusterConfig, traditional.ClusterConfig[0])
+			cfg.Profile.SpectrumX.TopologyFile = writeSpectrumXTopology(t, cfg, 8)
+			for _, group := range cfg.ClusterConfig {
+				t.Run(group.Identifier, func(t *testing.T) {
+					plugin := &NetworkOperatorPlugin{Groups: []string{group.Identifier}}
+					rendered, err := plugin.GenerateProfileDeploymentFiles(profile, cfg)
+					require.NoError(t, err)
+					var values struct {
+						Sriov struct {
+							Operator map[string]any `yaml:"operator"`
+						} `yaml:"sriov-network-operator"`
+					}
+					require.NoError(t, yaml.Unmarshal([]byte(rendered[helmValuesOutputName]), &values))
+					if group.Identifier == "vr-group" {
+						require.Equal(t, "120", values.Sriov.Operator["staleNodeStateCleanupDelayMinutes"])
+					} else {
+						require.NotContains(t, values.Sriov.Operator, "staleNodeStateCleanupDelayMinutes")
+					}
+					files := make([]bundle.File, 0, len(rendered))
+					for name, content := range rendered {
+						files = append(files, bundle.File{Name: name, Content: content})
+					}
+					_, err = bundle.FromFiles(files)
+					require.NoError(t, err)
+				})
+			}
+		})
+	}
+}
+
 func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool, ip string) {
 	t.Helper()
 	cfg, profile := vrConfigAndProfile(t, ra, split)
@@ -629,6 +668,7 @@ func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool, ip 
 	cfg.Profile.SpectrumX.IPVersion = ip
 	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
 	require.NoError(t, err)
+	require.Contains(t, rendered[helmValuesOutputName], `staleNodeStateCleanupDelayMinutes: "120"`)
 	files := []bundle.File{}
 	for name, content := range rendered {
 		files = append(files, bundle.File{Name: name, Content: content})

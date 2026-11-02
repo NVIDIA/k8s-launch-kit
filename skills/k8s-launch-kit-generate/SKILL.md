@@ -381,6 +381,12 @@ rails cross first/second ASICs between NetworkBays 1/2 and 3/4.
 Generation rejects VR inventories unless they contain four dense rails with two
 physical NICs each. Re-run discovery with NetworkBay status for old configs that
 assigned one rail per NIC; generation does not guess the pairing from PCI order. Missing or inconsistent status fails discovery. See `docs/user/discovery.md` for the rail mapping.
+VR RA2.4/RA3.1 Helm values set
+`sriov-network-operator.operator.staleNodeStateCleanupDelayMinutes: "120"`
+to preserve node state while extended NIC configuration keeps the SR-IOV
+daemon absent. Traditional platforms retain the chart default of 30 minutes.
+The setting is shared by the SR-IOV operator; external Helm owners must set it
+themselves. Upgrading Helm does not extend existing `keep-state-until` deadlines.
 Discovery saves the effective RA naming in
 `clusterConfig[].spectrumX.interfaceNames` (`netdevPrefix` and `rdmaPrefix`).
 These are derived values: resolution refreshes them after mode or naming

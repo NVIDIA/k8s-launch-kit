@@ -201,6 +201,14 @@ inventory order selects NIC 0 and NIC 1 and must match the switch topology.
 Generation rejects old inventories with one rail per NIC instead of guessing
 physical pairing from PCI addresses. Re-run NetworkBay discovery for those inputs.
 
+For VR, RA2.4/RA3.1 Helm values set
+`sriov-network-operator.operator.staleNodeStateCleanupDelayMinutes: "120"`.
+This retains SR-IOV node state during extended NIC configuration when the
+config daemon is absent, avoiding premature cleanup after the chart's default
+30 minutes. The setting applies to the shared SR-IOV operator; traditional
+platforms retain the chart default. External Helm owners must set it themselves.
+Existing `keep-state-until` deadlines are not extended by a Helm upgrade.
+
 Discovery saves the effective RA naming in
 `clusterConfig[].spectrumX.interfaceNames` (`netdevPrefix` and `rdmaPrefix`).
 These are derived values: resolution refreshes them after mode or naming
