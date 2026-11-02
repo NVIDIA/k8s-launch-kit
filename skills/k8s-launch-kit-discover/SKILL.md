@@ -245,10 +245,12 @@ Do not add GPU counts or resource maps under `clusterConfig`.
   confirmed negative and does not require PF MACs. When no match is found but a
   worker observation is unavailable or incomplete, or a MAC-based rule cannot
   be checked because an expected PF MAC is missing, discovery warns and sets
-  `clusterConfig[].netplanManagementUnknown`. If generation would emit a `NicInterfaceNameTemplate`
-  for an affected group, clean up the host's
-  `set-name` stanzas or resolve the warning and re-run discovery before
-  retrying generation; do not clear either field manually. Refresh configs
+  `clusterConfig[].netplanManagementUnknown`. If generation would emit a
+  `NicInterfaceNameTemplate` for an unknown group, it warns and continues.
+  A confirmed match (`netplanManaged: true`) still blocks generation; clean up
+  the affected host `set-name` stanzas and re-run discovery before retrying.
+  Review host netplan configuration and re-run discovery to resolve unknown
+  status; do not clear either field manually. Refresh configs
   created before this unknown-state field was added.
 
 - The bootstrap namespace is **always** `nvidia-k8s-launch-kit` — not configurable. The

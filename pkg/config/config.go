@@ -790,8 +790,8 @@ type ClusterConfig struct {
 	// NetplanManagementUnknown is false.
 	NetplanManaged bool `yaml:"netplanManaged"`
 	// NetplanManagementUnknown is true when discovery could not verify netplan
-	// management on every worker in this group. Generation fails closed if it
-	// would otherwise emit a NicInterfaceNameTemplate for the group. Omitted
+	// management on every worker in this group. Generation warns but still emits
+	// a NicInterfaceNameTemplate when the profile requires it. Omitted
 	// values in existing configs retain their prior behavior.
 	NetplanManagementUnknown bool `yaml:"netplanManagementUnknown,omitempty"`
 	PresetApplied            bool `yaml:"presetApplied,omitempty"`

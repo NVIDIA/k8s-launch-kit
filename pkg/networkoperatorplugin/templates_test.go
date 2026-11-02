@@ -1425,7 +1425,7 @@ sriovNetworkOperator:
 		},
 		Profile: &config.Profile{},
 	}
-	rendered, err := renderForScope(templatePath, cfg, nil, nil)
+	rendered, err := (&NetworkOperatorPlugin{}).renderForScope(templatePath, cfg, nil, nil)
 	require.NoError(t, err)
 
 	// Output key must be `values.yaml`, NOT `00-values.yaml`.

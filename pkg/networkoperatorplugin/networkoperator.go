@@ -26,6 +26,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -37,6 +38,8 @@ const (
 )
 
 type NetworkOperatorPlugin struct {
+	// Output receives rendering warnings. Nil suppresses UI output for library callers.
+	Output           ui.Output
 	LaunchKitConfig  *config.LaunchKitConfig
 	DiscoveryWorkers []string
 	// LaunchKitVersion is the version reported by the invoking l8k binary.

@@ -69,6 +69,11 @@ naming templates. Multiple selected sources retain the configured naming setting
 Netplan conflict checks apply only when a naming template is emitted.
 This fallback does not change the saved configuration or disable NIC tuning.
 
+Confirmed netplan naming matches (`netplanManaged: true`) block generation.
+Unverified status (`netplanManagementUnknown: true`) produces a warning in text
+and JSON output, and generation continues with the naming template. Review the
+host netplan configuration and re-run discovery to resolve the warning.
+
 When emitted, standard interface naming orders NICs by their configured rail numbers so generated
 names match policy selectors. Singleton host-device and legacy RDMA-shared
 policies use these configured names too, rather than saved inventory names. Rail numbers must be contiguous from zero, with one

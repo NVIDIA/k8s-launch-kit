@@ -199,10 +199,13 @@ readable configuration with no MAC-based `set-name` rules, is a verified
 negative and does not require PF MACs. When a MAC-based `set-name` rule exists,
 an unreadable expected PF MAC also leaves the result unknown. Neither flag
 persists host-unique MAC addresses. If `l8k generate` would emit a
-`NicInterfaceNameTemplate` for a group that is managed or unknown, it returns a
-validation error rather than risking conflicting NCO naming rules. Resolve the
-discovery warning and re-run discovery, or remove the affected `set-name`
-stanzas and re-run discovery, before retrying generation. Re-run discovery for
+`NicInterfaceNameTemplate` for a group with `netplanManaged: true`, it returns a
+validation error because the confirmed netplan naming rule can conflict with
+NCO naming. Remove the affected `set-name` stanzas and re-run discovery before
+retrying generation. For `netplanManagementUnknown: true` without a confirmed
+match, generation displays a warning in text and JSON output and continues.
+Review the host netplan configuration and re-run discovery to resolve the
+warning; do not clear the field manually. Re-run discovery for
 configs created before `netplanManagementUnknown` was available.
 
 GPU product and topology probing first tries a runtime-injected `nvidia-smi`

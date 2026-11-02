@@ -49,6 +49,8 @@ Standard profiles skip interface naming for a single selected group unless
 RDMA-shared needs names missing from inventory. Spectrum-X retains naming. Generation
 rejects naming layouts that split a physical NIC across rails; see
 [NIC templates and selected groups](docs/advanced/generation.md#nic-templates-and-selected-groups).
+When naming is emitted, unverified netplan management produces a warning and
+generation continues; a confirmed netplan naming match still blocks generation.
 
 ### Select the Deployment Profile
 

@@ -80,9 +80,11 @@ A group property MUST declare its aggregation policy for disagreement and incomp
 - **WHEN** discovery finds no netplan naming match but cannot inspect the netplan
   directory, parse a worker's observation, or obtain current PF MACs while
   checking a MAC-based `set-name` rule
-- **THEN** it records `netplanManagementUnknown`, warns, and rejects generation
-  of a `NicInterfaceNameTemplate` for that group until discovery is rerun with a
-  complete observation; a positive match on any worker remains `netplanManaged`.
+- **THEN** it records `netplanManagementUnknown` and warns; generation of a
+  `NicInterfaceNameTemplate` for that group warns and continues without treating
+  uncertainty as a confirmed conflict.
+- **AND** a positive match on any worker remains `netplanManaged` and blocks
+  generation of an interface-name template, including when both flags are set.
 
 #### Scenario: Netplan naming rules are conclusively absent
 
