@@ -133,6 +133,11 @@ var templateFuncs = template.FuncMap{
 	"spectrumXUseDRA": func(profile *config.Profile) bool {
 		return profile != nil && profile.SpectrumX != nil && profile.SpectrumX.UseDRA
 	},
+	"spectrumXHasVR": func(groups []config.ClusterConfig) bool {
+		return slices.ContainsFunc(groups, func(group config.ClusterConfig) bool {
+			return config.SpectrumXPlatformForGroup(group) == "vr"
+		})
+	},
 	// Retain the mode-only helpers for external profile templates. Built-in
 	// profiles consume resolved per-group names, including VR NIC identity.
 	"spectrumXRdmaPrefix": func(settings *config.SpectrumXConfig, multiplaneMode string) string {

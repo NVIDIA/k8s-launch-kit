@@ -77,6 +77,10 @@ sriov-network-operator:
 {{- end }}
 {{- end }}
   operator:
+{{- if spectrumXHasVR .ClusterConfig }}
+    # Preserve SR-IOV state while VR NIC configuration keeps the daemon absent.
+    staleNodeStateCleanupDelayMinutes: "120"
+{{- end }}
     # One chart value controls both SR-IOV admission helpers and their TLS setup.
     admissionControllers:
       enabled: false
