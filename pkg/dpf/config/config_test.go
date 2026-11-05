@@ -67,6 +67,60 @@ var _ = Describe("DPF input", func() {
 		Expect(e).NotTo(HaveOccurred())
 		Expect(r.MaxConcurrentBMCs).To(Equal(4))
 	})
+	It("keeps BMC verification enabled unless explicitly disabled and preserves presence", func() {
+		for _, value := range []string{"", "false", "null", "true"} {
+			text := seed
+			if value != "" {
+				text += "  tls: {insecureSkipVerify: " + value + "}\n"
+			}
+			in, err := Decode([]byte(text), "/site/in.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			r, err := Resolve(in)
+			Expect(err).NotTo(HaveOccurred())
+			for _, target := range r.Targets {
+				Expect(target.Access.InsecureSkipVerify()).To(Equal(value == "true"))
+				Expect(target.Access.TLSConfig().InsecureSkipVerify).To(Equal(value == "true"))
+			}
+			b, err := Saved(in, &inventory.Inventory{FormatVersion: "v1alpha1"}, "/results/out.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			if value == "" {
+				Expect(string(b)).NotTo(ContainSubstring("insecureSkipVerify"))
+			} else {
+				Expect(string(b)).To(ContainSubstring("insecureSkipVerify: " + value))
+			}
+		}
+	})
+	It("isolates cached TLS policies and lets endpoint false replace global true", func() {
+		for _, role := range []string{"dpus", "hosts"} {
+			text := seed + "  tls: {insecureSkipVerify: true}\n"
+			lines := strings.Split(text, "\n")
+			for i, line := range lines {
+				if strings.HasPrefix(line, "  "+role+":") {
+					lines[i] = strings.Replace(line, "credentialRef: read", "credentialRef: read, tls: {insecureSkipVerify: false}", 1)
+				}
+			}
+			in, err := Decode([]byte(strings.Join(lines, "\n")), "/site/in.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			r, err := Resolve(in)
+			Expect(err).NotTo(HaveOccurred())
+			for _, target := range r.Targets {
+				Expect(target.Access.InsecureSkipVerify()).To(Equal(target.Role != role))
+				clone := target.Access.TLSConfig()
+				clone.InsecureSkipVerify = !clone.InsecureSkipVerify
+				Expect(target.Access.InsecureSkipVerify()).To(Equal(target.Role != role))
+			}
+		}
+	})
+	It("rejects nonboolean insecure settings and contradictory CA trust", func() {
+		for _, value := range []string{"'true'", "1", "''"} {
+			_, err := Decode([]byte(seed+"  tls: {insecureSkipVerify: "+value+"}\n"), "/site/in.yaml")
+			Expect(err).To(HaveOccurred())
+		}
+		in, err := Decode([]byte(seed+"  tls: {insecureSkipVerify: true, caFile: ca.pem}\n"), "/site/in.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = Resolve(in)
+		Expect(err).To(MatchError(ContainSubstring("mutually exclusive")))
+	})
 	It("normalizes DNS/default ports and rejects paths, userinfo and duplicate origins", func() {
 		origin, e := Origin("https://EXAMPLE.invalid:443/")
 		Expect(e).NotTo(HaveOccurred())

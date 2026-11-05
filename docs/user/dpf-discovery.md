@@ -86,6 +86,37 @@ are relative to the input YAML and are rebased when saved elsewhere. Private fil
 are not copied. Endpoint origins require HTTPS; redirects, cross-origin links,
 unbounded pages and arbitrary action endpoints are rejected.
 
+For BMCs with untrusted certificates, explicitly opt in per endpoint:
+
+```yaml
+discovery:
+  dpus:
+    - bmcEndpoint: https://192.0.2.11
+      credentialRef: dpu-reader
+      tls:
+        insecureSkipVerify: true
+```
+
+This fragment extends the complete input above. `insecureSkipVerify` is a YAML
+boolean, defaults to `false`, and skips certificate-chain and hostname verification
+for executor-to-BMC Redfish connections only. HTTPS remains required, but the
+server is not authenticated and BMC credentials can be exposed to impersonation.
+Prefer a verified certificate/CA through `caFile` when available.
+
+The same field is accepted under `discovery.tls` as a shared BMC policy. An
+endpoint `tls` block replaces the entire shared policy; `{insecureSkipVerify: false}`
+restores system-trust verification for that endpoint. Omitted/null values use the
+policy's default. `caFile` and `insecureSkipVerify: true` cannot be combined in the
+effective policy. TLS policies are independent even when endpoints share credentials.
+
+The CLI warns on stderr unless quiet output is requested and records
+`tlsInsecureSkipVerify: true` on the affected `inventory.requestedScope` entries
+in JSON and saved YAML, including failed observations. This records the selected
+policy, not successful TLS or hardware verification. Changing the policy changes
+the scope digest: use a fresh seed and new output when switching policies.
+Management kubeconfig TLS and management-network probe TLS checks remain verified;
+this BMC option does not relax them or qualify hardware.
+
 ## Observations, reports and refresh
 
 Physical identity comes from qualified card/system fields, keeping raw serials.

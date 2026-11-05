@@ -3,10 +3,13 @@
 package discovery
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"os"
 	"testing"
 	"time"
 )
@@ -99,6 +102,39 @@ var _ = Describe("refresh regressions", func() {
 })
 
 var _ = Describe("scope evidence on refresh", func() {
+	It("records the resolved TLS policy even when collection fails before remote access", func() {
+		Expect(os.Setenv("DPF_SCOPE_TEST_PASSWORD", "private-password")).To(Succeed())
+		DeferCleanup(os.Unsetenv, "DPF_SCOPE_TEST_PASSWORD")
+		input, err := config.Decode([]byte(`management:
+  kubeconfigRef: {file: missing-kubeconfig}
+credentials:
+  reader: {username: reader, passwordRef: {env: DPF_SCOPE_TEST_PASSWORD}}
+discovery:
+  dpus: [{bmcEndpoint: 'https://192.0.2.1', credentialRef: reader, tls: {insecureSkipVerify: true}}]
+  hosts: [{bmcEndpoint: 'https://192.0.2.2', credentialRef: reader}]
+  probes: {mode: inventory}
+`), GinkgoT().TempDir()+"/site.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		req, err := config.Resolve(input)
+		Expect(err).NotTo(HaveOccurred())
+		report := Collect(context.Background(), req, "test", Dependencies{})
+		Expect(report.Inventory.RequestedScope).To(HaveLen(2))
+		Expect(report.Inventory.RequestedScope[0].TLSInsecureSkipVerify).To(BeTrue())
+		Expect(report.Inventory.RequestedScope[1].TLSInsecureSkipVerify).To(BeFalse())
+		Expect(report.Errors[0].Code).To(Equal("INVALID_MANAGEMENT_ACCESS"))
+	})
+	It("retains insecure BMC policy in saved scope and rejects a silent trust-policy change", func() {
+		old := estate()
+		old.RequestedScope = []inventory.ScopeEndpoint{{Role: "dpus", Endpoint: "https://192.0.2.1", TLSInsecureSkipVerify: false}}
+		Canonicalize(&old)
+		current := estate()
+		current.RequestedScope = []inventory.ScopeEndpoint{{Role: "dpus", Endpoint: "https://192.0.2.1", TLSInsecureSkipVerify: true}}
+		Canonicalize(&current)
+		Expect(scopeConflict(&old, &current)).To(BeTrue())
+		data, err := json.Marshal(current)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(data)).To(ContainSubstring(`"tlsInsecureSkipVerify":true`))
+	})
 	It("keeps missing scope evidence separate from a proven replacement", func() {
 		old := estate()
 		Canonicalize(&old)

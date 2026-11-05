@@ -90,6 +90,11 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 					} else {
 						if !inv.Output.Quiet {
 							fmt.Fprintln(r.Stderr, "Inspecting explicitly selected management and BMC scope")
+							for _, endpoint := range resolved.Targets {
+								if endpoint.Access.InsecureSkipVerify() {
+									fmt.Fprintf(r.Stderr, "Warning: BMC TLS certificate verification disabled for %s\n", endpoint.Endpoint)
+								}
+							}
 						}
 						deps := discovery.Dependencies{BMC: redfish.Collector{Qualifications: catalog.Hardware()}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
 						if resolved.Input.Site.Inventory == nil {

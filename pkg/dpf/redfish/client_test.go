@@ -5,10 +5,14 @@ package redfish
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -16,6 +20,34 @@ import (
 func TestRedfish(t *testing.T) { RegisterFailHandler(Fail); RunSpecs(t, "DPF Redfish") }
 
 var _ = Describe("GET/session-only transport", func() {
+	It("requires explicit insecure opt-in for an untrusted server and still rejects foreign origins", func() {
+		var requests atomic.Int32
+		s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			w.Write([]byte(`{"RedfishVersion":"1.0.0"}`))
+		}))
+		defer s.Close()
+		Expect(os.Setenv("DPF_TLS_TEST_PASSWORD", "private-password")).To(Succeed())
+		DeferCleanup(os.Unsetenv, "DPF_TLS_TEST_PASSWORD")
+		for _, policy := range []string{"", ", tls: {insecureSkipVerify: false}", ", tls: {insecureSkipVerify: true}"} {
+			source := fmt.Sprintf("management:\n  kubeconfigRef: {file: unused}\ncredentials:\n  read: {username: reader, passwordRef: {env: DPF_TLS_TEST_PASSWORD}}\ndiscovery:\n  dpus: [{bmcEndpoint: '%s', credentialRef: read%s}]\n  hosts: [{bmcEndpoint: 'https://192.0.2.1', credentialRef: read}]\n", s.URL, policy)
+			in, err := config.Decode([]byte(source), "/site/input.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			req, err := config.Resolve(in)
+			Expect(err).NotTo(HaveOccurred())
+			c := New(req.Targets[0], time.Second)
+			_, err = c.Get(context.Background(), "/redfish/v1/")
+			if req.Targets[0].Access.InsecureSkipVerify() {
+				Expect(err).NotTo(HaveOccurred())
+			} else {
+				Expect(Code(err)).To(Equal("TLS_VERIFICATION_FAILED"))
+				Expect(requests.Load()).To(BeZero())
+			}
+			_, err = c.Get(context.Background(), "https://foreign.invalid/redfish/v1/")
+			Expect(Code(err)).To(Equal("CROSS_ORIGIN_LINK"))
+		}
+		Expect(requests.Load()).To(Equal(int32(1)))
+	})
 	It("allows the service root and logs out exactly its own session", func() {
 		var methods []string
 		s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

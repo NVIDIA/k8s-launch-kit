@@ -35,7 +35,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	inv := &inventory.Inventory{FormatVersion: inventory.FormatVersion, Collection: inventory.Collection{RunID: runID, StartedAt: time.Now().UTC(), Mode: r.Mode, Collector: "l8k-go-discovery-v1"}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{}, Hosts: []inventory.Device{}, Associations: []inventory.Association{}, Evidence: map[string]inventory.Evidence{}}
 	report.Inventory = inv
 	for _, t := range r.Targets {
-		inv.RequestedScope = append(inv.RequestedScope, inventory.ScopeEndpoint{Role: t.Role, Endpoint: t.Endpoint, SystemURI: t.SystemURI})
+		inv.RequestedScope = append(inv.RequestedScope, inventory.ScopeEndpoint{Role: t.Role, Endpoint: t.Endpoint, SystemURI: t.SystemURI, TLSInsecureSkipVerify: t.Access.InsecureSkipVerify()})
 	}
 	slices.SortFunc(inv.RequestedScope, func(a, b inventory.ScopeEndpoint) int {
 		return strings.Compare(a.Role+a.Endpoint+a.SystemURI, b.Role+b.Endpoint+b.SystemURI)

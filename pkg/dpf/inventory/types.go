@@ -21,9 +21,10 @@ type Collection struct {
 	Collector  string    `json:"collector" yaml:"collector"`
 }
 type ScopeEndpoint struct {
-	Role      string `json:"role" yaml:"role"`
-	Endpoint  string `json:"endpoint" yaml:"endpoint"`
-	SystemURI string `json:"systemURI,omitempty" yaml:"systemURI,omitempty"`
+	Role                  string `json:"role" yaml:"role"`
+	Endpoint              string `json:"endpoint" yaml:"endpoint"`
+	SystemURI             string `json:"systemURI,omitempty" yaml:"systemURI,omitempty"`
+	TLSInsecureSkipVerify bool   `json:"tlsInsecureSkipVerify,omitempty" yaml:"tlsInsecureSkipVerify,omitempty"`
 }
 type Evidence struct {
 	Namespace           string    `json:"namespace,omitempty" yaml:"namespace,omitempty"`

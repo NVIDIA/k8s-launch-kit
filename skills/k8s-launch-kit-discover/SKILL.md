@@ -13,6 +13,14 @@ metadata:
 
 For the independent DPF preview, read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit management/BMC YAML. Keep the empty hardware/probe-image release gates visible; do not run Host discovery against the DPF estate.
 
+DPF BMC TLS verification defaults to enabled. For an explicitly requested lab
+bypass, set the endpoint's `tls.insecureSkipVerify: true`; the shared
+`discovery.tls` policy also supports it. An endpoint `tls` block replaces that
+policy, including an explicit `false`. Do not combine `caFile` with `true`.
+Retain stderr warnings and `inventory.requestedScope[].tlsInsecureSkipVerify` in
+the report. A policy change requires a fresh seed/output; it does not weaken
+management kubeconfig or network-probe TLS verification.
+
 This workflow uses the default `host` target; `--target host` is equivalent.
 The CLI snapshots discovery arguments and runs the concrete Host discovery
 operation through the target registry; command syntax and artifacts are

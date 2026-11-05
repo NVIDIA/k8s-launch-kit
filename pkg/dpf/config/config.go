@@ -39,7 +39,8 @@ type Credential struct {
 	PasswordRef PasswordRef `yaml:"passwordRef"`
 }
 type TLS struct {
-	CAFile *string `yaml:"caFile,omitempty"`
+	CAFile             *string `yaml:"caFile,omitempty"`
+	InsecureSkipVerify *bool   `yaml:"insecureSkipVerify,omitempty"`
 }
 type Endpoint struct {
 	Name          *string `yaml:"name,omitempty"`
@@ -96,6 +97,7 @@ func (a Access) Credentials() (string, string) { return a.username, a.password }
 func (a Access) TLSConfig() *tls.Config        { return a.tls.Clone() }
 func (a Access) PublicCA() []byte              { return bytes.Clone(a.ca) }
 func (a Access) String() string                { return "<private BMC access>" }
+func (a Access) InsecureSkipVerify() bool      { return a.tls != nil && a.tls.InsecureSkipVerify }
 
 type Target struct {
 	Endpoint  string
@@ -291,7 +293,11 @@ func Resolve(in Input) (Request, error) {
 		return r, fmt.Errorf("discovery requires 1-256 explicit DPU/host endpoints and both roles")
 	}
 	seen := map[string]bool{}
-	accesses := map[string]Access{}
+	type accessKey struct {
+		credential, caPath string
+		insecure           bool
+	}
+	accesses := map[accessKey]Access{}
 	for _, group := range []struct {
 		role      string
 		endpoints []Endpoint
@@ -328,10 +334,14 @@ func Resolve(in Input) (Request, error) {
 				}
 				caPath = resolvePath(base, *policy.CAFile)
 			}
-			cacheKey := e.CredentialRef + "\x00" + caPath
+			insecure := policy != nil && policy.InsecureSkipVerify != nil && *policy.InsecureSkipVerify
+			if insecure && caPath != "" {
+				return r, fmt.Errorf("%s/tls: caFile and insecureSkipVerify: true are mutually exclusive", ptr)
+			}
+			cacheKey := accessKey{credential: e.CredentialRef, caPath: caPath, insecure: insecure}
 			a, ok := accesses[cacheKey]
 			if !ok {
-				a, err = resolveAccess(c, caPath, base)
+				a, err = resolveAccess(c, caPath, base, insecure)
 				if err != nil {
 					return r, fmt.Errorf("%s: %w", ptr, err)
 				}
@@ -349,7 +359,7 @@ func resolvePath(base, p string) string {
 	}
 	return filepath.Join(base, p)
 }
-func resolveAccess(c Credential, caPath, base string) (Access, error) {
+func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, error) {
 	p := c.PasswordRef
 	if (p.Env == nil) == (p.File == nil) {
 		return Access{}, fmt.Errorf("passwordRef requires exactly one env or file")
@@ -390,7 +400,8 @@ func resolveAccess(c Credential, caPath, base string) (Access, error) {
 			return Access{}, fmt.Errorf("invalid CA file")
 		}
 	}
-	return Access{username: c.Username, password: password, tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, ca: ca}, nil
+	// Certificate verification is disabled only by explicit site configuration.
+	return Access{username: c.Username, password: password, tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, InsecureSkipVerify: insecure}, ca: ca}, nil
 }
 func Origin(s string) (string, error) {
 	u, err := url.Parse(s)
@@ -486,6 +497,9 @@ func validateScalarTypes(n *yaml.Node, p string) error {
 		expected := "!!str"
 		if p == "/discovery/limits/maxConcurrentBMCs" {
 			expected = "!!int"
+		}
+		if strings.HasSuffix(p, "/tls/insecureSkipVerify") {
+			expected = "!!bool"
 		}
 		if n.Tag != expected {
 			return fmt.Errorf("%s has invalid scalar type at line %d", p, n.Line)
