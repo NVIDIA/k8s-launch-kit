@@ -53,7 +53,7 @@ func TestStandardNamingRejectsSplitPhysicalNIC(t *testing.T) {
 			rail := 0
 			cfg.ClusterConfig[0].PFs[1].Rail = &rail
 		}
-		plugin := &NetworkOperatorPlugin{Groups: []string{cfg.ClusterConfig[0].Identifier}}
+		plugin := &NetworkOperatorPlugin{}
 		profile := loadProfileFromDir(t, "sriov-ethernet-rdma")
 		_, err = plugin.GenerateProfileDeploymentFiles(profile, cfg)
 		require.ErrorContains(t, err, `physical NIC "0000:03:00" appears in multiple rails (0 and 1)`)
@@ -79,13 +79,15 @@ func TestStandardNamingRailOrderFromBundledPreset(t *testing.T) {
 			t.Run(profileName+"/"+release, func(t *testing.T) {
 				cfg := standardNicConfigurationConfig(t, config.FlavorK8s, "ethernet", "sriov", false)
 				cfg.NetworkOperator.SelectedRelease = release
-				cfg.ClusterConfig = cfg.ClusterConfig[:1]
-				cfg.ClusterConfig[0].PFs = inventory.PFs
+				// Use multiple selected sources so naming remains necessary.
+				for i := range cfg.ClusterConfig {
+					cfg.ClusterConfig[i].PFs = inventory.PFs
+				}
 				cfg.NicConfigurationOperator.NetdevPrefix = "custom_r%rail_id%"
 				cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate = true
 				rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, profileName), cfg)
 				require.NoError(t, err)
-				_, content := fileMatching(t, rendered, "nicinterfacenametemplate")
+				_, content := fileMatching(t, rendered, "nicinterfacenametemplate-group-0")
 				var naming nicop.NicInterfaceNameTemplate
 				require.NoError(t, yaml.Unmarshal([]byte(content), &naming))
 				require.Len(t, naming.Spec.RailPciAddresses, 4)

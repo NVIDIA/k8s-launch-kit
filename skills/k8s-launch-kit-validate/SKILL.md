@@ -144,6 +144,12 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 - `strict`: full matrix. Cross-rail gates by `profile.routing`: `source-based`
   must succeed, `destination-based` must stay isolated.
 
+Connectivity discovery supports IPv4-only and IPv6-only secondary attachments.
+On dual-stack attachments it retains IPv4 preference; it does not test both
+families. IPv6 uses `ping -6`, `ip -6 route get`, and
+`ib_write_bw --ipv6 --ipv6-addr` on both endpoints. `rping` accepts IPv6
+addresses directly. Link-local and malformed addresses are excluded.
+
 All checks are source-bound. Before every ICMP probe, validate confirms that
 `ip route get <dst> from <src>` selects the requested source interface. A route
 using another interface is reported as not connected for that rail pair rather
@@ -278,6 +284,16 @@ copies required NADs and image pull secrets and creates dedicated
 ServiceAccount/SCC/RBAC there. The kubeconfig needs namespace/SCC creation and
 source NAD/Secret read permissions. Cleanup removes the temporary resources;
 `--keep` retains them. Inspect exact retained names after interrupted cleanup.
+Platform-managed Multus and reference CNI plugin installer rows are UNVERIFIED;
+their DaemonSet count, selectors, pods, and rollout status do not gate validation.
+NCP ownership checks still reject managed OpenShift artifacts, implicit ownership
+transitions, and failed mandatory reads. NCP readiness and connectivity still apply.
+NCP readiness also excludes non-ready Multus/CNI `appliedStates` when both
+desired and live specs leave them external. Every configured component in either
+spec must report ready; missing coverage and other component failures keep the
+aggregate error/progress state.
+Unknown spec fields, malformed/duplicate status, and policy-level reasons retain
+the original aggregate verdict. Live YAML keeps the raw controller status.
 OpenShift with connectivity enabled requires at least one gating test per
 selected family; in-progress manifests and incomplete coverage fail. Other
 profiles beyond SR-IOV Ethernet still need live hardware qualification; see

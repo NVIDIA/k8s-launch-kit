@@ -70,6 +70,8 @@ func testDospcxProfileBundleModes(t *testing.T, ra string) {
 			}
 			rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(p, cfg)
 			require.NoError(t, err)
+			require.NotContains(t, rendered[helmValuesOutputName], "staleNodeStateCleanupDelayMinutes",
+				"traditional platforms must retain the chart's cleanup delay")
 			files := []bundle.File{}
 			cmCount, nctCount, poolCount := 0, 0, 0
 			for name, content := range rendered {
@@ -613,19 +615,60 @@ func TestVRNetworkBayRailsRenderEightPlanes(t *testing.T) {
 		for _, split := range []bool{false, true} {
 			for _, dra := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/split=%v/dra=%v", ra, split, dra), func(t *testing.T) {
-					testVRNetworkBayManifestRails(t, ra, split, dra)
+					for _, ip := range []string{config.SpectrumXIPVersionIPv4, config.SpectrumXIPVersionIPv6} {
+						t.Run(ip, func(t *testing.T) { testVRNetworkBayManifestRails(t, ra, split, dra, ip) })
+					}
 				})
 			}
 		}
 	}
 }
 
-func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool) {
+func TestVRStaleStateRetentionFollowsGroupSelection(t *testing.T) {
+	for _, ra := range []string{"RA2.4", "RA3.1"} {
+		t.Run(ra, func(t *testing.T) {
+			cfg, profile := vrConfigAndProfile(t, ra, false)
+			cfg.ClusterConfig[0].Identifier = "vr-group"
+			cfg.ClusterConfig[0].WorkerNodes = []string{"worker-vr"}
+			traditional, _ := dospcxConfigAndProfile(t, ra, "hwplb", 8)
+			cfg.ClusterConfig = append(cfg.ClusterConfig, traditional.ClusterConfig[0])
+			cfg.Profile.SpectrumX.TopologyFile = writeSpectrumXTopology(t, cfg, 8)
+			for _, group := range cfg.ClusterConfig {
+				t.Run(group.Identifier, func(t *testing.T) {
+					plugin := &NetworkOperatorPlugin{Groups: []string{group.Identifier}}
+					rendered, err := plugin.GenerateProfileDeploymentFiles(profile, cfg)
+					require.NoError(t, err)
+					var values struct {
+						Sriov struct {
+							Operator map[string]any `yaml:"operator"`
+						} `yaml:"sriov-network-operator"`
+					}
+					require.NoError(t, yaml.Unmarshal([]byte(rendered[helmValuesOutputName]), &values))
+					if group.Identifier == "vr-group" {
+						require.Equal(t, "120", values.Sriov.Operator["staleNodeStateCleanupDelayMinutes"])
+					} else {
+						require.NotContains(t, values.Sriov.Operator, "staleNodeStateCleanupDelayMinutes")
+					}
+					files := make([]bundle.File, 0, len(rendered))
+					for name, content := range rendered {
+						files = append(files, bundle.File{Name: name, Content: content})
+					}
+					_, err = bundle.FromFiles(files)
+					require.NoError(t, err)
+				})
+			}
+		})
+	}
+}
+
+func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool, ip string) {
 	t.Helper()
 	cfg, profile := vrConfigAndProfile(t, ra, split)
 	cfg.Profile.SpectrumX.UseDRA = dra
+	cfg.Profile.SpectrumX.IPVersion = ip
 	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(profile, cfg)
 	require.NoError(t, err)
+	require.Contains(t, rendered[helmValuesOutputName], `staleNodeStateCleanupDelayMinutes: "120"`)
 	files := []bundle.File{}
 	for name, content := range rendered {
 		files = append(files, bundle.File{Name: name, Content: content})
@@ -672,6 +715,11 @@ func testVRNetworkBayManifestRails(t *testing.T, ra string, split, dra bool) {
 			}
 		case "CIDRPool":
 			poolNames = append(poolNames, obj.GetName())
+			if ip == config.SpectrumXIPVersionIPv6 {
+				require.EqualValues(t, 64, vrManifestField(t, obj.Object, "spec", "perNodeNetworkPrefix"))
+				require.EqualValues(t, 2, vrManifestField(t, obj.Object, "spec", "gatewayIndex"))
+				require.Equal(t, []any{map[string]any{"dst": "fd02::/28"}}, vrManifestField(t, obj.Object, "spec", "routes"))
+			}
 		case "ResourceClaimTemplate":
 			claimNames = append(claimNames, obj.GetName())
 			requests := vrManifestField(t, obj.Object, "spec", "spec", "devices", "requests").([]any)

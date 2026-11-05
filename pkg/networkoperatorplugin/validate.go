@@ -201,7 +201,12 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 		return nil, fmt.Errorf("validation artifact bundle is nil")
 	}
 	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
-	registry := crstate.NewDefault()
+	var registry *crstate.Registry
+	if ocp {
+		registry = crstate.NewOpenShift()
+	} else {
+		registry = crstate.NewDefault()
+	}
 	var results []ValidationResult
 	for _, doc := range artifacts.Documents() {
 		if doc.Role() != bundle.Deployment {
@@ -209,7 +214,7 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 		}
 		obj := doc.ObjectCopy()
 		if isNicClusterPolicy(obj) {
-			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File)
+			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File, flavor...)
 			if err != nil {
 				return nil, err
 			}
@@ -230,7 +235,7 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 				continue
 			}
 			merged := live.DeepCopy()
-			if mergeErr := mergeOCPSpec(merged, obj); mergeErr != nil {
+			if mergeErr := mergeOCPConfiguration(merged, obj); mergeErr != nil {
 				r.State = crstate.StateError
 				r.Reason = mergeErr.Error()
 			} else if !reflect.DeepEqual(merged.Object, live.Object) {

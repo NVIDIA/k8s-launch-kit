@@ -517,7 +517,7 @@ func TestTargetScopeProfileRendering(t *testing.T) {
 					if profile == "sriov-ib-rdma-ocp" && strings.Contains(template, "ippool") {
 						continue
 					}
-					rendered, err := renderForScope(path, cfg, plans, planSubnets)
+					rendered, err := (&NetworkOperatorPlugin{}).renderForScope(path, cfg, plans, planSubnets)
 					require.NoError(t, err)
 					files := make([]bundle.File, 0, len(rendered))
 					for name, content := range rendered {
@@ -548,7 +548,7 @@ func TestTargetScopeRenderingRejectsAmbiguousSourceIDs(t *testing.T) {
 	require.NoError(t, err)
 	cfg.ClusterConfig[1].Identifier = cfg.ClusterConfig[0].Identifier
 	plans, _ := planRender(cfg.ClusterConfig, cfg.ClusterConfig)
-	_, err = renderForScope(filepath.Join("..", "..", "profiles", "sriov-ethernet-rdma", "40-sriovnetworknodepolicy.yaml"), cfg, plans, nil)
+	_, err = (&NetworkOperatorPlugin{}).renderForScope(filepath.Join("..", "..", "profiles", "sriov-ethernet-rdma", "40-sriovnetworknodepolicy.yaml"), cfg, plans, nil)
 	require.ErrorContains(t, err, "duplicate identifier")
 }
 

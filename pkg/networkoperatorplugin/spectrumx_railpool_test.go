@@ -168,6 +168,7 @@ func TestSpectrumXRailPoolTemplatesStaySchemaCompatibleAndBounded(t *testing.T) 
 				},
 				Profile: &config.Profile{
 					SpectrumX: &config.ProfileSpectrumX{
+						Enable:         true,
 						MultiplaneMode: "none",
 						NumberOfPlanes: 1,
 					},

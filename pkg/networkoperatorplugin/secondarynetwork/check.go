@@ -30,8 +30,10 @@ type Check struct {
 // CheckPolicy checks the actual artifact, including a mandatory live-policy
 // read to prevent removal of an existing managed section. Installation collision
 // inspection is mandatory; health inspection of omitted sections is optional.
+// An OpenShift flavor skips platform installer inspection after verifying that
+// both sections are external. With no flavor, Kubernetes inspection applies.
 // A nil policy performs no API reads.
-func CheckPolicy(ctx context.Context, c client.Reader, desired *unstructured.Unstructured, workers []string) ([]Check, error) {
+func CheckPolicy(ctx context.Context, c client.Reader, desired *unstructured.Unstructured, workers []string, flavor ...string) ([]Check, error) {
 	if desired == nil {
 		return nil, nil
 	}
@@ -42,11 +44,15 @@ func CheckPolicy(ctx context.Context, c client.Reader, desired *unstructured.Uns
 	if err != nil {
 		return nil, err
 	}
+	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
 	managed := map[string]bool{}
 	for _, component := range []string{Multus, CNIPlugins} {
 		managed[component], err = hasManagedSection(desired, component)
 		if err != nil {
 			return nil, err
+		}
+		if ocp && managed[component] {
+			return nil, fmt.Errorf("%s must be externally managed on OpenShift", component)
 		}
 		if live != nil && !managed[component] {
 			present, err := hasManagedSection(live, component)
@@ -57,6 +63,17 @@ func CheckPolicy(ctx context.Context, c client.Reader, desired *unstructured.Uns
 				return nil, fmt.Errorf("refusing managed-to-external %s transition in NicClusterPolicy %s: removing its section can delete networking; perform a separately controlled migration first", component, desired.GetName())
 			}
 		}
+	}
+	if ocp {
+		var checks []Check
+		for _, component := range []string{Multus, CNIPlugins} {
+			checks = append(checks, Check{
+				Component: component,
+				Skipped:   true,
+				Reason:    "unverified external prerequisite: " + component + " is managed by OpenShift; installer health requires platform and runtime validation",
+			})
+		}
+		return checks, nil
 	}
 	inspection, inspectErr := Inspect(ctx, c)
 	if ctx.Err() != nil {

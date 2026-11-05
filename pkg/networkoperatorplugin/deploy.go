@@ -255,7 +255,12 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 
 	dryRun := opts.DryRun
 
-	registry := crstate.NewDefault()
+	var registry *crstate.Registry
+	if ocp {
+		registry = crstate.NewOpenShift()
+	} else {
+		registry = crstate.NewDefault()
+	}
 
 	// Compute total phase count for the headers — skip empty phases so
 	// users don't see "Phase 2/4" when there are no NNPs.

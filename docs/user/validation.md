@@ -71,7 +71,7 @@ Review skipped stages and non-gating cross-rail observations separately.
 
 ## External networking prerequisites
 
-For NCP bundles, validation checks live Multus/CNI ownership independently of
+For Kubernetes NCP bundles, validation checks live Multus/CNI ownership independently of
 catalog versions. An omitted section with a still-managed live section is an
 ownership conflict. Supported external installers are checked against configured
 worker names: incompatible node selectors are errors; missing Ready pods or
@@ -85,6 +85,24 @@ health check and does not alone fail static validation. Failed mandatory
 ownership inspection is an error. The report lists external prerequisite rows
 separately from NCP-managed catalog-version checks. Host CNI binaries,
 configuration, and data-plane behavior still require runtime qualification.
+
+On OpenShift, Multus and the reference CNI plugins are platform-managed.
+Validation reports their external prerequisite rows as **UNVERIFIED** and
+does not inspect installer DaemonSets or gate on their count, selectors,
+pods, or rollout status. It still checks NCP ownership: managed sections in
+OpenShift artifacts, implicit managed-to-external transitions, and failed
+mandatory ownership reads remain errors. NCP readiness and connectivity
+checks still apply; skipped installer checks do not establish networking health.
+
+The same ownership boundary applies to NCP `status.appliedStates`: when both
+desired and live specs omit Multus/CNI ownership, their controller states are
+marked unverified and excluded from an otherwise non-ready NCP aggregate.
+Every configured component in either spec must still report `ready`; missing
+coverage and other component failures retain the aggregate error/progress state.
+Unknown spec fields,
+malformed or duplicate status entries, and policy-level reasons retain the
+controller's aggregate verdict. The report's live YAML preserves the original
+status. Connectivity runs only after the remaining managed resources are ready.
 
 ## Worked acceptance decisions
 
@@ -221,7 +239,15 @@ Each generated example DaemonSet declares two validation containers: the DOCA
 container runs `rping`, `ib_write_bw`, and DMA-BUF bandwidth, while the `netshoot` container runs
 ICMP and route checks from the same pod network namespace. Validation applies
 the generated DaemonSet as written; it does not inject a helper container at
-runtime. Before every same-rail and cross-rail ICMP probe in `quick`, `full`,
+runtime.
+
+Connectivity discovery supports IPv4-only and IPv6-only secondary attachments.
+On dual-stack attachments it retains IPv4 preference; it does not test both
+families. IPv6 uses `ping -6`, `ip -6 route get`, and
+`ib_write_bw --ipv6 --ipv6-addr` on both endpoints. `rping` accepts IPv6
+addresses directly. Link-local and malformed addresses are excluded.
+
+Before every same-rail and cross-rail ICMP probe in `quick`, `full`,
 and `strict` modes, validation runs `ip route get <dst> from <src>`. A route
 that does not select the requested source interface means that rail pair is not
 connected; validation does not force the packet onto that interface. When the

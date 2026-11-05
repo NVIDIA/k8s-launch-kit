@@ -222,6 +222,15 @@ The shared resource-state registry classifies generated objects as:
 
 Kind-specific checks include per-component Network Operator state, SR-IOV per-node sync, matched PF counts, NIC configuration templates, IP pools, and Spectrum-X rail configuration.
 
+On OpenShift, the NCP readiness gate can exclude non-ready Multus and reference
+CNI applied states when both desired and live specs leave those components
+external. It still requires ready status for every configured component in
+either spec and retains other component failures. Missing coverage waits;
+unrecognized or malformed evidence and policy-level reasons retain the original
+aggregate verdict. This is the same classifier used by
+[validation](../user/validation.md#external-networking-prerequisites); it does
+not change deployment's ownership guards or controller-observation gate.
+
 For `NicConfigurationTemplate` and `NicFirmwareTemplate`, Launch Kit first waits for the operator to publish matched device names in `status.nicDevices` and for that name set to reflect the current `nodeSelector`, NIC type, PCI-address, serial-number, and part-number selectors. It then evaluates only those `NicDevice` objects and waits for the corresponding `spec.configuration` or `spec.firmware` field to reflect the current template payload. A successful device condition is accepted only after its `observedGeneration` catches up with the `NicDevice` generation. A configuration template checks `FirmwareUpdateInProgress` only when the matched device carries `spec.firmware`; without a deployed firmware template, a stale firmware condition from an older device generation does not block configuration reconciliation. Other discovered NICs do not block on configuration or firmware state. Changed templates are also observation-gated before this status is accepted, so status left by an earlier generation cannot produce a false success.
 
 For `NicInterfaceNameTemplate`, `InterfaceNameMismatch` is retryable because the NIC configuration daemon can publish it while newly-written udev rules are still taking effect. Launch Kit starts a five-minute retry window when it first observes that mismatch. Initial device discovery and other ordinary in-progress states remain unbounded. Since additional-resource verification is ordered, the template gates later checks during this window. A persistent mismatch fails deployment after the local timeout and retains the per-node and per-port mismatch details.

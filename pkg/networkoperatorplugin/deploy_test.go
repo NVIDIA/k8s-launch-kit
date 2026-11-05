@@ -27,7 +27,56 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
+
+func TestOpenShiftPolicyReadinessPreservesObservationGate(t *testing.T) {
+	for _, observed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no controller observation", true: "controller observed apply"}[observed], func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			live := ocpTestObject("mellanox.com/v1alpha1", "NicClusterPolicy", "", "nic-cluster-policy", map[string]interface{}{
+				"spec": map[string]interface{}{"nvIpam": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"state": "notReady",
+					"appliedStates": []interface{}{
+						map[string]interface{}{"name": "state-multus-cni", "state": "error"},
+						map[string]interface{}{"name": "state-container-networking-plugins", "state": "notReady"},
+						map[string]interface{}{"name": "state-nv-ipam-cni", "state": "ready"},
+					},
+				},
+			})
+			live.SetResourceVersion("1")
+			reads := 0
+			c := fake.NewClientBuilder().WithObjects(live).WithStatusSubresource(live).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					reads++
+					if reads == 2 {
+						if observed {
+							update := live.DeepCopy()
+							states, _, err := unstructured.NestedSlice(update.Object, "status", "appliedStates")
+							require.NoError(t, err)
+							states[2].(map[string]interface{})["message"] = "controller observed current spec"
+							require.NoError(t, unstructured.SetNestedSlice(update.Object, states, "status", "appliedStates"))
+							require.NoError(t, c.Status().Update(ctx, update))
+						} else {
+							cancel()
+						}
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+			err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, crstate.NewOpenShift(), live.DeepCopy(), "policy", "1", 0, time.Millisecond)
+			if observed {
+				require.NoError(t, err)
+				require.GreaterOrEqual(t, reads, 3)
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+		})
+	}
+}
 
 func TestManifestRetryableErrorTimeout(t *testing.T) {
 	interfaceTemplate := &unstructured.Unstructured{}

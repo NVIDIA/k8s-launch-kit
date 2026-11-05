@@ -19,6 +19,7 @@ package connectivity
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
@@ -130,7 +131,7 @@ type DaemonSetReport struct {
 //  2. Applies each via server-side apply.
 //  3. Waits for the DS rollout (desired > 0 AND ready == desired).
 //  4. Lists Running+Ready pods, parses each pod's multus annotation,
-//     filters to secondary networks, picks the first IPv4 per rail.
+//     filters to secondary networks, picks IPv4 per rail, falling back to IPv6.
 //  5. Discovers the RDMA device backing each multus interface per pod.
 //  6. Builds a test plan via PlanWithOptions().
 //  7. Runs the configured connectivity stages sequentially. RDMA stages use the
@@ -771,8 +772,8 @@ type testPodWithDS struct {
 }
 
 // buildTestPod converts a corev1.Pod into a TestPod by parsing the
-// multus `network-status` annotation. The first IPv4 per rail is used;
-// IPv6 is currently ignored. Also returns the rail→multus interface
+// multus `network-status` annotation. IPv4 is preferred on dual-stack rails;
+// IPv6 is used on IPv6-only rails. Also returns the rail→multus interface
 // name mapping (e.g. "rail-0" → "net1") so the caller can hand it to
 // DiscoverRDMADevices to populate RDMADevsByRail for the RDMA stages.
 func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
@@ -790,7 +791,7 @@ func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
 	}
 	ifaceByRail := map[string]string{}
 	for _, n := range SecondaryNetworks(nets) {
-		ip := pickIPv4(n.IPs)
+		ip := pickNetworkIP(n.IPs)
 		if ip == "" {
 			continue
 		}
@@ -815,13 +816,31 @@ func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
 	return tp, ifaceByRail, nil
 }
 
-// pickIPv4 returns the first IPv4 address from the multus IP list, or
-// "" if none. IPv6 entries are ignored.
-func pickIPv4(ips []string) string {
-	for _, ip := range ips {
-		if strings.Count(ip, ".") == 3 && !strings.Contains(ip, ":") {
-			return ip
+// pickNetworkIP prefers IPv4 for compatibility, falling back to global-unicast
+// IPv6 (including ULA). Link-local addresses require a scope and are not suitable
+// for the routed rail matrix.
+func pickNetworkIP(ips []string) string {
+	ipv6 := ""
+	for _, raw := range ips {
+		ip, err := netip.ParseAddr(raw)
+		if err != nil || !ip.IsGlobalUnicast() {
+			continue
 		}
+		if ip.Is4() {
+			return raw
+		}
+		if ipv6 == "" {
+			ipv6 = raw
+		}
+	}
+	return ipv6
+}
+
+// ipv6Flag selects the IPv6 command mode without changing existing IPv4 commands.
+func ipv6Flag(ip, flag string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err == nil && addr.Is6() {
+		return flag
 	}
 	return ""
 }

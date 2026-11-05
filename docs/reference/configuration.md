@@ -401,7 +401,7 @@ spectrumX:
 | Field | Meaning |
 | --- | --- |
 | `deployNicConfigurationTemplate` | Default `true`; standard-profile NIC tuning independently of interface naming. Explicit `false` opts out. CLI: `--deploy-nic-configuration-template[=false]` on root, generate and discover. |
-| `deployNicInterfaceNameTemplate` | Default `true`; renders interface-name templates for every selected source group in standard multirail profiles, including a single selected group. Explicit `false` disables naming. |
+| `deployNicInterfaceNameTemplate` | Default `true`; standard multirail profiles skip naming for a single selected group unless RDMA-shared needs missing interface names. Multiple selected groups retain naming; Spectrum-X uses its required templates. Explicit `false` disables standard-profile naming. |
 | `rdmaPrefix` / `netdevPrefix` | Standard-profile names. Multirail values require a rail placeholder. |
 | `updateFW` | Enables firmware staging storage in generated Network Operator configuration. |
 | `spectrumX.overlay` | Spectrum-X overlay mode. |
@@ -489,7 +489,7 @@ profile:
 | `deployment` | `sriov`, `rdma_shared`, or `host_device`. |
 | `multirail` | Enable more than one east-west rail. An explicit `false` is preserved. |
 | `routing` | `destination-based` or `source-based`; source-based adds the `sbr` CNI plugin outside Spectrum-X. |
-| `ignoreARP` | Adds `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` through the `tuning` CNI plugin outside Spectrum-X. Kubernetes renders both `all` and `IFNAME` scopes; OpenShift renders `IFNAME` only and requires those keys in the Multus sysctl allowlist. |
+| `ignoreARP` | Adds `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` through the `tuning` CNI plugin outside Spectrum-X. Both Kubernetes and OpenShift render `all` and `IFNAME` scopes. OpenShift deploy adds the corresponding Multus sysctl allowlist entries while preserving existing entries. |
 | `spectrumX.enable` | Select a Spectrum-X profile. |
 | `spectrumX.spcxVersion` | `RA2.1`, `RA2.2`, `RA2.3`, `RA2.4`, or `RA3.1`; RA2.3 requires 26.7, RA2.4 and RA3.1 require 26.10 or a newer catalogued release. |
 | `spectrumX.multiplaneMode` | `none`, `swplb`, or `hwplb`. When absent, H100/H200/B200/GB200 default to `none`; B300/GB300 default to the GA `swplb` path. B300/GB300 require explicit `hwplb`; VR with ConnectX-9 defaults to `hwplb` on RA2.4/RA3.1. |
@@ -515,10 +515,23 @@ doSPCX platform substring in `gpuType`; unresolved discovery warns, while
 RA2.4/RA3.1 generation fails. See the [RA2.4 contract](../user/spectrum-x.md#ra24-dospcx-profile)
 for release prerequisites, merging, defaults and supported layouts.
 
-VR generation currently supports IPv4, eight-plane HWPLB, four rails and two
+Discovery saves the effective RA naming in
+`clusterConfig[].spectrumX.interfaceNames` (`netdevPrefix` and `rdmaPrefix`).
+These are derived values: resolution refreshes them after mode or naming
+changes, including for older configs without this block. Change the existing
+`spectrumX.singlePlane`, `hwplb`, or `swplb` prefix settings for custom naming.
+PF inventory names remain observed values. Naming templates and PF selectors
+consume the same resolved per-group prefixes; standard profiles are unaffected.
+VR HWPLB uses `eth_r%rail_id%_p%plane_id%` and
+`roce_r%rail_id%_n%nic_id%`; traditional HWPLB retains `roce_r%rail_id%`.
+
+
+VR generation supports IPv4/IPv6, eight-plane HWPLB, four rails and two
 NICs per rail. It emits per-NIC pools/attachments and requires explicit host
 indices in reference topology JSON. See [VR addressing and naming](../user/spectrum-x.md#vr-dual-nic-rails)
 for field limits, custom prefix rules and migration requirements.
+`profile.spectrumX.ipv6SiteID` is a YAML-only integer from 0 to 15, defaulting
+to zero. Nonzero values apply only to VR IPv6; `hostFirstOctet` remains IPv4-only.
 
 A `machineType` containing `VR` (case-insensitive) selects platform `vr` before
 GPU-product matching, including when `gpuType` is empty. With ConnectX-9 and
@@ -562,8 +575,8 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 | `identifier` | Lowercase resource-name form of machine/GPU identity with complete `NVIDIA` segments removed and common machine segments shortened (`ThinkSystem` → `ts`, `PowerEdge` → `pe`), bounded to 30 bytes with balanced machine/GPU prefixes and a 6-character deterministic hash when needed, or `group-N` fallback. The Launch Kit machine node label uses the same value. |
 | `machineType` / `gpuType` | Discovered hardware identity. |
 | `linkType` | Per-group `Ethernet` or `InfiniBand` result when fabric probes agree. |
-| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`. |
-| `netplanManagementUnknown` | `true` when no match was found but a worker's netplan observation was unavailable or incomplete, or a MAC-based `set-name` rule could not be checked because an expected PF MAC was unreadable. A readable `/etc` without a netplan directory, or a complete configuration without MAC-based `set-name` rules, is a verified negative. Generation fails if a `NicInterfaceNameTemplate` would configure a group where either this field or `netplanManaged` is true. Resolve the discovery warning and re-run discovery; existing configs should be refreshed with discovery to populate this field. |
+| `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`. Blocks generation when a `NicInterfaceNameTemplate` would configure the group. |
+| `netplanManagementUnknown` | `true` when no match was found but a worker's netplan observation was unavailable or incomplete, or a MAC-based `set-name` rule could not be checked because an expected PF MAC was unreadable. A readable `/etc` without a netplan directory, or a complete configuration without MAC-based `set-name` rules, is a verified negative. When a `NicInterfaceNameTemplate` would configure the group, generation warns and continues unless `netplanManaged` is true. Review host netplan configuration and re-run discovery to resolve the warning; existing configs should be refreshed with discovery to populate this field. |
 | `presetApplied` | An exact topology preset was applied. |
 | `presetDeviation` | PF count, PCI address, or device ID drift from a matched preset. |
 | `capabilities.nodes` | Group-level SR-IOV, RDMA, and InfiniBand capability flags. |

@@ -205,6 +205,24 @@ these by applying `MaintenanceOperatorConfig` alone.
 ## OpenShift
 
 OpenShift deploy requires certified operator installations, uses OLM CSV/API checks, and configures existing operators. Helm values in the deployment directory are rejected. IPPool dry-run checks may be deferred until NCP installs NV-IPAM.
+
+The NCP readiness gate excludes non-ready Multus/CNI applied states only when
+both desired and live specs leave those components external and every configured
+component has ready status. Missing coverage and other component failures retain
+the aggregate error/progress state. Unknown/malformed evidence and policy-level
+reasons retain the aggregate verdict.
+Ownership and post-apply observation guards still apply. The
+[validation guide](../../docs/user/validation.md#external-networking-prerequisites)
+describes the shared classifier and report evidence.
+
+Deploy consumes the generated `04-cni-sysctl-allowlist-patch.yaml` before other
+operator configuration writes and network apply, regardless of filename order.
+It patches `openshift-multus/cni-sysctl-allowlist`, appending missing
+entries from that artifact while preserving
+site entries and other ConfigMap fields. Requires get/patch permission and an
+existing ConfigMap; inspection or patch errors stop deploy. Server-side dry-run
+is honored. The shared platform configuration persists through cleanup, and
+node propagation/pod attachment still require workload validation.
 Use `docs/user/openshift.md` for the operator ownership and acceptance workflow.
 
 ## Standard NIC tuning

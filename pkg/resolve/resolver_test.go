@@ -409,3 +409,30 @@ func TestNicConfigurationToggleDoesNotRejectSpectrumX(t *testing.T) {
 		require.NoError(t, ValidateResolvedConfig(cfg))
 	}
 }
+
+func TestResolveRefreshesDerivedSpectrumXNamesWithoutMutatingInput(t *testing.T) {
+	input, err := config.DecodeInput([]byte(`profile:
+  spectrumX:
+    enable: true
+    multiplaneMode: hwplb
+clusterConfig:
+  - identifier: machine-a
+    machineType: machine-VR
+    spectrumX:
+      interfaceNames:
+        netdevPrefix: stale-net
+        rdmaPrefix: stale-rdma
+`), "user.yaml")
+	require.NoError(t, err)
+	result, err := Resolve(Request{Input: input})
+	require.NoError(t, err)
+	names := result.Config.ClusterConfig[0].SpectrumX.InterfaceNames
+	require.Equal(t, "roce_r%rail_id%_n%nic_id%", names.RdmaPrefix)
+	require.Equal(t, "eth_r%rail_id%_p%plane_id%", names.NetdevPrefix)
+	require.Equal(t, "stale-rdma", input.Config.ClusterConfig[0].SpectrumX.InterfaceNames.RdmaPrefix)
+
+	input.Config.Profile.SpectrumX.MultiplaneMode = "swplb"
+	result, err = Resolve(Request{Input: input})
+	require.NoError(t, err)
+	require.Equal(t, "roce_r%rail_id%_p%plane_id%", result.Config.ClusterConfig[0].SpectrumX.InterfaceNames.RdmaPrefix)
+}

@@ -18,7 +18,13 @@ func cloneSpectrumXGroup(source *config.SpectrumXGroupConfig) *config.SpectrumXG
 	if source == nil {
 		return nil
 	}
-	return &config.SpectrumXGroupConfig{PlatformType: source.PlatformType, SwPlaneByRail: maps.Clone(source.SwPlaneByRail)}
+	clone := *source
+	clone.SwPlaneByRail = maps.Clone(source.SwPlaneByRail)
+	if source.InterfaceNames != nil {
+		names := *source.InterfaceNames
+		clone.InterfaceNames = &names
+	}
+	return &clone
 }
 
 func spectrumXSwPlane(group *config.ClusterConfig, rail int) int {

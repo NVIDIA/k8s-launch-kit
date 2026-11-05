@@ -121,18 +121,19 @@ A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in 
 ## Interface Naming And Group Selection
 
 When `nicConfigurationOperator.deployNicInterfaceNameTemplate` and multirail
-are enabled, standard profiles render a `NicInterfaceNameTemplate` for every
-selected source group. A single-group inventory and a single group selected
-with `--groups` or `--gpu-type` receive the same naming template; group count
-does not disable it. An explicit `deployNicInterfaceNameTemplate: false`
-disables standard-profile naming.
+are enabled, standard profiles retain naming for multiple selected source groups.
+For a single-group inventory or one source selected with `--groups` / `--gpu-type`,
+they skip naming and use PCI selectors or saved interface names. RDMA-shared
+retains naming if any selected east-west PF lacks an interface name; Spectrum-X
+retains its required templates. Explicit `deployNicInterfaceNameTemplate: false`
+disables standard-profile naming. The fallback preserves saved configuration and
+leaves NIC configuration templates enabled independently.
 
 The emitted standard naming layout must assign each physical NIC
 (`domain:bus:device`) to only one outer `railPciAddresses` entry. Splitting its
 PCI functions across entries is rejected before replacing output, because NCO
-has only one rail index per physical NIC. This is a layout check, not a
-single-group fallback; excluded groups and explicitly disabled naming do not
-trigger it.
+has only one rail index per physical NIC. This check applies only to emitted
+naming templates; skipped naming and excluded groups do not trigger it.
 
 ## Netplan Interface-Name Conflict
 
@@ -144,8 +145,11 @@ the same NIC. Clean up the affected `set-name` stanzas in the host netplan
 configuration, re-run `l8k discover`, and then retry `l8k generate`.
 
 Discovery also sets `clusterConfig[].netplanManagementUnknown` when no match was
-found but it could not inspect every worker. Generation fails closed for those
-groups until the discovery warning is resolved and discovery is re-run.
+found but it could not inspect every worker. For those groups, generation emits
+a warning through the normal text or JSON output and continues to render naming
+templates. Review host netplan configuration and re-run discovery to resolve the
+warning. A confirmed match (`netplanManaged: true`) still blocks generation,
+including when both fields are true.
 
 The check follows the actual render plan: a group excluded with `--groups` or
 `--gpu-type` does not block generation, and neither does a group for which no
@@ -214,6 +218,13 @@ Operator enable both the Network Operator drain requestor and
 a coordinated handoff and must not be separated. The generated
 `MaintenanceOperatorConfig` gets the global limits from the config's
 `maintenance` section.
+
+Numeric `maintenance.maxParallelOperations` and `maintenance.maxUnavailable`
+values render as unquoted integers in OpenShift CRs and Kubernetes Helm values;
+percentage values remain strings. For `maxUnavailable`, Helm values retain the
+special string `"0"` because the upstream chart would omit numeric zero. The chart renders
+that value as integer `0` in the final `MaintenanceOperatorConfig`; OpenShift
+CRs and legacy SR-IOV pool configs render integer `0` directly.
 
 Generated values do not add
 `network.nvidia.com/operator.nic-configuration.wait` to the SR-IOV config
@@ -304,11 +315,14 @@ visible selector-only, target-scope-unverified contract.
 
 `--flavor ocp` selects separate OpenShift profiles and generates no Helm values. Hardware policies use the same bucket and source-group render scopes as Kubernetes; optional NIC interface naming templates render per source group. Compatible groups share a network per GPU type and rail count. Custom workloads render once per shared network and workload namespace, referencing that namespace's NAD and the `openshift.io` SR-IOV resource. Verify each policy selector and PCI address against every targeted worker before deployment.
 
-With `profile.ignoreARP: true`, generated `tuning` meta-plugins use only
-`net.ipv4.conf.IFNAME.*` sysctls; the Kubernetes flavor also emits
-`net.ipv4.conf.all.*`. Confirm that OpenShift's
-`openshift-multus/cni-sysctl-allowlist` admits the three IFNAME entries before
-workload validation. With source-based routing, `sbr` follows `tuning`.
+With `profile.ignoreARP: true`, Kubernetes and OpenShift emit identical
+`tuning` sysctls: `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` under both
+`net.ipv4.conf.all` and `net.ipv4.conf.IFNAME`. With source-based routing,
+`sbr` follows `tuning`. Generation emits one
+`network-operator/04-cni-sysctl-allowlist-patch.yaml` with only the six `ignoreARP` allowlist entries
+and makes no cluster changes. OpenShift deploy merges this artifact into
+`openshift-multus/cni-sysctl-allowlist` before applying networks; external manifest
+application must preserve existing site entries when merging the patch.
 
 See `docs/user/openshift.md` for the required external operators and full
 generate-to-acceptance procedure.
@@ -368,10 +382,26 @@ rails cross first/second ASICs between NetworkBays 1/2 and 3/4.
 Generation rejects VR inventories unless they contain four dense rails with two
 physical NICs each. Re-run discovery with NetworkBay status for old configs that
 assigned one rail per NIC; generation does not guess the pairing from PCI order. Missing or inconsistent status fails discovery. See `docs/user/discovery.md` for the rail mapping.
-VR generation supports IPv4 HWPLB with eight planes on four dual-NIC rails.
+VR RA2.4/RA3.1 Helm values set
+`sriov-network-operator.operator.staleNodeStateCleanupDelayMinutes: "120"`
+to preserve node state while extended NIC configuration keeps the SR-IOV
+daemon absent. Traditional platforms retain the chart default of 30 minutes.
+The setting is shared by the SR-IOV operator; external Helm owners must set it
+themselves. Upgrading Helm does not extend existing `keep-state-until` deadlines.
+Discovery saves the effective RA naming in
+`clusterConfig[].spectrumX.interfaceNames` (`netdevPrefix` and `rdmaPrefix`).
+These are derived values: resolution refreshes them after mode or naming
+changes, including for older configs without this block. Change the existing
+`spectrumX.singlePlane`, `hwplb`, or `swplb` prefix settings for custom naming.
+PF inventory names remain observed values. Naming templates and PF selectors
+consume the same resolved per-group prefixes; standard profiles are unaffected.
+VR HWPLB uses `eth_r%rail_id%_p%plane_id%` and
+`roce_r%rail_id%_n%nic_id%`; traditional HWPLB retains `roce_r%rail_id%`.
+
+VR generation supports IPv4 and IPv6 HWPLB with eight planes on four dual-NIC rails.
 It emits four per-rail naming templates (`pfsPerNic: 4`), eight per-NIC
 `railRnicN` topology entries and CIDRPools, and eight workload attachments.
-Each NIC endpoint has four PFs, one schedulable VF and its own /31. DRA uses
+Each NIC endpoint has four PFs, one schedulable VF and its own IPv4 /31 or IPv6 /64. DRA uses
 one claim per logical rail with one GPU and two VF requests. NIC input order
 is preserved; it must agree with the physical switch topology. RDMA names
 are `roce_rR_n0`/`roce_rR_n1`; custom RDMA prefixes require `%nic_id%` and no
@@ -382,7 +412,14 @@ VR IPv4 defaults to site-zero `240.0.0.0/8`, with NIC(1), rail(2), POD(5),
 SU(7), host(8), peer(1) bits after the first octet. Eight-plane POD is always
 zero and host index is at most 251. Pools are per NIC/rail /11, allocations
 are /31 with even host and odd gateway, and routes cover /11 and /8.
-IPv6, non-HWPLB VR, incomplete topology, and extra software-plane offsets
+VR IPv6 uses `fd02:000S:NRPP:UUHH::peer/64`: site nibble `S`, NIC nibble
+`N`, rail nibble `R`, POD byte `PP`, SU byte `UU`, and host byte `HH`.
+`profile.spectrumX.ipv6SiteID` selects site 0..15 (default 0; YAML-only).
+The two NICs use distinct per-NIC/rail /40 pools; each host gets a static /64,
+with host `::1`, gateway `::2` (excluded from allocation), and route `fd02::/28`.
+POD remains zero, SU is 0..127, and host index is 0..251. `hostFirstOctet`
+affects only IPv4; nonzero `ipv6SiteID` is rejected outside VR IPv6.
+Non-HWPLB VR, incomplete topology, and extra software-plane offsets
 are rejected. Generation does not qualify runtime support or configure switches.
 26.10 beta.2 lacks the packaged NCO platformType CRD: verify a compatible NCO
 implementation and matching CRDs before deployment. Deploy checks the served

@@ -89,7 +89,7 @@ func TestRenderForScopeSkipsHelmValues(t *testing.T) {
 	templatePath := filepath.Join(t.TempDir(), helmValuesTemplateName)
 	require.NoError(t, os.WriteFile(templatePath, []byte("nfd:\n  enabled: true\n"), 0o600))
 
-	rendered, err := renderForScope(templatePath, &config.LaunchKitConfig{
+	rendered, err := (&NetworkOperatorPlugin{}).renderForScope(templatePath, &config.LaunchKitConfig{
 		NetworkOperator: &config.NetworkOperatorConfig{SkipHelmChart: true},
 	}, nil, nil)
 

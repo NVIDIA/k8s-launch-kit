@@ -393,7 +393,7 @@ func availableGpuTypesList(groups []config.ClusterConfig) string {
 //     once per source group within the plan, each rendering with its
 //     own per-source ClusterConfig (shared MergedIdentifier).
 //   - ScopePerSource: render once per source group, regardless of mode.
-func renderForScope(
+func (p *NetworkOperatorPlugin) renderForScope(
 	templatePath string,
 	cfg *config.LaunchKitConfig,
 	plans []RenderBucket,
@@ -528,7 +528,7 @@ func renderForScope(
 
 	case ScopePerSource:
 		var netplanManagedGroups []config.ClusterConfig
-		var netplanUnknownGroups []config.ClusterConfig
+		var netplanUnknownGroups []string
 		for i, plan := range plans {
 			for _, src := range plan.Sources {
 				renderCfg := withClusterConfig(cfg, []config.ClusterConfig{src}, subnetsAt(planSubnets, i))
@@ -544,14 +544,16 @@ func renderForScope(
 					}
 				}
 				if kind == "NicInterfaceNameTemplate" && len(rendered) > 0 {
-					switch {
-					case src.NetplanManaged:
+					if src.NetplanManaged {
 						netplanManagedGroups = append(netplanManagedGroups, src)
-					case src.NetplanManagementUnknown:
-						netplanUnknownGroups = append(netplanUnknownGroups, src)
-					case !isSpectrumX(cfg):
-						if err := validateInterfaceNamingLayout(src, rendered); err != nil {
-							return nil, err
+					} else {
+						if src.NetplanManagementUnknown {
+							netplanUnknownGroups = append(netplanUnknownGroups, templateGroupLabel(src))
+						}
+						if !isSpectrumX(cfg) {
+							if err := validateInterfaceNamingLayout(src, rendered); err != nil {
+								return nil, err
+							}
 						}
 					}
 				}
@@ -564,29 +566,16 @@ func renderForScope(
 		if len(netplanManagedGroups) > 0 {
 			return nil, newNetplanInterfaceNameConflictError(netplanManagedGroups)
 		}
-		if len(netplanUnknownGroups) > 0 {
-			return nil, newNetplanInterfaceNameUnknownError(netplanUnknownGroups)
+		if len(netplanUnknownGroups) > 0 && p.Output != nil {
+			slices.Sort(netplanUnknownGroups)
+			p.Output.Warning(
+				"Netplan management could not be verified for %s; generating NicInterfaceNameTemplate because no netplan naming match was confirmed. Review host netplan configuration and re-run 'l8k discover'.",
+				strings.Join(netplanUnknownGroups, ", "),
+			)
 		}
 	}
 
 	return results, nil
-}
-
-func newNetplanInterfaceNameUnknownError(groups []config.ClusterConfig) error {
-	labels := make([]string, 0, len(groups))
-	for _, group := range groups {
-		labels = append(labels, templateGroupLabel(group))
-	}
-	slices.Sort(labels)
-
-	return apperrors.NewValidationError(
-		fmt.Sprintf(
-			"cannot generate NicInterfaceNameTemplate: netplan management could not be verified for NICs being configured for %s",
-			strings.Join(labels, ", "),
-		),
-		nil,
-		"Resolve the netplan discovery warning, re-run 'l8k discover', then retry 'l8k generate'.",
-	)
 }
 
 func newNetplanInterfaceNameConflictError(groups []config.ClusterConfig) error {

@@ -5,7 +5,7 @@
 {{- $planes := .Profile.SpectrumX.NumberOfPlanes }}
 {{- $railCount := railCount .ClusterConfig.PFs $planes }}
 {{- $swplb := eq .Profile.SpectrumX.MultiplaneMode "swplb" }}
-{{- $netdevPrefix := spectrumXNetdevPrefix .SpectrumX .Profile.SpectrumX.MultiplaneMode }}
+{{- $netdevPrefix := .ClusterConfig.SpectrumX.InterfaceNames.NetdevPrefix }}
 {{- $first := true }}
 {{- range $railIdx := untilStep 0 $railCount 1 }}
 {{- if $swplb }}

@@ -4,6 +4,6 @@ metadata:
   name: default
   namespace: "{{.Maintenance.OperatorNamespace}}"
 spec:
-  maxParallelOperations: {{ .Maintenance.MaxParallelOperations.String | yamlQuote }}
-  maxUnavailable: {{ .Maintenance.MaxUnavailable.String | yamlQuote }}
+  maxParallelOperations: {{ .Maintenance.MaxParallelOperations.String }}
+  maxUnavailable: {{ .Maintenance.MaxUnavailable.String }}
   maxNodeMaintenanceTimeSeconds: {{ .Maintenance.MaxNodeMaintenanceTimeSeconds }}

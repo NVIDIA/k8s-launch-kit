@@ -48,9 +48,9 @@ maintenance-operator-chart:
 {{- end }}
   operatorConfig:
     deploy: true
-    # Keep scalar overrides quoted: upstream truthiness guards omit numeric 0.
-    maxParallelOperations: "{{ .Maintenance.MaxParallelOperations.String }}"
-    maxUnavailable: "{{ .Maintenance.MaxUnavailable.String }}"
+    # maxUnavailable is numeric; quote zero to survive upstream truthiness guards.
+    maxParallelOperations: {{ .Maintenance.MaxParallelOperations.String }}
+    maxUnavailable: {{ if eq .Maintenance.MaxUnavailable.String "0" }}"0"{{ else }}{{ .Maintenance.MaxUnavailable.String }}{{ end }}
     maxNodeMaintenanceTimeSeconds: "{{ .Maintenance.MaxNodeMaintenanceTimeSeconds }}"
 
 sriovNetworkOperator:
@@ -77,6 +77,10 @@ sriov-network-operator:
 {{- end }}
 {{- end }}
   operator:
+{{- if spectrumXHasVR .ClusterConfig }}
+    # Preserve SR-IOV state while VR NIC configuration keeps the daemon absent.
+    staleNodeStateCleanupDelayMinutes: "120"
+{{- end }}
     # One chart value controls both SR-IOV admission helpers and their TLS setup.
     admissionControllers:
       enabled: false

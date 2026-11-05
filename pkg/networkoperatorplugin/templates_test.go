@@ -206,6 +206,7 @@ func TestSpectrumXInterfaceNameTemplateModeDefaults(t *testing.T) {
 				SpectrumX: &config.SpectrumXConfig{},
 				Profile: &config.Profile{
 					SpectrumX: &config.ProfileSpectrumX{
+						Enable:         true,
 						MultiplaneMode: tc.mode,
 						NumberOfPlanes: tc.planes,
 					},
@@ -246,6 +247,7 @@ func TestSpectrumXInterfaceNameTemplateModeDefaults(t *testing.T) {
 			},
 			Profile: &config.Profile{
 				SpectrumX: &config.ProfileSpectrumX{
+					Enable:         true,
 					MultiplaneMode: "hwplb",
 					NumberOfPlanes: 2,
 				},
@@ -1423,7 +1425,7 @@ sriovNetworkOperator:
 		},
 		Profile: &config.Profile{},
 	}
-	rendered, err := renderForScope(templatePath, cfg, nil, nil)
+	rendered, err := (&NetworkOperatorPlugin{}).renderForScope(templatePath, cfg, nil, nil)
 	require.NoError(t, err)
 
 	// Output key must be `values.yaml`, NOT `00-values.yaml`.

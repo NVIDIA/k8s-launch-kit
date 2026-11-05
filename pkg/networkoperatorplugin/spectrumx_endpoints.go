@@ -26,10 +26,10 @@ type spectrumXEndpoint struct {
 	VFRequestName    string
 }
 
-func spectrumXEndpoints(profile *config.Profile, settings *config.SpectrumXConfig, group *config.ClusterConfig) []spectrumXEndpoint {
+func spectrumXEndpoints(profile *config.Profile, group *config.ClusterConfig) []spectrumXEndpoint {
 	spcx := profile.SpectrumX
 	planes := spcx.NumberOfPlanes
-	_, prefix := config.SpectrumXInterfaceNamePrefixes(settings, spcx.MultiplaneMode)
+	prefix := group.SpectrumX.InterfaceNames.NetdevPrefix
 	var endpoints []spectrumXEndpoint
 	vr := config.SpectrumXPlatformForGroup(*group) == "vr"
 	masters := railPciGroups(group.PFs, planes)
@@ -114,11 +114,8 @@ func spectrumXRailPrefix(prefix string, rail int) string {
 	return strings.ReplaceAll(prefix, "%rail%", fmt.Sprint(rail))
 }
 
-func spectrumXVRRdmaPrefix(settings *config.SpectrumXConfig, rail int) (string, error) {
-	rdma, _ := config.SpectrumXInterfaceNamePrefixes(settings, "hwplb")
-	if rdma == "roce_r%rail_id%" {
-		rdma += "_n%nic_id%"
-	}
+func spectrumXVRRdmaPrefix(group *config.ClusterConfig, rail int) (string, error) {
+	rdma := group.SpectrumX.InterfaceNames.RdmaPrefix
 	if !strings.Contains(rdma, "%nic_id%") || strings.Contains(rdma, "%plane_id%") || strings.Contains(rdma, "%plane%") {
 		return "", fmt.Errorf("VR HWPLB RDMA naming requires a %%nic_id%% placeholder and no plane placeholder; got %q", rdma)
 	}

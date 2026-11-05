@@ -14,8 +14,8 @@ spec:
     {{ $key }}: "{{ $value }}"
     {{- end }}
   {{- end }}
-  rdmaDevicePrefix: "{{spectrumXVRRdmaPrefix $.SpectrumX $rail}}"
-  netDevicePrefix: "{{spectrumXRailPrefix (spectrumXNetdevPrefix $.SpectrumX $.Profile.SpectrumX.MultiplaneMode) $rail}}"
+  rdmaDevicePrefix: "{{spectrumXVRRdmaPrefix $.ClusterConfig $rail}}"
+  netDevicePrefix: "{{spectrumXRailPrefix ($.ClusterConfig.SpectrumX.InterfaceNames.NetdevPrefix) $rail}}"
   pfsPerNic: 4
   railPciAddresses: [[{{range $i, $address := $addresses}}{{if $i}}, {{end}}{{printf "%q" $address}}{{end}}]]
 {{ end }}
@@ -32,8 +32,8 @@ spec:
     {{ $key }}: "{{ $value }}"
     {{- end }}
   {{- end }}
-  rdmaDevicePrefix: "{{spectrumXRdmaPrefix .SpectrumX .Profile.SpectrumX.MultiplaneMode}}"
-  netDevicePrefix: "{{spectrumXNetdevPrefix .SpectrumX .Profile.SpectrumX.MultiplaneMode}}"
+  rdmaDevicePrefix: "{{.ClusterConfig.SpectrumX.InterfaceNames.RdmaPrefix}}"
+  netDevicePrefix: "{{.ClusterConfig.SpectrumX.InterfaceNames.NetdevPrefix}}"
   pfsPerNic: {{spectrumXPfsPerNic .ClusterConfig.PFs .Profile.SpectrumX.NumberOfPlanes}}
   railPciAddresses: [{{- $first := true }}{{- range $group := railPciGroups .ClusterConfig.PFs .Profile.SpectrumX.NumberOfPlanes }}{{- if not $first }}, {{ end }}{{- $first = false }}[{{- $firstInner := true }}{{- range $addr := $group }}{{- if not $firstInner }}, {{ end }}{{- $firstInner = false }}"{{$addr}}"{{- end }}]{{- end }}]
 {{- end }}

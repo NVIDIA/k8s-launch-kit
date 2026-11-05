@@ -1,0 +1,16 @@
+{{- if and .Profile .Profile.IgnoreARP }}
+# l8k deploy merges these entries into the existing shared ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cni-sysctl-allowlist
+  namespace: openshift-multus
+data:
+  allowlist.conf: |-
+    ^net.ipv4.conf.all.arp_ignore$
+    ^net.ipv4.conf.all.arp_announce$
+    ^net.ipv4.conf.all.rp_filter$
+    ^net.ipv4.conf.IFNAME.arp_announce$
+    ^net.ipv4.conf.IFNAME.arp_ignore$
+    ^net.ipv4.conf.IFNAME.rp_filter$
+{{- end }}

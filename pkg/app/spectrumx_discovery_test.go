@@ -5,6 +5,7 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -162,5 +163,56 @@ func TestDiscoverySavesVRPlatformWithoutGPU(t *testing.T) {
 				require.NotContains(t, message.Message, "no unambiguous doSPCX platform match")
 			}
 		})
+	}
+}
+
+func TestDiscoveryPersistsSpectrumXInterfaceNames(t *testing.T) {
+	profilePath, err := filepath.Abs(filepath.Join("..", "config", "testdata", "dospcx-configmap.yaml"))
+	require.NoError(t, err)
+	for _, refresh := range []bool{false, true} {
+		for _, vr := range []bool{false, true} {
+			t.Run(fmt.Sprintf("refresh=%v/vr=%v", refresh, vr), func(t *testing.T) {
+				dir := t.TempDir()
+				t.Chdir(dir)
+				path := filepath.Join(dir, "cluster-config.yaml")
+				opts := options.Options{SaveClusterConfig: path, SpectrumX: true, SPCXVersion: "RA3.1",
+					SpectrumXConfig: profilePath, NetworkOperatorRelease: "26.10", MultiplaneMode: "hwplb", NumberOfPlanes: 8, TopologyScheme: config.SpectrumXTopology2Tier}
+				group := config.ClusterConfig{Identifier: "machine-a", GPUType: "NVIDIA-GB300", LinkType: "Ethernet",
+					PFs: []config.PFConfig{{DeviceID: "1023", Traffic: "east-west"}}}
+				wantRDMA := "roce_r%rail_id%"
+				if vr {
+					group.MachineType, group.GPUType = "machine-VR", ""
+					group.PFs[0].DeviceID = "1025"
+					wantRDMA += "_n%nic_id%"
+				}
+				if refresh {
+					opts.UserConfig = path
+					require.NoError(t, os.WriteFile(path, []byte(`profile:
+  fabric: ethernet
+  deployment: sriov
+  multirail: true
+  spectrumX:
+    enable: true
+    spcxVersion: RA3.1
+    multiplaneMode: hwplb
+    numberOfPlanes: 8
+extension:
+  preserve: value
+`), 0600))
+				}
+				l := newProfileDiscoveryLauncher(opts, []config.ClusterConfig{group})
+				require.NoError(t, l.discoverClusterConfig())
+				// Decode saved bytes directly: resolution must not manufacture the
+				// values asserted here on behalf of discovery.
+				var saved config.LaunchKitConfig
+				require.NoError(t, yaml.Unmarshal(mustRead(t, path), &saved))
+				require.NotNil(t, saved.ClusterConfig[0].SpectrumX.InterfaceNames)
+				require.Equal(t, wantRDMA, saved.ClusterConfig[0].SpectrumX.InterfaceNames.RdmaPrefix)
+				require.Equal(t, "eth_r%rail_id%_p%plane_id%", saved.ClusterConfig[0].SpectrumX.InterfaceNames.NetdevPrefix)
+				if refresh {
+					require.Contains(t, string(mustRead(t, path)), "preserve: value")
+				}
+			})
+		}
 	}
 }

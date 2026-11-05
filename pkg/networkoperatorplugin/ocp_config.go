@@ -21,6 +21,9 @@ import (
 )
 
 func isOCPOperatorConfig(obj *unstructured.Unstructured) bool {
+	if isOCPSysctlAllowlistPatch(obj) {
+		return true
+	}
 	switch obj.GroupVersionKind().Group + "/" + obj.GetKind() {
 	case "sriovnetwork.openshift.io/SriovOperatorConfig", "maintenance.nvidia.com/MaintenanceOperatorConfig", "nfd.openshift.io/NodeFeatureDiscovery":
 		return true
@@ -53,6 +56,20 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 	if sub == nil {
 		return fmt.Errorf("network operator Subscription is required to configure OpenShift maintenance settings")
 	}
+	// Resolve the shared allowlist prerequisite before any operator writes,
+	// regardless of artifact filename order. Missing or denied patches must
+	// not leave SR-IOV, maintenance, NFD, or Subscription settings changed.
+	for _, desired := range docs {
+		if !isOCPOperatorConfig(desired) {
+			return fmt.Errorf("unexpected OpenShift operator configuration %s", desired.GetKind())
+		}
+		if isOCPSysctlAllowlistPatch(desired) {
+			if err := ensureOCPSysctlAllowlist(ctx, c, desired, dryRun); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Driver maintenance coordination is supported by the certified Network
 	// Operator's Subscription deployment config. SR-IOV retains native draining.
 	operatorEnv := map[string]string{
@@ -60,8 +77,8 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 		"MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE": maintenanceNamespace,
 	}
 	for _, desired := range docs {
-		if !isOCPOperatorConfig(desired) {
-			return fmt.Errorf("unexpected OpenShift operator configuration %s", desired.GetKind())
+		if isOCPSysctlAllowlistPatch(desired) {
+			continue
 		}
 		key := types.NamespacedName{Namespace: desired.GetNamespace(), Name: desired.GetName()}
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -79,7 +96,7 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 				return err
 			}
 			before := current.DeepCopy()
-			if err := mergeOCPSpec(current, desired); err != nil {
+			if err := mergeOCPConfiguration(current, desired); err != nil {
 				return err
 			}
 			if reflect.DeepEqual(before.Object, current.Object) {
@@ -110,7 +127,10 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 	return waitForNetworkOperatorSubscriptionRollout(ctx, c, operatorNamespace, operatorEnv)
 }
 
-func mergeOCPSpec(current, desired *unstructured.Unstructured) error {
+func mergeOCPConfiguration(current, desired *unstructured.Unstructured) error {
+	if isOCPSysctlAllowlistPatch(desired) {
+		return mergeOCPSysctlAllowlist(current, desired)
+	}
 	want, _, _ := unstructured.NestedMap(desired.Object, "spec")
 	have, _, _ := unstructured.NestedMap(current.Object, "spec")
 	if have == nil {

@@ -28,6 +28,18 @@ func prepareDeploymentObjects(artifacts *bundle.Bundle, ocp bool) (deploymentObj
 			continue
 		}
 		obj := doc.ObjectCopy()
+		if doc.Source().File == ocpSysctlAllowlistPatchFilename && !isOCPSysctlAllowlistPatch(obj) {
+			return deploymentObjects{}, fmt.Errorf("%s: expected ConfigMap openshift-multus/cni-sysctl-allowlist", doc.Source().File)
+		}
+		if isOCPSysctlAllowlistPatch(obj) {
+			if _, err := sysctlAllowlistPatchEntries(obj); err != nil {
+				return deploymentObjects{}, fmt.Errorf("%s: %w", doc.Source().File, err)
+			}
+			if !ocp {
+				return deploymentObjects{}, fmt.Errorf("%s: OpenShift sysctl allowlist patch requires flavor ocp", doc.Source().File)
+			}
+		}
+
 		switch obj.GetKind() {
 		case "NicClusterPolicy":
 			if selected.ncp != nil {

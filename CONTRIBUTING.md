@@ -20,6 +20,27 @@ contract checks and cross-platform builds, and combines race detection and
 coverage in one test run. `make lint` installs a versioned local binary;
 `GOLANGCILINT_VERSION` can select the same version used by CI.
 
+### Recreate the latest release
+
+Maintainers can run **Actions → Recreate latest release → Run workflow**,
+selecting the branch whose current commit should replace the release tag
+(normally `main`). The workflow reads GitHub's latest published release, saves
+its tag and display name, deletes that release and repository tag, then creates
+a new release with the same tag and name at the selected commit. It explicitly
+marks the release as latest and generates release notes automatically.
+
+The workflow uses `GITHUB_TOKEN` with `contents: write` and `actions: write`;
+no additional token is required. It explicitly dispatches `release.yml` and
+`image-push-release.yml` at the recreated tag to rebuild the release assets and
+container image. These builds run separately; check both runs before treating
+the release as ready or recreating it again.
+
+Deleting a release removes its existing assets and manual release-note edits.
+The workflow stops before deletion if the latest release is unavailable,
+immutable, or missing its tag. Later failures can leave the release or tag
+absent; use the saved tag, name and target commit in the run summary to recover
+before starting another recreation. Avoid concurrent publication or tag changes.
+
 ### Extension Contracts
 
 Use the [contract index](openspec/README.md) to identify the integration boundaries

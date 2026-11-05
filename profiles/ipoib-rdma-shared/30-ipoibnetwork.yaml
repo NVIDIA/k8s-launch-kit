@@ -1,4 +1,4 @@
-{{- $metaPlugins := secondaryNetworkMetaPlugins .Profile .Flavor -}}
+{{- $metaPlugins := secondaryNetworkMetaPlugins .Profile -}}
 {{- if .Profile.Multirail -}}
 {{- /* Create separate IPoIB networks for each PF network interface */ -}}
 {{- range $i, $pf := .ClusterConfig.PFs}}

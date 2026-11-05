@@ -24,14 +24,17 @@ explicit CLI overrides to the deployment sidecar at
 ``<deployment-dir>/.l8k/resolved-config.yaml``. The source file is unchanged.
 Comments in the original YAML are preserved.
 
-When a selected hardware group has ``netplanManaged: true`` or
-``netplanManagementUnknown: true``, generation stops if the chosen profile would
+When a selected hardware group has ``netplanManaged: true``, generation stops if
+the chosen profile would
 emit a ``NicInterfaceNameTemplate`` for that group.
 The existing netplan ``set-name`` rule can conflict with the udev naming rule
 deployed by NIC Configuration Operator. Remove the affected ``set-name``
 stanzas from the host netplan configuration, re-run ``l8k discover``, and then
 retry ``l8k generate``. Groups excluded with ``--groups`` or ``--gpu-type`` do
 not participate in this check.
+If the group instead has ``netplanManagementUnknown: true``, generation displays
+a warning and continues. Review the host netplan configuration and re-run
+discovery to resolve the uncertainty.
 
 Discovery defaults ``deployment`` to ``sriov`` and ``multirail`` to ``true``.
 It derives ``fabric`` only when every discovered group reports the same
@@ -51,8 +54,8 @@ the automatic ``sbr`` CNI meta-plugin on generated non-Spectrum-X secondary
 networks so traffic sourced from a rail IP exits through that rail's interface
 and gateway. ``--ignore-arp`` chains the ``tuning`` CNI meta-plugin before
 ``sbr`` and sets ``arp_ignore=1``, ``arp_announce=2``, and ``rp_filter=0`` at
-both ``all`` and ``IFNAME`` scopes on Kubernetes, or only ``IFNAME``
-scope on OpenShift. The latter requires matching Multus sysctl allowlist entries.
+both ``all`` and ``IFNAME`` scopes on Kubernetes and OpenShift.
+OpenShift deployment adds the required Multus sysctl allowlist entries.
 This is useful when pod rails can observe ARP for each other: Linux can otherwise
 answer ARP for a rail-0 IP from a rail-3 VF MAC inside the same network
 namespace, sending RoCE traffic to the

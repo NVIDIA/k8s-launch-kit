@@ -179,6 +179,10 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 		return nil, nil
 	}
 	spcx := cfg.Profile.SpectrumX
+	vr := config.SpectrumXPlatformForGroup(group) == "vr"
+	if spcx.IPv6SiteID != 0 && (!vr || !isIPv6(spcx)) {
+		return nil, fmt.Errorf("ipv6SiteID is supported only for VR IPv6 addressing")
+	}
 	if spcx.TopologyFile == "" {
 		return nil, fmt.Errorf("profile.spectrumX.topologyFile or --topology-file is required for Spectrum-X CIDRPool generation")
 	}
@@ -190,7 +194,6 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 	if err != nil {
 		return nil, err
 	}
-	vr := config.SpectrumXPlatformForGroup(group) == "vr"
 	allowedNodes := nodeSet(group.WorkerNodes)
 	links, err := hostLinks(topology, spcx, vr, allowedNodes)
 	if err != nil {
@@ -222,7 +225,10 @@ func BuildCIDRPools(cfg *config.LaunchKitConfig, group config.ClusterConfig) ([]
 		}
 		var cidr string
 		var routes []string
-		if key.vr {
+		if key.vr && isIPv6(spcx) {
+			cidr = supernet(staticAllocations[0].Prefix, 40)
+			routes = []string{"fd02::/28"}
+		} else if key.vr {
 			cidr = supernet(staticAllocations[0].Prefix, 11)
 			routes = []string{cidr, supernet(cidr, 8)}
 		} else {

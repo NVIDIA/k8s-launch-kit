@@ -13,8 +13,9 @@ Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued r
 RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
 from GPU-product substrings or VR machine types, and accept optional HWPLB
 software-plane and OVS settings. VR with ConnectX-9 defaults to eight-plane HWPLB;
-discovery derives its four dual-NIC rails from NetworkBay peer status.
-VR IPv4 generation emits eight per-NIC XPlane groups, address pools and workload
+discovery derives its four dual-NIC rails from NetworkBay peer status and saves
+RA interface prefixes per source group, including VR’s per-NIC RDMA names.
+VR IPv4/IPv6 generation emits eight per-NIC XPlane groups, address pools and workload
 attachments; [VR topology inputs](docs/user/spectrum-x.md#vr-dual-nic-rails) require
 explicit host indices and must match physical cabling.
 Generation rejects VR inventories unless they contain four dense rails with two
@@ -47,9 +48,12 @@ from the saved inventory; see [traffic classification](docs/user/discovery.md#ea
 
 `l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. Discovery verifies exact group selectors; an explicit CLI `--node-selector` override remains user intent and is checked against worker inventory during deployment. The flag does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
 
-Enabled interface naming renders for supported single-group layouts. Generation
+Standard profiles skip interface naming for a single selected group unless
+RDMA-shared needs names missing from inventory. Spectrum-X retains naming. Generation
 rejects naming layouts that split a physical NIC across rails; see
 [NIC templates and selected groups](docs/advanced/generation.md#nic-templates-and-selected-groups).
+When naming is emitted, unverified netplan management produces a warning and
+generation continues; a confirmed netplan naming match still blocks generation.
 
 ### Select the Deployment Profile
 

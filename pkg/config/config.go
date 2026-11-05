@@ -752,6 +752,7 @@ type ProfileSpectrumX struct {
 	TopologyType         string `yaml:"topologyType,omitempty"`
 	IPVersion            string `yaml:"ipVersion,omitempty"`
 	HostFirstOctet       int    `yaml:"hostFirstOctet,omitempty"`
+	IPv6SiteID           int    `yaml:"ipv6SiteID,omitempty"` // VR IPv6 site nibble, 0..15
 	TopologyFile         string `yaml:"topologyFile,omitempty"`
 	ResolvedTopologyFile string `yaml:"-"`
 	UseDRA               bool   `yaml:"useDRA"`                  // enable DRA ResourceClaimTemplate-based workload allocation
@@ -763,6 +764,9 @@ type ProfileSpectrumX struct {
 type SpectrumXGroupConfig struct {
 	PlatformType  string      `yaml:"platformType"`            // derived from MachineType/GPUType; recomputed during discovery and resolution
 	SwPlaneByRail map[int]int `yaml:"swPlaneByRail,omitempty"` // RA2.4/RA3.1 software-plane assignments keyed by existing east-west rail ID
+	// InterfaceNames is derived from the selected mode, naming overrides and
+	// platform. Discovery persists it; resolution refreshes it before rendering.
+	InterfaceNames *SpectrumXInterfaceNamePrefixConfig `yaml:"interfaceNames,omitempty"`
 }
 
 type ClusterConfig struct {
@@ -786,8 +790,8 @@ type ClusterConfig struct {
 	// NetplanManagementUnknown is false.
 	NetplanManaged bool `yaml:"netplanManaged"`
 	// NetplanManagementUnknown is true when discovery could not verify netplan
-	// management on every worker in this group. Generation fails closed if it
-	// would otherwise emit a NicInterfaceNameTemplate for the group. Omitted
+	// management on every worker in this group. Generation warns but still emits
+	// a NicInterfaceNameTemplate when the profile requires it. Omitted
 	// values in existing configs retain their prior behavior.
 	NetplanManagementUnknown bool `yaml:"netplanManagementUnknown,omitempty"`
 	PresetApplied            bool `yaml:"presetApplied,omitempty"`

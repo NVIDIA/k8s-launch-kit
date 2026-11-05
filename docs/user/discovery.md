@@ -40,6 +40,14 @@ l8k discover \
 
 Discovery is self-contained. It does not require Node Feature Discovery (NFD) or a pre-installed Network Operator.
 
+The temporary discovery daemon requests 64 MiB of memory and has a 512 MiB
+limit to accommodate hardware probes on nodes with large PCI inventories.
+
+For Spectrum-X, discovery also saves the platform- and mode-specific desired
+interface prefixes in `clusterConfig[].spectrumX.interfaceNames`. These do not
+replace observed PF names. See [Spectrum-X naming](spectrum-x.md#vr-dual-nic-rails)
+for VR differences, custom settings and regeneration behavior.
+
 ## Read-only library discovery
 
 Library consumers that only need the inventory from an already-running NIC
@@ -194,10 +202,13 @@ readable configuration with no MAC-based `set-name` rules, is a verified
 negative and does not require PF MACs. When a MAC-based `set-name` rule exists,
 an unreadable expected PF MAC also leaves the result unknown. Neither flag
 persists host-unique MAC addresses. If `l8k generate` would emit a
-`NicInterfaceNameTemplate` for a group that is managed or unknown, it returns a
-validation error rather than risking conflicting NCO naming rules. Resolve the
-discovery warning and re-run discovery, or remove the affected `set-name`
-stanzas and re-run discovery, before retrying generation. Re-run discovery for
+`NicInterfaceNameTemplate` for a group with `netplanManaged: true`, it returns a
+validation error because the confirmed netplan naming rule can conflict with
+NCO naming. Remove the affected `set-name` stanzas and re-run discovery before
+retrying generation. For `netplanManagementUnknown: true` without a confirmed
+match, generation displays a warning in text and JSON output and continues.
+Review the host netplan configuration and re-run discovery to resolve the
+warning; do not clear the field manually. Re-run discovery for
 configs created before `netplanManagementUnknown` was available.
 
 GPU product and topology probing first tries a runtime-injected `nvidia-smi`

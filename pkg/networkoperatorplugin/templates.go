@@ -133,6 +133,13 @@ var templateFuncs = template.FuncMap{
 	"spectrumXUseDRA": func(profile *config.Profile) bool {
 		return profile != nil && profile.SpectrumX != nil && profile.SpectrumX.UseDRA
 	},
+	"spectrumXHasVR": func(groups []config.ClusterConfig) bool {
+		return slices.ContainsFunc(groups, func(group config.ClusterConfig) bool {
+			return config.SpectrumXPlatformForGroup(group) == "vr"
+		})
+	},
+	// Retain the mode-only helpers for external profile templates. Built-in
+	// profiles consume resolved per-group names, including VR NIC identity.
 	"spectrumXRdmaPrefix": func(settings *config.SpectrumXConfig, multiplaneMode string) string {
 		rdmaPrefix, _ := config.SpectrumXInterfaceNamePrefixes(settings, multiplaneMode)
 		return rdmaPrefix
@@ -362,7 +369,7 @@ func nicConfigurationLinkType(fabric string) (string, error) {
 	}
 }
 
-func secondaryNetworkMetaPlugins(profile *config.Profile, flavor ...string) string {
+func secondaryNetworkMetaPlugins(profile *config.Profile) string {
 	if profile == nil || (profile.SpectrumX != nil && profile.SpectrumX.Enable) {
 		return ""
 	}
@@ -370,18 +377,12 @@ func secondaryNetworkMetaPlugins(profile *config.Profile, flavor ...string) stri
 	plugins := make([]string, 0, 2)
 	if profile.IgnoreARP {
 		sysctls := []string{
+			`"net.ipv4.conf.all.arp_ignore": "1"`,
+			`"net.ipv4.conf.all.arp_announce": "2"`,
+			`"net.ipv4.conf.all.rp_filter": "0"`,
 			`"net.ipv4.conf.IFNAME.arp_ignore": "1"`,
 			`"net.ipv4.conf.IFNAME.arp_announce": "2"`,
 			`"net.ipv4.conf.IFNAME.rp_filter": "0"`,
-		}
-		// OpenShift requires the attached-interface entries to be allowlisted;
-		// keep the existing global settings for Kubernetes renders.
-		if len(flavor) == 0 || flavor[0] != config.FlavorOCP {
-			sysctls = append([]string{
-				`"net.ipv4.conf.all.arp_ignore": "1"`,
-				`"net.ipv4.conf.all.arp_announce": "2"`,
-				`"net.ipv4.conf.all.rp_filter": "0"`,
-			}, sysctls...)
 		}
 		plugins = append(plugins, fmt.Sprintf(`{
   "type": "tuning",
@@ -817,6 +818,15 @@ const templateGroupDiagnosticLimit = 8
 // .ClusterConfig are rendered once per group (producing separate files),
 // while other templates are rendered once.
 func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilter string) (map[string]string, error) {
+	// Direct library callers may supply inventory predating derived names.
+	if cfg != nil && isSpectrumX(cfg) {
+		resolved, err := config.CloneConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("copy Spectrum-X naming configuration: %w", err)
+		}
+		cfg = resolved
+		config.PopulateSpectrumXInterfaceNames(cfg)
+	}
 	// Singleton policies and per-group resources must use the same names as
 	// the naming template. Work on a copy so rendering preserves saved inventory.
 	if cfg != nil && cfg.NicConfigurationOperator != nil &&
@@ -1040,6 +1050,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	}
 	cfg = resolved
 	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
+	config.PopulateSpectrumXInterfaceNames(cfg)
 	cfg.CurrentNetworkNamespace = cfg.NetworkNamespaces[0]
 
 	// Apply --groups / --gpu-type filter to source groups before merging.
@@ -1081,6 +1092,16 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		}
 	}
 
+	// A single source has a homogeneous PCI layout and does not need renaming.
+	// Keep naming for Spectrum-X and RDMA-shared selectors without saved names.
+	// cfg is already cloned, so this rendering decision preserves caller input.
+	if cfg.NicConfigurationOperator != nil &&
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate &&
+		len(filtered) == 1 && !isSpectrumX(cfg) &&
+		!requiresRdmaSharedInterfaceNames(cfg, filtered[0]) {
+		cfg.NicConfigurationOperator.DeployNicInterfaceNameTemplate = false
+	}
+
 	// Bucket the filtered set by (gpuType, railCount), build the merged
 	// ClusterConfig per bucket, and decide Mode A vs B per bucket by
 	// comparing to the original (pre-filter) bucket. The plans drive
@@ -1108,7 +1129,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		if skipWorkloadTemplates && isWorkloadTemplate(filepath.Base(templatePath)) {
 			continue
 		}
-		rendered, err := renderForScope(templatePath, cfg, plans, planSubnets)
+		rendered, err := p.renderForScope(templatePath, cfg, plans, planSubnets)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process template %s: %w", templatePath, err)
 		}
@@ -1179,6 +1200,20 @@ func annotateGeneratedResources(results map[string]string, launchKitVersion stri
 		results[filename] = string(annotated)
 	}
 	return nil
+}
+
+// requiresRdmaSharedInterfaceNames reports whether the device plugin needs
+// naming templates because its ifNames selector cannot use PCI addresses.
+func requiresRdmaSharedInterfaceNames(cfg *config.LaunchKitConfig, group config.ClusterConfig) bool {
+	if cfg.Profile == nil || cfg.Profile.Deployment != "rdma_shared" {
+		return false
+	}
+	for _, pf := range group.PFs {
+		if pf.Traffic == "east-west" && pf.NetworkInterface == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // isSpectrumX returns true if the config targets a Spectrum-X profile.

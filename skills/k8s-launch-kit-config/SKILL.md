@@ -77,6 +77,16 @@ missing profile fields when it consumes that config.
 | `profile` | Profile selection criteria (fabric, deployment, multirail) |
 | `clusterConfig[]` | Per-group hardware: NICs, nodes, capabilities, selectors |
 
+Discovery saves the effective RA naming in
+`clusterConfig[].spectrumX.interfaceNames` (`netdevPrefix` and `rdmaPrefix`).
+These are derived values: resolution refreshes them after mode or naming
+changes, including for older configs without this block. Change the existing
+`spectrumX.singlePlane`, `hwplb`, or `swplb` prefix settings for custom naming.
+PF inventory names remain observed values. Naming templates and PF selectors
+consume the same resolved per-group prefixes; standard profiles are unaffected.
+VR HWPLB uses `eth_r%rail_id%_p%plane_id%` and
+`roce_r%rail_id%_n%nic_id%`; traditional HWPLB retains `roce_r%rail_id%`.
+
 Each `clusterConfig[]` entry has these key fields:
 
 - `identifier` — group name (used for `NicNodePolicy` naming). For groups with both `machineType` and `gpuType` resolved, this is the lowercased machine/GPU identity with complete `NVIDIA` segments removed and common machine segments shortened (`ThinkSystem` → `ts`, `PowerEdge` → `pe`), bounded to 30 bytes with balanced component prefixes and a 6-character deterministic hash when needed; otherwise a fallback `group-N`. The Launch Kit machine node label uses the same value.
@@ -92,8 +102,9 @@ Each `clusterConfig[]` entry has these key fields:
   netplan observation was unavailable or incomplete, or a MAC-based set-name
   rule could not be checked because an expected PF has no readable current MAC.
   A readable `/etc` without a netplan directory or a complete configuration
-  without MAC-based set-name rules is a verified negative. Generation rejects
-  interface-name rules for this group until discovery can verify host state.
+  without MAC-based set-name rules is a verified negative. Generation warns and
+  continues with interface-name rules unless `netplanManaged` is true. Review
+  host netplan configuration and re-run discovery to resolve the warning.
 - `capabilities.nodes.{sriov,rdma,ib}` — what the underlying hardware supports.
 - `pfs[]` — physical function list with PCI address, device ID, RDMA device,
   network interface, traffic class, rail, NUMA, GPU affinity, and `model` (the
