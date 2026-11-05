@@ -49,7 +49,7 @@ maintenance-operator-chart:
   operatorConfig:
     deploy: true
     # maxUnavailable is numeric; quote zero to survive upstream truthiness guards.
-    maxParallelOperations: "{{ .Maintenance.MaxParallelOperations.String }}"
+    maxParallelOperations: {{ .Maintenance.MaxParallelOperations.String }}
     maxUnavailable: {{ if eq .Maintenance.MaxUnavailable.String "0" }}"0"{{ else }}{{ .Maintenance.MaxUnavailable.String }}{{ end }}
     maxNodeMaintenanceTimeSeconds: "{{ .Maintenance.MaxNodeMaintenanceTimeSeconds }}"
 
