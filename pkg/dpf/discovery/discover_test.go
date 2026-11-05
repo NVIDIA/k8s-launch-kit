@@ -16,7 +16,7 @@ import (
 
 func TestDiscovery(t *testing.T) { RegisterFailHandler(Fail); RunSpecs(t, "DPF discovery checks") }
 func estate() inventory.Inventory {
-	return inventory.Inventory{Collection: inventory.Collection{Mode: "inventory"}, Management: &inventory.Management{APIEndpoint: "https://api.invalid", SystemNamespaceUID: "cluster-a", TrustDigest: "system-roots", KubernetesVersion: "v1", Nodes: []inventory.Node{{Name: "cp", UID: "node-a", Ready: true}}}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{{ID: "dpu-a", RecordKey: "a", SerialNumber: "CARD-A", ObservationState: "observed"}, {ID: "dpu-b", RecordKey: "b", SerialNumber: "CARD-B", ObservationState: "observed"}}, Hosts: []inventory.Device{{ID: "host-a", RecordKey: "host", Adapters: []inventory.Adapter{{Key: "adapter-a", SerialNumber: "CARD-A"}, {Key: "adapter-b", SerialNumber: "CARD-B"}, {Key: "adapter-c", SerialNumber: "CARD-C", Selection: "not-selected"}}}}, Associations: []inventory.Association{}}
+	return inventory.Inventory{Collection: inventory.Collection{Mode: "inventory"}, Management: &inventory.Management{APIEndpoint: "https://api.invalid", SystemNamespaceUID: "cluster-a", TrustDigest: "system-roots", KubernetesVersion: "v1", Nodes: []inventory.Node{{Name: "cp", UID: "node-a", Ready: true}}}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{{ID: "dpu-a", RecordKey: "a", SerialNumber: "CARD-A", ObservationState: "observed"}, {ID: "dpu-b", RecordKey: "b", SerialNumber: "CARD-B", ObservationState: "observed"}}, Hosts: []inventory.Device{{ObservationState: "observed", ID: "host-a", RecordKey: "host", Adapters: []inventory.Adapter{{Key: "adapter-a", SerialNumber: "CARD-A"}, {Key: "adapter-b", SerialNumber: "CARD-B"}, {Key: "adapter-c", SerialNumber: "CARD-C", Selection: "not-selected"}}}}, Associations: []inventory.Association{}}
 }
 
 var _ = Describe("inventory semantics", func() {
@@ -135,14 +135,14 @@ discovery:
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(data)).To(ContainSubstring(`"tlsInsecureSkipVerify":true`))
 	})
-	It("keeps missing scope evidence separate from a proven replacement", func() {
+	It("distinguishes infrastructure-only scope from management scope", func() {
 		old := estate()
 		Canonicalize(&old)
 		current := estate()
 		current.Management = nil
 		Canonicalize(&current)
-		Expect(current.ScopeDigest).To(BeEmpty())
-		Expect(scopeConflict(&old, &current)).To(BeFalse())
+		Expect(current.ScopeDigest).NotTo(BeEmpty())
+		Expect(scopeConflict(&old, &current)).To(BeTrue())
 		current = estate()
 		current.Management.SystemNamespaceUID = "replacement"
 		Canonicalize(&current)

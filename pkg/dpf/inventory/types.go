@@ -21,6 +21,8 @@ type Collection struct {
 	Collector  string    `json:"collector" yaml:"collector"`
 }
 type ScopeEndpoint struct {
+	SSHTrustDigest        string `json:"sshTrustDigest,omitempty" yaml:"sshTrustDigest,omitempty"`
+	SSHSudo               bool   `json:"sshSudo,omitempty" yaml:"sshSudo,omitempty"`
 	Role                  string `json:"role" yaml:"role"`
 	Endpoint              string `json:"endpoint" yaml:"endpoint"`
 	SystemURI             string `json:"systemURI,omitempty" yaml:"systemURI,omitempty"`
@@ -65,40 +67,65 @@ type TimeObservation struct {
 	NTPServers []string `json:"ntpServers,omitempty" yaml:"ntpServers,omitempty"`
 	ReasonCode string   `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
 }
+type PCIFunction struct {
+	Address  string   `json:"address" yaml:"address"`
+	Driver   string   `json:"driver,omitempty" yaml:"driver,omitempty"`
+	NUMANode string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
+	Netdevs  []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
+}
 type Adapter struct {
-	Key             string   `json:"adapterKey" yaml:"adapterKey"`
-	SerialNumber    string   `json:"serialNumber" yaml:"serialNumber"`
-	SerialNumberRaw string   `json:"serialNumberRaw" yaml:"serialNumberRaw"`
-	Model           string   `json:"model,omitempty" yaml:"model,omitempty"`
-	Slot            string   `json:"slot,omitempty" yaml:"slot,omitempty"`
-	Selection       string   `json:"selection" yaml:"selection"`
-	EvidenceRefs    []string `json:"evidenceRefs" yaml:"evidenceRefs"`
+	PCIFunctions    []PCIFunction `json:"pciFunctions,omitempty" yaml:"pciFunctions,omitempty"`
+	PCIAddress      string        `json:"pciAddress,omitempty" yaml:"pciAddress,omitempty"`
+	VendorID        string        `json:"vendorID,omitempty" yaml:"vendorID,omitempty"`
+	DeviceID        string        `json:"deviceID,omitempty" yaml:"deviceID,omitempty"`
+	IdentityState   string        `json:"identityState,omitempty" yaml:"identityState,omitempty"`
+	ReasonCode      string        `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
+	Key             string        `json:"adapterKey" yaml:"adapterKey"`
+	SerialNumber    string        `json:"serialNumber" yaml:"serialNumber"`
+	SerialNumberRaw string        `json:"serialNumberRaw" yaml:"serialNumberRaw"`
+	Model           string        `json:"model,omitempty" yaml:"model,omitempty"`
+	Slot            string        `json:"slot,omitempty" yaml:"slot,omitempty"`
+	Selection       string        `json:"selection" yaml:"selection"`
+	EvidenceRefs    []string      `json:"evidenceRefs" yaml:"evidenceRefs"`
+}
+
+// RuntimeObservation contains OS-visible facts, separate from BMC management readiness.
+type RuntimeObservation struct {
+	Hostname     string                 `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	OS           string                 `json:"os,omitempty" yaml:"os,omitempty"`
+	Interfaces   []Interface            `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
+	Routes       []Route                `json:"routes,omitempty" yaml:"routes,omitempty"`
+	DNS          []string               `json:"dns,omitempty" yaml:"dns,omitempty"`
+	Observations map[string]Observation `json:"observations,omitempty" yaml:"observations,omitempty"`
 }
 
 // Device represents every requested endpoint, including failed observations.
 type Device struct {
-	RecordKey             string          `json:"recordKey" yaml:"recordKey"`
-	InputRef              string          `json:"inputRef" yaml:"inputRef"`
-	BMCEndpoint           string          `json:"bmcEndpoint" yaml:"bmcEndpoint"`
-	SystemURI             string          `json:"systemURI,omitempty" yaml:"systemURI,omitempty"`
-	ObservationState      string          `json:"observationState" yaml:"observationState"`
-	ReasonCode            string          `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
-	ID                    string          `json:"id,omitempty" yaml:"id,omitempty"`
-	IdentityKey           []string        `json:"identityKey,omitempty" yaml:"identityKey,omitempty"`
-	SerialNumber          string          `json:"serialNumber,omitempty" yaml:"serialNumber,omitempty"`
-	SerialNumberRaw       string          `json:"serialNumberRaw,omitempty" yaml:"serialNumberRaw,omitempty"`
-	SystemUUID            string          `json:"systemUUID,omitempty" yaml:"systemUUID,omitempty"`
-	Manufacturer          string          `json:"manufacturer,omitempty" yaml:"manufacturer,omitempty"`
-	Model                 string          `json:"model,omitempty" yaml:"model,omitempty"`
-	ReaderAdapter         string          `json:"readerAdapter,omitempty" yaml:"readerAdapter,omitempty"`
-	InventoryCompleteness string          `json:"inventoryCompleteness,omitempty" yaml:"inventoryCompleteness,omitempty"`
-	Qualification         string          `json:"qualification" yaml:"qualification"`
-	Firmware              []Firmware      `json:"firmware" yaml:"firmware"`
-	Authentication        Authentication  `json:"authentication" yaml:"authentication"`
-	Time                  TimeObservation `json:"time" yaml:"time"`
-	Adapters              []Adapter       `json:"adapters,omitempty" yaml:"adapters,omitempty"`
-	AdvertisedResetTypes  []string        `json:"advertisedResetTypes,omitempty" yaml:"advertisedResetTypes,omitempty"`
-	EvidenceRefs          []string        `json:"evidenceRefs" yaml:"evidenceRefs"`
+	SSHEndpoint           string              `json:"sshEndpoint,omitempty" yaml:"sshEndpoint,omitempty"`
+	BMCAddressState       string              `json:"bmcAddressState,omitempty" yaml:"bmcAddressState,omitempty"`
+	Runtime               *RuntimeObservation `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	RecordKey             string              `json:"recordKey" yaml:"recordKey"`
+	InputRef              string              `json:"inputRef" yaml:"inputRef"`
+	BMCEndpoint           string              `json:"bmcEndpoint" yaml:"bmcEndpoint"`
+	SystemURI             string              `json:"systemURI,omitempty" yaml:"systemURI,omitempty"`
+	ObservationState      string              `json:"observationState" yaml:"observationState"`
+	ReasonCode            string              `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
+	ID                    string              `json:"id,omitempty" yaml:"id,omitempty"`
+	IdentityKey           []string            `json:"identityKey,omitempty" yaml:"identityKey,omitempty"`
+	SerialNumber          string              `json:"serialNumber,omitempty" yaml:"serialNumber,omitempty"`
+	SerialNumberRaw       string              `json:"serialNumberRaw,omitempty" yaml:"serialNumberRaw,omitempty"`
+	SystemUUID            string              `json:"systemUUID,omitempty" yaml:"systemUUID,omitempty"`
+	Manufacturer          string              `json:"manufacturer,omitempty" yaml:"manufacturer,omitempty"`
+	Model                 string              `json:"model,omitempty" yaml:"model,omitempty"`
+	ReaderAdapter         string              `json:"readerAdapter,omitempty" yaml:"readerAdapter,omitempty"`
+	InventoryCompleteness string              `json:"inventoryCompleteness,omitempty" yaml:"inventoryCompleteness,omitempty"`
+	Qualification         string              `json:"qualification" yaml:"qualification"`
+	Firmware              []Firmware          `json:"firmware" yaml:"firmware"`
+	Authentication        Authentication      `json:"authentication" yaml:"authentication"`
+	Time                  TimeObservation     `json:"time" yaml:"time"`
+	Adapters              []Adapter           `json:"adapters,omitempty" yaml:"adapters,omitempty"`
+	AdvertisedResetTypes  []string            `json:"advertisedResetTypes,omitempty" yaml:"advertisedResetTypes,omitempty"`
+	EvidenceRefs          []string            `json:"evidenceRefs" yaml:"evidenceRefs"`
 }
 type Node struct {
 	Interfaces    []Interface `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
@@ -157,10 +184,14 @@ type Check struct {
 	EvidenceRefs  []string `json:"evidenceRefs"`
 }
 type Problem struct {
-	Code     string `json:"code"`
-	Message  string `json:"message"`
-	InputRef string `json:"inputRef,omitempty"`
-	ExitCode int    `json:"-"`
+	Method      string `json:"method,omitempty"`
+	ResourceURI string `json:"resourceURI,omitempty"`
+	HTTPStatus  int    `json:"httpStatus,omitempty"`
+	Stage       string `json:"stage,omitempty"`
+	Code        string `json:"code"`
+	Message     string `json:"message"`
+	InputRef    string `json:"inputRef,omitempty"`
+	ExitCode    int    `json:"-"`
 }
 type Artifact struct {
 	Path string `json:"path"`

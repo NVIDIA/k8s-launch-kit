@@ -7,6 +7,7 @@ package discovery
 import (
 	"cmp"
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -16,13 +17,18 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 )
 
 type ProbeRunner interface {
 	Run(context.Context, config.Request, ManagementClient, *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error)
 }
+type Collector interface {
+	Collect(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error)
+}
 type Dependencies struct {
-	BMC    redfish.Collector
+	SSH    Collector
+	BMC    Collector
 	Probes ProbeRunner
 }
 
@@ -35,7 +41,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	inv := &inventory.Inventory{FormatVersion: inventory.FormatVersion, Collection: inventory.Collection{RunID: runID, StartedAt: time.Now().UTC(), Mode: r.Mode, Collector: "l8k-go-discovery-v1"}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{}, Hosts: []inventory.Device{}, Associations: []inventory.Association{}, Evidence: map[string]inventory.Evidence{}}
 	report.Inventory = inv
 	for _, t := range r.Targets {
-		inv.RequestedScope = append(inv.RequestedScope, inventory.ScopeEndpoint{Role: t.Role, Endpoint: t.Endpoint, SystemURI: t.SystemURI, TLSInsecureSkipVerify: t.Access.InsecureSkipVerify()})
+		inv.RequestedScope = append(inv.RequestedScope, config.Scope(t))
 	}
 	slices.SortFunc(inv.RequestedScope, func(a, b inventory.ScopeEndpoint) int {
 		return strings.Compare(a.Role+a.Endpoint+a.SystemURI, b.Role+b.Endpoint+b.SystemURI)
@@ -45,27 +51,31 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	problem := func(p inventory.Problem) { mu.Lock(); defer mu.Unlock(); report.Errors = append(report.Errors, p) }
-	mg, accessErr := ManagementAccess(r)
-	if accessErr != nil {
-		report.Execution = "failed"
-		report.Errors = append(report.Errors, inventory.Problem{Code: "INVALID_MANAGEMENT_ACCESS", Message: accessErr.Error(), ExitCode: 2})
-		return report
+	var mg ManagementClient
+	if r.Kubeconfig != "" {
+		var accessErr error
+		mg, accessErr = ManagementAccess(r)
+		if accessErr != nil {
+			report.Execution = "failed"
+			report.Errors = append(report.Errors, inventory.Problem{Code: "INVALID_MANAGEMENT_ACCESS", Message: accessErr.Error(), ExitCode: 2})
+			return report
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var err error
+			inv.Management, err = mg.Observe(ctx)
+			if err != nil {
+				problem(inventory.Problem{Code: "MANAGEMENT_INSPECTION_FAILED", Message: err.Error(), InputRef: "/management", ExitCode: 3})
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for id, e := range NewEvidence(time.Now().UTC()) {
+				inv.Evidence[id] = e
+			}
+		}()
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		var err error
-		inv.Management, err = mg.Observe(ctx)
-		if err != nil {
-			problem(inventory.Problem{Code: "MANAGEMENT_INSPECTION_FAILED", Message: err.Error(), InputRef: "/management", ExitCode: 3})
-			return
-		}
-		mu.Lock()
-		for id, e := range NewEvidence(time.Now().UTC()) {
-			inv.Evidence[id] = e
-		}
-		mu.Unlock()
-	}()
 	sem := make(chan struct{}, r.MaxConcurrentBMCs)
 	devices := make([]inventory.Device, len(r.Targets))
 	for index, target := range r.Targets {
@@ -79,7 +89,16 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 				devices[i] = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{t.Role, t.Endpoint, t.SystemURI}), InputRef: t.InputRef, BMCEndpoint: t.Endpoint, ObservationState: "unavailable", ReasonCode: "CANCELLED"}
 				return
 			}
-			d, e, err := deps.BMC.Collect(ctx, t, r.RequestTimeout)
+			collector := deps.BMC
+			if t.SSH != nil {
+				collector = deps.SSH
+			}
+			if collector == nil {
+				problem(inventory.Problem{Code: "COLLECTOR_UNAVAILABLE", Message: "selected discovery source is unavailable", InputRef: t.InputRef, ExitCode: 3})
+				devices[i] = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{t.Role, t.Endpoint, t.SystemURI}), InputRef: t.InputRef, ObservationState: "unavailable", ReasonCode: "COLLECTOR_UNAVAILABLE"}
+				return
+			}
+			d, e, err := collector.Collect(ctx, t, r.RequestTimeout)
 			devices[i] = d
 			mu.Lock()
 			for key, value := range e {
@@ -87,11 +106,26 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 			}
 			mu.Unlock()
 			if err != nil {
-				problem(inventory.Problem{Code: redfish.Code(err), Message: "BMC observation failed; inspect record reason and field path", InputRef: t.InputRef, ExitCode: 3})
+				if t.SSH != nil {
+					code := d.ReasonCode
+					if code == "" {
+						code = "SSH_OBSERVATION_FAILED"
+					}
+					stage := "observation"
+					var diagnostic *sshprobe.Error
+					if errors.As(err, &diagnostic) {
+						stage = diagnostic.Stage
+					}
+					problem(inventory.Problem{Code: code, Message: "SSH observation failed", InputRef: t.InputRef, Stage: stage, ExitCode: 3})
+				} else {
+					for _, diagnostic := range redfish.Diagnostics(err) {
+						problem(inventory.Problem{Code: diagnostic.Code, Message: "Redfish operation failed", InputRef: t.InputRef, Method: diagnostic.Method, ResourceURI: diagnostic.URI, HTTPStatus: diagnostic.Status, Stage: diagnostic.Stage, ExitCode: 3})
+					}
+				}
 				if d.ReasonCode == "CLEANUP_INCOMPLETE" {
 					mu.Lock()
 					report.Discovery.Cleanup.State = "incomplete"
-					report.Discovery.Cleanup.Leftovers = append(report.Discovery.Cleanup.Leftovers, t.Endpoint+": session outcome unknown")
+					report.Discovery.Cleanup.Leftovers = append(report.Discovery.Cleanup.Leftovers, t.Endpoint+redfish.CleanupReceipt(err)+": session cleanup incomplete")
 					mu.Unlock()
 				}
 			}
@@ -105,6 +139,13 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 			inv.Hosts = append(inv.Hosts, d)
 		}
 	}
+	requestedDPUs := false
+	for _, t := range r.Targets {
+		requestedDPUs = requestedDPUs || t.Role == "dpus"
+	}
+	if !requestedDPUs {
+		inv.DPUs = HostCards(inv.Hosts)
+	}
 	inv.Associations, report.Discovery.Checks = Correlate(inv.DPUs, inv.Hosts)
 	selected := map[string]bool{}
 	for _, a := range inv.Associations {
@@ -117,12 +158,12 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 			}
 		}
 	}
-	addCheck := func(id, subject string, ok bool, reason string, refs []string) {
+	addCheck := func(id, subject string, ok bool, reason string, refs []string, phase string) {
 		state := "failed"
 		if ok {
 			state = "passed"
 		}
-		report.Discovery.Checks = append(report.Discovery.Checks, inventory.Check{ID: id, Subject: subject, Vantage: "executor", RequiredPhase: "discover", State: state, ReasonCode: reason, EvidenceRefs: refs})
+		report.Discovery.Checks = append(report.Discovery.Checks, inventory.Check{ID: id, Subject: subject, Vantage: "executor", RequiredPhase: phase, State: state, ReasonCode: reason, EvidenceRefs: refs})
 	}
 	if inv.Management != nil {
 		cp := 0
@@ -131,7 +172,11 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 				cp++
 			}
 		}
-		addCheck("dpf.management.control-plane-count", "management", cp == 3, "EXACTLY_THREE_CONTROL_PLANES", inv.Management.EvidenceRefs)
+		phase := "generate"
+		if r.Mode == "management" {
+			phase = "discover"
+		}
+		addCheck("dpf.management.control-plane-count", "management", cp == 3, "EXACTLY_THREE_CONTROL_PLANES", inv.Management.EvidenceRefs, phase)
 		if r.Mode == "management" && cp == 3 {
 			if deps.Probes == nil {
 				report.Errors = append(report.Errors, inventory.Problem{Code: "PROBE_ASSETS_UNAVAILABLE", Message: "management probes require qualified installed probe assets", ExitCode: 2})
@@ -156,8 +201,17 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	}
 	report.Discovery.Checks = append(report.Discovery.Checks, ProbeChecks(inv, r.Targets)...)
 	for _, d := range append(slices.Clone(inv.DPUs), inv.Hosts...) {
-		addCheck("dpf.device.identity", d.RecordKey, d.ID != "" && d.ObservationState == "observed", "PHYSICAL_IDENTITY_REQUIRED", d.EvidenceRefs)
-		addCheck("dpf.device.qualification", d.RecordKey, d.Qualification == "qualified" && d.InventoryCompleteness == "complete", "QUALIFIED_ADAPTER_REQUIRED", d.EvidenceRefs)
+		addCheck("dpf.device.identity", d.RecordKey, d.ID != "" && d.ObservationState == "observed", "PHYSICAL_IDENTITY_REQUIRED", d.EvidenceRefs, "discover")
+		addCheck("dpf.device.qualification", d.RecordKey, d.Qualification == "qualified" && d.InventoryCompleteness == "complete", "QUALIFIED_ADAPTER_REQUIRED", d.EvidenceRefs, "generate")
+	}
+	addCheck("dpf.inventory.dpus", "inventory", len(inv.DPUs) > 0, "DPU_IDENTITY_REQUIRED", nil, "discover")
+	for _, d := range inv.DPUs {
+		state, reason := "not-evaluated", "REDFISH_AUTHORIZATION_NOT_EVALUATED"
+		if d.Authentication.PasswordRead == "verified" {
+			state, reason = "passed", "INVENTORY_READ_VERIFIED"
+		}
+		report.Discovery.Checks = append(report.Discovery.Checks, inventory.Check{ID: "dpf.management.redfish-read", Subject: d.RecordKey, RequiredPhase: "deploy", State: state, ReasonCode: reason, EvidenceRefs: d.EvidenceRefs})
+		report.Discovery.Checks = append(report.Discovery.Checks, inventory.Check{ID: "dpf.management.dpf-authentication", Subject: d.RecordKey, RequiredPhase: "deploy", State: "not-evaluated", ReasonCode: "DPF_AUTHENTICATION_NOT_EVALUATED", EvidenceRefs: []string{}})
 	}
 	report.Discovery.Outcome = "complete"
 	for _, c := range report.Discovery.Checks {
@@ -169,6 +223,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		report.Discovery.Outcome = "partial"
 	}
 	if ctx.Err() != nil {
+		report.Discovery.Outcome = "partial"
 		report.Execution = "failed"
 		code := 3
 		if ctx.Err() == context.Canceled {
@@ -179,6 +234,9 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	}
 	inv.Collection.FinishedAt = time.Now().UTC()
 	Canonicalize(inv)
+	if r.Kubeconfig != "" && inv.Management == nil {
+		inv.ScopeDigest = ""
+	}
 	report.Diff = Diff(r.Input.Site.Inventory, inv)
 	if scopeConflict(r.Input.Site.Inventory, inv) {
 		report.Discovery.Outcome = "partial"
@@ -217,7 +275,7 @@ func Correlate(dpus, hosts []inventory.Device) ([]inventory.Association, []inven
 			h := &hosts[hi]
 			for ai := range h.Adapters {
 				a := &h.Adapters[ai]
-				if d.SerialNumber != "" && a.SerialNumber == d.SerialNumber {
+				if d.ObservationState == "observed" && h.ObservationState == "observed" && d.SerialNumber != "" && a.SerialNumber == d.SerialNumber {
 					// Selection annotations are applied by the orchestrator after correlation.
 					matches = append(matches, inventory.Association{DPUID: d.ID, HostID: h.ID, HostAdapterKey: a.Key, SerialNumber: d.SerialNumber, EvidenceRefs: append(slices.Clone(d.EvidenceRefs), a.EvidenceRefs...)})
 				}
@@ -246,6 +304,10 @@ func Canonicalize(inv *inventory.Inventory) {
 	sortDevices(inv.Hosts)
 	slices.SortFunc(inv.Associations, func(a, b inventory.Association) int { return strings.Compare(a.DPUID, b.DPUID) })
 	inv.Fingerprint = inventory.Digest("dpf-facts-v1", material(inv))
+	inv.ScopeDigest = inventory.Digest("dpf-infrastructure-scope-v1", struct {
+		Mode      string
+		Endpoints []inventory.ScopeEndpoint
+	}{inv.Collection.Mode, inv.RequestedScope})
 	if inv.Management != nil {
 		inv.ScopeDigest = inventory.Digest("dpf-scope-v1", struct {
 			API, UID, Trust, Mode string
@@ -283,7 +345,11 @@ func material(inv *inventory.Inventory) map[string]any {
 			key := "device." + d.RecordKey
 			fields[key+".identity"] = []any{d.ID, d.IdentityKey, d.Model, d.ReaderAdapter, d.Qualification, d.InventoryCompleteness}
 			for _, a := range d.Adapters {
-				fields[key+".adapter."+a.Key] = []string{a.SerialNumber, a.Model, a.Slot}
+				fields[key+".adapter."+a.Key] = []any{a.SerialNumber, a.Model, a.Slot, a.PCIAddress, a.VendorID, a.DeviceID, a.IdentityState, a.ReasonCode, canonicalFunctions(a.PCIFunctions)}
+			}
+			fields[key+".endpoints"] = []string{d.SSHEndpoint, d.BMCEndpoint, d.BMCAddressState}
+			if d.Runtime != nil {
+				fields[key+".runtime"] = canonicalRuntime(*d.Runtime)
 			}
 			for _, fw := range d.Firmware {
 				fields[key+".firmware."+fw.Component+"."+fw.ResourceURI] = []string{fw.State, fw.RawVersion, fw.Activation}

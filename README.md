@@ -5,6 +5,8 @@ Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by defau
 
 
 The current lifecycle uses the `host` target by default. The `dpf` target provides an [experimental inventory discovery preview](docs/user/dpf-discovery.md); its provisioning phases remain unavailable.
+DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
+management cluster. Inventory success is separate from provisioning readiness.
 DPF BMC discovery verifies TLS by default; lab endpoints can explicitly opt in to
 `tls.insecureSkipVerify: true`, recorded in discovery reports. See the preview guide
 for its scope and security implications.

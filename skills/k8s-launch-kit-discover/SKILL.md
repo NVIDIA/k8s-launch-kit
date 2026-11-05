@@ -11,7 +11,13 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
-For the independent DPF preview, read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit management/BMC YAML. Keep the empty hardware/probe-image release gates visible; do not run Host discovery against the DPF estate.
+For the independent DPF preview, read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities and unique host/card associations, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
+
+SSH requires explicit credential references and known-hosts trust; it never inherits
+Redfish TLS bypass, ambient keys or SSH configuration. ARM-local IPMI can report a
+BMC address but does not authorize connecting to it. A failed selected source is
+not silently replaced by another source. Host-only inventory preserves host-reported
+BlueFields without inventing ARM/BMC bindings.
 
 DPF BMC TLS verification defaults to enabled. For an explicitly requested lab
 bypass, set the endpoint's `tls.insecureSkipVerify: true`; the shared

@@ -21,6 +21,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 )
@@ -76,7 +77,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 			resolved, err := config.Resolve(input)
 			if err != nil {
 				fail(2, err.Error())
-			} else if _, err = discovery.ManagementAccess(resolved); err != nil {
+			} else if err = validateManagement(resolved); err != nil {
 				fail(2, err.Error())
 			} else {
 				// Unqualified image assets reject management mode before any remote operation.
@@ -89,14 +90,14 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 						fail(1, err.Error())
 					} else {
 						if !inv.Output.Quiet {
-							fmt.Fprintln(r.Stderr, "Inspecting explicitly selected management and BMC scope")
+							fmt.Fprintln(r.Stderr, "Inspecting explicitly selected inventory sources")
 							for _, endpoint := range resolved.Targets {
 								if endpoint.Access.InsecureSkipVerify() {
 									fmt.Fprintf(r.Stderr, "Warning: BMC TLS certificate verification disabled for %s\n", endpoint.Endpoint)
 								}
 							}
 						}
-						deps := discovery.Dependencies{BMC: redfish.Collector{Qualifications: catalog.Hardware()}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
+						deps := discovery.Dependencies{SSH: sshprobe.Collector{}, BMC: redfish.Collector{Qualifications: catalog.Hardware()}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
 						if resolved.Input.Site.Inventory == nil {
 							resolved.Input.Site.Inventory = store.PriorInventory
 						}
@@ -134,4 +135,12 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 		}
 		return apperrors.NewExitStatus(discovery.ExitCode(report))
 	}), nil
+}
+
+func validateManagement(r config.Request) error {
+	if r.Kubeconfig == "" {
+		return nil
+	}
+	_, err := discovery.ManagementAccess(r)
+	return err
 }

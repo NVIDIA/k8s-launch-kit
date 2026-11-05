@@ -26,12 +26,13 @@ type Document map[string]any
 // Error deliberately omits response bodies, headers and private credentials.
 type Error struct {
 	Code   string
+	Method string
 	URI    string
 	Status int
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("Redfish %s at %s (HTTP %d)", e.Code, e.URI, e.Status)
+	return fmt.Sprintf("Redfish %s: %s %s (HTTP %d)", e.Code, e.Method, e.URI, e.Status)
 }
 func Code(err error) string {
 	var e *Error
@@ -89,7 +90,7 @@ func (c *Client) guard(ref string) (string, error) {
 			return "", &Error{Code: "CROSS_ORIGIN_LINK"}
 		}
 	}
-	if u.User != nil || u.Fragment != "" || u.Opaque != "" || u.RawPath != "" || !strings.HasPrefix(u.Path, "/redfish/v1/") || strings.Contains(u.Path, "..") || path.Clean(u.Path) != strings.TrimSuffix(u.Path, "/") {
+	if len(ref) > 2048 || u.User != nil || u.Fragment != "" || u.Opaque != "" || u.RawPath != "" || !strings.HasPrefix(u.Path, "/redfish/v1/") || strings.Contains(u.Path, "..") || path.Clean(u.Path) != strings.TrimSuffix(u.Path, "/") {
 		return "", &Error{Code: "UNSAFE_LINK"}
 	}
 	// Queries are accepted only as explicit pagination $skip/$skiptoken parameters.
@@ -102,7 +103,15 @@ func (c *Client) guard(ref string) (string, error) {
 	u.Host = ""
 	return u.String(), nil
 }
-func (c *Client) request(ctx context.Context, method, ref string, body []byte) (Document, http.Header, error) {
+func (c *Client) request(ctx context.Context, method, ref string, body []byte) (doc Document, headers http.Header, err error) {
+	defer func() {
+		var failure *Error
+		if errors.As(err, &failure) {
+			failure.Method = method
+			// Pagination tokens can carry opaque private state. Retain only the path.
+			failure.URI = strings.Split(failure.URI, "?")[0]
+		}
+	}()
 	uri, e := c.guard(ref)
 	if e != nil {
 		return nil, nil, e
@@ -217,7 +226,8 @@ func (c *Client) Open(ctx context.Context) (Document, error) {
 	}
 	username, password := c.access.Credentials()
 	body, _ := json.Marshal(map[string]string{"UserName": username, "Password": password})
-	// Never retry an ambiguous login. The token and session URI are never serialized.
+	// Never retry an ambiguous login. The token is never serialized; only a validated
+	// non-secret session receipt may be reported when cleanup fails.
 	c.sessionUncertain = true
 	_, header, err := c.request(ctx, http.MethodPost, collection, body)
 	if err != nil {

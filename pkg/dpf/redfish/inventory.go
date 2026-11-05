@@ -4,7 +4,6 @@ package redfish
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"regexp"
 	"slices"
@@ -42,12 +41,11 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
 		if cleanupErr := c.Close(cleanupCtx); cleanupErr != nil {
-			if err == nil {
-				err = cleanupErr
-			} else {
-				err = fmt.Errorf("%w; BMC session cleanup incomplete", err)
-			}
+			err = &ObservationError{Primary: err, Cleanup: cleanupErr, SessionURI: c.session}
 			device.ReasonCode = "CLEANUP_INCOMPLETE"
+		}
+		if err != nil && device.ReasonCode == "" {
+			device.ReasonCode = Code(err)
 		}
 	}()
 	root, err := c.Open(ctx)
@@ -55,7 +53,6 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		device.ReasonCode = Code(err)
 		return device, evidence, err
 	}
-	device.Authentication.PasswordRead = "verified"
 	device.Authentication.Method = "session"
 	add := func(uri, property string) string {
 		id := inventory.Digest("dpf-evidence-v1", []string{device.RecordKey, uri, property})
@@ -67,6 +64,7 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	if err != nil {
 		return device, evidence, err
 	}
+	device.Authentication.PasswordRead = "verified"
 	var system Resource
 	if target.SystemURI != "" {
 		for _, s := range systems {
@@ -141,41 +139,9 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		}
 		device.IdentityKey = []string{"system-uuid", strings.ToLower(device.SystemUUID)}
 		device.ID = inventory.PhysicalID("host", device.IdentityKey)
-		// NetworkInterfaces link the selected System to physical NetworkAdapters.
-		interfaces, er := c.Collection(ctx, Link(system.Document, "NetworkInterfaces"))
-		if er != nil {
-			return device, evidence, er
-		}
-		seen := map[string]bool{}
-		for _, iface := range interfaces {
-			uri := Link(Object(iface.Document, "Links"), "NetworkAdapter")
-			if uri == "" {
-				return device, evidence, &Error{Code: "ADAPTER_LINK_MISSING"}
-			}
-			uri, er = c.guard(uri)
-			if er != nil {
-				return device, evidence, er
-			}
-			if seen[uri] {
-				continue
-			}
-			seen[uri] = true
-			card, er := c.Get(ctx, uri)
-			if er != nil {
-				return device, evidence, er
-			}
-			raw := Text(card, "SerialNumber")
-			expectedSerials[uri] = raw
-			if !ValidSerial(raw) {
-				return device, evidence, &Error{Code: "CARD_SERIAL_MISSING"}
-			}
-			// Retain every physical network card; PCI/vendor omission cannot prove absence.
-			serial := strings.TrimSpace(raw)
-			device.Adapters = append(device.Adapters, inventory.Adapter{Key: inventory.Digest("dpf-adapter-v1", []string{device.ID, serial}), SerialNumber: serial, SerialNumberRaw: raw, Model: Text(card, "Model"), Selection: "not-selected", EvidenceRefs: []string{add(uri, "SerialNumber")}})
-		}
-		again, er := c.Collection(ctx, Link(system.Document, "NetworkInterfaces"))
-		if er != nil || !sameMembers(interfaces, again) {
-			return device, evidence, &Error{Code: "INVENTORY_CHANGED"}
+		device.Adapters, err = collectHostAdapters(ctx, c, system, device.ID, adapter == "hpe-standard-v1", add)
+		if err != nil {
+			return device, evidence, err
 		}
 		device.InventoryCompleteness = "unqualified"
 	}
@@ -258,13 +224,19 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	}
 	for uri, raw := range expectedSerials {
 		current, e := c.Get(ctx, uri)
-		if e != nil || Text(current, "SerialNumber") != raw {
-			return device, evidence, &Error{Code: "IDENTITY_CHANGED"}
+		if e != nil {
+			return device, evidence, e
+		}
+		if Text(current, "SerialNumber") != raw {
+			return device, evidence, &Error{Code: "IDENTITY_CHANGED", URI: uri}
 		}
 	}
 	refreshed, er := c.Get(ctx, system.URI)
-	if er != nil || Text(refreshed, "UUID") != device.SystemUUID || Text(refreshed, "SerialNumber") != Text(system.Document, "SerialNumber") {
-		return device, evidence, &Error{Code: "IDENTITY_CHANGED"}
+	if er != nil {
+		return device, evidence, er
+	}
+	if Text(refreshed, "UUID") != device.SystemUUID || Text(refreshed, "SerialNumber") != Text(system.Document, "SerialNumber") {
+		return device, evidence, &Error{Code: "IDENTITY_CHANGED", URI: system.URI}
 	}
 	device.ObservationState = "observed"
 	return device, evidence, nil

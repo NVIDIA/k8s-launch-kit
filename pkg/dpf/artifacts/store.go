@@ -76,6 +76,9 @@ func New(in config.Input, destination string, explicit bool) (*Store, error) {
 	}
 	protected := []string{in.Site.Management.KubeconfigRef.File}
 	for _, c := range in.Site.Credentials {
+		if c.PrivateKeyRef != nil {
+			protected = append(protected, c.PrivateKeyRef.File)
+		}
 		if c.PasswordRef.File != nil {
 			protected = append(protected, *c.PasswordRef.File)
 		}
@@ -84,6 +87,9 @@ func New(in config.Input, destination string, explicit bool) (*Store, error) {
 		protected = append(protected, *t.CAFile)
 	}
 	for _, e := range append(append([]config.Endpoint{}, in.Site.Discovery.DPUs...), in.Site.Discovery.Hosts...) {
+		if e.SSH != nil {
+			protected = append(protected, e.SSH.KnownHostsFile)
+		}
 		if e.TLS != nil && e.TLS.CAFile != nil {
 			protected = append(protected, *e.TLS.CAFile)
 		}
@@ -116,6 +122,9 @@ func New(in config.Input, destination string, explicit bool) (*Store, error) {
 		}
 	}
 	for _, p := range protected {
+		if p == "" {
+			continue
+		}
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(filepath.Dir(input), p)
 		}
@@ -157,6 +166,9 @@ func sameRequested(a, b config.Site) bool {
 		}{{"dpus", s.Discovery.DPUs}, {"hosts", s.Discovery.Hosts}} {
 			for _, e := range group.eps {
 				origin, err := config.Origin(e.BMCEndpoint)
+				if e.SSH != nil {
+					origin, err = config.SSHOrigin(e.SSH.Address)
+				}
 				if err != nil {
 					return ""
 				}
@@ -164,7 +176,11 @@ func sameRequested(a, b config.Site) bool {
 				if e.SystemURI != nil {
 					selector = *e.SystemURI
 				}
-				targets = append(targets, inventory.ScopeEndpoint{Role: group.role, Endpoint: origin, SystemURI: selector})
+				scope := inventory.ScopeEndpoint{Role: group.role, Endpoint: origin, SystemURI: selector}
+				if e.SSH != nil {
+					scope.SSHSudo = e.SSH.Sudo != nil && *e.SSH.Sudo
+				}
+				targets = append(targets, scope)
 			}
 		}
 		slices.SortFunc(targets, func(a, b inventory.ScopeEndpoint) int {

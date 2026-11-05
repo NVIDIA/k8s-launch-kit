@@ -35,14 +35,21 @@ type PasswordRef struct {
 	File *string `yaml:"file,omitempty"`
 }
 type Credential struct {
-	Username    string      `yaml:"username"`
-	PasswordRef PasswordRef `yaml:"passwordRef"`
+	Username      string      `yaml:"username"`
+	PasswordRef   PasswordRef `yaml:"passwordRef,omitempty"`
+	PrivateKeyRef *FileRef    `yaml:"privateKeyRef,omitempty"`
 }
 type TLS struct {
 	CAFile             *string `yaml:"caFile,omitempty"`
 	InsecureSkipVerify *bool   `yaml:"insecureSkipVerify,omitempty"`
 }
+type SSH struct {
+	Address        string `yaml:"address"`
+	KnownHostsFile string `yaml:"knownHostsFile"`
+	Sudo           *bool  `yaml:"sudo,omitempty"`
+}
 type Endpoint struct {
+	SSH           *SSH    `yaml:"ssh,omitempty"`
 	Name          *string `yaml:"name,omitempty"`
 	BMCEndpoint   string  `yaml:"bmcEndpoint"`
 	CredentialRef string  `yaml:"credentialRef"`
@@ -100,6 +107,7 @@ func (a Access) String() string                { return "<private BMC access>" }
 func (a Access) InsecureSkipVerify() bool      { return a.tls != nil && a.tls.InsecureSkipVerify }
 
 type Target struct {
+	SSH       *SSHAccess
 	Endpoint  string
 	SystemURI string
 	InputRef  string
@@ -230,10 +238,9 @@ func Resolve(in Input) (Request, error) {
 	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "management"}
 	s := in.Site
 	base := filepath.Dir(in.Path)
-	if s.Management.KubeconfigRef.File == "" {
-		return r, fmt.Errorf("/management/kubeconfigRef/file is required")
+	if s.Management.KubeconfigRef.File != "" {
+		r.Kubeconfig = resolvePath(base, s.Management.KubeconfigRef.File)
 	}
-	r.Kubeconfig = resolvePath(base, s.Management.KubeconfigRef.File)
 	if s.Management.Context != nil {
 		if *s.Management.Context == "" {
 			return r, fmt.Errorf("/management/context must not be empty")
@@ -246,6 +253,12 @@ func Resolve(in Input) (Request, error) {
 	}
 	if r.Mode != "management" && r.Mode != "inventory" {
 		return r, fmt.Errorf("/discovery/probes/mode must be management or inventory")
+	}
+	if r.Mode == "management" && r.Kubeconfig == "" {
+		return r, fmt.Errorf("/management/kubeconfigRef/file is required in management mode")
+	}
+	if r.Kubeconfig == "" && s.Management.Context != nil {
+		return r, fmt.Errorf("/management/context requires kubeconfigRef")
 	}
 	if p.Namespace != nil {
 		r.Namespace = *p.Namespace
@@ -289,8 +302,8 @@ func Resolve(in Input) (Request, error) {
 	if r.RequestTimeout > r.Timeout || r.MaxConcurrentBMCs < 1 || r.MaxConcurrentBMCs > 16 {
 		return r, fmt.Errorf("invalid /discovery/limits")
 	}
-	if len(s.Discovery.DPUs) == 0 || len(s.Discovery.Hosts) == 0 || len(s.Discovery.DPUs)+len(s.Discovery.Hosts) > 256 {
-		return r, fmt.Errorf("discovery requires 1-256 explicit DPU/host endpoints and both roles")
+	if len(s.Discovery.Hosts) == 0 || (r.Mode == "management" && len(s.Discovery.DPUs) == 0) || len(s.Discovery.DPUs)+len(s.Discovery.Hosts) > 256 {
+		return r, fmt.Errorf("discovery requires explicit hosts, at most 256 endpoints, and explicit DPUs in management mode")
 	}
 	seen := map[string]bool{}
 	type accessKey struct {
@@ -304,6 +317,32 @@ func Resolve(in Input) (Request, error) {
 	}{{"dpus", s.Discovery.DPUs}, {"hosts", s.Discovery.Hosts}} {
 		for i, e := range group.endpoints {
 			ptr := fmt.Sprintf("/discovery/%s/%d", group.role, i)
+			if e.SSH != nil {
+				if r.Mode != "inventory" {
+					return r, fmt.Errorf("%s/ssh requires inventory mode; management probes require BMC targets", ptr)
+				}
+				if e.BMCEndpoint != "" || e.SystemURI != nil || e.TLS != nil {
+					return r, fmt.Errorf("%s must select exactly one SSH or Redfish source", ptr)
+				}
+				origin, err := SSHOrigin(e.SSH.Address)
+				if err != nil {
+					return r, fmt.Errorf("%s/ssh/address: %w", ptr, err)
+				}
+				if seen[origin] {
+					return r, fmt.Errorf("duplicate SSH endpoint at %s", ptr)
+				}
+				seen[origin] = true
+				c, ok := s.Credentials[e.CredentialRef]
+				if !ok {
+					return r, fmt.Errorf("%s/credentialRef is unknown", ptr)
+				}
+				access, err := resolveSSHAccess(c, *e.SSH, base)
+				if err != nil {
+					return r, fmt.Errorf("%s/ssh: %w", ptr, err)
+				}
+				r.Targets = append(r.Targets, Target{Endpoint: origin, InputRef: ptr, Role: group.role, SSH: access})
+				continue
+			}
 			origin, err := Origin(e.BMCEndpoint)
 			if err != nil {
 				return r, fmt.Errorf("%s/bmcEndpoint: %w", ptr, err)
@@ -360,34 +399,12 @@ func resolvePath(base, p string) string {
 	return filepath.Join(base, p)
 }
 func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, error) {
-	p := c.PasswordRef
-	if (p.Env == nil) == (p.File == nil) {
-		return Access{}, fmt.Errorf("passwordRef requires exactly one env or file")
+	if c.PrivateKeyRef != nil {
+		return Access{}, fmt.Errorf("redfish requires passwordRef, not privateKeyRef")
 	}
-	var password string
-	if p.Env != nil {
-		if *p.Env == "" {
-			return Access{}, fmt.Errorf("empty passwordRef.env")
-		}
-		password = os.Getenv(*p.Env)
-	} else {
-		if *p.File == "" {
-			return Access{}, fmt.Errorf("empty passwordRef.file")
-		}
-		b, err := regularFile(resolvePath(base, *p.File), 64<<10)
-		if err != nil {
-			return Access{}, fmt.Errorf("cannot resolve password file")
-		}
-		if !utf8.Valid(b) {
-			return Access{}, fmt.Errorf("password file must be UTF-8")
-		}
-		password = string(b)
-		if strings.HasSuffix(password, "\n") {
-			password = strings.TrimSuffix(strings.TrimSuffix(password, "\n"), "\r")
-		}
-	}
-	if password == "" || len(password) > 64<<10 {
-		return Access{}, fmt.Errorf("password reference is missing, empty or too large")
+	password, err := resolvePassword(c.PasswordRef, base)
+	if err != nil {
+		return Access{}, err
 	}
 	roots, err := x509.SystemCertPool()
 	if err != nil || roots == nil {
@@ -400,8 +417,38 @@ func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, er
 			return Access{}, fmt.Errorf("invalid CA file")
 		}
 	}
-	// Certificate verification is disabled only by explicit site configuration.
 	return Access{username: c.Username, password: password, tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, InsecureSkipVerify: insecure}, ca: ca}, nil
+}
+func resolvePassword(p PasswordRef, base string) (string, error) {
+	if (p.Env == nil) == (p.File == nil) {
+		return "", fmt.Errorf("passwordRef requires exactly one env or file")
+	}
+	var password string
+	if p.Env != nil {
+		if *p.Env == "" {
+			return "", fmt.Errorf("empty passwordRef.env")
+		}
+		password = os.Getenv(*p.Env)
+	} else {
+		if *p.File == "" {
+			return "", fmt.Errorf("empty passwordRef.file")
+		}
+		b, err := regularFile(resolvePath(base, *p.File), 64<<10)
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve password file")
+		}
+		if !utf8.Valid(b) {
+			return "", fmt.Errorf("password file must be UTF-8")
+		}
+		password = string(b)
+		if strings.HasSuffix(password, "\n") {
+			password = strings.TrimSuffix(strings.TrimSuffix(password, "\n"), "\r")
+		}
+	}
+	if password == "" || len(password) > 64<<10 {
+		return "", fmt.Errorf("password reference is missing, empty or too large")
+	}
+	return password, nil
 }
 func Origin(s string) (string, error) {
 	u, err := url.Parse(s)
@@ -460,7 +507,7 @@ func rebase(n *yaml.Node, oldBase, newBase, p string) error {
 			if key == "inventory" && p == "" {
 				continue
 			}
-			isFile := key == "caFile" || key == "file" && (strings.HasSuffix(p, "kubeconfigRef") || strings.HasSuffix(p, "passwordRef"))
+			isFile := key == "caFile" || key == "knownHostsFile" || key == "file" && (strings.HasSuffix(p, "kubeconfigRef") || strings.HasSuffix(p, "passwordRef") || strings.HasSuffix(p, "privateKeyRef"))
 			if isFile && value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value != "" {
 				abs := resolvePath(oldBase, value.Value)
 				rel, err := filepath.Rel(newBase, abs)
@@ -498,7 +545,7 @@ func validateScalarTypes(n *yaml.Node, p string) error {
 		if p == "/discovery/limits/maxConcurrentBMCs" {
 			expected = "!!int"
 		}
-		if strings.HasSuffix(p, "/tls/insecureSkipVerify") {
+		if strings.HasSuffix(p, "/tls/insecureSkipVerify") || strings.HasSuffix(p, "/ssh/sudo") {
 			expected = "!!bool"
 		}
 		if n.Tag != expected {
