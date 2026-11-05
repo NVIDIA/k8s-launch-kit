@@ -26,6 +26,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/stretchr/testify/require"
 	configyaml "gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	renderedyaml "sigs.k8s.io/yaml"
@@ -182,7 +183,7 @@ func TestMaintenanceRequestorModeProfileMatrix(t *testing.T) {
 				operatorConfig := nestedMaintenanceMap(t, values, "maintenance-operator-chart", "operatorConfig")
 				require.Equal(t, map[string]any{
 					"deploy":                        true,
-					"maxParallelOperations":         "4",
+					"maxParallelOperations":         float64(4),
 					"maxUnavailable":                float64(4),
 					"maxNodeMaintenanceTimeSeconds": "3600",
 				}, operatorConfig)
@@ -224,7 +225,7 @@ func TestMaintenanceOperatorValuesPreserveExplicitZero(t *testing.T) {
 `)
 	require.Equal(t, map[string]any{
 		"deploy":                        true,
-		"maxParallelOperations":         "4",
+		"maxParallelOperations":         float64(4),
 		"maxUnavailable":                "0",
 		"maxNodeMaintenanceTimeSeconds": "0",
 	}, nestedMaintenanceMap(t, values, "maintenance-operator-chart", "operatorConfig"))
@@ -384,22 +385,26 @@ func TestSriovAdmissionControllerValues(t *testing.T) {
 
 // Check decoded scalar types, not just YAML text: numeric strings select the
 // percentage branch of Kubernetes IntOrString consumers.
-func TestMaxUnavailableScalarTypesAcrossProfiles(t *testing.T) {
+func TestMaintenanceScalarTypesAcrossProfiles(t *testing.T) {
 	profilesOnDisk, err := filepath.Glob(filepath.Join("..", "..", "profiles", "*", "profile.yaml"))
 	require.NoError(t, err)
 	for _, profilePath := range profilesOnDisk {
 		dir := filepath.Base(filepath.Dir(profilePath))
 		profile := loadProfileFromDir(t, dir)
 		for _, tc := range []struct {
-			name, input string
-			want        any
+			name, field, input string
+			want               any
 		}{
-			{"integer", "4", float64(4)}, {"zero", "0", float64(0)}, {"percentage", "37%", "37%"},
+			{"unavailable-integer", "maxUnavailable", "4", float64(4)},
+			{"unavailable-zero", "maxUnavailable", "0", float64(0)},
+			{"unavailable-percentage", "maxUnavailable", "37%", "37%"},
+			{"parallel-integer", "maxParallelOperations", "4", float64(4)},
+			{"parallel-percentage", "maxParallelOperations", "37%", "37%"},
 		} {
 			t.Run(dir+"/"+tc.name, func(t *testing.T) {
 				cfg := &config.LaunchKitConfig{
 					NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.7", Namespace: "network-operator"},
-					Maintenance:     maintenanceFromYAML(t, "maintenance:\n  maxUnavailable: "+tc.input+"\n"),
+					Maintenance:     maintenanceFromYAML(t, "maintenance:\n  "+tc.field+": "+tc.input+"\n"),
 				}
 				require.NoError(t, config.NormalizeMaintenance(cfg))
 				checked := false
@@ -426,7 +431,17 @@ func TestMaxUnavailableScalarTypesAcrossProfiles(t *testing.T) {
 						} else {
 							spec = nestedMaintenanceMap(t, obj, "spec")
 						}
-						require.Equal(t, want, spec["maxUnavailable"])
+						require.Equal(t, want, spec[tc.field])
+						if tc.field == "maxParallelOperations" {
+							// Exercise the scheduler's parser, including percentage rounding.
+							data, err := renderedyaml.Marshal(spec[tc.field])
+							require.NoError(t, err)
+							var limit intstr.IntOrString
+							require.NoError(t, renderedyaml.Unmarshal(data, &limit))
+							allowed, err := intstr.GetScaledValueFromIntOrPercent(&limit, 10, true)
+							require.NoError(t, err)
+							require.Equal(t, 4, allowed)
+						}
 						checked = true
 					}
 				}
