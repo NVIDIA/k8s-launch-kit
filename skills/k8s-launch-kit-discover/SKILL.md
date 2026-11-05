@@ -20,6 +20,10 @@ policy, including an explicit `false`. Do not combine `caFile` with `true`.
 Retain stderr warnings and `inventory.requestedScope[].tlsInsecureSkipVerify` in
 the report. A policy change requires a fresh seed/output; it does not weaken
 management kubeconfig or network-probe TLS verification.
+Redfish login prefers the public root's `Links.Sessions`, including standard
+HPE trailing-slash links. A protected `SessionService` GET is not required when
+that login link is present; credentials are sent only to the same-origin standard
+session collection, and cleanup uses its exact returned session child.
 
 This workflow uses the default `host` target; `--target host` is equivalent.
 The CLI snapshots discovery arguments and runs the concrete Host discovery

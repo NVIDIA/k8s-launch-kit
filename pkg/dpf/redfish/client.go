@@ -183,19 +183,27 @@ func (c *Client) Open(ctx context.Context) (Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	service := Link(root, "SessionService")
-	if service == "" {
-		return nil, &Error{Code: "SESSION_AUTH_UNSUPPORTED"}
+	// The public root advertises login even when SessionService itself requires
+	// authentication. Never require an authenticated GET before creating a session.
+	collection := Link(Object(root, "Links"), "Sessions")
+	if collection == "" {
+		service := Link(root, "SessionService")
+		if service == "" {
+			return nil, &Error{Code: "SESSION_AUTH_UNSUPPORTED"}
+		}
+		service, err = c.guard(service)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSuffix(service, "/") != "/redfish/v1/SessionService" {
+			return nil, &Error{Code: "SESSION_URI_UNSUPPORTED"}
+		}
+		sd, err := c.Get(ctx, service)
+		if err != nil {
+			return nil, err
+		}
+		collection = Link(sd, "Sessions")
 	}
-	service, err = c.guard(service)
-	if err != nil {
-		return nil, err
-	}
-	sd, err := c.Get(ctx, service)
-	if err != nil {
-		return nil, err
-	}
-	collection := Link(sd, "Sessions")
 	if collection == "" {
 		return nil, &Error{Code: "SESSION_AUTH_UNSUPPORTED"}
 	}
@@ -203,7 +211,8 @@ func (c *Client) Open(ctx context.Context) (Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	if service != "/redfish/v1/SessionService" || collection != "/redfish/v1/SessionService/Sessions" {
+	collectionBase := strings.TrimSuffix(collection, "/")
+	if collectionBase != "/redfish/v1/SessionService/Sessions" {
 		return nil, &Error{Code: "SESSION_URI_UNSUPPORTED"}
 	}
 	username, password := c.access.Credentials()
@@ -223,7 +232,8 @@ func (c *Client) Open(ctx context.Context) (Document, error) {
 	}
 	token := header.Get("X-Auth-Token")
 	session, err := c.guard(header.Get("Location"))
-	if err != nil || token == "" || !strings.HasPrefix(session, collection+"/") || strings.Contains(strings.TrimPrefix(session, collection+"/"), "/") || strings.Contains(session, "?") {
+	sessionID := strings.TrimPrefix(strings.TrimSuffix(session, "/"), collectionBase+"/")
+	if err != nil || token == "" || !strings.HasPrefix(session, collectionBase+"/") || sessionID == "" || strings.Contains(sessionID, "/") || strings.Contains(session, "?") {
 		return nil, &Error{Code: "INVALID_SESSION_RECEIPT"}
 	}
 	c.token = token

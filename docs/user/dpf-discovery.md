@@ -76,9 +76,13 @@ credentials. File and embedded representations of the same credential/trust fiel
 exclusive; choose token or tokenFile. Exec/auth-provider plugins, basic and anonymous access are rejected
 in this version. Ambient kubeconfig files are never merged. BMC authentication
 uses one session login using the supplied username/password; Basic fallback is
-not included in this preview. Session writes are restricted to the standard
+not included in this preview. Login uses the public service root's `Links.Sessions`
+when advertised, avoiding an unauthenticated read of a protected `SessionService`.
+If absent, the client reads the advertised standard `SessionService` to locate
+its sessions collection. Session writes are restricted to the standard
 `/redfish/v1/SessionService/Sessions` collection and its exact returned session
-child; alternate OEM session paths are unsupported. No password guessing or credential repair occurs.
+child; same-origin absolute links and optional trailing slashes are supported.
+Alternate OEM session paths are unsupported. No password guessing or credential repair occurs.
 
 Passwords resolve only from `{env: NAME}` or `{file: path}`. Environment values
 are verbatim. UTF-8 files lose at most one final LF/CRLF. File and CA references

@@ -20,6 +20,82 @@ import (
 func TestRedfish(t *testing.T) { RegisterFailHandler(Fail); RunSpecs(t, "DPF Redfish") }
 
 var _ = Describe("GET/session-only transport", func() {
+	It("logs in through public root session links without reading the protected service", func() {
+		for _, scenario := range []struct{ slash, absolute bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+			collection := "/redfish/v1/SessionService/Sessions"
+			receipt := collection + "/owned"
+			if scenario.slash {
+				collection += "/"
+				receipt += "/"
+			}
+			var methods []string
+			s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				methods = append(methods, r.Method+" "+r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				prefix := ""
+				if scenario.absolute {
+					prefix = "https://" + r.Host
+				}
+				switch r.URL.Path {
+				case "/redfish/v1/":
+					json.NewEncoder(w).Encode(Document{"SessionService": Document{"@odata.id": "/redfish/v1/SessionService"}, "Links": Document{"Sessions": Document{"@odata.id": prefix + collection}}})
+				case collection:
+					Expect(r.Method).To(Equal("POST"))
+					w.Header().Set("Location", prefix+receipt)
+					w.Header().Set("X-Auth-Token", "private-token")
+					w.WriteHeader(http.StatusCreated)
+					w.Write([]byte(`{}`))
+				case receipt:
+					Expect(r.Method).To(Equal("DELETE"))
+					Expect(r.Header.Get("X-Auth-Token")).To(Equal("private-token"))
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					w.WriteHeader(http.StatusUnauthorized)
+				}
+			}))
+			c := &Client{origin: s.URL, http: s.Client()}
+			_, err := c.Open(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(c.Close(context.Background())).To(Succeed())
+			Expect(methods).To(Equal([]string{"GET /redfish/v1/", "POST " + collection, "DELETE " + receipt}))
+			s.Close()
+		}
+	})
+	It("rejects foreign, OEM and query-bearing session links without attempting login", func() {
+		for _, link := range []string{"https://foreign.invalid/redfish/v1/SessionService/Sessions", "/redfish/v1/Oem/Sessions", "/redfish/v1/SessionService/Sessions?$skip=1"} {
+			var writes atomic.Int32
+			s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					writes.Add(1)
+				}
+				json.NewEncoder(w).Encode(Document{"Links": Document{"Sessions": Document{"@odata.id": link}}})
+			}))
+			c := &Client{origin: s.URL, http: s.Client()}
+			_, err := c.Open(context.Background())
+			Expect(err).To(HaveOccurred())
+			Expect(writes.Load()).To(BeZero())
+			Expect(c.Close(context.Background())).To(Succeed())
+			s.Close()
+		}
+	})
+	It("does not accept the session collection itself as a cleanup receipt", func() {
+		s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				w.Header().Set("Location", "/redfish/v1/SessionService/Sessions/")
+				w.Header().Set("X-Auth-Token", "private-token")
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{}`))
+				return
+			}
+			Expect(r.Method).NotTo(Equal(http.MethodDelete))
+			json.NewEncoder(w).Encode(Document{"Links": Document{"Sessions": Document{"@odata.id": "/redfish/v1/SessionService/Sessions/"}}})
+		}))
+		defer s.Close()
+		c := &Client{origin: s.URL, http: s.Client()}
+		_, err := c.Open(context.Background())
+		Expect(Code(err)).To(Equal("INVALID_SESSION_RECEIPT"))
+		Expect(Code(c.Close(context.Background()))).To(Equal("SESSION_OUTCOME_UNKNOWN"))
+	})
 	It("requires explicit insecure opt-in for an untrusted server and still rejects foreign origins", func() {
 		var requests atomic.Int32
 		s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
