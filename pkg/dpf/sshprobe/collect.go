@@ -125,7 +125,7 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		}
 		pciEvidence := add("host-pci", "PCIAddress")
 		for _, card := range cards {
-			a := inventory.Adapter{Key: inventory.Digest("dpf-adapter-pci-v1", []string{device.ID, card.address[:len(card.address)-2]}), PCIAddress: card.address, VendorID: card.vendor, DeviceID: card.device, Model: card.model, IdentityState: "partial", ReasonCode: "CARD_SERIAL_MISSING", Selection: "not-selected", EvidenceRefs: []string{pciEvidence}}
+			a := inventory.Adapter{Key: inventory.Digest("dpf-adapter-pci-v1", []string{device.ID, card.address[:len(card.address)-2]}), PCIAddress: card.address, VendorID: card.vendor, DeviceID: card.device, Model: card.model, IdentityState: "unknown", ReasonCode: "CARD_SERIAL_MISSING", Selection: "not-selected", EvidenceRefs: []string{pciEvidence}}
 			text, e := read("host-vpd:"+card.address, privilege+"lspci -D -vv -s "+card.address)
 			if e == nil {
 				serial, slot, parseErr := vpd(text)
@@ -135,7 +135,7 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 				a.SerialNumber, a.SerialNumberRaw, a.Slot = serial, serial, slot
 				a.EvidenceRefs = append(a.EvidenceRefs, add("host-vpd:"+card.address, "SerialNumber"))
 				if serial != "" {
-					a.IdentityState = "observed"
+					a.IdentityState = "known"
 					a.ReasonCode = ""
 				}
 			} else {
@@ -221,7 +221,7 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 	device.ObservationState = "observed"
 	device.InventoryCompleteness = "observed"
 	for _, a := range device.Adapters {
-		if a.IdentityState != "observed" {
+		if a.IdentityState != "known" {
 			device.InventoryCompleteness = "partial"
 		}
 	}

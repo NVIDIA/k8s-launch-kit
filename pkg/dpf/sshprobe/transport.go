@@ -77,6 +77,58 @@ func hostKeyCallback(data []byte) (ssh.HostKeyCallback, error) {
 	return callback, nil
 }
 
+// preferredHostKeyAlgorithms avoids negotiating an unpinned server key when a
+// different advertised key is already trusted. Host matching and revocation
+// decisions belong to the upstream callback, including hashed host entries.
+// Certificates remain available and are verified by that same callback: the
+// signing CA's algorithm does not determine the host certificate's key type.
+func preferredHostKeyAlgorithms(ctx context.Context, data []byte, verify ssh.HostKeyCallback, address string, remote net.Addr) ([]string, error) {
+	preferred := map[string]bool{}
+	seen := map[string]bool{}
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if ctx.Err() != nil {
+			return nil, &Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: "known-host-algorithms"}
+		}
+		fields := bytes.Fields(line)
+		if len(fields) < 3 || fields[0][0] == '#' || fields[0][0] == '@' {
+			continue
+		}
+		// New already validated the file. Parse just its key fields so arbitrary
+		// multi-word comments do not change ParseKnownHosts field-count handling.
+		_, _, key, _, _, err := ssh.ParseKnownHosts(bytes.Join(fields[:3], []byte{' '}))
+		if err != nil {
+			return nil, &Error{Code: "SSH_TRUST_INVALID", Stage: "known-host-algorithms"}
+		}
+		blob := string(key.Marshal())
+		if seen[blob] {
+			continue
+		}
+		seen[blob] = true
+		if verify(address, remote, key) != nil {
+			continue
+		}
+		switch key.Type() {
+		case ssh.KeyAlgoRSA:
+			preferred[ssh.KeyAlgoRSASHA256], preferred[ssh.KeyAlgoRSASHA512] = true, true
+		default:
+			preferred[key.Type()] = true
+		}
+	}
+	supported := ssh.SupportedAlgorithms().HostKeys
+	result := make([]string, 0, len(supported))
+	for _, a := range supported {
+		if preferred[a] {
+			result = append(result, a)
+		}
+	}
+	for _, a := range supported {
+		if !preferred[a] {
+			result = append(result, a)
+		}
+	}
+	return result, nil
+}
+
 func connect(ctx context.Context, endpoint string, auth credentials, timeout time.Duration) (*client, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "ssh" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Hostname() == "" || u.Port() == "" || timeout <= 0 {
@@ -117,8 +169,12 @@ func connect(ctx context.Context, endpoint string, auth credentials, timeout tim
 	if err = conn.SetDeadline(deadline); err != nil {
 		return nil, &Error{Code: "SSH_CONNECT_FAILED", Stage: "deadline"}
 	}
+	algorithms, err := preferredHostKeyAlgorithms(dialCtx, auth.knownHosts, verify, u.Host, conn.RemoteAddr())
+	if err != nil {
+		return nil, err
+	}
 	trustFailed := false
-	cfg := &ssh.ClientConfig{User: auth.user, Auth: []ssh.AuthMethod{method}, HostKeyCallback: func(host string, remote net.Addr, key ssh.PublicKey) error {
+	cfg := &ssh.ClientConfig{User: auth.user, Auth: []ssh.AuthMethod{method}, HostKeyAlgorithms: algorithms, HostKeyCallback: func(host string, remote net.Addr, key ssh.PublicKey) error {
 		err := verify(host, remote, key)
 		trustFailed = err != nil
 		return err

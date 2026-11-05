@@ -3,9 +3,13 @@
 package sshprobe
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -23,20 +27,21 @@ type testServer struct {
 	listener    net.Listener
 	key         ssh.Signer
 	private     ed25519.PrivateKey
+	extraKeys   []ssh.Signer
 	mu          sync.Mutex
 	connections []net.Conn
 	wg          sync.WaitGroup
 	closing     bool
 }
 
-func startServer() *testServer {
+func startServer(extraKeys ...ssh.Signer) *testServer {
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	Expect(err).NotTo(HaveOccurred())
 	key, err := ssh.NewSignerFromKey(private)
 	Expect(err).NotTo(HaveOccurred())
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	Expect(err).NotTo(HaveOccurred())
-	s := &testServer{listener: listener, key: key, private: private, connections: []net.Conn{}}
+	s := &testServer{listener: listener, key: key, private: private, extraKeys: extraKeys, connections: []net.Conn{}}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -73,6 +78,9 @@ func (s *testServer) serve(conn net.Conn) {
 		return nil, fmt.Errorf("denied")
 	}}
 	cfg.AddHostKey(s.key)
+	for _, key := range s.extraKeys {
+		cfg.AddHostKey(key)
+	}
 	server, chans, requests, err := ssh.NewServerConn(conn, cfg)
 	if err != nil {
 		return
@@ -159,6 +167,57 @@ var _ = Describe("bounded SSH transport", func() {
 		c, err := connect(context.Background(), "ssh://"+server.listener.Addr().String(), auth, time.Second)
 		Expect(err).NotTo(HaveOccurred())
 		c.Close()
+	})
+	It("selects the pinned Ed25519 key on a server also offering ECDSA and RSA", func() {
+		ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).NotTo(HaveOccurred())
+		ecdsaSigner, err := ssh.NewSignerFromKey(ecdsaKey)
+		Expect(err).NotTo(HaveOccurred())
+		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		Expect(err).NotTo(HaveOccurred())
+		rsaSigner, err := ssh.NewSignerFromKey(rsaKey)
+		Expect(err).NotTo(HaveOccurred())
+		server.close()
+		server = startServer(ecdsaSigner, rsaSigner)
+		for _, hashed := range []bool{false, true} {
+			auth := server.auth()
+			if hashed {
+				auth.knownHosts = []byte(knownhosts.HashHostname(knownhosts.Normalize(server.listener.Addr().String())) + " " + strings.TrimSpace(string(ssh.MarshalAuthorizedKey(server.key.PublicKey()))) + "\n")
+			}
+			auth.knownHosts = append([]byte(knownhosts.Line([]string{"other.example"}, ecdsaSigner.PublicKey())+"\n"), bytes.TrimSpace(auth.knownHosts)...)
+			auth.knownHosts = append(auth.knownHosts, []byte(" pinned host key with a multi word comment\n")...)
+			c, err := connect(context.Background(), "ssh://"+server.listener.Addr().String(), auth, time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			c.Close()
+		}
+		auth := server.auth()
+		auth.knownHosts = []byte(knownhosts.Line([]string{server.listener.Addr().String()}, rsaSigner.PublicKey()) + "\n")
+		c, err := connect(context.Background(), "ssh://"+server.listener.Addr().String(), auth, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		c.Close()
+	})
+	It("preserves host certificate authority verification", func() {
+		_, caPrivate, err := ed25519.GenerateKey(rand.Reader)
+		Expect(err).NotTo(HaveOccurred())
+		ca, err := ssh.NewSignerFromKey(caPrivate)
+		Expect(err).NotTo(HaveOccurred())
+		certificate := &ssh.Certificate{Key: server.key.PublicKey(), CertType: ssh.HostCert, ValidPrincipals: []string{"127.0.0.1"}, ValidAfter: uint64(time.Now().Add(-time.Minute).Unix()), ValidBefore: uint64(time.Now().Add(time.Minute).Unix())}
+		Expect(certificate.SignCert(rand.Reader, ca)).To(Succeed())
+		signer, err := ssh.NewCertSigner(certificate, server.key)
+		Expect(err).NotTo(HaveOccurred())
+		server.close()
+		server = startServer(signer)
+		auth := server.auth()
+		auth.knownHosts = []byte("@cert-authority " + knownhosts.Line([]string{server.listener.Addr().String()}, ca.PublicKey()) + "\n")
+		c, err := connect(context.Background(), "ssh://"+server.listener.Addr().String(), auth, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		c.Close()
+	})
+	It("does not promote revoked pinned keys", func() {
+		auth := server.auth()
+		auth.knownHosts = append(auth.knownHosts, []byte("@revoked "+knownhosts.Line([]string{server.listener.Addr().String()}, server.key.PublicKey())+"\n")...)
+		_, err := connect(context.Background(), "ssh://"+server.listener.Addr().String(), auth, time.Second)
+		Expect(Code(err)).To(Equal("SSH_HOST_KEY_REJECTED"))
 	})
 	It("uses only the explicitly provided private key", func() {
 		block, err := ssh.MarshalPrivateKey(server.private, "test")
