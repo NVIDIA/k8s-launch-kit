@@ -20,3 +20,19 @@ See [CONTRIBUTING](../CONTRIBUTING.md) for development and review requirements.
 Operator procedures and reference material belong under `docs/`; design plans,
 implementation details and development validation belong here. Lab-specific
 credentials, cluster inventories and test-run artifacts stay outside the repository.
+
+## Build From Source
+
+```bash
+git clone https://github.com/NVIDIA/k8s-launch-kit.git
+cd k8s-launch-kit
+make build
+```
+
+The binary is written to `build/l8k`.
+
+For a local install:
+
+```bash
+make install
+```
