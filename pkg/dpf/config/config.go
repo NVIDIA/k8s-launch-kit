@@ -107,10 +107,32 @@ type Access struct {
 }
 
 func (a Access) Credentials() (string, string) { return a.username, a.password }
-func (a Access) TLSConfig() *tls.Config        { return a.tls.Clone() }
-func (a Access) PublicCA() []byte              { return bytes.Clone(a.ca) }
-func (a Access) String() string                { return "<private BMC access>" }
-func (a Access) InsecureSkipVerify() bool      { return a.tls != nil && a.tls.InsecureSkipVerify }
+func (a Access) TLSConfig() *tls.Config {
+	if a.tls == nil {
+		return nil
+	}
+	config := a.tls.Clone()
+	if config.RootCAs != nil {
+		config.RootCAs = config.RootCAs.Clone()
+	}
+	return config
+}
+func (a Access) PublicCA() []byte         { return bytes.Clone(a.ca) }
+func (a Access) String() string           { return "<private BMC access>" }
+func (a Access) InsecureSkipVerify() bool { return a.tls != nil && a.tls.InsecureSkipVerify }
+
+// TrustDigest identifies the resolved verification policy, without file paths or
+// CA bytes. Custom roots augment system trust; the external system trust store
+// itself is not fingerprinted. The CA snapshot cannot change after resolution.
+func (a Access) TrustDigest() string {
+	if a.InsecureSkipVerify() {
+		return "verification-disabled"
+	}
+	if len(a.ca) == 0 {
+		return "system-roots"
+	}
+	return inventory.Digest("dpf-redfish-trust-v1", []string{"system-roots+custom-ca", string(a.ca)})
+}
 
 type Target struct {
 	SSH       *SSHAccess

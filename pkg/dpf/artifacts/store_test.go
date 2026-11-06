@@ -5,6 +5,7 @@ package artifacts
 import (
 	"context"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -104,6 +105,26 @@ var _ = Describe("safe publication", func() {
 		unchanged, e := os.ReadFile(output)
 		Expect(e).NotTo(HaveOccurred())
 		Expect(unchanged).To(Equal(saved))
+	})
+	It("does not overwrite a destination collected with changed or unrecorded Redfish trust", func() {
+		for index, priorTrust := range []string{"", "system-roots", "custom-ca-before", "verification-disabled"} {
+			output := filepath.Join(dir, []string{"legacy.yaml", "system.yaml", "custom.yaml", "insecure.yaml"}[index])
+			prior := &inventory.Inventory{FormatVersion: "v1alpha1", Collection: inventory.Collection{Mode: "inventory"}, RequestedScope: []inventory.ScopeEndpoint{{Role: "hosts", Endpoint: "https://192.0.2.2", TLSTrustDigest: priorTrust}}}
+			discovery.Canonicalize(prior)
+			saved, err := config.Saved(input, prior, output)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.WriteFile(output, saved, 0600)).To(Succeed())
+			store, err := New(input, output, true)
+			Expect(err).NotTo(HaveOccurred())
+			r := report(true)
+			r.Inventory.Collection.Mode = "inventory"
+			r.Inventory.RequestedScope = []inventory.ScopeEndpoint{{Role: "hosts", Endpoint: "https://192.0.2.2", TLSTrustDigest: "custom-ca-after"}}
+			discovery.Canonicalize(r.Inventory)
+			Expect(store.Publish(context.Background(), r)).To(MatchError(ContainSubstring("conflicts with resolved scope")))
+			unchanged, err := os.ReadFile(output)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(unchanged).To(Equal(saved))
+		}
 	})
 	It("preserves a legacy destination even when a fresh source would otherwise permit publication", func() {
 		output := filepath.Join(dir, "legacy.yaml")

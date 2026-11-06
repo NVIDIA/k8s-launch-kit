@@ -38,7 +38,7 @@ func softwareEvidence(uri, property string) string { return uri + "#" + property
 var _ = Describe("optional Redfish software observations", func() {
 	It("classifies component IDs and keeps raw versions and resource provenance", func() {
 		for id, expected := range map[string]string{"BMC_Firmware": "bmc", "DPU_OS": "dpu-os", "DPU_BSP": "dpu-bsp", "CEC_Firmware": "cec", "DPU_ATF": "atf", "DPU_UEFI": "uefi", "NIC_Firmware": "nic", "BMC_Golden_Image": "golden", "unrecognized": "other"} {
-			f := firmwareRecord(Resource{URI: "/redfish/v1/UpdateService/FirmwareInventory/" + id, Document: Document{"Id": id, "Name": "Inventory entry", "Version": " v1.2 "}}, "", "", softwareEvidence)
+			f := firmwareRecord(Resource{URI: "/redfish/v1/UpdateService/FirmwareInventory/" + id, Document: Document{"Id": id, "Name": "Inventory entry", "Version": " v1.2 "}}, "", "", "https://bmc.invalid", softwareEvidence)
 			Expect(f.Component).To(Equal(expected), id)
 			Expect(f.RawID).To(Equal(id))
 			Expect(f.RawVersion).To(Equal(" v1.2 "))
@@ -51,17 +51,79 @@ var _ = Describe("optional Redfish software observations", func() {
 	It("requires explicit target links for activation and does not infer it from names or enabled status", func() {
 		doc := Document{"Id": "DPU_OS", "Name": "Active image", "Version": "1", "Status": Document{"State": "Enabled"}, "Updateable": true}
 		record := Resource{URI: "/redfish/v1/UpdateService/FirmwareInventory/os", Document: doc}
-		Expect(firmwareRecord(record, "/redfish/v1/Systems/selected", "", softwareEvidence).Activation).To(Equal("unknown"))
+		Expect(firmwareRecord(record, "/redfish/v1/Systems/selected", "", "https://bmc.invalid", softwareEvidence).Activation).To(Equal("unknown"))
 		doc["Links"] = Document{"ActiveTargets": []any{Document{"@odata.id": "/redfish/v1/Systems/other"}}}
-		Expect(firmwareRecord(record, "/redfish/v1/Systems/selected", "", softwareEvidence).Activation).To(Equal("unknown"))
+		Expect(firmwareRecord(record, "/redfish/v1/Systems/selected", "", "https://bmc.invalid", softwareEvidence).Activation).To(Equal("unknown"))
 		doc["Links"] = Document{"StagedTargets": []any{Document{"@odata.id": "/redfish/v1/Systems/selected"}}}
-		Expect(firmwareRecord(record, "/redfish/v1/Systems/selected", "", softwareEvidence).Activation).To(Equal("staged"))
+		Expect(firmwareRecord(record, "/redfish/v1/Systems/selected", "", "https://bmc.invalid", softwareEvidence).Activation).To(Equal("staged"))
 		doc["Links"] = Document{"ActiveTargets": []any{Document{"@odata.id": "/redfish/v1/Systems/selected"}}}
-		Expect(firmwareRecord(record, "/redfish/v1/Systems/selected", "", softwareEvidence).Activation).To(Equal("running"))
+		Expect(firmwareRecord(record, "/redfish/v1/Systems/selected", "", "https://bmc.invalid", softwareEvidence).Activation).To(Equal("running"))
 		Object(doc, "Links")["StagedTargets"] = []any{Document{"@odata.id": "/redfish/v1/Systems/selected"}}
-		f := firmwareRecord(record, "/redfish/v1/Systems/selected", "", softwareEvidence)
+		f := firmwareRecord(record, "/redfish/v1/Systems/selected", "", "https://bmc.invalid", softwareEvidence)
 		Expect(f.Activation).To(Equal("unknown"))
 		Expect(f.ActivationReasonCode).To(Equal("ACTIVATION_CONFLICT"))
+	})
+	It("normalizes validated same-origin activation targets and keeps staged versions separate", func() {
+		reader, root, system := softwareFixture()
+		device := inventory.Device{BMCEndpoint: "https://bmc.invalid"}
+		reader.collections["/redfish/v1/UpdateService/FirmwareInventory"] = []Resource{
+			{URI: "/redfish/v1/UpdateService/FirmwareInventory/nic-current", Document: Document{"Id": "NIC_Firmware", "Version": "1.0", "Links": Document{"ActiveTargets": []any{Document{"@odata.id": "https://bmc.invalid/redfish/v1/Systems/DPU/"}}}}},
+			{URI: "/redfish/v1/UpdateService/FirmwareInventory/nic-next", Document: Document{"Id": "NIC_Firmware", "Version": "2.0", "Links": Document{"StagedTargets": []any{Document{"@odata.id": "https://bmc.invalid/redfish/v1/Systems/DPU"}}}}},
+		}
+		collectSoftware(context.Background(), reader, root, system, &device, softwareEvidence)
+		count := 0
+		for _, f := range device.Firmware {
+			if f.Component != "nic" {
+				continue
+			}
+			count++
+			Expect(f.State).To(Equal("known"))
+			Expect(f.ReasonCode).To(BeEmpty())
+			Expect(f.ActivationReasonCode).To(BeEmpty())
+			if f.RawVersion == "1.0" {
+				Expect(f.Activation).To(Equal("running"))
+			} else {
+				Expect(f.Activation).To(Equal("staged"))
+			}
+		}
+		Expect(count).To(Equal(2))
+		Expect(device.Observations).NotTo(HaveKey("firmware.nic"))
+		for _, ref := range []string{"/redfish/v1/Systems/DPU/", "https://bmc.invalid:443/redfish/v1/Systems/DPU", "https://BMC.INVALID/redfish/v1/Systems/DPU/"} {
+			f := firmwareRecord(Resource{Document: Document{"Id": "NIC_Firmware", "Version": "1", "Links": Document{"ActiveTargets": []any{Document{"@odata.id": ref}}}}}, "/redfish/v1/Systems/DPU/", "", "https://bmc.invalid", softwareEvidence)
+			Expect(f.Activation).To(Equal("running"), ref)
+		}
+		f := firmwareRecord(Resource{Document: Document{"Id": "BMC", "Version": "1", "Links": Document{"ActiveTargets": []any{Document{"@odata.id": "https://bmc.invalid/redfish/v1/Managers/BMC/"}}}}}, "/redfish/v1/Systems/DPU", "/redfish/v1/Managers/BMC/", "https://bmc.invalid", softwareEvidence)
+		Expect(f.Activation).To(Equal("running"))
+	})
+	It("never promotes foreign, malformed or query-bearing activation links", func() {
+		for _, scenario := range []struct {
+			value any
+			code  string
+		}{
+			{[]any{Document{"@odata.id": "https://foreign.invalid/redfish/v1/Systems/DPU"}}, "CROSS_ORIGIN_LINK"},
+			{[]any{Document{"@odata.id": "//bmc.invalid/redfish/v1/Systems/DPU"}}, "CROSS_ORIGIN_LINK"},
+			{[]any{Document{"@odata.id": "https://reader:secret@bmc.invalid/redfish/v1/Systems/DPU"}}, "UNSAFE_LINK"},
+			{[]any{Document{"@odata.id": "/redfish/v1/Systems/DPU/../DPU"}}, "UNSAFE_LINK"},
+			{[]any{Document{"@odata.id": "/redfish/v1/Systems/%44PU"}}, "UNSAFE_LINK"},
+			{[]any{Document{"@odata.id": "/redfish/v1/Systems/DPU#fragment"}}, "UNSAFE_LINK"},
+			{[]any{Document{"@odata.id": "/redfish/v1/Systems/DPU?$skip=0"}}, "UNSAFE_QUERY"},
+			{[]any{Document{"@odata.id": "/redfish/v1/Systems/DPU?"}}, "UNSAFE_QUERY"},
+			{[]any{Document{"@odata.id": 123}}, "UNSAFE_LINK"},
+			{Document{"@odata.id": "/redfish/v1/Systems/DPU"}, "ACTIVATION_LINK_INVALID"},
+		} {
+			// A valid active member must not hide a malformed or foreign staged
+			// member; otherwise incomplete activation evidence could pass a BOM.
+			doc := Document{"Id": "NIC_Firmware", "Version": "1", "Links": Document{"ActiveTargets": []any{Document{"@odata.id": "/redfish/v1/Systems/DPU"}}, "StagedTargets": scenario.value}}
+			f := firmwareRecord(Resource{Document: doc}, "/redfish/v1/Systems/DPU", "", "https://bmc.invalid", softwareEvidence)
+			Expect(f.Activation).To(Equal("unknown"))
+			Expect(f.ActivationReasonCode).To(Equal(scenario.code))
+			Expect(f.ActivationMessage).NotTo(BeEmpty())
+			Expect(f.ActivationMessage).NotTo(ContainSubstring("secret"))
+		}
+		doc := Document{"Id": "NIC_Firmware", "Version": "1", "Links": Document{"ActiveTargets": []any{Document{"@odata.id": "/redfish/v1/Systems/DPU"}, Document{"@odata.id": "https://foreign.invalid/redfish/v1/Systems/DPU"}}}}
+		f := firmwareRecord(Resource{Document: doc}, "/redfish/v1/Systems/DPU", "", "https://bmc.invalid", softwareEvidence)
+		Expect(f.Activation).To(Equal("unknown"))
+		Expect(f.ActivationReasonCode).To(Equal("CROSS_ORIGIN_LINK"))
 	})
 	It("retains a denied source reason and does not equate it with an absent property", func() {
 		reader, root, system := softwareFixture()
@@ -130,7 +192,7 @@ var _ = Describe("optional Redfish software observations", func() {
 		d := inventory.Device{}
 		collectSoftware(context.Background(), reader, Document{}, system, &d, softwareEvidence)
 		Expect(d.Observations["firmware-inventory"].ReasonCode).To(Equal("LINK_NOT_EXPOSED"))
-		f := firmwareRecord(Resource{URI: "/redfish/v1/UpdateService/FirmwareInventory/os", Document: Document{"Id": "DPU_OS"}}, "", "", softwareEvidence)
+		f := firmwareRecord(Resource{URI: "/redfish/v1/UpdateService/FirmwareInventory/os", Document: Document{"Id": "DPU_OS"}}, "", "", "https://bmc.invalid", softwareEvidence)
 		Expect(f.ReasonCode).To(Equal("VERSION_NOT_EXPOSED"))
 		reader, root, system := softwareFixture()
 		reader.collections["/redfish/v1/Managers"][0].Document["DateTime"] = "invalid"

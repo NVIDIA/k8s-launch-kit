@@ -102,6 +102,26 @@ var _ = Describe("refresh regressions", func() {
 })
 
 var _ = Describe("scope evidence on refresh", func() {
+	It("rejects changed or legacy Redfish trust policies without calling unread observations replacements", func() {
+		for _, prior := range []string{"", "system-roots", "custom-ca-before", "verification-disabled"} {
+			old := estate()
+			old.RequestedScope = []inventory.ScopeEndpoint{{Role: "dpus", Endpoint: "https://192.0.2.1", TLSTrustDigest: prior}}
+			Canonicalize(&old)
+			current := estate()
+			current.RequestedScope = []inventory.ScopeEndpoint{{Role: "dpus", Endpoint: "https://192.0.2.1", TLSTrustDigest: "custom-ca-after"}}
+			Canonicalize(&current)
+			Expect(scopeConflict(&old, &current)).To(BeTrue())
+			Expect(inventory.IdentityConflict(&old, &current)).To(BeFalse())
+			current.ScopeDigest = "" // Required management observation failed, so no complete scope exists.
+			Expect(scopeConflict(&old, &current)).To(BeFalse())
+		}
+		old := estate()
+		old.RequestedScope = []inventory.ScopeEndpoint{{Role: "hosts", Endpoint: "https://192.0.2.2", TLSTrustDigest: "system-roots"}}
+		Canonicalize(&old)
+		current := old
+		Canonicalize(&current)
+		Expect(scopeConflict(&old, &current)).To(BeFalse())
+	})
 	It("records the resolved TLS policy even when collection fails before remote access", func() {
 		Expect(os.Setenv("DPF_SCOPE_TEST_PASSWORD", "private-password")).To(Succeed())
 		DeferCleanup(os.Unsetenv, "DPF_SCOPE_TEST_PASSWORD")

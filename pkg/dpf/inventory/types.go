@@ -22,6 +22,7 @@ type Collection struct {
 	Collector  string    `json:"collector" yaml:"collector"`
 }
 type ScopeEndpoint struct {
+	TLSTrustDigest        string `json:"tlsTrustDigest,omitempty" yaml:"tlsTrustDigest,omitempty"`
 	SSHTrustDigest        string `json:"sshTrustDigest,omitempty" yaml:"sshTrustDigest,omitempty"`
 	SSHSudo               bool   `json:"sshSudo,omitempty" yaml:"sshSudo,omitempty"`
 	Role                  string `json:"role" yaml:"role"`

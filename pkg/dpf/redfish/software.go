@@ -63,7 +63,7 @@ func collectSoftware(ctx context.Context, reader Reader, root Document, system R
 	records, state := softwareInventory(ctx, reader, root)
 	device.Observations["firmware-inventory"] = state
 	for _, resource := range records {
-		firmware := firmwareRecord(resource, system.URI, manager.URI, add)
+		firmware := firmwareRecord(resource, system.URI, manager.URI, device.BMCEndpoint, add)
 		device.Firmware = append(device.Firmware, firmware)
 	}
 	for _, component := range []string{"bmc", "cec", "atf", "uefi", "nic", "dpu-os", "dpu-bsp", "golden"} {
@@ -216,7 +216,7 @@ func componentName(id, name string) string {
 	return "other"
 }
 
-func firmwareRecord(resource Resource, system, manager string, add func(string, string) string) inventory.Firmware {
+func firmwareRecord(resource Resource, system, manager, origin string, add func(string, string) string) inventory.Firmware {
 	f := inventory.Firmware{ResourceURI: resource.URI, RawID: Text(resource.Document, "Id"), RawName: Text(resource.Document, "Name"), RawVersion: Text(resource.Document, "Version"), State: "known", Activation: "unknown", ActivationReasonCode: "ACTIVATION_NOT_EXPOSED", ActivationMessage: "No explicit active or staged target link identifies the selected device.", EvidenceRefs: []string{add(resource.URI, "Id,Name,Version")}}
 	f.Component = componentName(f.RawID, f.RawName)
 	if strings.TrimSpace(f.RawVersion) == "" {
@@ -232,20 +232,57 @@ func firmwareRecord(resource Resource, system, manager string, add func(string, 
 	// DMTF SoftwareInventory v1.12 Links.ActiveTargets/StagedTargets describe
 	// actual activation, unlike Updateable, Status.Enabled, or an image's name.
 	links := Object(resource.Document, "Links")
-	matches := func(key string) bool {
-		targets, ok := links[key].([]any)
-		if !ok {
-			return false
+	// Reuse the transport's origin/path rules without performing a request.
+	// Target identity links cannot carry even the pagination queries accepted
+	// by the general reader. Normalize trailing slash only after validation.
+	validator := Client{origin: origin}
+	normalize := func(ref string) (string, error) {
+		uri, err := validator.guard(ref)
+		if err != nil {
+			return "", err
 		}
-		for _, target := range targets {
-			uri := Link(Document{"target": target}, "target")
-			if uri != "" && (uri == system || uri == manager) {
-				return true
-			}
+		if strings.Contains(uri, "?") {
+			return "", &Error{Code: "UNSAFE_QUERY"}
 		}
-		return false
+		return strings.TrimSuffix(uri, "/"), nil
 	}
-	active, staged := matches("ActiveTargets"), matches("StagedTargets")
+	selected := map[string]bool{}
+	for _, ref := range []string{system, manager} {
+		if ref == "" {
+			continue
+		}
+		uri, err := normalize(ref)
+		if err != nil {
+			f.ActivationReasonCode, f.ActivationMessage = Code(err), "The selected resource link is invalid; firmware activation cannot be established."
+			return f
+		}
+		selected[uri] = true
+	}
+	matches := func(key string) (bool, error) {
+		value, exists := links[key]
+		if !exists || value == nil {
+			return false, nil
+		}
+		targets, ok := value.([]any)
+		if !ok {
+			return false, &Error{Code: "ACTIVATION_LINK_INVALID"}
+		}
+		found := false
+		for _, target := range targets {
+			uri, err := normalize(Link(Document{"target": target}, "target"))
+			if err != nil {
+				return false, err
+			}
+			found = found || selected[uri]
+		}
+		return found, nil
+	}
+	active, activeErr := matches("ActiveTargets")
+	staged, stagedErr := matches("StagedTargets")
+	if err := errors.Join(activeErr, stagedErr); err != nil {
+		f.ActivationReasonCode, f.ActivationMessage = Code(err), "ActiveTargets or StagedTargets contains an invalid or unsafe resource link; activation remains unknown."
+		return f
+	}
 	if active != staged {
 		f.Activation = "running"
 		if staged {
