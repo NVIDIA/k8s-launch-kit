@@ -37,6 +37,8 @@ func commandFailure(err error, stage, command, output string) *Error {
 		code = "TOOL_NOT_AVAILABLE"
 	case strings.Contains(lower, "permission denied"), strings.Contains(lower, "access denied"), strings.Contains(lower, "operation not permitted"), strings.Contains(lower, "a password is required"), strings.Contains(lower, "not allowed to execute"):
 		code = "PERMISSION_DENIED"
+	case strings.Contains(lower, "failed to open device"), strings.Contains(lower, "cannot open device"):
+		code = "DEVICE_ACCESS_FAILED"
 	case strings.Contains(lower, "not supported"), strings.Contains(lower, "unsupported"), strings.Contains(lower, "unknown parameter"), strings.Contains(lower, "unrecognized option"):
 		code = "OPERATION_UNSUPPORTED"
 	}
@@ -67,6 +69,8 @@ func Reason(err error) string {
 		return "The remote tool exists but could not be executed."
 	case "PERMISSION_DENIED":
 		return "The configured account or noninteractive sudo policy does not permit this read."
+	case "DEVICE_ACCESS_FAILED":
+		return "The tool could not open the queried device; device access was not established."
 	case "OPERATION_UNSUPPORTED":
 		return "The installed tool or device does not support this read operation."
 	case "SSH_TIMEOUT_OR_CANCELLED":

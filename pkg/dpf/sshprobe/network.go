@@ -19,7 +19,7 @@ func collectNetwork(ctx context.Context, remote runner, runtime *inventory.Runti
 	n := &inventory.NetworkObservation{Links: []inventory.NetworkLink{}, Neighbors: []inventory.Neighbor{}, LLDP: []inventory.LLDPNeighbor{}, Resolver: inventory.ResolverObservation{Owner: "unknown", Search: []string{}, PerLink: map[string][]string{}, Domains: map[string][]string{}, DNSMasqServers: []string{}}}
 	runtime.Network = n
 	for _, p := range []struct{ stage, command string }{
-		{"network-links", "ip -j -d link show"}, {"neighbors", "ip -j neighbor show"}, {"resolver-path", "readlink -f /etc/resolv.conf"},
+		{"network-links", "ip -j link show"}, {"network-link-details", "ip -j -d link show"}, {"neighbors", "ip -j neighbor show"}, {"resolver-path", "readlink -f /etc/resolv.conf"},
 		{"resolver-dns", "resolvectl dns"}, {"resolver-domains", "resolvectl domain"}, {"dnsmasq", dnsmasqRead}, {"lldp", "lldpctl -f keyvalue"},
 	} {
 		text, err := remote.Run(ctx, p.stage, p.command)
@@ -27,6 +27,12 @@ func collectNetwork(ctx context.Context, remote runner, runtime *inventory.Runti
 			switch p.stage {
 			case "network-links":
 				n.Links, err = parseLinks(text)
+			case "network-link-details":
+				var details []inventory.NetworkLink
+				details, err = parseLinks(text)
+				if err == nil {
+					err = mergeLinkDetails(n.Links, details)
+				}
 			case "neighbors":
 				n.Neighbors, err = parseNeighbors(text)
 			case "resolver-path":
@@ -221,4 +227,27 @@ func parseLLDP(text string) ([]inventory.LLDPNeighbor, error) {
 		return nil, &Error{Code: "SSH_RUNTIME_INVALID"}
 	}
 	return out, nil
+}
+
+// Detailed iproute output is optional: some releases emit invalid JSON for
+// VXLAN attributes. Base links remain useful without detailed link kinds. Verify
+// a complete unchanged name/MAC/master projection before enriching those facts.
+func mergeLinkDetails(base, details []inventory.NetworkLink) error {
+	if len(base) != len(details) {
+		return &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
+	}
+	byName := map[string]inventory.NetworkLink{}
+	for _, d := range details {
+		byName[d.Name] = d
+	}
+	for _, b := range base {
+		d, exists := byName[b.Name]
+		if !exists || d.MAC != b.MAC || d.Master != b.Master {
+			return &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
+		}
+	}
+	for i := range base {
+		base[i].Kind = byName[base[i].Name].Kind
+	}
+	return nil
 }

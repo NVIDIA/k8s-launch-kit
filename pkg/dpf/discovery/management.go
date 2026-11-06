@@ -6,7 +6,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"net/url"
 	"slices"
 	"strings"
@@ -178,7 +180,10 @@ func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, e
 	}
 	result.Observations = map[string]inventory.Observation{}
 	storage, storageErr := m.Client.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{Limit: 256})
-	storageFact := inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: "INSPECTION_UNAVAILABLE", Message: "The Kubernetes API inspection failed or returned incomplete evidence."}
+	storageFact := apiObservationFailure(storageErr)
+	if storageErr == nil && storage.Continue != "" {
+		storageFact = inventory.Observation{State: "unknown", ReasonCode: "API_COVERAGE_INCOMPLETE", Message: "StorageClass enumeration exceeded the bounded first page; not all entries were observed."}
+	}
 	if storageErr == nil && storage.Continue == "" {
 		storageFact.State = "known"
 		storageFact.ReasonCode = ""
@@ -189,10 +194,14 @@ func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, e
 		slices.Sort(storageFact.Values)
 	}
 	result.Observations["storageClasses"] = storageFact
-	groupsFact := inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: "INSPECTION_UNAVAILABLE", Message: "The Kubernetes API inspection failed or returned incomplete evidence."}
 	data, groupErr := m.Client.Discovery().RESTClient().Get().AbsPath("/apis").Do(ctx).Raw()
 	var groups metav1.APIGroupList
-	if groupErr == nil && json.Unmarshal(data, &groups) == nil {
+	groupsFact := apiObservationFailure(groupErr)
+	decodeErr := json.Unmarshal(data, &groups)
+	if groupErr == nil && decodeErr != nil {
+		groupsFact = inventory.Observation{State: "unknown", ReasonCode: "API_RESPONSE_INVALID", Message: "The API group discovery response is not valid APIGroupList JSON."}
+	}
+	if groupErr == nil && decodeErr == nil {
 		groupsFact.State = "known"
 		groupsFact.ReasonCode = ""
 		groupsFact.Message = ""
@@ -211,4 +220,22 @@ func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, e
 // NewEvidence binds API reads to the current collection rather than old success flags.
 func NewEvidence(at time.Time) map[string]inventory.Evidence {
 	return map[string]inventory.Evidence{"management-identity": {Kind: "kubernetes-api", InputRef: "/management", ResourceURI: "/api/v1/namespaces/kube-system", Property: "metadata.uid", ObservedAt: at, Vantage: "executor", Authenticated: true}, "management-nodes": {Kind: "kubernetes-api", InputRef: "/management", ResourceURI: "/api/v1/nodes", ObservedAt: at, Vantage: "executor", Authenticated: true}}
+}
+
+// apiObservationFailure preserves why optional API evidence is unavailable without raw errors.
+func apiObservationFailure(err error) inventory.Observation {
+	code, message := "API_INSPECTION_FAILED", "The Kubernetes API request failed; no complete observation was obtained."
+	switch {
+	case apierrors.IsForbidden(err):
+		code, message = "API_ACCESS_DENIED", "The configured Kubernetes identity is forbidden from reading this resource."
+	case apierrors.IsUnauthorized(err):
+		code, message = "API_AUTHENTICATION_FAILED", "The Kubernetes API did not accept the configured credentials."
+	case apierrors.IsNotFound(err):
+		code, message = "API_RESOURCE_NOT_FOUND", "The requested Kubernetes API resource is not available."
+	case errors.Is(err, context.Canceled):
+		code, message = "API_CANCELLED", "The Kubernetes API inspection was cancelled."
+	case errors.Is(err, context.DeadlineExceeded), apierrors.IsTimeout(err):
+		code, message = "API_TIMEOUT", "The Kubernetes API inspection timed out."
+	}
+	return inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: code, Message: message}
 }

@@ -59,6 +59,32 @@ func canonicalRuntime(r inventory.RuntimeObservation) inventory.RuntimeObservati
 	})
 	r.DNS = slices.Clone(r.DNS)
 	slices.Sort(r.DNS)
+	if r.Network != nil {
+		n := *r.Network
+		n.Links = slices.Clone(n.Links)
+		slices.SortFunc(n.Links, func(a, b inventory.NetworkLink) int { return strings.Compare(a.Name, b.Name) })
+		n.Neighbors = slices.Clone(n.Neighbors)
+		for i := range n.Neighbors {
+			n.Neighbors[i].State = slices.Clone(n.Neighbors[i].State)
+			slices.Sort(n.Neighbors[i].State)
+		}
+		slices.SortFunc(n.Neighbors, func(a, b inventory.Neighbor) int {
+			return cmp.Or(strings.Compare(a.Interface, b.Interface), strings.Compare(a.Address, b.Address), strings.Compare(a.MAC, b.MAC), slices.Compare(a.State, b.State))
+		})
+		n.LLDP = slices.Clone(n.LLDP)
+		slices.SortFunc(n.LLDP, func(a, b inventory.LLDPNeighbor) int {
+			return cmp.Or(strings.Compare(a.Interface, b.Interface), strings.Compare(a.Chassis, b.Chassis), strings.Compare(a.Port, b.Port))
+		})
+		r.Network = &n
+	}
+	if r.Hardware != nil {
+		h := *r.Hardware
+		h.Cards = slices.Clone(h.Cards)
+		slices.SortFunc(h.Cards, func(a, b inventory.CardHardware) int {
+			return cmp.Or(strings.Compare(a.Domain, b.Domain), strings.Compare(a.PCIAddress, b.PCIAddress))
+		})
+		r.Hardware = &h
+	}
 	return r
 }
 

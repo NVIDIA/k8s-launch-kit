@@ -70,7 +70,7 @@ var _ = Describe("hardware observations", func() {
 		Expect(d.Runtime.Observations["arm-fru"].Tool).To(Equal("ipmitool"))
 	})
 	It("classifies diagnostics without persisting remote text", func() {
-		for text, code := range map[string]string{"sudo: mlxfwmanager: command not found": "TOOL_NOT_AVAILABLE", "sudo: a password is required": "PERMISSION_DENIED", "device operation not supported": "OPERATION_UNSUPPORTED", "opaque secret-value": "SSH_COMMAND_FAILED"} {
+		for text, code := range map[string]string{"sudo: mlxfwmanager: command not found": "TOOL_NOT_AVAILABLE", "sudo: a password is required": "PERMISSION_DENIED", "device operation not supported": "OPERATION_UNSUPPORTED", "opaque secret-value": "SSH_COMMAND_FAILED", "Status: Failed to open device": "DEVICE_ACCESS_FAILED"} {
 			err := commandFailure(fmt.Errorf("secret-value"), "firmware", "sudo -n mlxfwmanager --query", text)
 			Expect(err.Code).To(Equal(code))
 			Expect(err.Tool).To(Equal("mlxfwmanager"))

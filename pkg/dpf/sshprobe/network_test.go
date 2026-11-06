@@ -37,6 +37,30 @@ var _ = Describe("network observations", func() {
 		Expect(n.LLDP[0].Chassis).To(Equal("switch-a"))
 		Expect(strings.Join(r.calls, "\n")).NotTo(ContainSubstring("192.0.2.43"))
 	})
+	It("retains base link facts when detailed iproute VXLAN JSON is malformed", func() {
+		r := armRunner()
+		r.values["network-links"] = `[{"ifname":"oob_net0","address":"02:00:00:00:00:41","master":"br0"},{"ifname":"br0"}]`
+		r.values["network-link-details"] = `[{"ifname":"vxlan0","linkinfo":{"info_kind":"vxlan","info_data":{"fan_map":}}}]`
+		d, _, err := collect(context.Background(), config.Target{Role: "dpus", Endpoint: "ssh://192.0.2.41:22"}, r)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.Runtime.Network.Links).To(HaveLen(2))
+		Expect(d.Runtime.Network.Links[0].MAC).To(Equal("02:00:00:00:00:41"))
+		Expect(d.Runtime.Network.Links[0].Master).To(Equal("br0"))
+		Expect(d.Runtime.Observations["network-links"].State).To(Equal("observed"))
+		Expect(d.Runtime.Observations["network-link-details"].ReasonCode).To(Equal("SSH_RUNTIME_INVALID"))
+		Expect(d.Runtime.Observations["network-link-details"].Message).NotTo(BeEmpty())
+	})
+	It("enriches base link kinds only when detailed observations still match", func() {
+		base, err := parseLinks(`[{"ifname":"br0","address":"02:00:00:00:00:01"}]`)
+		Expect(err).NotTo(HaveOccurred())
+		details, err := parseLinks(`[{"ifname":"br0","address":"02:00:00:00:00:01","linkinfo":{"info_kind":"bridge"}}]`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mergeLinkDetails(base, details)).To(Succeed())
+		Expect(base[0].Kind).To(Equal("bridge"))
+		details[0].MAC = "02:00:00:00:00:02"
+		Expect(mergeLinkDetails(base, details)).NotTo(Succeed())
+		Expect(base[0].MAC).To(Equal("02:00:00:00:00:01"))
+	})
 	It("does not interpret failed or malformed probes as empty successful evidence", func() {
 		r := armRunner()
 		r.values["neighbors"] = "null"
