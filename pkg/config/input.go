@@ -289,6 +289,9 @@ func NormalizeResolvedConfigWithPresence(cfg *LaunchKitConfig, source string, pr
 	if cfg == nil {
 		return fmt.Errorf("config must not be nil")
 	}
+	if err := ValidateDOCAHostObservations(cfg); err != nil {
+		return err
+	}
 	if cfg.Profile != nil && cfg.Profile.SpectrumX != nil {
 		if err := NormalizeSpectrumXProfileConfig(cfg.Profile.SpectrumX); err != nil {
 			return fmt.Errorf("invalid spectrum-x profile config in %s: %w", displaySource(source), err)

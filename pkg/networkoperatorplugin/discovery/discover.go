@@ -288,6 +288,10 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	clusterConfig, nsWarnings, members := buildClusterConfigWithMembers(devices.Items, nodeLabels, opts.NodeSelector, opts.CollapseNicRails)
 	cfg.ClusterConfig = clusterConfig
 	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
+	cfg.DiscoveredDOCAHost, err = discoverDOCAHost(ctx, c, restConfig, cfg.ClusterConfig, dsPods, nil)
+	if err != nil {
+		return fmt.Errorf("discover host DOCA-HOST packages: %w", err)
+	}
 
 	for _, w := range nsWarnings {
 		uiOutput.Warning("%s", w)

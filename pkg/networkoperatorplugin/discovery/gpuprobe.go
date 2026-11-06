@@ -8,13 +8,11 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,13 +25,6 @@ const gpuProbeTimeout = 30 * time.Second
 const gpuProbeConcurrency = 4
 const gfdContainer = "gpu-feature-discovery"
 
-func execGPUInPod(ctx context.Context, restConfig *rest.Config, namespace, pod, container string, command []string) (string, error) {
-	result, err := kubeclient.ExecInPod(ctx, restConfig, namespace, pod, container, command)
-	log.Log.V(2).Info("GPU probe output", "namespace", namespace, "pod", pod, "container", container,
-		"stdout", truncateForLog(result.Stdout, 500), "stderr", truncateForLog(result.Stderr, 500))
-	return result.Stdout, err
-}
-
 type nodeGPUObservation struct {
 	host    gpuHostObservation
 	data    topoData
@@ -42,59 +33,7 @@ type nodeGPUObservation struct {
 	err     error
 }
 
-type gpuSource struct {
-	pod       corev1.Pod
-	container string
-}
-
-// hasHostSys checks the actual source volume, not a conventional volume name.
-// Subpath or nested mounts could hide physical devices and invalidate coverage.
-func hasHostSys(pod *corev1.Pod, container string) bool {
-	for _, c := range pod.Spec.Containers {
-		if c.Name != container {
-			continue
-		}
-		found := false
-		for _, mount := range c.VolumeMounts {
-			if strings.HasPrefix(mount.MountPath, "/sys/") {
-				return false
-			}
-			if mount.MountPath != "/sys" {
-				continue
-			}
-			if mount.SubPath != "" || mount.SubPathExpr != "" {
-				return false
-			}
-			for _, volume := range pod.Spec.Volumes {
-				if volume.Name == mount.Name && volume.HostPath != nil && volume.HostPath.Path == "/sys" {
-					found = true
-				}
-			}
-		}
-		return found
-	}
-	return false
-}
-
-func readyGPUContainer(pod *corev1.Pod, container string) bool {
-	if pod.UID == "" || pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
-		return false
-	}
-	ready := false
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-			ready = true
-		}
-	}
-	for _, status := range pod.Status.ContainerStatuses {
-		if status.Name == container && status.Ready && status.State.Running != nil {
-			return ready
-		}
-	}
-	return false
-}
-
-func findGFDSources(ctx context.Context, c client.Client, namespace string) (map[string][]gpuSource, error) {
+func findGFDSources(ctx context.Context, c client.Client, namespace string) (map[string][]podProbeSource, error) {
 	pods := &corev1.PodList{}
 	options := []client.ListOption{client.MatchingLabels{"app": gfdContainer, "app.kubernetes.io/part-of": "nvidia-gpu"}}
 	if namespace != "" {
@@ -103,10 +42,10 @@ func findGFDSources(ctx context.Context, c client.Client, namespace string) (map
 	if err := c.List(ctx, pods, options...); err != nil {
 		return nil, fmt.Errorf("list GPU feature discovery pods: %w", err)
 	}
-	result := map[string][]gpuSource{}
+	result := map[string][]podProbeSource{}
 	owners := map[client.ObjectKey]*appsv1.DaemonSet{}
 	for _, pod := range pods.Items {
-		if !readyGPUContainer(&pod, gfdContainer) || !hasHostSys(&pod, gfdContainer) {
+		if !readyProbeContainer(&pod, gfdContainer) || !hasHostSys(&pod, gfdContainer) {
 			continue
 		}
 		owner := metav1.GetControllerOf(&pod)
@@ -125,44 +64,9 @@ func findGFDSources(ctx context.Context, c client.Client, namespace string) (map
 		if ds.UID != owner.UID || ds.DeletionTimestamp != nil {
 			continue
 		}
-		result[pod.Spec.NodeName] = append(result[pod.Spec.NodeName], gpuSource{pod: pod, container: gfdContainer})
+		result[pod.Spec.NodeName] = append(result[pod.Spec.NodeName], podProbeSource{pod: pod, container: gfdContainer})
 	}
 	return result, nil
-}
-
-// execGPUChecked rejects replacement pods and container restarts across an
-// observation. API failures are optional-observation failures, not empty data.
-func execGPUChecked(ctx context.Context, c client.Client, restConfig *rest.Config, source gpuSource, exec readOnlyPodExec, command []string) (string, error) {
-	before := &corev1.Pod{}
-	key := client.ObjectKeyFromObject(&source.pod)
-	if err := c.Get(ctx, key, before); err != nil {
-		return "", err
-	}
-	if before.UID != source.pod.UID || before.Spec.NodeName != source.pod.Spec.NodeName || !readyGPUContainer(before, source.container) || !hasHostSys(before, source.container) {
-		return "", fmt.Errorf("GPU observation source changed or is not ready with host sysfs")
-	}
-	output, err := exec(ctx, restConfig, key.Namespace, key.Name, source.container, command)
-	if err != nil {
-		return "", err
-	}
-	after := &corev1.Pod{}
-	if err := c.Get(ctx, key, after); err != nil {
-		return "", err
-	}
-	if before.UID != after.UID || !readyGPUContainer(after, source.container) {
-		return "", fmt.Errorf("GPU observation source disappeared or restarted")
-	}
-	for _, previous := range before.Status.ContainerStatuses {
-		if previous.Name != source.container {
-			continue
-		}
-		for _, current := range after.Status.ContainerStatuses {
-			if current.Name == source.container && (current.RestartCount != previous.RestartCount || current.ContainerID != previous.ContainerID) {
-				return "", fmt.Errorf("GPU observation container restarted")
-			}
-		}
-	}
-	return output, ctx.Err()
 }
 
 func discoverGPUObservations(ctx context.Context, c client.Client, restConfig *rest.Config, gpuNamespace string,
@@ -175,7 +79,7 @@ func collectGPUObservations(ctx context.Context, c client.Client, restConfig *re
 	groups []config.ClusterConfig, nodeLabels map[string]map[string]string, devices []nicop.NicDevice, members groupPFMembers, pods []corev1.Pod, exec readOnlyPodExec, timeout time.Duration,
 ) (map[string]nodeGPUObservation, []nodePFIdentity, error) {
 	if exec == nil {
-		exec = execGPUInPod
+		exec = execProbeInPod
 	}
 	identities := buildPFIdentities(groups, devices, members, true)
 	byNode, knownGPU := map[string][]string{}, map[string]bool{}
@@ -192,13 +96,13 @@ func collectGPUObservations(ctx context.Context, c client.Client, restConfig *re
 	slices.Sort(nodes)
 	// The first node needing GFD performs one bounded list for this invocation.
 	var sourceOnce sync.Once
-	var sources map[string][]gpuSource
+	var sources map[string][]podProbeSource
 	var sourceErr error
 	var sourceWorkers sync.WaitGroup
 	sourceReady := make(chan struct{})
 	sourceCtx, cancelSources := context.WithCancel(ctx)
 	defer func() { cancelSources(); sourceWorkers.Wait() }()
-	getSource := func(nodeCtx context.Context, node string) (gpuSource, error) {
+	getSource := func(nodeCtx context.Context, node string) (podProbeSource, error) {
 		sourceOnce.Do(func() {
 			sourceWorkers.Add(1)
 			go func() {
@@ -211,14 +115,14 @@ func collectGPUObservations(ctx context.Context, c client.Client, restConfig *re
 		})
 		select {
 		case <-nodeCtx.Done():
-			return gpuSource{}, nodeCtx.Err()
+			return podProbeSource{}, nodeCtx.Err()
 		case <-sourceReady:
 		}
 		if sourceErr != nil {
-			return gpuSource{}, sourceErr
+			return podProbeSource{}, sourceErr
 		}
 		if len(sources[node]) != 1 {
-			return gpuSource{}, fmt.Errorf("expected one ready same-node GPU feature discovery source, found %d", len(sources[node]))
+			return podProbeSource{}, fmt.Errorf("expected one ready same-node GPU feature discovery source, found %d", len(sources[node]))
 		}
 		return sources[node][0], nil
 	}
@@ -240,8 +144,8 @@ func collectGPUObservations(ctx context.Context, c client.Client, restConfig *re
 						// Resolve missing products on their own node before group
 						// aggregation. A later representative fallback would erase
 						// a known disagreement and could select an unrelated preset.
-						source := gpuSource{pod: *pod, container: podContainerName(pod)}
-						output, err := execGPUChecked(nodeCtx, c, restConfig, source, exec, []string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
+						source := podProbeSource{pod: *pod, container: podContainerName(pod)}
+						output, err := execProbeChecked(nodeCtx, c, restConfig, source, exec, []string{"/bin/sh", "-c", sysfsNvidiaGPUIDCmd})
 						if err == nil {
 							results[i].product = parseGPUProductFromSysfs(output)
 						} else {
@@ -280,9 +184,9 @@ dispatch:
 }
 
 func observeNodeGPU(ctx context.Context, c client.Client, restConfig *rest.Config, pod corev1.Pod, pcis []string, knownGPU bool,
-	getSource func(context.Context, string) (gpuSource, error), exec readOnlyPodExec) nodeGPUObservation {
+	getSource func(context.Context, string) (podProbeSource, error), exec readOnlyPodExec) nodeGPUObservation {
 	result := nodeGPUObservation{}
-	source := gpuSource{pod: pod, container: podContainerName(&pod)}
+	source := podProbeSource{pod: pod, container: podContainerName(&pod)}
 	for _, pci := range pcis {
 		if !fabricPCIRE.MatchString(pci) {
 			result.err = fmt.Errorf("invalid expected NIC PCI identity")
@@ -290,7 +194,7 @@ func observeNodeGPU(ctx context.Context, c client.Client, restConfig *rest.Confi
 		}
 	}
 	command := append([]string{"/bin/sh", "-c", gpuHostProbeCmd, "l8k-gpu-host", "/sys/bus/pci/devices"}, pcis...)
-	hostOutput, hostErr := execGPUChecked(ctx, c, restConfig, source, exec, command)
+	hostOutput, hostErr := execProbeChecked(ctx, c, restConfig, source, exec, command)
 	if hostErr == nil {
 		result.host, hostErr = parseGPUHostObservation(hostOutput)
 	}
@@ -316,7 +220,7 @@ func observeNodeGPU(ctx context.Context, c client.Client, restConfig *rest.Confi
 				break
 			}
 		}
-		output, err := execGPUChecked(ctx, c, restConfig, source, exec, []string{"/bin/sh", "-c", gpuObservationCmd, "l8k-gpu", mode})
+		output, err := execProbeChecked(ctx, c, restConfig, source, exec, []string{"/bin/sh", "-c", gpuObservationCmd, "l8k-gpu", mode})
 		if err == nil {
 			product, data, parseErr := parseGPUObservation(output, result.host)
 			if product != "" {

@@ -24,6 +24,25 @@ settings used during generation. Connectivity accepts this resolved metadata
 or a user-owned configuration with the required explicit decisions; installed
 and embedded defaults alone do not satisfy that requirement.
 
+## Host DOCA-HOST release compatibility
+
+Before cluster checks, validation compares installed `discoveredDocaHost`
+observations for inventory workers with `networkOperator.selectedRelease`.
+It checks the three-part DOCA release against the catalog synchronized from the
+Network Operator release SBOM's `Mofed.version`. For example, host package
+`3.5.0-041000-26.07-ubuntu2404` matches a `doca3.5.0-...` driver coordinate;
+package/OFED/container build suffixes are not equivalent and are not compared.
+A different or unparseable DOCA release, missing release selection, or malformed
+snapshot fails with exit `2` and a partial report. Explicitly enabling the
+container driver does not bypass this gate; it also applies with
+`--connectivity=false` and in connectivity-only validation.
+
+These are saved discovery-time package observations, not a live host check.
+Rerun discovery after host package changes. Missing or unknown observations do
+not establish compatibility; configs without installed-host observations keep
+existing validation behavior. A match does not qualify a package build,
+firmware, loaded kernel modules, or data-plane functionality.
+
 ## InfiniBand partition diagnostics
 
 During connectivity setup, validation reads the P_Key table for each selected

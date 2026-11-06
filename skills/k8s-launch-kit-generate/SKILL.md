@@ -49,6 +49,14 @@ character devices must be provisioned by the host owner. Check
 [IPoIB prerequisites](../../docs/user/profiles.md#ipoib-with-inbox-drivers);
 generated names and loaded-module lists do not prove host readiness.
 
+The container driver defaults to true. After discovery, generation changes an
+omitted/null enable choice to false only with installed host DOCA-HOST package
+evidence for every source-inventory worker.
+Explicit `docaDriver.enable` or `--enable-doca-driver` wins. Mixed installed and
+absent/unknown evidence requires an explicit choice, including filtered rendering;
+review ownership before enabling containers over host drivers. See
+[host driver discovery](../../docs/user/discovery.md#host-installed-doca-host).
+
 ## Profile Selection Flags
 
 | Flag | Required | Values | Description |

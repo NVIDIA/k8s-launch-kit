@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
@@ -22,8 +23,60 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+func TestGenerateDOCAHostDefaultReachesPoliciesAndEffectiveBundle(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	t.Chdir(filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..")))
+	for _, override := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit-enable=%t", override), func(t *testing.T) {
+			cfg, err := config.DefaultLaunchKitConfig()
+			require.NoError(t, err)
+			cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "host_device"}
+			cfg.ClusterConfig = []config.ClusterConfig{{Identifier: "host-doca", WorkerNodes: []string{"worker-a"},
+				NodeSelector: map[string]string{"kubernetes.io/hostname": "worker-a"},
+				Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Sriov: true, Rdma: true}},
+				PFs:          []config.PFConfig{{PciAddress: "0000:18:00.0", DeviceID: "1023", Traffic: "east-west"}}}}
+			cfg.DiscoveredDOCAHost = []config.DOCAHostObservation{{Node: "worker-a", Status: config.DOCAHostInstalled, Version: "3.5.0-041000"}}
+			raw, err := yaml.Marshal(cfg)
+			require.NoError(t, err)
+			raw, err = omitDOCAHostDriverChoice(raw)
+			require.NoError(t, err)
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(path, raw, 0o600))
+			output := filepath.Join(t.TempDir(), "deployment")
+			opts := options.Options{SaveDeploymentFiles: output}
+			if override {
+				opts.EnableDocaDriver = &override
+			}
+			launcher := New(opts)
+			launcher.ui = ui.NewSilent()
+			launcher.plugins[networkoperatorplugin.PluginName] = &networkoperatorplugin.NetworkOperatorPlugin{}
+			require.NoError(t, launcher.executeGeneration(path))
+			artifacts, err := bundle.Load(os.DirFS(filepath.Join(output, networkoperatorplugin.PluginName)))
+			require.NoError(t, err)
+			policies := 0
+			for _, document := range artifacts.Documents() {
+				object := document.ObjectCopy()
+				if object.GetKind() != "NicClusterPolicy" && object.GetKind() != "NicNodePolicy" {
+					continue
+				}
+				policies++
+				_, found, err := unstructured.NestedFieldNoCopy(object.Object, "spec", "ofedDriver")
+				require.NoError(t, err)
+				assert.Equal(t, override, found, "host-device NCP must preserve the resolved driver ownership")
+			}
+			assert.Positive(t, policies)
+			effective, err := config.LoadEffectiveConfig(config.EffectiveConfigPath(output))
+			require.NoError(t, err)
+			assert.Equal(t, override, effective.DOCADriver.Enable)
+			assert.Equal(t, cfg.DiscoveredDOCAHost, effective.DiscoveredDOCAHost)
+		})
+	}
+}
 
 func TestExecuteGenerationPreservesStructuredTemplateValidationError(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
