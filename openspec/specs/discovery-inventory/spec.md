@@ -157,16 +157,6 @@ An inventory extension MUST cover fresh discovery and existing-config refresh. R
 - **WHEN** an existing user config contains custom keys and explicit false values
 - **THEN** refresh changes the intended inventory/override fields and preserves unrelated user content.
 
-## Baseline and limits
-
-There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).
-
-## Integration and evidence
-
-- Implementation: [discovery](../../../pkg/networkoperatorplugin/discovery/discover.go), [GPU topology](../../../pkg/networkoperatorplugin/discovery/gputopology.go), [presets](../../../pkg/presets), [application integration](../../../pkg/app/discover.go).
-- Existing suites: [discovery](../../../pkg/networkoperatorplugin/discovery/discover_test.go), [topology](../../../pkg/networkoperatorplugin/discovery/gputopology_test.go), [library](../../../pkg/networkoperatorplugin/discovery/library_test.go).
-- User documentation: [discovery](../../../docs/user/discovery.md), [presets](../../../docs/user/presets.md).
-
 ### Requirement: Reasoned DPF observations
 
 New and changed discovery checks SHALL retain a stable reason code and safe human-readable explanation for failed, unavailable, unknown, skipped and deferred outcomes. Where known, the observation SHALL identify its subject, vantage, tool or resource, and provenance. Missing tools, denied access, malformed output, timeout, absent properties, unsupported capabilities and conflicts MUST NOT collapse into an unexplained not-measured result. Optional failures SHALL remain separate from required physical identity and association failures.
@@ -194,3 +184,13 @@ Address lookup SHALL operate only on explicit MAC selectors and bounded declared
 
 - **WHEN** a configured lease file is absent, unreadable, oversized or malformed
 - **THEN** its unavailable result retains a safe reason and it contributes no candidates; other source evidence remains separately visible.
+
+## Baseline and limits
+
+There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).
+
+## Integration and evidence
+
+- Implementation: [discovery](../../../pkg/networkoperatorplugin/discovery/discover.go), [GPU topology](../../../pkg/networkoperatorplugin/discovery/gputopology.go), [presets](../../../pkg/presets), [application integration](../../../pkg/app/discover.go).
+- Existing suites: [discovery](../../../pkg/networkoperatorplugin/discovery/discover_test.go), [topology](../../../pkg/networkoperatorplugin/discovery/gputopology_test.go), [library](../../../pkg/networkoperatorplugin/discovery/library_test.go).
+- User documentation: [discovery](../../../docs/user/discovery.md), [presets](../../../docs/user/presets.md).

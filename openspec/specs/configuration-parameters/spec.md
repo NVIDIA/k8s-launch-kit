@@ -57,16 +57,6 @@ Resolution SHALL leave caller inputs and shared defaults unchanged. Extensions M
 - **WHEN** one caller modifies its resolved nested configuration
 - **THEN** a subsequent resolution and the original source/defaults retain their own values.
 
-## Baseline and limits
-
-Tag-driven wiring covers root/generate/discover; standalone deploy/validate also use typed Host mappings. Nonzero inference from `Options` cannot represent every explicit zero; use the existing presence-aware inputs. This contract does not promise purity for discovery. [Artifact handoff](../artifact-handoff/spec.md) owns persisted metadata and source selection.
-
-## Integration and evidence
-
-- Implementation: [config](../../../pkg/config), [option tags](../../../pkg/options/options.go), [config input](../../../pkg/configinput), [bindings](../../../pkg/configflags), [resolver](../../../pkg/resolve), [Host adapters](../../../pkg/target/host).
-- Existing regression suites to extend: [resolver](../../../pkg/resolve/resolver_test.go), [YAML input](../../../pkg/config/input_test.go), [Host mapping](../../../pkg/target/host/driver_test.go). These are evidence starting points, not proof for a new field.
-- User documentation: [configuration](../../../docs/reference/configuration.md).
-
 ### Requirement: DPF software release defaults
 
 The DPF target SHALL resolve software coordinates from a release-owned BOM, separately from site access inputs and observed running versions. Omitted or null release selection SHALL use the catalog default; explicit empty or unknown releases SHALL fail before remote access. Resolution SHALL preserve source configuration and return isolated catalog values. Minimum requirements, desired targets, model applicability and provenance SHALL remain distinct; unknown requirements SHALL retain reasons and never imply qualification.
@@ -80,3 +70,13 @@ The DPF target SHALL resolve software coordinates from a release-owned BOM, sepa
 
 - **WHEN** identity collection succeeds for hardware outside the selected release BOM
 - **THEN** inventory remains useful and a reasoned later-phase compatibility check is unresolved; no supported tuple is invented.
+
+## Baseline and limits
+
+Tag-driven wiring covers root/generate/discover; standalone deploy/validate also use typed Host mappings. Nonzero inference from `Options` cannot represent every explicit zero; use the existing presence-aware inputs. This contract does not promise purity for discovery. [Artifact handoff](../artifact-handoff/spec.md) owns persisted metadata and source selection.
+
+## Integration and evidence
+
+- Implementation: [config](../../../pkg/config), [option tags](../../../pkg/options/options.go), [config input](../../../pkg/configinput), [bindings](../../../pkg/configflags), [resolver](../../../pkg/resolve), [Host adapters](../../../pkg/target/host).
+- Existing regression suites to extend: [resolver](../../../pkg/resolve/resolver_test.go), [YAML input](../../../pkg/config/input_test.go), [Host mapping](../../../pkg/target/host/driver_test.go). These are evidence starting points, not proof for a new field.
+- User documentation: [configuration](../../../docs/reference/configuration.md).
