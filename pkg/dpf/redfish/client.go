@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -132,6 +133,10 @@ func (c *Client) request(ctx context.Context, method, ref string, body []byte) (
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
+		var timeout net.Error
+		if errors.As(e, &timeout) && timeout.Timeout() {
+			return nil, nil, &Error{Code: "BMC_TIMEOUT", URI: uri}
+		}
 		var verification *tls.CertificateVerificationError
 		if errors.As(e, &verification) {
 			return nil, nil, &Error{Code: "TLS_VERIFICATION_FAILED", URI: uri}
@@ -147,11 +152,24 @@ func (c *Client) request(ctx context.Context, method, ref string, body []byte) (
 		if response.StatusCode == 403 {
 			code = "ACCESS_DENIED"
 		}
+		if response.StatusCode == 404 {
+			code = "RESOURCE_NOT_FOUND"
+		}
 		return nil, nil, &Error{Code: code, URI: uri, Status: response.StatusCode}
 	}
 	b, e := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	c.bytes += len(b)
-	if e != nil || len(b) > 4<<20 || c.bytes > 32<<20 {
+	if e != nil {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		var timeout net.Error
+		if errors.As(e, &timeout) && timeout.Timeout() {
+			return nil, nil, &Error{Code: "BMC_TIMEOUT", URI: uri}
+		}
+		return nil, nil, &Error{Code: "RESPONSE_READ_FAILED", URI: uri}
+	}
+	if len(b) > 4<<20 || c.bytes > 32<<20 {
 		return nil, nil, &Error{Code: "RESPONSE_LIMIT", URI: uri}
 	}
 	var d Document
@@ -173,7 +191,7 @@ func (c *Client) Get(ctx context.Context, ref string) (Document, error) {
 			return d, nil
 		}
 		var remote *Error
-		retry := errors.As(err, &remote) && (remote.Code == "TRANSPORT_FAILED" || remote.Status == 429 || remote.Status == 502 || remote.Status == 503 || remote.Status == 504)
+		retry := errors.As(err, &remote) && (remote.Code == "TRANSPORT_FAILED" || remote.Code == "BMC_TIMEOUT" || remote.Status == 429 || remote.Status == 502 || remote.Status == 503 || remote.Status == 504)
 		if !retry || attempt == 2 {
 			return nil, err
 		}
@@ -262,58 +280,61 @@ func (c *Client) Close(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Collection returns already read members alongside an error. Required consumers
+// must reject the error; optional inventory may retain those members as partial evidence.
 func (c *Client) Collection(ctx context.Context, ref string) ([]Resource, error) {
 	var members []Resource
 	seen := map[string]bool{}
 	count := -1
 	initial, err := c.guard(ref)
 	if err != nil {
-		return nil, err
+		return members, err
 	}
 	base := strings.Split(initial, "?")[0]
 	for page := 0; ref != ""; page++ {
 		if page >= 32 || seen[ref] {
-			return nil, &Error{Code: "PAGINATION_LIMIT"}
+			return members, &Error{Code: "PAGINATION_LIMIT"}
 		}
 		seen[ref] = true
 		normalized, err := c.guard(ref)
 		if err != nil || strings.Split(normalized, "?")[0] != base {
-			return nil, &Error{Code: "UNSAFE_PAGINATION"}
+			return members, &Error{Code: "UNSAFE_PAGINATION"}
 		}
 		d, err := c.Get(ctx, ref)
 		if err != nil {
-			return nil, err
+			return members, err
 		}
 		if n, ok := d["Members@odata.count"].(float64); ok {
 			if n < 0 || n != float64(int(n)) || count >= 0 && count != int(n) {
-				return nil, &Error{Code: "COLLECTION_CHANGED"}
+				return members, &Error{Code: "COLLECTION_CHANGED"}
 			}
 			count = int(n)
 		}
 		list, ok := d["Members"].([]any)
 		if !ok {
-			return nil, &Error{Code: "INCOMPLETE_COLLECTION"}
+			return members, &Error{Code: "INCOMPLETE_COLLECTION"}
 		}
 		for _, item := range list {
 			link := Link(Document{"member": item}, "member")
 			link, err = c.guard(link)
 			if err != nil {
-				return nil, err
+				return members, err
 			}
 			if link == "" || seen["member:"+link] {
-				return nil, &Error{Code: "DUPLICATE_MEMBER"}
+				return members, &Error{Code: "DUPLICATE_MEMBER"}
 			}
 			seen["member:"+link] = true
 			value, err := c.Get(ctx, link)
 			if err != nil {
-				return nil, err
+				return members, err
 			}
 			members = append(members, Resource{URI: link, Document: value})
 		}
 		ref = Text(d, "Members@odata.nextLink")
 	}
 	if count < 0 || count != len(members) {
-		return nil, &Error{Code: "INCOMPLETE_COLLECTION"}
+		return members, &Error{Code: "INCOMPLETE_COLLECTION"}
 	}
 	return members, nil
 }

@@ -40,6 +40,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	report.Discovery.Mode = r.Mode
 	inv := &inventory.Inventory{FormatVersion: inventory.FormatVersion, Collection: inventory.Collection{RunID: runID, StartedAt: time.Now().UTC(), Mode: r.Mode, Collector: "l8k-go-discovery-v1"}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{}, Hosts: []inventory.Device{}, Associations: []inventory.Association{}, Evidence: map[string]inventory.Evidence{}}
 	report.Inventory = inv
+	inv.Software = r.Software
 	for _, t := range r.Targets {
 		inv.RequestedScope = append(inv.RequestedScope, config.Scope(t))
 	}
@@ -112,11 +113,13 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 						code = "SSH_OBSERVATION_FAILED"
 					}
 					stage := "observation"
+					tool := ""
 					var diagnostic *sshprobe.Error
 					if errors.As(err, &diagnostic) {
 						stage = diagnostic.Stage
+						tool = diagnostic.Tool
 					}
-					problem(inventory.Problem{Code: code, Message: "SSH observation failed", InputRef: t.InputRef, Stage: stage, ExitCode: 3})
+					problem(inventory.Problem{Code: code, Message: sshprobe.Reason(err), Tool: tool, InputRef: t.InputRef, Stage: stage, ExitCode: 3})
 				} else {
 					for _, diagnostic := range redfish.Diagnostics(err) {
 						problem(inventory.Problem{Code: diagnostic.Code, Message: "Redfish operation failed", InputRef: t.InputRef, Method: diagnostic.Method, ResourceURI: diagnostic.URI, HTTPStatus: diagnostic.Status, Stage: diagnostic.Stage, ExitCode: 3})
@@ -140,6 +143,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		}
 	}
 	requestedDPUs := false
+	collectAddresses(r, inv)
 	for _, t := range r.Targets {
 		requestedDPUs = requestedDPUs || t.Role == "dpus"
 	}
@@ -212,6 +216,10 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		}
 		report.Discovery.Checks = append(report.Discovery.Checks, inventory.Check{ID: "dpf.management.redfish-read", Subject: d.RecordKey, RequiredPhase: "deploy", State: state, ReasonCode: reason, EvidenceRefs: d.EvidenceRefs})
 		report.Discovery.Checks = append(report.Discovery.Checks, inventory.Check{ID: "dpf.management.dpf-authentication", Subject: d.RecordKey, RequiredPhase: "deploy", State: "not-evaluated", ReasonCode: "DPF_AUTHENTICATION_NOT_EVALUATED", EvidenceRefs: []string{}})
+	}
+	report.Discovery.Checks = append(report.Discovery.Checks, SoftwareChecks(inv)...)
+	for i := range report.Discovery.Checks {
+		ExplainCheck(&report.Discovery.Checks[i])
 	}
 	report.Discovery.Outcome = "complete"
 	for _, c := range report.Discovery.Checks {
@@ -319,6 +327,12 @@ func Canonicalize(inv *inventory.Inventory) {
 // Dedicated material projection excludes timestamps, readiness, credentials and aliases.
 func material(inv *inventory.Inventory) map[string]any {
 	fields := map[string]any{}
+	if inv.Software != nil {
+		fields["software"] = inv.Software
+	}
+	if inv.AddressLookup != nil {
+		fields["addressLookup"] = inv.AddressLookup
+	}
 	if inv.Management != nil {
 		fields["management.identity"] = []string{inv.Management.APIEndpoint, inv.Management.SystemNamespaceUID, inv.Management.TrustDigest, inv.Management.KubernetesVersion}
 		for _, n := range inv.Management.Nodes {

@@ -22,7 +22,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/addresslookup"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/yamlinput"
 	yaml "gopkg.in/yaml.v3"
 )
@@ -71,17 +73,21 @@ type Limits struct {
 	MaxConcurrentBMCs *int    `yaml:"maxConcurrentBMCs,omitempty"`
 }
 type Site struct {
+	DPF struct {
+		Release *string `yaml:"release,omitempty"`
+	} `yaml:"dpf,omitempty"`
 	Management struct {
 		KubeconfigRef FileRef `yaml:"kubeconfigRef"`
 		Context       *string `yaml:"context,omitempty"`
 	} `yaml:"management"`
 	Credentials map[string]Credential `yaml:"credentials"`
 	Discovery   struct {
-		DPUs   []Endpoint `yaml:"dpus"`
-		Hosts  []Endpoint `yaml:"hosts"`
-		TLS    *TLS       `yaml:"tls,omitempty"`
-		Probes Probes     `yaml:"probes,omitempty"`
-		Limits Limits     `yaml:"limits,omitempty"`
+		AddressLookup *addresslookup.Config `yaml:"addressLookup,omitempty"`
+		DPUs          []Endpoint            `yaml:"dpus"`
+		Hosts         []Endpoint            `yaml:"hosts"`
+		TLS           *TLS                  `yaml:"tls,omitempty"`
+		Probes        Probes                `yaml:"probes,omitempty"`
+		Limits        Limits                `yaml:"limits,omitempty"`
 	} `yaml:"discovery"`
 	Inventory *inventory.Inventory `yaml:"inventory,omitempty"`
 }
@@ -115,6 +121,8 @@ type Target struct {
 	Access    Access
 }
 type Request struct {
+	Software          *releases.Release
+	AddressLookup     *addresslookup.Request
 	Input             Input
 	Targets           []Target
 	Kubeconfig        string
@@ -238,6 +246,28 @@ func Resolve(in Input) (Request, error) {
 	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "management"}
 	s := in.Site
 	base := filepath.Dir(in.Path)
+	release := ""
+	if s.DPF.Release != nil {
+		if *s.DPF.Release == "" {
+			return r, fmt.Errorf("/dpf/release must not be empty")
+		}
+		release = *s.DPF.Release
+	}
+	software, err := releases.Resolve(release)
+	if err != nil {
+		return r, err
+	}
+	r.Software = &software
+	if s.Discovery.AddressLookup != nil {
+		lookup, err := addresslookup.Validate(*s.Discovery.AddressLookup)
+		if err != nil {
+			return r, err
+		}
+		for i := range lookup.Sources {
+			lookup.Sources[i].File = resolvePath(base, lookup.Sources[i].File)
+		}
+		r.AddressLookup = &lookup
+	}
 	if s.Management.KubeconfigRef.File != "" {
 		r.Kubeconfig = resolvePath(base, s.Management.KubeconfigRef.File)
 	}
@@ -507,7 +537,7 @@ func rebase(n *yaml.Node, oldBase, newBase, p string) error {
 			if key == "inventory" && p == "" {
 				continue
 			}
-			isFile := key == "caFile" || key == "knownHostsFile" || key == "file" && (strings.HasSuffix(p, "kubeconfigRef") || strings.HasSuffix(p, "passwordRef") || strings.HasSuffix(p, "privateKeyRef"))
+			isFile := key == "caFile" || key == "knownHostsFile" || key == "file" && (p == "/discovery/addressLookup/sources" || strings.HasSuffix(p, "kubeconfigRef") || strings.HasSuffix(p, "passwordRef") || strings.HasSuffix(p, "privateKeyRef"))
 			if isFile && value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value != "" {
 				abs := resolvePath(oldBase, value.Value)
 				rel, err := filepath.Rel(newBase, abs)

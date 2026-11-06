@@ -4,6 +4,8 @@ package sshprobe
 
 import (
 	"context"
+	"errors"
+	"net"
 	"path"
 	"strconv"
 	"strings"
@@ -24,12 +26,14 @@ func (Collector) Collect(ctx context.Context, target config.Target, timeout time
 	evidence = map[string]inventory.Evidence{}
 	if target.SSH == nil || (target.Role != "hosts" && target.Role != "dpus") {
 		device.ReasonCode = "SSH_CONFIGURATION_INVALID"
+		device.Message = "SSH discovery requires an explicit host or DPU SSH target."
 		return device, evidence, &Error{Code: device.ReasonCode, Stage: "target"}
 	}
 	user, password := target.SSH.Credentials()
 	c, err := connect(ctx, target.Endpoint, credentials{user: user, password: password, key: target.SSH.PrivateKey(), knownHosts: target.SSH.KnownHosts()}, timeout)
 	if err != nil {
 		device.ReasonCode = Code(err)
+		device.Message = Reason(err)
 		return device, evidence, err
 	}
 	defer c.Close()
@@ -43,7 +47,7 @@ func emptyDevice(target config.Target) inventory.Device {
 		Qualification: "unqualified", InventoryCompleteness: "unknown", BMCAddressState: "not-evaluated",
 		Authentication: inventory.Authentication{Method: "ssh", PasswordRead: "not-evaluated", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"},
 		Firmware:       []inventory.Firmware{}, EvidenceRefs: []string{},
-		Time:    inventory.TimeObservation{State: "unknown", ReasonCode: "NOT_EVALUATED"},
+		Time:    inventory.TimeObservation{State: "unknown", ReasonCode: "NOT_EVALUATED", Message: "BMC clock and NTP are not queried through OS SSH."},
 		Runtime: &inventory.RuntimeObservation{Observations: map[string]inventory.Observation{}},
 	}
 }
@@ -54,6 +58,13 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 	defer func() {
 		if err != nil {
 			device.ReasonCode = Code(err)
+			device.Message = Reason(err)
+			var diagnostic *Error
+			if errors.As(err, &diagnostic) {
+				if _, exists := device.Runtime.Observations[diagnostic.Stage]; !exists {
+					device.Runtime.Observations[diagnostic.Stage] = unavailable(err, diagnostic.Tool)
+				}
+			}
 		}
 	}()
 	device.ReaderAdapter = "linux-host-ssh-v1"
@@ -70,7 +81,13 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		device.EvidenceRefs = append(device.EvidenceRefs, id)
 		return id
 	}
-	read := func(stage, command string) (string, error) { return remote.Run(ctx, stage, command) }
+	read := func(stage, command string) (string, error) {
+		text, e := remote.Run(ctx, stage, command)
+		if e != nil {
+			device.Runtime.Observations[stage] = unavailable(e, commandTool(command))
+		}
+		return text, e
+	}
 	if target.Role == "dpus" {
 		dmi, e := read("arm-dmi", privilege+"dmidecode -s system-serial-number")
 		if e != nil {
@@ -90,6 +107,13 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		device.ID = inventory.PhysicalID("dpu", device.IdentityKey)
 		add("arm-dmi", "SerialNumber")
 		add("arm-fru", "Product Serial")
+		fruFields, _ := fields(fru)
+		if board := fruFields["Board Product"]; board != "" && len(board) <= 256 && !strings.ContainsAny(board, "\x00\r\n") {
+			device.Runtime.Observations["board-product"] = observed("ipmitool", board)
+			add("arm-fru", "Board Product")
+		} else {
+			device.Runtime.Observations["board-product"] = missing("ipmitool")
+		}
 		device.BMCAddressState = "unavailable"
 		lan, e := read("arm-ipmi-lan", privilege+"ipmitool lan print")
 		if e == nil {
@@ -100,7 +124,7 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 			add("arm-ipmi-lan", "IP Address")
 			device.Runtime.Observations["bmcAddress"] = inventory.Observation{State: "observed", Values: []string{device.BMCEndpoint}}
 		} else {
-			device.Runtime.Observations["bmcAddress"] = inventory.Observation{State: "unavailable", ReasonCode: Code(e)}
+			device.Runtime.Observations["bmcAddress"] = unavailable(e, "ipmitool")
 		}
 	} else {
 		uuid, e := read("host-dmi", privilege+"dmidecode -s system-uuid")
@@ -148,7 +172,9 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		}
 		device.Runtime.Observations["pciScope"] = inventory.Observation{State: "observed", Values: []string{"NVIDIA network PCI functions; grouped by host-local PCI slot"}}
 	}
+	collectNetwork(ctx, remote, device.Runtime, add)
 	collectRuntime(ctx, remote, device.Runtime, add)
+	collectHardware(ctx, remote, &device, privilege, target.Role, add)
 	// Recheck physical identity after optional observations, so disconnects and
 	// device changes cannot publish stale identity as a successful observation.
 	if target.Role == "dpus" {
@@ -257,7 +283,7 @@ func collectPF(ctx context.Context, remote runner, bdf string, runtime *inventor
 			}
 		}
 		if err != nil {
-			runtime.Observations[stage] = inventory.Observation{State: "unavailable", ReasonCode: Code(err)}
+			runtime.Observations[stage] = unavailable(err, commandTool(p.command))
 		} else {
 			runtime.Observations[stage] = inventory.Observation{State: "observed"}
 			add(stage, p.field)
@@ -296,13 +322,22 @@ func collectRuntime(ctx context.Context, remote runner, runtime *inventory.Runti
 				for _, line := range strings.Split(text, "\n") {
 					f := strings.Fields(line)
 					if len(f) >= 2 && f[0] == "nameserver" {
+						address, _, _ := strings.Cut(f[1], "%")
+						if net.ParseIP(address) == nil {
+							err = &Error{Code: "SSH_RUNTIME_INVALID", Stage: probe.stage}
+							runtime.DNS = nil
+							break
+						}
 						runtime.DNS = append(runtime.DNS, f[1])
+					}
+					if len(f) >= 2 && (f[0] == "search" || f[0] == "domain") && runtime.Network != nil {
+						runtime.Network.Resolver.Search = append(runtime.Network.Resolver.Search, f[1:]...)
 					}
 				}
 			}
 		}
 		if err != nil {
-			runtime.Observations[probe.stage] = inventory.Observation{State: "unavailable", ReasonCode: Code(err)}
+			runtime.Observations[probe.stage] = unavailable(err, commandTool(probe.command))
 		} else {
 			runtime.Observations[probe.stage] = inventory.Observation{State: "observed"}
 			add(probe.stage, probe.stage)

@@ -27,6 +27,7 @@ const maxOutput = 1 << 20
 type Error struct {
 	Code  string
 	Stage string
+	Tool  string
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Stage }
@@ -235,7 +236,11 @@ func (c *client) Run(ctx context.Context, stage, command string) (string, error)
 	defer stop()
 	session, err := c.ssh.NewSession()
 	if err != nil {
-		return "", &Error{Code: "SSH_COMMAND_FAILED", Stage: stage}
+		code := "SSH_COMMAND_FAILED"
+		if ctx.Err() != nil {
+			code = "SSH_TIMEOUT_OR_CANCELLED"
+		}
+		return "", &Error{Code: code, Stage: stage, Tool: commandTool(command)}
 	}
 	defer session.Close()
 	output := &commandOutput{}
@@ -245,13 +250,13 @@ func (c *client) Run(ctx context.Context, stage, command string) (string, error)
 	output.mu.Lock()
 	defer output.mu.Unlock()
 	if output.exceeded {
-		return "", &Error{Code: "SSH_OUTPUT_LIMIT", Stage: stage}
+		return "", &Error{Code: "SSH_OUTPUT_LIMIT", Stage: stage, Tool: commandTool(command)}
 	}
 	if ctx.Err() != nil {
-		return "", &Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: stage}
+		return "", &Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: stage, Tool: commandTool(command)}
 	}
 	if err != nil {
-		return "", &Error{Code: "SSH_COMMAND_FAILED", Stage: stage}
+		return "", commandFailure(err, stage, command, output.stdout.String()+"\n"+output.stderr.String())
 	}
 	return output.stdout.String(), nil
 }

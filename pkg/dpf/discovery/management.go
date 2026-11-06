@@ -178,22 +178,24 @@ func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, e
 	}
 	result.Observations = map[string]inventory.Observation{}
 	storage, storageErr := m.Client.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{Limit: 256})
-	storageFact := inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: "INSPECTION_UNAVAILABLE"}
+	storageFact := inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: "INSPECTION_UNAVAILABLE", Message: "The Kubernetes API inspection failed or returned incomplete evidence."}
 	if storageErr == nil && storage.Continue == "" {
 		storageFact.State = "known"
 		storageFact.ReasonCode = ""
+		storageFact.Message = ""
 		for _, s := range storage.Items {
 			storageFact.Values = append(storageFact.Values, s.Name+"/"+s.Provisioner)
 		}
 		slices.Sort(storageFact.Values)
 	}
 	result.Observations["storageClasses"] = storageFact
-	groupsFact := inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: "INSPECTION_UNAVAILABLE"}
+	groupsFact := inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: "INSPECTION_UNAVAILABLE", Message: "The Kubernetes API inspection failed or returned incomplete evidence."}
 	data, groupErr := m.Client.Discovery().RESTClient().Get().AbsPath("/apis").Do(ctx).Raw()
 	var groups metav1.APIGroupList
 	if groupErr == nil && json.Unmarshal(data, &groups) == nil {
 		groupsFact.State = "known"
 		groupsFact.ReasonCode = ""
+		groupsFact.Message = ""
 		for _, g := range groups.Groups {
 			if strings.HasSuffix(g.Name, "dpu.nvidia.com") {
 				groupsFact.Values = append(groupsFact.Values, g.Name)

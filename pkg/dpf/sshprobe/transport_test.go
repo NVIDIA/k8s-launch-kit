@@ -120,6 +120,16 @@ func (s *testServer) serve(conn net.Conn) {
 					return
 				case "LC_ALL=C flood":
 					_, _ = ch.Write([]byte(strings.Repeat("x", maxOutput+1)))
+				case "LC_ALL=C missing":
+					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{127}))
+					return
+				case "LC_ALL=C not-executable":
+					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{126}))
+					return
+				case "LC_ALL=C sudo -n mlxfwmanager --query":
+					_, _ = ch.Stderr().Write([]byte("sh: 1: sudo: not found"))
+					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{127}))
+					return
 				case "LC_ALL=C fail":
 					_, _ = ch.Stderr().Write([]byte("remote sensitive diagnostic"))
 					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{7}))
@@ -257,6 +267,19 @@ var _ = Describe("bounded SSH transport", func() {
 		_, err = c.Run(context.Background(), "failure", "fail")
 		Expect(Code(err)).To(Equal("SSH_COMMAND_FAILED"))
 		Expect(err.Error()).NotTo(ContainSubstring("sensitive"))
+	})
+	It("distinguishes missing executables and missing sudo without remote output", func() {
+		c, err := connect(context.Background(), "ssh://"+server.listener.Addr().String(), server.auth(), time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		defer c.Close()
+		for command, code := range map[string]string{"missing": "TOOL_NOT_AVAILABLE", "not-executable": "TOOL_NOT_EXECUTABLE", "sudo -n mlxfwmanager --query": "TOOL_NOT_AVAILABLE"} {
+			output, err := c.Run(context.Background(), "query", command)
+			Expect(output).To(BeEmpty())
+			Expect(Code(err)).To(Equal(code))
+			if strings.HasPrefix(command, "sudo") {
+				Expect(err.(*Error).Tool).To(Equal("sudo"))
+			}
+		}
 	})
 	It("bounds command output", func() {
 		c, err := connect(context.Background(), "ssh://"+server.listener.Addr().String(), server.auth(), time.Second)

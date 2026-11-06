@@ -66,3 +66,17 @@ Tag-driven wiring covers root/generate/discover; standalone deploy/validate also
 - Implementation: [config](../../../pkg/config), [option tags](../../../pkg/options/options.go), [config input](../../../pkg/configinput), [bindings](../../../pkg/configflags), [resolver](../../../pkg/resolve), [Host adapters](../../../pkg/target/host).
 - Existing regression suites to extend: [resolver](../../../pkg/resolve/resolver_test.go), [YAML input](../../../pkg/config/input_test.go), [Host mapping](../../../pkg/target/host/driver_test.go). These are evidence starting points, not proof for a new field.
 - User documentation: [configuration](../../../docs/reference/configuration.md).
+
+### Requirement: DPF software release defaults
+
+The DPF target SHALL resolve software coordinates from a release-owned BOM, separately from site access inputs and observed running versions. Omitted or null release selection SHALL use the catalog default; explicit empty or unknown releases SHALL fail before remote access. Resolution SHALL preserve source configuration and return isolated catalog values. Minimum requirements, desired targets, model applicability and provenance SHALL remain distinct; unknown requirements SHALL retain reasons and never imply qualification.
+
+#### Scenario: Explicit unsupported release
+
+- **WHEN** a DPF input selects a release absent from the embedded catalog
+- **THEN** configuration fails without substituting the default release or contacting infrastructure.
+
+#### Scenario: Inventory hardware is outside the BOM applicability
+
+- **WHEN** identity collection succeeds for hardware outside the selected release BOM
+- **THEN** inventory remains useful and a reasoned later-phase compatibility check is unresolved; no supported tuple is invented.

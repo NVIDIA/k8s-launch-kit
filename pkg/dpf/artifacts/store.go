@@ -75,6 +75,11 @@ func New(in config.Input, destination string, explicit bool) (*Store, error) {
 		return nil, fmt.Errorf("output aliases input")
 	}
 	protected := []string{in.Site.Management.KubeconfigRef.File}
+	if in.Site.Discovery.AddressLookup != nil {
+		for _, source := range in.Site.Discovery.AddressLookup.Sources {
+			protected = append(protected, source.File)
+		}
+	}
 	for _, c := range in.Site.Credentials {
 		if c.PrivateKeyRef != nil {
 			protected = append(protected, c.PrivateKeyRef.File)

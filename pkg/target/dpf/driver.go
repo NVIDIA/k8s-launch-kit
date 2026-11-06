@@ -123,7 +123,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 			fmt.Fprintf(r.Stdout, "DPF discovery: %s (%s)\n", report.Discovery.Outcome, report.Discovery.Mode)
 			for _, c := range report.Discovery.Checks {
 				if c.State != "passed" {
-					fmt.Fprintf(r.Stdout, "%s %s: %s (%s)\n", c.ID, c.Subject, c.State, c.ReasonCode)
+					fmt.Fprintf(r.Stdout, "%s %s: %s (%s): %s\n", c.ID, c.Subject, c.State, c.ReasonCode, c.Message)
 				}
 			}
 			for _, e := range report.Errors {

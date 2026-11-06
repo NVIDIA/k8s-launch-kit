@@ -145,77 +145,7 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		}
 		device.InventoryCompleteness = "unqualified"
 	}
-	bmcFirmware := ""
-	if uri := Link(root, "Managers"); uri != "" {
-		managers, er := c.Collection(ctx, uri)
-		if er == nil && len(managers) == 1 {
-			manager := managers[0]
-			bmcFirmware = Text(manager.Document, "FirmwareVersion")
-			if bmcFirmware != "" {
-				device.Firmware = append(device.Firmware, inventory.Firmware{ResourceURI: manager.URI, Component: "bmc", State: "known", RawVersion: bmcFirmware, Activation: "unknown", EvidenceRefs: []string{add(manager.URI, "FirmwareVersion")}})
-			}
-			if npURI := Link(manager.Document, "NetworkProtocol"); npURI != "" {
-				if np, readErr := c.Get(ctx, npURI); readErr == nil {
-					ntp := Object(np, "NTP")
-					if enabled, ok := ntp["ProtocolEnabled"].(bool); ok {
-						device.Time.NTPEnabled = &enabled
-					}
-					if servers, ok := ntp["NTPServers"].([]any); ok {
-						for _, v := range servers {
-							if server, ok := v.(string); ok {
-								device.Time.NTPServers = append(device.Time.NTPServers, server)
-							}
-						}
-					}
-					add(npURI, "NTP")
-				}
-			}
-
-			device.Time.DateTime = Text(manager.Document, "DateTime")
-			device.Time.Offset = Text(manager.Document, "DateTimeLocalOffset")
-			if device.Time.DateTime != "" {
-				device.Time.State = "known"
-				device.Time.ReasonCode = ""
-			}
-			add(manager.URI, "DateTime")
-		}
-	}
-	found := map[string]bool{}
-	for _, existing := range device.Firmware {
-		found[existing.Component] = true
-	}
-	if uri := Link(root, "UpdateService"); uri != "" {
-		update, er := c.Get(ctx, uri)
-		if er == nil {
-			fw, er := c.Collection(ctx, Link(update, "FirmwareInventory"))
-			if er == nil {
-				for _, f := range fw {
-					name := strings.ToLower(Text(f.Document, "Name"))
-					component := "other"
-					for _, candidate := range []string{"bmc", "cec", "atf", "nic", "golden"} {
-						if strings.Contains(name, candidate) {
-							component = candidate
-							break
-						}
-					}
-					if component == "atf" {
-						component = "atf-uefi"
-					}
-					version := Text(f.Document, "Version")
-					if version == "" {
-						continue
-					}
-					found[component] = true
-					device.Firmware = append(device.Firmware, inventory.Firmware{ResourceURI: f.URI, Component: component, State: "known", RawVersion: version, Activation: "unknown", EvidenceRefs: []string{add(f.URI, "Version")}})
-				}
-			}
-		}
-	}
-	for _, component := range []string{"bmc", "cec", "atf-uefi", "nic", "dpu-os", "golden"} {
-		if !found[component] {
-			device.Firmware = append(device.Firmware, inventory.Firmware{Component: component, State: "unknown", ReasonCode: "PROPERTY_NOT_EXPOSED", Activation: "unknown", EvidenceRefs: []string{}})
-		}
-	}
+	bmcFirmware := collectSoftware(ctx, c, root, system, &device, add)
 	for _, q := range co.Qualifications {
 		if q.Adapter == adapter && q.Model == device.Model && q.BMCFirmware == bmcFirmware && bmcFirmware != "" && q.VerifyCompleteness != nil && q.VerifyCompleteness(ctx, c, system) == nil {
 			device.Qualification = "qualified"
