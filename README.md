@@ -43,7 +43,7 @@ Physically dual-port BlueField-3 NICs are classified as north-south even in NIC
 mode or with an unlisted SKU. Groups containing only north-south NICs are omitted
 from the saved inventory; see [traffic classification](docs/user/discovery.md#east-west-and-north-south-nics).
 
-`l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. Discovery verifies exact group selectors; an explicit CLI `--node-selector` override remains user intent and is checked against worker inventory during deployment. The flag does not limit where the discovery daemon runs. Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
+`l8k discover` bootstraps a temporary privileged daemon on eligible Ready nodes, collects hardware inventory, and saves `cluster-config.yaml`. Discovery verifies exact group selectors; an explicit CLI `--node-selector` override remains user intent and is checked against worker inventory during deployment. The flag does not limit where the discovery daemon runs. The container driver defaults to enabled. Discovery records host-installed DOCA-HOST package versions and switches an omitted driver choice off only when every inventory worker has it; explicit overrides win. Release compatibility compares the DOCA release with the selected Network Operator SBOM; see [host driver discovery](docs/user/discovery.md#host-installed-doca-host). Discovery does not walk kernel-module holder graphs. Both DOCA driver unload controls default to true; review dependent storage and RDMA workloads before deployment. See [discovery scope and driver safety](docs/user/discovery.md#driver-module-safety).
 
 Standard profiles skip interface naming for a single selected group unless
 RDMA-shared needs names missing from inventory. Spectrum-X retains naming. Generation
@@ -105,7 +105,7 @@ This phase can be skipped if you provide your own configuration file by using --
 This phase resolves credentials from --kubeconfig, $KUBECONFIG, or ~/.kube/config.
 Fresh discovery fills profile settings from the detected hardware and built-in
 defaults. With --user-config, discovery replaces clusterConfig and
-discoveredSecondaryNetwork while preserving other settings. Explicit CLI overrides apply in both modes.
+discoveredSecondaryNetwork and discoveredDocaHost while preserving other settings. Explicit CLI overrides apply in both modes.
 
 ### Generate Deployment Files
 Based on the discovered or provided configuration,

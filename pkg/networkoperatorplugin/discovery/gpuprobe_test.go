@@ -218,7 +218,7 @@ func TestGPUCollectionDistinguishesUnknownUnlabeledAndCPUOnly(t *testing.T) {
 func TestGPUCheckedExecRejectsContainerRestart(t *testing.T) {
 	gfd, ds := gfdFixture("worker-0")
 	c := gpuFixtureClient(t, nil, gfd, ds)
-	_, err := execGPUChecked(context.Background(), c, &rest.Config{}, gpuSource{pod: *gfd, container: gfdContainer},
+	_, err := execProbeChecked(context.Background(), c, &rest.Config{}, podProbeSource{pod: *gfd, container: gfdContainer},
 		func(ctx context.Context, _ *rest.Config, _, _, _ string, _ []string) (string, error) {
 			updated := &corev1.Pod{}
 			require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(gfd), updated))

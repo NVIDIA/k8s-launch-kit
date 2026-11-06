@@ -22,7 +22,7 @@ override is supplied.
 For generation, configuration source precedence is:
 
 1. Canonical defaults from the repository-root `cluster-config.yaml`.
-2. Resolved hardware defaults for missing profile fields.
+2. Resolved hardware defaults for missing profile fields and host driver ownership.
 3. `--config-dir/l8k-config.yaml` or `--user-config` values.
 4. Explicit CLI flags.
 
@@ -36,7 +36,7 @@ Fresh discovery treats the selected reference file as a user layer except for
 its sample `profile`, which is discarded before hardware defaults are derived.
 Explicit non-profile values such as `docaDriver.enable: false` are preserved.
 
-Discovery with `--user-config` replaces `clusterConfig` and `discoveredSecondaryNetwork`, preserves every
+Discovery with `--user-config` replaces `clusterConfig`, `discoveredSecondaryNetwork`, and `discoveredDocaHost`, preserves every
 other loaded section, and then applies explicit CLI flags. It does not fill
 missing profile fields, recompute validation settings, or expand a release
 selected only in YAML.
@@ -103,6 +103,7 @@ deployment intent changes.
 | `spectrumX` | Spectrum-X naming defaults. |
 | `profile` | Selected fabric, deployment, routing, ARP, and Spectrum-X options. |
 | `clusterConfig` | Discovered or preset-provided hardware groups. |
+| `discoveredDocaHost` | Discovery-time per-node host `doca-host` package status and complete version; used for driver defaults and DOCA release compatibility. |
 | `discoveredSecondaryNetwork` | Optional read-only API observations of Multus and reference CNI plugin installers; separate from desired policy. |
 
 ## Secondary-network ownership
@@ -289,13 +290,20 @@ docaDriver:
 
 | Field | Meaning |
 | --- | --- |
-| `enable` | Include DOCA/OFED driver configuration. |
+| `enable` | Include DOCA/OFED container driver configuration. Defaults to true. After discovery, complete all-worker host DOCA-HOST evidence changes an omitted/null choice to false; explicit true/false wins. |
 | `version` | Driver image tag; filled by the selected release catalog. |
 | `unloadStorageModules` | Allow unload of storage-over-RDMA dependencies before driver replacement. |
 | `unloadThirdPartyRDMAModules` | Allow unload of non-MLX RDMA dependencies before driver replacement. |
 | `enableNFSRDMA` | Enable NFS-over-RDMA support. |
 | `skipPreflightChecks` | Skip the init-container module dependency check. |
 | `env` | Advanced literal `name`/`value` environment entries forwarded through the generated NicClusterPolicy or NicNodePolicy. Custom values override generated values by name; the last custom duplicate wins. |
+
+Host package observations are independent of desired driver ownership. Mixed
+installed/absent or installed/unknown workers require an explicit enable choice
+before generation; automatic inference covers the entire source inventory,
+including filtered generation. Discovery refresh preserves omitted enable fields.
+See [host-installed DOCA-HOST](../user/discovery.md#host-installed-doca-host)
+for observation status, release comparison granularity, and snapshot lifetime.
 
 Both unload controls default to `true`. Discovery does not populate the holder-module lists automatically. Confirm that no active workload depends on a module that the driver flow will unload.
 

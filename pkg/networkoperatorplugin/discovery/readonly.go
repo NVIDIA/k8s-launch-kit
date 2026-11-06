@@ -57,6 +57,7 @@ type readOnlyOptions struct {
 	assumeUnverifiedExcluded bool
 	fabricDiscovery          bool
 	gpuTopology              bool
+	docaHost                 bool
 	gpuOperatorNamespace     string
 }
 
@@ -120,6 +121,13 @@ func WithReadOnlyGPUTopology(gpuOperatorNamespace string) ReadOnlyOption {
 		options.gpuTopology = true
 		options.gpuOperatorNamespace = strings.TrimSpace(gpuOperatorNamespace)
 	}
+}
+
+// WithReadOnlyDOCAHost observes host doca-host package versions through existing
+// hostPID daemon pods. Requires REST credentials and pods/exec permission.
+// Missing evidence is recorded as unknown; no resources or packages are changed.
+func WithReadOnlyDOCAHost() ReadOnlyOption {
+	return func(options *readOnlyOptions) { options.docaHost = true }
 }
 
 func withReadOnlyPodExec(exec readOnlyPodExec) ReadOnlyOption {
@@ -266,6 +274,12 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 		return nil, fmt.Errorf("DiscoverReadOnly: load default config: %w", err)
 	}
 	cfg.ClusterConfig = clusterConfig
+	if options.docaHost {
+		cfg.DiscoveredDOCAHost, err = discoverDOCAHost(ctx, kubeClient, options.restConfig, clusterConfig, daemonPods, options.podExec)
+		if err != nil {
+			return nil, fmt.Errorf("DiscoverReadOnly: discover host DOCA-HOST packages: %w", err)
+		}
+	}
 	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, kubeClient)
 	if err != nil {
 		return nil, err

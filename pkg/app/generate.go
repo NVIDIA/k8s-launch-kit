@@ -26,8 +26,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 )
 
 // executeGeneration handles the profile selection and manifest generation phase.
@@ -122,9 +124,16 @@ func (l *Launcher) executeGeneration(configPath string) error {
 
 	// Resolve the same defaults/config/CLI precedence that discovery uses
 	// before either flow persists or consumes the final profile.
+	choicePresence := docaHostChoicePresence(resolvedInput.Present, l.options)
+	if err := resolve.ValidateDOCAHostDriverChoice(resolvedInput.Config, choicePresence); err != nil {
+		return apperrors.NewValidationError(err.Error(), nil, "Review each worker's discoveredDocaHost and select host or container driver ownership explicitly")
+	}
 	fullConfig, err = l.resolveProfileInput(resolvedInput)
 	if err != nil {
 		return err
+	}
+	for _, issue := range releases.DOCAHostIssues(fullConfig) {
+		l.ui.Warning("%s", issue)
 	}
 	resolveSpectrumXTopologyFile(configPath, fullConfig)
 

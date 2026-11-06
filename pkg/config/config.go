@@ -268,6 +268,7 @@ type LaunchKitConfig struct {
 	Profile                    *Profile                     `yaml:"profile,omitempty"`
 	ClusterConfig              []ClusterConfig              `yaml:"clusterConfig,omitempty"`
 	DiscoveredSecondaryNetwork *SecondaryNetworkObservation `yaml:"discoveredSecondaryNetwork,omitempty"`
+	DiscoveredDOCAHost         []DOCAHostObservation        `yaml:"discoveredDocaHost,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
@@ -306,6 +307,9 @@ type NetworkOperatorConfig struct {
 }
 
 type DOCADriverConfig struct {
+	// Enable selects the container driver and defaults to true. After discovery,
+	// an omitted choice resolves to false only when every inventory worker has
+	// host DOCA-HOST installed.
 	Enable                      bool   `yaml:"enable"`
 	Version                     string `yaml:"version"`
 	UnloadStorageModules        bool   `yaml:"unloadStorageModules"`

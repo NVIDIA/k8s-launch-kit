@@ -24,7 +24,7 @@ the post-discovery review before generation.
 Four things to know about the saved file:
 - **Fresh discovery persists a resolved profile.** Without `--user-config`,
   discovery fills profile fields from hardware/defaults and applies explicit
-  CLI overrides last. With `--user-config`, it replaces `clusterConfig` and `discoveredSecondaryNetwork`,
+  CLI overrides last. With `--user-config`, it replaces `clusterConfig`, `discoveredSecondaryNetwork`, and `discoveredDocaHost`,
   preserves every other section, and then applies explicit CLI overrides.
 - **North-south-only groups are dropped.** A node group whose NICs are all north-south (BlueField DPUs / OOB NICs) produces no manifests and is omitted from `cluster-config.yaml` (it would otherwise consume an NV-IPAM subnet slice and shift the per-rail pools). North-south NICs alongside east-west NICs in a mixed group are still listed.
 - **Dual-port BlueField-3 NICs are north-south.** Physical port count comes from the VPD model (`dual-port` / `2-port`), not PCI function count. This rule overrides a false `status.dpu`, an unlisted SKU, and GPU PIX proximity. Single-port multi-plane SuperNICs keep their existing classification.
@@ -53,6 +53,16 @@ For library consumers, read-only discovery is separate from `l8k discover`.
 callers can opt in to empty selectors and use `WorkerNodes` as the group
 membership source. See the read-only library discovery contract in the user
 guide before using that option.
+
+Host `doca-host` package observations are saved per worker in
+`discoveredDocaHost`, distinguishing installed, not-installed, and unknown.
+The container driver defaults to true. After discovery, complete all-worker
+presence changes an omitted/null `docaDriver.enable` choice to false; explicit
+YAML choices survive. Mixed presence is saved with a warning and
+requires an explicit driver ownership choice before generation. Discovery warns
+on DOCA release mismatches against the selected Network Operator SBOM; validation
+fails them using the saved snapshot. Package build suffixes are preserved but
+not compared. See [host driver discovery](../../docs/user/discovery.md#host-installed-doca-host).
 
 ## Usage (from AI agent)
 
