@@ -4,7 +4,12 @@ Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on K
 Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
-The current lifecycle uses the `host` target by default. The reserved `dpf` target does not have available lifecycle phases; see [target extension](docs/advanced/targets.md) for its implementation status.
+The current lifecycle uses the `host` target by default. The `dpf` target provides an [experimental inventory discovery preview](docs/user/dpf-discovery.md); its provisioning phases remain unavailable.
+DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
+management cluster. Inventory success is separate from provisioning readiness.
+DPF BMC discovery verifies TLS by default; lab endpoints can explicitly opt in to
+`tls.insecureSkipVerify: true`, recorded in discovery reports. See the preview guide
+for its scope and security implications.
 
 Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued releases;
 RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
@@ -166,7 +171,7 @@ Available Commands:
   version     Print the version number
 
 Target Selection Flags:
-      --target string   Deployment target: host (default) or dpf (reserved; phases are unavailable until the DPF driver is added) (default "host")
+      --target string   Deployment target: host (default) or dpf (experimental inventory discovery) (default "host")
 
 Host Target Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides
@@ -255,14 +260,6 @@ Use the [container installation example](docs/user/installation.md#container). I
 
 Use the [OpenShift deployment guide](docs/user/openshift.md) for externally installed operators, flavor-specific resources, validation permissions, and qualification limits.
 
-## Development
+## Contributing
 
-Read [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before editing. The [architecture guide](docs/architecture/overview.md) covers the component map and Go discovery-library entry point. [Documentation publishing](docs/reference/docs-publishing.md) gives the build and consistency checks. The [extension contracts](openspec/README.md) cover shared behavior and conformance scenarios for new configuration, probes, profiles, resource kinds, and checks.
-
-### Library API
-
-See the [Go discovery-library integration](docs/architecture/overview.md#go-discovery-library) for the Helm-free public entry point, release and preset options, and logging/concurrency considerations.
-
-## Repository Automation
-
-Contributor automation and review workflow live in [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [engineering documentation](engineering/README.md) for development guidance.

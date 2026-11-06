@@ -30,6 +30,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	dpftarget "github.com/nvidia/k8s-launch-kit/pkg/target/dpf"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
@@ -67,7 +68,7 @@ func addTargetFlag(cmd *cobra.Command) {
 		&targetName,
 		"target",
 		string(target.Host),
-		"Deployment target: host (default) or dpf (reserved; phases are unavailable until the DPF driver is added)",
+		"Deployment target: host (default) or dpf (experimental inventory discovery)",
 	)
 	setFlagGroup(cmd, "target", GroupTarget)
 	setFlagTargetScope(cmd, []target.Name{target.Host, target.DPF}, "target")
@@ -166,27 +167,13 @@ func (d unavailableTargetDriver) Bind(invocation target.Invocation) (target.Oper
 	}
 }
 
-func dpfTargetDescriptor() target.Descriptor {
-	const reason = "the DPF target name and CLI boundary are reserved, but the DPF driver is not available in this build"
-	unavailable := target.Capability{Available: false, Reason: reason}
-	return target.Descriptor{
-		Name:        target.DPF,
-		Description: "DPU-plane provisioning through NVIDIA DPF Operator",
-		Phases: map[target.Phase]target.Capability{
-			target.Discover: unavailable,
-			target.Generate: unavailable,
-			target.Deploy:   unavailable,
-			target.Validate: unavailable,
-			target.Pipeline: unavailable,
-		},
-	}
-}
+func dpfTargetDescriptor() target.Descriptor { return dpftarget.Descriptor() }
 
 func targetDescriptors() []target.Descriptor {
 	return []target.Descriptor{hosttarget.Descriptor(), dpfTargetDescriptor()}
 }
 
-func bindTargetCommand(cmd *cobra.Command, phase target.Phase, hostDriver target.Driver) (target.Operation, error) {
+func bindTargetCommand(cmd *cobra.Command, phase target.Phase, driver target.Driver) (target.Operation, error) {
 	selected, err := target.ParseName(targetName)
 	if err != nil {
 		return nil, err
@@ -195,9 +182,19 @@ func bindTargetCommand(cmd *cobra.Command, phase target.Phase, hostDriver target
 		return nil, err
 	}
 
+	hostDriver := target.Driver(unavailableTargetDriver{descriptor: hosttarget.Descriptor()})
+	dpfDriver := target.Driver(unavailableTargetDriver{descriptor: dpfTargetDescriptor()})
+	switch driver.Descriptor().Name {
+	case target.Host:
+		hostDriver = driver
+	case target.DPF:
+		dpfDriver = driver
+	default:
+		return nil, fmt.Errorf("unexpected driver")
+	}
 	registry, err := target.NewRegistry(
 		hostDriver,
-		unavailableTargetDriver{descriptor: dpfTargetDescriptor()},
+		dpfDriver,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct target registry: %w", err)
@@ -225,8 +222,8 @@ func bindTargetCommand(cmd *cobra.Command, phase target.Phase, hostDriver target
 	})
 }
 
-func runTargetCommand(cmd *cobra.Command, phase target.Phase, hostDriver target.Driver) {
-	operation, err := bindTargetCommand(cmd, phase, hostDriver)
+func runTargetCommand(cmd *cobra.Command, phase target.Phase, driver target.Driver) {
+	operation, err := bindTargetCommand(cmd, phase, driver)
 	if err != nil {
 		var structured *apperrors.StructuredError
 		if errors.As(err, &structured) {
@@ -292,6 +289,7 @@ func markDiscoverTargetScopes() {
 		"topology-scheme", "ip-version", "topology-file", "spectrum-x-config",
 		"spectrum-x-configmap-name")
 	markConfigFlagTargetScopes(discoverCmd, configflags.ScopeDiscover)
+	setFlagTargetScope(discoverCmd, []target.Name{target.Host, target.DPF}, "user-config", "save-cluster-config")
 }
 
 func markGenerateTargetScopes() {

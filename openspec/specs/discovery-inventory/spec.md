@@ -157,6 +157,34 @@ An inventory extension MUST cover fresh discovery and existing-config refresh. R
 - **WHEN** an existing user config contains custom keys and explicit false values
 - **THEN** refresh changes the intended inventory/override fields and preserves unrelated user content.
 
+### Requirement: Reasoned DPF observations
+
+New and changed discovery checks SHALL retain a stable reason code and safe human-readable explanation for failed, unavailable, unknown, skipped and deferred outcomes. Where known, the observation SHALL identify its subject, vantage, tool or resource, and provenance. Missing tools, denied access, malformed output, timeout, absent properties, unsupported capabilities and conflicts MUST NOT collapse into an unexplained not-measured result. Optional failures SHALL remain separate from required physical identity and association failures.
+
+#### Scenario: Firmware tool is absent
+
+- **WHEN** an SSH endpoint lacks an executable needed for an optional firmware observation
+- **THEN** the saved inventory identifies the missing tool and reason, without installing it or discarding successfully collected identity.
+
+#### Scenario: Restricted device rejects a query
+
+- **WHEN** an installed tool cannot read a restricted device
+- **THEN** the collector retains an access/query failure rather than claiming the tool is missing or the hardware absent, without changing privilege settings.
+
+### Requirement: DPF locator candidates are not identity
+
+Address lookup SHALL operate only on explicit MAC selectors and bounded declared sources. It SHALL preserve expired leases, ambiguous matches and unavailable sources as reasoned outcomes. Discovered addresses MUST NOT implicitly receive credentials, become selected endpoints or establish physical identity.
+
+#### Scenario: Sources disagree
+
+- **WHEN** usable sources associate one requested MAC with different addresses
+- **THEN** all candidates retain source provenance and the result is ambiguous; discovery does not choose or connect to one.
+
+#### Scenario: Lease source cannot be parsed
+
+- **WHEN** a configured lease file is absent, unreadable, oversized or malformed
+- **THEN** its unavailable result retains a safe reason and it contributes no candidates; other source evidence remains separately visible.
+
 ## Baseline and limits
 
 There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).

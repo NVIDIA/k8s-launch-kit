@@ -18,6 +18,8 @@ This documentation covers the `l8k` CLI for deploying NVIDIA cloud-native networ
 ## Deploy
 
 - Discover cluster hardware: /k8s-launch-kit/user/discovery/
+- DPF discovery preview: /k8s-launch-kit/user/dpf-discovery/
+- DPF discovery workflows: /k8s-launch-kit/user/dpf-workflows/
 - Generate and review manifests: /k8s-launch-kit/advanced/generation/
 - Deploy manifests: /k8s-launch-kit/advanced/deployment/
 - Deploy on OpenShift: /k8s-launch-kit/user/openshift/
@@ -42,15 +44,3 @@ This documentation covers the `l8k` CLI for deploying NVIDIA cloud-native networ
 
 - CLI reference: /k8s-launch-kit/reference/cli/
 - Configuration reference: /k8s-launch-kit/reference/configuration/
-
-## Contribute
-
-- Architecture: /k8s-launch-kit/architecture/overview/
-- Artifact bundle internals: /k8s-launch-kit/architecture/artifact-bundle/
-- Extend deployment targets: /k8s-launch-kit/advanced/targets/
-- Maintain and publish documentation: /k8s-launch-kit/reference/docs-publishing/
-
-## Design plans and history
-
-- DPF integration roadmap (in progress): /k8s-launch-kit/architecture/dpf-integration-plan/
-- HostTarget migration plan (implemented history): /k8s-launch-kit/architecture/host-target-migration-plan/

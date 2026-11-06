@@ -11,8 +11,9 @@ The [planning guide](../user/profiles.md) uses these terms to choose a
 deployment. An `l8k` binary version, a Network Operator release line, a
 Spectrum-X RA version, a Kubernetes/OpenShift flavor, a deployment profile,
 and a topology preset describe different choices. Pinning one does not pin the
-others. The `host` target covers the current lifecycle; the reserved `dpf`
-target has no available phases.
+others. The `host` target provides the networking lifecycle described here.
+The separate `dpf` target provides [experimental inventory discovery](../user/dpf-workflows.md);
+its provisioning phases are unavailable.
 
 ## Hardware
 

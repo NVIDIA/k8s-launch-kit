@@ -34,6 +34,12 @@ A result or gate extension MUST define command execution success separately from
 - **WHEN** a resource classifier returns in-progress
 - **THEN** aggregation applies the documented mode policy and does not describe that resource as ready.
 
+#### Scenario: DPF inventory without management readiness
+
+- **WHEN** explicit DPF inventory sources establish physical identities and unique host/card associations, and required observation, cleanup and publication succeed
+- **THEN** inventory discovery can complete without DPU Redfish or a management Kubernetes cluster; release qualification and provisioning authentication remain separate, visible later-phase checks.
+- **AND** unavailable selected sources and ambiguous identities still fail inventory; an observed BMC address never authorizes sending credentials to it automatically.
+
 ### Requirement: Output compatibility
 
 Output extensions SHALL preserve command-specific framing, existing public field meanings, diagnostic separation and exit mapping unless a compatibility change is explicit. Text, JSON and HTML MUST describe compatible evidence without assuming identical envelopes.

@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # CLI Reference
 
 Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for machine-readable capabilities.
-Config-backed flags include a `configPaths` list in schema output, derived
-from the same field tags that register the flags and apply explicit values.
+Config-backed flags include a `configPaths` list in schema output showing the
+configuration fields they set.
 
 ## Commands
 
@@ -32,10 +32,9 @@ with a source filename and document number where applicable.
 
 ## Target selection and flag ownership
 
-Omitting `--target` selects `host`; adding `--target host` follows the same
-code path. `dpf` is a recognized target name whose phases are unavailable in
-this build. Selecting it returns validation exit code `2`. This explicit
-capability error prevents DPF invocations from falling through to host logic.
+Omitting `--target` selects `host`. `dpf` provides an
+[experimental discovery preview](../user/dpf-discovery.md). Its other phases
+are unavailable and return exit `2`; they do not run against the host cluster.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags

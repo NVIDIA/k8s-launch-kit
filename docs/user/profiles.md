@@ -31,20 +31,20 @@ resource requests, and workload namespaces. Launch Kit resolves those inputs,
 renders resources, and reports its observed deployment checks. A site owner
 decides which checks and coverage constitute acceptance for the workload.
 
-## Availability and evidence
+## Workflow availability
 
-| Workflow | Documented implementation | Recorded verification |
+| Workflow | Use and prerequisites | Limits |
 | --- | --- | --- |
-| Kubernetes standard profiles below | Generation, deployment, and validation paths are documented. | Consult the relevant release/hardware qualification record; this guide does not establish live qualification for every combination. |
-| OpenShift SR-IOV Ethernet | OpenShift-specific generation, deployment, and validation. | Exercised on a two-node OpenShift 4.22 cluster. |
-| Other OpenShift standard profiles | Rendering and server dry-run. | Live integration qualification on suitable hardware remains to be recorded. |
-| OpenShift Spectrum-X | No generated OpenShift variant. | Unavailable; see [OpenShift qualification](openshift.md). |
-| Kubernetes Spectrum-X RA2.1, RA2.2, RA2.3, RA2.4, RA3.1 | Release-specific profile generation as shown in the [version matrix](spectrum-x.md#version-matrix). | Confirm the exact hardware, RA, operator release, and validated site profile with the responsible owner. |
+| Kubernetes standard profiles below | Select the fabric and workload device model that match your NICs and network. | Confirm the selected operator release and hardware combination with the platform owner before deployment. |
+| OpenShift SR-IOV Ethernet | Follow the [OpenShift procedure](openshift.md) with the required operators already installed. | Launch Kit configures those operators; it does not install their Helm charts. |
+| Other OpenShift standard profiles | Select an OpenShift-specific profile and review its generated resources with the operator owners. | Treat these profiles as preview workflows until runtime support for your hardware and release is confirmed. |
+| OpenShift Spectrum-X | No OpenShift variant is available. | Use a supported Kubernetes Spectrum-X environment. |
+| Kubernetes Spectrum-X RA2.1, RA2.2, RA2.3, RA2.4, RA3.1 | Choose a compatible release using the [version matrix](spectrum-x.md#version-matrix) and supply the site profile/topology. | Hardware, fabric and operator versions must match the selected RA requirements. |
+| DPF inventory | Use the separate [DPF discovery workflow](dpf-workflows.md) to inventory host and DPU endpoints. | Experimental inventory only; DPF provisioning phases are unavailable. |
 
-Rendering, API dry-run, live deployment, and a formal support commitment are
-different evidence. The table describes what this repository documents; it
-does not extend qualification to an untested platform or hardware combination.
-The reserved `dpf` target has no available lifecycle phases.
+Choose a release and hardware combination supported by your platform and
+operator vendors. Successful generation or API dry-run alone does not establish
+deployment readiness; review the deployment and workload validation results.
 
 ## Check prerequisites and site inputs
 

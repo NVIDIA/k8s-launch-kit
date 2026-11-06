@@ -5,7 +5,7 @@
 
 Only --help and explicitly constructed offline generate
 commands are executed. Documentation shell text is parsed, never executed.
-Architecture plans describe future interfaces and are excluded from syntax checks.
+Engineering plans and API internals live outside the published docs tree.
 """
 
 import argparse
@@ -141,7 +141,7 @@ def check_index():
         route = "/k8s-launch-kit/" + ("" if path == "index.md" else path[:-3] + "/")
         if route not in index:
             raise ValueError(f"llms.txt is missing {route}")
-    print(f"Navigation: all {len(paths)} published pages, including linked plans, are listed in llms.txt")
+    print(f"Navigation: all {len(paths)} published pages are listed in llms.txt")
 
 
 def check_offline_examples(binary):

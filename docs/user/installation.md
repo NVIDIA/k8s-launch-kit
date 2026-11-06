@@ -11,10 +11,9 @@ embedded release catalog; use `l8k schema` to see the release lines that **your
 installed binary** recognizes. Complete [deployment planning](profiles.md)
 before using cluster credentials.
 
-This website is published from the repository's `main` branch. For a pinned
-binary, read the documentation at its repository release tag when you need the
-exact behavior of that version. Record the `l8k version` output and the
-selected Network Operator release with your deployment artifacts.
+Use documentation matching your installed Launch Kit release. Record the
+`l8k version` output and selected Network Operator release with your deployment
+artifacts.
 
 ## Prerequisites
 
@@ -79,28 +78,6 @@ l8k() {
 
 The generated configuration, manifests, and reports remain in the current directory. Ensure the Kubernetes API server address in the mounted kubeconfig is reachable from the container runtime.
 
-## Build From Source
-
-```bash
-git clone https://github.com/NVIDIA/k8s-launch-kit.git
-cd k8s-launch-kit
-make build
-```
-
-The binary is written to `build/l8k`.
-
-For a local install:
-
-```bash
-make install
-```
-
-For development, symlink the source-tree assets instead of copying them:
-
-```bash
-make dev-install
-```
-
 ## Installed Assets
 
 The install places the binary on PATH. The default configuration and bundled topology presets are embedded in the binary. Use `--config-dir` when you need a filesystem override:
@@ -132,10 +109,8 @@ Build-only users should run from the repository root or install the profiles.
 
 Release artifacts also contain the Network Operator sosreport helper. The
 installers place it at
-`<prefix>/share/l8k/scripts/kubectl-netop_sosreport`. Source-tree
-`make install`, `make dev-install`, and direct `scripts/install-local.sh`
-invocations download the helper when it is absent; `l8k sosreport` itself never
-downloads executable code at runtime.
+`<prefix>/share/l8k/scripts/kubectl-netop_sosreport`. Keep this helper installed
+alongside the binary; `l8k sosreport` does not download executable code at runtime.
 
 ## Verify
 
