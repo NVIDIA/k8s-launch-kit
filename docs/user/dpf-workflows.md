@@ -247,7 +247,7 @@ l8k discover --target dpf --user-config dpf-discovered.yaml \
   > refresh.json 2> refresh.log
 ```
 
-The run retains `source-before.yaml`. Complete discovery replaces inventory while preserving user sections, comments and input intent. Relative file references are rebased if saving elsewhere; private files are not copied. Avoid simultaneous external edits, and use real output directories rather than symlink aliases. Credentials, trust files and configured lease files cannot be used as output destinations.
+A complete in-place refresh retains `source-before.yaml` before replacing inventory while preserving user sections, comments and input intent. A partial run leaves the original input unchanged and writes its new observations separately; it does not create this backup. Relative file references are rebased if saving elsewhere; private files are not copied. Avoid simultaneous external edits, and use real output directories rather than symlink aliases. Credentials, trust files and configured lease files cannot be used as output destinations.
 
 Next: [Refresh finished](#refresh-inventory-compare).
 
@@ -271,4 +271,4 @@ Create a new seed from the desired access configuration, without copying old `in
 
 ### 6. Retain the refreshed handoff and reports {#refresh-inventory-retain}
 
-Keep `source-before.yaml`, the current YAML, JSON/stdout report and stderr log. Discovery completion still means a successful inventory workflow, with deployment `acceptance: not-evaluated`. Unknown BOM constraints, hardware qualification and operator-created service checks remain visible until their later workflows are implemented and verified.
+Keep the current YAML, JSON/stdout report and stderr log, plus `source-before.yaml` when a complete in-place refresh created it. Discovery completion still means a successful inventory workflow, with deployment `acceptance: not-evaluated`. Unknown BOM constraints, hardware qualification and operator-created service checks remain visible until their later workflows are implemented and verified.
