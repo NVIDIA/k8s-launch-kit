@@ -242,6 +242,7 @@ validation:
   connectivity: true
   mode: strict
   checks:
+    - gateway
     - icmp
     - rping
     - ib_write_bw
@@ -257,7 +258,7 @@ validation:
 | `gpuDirect.gpuResourceType` | Qualified Kubernetes extended resource requested by the primary validation container. Defaults to `nvidia.com/gpu`. |
 | `connectivity` | Enables the data-plane stage. Static acceptance checks always run. |
 | `mode` | `quick`, `full`, or `strict`. |
-| `checks` | Any combination of `icmp`, `rping`, and `ib_write_bw`; an empty list disables all connectivity test families. |
+| `checks` | Any combination of `gateway`, `icmp`, `rping`, and `ib_write_bw` (all enabled by default); an empty list disables all connectivity test families. Gateway runs first and resolves the NAD's NV-IPAM IPPool in `networkOperator.namespace`, falling back to runtime interface routes for other IPAM/CIDRPool or an unset pool gateway. Explicit no-gateway rows are skipped. |
 | `rdma.rpingIterations` | Client iterations for each `rping` test. |
 | `rdma.ibWriteSize` | Message size passed to `ib_write_bw`. |
 | `rdma.ibWriteMinBandwidthGbps` | Minimum observed peak bandwidth. Set `0` to disable the bandwidth gate. |
@@ -327,6 +328,7 @@ nvIpam:
   startingSubnet: "192.168.0.0"
   mask: 22
   offset: 1
+  startingGateway: 1
   reserveFirstIPs: 10
   reserveLastIPs: 6
 ```
@@ -352,8 +354,17 @@ Reserved first/last IPs are merged with explicit exclusions for every subnet.
 | `startingSubnet` | Aligned IPv4 network address for automatic allocation. |
 | `mask` | Automatic subnet prefix length, from `/1` through `/30`. |
 | `offset` | Number of subnet-sized blocks between allocations; minimum `1`. |
+| `startingGateway` | Positive host offset from each automatic subnet network address; omitted/null defaults to `1`. Must be below the broadcast offset (`2^(32-mask)-1`); explicit `0` and negative values are rejected. Manual subnet gateways remain authoritative. YAML only. |
 | `reserveFirstIPs` / `reserveLastIPs` | Host addresses excluded from every automatic or manual subnet. |
 | `subnets` | Explicit `{subnet, gateway, exclusions}` entries. A non-empty list takes precedence over automatic fields. |
+
+For example, `startingGateway: 254` gives `192.168.2.254` for
+`192.168.2.0/24`. For `192.168.2.128/25`, `startingGateway: 126`
+gives `192.168.2.254`.
+Offsets can exceed 255: `startingGateway: 300` gives `192.168.1.44` for
+`192.168.0.0/22`. This is separate from `offset`, which spaces subnet networks.
+The generated `IPPool.spec.gateway` carries this address; NV-IPAM excludes its
+gateway from allocation independently of the optional reserved ranges.
 
 Automatic subnet allocation is precomputed across all final heterogeneous render buckets to avoid overlap within the generated bundle.
 

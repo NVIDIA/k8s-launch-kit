@@ -320,6 +320,36 @@ details table th, details table td { padding: 6px 10px; }
 .cell-missing { background: var(--bg-soft);    color: var(--text-faint); }
 .cell-self    { color: var(--text-faint); }
 
+.gateway-table { margin-top: 14px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.gateway-head, .gateway-row > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 2.1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) 76px 80px;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+}
+.gateway-head { background: var(--bg-soft); color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.gateway-row { margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.gateway-row > summary { color: var(--text); font-size: 13px; list-style: none; }
+.gateway-row > summary::before { display: none; }
+.gateway-row > summary:hover { background: var(--bg-soft); }
+.gateway-row > summary > span { min-width: 0; overflow-wrap: anywhere; }
+.gateway-source strong { display: block; font-weight: 500; }
+.gateway-source small, .gateway-rail small { display: block; margin-top: 3px; color: var(--text-muted); font-size: 11px; }
+.gateway-action { color: var(--link); font-size: 12px; }
+.gateway-action::before { content: "▸ "; }
+.gateway-row[open] .gateway-action::before { content: "▾ "; }
+.gateway-panel { padding: 0 14px 14px; }
+.gateway-panel p { margin: 8px 0; }
+.gateway-evidence { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; }
+@media (max-width: 700px) {
+  .gateway-head { display: none; }
+  .gateway-row > summary { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .gateway-source { grid-column: 1 / -1; }
+  .gateway-source-ip::before { content: "Source: "; color: var(--text-muted); }
+  .gateway-destination::before { content: "Gateway: "; color: var(--text-muted); }
+}
+
 .matrix-rail {
   margin-top: 14px;
   font-size: 13px;

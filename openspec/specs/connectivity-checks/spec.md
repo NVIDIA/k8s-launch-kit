@@ -67,6 +67,14 @@ A check extension MUST declare units, thresholds, server/client lifetime, cancel
 - **WHEN** the caller switches quick/full/strict mode
 - **THEN** the planner deterministically applies documented endpoint coverage and expectation rules.
 
+Gateway validation runs first after ready test endpoints exist, once per pod
+and secondary rail in every mode. It uses authoritative configured NV-IPAM
+and interface route evidence, validates the source path, and requires a bounded
+ICMP echo to a configured gateway. Explicit absence is skipped; malformed,
+ambiguous or unavailable evidence fails measurement. An unanswered echo does
+not independently diagnose ARP/ND failure. Gateway rows do not require pod pairs;
+existing pair-family coverage remains independently enforced.
+
 ## Baseline and limits
 
 The current seams are enums, functions and branches, not a plugin registry. ICMP cross-rail checks are observation-only in quick/full; strict source-based routing requires connectivity and strict destination-based routing forbids it. Generic forbidden-result finalization currently negates observed success and can clear execution errors; ICMP route errors have special handling. Existing planners may omit missing interface/RDMA mappings. The stronger classification/coverage decisions above require evidence when those paths change. [Outcomes](../outcomes-evidence/spec.md) owns aggregate acceptance, [profiles](../profile-planning/spec.md) workload capabilities and [effects](../managed-effects/spec.md) teardown policy.

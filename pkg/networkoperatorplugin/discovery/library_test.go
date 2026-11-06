@@ -165,3 +165,34 @@ func TestDiscover_DefaultConfigPath(t *testing.T) {
 	assert.NotContains(t, err.Error(), "networkOperator section is required",
 		"DefaultLaunchKitConfig must populate NetworkOperator")
 }
+
+func TestParseClusterConfigStartingGatewayPresence(t *testing.T) {
+	for _, tc := range []struct {
+		value   string
+		want    int
+		invalid bool
+	}{
+		{"", 1, false}, {"null", 1, false}, {"254", 254, false}, {"0", 0, true}, {"-1", -1, true},
+	} {
+		t.Run("gateway="+tc.value, func(t *testing.T) {
+			source := "nvIpam: {}"
+			if tc.value != "" {
+				source = "nvIpam: {startingGateway: " + tc.value + "}"
+			}
+			cfg, err := ParseClusterConfig(strings.NewReader(source))
+			if tc.invalid {
+				require.ErrorContains(t, err, "startingGateway")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.NvIpam.StartingGateway)
+		})
+	}
+}
+
+func TestParseClusterConfigPreservesLegacyBlockSizeDefault(t *testing.T) {
+	cfg, err := ParseClusterConfig(strings.NewReader("nvIpam: {perNodeBlockSize: 0}"))
+	require.NoError(t, err)
+	assert.Equal(t, config.DefaultNvIpamPerNodeBlockSize, cfg.NvIpam.PerNodeBlockSize)
+	assert.Equal(t, config.DefaultNvIpamStartingGateway, cfg.NvIpam.StartingGateway)
+}

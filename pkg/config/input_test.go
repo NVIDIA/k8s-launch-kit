@@ -182,3 +182,35 @@ func TestLoadInputWithoutPathReturnsEmptyUserLayer(t *testing.T) {
 	assert.Nil(t, input.Config.Profile)
 	assert.Nil(t, input.Config.NetworkOperator)
 }
+
+func TestStartingGatewayNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, wantError string
+		want                    int
+	}{
+		{"omitted", "nvIpam: {}", "", 1},
+		{"null", "nvIpam: {startingGateway: null}", "", 1},
+		{"positive", "nvIpam: {startingGateway: 254}", "", 254},
+		{"network", "nvIpam: {startingGateway: 0}", "startingGateway must be > 0", 0},
+		{"negative", "nvIpam: {startingGateway: -1}", "startingGateway must be > 0", -1},
+		{"broadcast", "nvIpam: {startingSubnet: 192.168.2.128, mask: 25, offset: 1, startingGateway: 127}", "startingGateway", 127},
+		{"outside subnet", "nvIpam: {startingSubnet: 192.168.2.128, mask: 25, offset: 1, startingGateway: 254}", "startingGateway", 254},
+		{"larger subnet", "nvIpam: {startingSubnet: 192.168.0.0, mask: 22, offset: 1, startingGateway: 300}", "", 300},
+		{"manual gateway authoritative", "nvIpam: {mask: 30, startingGateway: 300, subnets: [{subnet: 192.168.2.0/24, gateway: 192.168.2.254}]}", "", 300},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input, err := DecodeInput([]byte(tc.source), "gateway.yaml")
+			require.NoError(t, err)
+			err = NormalizeResolvedConfigWithPresence(input.Config, input.SourcePath, input.Present)
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, input.Config.NvIpam.StartingGateway)
+			if len(input.Config.NvIpam.Subnets) > 0 {
+				assert.Equal(t, "192.168.2.254", input.Config.NvIpam.Subnets[0].Gateway)
+			}
+		})
+	}
+}

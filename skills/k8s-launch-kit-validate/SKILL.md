@@ -58,7 +58,7 @@ for scope, limitations and subnet manager remediation.
    with no `NicFirmwareTemplate`. Each manifest is reported
    `READY`, `IN-PROGRESS`, `ERROR`, or `MISSING`.
 3. **Connectivity matrix.** By default, `l8k validate` applies the generated
-   example DaemonSet, waits for ready pods, and runs source-bound `icmp`,
+   example DaemonSet, waits for ready pods, and runs source-bound `gateway`, `icmp`,
    `rping`, and `ib_write_bw` tests. When `validation.gpuDirect.enabled` is
    true and `ib_write_bw` is selected, a distinct DMA-BUF bandwidth family
    uses the connected GPU index for each source and destination rail. Profile templates declare both validation
@@ -87,7 +87,8 @@ because the Spectrum-X operator owns them as children of
 
 Exit code is non-zero (4) on any missing manifest, version mismatch, or
 gating connectivity failure. A skipped, empty, or incomplete connectivity-only
-matrix also exits 4; every selected check family must produce a gating test,
+matrix also exits 4; every selected check family must produce a gating test (gateway permits explicit
+no-configured-gateway applicability skips),
 and non-gating cross-rail observations do not count. Version checks soft-skip
 when prerequisites are absent, but connectivity requires a user-owned cluster
 config.
@@ -127,13 +128,50 @@ l8k validate [--user-config <PATH>] [--deployment-files <DIR>] [--kubeconfig <PA
 | `--deployment-files` | `./deployment` | Directory containing generated manifests and `*example*.yaml` connectivity test DaemonSets; a test-only directory selects connectivity-only validation |
 | `--skip-network-operator-helm` | `networkOperator.skipHelmChart` (`false`) | Skip Helm release/version and values validation only |
 | `--validation-mode` | `validation.mode` (`strict`) | Connectivity mode: `quick`, `full`, or `strict` |
-| `--validation-checks` | `validation.checks` (`icmp,rping,ib_write_bw`) | Comma-separated connectivity checks; `""` disables all |
+| `--validation-checks` | `validation.checks` (`gateway,icmp,rping,ib_write_bw`) | Comma-separated connectivity checks; `""` disables all |
 | `--connectivity-timeout` | automatic (`0`) | Total connectivity budget is calculated from the generated matrix plan; set a positive duration for an explicit hard setup and execution deadline |
 | `--rdma-rping-iterations` | `validation.rdma.rpingIterations` | rping client iteration count |
 | `--rdma-ib-write-size` | `validation.rdma.ibWriteSize` | ib_write_bw message size |
 | `--rdma-ib-write-min-bandwidth-gbps` | `validation.rdma.ibWriteMinBandwidthGbps` | Minimum peak Gbps; `0` disables bandwidth gating |
 | `--junit-path` | disabled | Write JUnit XML alongside text/JSON; connectivity needs `profile.fabric: ethernet` or `infiniband` |
 | `--log-level` | disabled | `debug` for structured progress and timing; `trace` also includes bounded command output |
+
+## Gateway checks
+
+Gateway checks run first after test pods are ready, before all pair-based
+connectivity families, regardless of `validation.checks` order. Every mode
+checks each pod/secondary rail once; `--validation-checks gateway` also works
+with one pod. Validation follows the exact namespaced NetworkAttachmentDefinition
+from Multus status and its single explicit NV-IPAM `poolName` to the live IPPool
+in `networkOperator.namespace`. Its `spec.gateway` is probed even when the pod
+has only a connected route and no `via` route. Source IP membership in that
+pool's subnet must match. Standalone CNI and plugin chains are supported;
+multiple pools/plugins or CNI args overrides fail as ambiguous. Validation also
+checks the matching pod network-selection entry by NAD namespace/name and
+requested interface. Nonempty per-pod `cni-args` on NV-IPAM attachments are
+unsupported and fail before pool lookup; malformed or ambiguous selections
+also fail gateway measurement. Args on unrelated attachments do not override
+the selected gateway. The runner uses
+runtime interface routes when no IPPool gateway is set, for other IPAM providers,
+and for explicit `poolType: cidrpool`. CIDRPool per-node configured allocations
+are not separately resolved by this check. It never guesses a `.1` address or uses
+the management default route. A missing, malformed, denied or ambiguous gateway
+lookup fails measurement. When neither configuration nor interface routes has
+a gateway, the row is explicitly `SKIPPED`, with zero contribution to passed
+or failed counts. This applicability assessment can exit zero when gateway is
+the only selected family; zero endpoints and missing coverage for other selected
+families still fail connectivity-only acceptance.
+
+A configured gateway requires a positive, source-IP-bound ICMP echo after route
+qualification selects the intended interface. IPv6 link-local gateways are
+scoped to that interface. No echo fails gateway ICMP reachability; it does not
+prove that ARP/ND resolution failed because a gateway may filter ICMP. Other
+selected families continue after a gateway failure. Text reports gateway endpoints and status. JSON, HTML and JUnit retain
+gateway configuration, route and probe evidence; skipped rows remain skipped
+in JUnit. The automatic deadline includes a shared 10-second NAD/IPPool lookup limit,
+a 10-second runtime discovery limit when needed, a 10-second source-route limit
+and a 5-second echo limit per endpoint. Direct Go callers must supply
+`connectivity.Options.IPAMNamespace` for NV-IPAM IPPool attachments.
 
 ## Connectivity Modes
 
@@ -148,7 +186,8 @@ Connectivity discovery supports IPv4-only and IPv6-only secondary attachments.
 On dual-stack attachments it retains IPv4 preference; it does not test both
 families. IPv6 uses `ping -6`, `ip -6 route get`, and
 `ib_write_bw --ipv6 --ipv6-addr` on both endpoints. `rping` accepts IPv6
-addresses directly. Link-local and malformed addresses are excluded.
+addresses directly. Link-local and malformed source endpoint addresses are excluded;
+IPv6 link-local gateways use their secondary interface scope.
 
 All checks are source-bound. Before every ICMP probe, validate confirms that
 `ip route get <dst> from <src>` selects the requested source interface. A route
@@ -295,7 +334,7 @@ aggregate error/progress state.
 Unknown spec fields, malformed/duplicate status, and policy-level reasons retain
 the original aggregate verdict. Live YAML keeps the raw controller status.
 OpenShift with connectivity enabled requires at least one gating test per
-selected family; in-progress manifests and incomplete coverage fail. Other
+selected family, except explicit no-configured-gateway applicability skips; in-progress manifests and incomplete coverage fail. Other
 profiles beyond SR-IOV Ethernet still need live hardware qualification; see
 `docs/user/openshift.md`.
 

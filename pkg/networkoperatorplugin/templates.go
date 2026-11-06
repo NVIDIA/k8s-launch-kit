@@ -926,8 +926,14 @@ func ProcessTemplate(templatePath string, cfg *config.LaunchKitConfig, groupFilt
 			totalSubnets += groupCounts[gi]
 		}
 
-		allSubnets, err := config.GenerateSubnets(
-			cfg.NvIpam.StartingSubnet, cfg.NvIpam.Mask, cfg.NvIpam.Offset, totalSubnets)
+		// Direct programmatic callers have no YAML presence information;
+		// zero means the new field was omitted. YAML normalization rejects zero.
+		gatewayOffset := cfg.NvIpam.StartingGateway
+		if gatewayOffset == 0 {
+			gatewayOffset = config.DefaultNvIpamStartingGateway
+		}
+		allSubnets, err := config.GenerateSubnetsWithGateway(
+			cfg.NvIpam.StartingSubnet, cfg.NvIpam.Mask, cfg.NvIpam.Offset, totalSubnets, gatewayOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to auto-generate subnets: %w", err)
 		}
@@ -1049,6 +1055,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 		return nil, fmt.Errorf("copy resolved configuration: %w", err)
 	}
 	cfg = resolved
+	config.ApplyNvIpamDefaults(cfg)
 	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
 	config.PopulateSpectrumXInterfaceNames(cfg)
 	cfg.CurrentNetworkNamespace = cfg.NetworkNamespaces[0]

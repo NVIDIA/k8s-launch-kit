@@ -62,12 +62,12 @@ func TestJUnitCatalogNamesAndPairResults(t *testing.T) {
 			require.NoError(t, err)
 			var doc junitDocument
 			require.NoError(t, xml.Unmarshal(bytes, &doc))
-			require.Len(t, doc.Suites, 4)
-			expected := []string{"K8sEastWestNetworkICMPPing-", "K8sEastWestNetworkRDMAPing-", "K8sEastWestNetworkIBWriteBandwidth-", "K8sEastWestNetworkDMABufBandwidth-"}
+			require.Len(t, doc.Suites, 5)
+			expected := []string{"K8sEastWestNetworkGatewayICMPPing-", "K8sEastWestNetworkICMPPing-", "K8sEastWestNetworkRDMAPing-", "K8sEastWestNetworkIBWriteBandwidth-", "K8sEastWestNetworkDMABufBandwidth-"}
 			for i, name := range expected {
 				assert.Equal(t, name+fabric, doc.Suites[i].Name)
 			}
-			suite := doc.Suites[1]
+			suite := doc.Suites[2]
 			assert.Equal(t, 4, suite.Tests)
 			assert.Equal(t, 1, suite.Failures)
 			assert.Zero(t, suite.Errors)
@@ -97,17 +97,17 @@ func TestJUnitMissingCoverageAndPartialRun(t *testing.T) {
 			assert.Equal(t, "network/validation", doc.Suites[0].Name)
 			assert.Equal(t, 1, doc.Suites[0].Failures+doc.Suites[0].Errors)
 		}
-		assert.Len(t, doc.Suites, 4+offset)
+		assert.Len(t, doc.Suites, 5+offset)
 		for _, s := range doc.Suites[offset:] {
 			assert.Equal(t, 1, s.Tests)
 			assert.Equal(t, 1, s.Skipped)
 		}
 	}
 	partial := buildJUnit(junitInput{Configured: true, Enabled: true, Fabric: "infiniband", RunError: errors.New("interrupted"), Data: connectivity.ReportData{Matrix: &connectivity.MatrixResult{PingResults: []connectivity.PingResult{{Test: connectivity.PingTest{Kind: connectivity.ICMPSameRail}, OK: true}}}}})
-	require.Len(t, partial.Suites, 5)
+	require.Len(t, partial.Suites, 6)
 	assert.Equal(t, 1, partial.Suites[0].Errors)
 	assert.Equal(t, 1, partial.Suites[1].Tests)
-	assert.Zero(t, partial.Suites[1].Skipped)
+	assert.Zero(t, partial.Suites[2].Skipped)
 }
 
 func TestJUnitFabricRequiresExplicitKnownValue(t *testing.T) {
@@ -135,14 +135,15 @@ func TestValidateJUnitRunner(t *testing.T) {
 				newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) { return nil, &rest.Config{}, nil },
 				runConnectivityMatrix: func(context.Context, ctrlclient.Client, *rest.Config, ui.Output, *bundle.Bundle, connectivity.Options) (*connectivity.MatrixResult, error) {
 					m := &connectivity.MatrixResult{PingResults: []connectivity.PingResult{
+						{Test: connectivity.PingTest{Kind: connectivity.Gateway}, OK: true},
 						{Test: connectivity.PingTest{Kind: connectivity.ICMPSameRail}, OK: true},
 						{Test: connectivity.PingTest{Kind: connectivity.RDMAPingSameRail}, OK: true},
 						{Test: connectivity.PingTest{Kind: connectivity.RDMABwSameRail}, OK: true},
-					}, Summary: connectivity.MatrixSummary{TotalTests: 3, Passed: 3}}
+					}, Summary: connectivity.MatrixSummary{TotalTests: 4, Passed: 4}}
 					if outcome == "deployment-write-error" {
 						m.PingResults[0].OK = false
 						m.Summary.Failed = 1
-						m.Summary.Passed = 2
+						m.Summary.Passed = 3
 					}
 					if outcome == "partial-error" || outcome == "cluster-write-error" {
 						return m, errors.New("matrix interrupted")
@@ -267,4 +268,21 @@ func TestJUnitPresetOutcomes(t *testing.T) {
 	assert.Equal(t, "PF count differs", suite.Cases[1].Failure.Message)
 	assert.Equal(t, "No preset", suite.Cases[2].Skipped.Message)
 	assert.Equal(t, "Missing hardware identity", suite.Cases[3].Skipped.Message)
+}
+
+func TestGatewayJUnitRetainsSkippedApplicabilityAndProbeFailures(t *testing.T) {
+	doc := buildJUnit(junitInput{Configured: true, Enabled: true, Fabric: "ethernet", Checks: []connectivity.Check{connectivity.CheckGateway}, Data: connectivity.ReportData{Matrix: &connectivity.MatrixResult{PingResults: []connectivity.PingResult{
+		{Test: connectivity.PingTest{Kind: connectivity.Gateway, SrcPod: "pod-a", SrcIP: "192.0.2.10", SrcRail: "rail-0"}, SkipReason: "no configured gateway"},
+		{Test: connectivity.PingTest{Kind: connectivity.Gateway, SrcPod: "pod-b", SrcIP: "192.0.2.11", SrcRail: "rail-0", DstIP: "192.0.2.254"}, Err: errors.New("gateway ICMP reachability failed")},
+	}}}})
+	require.NotEmpty(t, doc.Suites)
+	suite := doc.Suites[0]
+	assert.Equal(t, "K8sEastWestNetworkGatewayICMPPing-ethernet", suite.Name)
+	assert.Equal(t, 2, suite.Tests)
+	assert.Equal(t, 1, suite.Skipped)
+	assert.Equal(t, 1, suite.Failures)
+	require.NotNil(t, suite.Cases[0].Skipped)
+	assert.Equal(t, "no configured gateway", suite.Cases[0].Skipped.Message)
+	require.NotNil(t, suite.Cases[1].Failure)
+	assert.Contains(t, suite.Cases[1].Out, `"Family": "gateway"`)
 }

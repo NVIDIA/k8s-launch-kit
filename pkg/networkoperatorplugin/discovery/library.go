@@ -38,7 +38,6 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
-	"gopkg.in/yaml.v2"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -266,18 +265,22 @@ func ParseClusterConfig(r io.Reader) (*config.LaunchKitConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ParseClusterConfig: read failed: %w", err)
 	}
-	var cfg config.LaunchKitConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	input, err := config.DecodeInput(data, "ParseClusterConfig")
+	if err != nil {
 		return nil, fmt.Errorf("ParseClusterConfig: yaml unmarshal failed: %w", err)
 	}
-	config.ApplyNvIpamDefaults(&cfg)
+	cfg := input.Config
+	if err := config.ValidateNvIpamStartingGateway(cfg.NvIpam, input.Present); err != nil {
+		return nil, fmt.Errorf("ParseClusterConfig: invalid nvIpam config: %w", err)
+	}
+	config.ApplyNvIpamDefaults(cfg)
 	if cfg.NvIpam != nil && len(cfg.NvIpam.Subnets) > 0 {
 		if err := config.ApplyReservedExclusions(
 			cfg.NvIpam.Subnets, cfg.NvIpam.ReserveFirstIPs, cfg.NvIpam.ReserveLastIPs); err != nil {
 			return nil, fmt.Errorf("ParseClusterConfig: invalid nvIpam config: %w", err)
 		}
 	}
-	return &cfg, nil
+	return cfg, nil
 }
 
 // applyRelease resolves the supplied release key against the embedded

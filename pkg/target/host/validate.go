@@ -216,7 +216,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		return exitWithReport(apperrors.NewValidationError(
 			"invalid validation configuration",
 			err,
-			"Use --validation-mode quick|full|strict, --validation-checks icmp,rping,ib_write_bw, and positive RDMA parameter values",
+			"Use --validation-mode quick|full|strict, --validation-checks gateway,icmp,rping,ib_write_bw, and positive RDMA parameter values",
 		))
 	}
 
@@ -473,6 +473,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		uiOutput, _ := ui.NewOutputForFormat(request.OutputFormat, request.AutoApprove)
 		ctxWithUI := ui.WithOutput(ctx, uiOutput)
 		m, err := runner.runConnectivityMatrix(ctxWithUI, k8sClient, restConfig, uiOutput, reportBundle, connectivity.Options{
+			IPAMNamespace:           operatorNamespace,
 			ManifestDir:             manifestDir,
 			OpenShift:               ocp,
 			Timeout:                 request.ConnectivityTime,
