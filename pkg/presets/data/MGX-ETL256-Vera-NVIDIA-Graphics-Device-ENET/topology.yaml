@@ -1,0 +1,173 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+
+machineType: MGX-ETL256-Vera
+gpuType: NVIDIA-Graphics-Device
+nicModel: ConnectX-9
+
+# ENET per-PF layout: four ConnectX-9 NICs, each with four PFs/rails.
+# This is the host-managed inventory with the BlueField-4 at 0005:05:00.0
+# in zero-trust mode. NCO excludes that host-restricted device from discovery;
+# it is deliberately absent here and must not receive host configuration.
+# Use --collapse-nic-rails=false for discovery to retain all sixteen PFs.
+# GPU names match the observed driver product; do not substitute an RTX SKU.
+# Each NIC is equally PXB-close to two GPUs. Alternate between those measured
+# candidates for connectedGPU; these are affinity choices, not exclusive links.
+capabilities:
+  nodes:
+    sriov: true
+    rdma: true
+    ib: false
+
+pfs:
+  # Domain 0001: nearest GPUs GPU0/GPU1 (PXB).
+  - deviceID: "1025"
+    pciAddress: "0001:03:00.0"
+    rdmaDevice: mlx5_0
+    networkInterface: enP1p3s0f0np0
+    traffic: east-west
+    rail: 0
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0001:03:00.1"
+    rdmaDevice: mlx5_1
+    networkInterface: enP1p3s0f1np1
+    traffic: east-west
+    rail: 1
+    numaNode: 0
+    connectedGPU: GPU1
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0001:03:00.2"
+    rdmaDevice: mlx5_2
+    networkInterface: enP1p3s0f2np2
+    traffic: east-west
+    rail: 2
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0001:03:00.3"
+    rdmaDevice: mlx5_3
+    networkInterface: enP1p3s0f3np3
+    traffic: east-west
+    rail: 3
+    numaNode: 0
+    connectedGPU: GPU1
+    gpuProximity: PXB
+
+  # Domain 0003: nearest GPUs GPU2/GPU3 (PXB).
+  - deviceID: "1025"
+    pciAddress: "0003:03:00.0"
+    rdmaDevice: mlx5_4
+    networkInterface: enP3p3s0f0np0
+    traffic: east-west
+    rail: 4
+    numaNode: 0
+    connectedGPU: GPU2
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0003:03:00.1"
+    rdmaDevice: mlx5_5
+    networkInterface: enP3p3s0f1np1
+    traffic: east-west
+    rail: 5
+    numaNode: 0
+    connectedGPU: GPU3
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0003:03:00.2"
+    rdmaDevice: mlx5_6
+    networkInterface: enP3p3s0f2np2
+    traffic: east-west
+    rail: 6
+    numaNode: 0
+    connectedGPU: GPU2
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0003:03:00.3"
+    rdmaDevice: mlx5_7
+    networkInterface: enP3p3s0f3np3
+    traffic: east-west
+    rail: 7
+    numaNode: 0
+    connectedGPU: GPU3
+    gpuProximity: PXB
+
+  # Domain 0004: nearest GPUs GPU4/GPU5 (PXB).
+  - deviceID: "1025"
+    pciAddress: "0004:03:00.0"
+    rdmaDevice: mlx5_8
+    networkInterface: enP4p3s0f0np0
+    traffic: east-west
+    rail: 8
+    numaNode: 0
+    connectedGPU: GPU4
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0004:03:00.1"
+    rdmaDevice: mlx5_9
+    networkInterface: enP4p3s0f1np1
+    traffic: east-west
+    rail: 9
+    numaNode: 0
+    connectedGPU: GPU5
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0004:03:00.2"
+    rdmaDevice: mlx5_10
+    networkInterface: enP4p3s0f2np2
+    traffic: east-west
+    rail: 10
+    numaNode: 0
+    connectedGPU: GPU4
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0004:03:00.3"
+    rdmaDevice: mlx5_11
+    networkInterface: enP4p3s0f3np3
+    traffic: east-west
+    rail: 11
+    numaNode: 0
+    connectedGPU: GPU5
+    gpuProximity: PXB
+
+  # Domain 0006: nearest GPUs GPU6/GPU7 (PXB).
+  - deviceID: "1025"
+    pciAddress: "0006:03:00.0"
+    rdmaDevice: mlx5_13
+    networkInterface: enP6p3s0f0np0
+    traffic: east-west
+    rail: 12
+    numaNode: 0
+    connectedGPU: GPU6
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0006:03:00.1"
+    rdmaDevice: mlx5_14
+    networkInterface: enP6p3s0f1np1
+    traffic: east-west
+    rail: 13
+    numaNode: 0
+    connectedGPU: GPU7
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0006:03:00.2"
+    rdmaDevice: mlx5_15
+    networkInterface: enP6p3s0f2np2
+    traffic: east-west
+    rail: 14
+    numaNode: 0
+    connectedGPU: GPU6
+    gpuProximity: PXB
+  - deviceID: "1025"
+    pciAddress: "0006:03:00.3"
+    rdmaDevice: mlx5_16
+    networkInterface: enP6p3s0f3np3
+    traffic: east-west
+    rail: 15
+    numaNode: 0
+    connectedGPU: GPU7
+    gpuProximity: PXB
