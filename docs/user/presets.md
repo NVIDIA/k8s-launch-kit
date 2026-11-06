@@ -26,6 +26,7 @@ Bundled presets include:
 
 - `GB300-DGX-Station-NVIDIA-GB300`
 - `GB300-NVL-NVIDIA-GB300`
+- `MGX-ETL256-Vera-NVIDIA-Graphics-Device-ENET`
 - `PowerEdge-R760xa-H100-NVL`
 - `PowerEdge-XE7745-RTX-PRO-4500`
 - `PowerEdge-XE9680-H200`
@@ -70,6 +71,48 @@ l8k generate \
 
 `--node-selector` is required because the synthesized cluster config has no live worker-node list.
 
+### MGX ETL256 Vera ENET
+
+`MGX-ETL256-Vera-NVIDIA-Graphics-Device-ENET` describes the Ethernet per-PF
+layout with sixteen ConnectX-9 PFs: four functions each at `0001:03:00`,
+`0003:03:00`, `0004:03:00`, and `0006:03:00`, numbered as rails 0–15.
+The exact matching keys are `MGX-ETL256-Vera` and `NVIDIA-Graphics-Device`;
+the latter is the observed driver product name, not an RTX model alias.
+Each NIC is equally PXB-close to a pair of GPUs (0/1, 2/3, 4/5, and 6/7).
+The preset alternates `connectedGPU` within each measured pair; this does not
+claim an exclusive GPU connection or GPUDirect qualification.
+
+This variant includes all host-discoverable PFs while the host-restricted
+BlueField-4 at `0005:05:00.0` is in zero-trust mode. NIC Configuration Operator
+excludes that device from `NicDevice` inventory, so the preset omits it and
+generates no configuration for it. If its mode changes and discovery includes
+it, the extra PF causes a deviation and prevents preset overlay. Keep any
+discovered north-south PFs in other layouts; do not remove them to force a match.
+
+For discovery, pass `--collapse-nic-rails=false` to retain all sixteen rails.
+The default collapsed four-PF layout intentionally deviates from this preset.
+For offline Ethernet RDMA-shared generation of one homogeneous source group:
+
+```bash
+l8k generate \
+  --for MGX-ETL256-Vera-NVIDIA-Graphics-Device-ENET \
+  --node-selector example.com/node-group=enet \
+  --fabric ethernet --deployment-type rdma_shared \
+  --multirail --routing source-based --ignore-arp \
+  --save-deployment-files ./deployment-enet
+```
+
+The preset contains hardware topology only. Supply site IP pools, gateways,
+operator ownership and driver settings separately. RDMA-shared uses the saved
+interface names, avoiding renaming PCI functions of one NIC into different
+rails; multi-source generation that requires such renaming is rejected.
+Source-based routing (`sbr`) and `ignoreARP` tuning can preserve rail-specific
+egress and reduce ARP flux, but do not create cross-rail fabric routes. Verify
+same-rail and cross-rail connectivity against the site's routing policy
+separately. Offline generation does not establish runtime, GPUDirect,
+congestion or full connectivity-matrix qualification. See
+[routing and ARP tuning](profiles.md#routing-and-arp-tuning).
+
 ## Preset YAML
 
 ```yaml
@@ -102,13 +145,16 @@ false or omitted.
 ## Author A Preset
 
 1. Collect topology on a representative node for the exact machine/GPU pair.
-   Record every PF, including north-south interfaces, and confirm its PCI
+   Record every host-discoverable PF, including discovered north-south interfaces, and confirm its PCI
    address, device ID, traffic role, rail, NUMA node, and GPU association.
 2. Set `machineType` to the existing `nvidia.com/gpu.machine` label, or the
    discovered `/sys/class/dmi/id/product_name` value with spaces normalized to
    dashes. Set `gpuType` to `nvidia.com/gpu.product` or the sanitized GPU product
    name from discovery. Copy the persisted values from `cluster-config.yaml`
    when available; matching is exact and case-sensitive.
+   Account for the discovery rail-collapse setting and devices excluded from
+   `NicDevice` inventory (for example, zero-trust BlueFields); a different
+   discoverable PF set must produce a deviation rather than a partial overlay.
 3. Create `presets/<unique-machine-gpu-variant>/topology.yaml`. Include both
    matching keys and `capabilities.nodes` for offline `--for` use. Keep rail
    assignments and `connectedGPU: GPU<N>` consistent with the physical layout;
