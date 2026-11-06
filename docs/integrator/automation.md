@@ -43,13 +43,19 @@ Output contracts differ by command:
 
 | Command | Successful stdout with `--output json` |
 | --- | --- |
-| Root pipeline, `discover`, `generate` | One `JSONResult` envelope, including collected `messages`. |
+| Host root pipeline, `discover`, `generate` | One `JSONResult` envelope, including collected `messages`. |
 | `clean` | One result with a `cleanup` summary. |
-| Standalone `deploy` | No finalized success JSON envelope. Use the process exit status; progress is sent to stderr. |
-| `validate` | A sequence of JSON objects: manifest/version summary when full validation runs, connectivity when run, and `reportPath` when the HTML report is written. Do not parse the stream as one document. |
+| Host standalone `deploy` | No finalized success JSON envelope. Use the process exit status; progress is sent to stderr. |
+| Host `validate` | A sequence of JSON objects: manifest/version summary when full validation runs, connectivity when run, and `reportPath` when the HTML report is written. Do not parse the stream as one document. |
 | `schema` | One capability object; this command always emits JSON. |
 | `version` | One version/build object. |
 | `preset list`, `preset update`, `sosreport` | Text output; these commands do not provide a JSON success contract despite accepting the inherited flag. |
+
+DPF `generate`, `deploy` and `validate` emit one final workflow object with
+`target`, `phase`, `outcome`, `exitCode`, optional `generation`/`deployment`
+results, and `errors`. Inspect each check's state, reason code and explanation;
+a nonzero process status or unresolved admission check is not success. DPF
+run reports are saved beside the immutable bundle. See [Sentry workflow](../user/dpf-sentry.md).
 
 Lifecycle JSON mode sends human-readable progress to stderr and auto-confirms
 prompts. Structured error objects may be emitted on failures; invalid command-line arguments can instead write text to stderr. Validation can emit partial

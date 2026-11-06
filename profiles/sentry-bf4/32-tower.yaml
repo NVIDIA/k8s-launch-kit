@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUService
+metadata:
+  name: {{ .Names.Tower }}
+  namespace: {{ .Namespace }}
+spec:
+  serviceID: {{ .Names.Tower }}
+  security:
+    privileged: true
+  interfaces:
+  - {{ .Names.IngressInterface }}
+  - {{ .Names.EgressInterface }}
+  helmChart:
+    source:
+      repoURL: oci://nvcr.io/nvstaging/doca
+      chart: doca-tower
+      version: "0.2.16"
+    values:
+      dnsPolicy: Default
+      # enforce: ext_proc observability_mode false and tower-tap replies,
+      # so a pack with judgeEnforce can turn a blocked tool call into a 403.
+      dataplane:
+        mode: enforce
+      image:
+        repository: docker.io/envoyproxy/envoy
+        tag: {{ .EnvoyTag }}
+        pullPolicy: IfNotPresent
+      imagePullSecrets:
+      - name: {{ .PullSecret }}
+      initImage:
+        repository: nvcr.io/nvstaging/doca/doca-tower-openflow
+        tag: {{ .OpenFlowTag }}
+        pullPolicy: Always
+      ingress:
+        interface: net1
+        cidr: {{ .IngressCIDR }}
+        ip: {{ .IngressIP }}
+        prefix: {{ .IngressPrefix }}
+      mitm:
+        enabled: true
+        secretName: {{ .MITMSecret }}
+      tproxy:
+        httpsListen: 8445
+      openflow:
+        enabled: true
+        normalActionWhenDisabled: false
+        image:
+          repository: nvcr.io/nvstaging/doca/doca-tower-openflow
+          tag: {{ .OpenFlowTag }}
+          pullPolicy: Always
+      egress:
+        enabled: true
+      extauthzd:
+        enabled: true
+        policyOnly: true
+        nodeID: doca-tower
+        image:
+          repository: nvcr.io/nvstaging/doca/doca-tower-policy-plugin
+          tag: {{ .PluginTag }}
+          pullPolicy: IfNotPresent
+        binary: /extauthzd
+        # The chart mounts this path into extauthzd. Argus creates
+        # argus_query.sock in this directory.
+        hostPath: /etc/doca_argus_config
+        argusSock: /etc/doca_argus_config/argus_query.sock
+        policySocket: /var/run/doca-tower-policy/policy.sock
+        policySocketHostPath: /var/run/doca-tower-policy
+        policyStore: ""
+      tap:
+        enabled: {{ .LLMInspection }}
+        judgeURL: https://inference-api.nvidia.com/openjev/v1/systemone
+        judgeModel: openjev-4b
+{{- if .LLMInspection }}
+        inferenceSecret: {{ .InferenceSecret }}
+{{- end }}
+        image:
+          repository: nvcr.io/nvstaging/doca/doca-tower-tap
+          tag: {{ .TapTag }}
+          pullPolicy: IfNotPresent
+        hostPath: /opt/doca-tower
+        binary: /usr/local/bin/tower-tap
+  serviceDaemonSet:
+    nodeSelector:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: {{ .ScopeKey }}
+          operator: In
+          values:
+          - "{{ .ScopeValue }}"
+    labels:
+      dpuservice.dpu.nvidia.com/name: {{ .Names.Tower }}
+      svc.dpu.nvidia.com/service: {{ .Names.Tower }}
+    annotations:
+      dpuservice.dpu.nvidia.com/name: {{ .Names.Tower }}
+      k8s.v1.cni.cncf.io/networks: '[{"name":"{{ .Names.IngressNAD }}","namespace":"{{ .Namespace }}","interface":"net1"},{"name":"{{ .Names.EgressNAD }}","namespace":"{{ .Namespace }}","interface":"net2"}]'
+    resources:
+      cpu: "1"
+      memory: 1Gi
+      nvidia.com/bf_sf_trusted: "2"

@@ -74,14 +74,21 @@ type Limits struct {
 }
 type Site struct {
 	DPF struct {
-		Release *string `yaml:"release,omitempty"`
+		Release   *string `yaml:"release,omitempty"`
+		Profile   *string `yaml:"profile,omitempty"`
+		Namespace *string `yaml:"namespace,omitempty"`
+		Name      *string `yaml:"name,omitempty"`
 	} `yaml:"dpf,omitempty"`
 	Management struct {
-		KubeconfigRef FileRef `yaml:"kubeconfigRef"`
-		Context       *string `yaml:"context,omitempty"`
+		KubeconfigRef     FileRef `yaml:"kubeconfigRef"`
+		Context           *string `yaml:"context,omitempty"`
+		ClusterUID        *string `yaml:"clusterUID,omitempty"`
+		KubernetesVersion *string `yaml:"kubernetesVersion,omitempty"`
 	} `yaml:"management"`
-	Credentials map[string]Credential `yaml:"credentials"`
-	Discovery   struct {
+	Provisioning *Provisioning         `yaml:"provisioning,omitempty"`
+	Sentry       *Sentry               `yaml:"sentry,omitempty"`
+	Credentials  map[string]Credential `yaml:"credentials"`
+	Discovery    struct {
 		AddressLookup *addresslookup.Config `yaml:"addressLookup,omitempty"`
 		DPUs          []Endpoint            `yaml:"dpus"`
 		Hosts         []Endpoint            `yaml:"hosts"`
@@ -558,8 +565,8 @@ func rebase(n *yaml.Node, oldBase, newBase, p string) error {
 			if key == "inventory" && p == "" {
 				continue
 			}
-			isFile := key == "caFile" || key == "knownHostsFile" || key == "file" && (p == "/discovery/addressLookup/sources" || strings.HasSuffix(p, "kubeconfigRef") || strings.HasSuffix(p, "passwordRef") || strings.HasSuffix(p, "privateKeyRef"))
-			if isFile && value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value != "" {
+			isReference := next == "/sentry/chartDirectory" || key == "caFile" || key == "knownHostsFile" || key == "file" && (p == "/discovery/addressLookup/sources" || strings.HasSuffix(p, "kubeconfigRef") || strings.HasSuffix(p, "passwordRef") || strings.HasSuffix(p, "privateKeyRef"))
+			if isReference && value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value != "" {
 				abs := resolvePath(oldBase, value.Value)
 				rel, err := filepath.Rel(newBase, abs)
 				if err != nil {
@@ -596,7 +603,10 @@ func validateScalarTypes(n *yaml.Node, p string) error {
 		if p == "/discovery/limits/maxConcurrentBMCs" {
 			expected = "!!int"
 		}
-		if strings.HasSuffix(p, "/tls/insecureSkipVerify") || strings.HasSuffix(p, "/ssh/sudo") {
+		if p == "/sentry/policyServerNodePort" {
+			expected = "!!int"
+		}
+		if strings.HasSuffix(p, "/tls/insecureSkipVerify") || strings.HasSuffix(p, "/ssh/sudo") || p == "/sentry/llmInspection" {
 			expected = "!!bool"
 		}
 		if n.Tag != expected {

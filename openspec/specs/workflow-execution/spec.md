@@ -76,6 +76,49 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **WHEN** a check depends on an operator-created endpoint before that operator is installed
 - **THEN** it is deferred with a reason and required phase, not reported as passed or used to fail initial hardware inventory.
 
+### Requirement: Explicit DPF deployment boundary
+
+The initial Sentry workflow SHALL consume existing management, tenant, enrolled
+BlueField-4 and namespace/credential resources. It SHALL verify explicit cluster
+identities, exact selected device membership and compatible release contracts.
+It SHALL not silently install an operator, enroll hardware, adopt foreign objects,
+execute reboot scripts, remove foreign ownership or modify unrelated Host resources.
+Selected nodes SHALL use the external reboot method without pending power actions.
+
+#### Scenario: Existing foreign owner
+
+- **WHEN** a selected DPU belongs to a different DPUSet or DPUDeployment
+- **THEN** deployment fails with a retained reason before creating replacement provisioning resources.
+
+#### Scenario: Unreviewed reboot automation
+
+- **WHEN** the selected DPUNode uses a reboot script or has a pending power request
+- **THEN** preflight blocks provisioning and identifies the unresolved external transition.
+
+### Requirement: Honest admission and selected readiness
+
+Unresolved required admission checks SHALL yield an incomplete result and nonzero
+exit status. Readiness SHALL require current generation evidence according to the
+kind's actual status contract and exact selected tenant-node coverage. Native
+resource comparison SHALL accept declared API defaults while rejecting additional
+effectful desired fields. Controller-owned workload projections SHALL accept normal
+Kubernetes defaults without ignoring supplied fields or selected membership.
+
+#### Scenario: Missing freshness
+
+- **WHEN** a resource is marked Ready but lacks its required current generation evidence
+- **THEN** validation remains unsuccessful and retains the reason.
+
+#### Scenario: Missing future API during admission
+
+- **WHEN** a dry-run cannot validate a required object because its API is not served
+- **THEN** the result records unresolved admission and does not claim complete success.
+
+#### Scenario: Unexpected hardware setting
+
+- **WHEN** an existing or admitted DPUSet adds a non-default hardware setting absent from frozen intent
+- **THEN** the workflow rejects desired-state drift rather than adopting that setting.
+
 ## Baseline and limits
 
 The root pipeline runs discover/generate/deploy, not automatic validation. Exactly-once dispatch is not a promise of global idempotency or a non-reusable operation object. Discovery may mutate supplied config and use a global logger. It performs pre-clean before some worker validation and defers cleanup only after successful setup. See [effects](../managed-effects/spec.md), [artifacts](../artifact-handoff/spec.md) and [outcomes](../outcomes-evidence/spec.md) for those independent responsibilities.

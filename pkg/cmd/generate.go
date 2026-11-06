@@ -22,6 +22,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	dpftarget "github.com/nvidia/k8s-launch-kit/pkg/target/dpf"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
@@ -38,13 +39,18 @@ var (
 
 var generateCmd = &cobra.Command{
 	Use:   "generate",
-	Short: "Generate deployment manifests for a network profile",
+	Short: "Generate deployment manifests for a target profile",
 	Long: `Select a deployment profile and generate Kubernetes YAML manifests
 from a cluster configuration file.
 
 Supports SR-IOV, host-device, RDMA-shared, IPoIB, MacVLAN, and Spectrum-X profiles.
 File-backed configs remain unchanged; the resolved config is saved with the deployment bundle.
-Optionally deploy the generated manifests with --deploy.`,
+Optionally deploy the generated manifests with --deploy.
+
+For --target dpf, supply an explicit DPF configuration, pinned local chart
+archives and --save-deployment-files. Generation is offline and validates a
+Sentry BF4 bundle for existing management and DPU clusters. --dpf-profile and
+--dpf-release override the configuration without rewriting the source file.`,
 	Example: `  # SR-IOV Ethernet (most common for GPU clusters)
   l8k generate --user-config cluster-config.yaml \
     --fabric ethernet --deployment-type sriov \
@@ -83,6 +89,10 @@ Optionally deploy the generated manifests with --deploy.`,
     --save-deployment-files ./output`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := mustCollectConfigFlags(cmd, generateConfigOptions)
+		if targetName == string(target.DPF) {
+			runTargetCommand(cmd, target.Generate, dpftarget.NewWorkflowAdapter(dpftarget.WorkflowRequest{Phase: target.Generate, UserConfig: userConfig, OutputPath: saveDeploymentFiles, Overrides: opts.ConfigInputs, Deploy: deploy}))
+			return
+		}
 		opts.LaunchKitVersion = Version
 		opts.ConfigDir = configDir
 		opts.UserConfig = userConfig
@@ -133,6 +143,8 @@ func init() {
 	generateCmd.Flags().BoolVar(&overwriteExistingFlag, "overwrite-existing", false, "Converge the cluster to the rendered manifests when preflight detects drift: helm upgrade the chart on chart-version/values mismatch, delete stray Network Operator CRs in the operator namespace, and rewrite NicClusterPolicy component versions via SSA. Off by default — preflight fails fast and lists what would change.")
 
 	setFlagGroup(generateCmd, "user-config", GroupCommon)
+	setFlagGroup(generateCmd, "dpf-release", GroupCommon)
+	setFlagGroup(generateCmd, "dpf-profile", GroupProfile)
 	setFlagGroup(generateCmd, "flavor", GroupCommon)
 	setFlagGroup(generateCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(generateCmd, "network-operator-namespace", GroupCommon)

@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUService
+metadata:
+  name: {{ .Names.Server }}
+  namespace: {{ .Namespace }}
+spec:
+  serviceID: {{ .Names.Server }}
+  deployInCluster: true
+  helmChart:
+    source:
+      repoURL: https://helm.ngc.nvidia.com/nvstaging/doca
+      chart: doca-sentry-policy-server
+      version: "0.2.5"
+    values:
+      service:
+        type: NodePort
+        port: 8080
+        nodePort: {{ .NodePort }}
+      image:
+        repository: nvcr.io/nvstaging/doca/doca-tower-policy-rest
+        tag: {{ .ServerTag }}
+        pullPolicy: Always
+      imagePullSecrets:
+        - name: {{ .PullSecret }}
+      dpuKubeconfig:
+        secretName: {{ .Names.CredentialSecret }}
+        secretKey: kubeconfig
+        mountPath: /var/run/dpu-cluster
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule

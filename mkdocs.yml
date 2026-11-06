@@ -87,8 +87,9 @@ nav:
       - Networking concepts: advanced/concepts.md
   - Deploy:
       - Discover cluster hardware: user/discovery.md
-      - DPF discovery workflows: user/dpf-workflows.md
+      - DPF workflows: user/dpf-workflows.md
       - DPF discovery preview: user/dpf-discovery.md
+      - Deploy Sentry with DPF: user/dpf-sentry.md
       - Generate and review manifests: advanced/generation.md
       - Deploy manifests: advanced/deployment.md
       - Deploy on OpenShift: user/openshift.md

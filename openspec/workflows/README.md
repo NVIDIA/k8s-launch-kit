@@ -6,7 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # Procedural documentation sources
 
 `dpf-discovery.json` owns the user steps and flow transitions for initial DPF
-inventory, address-candidate lookup and refresh. Its generated page is
+inventory, address-candidate lookup, refresh, and Sentry BF4 generation,
+deployment and resource/functional verification. Its generated page is
 `docs/user/dpf-workflows.md`; edit the JSON, not the generated Markdown.
 
 This is a **repository-owned documentation extension**, not a native executable

@@ -4,7 +4,7 @@ Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on K
 Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
-The current lifecycle uses the `host` target by default. The `dpf` target provides an [experimental inventory discovery preview](docs/user/dpf-discovery.md); its provisioning phases remain unavailable.
+The current lifecycle uses the `host` target by default. The `dpf` target provides [experimental inventory discovery](docs/user/dpf-discovery.md) and a [Sentry workflow for enrolled BlueField-4 devices](docs/user/dpf-sentry.md), with generation, deployment and resource validation against existing DPF infrastructure.
 DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
 management cluster. Inventory success is separate from provisioning readiness.
 DPF BMC discovery verifies TLS by default; lab endpoints can explicitly opt in to
@@ -171,7 +171,7 @@ Available Commands:
   version     Print the version number
 
 Target Selection Flags:
-      --target string   Deployment target: host (default) or dpf (experimental inventory discovery) (default "host")
+      --target string   Deployment target: host (default) or dpf (experimental discovery and Sentry workflow) (default "host")
 
 Host Target Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides

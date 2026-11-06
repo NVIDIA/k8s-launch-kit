@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+name: BlueField-4 Sentry
+plugin: dpf
+target: dpf
+description: Zero Trust Sentry on explicitly selected enrolled BlueField-4 devices.
+templates:
+  - 10-flavor.yaml
+  - 20-passthrough-interfaces.yaml
+  - 21-passthrough-chain.yaml
+  - 30-tower-nads.yaml
+  - 31-tower-interfaces.yaml
+  - 32-tower.yaml
+  - 33-tower-chain.yaml
+  - 40-controller.yaml
+  - 50-argus.yaml
+  - 60-policy-rbac.yaml
+  - 61-policy-credential.yaml
+  - 62-policy-server.yaml

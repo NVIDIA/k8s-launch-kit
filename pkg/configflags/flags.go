@@ -16,7 +16,9 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/configinput"
+	dpfconfig "github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/target"
 )
 
 // Scope identifies the command on which a config-backed flag is available.
@@ -33,6 +35,7 @@ type Definition struct {
 	FieldName   string
 	FlagName    string
 	ValueType   string
+	Target      target.Name
 	ConfigPaths []string
 	Resolver    string
 	Scopes      []Scope
@@ -53,6 +56,7 @@ func Definitions() []Definition {
 			FieldName:   field.Name,
 			FlagName:    flagName,
 			ValueType:   valueType(field.Type),
+			Target:      targetForTag(field.Tag.Get("target")),
 			ConfigPaths: splitTag(field.Tag.Get("config")),
 			Resolver:    field.Tag.Get("resolve"),
 			Scopes:      parseScopes(field.Tag.Get("scopes")),
@@ -90,6 +94,9 @@ func ValidateDefinitions() error {
 		if len(definition.Scopes) == 0 {
 			return fmt.Errorf("config flag --%s has no command scope", definition.FlagName)
 		}
+		if !knownTarget(definition.Target) {
+			return fmt.Errorf("config flag --%s has unknown target %q", definition.FlagName, definition.Target)
+		}
 		if definition.Usage == "" {
 			return fmt.Errorf("config flag --%s has no usage text", definition.FlagName)
 		}
@@ -104,7 +111,7 @@ func ValidateDefinitions() error {
 			return fmt.Errorf("config flag --%s has unknown resolver %q", definition.FlagName, definition.Resolver)
 		}
 		for _, path := range definition.ConfigPaths {
-			destinationType, err := configPathType(path)
+			destinationType, err := configPathType(path, definition.Target)
 			if err != nil {
 				return fmt.Errorf("config flag --%s: %w", definition.FlagName, err)
 			}
@@ -222,6 +229,7 @@ func definitionForField(field reflect.StructField) (Definition, bool) {
 		FieldName:   field.Name,
 		FlagName:    flagName,
 		ValueType:   valueType(field.Type),
+		Target:      targetForTag(field.Tag.Get("target")),
 		ConfigPaths: splitTag(field.Tag.Get("config")),
 		Resolver:    field.Tag.Get("resolve"),
 		Scopes:      parseScopes(field.Tag.Get("scopes")),
@@ -406,11 +414,19 @@ func containsScope(scopes []Scope, want Scope) bool {
 	return false
 }
 
-func configPathType(path string) (reflect.Type, error) {
+func configPathType(path string, targetName target.Name) (reflect.Type, error) {
 	if path == "" {
 		return nil, fmt.Errorf("config path must not be empty")
 	}
-	current := reflect.TypeOf(config.LaunchKitConfig{})
+	var current reflect.Type
+	switch targetName {
+	case target.Host:
+		current = reflect.TypeOf(config.LaunchKitConfig{})
+	case target.DPF:
+		current = reflect.TypeOf(dpfconfig.Site{})
+	default:
+		return nil, fmt.Errorf("unknown config target %q", targetName)
+	}
 	for _, part := range strings.Split(path, ".") {
 		for current.Kind() == reflect.Pointer {
 			current = current.Elem()
@@ -425,6 +441,17 @@ func configPathType(path string) (reflect.Type, error) {
 		current = field.Type
 	}
 	return current, nil
+}
+
+func targetForTag(value string) target.Name {
+	if value == "" {
+		return target.Host
+	}
+	return target.Name(value)
+}
+
+func knownTarget(name target.Name) bool {
+	return name == target.Host || name == target.DPF
 }
 
 func mappingTypesMatch(valueType string, destination reflect.Type) bool {

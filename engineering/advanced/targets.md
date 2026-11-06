@@ -29,7 +29,7 @@ Passing `--target host` is an explicit synonym:
 l8k generate --target host ...
 ```
 
-The `dpf` target implements an [experimental inventory discovery preview](../../docs/user/dpf-discovery.md). Its software collects explicit Redfish or host/ARM SSH inventory, optionally with management Kubernetes observations. Inventory acceptance is independent of DPF provisioning readiness; hardware qualification and management probe-image release gates remain explicit. Other DPF phases remain unavailable and cannot fall through to Host execution.
+The `dpf` target implements an [experimental inventory discovery preview](../../docs/user/dpf-discovery.md). Its software collects explicit Redfish or host/ARM SSH inventory, optionally with management Kubernetes observations. Inventory acceptance is independent of DPF provisioning readiness; hardware qualification and management probe-image release gates remain explicit. The experimental `sentry-bf4` profile also supports generate/deploy/validate against existing DPF management, tenant and enrolled BF4 resources. Root pipeline and unrelated phases remain unavailable and cannot fall through to Host execution. See [Sentry operations](../../docs/user/dpf-sentry.md).
 
 Use `l8k schema` to inspect target and phase availability programmatically.
 
@@ -42,8 +42,9 @@ sound generic:
   `--target`, `--output`, and logging controls;
 - host flags describe Network Operator behavior, such as `--fabric`,
   `--deployment-type`, Spectrum-X settings, and connectivity checks;
-- existing path and kubeconfig flags remain host compatibility inputs until a
-  multi-context environment contract gives them target-independent semantics.
+- configuration/artifact paths and lifecycle timeouts have explicit per-command
+  target support; `--kubeconfig` remains Host-only. DPF access uses the typed site
+  file and its bound management and tenant identities.
 
 Help output separates target selection, host configuration, and
 target-agnostic output controls. Every target-aware Cobra flag also carries a

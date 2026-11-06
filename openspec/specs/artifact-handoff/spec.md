@@ -86,9 +86,33 @@ ambiguous inventory SHALL fail rather than guessing a source association.
 - **THEN** it retries within the existing deployment budget without evaluating readiness until fresh scope inspection succeeds.
 - **AND** permission denials, invalid source metadata and selector mismatches remain terminal; pre-write inspection failures do not authorize writes.
 
+### Requirement: Closed DPF intent handoff
+
+DPF Sentry generation SHALL retain a closed, hashed bundle containing the resolved
+configuration, native resources, pinned chart archives, effective Helm values and
+validation-only workload projections. Consumers SHALL verify the complete bundle
+against its resolved profile intent using retained chart bytes before opening
+cluster clients. Different desired intent requires generation into a new directory;
+explicit access-path relocation SHALL not replace captured deployment intent.
+
+#### Scenario: Reindexed foreign resource
+
+- **WHEN** a bundle has consistent hashes but changed resources or stages inconsistent with its resolved profile
+- **THEN** deploy and validate reject it before cluster access or writes.
+
+#### Scenario: Relocated discovery output
+
+- **WHEN** discovery saves a source config in another directory
+- **THEN** chart-directory and credential-file references continue to resolve to their original locations.
+
+#### Scenario: Workload projections
+
+- **WHEN** a selected DPF release transforms service Helm inputs
+- **THEN** validation projections include that release's effective input transformation and remain separate from resources applied by Launch Kit.
+
 ## Baseline and limits
 
-Structural validation does not prove CRD schema/admission or readiness. Sidecar handling lives outside `pkg/bundle`. Atomic sidecar writing does not promise whole-directory atomicity or cluster transactions. No content hash binds manifests to effective config; explicit override may differ from generated intent. Bundle checks cannot recover artifacts already lost to render-map overwrite; [profile planning](../profile-planning/spec.md) owns that boundary.
+Structural validation does not prove CRD schema/admission or readiness. Sidecar handling lives outside `pkg/bundle`. Atomic sidecar writing does not promise whole-directory atomicity or cluster transactions. The legacy Host handoff has no content hash binding manifests to effective config; its explicit override may differ from generated intent. DPF uses the closed intent contract above. Bundle checks cannot recover artifacts already lost to render-map overwrite; [profile planning](../profile-planning/spec.md) owns that boundary.
 
 ## Integration and evidence
 

@@ -68,7 +68,7 @@ func addTargetFlag(cmd *cobra.Command) {
 		&targetName,
 		"target",
 		string(target.Host),
-		"Deployment target: host (default) or dpf (experimental inventory discovery)",
+		"Deployment target: host (default) or dpf (experimental discovery and Sentry workflow)",
 	)
 	setFlagGroup(cmd, "target", GroupTarget)
 	setFlagTargetScope(cmd, []target.Name{target.Host, target.DPF}, "target")
@@ -302,13 +302,14 @@ func markGenerateTargetScopes() {
 		"workload-manifest", "network-operator-namespace", "network-operator-release", "skip-network-operator-helm",
 		"image-pull-secrets", "enabled-plugins", "kubeconfig", "overwrite-existing")
 	markConfigFlagTargetScopes(generateCmd, configflags.ScopeGenerate)
+	setFlagTargetScope(generateCmd, []target.Name{target.Host, target.DPF}, "user-config", "save-deployment-files")
 }
 
 func markConfigFlagTargetScopes(cmd *cobra.Command, scope configflags.Scope) {
 	for _, definition := range configflags.Definitions() {
 		for _, available := range definition.Scopes {
 			if available == scope {
-				setFlagTargetScope(cmd, []target.Name{target.Host}, definition.FlagName)
+				setFlagTargetScope(cmd, []target.Name{definition.Target}, definition.FlagName)
 				break
 			}
 		}
@@ -319,6 +320,7 @@ func markDeployTargetScopes() {
 	setFlagTargetScope(deployCmd, []target.Name{target.Host, target.DPF}, "dry-run", "deploy-timeout")
 	setFlagTargetScope(deployCmd, []target.Name{target.Host},
 		"flavor", "kubeconfig", "deployment-files", "network-operator-namespace", "user-config", "overwrite-existing", "skip-network-operator-helm")
+	setFlagTargetScope(deployCmd, []target.Name{target.Host, target.DPF}, "deployment-files", "user-config")
 }
 
 func markValidateTargetScopes() {
@@ -327,4 +329,5 @@ func markValidateTargetScopes() {
 		"keep", "connectivity-timeout", "validation-mode", "validation-checks",
 		"rdma-rping-iterations", "rdma-ib-write-size", "rdma-ib-write-min-bandwidth-gbps",
 		"wait", "report-path", "junit-path")
+	setFlagTargetScope(validateCmd, []target.Name{target.Host, target.DPF}, "deployment-files", "user-config", "wait")
 }

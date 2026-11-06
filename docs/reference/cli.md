@@ -32,9 +32,11 @@ with a source filename and document number where applicable.
 
 ## Target selection and flag ownership
 
-Omitting `--target` selects `host`. `dpf` provides an
-[experimental discovery preview](../user/dpf-discovery.md). Its other phases
-are unavailable and return exit `2`; they do not run against the host cluster.
+Omitting `--target` selects `host`. `dpf` provides experimental
+[inventory discovery](../user/dpf-discovery.md) and the [Sentry BF4
+generate/deploy/validate workflow](../user/dpf-sentry.md) on an existing DPF
+management cluster, tenant and enrolled devices. The root DPF pipeline remains
+unavailable; it does not fall through into Host execution.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags
@@ -45,17 +47,23 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | --- | --- | --- | --- |
 | `--target` | discover, generate, deploy, validate, root pipeline | target-agnostic | Target name. Defaults to `host`. |
 | `--kubeconfig` | root, discover, generate with deploy, deploy, clean, validate, sosreport | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
-| `--user-config` | root, discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace and Helm-ownership resolution. |
+| `--user-config` | root, discover, generate, deploy, clean, validate | host and dpf where the phase is available | Host configuration or DPF site input. DPF deploy/validate normally consume the bundle's resolved input; an explicit file must preserve generated intent. |
 | `--config-dir` | all | host | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
 | `--network-operator-release` | root, discover, generate | host | Catalogued release line such as `26.1`, `26.4`, `26.7`, or `26.10`. |
 | `--network-operator-namespace` | root, discover, generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--skip-network-operator-helm` | generate, deploy, validate, root pipeline | host | Skip `values.yaml` generation, Network Operator chart installation, and Helm-specific validation. Custom-resource handling remains enabled. |
 | `--flavor` | root, discover, generate, deploy, validate, clean | host | `k8s` or `ocp`, overriding config. Clean accepts the flag to reject OpenShift cleanup explicitly. |
-| `--output json` | all (inherited) | target-agnostic | Command-specific output; validation emits a stream, preset/sosreport success remains text, and standalone deploy has no success envelope. See [Automation](../integrator/automation.md#json-mode). |
+| `--output json` | all (inherited) | target-agnostic | Command-specific output. DPF lifecycle emits one final target/phase result with report paths; Host validation emits a stream, preset/sosreport success remains text, and Host standalone deploy has no success envelope. See [Automation](../integrator/automation.md#json-mode). |
 | `--yes`, `-y` | root pipeline only | target-agnostic | Auto-confirm root prompts. Subcommands reject this flag; lifecycle JSON mode auto-confirms. |
 | `--quiet` | root pipeline | target-agnostic | Suppress informational output. |
 | `--log-level` | all | target-agnostic | Enable `trace`, `debug`, `info`, `warn`, or `error` logging. `debug` shows structured progress; `trace` also shows bounded command output. |
 | `--log-file` | all | target-agnostic | Write logs to a file instead of `stderr`. |
+
+DPF generation accepts `--dpf-release` and `--dpf-profile` on `generate` only.
+Select an explicit generation release and profile from `l8k schema` under
+`dpf.generationReleases` and `dpf.profiles`; `dpf.charts` lists the four required
+local archive coordinates and hashes. DPF credentials and management context
+come from its site/resolved input, never the Host `--kubeconfig` fallback.
 
 The public host config remains the flat `cluster-config.yaml` schema. Generated
 manifests remain under `deployment/network-operator/`; the exact resolved
@@ -76,6 +84,7 @@ available throughout the command tree.
 | `--kubeconfig`, `--user-config`, `--flavor`, `--network-operator-namespace` | yes | yes | yes | yes | yes | yes |
 | `--network-operator-release`, `--image-pull-secrets`, profile/Spectrum-X flags | yes | yes | yes | — | — | — |
 | `--enabled-plugins` | yes | yes | yes | — | — | — |
+| `--dpf-release`, `--dpf-profile` | — | — | yes | — | — | — |
 | `--node-selector` | yes | yes | yes (`--for`) | — | — | — |
 | `--save-cluster-config`, `--collapse-nic-rails` | yes | yes | — | — | — | — |
 | `--keep-namespace` | — | yes | — | — | — | — |
@@ -114,7 +123,28 @@ resolves missing values from hardware defaults. With `--user-config`, only
 `clusterConfig` is replaced and explicit flags are the only changes made to
 the rest of the supplied configuration.
 
+## DPF workflow flags
+
+| Flag | Command | Meaning |
+| --- | --- | --- |
+| `--dpf-release` | generate | Explicit installed DPF release; overrides `dpf.release` in the site input. It does not upgrade the operator. |
+| `--dpf-profile` | generate | DPF profile; overrides `dpf.profile`. The available profile is `sentry-bf4`. |
+| `--save-deployment-files` | generate | Required immutable output directory for the DPF bundle. |
+| `--deployment-files` | deploy, validate | Previously generated DPF bundle; retained target metadata must identify DPF. |
+| `--deploy` | generate | Deploy the exact generated bundle through the same DPF deployment path. |
+| `--dry-run` | deploy or generate with deploy | Server-side admission of native resources; unavailable future APIs may remain unresolved. It does not prove service readiness. |
+| `--deploy-timeout` | deploy | Explicit end-to-end budget; use a bounded duration such as `45m`. DPF additionally has a 45-minute default when no explicit budget is supplied. |
+| `--wait` | validate | Bound resource validation, for example `10m`. Host connectivity/report flags are not DPF policy tests. |
+
+DPF generation alone reads local inputs and chart archives. Deploy/validate
+connect to the bound management and tenant APIs. The bundle remains unchanged;
+run reports are written beside it under `<bundle>.runs/`. Read the [DPF Sentry
+procedure](../user/dpf-sentry.md) for external prerequisites, physical effects,
+retry boundaries and separate allow/deny verification.
+
 ## Profile Flags
+
+These flags describe Host profiles; DPF uses the separate workflow flags above.
 
 | Flag | Description |
 | --- | --- |
@@ -165,7 +195,7 @@ root pipeline. The remaining profile flags also apply to discovery.
 | --- | --- |
 | `--deployment-files` | Directory containing generated manifests. Defaults to `./deployment`. |
 | `--dry-run` | Use server-side dry run. |
-| `--deploy-timeout` | End-to-end deploy timeout, accepted by standalone deploy and the root pipeline. `0` means unbounded. Not available on `generate --deploy`. |
+| `--deploy-timeout` | End-to-end deploy timeout, accepted by standalone deploy and the root pipeline. Host `0` means unbounded; DPF retains its separate lifecycle guard. Not available on `generate --deploy`. |
 | `--overwrite-existing` | Upgrade conflicting Helm chart/values and delete reported stray CRs, including resources without l8k ownership annotations. See the [deletion boundary](../advanced/deployment.md#stray-resource-deletion-boundary). |
 | `--skip-network-operator-helm` | Skip chart installation and Helm chart-version/values preflight checks; still apply manifests and check component versions and strays. |
 
@@ -202,6 +232,10 @@ the kubeconfig and resolved namespace. See [Cleanup](../user/cleanup.md) for the
 full deletion boundary.
 
 ## Validate Flags
+
+The following connectivity and HTML/JUnit report behavior describes Host
+validation. DPF validation checks resources against its frozen bundle and writes
+a separate JSON run report; it does not create a policy-test workload.
 
 When `--deployment-files` contains only user-provided `*example*.yaml` test
 DaemonSets, `validate` runs connectivity only. Adding `values.yaml` or any

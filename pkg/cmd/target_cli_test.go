@@ -144,6 +144,8 @@ func TestImportantFlagScopes(t *testing.T) {
 		{command: rootCmd, flag: "fabric", expected: []target.Name{target.Host}},
 		{command: discoverCmd, flag: "kubeconfig", expected: []target.Name{target.Host}},
 		{command: generateCmd, flag: "deploy", expected: []target.Name{target.Host, target.DPF}},
+		{command: generateCmd, flag: "dpf-release", expected: []target.Name{target.DPF}},
+		{command: generateCmd, flag: "dpf-profile", expected: []target.Name{target.DPF}},
 		{command: deployCmd, flag: "dry-run", expected: []target.Name{target.Host, target.DPF}},
 		{command: validateCmd, flag: "connectivity", expected: []target.Name{target.Host}},
 		{command: generateCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
@@ -250,7 +252,7 @@ func TestTargetDescriptors(t *testing.T) {
 	assert.Equal(t, target.DPF, descriptors[1].Name)
 	for _, phase := range target.PublicPhases() {
 		assert.True(t, descriptors[0].Capability(phase).Available)
-		assert.Equal(t, phase == target.Discover, descriptors[1].Capability(phase).Available)
+		assert.True(t, descriptors[1].Capability(phase).Available)
 		assert.NotEmpty(t, descriptors[1].Capability(phase).Reason)
 	}
 }
@@ -273,7 +275,9 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Equal(t, "host", actual.Targets[0].Name)
 		assert.Equal(t, "dpf", actual.Targets[1].Name)
 		assert.True(t, actual.Targets[0].Phases["validate"].Available)
-		assert.False(t, actual.Targets[1].Phases["validate"].Available)
+		assert.True(t, actual.Targets[1].Phases["generate"].Available)
+		assert.True(t, actual.Targets[1].Phases["deploy"].Available)
+		assert.True(t, actual.Targets[1].Phases["validate"].Available)
 		assert.Equal(t, []string{"host", "dpf"}, actual.Flags["--output"].Targets)
 		assert.Equal(t, []string{"host"}, actual.Flags["--fabric"].Targets)
 	})
@@ -290,17 +294,28 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Contains(t, omittedOutput, "cluster config file does not exist")
 	})
 
-	for _, phase := range target.PublicPhases() {
-		if phase == target.Discover {
-			continue
+	t.Run("dpf generate reaches workflow validation", func(t *testing.T) {
+		dir := dpfProcessTempDir(t)
+		output, exitCode := runCLIHelper(t, "generate", "--target", "dpf", "--user-config", filepath.Join(dir, "missing.yaml"), "--save-deployment-files", filepath.Join(dir, "bundle"), "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, `"phase":"generate"`)
+		assert.Contains(t, output, "reference must be a bounded regular file")
+		assert.NotContains(t, output, `does not implement phase`)
+	})
+
+	t.Run("dpf deploy and validate fail on missing bundles before credential access", func(t *testing.T) {
+		for _, phase := range []string{"deploy", "validate"} {
+			t.Run(phase, func(t *testing.T) {
+				dir := dpfProcessTempDir(t)
+				missingBundle := filepath.Join(dir, "missing-bundle")
+				output, exitCode := runCLIHelper(t, phase, "--target", "dpf", "--deployment-files", missingBundle, "--user-config", filepath.Join(dir, "missing-kubeconfig"), "--output", "json")
+				assert.Equal(t, 2, exitCode)
+				assert.Contains(t, output, `"phase":"`+phase+`"`)
+				assert.Contains(t, output, "open DPF bundle")
+				assert.NotContains(t, output, "kubeconfig")
+			})
 		}
-		t.Run("dpf "+string(phase)+" capability error", func(t *testing.T) {
-			output, exitCode := runCLIHelper(t, string(phase), "--target", "dpf")
-			assert.Equal(t, 2, exitCode)
-			assert.Contains(t, output, `invalid target invocation`)
-			assert.Contains(t, output, `target "dpf" does not implement phase "`+string(phase)+`"`)
-		})
-	}
+	})
 
 	t.Run("root dpf pipeline cannot enter host path", func(t *testing.T) {
 		output, exitCode := runCLIHelper(t, "--target", "dpf")
@@ -308,10 +323,41 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Contains(t, output, `target "dpf" does not implement phase "pipeline"`)
 	})
 
-	t.Run("explicit false host flag is rejected for dpf", func(t *testing.T) {
+	t.Run("DPF-only flags are rejected for host and host-only flags are rejected for DPF", func(t *testing.T) {
+		for _, flag := range []string{"--dpf-release", "--dpf-profile"} {
+			output, exitCode := runCLIHelper(t, "generate", flag, "26.8.0", "--user-config", filepath.Join(t.TempDir(), "missing"), "--save-deployment-files", filepath.Join(t.TempDir(), "out"))
+			assert.Equal(t, 2, exitCode)
+			assert.Contains(t, output, "not valid for target \"host\"")
+		}
 		output, exitCode := runCLIHelper(t, "validate", "--target", "dpf", "--connectivity=false")
 		assert.Equal(t, 2, exitCode)
 		assert.Contains(t, output, `--connectivity (targets: host)`)
+	})
+
+	t.Run("invalid DPF config returns one JSON workflow failure without host fallback", func(t *testing.T) {
+		dir := dpfProcessTempDir(t)
+		badConfig := filepath.Join(dir, "invalid.yaml")
+		require.NoError(t, os.WriteFile(badConfig, []byte("dpf: [invalid]\n"), 0o600))
+		bundlePath := filepath.Join(dir, "bundle")
+		output, exitCode := runCLIHelper(t, "generate", "--target", "dpf", "--user-config", badConfig, "--save-deployment-files", bundlePath, "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, `"target":"dpf"`)
+		assert.Contains(t, output, `"phase":"generate"`)
+		assert.NotContains(t, output, "Host configuration")
+		assert.NoDirExists(t, bundlePath)
+	})
+
+	t.Run("explicit empty DPF release returns validation JSON and creates no bundle", func(t *testing.T) {
+		dir := dpfProcessTempDir(t)
+		configPath := filepath.Join(dir, "site.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte("dpf:\n  release: 26.8.0\n"), 0o600))
+		bundlePath := filepath.Join(dir, "bundle")
+		output, exitCode := runCLIHelper(t, "generate", "--target", "dpf", "--user-config", configPath, "--dpf-release=", "--save-deployment-files", bundlePath, "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, `"target":"dpf"`)
+		assert.Contains(t, output, "DPF release")
+		assert.Contains(t, output, "has no Sentry BF4 generation contract")
+		assert.NoDirExists(t, bundlePath)
 	})
 
 	t.Run("dpf capability errors preserve json output mode", func(t *testing.T) {
@@ -393,4 +439,16 @@ func runCLIHelper(t *testing.T, args ...string) (string, int) {
 		t.Fatalf("run helper %s: %v\n%s", strings.Join(args, " "), err, output)
 	}
 	return string(output), exitErr.ExitCode()
+}
+
+func dpfProcessTempDir(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	repoRoot, err := filepath.Abs(filepath.Join(cwd, "../.."))
+	require.NoError(t, err)
+	dir, err := os.MkdirTemp(repoRoot, ".dpf-cli-test-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }

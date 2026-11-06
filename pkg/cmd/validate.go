@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	dpftarget "github.com/nvidia/k8s-launch-kit/pkg/target/dpf"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
@@ -43,7 +44,7 @@ var (
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
-	Short: "Verify a deployment matches the selected Network Operator release",
+	Short: "Verify the selected target's deployment resources",
 	Long: `Validate that a previously generated deployment is correctly applied to
 the cluster.
 
@@ -82,7 +83,12 @@ by the selected checks.
 Exits non-zero on any missing manifest, version mismatch, or
 connectivity-matrix failure. A skipped, empty, or incomplete connectivity-only
 matrix also fails; every selected check family must produce a gating test, and
-non-gating cross-rail observations do not count.`,
+non-gating cross-rail observations do not count.
+
+For --target dpf, verify a generated DPF bundle's cluster bindings, selected
+devices and Sentry resources without creating them. --wait enables bounded
+readiness polling. Resource readiness is separate from a functional Sentry
+allow/deny policy test; the Host connectivity workload is not run.`,
 	Example: `  # Full validate (manifest state + connectivity matrix)
   l8k validate
 
@@ -104,6 +110,10 @@ non-gating cross-rail observations do not count.`,
   # Agent mode (JSON output)
   l8k validate --output json 2>/dev/null`,
 	Run: func(cmd *cobra.Command, _ []string) {
+		if targetName == string(target.DPF) {
+			runTargetCommand(cmd, target.Validate, dpftarget.NewWorkflowAdapter(dpftarget.WorkflowRequest{Phase: target.Validate, UserConfig: userConfig, DeploymentFiles: deploymentFiles, Wait: validateWait}))
+			return
+		}
 		runTargetCommand(cmd, target.Validate, hosttarget.NewValidateAdapter(
 			newHostValidateRequest(cmd),
 			hosttarget.NewValidateRunner(),

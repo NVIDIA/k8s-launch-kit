@@ -11,6 +11,22 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
+## DPF Sentry deployment
+
+For an explicit DPF request, use `l8k deploy --target dpf
+--deployment-files <bundle>` and follow `docs/user/dpf-sentry.md`. The bundle
+binds management/tenant access and selected enrolled BF4 devices; do not add
+Host `--kubeconfig` or infer an ambient context. Existing namespaces, registry
+and MITM Secrets, operator/tenant health and exact foreign-owner transition
+are external prerequisites. Preview native API admission with `--dry-run`,
+review unresolved checks, then use an explicit `--deploy-timeout`. Real deploy
+can reimage devices and require host power handling. It never implicitly
+adopts/removes another owner or applies chart projections twice. Reports go to
+`<bundle>.runs/`; preserve the bundle and failed-run evidence before retrying.
+The Host procedure below applies to `host` only.
+
+## Host workflow
+
 This workflow uses the default `host` target; `--target host` is equivalent.
 The CLI snapshots deployment arguments and runs the standalone Host deploy
 service through the target registry; command syntax and apply ordering are

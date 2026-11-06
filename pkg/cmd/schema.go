@@ -25,6 +25,8 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
+	dpfconfig "github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sentry"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
@@ -38,6 +40,7 @@ type commandSchema struct {
 
 // schema represents the tool's capabilities in a machine-readable format.
 type schema struct {
+	DPF                              dpfSchema                `json:"dpf"`
 	Version                          string                   `json:"version"`
 	Description                      string                   `json:"description"`
 	Commands                         map[string]commandSchema `json:"commands"`
@@ -50,6 +53,27 @@ type schema struct {
 	SupportedNetworkOperatorReleases []string                 `json:"supportedNetworkOperatorReleases"`
 	ExitCodes                        map[string]string        `json:"exitCodes"`
 	Flags                            map[string]flagSchema    `json:"flags"`
+}
+
+type dpfSchema struct {
+	Profiles           []string      `json:"profiles"`
+	GenerationReleases []string      `json:"generationReleases"`
+	Charts             []chartSchema `json:"charts"`
+}
+type chartSchema struct {
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	Repository string `json:"repository"`
+	Filename   string `json:"filename"`
+	SHA256     string `json:"sha256"`
+}
+
+func dpfCapabilitiesSchema() dpfSchema {
+	s := dpfSchema{Profiles: []string{"sentry-bf4"}, GenerationReleases: dpfconfig.GenerationReleases()}
+	for _, c := range sentry.Catalog() {
+		s.Charts = append(s.Charts, chartSchema{Name: c.Name, Version: c.Version, Repository: c.Repository, Filename: c.Filename, SHA256: c.SHA256})
+	}
+	return s
 }
 
 type flagSchema struct {
@@ -74,6 +98,7 @@ var schemaCmd = &cobra.Command{
 	Long:  `Output a machine-readable JSON description of l8k's capabilities, flags, and exit codes. Designed for AI agents to programmatically discover what this tool can do.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		s := schema{
+			DPF:         dpfCapabilitiesSchema(),
 			Version:     Version,
 			Description: "CLI tool for deploying NVIDIA cloud-native networking solutions on Kubernetes",
 			Commands: map[string]commandSchema{

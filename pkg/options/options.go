@@ -25,6 +25,10 @@ import (
 // Options holds all the configuration parameters for the application
 type Options struct {
 	Flavor string `flag:"flavor" config:"flavor" scopes:"root,generate,discover" usage:"Cluster flavor: k8s or ocp (overrides config)"` // Empty means use the config file.
+	// DPF profile and release are target-specific generation inputs. Empty
+	// explicit values remain present in ConfigInputs for validation.
+	DPFProfile string `flag:"dpf-profile" config:"dpf.profile" target:"dpf" scopes:"generate" usage:"DPF generation profile name"`
+	DPFRelease string `flag:"dpf-release" config:"dpf.release" target:"dpf" scopes:"generate" usage:"Installed DPF release selected for generation"`
 	// LaunchKitVersion is the version reported by `l8k version`. The CLI
 	// passes it through so generated resources can record their producer.
 	LaunchKitVersion string

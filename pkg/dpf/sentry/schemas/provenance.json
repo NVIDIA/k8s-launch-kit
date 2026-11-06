@@ -1,0 +1,114 @@
+[
+  {
+    "file": "26.8.0-rc.1-BlueFieldSoftware.json",
+    "sha256": "c27bc4cc4dd297d9711861ad45e9bc90a3a4ce2b5ae9b628bd654fafd6c7a968",
+    "sourceCommit": "6bc1bd3f00f5fb4064600748da7164e3610622cd",
+    "sourcePath": "config/provisioning/crd/bases/provisioning.dpu.nvidia.com_bluefieldsoftwares.yaml",
+    "sourceSHA256": "28273445837914290a7ea9f1f6b98837c3a763e925bd8a318ae7b7ae7d838d5e"
+  },
+  {
+    "file": "26.8.0-rc.1-DPUFlavor.json",
+    "sha256": "0b0d46480fbabb0d3b182077cd23f83fc02ffd846a1a484df076ed18246e4ff2",
+    "sourceCommit": "6bc1bd3f00f5fb4064600748da7164e3610622cd",
+    "sourcePath": "config/provisioning/crd/bases/provisioning.dpu.nvidia.com_dpuflavors.yaml",
+    "sourceSHA256": "3d0c5c3000121b96e052eed993e773ce5bf42727025419605958bf61123e4fb6"
+  },
+  {
+    "file": "26.8.0-rc.1-DPUSet.json",
+    "sha256": "0129a3c4e6010e80d7ad64585cd08045b3d967cb15ca3c6ca37a87541765e38f",
+    "sourceCommit": "6bc1bd3f00f5fb4064600748da7164e3610622cd",
+    "sourcePath": "config/provisioning/crd/bases/provisioning.dpu.nvidia.com_dpusets.yaml",
+    "sourceSHA256": "4223ce3d30d513f8ea4007eb092601082355211b7849594f0f9e36b7cbdf9428"
+  },
+  {
+    "file": "26.8.0-rc.1-DPUService.json",
+    "sha256": "8cd8be61c807a85935588e3dc1ea73877f42cf5953fb05caceaa0ad84c6c5db8",
+    "sourceCommit": "6bc1bd3f00f5fb4064600748da7164e3610622cd",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuservices.yaml",
+    "sourceSHA256": "8747081355c8aad5f32734d3cf8c6d584b7fa94fb3e452204dc0d81ec69f26e2"
+  },
+  {
+    "file": "26.8.0-rc.1-DPUServiceNAD.json",
+    "sha256": "ec9ec0864824dec9c00659b484fca9ac00777eb8b66f6d33ddda91b08b13134b",
+    "sourceCommit": "6bc1bd3f00f5fb4064600748da7164e3610622cd",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuservicenads.yaml",
+    "sourceSHA256": "07f1514c175f1e471f5c1678a6a54dacdc8deac3a4217ad5a830a9b64dfd706c"
+  },
+  {
+    "file": "26.8.0-rc.1-DPUServiceInterface.json",
+    "sha256": "15ea9818fc1114305264f8db423325f2a4a7830ad3fd9fc15697071b5178c836",
+    "sourceCommit": "6bc1bd3f00f5fb4064600748da7164e3610622cd",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuserviceinterfaces.yaml",
+    "sourceSHA256": "944ed0e9a5e1caeef5c5679fafb12c7bf8a016155c42c1bbd687a3d8bacdb123"
+  },
+  {
+    "file": "26.8.0-rc.1-DPUServiceChain.json",
+    "sha256": "b4e9c274c67290ef8d9794c20be63ba5af36e842d1d735dcba26cdbd6a4ef3e7",
+    "sourceCommit": "6bc1bd3f00f5fb4064600748da7164e3610622cd",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuservicechains.yaml",
+    "sourceSHA256": "60f850ad7e67d4dc66aac9281451cb157dd44c6a82045e0f61c54378901771e4"
+  },
+  {
+    "file": "26.8.0-rc.1-DPUServiceCredentialRequest.json",
+    "sha256": "9d4c953fc166f2e27b5220ace7803a36a53b6c597bb250461a4a1c8a752eb34e",
+    "sourceCommit": "6bc1bd3f00f5fb4064600748da7164e3610622cd",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuservicecredentialrequests.yaml",
+    "sourceSHA256": "29c4839e629701b08d520e21fb915c2342e8bf66abde01ff5018b428192697b1"
+  },
+  {
+    "file": "26.8.0-BlueFieldSoftware.json",
+    "sha256": "c27bc4cc4dd297d9711861ad45e9bc90a3a4ce2b5ae9b628bd654fafd6c7a968",
+    "sourceCommit": "fc4974ed3bc026ae27634673c2fdf818a2972235",
+    "sourcePath": "config/provisioning/crd/bases/provisioning.dpu.nvidia.com_bluefieldsoftwares.yaml",
+    "sourceSHA256": "28273445837914290a7ea9f1f6b98837c3a763e925bd8a318ae7b7ae7d838d5e"
+  },
+  {
+    "file": "26.8.0-DPUFlavor.json",
+    "sha256": "0b0d46480fbabb0d3b182077cd23f83fc02ffd846a1a484df076ed18246e4ff2",
+    "sourceCommit": "fc4974ed3bc026ae27634673c2fdf818a2972235",
+    "sourcePath": "config/provisioning/crd/bases/provisioning.dpu.nvidia.com_dpuflavors.yaml",
+    "sourceSHA256": "3d0c5c3000121b96e052eed993e773ce5bf42727025419605958bf61123e4fb6"
+  },
+  {
+    "file": "26.8.0-DPUSet.json",
+    "sha256": "3684f374d9c5ad42a091195aba2dfc5b5f5f3a0a2ec607fde49bc9ccef8f08d9",
+    "sourceCommit": "fc4974ed3bc026ae27634673c2fdf818a2972235",
+    "sourcePath": "config/provisioning/crd/bases/provisioning.dpu.nvidia.com_dpusets.yaml",
+    "sourceSHA256": "c025cf3d5a66ca61a270287b688e883a1a1c1ce8855700a553a8b43f41126d53"
+  },
+  {
+    "file": "26.8.0-DPUService.json",
+    "sha256": "8cd8be61c807a85935588e3dc1ea73877f42cf5953fb05caceaa0ad84c6c5db8",
+    "sourceCommit": "fc4974ed3bc026ae27634673c2fdf818a2972235",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuservices.yaml",
+    "sourceSHA256": "8747081355c8aad5f32734d3cf8c6d584b7fa94fb3e452204dc0d81ec69f26e2"
+  },
+  {
+    "file": "26.8.0-DPUServiceNAD.json",
+    "sha256": "ec9ec0864824dec9c00659b484fca9ac00777eb8b66f6d33ddda91b08b13134b",
+    "sourceCommit": "fc4974ed3bc026ae27634673c2fdf818a2972235",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuservicenads.yaml",
+    "sourceSHA256": "07f1514c175f1e471f5c1678a6a54dacdc8deac3a4217ad5a830a9b64dfd706c"
+  },
+  {
+    "file": "26.8.0-DPUServiceInterface.json",
+    "sha256": "02b0faaf3384316124de3c9ecb87b8abf43567418f43b84261e75aaf206eedad",
+    "sourceCommit": "fc4974ed3bc026ae27634673c2fdf818a2972235",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuserviceinterfaces.yaml",
+    "sourceSHA256": "71b40c578ea40f24b1a219726d94a99de8e7491d3478a5b152c865e70d5d7317"
+  },
+  {
+    "file": "26.8.0-DPUServiceChain.json",
+    "sha256": "706755a9aa556e166257427eac66e6a0f994b6b61f5e2d99e226cd472683e0d7",
+    "sourceCommit": "fc4974ed3bc026ae27634673c2fdf818a2972235",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuservicechains.yaml",
+    "sourceSHA256": "f43da798e37c3cf5322d61248aed81b28323bcbbc9d0fa6fe7722d41e2f69210"
+  },
+  {
+    "file": "26.8.0-DPUServiceCredentialRequest.json",
+    "sha256": "9d4c953fc166f2e27b5220ace7803a36a53b6c597bb250461a4a1c8a752eb34e",
+    "sourceCommit": "fc4974ed3bc026ae27634673c2fdf818a2972235",
+    "sourcePath": "config/dpuservice/crd/bases/svc.dpu.nvidia.com_dpuservicecredentialrequests.yaml",
+    "sourceSHA256": "29c4839e629701b08d520e21fb915c2342e8bf66abde01ff5018b428192697b1"
+  }
+]

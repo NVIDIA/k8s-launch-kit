@@ -49,7 +49,7 @@ flowchart TB
                 validatesvc["Standalone validate + report service"]
                 hostpaths["Host config, kubeconfig, preset, artifact resolution"]
             end
-            dpf["DPF inventory — pkg/target/dpf + pkg/dpf\nexplicit Redfish / host SSH / ARM OOB SSH sources\nprovisioning phases unavailable"]
+            dpf["DPF — pkg/target/dpf + pkg/dpf\nexplicit inventory sources\nSentry generation / deploy / validation on existing infrastructure"]
         end
 
         subgraph application["Host application orchestration"]
