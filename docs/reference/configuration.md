@@ -5,14 +5,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Configuration File
 
-`cluster-config.yaml` keeps its existing public YAML shape. Discovery writes
-it, while generation reads it without modifying it. The repository-root file
-is also the canonical lowest-precedence defaults source embedded in the
-binary. Generation records the effective result in
+`cluster-config.yaml` contains hardware inventory and deployment settings.
+Discovery writes it; generation reads it without modifying it and fills omitted
+values from the built-in defaults. Generation records the effective result in
 `<deployment-dir>/.l8k/resolved-config.yaml`; deploy and validate use that
 bundle metadata when no explicit `--user-config` is supplied.
 
-The canonical default release is `26.7`. The `26.10` catalog entry selects
+The default release is `26.7`. The `26.10` catalog entry selects
 Network Operator `v26.10.0-beta.1` when requested. A compatible Spectrum-X release
 selected during fresh discovery takes precedence over that default; the saved
 file contains the selected release and its matching catalog versions. An
@@ -21,7 +20,7 @@ override is supplied.
 
 For generation, configuration source precedence is:
 
-1. Canonical defaults from the repository-root `cluster-config.yaml`.
+1. Built-in configuration defaults.
 2. Resolved hardware defaults for missing profile fields.
 3. `--config-dir/l8k-config.yaml` or `--user-config` values.
 4. Explicit CLI flags.
@@ -459,8 +458,8 @@ Deploy and validate monitor all matched `NicDevice` objects and require current
 `ConfigUpdateInProgress` conditions with `reason: UpdateSuccessful` and
 `status: "False"`. Missing, stale or partial status remains in progress; runtime
 or firmware configuration failures are reported. Confirm NCO/DOCA/RHCOS runtime
-RoCE support for the selected release before enabling this option on OCP; offline
-rendering and tests do not establish live qualification.
+RoCE support for the selected release before enabling this option on OCP,
+then validate connectivity on the selected workers.
 
 Spectrum-X `NicConfigurationTemplate.spec.nicSelector` is not a separate
 configuration input. Launch Kit renders one template per source hardware group
@@ -572,7 +571,7 @@ Fresh discovery may merge compatible source groups during generation, but it kee
 
 | Field | Meaning |
 | --- | --- |
-| `identifier` | Lowercase resource-name form of machine/GPU identity with complete `NVIDIA` segments removed and common machine segments shortened (`ThinkSystem` → `ts`, `PowerEdge` → `pe`), bounded to 30 bytes with balanced machine/GPU prefixes and a 6-character deterministic hash when needed, or `group-N` fallback. The Launch Kit machine node label uses the same value. |
+| `identifier` | Saved group name used with `--groups` and the Launch Kit machine node label. Names are lowercase and may be shortened; copy the saved value rather than constructing it. Unresolved multiple groups use `group-N`. |
 | `machineType` / `gpuType` | Discovered hardware identity. |
 | `linkType` | Per-group `Ethernet` or `InfiniBand` result when fabric probes agree. |
 | `netplanManaged` | `true` when any worker has an NVIDIA PF selected by a netplan `match.macaddress` stanza with a non-empty `set-name`. Blocks generation when a `NicInterfaceNameTemplate` would configure the group. |

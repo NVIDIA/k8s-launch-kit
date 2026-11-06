@@ -16,19 +16,16 @@ kubeconfig adds management observations and must work if supplied.
 This build exposes an **experimental inventory preview**. Inventory success means
 that selected sources were read, physical identities and unique host/card mappings
 were established, and cleanup/publication succeeded. It does **not** mean DPF
-provisioning readiness or production hardware qualification. Missing optional card
-metadata remains visible, including cards without serials. The hardware qualification
-catalog remains empty; its failed qualification checks are required for future
-`generate`, not for inventory collection. Overall deployment `acceptance` remains
+provisioning readiness or production hardware support. Missing optional card
+metadata remains visible, including cards without serials. Hardware support and
+deployment readiness checks do not block inventory collection. Overall deployment `acceptance` remains
 `not-evaluated`, even when `discovery.outcome` is `complete` and the command exits zero.
 
-Management probes use an existing digest-pinned diagnostic image with Go
-orchestration. The catalog pins `docker.io/nicolaka/netshoot:v0.16`, but Kubernetes
-runtime qualification is pending. Default `management` mode rejects locally until
-that cohort is qualified; explicitly select `inventory`. There is no automatic
-downgrade. Management mode retains the three-control-plane topology requirement;
-inventory merely reports that later-phase check. DPF generate/deploy/validate and
-the root DPF pipeline remain unavailable.
+Explicitly select `discovery.probes.mode: inventory`. The default `management`
+mode is unavailable in this preview; selecting it stops the command before
+remote access. Inventory reports management topology when a kubeconfig is supplied,
+but does not test management-network connectivity. DPF generate/deploy/validate
+and the DPF pipeline are unavailable.
 
 ## Inputs and invocation
 
@@ -70,39 +67,34 @@ l8k discover --target dpf --user-config dpf-site.yaml \
   --save-cluster-config dpf-discovered.yaml --output json
 ```
 
-The YAML is ordinary CLI configuration. `--target` chooses the schema; generated
-facts live under `inventory`. There is no CRD wrapper. Unknown fields, duplicate
+The YAML is ordinary CLI configuration; collected facts live under `inventory`.
+Unknown fields, duplicate
 keys, wrong scalar types, ambiguous contexts and duplicate endpoints fail before
 remote access. Lists and credentials stay in YAML; no password CLI flag exists.
 
 | Source | Values |
 | --- | --- |
 | Required site inputs | Nonempty host list; each selected endpoint and credential alias; username and password reference or SSH private-key reference |
-| Defaultable | `dpf.release: 26.4.0`; context from a supplied kubeconfig; verified system trust; SSH port22; SSH sudo false; collection 10m; request 15s; four endpoint collectors in flight (`maxConcurrentBMCs`) |
-| Conditional | Kubeconfig and explicit DPUs for management mode; SSH known-hosts file; approved noninteractive sudo for protected reads; private Redfish CA; `systemURI` for multi-System BMCs |
+| Defaultable | `dpf.release: 26.4.0`; context from a supplied kubeconfig; system certificate trust; SSH port `22`; SSH sudo `false`; collection timeout `10m`; request timeout `15s`; up to four endpoints queried at once (`maxConcurrentBMCs`) |
+| Conditional | Kubeconfig for optional management observations; SSH known-hosts file; approved noninteractive sudo for protected reads; private Redfish CA; `systemURI` when a BMC exposes multiple systems |
 | Observed | Physical-card/system identities, linked host adapters, component firmware, auth/time unknowns, management nodes/version |
-| Release owned | Software BOM coordinates, exact-model software minima or explicit unknown requirements, and probe image/architecture digests; hardware qualification remains separate |
+| Release defaults | Software bill of materials (BOM), minimum versions for supported models, and explicit unknown requirements; these do not establish deployment readiness |
 | Optional lookup inputs | Explicit ARM/BMC MAC selectors; optional local `dnsmasq-leases` files. Lookup returns address hints, never identity or permission to connect |
 | Later phases | Deployment profile, DPU API allocation, DHCP/service networks and controller authentication |
 
 The management kubeconfig must use verified HTTPS and certificate/key or bearer
 credentials. File and embedded representations of the same credential/trust field are mutually
 exclusive; choose token or tokenFile. Exec/auth-provider plugins, basic and anonymous access are rejected
-in this version. Ambient kubeconfig files are never merged. BMC authentication
-uses one session login using the supplied username/password; Basic fallback is
-not included in this preview. Login uses the public service root's `Links.Sessions`
-when advertised, avoiding an unauthenticated read of a protected `SessionService`.
-If absent, the client reads the advertised standard `SessionService` to locate
-its sessions collection. Session writes are restricted to the standard
-`/redfish/v1/SessionService/Sessions` collection and its exact returned session
-child; same-origin absolute links and optional trailing slashes are supported.
-Alternate OEM session paths are unsupported. No password guessing or credential repair occurs.
+in this version. Only the supplied kubeconfig is used. The BMC must support
+standard Redfish session login with the supplied username/password and allow
+the account to read inventory. Basic authentication and vendor-specific session
+paths are unsupported. Discovery deletes its login session when finished; a cleanup
+failure is reported. It does not guess passwords or repair credentials.
 
 Passwords resolve only from `{env: NAME}` or `{file: path}`. Environment values
 are verbatim. UTF-8 files lose at most one final LF/CRLF. File, SSH known-hosts and CA references
 are relative to the input YAML and are rebased when saved elsewhere. Private files
-are not copied. Endpoint origins require HTTPS; redirects, cross-origin links,
-unbounded pages and arbitrary action endpoints are rejected.
+are not copied. BMC endpoints require HTTPS; redirected connections are not supported.
 
 For BMCs with untrusted certificates, explicitly opt in per endpoint:
 
@@ -117,7 +109,7 @@ discovery:
 
 This fragment extends the complete input above. `insecureSkipVerify` is a YAML
 boolean, defaults to `false`, and skips certificate-chain and hostname verification
-for executor-to-BMC Redfish connections only. HTTPS remains required, but the
+for CLI-to-BMC Redfish connections only. HTTPS remains required, but the
 server is not authenticated and BMC credentials can be exposed to impersonation.
 Prefer a verified certificate/CA through `caFile` when available.
 
@@ -130,10 +122,9 @@ effective policy. TLS policies are independent even when endpoints share credent
 The CLI warns on stderr unless quiet output is requested and records
 `tlsInsecureSkipVerify: true` on the affected `inventory.requestedScope` entries
 in JSON and saved YAML, including failed observations. This records the selected
-policy, not successful TLS or hardware verification. Changing the policy changes
-the scope digest: use a fresh seed and new output when switching policies.
-Management kubeconfig TLS and management-network probe TLS checks remain verified;
-this BMC option does not relax them or qualify hardware.
+policy, not successful TLS or hardware verification. Use a fresh input without
+saved `inventory` and a new output when changing the verification policy or custom
+CA contents. This BMC option does not relax management kubeconfig TLS verification.
 
 ## Optional SSH inventory in Zero Trust
 
@@ -172,14 +163,13 @@ reference. SSH host keys must match the explicitly supplied known-hosts file;
 unknown/changed keys fail. Establish that trust through your site's trusted
 inventory/onboarding process. `tls.insecureSkipVerify` never applies to SSH.
 
-Host collection reads the system UUID and NVIDIA network PCI/VPD inventory,
-including per-function network-device/driver/NUMA facts where available. It does
-not claim an all-vendor hardware census. DPU ARM identity requires agreement
-between system DMI serial and the NVIDIA BlueField built-in IPMI FRU serial.
-OS interfaces, routes, DNS and local BMC LAN address are additional observations.
-Supported remote tools must already exist; discovery installs nothing and invokes
-only fixed read commands through Go SSH, optionally with `sudo -n`. It prompts for
-no sudo password, changes no privileges and uses no remote Python helper.
+Host collection reports the host identity and NVIDIA network cards, with PCI,
+driver and NUMA information where available. DPU identity must be consistent
+across the available system and card records; conflicting serials prevent a
+complete inventory. Interfaces, routes, DNS and local BMC LAN address are additional
+observations. Required tools must already exist; see the [tool prerequisites](dpf-workflows.md#initial-inventory-prepare).
+Discovery runs read commands, optionally with `sudo -n`. It installs nothing,
+prompts for no sudo password and changes no privileges.
 
 ARM discovery needs a booted, reachable OS with sufficient permissions. Local
 `ipmitool lan print` can report the BMC endpoint without Redfish. The endpoint is
@@ -190,19 +180,19 @@ never infers a BMC address from an ARM IP or a serial from a hostname.
 
 Host and ARM PCI addresses belong to different domains; correlation uses physical
 serial identity, not matching PCI addresses. Host-reported identity alone does not
-attest trusted DPU state. Source evidence, SSH trust digest and any conflicts stay
-in the output. SSH inventory success does not establish Redfish authorization,
+attest trusted DPU state. Sources and any conflicts stay in the output.
+SSH inventory success does not establish Redfish authorization,
 controller mTLS enrollment or provisioning readiness. Those checks remain separate.
 
 ## Software BOM and optional address lookup
 
-`dpf.release` selects the embedded software BOM independently of live measurements.
-Omitted/null selects the pinned `26.4.0` default; explicit empty or unknown releases
+`dpf.release` selects the release's software BOM independently of live measurements.
+Omitted/null selects the `26.4.0` default; explicit empty or unknown releases
 are rejected. The resolved BOM is saved under `inventory.software`, with source
 references and unknown requirements. The current catalog has exact BlueField-3
 models `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 do not
 establish applicability. Desired BFB/component coordinates are not measured
-versions. Only explicit documented minima are compatibility checks; unsupported
+versions. Only documented minimum versions are compatibility checks; unsupported
 firmware requirements remain unknown. Model applicability and software checks do
 not qualify hardware or enable DPF deployment profiles.
 
@@ -223,79 +213,33 @@ lookup inputs, interpret ambiguity and explicitly add a verified endpoint.
 
 ## Observations, reports and refresh
 
-Physical identity comes from source-specific card/system fields, keeping raw serials
-and evidence. Ports/PCI functions, CPU serials and addresses cannot substitute for
-card identity. HPE collection follows explicit System/chassis/PCI relationships;
-shared-chassis records require an ownership join. Partial adapters retain their
-PCI/slot facts without fabricated serials. No supported release tuple is implied.
-Every requested endpoint remains represented on failure; unrelated cards remain
-outside selection. Unknown firmware/auth/time values stay unknown. Qualification
-requires both a reviewed model/firmware tuple and an adapter-specific completeness
-predicate; no site input can waive that requirement.
+Review each card's serial and its host association. Missing or conflicting identity
+must be resolved before accepting the inventory; an IP address, PCI address or
+CPU serial does not establish card identity. Cards with incomplete information
+remain visible with their available PCI/slot details. Every requested endpoint
+remains represented on failure, and unknown firmware, authentication or time
+values remain unknown. Inventory completion does not establish hardware support
+for DPF deployment.
 
 Complete discovery writes the requested YAML. Partial collection preserves an
 existing handoff and writes `partial.yaml` plus `report.json` beneath
 `<output-stem>.discovery/<run-id>/`. JSON stdout is one final DPF result, with
-progress on stderr; syntax errors before dispatch retain normal Cobra stderr.
+progress on stderr. Invalid command-line arguments are reported on stderr.
 The report contains facts, checks, factual diffs, later-phase gaps, errors and
 successfully written artifacts. Redfish errors retain sanitized method/resource,
 HTTP status and observation/cleanup stage. Cleanup failures retain the exact
 validated session URI when known, never its token. Verify ownership before manual
 recovery; an unknown cleanup result is not success. Authentication at session
-creation does not establish permission to read protected inventory. Saved YAML alone contains the factual handoff.
-Explicit in-place refresh requires the same input/output path; it keeps
-`source-before.yaml`. Stable sidecar locks serialize cooperating writers. External
-edits between the final hash check and rename cannot be excluded; avoid concurrent
-editing. Output paths must use real directories without symlink aliases.
+creation does not establish permission to read protected inventory.
+A complete in-place refresh uses the same input/output path and saves
+`source-before.yaml` before replacing the inventory. A partial refresh leaves the
+original file unchanged. Avoid concurrent runs or edits to the same output, and
+use real directories without symlink aliases. Follow the [refresh procedure](dpf-workflows.md#refresh-inventory)
+when inputs, trust settings or an older saved inventory need to change.
 
 | Exit | Meaning |
 | --- | --- |
 | 0 | Explicit-mode checks, cleanup and publication completed |
 | 2 | Invalid input, incomplete required identity/mapping, unavailable management mode or proven mismatch |
 | 3 | Required observation, authentication, TLS, API or remote cleanup failure |
-| 1 | Cancellation or local publication/encoding error |
-
-## Management probe implementation and qualification
-
-Launch Kit builds no discovery image. The release catalog pins the existing
-[`nicolaka/netshoot:v0.16`](https://github.com/nicolaka/netshoot/releases/tag/v0.16)
-image by manifest and Linux amd64/arm64 digests. A fixed, embedded diagnostic
-adapter invokes its `getent`, `curl`, `ip` and `jq` tools; the Go CLI resolves
-destinations/public trust and validates the versioned JSON results. No Python,
-runtime package installation, downloaded helper or site-supplied command is used.
-The image repository can be mirrored without changing its pinned digest.
-
-The NVIDIA candidate
-[`nvcr.io/nvidia/k8s/toolbox`](https://catalog.ngc.nvidia.com/orgs/nvidia/k8s/containers/toolbox/latest/layers)
-has suitable tools, but its inspected current image is based on Ubuntu 23.04 and
-was built in September 2023. DOCA 3.3.0 base/full runtime images were also inspected;
-both lack `curl` and `ip`. Netshoot is the selected existing-image alternative.
-
-The runner uses an existing namespace, an immutable ConfigMap containing the
-public request, public CAs and fixed adapter, and exact run-owned Pods. It creates no namespaces, RBAC, Secrets,
-operators or DPF objects. Each management node has separate Pod-network and
-host-network probes. Admission, node/Pod UIDs, image identity, request immutability
-and full row coverage are checked before evidence is accepted. No BMC credential
-or kubeconfig is sent to a probe. Pods run as non-root with a read-only root
-filesystem, dropped capabilities and a bounded memory-backed scratch volume.
-Each resolved IP remains a separate observation, including failed alternatives.
-
-Cleanup checks exact UID/resourceVersion and admitted-spec ownership, preserving
-foreign modifications. Receipts are journaled atomically before creates and after
-UID receipts. Ambiguous creates are inspected by exact name/spec; unresolved
-outcomes remain explicit leftovers. SIGKILL can leave resources; consult
-`resources.json` and verify current UIDs/ownership before operator recovery.
-Automatic cleanup of other runs is not implemented.
-
-The published manifest/platform digests and local non-root tool execution have
-been checked. The opt-in `dpf_probe_image` Go test tag exercises the fixed adapter
-inside the existing image against local DNS/TLS/HTTP fixtures; set
-`DPF_PROBE_TEST_IMAGE` to the immutable catalog reference when running that test.
-It defaults to Linux amd64; set `DPF_PROBE_TEST_PLATFORM=linux/arm64` for arm64.
-Local containers do not establish Kubernetes network paths or admission behavior.
-Before enabling management mode in the release catalog, exercise host-network
-admission, scheduling, successful log collection, cancellation and cleanup on
-a controlled cluster, and qualify actual vendor resource graphs, component
-versions, physical-card correlation and completeness predicates. Software fixtures
-establish parser/control-flow behavior; they do not establish physical hardware
-support. Discovery performs no firmware, NTP, trust enrollment or power action.
+| 1 | Cancellation or local output error |

@@ -260,14 +260,6 @@ Use the [container installation example](docs/user/installation.md#container). I
 
 Use the [OpenShift deployment guide](docs/user/openshift.md) for externally installed operators, flavor-specific resources, validation permissions, and qualification limits.
 
-## Development
+## Contributing
 
-Read [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before editing. The [architecture guide](docs/architecture/overview.md) covers the component map and Go discovery-library entry point. [Documentation publishing](docs/reference/docs-publishing.md) gives the build and consistency checks. The [extension contracts](openspec/README.md) cover shared behavior and conformance scenarios for new configuration, probes, profiles, resource kinds, and checks.
-
-### Library API
-
-See the [Go discovery-library integration](docs/architecture/overview.md#go-discovery-library) for the Helm-free public entry point, release and preset options, and logging/concurrency considerations.
-
-## Repository Automation
-
-Contributor automation and review workflow live in [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [engineering documentation](engineering/README.md) for development guidance.

@@ -57,6 +57,12 @@ the [documentation impact map](AGENTS.md#required-documentation-updates) to
 identify affected guides, README examples, architecture diagrams and skill
 playbooks, including their bundled references.
 
+Keep `docs/` focused on operator procedures and reference material: what the
+command does, where operations run, required inputs, outputs and recovery actions.
+Keep architecture, implementation plans and contributor tooling in
+[engineering documentation](engineering/README.md). Do not publish specific lab
+clusters or development test-run history in user guides.
+
 Before opening a PR:
 
 - Update existing sections and examples to describe the resulting behavior.

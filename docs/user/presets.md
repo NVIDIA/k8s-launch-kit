@@ -127,9 +127,8 @@ false or omitted.
    The override replaces the catalog, so include every preset needed for the
    review. Inspect networks, resource names, selectors, and GPU requests in
    the rendered output. Rendering does not certify the hardware.
-5. Verify the complete PF inventory against representative live discovery and
-   inspect any preset deviations. Submit the preset and its evidence through
-   the repository contribution process.
+5. Compare the complete PF inventory with discovery from the target hardware
+   and resolve any preset deviations before using the preset for deployment.
 
 ## Validation And Deviations
 

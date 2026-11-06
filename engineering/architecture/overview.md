@@ -397,7 +397,7 @@ point for applications that need Launch Kit's hardware inventory without the
 CLI. It bootstraps the discovery daemon, fills a `*config.LaunchKitConfig`, and
 writes the `nvidia.kubernetes-launch-kit.machine` and `.gpu` labels. It also
 patches an existing `NicClusterPolicy` when needed; the call changes cluster
-state. See [Cluster Discovery](../user/discovery.md) for prerequisites and
+state. See [Cluster Discovery](../../docs/user/discovery.md) for prerequisites and
 bootstrap effects.
 
 After creating a controller-runtime `client.Client` and matching

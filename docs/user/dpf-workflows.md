@@ -8,7 +8,7 @@ openspec/workflows/dpf-discovery.json. Edit the source, then regenerate.
 
 # DPF discovery workflows
 
-Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Start with **inventory mode**; management probe mode is not qualified in this preview. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.
+Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Start with **inventory mode**; management probe mode is unavailable in this preview. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.
 
 For complete field and error details, see [DPF discovery reference](dpf-discovery.md). Each diagram follows the same steps as its procedure. Commands are examples to run deliberately from a machine with direct access to your selected endpoints.
 
@@ -18,23 +18,27 @@ Use this workflow when you know the host access addresses. DPU ARM/BMC addresses
 
 ```mermaid
 flowchart TD
-  n1["Choose the sources and access inputs"]
-  n2["Prepare credentials, trust and existing tools"]
-  n3["Create an inventory configuration"]
-  n4["Run discovery and retain its output"]
-  n5["Review inventory, reasons and software gaps"]
-  n6["Resolve the reported prerequisite or ownership issue"]
-  n7["Keep the handoff and decide what is next"]
+  n1["CLI machine: choose sources and access inputs"]
+  n2["CLI and endpoint administrators: prepare access"]
+  n3["CLI machine: create the inventory configuration"]
+  n4["CLI machine: start discovery"]
+  n5["Selected host, DPU and BMC: read identity and facts"]
+  n6["CLI machine: match cards and assess results"]
+  n7["CLI machine: review inventory and reasons"]
+  n8["Endpoint owner or CLI operator: correct the cause"]
+  n9["CLI machine: retain the inventory and report"]
   n1 -->|"Sources selected"| n2
   n2 -->|"Access prepared"| n3
   n3 -->|"Configuration ready"| n4
-  n4 -->|"Run finished"| n5
-  n5 -->|"Complete inventory reviewed"| n7
-  n5 -->|"Required failure or conflict"| n6
-  n6 -->|"Retry after correction"| n2
+  n4 -->|"Collect from selected endpoints"| n5
+  n5 -->|"Return facts and read failures to CLI"| n6
+  n6 -->|"Review saved results"| n7
+  n7 -->|"Complete inventory reviewed"| n9
+  n7 -->|"Required failure or conflict"| n8
+  n8 -->|"Retry after correction"| n2
 ```
 
-### 1. Choose the sources and access inputs {#initial-inventory-choose-inputs}
+### 1. CLI machine: choose sources and access inputs {#initial-inventory-choose-inputs}
 
 Choose each source explicitly: a host operating system over SSH or its BMC over Redfish; optionally choose the DPU ARM operating system over SSH or DPU BMC over Redfish. A selected source must succeed; Launch Kit does not silently replace failed Redfish access with SSH. Host SSH can supply host-to-card identity in Zero Trust when PCI/VPD access is available. ARM SSH needs a booted, reachable DPU operating system. Neither access path proves trusted DPU state.
 
@@ -47,11 +51,23 @@ Choose each source explicitly: a host operating system over SSH or its BMC over 
 | Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` explicitly because the default management mode is unavailable in this preview. |
 | Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |
 
-Do not provide product versions as measured facts. The embedded release BOM owns its software coordinates; live observations remain separate. Omitted or null `dpf.release` uses the pinned default; an empty or unknown release is rejected.
+Do not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted or null `dpf.release` uses the pinned default; an empty or unknown release is rejected.
+
+All network connections start from the machine where you run `l8k`. Host and DPU endpoints do not need to connect to each other for this workflow.
+
+| Connection from the CLI machine | Where the operation runs | What it provides |
+| --- | --- | --- |
+| SSH to the selected host | Host operating system | Host identity, installed card serials and available host/card facts |
+| SSH to the selected DPU ARM address | DPU operating system | DPU identity, local hardware/network facts, and optionally its BMC address through local IPMI |
+| HTTPS to a selected host or DPU BMC | That BMC's Redfish service | System/card identity and available firmware, clock and NTP information |
+| HTTPS to the management API, only if a kubeconfig is supplied | Existing management Kubernetes API | Cluster identity, version and nodes, plus optional storage and advertised DPF API information |
+| No remote connection | CLI machine | Read input/trust/lease files, match identities, compare software requirements and save results |
+
+Choose SSH or Redfish separately for each endpoint. Selecting host Redfish does not run tools in the host OS. Selecting DPU SSH does not log in to DPU Redfish. The [collection step](#initial-inventory-collect) lists the operations for each choice.
 
 Next: [Sources selected](#initial-inventory-prepare).
 
-### 2. Prepare credentials, trust and existing tools {#initial-inventory-prepare}
+### 2. CLI and endpoint administrators: prepare access {#initial-inventory-prepare}
 
 Put passwords in an environment variable or a private file, and SSH private keys and known-hosts entries in files under your control. Reference them from YAML; do not put password values in command-line arguments. File references are relative to that YAML file. Verify SSH keys and Redfish CA trust through your normal provisioning process.
 
@@ -61,7 +77,7 @@ Set `ssh.sudo: true` only where noninteractive elevated reads are authorized and
 
 Next: [Access prepared](#initial-inventory-configure).
 
-### 3. Create an inventory configuration {#initial-inventory-configure}
+### 3. CLI machine: create the inventory configuration {#initial-inventory-configure}
 
 Save this example as `dpf-site.yaml`, replacing the documentation address and credential paths with your host values. It intentionally starts with host SSH only and requires no Kubernetes cluster. Ensure the listed files exist before running.
 
@@ -87,7 +103,7 @@ For direct DPU ARM discovery, add a separate credential alias and a `discovery.d
 
 Next: [Configuration ready](#initial-inventory-run).
 
-### 4. Run discovery and retain its output {#initial-inventory-run}
+### 4. CLI machine: start discovery {#initial-inventory-run}
 
 Choose a new output path for the first run. Run from a machine that can reach every selected endpoint and read the referenced files.
 
@@ -99,9 +115,72 @@ l8k discover --target dpf --user-config dpf-site.yaml \
 
 Record the process exit status as well as the files. `discovery.json` contains the final result; progress and diagnostics go to `discovery.log`. The command creates its own run directory next to the requested YAML. It does not send credentials to addresses found during collection. Redfish uses a temporary login session and deletes that session; SSH runs read commands on explicitly selected endpoints.
 
-Next: [Run finished](#initial-inventory-inspect).
+While this command runs, Launch Kit performs the collection and matching steps below automatically. You do not need to run the listed remote commands yourself. The host-only example contacts the host over SSH; it does not contact any DPU ARM address or BMC unless you add that endpoint explicitly.
 
-### 5. Review inventory, reasons and software gaps {#initial-inventory-inspect}
+Next: [Collect from selected endpoints](#initial-inventory-collect).
+
+### 5. Selected host, DPU and BMC: read identity and facts {#initial-inventory-collect}
+
+Launch Kit uses the configured connection for each endpoint. Required identity reads must succeed to complete inventory. Optional reads add facts; a missing tool, denied operation or unsupported response leaves an explained gap instead of silently passing the check. After collecting optional facts, Launch Kit rereads identity to detect a changed or replaced device.
+
+**On a host selected through SSH**
+
+| Read performed on the host | Purpose and result | Required or optional |
+| --- | --- | --- |
+| `dmidecode -s system-uuid` | Identifies the physical host. | Required |
+| `lspci -Dnn -d 15b3:` and per-card `lspci -D -vv -s <PCI-address>` | Finds NVIDIA network cards, their PCI locations and available card serial/slot information. | PCI enumeration is required; a selected DPU needs a usable serial for host-to-card matching. Missing serials remain visible. |
+| Linux PCI device files | Reads each function's network interface, driver and NUMA location. | Optional |
+| `systemctl show rshim --property=LoadState --property=ActiveState` | Reports whether the host's RShim service is present and active. It does not start the service or use it to access a DPU. | Optional |
+
+**On a DPU ARM operating system selected through SSH**
+
+| Read performed on the DPU ARM OS | Purpose and result | Required or optional |
+| --- | --- | --- |
+| `dmidecode -s system-serial-number` and `ipmitool fru print 0` | Reads system and built-in card records; their serials must agree. Also records available model/board information. | Required for DPU identity |
+| `ipmitool lan print` | Reads the local BMC's configured LAN address over local IPMI. | Optional |
+| `lspci -Dnn -d 15b3:` and per-card `lspci -D -vv -s <PCI-address>` | Locates ARM-visible NVIDIA cards and available card serials before associating hardware readings with them. | Optional |
+| `mlxprivhost -d <PCI-address> q --full` | Reports host privilege restrictions, such as restricted access or disabled RShim, for a visible BlueField. | Optional |
+
+Local IPMI is an operation **from the DPU ARM OS to its local BMC**, not an HTTPS login from the CLI. The returned BMC address is recorded, but Launch Kit does not connect to it or send it credentials. Host and ARM PCI addresses are local to different operating systems and need not match.
+
+**On each selected host or DPU ARM OS, through SSH**
+
+| Read performed on that OS | Purpose and result |
+| --- | --- |
+| `mlxfwmanager --version` | Records the installed MFT tool version. |
+| `mlxfwmanager --query -d <PCI-address>` | Queries the specific visible card's current NIC firmware and PSID. |
+| `mlxconfig -d <PCI-address> q <parameter>` | Reads `INTERNAL_CPU_OFFLOAD_ENGINE`, `INTERNAL_CPU_RSHIM` and `NUM_OF_VFS` on visible BlueFields. These results are next-boot settings, not proof of the running mode. |
+| `hostname`, `cat /etc/os-release`, `ip -j address show`, `ip -j -4 route show` | Reports the OS, local addresses and IPv4 routes. |
+| `ip -j link show`, `ip -j -d link show`, `ip -j neighbor show` | Reports MACs, bridge/member relationships, available link details and neighbors already known to that OS. It does not scan the subnet. |
+| `cat /etc/resolv.conf`, `readlink -f /etc/resolv.conf`, `resolvectl dns`, `resolvectl domain` | Reports configured DNS servers, search domains, per-link DNS and the resolver configuration in use. |
+| Selected `server=` and `no-resolv` settings in `/etc/dnsmasq.conf` and `/etc/dnsmasq.d/*.conf` | Reports local dnsmasq DNS forwarding configuration. This is separate from reading a DHCP lease snapshot on the CLI machine. |
+| `lldpctl -f keyvalue` | Reports neighbors already available from the local LLDP service. |
+
+These hardware and network reads are optional. `<PCI-address>` comes from that same OS's card inventory; Launch Kit queries each card separately. In Zero Trust, the host may be unable to query a restricted card even when `mlxfwmanager` is installed. That limitation is reported; it does not cause an automatic connection to the DPU. Tools must be installed on the OS where the command runs, not merely on the CLI machine. When configured, protected hardware reads use `sudo -n`; tools are never installed or settings changed by discovery.
+
+**On a selected host or DPU BMC, through HTTPS Redfish**
+
+The CLI creates a temporary session, reads system and card inventory, and queries available firmware components, BMC time and NTP configuration. Host BMC reads locate cards associated with the selected host; DPU BMC reads identify that DPU. No SSH commands run in either OS for this choice. System/card identity is required; optional firmware or clock properties may remain unknown. A firmware version is not assumed to be running unless the BMC explicitly identifies it as active. The CLI deletes its session afterward and reports any cleanup failure. It does not change firmware, NTP, power or trust settings.
+
+**At the management Kubernetes API, if configured**
+
+The CLI reads the cluster identity from `kube-system`, the Kubernetes version and the node list, including control-plane membership and reported readiness. These reads are required when you supply a management kubeconfig. StorageClasses and advertised DPF API groups are additional optional reads. Inventory mode creates no Pods and performs no management-network connectivity tests. It does not install DPF or run commands inside Kubernetes nodes.
+
+Next: [Return facts and read failures to CLI](#initial-inventory-match).
+
+### 6. CLI machine: match cards and assess results {#initial-inventory-match}
+
+Launch Kit compares physical card serials returned by the selected sources. Each explicit DPU must match exactly one adapter on one observed host. A missing serial, conflicting identity or multiple matches prevents a complete inventory; an IP address or PCI address cannot substitute for that match. With host-only input, the inventory lists host-reported BlueFields without claiming a working ARM or BMC connection.
+
+Next, the CLI compares eligible measured versions with the selected release's documented requirements. It reports unavailable measurements and unknown requirements separately from below-minimum versions. These comparisons do not install or update software.
+
+If address lookup is configured, the CLI separately matches your supplied management MACs to local lease-file records and neighbors read from the selected SSH endpoints. These are unverified IP candidates, not card identities or host-to-DPU associations. No candidate is contacted automatically.
+
+Finally, the CLI checks collection and session-cleanup results, compares against any previous inventory, and writes the YAML and report. Required failures produce partial output; optional gaps remain recorded even when inventory completes. All output files are written on the CLI machine.
+
+Next: [Review saved results](#initial-inventory-inspect).
+
+### 7. CLI machine: review inventory and reasons {#initial-inventory-inspect}
 
 Inspect `discovery.outcome`, `discovery.checks`, `errors`, `artifacts` and `acceptance` in the JSON report. Review saved `inventory.hosts`, `inventory.dpus`, `inventory.associations` and their evidence before using the handoff. Complete discovery writes `dpf-discovered.yaml`; partial discovery preserves an existing handoff and writes `partial.yaml` and `report.json` under `dpf-discovered.discovery/<run-id>/`. Use the report's artifact paths instead of guessing the run ID.
 
@@ -115,19 +194,19 @@ Read each non-success observation's `reasonCode`, `message` and `tool` where pre
 | `SOFTWARE_BELOW_MINIMUM` | Review the release requirement and plan a separate maintenance action; discovery does not update firmware. |
 | `PUBLICATION_FAILED` | Read the error explanation, resolve the local output/path problem, and rerun; only listed successfully written artifacts exist. |
 
-The resolved software BOM is saved under `inventory.software`, including source references and unknown requirements. Release `26.4.0` has exact BlueField-3 model entries `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 are not sufficient for BOM applicability. The documented NIC/MFT minima can be evaluated when current, identity-bound measurements exist. BMC, CEC, ATF, UEFI, OS/BSP and golden-image minima remain unknown where the catalog has no supported requirement. A BFB target is a desired artifact, not an observed OS/BSP version. No site-supplied minimum can turn an unknown catalog requirement into qualified support.
+The resolved software BOM is saved under `inventory.software`, including source references and unknown requirements. Release `26.4.0` has exact BlueField-3 model entries `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 are not sufficient for BOM applicability. The documented NIC/MFT minima can be evaluated when current measurements associated with the correct device exist. BMC, CEC, ATF, UEFI, OS/BSP and golden-image minima remain unknown where the catalog has no supported requirement. A BFB target is a desired artifact, not an observed OS/BSP version. An unknown requirement must remain unresolved; supplying a guessed minimum does not establish compatibility.
 
-Exit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Profile planning, hardware qualification, DPF authentication, operator-created connectivity and deployment remain later work; DPF generate/deploy/validate are unavailable in this preview.
+Exit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; DPF generate/deploy/validate are unavailable in this preview.
 
 Next: [Complete inventory reviewed](#initial-inventory-finish); [Required failure or conflict](#initial-inventory-resolve).
 
-### 6. Resolve the reported prerequisite or ownership issue {#initial-inventory-resolve}
+### 8. Endpoint owner or CLI operator: correct the cause {#initial-inventory-resolve}
 
 Use the specific recorded reason to correct the source configuration or ask the infrastructure owner to repair missing tools, permissions, credentials, connectivity or conflicting identity. Do not delete unknown observations or label them passed. Optional gaps may remain documented without blocking inventory; required source failures, identity ambiguity, cleanup or publication errors need resolution. If cleanup is uncertain, use the reported session/resource ownership evidence before any manual action. Rerun after correcting the cause.
 
 Next: [Retry after correction](#initial-inventory-prepare).
 
-### 7. Keep the handoff and decide what is next {#initial-inventory-finish}
+### 9. CLI machine: retain the inventory and report {#initial-inventory-finish}
 
 Retain the seed, discovered YAML, JSON report and stderr log together. The discovered YAML preserves configuration intent and replaces observed inventory; it is not a deployment-ready profile or a provisioning approval. If a DPU access address is missing, use [address-candidate lookup](#address-candidates). For later remeasurement of the same estate, use [refresh](#refresh-inventory).
 
@@ -137,11 +216,11 @@ Use this optional inventory addition when you know an ARM or BMC management MAC 
 
 ```mermaid
 flowchart TD
-  n1["Supply the management MAC and lookup evidence"]
-  n2["Add explicit address selectors to the seed"]
-  n3["Run inventory with lookup enabled"]
-  n4["Review candidates and unresolved lookups"]
-  n5["Authorize an explicit endpoint and rediscover"]
+  n1["CLI machine: prepare MACs and lease snapshots"]
+  n2["CLI machine: configure address lookup"]
+  n3["CLI machine: run inventory and local lookup"]
+  n4["CLI operator: review candidate addresses"]
+  n5["Endpoint owner and CLI operator: verify and select"]
   n1 -->|"MAC and source selected"| n2
   n2 -->|"Selectors configured"| n3
   n3 -->|"Candidate report available"| n4
@@ -149,7 +228,7 @@ flowchart TD
   n4 -->|"Missing or ambiguous evidence"| n1
 ```
 
-### 1. Supply the management MAC and lookup evidence {#address-candidates-locators}
+### 1. CLI machine: prepare MACs and lease snapshots {#address-candidates-locators}
 
 Obtain the exact ARM or BMC management MAC from authoritative asset records or a trustworthy observed interface. You must choose its role (`arm` or `bmc`) and a unique name. Launch Kit does not infer a management MAC from a NIC serial, data-port MAC, hostname or neighboring address.
 
@@ -157,7 +236,7 @@ Optionally obtain a current dnsmasq IPv4 lease-file snapshot through your author
 
 Next: [MAC and source selected](#address-candidates-configure).
 
-### 2. Add explicit address selectors to the seed {#address-candidates-configure}
+### 2. CLI machine: configure address lookup {#address-candidates-configure}
 
 Merge this fragment into the existing `discovery` section of a seed without saved inventory. Replace the MACs and file path; omit `sources` if you only want eligible observed neighbors. Do not replace the required host list.
 
@@ -180,7 +259,7 @@ The supported file contains the five dnsmasq IPv4 columns: expiry epoch, MAC, IP
 
 Next: [Selectors configured](#address-candidates-run).
 
-### 3. Run inventory with lookup enabled {#address-candidates-run}
+### 3. CLI machine: run inventory and local lookup {#address-candidates-run}
 
 Save the configured seed as `dpf-lookup.yaml` and select a new handoff path.
 
@@ -190,11 +269,11 @@ l8k discover --target dpf --user-config dpf-lookup.yaml \
   > candidates.json 2> candidates.log
 ```
 
-Lookup happens as part of this inventory run. It reads only the configured lease files and already observed SSH neighbors. No candidate is contacted and no credential is sent to it.
+The selected endpoints undergo the same [identity and optional reads](#initial-inventory-collect) as first inventory. On the CLI machine, address lookup then reads the configured lease snapshots and matches the supplied MACs against those records and the neighbors returned by remote `ip -j neighbor show`. No candidate is contacted and no credential is sent to it.
 
 Next: [Candidate report available](#address-candidates-review).
 
-### 4. Review candidates and unresolved lookups {#address-candidates-review}
+### 4. CLI operator: review candidate addresses {#address-candidates-review}
 
 Read `inventory.addressLookup.candidates` for the address, selected name/role/MAC, source and evidence reference. Read `inventory.addressLookup.observations` for each device and lease source. A single address is `ADDRESS_UNVERIFIED`; several addresses for a MAC remain ambiguous, and missing/expired/unreadable evidence keeps its reason. A candidate is not a host-to-DPU association and is never a readiness pass.
 
@@ -202,7 +281,7 @@ Use your DHCP/network or asset owner to resolve multiple, missing or contradicto
 
 Next: [Ownership can be independently verified](#address-candidates-bind); [Missing or ambiguous evidence](#address-candidates-locators).
 
-### 5. Authorize an explicit endpoint and rediscover {#address-candidates-bind}
+### 5. Endpoint owner and CLI operator: verify and select {#address-candidates-bind}
 
 Verify endpoint ownership and obtain SSH known-hosts trust or Redfish CA trust and the appropriate account through your normal process. Create a new seed and add the verified endpoint under `discovery.dpus`, with its credential reference and trust policy. Use a new output when changing scope; do not edit the old observed identity to force a match.
 
@@ -214,12 +293,12 @@ Use this workflow to remeasure the same selected estate, compare facts and prese
 
 ```mermaid
 flowchart TD
-  n1["Check scope and preserve source intent"]
-  n2["Run an explicit in-place refresh"]
-  n3["Compare current facts and explain every gap"]
-  n4["Correct the cause and retry the same scope"]
-  n5["Start a new inventory for the changed estate"]
-  n6["Retain the refreshed handoff and reports"]
+  n1["CLI machine: check inputs and trust before refresh"]
+  n2["CLI machine: repeat reads on the selected endpoints"]
+  n3["CLI machine: compare new observations and reasons"]
+  n4["Endpoint owner or CLI operator: repair and retry"]
+  n5["CLI machine: start a new inventory"]
+  n6["CLI machine: retain the refreshed files"]
   n1 -->|"Same scope ready"| n2
   n1 -->|"Scope changed"| n5
   n2 -->|"Refresh finished"| n3
@@ -229,21 +308,21 @@ flowchart TD
   n4 -->|"Actual scope change"| n5
 ```
 
-### 1. Check scope and preserve source intent {#refresh-inventory-scope}
+### 1. CLI machine: check inputs and trust before refresh {#refresh-inventory-scope}
 
-Start from the existing discovered YAML and keep its credential/trust references valid. Decide whether you are remeasuring the same host/DPU endpoints and trust policy. If endpoint selection, trust policy or physical identity has changed, create a fresh seed without old `inventory` and use a new output path. Investigate unexpected replacement or ownership changes before accepting them.
+Start from the existing discovered YAML and keep its credential/trust references valid. Decide whether you are remeasuring the same host/DPU endpoints and trust policy. If endpoint selection, trust policy or physical identity has changed, create a fresh input without old `inventory` and use a new output path. Investigate unexpected replacement or ownership changes before accepting them.
 
-Redfish trust comparisons include the verification policy and custom CA bundle contents, so changing either requires a new inventory scope. Moving the same bundle to another path does not change its trust contents. The operating system root store remains an external prerequisite; its certificate contents are not fingerprinted. Older preview handoffs without the Redfish trust-policy digest also require a fresh seed and new output.
+Changing Redfish certificate verification or the contents of a custom CA file requires a new inventory. Moving an unchanged CA file to another path does not. Keep the CLI machine's operating-system trust store maintained; discovery does not report changes within that store.
 
-Older preview handoffs with serial-keyed Redfish host-card records cannot safely protect a refresh. Launch Kit rejects refreshing those bindings even if the observed serial is unchanged. Verify endpoint ownership, create a fresh seed without saved `inventory`, and use a new output path; keep the old handoff as history.
+Some inventories saved by older preview versions cannot be refreshed. If the command reports that the old inventory is incompatible, verify endpoint ownership, create a fresh input without saved `inventory`, and use a new output path. Keep the previous file as history; do not edit its recorded identities or trust information to bypass the error.
 
-Do not manually edit observed serials, associations, firmware or check outcomes. `dpf.release` selects the embedded BOM; changing the release does not upgrade software. An omitted release continues to resolve to the CLI's pinned default, so record the CLI version and review `inventory.software` when comparing runs from different binaries. Explicit release selection makes that intention visible.
+Do not manually edit observed serials, associations, firmware or check outcomes. `dpf.release` selects the release's BOM; changing it does not upgrade software. An omitted release uses the CLI's default, so record the CLI version and review `inventory.software` when comparing runs from different versions. Specify the release explicitly when you want to retain that choice.
 
 Next: [Same scope ready](#refresh-inventory-run); [Scope changed](#refresh-inventory-new-scope).
 
-### 2. Run an explicit in-place refresh {#refresh-inventory-run}
+### 2. CLI machine: repeat reads on the selected endpoints {#refresh-inventory-run}
 
-Use the same YAML path for input and output and explicitly supply `--save-cluster-config`:
+Launch Kit repeats the [same reads on the selected host, DPU, BMC and optional management API](#initial-inventory-collect), then matches the returned identities and compares them with the saved inventory. Run from the CLI machine using the same YAML path for input and output and explicitly supply `--save-cluster-config`:
 
 ```bash
 l8k discover --target dpf --user-config dpf-discovered.yaml \
@@ -255,24 +334,24 @@ A complete in-place refresh retains `source-before.yaml` before replacing invent
 
 Next: [Refresh finished](#refresh-inventory-compare).
 
-### 3. Compare current facts and explain every gap {#refresh-inventory-compare}
+### 3. CLI machine: compare new observations and reasons {#refresh-inventory-compare}
 
-Review `diff`, current checks, `errors`, cleanup and successfully written `artifacts` in the result. Compare physical identity, firmware, relevant hardware/mode/network observations and resolved release requirements. A failed current observation stays unknown rather than inheriting an earlier pass; semantic list ordering alone should not produce a changed fact.
+Review `diff`, current checks, `errors`, cleanup and successfully written `artifacts` in the result. Compare physical identity, firmware, relevant hardware/mode/network observations and resolved release requirements. A failed current observation stays unknown rather than inheriting an earlier pass. Reordered lists alone are not changes to the observed configuration.
 
 On partial collection, the previous handoff remains intact and the new partial YAML/report live under `dpf-discovered.discovery/<run-id>/`. Inspect the new report instead of mistaking the unchanged handoff for fresh success. Required failures need correction and another run. Optional missing tools or inaccessible properties remain explained observations; they do not make deployment readiness pass.
 
 Next: [Complete refresh reviewed](#refresh-inventory-retain); [Partial or failed refresh](#refresh-inventory-repair).
 
-### 4. Correct the cause and retry the same scope {#refresh-inventory-repair}
+### 4. Endpoint owner or CLI operator: repair and retry {#refresh-inventory-repair}
 
 Use the saved reason and affected source to repair the external prerequisite or fix the input. Preserve the unsuccessful run's report. Do not overwrite failure evidence with an old successful observation. If the cause is a real endpoint, trust or identity change, switch to a fresh seed and output.
 
 Next: [Same scope corrected](#refresh-inventory-run); [Actual scope change](#refresh-inventory-new-scope).
 
-### 5. Start a new inventory for the changed estate {#refresh-inventory-new-scope}
+### 5. CLI machine: start a new inventory {#refresh-inventory-new-scope}
 
 Create a new seed from the desired access configuration, without copying old `inventory` facts, and select a new handoff path. Recheck endpoint ownership/trust and follow [initial inventory](#initial-inventory). Keep the previous estate's handoff and report as history.
 
-### 6. Retain the refreshed handoff and reports {#refresh-inventory-retain}
+### 6. CLI machine: retain the refreshed files {#refresh-inventory-retain}
 
-Keep the current YAML, JSON/stdout report and stderr log, plus `source-before.yaml` when a complete in-place refresh created it. Discovery completion still means a successful inventory workflow, with deployment `acceptance: not-evaluated`. Unknown BOM constraints, hardware qualification and operator-created service checks remain visible until their later workflows are implemented and verified.
+Keep the current YAML, JSON/stdout report and stderr log, plus `source-before.yaml` when a complete in-place refresh created it. Discovery completion still means a successful inventory workflow, with deployment `acceptance: not-evaluated`. Unknown software requirements and unverified deployment prerequisites remain unresolved; a refreshed inventory does not enable DPF deployment.

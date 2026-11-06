@@ -18,11 +18,10 @@ docs/
 |-- integrator/
 |-- reference/
 |-- advanced/
-|-- architecture/
 `-- assets/
 ```
 
-The old RST files under `docs/` are retained for compatibility, but the GitHub Pages site uses the Markdown pages listed in `mkdocs.yml`. The DPF roadmap and HostTarget migration history are published and linked from [Architecture](../architecture/overview.md), outside the primary navigation. Keep their status labels and `llms.txt` entries current.
+The old RST files under `docs/` are retained for compatibility. The published documentation uses the operator-facing Markdown pages listed in `mkdocs.yml`. Engineering architecture, implementation plans and contributor instructions live under `engineering/` and are excluded from user navigation, search indexes and HTML exports. Keep `docs/llms.txt` aligned with the published operator pages.
 
 ## Content Ownership
 
@@ -36,8 +35,9 @@ contracts in README or skills.
 
 Task articles should state the outcome, applicability, inputs and permissions,
 ordered actions, expected evidence, and failure/next step. Reference articles
-optimize lookup; architecture and design plans describe implementation or
-future work. Label snippets that are illustrative or partial so readers do not
+optimize lookup. Explain operations, where they execute, prerequisites, outputs
+and recovery actions. Do not include package internals, implementation plans,
+specific lab clusters or development test-run history in user documentation. Label snippets that are illustrative or partial so readers do not
 mistake them for a runnable, qualified site configuration.
 
 ## Local Build
@@ -66,8 +66,7 @@ python3 scripts/check-docs.py --binary build/l8k
 The CI build job runs this check on every pull request and main-branch push.
 It compares long flags in Markdown/RST shell examples and Cobra help examples
 against the actual command flags, verifies the lifecycle applicability matrix
-and the `llms.txt` inventory of every published Markdown page, including linked
-design plans. It renders the published standard Profile YAML with an embedded
+and the `llms.txt` inventory of every published Markdown page. It renders the published standard Profile YAML with an embedded
 preset and the complete application sample in an isolated temporary directory.
 It checks source preservation, effective metadata, operational workload
 namespace/resource transformation, and the fixture retention recipe.

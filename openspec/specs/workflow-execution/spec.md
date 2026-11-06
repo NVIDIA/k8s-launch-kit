@@ -84,4 +84,4 @@ The root pipeline runs discover/generate/deploy, not automatic validation. Exact
 
 - Implementation: [target registry](../../../pkg/target), [Host adapters](../../../pkg/target/host), [CLI routing](../../../pkg/cmd/target_cli.go), [application deploy](../../../pkg/app/deploy.go).
 - Existing suites: [target](../../../pkg/target/target_test.go), [Host driver](../../../pkg/target/host/driver_test.go), [deploy](../../../pkg/target/host/deploy_test.go), [launcher](../../../pkg/target/host/launcher_test.go).
-- User documentation: [targets](../../../docs/advanced/targets.md).
+- Engineering: [target extension](../../../engineering/advanced/targets.md).

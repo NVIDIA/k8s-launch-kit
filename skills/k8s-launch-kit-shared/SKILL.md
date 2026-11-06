@@ -78,7 +78,7 @@ arguments, binds a phase-specific adapter through the target registry, and
 runs the resulting operation exactly once with the command context. Do not
 bypass this route when extending or automating a lifecycle phase. The
 canonical component and data-flow diagrams live in
-`docs/architecture/overview.md`; update them with any change to lifecycle,
+`engineering/architecture/overview.md`; update them with any change to lifecycle,
 package ownership, artifacts, or external integration boundaries.
 
 ## Common Flags And Command Scope

@@ -95,12 +95,6 @@ For a local install:
 make install
 ```
 
-For development, symlink the source-tree assets instead of copying them:
-
-```bash
-make dev-install
-```
-
 ## Installed Assets
 
 The install places the binary on PATH. The default configuration and bundled topology presets are embedded in the binary. Use `--config-dir` when you need a filesystem override:
@@ -132,10 +126,8 @@ Build-only users should run from the repository root or install the profiles.
 
 Release artifacts also contain the Network Operator sosreport helper. The
 installers place it at
-`<prefix>/share/l8k/scripts/kubectl-netop_sosreport`. Source-tree
-`make install`, `make dev-install`, and direct `scripts/install-local.sh`
-invocations download the helper when it is absent; `l8k sosreport` itself never
-downloads executable code at runtime.
+`<prefix>/share/l8k/scripts/kubectl-netop_sosreport`. Keep this helper installed
+alongside the binary; `l8k sosreport` does not download executable code at runtime.
 
 ## Verify
 

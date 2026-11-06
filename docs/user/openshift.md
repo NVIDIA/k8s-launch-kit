@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # OpenShift host deployments
 
-This procedure prepares **SR-IOV Ethernet RDMA** on an existing OpenShift cluster. Ethernet SR-IOV was exercised on a two-node OpenShift 4.22 cluster. Other standard OpenShift profiles passed rendering and server dry-run but still need live integration qualification. Spectrum-X has no OpenShift variant. The example uses Network Operator release `26.7`; confirm its suitability for the site before proceeding.
+This procedure prepares **SR-IOV Ethernet RDMA** on an existing OpenShift cluster with externally installed operators. Other standard OpenShift profiles are preview workflows: confirm runtime support for the selected hardware, operator release and profile before use. Spectrum-X has no OpenShift variant. The example uses Network Operator release `26.7`; choose an operator release compatible with your OpenShift version and hardware.
 
 ## Before you start
 
