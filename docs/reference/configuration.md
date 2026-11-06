@@ -242,6 +242,7 @@ validation:
   connectivity: true
   mode: strict
   checks:
+    - gateway
     - icmp
     - rping
     - ib_write_bw
@@ -257,7 +258,7 @@ validation:
 | `gpuDirect.gpuResourceType` | Qualified Kubernetes extended resource requested by the primary validation container. Defaults to `nvidia.com/gpu`. |
 | `connectivity` | Enables the data-plane stage. Static acceptance checks always run. |
 | `mode` | `quick`, `full`, or `strict`. |
-| `checks` | Any combination of `icmp`, `rping`, and `ib_write_bw`; an empty list disables all connectivity test families. |
+| `checks` | Any combination of `gateway`, `icmp`, `rping`, and `ib_write_bw` (all enabled by default); an empty list disables all connectivity test families. Gateway runs first and resolves the NAD's NV-IPAM IPPool in `networkOperator.namespace`, falling back to runtime interface routes for other IPAM/CIDRPool or an unset pool gateway. Explicit no-gateway rows are skipped. |
 | `rdma.rpingIterations` | Client iterations for each `rping` test. |
 | `rdma.ibWriteSize` | Message size passed to `ib_write_bw`. |
 | `rdma.ibWriteMinBandwidthGbps` | Minimum observed peak bandwidth. Set `0` to disable the bandwidth gate. |

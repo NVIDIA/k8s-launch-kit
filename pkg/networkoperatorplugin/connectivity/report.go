@@ -343,7 +343,7 @@ func reportFuncMap() template.FuncMap {
 			byKey := map[key][]PingResult{}
 			order := []key{}
 			for _, r := range results {
-				if r.Test.Kind.IsCrossRail() {
+				if r.Test.Kind.IsCrossRail() || r.Test.Kind == Gateway {
 					continue
 				}
 				k := key{r.Test.Rail, htmlFamilyOf(r.Test.Kind)}
@@ -399,6 +399,15 @@ func reportFuncMap() template.FuncMap {
 			}
 			return out
 		},
+		"gatewayResults": func(results []PingResult) []PingResult {
+			out := make([]PingResult, 0)
+			for _, result := range results {
+				if result.Test.Kind == Gateway {
+					out = append(out, result)
+				}
+			}
+			return out
+		},
 		"icmpRouteDiagnostics": collectICMPRouteDiagnostics,
 		// familyTitle is the human-friendly section header for a
 		// given kind family.
@@ -419,6 +428,9 @@ func reportFuncMap() template.FuncMap {
 		// only on pass/fail/missing).
 		"cellClass": func(r *PingResult) string {
 			if r == nil {
+				return "cell-missing"
+			}
+			if r.SkipReason != "" {
 				return "cell-missing"
 			}
 			if r.Expectation == ExpectObserve {

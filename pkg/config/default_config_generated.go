@@ -55,7 +55,7 @@ var defaultConfigYAML = []byte(
 	"validation:\n" +
 	"  connectivity: true\n" +
 	"  mode: strict\n" +
-	"  checks: [icmp, rping, ib_write_bw]\n" +
+	"  checks: [gateway, icmp, rping, ib_write_bw]\n" +
 	"  rdma:\n" +
 	"    rpingIterations: 5\n" +
 	"    ibWriteSize: 65536\n" +

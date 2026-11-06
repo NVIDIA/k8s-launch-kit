@@ -199,7 +199,7 @@ profile:
 		require.NotNil(t, config.Validation.Connectivity)
 		assert.True(t, *config.Validation.Connectivity)
 		assert.Equal(t, ValidationModeStrict, config.Validation.Mode)
-		assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, config.Validation.Checks)
+		assert.Equal(t, []string{ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, config.Validation.Checks)
 		require.NotNil(t, config.Validation.RDMA)
 		assert.False(t, config.Validation.GPUDirect.Enabled)
 		assert.Equal(t, DefaultGPUResourceType, config.Validation.GPUDirect.GPUResourceType)
@@ -286,7 +286,7 @@ func TestDefaultLaunchKitConfig(t *testing.T) {
 	assert.Equal(t, DefaultNvIpamStartingGateway, cfg.NvIpam.StartingGateway)
 	require.NotNil(t, cfg.Validation, "DefaultLaunchKitConfig must populate Validation")
 	assert.Equal(t, ValidationModeStrict, cfg.Validation.Mode)
-	assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
+	assert.Equal(t, []string{ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
 	require.NotNil(t, cfg.Validation.RDMA)
 	assert.False(t, cfg.Validation.GPUDirect.Enabled)
 	assert.Equal(t, DefaultGPUResourceType, cfg.Validation.GPUDirect.GPUResourceType)
@@ -370,6 +370,12 @@ func TestValidationConfig(t *testing.T) {
 	t.Run("normalizes duplicates and blanks", func(t *testing.T) {
 		checks := NormalizeValidationChecks([]string{" icmp ", " rping ", "", "ib_write_bw", "rping"})
 		assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, checks)
+	})
+
+	t.Run("accepts explicit gateway-only selection without adding defaults", func(t *testing.T) {
+		cfg := NormalizeValidationConfig(&ValidationConfig{Checks: []string{ValidationCheckGateway}})
+		require.NoError(t, ValidateValidationConfig(cfg))
+		assert.Equal(t, []string{ValidationCheckGateway}, cfg.Checks)
 	})
 
 	t.Run("rejects unknown checks", func(t *testing.T) {

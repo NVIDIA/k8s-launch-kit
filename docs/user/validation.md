@@ -52,7 +52,7 @@ actual data path. Interfaces excluded from the matrix are not inspected.
 | Invocation | Exit and coverage behavior |
 | --- | --- |
 | Full Kubernetes validation | Failed static gates or gating connectivity tests return `4`. In-progress manifests can return `0` with warnings and skip connectivity. A skipped matrix (for example, fewer than two usable pods) or missing selected-family coverage does not independently fail this mode. |
-| Connectivity-only validation | Requires at least one gating test for every selected family and all gating tests to pass. Skipped, empty, or incomplete coverage returns `4`. |
+| Connectivity-only validation | Requires at least one gating test for every selected family and all gating tests to pass, except explicit no-configured-gateway applicability skips. Empty endpoints or incomplete coverage returns `4`. |
 | OpenShift with connectivity enabled | Enforces the same per-family coverage requirement; in-progress manifests that prevent connectivity return `4`. |
 | `--connectivity=false` | Runs static checks only. Success supplies no data-plane evidence. |
 
@@ -172,10 +172,12 @@ unchanged; XML is written only to the requested file.
 
 Connectivity reporting requires `profile.fabric: ethernet` or `infiniband`
 in the resolved cluster config. No fabric is guessed from the probe command.
-Each family uses the corresponding catalog name from Network Test Discussion Notes:
+Existing families retain their catalog names from Network Test Discussion Notes;
+gateway checks add a dedicated suite:
 
 | Probe | Suite name (append `-ethernet` or `-infiniband`) |
 | --- | --- |
+| Gateway ICMP | `K8sEastWestNetworkGatewayICMPPing` |
 | ICMP | `K8sEastWestNetworkICMPPing` |
 | RDMA ping | `K8sEastWestNetworkRDMAPing` |
 | Host-memory bandwidth | `K8sEastWestNetworkIBWriteBandwidth` |
@@ -215,7 +217,7 @@ preserves the existing mode/flavor acceptance rules described below.
 | Component versions | Version-bearing sections of `NicClusterPolicy` and `NicNodePolicy` match the selected release catalog. |
 | Manifest state | Each generated CR is classified as `READY`, `IN-PROGRESS`, `ERROR`, or `MISSING`. |
 | Preflight | Stray CRs and Helm value drift that can make the apply path ambiguous. |
-| Connectivity | ICMP, `rping`, host-memory `ib_write_bw`, and optional GPUDirect DMA-BUF bandwidth checks between generated test DaemonSet pods. |
+| Connectivity | Per-pod/rail gateway ICMP reachability first, then ICMP, `rping`, host-memory `ib_write_bw`, and optional GPUDirect DMA-BUF bandwidth checks between generated test DaemonSet pods. |
 
 The Helm version check prefers the exact release name `network-operator` and
 reads its highest revision, so a sibling release such as `network-operator-post`
@@ -245,7 +247,43 @@ Connectivity discovery supports IPv4-only and IPv6-only secondary attachments.
 On dual-stack attachments it retains IPv4 preference; it does not test both
 families. IPv6 uses `ping -6`, `ip -6 route get`, and
 `ib_write_bw --ipv6 --ipv6-addr` on both endpoints. `rping` accepts IPv6
-addresses directly. Link-local and malformed addresses are excluded.
+addresses directly. Link-local and malformed source endpoint addresses are excluded;
+IPv6 link-local gateways remain supported with interface scope.
+
+Gateway checks run first after test pods are ready, before all pair-based
+connectivity families, regardless of `validation.checks` order. Every mode
+checks each pod/secondary rail once; `--validation-checks gateway` also works
+with one pod. Validation follows the exact namespaced NetworkAttachmentDefinition
+from Multus status and its single explicit NV-IPAM `poolName` to the live IPPool
+in `networkOperator.namespace`. Its `spec.gateway` is probed even when the pod
+has only a connected route and no `via` route. Source IP membership in that
+pool's subnet must match. Standalone CNI and plugin chains are supported;
+multiple pools/plugins or CNI args overrides fail as ambiguous. Validation also
+checks the matching pod network-selection entry by NAD namespace/name and
+requested interface. Nonempty per-pod `cni-args` on NV-IPAM attachments are
+unsupported and fail before pool lookup; malformed or ambiguous selections
+also fail gateway measurement. Args on unrelated attachments do not override
+the selected gateway. The runner uses
+runtime interface routes when no IPPool gateway is set, for other IPAM providers,
+and for explicit `poolType: cidrpool`. CIDRPool per-node configured allocations
+are not separately resolved by this check. It never guesses a `.1` address or uses
+the management default route. A missing, malformed, denied or ambiguous gateway
+lookup fails measurement. When neither configuration nor interface routes has
+a gateway, the row is explicitly `SKIPPED`, with zero contribution to passed
+or failed counts. This applicability assessment can exit zero when gateway is
+the only selected family; zero endpoints and missing coverage for other selected
+families still fail connectivity-only acceptance.
+
+A configured gateway requires a positive, source-IP-bound ICMP echo after route
+qualification selects the intended interface. IPv6 link-local gateways are
+scoped to that interface. No echo fails gateway ICMP reachability; it does not
+prove that ARP/ND resolution failed because a gateway may filter ICMP. Other
+selected families continue after a gateway failure. Text reports gateway endpoints and status. JSON, HTML and JUnit retain
+gateway configuration, route and probe evidence; skipped rows remain skipped
+in JUnit. The automatic deadline includes a shared 10-second NAD/IPPool lookup limit,
+a 10-second runtime discovery limit when needed, a 10-second source-route limit
+and a 5-second echo limit per endpoint. Direct Go callers must supply
+`connectivity.Options.IPAMNamespace` for NV-IPAM IPPool attachments.
 
 Before every same-rail and cross-rail ICMP probe in `quick`, `full`,
 and `strict` modes, validation runs `ip route get <dst> from <src>`. A route
@@ -302,6 +340,7 @@ validation:
   connectivity: true
   mode: strict
   checks:
+    - gateway
     - icmp
     - rping
     - ib_write_bw
@@ -459,7 +498,8 @@ Each group requires `workerNodes`; each east-west PF requires a non-negative
 source and destination GPU independently for every tested rail.
 
 A connectivity-only invocation succeeds only when every selected check family
-produces at least one gating test and all gating tests pass. Non-gating
+produces at least one gating test and all gating tests pass, except explicit
+no-configured-gateway applicability skips. Non-gating
 cross-rail observations do not satisfy this requirement. A skipped,
 empty, or incomplete matrix exits with status `4` because there is no other
 validation stage providing acceptance evidence.

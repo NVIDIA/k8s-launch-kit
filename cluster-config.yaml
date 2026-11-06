@@ -46,7 +46,7 @@ networkNamespaces: [default]
 validation:
   connectivity: true
   mode: strict
-  checks: [icmp, rping, ib_write_bw]
+  checks: [gateway, icmp, rping, ib_write_bw]
   rdma:
     rpingIterations: 5
     ibWriteSize: 65536

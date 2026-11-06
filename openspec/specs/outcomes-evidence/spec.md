@@ -69,8 +69,8 @@ Current acceptance is intentionally not uniform:
 | Mode | Current policy relevant to coverage |
 | --- | --- |
 | Full Kubernetes validation | Can return success with in-progress/skipped resource results or empty connectivity results; exit zero alone is not complete qualification. |
-| Connectivity-only | Requires at least one gating row per selected family; this does not prove every intended endpoint was covered. |
-| OpenShift validation | When connectivity is enabled, also enforces selected-family gating coverage, subject to its supported profile matrix. |
+| Connectivity-only | Requires at least one gating row per selected family, except gateway permits explicit no-configured-gateway applicability skips; this does not prove every intended endpoint was covered. |
+| OpenShift validation | When connectivity is enabled, also enforces selected-family gating coverage (including the gateway applicability exception), subject to its supported profile matrix. |
 
 Validation emits multiple JSON documents. Root/discover/generate envelopes, standalone deploy status and other commands have different output shapes. This contract does not introduce a universal result envelope or strengthen all acceptance gates. [Connectivity](../connectivity-checks/spec.md) owns individual measurement truth tables; [resource kinds](../resource-kinds/spec.md) supplies classified resource evidence.
 

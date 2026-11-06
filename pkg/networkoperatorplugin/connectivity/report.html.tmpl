@@ -885,7 +885,32 @@ footer strong { color: var(--text-muted); }
       <p class="summary-line">
         <strong>{{.Matrix.Summary.Passed}}</strong>/{{.Matrix.Summary.TotalTests}} passed
         {{- if gt .Matrix.Summary.Failed 0}} · <strong>{{.Matrix.Summary.Failed}}</strong> failed{{end}}
+        {{- if gt .Matrix.Summary.Skipped 0}} · <strong>{{.Matrix.Summary.Skipped}}</strong> skipped{{end}}
       </p>
+
+      {{- $gateways := gatewayResults .Matrix.PingResults}}
+      {{- if $gateways}}
+      <div class="matrix-rail">Gateway ICMP reachability</div>
+      <p>ICMP echo reachability does not by itself diagnose neighbor resolution.</p>
+      <table class="matrix-table">
+        <thead><tr><th>Source</th><th>Rail / interface</th><th>Source IP</th><th>Gateway</th><th>Result</th><th>Evidence</th></tr></thead>
+        <tbody>
+        {{- range $gateways}}
+          <tr>
+            <td>{{.Test.SrcNamespace}}/{{.Test.SrcPod}} ({{srcLabel .Test}})</td>
+            <td>{{.Test.SrcRail}} / {{.Test.SrcIface}}</td>
+            <td>{{.Test.SrcIP}}</td><td>{{.Test.DstIP}}</td>
+            <td class="{{cellClass .}}">{{if .SkipReason}}SKIPPED: {{.SkipReason}}{{else if .OK}}ICMP reachable{{else}}FAILED: {{errorText .Err}}{{end}}</td>
+            <td><details><summary>Routes and probe output</summary><pre>{{.GatewayEvidence}}
+{{.Route.Command}}
+{{.Route.Output}}
+{{.Stdout}}
+{{.Stderr}}</pre></details></td>
+          </tr>
+        {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
 
       {{- $rails := matrixByRail .Matrix.PingResults}}
       {{- range $rails}}

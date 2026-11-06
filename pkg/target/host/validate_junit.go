@@ -68,6 +68,7 @@ var junitFamilies = []struct {
 	Check connectivity.Check
 	Name  string
 }{
+	{connectivity.CheckGateway, "K8sEastWestNetworkGatewayICMPPing"},
 	{connectivity.CheckICMP, "K8sEastWestNetworkICMPPing"},
 	{connectivity.CheckRPing, "K8sEastWestNetworkRDMAPing"},
 	{connectivity.CheckIBWriteBW, "K8sEastWestNetworkIBWriteBandwidth"},
@@ -87,6 +88,8 @@ func junitFabric(cfg *config.LaunchKitConfig) (string, error) {
 
 func junitCheck(kind connectivity.PingTestKind) connectivity.Check {
 	switch {
+	case kind == connectivity.Gateway:
+		return connectivity.CheckGateway
 	case kind.IsICMP():
 		return connectivity.CheckICMP
 	case kind.IsRDMAPing():
@@ -192,9 +195,14 @@ func buildJUnit(input junitInput) junitDocument {
 					// Include pods and IPs to distinguish multiple endpoints on one node.
 					name := fmt.Sprintf("%s::%s/%s[%s,%s]→%s/%s[%s,%s]", suite.Name,
 						t.SrcNode, t.SrcRail, t.SrcPod, t.SrcIP, t.DstNode, t.DstRail, t.DstPod, t.DstIP)
+					if t.Kind == connectivity.Gateway {
+						name = fmt.Sprintf("%s::%s/%s[%s,%s,%s,%s]→%s", suite.Name, t.SrcNamespace, t.SrcPod, t.SrcNode, t.SrcRail, t.SrcIface, t.SrcIP, t.DstIP)
+					}
 					c := junitCase{Name: name, Classname: "network.connectivity", Out: junitJSON(r), Err: r.Stderr}
 					// OK is the existing expectation-aware verdict, not observed reachability.
-					if !r.OK {
+					if r.SkipReason != "" {
+						c.Skipped = &junitMessage{Message: r.SkipReason}
+					} else if !r.OK {
 						message := "Connectivity expectation not satisfied"
 						if r.Err != nil {
 							message = r.Err.Error()

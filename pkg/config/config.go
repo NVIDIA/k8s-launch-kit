@@ -513,6 +513,7 @@ const (
 	ValidationModeFull   = "full"
 	ValidationModeStrict = "strict"
 
+	ValidationCheckGateway   = "gateway"
 	ValidationCheckICMP      = "icmp"
 	ValidationCheckRPing     = "rping"
 	ValidationCheckIBWriteBW = "ib_write_bw"
@@ -563,7 +564,7 @@ func DefaultValidationConfig() *ValidationConfig {
 	return &ValidationConfig{
 		Connectivity: defaultBool(true),
 		Mode:         ValidationModeStrict,
-		Checks:       []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW},
+		Checks:       []string{ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW},
 		RDMA: &ValidationRDMAConfig{
 			RPingIterations:         DefaultValidationRPingIterations,
 			IBWriteSize:             DefaultValidationIBWriteSize,
@@ -594,7 +595,7 @@ func NormalizeValidationConfigWithPresence(v *ValidationConfig, present PathSet)
 		v.Mode = ValidationModeStrict
 	}
 	if v.Checks == nil && !present.Has("validation.checks") {
-		v.Checks = []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}
+		v.Checks = []string{ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}
 	} else {
 		v.Checks = NormalizeValidationChecks(v.Checks)
 	}
@@ -662,10 +663,10 @@ func ValidateValidationConfig(v *ValidationConfig) error {
 	}
 	for _, check := range v.Checks {
 		switch check {
-		case ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW:
+		case ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW:
 		default:
-			return fmt.Errorf("validation.checks contains unsupported check %q (supported: %s, %s, %s)",
-				check, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW)
+			return fmt.Errorf("validation.checks contains unsupported check %q (supported: %s, %s, %s, %s)",
+				check, ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW)
 		}
 	}
 	return nil

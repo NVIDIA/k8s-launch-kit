@@ -157,6 +157,21 @@ l8k schema | jq .
 
 The schema includes command descriptions, supported fabrics and deployment types, supported Network Operator release lines, exit codes, and automation-relevant flags.
 
+Gateway rows have `Family: "gateway"` and run before other connectivity
+families. A configured gateway requires a successful source-bound ICMP echo;
+no echo does not independently establish an ARP/ND failure. `SkipReason`
+identifies confirmed absence of a configured gateway; these rows increment
+`Summary.Skipped`, never `Passed` or `Failed`. Gateway-only applicability may
+exit zero with every row skipped; it supplies no positive connectivity evidence.
+Zero endpoints and missing coverage for other selected families remain failures
+in connectivity-only and OpenShift validation. `GatewayEvidence` retains the
+configuration/runtime lookup in JSON, HTML and JUnit; text reports endpoints
+and status. Per-pod network-selection `cni-args` on the selected NV-IPAM
+attachment fail gateway measurement before pool lookup; raw args are not
+retained in reports. `Route`, `Stdout`, `Stderr` and `Error` retain
+qualification and probe evidence. JUnit adds the gateway family suite with
+individual skipped or failed cases.
+
 ## Exit Codes
 
 | Code | Meaning |

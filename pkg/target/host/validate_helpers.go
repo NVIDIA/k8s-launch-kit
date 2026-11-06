@@ -58,6 +58,8 @@ func connectivityChecksFromConfig(validationCfg *config.ValidationConfig) []conn
 	checks := make([]connectivity.Check, 0, len(validationCfg.Checks))
 	for _, check := range validationCfg.Checks {
 		switch check {
+		case config.ValidationCheckGateway:
+			checks = append(checks, connectivity.CheckGateway)
 		case config.ValidationCheckICMP:
 			checks = append(checks, connectivity.CheckICMP)
 		case config.ValidationCheckRPing:
@@ -224,6 +226,10 @@ func connectivityCoverageVerdict(matrix *connectivity.MatrixResult, selectedChec
 			continue
 		}
 		switch {
+		case result.Test.Kind == connectivity.Gateway:
+			// An explicit no-gateway row supplies applicability evidence,
+			// not a successful probe. Empty endpoint sets still fail coverage.
+			gatingChecks[connectivity.CheckGateway] = true
 		case result.Test.Kind.IsICMP():
 			gatingChecks[connectivity.CheckICMP] = true
 		case result.Test.Kind.IsRDMAPing():
