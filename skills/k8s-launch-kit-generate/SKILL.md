@@ -11,6 +11,20 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
+## DPF Sentry generation
+
+For an explicit DPF request, use `--target dpf` and follow
+`docs/user/dpf-sentry.md`. Generate from a retained discovery inventory plus
+explicit selected device/tenant bindings, site networks, SHA-bound BF4 software
+and four catalogued local chart archives. `l8k schema` exposes `dpf.profiles`,
+`dpf.generationReleases` and `dpf.charts`. Generation reads no credentials and
+contacts no cluster. Core policy defaults to `llmInspection: false`; enabling
+LLM inspection requires a real inference Secret. The resolved bundle is
+immutable; use a new directory for changed desired intent. Do not apply chart
+projections separately. The Host procedure below applies to `host` only.
+
+## Host workflow
+
 This workflow uses the default `host` target; `--target host` is equivalent.
 The CLI snapshots generation arguments and runs the concrete Host generation
 operation through the target registry; command syntax and artifacts are

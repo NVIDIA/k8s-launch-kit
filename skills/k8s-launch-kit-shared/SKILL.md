@@ -68,8 +68,12 @@ the `host` target. Existing invocations must omit `--target` unless the user
 explicitly requests it; `--target host` is an equivalent explicit form.
 
 The `dpf` target exposes experimental inventory discovery through explicit
-SSH/Redfish sources. Its provisioning phases remain unavailable. Do not attempt DPF provisioning. Use `l8k schema` and inspect
-`targets[].phases` before selecting any non-host target. Host-only flags such as
+SSH/Redfish sources and Sentry BF4 generate/deploy/validate on existing DPF
+management, tenant and enrolled devices. Follow `docs/user/dpf-sentry.md`; the
+root DPF pipeline remains unavailable. Use `l8k schema` and inspect
+`targets[].phases`, `dpf.profiles`, `dpf.generationReleases` and `dpf.charts`
+before selecting this workflow. DPF uses the explicit management file/context
+in its site/resolved input, plus the selected tenant binding. Host-only flags such as
 `--fabric`, `--kubeconfig`, and the Network Operator/Spectrum-X flags are
 rejected when explicitly combined with another target.
 
@@ -92,7 +96,7 @@ root-only, `--deploy-timeout` belongs to root/standalone deploy, and
 
 | Flag | Description |
 |------|-------------|
-| `--target <NAME>` | Lifecycle target: `host` (default); `dpf` offers experimental inventory discovery |
+| `--target <NAME>` | Lifecycle target: `host` (default); `dpf` offers experimental inventory and Sentry BF4 generation/deployment/resource validation |
 | `--kubeconfig <PATH>` | Path to kubeconfig file (optional — falls back to `$KUBECONFIG` env var) |
 | `--user-config <PATH>` | Path to user-supplied l8k-config.yaml |
 | `--output <FORMAT>` | Output format: `text` (default), `json` |

@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUService
+metadata:
+  name: {{ .Names.Controller }}
+  namespace: {{ .Namespace }}
+spec:
+  serviceID: {{ .Names.Controller }}
+  security:
+    privileged: false
+  helmChart:
+    source:
+      repoURL: https://helm.ngc.nvidia.com/nvstaging/doca
+      chart: doca-sentry-policy-controller
+      version: "0.2.5"
+    values:
+      image:
+        repository: nvcr.io/nvstaging/doca/doca-tower-policy-sidecar
+        tag: {{ .ControllerTag }}
+        pullPolicy: Always
+      imagePullSecrets:
+        - name: {{ .PullSecret }}
+      hostNetwork: true
+      webhook:
+        enabled: false
+  serviceDaemonSet:
+    nodeSelector:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: {{ .ScopeKey }}
+              operator: In
+              values:
+                - "{{ .ScopeValue }}"
+    labels:
+      dpuservice.dpu.nvidia.com/name: {{ .Names.Controller }}
+      svc.dpu.nvidia.com/service: {{ .Names.Controller }}
+    annotations:
+      dpuservice.dpu.nvidia.com/name: {{ .Names.Controller }}
+    resources:
+      cpu: "200m"
+      memory: 256Mi

@@ -1,8 +1,8 @@
 {
   "$comment": "Copyright 2026 NVIDIA CORPORATION & AFFILIATES; SPDX-License-Identifier: Apache-2.0",
   "formatVersion": 1,
-  "title": "DPF discovery workflows",
-  "introduction": "Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Start with **inventory mode**; management probe mode is unavailable in this preview. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.\n\nFor complete field and error details, see [DPF discovery reference](dpf-discovery.md). Each diagram follows the same steps as its procedure. Commands are examples to run deliberately from a machine with direct access to your selected endpoints.",
+  "title": "DPF workflows",
+  "introduction": "Use these procedures for DPF inventory and the experimental Sentry BF4 generate/deploy/validate workflow. The DPU estate is independent of Host Network Operator deployment. Start with **inventory mode** to collect physical identity and host associations; management probe mode remains unavailable. Deploying Sentry additionally requires an existing DPF management cluster, tenant, enrolled devices and the explicit prerequisites in the [Sentry procedure](dpf-sentry.md). VM creation, Kubernetes/DPF bootstrap, enrollment, upgrades, teardown and implicit transfer from another owner are outside this workflow.\n\nEach diagram follows its procedure. Run commands from a CLI machine with the required local files and explicitly bound access. Inventory success, local generation, API admission, resource readiness and functional traffic checks establish different outcomes. See [DPF discovery reference](dpf-discovery.md) for collection fields and errors.",
   "workflows": [
     {
       "id": "initial-inventory",
@@ -78,7 +78,7 @@
         {
           "id": "inspect",
           "title": "CLI machine: review inventory and reasons",
-          "body": "Inspect `discovery.outcome`, `discovery.checks`, `errors`, `artifacts` and `acceptance` in the JSON report. Review saved `inventory.hosts`, `inventory.dpus`, `inventory.associations` and their evidence before using the handoff. Complete discovery writes `dpf-discovered.yaml`; partial discovery preserves an existing handoff and writes `partial.yaml` and `report.json` under `dpf-discovered.discovery/<run-id>/`. Use the report's artifact paths instead of guessing the run ID.\n\nRead each non-success observation's `reasonCode`, `message` and `tool` where present. A missing `mlxfwmanager` is an unavailable prerequisite, not proof of an incompatible NIC firmware. A denied Redfish firmware collection is different from a component property not being exposed. Conflicting versions or ambiguous activation cannot establish a software minimum.\n\n| Example reason | What to do |\n| --- | --- |\n| `TOOL_NOT_AVAILABLE` / `PERMISSION_DENIED` | Check the named endpoint tool or authorized noninteractive sudo policy; do not treat the unmeasured check as passed. |\n| `ACCESS_DENIED` / `PROPERTY_NOT_EXPOSED` | Distinguish an account permission problem from a property the service does not advertise. |\n| `SOFTWARE_VERSION_CONFLICT` / `SOFTWARE_IDENTITY_UNAVAILABLE` | Reconcile version/activation sources or the rejected physical identity before trusting software comparisons. |\n| `SOFTWARE_BELOW_MINIMUM` | Review the release requirement and plan a separate maintenance action; discovery does not update firmware. |\n| `PUBLICATION_FAILED` | Read the error explanation, resolve the local output/path problem, and rerun; only listed successfully written artifacts exist. |\n\nThe resolved software BOM is saved under `inventory.software`, including source references and unknown requirements. Release `26.4.0` has exact BlueField-3 model entries `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 are not sufficient for BOM applicability. The documented NIC/MFT minima can be evaluated when current measurements associated with the correct device exist. BMC, CEC, ATF, UEFI, OS/BSP and golden-image minima remain unknown where the catalog has no supported requirement. A BFB target is a desired artifact, not an observed OS/BSP version. An unknown requirement must remain unresolved; supplying a guessed minimum does not establish compatibility.\n\nExit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; DPF generate/deploy/validate are unavailable in this preview.",
+          "body": "Inspect `discovery.outcome`, `discovery.checks`, `errors`, `artifacts` and `acceptance` in the JSON report. Review saved `inventory.hosts`, `inventory.dpus`, `inventory.associations` and their evidence before using the handoff. Complete discovery writes `dpf-discovered.yaml`; partial discovery preserves an existing handoff and writes `partial.yaml` and `report.json` under `dpf-discovered.discovery/<run-id>/`. Use the report's artifact paths instead of guessing the run ID.\n\nRead each non-success observation's `reasonCode`, `message` and `tool` where present. A missing `mlxfwmanager` is an unavailable prerequisite, not proof of an incompatible NIC firmware. A denied Redfish firmware collection is different from a component property not being exposed. Conflicting versions or ambiguous activation cannot establish a software minimum.\n\n| Example reason | What to do |\n| --- | --- |\n| `TOOL_NOT_AVAILABLE` / `PERMISSION_DENIED` | Check the named endpoint tool or authorized noninteractive sudo policy; do not treat the unmeasured check as passed. |\n| `ACCESS_DENIED` / `PROPERTY_NOT_EXPOSED` | Distinguish an account permission problem from a property the service does not advertise. |\n| `SOFTWARE_VERSION_CONFLICT` / `SOFTWARE_IDENTITY_UNAVAILABLE` | Reconcile version/activation sources or the rejected physical identity before trusting software comparisons. |\n| `SOFTWARE_BELOW_MINIMUM` | Review the release requirement and plan a separate maintenance action; discovery does not update firmware. |\n| `PUBLICATION_FAILED` | Read the error explanation, resolve the local output/path problem, and rerun; only listed successfully written artifacts exist. |\n\nThe resolved software BOM is saved under `inventory.software`, including source references and unknown requirements. Release `26.4.0` has exact BlueField-3 model entries `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 are not sufficient for BOM applicability. The documented NIC/MFT minima can be evaluated when current measurements associated with the correct device exist. BMC, CEC, ATF, UEFI, OS/BSP and golden-image minima remain unknown where the catalog has no supported requirement. A BFB target is a desired artifact, not an observed OS/BSP version. An unknown requirement must remain unresolved; supplying a guessed minimum does not establish compatibility.\n\nExit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; the separate [Sentry BF4 procedure](dpf-sentry.md) provides generation, deployment and resource validation only after its additional prerequisites are met.",
           "transitions": [
             {
               "to": "finish",
@@ -240,7 +240,193 @@
         {
           "id": "retain",
           "title": "CLI machine: retain the refreshed files",
-          "body": "Keep the current YAML, JSON/stdout report and stderr log, plus `source-before.yaml` when a complete in-place refresh created it. Discovery completion still means a successful inventory workflow, with deployment `acceptance: not-evaluated`. Unknown software requirements and unverified deployment prerequisites remain unresolved; a refreshed inventory does not enable DPF deployment.",
+          "body": "Keep the current YAML, JSON/stdout report and stderr log, plus `source-before.yaml` when a complete in-place refresh created it. Discovery completion still means a successful inventory workflow, with deployment `acceptance: not-evaluated`. Unknown software requirements and unverified deployment prerequisites remain unresolved; a refreshed inventory alone does not establish Sentry deployment readiness. Continue with the [explicit deployment prerequisites](dpf-sentry.md#prepare-the-existing-environment) when that workflow is intended.",
+          "transitions": []
+        }
+      ]
+    },
+    {
+      "id": "generate-sentry",
+      "title": "Generate a Sentry BF4 bundle",
+      "introduction": "Use this procedure after reviewing physical discovery and selecting an existing DPF environment. Generation runs locally on the CLI machine, reads no deployment credentials and contacts no cluster. It does not establish readiness.",
+      "steps": [
+        {
+          "id": "bind-inputs",
+          "title": "CLI operator: select devices and desired site inputs",
+          "body": "Copy the discovered YAML to `deployment-site.yaml`, retaining its inventory. Choose the exact inventory device IDs and explicitly name their enrolled DPUDevice/DPUNode objects. Bind the existing tenant by name, namespace, selector, resource UID, tenant cluster UID and API server version. Management UID/version may default from saved observations; management kubeconfig/context must be explicit. Supply PSID-matched ISO/PLDM URLs and SHA-256, service networks and existing Secret names. Follow the [configuration fragment and input table](dpf-sentry.md#prepare-the-deployment-configuration). Do not invent missing observations or infer enrollment names.\n\nCore policy defaults to `llmInspection: false` and makes no LLM inspection claim. Enable it only with the real inference Secret and intended external inference access.\n\n`ingressCIDR` and `ingressIP` configure only the `net1` ingress network. The current profile obtains `net2` egress IPv4 and its router through DHCP on the untagged `p0` uplink; these inputs do not configure egress, switch VLANs, a DHCP server/relay or upstream routing.",
+          "transitions": [
+            {
+              "to": "stage-charts",
+              "label": "Bindings and intent reviewed"
+            }
+          ]
+        },
+        {
+          "id": "stage-charts",
+          "title": "CLI machine: obtain the pinned local charts",
+          "body": "Run `l8k schema` and inspect `dpf.charts`. Obtain all four exact chart archives using authorized registry access and your credential store, preserving catalog filenames in `sentry.chartDirectory`. Verify their SHA-256. Use each declared repository type; never put registry passwords in CLI arguments or site YAML. Generation does not download or repair missing archives.",
+          "transitions": [
+            {
+              "to": "render",
+              "label": "Four archives verified"
+            }
+          ]
+        },
+        {
+          "id": "render",
+          "title": "CLI machine: generate the local bundle",
+          "body": "Choose a new output directory and run:\n\n```bash\nl8k generate --target dpf --user-config deployment-site.yaml \\\n  --dpf-release 26.8.0 --dpf-profile sentry-bf4 \\\n  --save-deployment-files ./sentry-bundle --output json \\\n  > generate.json 2> generate.log\n```\n\nUse the installed DPF release, not an intended upgrade. Generation validates exact chart bytes, resource identities, selected scope and release-specific API shapes before publishing. Check the exit status and returned result.",
+          "transitions": [
+            {
+              "to": "review",
+              "label": "Generation completed"
+            }
+          ]
+        },
+        {
+          "id": "review",
+          "title": "CLI operator: review destinations and physical scope",
+          "body": "Inspect the selected-device set, exact device/tenant selectors, resource names, service/provisioning namespaces and artifact hashes. Management provisioning/service CRs and tenant RBAC have separate destinations. Effective chart values and projections are retained for validation; DPF deploys the charts, so do not apply those projections manually.\n\nThe bundle is immutable and includes target metadata and resolved inputs. Repeating identical output is allowed. Corrected intent requires a new bundle directory; do not edit the captured files to force acceptance. A generated bundle does not authorize an ownership transition or physical reimage.",
+          "transitions": [
+            {
+              "to": "retain",
+              "label": "Review complete"
+            }
+          ]
+        },
+        {
+          "id": "retain",
+          "title": "CLI operator: preserve the bundle and choose the next action",
+          "body": "Keep `sentry-bundle`, `generate.json` and `generate.log`. Continue to [deployment](#deploy-sentry) only after external namespaces, Secrets, access, device ownership and the maintenance window are ready. `generate --deploy` invokes the same deployment path after generation; use separate commands to set an explicit standalone deploy timeout.",
+          "transitions": []
+        }
+      ]
+    },
+    {
+      "id": "deploy-sentry",
+      "title": "Check admission and deploy the selected Sentry bundle",
+      "introduction": "Run from the CLI machine. The existing DPF controllers perform firmware download, DPU provisioning, host power coordination and chart reconciliation. Real deployment can reimage selected devices. No VM/bootstrap/enrollment or implicit foreign-owner transition is performed.",
+      "steps": [
+        {
+          "id": "prerequisites",
+          "title": "Cluster/device administrators: prepare external ownership and access",
+          "body": "Arrange the [existing-environment prerequisites](dpf-sentry.md#prepare-the-existing-environment). The dedicated service namespace must be Active on management and tenant clusters, with registry and MITM Secrets in both; optional inference credentials belong on the tenant. Configure Argo CD repository credentials for the selected OCI and HTTPS chart registries in the existing Argo CD namespace; image-pull Secrets and local CLI login do not provide chart access. DPF management and tenant services and BMC controller credentials/trust must already work. If another DPUSet or DPUDeployment owns a selected device, resolve the explicitly authorized transition externally. Do not bypass an ownership error by relabeling or deleting unrelated resources.\n\nArrange an untagged Layer 2 `p0` uplink with an existing IPv4 DHCP server or relay that supplies a lease and router acceptable for `p0`'s MAC; Tower temporarily borrows that MAC on `net2`. Require a route to the approved upstream test endpoint. The network administrator owns switch/VLAN, DHCP and routing configuration; Launch Kit does not provision them. A management/BMC lease does not establish this egress path.\n\nArrange the host IOMMU mode required by [DPF 26.8 Argus](https://networking-docs.nvidia.com/dpf/26.8.0/doca-argus-service): bare-metal hosts require IOMMU disabled or enabled with passthrough. The site administrator chooses and authorizes this host-wide DMA-isolation setting and any maintenance/reboot. DPU flavor ARM kernel settings do not configure the host; Launch Kit does not select or apply that mode.",
+          "transitions": [
+            {
+              "to": "preview",
+              "label": "Prerequisites and physical scope authorized"
+            }
+          ]
+        },
+        {
+          "id": "preview",
+          "title": "CLI machine and bound APIs: check server admission",
+          "body": "Run:\n\n```bash\nl8k deploy --target dpf --deployment-files ./sentry-bundle \\\n  --dry-run --deploy-timeout 10m --output json \\\n  > admission.json 2> admission.log\n```\n\nThe management access file/context comes from the resolved bundle; no ambient kubeconfig is used. The CLI checks live identities, selected membership, ownership and external prerequisites, then requests server-side dry-run for native resources. No chart or DPU is provisioned by this preview.",
+          "transitions": [
+            {
+              "to": "review-admission",
+              "label": "Admission checks returned"
+            }
+          ]
+        },
+        {
+          "id": "review-admission",
+          "title": "CLI operator: inspect passed and unresolved admission checks",
+          "body": "Read each check and its source/reason. Missing future chart-created APIs or admission prerequisites may remain deferred/unresolved because dry-run does not install them. Projections are validation-only; no runtime service readiness or policy test has occurred. Resolve rejected prerequisites and review deferred work before choosing real deployment. A completion summary is not proof that every API was admitted.",
+          "transitions": [
+            {
+              "to": "deploy",
+              "label": "Concrete plan reviewed for real deploy"
+            }
+          ]
+        },
+        {
+          "id": "deploy",
+          "title": "CLI and management controllers: create and reconcile in dependency order",
+          "body": "Use an explicit budget that includes downloads, firmware and OS installation, required host power cycles, and service startup:\n\n```bash\nl8k deploy --target dpf --deployment-files ./sentry-bundle \\\n  --deploy-timeout 90m --output json > deploy.json 2> deploy.log\n```\n\nThe CLI submits native resources in order. DPF downloads the desired ISO/firmware, and consumed artifact hashes are checked before DPUSet effects. DPF then provisions the selected DPUs. Launch Kit waits for each DPUSet to become Ready and host transition markers to clear before submitting the next; allow time for all devices and required host power cycles. After the selected nodes and DNS are ready, the CLI submits Tower, the policy controller and Argus together, then waits for all three. The controller installs the policy API Tower needs, while Tower provides the controller's policy socket. The policy REST server starts afterward on management. Chart projections are observed, never applied again. Follow the existing DPF host-power procedure when a cold boot is required. Keep firmware caches unchanged during provisioning.",
+          "transitions": [
+            {
+              "to": "inspect",
+              "label": "Run completed or stopped"
+            }
+          ]
+        },
+        {
+          "id": "inspect",
+          "title": "CLI operator: inspect the persisted run and actual state",
+          "body": "Read `<bundle>.runs/<run-directory>/report.json` together with stdout/stderr. Confirm selected membership and coverage, and investigate failures, unresolved evidence, ownership changes or readiness timeouts. The immutable bundle is retained. A successful resource run still needs [separate functional verification](dpf-sentry.md#verify-resources-and-policy-behavior).\n\nCancellation/timeout stops CLI orchestration; controller work already started is not rolled back. Preserve the report and inspect actual DPF/device state before retrying. Do not start a second run while an earlier controller action remains uncertain.",
+          "transitions": [
+            {
+              "to": "complete",
+              "label": "Selected resources ready"
+            },
+            {
+              "to": "recover",
+              "label": "Failed or unresolved run"
+            }
+          ]
+        },
+        {
+          "id": "recover",
+          "title": "Responsible administrator: correct the reported prerequisite or desired intent",
+          "body": "Use the reported source and reason to fix external access, namespace/Secret readiness, physical ownership or the selected artifact. An unchanged bundle can be retried after resolving its cause. Changed desired intent needs a newly generated bundle. Upgrades, teardown and another owner's removal remain separately authorized operations; this procedure does not perform them.",
+          "transitions": [
+            {
+              "to": "preview",
+              "label": "Unchanged intent and cause resolved"
+            }
+          ]
+        },
+        {
+          "id": "complete",
+          "title": "CLI operator: retain evidence and verify policy behavior",
+          "body": "Preserve the unchanged bundle and all run reports. Continue to [resource and functional verification](#validate-sentry). Successful resource readiness does not establish an allow/deny or LLM inspection result.",
+          "transitions": []
+        }
+      ]
+    },
+    {
+      "id": "validate-sentry",
+      "title": "Verify resources, then test Sentry policy enforcement",
+      "introduction": "DPF validation verifies live resources and selected coverage without cluster writes. It reads the frozen bundle and writes a separate report. Functional VF policy traffic and optional LLM inspection require additional deliberate tests.",
+      "steps": [
+        {
+          "id": "run",
+          "title": "CLI machine: validate the frozen bundle against both APIs",
+          "body": "Run:\n\n```bash\nl8k validate --target dpf --deployment-files ./sentry-bundle \\\n  --wait 10m --output json > validate.json 2> validate.log\n```\n\nAccess and target identity come from the resolved bundle. Do not substitute Host `--kubeconfig`, connectivity or HTML/JUnit report flags. The command checks current management/tenant resource state, ownership, identity and selected DPU coverage.",
+          "transitions": [
+            {
+              "to": "inspect",
+              "label": "Resource verification returned"
+            }
+          ]
+        },
+        {
+          "id": "inspect",
+          "title": "CLI operator: assess coverage and unresolved conditions",
+          "body": "Inspect the result and `<bundle>.runs/<run-directory>/report.json`. Check that all selected devices and intended workloads are represented and current. Missing reads, stale conditions and unresolved prerequisites are not passes. Resource validation does not send policy-test traffic or claim LLM inspection. Resolve resource failures before relying on the datapath.\n\nThe pinned Argus chart has no application readiness probe. Pod Running/Ready alone does not establish host attachment or a working query service. Inspect Argus initialization/DMA errors and verify the chosen host IOMMU prerequisite if attachment or the configured query socket is unavailable.",
+          "transitions": [
+            {
+              "to": "traffic",
+              "label": "Resource state reviewed"
+            }
+          ]
+        },
+        {
+          "id": "traffic",
+          "title": "Host workload operator: verify positive and negative VF behavior",
+          "body": "Use an already prepared host VF workload on the selected host, with its actual MAC, NAD and advertised resource. Mount only the public MITM CA. Follow the [functional procedure](dpf-sentry.md#verify-resources-and-policy-behavior): baseline denial with no MAC policy; PUT a policy and poll GET until applied; verify an allowed HTTP/HTTPS path reaches the approved server and a denied path receives an attributable authorization denial. Verify Argus identity and intended DPU controller programming. An egress503 does not pass the positive test.\n\nUse the same VF interface for every request and an explicit DNS resolution when needed. If LLM inspection is selected, test that additional path with real inference credentials; core policy success makes no LLM claim.\n\nIf `net2` lacks an IPv4 lease/router or the managed egress helper reports DHCP failure, resolve the `p0` VLAN, DHCP/relay, MAC policy and return path with the network administrator before permitted-traffic tests. Do not start another DHCP client. An attributable authorization denial is distinct from an upstream connection failure or egress `503`; only reaching the approved upstream server passes the positive test.\n\nRequire successful Argus host attachment, a responding configured query socket, and the expected executable identity for the actual VF test process. Resource readiness alone is insufficient evidence for that identity or functional enforcement.",
+          "transitions": [
+            {
+              "to": "cleanup",
+              "label": "Functional evidence captured"
+            }
+          ]
+        },
+        {
+          "id": "cleanup",
+          "title": "Test owner: remove only test resources and retain evidence",
+          "body": "DELETE the test policy through the policy API, poll GET until404 and confirm baseline denial returns. Remove only the test pod and test-specific public-CA/configuration resources. Keep the generated bundle, run reports, logs and functional results. Do not delete production resources or infer teardown authorization from validation.",
           "transitions": []
         }
       ]

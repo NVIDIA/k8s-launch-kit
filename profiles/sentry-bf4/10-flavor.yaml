@@ -1,0 +1,246 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: provisioning.dpu.nvidia.com/v1alpha1
+kind: DPUFlavor
+metadata:
+  name: {{ .Names.Flavor }}
+  namespace: {{ .ProvisioningNamespace }}
+  annotations:
+    provisioning.dpu.nvidia.com/num-of-trusted-sfs: "2"
+spec:
+  sysctl:
+    parameters:
+    - net.ipv6.conf.all.disable_ipv6=1
+    - net.ipv6.conf.default.disable_ipv6=1
+    - net.ipv6.conf.lo.disable_ipv6=1
+    - net.ipv4.conf.all.arp_ignore=1
+    - net.ipv4.conf.all.arp_announce=2
+  dpuMode: zero-trust
+  grub:
+    kernelParameters:
+    - console=hvc0
+    - console=ttyAMA0
+    - fixrttc
+    - net.ifnames=0
+    - biosdevname=0
+    - iommu.passthrough=1
+    - cgroup_no_v1=net_prio,net_cls
+    - hugepagesz=2048kB
+    - hugepages=500
+  nvconfig:
+  - device: "*"
+    parameters:
+    - PF_BAR2_ENABLE=0
+    - PER_PF_NUM_SF=1
+    - PF_TOTAL_SF=20
+    - PF_SF_BAR_SIZE=14
+    - NUM_PF_MSIX_VALID=0
+    - PF_NUM_PF_MSIX_VALID=1
+    - PF_NUM_PF_MSIX=228
+    - INTERNAL_CPU_MODEL=1
+    - INTERNAL_CPU_OFFLOAD_ENGINE=0
+    - SRIOV_EN=1
+    - NUM_OF_VFS=46
+    - LAG_RESOURCE_ALLOCATION=1
+    - LINK_TYPE_P1=ETH
+    - LINK_TYPE_P2=ETH
+  ovs:
+    rawConfigScript: |
+      _ovs-vsctl() {
+        ovs-vsctl --timeout 15 "$@"
+      }
+
+
+      for i in $(seq 0 99); do
+        _ovs-vsctl --if-exists del-br "ovsbr${i}"
+      done
+      ovs-appctl --timeout 15 dpctl/del-dp system@ovs-system &>/dev/null || true
+
+      _ovs-vsctl set Open_vSwitch . other_config:doca-init=true
+      _ovs-vsctl set Open_vSwitch . other_config:dpdk-max-memzones=50000
+      _ovs-vsctl set Open_vSwitch . other_config:hw-offload=true
+      _ovs-vsctl set Open_vSwitch . other_config:pmd-quiet-idle=false
+      _ovs-vsctl set Open_vSwitch . other_config:max-idle=20000
+      _ovs-vsctl set Open_vSwitch . other_config:max-revalidator=5000
+      _ovs-vsctl set Open_vSwitch . other_config:doca-congestion-threshold=60
+      _ovs-vsctl set Open_vSwitch . other_config:flow-limit=500000
+      _ovs-vsctl set Open_vSwitch . other_config:hw-offload-ct-unidir-udp-enabled=true
+      _ovs-vsctl set Open_vSwitch . other_config:hw-offload-ct-size=250000
+      _ovs-vsctl remove Open_vSwitch . other_config default-datapath-type || true
+
+      if systemctl list-unit-files openvswitch-switch.service &>/dev/null; then
+        systemctl restart openvswitch-switch
+      elif systemctl list-unit-files openvswitch.service &>/dev/null; then
+        systemctl restart openvswitch
+      fi
+
+      _ovs-vsctl --may-exist add-br br-sfc
+      _ovs-vsctl set bridge br-sfc datapath_type=netdev
+      _ovs-vsctl set bridge br-sfc fail_mode=secure
+      _ovs-vsctl --may-exist add-port br-sfc p0
+      _ovs-vsctl set Interface p0 type=dpdk
+      _ovs-vsctl set Interface p0 mtu_request=9216
+      _ovs-vsctl set Port p0 external_ids:dpf-type=physical
+
+      _ovs-vsctl --may-exist add-br br-envoy
+      _ovs-vsctl set bridge br-envoy datapath_type=netdev
+
+  configFiles:
+  - path: /etc/mellanox/mlnx-bf.conf
+    operation: override
+    raw: |
+      ALLOW_SHARED_RQ="no"
+      IPSEC_FULL_OFFLOAD="no"
+      ENABLE_ESWITCH_MULTIPORT="yes"
+      SNAP_DMA_SF="no"
+    permissions: "0644"
+  - path: /etc/mellanox/mlnx-ovs.conf
+    operation: override
+    raw: |
+      CREATE_OVS_BRIDGES="no"
+      OVS_DOCA="yes"
+    permissions: "0644"
+  - path: /etc/mellanox/mlnx-sf.conf
+    operation: override
+    raw: ""
+    permissions: "0644"
+  - path: /usr/local/sbin/br-envoy-vfs
+    operation: override
+    permissions: "0755"
+    raw: |
+      #!/bin/bash
+      set -euo pipefail
+
+      _ovs-vsctl() {
+        ovs-vsctl --timeout 15 "$@"
+      }
+
+      discover_vfs() {
+        devlink -j port show | python3 -c '
+      import json
+      import sys
+
+      ports = json.load(sys.stdin).get("port", {})
+      matches = sorted(
+          (port.get("vfnum"), port.get("netdev") or port.get("ifname"))
+          for port in ports.values()
+          if port.get("flavour") == "pcivf"
+          and port.get("controller") == 1
+          and port.get("pfnum") == 0
+          and isinstance(port.get("vfnum"), int)
+          and (port.get("netdev") or port.get("ifname"))
+      )
+      for _, netdev in matches:
+          print(netdev)
+      '
+      }
+
+      is_current_vf() {
+        local port=$1
+        local vf
+        for vf in "${vf_representors[@]}"; do
+          [[ "$vf" == "$port" ]] && return 0
+        done
+        return 1
+      }
+
+      for _ in $(seq 1 30); do
+        _ovs-vsctl br-exists br-envoy && break
+        sleep 2
+      done
+      _ovs-vsctl br-exists br-envoy
+
+      vf_representors=()
+      mapfile -t vf_representors < <(discover_vfs)
+
+      mapfile -t bridge_ports < <(_ovs-vsctl list-ports br-envoy)
+      for port in "${bridge_ports[@]}"; do
+        [[ -n "$port" ]] || continue
+        tag="$(_ovs-vsctl --if-exists get Port "$port" external_ids:br-envoy-vf || true)"
+        tag="${tag//\"/}"
+        if [[ "$tag" == "1" ]] && ! is_current_vf "$port"; then
+          echo "[br-envoy-vfs] removing stale VF port ${port}" >&2
+          _ovs-vsctl --if-exists del-port br-envoy "$port"
+        fi
+      done
+
+      for vf_representor in "${vf_representors[@]}"; do
+        [[ -n "$vf_representor" ]] || continue
+        _ovs-vsctl --may-exist add-port br-envoy "${vf_representor}" -- \
+          set Interface "${vf_representor}" type=dpdk mtu_request=9216 -- \
+          set Port "${vf_representor}" external_ids:br-envoy-vf=1
+      done
+
+      echo "[br-envoy-vfs] attached ${#vf_representors[@]} PF0 VF representor(s)"
+  - path: /usr/local/sbin/br-envoy-vfs-monitor
+    operation: override
+    permissions: "0755"
+    raw: |
+      #!/bin/bash
+      set -uo pipefail
+
+      reconcile() {
+        until /usr/local/sbin/br-envoy-vfs; do
+          sleep 5
+        done
+      }
+
+      {
+        trap 'kill $(jobs -p) 2>/dev/null' EXIT
+        devlink monitor port &
+        ovsdb-client monitor Open_vSwitch Port name,external_ids &
+        echo start
+        wait -n
+      } | while read -r _; do
+        while read -r -t 2 _; do :; done
+        reconcile
+      done
+  - path: /etc/netplan/99-p1.yaml
+    operation: override
+    permissions: "0600"
+    raw: |
+      network:
+        version: 2
+        ethernets:
+          p1:
+            renderer: networkd
+            dhcp4: false
+            dhcp6: false
+            accept-ra: false
+            link-local: []
+  - path: /etc/netplan/99-disable-mlx-ipv6.yaml
+    operation: override
+    permissions: "0600"
+    raw: |
+      network:
+        version: 2
+        ethernets:
+          enP2p1s0f0S0:
+            dhcp4: true
+            dhcp6: false
+            accept-ra: false
+            link-local: []
+          enP6p1s0f0S0:
+            dhcp4: true
+            dhcp6: false
+            accept-ra: false
+            link-local: []
+  - path: /etc/systemd/system/br-envoy-vfs.service
+    operation: override
+    permissions: "0644"
+    raw: |
+      [Unit]
+      Description=Attach PF0 host VF representors to br-envoy
+      After=openvswitch-switch.service
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/sbin/br-envoy-vfs-monitor
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  systemdServices:
+  - name: br-envoy-vfs.service
+    operation: EnableAndStart

@@ -1,0 +1,120 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUService
+metadata:
+  name: {{ .Names.Argus }}
+  namespace: {{ .Namespace }}
+spec:
+  serviceID: {{ .Names.Argus }}
+  security:
+    privileged: true
+  helmChart:
+    source:
+      repoURL: https://helm.ngc.nvidia.com/nvstaging/doca
+      chart: doca-argus
+      version: "1.5.1-ai-gateway.8"
+    values:
+      containerImage: {{ .ArgusImage }}
+      imagePullSecrets:
+        - name: {{ .PullSecret }}
+      config:
+        isLocalPath: false
+        hostConfigDir: /etc/doca_argus_config
+        content:
+          service:
+            query_socket_path: /etc/doca_argus_config/argus_query.sock
+            immediate_shutdown: true
+            service_log_level: 50
+            system_scanner_sleep_time: 10s
+            pool_num_workers: 7
+          apsh_config:
+            auto_scan: true
+            only_scan_pf: true
+            default:
+              os_symbol_path: auto
+              mem_regions_path: auto
+              os_type: linux
+              service_log_level: 50
+              sdk_log_level: 50
+              limits:
+                string: 2100000
+                process: 10000
+                file_descriptor: 10000
+                thread: 10000
+                process_memory: 10000
+                pool_size: 100000000
+              events:
+                container_filter: false
+                sbom:
+                  containers: false
+                  none_containers: false
+          collection:
+            events:
+              process:
+                disable_scan: false
+                scans_frequency: false
+                process_created: true
+                process_terminated: true
+                process_zombie: true
+                process_hidden: true
+              thread:
+                disable_scan: false
+                scans_frequency: 1s
+                thread_created: true
+                thread_terminated: true
+              file_descriptor:
+                disable_scan: false
+                scans_frequency: false
+                file_descriptor_open: true
+                file_descriptor_close: true
+                file_descriptor_file_content_change: true
+              network_connection:
+                disable_scan: false
+                scans_frequency: false
+                network_connection_created: true
+                network_connection_terminated: true
+              process_memory:
+                disable_scan: false
+                scans_frequency: 10s
+                new_executable_anonymous_memory_mapped: true
+                file_unmapped: true
+                executable_permissions_added: true
+                executable_permissions_removed: true
+              process_attestation:
+                disable_scan: false
+                scans_frequency: 10s
+                new_file_mapped: true
+                foreign_binary_executed: true
+                foreign_library_loaded: true
+              shell_command:
+                disable_scan: false
+                scans_frequency: 1s
+                shell_command_executed: true
+                shell_history_cleared: true
+                shell_history_disabled: true
+          output:
+            log_stdout: false
+            log_folder_path: /var/log/doca_argus_activity_report
+            log_threshold_size: 100M
+            log_max_files_count: 10
+            telemetry_address: false
+            telemetry_tag: fluentbit_forward_input
+            telemetry_format: json
+            telemetry_user_data: NONE
+  serviceDaemonSet:
+    nodeSelector:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: {{ .ScopeKey }}
+              operator: In
+              values:
+                - "{{ .ScopeValue }}"
+    labels:
+      dpuservice.dpu.nvidia.com/name: {{ .Names.Argus }}
+      svc.dpu.nvidia.com/service: {{ .Names.Argus }}
+    annotations:
+      dpuservice.dpu.nvidia.com/name: {{ .Names.Argus }}
+    resources:
+      cpu: "4"
+      memory: 10Gi

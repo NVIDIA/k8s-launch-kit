@@ -30,11 +30,23 @@ var _ = Describe("target boundary", func() {
 		Expect(result["target"]).To(Equal("dpf"))
 		Expect(result["execution"]).To(Equal("failed"))
 	})
-	It("advertises only discovery and rejects other phases before binding", func() {
-		for _, p := range []target.Phase{target.Generate, target.Deploy, target.Validate, target.Pipeline} {
-			_, e := NewDiscoverAdapter(Request{}).Bind(target.Invocation{Target: target.DPF, Phase: p})
-			Expect(e).To(HaveOccurred())
-			Expect(Descriptor().Capability(p).Available).To(BeFalse())
+	It("advertises implemented public workflows and keeps the composite pipeline unavailable", func() {
+		for _, p := range []target.Phase{target.Discover, target.Generate, target.Deploy, target.Validate} {
+			Expect(Descriptor().Capability(p).Available).To(BeTrue())
 		}
+		Expect(Descriptor().Capability(target.Pipeline).Available).To(BeFalse())
+	})
+
+	It("binds the workflow adapter only to its configured phase", func() {
+		adapter := NewWorkflowAdapter(WorkflowRequest{Phase: target.Generate})
+		_, e := adapter.Bind(target.Invocation{Target: target.DPF, Phase: target.Deploy})
+		Expect(e).To(MatchError(ContainSubstring("does not bind phase")))
+		_, e = adapter.Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
+		Expect(e).NotTo(HaveOccurred())
+	})
+
+	It("retains the discovery adapter phase boundary", func() {
+		_, e := NewDiscoverAdapter(Request{}).Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
+		Expect(e).To(HaveOccurred())
 	})
 })

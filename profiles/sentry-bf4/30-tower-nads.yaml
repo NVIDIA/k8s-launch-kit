@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceNAD
+metadata:
+  name: {{ .Names.IngressNAD }}
+  namespace: {{ .Namespace }}
+  annotations:
+    dpuservicenad.svc.dpu.nvidia.com/use-trusted-sfs: ""
+spec:
+  resourceType: sf
+  bridge: br-envoy
+  serviceMTU: 1500
+  ipam: false
+---
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceNAD
+metadata:
+  name: {{ .Names.EgressNAD }}
+  namespace: {{ .Namespace }}
+  annotations:
+    dpuservicenad.svc.dpu.nvidia.com/use-trusted-sfs: ""
+spec:
+  resourceType: sf
+  bridge: br-envoy
+  serviceMTU: 1500
+  ipam: false
