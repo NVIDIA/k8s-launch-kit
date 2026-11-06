@@ -240,7 +240,10 @@ The CLI checks existing operator/tenant health, selected identities and ownershi
 service namespaces/Secret keys, then creates the bundle's resources in dependency
 order. It verifies the downloaded provisioning bytes before each DPUSet creates
 physical effects. DPF performs reimaging, host power coordination and service
-reconciliation. External firmware caches must remain unchanged during provisioning.
+reconciliation. Launch Kit provisions devices sequentially, waiting for each
+DPUSet to become Ready and host transition markers to clear before submitting
+the next. Include all devices and required host power cycles in the deployment
+timeout. External firmware caches must remain unchanged during provisioning.
 A host cold boot also affects co-resident devices and workloads; include that
 host-wide effect in the maintenance plan.
 

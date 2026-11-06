@@ -95,6 +95,12 @@ Selected nodes SHALL use the external reboot method without pending power action
 - **WHEN** the selected DPUNode uses a reboot script or has a pending power request
 - **THEN** preflight blocks provisioning and identifies the unresolved external transition.
 
+#### Scenario: Multiple selected devices
+
+- **WHEN** deployment submits a DPUSet for one selected device and DPF starts its host transition
+- **THEN** the workflow waits for that DPUSet to become Ready and selected host transition markers to clear before submitting the next DPUSet, retaining the full identity, ownership, BMC and artifact checks before each physical create.
+- **AND** timeout or cancellation retains the completed and pending observations and does not submit later DPUSets.
+
 ### Requirement: Honest admission and selected readiness
 
 Unresolved required admission checks SHALL yield an incomplete result and nonzero

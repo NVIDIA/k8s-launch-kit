@@ -197,9 +197,20 @@ func (s *run) execute(ctx context.Context) error {
 			if err := s.document(ctx, stage, doc); err != nil {
 				return err
 			}
+			// A DPUSet starts a physical operation. Finish it before the next
+			// document rechecks the complete selected-device/BMC domain; those
+			// prerequisites may be unavailable during the operation just started.
+			if s.result.Mode == Deploy && doc.Ref().Kind == "DPUSet" {
+				if err := s.wait(ctx, stage.ID, doc); err != nil {
+					return err
+				}
+			}
 		}
 		if s.result.Mode != DryRun {
 			for _, doc := range append(view.Documents(), view.Projections()...) {
+				if s.result.Mode == Deploy && doc.Ref().Kind == "DPUSet" && !doc.IsProjection() {
+					continue // Already waited before processing the next document.
+				}
 				if err := s.wait(ctx, stage.ID, doc); err != nil {
 					return err
 				}
@@ -382,6 +393,14 @@ func (s *run) wait(ctx context.Context, stage string, doc bundle.Document) error
 			}
 		}
 		ready, terminal, message := Readiness(object)
+		if ready && doc.Ref().Kind == "DPUSet" {
+			// Native Ready can precede removal of the host reset marker.
+			// Do not start another operation until the selected domain is idle.
+			ready, message, err = s.selectedTransitionsClear(ctx)
+			if err != nil {
+				return err
+			}
+		}
 		if ready && doc.IsProjection() && doc.Ref().Destination == bundle.DPU && doc.Ref().Kind == "DaemonSet" {
 			ready, message, err = s.daemonSetCoverage(ctx, object)
 			if err != nil {

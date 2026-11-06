@@ -477,7 +477,7 @@ l8k deploy --target dpf --deployment-files ./sentry-bundle \
   --deploy-timeout 90m --output json > deploy.json 2> deploy.log
 ```
 
-The CLI submits native resources in order. DPF downloads the desired ISO/firmware, and consumed artifact hashes are checked before DPUSet effects. DPF then provisions the selected DPUs. After the selected nodes and DNS are ready, the CLI submits Tower, the policy controller and Argus together, then waits for all three. The controller installs the policy API Tower needs, while Tower provides the controller's policy socket. The policy REST server starts afterward on management. Chart projections are observed, never applied again. Follow the existing DPF host-power procedure when a cold boot is required. Keep firmware caches unchanged during provisioning.
+The CLI submits native resources in order. DPF downloads the desired ISO/firmware, and consumed artifact hashes are checked before DPUSet effects. DPF then provisions the selected DPUs. Launch Kit waits for each DPUSet to become Ready and host transition markers to clear before submitting the next; allow time for all devices and required host power cycles. After the selected nodes and DNS are ready, the CLI submits Tower, the policy controller and Argus together, then waits for all three. The controller installs the policy API Tower needs, while Tower provides the controller's policy socket. The policy REST server starts afterward on management. Chart projections are observed, never applied again. Follow the existing DPF host-power procedure when a cold boot is required. Keep firmware caches unchanged during provisioning.
 
 Next: [Run completed or stopped](#deploy-sentry-inspect).
 
