@@ -102,6 +102,7 @@ deployment intent changes.
 | `nicConfigurationOperator` | Optional NIC firmware/runtime tuning and interface naming templates. |
 | `spectrumX` | Spectrum-X naming defaults. |
 | `profile` | Selected fabric, deployment, routing, ARP, and Spectrum-X options. |
+| `cluster` | Optional authoritative pod/service CIDR overrides for IPPool collision checks (YAML only). |
 | `clusterConfig` | Discovered or preset-provided hardware groups. |
 | `discoveredSecondaryNetwork` | Optional read-only API observations of Multus and reference CNI plugin installers; separate from desired policy. |
 
@@ -369,10 +370,47 @@ gateway from allocation independently of the optional reserved ranges.
 Automatic subnet allocation is precomputed across all final heterogeneous render buckets to avoid overlap within the generated bundle.
 
 These ranges are configurable defaults, not cluster-reserved address space.
-Launch Kit does not currently compare them with cluster pod or service CIDRs.
-Choose `startingSubnet` or explicit `subnets` that do not overlap those CIDRs
-or other site networks before deploying; discovery does not certify that the
-chosen address space is available.
+`l8k generate` checks the rendered IPPools against any explicit `cluster` ranges
+before replacing output. `l8k deploy` additionally reads live cluster addresses
+before any writes. Choose subnets that do not overlap other site networks either.
+
+### Cluster address overrides
+
+```yaml
+cluster:
+  podCIDRs: ["10.244.0.0/16", "fd00:1::/48"]
+  serviceCIDRs: ["10.96.0.0/12", "fd00:2::/112"]
+```
+
+Each supplied list is authoritative for its own address class and replaces live
+discovery of that class. Include every applicable IPv4/IPv6 range. Omitted/null
+lists request discovery; explicit empty lists, invalid CIDRs and IPv4-mapped
+IPv6 CIDRs are rejected. Host bits are masked for overlap comparisons. These
+YAML-only fields survive resolved-config handoff and discovery refresh without
+being filled from partial observations.
+
+Deployment inspects **all** Nodes, regardless of selected hardware groups:
+`spec.podCIDRs` (falling back to `spec.podCIDR`) and each `status.addresses`
+InternalIP. A Node's missing pod range or InternalIP produces a warning naming
+that Node. Node-list failures and malformed addresses fail the check. Node pod
+ranges are only best-effort evidence: CNIs managing their own IPAM may leave them
+empty or populate ranges different from actual pod allocation. Use `podCIDRs`
+for authoritative CNI ranges. Node InternalIPs are checked even with overrides;
+they identify individual addresses, not the node network's full subnet.
+
+Unless `serviceCIDRs` is supplied, deployment lists all ServiceCIDR objects,
+using `networking.k8s.io/v1` then `v1beta1` only if the GA API is absent. Failed
+reads (including RBAC denial), malformed ranges and an empty served API stop
+deployment. If neither API is served, deployment warns that service ranges are
+unverified; this supports Kubernetes 1.32 without MultiCIDRServiceAllocator.
+This is capability-based, not a version-string exemption: supply an override
+when the API is unavailable. See the [upstream ServiceCIDR guide](https://kubernetes.io/docs/tasks/network/reconfigure-default-service-ip-ranges/).
+
+Any detected overlap fails with the IPPool file/document/name and conflicting
+range or Node. Checks cover NV-IPAM **IPPool** resources, not Spectrum-X CIDRPool,
+other IPAM providers, or site-wide address reservation. Offline generation can
+check only explicit overrides; `discover` does not persist inferred cluster
+ranges. Standalone `validate` is not a replacement for this deployment guard.
 
 ## Profile Resource Settings
 

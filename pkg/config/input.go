@@ -300,6 +300,9 @@ func NormalizeResolvedConfigWithPresence(cfg *LaunchKitConfig, source string, pr
 	if err := validateDOCADriverConfig(cfg.DOCADriver); err != nil {
 		return fmt.Errorf("invalid docaDriver config in %s: %w", displaySource(source), err)
 	}
+	if err := ValidateClusterNetworkConfig(cfg.Cluster); err != nil {
+		return fmt.Errorf("invalid cluster network config in %s: %w", displaySource(source), err)
+	}
 	ApplyNvIpamDefaultsWithPresence(cfg, present)
 	if cfg.NvIpam != nil && cfg.NvIpam.PerNodeBlockSize == 0 && present.Has("nvIpam.perNodeBlockSize") {
 		return fmt.Errorf("invalid nvIpam config in %s: nvIpam.perNodeBlockSize must be > 0, got 0",

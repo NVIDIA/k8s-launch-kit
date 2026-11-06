@@ -42,6 +42,24 @@ with the file and document number in the error. Only `values.yaml` is treated
 as Helm values; rename `values.yml` or case variants to `values.yaml`. The
 expected preflight inventory and applied objects come from that same snapshot.
 
+## IPPool address collision guard
+
+Before Helm, remediation, or apply, bundles containing NV-IPAM IPPools are
+checked against configured pod/service CIDRs and fresh cluster addresses.
+This applies to Kubernetes and OpenShift, external Helm, overwrite and dry-run.
+The caller needs cluster-wide Node list permission and ServiceCIDR list
+permission unless service ranges are explicitly configured. Detected overlaps,
+failed mandatory reads, and malformed ranges block all deployment writes.
+Missing pod ranges warn by Node name; a genuinely absent ServiceCIDR API warns
+instead of claiming verified service address space. No extra cluster reads are
+made for bundles without IPPools.
+
+The guard checks the retained bundle's actual subnets, including manually edited
+manifests, and does not change allocations. Observations are local to each deploy;
+there is no reservation or transaction preventing later cluster address changes.
+See [cluster address overrides](../reference/configuration.md#cluster-address-overrides)
+for authoritative inputs, API fallback policy and coverage limits.
+
 ## Secondary-network ownership guard
 
 Before Helm, preflight remediation, or apply, an affected `NicClusterPolicy`

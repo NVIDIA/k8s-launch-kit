@@ -252,6 +252,13 @@ SR-IOV and Spectrum-X chart values disable both admission helpers through
 Do not put `enableInjector` or `enableOperatorWebhook` under the chart
 `sriovOperatorConfig` values: these are CR fields, not chart overrides.
 
+## IPPool cluster address checks
+
+Before replacing output, generation checks rendered IPPool subnets against
+explicit `cluster.podCIDRs` and `cluster.serviceCIDRs`. This is offline and cannot
+verify undiscovered ranges or Node addresses. Deploy performs fresh cluster
+checks; external installers must perform equivalent checks themselves.
+
 ## Common Mistakes
 
 - **There is no `--profile` flag.** Profiles are selected via `--fabric` + `--deployment-type` (or `--spectrum-x`). Do NOT invent flags.

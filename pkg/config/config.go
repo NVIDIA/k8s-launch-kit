@@ -235,6 +235,7 @@ func truncateIdentifierWithHash(s string) string {
 type LaunchKitConfig struct {
 	namespacePresence        flavorNamespacePresence         `yaml:"-"`
 	Flavor                   string                          `yaml:"flavor,omitempty"`
+	Cluster                  *ClusterNetworkConfig           `yaml:"cluster,omitempty"`
 	NetworkOperator          *NetworkOperatorConfig          `yaml:"networkOperator,omitempty"`
 	DOCADriver               *DOCADriverConfig               `yaml:"docaDriver,omitempty"`
 	Maintenance              *MaintenanceConfig              `yaml:"maintenance,omitempty"`
@@ -961,6 +962,9 @@ func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKit
 		logger.Info("Cluster configuration loaded successfully")
 	}
 
+	if err := ValidateClusterNetworkConfig(config.Cluster); err != nil {
+		return nil, nil, fmt.Errorf("invalid cluster network config in %s: %w", configPath, err)
+	}
 	ApplyNvIpamDefaults(&config)
 	if err := validateNvIpam(config.NvIpam); err != nil {
 		return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
