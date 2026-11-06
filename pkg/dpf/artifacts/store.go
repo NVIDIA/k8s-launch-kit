@@ -251,6 +251,9 @@ func (s *Store) Publish(ctx context.Context, report *inventory.Report) error {
 		return err
 	}
 	if report.Inventory != nil && report.Discovery.Outcome == "complete" && s.PriorInventory != nil {
+		if inventory.LegacyHostCardBindings(s.PriorInventory) {
+			return fmt.Errorf("existing destination uses legacy Redfish card bindings; verify endpoint ownership and use a fresh seed without inventory and a new output")
+		}
 		if s.PriorInventory.ScopeDigest != "" && s.PriorInventory.ScopeDigest != report.Inventory.ScopeDigest || inventory.IdentityConflict(s.PriorInventory, report.Inventory) {
 			return fmt.Errorf("existing destination inventory conflicts with resolved scope or physical identity")
 		}

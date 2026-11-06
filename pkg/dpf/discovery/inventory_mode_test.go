@@ -73,6 +73,26 @@ var _ = Describe("independent inventory acceptance", func() {
 		Expect(r.Errors).To(ContainElement(And(HaveField("HTTPStatus", 403), HaveField("Method", "DELETE"), HaveField("Stage", "cleanup"))))
 		Expect(r.Discovery.Cleanup.Leftovers).To(ContainElement(ContainSubstring("/Sessions/own")))
 	})
+	It("requires a fresh seed for legacy serial-keyed host cards without rejecting stable or explicit bindings", func() {
+		req := inventoryRequest()
+		req.Targets = req.Targets[:1]
+		first := Collect(context.Background(), req, "first", Dependencies{BMC: fixtureCollector{}})
+		Expect(ExitCode(first)).To(Equal(0))
+		Expect(inventory.LegacyHostCardBindings(first.Inventory)).To(BeFalse())
+		host := &first.Inventory.Hosts[0]
+		host.Adapters[0].Key = inventory.Digest("dpf-adapter-v1", []string{host.ID, host.Adapters[0].SerialNumber})
+		first.Inventory.DPUs = HostCards(first.Inventory.Hosts)
+		Expect(inventory.LegacyHostCardBindings(first.Inventory)).To(BeTrue())
+		req.Input.Site.Inventory = first.Inventory
+		current := Collect(context.Background(), req, "second", Dependencies{BMC: fixtureCollector{}})
+		Expect(current.Discovery.Outcome).To(Equal("partial"))
+		Expect(current.Errors).To(ContainElement(And(HaveField("Code", "SCOPE_CONFLICT"), HaveField("Message", ContainSubstring("legacy Redfish card bindings")))))
+		first.Inventory.DPUs[0].ReaderAdapter = "explicit-endpoint"
+		Expect(inventory.LegacyHostCardBindings(first.Inventory)).To(BeFalse())
+		first.Inventory.DPUs = HostCards(first.Inventory.Hosts)
+		host.Adapters[0].SerialNumber = ""
+		Expect(inventory.LegacyHostCardBindings(first.Inventory)).To(BeFalse())
+	})
 	It("does not leave a completed handoff after cancellation of otherwise valid observations", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

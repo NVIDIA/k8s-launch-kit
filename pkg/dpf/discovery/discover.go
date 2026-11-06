@@ -248,7 +248,11 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	report.Diff = Diff(r.Input.Site.Inventory, inv)
 	if scopeConflict(r.Input.Site.Inventory, inv) {
 		report.Discovery.Outcome = "partial"
-		report.Errors = append(report.Errors, inventory.Problem{Code: "SCOPE_CONFLICT", Message: "resolved scope changed; use a fresh seed and new output", ExitCode: 2})
+		message := "resolved scope changed; use a fresh seed and new output"
+		if inventory.LegacyHostCardBindings(r.Input.Site.Inventory) {
+			message = "saved inventory uses legacy Redfish card bindings that cannot protect refresh; verify endpoint ownership and use a fresh seed without inventory and a new output"
+		}
+		report.Errors = append(report.Errors, inventory.Problem{Code: "SCOPE_CONFLICT", Message: message, ExitCode: 2})
 	}
 	report.PendingInputs = []inventory.Problem{{Code: "LATER_PHASE_INPUT", Message: "DPU API allocation and selected service profile are evaluated by future generation", InputRef: "/networks/dpuAPI"}}
 	slices.SortFunc(report.Errors, func(a, b inventory.Problem) int { return strings.Compare(a.InputRef+a.Code, b.InputRef+b.Code) })

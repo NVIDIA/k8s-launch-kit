@@ -105,5 +105,23 @@ var _ = Describe("safe publication", func() {
 		Expect(e).NotTo(HaveOccurred())
 		Expect(unchanged).To(Equal(saved))
 	})
+	It("preserves a legacy destination even when a fresh source would otherwise permit publication", func() {
+		output := filepath.Join(dir, "legacy.yaml")
+		key := inventory.Digest("dpf-adapter-v1", []string{"host", "CARD-ONE"})
+		prior := &inventory.Inventory{
+			FormatVersion: "v1alpha1",
+			Hosts:         []inventory.Device{{ID: "host", Adapters: []inventory.Adapter{{Key: key, SerialNumber: "CARD-ONE"}}}},
+			DPUs:          []inventory.Device{{ID: "card", ReaderAdapter: "host-card-v1", RecordKey: inventory.Digest("dpf-host-card-v1", []string{"host", key})}},
+		}
+		saved, err := config.Saved(input, prior, output)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.WriteFile(output, saved, 0600)).To(Succeed())
+		store, err := New(input, output, true)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.Publish(context.Background(), report(true))).To(MatchError(ContainSubstring("legacy Redfish card bindings")))
+		unchanged, err := os.ReadFile(output)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(unchanged).To(Equal(saved))
+	})
 
 })

@@ -152,6 +152,8 @@ func collectHostAdapters(ctx context.Context, c *Client, system Resource, hostID
 		raw := Text(card.resource.Document, "SerialNumber")
 		serial := ""
 		state, reason := "unknown", "CARD_SERIAL_MISSING"
+		// Observation location survives replacement and newly available serial
+		// data. SerialNumber carries the separate physical identity.
 		adapterKey := inventory.Digest("dpf-adapter-observation-v1", []string{hostID, key})
 		if ValidSerial(raw) {
 			serial = strings.TrimSpace(raw)
@@ -160,7 +162,6 @@ func collectHostAdapters(ctx context.Context, c *Client, system Resource, hostID
 			}
 			serials[serial] = true
 			state, reason = "known", ""
-			adapterKey = inventory.Digest("dpf-adapter-v1", []string{hostID, serial})
 		}
 		model := Text(card.resource.Document, "Model")
 		if model == "" {

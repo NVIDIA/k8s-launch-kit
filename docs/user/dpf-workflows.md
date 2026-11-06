@@ -233,6 +233,8 @@ flowchart TD
 
 Start from the existing discovered YAML and keep its credential/trust references valid. Decide whether you are remeasuring the same host/DPU endpoints and trust policy. If endpoint selection, trust policy or physical identity has changed, create a fresh seed without old `inventory` and use a new output path. Investigate unexpected replacement or ownership changes before accepting them.
 
+Older preview handoffs with serial-keyed Redfish host-card records cannot safely protect a refresh. Launch Kit rejects refreshing those bindings even if the observed serial is unchanged. Verify endpoint ownership, create a fresh seed without saved `inventory`, and use a new output path; keep the old handoff as history.
+
 Do not manually edit observed serials, associations, firmware or check outcomes. `dpf.release` selects the embedded BOM; changing the release does not upgrade software. An omitted release continues to resolve to the CLI's pinned default, so record the CLI version and review `inventory.software` when comparing runs from different binaries. Explicit release selection makes that intention visible.
 
 Next: [Same scope ready](#refresh-inventory-run); [Scope changed](#refresh-inventory-new-scope).

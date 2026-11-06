@@ -67,6 +67,49 @@ var _ = Describe("DPF input", func() {
 		Expect(e).NotTo(HaveOccurred())
 		Expect(r.MaxConcurrentBMCs).To(Equal(4))
 	})
+	It("validates merged scalar values at their effective paths and preserves explicit overrides", func() {
+		for _, addition := range []string{
+			"  limits: {<<: {maxConcurrentBMCs: 2}}\n",
+			"  limits: {<<: [{maxConcurrentBMCs: 2}, {maxConcurrentBMCs: 3}]}\n",
+			"  limits: {<<: {maxConcurrentBMCs: wrong}, maxConcurrentBMCs: 2}\n",
+		} {
+			in, err := Decode([]byte(seed+addition+"  tls: {<<: {insecureSkipVerify: true}, insecureSkipVerify: false}\n"), "/site/in.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			r, err := Resolve(in)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(r.MaxConcurrentBMCs).To(Equal(2))
+			Expect(r.Targets[0].Access.InsecureSkipVerify()).To(BeFalse())
+			b, err := Saved(in, &inventory.Inventory{FormatVersion: "v1alpha1"}, "/site/out.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			again, err := Decode(b, "/site/out.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			resolved, err := Resolve(again)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resolved.MaxConcurrentBMCs).To(Equal(2))
+			Expect(resolved.Targets[0].Access.InsecureSkipVerify()).To(BeFalse())
+		}
+	})
+	It("rejects invalid effective merged types and duplicate keys before expansion", func() {
+		for _, addition := range []string{
+			"  limits: {<<: {maxConcurrentBMCs: '2'}}\n",
+			"  tls: {<<: {insecureSkipVerify: 'true'}}\n",
+			"  limits: {<<: {maxConcurrentBMCs: 2, maxConcurrentBMCs: 3}}\n",
+		} {
+			_, err := Decode([]byte(seed+addition), "/site/in.yaml")
+			Expect(err).To(HaveOccurred())
+		}
+	})
+	It("expands aliased merge policies without losing an explicit false override", func() {
+		text := strings.Replace(seed, "discovery:\n", "discovery:\n  tls: &policy {insecureSkipVerify: true}\n", 1)
+		text = strings.ReplaceAll(text, "credentialRef: read}", "credentialRef: read, tls: {<<: *policy, insecureSkipVerify: false}}")
+		in, err := Decode([]byte(text), "/site/in.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		r, err := Resolve(in)
+		Expect(err).NotTo(HaveOccurred())
+		for _, target := range r.Targets {
+			Expect(target.Access.InsecureSkipVerify()).To(BeFalse())
+		}
+	})
 	It("keeps BMC verification enabled unless explicitly disabled and preserves presence", func() {
 		for _, value := range []string{"", "false", "null", "true"} {
 			text := seed

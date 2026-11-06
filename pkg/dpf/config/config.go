@@ -190,13 +190,12 @@ func Decode(b []byte, p string) (Input, error) {
 	if err := validateKeys(&doc, map[*yaml.Node]bool{}, map[*yaml.Node]bool{}, 0); err != nil {
 		return Input{}, err
 	}
-	if err := validateScalarTypes(doc.Content[0], ""); err != nil {
-		return Input{}, err
-	}
 	expanded, err := yamlinput.Expand(&doc)
 	if err != nil {
 		return Input{}, err
 	}
+	// Scalar types belong to their effective paths after merge/alias expansion.
+	// Expand preserves YAML tags, so validation still rejects string coercion.
 	if err := validateScalarTypes(expanded.Content[0], ""); err != nil {
 		return Input{}, err
 	}

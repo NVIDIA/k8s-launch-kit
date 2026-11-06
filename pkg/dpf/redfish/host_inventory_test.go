@@ -84,6 +84,56 @@ var _ = Describe("host inventory ownership and partial identity", func() {
 		Expect(cards[2].PCIAddress).To(Equal("0000:21:00.0"))
 		Expect(cards[2].Key).NotTo(BeEmpty())
 	})
+	It("keeps the host resource observation key across replacement and newly exposed identity", func() {
+		keys := []string{}
+		for _, serial := range []string{"DPU-A", "DPU-REPLACED", ""} {
+			docs := hostGraph()
+			docs["/redfish/v1/Chassis/enclosure/NetworkAdapters/dpu"]["SerialNumber"] = serial
+			c, closeServer := graphClient(docs, nil)
+			system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
+			Expect(err).NotTo(HaveOccurred())
+			cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true, func(uri, prop string) string { return uri + "#" + prop })
+			closeServer()
+			Expect(err).NotTo(HaveOccurred())
+			found := false
+			for _, card := range cards {
+				if card.Slot != "Slot 5" {
+					continue
+				}
+				found = true
+				Expect(card.SerialNumber).To(Equal(serial))
+				keys = append(keys, card.Key)
+			}
+			Expect(found).To(BeTrue())
+		}
+		Expect(keys).To(HaveLen(3))
+		Expect(keys[1]).To(Equal(keys[0]))
+		Expect(keys[2]).To(Equal(keys[0]))
+	})
+	It("keeps resource observation keys independent of collection order and bound to the host", func() {
+		keys := []string{}
+		for _, hostID := range []string{"host-a", "host-a", "host-b"} {
+			docs := hostGraph()
+			if len(keys) > 0 {
+				members := docs["/redfish/v1/Chassis/enclosure/NetworkAdapters"]["Members"].([]any)
+				members[0], members[1] = members[1], members[0]
+			}
+			c, closeServer := graphClient(docs, nil)
+			system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
+			Expect(err).NotTo(HaveOccurred())
+			cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, hostID, true, func(uri, prop string) string { return uri + "#" + prop })
+			closeServer()
+			Expect(err).NotTo(HaveOccurred())
+			for _, card := range cards {
+				if card.SerialNumber == "DPU-A" {
+					keys = append(keys, card.Key)
+				}
+			}
+		}
+		Expect(keys).To(HaveLen(3))
+		Expect(keys[1]).To(Equal(keys[0]))
+		Expect(keys[2]).NotTo(Equal(keys[0]))
+	})
 	It("does not assign an uncorrelated shared-chassis adapter to the selected host", func() {
 		docs := hostGraph()
 		docs["/redfish/v1/Systems/host/PCIDevices/dpu"]["DeviceResourceId"] = "not-a-chassis-card"
