@@ -63,6 +63,12 @@ Before opening a PR:
 - Check examples, links and any affected generated documentation.
 - Run `make build` and `python3 scripts/check-docs.py --binary build/l8k` to
   check documented flags, navigation and offline generation examples.
+- For procedural workflow changes, edit the repository-owned definitions under
+  `openspec/workflows/` and regenerate with `python3 scripts/generate-workflow-docs.py`.
+  Run `python3 -m unittest discover -s scripts -p 'test_generate_workflow_docs.py'`
+  and `python3 scripts/generate-workflow-docs.py --check`. See the
+  [workflow source contract](openspec/workflows/README.md); these are documentation
+  inputs, not executable OpenSpec workflows or a runtime dependency.
 - For site changes, install `requirements-docs.txt` in an isolated Python
   environment and run `mkdocs build --strict`.
 - List documentation updates and validation in the PR description. If no

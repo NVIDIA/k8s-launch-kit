@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-discover
-version: 1.2.6
+version: 1.2.7
 description: "Use this skill when the user wants to discover their Kubernetes cluster's network hardware capabilities using k8s-launch-kit (l8k). Activate for: cluster discovery, hardware detection, NIC detection, finding what GPUs or NICs are in a cluster, creating a cluster config file, or when the user says 'discover' in the context of l8k or NVIDIA networking."
 metadata:
   requires:
@@ -11,13 +11,30 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
-For the independent DPF preview, read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities and unique host/card associations, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
+For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities and unique host/card associations, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
 
 SSH requires explicit credential references and known-hosts trust; it never inherits
 Redfish TLS bypass, ambient keys or SSH configuration. ARM-local IPMI can report a
 BMC address but does not authorize connecting to it. A failed selected source is
 not silently replaced by another source. Host-only inventory preserves host-reported
 BlueFields without inventing ARM/BMC bindings.
+
+DPF inventory saves the resolved software BOM under `inventory.software`.
+`dpf.release` defaults to `26.4.0`; omit/null defaults, explicit empty/unknown
+rejects. Exact BlueField-3 catalog applicability and observed current versions
+remain separate from hardware qualification. Never supply reference-script guessed
+minima or clear unknown observations to imply compatibility. Missing tools and
+failed checks retain specific safe reasons and tool names where applicable;
+existing tools and authorized noninteractive sudo are external prerequisites.
+
+Optional `discovery.addressLookup` requires explicit ARM/BMC MAC selectors and
+can read local dnsmasq IPv4 lease files or eligible observed SSH neighbors. Treat
+`inventory.addressLookup.candidates` as unverified hints, retain source/ambiguity
+reasons and never send credentials automatically. Have the user establish endpoint
+ownership and trust before adding an explicit endpoint and rerunning inventory.
+Use a fresh seed/output for scope changes; same-scope in-place refresh explicitly
+uses the same `--user-config` and `--save-cluster-config` path. Keep reports and
+stderr and do not treat a preserved old handoff after partial failure as fresh data.
 
 DPF BMC TLS verification defaults to enabled. For an explicitly requested lab
 bypass, set the endpoint's `tls.insecureSkipVerify: true`; the shared

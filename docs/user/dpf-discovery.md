@@ -5,6 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # DPF discovery preview
 
+Start with the [step-by-step CLI workflows](dpf-workflows.md) for first inventory,
+address-candidate lookup and refresh. This page provides the access and output reference.
+
 `l8k discover --target dpf` collects hardware inventory from explicitly selected
 host/DPU Redfish or SSH endpoints. The DPF estate is independent of Host networking.
 Inventory mode can run before Kubernetes exists; an explicitly supplied management
@@ -75,11 +78,12 @@ remote access. Lists and credentials stay in YAML; no password CLI flag exists.
 | Source | Values |
 | --- | --- |
 | Required site inputs | Nonempty host list; each selected endpoint and credential alias; username and password reference or SSH private-key reference |
-| Defaultable | Context from a supplied kubeconfig; verified system trust; SSH port22; SSH sudo false; collection 10m; request 15s; four endpoint collectors in flight (`maxConcurrentBMCs`) |
+| Defaultable | `dpf.release: 26.4.0`; context from a supplied kubeconfig; verified system trust; SSH port22; SSH sudo false; collection 10m; request 15s; four endpoint collectors in flight (`maxConcurrentBMCs`) |
 | Conditional | Kubeconfig and explicit DPUs for management mode; SSH known-hosts file; approved noninteractive sudo for protected reads; private Redfish CA; `systemURI` for multi-System BMCs |
 | Observed | Physical-card/system identities, linked host adapters, component firmware, auth/time unknowns, management nodes/version |
-| Release owned | Qualified adapter completeness predicates and the probe image/architecture digests |
-| Later phases | Profile/release cohort, DPU API allocation, DHCP/service networks and controller authentication |
+| Release owned | Software BOM coordinates, exact-model software minima or explicit unknown requirements, and probe image/architecture digests; hardware qualification remains separate |
+| Optional lookup inputs | Explicit ARM/BMC MAC selectors; optional local `dnsmasq-leases` files. Lookup returns address hints, never identity or permission to connect |
+| Later phases | Deployment profile, DPU API allocation, DHCP/service networks and controller authentication |
 
 The management kubeconfig must use verified HTTPS and certificate/key or bearer
 credentials. File and embedded representations of the same credential/trust field are mutually
@@ -180,7 +184,8 @@ no sudo password, changes no privileges and uses no remote Python helper.
 ARM discovery needs a booted, reachable OS with sufficient permissions. Local
 `ipmitool lan print` can report the BMC endpoint without Redfish. The endpoint is
 recorded as `observed-local-ipmi`; discovery does not connect or send credentials
-to that newly observed address. Missing optional tools/data remain unknown. It
+to that newly observed address. Missing optional tools/data remain unknown with a persisted `reasonCode`, safe
+`message`, and `tool` where applicable; required-source failures retain their cause too. It
 never infers a BMC address from an ARM IP or a serial from a hostname.
 
 Host and ARM PCI addresses belong to different domains; correlation uses physical
@@ -188,6 +193,33 @@ serial identity, not matching PCI addresses. Host-reported identity alone does n
 attest trusted DPU state. Source evidence, SSH trust digest and any conflicts stay
 in the output. SSH inventory success does not establish Redfish authorization,
 controller mTLS enrollment or provisioning readiness. Those checks remain separate.
+
+## Software BOM and optional address lookup
+
+`dpf.release` selects the embedded software BOM independently of live measurements.
+Omitted/null selects the pinned `26.4.0` default; explicit empty or unknown releases
+are rejected. The resolved BOM is saved under `inventory.software`, with source
+references and unknown requirements. The current catalog has exact BlueField-3
+models `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 do not
+establish applicability. Desired BFB/component coordinates are not measured
+versions. Only explicit documented minima are compatibility checks; unsupported
+firmware requirements remain unknown. Model applicability and software checks do
+not qualify hardware or enable DPF deployment profiles.
+
+SSH can report NIC firmware/PSID, MFT version, NVConfig and privilege observations
+when the existing tools and permissions permit the read. Current and next-boot
+configuration remain distinct. Redfish firmware keeps raw component identities,
+versions, source evidence and explicit activation where exposed. A failed source,
+partial firmware collection, identity change or explicit version/activation conflict
+cannot satisfy a minimum through that source. An independent valid SSH observation
+can still satisfy a minimum unless explicit component conflicts remain.
+
+`discovery.addressLookup` optionally combines named ARM/BMC MAC selectors with local
+`dnsmasq-leases` snapshots and eligible neighbors already read through selected SSH
+sources. Results and source/device reasons are saved under `inventory.addressLookup`.
+An address candidate is unverified and never receives credentials automatically.
+Follow the [candidate procedure](dpf-workflows.md#address-candidates) to prepare
+lookup inputs, interpret ambiguity and explicitly add a verified endpoint.
 
 ## Observations, reports and refresh
 
