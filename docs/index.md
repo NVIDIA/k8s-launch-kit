@@ -11,8 +11,9 @@ NVIDIA Kubernetes Launch Kit (`l8k`) helps platform teams configure NVIDIA netwo
 
 Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, InfiniBand, or Spectrum-X networking. Start with [Plan your deployment](user/profiles.md) to choose a platform and profile, check what is qualified, and identify the site inputs and permissions you need.
 
-The lifecycle commands operate on the `host` target by default. The reserved
-`dpf` target has no available lifecycle phases; see the
+The lifecycle commands operate on the `host` target by default. The `dpf` target
+provides an [experimental inventory discovery workflow](user/dpf-workflows.md)
+for a separate DPU estate. DPF provisioning phases remain unavailable; see the
 [target extension contract](advanced/targets.md) if you are extending Launch Kit.
 
 ## Find Your Path
