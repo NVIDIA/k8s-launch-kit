@@ -20,8 +20,10 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -352,4 +354,53 @@ func TestRenderHTML_GPUDirectFamilyIncludesEndpointEvidence(t *testing.T) {
 	assert.Contains(t, html, "91.2 Gbps")
 	assert.Contains(t, html, "100.0 Gbps")
 	assert.Contains(t, html, "below minimum")
+}
+
+func TestRenderHTML_GatewayEvidenceSeparateFromResult(t *testing.T) {
+	for _, outcome := range []string{"failed", "passed", "skipped"} {
+		t.Run(outcome, func(t *testing.T) {
+			r := PingResult{
+				Test:            gatewayFixture(),
+				GatewayEvidence: "pool <gateway> configuration",
+				Route:           RouteCheck{Command: "ip route get 192.0.2.1", Output: "192.0.2.1 dev net1", OK: true},
+			}
+			want := "FAILED"
+			switch outcome {
+			case "failed":
+				r.Err = fmt.Errorf("gateway probe failed: %s <untrusted>", strings.Repeat("timeout ping --argument ", 100))
+				r.Stdout, r.Stderr = "100% packet loss", "probe stderr <diagnostic>"
+			case "passed":
+				r.OK, r.ObservedOK = true, true
+				r.Stdout = "1 received, 0% packet loss"
+				want = "PASSED"
+			case "skipped":
+				r.SkipReason = "no configured gateway <on-link>"
+				want = "SKIPPED"
+			}
+			var buf bytes.Buffer
+			require.NoError(t, RenderHTML(&buf, ReportData{Matrix: &MatrixResult{PingResults: []PingResult{r}}}))
+			_, section, found := strings.Cut(buf.String(), `<div class="gateway-table">`)
+			require.True(t, found)
+			section, _, found = strings.Cut(section, "</details>")
+			require.True(t, found)
+			summary, evidence, found := strings.Cut(section, `<div class="gateway-panel">`)
+			require.True(t, found)
+			assert.Contains(t, summary, ">"+want+"</span>")
+			assert.NotContains(t, summary, "packet loss")
+			assert.NotContains(t, summary, "timeout ping")
+			assert.NotContains(t, summary, "no configured gateway")
+			assert.Contains(t, summary, `<details class="gateway-row">`)
+			assert.Contains(t, summary, `<span class="gateway-action">Evidence</span>`)
+			assert.NotContains(t, summary, `class="gateway-row" open`)
+			for _, value := range []string{r.GatewayEvidence, r.Route.Command, r.Route.Output, r.Stdout, r.Stderr, r.SkipReason} {
+				if value != "" {
+					assert.Contains(t, evidence, html.EscapeString(value))
+				}
+			}
+			if r.Err != nil {
+				assert.Contains(t, evidence, html.EscapeString(r.Err.Error()))
+			}
+			assert.NotContains(t, section, "<untrusted>")
+		})
+	}
 }

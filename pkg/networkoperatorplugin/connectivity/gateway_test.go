@@ -222,7 +222,8 @@ var _ = ginkgo.Describe("secondary network gateway validation", func() {
 		var output bytes.Buffer
 		require.NoError(t, RenderHTML(&output, ReportData{Matrix: matrix}))
 		assert.Contains(t, output.String(), "Gateway ICMP reachability")
-		assert.Contains(t, output.String(), "SKIPPED: no configured gateway")
+		assert.Contains(t, output.String(), "SKIPPED</span>")
+		assert.Contains(t, output.String(), "Skipped: no configured gateway")
 		assert.NotContains(t, output.String(), "Rail <code>rail-0</code>")
 		encoded, err := json.Marshal(matrix)
 		require.NoError(t, err)
@@ -233,7 +234,7 @@ var _ = ginkgo.Describe("secondary network gateway validation", func() {
 		assert.Empty(t, byRail)
 		assert.Empty(t, nodes)
 		assert.Empty(t, rails)
-		assert.False(t, strings.Contains(output.String(), "ICMP reachable</td>"))
+		assert.False(t, strings.Contains(output.String(), "PASSED</span>"))
 	})
 })
 

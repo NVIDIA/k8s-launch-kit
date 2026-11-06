@@ -347,6 +347,36 @@ details table th, details table td { padding: 6px 10px; }
 .cell-missing { background: var(--bg-soft);    color: var(--text-faint); }
 .cell-self    { color: var(--text-faint); }
 
+.gateway-table { margin-top: 14px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.gateway-head, .gateway-row > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 2.1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) 76px 80px;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+}
+.gateway-head { background: var(--bg-soft); color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.gateway-row { margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.gateway-row > summary { color: var(--text); font-size: 13px; list-style: none; }
+.gateway-row > summary::before { display: none; }
+.gateway-row > summary:hover { background: var(--bg-soft); }
+.gateway-row > summary > span { min-width: 0; overflow-wrap: anywhere; }
+.gateway-source strong { display: block; font-weight: 500; }
+.gateway-source small, .gateway-rail small { display: block; margin-top: 3px; color: var(--text-muted); font-size: 11px; }
+.gateway-action { color: var(--link); font-size: 12px; }
+.gateway-action::before { content: "▸ "; }
+.gateway-row[open] .gateway-action::before { content: "▾ "; }
+.gateway-panel { padding: 0 14px 14px; }
+.gateway-panel p { margin: 8px 0; }
+.gateway-evidence { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; }
+@media (max-width: 700px) {
+  .gateway-head { display: none; }
+  .gateway-row > summary { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .gateway-source { grid-column: 1 / -1; }
+  .gateway-source-ip::before { content: "Source: "; color: var(--text-muted); }
+  .gateway-destination::before { content: "Gateway: "; color: var(--text-muted); }
+}
+
 .matrix-rail {
   margin-top: 14px;
   font-size: 13px;
@@ -892,24 +922,37 @@ footer strong { color: var(--text-muted); }
       {{- if $gateways}}
       <div class="matrix-rail">Gateway ICMP reachability</div>
       <p>ICMP echo reachability does not by itself diagnose neighbor resolution.</p>
-      <table class="matrix-table">
-        <thead><tr><th>Source</th><th>Rail / interface</th><th>Source IP</th><th>Gateway</th><th>Result</th><th>Evidence</th></tr></thead>
-        <tbody>
+      <div class="gateway-table">
+        <div class="gateway-head"><span>Source</span><span>Rail / interface</span><span>Source IP</span><span>Gateway</span><span>Result</span><span></span></div>
         {{- range $gateways}}
-          <tr>
-            <td>{{.Test.SrcNamespace}}/{{.Test.SrcPod}} ({{srcLabel .Test}})</td>
-            <td>{{.Test.SrcRail}} / {{.Test.SrcIface}}</td>
-            <td>{{.Test.SrcIP}}</td><td>{{.Test.DstIP}}</td>
-            <td class="{{cellClass .}}">{{if .SkipReason}}SKIPPED: {{.SkipReason}}{{else if .OK}}ICMP reachable{{else}}FAILED: {{errorText .Err}}{{end}}</td>
-            <td><details><summary>Routes and probe output</summary><pre>{{.GatewayEvidence}}
+        <details class="gateway-row">
+          <summary>
+            <span class="gateway-source"><strong>{{srcLabel .Test}}</strong><small>{{.Test.SrcNamespace}}/{{.Test.SrcPod}}</small></span>
+            <span class="gateway-rail">{{.Test.SrcRail}}<small>{{.Test.SrcIface}}</small></span>
+            <span class="gateway-source-ip">{{.Test.SrcIP}}</span><span class="gateway-destination">{{.Test.DstIP}}</span>
+            <span class="gateway-result"><span class="badge {{if .SkipReason}}state-unknown{{else if .OK}}state-success{{else}}state-error{{end}}">{{if .SkipReason}}SKIPPED{{else if .OK}}PASSED{{else}}FAILED{{end}}</span></span>
+            <span class="gateway-action">Evidence</span>
+          </summary>
+          <div class="gateway-panel">
+            {{- if .SkipReason}}<p>Skipped: {{.SkipReason}}</p>{{end}}
+            {{- if .Err}}<pre class="yaml-block gateway-evidence">Error / probe command:
+{{errorText .Err}}</pre>{{end}}
+            {{- if .GatewayEvidence}}<pre class="yaml-block gateway-evidence">Gateway configuration / discovery:
+{{.GatewayEvidence}}</pre>{{end}}
+            {{- if or .Route.Command .Route.Output .Route.Err}}<pre class="yaml-block gateway-evidence">Route command:
 {{.Route.Command}}
+Route output:
 {{.Route.Output}}
-{{.Stdout}}
-{{.Stderr}}</pre></details></td>
-          </tr>
+{{if .Route.Err}}Route error:
+{{.Route.Err}}{{end}}</pre>{{end}}
+            {{- if .Stdout}}<pre class="yaml-block gateway-evidence">Probe stdout:
+{{.Stdout}}</pre>{{end}}
+            {{- if .Stderr}}<pre class="yaml-block gateway-evidence">Probe stderr:
+{{.Stderr}}</pre>{{end}}
+          </div>
+        </details>
         {{- end}}
-        </tbody>
-      </table>
+      </div>
       {{- end}}
 
       {{- $rails := matrixByRail .Matrix.PingResults}}

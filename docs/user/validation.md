@@ -279,7 +279,9 @@ qualification selects the intended interface. IPv6 link-local gateways are
 scoped to that interface. No echo fails gateway ICMP reachability; it does not
 prove that ARP/ND resolution failed because a gateway may filter ICMP. Other
 selected families continue after a gateway failure. Text reports gateway endpoints and status. JSON, HTML and JUnit retain
-gateway configuration, route and probe evidence; skipped rows remain skipped
+gateway configuration, route and probe evidence. In HTML, gateway rows show a
+compact result; expand the row using **Evidence** for the full error, commands
+and output. Skipped rows remain skipped
 in JUnit. The automatic deadline includes a shared 10-second NAD/IPPool lookup limit,
 a 10-second runtime discovery limit when needed, a 10-second source-route limit
 and a 5-second echo limit per endpoint. Direct Go callers must supply
