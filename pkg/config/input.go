@@ -305,6 +305,9 @@ func NormalizeResolvedConfigWithPresence(cfg *LaunchKitConfig, source string, pr
 		return fmt.Errorf("invalid nvIpam config in %s: nvIpam.perNodeBlockSize must be > 0, got 0",
 			displaySource(source))
 	}
+	if err := ValidateNvIpamStartingGateway(cfg.NvIpam, present); err != nil {
+		return fmt.Errorf("invalid nvIpam config in %s: %w", displaySource(source), err)
+	}
 	if err := validateNvIpam(cfg.NvIpam); err != nil {
 		return fmt.Errorf("invalid nvIpam config in %s: %w", displaySource(source), err)
 	}

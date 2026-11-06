@@ -211,6 +211,7 @@ networkNamespaces: ["my-namespace"]
   is GA.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
 - `nvIpam.perNodeBlockSize` defaults to `10`; generation warns when it is lower than `sriov.numVfs` because the per-node allocation may be too small for all VFs.
+- `nvIpam.startingGateway` is a YAML-only positive host offset in each automatic subnet (default `1`); it must select a usable host below broadcast. For `192.168.2.128/25`, use `126` for gateway `192.168.2.254`. Manual entries retain their own gateway. `nvIpam.offset` separately controls subnet spacing; NV-IPAM automatically excludes the gateway from allocation.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
 - `docaDriver.env` is an advanced escape hatch. Values override generated MOFED environment entries by name, duplicate custom names use the last value, and bad driver options can disrupt node networking.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.

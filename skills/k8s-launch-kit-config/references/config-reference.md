@@ -152,9 +152,16 @@ nvIpam:
   mask: 22
 
   # int | default: 1
-  # Gateway offset from the network address.
-  # offset=1 means gateway = network_address + 1 (e.g., 192.168.0.1).
+  # Number of subnet-sized blocks between networks; must be at least 1.
+  # offset=2 skips every other subnet.
   offset: 1
+
+  # int | default: 1 (omitted/null); YAML-only setting
+  # Host offset within every automatic subnet, added to its network address.
+  # Must be positive and below the broadcast offset; zero is invalid.
+  # On 192.168.2.128/25, 126 selects 192.168.2.254; on /22, 300 is valid.
+  # Manual subnets keep their explicit gateway.
+  startingGateway: 1
 
   # --- IP exclusions (optional) ---
 
@@ -166,8 +173,8 @@ nvIpam:
 
   # int | default: 0
   # Reserve the last N host addresses of EVERY subnet (broadcast downward).
-  # e.g. 6 → .250–.255 on a /24. The gateway is NOT auto-excluded — it is
-  # covered by the low reserve block.
+  # e.g. 6 → .250–.255 on a /24. NV-IPAM automatically excludes the gateway
+  # independently of these optional ranges.
   # reserveLastIPs: 6
 
   # --- Manual mode (takes precedence if non-empty) ---

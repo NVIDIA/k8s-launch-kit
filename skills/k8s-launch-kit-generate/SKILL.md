@@ -300,6 +300,7 @@ visible selector-only, target-scope-unverified contract.
   `machineType` and `gpuType` strings.
 - Use `--groups <a,b,...>` (case-sensitive identifier list) or `--gpu-type <X>` (case-insensitive) to scope a generate to a subset of source groups in heterogeneous clusters. Mutually exclusive. Empty match is a validation error. Strict-subset filters split per-source rendering: NodePolicies emit one CR per source (each with its own machine-label nodeSelector but a shared bucket-level resourceName); IPPool/example DaemonSet emit one CR per bucket with an `In` list of source machine labels.
 - Generated IPPools use `nvIpam.perNodeBlockSize` (default `10`). Generation warns when it is lower than `sriov.numVfs`, since the per-node block may not have an address for every VF.
+- `nvIpam.startingGateway` is a YAML-only positive host offset in each automatic subnet (default `1`); it must select a usable host below broadcast. For `192.168.2.128/25`, use `126` for gateway `192.168.2.254`. Manual entries retain their own gateway. `nvIpam.offset` separately controls subnet spacing; NV-IPAM automatically excludes the gateway from allocation.
 
 > [!CAUTION]
 > Generation does not apply anything to the cluster. Use `--deploy` or `k8s-launch-kit-deploy` to apply.

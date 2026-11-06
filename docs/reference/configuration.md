@@ -327,6 +327,7 @@ nvIpam:
   startingSubnet: "192.168.0.0"
   mask: 22
   offset: 1
+  startingGateway: 1
   reserveFirstIPs: 10
   reserveLastIPs: 6
 ```
@@ -352,8 +353,17 @@ Reserved first/last IPs are merged with explicit exclusions for every subnet.
 | `startingSubnet` | Aligned IPv4 network address for automatic allocation. |
 | `mask` | Automatic subnet prefix length, from `/1` through `/30`. |
 | `offset` | Number of subnet-sized blocks between allocations; minimum `1`. |
+| `startingGateway` | Positive host offset from each automatic subnet network address; omitted/null defaults to `1`. Must be below the broadcast offset (`2^(32-mask)-1`); explicit `0` and negative values are rejected. Manual subnet gateways remain authoritative. YAML only. |
 | `reserveFirstIPs` / `reserveLastIPs` | Host addresses excluded from every automatic or manual subnet. |
 | `subnets` | Explicit `{subnet, gateway, exclusions}` entries. A non-empty list takes precedence over automatic fields. |
+
+For example, `startingGateway: 254` gives `192.168.2.254` for
+`192.168.2.0/24`. For `192.168.2.128/25`, `startingGateway: 126`
+gives `192.168.2.254`.
+Offsets can exceed 255: `startingGateway: 300` gives `192.168.1.44` for
+`192.168.0.0/22`. This is separate from `offset`, which spaces subnet networks.
+The generated `IPPool.spec.gateway` carries this address; NV-IPAM excludes its
+gateway from allocation independently of the optional reserved ranges.
 
 Automatic subnet allocation is precomputed across all final heterogeneous render buckets to avoid overlap within the generated bundle.
 

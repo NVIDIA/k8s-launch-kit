@@ -89,13 +89,15 @@ var defaultConfigYAML = []byte(
 	"  poolName: nv-ipam-pool\n" +
 	"  perNodeBlockSize: 10\n" +
 	"  # --- Option 1: Auto-generate subnets (used when subnets list is empty) ---\n" +
-	"  # Each group gets its own unique subnet slice; gateway = network address + 1.\n" +
+	"  # Each group gets its own unique subnet slice.\n" +
 	"  startingSubnet: 192.168.0.0\n" +
 	"  mask: 22\n" +
 	"  offset: 1\n" +
+	"  # Host offset within each subnet; 1 selects its first usable address.\n" +
+	"  startingGateway: 1\n" +
 	"  # IP exclusions (optional). reserveFirstIPs/reserveLastIPs apply to EVERY\n" +
 	"  # subnet, including each auto-generated per-rail subnet — they reserve the\n" +
-	"  # first N and last N host addresses (gateway is covered by the low block).\n" +
+	"  # first N and last N addresses. NV-IPAM automatically excludes the gateway.\n" +
 	"  # reserveFirstIPs: 10   # e.g. .0–.9 on a /24\n" +
 	"  # reserveLastIPs: 6     # e.g. .250–.255 on a /24\n" +
 	"  #\n" +
