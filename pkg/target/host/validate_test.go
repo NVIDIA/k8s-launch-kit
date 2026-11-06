@@ -609,13 +609,17 @@ func TestValidateUsesEffectiveOperatorNamespaceForGatewayPoolLookup(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, append(contents, []byte("\nnetworkOperator:\n  namespace: custom-ipam\n")...), 0o600))
 	captured := ""
+	capturedErr := errors.New("options captured; no cluster calls")
 	runner := validateRunner{
-		newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) { return nil, &rest.Config{}, nil },
+		newKubeClient: func(kubeconfig string) (ctrlclient.Client, *rest.Config, error) {
+			assert.Equal(t, "test-kubeconfig", kubeconfig)
+			return nil, &rest.Config{}, nil
+		},
 		runConnectivityMatrix: func(_ context.Context, _ ctrlclient.Client, _ *rest.Config, _ ui.Output, _ *bundle.Bundle, opts connectivity.Options) (*connectivity.MatrixResult, error) {
 			captured = opts.IPAMNamespace
-			return nil, errors.New("options captured; no cluster calls")
+			return nil, capturedErr
 		},
 	}
-	require.Error(t, runner.Run(context.Background(), ValidateRequest{DeploymentFiles: dir, UserConfig: path, ReportPath: "-", OutputFormat: "text"}))
+	require.ErrorIs(t, runner.Run(context.Background(), ValidateRequest{Kubeconfig: "test-kubeconfig", DeploymentFiles: dir, UserConfig: path, ReportPath: "-", OutputFormat: "text"}), capturedErr)
 	assert.Equal(t, "custom-ipam", captured)
 }
