@@ -400,6 +400,10 @@ func reportFuncMap() template.FuncMap {
 			return out
 		},
 		"icmpRouteDiagnostics": collectICMPRouteDiagnostics,
+		"nextHopResults":       nextHopResults,
+		"nextHopKind":          nextHopKind,
+		"nextHopObservedAt":    nextHopObservedAt,
+		"resultFamily":         resultFamily,
 		// familyTitle is the human-friendly section header for a
 		// given kind family.
 		"familyTitle": func(fam string) string {
@@ -576,4 +580,19 @@ func buildRailTable(results []PingResult) (nodes []string, table map[string]map[
 	}
 	sort.Strings(nodes)
 	return
+}
+
+// nextHopKind distinguishes routed gateways from directly attached destinations.
+func nextHopKind(gateway bool) string {
+	if gateway {
+		return "gateway"
+	}
+	return "on-link destination"
+}
+
+func nextHopObservedAt(observedAt time.Time) string {
+	if observedAt.IsZero() {
+		return "not collected"
+	}
+	return observedAt.UTC().Format(time.RFC3339Nano)
 }

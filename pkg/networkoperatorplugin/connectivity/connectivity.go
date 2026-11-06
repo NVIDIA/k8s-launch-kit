@@ -27,6 +27,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -598,6 +599,7 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 				stageResults = append(stageResults, testResult)
 			}
 		}
+		annotateNextHops(executionCtx, restConfig, namespaceByPod, icmpContainerByPod, stageResults, kubeclient.ExecInPod)
 		result.PingResults = append(result.PingResults, stageResults...)
 		if result.StageDurations == nil {
 			result.StageDurations = make(map[Check]time.Duration)

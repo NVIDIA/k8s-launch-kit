@@ -96,6 +96,18 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 		}
 	}
 
+	if diagnostics := nextHopResults(result.PingResults); len(diagnostics) > 0 {
+		uiOutput.Info("")
+		uiOutput.Info("Next-hop observations after failed tests (advisory):")
+		for _, r := range diagnostics {
+			d := r.NextHop
+			uiOutput.Info("  %s %s [%s] → %s [%s]: %s %s dev %s, %s (%s), observed at %s: %s",
+				resultFamily(r.Test.Kind), axisLabel(r.Test.SrcNode, r.Test.SrcPod), r.Test.SrcRail,
+				axisLabel(r.Test.DstNode, r.Test.DstPod), r.Test.DstRail,
+				nextHopKind(d.Gateway), d.Address, d.Interface, d.Status, d.State, nextHopObservedAt(d.ObservedAt), d.Message)
+		}
+	}
+
 	var gpuResults []PingResult
 	for _, r := range result.PingResults {
 		if r.Test.Kind.IsGPUDirectDMABuf() {

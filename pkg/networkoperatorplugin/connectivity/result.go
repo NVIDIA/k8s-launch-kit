@@ -44,9 +44,10 @@ type PingResult struct {
 	ObservedOK       bool
 	Expectation      Expectation
 	Route            RouteCheck
-	BandwidthGbps    float64 // ib_write_bw families only; 0 when n/a
-	MsgRateMpps      float64 // ib_write_bw families only; 0 when n/a
-	MinBandwidthGbps float64 // ib_write_bw families only; 0 when no threshold was applied
+	NextHop          *NextHopDiagnostic `json:"NextHop,omitempty"`
+	BandwidthGbps    float64            // ib_write_bw families only; 0 when n/a
+	MsgRateMpps      float64            // ib_write_bw families only; 0 when n/a
+	MinBandwidthGbps float64            // ib_write_bw families only; 0 when no threshold was applied
 	Stdout           string
 	Stderr           string
 	// ServerLog is populated for failed RDMA batch cells before the

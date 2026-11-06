@@ -34,6 +34,20 @@ must remain available for follow-up `kubectl exec` inspection.
 
 `l8k sosreport` gathers cluster state, CRDs, operator logs, and per-node NIC info into a structured directory for offline analysis. Release installations include the Network Operator collection script under `share/l8k/scripts/`; the command never downloads executable code at runtime. If the script is missing, report the upstream URL and exact expected path emitted by `l8k` so the user can install it manually. Use the diagnostic commands and triage workflow below to interpret the dump.
 
+## Failed connection next-hop observations
+
+After a failed test with a valid source-interface route, validation reads
+`ip -j neigh` in the existing netshoot container and reports the gateway or
+on-link destination's neighbor state in text, JSON and HTML. Text and HTML
+label gateway versus on-link destination and include the UTC observation time. `FAILED` is
+unresolved, `INCOMPLETE` remains pending, and mapped `STALE` is not a failure.
+Absent/ambiguous evidence or tool/permission/deadline errors are unverified.
+These are advisory snapshots after each test family; preserve the original
+error and verdict and do not infer a switch fault or end-to-end reachability.
+No active probe, switch access or network configuration change is performed.
+See [next-hop diagnostics](../../docs/user/validation.md#next-hop-diagnostics-for-failed-connections)
+for the five-second read bound, deduplication, eligibility and output details.
+
 ## Diagnostic Commands
 
 ```bash

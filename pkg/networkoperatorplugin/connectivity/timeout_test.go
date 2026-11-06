@@ -45,11 +45,11 @@ func TestAutomaticTimeoutBudgetMirrorsSelectedExecutionPlan(t *testing.T) {
 
 	assert.Equal(t, 12, budget.PlannedTests)
 	assert.Equal(t, automaticSetupTimeout, budget.Setup)
-	assert.Equal(t, 6*time.Minute+41*time.Second, budget.Tests)
-	assert.Equal(t, 40*time.Second+100*time.Millisecond, budget.SafetyMargin)
-	assert.Equal(t, 7*time.Minute+21*time.Second+100*time.Millisecond, budget.executionTimeout())
+	assert.Equal(t, 7*time.Minute+41*time.Second, budget.Tests)
+	assert.Equal(t, 46*time.Second+100*time.Millisecond, budget.SafetyMargin)
+	assert.Equal(t, 8*time.Minute+27*time.Second+100*time.Millisecond, budget.executionTimeout())
 	assert.Equal(t, matrixCleanupTimeout, budget.Cleanup)
-	assert.Equal(t, 17*time.Minute+51*time.Second+100*time.Millisecond, budget.Total)
+	assert.Equal(t, 18*time.Minute+57*time.Second+100*time.Millisecond, budget.Total)
 }
 
 func TestAutomaticTimeoutBudgetIncludesOnlySelectedChecks(t *testing.T) {
@@ -66,9 +66,9 @@ func TestAutomaticTimeoutBudgetIncludesOnlySelectedChecks(t *testing.T) {
 	budget := automaticTimeoutBudget(plan, []Check{CheckICMP})
 
 	assert.Equal(t, 2, budget.PlannedTests)
-	assert.Equal(t, 30*time.Second, budget.Tests)
+	assert.Equal(t, 40*time.Second, budget.Tests)
 	assert.Equal(t, automaticSafetyMinimum, budget.SafetyMargin)
-	assert.Equal(t, automaticSetupTimeout+time.Minute+matrixCleanupTimeout, budget.Total)
+	assert.Equal(t, automaticSetupTimeout+70*time.Second+matrixCleanupTimeout, budget.Total)
 }
 
 func TestAutomaticTimeoutBudgetForThreeNodeFourRailQuickMatrix(t *testing.T) {
@@ -108,7 +108,7 @@ func TestAutomaticTimeoutBudgetForThreeNodeFourRailQuickMatrix(t *testing.T) {
 	})
 
 	assert.Equal(t, 144, budget.PlannedTests)
-	assert.Equal(t, 2*time.Hour+12*time.Minute+3*time.Second, budget.Total)
+	assert.Equal(t, 2*time.Hour+25*time.Minute+15*time.Second, budget.Total)
 }
 
 func TestAutomaticTimeoutBudgetUsesDefaultChecksAndNoSafetyForEmptyPlan(t *testing.T) {

@@ -276,6 +276,45 @@ Preflight uses the same checks as deployment: Helm chart version, generated Helm
 The Helm chart/version checks are omitted when Helm management is disabled;
 component and stray-resource checks remain active.
 
+## Next-hop diagnostics for failed connections
+
+After each connectivity family, validation inspects the source test pod's neighbor
+table for failed tests whose captured route selected the source interface. It uses
+the route's gateway (`via`) or the destination itself for an on-link route. The
+existing `netshoot` container must provide `ip -j neigh`; no additional privileges,
+switch access, configuration changes or active ARP probes are required.
+
+The advisory observation appears in text, JSON (`PingResults[].NextHop`), HTML,
+and the testcase JSON included in JUnit system-out. It retains the next-hop IP,
+interface, gateway/on-link distinction, state, observation time, bounded command
+output and diagnostic errors. Text and HTML label each observation as a `gateway`
+or `on-link destination` and show its UTC snapshot timestamp; an unavailable
+timestamp is displayed as `not collected`. Original test errors, expectations and verdicts are
+unchanged, including non-gating and expected-isolation results.
+
+| Observation | Meaning |
+| --- | --- |
+| `unresolved` / `FAILED` | The kernel reports failed next-hop address resolution. It does not identify whether a gateway is absent, a VLAN is wrong, or another fabric issue exists. |
+| `pending` / `INCOMPLETE` | Resolution is still incomplete; this is not a final failure verdict. |
+| `resolved` / mapped `REACHABLE`, `STALE`, `DELAY`, `PROBE`, `PERMANENT`, `NOARP` | A link-layer mapping exists. It does not prove that the peer or destination is reachable. |
+| `unverified` | Evidence is absent, ambiguous, malformed or unavailable, including missing tools, denied pod exec and expired deadlines. An absent entry alone is not resolution failure. |
+
+For example, a correct SBR route through `192.0.2.1 dev net1` can coexist with a
+`FAILED` neighbor entry for `192.0.2.1`. The report then explicitly identifies
+unresolved next-hop addressing alongside the original ICMP/RDMA error. It does
+not infer that a switch is misconfigured. A setup/tool error can also retain a
+neighbor observation; the observation alone does not establish its cause.
+
+Successful connections, measured bandwidth below its acceptance threshold, and
+route failures/mismatches do not trigger this inspection. Failed non-required
+RDMA checks without a captured route also have no next-hop observation. The
+snapshot is collected after a family completes, not at the exact failure instant.
+Identical neighbors are read once per source pod/container/interface within that
+family, and refreshed for subsequent families. Each read has a five-second bound
+within the connectivity deadline; automatic timeout planning includes this cost.
+Diagnostics do not delay cleanup beyond that deadline or change routing, neighbors,
+interfaces, operator policies or switches. Static validation does not run them.
+
 ## Validation Modes
 
 | Mode | Coverage | Cross-rail gating |

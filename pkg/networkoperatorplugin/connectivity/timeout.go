@@ -25,6 +25,7 @@ const (
 	rdmaServerCleanupTimeout     = 3 * time.Second
 	rdmaServerLogTimeout         = 5 * time.Second
 	routeCheckTimeout            = 10 * time.Second
+	nextHopTimeout               = 5 * time.Second
 	nonRequiredCommandTimeout    = 5 * time.Second
 	icmpCommandTimeout           = 5 * time.Second
 	rpingCommandTimeout          = 30 * time.Second
@@ -66,6 +67,9 @@ func automaticTimeoutBudget(plan MatrixPlan, checks []Check) timeoutBudget {
 			continue
 		}
 
+		// At most one bounded neighbor read per failed test; stage-local cache
+		// hits and successful tests leave extra headroom.
+		budget.Tests += time.Duration(len(tests)) * nextHopTimeout
 		switch check {
 		case CheckICMP:
 			budget.Tests += allRouteBudget(tests)

@@ -966,6 +966,34 @@ footer strong { color: var(--text-muted); }
       </table>
       {{- end}}
 
+      {{- $nextHops := nextHopResults .Matrix.PingResults}}
+      {{- if $nextHops}}
+      <div class="matrix-rail">Next-hop observations after failed tests (advisory)</div>
+      <p>Neighbor state is observed after each test family. It does not change the original verdict or establish the underlying cause.</p>
+      <table class="matrix-table">
+        <thead><tr><th>Check</th><th>Source / rail</th><th>Destination / rail</th><th>Next hop / interface</th><th>Observation</th></tr></thead>
+        <tbody>
+        {{- range $nextHops}}
+          <tr>
+            <td>{{resultFamily .Test.Kind}}</td>
+            <td>{{srcLabel .Test}} / {{.Test.SrcRail}}</td>
+            <td>{{dstLabel .Test}} / {{.Test.DstRail}}</td>
+            <td>{{nextHopKind .NextHop.Gateway}} <code>{{.NextHop.Address}}</code> / <code>{{.NextHop.Interface}}</code></td>
+            <td>{{.NextHop.Status}} ({{.NextHop.State}}): {{.NextHop.Message}}
+              <details><summary>Evidence and original error</summary>
+                <pre>Observed at: {{nextHopObservedAt .NextHop.ObservedAt}}
+{{.NextHop.Command}}
+{{.NextHop.Output}}
+{{.NextHop.Error}}
+{{if .Err}}{{.Err}}{{end}}</pre>
+              </details>
+            </td>
+          </tr>
+        {{- end}}
+        </tbody>
+      </table>
+      {{- end}}
+
       {{- $gpuResults := gpudirectResults .Matrix.PingResults}}
       {{- if $gpuResults}}
       <div class="matrix-rail">GPUDirect DMA-BUF endpoint details</div>

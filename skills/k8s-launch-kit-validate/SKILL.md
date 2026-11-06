@@ -36,6 +36,20 @@ they do not change exit status or run during static validation. Follow the
 [partition diagnostic guidance](../../docs/user/validation.md#infiniband-partition-diagnostics)
 for scope, limitations and subnet manager remediation.
 
+## Failed connection next-hop observations
+
+After a failed test with a valid source-interface route, validation reads
+`ip -j neigh` in the existing netshoot container and reports the gateway or
+on-link destination's neighbor state in text, JSON and HTML. Text and HTML
+label gateway versus on-link destination and include the UTC observation time. `FAILED` is
+unresolved, `INCOMPLETE` remains pending, and mapped `STALE` is not a failure.
+Absent/ambiguous evidence or tool/permission/deadline errors are unverified.
+These are advisory snapshots after each test family; preserve the original
+error and verdict and do not infer a switch fault or end-to-end reachability.
+No active probe, switch access or network configuration change is performed.
+See [next-hop diagnostics](../../docs/user/validation.md#next-hop-diagnostics-for-failed-connections)
+for the five-second read bound, deduplication, eligibility and output details.
+
 ## What it checks
 
 1. **Network Operator Helm release version.** Reads the chart's
