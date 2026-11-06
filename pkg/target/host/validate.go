@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/rest"
@@ -35,6 +36,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
@@ -211,6 +213,18 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 			profileRouting = cfg.Profile.Routing
 		}
 		clusterConfig = cfg.ClusterConfig
+	}
+	// Compare the saved host package snapshot even when the container driver
+	// was explicitly enabled. That override does not make incompatible host
+	// DOCA releases match the selected Network Operator release SBOM.
+	if cfg != nil {
+		if err := config.ValidateDOCAHostObservations(cfg); err != nil {
+			return exitWithReport(apperrors.NewValidationError("invalid host DOCA-HOST observations", err, "Run discovery again to refresh host package evidence"))
+		}
+		if issues := releases.DOCAHostIssues(cfg); len(issues) > 0 {
+			return exitWithReport(apperrors.NewValidationError("discovered host DOCA-HOST release compatibility failed", fmt.Errorf("%s", strings.Join(issues, "; ")),
+				"Align host DOCA-HOST with the selected release SBOM and rerun discovery; this check uses the saved discovery snapshot"))
+		}
 	}
 	if err := applyValidationOverrides(request, validationCfg); err != nil {
 		return exitWithReport(apperrors.NewValidationError(

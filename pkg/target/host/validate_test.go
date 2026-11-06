@@ -95,6 +95,34 @@ func TestListNodesForReportAcceptsNilClient(t *testing.T) {
 	assert.Nil(t, listNodesForReport(context.Background(), nil))
 }
 
+func TestValidateRejectsDOCAHostMismatchAndMalformedSnapshotBeforeClusterAccess(t *testing.T) {
+	for _, tc := range []struct{ name, observations, expected string }{
+		{"mismatch", "- {node: worker-a, status: installed, version: 3.5.0-041000}", "does not match Network Operator 26.10 release SBOM DOCA 3.6.0"},
+		{"duplicate", "- {node: worker-a, status: installed, version: 3.5.0-041000}\n- {node: worker-a, status: unknown}", "unique, nonempty node names"},
+		{"missing version", "- {node: worker-a, status: installed}", "has no package version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			deployment := filepath.Join(tmp, "deployment")
+			require.NoError(t, os.Mkdir(deployment, 0o700))
+			input := filepath.Join(tmp, "config.yaml")
+			source := "networkOperator: {selectedRelease: '26.10'}\ndocaDriver: {enable: true}\nvalidation: {connectivity: false}\nclusterConfig:\n- workerNodes: [worker-a]\ndiscoveredDocaHost:\n" + tc.observations + "\n"
+			require.NoError(t, os.WriteFile(input, []byte(source), 0o600))
+			called := false
+			runner := validateRunner{newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) {
+				called = true
+				return nil, nil, errors.New("unexpected cluster access")
+			}}
+			err := runner.Run(context.Background(), ValidateRequest{UserConfig: input, DeploymentFiles: deployment,
+				Kubeconfig: filepath.Join(tmp, "kubeconfig"), ReportPath: filepath.Join(tmp, "report.html"), OutputFormat: "json"})
+			require.ErrorContains(t, err, tc.expected)
+			assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
+			assert.False(t, called)
+			assert.FileExists(t, filepath.Join(tmp, "report.html"))
+		})
+	}
+}
+
 func TestValidateDoesNotCreateMissingDeploymentDirectoryForDefaultReport(t *testing.T) {
 	workingDir := t.TempDir()
 	t.Chdir(workingDir)

@@ -27,6 +27,14 @@ rollouts, ownership/coverage errors, or UNVERIFIED evidence. Non-detection and
 denied optional health reads do not prove missing networking or successful
 readiness. See [external prerequisites](../../docs/user/validation.md#external-networking-prerequisites).
 
+Saved `discoveredDocaHost` installed-package observations must match the selected
+Network Operator SBOM's three-part DOCA release. Mismatch, malformed evidence,
+or missing release selection fails with exit 2 before cluster checks, including
+static/connectivity-only validation and explicit container-driver enablement.
+This checks the discovery snapshot; rerun discovery after package changes.
+Package and container build suffixes are not compared. See
+[host compatibility](../../docs/user/validation.md#host-doca-host-release-compatibility).
+
 ## InfiniBand partition diagnostics
 
 Connectivity setup inspects selected IPoIB interfaces in test pods and warns

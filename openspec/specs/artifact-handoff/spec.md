@@ -67,6 +67,12 @@ Generation SHALL preserve source YAML and write effective metadata at `.l8k/reso
 - **WHEN** supported empty values are saved and loaded as resolved metadata
 - **THEN** loading preserves those values without filling them from defaults.
 
+#### Scenario: Topology override retains host evidence
+
+- **WHEN** generation applies a topology preset to an input with host package observations
+- **THEN** discovery membership and completeness remain the source for driver ownership and host release compatibility; resolved metadata preserves that scope independently of render topology.
+- **AND** later validation and repeated generation retain these checks; presets do not define host package state or worker membership.
+
 ### Requirement: Source membership survives artifact handoff
 
 Rendered SR-IOV node policies and NV-IPAM IPPools SHALL identify their selected

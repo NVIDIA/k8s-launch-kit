@@ -49,6 +49,17 @@ character devices must be provisioned by the host owner. Check
 [IPoIB prerequisites](../../docs/user/profiles.md#ipoib-with-inbox-drivers);
 generated names and loaded-module lists do not prove host readiness.
 
+The container driver defaults to true. After discovery, generation changes an
+omitted/null enable choice to false only with installed host DOCA-HOST package
+evidence for every source-inventory worker.
+Explicit `docaDriver.enable` or `--enable-doca-driver` wins. Mixed installed and
+absent/unknown evidence requires an explicit choice, including filtered rendering;
+review ownership before enabling containers over host drivers. Presets apply only
+to topology: original discovery membership remains authoritative in the preserved
+`discoveredDocaHostScope`, including bundle validation and repeated generation
+with or without `--for`. Preset-only input without host observations retains true. See
+[host driver discovery](../../docs/user/discovery.md#host-installed-doca-host).
+
 ## Profile Selection Flags
 
 | Flag | Required | Values | Description |
@@ -114,7 +125,7 @@ l8k generate --user-config cluster-config.yaml \
 ## Choosing `l8k discover` vs `--for`
 
 - **`l8k discover` then `l8k generate`** — default flow. Discovery learns the hardware and persists the resolved profile, so generation needs only the resulting `cluster-config.yaml` unless an override is desired.
-- **`l8k generate --for <preset>`** — skip discovery entirely when the SKU is already known and there is a preset for it. Useful for ahead-of-time generation (CI scaffolding, lab runbooks, demos), or when you don't have `kubectl` access yet. Requires `--node-selector` to identify the target nodes at apply time.
+- **`l8k generate --for <preset>`** — use preset topology without a new discovery run when the SKU is already known. Existing discovery-time host observations still govern driver ownership and compatibility. Useful for ahead-of-time generation (CI scaffolding, lab runbooks, demos), or when you don't have `kubectl` access yet. Requires `--node-selector` to identify the target nodes at apply time.
 
 A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in its `topology.yaml`. All bundled presets do.
 

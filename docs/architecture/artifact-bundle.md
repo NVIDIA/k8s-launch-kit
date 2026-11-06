@@ -50,3 +50,9 @@ hardware resources require their configuration. The explicit `[""]` source refer
 preserves an unnamed sole source and resolves only against exactly one unnamed
 configured source. Selector-only preset inputs retain
 an explicit unverified-scope diagnostic, distinct from ordinary device readiness.
+
+Host package observations have their own discovery membership in
+`discoveredDocaHostScope`, retained with the observations when topology is
+overridden. Generation and validation use that scope for DOCA-HOST ownership
+and release checks. It does not select deployment targets or verify a preset's
+node selector; selector-only preset topology remains scope-unverified.
