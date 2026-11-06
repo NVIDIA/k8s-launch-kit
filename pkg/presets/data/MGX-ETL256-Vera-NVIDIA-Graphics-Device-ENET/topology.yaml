@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+
+machineType: MGX-ETL256-Vera
+gpuType: NVIDIA-Graphics-Device
+nicModel: ConnectX-9
+
+capabilities:
+  nodes:
+    sriov: true
+    rdma: true
+    ib: false
+
+pfs:
+  - deviceID: "1025"
+    pciAddress: "0001:03:00.0"
+    rdmaDevice: mlx5_0
+    networkInterface: enP1p3s0f0np0
+    traffic: east-west
+    rail: 0
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: PXB
+
+  - deviceID: "1025"
+    pciAddress: "0003:03:00.0"
+    rdmaDevice: mlx5_4
+    networkInterface: enP3p3s0f0np0
+    traffic: east-west
+    rail: 1
+    numaNode: 0
+    connectedGPU: GPU2
+    gpuProximity: PXB
+
+  - deviceID: "1025"
+    pciAddress: "0004:03:00.0"
+    rdmaDevice: mlx5_8
+    networkInterface: enP4p3s0f0np0
+    traffic: east-west
+    rail: 2
+    numaNode: 0
+    connectedGPU: GPU4
+    gpuProximity: PXB
+
+  - deviceID: "1025"
+    pciAddress: "0006:03:00.0"
+    rdmaDevice: mlx5_13
+    networkInterface: enP6p3s0f0np0
+    traffic: east-west
+    rail: 3
+    numaNode: 0
+    connectedGPU: GPU6
+    gpuProximity: PXB
