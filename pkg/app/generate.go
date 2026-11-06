@@ -261,6 +261,9 @@ func (l *Launcher) generateDeploymentFiles(profile *profiles.Profile, clusterCon
 		return apperrors.NewValidationError("invalid generated artifacts", err, "Correct the named template and regenerate")
 	}
 
+	if err := networkoperatorplugin.CheckConfiguredIPPoolCIDRs(artifacts, clusterConfig); err != nil {
+		return apperrors.NewValidationError(fmt.Sprintf("IPPool address collision check failed: %v", err), nil, "Choose non-overlapping NV-IPAM subnets")
+	}
 	if l.options.SaveDeploymentFiles != "" {
 		if err := l.saveDeploymentBundle(artifacts, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin)); err != nil {
 			return fmt.Errorf("failed to save deployment files: %w", err)

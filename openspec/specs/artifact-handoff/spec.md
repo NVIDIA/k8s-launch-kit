@@ -86,6 +86,26 @@ ambiguous inventory SHALL fail rather than guessing a source association.
 - **THEN** it retries within the existing deployment budget without evaluating readiness until fresh scope inspection succeeds.
 - **AND** permission denials, invalid source metadata and selector mismatches remain terminal; pre-write inspection failures do not authorize writes.
 
+### Requirement: IPPool cluster address collision protection
+
+Generation SHALL check the validated artifact snapshot's NV-IPAM IPPool subnets
+against explicit authoritative cluster pod/service CIDRs before output replacement.
+Deployment SHALL check that snapshot against configured overrides and fresh
+all-cluster Node pod CIDRs, InternalIPs and ServiceCIDRs before managed effects,
+including external Helm, overwrite and dry-run. Each supplied override replaces
+only its own address class. Observed ranges SHALL NOT become persisted overrides.
+
+#### Scenario: Detected overlap
+
+- **WHEN** an IPPool overlaps a known pod/service range or contains a Node InternalIP
+- **THEN** deployment fails before Helm, remediation or apply, naming the source resource and conflict.
+
+#### Scenario: Incomplete cluster address evidence
+
+- **WHEN** a Node has no pod range and no authoritative override exists
+- **THEN** deployment warns by Node name while checking all available ranges.
+- **AND** absent GA and beta ServiceCIDR APIs warn; denied reads, malformed ranges and an empty served API fail unless authoritative service ranges bypass that API read.
+
 ## Baseline and limits
 
 Structural validation does not prove CRD schema/admission or readiness. Sidecar handling lives outside `pkg/bundle`. Atomic sidecar writing does not promise whole-directory atomicity or cluster transactions. No content hash binds manifests to effective config; explicit override may differ from generated intent. Bundle checks cannot recover artifacts already lost to render-map overwrite; [profile planning](../profile-planning/spec.md) owns that boundary.

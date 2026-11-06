@@ -214,3 +214,30 @@ func TestStartingGatewayNormalization(t *testing.T) {
 		})
 	}
 }
+
+func TestClusterNetworkOverridesPresenceIsolationAndHandoff(t *testing.T) {
+	for _, yaml := range []string{"cluster: {}", "cluster: {podCIDRs: null, serviceCIDRs: null}"} {
+		input, err := DecodeInput([]byte(yaml), "network.yaml")
+		require.NoError(t, err)
+		require.NoError(t, NormalizeResolvedConfigWithPresence(input.Config, input.SourcePath, input.Present))
+		require.Nil(t, input.Config.Cluster.PodCIDRs)
+		require.Nil(t, input.Config.Cluster.ServiceCIDRs)
+	}
+	for _, yaml := range []string{"cluster: {podCIDRs: []}", "cluster: {serviceCIDRs: []}", "cluster: {podCIDRs: [invalid]}", "cluster: {serviceCIDRs: ['::ffff:10.0.0.0/120']}"} {
+		input, err := DecodeInput([]byte(yaml), "network.yaml")
+		require.NoError(t, err)
+		require.ErrorContains(t, NormalizeResolvedConfigWithPresence(input.Config, input.SourcePath, input.Present), "cluster.")
+	}
+	input, err := DecodeInput([]byte("cluster:\n  podCIDRs: [10.244.0.0/16, 'fd00:1::/48']\n  serviceCIDRs: [10.96.0.0/12]\n"), "network.yaml")
+	require.NoError(t, err)
+	require.NoError(t, NormalizeResolvedConfigWithPresence(input.Config, input.SourcePath, input.Present))
+	clone, err := CloneConfig(input.Config)
+	require.NoError(t, err)
+	clone.Cluster.PodCIDRs[0] = "192.0.2.0/24"
+	require.Equal(t, "10.244.0.0/16", input.Config.Cluster.PodCIDRs[0])
+	path, err := WriteEffectiveConfig(t.TempDir(), input.Config)
+	require.NoError(t, err)
+	restored, err := LoadEffectiveConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, input.Config.Cluster, restored.Cluster)
+}

@@ -168,6 +168,12 @@ var defaultConfigYAML = []byte(
 	"  rdmaPrefix: rdma_r%rail_id%\n" +
 	"  netdevPrefix: eth_r%rail_id%\n" +
 	"podNamespace: default\n" +
+	"# Optional authoritative IPv4/IPv6 ranges for IPPool collision checks.\n" +
+	"# Omit each list to discover that address class at deploy; [] is invalid.\n" +
+	"# cluster:\n" +
+	"#   podCIDRs: [\"10.244.0.0/16\"]\n" +
+	"#   serviceCIDRs: [\"10.96.0.0/12\"]\n" +
+	"\n" +
 	"clusterConfig:\n" +
 	"  - identifier: \"\"\n" +
 	"    machineType: X9DRFF-i/7(T)+\n" +
