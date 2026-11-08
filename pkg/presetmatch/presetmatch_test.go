@@ -117,3 +117,45 @@ func TestAnyMatched(t *testing.T) {
 	assert.True(t, AnyMatched([]Result{{Status: StatusDeviation}}))
 	assert.True(t, AnyMatched([]Result{{Status: StatusSkipped}, {Status: StatusMatch}}))
 }
+
+func TestMatchGroup_GB200NVLTrayInventory(t *testing.T) {
+	catalog, err := presets.EmbeddedCatalog()
+	require.NoError(t, err)
+
+	// Issue #323 identifies four rail NICs and two north-south BlueField-3s.
+	group := config.ClusterConfig{
+		Identifier:  "gb200-nvl-gb200",
+		MachineType: "GB200-NVL",
+		GPUType:     "NVIDIA-GB200",
+		PFs: []config.PFConfig{
+			{DeviceID: "1021", PciAddress: "0000:03:00.0"},
+			{DeviceID: "1021", PciAddress: "0002:03:00.0"},
+			{DeviceID: "1021", PciAddress: "0010:03:00.0"},
+			{DeviceID: "1021", PciAddress: "0012:03:00.0"},
+			{DeviceID: "a2dc", PciAddress: "0006:03:00.0"},
+			{DeviceID: "a2dc", PciAddress: "0016:03:00.0"},
+		},
+	}
+	result := MatchGroupWithCatalog(group, catalog)
+	require.Equal(t, StatusMatch, result.Status)
+	assert.Empty(t, result.Deviations)
+	require.True(t, presets.ApplyPreset(result.Preset, &group))
+	for i, pf := range group.PFs[:4] {
+		require.NotNil(t, pf.Rail)
+		require.NotNil(t, pf.NumaNode)
+		assert.Equal(t, i, *pf.Rail)
+		assert.Equal(t, i/2, *pf.NumaNode)
+		assert.Equal(t, []string{"GPU0", "GPU1", "GPU2", "GPU3"}[i], pf.ConnectedGPU)
+		assert.Equal(t, "SYS", pf.GPUProximity)
+		assert.Equal(t, "east-west", pf.Traffic)
+	}
+	for _, pf := range group.PFs[4:] {
+		assert.Equal(t, "north-south", pf.Traffic)
+		assert.Nil(t, pf.Rail)
+		assert.Empty(t, pf.ConnectedGPU)
+	}
+
+	// The reported zero-trust discovery excludes both BlueFields.
+	group.PFs = group.PFs[:4]
+	assert.Equal(t, StatusDeviation, MatchGroupWithCatalog(group, catalog).Status)
+}
