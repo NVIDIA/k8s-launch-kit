@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+
+machineType: GB200-NVL
+manufacturer: NVIDIA
+gpuType: NVIDIA-GB200
+nicModel: NVIDIA 2XCONNECTX-7 MEZZ CRYPTO ENABLED (ConnectX-7)
+numaNodes: 2
+
+capabilities:
+  nodes:
+    sriov: true
+    rdma: true
+    ib: true
+
+pfs:
+  # --- NUMA 0: GPU0, GPU1 ---
+  - deviceID: "1021"
+    rdmaDevice: mlx5_0
+    pciAddress: "0000:03:00.0"
+    networkInterface: ibp3s0
+    traffic: east-west
+    rail: 0
+    numaNode: 0
+    connectedGPU: GPU0
+    gpuProximity: SYS
+    psid: nvd0000000054
+    partNumber: 900-24768-0002-000
+
+  - deviceID: "1021"
+    rdmaDevice: mlx5_1
+    pciAddress: "0002:03:00.0"
+    networkInterface: ibP2p3s0
+    traffic: east-west
+    rail: 1
+    numaNode: 0
+    connectedGPU: GPU1
+    gpuProximity: SYS
+    psid: nvd0000000054
+    partNumber: 900-24768-0002-000
+
+  # --- NUMA 1: GPU2, GPU3 ---
+  - deviceID: "1021"
+    rdmaDevice: mlx5_3
+    pciAddress: "0010:03:00.0"
+    networkInterface: ibP16p3s0
+    traffic: east-west
+    rail: 2
+    numaNode: 1
+    connectedGPU: GPU2
+    gpuProximity: SYS
+    psid: nvd0000000054
+    partNumber: 900-24768-0002-000
+
+  - deviceID: "1021"
+    rdmaDevice: mlx5_4
+    pciAddress: "0012:03:00.0"
+    networkInterface: ibP18p3s0
+    traffic: east-west
+    rail: 3
+    numaNode: 1
+    connectedGPU: GPU3
+    gpuProximity: SYS
+    psid: nvd0000000054
+    partNumber: 900-24768-0002-000
+
+  # --- N-S: BlueField-3 DPUs (not rails) ---
+  - deviceID: a2dc
+    pciAddress: "0006:03:00.0"
+    rdmaDevice: ""
+    networkInterface: ""
+    traffic: north-south
+
+  - deviceID: a2dc
+    pciAddress: "0016:03:00.0"
+    rdmaDevice: ""
+    networkInterface: ""
+    traffic: north-south

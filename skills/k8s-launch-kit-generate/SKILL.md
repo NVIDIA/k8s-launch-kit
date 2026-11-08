@@ -118,6 +118,13 @@ l8k generate --user-config cluster-config.yaml \
 
 A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in its `topology.yaml`. All bundled presets do.
 
+For a GB200 NVL tray with four ConnectX-7 InfiniBand rails and two north-south
+BlueField-3s, use `--for GB200-NVL-NVIDIA-GB200 --fabric infiniband
+--deployment-type sriov` with an explicit `--node-selector`. This preset contains
+the four rail PFs and both BlueField-3 PFs. Discovery that excludes host-restricted
+BlueFields reports a topology deviation; see [Topology Presets](../../docs/user/presets.md)
+for its discovery evidence and layout.
+
 ## Interface Naming And Group Selection
 
 When `nicConfigurationOperator.deployNicInterfaceNameTemplate` and multirail
