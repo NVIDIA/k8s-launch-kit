@@ -298,6 +298,9 @@ those, only the **master PF** (lowest PCI function) is written to
 ConnectX-8 node yields 4 rails, not 8. The per-PF planes are reconstructed at
 generate time from the multiplane mode + `numberOfPlanes`.
 
+The `MGX-ETL256-Vera-NVIDIA-Graphics-Device-ENET` preset uses this default:
+four ConnectX-9 master PFs form rails 0–3.
+
 The exception is a **genuinely dual-port NIC**: when the NIC's VPD model name
 (read from `NicDevice.Status.modelName`, surfaced as the `model` field on each
 PF) contains a port-count keyword like `2-port`/`Dual-port`, each port is kept as

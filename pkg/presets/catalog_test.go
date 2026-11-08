@@ -17,12 +17,14 @@
 package presets
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/assets"
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +49,64 @@ func TestEmbeddedCatalog(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, topology)
 	assert.Equal(t, "PowerEdge-XE9680", topology.MachineType)
+}
+
+func TestEmbeddedENETPreset(t *testing.T) {
+	catalog, err := EmbeddedCatalog()
+	require.NoError(t, err)
+	topology, err := catalog.LoadPreset("MGX-ETL256-Vera", "NVIDIA-Graphics-Device")
+	require.NoError(t, err)
+	require.NotNil(t, topology)
+	require.Len(t, topology.PFs, 4)
+	require.NotNil(t, topology.Capabilities)
+	require.NotNil(t, topology.Capabilities.Nodes)
+	assert.True(t, topology.Capabilities.Nodes.Sriov)
+	assert.True(t, topology.Capabilities.Nodes.Rdma)
+	assert.False(t, topology.Capabilities.Nodes.Ib, "this preset covers Ethernet")
+
+	for rail, domain := range []int{1, 3, 4, 6} {
+		pf := topology.PFs[rail]
+		assert.Equal(t, "1025", pf.DeviceID)
+		assert.Equal(t, fmt.Sprintf("%04x:03:00.0", domain), pf.PciAddress)
+		assert.Equal(t, fmt.Sprintf("enP%dp3s0f0np0", domain), pf.NetworkInterface)
+		rdmaIndex := rail * 4
+		if domain == 6 {
+			rdmaIndex++ // mlx5_12 belongs to the excluded BlueField-4.
+		}
+		assert.Equal(t, fmt.Sprintf("mlx5_%d", rdmaIndex), pf.RdmaDevice)
+		assert.Equal(t, "east-west", pf.Traffic)
+		require.NotNil(t, pf.Rail)
+		assert.Equal(t, rail, *pf.Rail)
+		require.NotNil(t, pf.NumaNode)
+		assert.Zero(t, *pf.NumaNode)
+		assert.Equal(t, fmt.Sprintf("GPU%d", rail*2), pf.ConnectedGPU)
+		assert.Equal(t, "PXB", pf.GPUProximity)
+	}
+
+	group, err := SynthesizeClusterConfig("enet", topology, map[string]string{"example.com/node-group": "enet"})
+	require.NoError(t, err)
+	assert.Empty(t, ValidatePreset(topology, group.PFs))
+	assert.True(t, ApplyPreset(topology, &group))
+
+	// An exposed BlueField must remain north-south.
+	group.PFs = append(group.PFs, config.PFConfig{
+		DeviceID: "a2df", PciAddress: "0005:05:00.0", Traffic: "north-south",
+	})
+	assert.True(t, HasTopologyDeviation(ValidatePreset(topology, group.PFs)))
+	assert.False(t, ApplyPreset(topology, &group))
+	assert.Equal(t, "north-south", group.PFs[4].Traffic)
+	assert.Nil(t, group.PFs[4].Rail)
+
+	var uncollapsed []config.PFConfig
+	for _, domain := range []int{1, 3, 4, 6} {
+		for function := range 4 {
+			uncollapsed = append(uncollapsed, config.PFConfig{
+				DeviceID: "1025", PciAddress: fmt.Sprintf("%04x:03:00.%d", domain, function),
+			})
+		}
+	}
+	assert.True(t, HasTopologyDeviation(ValidatePreset(topology, uncollapsed)))
+	assert.True(t, HasTopologyDeviation(ValidatePreset(topology, group.PFs[:3])))
 }
 
 func TestCatalogForConfigDir(t *testing.T) {

@@ -26,6 +26,7 @@ Bundled presets include:
 
 - `GB300-DGX-Station-NVIDIA-GB300`
 - `GB300-NVL-NVIDIA-GB300`
+- `MGX-ETL256-Vera-NVIDIA-Graphics-Device-ENET`
 - `PowerEdge-R760xa-H100-NVL`
 - `PowerEdge-XE7745-RTX-PRO-4500`
 - `PowerEdge-XE9680-H200`
@@ -70,6 +71,30 @@ l8k generate \
 
 `--node-selector` is required because the synthesized cluster config has no live worker-node list.
 
+### MGX ETL256 Vera ENET
+
+`MGX-ETL256-Vera-NVIDIA-Graphics-Device-ENET` matches
+`MGX-ETL256-Vera` / `NVIDIA-Graphics-Device` with discovery's default rail
+collapsing. It retains function `.0` at `0001:03:00`, `0003:03:00`,
+`0004:03:00`, and `0006:03:00` as rails 0–3, with GPU0/2/4/6 affinity and
+`PXB` proximity. The host-restricted BlueField-4 is excluded; exposing it or
+using `--collapse-nic-rails=false` produces a topology deviation.
+
+Generate four Ethernet RDMA-shared networks with:
+
+```bash
+l8k generate \
+  --for MGX-ETL256-Vera-NVIDIA-Graphics-Device-ENET \
+  --node-selector example.com/node-group=enet \
+  --fabric ethernet --deployment-type rdma_shared \
+  --multirail --routing source-based --ignore-arp \
+  --save-deployment-files ./deployment-enet
+```
+
+Supply site addressing, operator ownership and driver settings separately.
+Offline generation does not establish live connectivity or GPUDirect support.
+See [routing and ARP tuning](profiles.md#routing-and-arp-tuning).
+
 ## Preset YAML
 
 ```yaml
@@ -102,13 +127,16 @@ false or omitted.
 ## Author A Preset
 
 1. Collect topology on a representative node for the exact machine/GPU pair.
-   Record every PF, including north-south interfaces, and confirm its PCI
+   Record every host-discoverable PF, including discovered north-south interfaces, and confirm its PCI
    address, device ID, traffic role, rail, NUMA node, and GPU association.
 2. Set `machineType` to the existing `nvidia.com/gpu.machine` label, or the
    discovered `/sys/class/dmi/id/product_name` value with spaces normalized to
    dashes. Set `gpuType` to `nvidia.com/gpu.product` or the sanitized GPU product
    name from discovery. Copy the persisted values from `cluster-config.yaml`
    when available; matching is exact and case-sensitive.
+   Account for the discovery rail-collapse setting and devices excluded from
+   `NicDevice` inventory (for example, zero-trust BlueFields); a different
+   discoverable PF set must produce a deviation rather than a partial overlay.
 3. Create `presets/<unique-machine-gpu-variant>/topology.yaml`. Include both
    matching keys and `capabilities.nodes` for offline `--for` use. Keep rail
    assignments and `connectedGPU: GPU<N>` consistent with the physical layout;
