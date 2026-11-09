@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
@@ -22,8 +23,199 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+func TestGenerateDOCAHostDefaultReachesPoliciesAndEffectiveBundle(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	t.Chdir(filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..")))
+	for _, override := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit-enable=%t", override), func(t *testing.T) {
+			cfg, err := config.DefaultLaunchKitConfig()
+			require.NoError(t, err)
+			cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "host_device"}
+			cfg.ClusterConfig = []config.ClusterConfig{{Identifier: "host-doca", WorkerNodes: []string{"worker-a"},
+				NodeSelector: map[string]string{"kubernetes.io/hostname": "worker-a"},
+				Capabilities: &config.ClusterCapabilities{Nodes: &config.NodesCapabilities{Sriov: true, Rdma: true}},
+				PFs:          []config.PFConfig{{PciAddress: "0000:18:00.0", DeviceID: "1023", Traffic: "east-west"}}}}
+			cfg.DiscoveredDOCAHost = []config.DOCAHostObservation{{Node: "worker-a", Status: config.DOCAHostInstalled, Version: "3.5.0-041000"}}
+			raw, err := yaml.Marshal(cfg)
+			require.NoError(t, err)
+			raw, err = omitDOCAHostDriverChoice(raw)
+			require.NoError(t, err)
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(path, raw, 0o600))
+			output := filepath.Join(t.TempDir(), "deployment")
+			opts := options.Options{SaveDeploymentFiles: output}
+			if override {
+				opts.EnableDocaDriver = &override
+			}
+			launcher := New(opts)
+			launcher.ui = ui.NewSilent()
+			launcher.plugins[networkoperatorplugin.PluginName] = &networkoperatorplugin.NetworkOperatorPlugin{}
+			require.NoError(t, launcher.executeGeneration(path))
+			artifacts, err := bundle.Load(os.DirFS(filepath.Join(output, networkoperatorplugin.PluginName)))
+			require.NoError(t, err)
+			policies := 0
+			for _, document := range artifacts.Documents() {
+				object := document.ObjectCopy()
+				if object.GetKind() != "NicClusterPolicy" && object.GetKind() != "NicNodePolicy" {
+					continue
+				}
+				policies++
+				_, found, err := unstructured.NestedFieldNoCopy(object.Object, "spec", "ofedDriver")
+				require.NoError(t, err)
+				assert.Equal(t, override, found, "host-device NCP must preserve the resolved driver ownership")
+			}
+			assert.Positive(t, policies)
+			effective, err := config.LoadEffectiveConfig(config.EffectiveConfigPath(output))
+			require.NoError(t, err)
+			assert.Equal(t, override, effective.DOCADriver.Enable)
+			assert.Equal(t, cfg.DiscoveredDOCAHost, effective.DiscoveredDOCAHost)
+		})
+	}
+}
+
+func TestGeneratePresetOnlyOverridesTopologyAndRetainsHostEvidence(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	t.Chdir(filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..")))
+	enabled, disabled := true, false
+	for _, tc := range []struct {
+		name, secondStatus, release, wantError string
+		yamlChoice, cliChoice                  *bool
+		noDiscovery, wantEnable, wantWarning   bool
+		incompleteMembership                   bool
+	}{
+		{name: "installed default", wantEnable: false},
+		{name: "mixed no choice", secondStatus: config.DOCAHostNotInstalled, wantError: "set docaDriver.enable explicitly"},
+		{name: "mixed unknown no choice", secondStatus: config.DOCAHostUnknown, wantError: "set docaDriver.enable explicitly"},
+		{name: "incomplete source membership", incompleteMembership: true, wantError: "lack complete workerNodes"},
+		{name: "mixed manual true", secondStatus: config.DOCAHostNotInstalled, yamlChoice: &enabled, wantEnable: true},
+		{name: "mixed manual false", secondStatus: config.DOCAHostNotInstalled, yamlChoice: &disabled},
+		{name: "installed YAML true", yamlChoice: &enabled, wantEnable: true},
+		{name: "installed YAML false", yamlChoice: &disabled},
+		{name: "CLI true wins", yamlChoice: &disabled, cliChoice: &enabled, wantEnable: true},
+		{name: "CLI false wins", yamlChoice: &enabled, cliChoice: &disabled},
+		{name: "release mismatch", release: "26.10", wantWarning: true},
+		{name: "preset only", noDiscovery: true, wantEnable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := config.DefaultLaunchKitConfig()
+			require.NoError(t, err)
+			cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "host_device"}
+			cfg.NetworkOperator.SelectedRelease = "26.7"
+			if tc.release != "" {
+				cfg.NetworkOperator.SelectedRelease = tc.release
+			}
+			if !tc.noDiscovery {
+				cfg.ClusterConfig = []config.ClusterConfig{
+					{Identifier: "source-a", GPUType: "NVIDIA-H200", WorkerNodes: []string{"worker-a"}},
+					{Identifier: "source-b", GPUType: "NVIDIA-H200", WorkerNodes: []string{"worker-b"}},
+				}
+				if tc.incompleteMembership {
+					cfg.ClusterConfig[1].WorkerNodes = nil
+				}
+				second := config.DOCAHostObservation{Node: "worker-b", Status: config.DOCAHostInstalled, Version: "3.5.0-1"}
+				if tc.secondStatus != "" {
+					second.Status, second.Version = tc.secondStatus, ""
+				}
+				cfg.DiscoveredDOCAHost = []config.DOCAHostObservation{
+					{Node: "worker-a", Status: config.DOCAHostInstalled, Version: "3.5.0-1"}, second,
+					{Node: "excluded", Status: config.DOCAHostInstalled, Version: "0.0.0-1"},
+				}
+			}
+			if tc.yamlChoice != nil {
+				cfg.DOCADriver.Enable = *tc.yamlChoice
+			}
+			raw, err := yaml.Marshal(cfg)
+			require.NoError(t, err)
+			if tc.yamlChoice == nil {
+				raw, err = omitDOCAHostDriverChoice(raw)
+				require.NoError(t, err)
+			}
+			input := filepath.Join(t.TempDir(), "source.yaml")
+			require.NoError(t, os.WriteFile(input, raw, 0o600))
+			outputDir := filepath.Join(t.TempDir(), "deployment")
+			launcher := New(options.Options{ForPreset: "GB300-DGX-Station-NVIDIA-GB300", NodeSelector: "role=preset-render",
+				EnableDocaDriver: tc.cliChoice, SaveDeploymentFiles: outputDir})
+			output := &testOutput{}
+			launcher.ui = output
+			launcher.plugins[networkoperatorplugin.PluginName] = &networkoperatorplugin.NetworkOperatorPlugin{}
+			launcher.presetCatalog, err = presets.EmbeddedCatalog()
+			require.NoError(t, err)
+			err = launcher.executeGeneration(input)
+			unchanged, readErr := os.ReadFile(input)
+			require.NoError(t, readErr)
+			assert.Equal(t, raw, unchanged, "preset generation must preserve the source config")
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+				assert.NoDirExists(t, outputDir, "mixed ownership must fail before artifacts are written")
+				return
+			}
+			require.NoError(t, err)
+			got, err := config.LoadEffectiveConfig(config.EffectiveConfigPath(outputDir))
+			require.NoError(t, err)
+			require.Len(t, got.ClusterConfig, 1)
+			assert.Equal(t, "NVIDIA-GB300", got.ClusterConfig[0].GPUType)
+			assert.Empty(t, got.ClusterConfig[0].WorkerNodes, "discovery workers must not become preset topology membership")
+			assert.Equal(t, tc.wantEnable, got.DOCADriver.Enable)
+			assert.Equal(t, cfg.DiscoveredDOCAHost, got.DiscoveredDOCAHost)
+			if tc.noDiscovery {
+				assert.Nil(t, got.DiscoveredDOCAHostScope)
+			} else {
+				require.NotNil(t, got.DiscoveredDOCAHostScope)
+				assert.Equal(t, []string{"worker-a", "worker-b"}, got.DiscoveredDOCAHostScope.WorkerNodes)
+				assert.True(t, got.DiscoveredDOCAHostScope.MembershipKnown)
+			}
+			warnings := strings.Join(output.warnings, "\n")
+			assert.Equal(t, tc.wantWarning, strings.Contains(warnings, "release SBOM"))
+			assert.NotContains(t, warnings, "excluded", "unselected stale observations must remain excluded")
+			artifacts, err := bundle.Load(os.DirFS(filepath.Join(outputDir, networkoperatorplugin.PluginName)))
+			require.NoError(t, err)
+			ofeds, policies := 0, 0
+			for _, document := range artifacts.Documents() {
+				object := document.ObjectCopy()
+				if object.GetKind() == "NicClusterPolicy" || object.GetKind() == "NicNodePolicy" {
+					policies++
+					_, found, err := unstructured.NestedFieldNoCopy(object.Object, "spec", "ofedDriver")
+					require.NoError(t, err)
+					if found {
+						ofeds++
+					}
+				}
+			}
+			assert.Positive(t, policies)
+			assert.Equal(t, tc.wantEnable, ofeds > 0)
+
+			// Reuse the resolved config as plain input with its driver choice
+			// omitted: captured evidence must survive another topology override.
+			repeated, err := yaml.Marshal(got)
+			require.NoError(t, err)
+			repeated, err = omitDOCAHostDriverChoice(repeated)
+			require.NoError(t, err)
+			repeatInput := filepath.Join(t.TempDir(), "reused.yaml")
+			require.NoError(t, os.WriteFile(repeatInput, repeated, 0o600))
+			for _, preset := range []string{"GB300-DGX-Station-NVIDIA-GB300", ""} {
+				launcher.options.ForPreset = preset
+				launcher.options.EnableDocaDriver = nil
+				launcher.options.SaveDeploymentFiles = filepath.Join(t.TempDir(), "repeated")
+				err = launcher.executeGeneration(repeatInput)
+				if tc.secondStatus != "" {
+					require.ErrorContains(t, err, "set docaDriver.enable explicitly")
+				} else {
+					require.NoError(t, err)
+					reused, err := config.LoadEffectiveConfig(config.EffectiveConfigPath(launcher.options.SaveDeploymentFiles))
+					require.NoError(t, err)
+					assert.Equal(t, got.DiscoveredDOCAHostScope, reused.DiscoveredDOCAHostScope)
+					assert.Equal(t, tc.noDiscovery, reused.DOCADriver.Enable)
+				}
+			}
+		})
+	}
+}
 
 func TestExecuteGenerationPreservesStructuredTemplateValidationError(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)

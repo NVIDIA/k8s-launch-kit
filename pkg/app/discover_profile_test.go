@@ -493,3 +493,155 @@ func TestDiscoverSavesUncertainSecondaryNetworkEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoverDOCAHostRoundTrip(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		for _, mixed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("refresh=%t/mixed=%t", refresh, mixed), func(t *testing.T) {
+				tmp := t.TempDir()
+				t.Chdir(tmp)
+				inputPath := filepath.Join(tmp, "input.yaml")
+				outputPath := filepath.Join(tmp, "discovered.yaml")
+				// No enable field: refresh must preserve its omission and
+				// unrelated custom keys/comments, not serialize merged defaults.
+				require.NoError(t, os.WriteFile(inputPath, []byte("# retain owner settings\ncustomKey: keep\nprofile: {fabric: ethernet}\n"), 0o600))
+				opts := options.Options{SaveClusterConfig: outputPath, ConfigDir: tmp}
+				if refresh {
+					opts.UserConfig = inputPath
+				}
+				launcher := newProfileDiscoveryLauncher(opts, []config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet", WorkerNodes: []string{"worker-a", "worker-b"}}})
+				output := &testOutput{}
+				launcher.ui = output
+				launcher.plugins[networkoperatorplugin.PluginName].(*fakeProfileDiscoveryPlugin).mutateConfig = func(cfg *config.LaunchKitConfig) {
+					second := config.DOCAHostObservation{Node: "worker-b", Status: config.DOCAHostInstalled, Version: "3.5.0-041000"}
+					if mixed {
+						second.Status, second.Version = config.DOCAHostNotInstalled, ""
+					}
+					cfg.DiscoveredDOCAHost = []config.DOCAHostObservation{
+						{Node: "worker-a", Status: config.DOCAHostInstalled, Version: "3.5.0-041000"}, second,
+					}
+				}
+				require.NoError(t, launcher.discoverClusterConfig())
+				got, err := config.LoadInput(outputPath, launcher.logger)
+				require.NoError(t, err)
+				require.Len(t, got.Config.DiscoveredDOCAHost, 2)
+				if mixed {
+					assert.Contains(t, strings.Join(output.warnings, "\n"), "set docaDriver.enable explicitly")
+					assert.False(t, got.Present.Has("docaDriver.enable"), "unresolved choice must survive save/load")
+					err := launcher.executeGeneration(outputPath)
+					require.ErrorContains(t, err, "set docaDriver.enable explicitly")
+				} else {
+					resolved, err := resolve.Resolve(resolve.Request{Input: got, ApplyHardwareDefaults: true})
+					require.NoError(t, err)
+					assert.False(t, resolved.Config.DOCADriver.Enable)
+				}
+				if refresh {
+					raw, err := os.ReadFile(outputPath)
+					require.NoError(t, err)
+					assert.Contains(t, string(raw), "customKey: keep")
+					assert.Contains(t, string(raw), "# retain owner settings")
+					assert.False(t, got.Present.Has("docaDriver.enable"))
+				}
+			})
+		}
+	}
+}
+
+func TestDiscoverRefreshReplacesMalformedSavedDOCAHostEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, snapshot, expectedError string
+	}{
+		{"missing version", "- {node: worker-a, status: installed}", "has no package version"},
+		{"invalid status", "- {node: worker-a, status: malformed}", "has invalid status"},
+		{"duplicate node", "- {node: worker-a, status: unknown}\n- {node: worker-a, status: not-installed}", "unique, nonempty node names"},
+		{"duplicate scope", "- {node: worker-a, status: installed, version: 3.5.0-1}\ndiscoveredDocaHostScope: {workerNodes: [worker-a, worker-a], membershipKnown: true}", "unique, nonempty workerNodes"},
+		{"empty complete scope", "- {node: worker-a, status: installed, version: 3.5.0-1}\ndiscoveredDocaHostScope: {workerNodes: [], membershipKnown: true}", "requires nonempty workerNodes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			inputPath := filepath.Join(tmp, "input.yaml")
+			outputPath := filepath.Join(tmp, "refreshed.yaml")
+			source := profileDiscoveryBaseConfig + "# retain owner settings\ncustomKey: keep\ndiscoveredDocaHost:\n" + tc.snapshot + "\n"
+			require.NoError(t, os.WriteFile(inputPath, []byte(source), 0o600))
+			launcher := newProfileDiscoveryLauncher(options.Options{UserConfig: inputPath, SaveClusterConfig: outputPath},
+				[]config.ClusterConfig{{Identifier: "group-a", WorkerNodes: []string{"worker-a"}, LinkType: "Ethernet"}})
+			// Generation must still reject invalid snapshots; only the discovery
+			// bootstrap may discard observations that this operation replaces.
+			require.ErrorContains(t, launcher.executeGeneration(inputPath), tc.expectedError)
+			refreshed := []config.DOCAHostObservation{{Node: "worker-a", Status: config.DOCAHostNotInstalled}}
+			probed := false
+			launcher.plugins[networkoperatorplugin.PluginName].(*fakeProfileDiscoveryPlugin).mutateConfig = func(cfg *config.LaunchKitConfig) {
+				probed = true
+				assert.Empty(t, cfg.DiscoveredDOCAHost, "bootstrap must not consume the invalid saved snapshot")
+				assert.Nil(t, cfg.DiscoveredDOCAHostScope)
+				original, err := os.ReadFile(inputPath)
+				require.NoError(t, err)
+				assert.Equal(t, source, string(original), "discarding bootstrap evidence must not mutate the source YAML")
+				cfg.DiscoveredDOCAHost = refreshed
+			}
+			require.NoError(t, launcher.discoverClusterConfig())
+			assert.True(t, probed)
+			got, err := config.LoadInput(outputPath, launcher.logger)
+			require.NoError(t, err)
+			assert.Equal(t, refreshed, got.Config.DiscoveredDOCAHost)
+			assert.Nil(t, got.Config.DiscoveredDOCAHostScope)
+			assert.True(t, got.Config.DOCADriver.Enable, "an explicit true must survive snapshot refresh")
+			assert.True(t, got.Present.Has("docaDriver.enable"))
+			saved, err := os.ReadFile(outputPath)
+			require.NoError(t, err)
+			assert.Contains(t, string(saved), "# retain owner settings\ncustomKey: keep")
+			original, err := os.ReadFile(inputPath)
+			require.NoError(t, err)
+			assert.Equal(t, source, string(original))
+			_, err = resolve.Resolve(resolve.Request{Input: got, ApplyHardwareDefaults: true})
+			require.NoError(t, err, "replacement evidence must pass normal generation validation")
+		})
+	}
+}
+
+func TestDiscoverClearsPreviousHostScopeWhenRefreshingEvidence(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		t.Run(fmt.Sprintf("refresh=%t", refresh), func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Chdir(tmp)
+			input := filepath.Join(tmp, "l8k-config.yaml")
+			output := filepath.Join(tmp, "discovered.yaml")
+			source := `profile: {fabric: ethernet}
+# retain owner setting
+customKey: keep
+discoveredDocaHost:
+  - {node: old-worker, status: installed, version: 3.5.0-1}
+discoveredDocaHostScope: {workerNodes: [old-worker], membershipKnown: true}
+`
+			require.NoError(t, os.WriteFile(input, []byte(source), 0o600))
+			opts := options.Options{SaveClusterConfig: output}
+			if refresh {
+				opts.UserConfig = input
+			}
+			launcher := newProfileDiscoveryLauncher(opts, []config.ClusterConfig{{Identifier: "new-source", WorkerNodes: []string{"new-worker"}, LinkType: "Ethernet"}})
+			launcher.plugins[networkoperatorplugin.PluginName].(*fakeProfileDiscoveryPlugin).mutateConfig = func(cfg *config.LaunchKitConfig) {
+				assert.Nil(t, cfg.DiscoveredDOCAHostScope)
+				assert.Empty(t, cfg.DiscoveredDOCAHost)
+				cfg.DiscoveredDOCAHost = []config.DOCAHostObservation{{Node: "new-worker", Status: config.DOCAHostNotInstalled}}
+			}
+			require.NoError(t, launcher.discoverClusterConfig())
+			got, err := config.LoadInput(output, launcher.logger)
+			require.NoError(t, err)
+			assert.Nil(t, got.Config.DiscoveredDOCAHostScope)
+			selected := config.SelectedDOCAHost(got.Config)
+			require.Len(t, selected, 1)
+			assert.Equal(t, "new-worker", selected[0].Node)
+			assert.Equal(t, config.DOCAHostNotInstalled, selected[0].Status)
+			resolved, err := resolve.Resolve(resolve.Request{Input: got, ApplyHardwareDefaults: true})
+			require.NoError(t, err)
+			assert.True(t, resolved.Config.DOCADriver.Enable)
+			saved, err := os.ReadFile(output)
+			require.NoError(t, err)
+			assert.NotContains(t, string(saved), "old-worker")
+			if refresh {
+				assert.Contains(t, string(saved), "discoveredDocaHostScope: null", "YAML patch must clear the old persisted scope")
+				assert.Contains(t, string(saved), "# retain owner setting\ncustomKey: keep")
+			}
+		})
+	}
+}
