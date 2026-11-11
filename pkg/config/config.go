@@ -210,12 +210,19 @@ func SanitizeIdentifier(s string) string {
 
 func normalizeIdentifier(s string) string {
 	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, " ", "-")
+	// Map non-alphanumerics to '-' so the identifier is a valid RFC 1123 name
+	// (it is used directly as metadata.name for CRs like NicNodePolicy).
+	s = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '-'
+	}, s)
 	segments := strings.Split(s, "-")
 	filtered := segments[:0]
 	for _, segment := range segments {
 		switch segment {
-		case "nvidia":
+		case "", "nvidia": // drop empties (collapse/trim hyphens) and vendor token
 			continue
 		case "thinksystem":
 			segment = "ts"
