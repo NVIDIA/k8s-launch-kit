@@ -200,6 +200,22 @@ func TestSecondaryNetworkDirectOpenShiftGenerationRejectsManagedOwnership(t *tes
 	require.ErrorContains(t, err, "cannot be managed on OpenShift")
 }
 
+func TestSecondaryNetworkOpenShiftDeployRejectsManagedOwnership(t *testing.T) {
+	// OpenShift's platform installers are invisible to the Kubernetes heuristics,
+	// so only the flavor-aware guard stops a managed section at deploy time.
+	scheme := runtime.NewScheme()
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	ctx := ui.WithOutput(context.Background(), ui.NewSilent())
+	for _, component := range []string{"multus", "cniPlugins"} {
+		ncp := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "mellanox.com/v1alpha1", "kind": "NicClusterPolicy", "metadata": map[string]interface{}{"name": "policy"}, "spec": map[string]interface{}{"secondaryNetwork": map[string]interface{}{component: map[string]interface{}{"image": "installer"}}}}}
+		require.NoError(t, checkSecondaryNetworkDeployment(ctx, c, ncp, &config.LaunchKitConfig{}), "Kubernetes permits installing when no installer is detected")
+		err := checkSecondaryNetworkDeployment(ctx, c, ncp, &config.LaunchKitConfig{Flavor: config.FlavorOCP})
+		require.ErrorContains(t, err, component+" must be externally managed on OpenShift")
+	}
+}
+
 func TestSecondaryNetworkOverwriteRefusesLegacyPolicyTeardownBeforeHelm(t *testing.T) {
 	for _, component := range []string{"multus", "cniPlugins"} {
 		for _, dryRun := range []bool{false, true} {
