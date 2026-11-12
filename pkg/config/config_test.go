@@ -59,6 +59,14 @@ func TestGeneratedGroupIdentifierUsesBalancedComponents(t *testing.T) {
 	))
 }
 
+func TestGeneratedGroupIdentifierIsRFC1123(t *testing.T) {
+	// Underscores in machine types (e.g. HG635N_V2) must not reach the identifier.
+	identifier := GeneratedGroupIdentifier("HG635N_V2", "NVIDIA-GB300")
+	assert.Equal(t, "hg635n-v2-gb300", identifier)
+	assert.NotContains(t, identifier, "_")
+	assert.Regexp(t, `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, identifier)
+}
+
 func TestGeneratedGroupIdentifierReallocatesUnusedComponentBudget(t *testing.T) {
 	t.Run("short machine type", func(t *testing.T) {
 		identifier := GeneratedGroupIdentifier(
