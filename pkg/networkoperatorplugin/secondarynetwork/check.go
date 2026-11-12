@@ -12,6 +12,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -116,6 +117,27 @@ func CheckPolicy(ctx context.Context, c client.Reader, desired *unstructured.Uns
 		checks = append(checks, check)
 	}
 	return checks, nil
+}
+
+// openShiftInstallers are the Cluster Network Operator DaemonSets per component.
+var openShiftInstallers = map[string]string{Multus: "multus", CNIPlugins: "multus-additional-cni-plugins"}
+
+// openShiftInstaller returns the component's DaemonSet only when it is
+// controlled by the OpenShift network operator; a missing or foreign
+// DaemonSet returns nil so health stays unverified.
+func openShiftInstaller(ctx context.Context, c client.Reader, component string) (*appsv1.DaemonSet, error) {
+	ds := &appsv1.DaemonSet{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: "openshift-multus", Name: openShiftInstallers[component]}, ds); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	owner := metav1.GetControllerOf(ds)
+	if owner == nil || owner.APIVersion != "operator.openshift.io/v1" || owner.Kind != "Network" || owner.Name != "cluster" {
+		return nil, nil
+	}
+	return ds, nil
 }
 
 func checkHealth(ctx context.Context, c client.Reader, component string, ds appsv1.DaemonSet, workers []string) (Check, error) {
