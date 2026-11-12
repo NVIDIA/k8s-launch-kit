@@ -85,6 +85,46 @@ var _ = ginkgo.Describe("IPPool cluster address collision checks", func() {
 		gomega.Expect(checkLiveIPPoolCIDRs(ctx, newClient(node, service), collisionBundle("192.168.0.0/22"), cfg)).To(gomega.Succeed())
 		gomega.Expect(fmt.Sprint(output.Messages())).To(gomega.ContainSubstring("Node worker-a: pod range unknown"))
 	})
+	ginkgo.Describe("OpenShift cluster network", func() {
+		openShiftNetwork := func(cidrs ...string) *unstructured.Unstructured {
+			entries := []interface{}{}
+			for _, cidr := range cidrs {
+				entries = append(entries, map[string]interface{}{"cidr": cidr, "hostPrefix": int64(23)})
+			}
+			u := &unstructured.Unstructured{Object: map[string]interface{}{"spec": map[string]interface{}{"clusterNetwork": entries}}}
+			u.SetAPIVersion("config.openshift.io/v1")
+			u.SetKind("Network")
+			u.SetName("cluster")
+			return u
+		}
+		newOpenShiftClient := func(objects ...client.Object) client.WithWatch {
+			s := runtime.NewScheme()
+			gomega.Expect(corev1.AddToScheme(s)).To(gomega.Succeed())
+			gomega.Expect(networkingv1.AddToScheme(s)).To(gomega.Succeed())
+			s.AddKnownTypeWithName(schema.GroupVersionKind{Group: "config.openshift.io", Version: "v1", Kind: "Network"}, &unstructured.Unstructured{})
+			return fake.NewClientBuilder().WithScheme(s).WithObjects(objects...).Build()
+		}
+		ginkgo.BeforeEach(func() { node.Spec.PodCIDRs = nil })
+		ginkgo.It("reads live ranges each run, so an expanded network rejects a newly overlapping pool", func() {
+			pool := collisionBundle("10.129.0.0/24")
+			gomega.Expect(checkLiveIPPoolCIDRs(ctx, newOpenShiftClient(node, service, openShiftNetwork("10.128.0.0/19")), pool, cfg)).To(gomega.Succeed())
+			gomega.Expect(fmt.Sprint(output.Messages())).NotTo(gomega.ContainSubstring("pod range unknown"))
+			gomega.Expect(checkLiveIPPoolCIDRs(ctx, newOpenShiftClient(node, service, openShiftNetwork("10.128.0.0/14")), pool, cfg)).To(gomega.MatchError(gomega.ContainSubstring("OpenShift Network cluster spec.clusterNetwork[0]")))
+			gomega.Expect(cfg.Cluster).To(gomega.BeNil())
+		})
+		ginkgo.It("falls back to Node pod ranges when the Network lists no ranges", func() {
+			gomega.Expect(checkLiveIPPoolCIDRs(ctx, newOpenShiftClient(node, service, openShiftNetwork()), collisionBundle("10.129.0.0/24"), cfg)).To(gomega.Succeed())
+			gomega.Expect(fmt.Sprint(output.Messages())).To(gomega.ContainSubstring("Node worker-a: pod range unknown"))
+		})
+		ginkgo.It("rejects malformed ranges and does not downgrade failed reads", func() {
+			gomega.Expect(checkLiveIPPoolCIDRs(ctx, newOpenShiftClient(node, service, openShiftNetwork("broken")), collisionBundle("10.129.0.0/24"), cfg)).To(gomega.MatchError(gomega.ContainSubstring("invalid CIDR")))
+			denied := apierrors.NewForbidden(schema.GroupResource{Group: "config.openshift.io", Resource: "networks"}, "cluster", fmt.Errorf("denied"))
+			c := interceptor.NewClient(newOpenShiftClient(node, service), interceptor.Funcs{Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+				return denied
+			}})
+			gomega.Expect(checkLiveIPPoolCIDRs(ctx, c, collisionBundle("10.129.0.0/24"), cfg)).To(gomega.MatchError(gomega.ContainSubstring("denied")))
+		})
+	})
 	ginkgo.It("treats overrides as authoritative without mutating them or the bundle", func() {
 		cfg.Cluster = &config.ClusterNetworkConfig{PodCIDRs: []string{"192.0.2.0/24"}, ServiceCIDRs: []string{"198.51.100.0/24"}}
 		b := collisionBundle("10.0.0.0/8")
@@ -93,6 +133,9 @@ var _ = ginkgo.Describe("IPPool cluster address collision checks", func() {
 			_, isNode := list.(*corev1.NodeList)
 			gomega.Expect(isNode).To(gomega.BeTrue(), "service overrides must avoid the ServiceCIDR read")
 			return c.List(ctx, list, opts...)
+		}, Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			ginkgo.Fail("pod overrides must avoid the OpenShift Network read")
+			return nil
 		}})
 		gomega.Expect(checkLiveIPPoolCIDRs(ctx, c, b, cfg)).To(gomega.Succeed())
 		gomega.Expect(cfg.Cluster.PodCIDRs).To(gomega.Equal([]string{"192.0.2.0/24"}))
