@@ -97,7 +97,8 @@ ambiguous inventory SHALL fail rather than guessing a source association.
 Generation SHALL check the validated artifact snapshot's NV-IPAM IPPool subnets
 against explicit authoritative cluster pod/service CIDRs before output replacement.
 Deployment SHALL check that snapshot against configured overrides and fresh
-all-cluster Node pod CIDRs, InternalIPs and ServiceCIDRs before managed effects,
+all-cluster pod ranges (OpenShift Network `spec.clusterNetwork` when served,
+else Node pod CIDRs), InternalIPs and ServiceCIDRs before managed effects,
 including external Helm, overwrite and dry-run. Each supplied override replaces
 only its own address class. Observed ranges SHALL NOT become persisted overrides.
 
@@ -106,9 +107,15 @@ only its own address class. Observed ranges SHALL NOT become persisted overrides
 - **WHEN** an IPPool overlaps a known pod/service range or contains a Node InternalIP
 - **THEN** deployment fails before Helm, remediation or apply, naming the source resource and conflict.
 
+#### Scenario: OpenShift cluster network ranges
+
+- **WHEN** the config.openshift.io/v1 Network `cluster` serves `spec.clusterNetwork` ranges and no pod override exists
+- **THEN** deployment checks those ranges instead of Node pod CIDRs, independent of the configured flavor.
+- **AND** an absent API/object or empty list falls back to Node pod CIDRs; denied reads and malformed ranges fail.
+
 #### Scenario: Incomplete cluster address evidence
 
-- **WHEN** a Node has no pod range and no authoritative override exists
+- **WHEN** no pod range is available from the OpenShift Network or a Node, and no authoritative override exists
 - **THEN** deployment warns by Node name while checking all available ranges.
 - **AND** absent GA and beta ServiceCIDR APIs warn; denied reads, malformed ranges and an empty served API fail unless authoritative service ranges bypass that API read.
 
