@@ -442,7 +442,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 
 	// Networking evidence is optional inventory; inspection failures remain
 	// explicit so generation cannot turn uncertainty into installation consent.
-	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, c)
+	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, c, cfg.Flavor)
 	if err != nil {
 		return err
 	}

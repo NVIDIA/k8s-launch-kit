@@ -131,9 +131,29 @@ func GetPolicy(ctx context.Context, c client.Reader, name string) (*unstructured
 
 // DiscoverEvidence saves optional inspection failures as uncertainty, allowing
 // hardware discovery to complete. Cancellation is always an operation error.
-func DiscoverEvidence(ctx context.Context, c client.Reader) (*config.SecondaryNetworkObservation, error) {
+// On OpenShift, undetected components are matched to the network operator's
+// installers, which the generic image/entrypoint heuristics do not recognize.
+func DiscoverEvidence(ctx context.Context, c client.Reader, flavor ...string) (*config.SecondaryNetworkObservation, error) {
 	inspection, err := Inspect(ctx, c)
 	if err == nil {
+		if len(flavor) > 0 && flavor[0] == config.FlavorOCP {
+			for component, observation := range map[string]*config.ComponentObservation{Multus: &inspection.Observation.Multus, CNIPlugins: &inspection.Observation.CNIPlugins} {
+				if observation.Status != config.InstallerNotDetected {
+					continue
+				}
+				ds, err := openShiftInstaller(ctx, c, component)
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				if err == nil && ds != nil {
+					*observation = config.ComponentObservation{
+						Status:     config.InstallerExternal,
+						Reason:     "managed by the OpenShift network operator",
+						Installers: []config.InstallerReference{{Namespace: ds.Namespace, Name: ds.Name, UID: string(ds.UID)}},
+					}
+				}
+			}
+		}
 		return &inspection.Observation, nil
 	}
 	if ctx.Err() != nil {
