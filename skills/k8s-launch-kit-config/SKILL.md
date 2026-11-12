@@ -259,8 +259,11 @@ runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. 
 of all applicable IPv4/IPv6 ranges. Omitted/null means discover at deploy;
 explicit empty lists are invalid. Each override replaces its class of discovery.
 Generation checks actual IPPools against supplied ranges without API access.
-Deploy checks all Node InternalIPs and, absent overrides, Node pod ranges and
-ServiceCIDRs before any writes. Missing pod ranges warn by Node name; missing
+Deploy checks all Node InternalIPs and, absent overrides, pod ranges and
+ServiceCIDRs before any writes. Pod ranges come from the OpenShift Network
+`spec.clusterNetwork` when that API serves ranges, otherwise from Node pod
+ranges; the probe is capability-based, not gated by flavor. Denied reads and
+malformed Network ranges fail. Missing pod ranges warn by Node name; missing
 ServiceCIDR APIs warn, but denied/failed reads and empty served APIs fail.
 Use authoritative pod ranges for CNIs whose IPAM differs from Node podCIDRs.
 See [configuration](../../docs/reference/configuration.md#cluster-address-overrides)

@@ -418,6 +418,14 @@ empty or populate ranges different from actual pod allocation. Use `podCIDRs`
 for authoritative CNI ranges. Node InternalIPs are checked even with overrides;
 they identify individual addresses, not the node network's full subnet.
 
+On OpenShift, where OVN-Kubernetes leaves Node pod ranges empty, deployment
+first reads `spec.clusterNetwork` from the `config.openshift.io/v1` Network
+`cluster` and uses those ranges instead of Node pod ranges. The lookup happens on
+every run, so an expanded cluster network is checked without rediscovery. If the
+API or object is absent, or it lists no ranges, deployment falls back to Node pod
+ranges. Other read failures, including RBAC denial, and malformed ranges stop
+deployment. A supplied `podCIDRs` skips this lookup.
+
 Unless `serviceCIDRs` is supplied, deployment lists all ServiceCIDR objects,
 using `networking.k8s.io/v1` then `v1beta1` only if the GA API is absent. Failed
 reads (including RBAC denial), malformed ranges and an empty served API stop

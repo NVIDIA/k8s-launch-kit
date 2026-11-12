@@ -144,9 +144,20 @@ func checkLiveIPPoolCIDRs(ctx context.Context, c client.Client, artifacts *bundl
 	if len(nodes.Items) == 0 {
 		return fmt.Errorf("cannot inspect cluster addresses: Node list is empty")
 	}
+	// Node pod ranges are empty under OVN-Kubernetes; prefer OpenShift's
+	// cluster-wide ranges when the API is served.
+	nodePodRanges := overrides.PodCIDRs == nil
+	if nodePodRanges {
+		pods, err := openShiftPodCIDRs(ctx, c)
+		if err != nil {
+			return err
+		}
+		ranges = append(ranges, pods...)
+		nodePodRanges = len(pods) == 0
+	}
 	sort.Slice(nodes.Items, func(i, j int) bool { return nodes.Items[i].Name < nodes.Items[j].Name })
 	for _, node := range nodes.Items {
-		if overrides.PodCIDRs == nil {
+		if nodePodRanges {
 			cidrs := node.Spec.PodCIDRs
 			if len(cidrs) == 0 && node.Spec.PodCIDR != "" {
 				cidrs = []string{node.Spec.PodCIDR}
@@ -180,6 +191,36 @@ func checkLiveIPPoolCIDRs(ctx context.Context, c client.Client, artifacts *bundl
 		}
 	}
 	return checkCIDROverlaps(pools, ranges)
+}
+
+// openShiftPodCIDRs reads spec.clusterNetwork from the config.openshift.io
+// Network "cluster". It returns no ranges when the API or object is absent;
+// other read failures and malformed ranges are errors.
+func openShiftPodCIDRs(ctx context.Context, c client.Client) ([]namedCIDR, error) {
+	network := &unstructured.Unstructured{}
+	network.SetAPIVersion("config.openshift.io/v1")
+	network.SetKind("Network")
+	if err := c.Get(ctx, client.ObjectKey{Name: "cluster"}, network); err != nil {
+		if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read OpenShift Network cluster: %w", err)
+	}
+	entries, _, err := unstructured.NestedSlice(network.Object, "spec", "clusterNetwork")
+	if err != nil {
+		return nil, fmt.Errorf("OpenShift Network cluster: invalid spec.clusterNetwork: %w", err)
+	}
+	var ranges []namedCIDR
+	for i, entry := range entries {
+		m, _ := entry.(map[string]interface{})
+		value, _ := m["cidr"].(string)
+		r, err := parseNamedCIDR(value, fmt.Sprintf("OpenShift Network cluster spec.clusterNetwork[%d]", i))
+		if err != nil {
+			return nil, err
+		}
+		ranges = append(ranges, r)
+	}
+	return ranges, nil
 }
 
 // Prefer GA, falling back to beta only on verified API absence. Denied reads,
