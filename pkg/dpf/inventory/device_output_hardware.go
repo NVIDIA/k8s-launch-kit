@@ -135,9 +135,10 @@ func runtimeFromOutput(w *RuntimeOutput, role string, issues []DeviceIssue) (*Ru
 	for _, issue := range issues {
 		if strings.HasPrefix(issue.Field, "runtime.") && !strings.HasPrefix(issue.Field, "runtime.hardware.") {
 			key := strings.TrimPrefix(issue.Field, "runtime.")
-			if key == "boardProduct" {
+			switch key {
+			case "boardProduct":
 				key = "board-product"
-			} else if key == "mftVersion" {
+			case "mftVersion":
 				key = "mft-version"
 			}
 			r.Observations[key] = issueObservation(issue)

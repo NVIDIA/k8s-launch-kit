@@ -27,28 +27,34 @@ func firmwareToOutput(firmware []Firmware, observations map[string]Observation, 
 	for _, slot := range firmwareOutputSlots(w) {
 		field := "firmware." + slot.component
 		addFirmwareIssue(issues, field, observations[field])
+		addFirmwareIssue(issues, field+".activation", observations[field+".activation"])
+		activationConflict := observations[field+".activation"].ReasonCode == "ACTIVATION_CONFLICT"
+		for _, f := range firmware {
+			activationConflict = activationConflict || f.Component == slot.component && !usableFirmwareVersion(f.RawVersion) && f.ActivationReasonCode == "ACTIVATION_CONFLICT"
+		}
 		for _, f := range firmware {
 			if f.Component != slot.component {
 				continue
 			}
-			if f.RawVersion == "" && (f.State != "known" || f.ReasonCode != "") {
+			usable := usableFirmwareVersion(f.RawVersion)
+			if !usable && (f.State != "known" || f.ReasonCode != "") {
 				code := f.ReasonCode
-				if code == "" && f.State == "conflict" {
+				if f.State == "conflict" {
 					code = "FIRMWARE_VERSION_CONFLICT"
 				}
 				addFirmwareIssue(issues, field, Observation{State: "unknown", ReasonCode: code, Message: f.Message})
 			}
-			if f.RawVersion == "" && f.ActivationReasonCode != "" {
+			if !usable && f.ActivationReasonCode != "" {
 				addFirmwareIssue(issues, field+".activation", Observation{State: "unknown", ReasonCode: f.ActivationReasonCode, Message: f.ActivationMessage})
 			}
-			if f.RawVersion == "" {
+			if !usable {
+				if f.RawVersion != "" || f.State == "known" {
+					addFirmwareIssue(issues, field, Observation{State: "unknown", ReasonCode: "VERSION_INVALID", Message: "The firmware version is blank or contains unsupported characters."})
+				}
 				continue
 			}
-			if !safeFact(f.RawVersion) {
-				return nil, fmt.Errorf("%s has invalid firmware version", field)
-			}
 			activation := f.Activation
-			if activation == "unknown" {
+			if activation == "unknown" || activationConflict || f.ActivationReasonCode == "ACTIVATION_CONFLICT" {
 				activation = ""
 			}
 			if activation != "" && activation != "running" && activation != "staged" {
@@ -67,16 +73,16 @@ func firmwareToOutput(firmware []Firmware, observations map[string]Observation, 
 			return strings.Compare(a.Version, b.Version)
 		})
 		for _, f := range firmware {
-			if f.Component != slot.component || f.RawVersion == "" {
+			if f.Component != slot.component || !usableFirmwareVersion(f.RawVersion) {
 				continue
 			}
 			activation := f.Activation
-			if activation == "unknown" {
+			if activation == "unknown" || activationConflict || f.ActivationReasonCode == "ACTIVATION_CONFLICT" {
 				activation = ""
 			}
 			index := slices.Index(*slot.versions, FirmwareVersionOutput{Version: f.RawVersion, Activation: activation})
 			entryField := fmt.Sprintf("%s[%d]", field, index)
-			if f.State == "conflict" {
+			if f.State == "conflict" || f.ReasonCode == "FIRMWARE_VERSION_CONFLICT" {
 				addFirmwareIssue(issues, field, Observation{State: "unknown", ReasonCode: "FIRMWARE_VERSION_CONFLICT", Message: f.Message})
 			} else if f.State != "known" || f.ReasonCode != "" {
 				addFirmwareIssue(issues, entryField, Observation{State: "unknown", ReasonCode: f.ReasonCode, Message: f.Message})
@@ -96,6 +102,9 @@ func firmwareFromOutput(w *FirmwareOutput, issues []DeviceIssue) ([]Firmware, er
 	if w == nil {
 		w = &FirmwareOutput{}
 	}
+	if err := validateFirmwareIssues(w, issues); err != nil {
+		return nil, err
+	}
 	var firmware []Firmware
 	for _, slot := range firmwareOutputSlots(w) {
 		field := "firmware." + slot.component
@@ -107,7 +116,7 @@ func firmwareFromOutput(w *FirmwareOutput, issues []DeviceIssue) ([]Firmware, er
 			}
 		}
 		for index, version := range *slot.versions {
-			if !safeFact(version.Version) || version.Activation != "" && version.Activation != "running" && version.Activation != "staged" {
+			if !usableFirmwareVersion(version.Version) || version.Activation != "" && version.Activation != "running" && version.Activation != "staged" {
 				return nil, fmt.Errorf("%s requires a measured version and valid activation", field)
 			}
 			f := Firmware{Component: slot.component, State: "known", RawVersion: version.Version, Activation: version.Activation}
@@ -131,6 +140,9 @@ func firmwareFromOutput(w *FirmwareOutput, issues []DeviceIssue) ([]Firmware, er
 					}
 					f.ActivationReasonCode, f.ActivationMessage = issue.Code, issue.Message
 				}
+				if issue.Field == field+".activation" && issue.Code == "ACTIVATION_CONFLICT" {
+					f.Activation, f.ActivationReasonCode, f.ActivationMessage = "unknown", issue.Code, issue.Message
+				}
 			}
 			firmware = append(firmware, f)
 		}
@@ -153,6 +165,15 @@ func firmwareFromOutput(w *FirmwareOutput, issues []DeviceIssue) ([]Firmware, er
 		}
 	}
 	return firmware, nil
+}
+
+// Raw versions are compared without normalization by software checks. Retain
+// safe surrounding whitespace: trimming could turn an uncomparable value into
+// compatibility evidence. Unusable optional measurements remain diagnostics.
+func usableFirmwareVersion(version string) bool {
+	return len(version) <= 1024 && strings.TrimSpace(version) != "" && !strings.ContainsFunc(version, func(r rune) bool {
+		return r < ' ' || r == 0x7f
+	})
 }
 
 // Routine absent/unknown component properties are represented by absent typed

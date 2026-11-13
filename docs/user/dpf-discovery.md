@@ -299,7 +299,8 @@ no eligible `psid` value. These optional gaps preserve
 physical inventory and discovery's existing acceptance policy. A downstream
 consumer requiring PSID must require a single observed value associated with the
 selected device and reject contradictory or invalid readings across its sources;
-it must not turn an unavailable Redfish value into success by substituting SSH.
+an absent or unsupported Redfish PSID may be supplied by an independently verified
+SSH measurement, but a rejected or conflicting Redfish PSID must not be bypassed.
 The PSID fact and eligibility contribute to the inventory fingerprint and refresh
 diff. Release qualification and administrator authorization remain separate checks.
 
@@ -329,7 +330,7 @@ identity rechecks, cleanup, host/card matching or output publication.
 `RUNNING` precedes the operation; `PASS` follows a successful check or completed
 read; `FAIL` identifies a failed operation. `UNAVAILABLE` identifies an optional
 fact that could not be measured. Optional-read summaries count unavailable facts;
-the saved detailed report retains each reason. Completing a read does not mean
+the saved detailed report retains actionable fact failures and required check reasons. Completing a read does not mean
 all optional facts were available. Concurrent endpoints can interleave whole
 status lines. `--quiet` suppresses progress; it does not change acceptance.
 
