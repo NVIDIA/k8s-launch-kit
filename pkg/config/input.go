@@ -289,6 +289,9 @@ func NormalizeResolvedConfigWithPresence(cfg *LaunchKitConfig, source string, pr
 	if cfg == nil {
 		return fmt.Errorf("config must not be nil")
 	}
+	if err := ValidateDOCAHostObservations(cfg); err != nil {
+		return err
+	}
 	if cfg.Profile != nil && cfg.Profile.SpectrumX != nil {
 		if err := NormalizeSpectrumXProfileConfig(cfg.Profile.SpectrumX); err != nil {
 			return fmt.Errorf("invalid spectrum-x profile config in %s: %w", displaySource(source), err)
@@ -300,10 +303,16 @@ func NormalizeResolvedConfigWithPresence(cfg *LaunchKitConfig, source string, pr
 	if err := validateDOCADriverConfig(cfg.DOCADriver); err != nil {
 		return fmt.Errorf("invalid docaDriver config in %s: %w", displaySource(source), err)
 	}
+	if err := ValidateClusterNetworkConfig(cfg.Cluster); err != nil {
+		return fmt.Errorf("invalid cluster network config in %s: %w", displaySource(source), err)
+	}
 	ApplyNvIpamDefaultsWithPresence(cfg, present)
 	if cfg.NvIpam != nil && cfg.NvIpam.PerNodeBlockSize == 0 && present.Has("nvIpam.perNodeBlockSize") {
 		return fmt.Errorf("invalid nvIpam config in %s: nvIpam.perNodeBlockSize must be > 0, got 0",
 			displaySource(source))
+	}
+	if err := ValidateNvIpamStartingGateway(cfg.NvIpam, present); err != nil {
+		return fmt.Errorf("invalid nvIpam config in %s: %w", displaySource(source), err)
 	}
 	if err := validateNvIpam(cfg.NvIpam); err != nil {
 		return fmt.Errorf("invalid nvIpam config in %s: %w", displaySource(source), err)

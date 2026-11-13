@@ -27,6 +27,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,6 +40,7 @@ import (
 type Check string
 
 const (
+	CheckGateway         Check = "gateway"
 	CheckICMP            Check = "icmp"
 	CheckRPing           Check = "rping"
 	CheckIBWriteBW       Check = "ib_write_bw"
@@ -49,6 +51,9 @@ const (
 // fills these from the corresponding flags.
 type Options struct {
 	OpenShift bool
+	// IPAMNamespace is the effective Network Operator/IPAM pool namespace.
+	// Required for gateway checks on NV-IPAM IPPool attachments.
+	IPAMNamespace string
 	// ManifestDir is the deployment directory the example DaemonSet
 	// manifests live under (validate uses the same dir it just
 	// validated).
@@ -66,7 +71,7 @@ type Options struct {
 	// cross-rail expectations.
 	Routing string
 	// Checks selects which connectivity test families to run. Nil means
-	// the default set (icmp + rping + ib_write_bw); an empty slice means skip all
+	// the default set (gateway + icmp + rping + ib_write_bw); an empty slice means skip all
 	// connectivity tests without applying the example DaemonSets.
 	Checks []Check
 	// RPingIterations maps to `rping -C`. 0 defaults to 5, matching the
@@ -97,11 +102,11 @@ type MatrixResult struct {
 	// one per merged group.
 	DaemonSets []DaemonSetReport
 	// PingResults is the flat list of every executed connectivity test
-	// (icmp + rping + host-memory ib_write_bw + GPUDirect DMA-BUF,
+	// (gateway + icmp + rping + host-memory ib_write_bw + GPUDirect DMA-BUF,
 	// same-rail + cross-rail).
 	PingResults []PingResult
-	// Skipped is non-nil when fewer than 2 schedulable test pods
-	// were available across all DaemonSets. The matrix is treated
+	// Skipped is non-nil when no selected checks can run (for example,
+	// too few pods for pair checks with gateway disabled). The matrix is treated
 	// as a soft skip (exit 0, reason rendered).
 	Skipped *MatrixSkip
 	// Summary numbers for the JSON output.
@@ -115,6 +120,7 @@ type MatrixSummary struct {
 	TotalTests int
 	Passed     int
 	Failed     int
+	Skipped    int `json:"Skipped,omitempty"`
 }
 
 // DaemonSetReport captures one DS's rollout state and the test pods it
@@ -208,6 +214,7 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 
 	uiOutput.Info("Loading example DaemonSet manifests from %s", opts.ManifestDir)
 
+	hasGateway := checksContain(opts.Checks, CheckGateway)
 	hasICMP := checksContain(opts.Checks, CheckICMP)
 	hasRDMA := checksContain(opts.Checks, CheckRPing) || checksContain(opts.Checks, CheckIBWriteBW) || checksContain(opts.Checks, CheckGPUDirectDMABuf)
 	loadStarted := time.Now()
@@ -223,7 +230,7 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 			Skipped: &MatrixSkip{Reason: "no example DaemonSet manifests found under " + opts.ManifestDir},
 		}, nil
 	}
-	if hasICMP || hasRDMA {
+	if hasGateway || hasICMP || hasRDMA {
 		for _, ref := range refs {
 			if ref.ICMPContainer == "" {
 				return nil, fmt.Errorf("example DaemonSet %s/%s from %s does not declare the %q ICMP/route helper container",
@@ -436,8 +443,8 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 	testPods := buildMatrixPods(setupCtx, allPods, hasRDMA)
 
 	plan := PlanWithOptions(testPods, opts.Mode, opts.Routing)
-	if plan.Skip != nil {
-		if opts.OpenShift {
+	if plan.Skip != nil && (!hasGateway || len(plan.Gateway) == 0) {
+		if opts.OpenShift && (!hasGateway || len(opts.Checks) != 1) {
 			return result, fmt.Errorf("OpenShift two-node connectivity requires at least two usable endpoints: %s", plan.Skip.Reason)
 		}
 		uiOutput.Warning("Matrix skipped: %s", plan.Skip.Reason)
@@ -481,6 +488,10 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 		"gpuDirectSameRail", len(plan.GPUDirectDMABufSameRail),
 		"gpuDirectCrossRail", len(plan.GPUDirectDMABufCrossRail))
 	plannedTests := 0
+	if hasGateway {
+		uiOutput.Info("Plan: %d pod/rail gateway checks", len(plan.Gateway))
+		plannedTests += len(plan.Gateway)
+	}
 	if checksContain(opts.Checks, CheckICMP) {
 		uiOutput.Info("Plan: %d same-rail ICMP + %d cross-rail ICMP",
 			len(plan.ICMPSameRail), len(plan.ICMPCrossRail))
@@ -535,6 +546,20 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 		run   func(t PingTest) PingResult
 	}{
 		{
+			check: CheckGateway,
+			label: "Gateway ICMP reachability",
+			tests: testsForCheck(plan, CheckGateway),
+			run: func(t PingTest) PingResult {
+				target, err := configuredGateway(executionCtx, c, t, opts.IPAMNamespace)
+				if err != nil {
+					r := initResult(t)
+					r.Err, r.GatewayEvidence = err, target.Evidence
+					return r
+				}
+				return runGateway(executionCtx, restConfig, t.SrcNamespace, t.SrcPod, gatewayContainer(allPods, t), t, kubeclient.ExecInPod, target)
+			},
+		},
+		{
 			check: CheckRPing,
 			label: "RDMA ping (rping)",
 			tests: testsForCheck(plan, CheckRPing),
@@ -572,7 +597,9 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 		stageStarted := time.Now()
 		logger.V(1).Info("connectivity stage started",
 			"stage", stage.check, "tests", len(tests), "remainingTimeout", remainingTimeout(executionCtx))
-		tests = checkSourceRoutes(executionCtx, restConfig, namespaceByPod, icmpContainerByPod, tests, routes)
+		if stage.check != CheckGateway {
+			tests = checkSourceRoutes(executionCtx, restConfig, namespaceByPod, icmpContainerByPod, tests, routes)
+		}
 		stageResults := make([]PingResult, 0, len(tests))
 		switch stage.check {
 		case CheckRPing:
@@ -586,7 +613,9 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 				testStarted := time.Now()
 				testLogger(t).V(1).Info("connectivity test started", "index", i+1, "total", len(tests))
 				var testResult PingResult
-				if namespaceByPod[t.SrcPod] == "" || namespaceByPod[t.DstPod] == "" || icmpContainerByPod[t.SrcPod] == "" {
+				if stage.check == CheckGateway {
+					testResult = stage.run(t)
+				} else if namespaceByPod[t.SrcPod] == "" || namespaceByPod[t.DstPod] == "" || icmpContainerByPod[t.SrcPod] == "" {
 					testResult = PingResult{
 						Test: t,
 						Err:  fmt.Errorf("no namespace/container lookup for pod pair (%s, %s)", t.SrcPod, t.DstPod),
@@ -616,7 +645,9 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 	// Summary.
 	for _, r := range result.PingResults {
 		result.Summary.TotalTests++
-		if r.OK {
+		if r.SkipReason != "" {
+			result.Summary.Skipped++
+		} else if r.OK {
 			result.Summary.Passed++
 		} else {
 			result.Summary.Failed++
@@ -637,7 +668,7 @@ func RunMatrixBundle(ctx context.Context, c client.Client, restConfig *rest.Conf
 
 func normalizeChecks(checks []Check) []Check {
 	if checks == nil {
-		return []Check{CheckICMP, CheckRPing, CheckIBWriteBW}
+		return []Check{CheckGateway, CheckICMP, CheckRPing, CheckIBWriteBW}
 	}
 	out := make([]Check, 0, len(checks))
 	seen := map[Check]bool{}
@@ -727,6 +758,9 @@ func checkSourceRoutes(ctx context.Context, restConfig *rest.Config, namespaceBy
 
 func resultCounts(results []PingResult) (passed, failed int) {
 	for _, result := range results {
+		if result.SkipReason != "" {
+			continue
+		}
 		if result.OK {
 			passed++
 		} else {
@@ -783,11 +817,14 @@ func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
 		return TestPod{}, nil, err
 	}
 	tp := TestPod{
-		Name:             p.Name,
-		Namespace:        p.Namespace,
-		Node:             p.Spec.NodeName,
-		IPsByRail:        map[string]string{},
-		InterfacesByRail: map[string]string{},
+		Name:                p.Name,
+		Namespace:           p.Namespace,
+		Node:                p.Spec.NodeName,
+		IPsByRail:           map[string]string{},
+		InterfacesByRail:    map[string]string{},
+		NetworksByRail:      map[string]string{},
+		GatewayErrorsByRail: map[string]error{},
+		networkSelection:    p.Annotations[networkSelectionAnnotation],
 	}
 	ifaceByRail := map[string]string{}
 	for _, n := range SecondaryNetworks(nets) {
@@ -803,9 +840,11 @@ func buildTestPod(p *corev1.Pod) (TestPod, map[string]string, error) {
 		// rail name — multus reports duplicates only when a pod
 		// attaches twice; keep the first.
 		if _, exists := tp.IPsByRail[rail]; exists {
+			tp.GatewayErrorsByRail[rail] = fmt.Errorf("ambiguous secondary attachments for rail %q", rail)
 			continue
 		}
 		tp.IPsByRail[rail] = ip
+		tp.NetworksByRail[rail] = n.Name
 		tp.RailOrder = append(tp.RailOrder, rail)
 		if n.Interface != "" {
 			ifaceByRail[rail] = n.Interface
@@ -859,7 +898,10 @@ func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 	s := result.Summary
 	uiOutput.Info("Matrix complete: %d/%d passed, %d failed",
 		s.Passed, s.TotalTests, s.Failed)
-	if s.Failed == 0 && s.TotalTests > 0 {
+	if s.Skipped > 0 {
+		uiOutput.Info("%d gateway check(s) skipped: no configured gateway", s.Skipped)
+	}
+	if s.Failed == 0 && s.Passed > 0 && s.Skipped == 0 {
 		uiOutput.Success("All %d connectivity test(s) passed", s.TotalTests)
 		return
 	}
@@ -869,7 +911,7 @@ func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 	const maxFailures = 5
 	var failures []PingResult
 	for _, r := range result.PingResults {
-		if !r.OK {
+		if !r.OK && r.SkipReason == "" {
 			failures = append(failures, r)
 		}
 	}
@@ -880,6 +922,9 @@ func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 		}
 		src := failureLabel(f.Test.SrcNode, f.Test.SrcPod)
 		dst := failureLabel(f.Test.DstNode, f.Test.DstPod)
+		if f.Test.Kind == Gateway {
+			dst = f.Test.DstIP
+		}
 		label := stageLabelOf(f.Test.Kind)
 		if f.Err != nil {
 			uiOutput.Error("%s %s→%s (%s): %v", label, src, dst, f.Test.Rail, f.Err)
@@ -893,6 +938,9 @@ func emitSummary(uiOutput ui.Output, result *MatrixResult) {
 // stageLabelOf returns the human-friendly family label for a test kind used
 // in failure-line prefixes.
 func stageLabelOf(k PingTestKind) string {
+	if k == Gateway {
+		return "gateway"
+	}
 	if k.IsICMP() {
 		return "icmp"
 	}

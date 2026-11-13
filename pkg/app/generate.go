@@ -26,8 +26,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 )
 
 // executeGeneration handles the profile selection and manifest generation phase.
@@ -40,7 +42,17 @@ func (l *Launcher) executeGeneration(configPath string) error {
 		return fmt.Errorf("failed to load full config: %w", err)
 	}
 	fullConfig := input.Config
-	resolvedInput := input
+	resolvedInput, err := config.CloneInput(input)
+	if err != nil {
+		return fmt.Errorf("copy generation input: %w", err)
+	}
+	// Host observations retain their discovery membership independently of
+	// topology overrides. Persist this scope with the effective bundle so
+	// standalone validation uses the same host evidence as generation.
+	if len(input.Config.DiscoveredDOCAHost) > 0 {
+		scope := config.DOCAHostScopeForConfig(input.Config)
+		resolvedInput.Config.DiscoveredDOCAHostScope = &scope
+	}
 
 	// Reject duplicate clusterConfig identifiers before any rendering. Each
 	// identifier keys the per-source output filenames, so two groups sharing
@@ -89,8 +101,8 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	// --for supplies the hardware inventory used by profile defaulting as well
 	// as rendering. Substitute it before resolveProfileSettings so defaults can
 	// use the preset's machine/gpu types and east-west NICs. Keep the source
-	// inventory separately: generated preset hardware is transient and must not
-	// replace clusterConfig in a file-backed user configuration.
+	// inventory separately: host evidence has its own preserved scope, and the
+	// file-backed user configuration remains unchanged.
 	if l.options.ForPreset != "" {
 		preset, err := l.presetCatalog.LoadPresetByDir(l.options.ForPreset)
 		if err != nil {
@@ -109,22 +121,22 @@ func (l *Launcher) executeGeneration(configPath string) error {
 				"Add a 'capabilities.nodes.{sriov,rdma,ib}' block to the preset's topology.yaml",
 			)
 		}
-		presetConfig, cloneErr := config.CloneConfig(input.Config)
-		if cloneErr != nil {
-			return fmt.Errorf("copy config for --for: %w", cloneErr)
-		}
-		presetConfig.ClusterConfig = []config.ClusterConfig{cc}
-		presetInput := *input
-		presetInput.Config = presetConfig
-		resolvedInput = &presetInput
+		resolvedInput.Config.ClusterConfig = []config.ClusterConfig{cc}
 		l.ui.Info("Using preset %q (clusterConfig replaced from preset)", l.options.ForPreset)
 	}
 
 	// Resolve the same defaults/config/CLI precedence that discovery uses
 	// before either flow persists or consumes the final profile.
+	choicePresence := docaHostChoicePresence(resolvedInput.Present, l.options)
+	if err := resolve.ValidateDOCAHostDriverChoice(resolvedInput.Config, choicePresence); err != nil {
+		return apperrors.NewValidationError(err.Error(), nil, "Review each worker's discoveredDocaHost and select host or container driver ownership explicitly")
+	}
 	fullConfig, err = l.resolveProfileInput(resolvedInput)
 	if err != nil {
 		return err
+	}
+	for _, issue := range releases.DOCAHostIssues(fullConfig) {
+		l.ui.Warning("%s", issue)
 	}
 	resolveSpectrumXTopologyFile(configPath, fullConfig)
 
@@ -261,6 +273,9 @@ func (l *Launcher) generateDeploymentFiles(profile *profiles.Profile, clusterCon
 		return apperrors.NewValidationError("invalid generated artifacts", err, "Correct the named template and regenerate")
 	}
 
+	if err := networkoperatorplugin.CheckConfiguredIPPoolCIDRs(artifacts, clusterConfig); err != nil {
+		return apperrors.NewValidationError(fmt.Sprintf("IPPool address collision check failed: %v", err), nil, "Choose non-overlapping NV-IPAM subnets")
+	}
 	if l.options.SaveDeploymentFiles != "" {
 		if err := l.saveDeploymentBundle(artifacts, filepath.Join(l.options.SaveDeploymentFiles, profile.Plugin)); err != nil {
 			return fmt.Errorf("failed to save deployment files: %w", err)

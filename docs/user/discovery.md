@@ -69,7 +69,7 @@ If a worker is missing, check its readiness, image pull, discovery pod,
 4. Runs a temporary NIC Configuration Daemon on the eligible nodes.
 5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe and excludes BlueFields whose host trust level is `restricted`.
 6. Reads the published `NicDevice` resources and probes GPU, NIC, fabric, NUMA, and rail data. It does not walk kernel-module holder graphs.
-7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, `clusterConfig` and `discoveredSecondaryNetwork` are replaced.
+7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, `clusterConfig`, `discoveredSecondaryNetwork`, and `discoveredDocaHost` are replaced.
 8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
 
 The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
@@ -220,10 +220,76 @@ l8k discover \
 
 On a fresh run without `--user-config`, the example profile in the installed
 reference configuration is ignored. With `--user-config`, discovery replaces
-`clusterConfig` and `discoveredSecondaryNetwork`. It preserves every other loaded section and value,
+`clusterConfig`, `discoveredSecondaryNetwork`, and `discoveredDocaHost`, and clears
+any previously generated `discoveredDocaHostScope`. It preserves every other loaded section and value,
 including explicit `false` values, and then applies explicit CLI overrides.
 Missing profile values are not filled during this refresh; supply them in the
 file or through CLI flags if they are needed.
+
+## Host-installed DOCA-HOST
+
+Discovery queries each retained inventory worker's host package database through
+its existing privileged, host-PID NIC daemon (`chroot /proc/1/root`). It reads
+`doca-host` using `dpkg-query` or RPM, preserving the full installed version in
+`discoveredDocaHost`. It never uses the daemon container's package database.
+A missing package is `not-installed`; failed exec, unsupported package managers,
+partial installation, or unreadable metadata is `unknown`, with a warning.
+At most four probes run concurrently. Each has a 30-second deadline and honors
+command cancellation; diagnostics are emitted in node order after collection.
+
+```yaml
+discoveredDocaHost:
+  - node: worker-a
+    status: installed
+    version: 3.5.0-041000-26.07-ubuntu2404
+  - node: worker-b
+    status: not-installed
+```
+
+The container driver defaults to enabled (`docaDriver.enable: true`). After
+discovery, if every inventory worker has installed DOCA-HOST and the enable
+choice is omitted or null, generation changes it to `false`, omitting
+`ofedDriver` from the generated policies. Fresh discovery persists this resolved default;
+a refresh preserves an omitted field so generation can derive it later.
+Rediscovery also replaces invalid saved host observations, such as missing
+package versions or invalid statuses, while preserving desired settings.
+Generation and validation continue to reject invalid observations.
+Explicit YAML `true`/`false` (including a selected reference file) and
+generation's `--enable-doca-driver` override
+remain authoritative. Absent or entirely unknown host evidence retains the
+container-driver default of `true`.
+
+Mixed installed and absent/unknown workers cannot share a safe automatic
+choice under the global toggle. Discovery saves the evidence and warns, leaving
+an omitted enable field unresolved. Generation requires an explicit
+`docaDriver.enable` choice after the owner reviews host/container ownership.
+This conservative decision uses the entire source inventory, including when
+`--groups` or `--gpu-type` later filters rendering. Use a homogeneous source
+inventory or explicitly select driver ownership for a filtered mixed inventory.
+
+Topology presets do not replace host evidence. Generation captures the discovery
+worker names and whether membership is complete in `discoveredDocaHostScope`
+alongside the observations. This scope survives `--for` topology replacement
+and the generated `.l8k/resolved-config.yaml` handoff, so later validation checks
+the same original workers. Observations outside that scope remain excluded.
+Repeated generation reuses the preserved scope; rediscovery clears it and
+collects new inventory and observations. Presets contain topology only, and
+preset-only inputs without discovery observations keep the default driver enabled.
+
+
+Discovery warns when an installed DOCA release differs from the selected
+Network Operator release SBOM; `l8k validate` rejects that mismatch even if the
+container driver was explicitly enabled. The comparison uses the three-part
+DOCA release (for example `3.5.0`) extracted from the raw package version and
+the catalog's SBOM-derived `Mofed.version`. Host package build identifiers and
+OFED/container image build suffixes have different meanings and are not compared.
+This does not qualify kernel modules, firmware, or a particular package build.
+Validation checks the saved discovery snapshot, not current host package state;
+rerun discovery after changing host packages or the selected release.
+
+Library callers can opt in with `WithReadOnlyDOCAHost()`, alongside
+`WithReadOnlyRESTConfig(...)`. This uses only existing host-PID daemon pods and
+requires `pods/exec`; default read-only calls acquire no additional probes.
 
 ## Groups And Node Labels
 
@@ -363,7 +429,8 @@ Debug logs include node eligibility, sysfs NIC and BlueField trust probing, mach
 
 If `--save-cluster-config` is omitted, discovery rewrites the `--user-config`
 file or creates `cluster-config.yaml` in the current directory. For a user
-config refresh, only `clusterConfig`, `discoveredSecondaryNetwork`, and explicit CLI overrides change. Source
+config refresh, only `clusterConfig`, `discoveredSecondaryNetwork`, `discoveredDocaHost`,
+previously generated `discoveredDocaHostScope`, and explicit CLI overrides change. Source
 comments are retained where possible, and a generated-file banner identifies
 the discovery output.
 

@@ -49,6 +49,24 @@ func RenderMatrixText(uiOutput ui.Output, result *MatrixResult) {
 		return
 	}
 
+	for _, r := range result.PingResults {
+		if r.Test.Kind != Gateway {
+			continue
+		}
+		status := "ICMP reachable"
+		if r.SkipReason != "" {
+			status = "SKIPPED: " + r.SkipReason
+		} else if !r.OK {
+			status = "FAILED"
+			if r.Err != nil {
+				status += ": " + r.Err.Error()
+			}
+		}
+		uiOutput.Info("Gateway %s/%s (%s) [%s/%s, source %s] → %s: %s",
+			r.Test.SrcNamespace, r.Test.SrcPod, axisLabel(r.Test.SrcNode, r.Test.SrcPod), r.Test.SrcRail, r.Test.SrcIface,
+			r.Test.SrcIP, r.Test.DstIP, status)
+	}
+
 	tty := uiOutput.IsTTY()
 	// Group per (rail, kind family). One grid is rendered for
 	// every (rail, family) bucket that has at least one result, in
@@ -172,6 +190,9 @@ func groupResultsByKind(results []PingResult) (byRail map[string]map[kindFamily]
 
 	for i := range results {
 		r := &results[i]
+		if r.Test.Kind == Gateway {
+			continue
+		}
 		src := axisLabel(r.Test.SrcNode, r.Test.SrcPod)
 		dst := axisLabel(r.Test.DstNode, r.Test.DstPod)
 		nodeSet[src] = struct{}{}

@@ -436,3 +436,29 @@ clusterConfig:
 	require.NoError(t, err)
 	require.Equal(t, "roce_r%rail_id%_p%plane_id%", result.Config.ClusterConfig[0].SpectrumX.InterfaceNames.RdmaPrefix)
 }
+
+func TestResolveStartingGatewayPresence(t *testing.T) {
+	for _, tc := range []struct {
+		value   string
+		want    int
+		invalid bool
+	}{
+		{"", 1, false}, {"null", 1, false}, {"254", 254, false}, {"0", 0, true}, {"-1", -1, true},
+	} {
+		t.Run("gateway="+tc.value, func(t *testing.T) {
+			source := "nvIpam: {}"
+			if tc.value != "" {
+				source = "nvIpam: {startingGateway: " + tc.value + "}"
+			}
+			input, err := config.DecodeInput([]byte(source), "gateway.yaml")
+			require.NoError(t, err)
+			result, err := Resolve(Request{Input: input})
+			if tc.invalid {
+				require.ErrorContains(t, err, "startingGateway")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, result.Config.NvIpam.StartingGateway)
+		})
+	}
+}

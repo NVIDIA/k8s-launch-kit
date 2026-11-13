@@ -247,7 +247,7 @@ requires a user-owned config with explicit `profile.routing` and
 | --- | --- |
 | `--connectivity` | Enable or disable data-plane connectivity checks. |
 | `--validation-mode` | `quick`, `full`, or `strict`. |
-| `--validation-checks` | Comma-separated list of `icmp`, `rping`, and `ib_write_bw`. Enabled GPUDirect DMA-BUF validation follows the `ib_write_bw` selection. |
+| `--validation-checks` | Comma-separated list of `gateway`, `icmp`, `rping`, and `ib_write_bw` (all enabled by default). Gateway runs first per pod/rail and can run alone with one pod. Enabled GPUDirect DMA-BUF validation follows the `ib_write_bw` selection. |
 | `--connectivity-timeout` | Maximum connectivity workload setup and execution duration. `0` (default) calculates the total budget from the generated matrix plan; a positive duration is an explicit hard deadline. |
 | `--rdma-rping-iterations` | Override `validation.rdma.rpingIterations`. |
 | `--rdma-ib-write-size` | Override `validation.rdma.ibWriteSize`. |

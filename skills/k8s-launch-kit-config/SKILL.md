@@ -66,6 +66,7 @@ missing profile fields when it consumes that config.
 | `networkOperator` | Operator namespace, version, image repository, Helm repository, and `skipHelmChart` ownership switch |
 | `docaDriver` | OFED/DOCA driver image, version, blacklist settings |
 | `maintenance` | Maintenance Operator, SR-IOV drain, and legacy OFED upgrade concurrency |
+| `cluster` | Optional authoritative `podCIDRs` and `serviceCIDRs` lists for IPPool collision checks; YAML only |
 | `nvIpam` | NV-IPAM per-node block size, IP pool ranges, and subnet generation |
 | `sriov` | VF count, resource prefix, MTU, link type |
 | `hostdev` | Host device resource name |
@@ -211,6 +212,7 @@ networkNamespaces: ["my-namespace"]
   is GA.
 - `nvIpam` subnets are auto-generated if not specified — one per rail using non-routable ranges.
 - `nvIpam.perNodeBlockSize` defaults to `10`; generation warns when it is lower than `sriov.numVfs` because the per-node allocation may be too small for all VFs.
+- `nvIpam.startingGateway` is a YAML-only positive host offset in each automatic subnet (default `1`); it must select a usable host below broadcast. For `192.168.2.128/25`, use `126` for gateway `192.168.2.254`. Manual entries retain their own gateway. `nvIpam.offset` separately controls subnet spacing; NV-IPAM automatically excludes the gateway from allocation.
 - `docaDriver.unloadThirdPartyRDMAModules: true` auto-populates `UNLOAD_THIRD_PARTY_RDMA_MODULES` from discovered OFED-dependent modules.
 - `docaDriver.env` is an advanced escape hatch. Values override generated MOFED environment entries by name, duplicate custom names use the last value, and bad driver options can disrupt node networking.
 - For release 26.1+, SR-IOV requestor mode requires both the Network Operator drain requestor and the SR-IOV external drainer. l8k renders both; applying only CRs cannot enable their Deployment environment variables.
@@ -250,3 +252,19 @@ which deletes them. OCP preserves existing templates and disabled plugins.
 Generation rejects inventory with selected and excluded ports on the same PCI
 device. Review whole-NIC scope, including ports absent from inventory, and qualify
 runtime RoCE support for the installed NCO/DOCA/RHCOS versions before live use. See `docs/reference/configuration.md#nic-configuration-and-naming`.
+
+## Cluster address collision inputs
+
+`cluster.podCIDRs` and `cluster.serviceCIDRs` are optional authoritative lists
+of all applicable IPv4/IPv6 ranges. Omitted/null means discover at deploy;
+explicit empty lists are invalid. Each override replaces its class of discovery.
+Generation checks actual IPPools against supplied ranges without API access.
+Deploy checks all Node InternalIPs and, absent overrides, pod ranges and
+ServiceCIDRs before any writes. Pod ranges come from the OpenShift Network
+`spec.clusterNetwork` when that API serves ranges, otherwise from Node pod
+ranges; the probe is capability-based, not gated by flavor. Denied reads and
+malformed Network ranges fail. Missing pod ranges warn by Node name; missing
+ServiceCIDR APIs warn, but denied/failed reads and empty served APIs fail.
+Use authoritative pod ranges for CNIs whose IPAM differs from Node podCIDRs.
+See [configuration](../../docs/reference/configuration.md#cluster-address-overrides)
+for fallback, permissions and the IPPool-only scope.

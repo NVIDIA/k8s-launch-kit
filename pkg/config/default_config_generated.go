@@ -55,7 +55,7 @@ var defaultConfigYAML = []byte(
 	"validation:\n" +
 	"  connectivity: true\n" +
 	"  mode: strict\n" +
-	"  checks: [icmp, rping, ib_write_bw]\n" +
+	"  checks: [gateway, icmp, rping, ib_write_bw]\n" +
 	"  rdma:\n" +
 	"    rpingIterations: 5\n" +
 	"    ibWriteSize: 65536\n" +
@@ -89,13 +89,15 @@ var defaultConfigYAML = []byte(
 	"  poolName: nv-ipam-pool\n" +
 	"  perNodeBlockSize: 10\n" +
 	"  # --- Option 1: Auto-generate subnets (used when subnets list is empty) ---\n" +
-	"  # Each group gets its own unique subnet slice; gateway = network address + 1.\n" +
+	"  # Each group gets its own unique subnet slice.\n" +
 	"  startingSubnet: 192.168.0.0\n" +
 	"  mask: 22\n" +
 	"  offset: 1\n" +
+	"  # Host offset within each subnet; 1 selects its first usable address.\n" +
+	"  startingGateway: 1\n" +
 	"  # IP exclusions (optional). reserveFirstIPs/reserveLastIPs apply to EVERY\n" +
 	"  # subnet, including each auto-generated per-rail subnet — they reserve the\n" +
-	"  # first N and last N host addresses (gateway is covered by the low block).\n" +
+	"  # first N and last N addresses. NV-IPAM automatically excludes the gateway.\n" +
 	"  # reserveFirstIPs: 10   # e.g. .0–.9 on a /24\n" +
 	"  # reserveLastIPs: 6     # e.g. .250–.255 on a /24\n" +
 	"  #\n" +
@@ -166,6 +168,12 @@ var defaultConfigYAML = []byte(
 	"  rdmaPrefix: rdma_r%rail_id%\n" +
 	"  netdevPrefix: eth_r%rail_id%\n" +
 	"podNamespace: default\n" +
+	"# Optional authoritative IPv4/IPv6 ranges for IPPool collision checks.\n" +
+	"# Omit each list to discover that address class at deploy; [] is invalid.\n" +
+	"# cluster:\n" +
+	"#   podCIDRs: [\"10.244.0.0/16\"]\n" +
+	"#   serviceCIDRs: [\"10.96.0.0/12\"]\n" +
+	"\n" +
 	"clusterConfig:\n" +
 	"  - identifier: \"\"\n" +
 	"    machineType: X9DRFF-i/7(T)+\n" +

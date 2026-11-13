@@ -163,6 +163,26 @@ var _ = Describe("deployment ownership boundary", func() {
 		_, err = CheckPolicy(ctx, fixtureClient(), fixturePolicy(), nil, config.FlavorOCP)
 		Expect(err).To(MatchError(context.Canceled))
 	})
+	It("records OpenShift network-operator installers during discovery and ignores foreign DaemonSets", func() {
+		ctx := context.Background()
+		yes := true
+		installer := func(component string) *appsv1.DaemonSet {
+			ds := fixtureInstaller(openShiftInstallers[component], "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc", "/bin/bash")
+			ds.Namespace = "openshift-multus"
+			ds.OwnerReferences = []metav1.OwnerReference{{APIVersion: "operator.openshift.io/v1", Kind: "Network", Name: "cluster", UID: "network-uid", Controller: &yes}}
+			return ds
+		}
+		multus, plugins := installer(Multus), installer(CNIPlugins)
+		multus.OwnerReferences = nil
+		observation, err := DiscoverEvidence(ctx, fixtureClient(multus, plugins), config.FlavorOCP)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(observation.Multus.Status).To(Equal(config.InstallerNotDetected)) // foreign owner
+		Expect(observation.CNIPlugins.Status).To(Equal(config.InstallerExternal))
+		Expect(observation.CNIPlugins.Installers).To(Equal([]config.InstallerReference{{Namespace: "openshift-multus", Name: "multus-additional-cni-plugins", UID: string(plugins.UID)}}))
+		observation, err = DiscoverEvidence(ctx, fixtureClient(plugins))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(observation.CNIPlugins.Status).To(Equal(config.InstallerNotDetected)) // Kubernetes flavor unchanged
+	})
 	It("does not inspect an unrelated bundle", func() {
 		checks, err := CheckPolicy(context.Background(), nil, nil, nil)
 		Expect(err).NotTo(HaveOccurred())

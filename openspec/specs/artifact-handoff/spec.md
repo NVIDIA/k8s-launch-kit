@@ -67,6 +67,12 @@ Generation SHALL preserve source YAML and write effective metadata at `.l8k/reso
 - **WHEN** supported empty values are saved and loaded as resolved metadata
 - **THEN** loading preserves those values without filling them from defaults.
 
+#### Scenario: Topology override retains host evidence
+
+- **WHEN** generation applies a topology preset to an input with host package observations
+- **THEN** discovery membership and completeness remain the source for driver ownership and host release compatibility; resolved metadata preserves that scope independently of render topology.
+- **AND** later validation and repeated generation retain these checks; presets do not define host package state or worker membership.
+
 ### Requirement: Source membership survives artifact handoff
 
 Rendered SR-IOV node policies and NV-IPAM IPPools SHALL identify their selected
@@ -114,6 +120,33 @@ explicit access-path relocation SHALL not replace captured deployment intent.
 
 - **WHEN** a selected DPF release transforms service Helm inputs
 - **THEN** validation projections include that release's effective input transformation and remain separate from resources applied by Launch Kit.
+
+### Requirement: IPPool cluster address collision protection
+
+Generation SHALL check the validated artifact snapshot's NV-IPAM IPPool subnets
+against explicit authoritative cluster pod/service CIDRs before output replacement.
+Deployment SHALL check that snapshot against configured overrides and fresh
+all-cluster pod ranges (OpenShift Network `spec.clusterNetwork` when served,
+else Node pod CIDRs), InternalIPs and ServiceCIDRs before managed effects,
+including external Helm, overwrite and dry-run. Each supplied override replaces
+only its own address class. Observed ranges SHALL NOT become persisted overrides.
+
+#### Scenario: Detected overlap
+
+- **WHEN** an IPPool overlaps a known pod/service range or contains a Node InternalIP
+- **THEN** deployment fails before Helm, remediation or apply, naming the source resource and conflict.
+
+#### Scenario: OpenShift cluster network ranges
+
+- **WHEN** the config.openshift.io/v1 Network `cluster` serves `spec.clusterNetwork` ranges and no pod override exists
+- **THEN** deployment checks those ranges instead of Node pod CIDRs, independent of the configured flavor.
+- **AND** an absent API/object or empty list falls back to Node pod CIDRs; denied reads and malformed ranges fail.
+
+#### Scenario: Incomplete cluster address evidence
+
+- **WHEN** no pod range is available from the OpenShift Network or a Node, and no authoritative override exists
+- **THEN** deployment warns by Node name while checking all available ranges.
+- **AND** absent GA and beta ServiceCIDR APIs warn; denied reads, malformed ranges and an empty served API fail unless authoritative service ranges bypass that API read.
 
 ## Baseline and limits
 

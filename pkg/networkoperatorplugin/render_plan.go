@@ -706,7 +706,7 @@ func preallocatePlanSubnets(cfg *config.LaunchKitConfig, plans []RenderBucket) (
 	if total == 0 {
 		return nil, nil
 	}
-	all, err := config.GenerateSubnets(cfg.NvIpam.StartingSubnet, cfg.NvIpam.Mask, cfg.NvIpam.Offset, total)
+	all, err := config.GenerateSubnetsWithGateway(cfg.NvIpam.StartingSubnet, cfg.NvIpam.Mask, cfg.NvIpam.Offset, total, cfg.NvIpam.StartingGateway)
 	if err != nil {
 		return nil, fmt.Errorf("auto-generate subnets: %w", err)
 	}

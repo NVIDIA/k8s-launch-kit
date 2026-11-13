@@ -59,6 +59,14 @@ func TestGeneratedGroupIdentifierUsesBalancedComponents(t *testing.T) {
 	))
 }
 
+func TestGeneratedGroupIdentifierIsRFC1123(t *testing.T) {
+	// Underscores in machine types (e.g. HG635N_V2) must not reach the identifier.
+	identifier := GeneratedGroupIdentifier("HG635N_V2", "NVIDIA-GB300")
+	assert.Equal(t, "hg635n-v2-gb300", identifier)
+	assert.NotContains(t, identifier, "_")
+	assert.Regexp(t, `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, identifier)
+}
+
 func TestGeneratedGroupIdentifierReallocatesUnusedComponentBudget(t *testing.T) {
 	t.Run("short machine type", func(t *testing.T) {
 		identifier := GeneratedGroupIdentifier(
@@ -199,7 +207,7 @@ profile:
 		require.NotNil(t, config.Validation.Connectivity)
 		assert.True(t, *config.Validation.Connectivity)
 		assert.Equal(t, ValidationModeStrict, config.Validation.Mode)
-		assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, config.Validation.Checks)
+		assert.Equal(t, []string{ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, config.Validation.Checks)
 		require.NotNil(t, config.Validation.RDMA)
 		assert.False(t, config.Validation.GPUDirect.Enabled)
 		assert.Equal(t, DefaultGPUResourceType, config.Validation.GPUDirect.GPUResourceType)
@@ -283,9 +291,10 @@ func TestDefaultLaunchKitConfig(t *testing.T) {
 	assert.Empty(t, cfg.DOCADriver.Env, "advanced driver env must be opt-in")
 	require.NotNil(t, cfg.NvIpam, "DefaultLaunchKitConfig must populate NvIpam")
 	assert.Equal(t, DefaultNvIpamPerNodeBlockSize, cfg.NvIpam.PerNodeBlockSize)
+	assert.Equal(t, DefaultNvIpamStartingGateway, cfg.NvIpam.StartingGateway)
 	require.NotNil(t, cfg.Validation, "DefaultLaunchKitConfig must populate Validation")
 	assert.Equal(t, ValidationModeStrict, cfg.Validation.Mode)
-	assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
+	assert.Equal(t, []string{ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, cfg.Validation.Checks)
 	require.NotNil(t, cfg.Validation.RDMA)
 	assert.False(t, cfg.Validation.GPUDirect.Enabled)
 	assert.Equal(t, DefaultGPUResourceType, cfg.Validation.GPUDirect.GPUResourceType)
@@ -369,6 +378,12 @@ func TestValidationConfig(t *testing.T) {
 	t.Run("normalizes duplicates and blanks", func(t *testing.T) {
 		checks := NormalizeValidationChecks([]string{" icmp ", " rping ", "", "ib_write_bw", "rping"})
 		assert.Equal(t, []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}, checks)
+	})
+
+	t.Run("accepts explicit gateway-only selection without adding defaults", func(t *testing.T) {
+		cfg := NormalizeValidationConfig(&ValidationConfig{Checks: []string{ValidationCheckGateway}})
+		require.NoError(t, ValidateValidationConfig(cfg))
+		assert.Equal(t, []string{ValidationCheckGateway}, cfg.Checks)
 	})
 
 	t.Run("rejects unknown checks", func(t *testing.T) {
@@ -1705,6 +1720,7 @@ func TestApplyNvIpamDefaults(t *testing.T) {
 
 		ApplyNvIpamDefaults(cfg)
 		assert.Equal(t, DefaultNvIpamPerNodeBlockSize, cfg.NvIpam.PerNodeBlockSize)
+		assert.Equal(t, DefaultNvIpamStartingGateway, cfg.NvIpam.StartingGateway)
 	})
 
 	t.Run("preserves a configured block size", func(t *testing.T) {
@@ -1712,5 +1728,48 @@ func TestApplyNvIpamDefaults(t *testing.T) {
 
 		ApplyNvIpamDefaults(cfg)
 		assert.Equal(t, 32, cfg.NvIpam.PerNodeBlockSize)
+	})
+}
+
+func TestGenerateSubnetsWithGateway(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, gateway, lastGateway string
+		mask, spacing, hostOffset, count  int
+	}{
+		{"custom /24", "192.168.2.0", "192.168.2.254", "192.168.4.254", 24, 2, 254, 2},
+		{"high-base /25", "192.168.2.128", "192.168.2.254", "192.168.3.126", 25, 1, 126, 2},
+		{"offset beyond octet /22", "192.168.0.0", "192.168.1.44", "192.168.5.44", 22, 1, 300, 2},
+		{"last IPv4 host", "255.255.255.252", "255.255.255.254", "255.255.255.254", 30, 1, 2, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			subnets, err := GenerateSubnetsWithGateway(tc.start, tc.mask, tc.spacing, tc.count, tc.hostOffset)
+			require.NoError(t, err)
+			require.Len(t, subnets, tc.count)
+			assert.Equal(t, tc.gateway, subnets[0].Gateway)
+			assert.Equal(t, tc.lastGateway, subnets[tc.count-1].Gateway)
+		})
+	}
+	for _, tc := range []struct {
+		name             string
+		mask, hostOffset int
+	}{
+		{"network", 24, 0}, {"negative", 24, -1}, {"broadcast", 24, 255},
+		{"outside subnet", 25, 254}, {"large offset", 24, int(^uint(0) >> 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := GenerateSubnetsWithGateway("192.168.0.0", tc.mask, 1, 1, tc.hostOffset)
+			require.ErrorContains(t, err, "nvIpam.startingGateway")
+		})
+	}
+	t.Run("large subnet spacing cannot wrap", func(t *testing.T) {
+		_, err := GenerateSubnetsWithGateway("192.168.0.0", 24, int(^uint(0)>>1), 3, 1)
+		require.ErrorContains(t, err, "overflow")
+	})
+	t.Run("compatibility helper keeps first usable gateway", func(t *testing.T) {
+		before, err := GenerateSubnets("192.168.0.0", 22, 2, 3)
+		require.NoError(t, err)
+		after, err := GenerateSubnetsWithGateway("192.168.0.0", 22, 2, 3, DefaultNvIpamStartingGateway)
+		require.NoError(t, err)
+		assert.Equal(t, before, after)
 	})
 }

@@ -62,7 +62,7 @@ Record these decisions before generation and check them again in
 | Decision | Site check before deployment |
 | --- | --- |
 | Target scope | Intended cluster context, workers, east-west PFs, and any excluded or separately managed cohorts. |
-| Fabric and addressing | Ethernet/InfiniBand link layer, switch/VLAN/rail setup, non-overlapping subnet and gateway, routing, and MTU. NV-IPAM only prevents overlap **within one generated bundle**; it cannot reserve other site networks. |
+| Fabric and addressing | Ethernet/InfiniBand link layer, switch/VLAN/rail setup, non-overlapping subnet and gateway, routing, and MTU. Automatic NV-IPAM allocation avoids overlap within a generated bundle; deployment checks IPPools against known cluster ranges and Node InternalIPs. Unknown pod ranges warn; other site networks still need review. |
 | Workload resources | VF count or shared-device capacity, network names, namespaces, image access, and application placement. |
 | Driver and disruption | Current storage/RDMA module users, driver changes, maintenance concurrency, and acceptable node unavailability. The default driver unload controls are enabled; review their effect. |
 | Lifecycle owner | Who owns the Network Operator release, custom resources, acceptance report, and eventual removal. |

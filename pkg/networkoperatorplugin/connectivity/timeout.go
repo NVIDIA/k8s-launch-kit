@@ -24,6 +24,7 @@ const (
 	matrixCleanupTimeout         = 30 * time.Second
 	rdmaServerCleanupTimeout     = 3 * time.Second
 	rdmaServerLogTimeout         = 5 * time.Second
+	gatewayConfigTimeout         = 10 * time.Second
 	routeCheckTimeout            = 10 * time.Second
 	nonRequiredCommandTimeout    = 5 * time.Second
 	icmpCommandTimeout           = 5 * time.Second
@@ -67,6 +68,8 @@ func automaticTimeoutBudget(plan MatrixPlan, checks []Check) timeoutBudget {
 		}
 
 		switch check {
+		case CheckGateway:
+			budget.Tests += time.Duration(len(tests)) * (gatewayConfigTimeout + 2*routeCheckTimeout + icmpCommandTimeout)
 		case CheckICMP:
 			budget.Tests += allRouteBudget(tests)
 			for _, test := range tests {
@@ -97,6 +100,8 @@ func automaticTimeoutBudget(plan MatrixPlan, checks []Check) timeoutBudget {
 
 func testsForCheck(plan MatrixPlan, check Check) []PingTest {
 	switch check {
+	case CheckGateway:
+		return append([]PingTest{}, plan.Gateway...)
 	case CheckICMP:
 		return append(append([]PingTest{}, plan.ICMPSameRail...), plan.ICMPCrossRail...)
 	case CheckRPing:

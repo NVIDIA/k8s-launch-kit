@@ -201,6 +201,9 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	if err != nil {
 		return pkgerrors.NewValidationError("invalid deployment artifacts", err, "Correct the generated manifests and rerun deploy")
 	}
+	if err := checkLiveIPPoolCIDRs(ctx, kubeClient, artifacts, opts.Config); err != nil {
+		return pkgerrors.NewValidationError(fmt.Sprintf("IPPool address collision check failed: %v", err), nil, "Choose non-overlapping subnets or correct cluster CIDR overrides and API access")
+	}
 	if err := checkBundleTargetScopes(ctx, kubeClient, artifacts, opts.Config); err != nil {
 		return pkgerrors.NewValidationError("invalid hardware target scope", err, "Correct selectors and worker inventory, or regenerate legacy artifacts")
 	}

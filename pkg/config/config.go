@@ -210,12 +210,19 @@ func SanitizeIdentifier(s string) string {
 
 func normalizeIdentifier(s string) string {
 	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, " ", "-")
+	// Map non-alphanumerics to '-' so the identifier is a valid RFC 1123 name
+	// (it is used directly as metadata.name for CRs like NicNodePolicy).
+	s = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '-'
+	}, s)
 	segments := strings.Split(s, "-")
 	filtered := segments[:0]
 	for _, segment := range segments {
 		switch segment {
-		case "nvidia":
+		case "", "nvidia": // drop empties (collapse/trim hyphens) and vendor token
 			continue
 		case "thinksystem":
 			segment = "ts"
@@ -235,6 +242,7 @@ func truncateIdentifierWithHash(s string) string {
 type LaunchKitConfig struct {
 	namespacePresence        flavorNamespacePresence         `yaml:"-"`
 	Flavor                   string                          `yaml:"flavor,omitempty"`
+	Cluster                  *ClusterNetworkConfig           `yaml:"cluster,omitempty"`
 	NetworkOperator          *NetworkOperatorConfig          `yaml:"networkOperator,omitempty"`
 	DOCADriver               *DOCADriverConfig               `yaml:"docaDriver,omitempty"`
 	Maintenance              *MaintenanceConfig              `yaml:"maintenance,omitempty"`
@@ -268,6 +276,8 @@ type LaunchKitConfig struct {
 	Profile                    *Profile                     `yaml:"profile,omitempty"`
 	ClusterConfig              []ClusterConfig              `yaml:"clusterConfig,omitempty"`
 	DiscoveredSecondaryNetwork *SecondaryNetworkObservation `yaml:"discoveredSecondaryNetwork,omitempty"`
+	DiscoveredDOCAHost         []DOCAHostObservation        `yaml:"discoveredDocaHost,omitempty"`
+	DiscoveredDOCAHostScope    *DOCAHostScope               `yaml:"discoveredDocaHostScope,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
@@ -306,6 +316,9 @@ type NetworkOperatorConfig struct {
 }
 
 type DOCADriverConfig struct {
+	// Enable selects the container driver and defaults to true. After discovery,
+	// an omitted choice resolves to false only when every inventory worker has
+	// host DOCA-HOST installed.
 	Enable                      bool   `yaml:"enable"`
 	Version                     string `yaml:"version"`
 	UnloadStorageModules        bool   `yaml:"unloadStorageModules"`
@@ -337,6 +350,9 @@ type DOCADriverEnvVar struct {
 // nvIpam.perNodeBlockSize is omitted.
 const DefaultNvIpamPerNodeBlockSize = 10
 
+// DefaultNvIpamStartingGateway selects the first usable address of each subnet.
+const DefaultNvIpamStartingGateway = 1
+
 type NvIpamConfig struct {
 	PoolName string `yaml:"poolName"`
 	// PerNodeBlockSize is the number of addresses NV-IPAM reserves for each
@@ -346,6 +362,9 @@ type NvIpamConfig struct {
 	StartingSubnet   string               `yaml:"startingSubnet,omitempty"`
 	Mask             int                  `yaml:"mask,omitempty"`
 	Offset           int                  `yaml:"offset,omitempty"`
+	// StartingGateway is a positive host offset from each generated subnet's
+	// network address. Manual subnet gateways take precedence.
+	StartingGateway int `yaml:"startingGateway,omitempty"`
 	// ReserveFirstIPs excludes the first N host addresses of EVERY subnet
 	// (network address upward, e.g. 10 → .0–.9 on a /24). Applied to both
 	// auto-generated and manually-listed subnets. Mask-agnostic.
@@ -507,6 +526,7 @@ const (
 	ValidationModeFull   = "full"
 	ValidationModeStrict = "strict"
 
+	ValidationCheckGateway   = "gateway"
 	ValidationCheckICMP      = "icmp"
 	ValidationCheckRPing     = "rping"
 	ValidationCheckIBWriteBW = "ib_write_bw"
@@ -557,7 +577,7 @@ func DefaultValidationConfig() *ValidationConfig {
 	return &ValidationConfig{
 		Connectivity: defaultBool(true),
 		Mode:         ValidationModeStrict,
-		Checks:       []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW},
+		Checks:       []string{ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW},
 		RDMA: &ValidationRDMAConfig{
 			RPingIterations:         DefaultValidationRPingIterations,
 			IBWriteSize:             DefaultValidationIBWriteSize,
@@ -588,7 +608,7 @@ func NormalizeValidationConfigWithPresence(v *ValidationConfig, present PathSet)
 		v.Mode = ValidationModeStrict
 	}
 	if v.Checks == nil && !present.Has("validation.checks") {
-		v.Checks = []string{ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}
+		v.Checks = []string{ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW}
 	} else {
 		v.Checks = NormalizeValidationChecks(v.Checks)
 	}
@@ -656,10 +676,10 @@ func ValidateValidationConfig(v *ValidationConfig) error {
 	}
 	for _, check := range v.Checks {
 		switch check {
-		case ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW:
+		case ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW:
 		default:
-			return fmt.Errorf("validation.checks contains unsupported check %q (supported: %s, %s, %s)",
-				check, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW)
+			return fmt.Errorf("validation.checks contains unsupported check %q (supported: %s, %s, %s, %s)",
+				check, ValidationCheckGateway, ValidationCheckICMP, ValidationCheckRPing, ValidationCheckIBWriteBW)
 		}
 	}
 	return nil
@@ -954,6 +974,9 @@ func LoadFullConfigWithSource(configPath string, logger logr.Logger) (*LaunchKit
 		logger.Info("Cluster configuration loaded successfully")
 	}
 
+	if err := ValidateClusterNetworkConfig(config.Cluster); err != nil {
+		return nil, nil, fmt.Errorf("invalid cluster network config in %s: %w", configPath, err)
+	}
 	ApplyNvIpamDefaults(&config)
 	if err := validateNvIpam(config.NvIpam); err != nil {
 		return nil, nil, fmt.Errorf("invalid nvIpam config in %s: %w", configPath, err)
@@ -1192,6 +1215,13 @@ func containsPlaceholder(s, placeholder string) bool {
 // starting network address. Each subsequent subnet is offset by `offset` subnet-sized
 // blocks. The gateway for each subnet is the first usable address (network + 1).
 func GenerateSubnets(startingSubnet string, mask, offset, count int) ([]NvIpamSubnetConfig, error) {
+	return GenerateSubnetsWithGateway(startingSubnet, mask, offset, count, DefaultNvIpamStartingGateway)
+}
+
+// GenerateSubnetsWithGateway creates subnet configurations with the gateway at
+// startingGateway addresses above each network address. offset controls spacing
+// between subnets; startingGateway must select a usable host within each subnet.
+func GenerateSubnetsWithGateway(startingSubnet string, mask, offset, count, startingGateway int) ([]NvIpamSubnetConfig, error) {
 	if count < 1 {
 		return nil, fmt.Errorf("subnet count must be >= 1, got %d", count)
 	}
@@ -1214,6 +1244,9 @@ func GenerateSubnets(startingSubnet string, mask, offset, count int) ([]NvIpamSu
 	baseIP := binary.BigEndian.Uint32(ip4)
 	blockSize := uint32(1) << uint(32-mask)
 	hostMask := blockSize - 1
+	if err := validateStartingGateway(startingGateway, mask); err != nil {
+		return nil, err
+	}
 
 	// Verify the starting address is properly aligned (host bits must be zero)
 	if baseIP&hostMask != 0 {
@@ -1221,20 +1254,19 @@ func GenerateSubnets(startingSubnet string, mask, offset, count int) ([]NvIpamSu
 	}
 
 	// Check that the last subnet won't overflow the IPv4 address space
-	lastIndex := uint64(count-1) * uint64(offset)
-	lastAddr := uint64(baseIP) + lastIndex*uint64(blockSize)
-	if lastAddr > math.MaxUint32 {
+	maxSteps := (uint64(math.MaxUint32) - uint64(baseIP)) / uint64(blockSize)
+	if uint64(count-1) > maxSteps/uint64(offset) {
 		return nil, fmt.Errorf("subnet generation would overflow IPv4 address space: starting %s/%d, offset %d, count %d",
 			startingSubnet, mask, offset, count)
 	}
 
 	subnets := make([]NvIpamSubnetConfig, count)
 	for i := 0; i < count; i++ {
-		networkAddr := baseIP + uint32(i*offset)*blockSize
+		networkAddr := uint32(uint64(baseIP) + uint64(i)*uint64(offset)*uint64(blockSize))
 		subnetIP := make(net.IP, 4)
 		binary.BigEndian.PutUint32(subnetIP, networkAddr)
 		gatewayIP := make(net.IP, 4)
-		binary.BigEndian.PutUint32(gatewayIP, networkAddr+1)
+		binary.BigEndian.PutUint32(gatewayIP, networkAddr+uint32(startingGateway))
 
 		subnets[i] = NvIpamSubnetConfig{
 			Subnet:  fmt.Sprintf("%s/%d", subnetIP.String(), mask),
@@ -1243,6 +1275,16 @@ func GenerateSubnets(startingSubnet string, mask, offset, count int) ([]NvIpamSu
 	}
 
 	return subnets, nil
+}
+
+// validateStartingGateway requires a usable host offset for a valid IPv4 mask.
+func validateStartingGateway(startingGateway, mask int) error {
+	broadcastOffset := uint64(1)<<uint(32-mask) - 1
+	if startingGateway < 1 || uint64(startingGateway) >= broadcastOffset {
+		return fmt.Errorf("nvIpam.startingGateway must be between 1 and %d for /%d, got %d",
+			broadcastOffset-1, mask, startingGateway)
+	}
+	return nil
 }
 
 // uint32ToIP renders a big-endian uint32 as a dotted-quad IPv4 string.
@@ -1330,9 +1372,28 @@ func ApplyNvIpamDefaultsWithPresence(cfg *LaunchKitConfig, present PathSet) {
 	if cfg == nil || cfg.NvIpam == nil {
 		return
 	}
+	if cfg.NvIpam.StartingGateway == 0 && !present.Has("nvIpam.startingGateway") {
+		cfg.NvIpam.StartingGateway = DefaultNvIpamStartingGateway
+	}
 	if cfg.NvIpam.PerNodeBlockSize == 0 && !present.Has("nvIpam.perNodeBlockSize") {
 		cfg.NvIpam.PerNodeBlockSize = DefaultNvIpamPerNodeBlockSize
 	}
+}
+
+// ValidateNvIpamStartingGateway validates the configured host offset without
+// interpreting an omitted zero value as an explicit network-address request.
+// Manual subnet entries retain their own gateways and ignore automatic bounds.
+func ValidateNvIpamStartingGateway(nv *NvIpamConfig, present PathSet) error {
+	if nv == nil {
+		return nil
+	}
+	if nv.StartingGateway < 0 || (nv.StartingGateway == 0 && present.Has("nvIpam.startingGateway")) {
+		return fmt.Errorf("nvIpam.startingGateway must be > 0, got %d", nv.StartingGateway)
+	}
+	if len(nv.Subnets) == 0 && nv.StartingSubnet != "" && nv.Mask >= 1 && nv.Mask <= 30 && nv.StartingGateway > 0 {
+		return validateStartingGateway(nv.StartingGateway, nv.Mask)
+	}
+	return nil
 }
 
 // validateNvIpam checks the nvIpam settings before any rendering. It validates

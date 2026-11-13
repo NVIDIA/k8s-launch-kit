@@ -32,7 +32,11 @@ func secondaryNetworkWorkers(cfg *config.LaunchKitConfig) []string {
 }
 
 func checkSecondaryNetworkDeployment(ctx context.Context, c client.Reader, ncp *unstructured.Unstructured, cfg *config.LaunchKitConfig) error {
-	checks, err := secondarynetwork.CheckPolicy(ctx, c, ncp, secondaryNetworkWorkers(cfg))
+	var flavor string
+	if cfg != nil {
+		flavor = cfg.Flavor
+	}
+	checks, err := secondarynetwork.CheckPolicy(ctx, c, ncp, secondaryNetworkWorkers(cfg), flavor)
 	if err != nil {
 		return fmt.Errorf("secondary-network ownership check: %w", err)
 	}

@@ -586,6 +586,12 @@ func TestTargetScopeUnnamedSourceLifecycle(t *testing.T) {
 				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gpu-b", Labels: map[string]string{"cohort": "gpu"}}},
 				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "other", Labels: map[string]string{"cohort": "other"}}},
 			}
+			// Model the cluster service allocator for the pre-write address check.
+			objects = append(objects, &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "networking.k8s.io/v1", "kind": "ServiceCIDR",
+				"metadata": map[string]interface{}{"name": "kubernetes"},
+				"spec":     map[string]interface{}{"cidrs": []interface{}{"10.96.0.0/12"}},
+			}})
 			var targetFiles []bundle.File
 			for _, doc := range generated.Documents() {
 				obj := doc.ObjectCopy()

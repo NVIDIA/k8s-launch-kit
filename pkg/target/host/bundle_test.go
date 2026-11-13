@@ -58,10 +58,11 @@ var _ = ginkgo.Describe("Host artifact snapshot", func() {
 				gomega.Expect(artifacts.Documents()[0].Source().File).To(gomega.Equal("60-example-daemonset.yaml"))
 				return &connectivity.MatrixResult{
 					PingResults: []connectivity.PingResult{
+						{Test: connectivity.PingTest{Kind: connectivity.Gateway}, OK: true},
 						{Test: connectivity.PingTest{Kind: connectivity.ICMPSameRail}, OK: true},
 						{Test: connectivity.PingTest{Kind: connectivity.RDMAPingSameRail}, OK: true},
 						{Test: connectivity.PingTest{Kind: connectivity.RDMABwSameRail}, OK: true},
-					}, Summary: connectivity.MatrixSummary{TotalTests: 3, Passed: 3},
+					}, Summary: connectivity.MatrixSummary{TotalTests: 4, Passed: 4},
 				}, nil
 			},
 		}
