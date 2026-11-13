@@ -120,7 +120,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 						err = store.Publish(publishCtx, &report)
 						cancel()
 						if err != nil {
-							progress.Info("[FAIL] Publication: output could not be published; see the result for details")
+							progress.Info("[FAIL] Publication incomplete; see the result for details")
 							report.Execution = "failed"
 							report.Errors = append(report.Errors, inventory.Problem{Code: "PUBLICATION_FAILED", Message: err.Error(), ExitCode: 1})
 							_ = store.Report(&report)
