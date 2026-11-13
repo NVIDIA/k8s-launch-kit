@@ -229,6 +229,9 @@ func DeviceFromOutput(w DeviceOutput, role string) (Device, error) {
 }
 
 func validateDeviceOutput(w DeviceOutput, role string) error {
+	if err := validateHardwareIssueFields(w); err != nil {
+		return err
+	}
 	securityIssues := map[string]bool{}
 	for _, issue := range w.Issues {
 		if issue.Field == "" || issue.Code == "" || !safeFact(issue.Field) || !safeFact(issue.Code) {
