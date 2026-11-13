@@ -16,7 +16,7 @@ var _ = Describe("compact discovery inventory input", func() {
 		in, err := Decode([]byte(seed), "/site/input.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		inv := &inventory.Inventory{FormatVersion: inventory.FormatVersion, DPUs: []inventory.Device{{
-			ID: "dpu-one", ObservationState: "observed", Observations: map[string]inventory.Observation{
+			ID: "dpu-one", BMCEndpoint: "https://dpu.invalid", Model: "B4240", ReaderAdapter: "bluefield-card-v1", ObservationState: "observed", Observations: map[string]inventory.Observation{
 				"bmc-administrator":  {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"},
 				"firmware-inventory": {State: "observed"},
 				"psid":               {State: "observed", Values: []string{"MT_0000001774"}, ReasonCode: "PSID_OBSERVED", Tool: "redfish"},
@@ -35,8 +35,8 @@ var _ = Describe("compact discovery inventory input", func() {
 	})
 
 	It("continues rejecting unknown fields inside compact device and authentication records", func() {
-		for _, field := range []string{"      deviceTypo: value\n", "      authentication: {administratorTypo: verified}\n"} {
-			_, err := Decode([]byte(seed+"inventory:\n  formatVersion: v1alpha2\n  dpus:\n    - id: dpu-one\n"+field), "/site/input.yaml")
+		for _, field := range []string{"      deviceTypo: value\n", "      firmware: {firmwareTypo: value}\n", "      runtime: {runtimeTypo: value}\n"} {
+			_, err := Decode([]byte(seed+"inventory:\n  formatVersion: v1alpha3\n  dpus:\n    - id: dpu-one\n"+field), "/site/input.yaml")
 			Expect(err).To(HaveOccurred())
 		}
 	})

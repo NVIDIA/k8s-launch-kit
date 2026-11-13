@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+
+	yaml "gopkg.in/yaml.v3"
 )
 
 // inventoryWire avoids recursively invoking the Inventory codecs. Device itself
@@ -16,6 +18,13 @@ import (
 type inventoryWire Inventory
 
 func (i Inventory) MarshalJSON() ([]byte, error) {
+	if i.FormatVersion == FormatVersion {
+		wire, err := i.output()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(wire)
+	}
 	wire, err := i.compact()
 	if err != nil {
 		return nil, err
@@ -23,12 +32,80 @@ func (i Inventory) MarshalJSON() ([]byte, error) {
 	return json.Marshal(wire)
 }
 
-func (i Inventory) MarshalYAML() (any, error) { return i.compact() }
+func (i Inventory) MarshalYAML() (any, error) {
+	if i.FormatVersion == FormatVersion {
+		return i.output()
+	}
+	return i.compact()
+}
 
 func (i *Inventory) UnmarshalJSON(data []byte) error {
-	var wire inventoryWire
+	if i == nil {
+		return fmt.Errorf("nil inventory destination")
+	}
+	var header struct {
+		FormatVersion string `json:"formatVersion"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
+	if header.FormatVersion == FormatVersion {
+		var wire inventoryOutput
+		if err := decoder.Decode(&wire); err != nil {
+			return err
+		}
+		result, err := wire.inventory()
+		if err != nil {
+			return err
+		}
+		*i = result
+		return nil
+	}
+	var wire inventoryWire
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	result := Inventory(wire)
+	if err := NormalizeInventory(&result); err != nil {
+		return err
+	}
+	*i = result
+	return nil
+}
+
+// UnmarshalYAML selects a versioned public schema and preserves strict nested
+// validation. A custom node decoder must not bypass the caller's KnownFields.
+func (i *Inventory) UnmarshalYAML(node *yaml.Node) error {
+	if i == nil {
+		return fmt.Errorf("nil inventory destination")
+	}
+	var header struct {
+		FormatVersion string `yaml:"formatVersion"`
+	}
+	if err := node.Decode(&header); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(node)
+	if err != nil {
+		return err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if header.FormatVersion == FormatVersion {
+		var wire inventoryOutput
+		if err := decoder.Decode(&wire); err != nil {
+			return err
+		}
+		result, err := wire.inventory()
+		if err != nil {
+			return err
+		}
+		*i = result
+		return nil
+	}
+	var wire inventoryWire
 	if err := decoder.Decode(&wire); err != nil {
 		return err
 	}
@@ -42,7 +119,7 @@ func (i *Inventory) UnmarshalJSON(data []byte) error {
 
 func (i Inventory) compact() (inventoryWire, error) {
 	wire := inventoryWire(i)
-	if i.FormatVersion != FormatVersion {
+	if i.FormatVersion != "v1alpha2" {
 		return wire, nil
 	}
 	var err error
@@ -99,11 +176,10 @@ func compactDevices(devices []Device) ([]Device, error) {
 }
 
 // NormalizeInventory restores the internal observation model from the compact
-// v1alpha2 wire contract. YAML callers must invoke it after their strict decode;
-// keeping YAML decoding outside this type preserves KnownFields validation.
+// v1alpha2 wire contract. Both codecs call it after strict decoding.
 // Legacy records retain their exact state, including absent/unknown evidence.
 func NormalizeInventory(i *Inventory) error {
-	if i == nil || i.FormatVersion != FormatVersion {
+	if i == nil || i.FormatVersion != "v1alpha2" {
 		return nil
 	}
 	for _, devices := range [][]Device{i.Hosts, i.DPUs} {

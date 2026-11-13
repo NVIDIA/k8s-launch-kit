@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const FormatVersion = "v1alpha2"
+const FormatVersion = "v1alpha3"
 
 type Collection struct {
 	RunID      string    `json:"runID" yaml:"runID"`

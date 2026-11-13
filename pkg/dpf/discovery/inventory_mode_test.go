@@ -26,8 +26,13 @@ type fixtureCollector struct {
 
 func (f fixtureCollector) Collect(_ context.Context, t config.Target, _ time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
 	d := inventory.Device{ID: "host-one", RecordKey: t.InputRef, InputRef: t.InputRef, ObservationState: "observed", Qualification: "unqualified", InventoryCompleteness: "partial", EvidenceRefs: []string{"source"}}
+	if t.SSH != nil {
+		d.SSHEndpoint = t.Endpoint
+	} else {
+		d.BMCEndpoint = t.Endpoint
+	}
 	if t.Role == "hosts" {
-		d.Adapters = []inventory.Adapter{{Key: "card-one", SerialNumber: "CARD-ONE", Model: "BlueField-4", EvidenceRefs: []string{"source"}}}
+		d.Adapters = []inventory.Adapter{{Key: "card-one", IdentityState: "known", SerialNumber: "CARD-ONE", Model: "BlueField-4", EvidenceRefs: []string{"source"}}}
 	} else {
 		d.ID = "dpu-one"
 		d.SerialNumber = "CARD-ONE"

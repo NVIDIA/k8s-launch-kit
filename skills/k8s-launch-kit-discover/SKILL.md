@@ -16,15 +16,21 @@ For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-
 DPF live check status goes to stderr as operations run, including with JSON output;
 quiet suppresses progress. Human summaries show configured names/addresses and
 host/DPU mappings, separating discovery blockers from later prerequisites and
-checks not requested. Host/DPU BMC results omit evidence maps/references; typed
-facts, reasons and required checks remain. Other discovery sources retain their
-existing metadata. Legacy inventories remain readable and refresh from fresh reads.
-Host/DPU `observations` contains only failures/mismatches and unavailable-fact reasons;
-successful device state and empty value lists are omitted. Verified admin access
-is saved under `authentication.bmcAdministrator`, and PSID under `psid`; missing
-PSID reasons remain under `observations.psid`. Report check outcomes remain complete.
-Host BMC reads retain identity, adapters and reset types, not a firmware/time dump.
-New inventory format is `v1alpha2`; this CLI also reads legacy `v1alpha1`.
+checks not requested. Both host and DPU results use named facts and an `issues`
+list (`field`, `code`, safe `message`, optional `tool`) for failures, mismatches
+and unavailable facts. Generic observations, successful per-value state, raw
+firmware/command dumps and device evidence references are omitted. Review `id`,
+`psid` and `bmcAdministratorVerified`; missing identity/authorization is not success.
+SSH card readings use `runtime.hardware.cards`, including `firmwareVersion`,
+`psid`, `nextBoot` settings and `hostPrivileges`; next-boot settings do not prove
+running mode. DPU firmware uses named component version lists with activation
+when known. Host BMC reads retain identity, adapters and reset types.
+`inventory.software` retains artifact coordinates and named documented minima,
+without source/revision lists or generic requirements. Missing minima remain
+unknown. `scopeDigest` guards the configured refresh scope/trust policy; the
+inventory does not repeat `requestedScope`. Management/probe source metadata and
+report check outcomes remain intact. New format is `v1alpha3`; legacy `v1alpha1`
+and `v1alpha2` remain readable without inferring missing verification.
 Add `--log-level debug` for source/stage timing, or `trace` for bounded request/tool
 metadata. Redirecting stderr hides live progress in the selected file. Never dump
 credentials or raw HTTP/SSH payloads to diagnose access. Password references can
@@ -85,8 +91,8 @@ DPF BMC TLS verification defaults to enabled. For an explicitly requested lab
 bypass, set the endpoint's `tls.insecureSkipVerify: true`; the shared
 `discovery.tls` policy also supports it. An endpoint `tls` block replaces that
 policy, including an explicit `false`. Do not combine `caFile` with `true`.
-Retain stderr warnings and `inventory.requestedScope[].tlsInsecureSkipVerify` in
-the report. A policy change requires a fresh seed/output; it does not weaken
+Retain stderr warnings and the configured `discovery` TLS policy; the saved
+`inventory.scopeDigest` guards that policy during refresh. A policy change requires a fresh seed/output; it does not weaken
 management kubeconfig or network-probe TLS verification.
 Redfish login prefers the public root's `Links.Sessions`, including standard
 HPE trailing-slash links. A protected `SessionService` GET is not required when

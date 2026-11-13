@@ -17,6 +17,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -381,6 +382,11 @@ func Canonicalize(inv *inventory.Inventory) {
 	sortDevices(inv.Hosts)
 	slices.SortFunc(inv.Associations, func(a, b inventory.Association) int { return strings.Compare(a.DPUID, b.DPUID) })
 	inv.Fingerprint = inventory.Digest("dpf-facts-v1", material(inv))
+	// A loaded v3 inventory retains only the digest. Fresh collections supply
+	// RequestedScope; do not replace a persisted guard with an empty scope.
+	if inv.RequestedScope == nil && inv.ScopeDigest != "" {
+		return
+	}
 	inv.ScopeDigest = inventory.Digest("dpf-infrastructure-scope-v1", struct {
 		Mode      string
 		Endpoints []inventory.ScopeEndpoint
@@ -397,7 +403,7 @@ func Canonicalize(inv *inventory.Inventory) {
 func material(inv *inventory.Inventory) map[string]any {
 	fields := map[string]any{}
 	if inv.Software != nil {
-		fields["software"] = inv.Software
+		fields["software"] = releases.Summarize(*inv.Software)
 	}
 	if inv.AddressLookup != nil {
 		fields["addressLookup"] = inv.AddressLookup
@@ -423,22 +429,37 @@ func material(inv *inventory.Inventory) map[string]any {
 
 		}
 	}
-	for _, devices := range [][]inventory.Device{inv.DPUs, inv.Hosts} {
-		for _, d := range devices {
+	for _, group := range []struct {
+		role    string
+		devices []inventory.Device
+	}{{"dpus", inv.DPUs}, {"hosts", inv.Hosts}} {
+		for _, d := range group.devices {
 			key := "device." + d.RecordKey
-			fields[key+".identity"] = []any{d.ID, d.IdentityKey, d.Model, d.ReaderAdapter, d.Qualification, d.InventoryCompleteness}
-			for _, a := range d.Adapters {
-				fields[key+".adapter."+a.Key] = []any{a.SerialNumber, a.Model, a.Slot, a.PCIAddress, a.VendorID, a.DeviceID, a.IdentityState, a.ReasonCode, canonicalFunctions(a.PCIFunctions)}
-			}
-			if psid, present := d.Observations["psid"]; present {
-				fields[key+".psid"] = []any{psid.State, psid.Values, psid.ReasonCode, psid.Tool}
-			}
-			fields[key+".endpoints"] = []string{d.SSHEndpoint, d.BMCEndpoint, d.BMCAddressState}
 			if d.Runtime != nil {
-				fields[key+".runtime"] = canonicalRuntime(*d.Runtime)
+				runtime := canonicalRuntime(*d.Runtime)
+				d.Runtime = &runtime
 			}
-			for _, fw := range d.Firmware {
-				fields[key+".firmware."+fw.Component+"."+fw.ResourceURI] = []string{fw.State, fw.RawVersion, fw.Activation}
+			w, err := inventory.DeviceToOutput(d, group.role)
+			if err != nil {
+				// Publication rejects malformed facts. Keep them visible in the
+				// comparison as well, rather than claiming an unchanged record.
+				fields[key+".invalid"] = err.Error()
+				continue
+			}
+			fields[key+".identity"] = []string{w.ID, w.SerialNumber, w.SystemUUID, w.Manufacturer, w.Model, w.Method}
+			fields[key+".endpoints"] = []string{w.SSHEndpoint, w.BMCEndpoint, w.SystemURI}
+			fields[key+".psid"] = w.PSID
+			fields[key+".bmcAdministratorVerified"] = w.BMCAdministratorVerified
+			fields[key+".firmwareInventoryComplete"] = w.FirmwareInventoryComplete
+			fields[key+".firmware"] = w.Firmware
+			fields[key+".runtime"] = w.Runtime
+			fields[key+".advertisedResetTypes"] = w.AdvertisedResetTypes
+			for _, a := range w.Adapters {
+				a.PCIFunctions = canonicalFunctions(a.PCIFunctions)
+				fields[key+".adapter."+a.Key] = a
+			}
+			for _, issue := range w.Issues {
+				fields[key+".issue."+issue.Field+"."+issue.Code] = issue.Tool
 			}
 		}
 	}

@@ -78,8 +78,8 @@ remote access. Lists and credentials stay in YAML; no password CLI flag exists.
 | Required site inputs | Nonempty host list and explicit DPU BMC endpoints with administrator credentials for completion; each selected endpoint and credential alias; username and password reference or SSH private-key reference |
 | Defaultable | `dpf.release: 26.4.0`; context from a supplied kubeconfig; system certificate trust; SSH port `22`; SSH sudo `false`; collection timeout `10m`; request timeout `15s`; up to four endpoints queried at once (`maxConcurrentBMCs`) |
 | Conditional | Kubeconfig for optional management observations; SSH known-hosts file; approved noninteractive sudo for protected reads; private Redfish CA; `systemURI` when a BMC exposes multiple systems |
-| Observed | Physical-card/system identities, linked host adapters, component firmware, auth/time unknowns, management nodes/version |
-| Release defaults | Software bill of materials (BOM), minimum versions for supported models, and explicit unknown requirements; these do not establish deployment readiness |
+| Observed | Physical-card/system identities, linked host adapters, named DPU firmware versions, administrator verification, runtime hardware/network facts and management nodes/version |
+| Release defaults | Software bill of materials (BOM), artifact coordinates and documented minima for supported models; omitted minima remain unknown and do not establish deployment readiness |
 | Optional lookup inputs | Explicit ARM/BMC MAC selectors; optional local `dnsmasq-leases` files. Lookup returns address hints, never identity or permission to connect |
 | Later phases | Deployment profile, DPU API allocation, DHCP/service networks and controller authentication |
 
@@ -119,7 +119,7 @@ field could otherwise establish the binding. This proves observed Redfish
 privileges and matching local-account state, not future write success or DPF
 controller authentication. External-provider role mappings are not evaluated.
 
-Review `observations.bmc-administrator` and the required
+Review `bmcAdministratorVerified` on each DPU, any `issues` entry for that field, and the required
 `dpf.management.bmc-administrator` check. `BMC_ADMIN_REQUIRED` means the role lacks
 administrator privileges; `BMC_ADMIN_ACCESS_DENIED` means required account/role
 reads were denied; `BMC_ADMIN_UNVERIFIABLE` means evidence was missing, malformed,
@@ -188,10 +188,11 @@ restores system-trust verification for that endpoint. Omitted/null values use th
 policy's default. `caFile` and `insecureSkipVerify: true` cannot be combined in the
 effective policy. TLS policies are independent even when endpoints share credentials.
 
-The CLI warns on stderr unless quiet output is requested and records
-`tlsInsecureSkipVerify: true` on the affected `inventory.requestedScope` entries
-in JSON and saved YAML, including failed observations. This records the selected
-policy, not successful TLS or hardware verification. Use a fresh input without
+The CLI warns on stderr unless quiet output is requested. Your `discovery` input
+retains the selected TLS policy; `inventory.scopeDigest` protects refresh against
+a changed scope or trust policy. The inventory does not repeat the configured
+endpoint/trust list as `requestedScope`. A selected policy does not establish
+successful TLS or hardware verification. Use a fresh input without
 saved `inventory` and a new output when changing the verification policy or custom
 CA contents. This BMC option does not relax management kubeconfig TLS verification.
 
@@ -244,9 +245,10 @@ prompts for no sudo password and changes no privileges.
 
 ARM discovery needs a booted, reachable OS with sufficient permissions. Local
 `ipmitool lan print` can report the BMC endpoint without Redfish. The endpoint is
-recorded as `observed-local-ipmi`; discovery does not connect or send credentials
-to that newly observed address. Missing optional tools/data remain unknown with a persisted `reasonCode`, safe
-`message`, and `tool` where applicable; required-source failures retain their cause too. It
+saved as `bmcEndpoint` alongside `method: ssh`; discovery does not connect or send
+credentials to that newly observed address. Missing optional tools/data are
+reported in `issues` with the affected `field`, a stable `code`, safe `message`
+and `tool` where applicable; required-source failures retain their cause too. It
 never infers a BMC address from an ARM IP or a serial from a hostname.
 
 Host and ARM PCI addresses belong to different domains; correlation uses physical
@@ -266,9 +268,13 @@ Controller mTLS enrollment and provisioning readiness remain separate later-phas
 
 `dpf.release` selects the release's software BOM independently of live measurements.
 Omitted/null selects the `26.4.0` default; explicit empty or unknown releases
-are rejected. The resolved BOM is saved under `inventory.software`, with source
-references and unknown requirements. The current catalog has exact BlueField-3
-models `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 do not
+are rejected. The resolved BOM is saved under `inventory.software`, with operator
+and component coordinates, exact hardware models and BFB version/URL plus a
+digest when known. Documented minima use named fields such as
+`minimumNICFirmware` and `minimumHostMFT`. Omitted minima remain unknown in
+software checks; they are not inherited from a newer catalog. Catalog source
+references, revision lists and generic requirement objects are not saved.
+The current catalog has exact BlueField-3 models `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 do not
 establish applicability. Desired BFB/component coordinates are not measured
 versions. Only documented minimum versions are compatibility checks; unsupported
 firmware requirements remain unknown. Model applicability and software checks do
@@ -283,10 +289,10 @@ same identity-bound source fields are reread before the PSID becomes observed.
 This is a Redfish fact obtained from authenticated `AssetTag` reads;
 it does not create an SSH/runtime observation or infer a PSID from a model.
 
-Failures and missing PSIDs are recorded under `observations.psid`.
+Failures and missing PSIDs are recorded in `issues` with `field: psid`.
 `PSID_NOT_EXPOSED` and `PSID_READER_UNSUPPORTED` mean this source supplies no PSID.
-`PSID_INVALID`, `PSID_CONFLICT`, `PSID_CHANGED` and `PSID_RECHECK_FAILED` keep the
-observation unavailable with no eligible values. These optional gaps preserve
+`PSID_INVALID`, `PSID_CONFLICT`, `PSID_CHANGED` and `PSID_RECHECK_FAILED` leave
+no eligible `psid` value. These optional gaps preserve
 physical inventory and discovery's existing acceptance policy. A downstream
 consumer requiring PSID must require a single observed value associated with the
 selected device and reject contradictory or invalid readings across its sources;
@@ -296,9 +302,11 @@ diff. Release qualification and administrator authorization remain separate chec
 
 SSH can report NIC firmware/PSID, MFT version, NVConfig and privilege observations
 when the existing tools and permissions permit the read. Current and next-boot
-configuration remain distinct. Redfish firmware keeps raw component identities,
-versions, resource paths and explicit activation where exposed. A failed source,
-partial firmware collection, identity change or explicit version/activation conflict
+configuration remain distinct. DPU Redfish firmware is grouped by named
+component under `firmware`, such as `bmc`, `nic`, `cec` and `uefi`. Each version
+retains activation when known; an absent activation does not mean running. Raw
+vendor names, firmware resource dumps and source-reference bookkeeping are
+omitted. A failed source, partial firmware collection, identity change or explicit version/activation conflict
 cannot satisfy a minimum through that source. An independent valid SSH observation
 can still satisfy a minimum unless explicit component conflicts remain.
 
@@ -355,30 +363,36 @@ displaying them. `--output json` still emits one final JSON document on stdout.
 
 ### Read the device results
 
-Each host/DPU `observations` block contains failures, mismatches and reasons why
-requested facts are unavailable. Successful reads and the per-device
-client-certificate “not evaluated” placeholder are omitted. An empty block is
-omitted entirely; absence of a diagnostic does not establish deployment readiness.
-The report's checks still record required successes and later-phase gaps.
+Both host and DPU records use named fields for available facts and `issues` for
+failures, mismatches and unavailable facts. Each issue identifies its `field` and
+`code`, with a safe `message` and `tool` when available. Successful reads do not
+create issue entries or repeat `state: observed` beside every value. The report's
+checks still record required successes and later-phase gaps.
 
-Verified DPU facts have dedicated fields: `psid` holds the board identifier and
-`authentication.bmcAdministrator: verified` records successful administrator
-verification. DPU firmware versions and clock/NTP settings remain under `firmware`
-and `time`. `firmwareInventoryComplete: true` means firmware enumeration completed;
-it does not mean every component exposes a version or that firmware is compatible.
-Successful device records omit `observationState`; failed, ambiguous and unknown
-records retain their state and available reasons. Empty diagnostic `values` lists
-are omitted.
+Review `id`, `serialNumber`, `model`, `psid` and `bmcAdministratorVerified` where
+present. `id` is published only after the required physical identity rechecks
+succeed; a retained serial or endpoint on a failed record is diagnostic context.
+A missing fact stays unknown. `firmwareInventoryComplete: true` means DPU
+firmware enumeration completed, not that every version is known or compatible.
+`firmware` contains named component version lists; activation remains separate
+from version. ERoT components stay separate from BMC firmware.
 
-Host BMC discovery collects system identity, PCI adapter identities and advertised
-reset types for host-to-DPU mapping. It does not dump host firmware, query host
-NTP settings or manufacture missing DPU firmware components on a host. DPU firmware
-inventory keeps ERoT entries separate from BMC firmware so their different versions
-do not create a false BMC mismatch.
+For SSH sources, `runtime.mftVersion`, `runtime.boardProduct` and
+`runtime.hardware.cards` hold measured values. Each card can have `psid`,
+`firmwareVersion`, `nextBoot` settings and `hostPrivileges`. For example,
+`nextBoot.numVFs: 0` is an explicit measured zero, not a missing value; next-boot
+settings do not prove the running mode. Host RShim service state, when readable,
+is under `runtime.hardware.rshim`.
 
-New saved inventories use format `v1alpha2`. This CLI can read legacy `v1alpha1`
-inventories; use the updated CLI to consume the new format. Keep old outputs as
-history and refresh through discovery rather than manually deleting status fields.
+Host BMC discovery keeps system identity, PCI adapter identities and advertised
+reset types for host-to-DPU mapping. It does not dump host firmware or manufacture
+DPU-only component placeholders. Host/DPU output omits generic observation maps,
+authentication/time placeholders, raw command strings and collection bookkeeping.
+
+New saved inventories use format `v1alpha3`. This CLI also reads legacy
+`v1alpha1` and `v1alpha2` conservatively: absent state or verification does not
+become successful identity or administrator proof. Keep previous outputs as
+history and refresh through discovery rather than editing version tags or facts.
 
 ### Internal identifiers in saved inventory
 
@@ -393,12 +407,11 @@ The detailed YAML/JSON retains identifiers for automation and traceability:
 These `sha256:` values are internal identifiers/comparison digests, not secrets,
 signatures or independent proof that hardware is correct.
 
-Host and DPU BMC observations do not generate `evidence` records or
-`evidenceRefs`. Their results retain the observed values, status and failure
-reasons. Firmware resource paths and endpoint identity remain available where
-recorded. Other discovery sources, such as SSH or management-cluster probes,
-can still include their source metadata. Older saved inventories remain readable;
-a fresh BMC collection replaces their BMC metadata. Existing backups are preserved.
+Host and DPU records omit evidence maps, reference lists and raw vendor resource
+metadata. Named facts and field-specific issues remain available for review.
+Management observations and connectivity probes retain their own source metadata.
+A refresh preserves source backups; removing old device metadata alone does not
+report a physical change.
 
 ### Review and refresh the handoff
 
@@ -406,8 +419,8 @@ Review each card's serial and its host association. Missing or conflicting ident
 must be resolved before accepting the inventory; an IP address, PCI address or
 CPU serial does not establish card identity. Cards with incomplete information
 remain visible with their available PCI/slot details. Every requested endpoint
-remains represented on failure, and unknown firmware, authentication or time
-values remain unknown. Inventory completion does not establish hardware support
+remains represented on failure, and missing firmware or authorization facts
+remain unknown. Inventory completion does not establish hardware support
 for DPF deployment.
 
 Complete discovery writes the requested YAML. Partial collection preserves an

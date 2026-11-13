@@ -18,7 +18,7 @@ func TestInventory(t *testing.T) {
 }
 
 func compactFixture() Inventory {
-	return Inventory{FormatVersion: FormatVersion, Hosts: []Device{{ID: "host-one", ObservationState: "observed"}}, DPUs: []Device{{
+	return Inventory{FormatVersion: "v1alpha2", Hosts: []Device{{ID: "host-one", ObservationState: "observed"}}, DPUs: []Device{{
 		ID: "dpu-one", RecordKey: "record-one", ObservationState: "observed", BMCEndpoint: "https://192.0.2.1",
 		Observations: map[string]Observation{
 			"psid":                       {State: "observed", Values: []string{"MT_0000001774"}, ReasonCode: "PSID_OBSERVED", Tool: "redfish"},
@@ -81,7 +81,7 @@ var _ = ginkgo.Describe("compact inventory", func() {
 	})
 
 	ginkgo.It("preserves explicit failures and unknown records even when an ID was assigned", func() {
-		in := Inventory{FormatVersion: FormatVersion, DPUs: []Device{
+		in := Inventory{FormatVersion: "v1alpha2", DPUs: []Device{
 			{ID: "before-recheck", ObservationState: "unavailable", ReasonCode: "IDENTITY_CHANGED"},
 			{ID: "not-verified", ObservationState: ""},
 			{ObservationState: "observed"},
@@ -130,7 +130,7 @@ var _ = ginkgo.Describe("compact inventory", func() {
 	)
 
 	ginkgo.It("retains failures whose reason happens to say not evaluated", func() {
-		in := Inventory{FormatVersion: FormatVersion, Hosts: []Device{{ID: "host-one", ObservationState: "observed", Observations: map[string]Observation{
+		in := Inventory{FormatVersion: "v1alpha2", Hosts: []Device{{ID: "host-one", ObservationState: "observed", Observations: map[string]Observation{
 			"client-certificate-support": {State: "failed", ReasonCode: "NOT_EVALUATED"},
 			"other-fact":                 {State: "unknown", ReasonCode: "NOT_EVALUATED"},
 		}}}}

@@ -326,25 +326,36 @@ The current DPF target still rejects generation, deployment and validation befor
 consuming inventory. A future generator must require fresh complete discovery and
 revalidate its own authorization needs; saved facts do not authorize provisioning.
 
-Inventory `v1alpha2` projects host/DPU observations into diagnostics only at the
-serialization boundary; in-memory collection/check data remains intact. Verified
-PSID and BMC administrator authorization are typed facts, with explicit firmware
-enumeration completeness for software comparisons. Only successful device state
-is omitted. Version-aware decoding restores consumer semantics and must never
-infer legacy success from a missing field or accept contradictory success/failure
-facts. Legacy inventories remain readable. Host BMC collection is limited to
-identity, PCI mapping and reset capabilities; configured qualification may inspect
-manager version privately, without a host firmware/time inventory. DPU ERoT and
+Inventory `v1alpha3` has a versioned public projection for both host and DPU
+records; internal collector/check APIs keep their existing domain state. Public
+facts use dedicated fields: identity, PSID, administrator verification, runtime
+versions, per-card firmware/PSID, next-boot settings and host privileges. Named
+DPU firmware components retain version/activation; raw vendor metadata and
+command output are not serialized. `issues` carries only failures, mismatches
+and unavailable facts, with field/code/message/tool rather than a generic
+state/value wrapper. ID is exported only for an eligible final identity.
+Version-aware decoding preserves these authority boundaries and rejects
+contradictions. Legacy `v1alpha1` and `v1alpha2` remain readable without inferring
+missing success. Required report check results and qualification boundaries stay
+separate from compact device facts.
+
+The public software BOM is a projection of the internal release catalog:
+operator/component coordinates, exact hardware applicability, BFB version/URL
+and known digest, plus fixed named minimum fields. Missing minima reconstruct
+unknown requirements for compatibility checks; decoding uses saved coordinates
+rather than current catalog defaults. Catalog sources/revisions, generic
+requirements and static limitation prose stay internal. Host BMC collection is
+limited to identity, PCI mapping and advertised reset capabilities; DPU ERoT and
 BMC firmware remain distinct components.
 
-BMC discovery keeps typed values, status/reasons, endpoint and firmware resource
-paths, but does not create an evidence table or reference lists. Required live
-reads, identity and PSID rereads, and administrator checks remain mandatory;
-metadata references are not an authorization or validation gate. Shared evidence
-types remain readable for legacy inventories and other sources such as SSH and
-management probes. Empty metadata is omitted from saved complete/partial
-inventory and reports; refresh replaces old BMC metadata while retaining source
-backups and existing material identity/scope comparison rules.
+Host/DPU records do not create evidence tables or reference lists, regardless of
+transport. Mandatory live reads, identity and PSID rereads, administrator checks,
+cleanup and publication remain unchanged. Management/probe evidence retains its
+own contract. The public `scopeDigest` guards resolved refresh endpoints/trust;
+`requestedScope` and its detailed policy bookkeeping stay internal. Material
+fingerprints compare the public fact projection so removed provenance does not
+create false changes. Refresh preserves source backups and existing stable
+physical identity/scope conflict guards.
 
 ### Stage 4: DPF generation for Zero Trust passthrough
 

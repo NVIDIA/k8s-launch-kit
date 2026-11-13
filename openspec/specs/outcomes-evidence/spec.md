@@ -59,8 +59,8 @@ Output extensions SHALL preserve command-specific framing, existing public field
 
 - **WHEN** DPF discovery runs with normal CLI output
 - **THEN** live operation/check status is emitted as work occurs on stderr, identifies the selected source by name/address, distinguishes running/passed/failed/unavailable states, and does not announce successful identity or cleanup before its required checks complete.
-- **AND** the final text summary distinguishes discovery blockers, later provisioning prerequisites and checks not requested; internal identity/comparison hashes remain in structured artifacts rather than replacing source names. BMC collection does not generate evidence maps or references.
-- **AND** JSON remains one final stdout document, quiet suppresses progress, and compact inventory presentation preserves check states, usable facts, failure reasons, acceptance and process exit status. A final output-write failure remains a command failure.
+- **AND** the final text summary distinguishes discovery blockers, later provisioning prerequisites and checks not requested; internal identity/comparison hashes remain in structured artifacts rather than replacing source names. Host/DPU records from either Redfish or SSH omit device evidence maps/references and publish named facts with field-specific `issues`; unsuccessful reads do not require a generic observation wrapper.
+- **AND** JSON remains one final stdout document, quiet suppresses progress, and typed `v1alpha3` inventory presentation preserves required report check states, usable facts, failure reasons, acceptance and process exit status. Legacy `v1alpha1`/`v1alpha2` decoding cannot infer missing verification; omitted BOM minima remain unresolved, and private provenance removal alone cannot create a material diff. A final output-write failure remains a command failure.
 - **AND** debug/trace uses the existing logging controls and bounded operation metadata; credentials, session tokens, raw vendor responses, SSH command output and secret-file contents are not logged.
 
 ### Requirement: Evidence existence and partial results
