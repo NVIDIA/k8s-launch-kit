@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Names.Server }}
+  namespace: {{ .Namespace }}
+rules:
+  - apiGroups: ["tower.dpu.nvidia.com"]
+    resources: ["docatowerpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["tower.dpu.nvidia.com"]
+    resources: ["docatowerpolicies/status"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Names.Server }}
+  namespace: {{ .Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Names.Server }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Names.Server }}
+    namespace: {{ .Namespace }}

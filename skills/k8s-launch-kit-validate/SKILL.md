@@ -11,6 +11,20 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and exit codes.
 
+## DPF Sentry resource validation
+
+For an explicit DPF request, use `l8k validate --target dpf
+--deployment-files <bundle> --wait 10m` and follow `docs/user/dpf-sentry.md`.
+Access comes from the bundle's bound management/tenant inputs. Validation
+verifies current resource state, identities and selected coverage without
+cluster writes, and writes evidence to `<bundle>.runs/`. It does not run a
+Sentry allow/deny or LLM test. Perform those functional checks separately with
+the actual selected VF/MAC and public MITM CA. Do not reuse Host connectivity,
+HTML/JUnit report or Network Operator checks for this target. The Host
+procedure below applies to `host` only.
+
+## Host workflow
+
 This workflow uses the default `host` target; `--target host` is equivalent.
 The CLI snapshots validation arguments and runs the standalone Host validation
 and report service through the target registry; checks and report semantics

@@ -28,14 +28,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// Descriptor exposes the inventory preview, keeping provisioning unavailable.
+// Descriptor exposes the independent preview workflows. Pipeline bootstrap is
+// unavailable; deployment consumes explicitly bound existing infrastructure.
 func Descriptor() target.Descriptor {
 	phases := map[target.Phase]target.Capability{}
 	for _, p := range append(target.PublicPhases(), target.Pipeline) {
 		phases[p] = target.Capability{Available: false, Reason: "DPF provisioning is not implemented in this build"}
 	}
 	phases[target.Discover] = target.Capability{Available: true, Reason: "experimental inventory discovery; management probes require qualified release assets; hardware catalog qualification pending"}
-	return target.Descriptor{Name: target.DPF, Description: "Independent DPF inventory discovery preview", Phases: phases}
+	for _, p := range []target.Phase{target.Generate, target.Deploy, target.Validate} {
+		phases[p] = target.Capability{Available: true, Reason: "experimental Sentry BF4 workflow on existing DPF management, tenant and enrolled devices"}
+	}
+	return target.Descriptor{Name: target.DPF, Description: "Independent DPF discovery and Sentry BF4 workflow", Phases: phases}
 }
 
 type Request struct {

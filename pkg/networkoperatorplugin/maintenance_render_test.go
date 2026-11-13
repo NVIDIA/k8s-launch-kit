@@ -389,6 +389,17 @@ func TestMaintenanceScalarTypesAcrossProfiles(t *testing.T) {
 	profilesOnDisk, err := filepath.Glob(filepath.Join("..", "..", "profiles", "*", "profile.yaml"))
 	require.NoError(t, err)
 	for _, profilePath := range profilesOnDisk {
+		// Maintenance fields belong to Host profiles. Inspect only the target
+		// header before decoding a target-specific profile payload.
+		data, err := os.ReadFile(profilePath)
+		require.NoError(t, err)
+		var header struct {
+			Target string `yaml:"target"`
+		}
+		require.NoError(t, configyaml.Unmarshal(data, &header))
+		if header.Target != "" && header.Target != "host" {
+			continue
+		}
 		dir := filepath.Base(filepath.Dir(profilePath))
 		profile := loadProfileFromDir(t, dir)
 		for _, tc := range []struct {

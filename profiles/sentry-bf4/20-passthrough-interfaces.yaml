@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceInterface
+metadata:
+  name: {{ .Names.Physical }}
+  namespace: {{ .Namespace }}
+spec:
+  template:
+    spec:
+      nodeSelector:
+        matchLabels:
+          {{ .ScopeKey }}: "{{ .ScopeValue }}"
+      template:
+        metadata:
+          labels:
+            {{ .PassthroughLabel }}: p0
+        spec:
+          interfaceType: physical
+          physical:
+            interfaceName: p0
+---
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceInterface
+metadata:
+  name: {{ .Names.PF }}
+  namespace: {{ .Namespace }}
+spec:
+  template:
+    spec:
+      nodeSelector:
+        matchLabels:
+          {{ .ScopeKey }}: "{{ .ScopeValue }}"
+      template:
+        metadata:
+          labels:
+            {{ .PassthroughLabel }}: pf0hpf
+        spec:
+          interfaceType: pf
+          pf:
+            pfID: 0
+---
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceInterface
+metadata:
+  name: {{ .Names.Patch }}
+  namespace: {{ .Namespace }}
+spec:
+  template:
+    spec:
+      nodeSelector:
+        matchLabels:
+          {{ .ScopeKey }}: "{{ .ScopeValue }}"
+      template:
+        metadata:
+          labels:
+            {{ .PassthroughLabel }}: br-envoy-patch
+        spec:
+          interfaceType: patch
+          patch:
+            peerBridge: br-envoy

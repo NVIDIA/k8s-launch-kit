@@ -26,6 +26,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	launchtarget "github.com/nvidia/k8s-launch-kit/pkg/target"
 	"gopkg.in/yaml.v2"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -71,6 +72,29 @@ type Profile struct {
 	Templates           []string
 }
 
+// ProfileMetadata contains fields shared by all profile targets. Manifest is
+// the original YAML so a target can decode its own payload without using the
+// Host profile schema. TemplatePaths are resolved, existing files contained
+// within the profiles root.
+type ProfileMetadata struct {
+	Target          launchtarget.Name
+	Directory       string
+	Name            string
+	Plugin          string
+	Description     string
+	DeploymentGuide string
+	TemplatePaths   []string
+	Manifest        []byte
+}
+
+type profileMetadataYAML struct {
+	Name            string   `yaml:"name"`
+	Plugin          string   `yaml:"plugin"`
+	Description     string   `yaml:"description"`
+	DeploymentGuide string   `yaml:"deploymentGuide"`
+	Templates       []string `yaml:"templates"`
+}
+
 // getprofilesDir resolves the profiles directory using a lookup chain:
 // 1. ./profiles (CWD — container/repo root)
 // 2. /usr/local/share/l8k/profiles (default install)
@@ -94,6 +118,182 @@ func getprofilesDir() (string, error) {
 		"Run 'scripts/install.sh' to install l8k, or run from the repository root")
 }
 
+// LoadProfileForTarget loads target-independent metadata and template paths for
+// the exact profile directory name. The returned manifest is raw YAML for the
+// target implementation to decode using its own schema.
+func LoadProfileForTarget(targetName launchtarget.Name, profileName string) (*ProfileMetadata, error) {
+	profilesDir, err := getprofilesDir()
+	if err != nil {
+		return nil, err
+	}
+	return loadProfileForTarget(profilesDir, targetName, profileName)
+}
+
+func loadProfileForTarget(profilesDir string, targetName launchtarget.Name, profileName string) (*ProfileMetadata, error) {
+	if !knownProfileTarget(targetName) {
+		return nil, fmt.Errorf("unknown profile target %q", targetName)
+	}
+	root, directory, manifest, err := readProfileManifest(profilesDir, profileName)
+	if err != nil {
+		return nil, err
+	}
+	declaredTarget, err := decodeProfileTarget(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("profile %q: %w", profileName, err)
+	}
+	if declaredTarget != targetName {
+		return nil, fmt.Errorf("profile %q targets %q, not %q", profileName, declaredTarget, targetName)
+	}
+	return profileMetadataFromManifest(root, directory, profileName, declaredTarget, manifest)
+}
+
+func readProfileManifest(profilesDir, profileName string) (string, string, []byte, error) {
+	if profileName == "" || profileName == "." || filepath.Base(profileName) != profileName || strings.ContainsAny(profileName, `/\\`) {
+		return "", "", nil, fmt.Errorf("invalid profile name %q", profileName)
+	}
+
+	root, err := filepath.EvalSymlinks(profilesDir)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("resolve profiles directory: %w", err)
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("resolve profiles directory: %w", err)
+	}
+	profilePath := filepath.Join(root, profileName)
+	info, err := os.Stat(profilePath)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("profile %q not found: %w", profileName, err)
+	}
+	if !info.IsDir() {
+		return "", "", nil, fmt.Errorf("profile %q is not a directory", profileName)
+	}
+	directory, err := resolveContainedPath(root, root, profileName)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("resolve profile %q: %w", profileName, err)
+	}
+
+	manifestPath, err := resolveContainedPath(root, directory, "profile.yaml")
+	if err != nil {
+		return "", "", nil, fmt.Errorf("resolve profile %q manifest: %w", profileName, err)
+	}
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("read profile %q manifest: %w", profileName, err)
+	}
+	return root, directory, manifest, nil
+}
+
+func profileMetadataFromManifest(root, directory, profileName string, declaredTarget launchtarget.Name, manifest []byte) (*ProfileMetadata, error) {
+	var metadata profileMetadataYAML
+	if err := yaml.Unmarshal(manifest, &metadata); err != nil {
+		return nil, fmt.Errorf("decode profile %q metadata: %w", profileName, err)
+	}
+
+	templatePaths := make([]string, 0, len(metadata.Templates))
+	for _, template := range metadata.Templates {
+		if template == "" {
+			return nil, fmt.Errorf("profile %q contains an empty template path", profileName)
+		}
+		path, err := resolveContainedPath(root, directory, filepath.FromSlash(template))
+		if err != nil {
+			return nil, fmt.Errorf("profile %q template %q: %w", profileName, template, err)
+		}
+		if info, err := os.Stat(path); err != nil {
+			return nil, fmt.Errorf("profile %q template %q: %w", profileName, template, err)
+		} else if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("profile %q template %q is not a regular file", profileName, template)
+		}
+		templatePaths = append(templatePaths, path)
+	}
+
+	return &ProfileMetadata{
+		Target:          declaredTarget,
+		Directory:       directory,
+		Name:            metadata.Name,
+		Plugin:          metadata.Plugin,
+		Description:     metadata.Description,
+		DeploymentGuide: metadata.DeploymentGuide,
+		TemplatePaths:   templatePaths,
+		Manifest:        manifest,
+	}, nil
+}
+
+func decodeProfileTarget(manifest []byte) (launchtarget.Name, error) {
+	var header yaml.MapSlice
+	if err := yaml.Unmarshal(manifest, &header); err != nil {
+		return "", fmt.Errorf("decode target header: %w", err)
+	}
+	var declared string
+	found := false
+	for _, item := range header {
+		key, ok := item.Key.(string)
+		if !ok || key != "target" {
+			continue
+		}
+		if found {
+			return "", fmt.Errorf("duplicate target header")
+		}
+		found = true
+		value, ok := item.Value.(string)
+		if !ok {
+			return "", fmt.Errorf("invalid target header: expected a string")
+		}
+		declared = value
+	}
+	if !found {
+		return launchtarget.Host, nil
+	}
+	targetName := launchtarget.Name(declared)
+	if !knownProfileTarget(targetName) {
+		return "", fmt.Errorf("unknown or invalid target %q", declared)
+	}
+	return targetName, nil
+}
+
+func knownProfileTarget(targetName launchtarget.Name) bool {
+	return targetName == launchtarget.Host || targetName == launchtarget.DPF
+}
+
+// resolveContainedPath follows symlinks but rejects any result outside root.
+// The profile root itself may be a symlink in an installation layout.
+func resolveContainedPath(root, base, relative string) (string, error) {
+	if filepath.IsAbs(relative) {
+		return "", fmt.Errorf("absolute path is not allowed")
+	}
+	candidate := filepath.Join(base, relative)
+	lexical, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+	if err := ensureContained(root, lexical); err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", err
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	if err := ensureContained(root, resolved); err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func ensureContained(root, path string) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path escapes profiles directory")
+	}
+	return nil
+}
+
 // FindApplicableProfile selects a profile from disk that matches the user's
 // requirements, cluster capabilities, and selected Network Operator release.
 // selectedRelease is the catalog key (MAJOR.MINOR, e.g. "26.4") chosen via
@@ -109,7 +309,10 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 	if err != nil {
 		return nil, err
 	}
+	return findApplicableProfile(profilesDir, requirements, capabilities, pluginName, selectedRelease, flavor)
+}
 
+func findApplicableProfile(profilesDir string, requirements *config.Profile, capabilities *config.ClusterCapabilities, pluginName, selectedRelease, flavor string) (*Profile, error) {
 	entries, err := os.ReadDir(profilesDir)
 	if err != nil {
 		return nil, err
@@ -121,16 +324,26 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 
 	for _, entry := range entries {
 		if entry.IsDir() {
-			profileManifest := filepath.Join(profilesDir, entry.Name(), "profile.yaml")
-			profileData, err := os.ReadFile(profileManifest)
+			root, directory, manifest, err := readProfileManifest(profilesDir, entry.Name())
 			if err != nil {
-				log.Log.Error(err, "failed to read profile manifest", "profileManifest", profileManifest)
+				log.Log.Error(err, "failed to read profile manifest", "profile", entry.Name())
+				return nil, err
+			}
+			profileTarget, err := decodeProfileTarget(manifest)
+			if err != nil {
+				return nil, fmt.Errorf("profile %q: %w", entry.Name(), err)
+			}
+			if profileTarget != launchtarget.Host {
+				continue
+			}
+			metadata, err := profileMetadataFromManifest(root, directory, entry.Name(), profileTarget, manifest)
+			if err != nil {
 				return nil, err
 			}
 			profile := &Profile{}
-			err = yaml.Unmarshal(profileData, profile)
+			err = yaml.Unmarshal(metadata.Manifest, profile)
 			if err != nil {
-				log.Log.Error(err, "failed to unmarshal profile manifest", "profileManifest", profileManifest)
+				log.Log.Error(err, "failed to unmarshal Host profile manifest", "profile", entry.Name())
 				return nil, err
 			}
 			if profile.Plugin != pluginName {
@@ -146,7 +359,8 @@ func FindApplicableProfile(requirements *config.Profile, capabilities *config.Cl
 			valid, reason := profile.Validate(requirements, capabilities, selectedRelease)
 			if valid {
 				log.Log.V(1).Info("Found applicable profile", "profile", profile)
-				profile.UpdateManifestsPaths(filepath.Join(profilesDir, entry.Name()))
+				profile.Templates = metadata.TemplatePaths
+				profile.DeploymentGuide = filepath.Join(metadata.Directory, profile.DeploymentGuide)
 				return profile, nil
 			} else {
 				errorMessages = append(errorMessages, fmt.Sprintf("profile %s is not applicable: %s", entry.Name(), reason))

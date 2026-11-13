@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceInterface
+metadata:
+  name: {{ .Names.IngressInterface }}
+  namespace: {{ .Namespace }}
+spec:
+  template:
+    spec:
+      nodeSelector:
+        matchLabels:
+          {{ .ScopeKey }}: "{{ .ScopeValue }}"
+      template:
+        metadata:
+          labels:
+            {{ .TowerLabel }}: tower-ingress
+        spec:
+          interfaceType: service
+          service:
+            serviceID: {{ .Names.Tower }}
+            network: {{ .Names.IngressNAD }}
+            interfaceName: net1
+---
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceInterface
+metadata:
+  name: {{ .Names.EgressInterface }}
+  namespace: {{ .Namespace }}
+spec:
+  template:
+    spec:
+      nodeSelector:
+        matchLabels:
+          {{ .ScopeKey }}: "{{ .ScopeValue }}"
+      template:
+        metadata:
+          labels:
+            {{ .TowerLabel }}: tower-egress
+        spec:
+          interfaceType: service
+          service:
+            serviceID: {{ .Names.Tower }}
+            network: {{ .Names.EgressNAD }}
+            interfaceName: net2

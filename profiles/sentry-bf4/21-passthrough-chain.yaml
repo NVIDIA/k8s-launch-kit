@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceChain
+metadata:
+  name: {{ .Names.Passthrough }}
+  namespace: {{ .Namespace }}
+spec:
+  template:
+    spec:
+      nodeSelector:
+        matchLabels:
+          {{ .ScopeKey }}: "{{ .ScopeValue }}"
+      template:
+        spec:
+          switches:
+          - serviceMTU: 1500
+            ports:
+            - serviceInterface:
+                matchLabels:
+                  {{ .PassthroughLabel }}: p0
+            - serviceInterface:
+                matchLabels:
+                  {{ .PassthroughLabel }}: pf0hpf
+            - serviceInterface:
+                matchLabels:
+                  {{ .PassthroughLabel }}: br-envoy-patch

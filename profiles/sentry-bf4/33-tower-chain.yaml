@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceChain
+metadata:
+  name: {{ .Names.Tower }}
+  namespace: {{ .Namespace }}
+spec:
+  template:
+    spec:
+      nodeSelector:
+        matchLabels:
+          {{ .ScopeKey }}: "{{ .ScopeValue }}"
+      template:
+        spec:
+          switches:
+          - serviceMTU: 1500
+            ports:
+            - serviceInterface:
+                matchLabels:
+                  {{ .TowerLabel }}: tower-ingress
+          - serviceMTU: 1500
+            ports:
+            - serviceInterface:
+                matchLabels:
+                  {{ .TowerLabel }}: tower-egress

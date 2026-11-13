@@ -24,8 +24,9 @@ deployment readiness checks do not block inventory collection. Overall deploymen
 Explicitly select `discovery.probes.mode: inventory`. The default `management`
 mode is unavailable in this preview; selecting it stops the command before
 remote access. Inventory reports management topology when a kubeconfig is supplied,
-but does not test management-network connectivity. DPF generate/deploy/validate
-and the DPF pipeline are unavailable.
+but does not test management-network connectivity. The separate experimental
+[Sentry BF4 workflow](dpf-sentry.md) provides generation, deployment and resource
+validation for an existing DPF environment. The root DPF pipeline remains unavailable.
 
 ## Inputs and invocation
 
@@ -81,7 +82,7 @@ remote access. Lists and credentials stay in YAML; no password CLI flag exists.
 | Observed | Physical-card/system identities, linked host adapters, named DPU firmware versions, administrator verification, runtime hardware/network facts and management nodes/version |
 | Release defaults | Software bill of materials (BOM), artifact coordinates and documented minima for supported models; omitted minima remain unknown and do not establish deployment readiness |
 | Optional lookup inputs | Explicit ARM/BMC MAC selectors; optional local `dnsmasq-leases` files. Lookup returns address hints, never identity or permission to connect |
-| Later phases | Deployment profile, DPU API allocation, DHCP/service networks and controller authentication |
+| Separate Sentry workflow | Explicit device/tenant bindings, deployment release, OS/firmware hashes, local charts, service networking and existing controller/Secret access; see [required deployment inputs](dpf-sentry.md#prepare-the-deployment-configuration) |
 
 The management kubeconfig must use verified HTTPS and certificate/key or bearer
 credentials. File and embedded representations of the same credential/trust field are mutually
@@ -278,7 +279,9 @@ The current catalog has exact BlueField-3 models `B3210`, `B3220` and `B3240`; g
 establish applicability. Desired BFB/component coordinates are not measured
 versions. Only documented minimum versions are compatibility checks; unsupported
 firmware requirements remain unknown. Model applicability and software checks do
-not qualify hardware or enable DPF deployment profiles.
+not qualify hardware. Sentry generation validates its separately selected BF4
+profile, desired cohort and explicit enrollment bindings; this discovery BOM is
+not a substitute for those deployment inputs.
 
 On the supported BF4/B4240 Redfish reader, `inventory.dpus[].psid`
 records a successfully verified PSID from the selected System's `AssetTag`, falling back to the
