@@ -236,6 +236,25 @@ not qualify hardware. Sentry generation validates its separately selected BF4
 profile, desired cohort and explicit enrollment bindings; this discovery BOM is
 not a substitute for those deployment inputs.
 
+On the supported BF4/B4240 Redfish reader, `inventory.dpus[].observations.psid`
+records the PSID from the selected System's `AssetTag`, falling back to the
+identity-selected chassis's `AssetTag`. Missing, null, empty and `N/A` values
+remain unknown. Both values, when supplied, must be bounded ASCII identifiers
+and agree exactly; the selected value keeps its original spelling. The
+same identity-bound source fields are reread before the PSID becomes observed.
+This is a Redfish fact, with `Tool: redfish` and authenticated `AssetTag` evidence;
+it does not create an SSH/runtime observation or infer a PSID from a model.
+
+`PSID_NOT_EXPOSED` and `PSID_READER_UNSUPPORTED` mean this source supplies no PSID.
+`PSID_INVALID`, `PSID_CONFLICT`, `PSID_CHANGED` and `PSID_RECHECK_FAILED` keep the
+observation unavailable with no eligible values. These optional gaps preserve
+physical inventory and discovery's existing acceptance policy. A downstream
+consumer requiring PSID must require a single observed value, retain provenance
+and reject contradictory or invalid PSID evidence across its selected sources;
+it must not turn an unavailable Redfish value into success by substituting SSH.
+The PSID fact and eligibility contribute to the inventory fingerprint and refresh
+diff. Release qualification and administrator authorization remain separate checks.
+
 SSH can report NIC firmware/PSID, MFT version, NVConfig and privilege observations
 when the existing tools and permissions permit the read. Current and next-boot
 configuration remain distinct. Redfish firmware keeps raw component identities,

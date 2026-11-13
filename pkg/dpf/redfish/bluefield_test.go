@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
@@ -27,7 +28,8 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 			legacy bool
 			code   string
 		}{
-			{"physical card", false, ""}, {"legacy component", true, ""}, {"nullable legacy metadata", true, ""},
+			{"physical card", false, ""},
+			{"PSID System", false, ""}, {"PSID fallback", false, ""}, {"PSID matching", false, ""}, {"PSID conflict", false, ""}, {"PSID malformed", false, ""}, {"PSID late System", false, ""}, {"PSID late chassis", false, ""}, {"PSID missing", false, ""}, {"PSID reread denied", false, "ACCESS_DENIED"}, {"legacy component", true, ""}, {"nullable legacy metadata", true, ""},
 			{"ambiguous cards", false, "CARD_IDENTITY_AMBIGUOUS"}, {"wrong serial", false, "CARD_IDENTITY_AMBIGUOUS"},
 			{"wrong model", false, "CARD_IDENTITY_AMBIGUOUS"}, {"wrong manufacturer", false, "CARD_IDENTITY_AMBIGUOUS"},
 			{"foreign system link", false, "CARD_IDENTITY_AMBIGUOUS"}, {"foreign containment", true, "CARD_IDENTITY_AMBIGUOUS"},
@@ -38,6 +40,7 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 			By(scenario.name)
 			link := func(uri string) Document { return Document{"@odata.id": uri} }
 			boardReads := 0
+			systemReads, cardReads := 0, 0
 			writes := []string{}
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
@@ -65,7 +68,21 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 				case "/redfish/v1/Systems":
 					doc = Document{"Members@odata.count": 1, "Members": []any{link("/redfish/v1/Systems/DPU")}}
 				case "/redfish/v1/Systems/DPU":
+					systemReads++
+					if scenario.name == "PSID reread denied" && systemReads > 1 {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
 					doc = Document{"Manufacturer": "Nvidia", "Model": "BlueField-4", "SerialNumber": "CARD-A", "UUID": "11111111-1111-4111-8111-111111111111", "Links": Document{"Chassis": []any{link("/redfish/v1/Chassis/BMC")}}}
+					if strings.HasPrefix(scenario.name, "PSID ") && scenario.name != "PSID fallback" && scenario.name != "PSID missing" {
+						doc["AssetTag"] = "MT_0000001774"
+					}
+					if scenario.name == "PSID malformed" {
+						doc["AssetTag"] = false
+					}
+					if scenario.name == "PSID late System" && systemReads > 1 {
+						doc["AssetTag"] = "MT_0000001775"
+					}
 					if scenario.legacy {
 						delete(doc, "Manufacturer")
 						delete(doc, "Model")
@@ -94,7 +111,14 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 					}
 					doc = Document{"Members@odata.count": len(members), "Members": members}
 				case "/redfish/v1/Chassis/Board", "/redfish/v1/Chassis/Other":
+					cardReads++
 					doc = Document{"ChassisType": "Card", "Manufacturer": "Nvidia", "Model": "B4240", "SerialNumber": "CARD-A", "Links": Document{"ComputerSystems": []any{link("/redfish/v1/Systems/DPU")}, "Contains": []any{link("/redfish/v1/Chassis/BMC")}}}
+					if scenario.name == "PSID fallback" || scenario.name == "PSID matching" || scenario.name == "PSID late chassis" {
+						doc["AssetTag"] = "MT_0000001774"
+					}
+					if scenario.name == "PSID conflict" || scenario.name == "PSID late chassis" && cardReads > 1 {
+						doc["AssetTag"] = "MT_0000001775"
+					}
 					if scenario.legacy {
 						delete(doc, "Manufacturer")
 						delete(doc, "Model")
@@ -173,6 +197,32 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 				Expect(d.SerialNumber).To(Equal("CARD-A"))
 				Expect(d.Model).To(Equal("B4240"))
 				Expect(evidence).NotTo(BeEmpty())
+				if strings.HasPrefix(scenario.name, "PSID ") {
+					expected := "PSID_OBSERVED"
+					switch scenario.name {
+					case "PSID conflict":
+						expected = "PSID_CONFLICT"
+					case "PSID malformed":
+						expected = "PSID_INVALID"
+					case "PSID late System", "PSID late chassis":
+						expected = "PSID_CHANGED"
+					case "PSID missing":
+						expected = "PSID_NOT_EXPOSED"
+					}
+					o := d.Observations["psid"]
+					Expect(o.ReasonCode).To(Equal(expected))
+					Expect(d.Runtime).To(BeNil())
+					Expect(systemReads).To(Equal(2))
+					Expect(cardReads).To(Equal(2))
+					if expected == "PSID_OBSERVED" {
+						Expect(o.Values).To(Equal([]string{"MT_0000001774"}))
+						Expect(d.EvidenceRefs).To(ContainElement(Satisfy(func(ref string) bool {
+							return evidence[ref].Kind == "redfish" && evidence[ref].Property == "AssetTag" && evidence[ref].Authenticated
+						})))
+					} else {
+						Expect(o.Values).To(BeEmpty())
+					}
+				}
 				if scenario.legacy {
 					Expect(d.SystemUUID).To(BeEmpty())
 					Expect(d.Manufacturer).To(BeEmpty())
@@ -180,6 +230,10 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 			} else {
 				Expect(Code(err)).To(Equal(scenario.code))
 				Expect(d.ObservationState).NotTo(Equal("observed"))
+				if scenario.name == "PSID reread denied" || scenario.name == "graph changes" {
+					Expect(d.Observations["psid"].ReasonCode).To(Equal("PSID_RECHECK_FAILED"))
+					Expect(d.Observations["psid"].Values).To(BeEmpty())
+				}
 			}
 			Expect(writes).To(Equal([]string{"POST /redfish/v1/SessionService/Sessions", "DELETE /redfish/v1/SessionService/Sessions/owned"}))
 			server.Close()

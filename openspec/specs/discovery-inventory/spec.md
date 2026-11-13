@@ -171,6 +171,13 @@ New and changed discovery checks SHALL retain a stable reason code and safe huma
 - **WHEN** an installed tool cannot read a restricted device
 - **THEN** the collector retains an access/query failure rather than claiming the tool is missing or the hardware absent, without changing privilege settings.
 
+#### Scenario: Supported BF4 Redfish PSID sources
+
+- **WHEN** the supported BF4 reader establishes physical identity and reads System/chassis AssetTags
+- **THEN** it persists a typed `observations.psid` Redfish fact, preferring System and falling back to the identity-selected chassis, with authenticated source-property evidence and no fabricated SSH/runtime data.
+- **AND** absent/null/empty/N/A stays unknown; malformed or contradictory values remain unavailable, and any source-field change or failed required recheck prevents an observed value. Optional PSID gaps do not erase physical identity or independently fail discovery.
+- **AND** the PSID fact and eligibility affect inventory fingerprint/diff; consumers requiring PSID must reject invalid/conflicting selected-source evidence and require one observed identifier.
+
 ### Requirement: DPF locator candidates are not identity
 
 Address lookup SHALL operate only on explicit MAC selectors and bounded declared sources. It SHALL preserve expired leases, ambiguous matches and unavailable sources as reasoned outcomes. Discovered addresses MUST NOT implicitly receive credentials, become selected endpoints or establish physical identity.
