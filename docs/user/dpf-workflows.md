@@ -51,6 +51,8 @@ Choose each source explicitly: a host operating system over SSH or its BMC over 
 | Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` explicitly because the default management mode is unavailable in this preview. |
 | Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |
 
+Use an account whose own session proves its effective administrator role. If session Roles is absent, local authentication must be established by an explicit trusted local session `UserAuthenticationSource`. A current `LocalAccountAuth: Enabled` policy alone cannot prove how an existing session authenticated. Disabled local authentication and explicitly external session sources are unsupported; Fallback/LocalFirst require the explicit local session source. Missing origin plus missing Roles cannot inherit privileges from a same-named local administrator. Discovery reports unverifiable proof as partial without replacing a complete handoff.
+
 Do not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted or null `dpf.release` uses the pinned default; an empty or unknown release is rejected.
 
 All network connections start from the machine where you run `l8k`. Host and DPU endpoints do not need to connect to each other for this workflow.
@@ -202,7 +204,7 @@ Read each non-success observation's `reasonCode`, `message` and `tool` where pre
 | `SOFTWARE_BELOW_MINIMUM` | Review the release requirement and plan a separate maintenance action; discovery does not update firmware. |
 | `HOST_ADAPTER_VENDOR_CONFLICT` | Inspect the selected endpoints and matching serial/PCI evidence: a same-serial host adapter reports a non-NVIDIA vendor. Correct the source and rediscover; do not edit observed identity or discard a contradictory candidate to force a match. |
 | `BMC_ADMIN_REQUIRED` / `BMC_ADMIN_ACCESS_DENIED` | Use an authorized account with all standard Administrator privileges and readable account/role evidence. |
-| `BMC_ADMIN_UNVERIFIABLE` / `BMC_ADMIN_NOT_VERIFIED` | Supply explicit trusted DPU BMC access and complete, consistent account/role evidence; host/ARM SSH is insufficient. |
+| `BMC_ADMIN_UNVERIFIABLE` / `BMC_ADMIN_NOT_VERIFIED` | Supply explicit trusted DPU BMC access and inspect session Roles, authentication origin and linked account/role evidence. Host/ARM SSH and a same-named local administrator cannot substitute for verified session privileges. |
 | `BMC_PASSWORD_CHANGE_REQUIRED` / `BMC_ADMIN_ACCOUNT_RESTRICTED` | Ask the administrator to resolve password-change, disabled or locked state separately, then rerun. Discovery does not repair access. |
 | `PUBLICATION_FAILED` | Read the error explanation, resolve the local output/path problem, and rerun; only listed successfully written artifacts exist. |
 

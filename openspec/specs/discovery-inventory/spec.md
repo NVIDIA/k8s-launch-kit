@@ -201,13 +201,20 @@ Address lookup SHALL operate only on explicit MAC selectors and bounded declared
 ### Requirement: DPU BMC administrator evidence
 
 DPF discovery SHALL require read-only evidence that each discovered DPU BMC's
-authenticated local account has the full standard Administrator privilege set.
+authenticated session has the full standard Administrator privilege set, with a
+uniquely matching local account and verified account state.
 It SHALL bind the session username to its advertised own account and linked role,
 or identify one matching account from a complete bounded collection,
 verify enabled/unlocked/no-password-change state, and reject missing, denied,
 malformed, unsafe or inconsistent evidence. Custom roles with the complete standard
 privilege set SHALL be accepted; username, role name and OEM privilege names alone
 MUST NOT substitute. Host-only and ARM-only observations SHALL remain partial.
+
+#### Scenario: External authentication collides with a local account
+
+- **WHEN** a session username matches a local administrator but effective-role or local-authentication evidence is absent or contradictory
+- **THEN** discovery fails the administrator check as unverifiable, retains physical observations and preserves the prior complete handoff.
+- **AND** matching session Roles or an explicit trusted local session UserAuthenticationSource is required; username equality, current LocalAccountAuth Enabled policy and absent external-provider settings do not prove an existing session's origin. Disabled local authentication and explicit external session sources remain unsupported; Fallback/LocalFirst require an explicit trusted local session source. Malformed exposed fields cannot use an absence fallback.
 
 #### Scenario: Administrator authorization cannot be established
 

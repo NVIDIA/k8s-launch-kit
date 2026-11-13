@@ -94,7 +94,7 @@ failure is reported. It does not guess passwords or repair credentials.
 
 DPU BMC administrator authorization is required during discovery. The CLI reads
 its own session, the advertised standard AccountService account collection and
-the authenticated account's linked role. An advertised account URI whose final
+the matching local account's linked role. An advertised account URI whose final
 component matches the session username is read first and its returned username
 is verified; unrelated account records need not be readable. For numeric/opaque
 account URIs, the bounded complete collection must identify one matching account. The account username must match the
@@ -104,9 +104,20 @@ session, and the account must expose `Enabled: true`, `Locked: false` and
 `ConfigureSelf`. A custom role granting this set is accepted. A username of
 `admin`, a role name alone or OEM-only privileges do not establish authorization.
 Missing, denied, malformed or conflicting account/role evidence fails closed.
-External accounts that cannot be uniquely bound to a local account are unverified.
-This proves observed
-Redfish privileges, not future write success or DPF controller authentication.
+
+The owned session's `Roles` must match the account's assigned role. If `Roles`
+is absent, the CLI requires the session's `UserAuthenticationSource` to identify
+the trusted local AccountService. A current `LocalAccountAuth: Enabled` setting
+does not prove how an existing session authenticated and cannot replace this proof.
+`LocalAccountAuth: Disabled` and explicitly external session sources are
+unsupported. `Fallback` and `LocalFirst` require that explicit local session
+source, because those modes can authenticate through external providers.
+When mode/source information is absent, a matching effective session role is
+required; a username collision or an absent LDAP setting is insufficient.
+Malformed or inconsistent exposed fields remain unverified even when another
+field could otherwise establish the binding. This proves observed Redfish
+privileges and matching local-account state, not future write success or DPF
+controller authentication. External-provider role mappings are not evaluated.
 
 Review `observations.bmc-administrator` and the required
 `dpf.management.bmc-administrator` check. `BMC_ADMIN_REQUIRED` means the role lacks

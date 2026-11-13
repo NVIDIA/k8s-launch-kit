@@ -22,17 +22,60 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 	It("verifies the authenticated account and effective privileges without password or privilege mutations", func() {
 		Expect(os.Setenv("DPF_ADMIN_TEST_PASSWORD", "credential-canary")).To(Succeed())
 		DeferCleanup(os.Unsetenv, "DPF_ADMIN_TEST_PASSWORD")
-		for _, scenario := range []struct{ name, expected string }{
-			{"administrator", "BMC_ADMIN_VERIFIED"}, {"custom full role", "BMC_ADMIN_VERIFIED"}, {"absolute links", "BMC_ADMIN_VERIFIED"}, {"unrelated account unreadable", "BMC_ADMIN_VERIFIED"}, {"session role absent", "BMC_ADMIN_VERIFIED"}, {"session password change", "BMC_PASSWORD_CHANGE_REQUIRED"}, {"malformed pagination", "BMC_ADMIN_UNVERIFIABLE"}, {"late password change", "BMC_PASSWORD_CHANGE_REQUIRED"},
-			{"username admin read only", "BMC_ADMIN_REQUIRED"}, {"operator", "BMC_ADMIN_REQUIRED"}, {"OEM only", "BMC_ADMIN_REQUIRED"},
-			{"account service denied", "BMC_ADMIN_ACCESS_DENIED"}, {"account member denied", "BMC_ADMIN_ACCESS_DENIED"}, {"role denied", "BMC_ADMIN_ACCESS_DENIED"},
-			{"account service missing", "BMC_ADMIN_UNVERIFIABLE"}, {"missing user", "BMC_ADMIN_UNVERIFIABLE"}, {"duplicate user", "BMC_ADMIN_UNVERIFIABLE"},
-			{"malformed privileges", "BMC_ADMIN_UNVERIFIABLE"}, {"duplicate privileges", "BMC_ADMIN_UNVERIFIABLE"}, {"missing state", "BMC_ADMIN_UNVERIFIABLE"},
-			{"disabled", "BMC_ADMIN_ACCOUNT_RESTRICTED"}, {"locked", "BMC_ADMIN_ACCOUNT_RESTRICTED"}, {"password change", "BMC_PASSWORD_CHANGE_REQUIRED"},
-			{"login password change", "BMC_PASSWORD_CHANGE_REQUIRED"}, {"denied password change", "BMC_PASSWORD_CHANGE_REQUIRED"},
-			{"session identity mismatch", "BMC_ADMIN_UNVERIFIABLE"}, {"session role mismatch", "BMC_ADMIN_UNVERIFIABLE"}, {"role identity mismatch", "BMC_ADMIN_UNVERIFIABLE"},
-			{"foreign service", "BMC_ADMIN_UNVERIFIABLE"}, {"foreign role", "BMC_ADMIN_UNVERIFIABLE"}, {"foreign account", "BMC_ADMIN_UNVERIFIABLE"},
-			{"wrong account tree", "BMC_ADMIN_UNVERIFIABLE"}, {"query role", "BMC_ADMIN_UNVERIFIABLE"}, {"incomplete accounts", "BMC_ADMIN_UNVERIFIABLE"},
+		for _, scenario := range []struct {
+			name, expected          string
+			session, service, login Document
+			omitRoles, customRole   bool
+		}{
+			{name: "administrator", expected: "BMC_ADMIN_VERIFIED"}, {name: "custom full role", expected: "BMC_ADMIN_VERIFIED"}, {name: "absolute links", expected: "BMC_ADMIN_VERIFIED"}, {name: "unrelated account unreadable", expected: "BMC_ADMIN_VERIFIED"}, {name: "session role absent", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "session password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"}, {name: "malformed pagination", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "late password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"},
+			{name: "username admin read only", expected: "BMC_ADMIN_REQUIRED"}, {name: "operator", expected: "BMC_ADMIN_REQUIRED"}, {name: "OEM only", expected: "BMC_ADMIN_REQUIRED"},
+			{name: "account service denied", expected: "BMC_ADMIN_ACCESS_DENIED"}, {name: "account member denied", expected: "BMC_ADMIN_ACCESS_DENIED"}, {name: "role denied", expected: "BMC_ADMIN_ACCESS_DENIED"},
+			{name: "account service missing", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "missing user", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "duplicate user", expected: "BMC_ADMIN_UNVERIFIABLE"},
+			{name: "malformed privileges", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "duplicate privileges", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "missing state", expected: "BMC_ADMIN_UNVERIFIABLE"},
+			{name: "disabled", expected: "BMC_ADMIN_ACCOUNT_RESTRICTED"}, {name: "locked", expected: "BMC_ADMIN_ACCOUNT_RESTRICTED"}, {name: "password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"},
+			{name: "login password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"}, {name: "denied password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"},
+			{name: "session identity mismatch", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "session role mismatch", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "role identity mismatch", expected: "BMC_ADMIN_UNVERIFIABLE"},
+			{name: "foreign service", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "foreign role", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "foreign account", expected: "BMC_ADMIN_UNVERIFIABLE"},
+			{name: "wrong account tree", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "query role", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "incomplete accounts", expected: "BMC_ADMIN_UNVERIFIABLE"},
+			{name: "local enabled roleless", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"LocalAccountAuth": "Enabled"}},
+			{name: "local enabled with LDAP roleless", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"LocalAccountAuth": "Enabled", "LDAP": Document{"ServiceEnabled": true}}},
+			{name: "enabled snapshot after external login", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"LocalAccountAuth": "Enabled"}, login: Document{"Roles": []any{"ReadOnly"}, "UserAuthenticationSource": "ldaps://directory.example.invalid"}},
+			{name: "enabled with effective session role", expected: "BMC_ADMIN_VERIFIED", service: Document{"LocalAccountAuth": "Enabled"}},
+			{name: "enabled with explicit local source", expected: "BMC_ADMIN_VERIFIED", omitRoles: true, service: Document{"LocalAccountAuth": "Enabled"}, session: Document{"UserAuthenticationSource": "/redfish/v1/AccountService"}},
+			{name: "explicit local source roleless", expected: "BMC_ADMIN_VERIFIED", omitRoles: true, session: Document{"UserAuthenticationSource": "/redfish/v1/AccountService"}},
+			{name: "fallback explicit local source", expected: "BMC_ADMIN_VERIFIED", omitRoles: true, service: Document{"LocalAccountAuth": "Fallback"}, session: Document{"UserAuthenticationSource": "/redfish/v1/AccountService"}},
+			{name: "local first custom explicit source", expected: "BMC_ADMIN_VERIFIED", omitRoles: true, customRole: true, service: Document{"LocalAccountAuth": "LocalFirst"}, session: Document{"UserAuthenticationSource": "/redfish/v1/AccountService"}},
+			{name: "legacy LDAP certificate metadata", expected: "BMC_ADMIN_VERIFIED", service: Document{"LDAP": Document{"Certificates": Document{"@odata.id": "/redfish/v1/AccountService/LDAP/Certificates"}}}},
+			{name: "unknown nullable source with session role", expected: "BMC_ADMIN_VERIFIED", session: Document{"UserAuthenticationSource": nil}},
+			{name: "external local collision", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"LocalAccountAuth": "Disabled", "LDAP": Document{"ServiceEnabled": true, "RemoteRoleMapping": []any{Document{"RemoteUser": "site-maintainer", "LocalRole": "ReadOnly"}}}}},
+			{name: "disabled local with session role", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Disabled"}},
+			{name: "disabled contradictory local source", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Disabled"}, session: Document{"UserAuthenticationSource": "/redfish/v1/AccountService"}},
+			{name: "fallback roleless", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"LocalAccountAuth": "Fallback"}},
+			{name: "fallback with session role only", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Fallback"}},
+			{name: "local first roleless", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"LocalAccountAuth": "LocalFirst"}},
+			{name: "local first with session role only", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "LocalFirst"}},
+			{name: "LDAP enabled missing session proof", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"LDAP": Document{"ServiceEnabled": true}}},
+			{name: "LDAP unknown missing session proof", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"LDAP": Document{"Certificates": Document{}}}},
+			{name: "additional providers missing session proof", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, service: Document{"AdditionalExternalAccountProviders": Document{"@odata.id": "/redfish/v1/AccountService/ExternalAccountProviders"}}},
+			{name: "external authentication source", expected: "BMC_ADMIN_UNVERIFIABLE", session: Document{"UserAuthenticationSource": "ldaps://directory.example.invalid"}},
+			{name: "enabled contradictory external source", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Enabled"}, session: Document{"UserAuthenticationSource": "ldaps://directory.example.invalid"}},
+			{name: "wrong local authentication resource", expected: "BMC_ADMIN_UNVERIFIABLE", session: Document{"UserAuthenticationSource": "/redfish/v1/AccountService/Accounts/7"}},
+			{name: "query authentication source", expected: "BMC_ADMIN_UNVERIFIABLE", session: Document{"UserAuthenticationSource": "/redfish/v1/AccountService?x=1"}},
+			{name: "empty authentication source", expected: "BMC_ADMIN_UNVERIFIABLE", session: Document{"UserAuthenticationSource": ""}},
+			{name: "boolean authentication source", expected: "BMC_ADMIN_UNVERIFIABLE", session: Document{"UserAuthenticationSource": true}},
+			{name: "object authentication source", expected: "BMC_ADMIN_UNVERIFIABLE", session: Document{"UserAuthenticationSource": Document{"@odata.id": "/redfish/v1/AccountService"}}},
+			{name: "null source roleless", expected: "BMC_ADMIN_UNVERIFIABLE", omitRoles: true, session: Document{"UserAuthenticationSource": nil}},
+			{name: "unknown local mode", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Other"}},
+			{name: "empty local mode", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": ""}},
+			{name: "null local mode", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": nil}},
+			{name: "boolean local mode", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": false}},
+			{name: "array local mode", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": []any{"Enabled"}}},
+			{name: "null session roles", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Enabled"}, session: Document{"Roles": nil}},
+			{name: "empty session roles", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Enabled"}, session: Document{"Roles": []any{}}},
+			{name: "null session role member", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Enabled"}, session: Document{"Roles": []any{nil}}},
+			{name: "empty session role member", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Enabled"}, session: Document{"Roles": []any{""}}},
+			{name: "duplicate session role members", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Enabled"}, session: Document{"Roles": []any{"Administrator", "Administrator"}}},
+			{name: "malformed session roles", expected: "BMC_ADMIN_UNVERIFIABLE", service: Document{"LocalAccountAuth": "Enabled"}, session: Document{"Roles": "Administrator"}},
 		} {
 			By(scenario.name)
 			writes, visited := []string{}, []string{}
@@ -40,7 +83,7 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 			if scenario.name == "username admin read only" || scenario.name == "unrelated account unreadable" {
 				username = "admin"
 			}
-			if scenario.name == "custom full role" {
+			if scenario.name == "custom full role" || scenario.customRole {
 				roleID = "SiteMaintainer"
 			}
 			link := func(uri string) Document { return Document{"@odata.id": uri} }
@@ -67,6 +110,9 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 					w.Header().Set("Location", "/redfish/v1/SessionService/Sessions/owned")
 					w.WriteHeader(http.StatusCreated)
 					doc = Document{}
+					for key, value := range scenario.login {
+						doc[key] = value
+					}
 					if scenario.name == "login password change" {
 						doc["@Message.ExtendedInfo"] = []any{Document{"MessageId": "Base.1.18.PasswordChangeRequired", "Message": "credential-canary"}}
 					}
@@ -79,7 +125,7 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 					if scenario.name == "session password change" {
 						doc["@Message.ExtendedInfo"] = []any{Document{"MessageId": "Base.1.18.PasswordChangeRequired"}}
 					}
-					if scenario.name == "session role absent" {
+					if scenario.name == "session role absent" || scenario.omitRoles {
 						delete(doc, "Roles")
 					}
 					if scenario.name == "session identity mismatch" {
@@ -87,6 +133,9 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 					}
 					if scenario.name == "session role mismatch" {
 						doc["Roles"] = []any{"ReadOnly"}
+					}
+					for key, value := range scenario.session {
+						doc[key] = value
 					}
 				case "/redfish/v1/AccountService":
 					if scenario.name == "account service denied" || scenario.name == "denied password change" {
@@ -97,6 +146,9 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 						return
 					}
 					doc = Document{"Accounts": link("/redfish/v1/AccountService/Accounts")}
+					for key, value := range scenario.service {
+						doc[key] = value
+					}
 				case "/redfish/v1/AccountService/Accounts":
 					doc = Document{"Members@odata.count": 1, "Members": []any{link("/redfish/v1/AccountService/Accounts/7")}}
 					if scenario.name == "unrelated account unreadable" {
@@ -196,6 +248,11 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 			Expect(admin.Message).NotTo(BeEmpty())
 			if scenario.expected == "BMC_ADMIN_VERIFIED" {
 				Expect(admin.State).To(Equal("observed"))
+				binding := "owned-session.Roles"
+				if scenario.omitRoles {
+					binding = "owned-session.UserAuthenticationSource"
+				}
+				Expect(evidence).To(ContainElement(HaveField("Property", binding)))
 			} else {
 				Expect(admin.State).To(Equal("failed"))
 			}

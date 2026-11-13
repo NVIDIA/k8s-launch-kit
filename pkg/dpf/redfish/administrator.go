@@ -11,7 +11,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 )
 
-// administrator observes the authenticated local account and its assigned role.
+// administrator binds the owned session's privileges to a matching local account.
 // A username or a role name alone is not privilege evidence. Account documents
 // and arbitrary OEM privileges are never retained in inventory.
 func (c *Client) administrator(ctx context.Context, root Document, add func(string, string) string) inventory.Observation {
@@ -46,6 +46,33 @@ func (c *Client) administrator(ctx context.Context, root Document, add func(stri
 	doc, err := c.Get(ctx, service)
 	if err != nil {
 		return unavailable(err)
+	}
+	// AccountService policy can change after login. It can contradict local
+	// authentication, but cannot prove the origin of this existing session.
+	mode := ""
+	if value, present := doc["LocalAccountAuth"]; present {
+		var valid bool
+		mode, valid = value.(string)
+		if !valid || (mode != "Enabled" && mode != "Disabled" && mode != "Fallback" && mode != "LocalFirst") {
+			return fail("BMC_ADMIN_UNVERIFIABLE", "The BMC exposes an invalid local authentication mode.")
+		}
+		if mode == "Disabled" {
+			return fail("BMC_ADMIN_UNVERIFIABLE", "Local BMC account authentication is disabled; a same-named local account cannot verify this session's privileges.")
+		}
+	}
+	localSource := false
+	if source, present := session["UserAuthenticationSource"]; present && source != nil {
+		value, valid := source.(string)
+		if !valid {
+			return fail("BMC_ADMIN_UNVERIFIABLE", "The BMC session exposes an invalid authentication source.")
+		}
+		if _, err := c.accountLink(value, service); err != nil {
+			return fail("BMC_ADMIN_UNVERIFIABLE", "The BMC session does not identify the trusted local AccountService as its authentication source; external accounts are not verified.")
+		}
+		localSource = true
+	}
+	if (mode == "Fallback" || mode == "LocalFirst") && !localSource {
+		return fail("BMC_ADMIN_UNVERIFIABLE", "The BMC authentication mode permits external accounts, but the session does not establish a local authentication source.")
 	}
 	accountsURI, err := c.accountLink(Link(doc, "Accounts"), service+"/Accounts")
 	if err != nil {
@@ -86,6 +113,8 @@ func (c *Client) administrator(ctx context.Context, root Document, add func(stri
 		if !valid || len(values) != 1 || values[0] != roleID {
 			return fail("BMC_ADMIN_UNVERIFIABLE", "The BMC session roles do not match the authenticated account's assigned role.")
 		}
+	} else if !localSource {
+		return fail("BMC_ADMIN_UNVERIFIABLE", "The BMC session exposes neither a matching effective role nor verified local authentication; username equality alone does not establish privileges.")
 	}
 	roleURI, err := c.accountLink(Link(Object(account.Document, "Links"), "Role"), service+"/Roles/"+roleID)
 	if err != nil {
@@ -120,9 +149,18 @@ func (c *Client) administrator(ctx context.Context, root Document, add func(stri
 		return unavailable(&Error{Code: "PASSWORD_CHANGE_REQUIRED"})
 	}
 	add("/redfish/v1/SessionService/Sessions", "owned-session.UserName")
+	if _, present := session["Roles"]; present {
+		add("/redfish/v1/SessionService/Sessions", "owned-session.Roles")
+	}
+	if localSource {
+		add("/redfish/v1/SessionService/Sessions", "owned-session.UserAuthenticationSource")
+	}
+	if mode != "" {
+		add(service, "LocalAccountAuth")
+	}
 	add(account.URI, "Enabled,Locked,PasswordChangeRequired,RoleId")
 	add(roleURI, "AssignedPrivileges")
-	return inventory.Observation{State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED", Message: "The authenticated BMC account is enabled, unlocked, requires no password change and has all standard Administrator privileges.", Tool: "redfish"}
+	return inventory.Observation{State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED", Message: "The BMC session has verified standard Administrator privileges; its matching local account is enabled, unlocked and requires no password change.", Tool: "redfish"}
 }
 
 // accounts selects an advertised username-addressed account without requiring

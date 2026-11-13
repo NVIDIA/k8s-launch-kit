@@ -25,6 +25,14 @@ and its linked role must grant all five standard Administrator privileges; names
 alone and OEM-only roles are insufficient. Missing or denied evidence fails closed.
 Discovery never changes passwords or tests privilege with a write.
 
+The owned session must expose a matching effective role, or positively establish
+local authentication through its trusted local `UserAuthenticationSource`.
+The current `LocalAccountAuth: Enabled` policy alone does not prove the origin
+of an existing session. Disabled local authentication and explicitly external
+sources fail. Fallback/LocalFirst modes require an explicit local session source.
+Missing mode/source plus missing Roles is unverifiable; a same-named local
+administrator or absent LDAP configuration cannot substitute for session proof.
+
 Host/card correlation also rejects an exposed non-NVIDIA PCI vendor on any
 same-serial candidate (`HOST_ADAPTER_VENDOR_CONFLICT`). Inspect endpoint and
 serial/PCI evidence before rerunning; do not edit inventory or discard a
