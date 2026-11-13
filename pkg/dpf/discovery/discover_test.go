@@ -52,6 +52,21 @@ var _ = Describe("inventory semantics", func() {
 		Canonicalize(&a)
 		Expect(a.Fingerprint).NotTo(Equal(first))
 	})
+	It("fingerprints Redfish PSID values and eligibility without diagnostic prose", func() {
+		before, after := estate(), estate()
+		before.DPUs[0].Observations = map[string]inventory.Observation{"psid": {State: "observed", Values: []string{"MT_0000001774"}, ReasonCode: "PSID_OBSERVED", Tool: "redfish", Message: "initial"}}
+		after.DPUs[0].Observations = map[string]inventory.Observation{"psid": {State: "observed", Values: []string{"MT_0000001774"}, ReasonCode: "PSID_OBSERVED", Tool: "redfish", Message: "different prose"}}
+		Canonicalize(&before)
+		Canonicalize(&after)
+		Expect(after.Fingerprint).To(Equal(before.Fingerprint))
+		after.DPUs[0].Observations["psid"] = inventory.Observation{State: "observed", Values: []string{"MT_0000001775"}, ReasonCode: "PSID_OBSERVED", Tool: "redfish"}
+		Canonicalize(&after)
+		Expect(after.Fingerprint).NotTo(Equal(before.Fingerprint))
+		after.DPUs[0].Observations["psid"] = inventory.Observation{State: "unavailable", ReasonCode: "PSID_CONFLICT", Tool: "redfish"}
+		Canonicalize(&after)
+		Expect(after.Fingerprint).NotTo(Equal(before.Fingerprint))
+		Expect(Diff(&before, &after)).To(ContainElement(HaveField("Path", ContainSubstring(".psid"))))
+	})
 	It("blocks endpoint replacement but preserves unknown observations", func() {
 		old := estate()
 		cur := estate()

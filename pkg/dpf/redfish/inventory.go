@@ -37,6 +37,8 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	evidence = map[string]inventory.Evidence{}
 	expectedSerials := map[string]string{}
 	bf4Identities := map[string]Document{}
+	var psidCard Resource
+	var currentPSIDCard Document
 	c := New(target, timeout)
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
@@ -44,6 +46,12 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		if cleanupErr := c.Close(cleanupCtx); cleanupErr != nil {
 			err = &ObservationError{Primary: err, Cleanup: cleanupErr, SessionURI: c.session}
 			device.ReasonCode = "CLEANUP_INCOMPLETE"
+		}
+		if err != nil && psidCard.URI != "" {
+			state := device.Observations["psid"]
+			if state.State == "observed" || state.ReasonCode == "PSID_NOT_VERIFIED" {
+				device.Observations["psid"] = psidUnavailable("PSID_RECHECK_FAILED", "A required identity, source or cleanup recheck failed; the Redfish PSID is ineligible.")
+			}
 		}
 		if err != nil && device.ReasonCode == "" {
 			device.ReasonCode = Code(err)
@@ -95,6 +103,9 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	device.Model = Text(system.Document, "Model")
 	device.SystemUUID = Text(system.Document, "UUID")
 	bf4 := target.Role == "dpus" && b4240Service(root, nil)
+	if target.Role == "dpus" {
+		device.Observations["psid"] = inventory.Observation{State: "unknown", ReasonCode: "PSID_READER_UNSUPPORTED", Message: "This device is outside the supported BF4 AssetTag PSID reader.", Tool: "redfish"}
+	}
 	if bf4 && !b4240Service(root, system.Document) {
 		return device, evidence, &Error{Code: "DPU_IDENTITY_CONFLICT"}
 	}
@@ -148,6 +159,10 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		if len(cards) != 1 {
 			return device, evidence, &Error{Code: "CARD_IDENTITY_AMBIGUOUS"}
 		}
+		if bf4 {
+			psidCard = cards[0]
+			device.Observations["psid"] = inventory.Observation{State: "unknown", ReasonCode: "PSID_NOT_VERIFIED", Message: "Redfish PSID eligibility awaits successful identity and source rechecks.", Tool: "redfish"}
+		}
 		device.SerialNumberRaw = Text(cards[0].Document, "SerialNumber")
 		if !bf4 {
 			expectedSerials[cards[0].URI] = device.SerialNumberRaw
@@ -187,6 +202,9 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		if !reflect.DeepEqual(cardIdentity(current), identity) {
 			return device, evidence, &Error{Code: "IDENTITY_CHANGED", URI: uri}
 		}
+		if uri == psidCard.URI {
+			currentPSIDCard = current
+		}
 		add(uri, "Model,Manufacturer,SerialNumber,ChassisType,Links")
 	}
 	for uri, raw := range expectedSerials {
@@ -204,6 +222,9 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	}
 	if Text(refreshed, "UUID") != device.SystemUUID || Text(refreshed, "SerialNumber") != Text(system.Document, "SerialNumber") || len(bf4Identities) > 0 && !reflect.DeepEqual(cardIdentity(refreshed), cardIdentity(system.Document)) {
 		return device, evidence, &Error{Code: "IDENTITY_CHANGED", URI: system.URI}
+	}
+	if bf4 {
+		device.Observations["psid"] = bf4PSID(system, psidCard, refreshed, currentPSIDCard, add)
 	}
 	if target.Role == "dpus" && c.passwordChangeRequired {
 		device.Observations["bmc-administrator"] = inventory.Observation{State: "failed", ReasonCode: "BMC_PASSWORD_CHANGE_REQUIRED", Message: "The BMC requires a password change; discovery does not change passwords.", Tool: "redfish"}

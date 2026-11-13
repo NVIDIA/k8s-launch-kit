@@ -25,6 +25,13 @@ and its linked role must grant all five standard Administrator privileges; names
 alone and OEM-only roles are insufficient. Missing or denied evidence fails closed.
 Discovery never changes passwords or tests privilege with a write.
 
+Supported BF4/B4240 Redfish discovery saves `inventory.dpus[].observations.psid`
+from System AssetTag, then the identity-selected chassis fallback, with Redfish
+property evidence and source rereads. Missing/N/A stays unknown. Invalid,
+conflicting, changed or failed-recheck PSIDs stay unavailable; a consumer requiring
+PSID must reject those states rather than inventing Runtime/SSH evidence or
+copying another card's PSID. This optional fact does not change inventory acceptance.
+
 DPF inventory saves the resolved software BOM under `inventory.software`.
 `dpf.release` defaults to `26.4.0`; omit/null defaults, explicit empty/unknown
 rejects. Exact BlueField-3 catalog applicability and observed current versions

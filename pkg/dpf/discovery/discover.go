@@ -379,6 +379,9 @@ func material(inv *inventory.Inventory) map[string]any {
 			for _, a := range d.Adapters {
 				fields[key+".adapter."+a.Key] = []any{a.SerialNumber, a.Model, a.Slot, a.PCIAddress, a.VendorID, a.DeviceID, a.IdentityState, a.ReasonCode, canonicalFunctions(a.PCIFunctions)}
 			}
+			if psid, present := d.Observations["psid"]; present {
+				fields[key+".psid"] = []any{psid.State, psid.Values, psid.ReasonCode, psid.Tool}
+			}
 			fields[key+".endpoints"] = []string{d.SSHEndpoint, d.BMCEndpoint, d.BMCAddressState}
 			if d.Runtime != nil {
 				fields[key+".runtime"] = canonicalRuntime(*d.Runtime)
