@@ -59,14 +59,15 @@ type Resource struct {
 	Document Document
 }
 type Client struct {
-	origin           string
-	http             *http.Client
-	access           config.Access
-	token            string
-	session          string
-	sessionUncertain bool
-	reads            int
-	bytes            int
+	origin                 string
+	http                   *http.Client
+	access                 config.Access
+	token                  string
+	session                string
+	sessionUncertain       bool
+	passwordChangeRequired bool
+	reads                  int
+	bytes                  int
 }
 
 func New(target config.Target, timeout time.Duration) *Client {
@@ -151,6 +152,12 @@ func (c *Client) request(ctx context.Context, method, ref string, body []byte) (
 		}
 		if response.StatusCode == 403 {
 			code = "ACCESS_DENIED"
+			// Inspect only the bounded standard message identifier; never retain bodies.
+			var failure Document
+			if b, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10)); readErr == nil && json.Unmarshal(b, &failure) == nil && passwordChangeMessage(failure) {
+				code = "PASSWORD_CHANGE_REQUIRED"
+				c.passwordChangeRequired = true
+			}
 		}
 		if response.StatusCode == 404 {
 			code = "RESOURCE_NOT_FOUND"
@@ -177,6 +184,9 @@ func (c *Client) request(ctx context.Context, method, ref string, body []byte) (
 		if e := json.Unmarshal(b, &d); e != nil || d == nil {
 			return nil, nil, &Error{Code: "INVALID_RESPONSE", URI: uri}
 		}
+	}
+	if passwordChangeMessage(d) {
+		c.passwordChangeRequired = true
 	}
 	return d, response.Header.Clone(), nil
 }
@@ -284,6 +294,10 @@ func (c *Client) Close(ctx context.Context) error {
 // Collection returns already read members alongside an error. Required consumers
 // must reject the error; optional inventory may retain those members as partial evidence.
 func (c *Client) Collection(ctx context.Context, ref string) ([]Resource, error) {
+	return c.collection(ctx, ref, "")
+}
+
+func (c *Client) collection(ctx context.Context, ref, memberBase string) ([]Resource, error) {
 	var members []Resource
 	seen := map[string]bool{}
 	count := -1
@@ -320,6 +334,9 @@ func (c *Client) Collection(ctx context.Context, ref string) ([]Resource, error)
 			link, err = c.guard(link)
 			if err != nil {
 				return members, err
+			}
+			if memberBase != "" && (!strings.HasPrefix(link, memberBase) || strings.Contains(strings.TrimPrefix(link, memberBase), "/") || strings.Contains(link, "?") || link == memberBase) {
+				return members, &Error{Code: "UNSAFE_ACCOUNT_LINK"}
 			}
 			if link == "" || seen["member:"+link] {
 				return members, &Error{Code: "DUPLICATE_MEMBER"}

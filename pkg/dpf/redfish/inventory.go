@@ -36,6 +36,7 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	device = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{target.Role, target.Endpoint, target.SystemURI}), InputRef: target.InputRef, BMCEndpoint: target.Endpoint, ObservationState: "unavailable", Qualification: "unqualified", InventoryCompleteness: "unknown", Authentication: inventory.Authentication{PasswordRead: "unknown", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"}, Time: inventory.TimeObservation{State: "unknown", ReasonCode: "PROPERTY_NOT_EXPOSED"}, Firmware: []inventory.Firmware{}, EvidenceRefs: []string{}}
 	evidence = map[string]inventory.Evidence{}
 	expectedSerials := map[string]string{}
+	bf4Identities := map[string]Document{}
 	c := New(target, timeout)
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
@@ -51,6 +52,13 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	root, err := c.Open(ctx)
 	if err != nil {
 		device.ReasonCode = Code(err)
+		if target.Role == "dpus" {
+			state := unavailable(err)
+			if Code(err) == "PASSWORD_CHANGE_REQUIRED" {
+				state.Message = "The BMC requires a password change; discovery does not change passwords."
+			}
+			device.Observations = map[string]inventory.Observation{"bmc-administrator": state}
+		}
 		return device, evidence, err
 	}
 	device.Authentication.Method = "session"
@@ -59,6 +67,9 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		evidence[id] = inventory.Evidence{Kind: "redfish", InputRef: target.InputRef, ResourceURI: uri, Property: property, ObservedAt: time.Now().UTC(), Vantage: "executor", Adapter: device.ReaderAdapter, Authenticated: true}
 		device.EvidenceRefs = append(device.EvidenceRefs, id)
 		return id
+	}
+	if target.Role == "dpus" {
+		device.Observations = map[string]inventory.Observation{"bmc-administrator": c.administrator(ctx, root, add)}
 	}
 	systems, err := c.Collection(ctx, Link(root, "Systems"))
 	if err != nil {
@@ -83,9 +94,15 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	device.Manufacturer = Text(system.Document, "Manufacturer")
 	device.Model = Text(system.Document, "Model")
 	device.SystemUUID = Text(system.Document, "UUID")
+	bf4 := target.Role == "dpus" && b4240Service(root, nil)
+	if bf4 && !b4240Service(root, system.Document) {
+		return device, evidence, &Error{Code: "DPU_IDENTITY_CONFLICT"}
+	}
 	adapter := ""
 	maker := strings.ToLower(device.Manufacturer)
 	switch {
+	case bf4:
+		adapter = "bluefield-card-v1"
 	case strings.Contains(maker, "nvidia") || strings.Contains(maker, "mellanox"):
 		adapter = "bluefield-card-v1"
 	case strings.Contains(maker, "hpe") || strings.Contains(maker, "hewlett"):
@@ -112,10 +129,18 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 			return device, evidence, er
 		}
 		var cards []Resource
-		for _, ch := range chassis {
-			model := Text(ch.Document, "Model")
-			if strings.Contains(strings.ToLower(model), "bluefield") && ValidSerial(Text(ch.Document, "SerialNumber")) {
-				if c.linkedToSystem(ch.Document, system.URI) {
+		if bf4 {
+			var witnesses []Resource
+			cards, witnesses = c.b4240Cards(system, chassis)
+			for _, resources := range [][]Resource{cards, witnesses} {
+				for _, resource := range resources {
+					bf4Identities[resource.URI] = cardIdentity(resource.Document)
+				}
+			}
+		} else {
+			for _, ch := range chassis {
+				model := Text(ch.Document, "Model")
+				if strings.Contains(strings.ToLower(model), "bluefield") && ValidSerial(Text(ch.Document, "SerialNumber")) && c.linkedToSystem(ch.Document, system.URI) {
 					cards = append(cards, ch)
 				}
 			}
@@ -124,7 +149,9 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 			return device, evidence, &Error{Code: "CARD_IDENTITY_AMBIGUOUS"}
 		}
 		device.SerialNumberRaw = Text(cards[0].Document, "SerialNumber")
-		expectedSerials[cards[0].URI] = device.SerialNumberRaw
+		if !bf4 {
+			expectedSerials[cards[0].URI] = device.SerialNumberRaw
+		}
 		device.SerialNumber = strings.TrimSpace(device.SerialNumberRaw)
 		device.Model = Text(cards[0].Document, "Model")
 		device.IdentityKey = []string{"nvidia", device.SerialNumber}
@@ -152,6 +179,16 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 			device.InventoryCompleteness = "complete"
 		}
 	}
+	for uri, identity := range bf4Identities {
+		current, e := c.Get(ctx, uri)
+		if e != nil {
+			return device, evidence, e
+		}
+		if !reflect.DeepEqual(cardIdentity(current), identity) {
+			return device, evidence, &Error{Code: "IDENTITY_CHANGED", URI: uri}
+		}
+		add(uri, "Model,Manufacturer,SerialNumber,ChassisType,Links")
+	}
 	for uri, raw := range expectedSerials {
 		current, e := c.Get(ctx, uri)
 		if e != nil {
@@ -165,12 +202,16 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	if er != nil {
 		return device, evidence, er
 	}
-	if Text(refreshed, "UUID") != device.SystemUUID || Text(refreshed, "SerialNumber") != Text(system.Document, "SerialNumber") {
+	if Text(refreshed, "UUID") != device.SystemUUID || Text(refreshed, "SerialNumber") != Text(system.Document, "SerialNumber") || len(bf4Identities) > 0 && !reflect.DeepEqual(cardIdentity(refreshed), cardIdentity(system.Document)) {
 		return device, evidence, &Error{Code: "IDENTITY_CHANGED", URI: system.URI}
+	}
+	if target.Role == "dpus" && c.passwordChangeRequired {
+		device.Observations["bmc-administrator"] = inventory.Observation{State: "failed", ReasonCode: "BMC_PASSWORD_CHANGE_REQUIRED", Message: "The BMC requires a password change; discovery does not change passwords.", Tool: "redfish"}
 	}
 	device.ObservationState = "observed"
 	return device, evidence, nil
 }
+
 func sameMembers(a, b []Resource) bool {
 	keys := func(r []Resource) []string {
 		s := make([]string, 0, len(r))

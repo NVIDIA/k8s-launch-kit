@@ -36,9 +36,10 @@ A result or gate extension MUST define command execution success separately from
 
 #### Scenario: DPF inventory without management readiness
 
-- **WHEN** explicit DPF inventory sources establish physical identities and unique host/card associations, and required observation, cleanup and publication succeed
-- **THEN** inventory discovery can complete without DPU Redfish or a management Kubernetes cluster; release qualification and provisioning authentication remain separate, visible later-phase checks.
+- **WHEN** explicit DPF inventory sources establish physical identities and unique host/card associations, each DPU BMC account has verified administrator privileges, and required observation, cleanup and publication succeed
+- **THEN** inventory discovery can complete without a management Kubernetes cluster; release qualification and provisioning authentication remain separate, visible later-phase checks.
 - **AND** unavailable selected sources and ambiguous identities still fail inventory; an observed BMC address never authorizes sending credentials to it automatically.
+- **AND** host-only or ARM-only input preserves partial identity evidence and exits nonzero because DPU BMC administrator authorization is missing; it cannot publish a completed handoff.
 
 ### Requirement: Output compatibility
 

@@ -209,7 +209,21 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		addCheck("dpf.device.qualification", d.RecordKey, d.Qualification == "qualified" && d.InventoryCompleteness == "complete", "QUALIFIED_ADAPTER_REQUIRED", d.EvidenceRefs, "generate")
 	}
 	addCheck("dpf.inventory.dpus", "inventory", len(inv.DPUs) > 0, "DPU_IDENTITY_REQUIRED", nil, "discover")
-	for _, d := range inv.DPUs {
+	for i := range inv.DPUs {
+		d := &inv.DPUs[i]
+		admin := d.Observations["bmc-administrator"]
+		if admin.State == "" || d.BMCEndpoint == "" || d.SSHEndpoint != "" {
+			admin = inventory.Observation{State: "failed", ReasonCode: "BMC_ADMIN_NOT_VERIFIED", Message: "An explicit DPU BMC endpoint with verified administrator privileges is required; host or ARM SSH identity cannot substitute for BMC authorization."}
+		}
+		if d.Observations == nil {
+			d.Observations = map[string]inventory.Observation{}
+		}
+		d.Observations["bmc-administrator"] = admin
+		adminState := "failed"
+		if admin.State == "observed" && admin.ReasonCode == "BMC_ADMIN_VERIFIED" && d.BMCEndpoint != "" && d.SSHEndpoint == "" {
+			adminState = "passed"
+		}
+		report.Discovery.Checks = append(report.Discovery.Checks, inventory.Check{ID: "dpf.management.bmc-administrator", Subject: d.RecordKey, Vantage: "executor", RequiredPhase: "discover", State: adminState, ReasonCode: admin.ReasonCode, Message: admin.Message, EvidenceRefs: d.EvidenceRefs})
 		state, reason := "not-evaluated", "REDFISH_AUTHORIZATION_NOT_EVALUATED"
 		if d.Authentication.PasswordRead == "verified" {
 			state, reason = "passed", "INVENTORY_READ_VERIFIED"
