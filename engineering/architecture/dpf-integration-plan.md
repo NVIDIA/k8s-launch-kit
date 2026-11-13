@@ -322,9 +322,11 @@ inventory requires read-only verification of the authenticated DPU BMC account a
 its effective Administrator privileges. Host/ARM-only inventory is partial and
 cannot bypass this gate. Preserve physical identity and authorization failure
 evidence independently; never rotate passwords or probe privilege by mutation.
-The current DPF target still rejects generation, deployment and validation before
-consuming inventory. A future generator must require fresh complete discovery and
-revalidate its own authorization needs; saved facts do not authorize provisioning.
+Sentry generation and retained bundle validation require successful administrator
+evidence for each selected DPU. Older inventories and bundles must be regenerated
+from completed discovery. Deployment independently verifies live DPF authentication
+and provisioning prerequisites; saved facts do not authorize provisioning. The
+root DPF pipeline remains unavailable.
 
 ### Stage 4: DPF generation for Zero Trust passthrough
 
