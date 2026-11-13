@@ -118,6 +118,15 @@ func ValidateGeneration(g Generation) error {
 		if psid == "" {
 			return fmt.Errorf("resolved device %s has no PSID", d.ID)
 		}
+		measuredPSIDs, err := measuredDevicePSIDs(d)
+		if err != nil {
+			return err
+		}
+		for measured := range measuredPSIDs {
+			if measured != psid {
+				return fmt.Errorf("resolved device %s PSID differs from its retained measurements", d.ID)
+			}
+		}
 		a, ok := g.Provisioning.Software.PLDM[psid]
 		if !ok {
 			return fmt.Errorf("resolved device %s has no matching PLDM artifact", d.ID)

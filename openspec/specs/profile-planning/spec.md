@@ -205,6 +205,20 @@ established unnamed sole source SHALL retain its empty ID through explicit
 - **WHEN** selected sources sharing a GPU label have different rail-count buckets
 - **THEN** each resource retains only its intended source IDs, enabling deployment to reject a shared selector that includes another bucket's workers.
 
+### Requirement: Measured DPF firmware selection
+
+DPF generation SHALL accept a supported BF4 Redfish PSID observation without
+requiring an SSH runtime record. It SHALL compare that observation with eligible
+serial-bound host/DPU SSH PSIDs and require one consistent identifier. Explicitly
+invalid, conflicting, changed or incompletely verified Redfish PSID evidence SHALL remain a blocker even
+when another source supplies a value. Missing Redfish metadata alone does not
+invalidate an independent eligible measurement.
+
+#### Scenario: Retained firmware selection contradicts the BMC observation
+
+- **WHEN** a retained DPF bundle selects a PSID different from any retained serial-bound Redfish or SSH PSID
+- **THEN** bundle validation rejects the contradiction before cluster access.
+
 ## Baseline and limits
 
 Current profile lookup is first-match; this spec does not introduce universal ambiguity rejection. Existing render maps do not universally detect pre-overwrite collisions: the collision requirement is an extension obligation, with legacy coverage to be assessed when touched. `ScopeClusterWide` may render a namespaced ConfigMap, while SCCs may render per workload namespace. [Resource kinds](../resource-kinds/spec.md) owns API/readiness integration; [artifacts](../artifact-handoff/spec.md) owns post-render structural validation.

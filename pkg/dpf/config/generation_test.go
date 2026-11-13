@@ -291,6 +291,62 @@ var _ = Describe("DPF generation configuration", func() {
 		}
 	})
 
+	It("uses a Redfish PSID without requiring an SSH runtime observation", func() {
+		in := validGenerationInput(GinkgoT().TempDir())
+		d := &in.Site.Inventory.DPUs[0]
+		d.Model, d.ReaderAdapter = "B4240", "bluefield-card-v1"
+		d.Runtime = nil
+		d.Observations["psid"] = inventory.Observation{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{generationPSID}}
+		in.Site.Inventory.Hosts[0].Runtime = nil
+		resolved, err := ResolveGeneration(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.DevicePSIDs).To(Equal(map[string]string{"dpu-1": generationPSID}))
+		Expect(resolved.Devices[0].Runtime).To(BeNil())
+		encoded, err := EncodeResolved(resolved)
+		Expect(err).NotTo(HaveOccurred())
+		decoded, err := DecodeResolved(encoded)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(decoded.Devices[0].Observations["psid"]).To(Equal(d.Observations["psid"]))
+	})
+
+	It("rejects contradictory Redfish PSID evidence even when SSH reports a value", func() {
+		for _, reason := range []string{"PSID_CONFLICT", "PSID_INVALID", "PSID_CHANGED", "PSID_RECHECK_FAILED", "PSID_NOT_VERIFIED"} {
+			in := validGenerationInput(GinkgoT().TempDir())
+			in.Site.Inventory.DPUs[0].Observations["psid"] = inventory.Observation{State: "unavailable", ReasonCode: reason, Tool: "redfish"}
+			_, err := ResolveGeneration(in)
+			Expect(err).To(MatchError(ContainSubstring("rejected Redfish PSID evidence (" + reason + ")")))
+		}
+		in := validGenerationInput(GinkgoT().TempDir())
+		d := &in.Site.Inventory.DPUs[0]
+		d.Model, d.ReaderAdapter = "B4240", "bluefield-card-v1"
+		d.Observations["psid"] = inventory.Observation{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{"MT_0000000011"}}
+		_, err := ResolveGeneration(in)
+		Expect(err).To(MatchError(ContainSubstring("one observed, nonconflicting PSID")))
+
+		d.Observations["psid"] = inventory.Observation{State: "unknown", ReasonCode: "PSID_NOT_EXPOSED", Tool: "redfish"}
+		_, err = ResolveGeneration(in)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("does not accept malformed or unsupported Redfish PSID observations", func() {
+		for _, observation := range []inventory.Observation{
+			{State: "unknown", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{generationPSID}},
+			{State: "observed", ReasonCode: "PSID_NOT_EXPOSED", Tool: "redfish", Values: []string{generationPSID}},
+			{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "ssh", Values: []string{generationPSID}},
+			{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: nil},
+			{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{generationPSID, generationPSID}},
+			{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{"MT_invalid value"}},
+			{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{"unknown"}},
+		} {
+			in := validGenerationInput(GinkgoT().TempDir())
+			d := &in.Site.Inventory.DPUs[0]
+			d.Model, d.ReaderAdapter = "B4240", "bluefield-card-v1"
+			d.Observations["psid"] = observation
+			_, err := ResolveGeneration(in)
+			Expect(err).To(HaveOccurred())
+		}
+	})
+
 	It("rejects absent or conflicting observed PSID mappings", func() {
 		in := validGenerationInput(GinkgoT().TempDir())
 		in.Site.Inventory.DPUs[0].Runtime.Hardware.Cards[0].PSID = inventory.Observation{State: "unavailable"}

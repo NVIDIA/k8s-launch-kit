@@ -117,6 +117,13 @@ credentials, review its completed report, and generate into a new bundle
 directory. Do not add the proof by editing YAML. Saved privileges are an
 observation; deployment still verifies live DPF access and its own prerequisites.
 
+Firmware selection uses the PSID measured by discovery. Supported BF4 BMCs can
+report it through Redfish; review `observations.psid` in the inventory. Existing
+host SSH measurements can also provide the PSID. All available measurements
+must agree. A malformed, conflicting, changing or incompletely verified Redfish PSID blocks generation
+even when another source reports a value. Resolve the recorded cause and
+rediscover; do not copy a PSID from a different card or infer it from the model.
+
 | Input class | What belongs here |
 | --- | --- |
 | Required site intent | Explicit installed DPF release; selected inventory device IDs; existing DPUDevice/DPUNode names; selected tenant name, namespace, resource UID, tenant cluster UID and exact label selector; tenant API server version; ISO and PSID-specific firmware URLs with SHA-256; local chart directory; ingress subnet/address; existing Secret names; reachable management policy-server address. |

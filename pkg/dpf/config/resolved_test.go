@@ -13,6 +13,43 @@ import (
 )
 
 var _ = Describe("resolved DPF generation", func() {
+	It("rejects retained PSID selection that contradicts the Redfish observation", func() {
+		generation := resolvedGeneration()
+		d := &generation.Devices[0]
+		d.Model, d.ReaderAdapter = "B4240", "bluefield-card-v1"
+		d.Observations["psid"] = inventory.Observation{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{"MT_0000000011"}}
+		Expect(ValidateGeneration(generation)).To(MatchError(ContainSubstring("differs from its retained measurements")))
+		d.Observations["psid"] = inventory.Observation{State: "unavailable", ReasonCode: "PSID_CHANGED", Tool: "redfish"}
+		Expect(ValidateGeneration(generation)).To(MatchError(ContainSubstring("rejected Redfish PSID evidence")))
+	})
+
+	It("compares all retained serial-bound measurements before accepting firmware selection", func() {
+		generation := resolvedGeneration()
+		d := &generation.Devices[0]
+		d.Model, d.ReaderAdapter = "B4240", "bluefield-card-v1"
+		d.Observations["psid"] = inventory.Observation{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{generationPSID}}
+		d.Runtime.Hardware.Cards[0].PSID.Values = []string{"MT_0000000011"}
+		Expect(ValidateGeneration(generation)).To(MatchError(ContainSubstring("differs from its retained measurements")))
+		_, err := EncodeResolved(generation)
+		Expect(err).To(HaveOccurred())
+		encoded, err := yaml.Marshal(Resolved{FormatVersion: "v1alpha1", Target: "dpf", Config: generation})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = DecodeResolved(encoded)
+		Expect(err).To(HaveOccurred())
+
+		// An unrelated card's measurement must not participate in this binding.
+		d.Runtime.Hardware.Cards[0].SerialNumber = "OTHER-CARD"
+		Expect(ValidateGeneration(generation)).To(Succeed())
+	})
+
+	It("rejects incomplete Redfish verification even when retained SSH has a PSID", func() {
+		for _, reason := range []string{"PSID_RECHECK_FAILED", "PSID_NOT_VERIFIED"} {
+			generation := resolvedGeneration()
+			generation.Devices[0].Observations["psid"] = inventory.Observation{State: "unavailable", ReasonCode: reason, Tool: "redfish"}
+			Expect(ValidateGeneration(generation)).To(MatchError(ContainSubstring("rejected Redfish PSID evidence")))
+		}
+	})
+
 	It("rejects legacy or failed administrator proof in retained deployment metadata", func() {
 		for _, admin := range []inventory.Observation{{}, {State: "failed", ReasonCode: "BMC_ADMIN_REQUIRED"}, {State: "failed", ReasonCode: "BMC_ADMIN_VERIFIED"}, {State: "observed", ReasonCode: "BMC_ADMIN_UNVERIFIABLE"}} {
 			generation := resolvedGeneration()

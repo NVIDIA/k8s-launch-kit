@@ -273,27 +273,15 @@ func resolveProvisioning(g *Generation, inv *inventory.Inventory) error {
 		if len(associations) != 1 || associations[0].SerialNumber != d.SerialNumber {
 			return fmt.Errorf("device %s requires one unambiguous host association", binding.ID)
 		}
-		psids := map[string]bool{}
-		collectPSIDs := func(device inventory.Device) {
-			if device.Runtime == nil || device.Runtime.Hardware == nil {
-				return
-			}
-			for _, card := range device.Runtime.Hardware.Cards {
-				if card.SerialNumber == d.SerialNumber && card.PSID.State == "observed" {
-					for _, v := range card.PSID.Values {
-						if v != "" {
-							psids[v] = true
-						}
-					}
-				}
-			}
+		psids, err := measuredDevicePSIDs(d)
+		if err != nil {
+			return err
 		}
-		collectPSIDs(d)
 		hosts := 0
 		for _, h := range inv.Hosts {
 			if h.ID == associations[0].HostID {
 				hosts++
-				collectPSIDs(h)
+				collectRuntimePSIDs(psids, d.SerialNumber, h)
 			}
 		}
 		if hosts != 1 {
@@ -354,6 +342,59 @@ func validateProvisioningDevice(d inventory.Device) error {
 		return fmt.Errorf("device %s has invalid BMC endpoint", d.ID)
 	}
 	return nil
+}
+
+// measuredDevicePSIDs shares source and retained-device consistency checks.
+// Host runtime evidence is added by resolution using the verified association.
+func measuredDevicePSIDs(d inventory.Device) (map[string]bool, error) {
+	psids := map[string]bool{}
+	psid, err := observedRedfishPSID(d)
+	if err != nil {
+		return nil, err
+	}
+	if psid != "" {
+		psids[psid] = true
+	}
+	collectRuntimePSIDs(psids, d.SerialNumber, d)
+	return psids, nil
+}
+
+func collectRuntimePSIDs(psids map[string]bool, serial string, d inventory.Device) {
+	if d.Runtime == nil || d.Runtime.Hardware == nil {
+		return
+	}
+	for _, card := range d.Runtime.Hardware.Cards {
+		if card.SerialNumber == serial && card.PSID.State == "observed" {
+			for _, value := range card.PSID.Values {
+				if value != "" {
+					psids[value] = true
+				}
+			}
+		}
+	}
+}
+
+// Redfish and SSH measurements may complement each other, but an explicitly
+// contradictory or changed Redfish identity cannot be hidden by another source.
+func observedRedfishPSID(d inventory.Device) (string, error) {
+	observation := d.Observations["psid"]
+	switch observation.ReasonCode {
+	case "PSID_CONFLICT", "PSID_INVALID", "PSID_CHANGED", "PSID_RECHECK_FAILED", "PSID_NOT_VERIFIED":
+		return "", fmt.Errorf("device %s has rejected Redfish PSID evidence (%s); resolve the reported cause and rediscover", d.ID, observation.ReasonCode)
+	}
+	if observation.State != "observed" && observation.ReasonCode != "PSID_OBSERVED" {
+		return "", nil
+	}
+	if observation.State != "observed" || observation.ReasonCode != "PSID_OBSERVED" || observation.Tool != "redfish" || d.Model != "B4240" || d.ReaderAdapter != "bluefield-card-v1" || len(observation.Values) != 1 {
+		return "", fmt.Errorf("device %s has inconsistent Redfish PSID evidence; rediscover", d.ID)
+	}
+	psid := observation.Values[0]
+	if !strings.HasPrefix(psid, "MT_") || len(psid) > 32 || strings.IndexFunc(psid, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-')
+	}) >= 0 {
+		return "", fmt.Errorf("device %s Redfish PSID is not supported for PLDM selection", d.ID)
+	}
+	return psid, nil
 }
 
 func validateArtifact(a Artifact) error {

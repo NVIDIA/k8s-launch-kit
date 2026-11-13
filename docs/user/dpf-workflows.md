@@ -392,6 +392,8 @@ Core policy defaults to `llmInspection: false` and makes no LLM inspection claim
 
 `ingressCIDR` and `ingressIP` configure only the `net1` ingress network. The current profile obtains `net2` egress IPv4 and its router through DHCP on the untagged `p0` uplink; these inputs do not configure egress, switch VLANs, a DHCP server/relay or upstream routing.
 
+Use the PSID actually measured by discovery: supported BF4 BMCs report it through Redfish, and existing host SSH inventory can also supply it. Missing BMC metadata is distinct from contradictory, invalid or changing PSID evidence. All available measurements must agree; resolve recorded conflicts and rediscover before generation. A model name or another card's PSID is not a substitute.
+
 Next: [Bindings and intent reviewed](#generate-sentry-stage-charts).
 
 ### 2. CLI machine: obtain the pinned local charts {#generate-sentry-stage-charts}
