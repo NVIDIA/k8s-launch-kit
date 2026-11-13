@@ -187,12 +187,20 @@ func componentName(id, name string) string {
 	}
 	// Prefer a recognizable stable ID, then the display name; golden must precede
 	// component aliases because a golden BMC image is not the running BMC image.
+	// Keep explicitly identified BMC and CPU ERoTs separate from each other
+	// and from BMC firmware. An ERoT name alone does not identify CEC firmware.
 	for _, raw := range []string{id, name} {
 		s := normalize(raw)
 		words := "-" + s + "-"
 		switch {
 		case strings.Contains(words, "-golden-"):
 			return "golden"
+		case strings.Contains(words, "-erot-") && strings.Contains(words, "-bmc-") && !strings.Contains(words, "-cpu-"):
+			return "bmc-erot"
+		case strings.Contains(words, "-erot-") && strings.Contains(words, "-cpu-") && !strings.Contains(words, "-bmc-"):
+			return "cpu-erot"
+		case strings.Contains(words, "-erot-"):
+			return "erot"
 		case strings.Contains(words, "-bmc-"):
 			return "bmc"
 		case strings.Contains(words, "-cec-"):
@@ -296,7 +304,8 @@ func firmwareRecord(resource Resource, system, manager, origin string) inventory
 func reconcileFirmware(device *inventory.Device) string {
 	versions := map[string]map[string]bool{}
 	for _, f := range device.Firmware {
-		if f.State != "known" || f.Activation == "staged" || f.Component == "other" {
+		// Generic identities cannot establish that entries describe one component.
+		if f.State != "known" || f.Activation == "staged" || f.Component == "other" || f.Component == "erot" {
 			continue
 		}
 		if versions[f.Component] == nil {

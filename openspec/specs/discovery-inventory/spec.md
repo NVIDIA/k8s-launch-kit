@@ -161,6 +161,14 @@ An inventory extension MUST cover fresh discovery and existing-config refresh. R
 
 New and changed discovery checks SHALL retain a stable reason code and safe human-readable explanation for failed, unavailable, unknown, skipped and deferred outcomes. Where known, the observation SHALL identify its subject, vantage, tool or resource, and provenance. Missing tools, denied access, malformed output, timeout, absent properties, unsupported capabilities and conflicts MUST NOT collapse into an unexplained not-measured result. Optional failures SHALL remain separate from required physical identity and association failures.
 
+#### Scenario: Compact DPF device results
+
+- **WHEN** DPF inventory is serialized as `v1alpha2`
+- **THEN** host/DPU `observations` retains failures, conflicts and unavailable-fact reasons, omitting successful collection bookkeeping and the deferred client-certificate placeholder; required check outcomes remain in the report.
+- **AND** verified PSID, BMC administrator authorization and firmware enumeration completeness remain explicit typed facts; successful device `observationState` is omitted without promoting unknown legacy observations to success.
+- **AND** versioned decoding preserves identity, authorization, software-check and refresh semantics, rejects contradictory facts and retains strict input validation. `v1alpha1` input remains readable without treating absent status as verified identity.
+- **AND** host BMC collection retains identity, PCI mappings and advertised reset types without general firmware/time inventory or DPU-only component placeholders; DPU ERoT firmware is distinct from BMC firmware.
+
 #### Scenario: Firmware tool is absent
 
 - **WHEN** an SSH endpoint lacks an executable needed for an optional firmware observation
@@ -180,7 +188,7 @@ New and changed discovery checks SHALL retain a stable reason code and safe huma
 #### Scenario: Supported BF4 Redfish PSID sources
 
 - **WHEN** the supported BF4 reader establishes physical identity and reads System/chassis AssetTags
-- **THEN** it persists a typed `observations.psid` Redfish fact, preferring System and falling back to the identity-selected chassis, with authenticated reads and no fabricated SSH/runtime data.
+- **THEN** it persists a typed `psid` Redfish fact on success, or a reason under `observations.psid` on failure, preferring System and falling back to the identity-selected chassis, with authenticated reads and no fabricated SSH/runtime data.
 - **AND** absent/null/empty/N/A stays unknown; malformed or contradictory values remain unavailable, and any source-field change or failed required recheck prevents an observed value. Optional PSID gaps do not erase physical identity or independently fail discovery.
 - **AND** the PSID fact and eligibility affect inventory fingerprint/diff; consumers requiring PSID must reject invalid/conflicting selected-source evidence and require one observed identifier.
 

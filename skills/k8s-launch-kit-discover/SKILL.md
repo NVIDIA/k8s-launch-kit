@@ -19,6 +19,12 @@ host/DPU mappings, separating discovery blockers from later prerequisites and
 checks not requested. Host/DPU BMC results omit evidence maps/references; typed
 facts, reasons and required checks remain. Other discovery sources retain their
 existing metadata. Legacy inventories remain readable and refresh from fresh reads.
+Host/DPU `observations` contains only failures/mismatches and unavailable-fact reasons;
+successful device state and empty value lists are omitted. Verified admin access
+is saved under `authentication.bmcAdministrator`, and PSID under `psid`; missing
+PSID reasons remain under `observations.psid`. Report check outcomes remain complete.
+Host BMC reads retain identity, adapters and reset types, not a firmware/time dump.
+New inventory format is `v1alpha2`; this CLI also reads legacy `v1alpha1`.
 Add `--log-level debug` for source/stage timing, or `trace` for bounded request/tool
 metadata. Redirecting stderr hides live progress in the selected file. Never dump
 credentials or raw HTTP/SSH payloads to diagnose access. Password references can
@@ -51,8 +57,8 @@ serial/PCI evidence before rerunning; do not edit inventory or discard a
 contradictory candidate to force a match. Missing vendor information remains
 unknown, and unrelated mixed-vendor host adapters remain in inventory.
 
-Supported BF4/B4240 Redfish discovery saves `inventory.dpus[].observations.psid`
-from System AssetTag, then the identity-selected chassis fallback, with authenticated
+Supported BF4/B4240 Redfish discovery saves `inventory.dpus[].psid`
+for successful reads from System AssetTag, then the identity-selected chassis fallback, with authenticated
 reads and final source rereads. Missing/N/A stays unknown. Invalid,
 conflicting, changed or failed-recheck PSIDs stay unavailable; a consumer requiring
 PSID must reject those states rather than inventing Runtime/SSH evidence or

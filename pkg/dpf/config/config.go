@@ -246,6 +246,9 @@ func Decode(b []byte, p string) (Input, error) {
 	if err := strict.Decode(&site); err != nil {
 		return Input{}, fmt.Errorf("unknown field or invalid type in DPF configuration")
 	}
+	if err := inventory.NormalizeInventory(site.Inventory); err != nil {
+		return Input{}, err
+	}
 	return Input{Site: site, Source: bytes.Clone(b), Path: p, Document: expanded}, nil
 }
 func validateKeys(n *yaml.Node, active, visited map[*yaml.Node]bool, depth int) error {

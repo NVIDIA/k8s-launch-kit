@@ -111,9 +111,12 @@ var _ = Describe("secret-safe Redfish progress and logs", func() {
 					close(ch)
 				}
 			}
-			var systemReads atomic.Int32
+			var systemReads, softwareReads atomic.Int32
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				uri := strings.TrimSuffix(r.URL.Path, "/")
+				if strings.HasPrefix(uri, "/redfish/v1/Managers") || strings.HasPrefix(uri, "/redfish/v1/UpdateService") {
+					softwareReads.Add(1)
+				}
 				var doc Document
 				switch uri {
 				case "/redfish/v1":
@@ -183,12 +186,8 @@ var _ = Describe("secret-safe Redfish progress and logs", func() {
 			Expect(progress.String()).NotTo(ContainSubstring("[PASS] \"Named host\" (" + server.URL + "): Physical"))
 			release(releaseRead)
 			Eventually(rechecking, 3*time.Second).Should(BeClosed())
-			if cleanupFails {
-				Expect(progress.String()).To(ContainSubstring("[UNAVAILABLE]"))
-			} else {
-				Expect(progress.String()).NotTo(ContainSubstring("[UNAVAILABLE]"))
-				Expect(progress.String()).To(ContainSubstring(": Optional BMC firmware/time/settings observations — reads completed; compatibility not evaluated"))
-			}
+			Expect(progress.String()).NotTo(ContainSubstring("[UNAVAILABLE]"))
+			Expect(progress.String()).NotTo(ContainSubstring("Optional BMC firmware/time/settings"))
 			Expect(progress.String()).NotTo(ContainSubstring(": Physical identity recheck — verified"))
 			release(releaseRecheck)
 			Eventually(cleaning, 3*time.Second).Should(BeClosed())
@@ -199,6 +198,11 @@ var _ = Describe("secret-safe Redfish progress and logs", func() {
 			var collection collected
 			Eventually(result, 3*time.Second).Should(Receive(&collection))
 			expectNoRedfishEvidence(collection.device, collection.evidence)
+			Expect(softwareReads.Load()).To(BeZero())
+			Expect(collection.device.Firmware).To(BeEmpty())
+			Expect(collection.device.Time).To(BeZero())
+			Expect(collection.device.Observations).To(BeEmpty())
+			Expect(collection.device.Adapters).To(ContainElement(And(HaveField("SerialNumber", "DPU-A"), HaveField("PCIAddress", "0000:81:00.0"))))
 			collectionErr := collection.err
 			if cleanupFails {
 				Expect(collectionErr).To(HaveOccurred())

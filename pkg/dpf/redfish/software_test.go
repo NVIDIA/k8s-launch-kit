@@ -36,7 +36,7 @@ func softwareFixture() (softwareReader, Document, Resource) {
 
 var _ = Describe("optional Redfish software observations", func() {
 	It("classifies component IDs and keeps raw versions and resource provenance", func() {
-		for id, expected := range map[string]string{"BMC_Firmware": "bmc", "DPU_OS": "dpu-os", "DPU_BSP": "dpu-bsp", "CEC_Firmware": "cec", "DPU_ATF": "atf", "DPU_UEFI": "uefi", "NIC_Firmware": "nic", "BMC_Golden_Image": "golden", "unrecognized": "other"} {
+		for id, expected := range map[string]string{"BMC_Firmware": "bmc", "Bluefield_BMC_ERoT_FW": "bmc-erot", "Bluefield_CPU_ERoT_FW": "cpu-erot", "ERoT_Firmware": "erot", "DPU_OS": "dpu-os", "DPU_BSP": "dpu-bsp", "CEC_Firmware": "cec", "DPU_ATF": "atf", "DPU_UEFI": "uefi", "NIC_Firmware": "nic", "BMC_Golden_Image": "golden", "unrecognized": "other"} {
 			f := firmwareRecord(Resource{URI: "/redfish/v1/UpdateService/FirmwareInventory/" + id, Document: Document{"Id": id, "Name": "Inventory entry", "Version": " v1.2 "}}, "", "", "https://bmc.invalid")
 			Expect(f.Component).To(Equal(expected), id)
 			Expect(f.RawID).To(Equal(id))
@@ -165,6 +165,25 @@ var _ = Describe("optional Redfish software observations", func() {
 			}
 		}
 		Expect(count).To(Equal(2))
+	})
+	It("keeps BMC and CPU ERoT versions distinct without conflating unidentified roots of trust", func() {
+		reader, root, system := softwareFixture()
+		reader.collections["/redfish/v1/UpdateService/FirmwareInventory"] = []Resource{
+			{URI: "/redfish/v1/UpdateService/FirmwareInventory/BMC", Document: Document{"Id": "BMC_Firmware", "Version": "1.0"}},
+			{URI: "/redfish/v1/UpdateService/FirmwareInventory/BMC_ERoT", Document: Document{"Id": "Bluefield_BMC_ERoT_FW", "Name": "BMC Firmware", "Version": "2.0"}},
+			{URI: "/redfish/v1/UpdateService/FirmwareInventory/CPU_ERoT", Document: Document{"Id": "Bluefield_CPU_ERoT_FW", "Version": "3.0"}},
+			{URI: "/redfish/v1/UpdateService/FirmwareInventory/ERoT_1", Document: Document{"Id": "ERoT_1", "Version": "4.0"}},
+			{URI: "/redfish/v1/UpdateService/FirmwareInventory/ERoT_2", Document: Document{"Id": "ERoT_2", "Version": "5.0"}},
+		}
+		d := inventory.Device{}
+		Expect(collectSoftware(context.Background(), reader, root, system, &d)).To(Equal("1.0"))
+		Expect(d.Observations).NotTo(HaveKey("firmware.bmc"))
+		Expect(d.Firmware).NotTo(ContainElement(HaveField("State", "conflict")))
+		Expect(d.Firmware).To(ContainElement(And(HaveField("Component", "bmc-erot"), HaveField("RawVersion", "2.0"), HaveField("State", "known"))))
+		Expect(d.Firmware).To(ContainElement(And(HaveField("Component", "cpu-erot"), HaveField("RawVersion", "3.0"), HaveField("State", "known"))))
+		Expect(d.Firmware).To(ContainElement(And(HaveField("Component", "erot"), HaveField("RawVersion", "4.0"), HaveField("State", "known"))))
+		Expect(d.Firmware).To(ContainElement(And(HaveField("Component", "erot"), HaveField("RawVersion", "5.0"), HaveField("State", "known"))))
+		Expect(d.Firmware).To(ContainElement(And(HaveField("Component", "cec"), HaveField("RawVersion", ""), HaveField("ReasonCode", "COMPONENT_NOT_EXPOSED"))))
 	})
 	It("keeps an explicitly staged successor separate from the manager version", func() {
 		reader, root, system := softwareFixture()

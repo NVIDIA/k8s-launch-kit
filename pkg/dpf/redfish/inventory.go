@@ -52,7 +52,10 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		output.Info("[PASS] %s: %s — %s", label, stage, detail)
 		stage = ""
 	}
-	device = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{target.Role, target.Endpoint, target.SystemURI}), InputRef: target.InputRef, BMCEndpoint: target.Endpoint, ObservationState: "unavailable", Qualification: "unqualified", InventoryCompleteness: "unknown", Authentication: inventory.Authentication{PasswordRead: "unknown", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"}, Time: inventory.TimeObservation{State: "unknown", ReasonCode: "PROPERTY_NOT_EXPOSED"}, Firmware: []inventory.Firmware{}}
+	device = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{target.Role, target.Endpoint, target.SystemURI}), InputRef: target.InputRef, BMCEndpoint: target.Endpoint, ObservationState: "unavailable", Qualification: "unqualified", InventoryCompleteness: "unknown", Authentication: inventory.Authentication{PasswordRead: "unknown", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"}}
+	if target.Role == "dpus" {
+		device.Time = inventory.TimeObservation{State: "unknown", ReasonCode: "PROPERTY_NOT_EXPOSED"}
+	}
 	expectedSerials := map[string]string{}
 	bf4Identities := map[string]Document{}
 	var psidCard Resource
@@ -216,36 +219,41 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	}
 	output.Info("[RUNNING] %s: Physical inventory read completed; identity recheck pending", label)
 	stage = ""
-	begin("Optional BMC firmware/time/settings observations")
-	bmcFirmware := collectSoftware(ctx, c, root, system, &device)
+	bmcFirmware := ""
+	if target.Role == "dpus" {
+		begin("Optional BMC firmware/time/settings observations")
+		bmcFirmware = collectSoftware(ctx, c, root, system, &device)
+		observed, unavailableCount := 0, 0
+		for _, key := range []string{"managers", "firmware-inventory", "bmc-time", "bmc-ntp"} {
+			if device.Observations[key].State == "observed" {
+				observed++
+			} else {
+				unavailableCount++
+			}
+		}
+		for _, firmware := range device.Firmware {
+			if firmware.State == "known" {
+				observed++
+			} else {
+				unavailableCount++
+			}
+		}
+		if unavailableCount > 0 {
+			output.Info("[UNAVAILABLE] %s: Optional BMC firmware/time/settings reads completed; %d observed, %d unavailable or unknown; inspect the detailed report for reasons, compatibility not evaluated", label, observed, unavailableCount)
+			stage = ""
+		} else {
+			pass("reads completed; compatibility not evaluated")
+		}
+		logger.V(1).Info("Optional Redfish observations completed", "observedSections", observed, "unavailableObservations", unavailableCount)
+	} else {
+		bmcFirmware = co.hostQualificationFirmware(ctx, c, root, adapter, device.Model)
+	}
 	for _, q := range co.Qualifications {
 		if q.Adapter == adapter && q.Model == device.Model && q.BMCFirmware == bmcFirmware && bmcFirmware != "" && q.VerifyCompleteness != nil && q.VerifyCompleteness(ctx, c, system) == nil {
 			device.Qualification = "qualified"
 			device.InventoryCompleteness = "complete"
 		}
 	}
-	observed, unavailableCount := 0, 0
-	for _, key := range []string{"managers", "firmware-inventory", "bmc-time", "bmc-ntp"} {
-		if device.Observations[key].State == "observed" {
-			observed++
-		} else {
-			unavailableCount++
-		}
-	}
-	for _, firmware := range device.Firmware {
-		if firmware.State == "known" {
-			observed++
-		} else {
-			unavailableCount++
-		}
-	}
-	if unavailableCount > 0 {
-		output.Info("[UNAVAILABLE] %s: Optional BMC firmware/time/settings reads completed; %d observed, %d unavailable or unknown; inspect the detailed report for reasons, compatibility not evaluated", label, observed, unavailableCount)
-		stage = ""
-	} else {
-		pass("reads completed; compatibility not evaluated")
-	}
-	logger.V(1).Info("Optional Redfish observations completed", "observedSections", observed, "unavailableObservations", unavailableCount)
 	begin("Physical identity recheck")
 	for uri, identity := range bf4Identities {
 		current, e := c.Get(ctx, uri)
@@ -285,6 +293,22 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	device.ObservationState = "observed"
 	pass("verified; session cleanup pending")
 	return device, evidence, nil
+}
+
+// hostQualificationFirmware reads only manager metadata when an applicable catalog
+// entry needs it. Host firmware inventory and clock settings are outside discovery.
+func (co Collector) hostQualificationFirmware(ctx context.Context, reader Reader, root Document, adapter, model string) string {
+	for _, q := range co.Qualifications {
+		if q.Adapter != adapter || q.Model != model || q.BMCFirmware == "" || q.VerifyCompleteness == nil {
+			continue
+		}
+		manager, state := softwareManager(ctx, reader, root)
+		if state.State == "observed" {
+			return Text(manager.Document, "FirmwareVersion")
+		}
+		return ""
+	}
+	return ""
 }
 
 func sameMembers(a, b []Resource) bool {

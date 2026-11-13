@@ -326,6 +326,17 @@ The current DPF target still rejects generation, deployment and validation befor
 consuming inventory. A future generator must require fresh complete discovery and
 revalidate its own authorization needs; saved facts do not authorize provisioning.
 
+Inventory `v1alpha2` projects host/DPU observations into diagnostics only at the
+serialization boundary; in-memory collection/check data remains intact. Verified
+PSID and BMC administrator authorization are typed facts, with explicit firmware
+enumeration completeness for software comparisons. Only successful device state
+is omitted. Version-aware decoding restores consumer semantics and must never
+infer legacy success from a missing field or accept contradictory success/failure
+facts. Legacy inventories remain readable. Host BMC collection is limited to
+identity, PCI mapping and reset capabilities; configured qualification may inspect
+manager version privately, without a host firmware/time inventory. DPU ERoT and
+BMC firmware remain distinct components.
+
 BMC discovery keeps typed values, status/reasons, endpoint and firmware resource
 paths, but does not create an evidence table or reference lists. Required live
 reads, identity and PSID rereads, and administrator checks remain mandatory;

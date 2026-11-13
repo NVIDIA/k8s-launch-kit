@@ -274,15 +274,16 @@ versions. Only documented minimum versions are compatibility checks; unsupported
 firmware requirements remain unknown. Model applicability and software checks do
 not qualify hardware or enable DPF deployment profiles.
 
-On the supported BF4/B4240 Redfish reader, `inventory.dpus[].observations.psid`
-records the PSID from the selected System's `AssetTag`, falling back to the
+On the supported BF4/B4240 Redfish reader, `inventory.dpus[].psid`
+records a successfully verified PSID from the selected System's `AssetTag`, falling back to the
 identity-selected chassis's `AssetTag`. Missing, null, empty and `N/A` values
 remain unknown. Both values, when supplied, must be bounded ASCII identifiers
 and agree exactly; the selected value keeps its original spelling. The
 same identity-bound source fields are reread before the PSID becomes observed.
-This is a Redfish fact, with `tool: redfish`, obtained from authenticated `AssetTag` reads;
+This is a Redfish fact obtained from authenticated `AssetTag` reads;
 it does not create an SSH/runtime observation or infer a PSID from a model.
 
+Failures and missing PSIDs are recorded under `observations.psid`.
 `PSID_NOT_EXPOSED` and `PSID_READER_UNSUPPORTED` mean this source supplies no PSID.
 `PSID_INVALID`, `PSID_CONFLICT`, `PSID_CHANGED` and `PSID_RECHECK_FAILED` keep the
 observation unavailable with no eligible values. These optional gaps preserve
@@ -351,6 +352,33 @@ l8k discover --target dpf --user-config dpf-site.yaml \
 
 Redirecting `2>discover.log` saves progress and logs to that file instead of
 displaying them. `--output json` still emits one final JSON document on stdout.
+
+### Read the device results
+
+Each host/DPU `observations` block contains failures, mismatches and reasons why
+requested facts are unavailable. Successful reads and the per-device
+client-certificate “not evaluated” placeholder are omitted. An empty block is
+omitted entirely; absence of a diagnostic does not establish deployment readiness.
+The report's checks still record required successes and later-phase gaps.
+
+Verified DPU facts have dedicated fields: `psid` holds the board identifier and
+`authentication.bmcAdministrator: verified` records successful administrator
+verification. DPU firmware versions and clock/NTP settings remain under `firmware`
+and `time`. `firmwareInventoryComplete: true` means firmware enumeration completed;
+it does not mean every component exposes a version or that firmware is compatible.
+Successful device records omit `observationState`; failed, ambiguous and unknown
+records retain their state and available reasons. Empty diagnostic `values` lists
+are omitted.
+
+Host BMC discovery collects system identity, PCI adapter identities and advertised
+reset types for host-to-DPU mapping. It does not dump host firmware, query host
+NTP settings or manufacture missing DPU firmware components on a host. DPU firmware
+inventory keeps ERoT entries separate from BMC firmware so their different versions
+do not create a false BMC mismatch.
+
+New saved inventories use format `v1alpha2`. This CLI can read legacy `v1alpha1`
+inventories; use the updated CLI to consume the new format. Keep old outputs as
+history and refresh through discovery rather than manually deleting status fields.
 
 ### Internal identifiers in saved inventory
 
