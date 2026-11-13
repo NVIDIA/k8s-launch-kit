@@ -15,6 +15,46 @@ import (
 const generationPSID = "MT_0000000010"
 
 var _ = Describe("DPF generation configuration", func() {
+	It("accepts supported inventory versions without upgrading failed identity", func() {
+		for _, version := range []string{"v1alpha1", "v1alpha2", "v1alpha3"} {
+			in := validGenerationInput(GinkgoT().TempDir())
+			in.Site.Inventory.FormatVersion = version
+			in = decodeGenerationInput(in)
+			_, err := ResolveGeneration(in)
+			Expect(err).NotTo(HaveOccurred(), version)
+			in.Site.Inventory.DPUs[0].ReasonCode = "IDENTITY_CHANGED"
+			_, err = ResolveGeneration(in)
+			Expect(err).To(MatchError(ContainSubstring("requires observed BlueField-4 identity")))
+		}
+		in := validGenerationInput(GinkgoT().TempDir())
+		in.Site.Inventory.FormatVersion = "v99"
+		_, err := ResolveGeneration(in)
+		Expect(err).To(MatchError(ContainSubstring("supported discovery inventory")))
+	})
+
+	It("uses named typed Redfish PSID without requiring an SSH measurement", func() {
+		in := validGenerationInput(GinkgoT().TempDir())
+		d := &in.Site.Inventory.DPUs[0]
+		d.Model, d.ReaderAdapter = "B4240", "bluefield-card-v1"
+		d.Observations["psid"] = inventory.Observation{State: "observed", ReasonCode: "PSID_OBSERVED", Tool: "redfish", Values: []string{generationPSID}}
+		d.Runtime = nil
+		in.Site.Inventory.Hosts[0].Runtime = nil
+		encoded, err := yaml.Marshal(in.Site)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring("psid: " + generationPSID))
+		Expect(string(encoded)).NotTo(ContainSubstring("observations:"))
+		in, err = Decode(encoded, in.Path)
+		Expect(err).NotTo(HaveOccurred())
+		g, err := ResolveGeneration(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(g.DevicePSIDs["dpu-1"]).To(Equal(generationPSID))
+		sidecar, err := EncodeResolved(g)
+		Expect(err).NotTo(HaveOccurred())
+		restored, err := DecodeResolved(sidecar)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restored.Devices[0].Observations["psid"].ReasonCode).To(Equal("PSID_OBSERVED"))
+		Expect(restored.DevicePSIDs["dpu-1"]).To(Equal(generationPSID))
+	})
 	It("preserves the chart directory through a relocated discovery output", func() {
 		in := validGenerationInput(GinkgoT().TempDir())
 		in.Site.Sentry.ChartDirectory = "charts/sentry"
@@ -429,17 +469,17 @@ var _ = Describe("DPF generation configuration", func() {
 func validGenerationInput(base string) Input {
 	psid := inventory.Observation{State: "observed", Values: []string{generationPSID}}
 	dpu := inventory.Device{
-		ID: "dpu-1", SerialNumber: "BF4-SERIAL-1", Model: "BlueField-4", ObservationState: "observed",
+		ID: "dpu-1", SerialNumber: "BF4-SERIAL-1", Model: "BlueField-4", ReaderAdapter: "bluefield-card-v1", ObservationState: "observed",
 		BMCEndpoint:  "https://192.0.2.21",
 		Observations: map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"}},
 		Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{
-			SerialNumber: "BF4-SERIAL-1", PSID: psid,
+			PCIAddress: "0000:21:00.0", Domain: "arm-pci", SerialNumber: "BF4-SERIAL-1", PSID: psid,
 		}}}},
 	}
 	host := inventory.Device{
-		ID: "host-1",
+		ID: "host-1", ObservationState: "observed", SSHEndpoint: "ssh://192.0.2.10", ReaderAdapter: "linux-host-ssh-v1",
 		Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{
-			SerialNumber: "BF4-SERIAL-1", PSID: psid,
+			PCIAddress: "0000:21:00.0", Domain: "host-pci", SerialNumber: "BF4-SERIAL-1", PSID: psid,
 		}}}},
 	}
 	site := Site{}

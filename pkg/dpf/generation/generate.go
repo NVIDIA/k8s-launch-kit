@@ -69,15 +69,21 @@ func Build(ctx context.Context, in config.Input, overrides configinput.Values) (
 // renderBundle is shared by generation and admission of a loaded bundle. It uses
 // only resolved intent and retained chart bytes, never credentials or source paths.
 func renderBundle(ctx context.Context, g config.Generation, archives map[string][]byte) (*bundle.Bundle, error) {
+	sidecar, err := config.EncodeResolved(g)
+	if err != nil {
+		return nil, err
+	}
+	return renderBundleWithSidecar(ctx, g, archives, sidecar)
+}
+
+// Admission preserves the already decoded sidecar bytes, including legacy
+// metadata, so a schema upgrade does not change the retained bundle digest.
+func renderBundleWithSidecar(ctx context.Context, g config.Generation, archives map[string][]byte, sidecar []byte) (*bundle.Bundle, error) {
 	p, err := profiles.LoadProfileForTarget(target.DPF, g.Profile)
 	if err != nil {
 		return nil, err
 	}
 	rendered, err := sentry.Render(g, p, archives)
-	if err != nil {
-		return nil, err
-	}
-	sidecar, err := config.EncodeResolved(g)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +163,7 @@ func Configuration(b *bundle.Bundle, userConfig string) (config.Generation, erro
 			}
 		}
 	}
-	expected, err := renderBundle(context.Background(), g, archives)
+	expected, err := renderBundleWithSidecar(context.Background(), g, archives, data)
 	if err != nil {
 		return g, fmt.Errorf("validate retained DPF intent: %w", err)
 	}

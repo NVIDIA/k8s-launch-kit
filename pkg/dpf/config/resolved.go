@@ -16,7 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-// Resolved is deployment metadata, not another user input/defaulting path.
+// Resolved is the legacy v1alpha1 deployment metadata. New bundles use the typed
+// v1alpha2 codec in EncodeResolved; this type remains for reading legacy bundles.
 type Resolved struct {
 	FormatVersion string     `yaml:"formatVersion"`
 	Target        string     `yaml:"target"`
@@ -27,7 +28,11 @@ func EncodeResolved(g Generation) ([]byte, error) {
 	if err := ValidateGeneration(g); err != nil {
 		return nil, err
 	}
-	return yaml.Marshal(Resolved{FormatVersion: "v1alpha1", Target: "dpf", Config: g})
+	wire, err := generationToOutput(g)
+	if err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(resolvedOutput{FormatVersion: "v1alpha2", Target: "dpf", Config: wire})
 }
 
 func DecodeResolved(b []byte) (Generation, error) {
@@ -42,17 +47,37 @@ func DecodeResolved(b []byte) (Generation, error) {
 	if err := validateKeys(&syntax, map[*yaml.Node]bool{}, map[*yaml.Node]bool{}, 0); err != nil {
 		return r.Config, err
 	}
+	var header struct {
+		FormatVersion string `yaml:"formatVersion"`
+		Target        string `yaml:"target"`
+	}
+	if err := syntax.Decode(&header); err != nil {
+		return r.Config, fmt.Errorf("invalid resolved DPF configuration: %w", err)
+	}
+	if header.Target != "dpf" || (header.FormatVersion != "v1alpha1" && header.FormatVersion != "v1alpha2") {
+		return r.Config, fmt.Errorf("unsupported resolved DPF format or target")
+	}
 	d := yaml.NewDecoder(bytes.NewReader(b))
 	d.KnownFields(true)
-	if err := d.Decode(&r); err != nil {
-		return r.Config, fmt.Errorf("invalid resolved DPF configuration: %w", err)
+	switch header.FormatVersion {
+	case "v1alpha1":
+		if err := d.Decode(&r); err != nil {
+			return r.Config, fmt.Errorf("invalid resolved DPF configuration: %w", err)
+		}
+	case "v1alpha2":
+		var wire resolvedOutput
+		if err := d.Decode(&wire); err != nil {
+			return r.Config, fmt.Errorf("invalid resolved DPF configuration: %w", err)
+		}
+		var err error
+		r.Config, err = wire.Config.generation()
+		if err != nil {
+			return r.Config, err
+		}
 	}
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {
 		return r.Config, fmt.Errorf("resolved DPF configuration must be one document")
-	}
-	if r.Target != "dpf" || r.FormatVersion != "v1alpha1" {
-		return r.Config, fmt.Errorf("unsupported resolved DPF format or target")
 	}
 	return r.Config, ValidateGeneration(r.Config)
 }

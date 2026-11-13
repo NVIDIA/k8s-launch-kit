@@ -106,10 +106,12 @@ Copy a successful [discovered configuration](dpf-discovery.md) to
 below; replace every angle-bracket placeholder before generating. Do not edit
 the inventory to turn an unknown or conflicting observation into a fact.
 
-Every selected device must retain successful discovery evidence under
-`observations.bmc-administrator`: `state: observed` and
-`reasonCode: BMC_ADMIN_VERIFIED`, with an explicit BMC endpoint and no ARM SSH
-endpoint. Generation accepts the exact observed model `BlueField-4`, or `B4240`
+Every selected device must retain successful discovery evidence:
+`bmcAdministratorVerified: true` in typed `v1alpha3` inventory, with an explicit
+BMC endpoint and no ARM SSH endpoint. Legacy `v1alpha1`/`v1alpha2` inventory is
+also accepted when its retained administrator observation is `state: observed`
+with `reasonCode: BMC_ADMIN_VERIFIED`; missing or failed proof is never inferred.
+Generation accepts the exact observed model `BlueField-4`, or `B4240`
 from the reviewed `bluefield-card-v1` reader, and preserves that measured model.
 Unselected records do not need to satisfy this selection gate. If older inventory
 or a retained bundle lacks this proof, rerun discovery with DPU BMC administrator
@@ -118,7 +120,8 @@ directory. Do not add the proof by editing YAML. Saved privileges are an
 observation; deployment still verifies live DPF access and its own prerequisites.
 
 Firmware selection uses the PSID measured by discovery. Supported BF4 BMCs can
-report it through Redfish; review `observations.psid` in the inventory. Existing
+report it through Redfish; review `psid` and any `issues` for that field in typed
+inventory (`observations.psid` in legacy inventory). Existing
 host SSH measurements can also provide the PSID. All available measurements
 must agree. A malformed, conflicting, changing or incompletely verified Redfish PSID blocks generation
 even when another source reports a value. Resolve the recorded cause and
@@ -235,8 +238,10 @@ The bundle includes native resources, chart archives, effective values and
 validation-only chart projections. DPF owns chart deployment; Launch Kit does
 not apply the projections a second time. `.l8k/bundle.yaml` identifies the DPF
 target and binds the files; `.l8k/resolved-config.yaml` retains the effective
-inputs. Preserve the bundle unchanged. To change desired intent, generate a new
-bundle directory. Repeating identical generation at the same path is allowed;
+inputs using typed selected-device facts in resolved format `v1alpha2`. The
+bundle index remains `v1alpha1`; valid legacy resolved `v1alpha1` metadata is
+accepted with the same administrator and PSID checks. Preserve the bundle
+unchanged. To change desired intent, generate a new bundle directory. Repeating identical generation at the same path is allowed;
 different content does not overwrite an existing bundle.
 
 ## Check admission, then deploy

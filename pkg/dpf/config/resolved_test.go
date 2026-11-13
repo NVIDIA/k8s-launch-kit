@@ -13,6 +13,59 @@ import (
 )
 
 var _ = Describe("resolved DPF generation", func() {
+	It("writes typed devices without generic collector data and accepts legacy metadata", func() {
+		g := resolvedGeneration()
+		g.Devices[0].EvidenceRefs = []string{"collector-evidence-canary"}
+		g.Devices[0].Observations["internal-only"] = inventory.Observation{State: "observed", Values: []string{"generic-value-canary"}}
+		encoded, err := EncodeResolved(g)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring("formatVersion: v1alpha2"))
+		Expect(string(encoded)).To(ContainSubstring("bmcAdministratorVerified: true"))
+		for _, forbidden := range []string{"observations:", "readerAdapter:", "observationState:", "evidenceRefs:", "collector-evidence-canary", "generic-value-canary"} {
+			Expect(string(encoded)).NotTo(ContainSubstring(forbidden))
+		}
+		legacy, err := yaml.Marshal(Resolved{FormatVersion: "v1alpha1", Target: "dpf", Config: g})
+		Expect(err).NotTo(HaveOccurred())
+		decoded, err := DecodeResolved(legacy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(decoded).To(Equal(g))
+	})
+
+	It("preserves rejected versus missing PSID semantics across the typed handoff", func() {
+		for _, code := range []string{"PSID_NOT_EXPOSED", "PSID_READER_UNSUPPORTED", "PSID_CONFLICT", "PSID_INVALID", "PSID_CHANGED", "PSID_RECHECK_FAILED", "PSID_NOT_VERIFIED"} {
+			g := resolvedGeneration()
+			g.Devices[0].Observations["psid"] = inventory.Observation{State: "unavailable", ReasonCode: code, Tool: "redfish"}
+			wire, err := generationToOutput(g)
+			Expect(err).NotTo(HaveOccurred())
+			encoded, err := yaml.Marshal(resolvedOutput{FormatVersion: "v1alpha2", Target: "dpf", Config: wire})
+			Expect(err).NotTo(HaveOccurred())
+			decoded, err := DecodeResolved(encoded)
+			if code == "PSID_NOT_EXPOSED" || code == "PSID_READER_UNSUPPORTED" {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(decoded.Devices[0].Observations["psid"].ReasonCode).To(Equal(code))
+			} else {
+				Expect(err).To(MatchError(ContainSubstring("rejected Redfish PSID evidence")), code)
+			}
+		}
+	})
+
+	It("rejects generic or contradictory typed device fields", func() {
+		g := resolvedGeneration()
+		wire, err := generationToOutput(g)
+		Expect(err).NotTo(HaveOccurred())
+		wire.Devices[0].Issues = append(wire.Devices[0].Issues, inventory.DeviceIssue{Field: "identity", Code: "IDENTITY_CHANGED"})
+		encoded, err := yaml.Marshal(resolvedOutput{FormatVersion: "v1alpha2", Target: "dpf", Config: wire})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = DecodeResolved(encoded)
+		Expect(err).To(MatchError(ContainSubstring("failed recheck")))
+
+		encoded, err = EncodeResolved(g)
+		Expect(err).NotTo(HaveOccurred())
+		document := strings.Replace(string(encoded), "bmcAdministratorVerified: true", "bmcAdministratorVerified: true\n          observations: {}", 1)
+		_, err = DecodeResolved([]byte(document))
+		Expect(err).To(MatchError(ContainSubstring("field observations not found")))
+	})
+
 	It("rejects retained PSID selection that contradicts the Redfish observation", func() {
 		generation := resolvedGeneration()
 		d := &generation.Devices[0]
@@ -72,7 +125,8 @@ var _ = Describe("resolved DPF generation", func() {
 
 		decoded, err := DecodeResolved(encoded)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(decoded).To(Equal(generation))
+		Expect(SameIntent(decoded, generation)).To(BeTrue())
+		Expect(decoded.Devices[0].Runtime.Hardware.Cards[0].PSID.Values).To(Equal([]string{generationPSID}))
 
 		decoded.Provisioning.Software.PLDM[generationPSID] = testArtifact("mutated.pldm")
 		decoded.Provisioning.Devices[0].DPUNode = "mutated-node"
@@ -91,7 +145,7 @@ var _ = Describe("resolved DPF generation", func() {
 			edit func(string) string
 			want string
 		}{
-			{name: "unknown format", edit: func(s string) string { return strings.Replace(s, "formatVersion: v1alpha1", "formatVersion: v9", 1) }, want: "unsupported resolved DPF format or target"},
+			{name: "unknown format", edit: func(s string) string { return strings.Replace(s, "formatVersion: v1alpha2", "formatVersion: v9", 1) }, want: "unsupported resolved DPF format or target"},
 			{name: "wrong target", edit: func(s string) string { return strings.Replace(s, "target: dpf", "target: host", 1) }, want: "unsupported resolved DPF format or target"},
 			{name: "unknown field", edit: func(s string) string { return s + "unexpectedField: true\n" }, want: "field unexpectedField not found"},
 			{name: "duplicate key", edit: func(s string) string { return strings.Replace(s, "target: dpf\n", "target: dpf\ntarget: host\n", 1) }, want: "duplicate"},
@@ -197,7 +251,7 @@ func resolvedGeneration() Generation {
 }
 
 func cloneResolvedGeneration(g Generation) Generation {
-	encoded, err := EncodeResolved(g)
+	encoded, err := yaml.Marshal(Resolved{FormatVersion: "v1alpha1", Target: "dpf", Config: g})
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	cloned, err := DecodeResolved(encoded)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())

@@ -36,6 +36,20 @@ func fixture() (Index, []File) {
 }
 
 var _ = Describe("validated immutable membership", func() {
+	It("versions resolved metadata independently of the bundle index", func() {
+		for _, version := range []string{"v1alpha1", "v1alpha2", "v99"} {
+			index, files := fixture()
+			files[0].Data = []byte(strings.Replace(string(files[0].Data), "v1alpha1", version, 1))
+			b, err := New(index, files)
+			if version == "v99" {
+				Expect(err).To(MatchError(ContainSubstring("unsupported DPF resolved configuration envelope")))
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(b.Index().FormatVersion).To(Equal("v1alpha1"))
+			}
+		}
+	})
+
 	It("retains exact bytes and isolates constructor and consumer mutations", func() {
 		index, files := fixture()
 		b, err := New(index, files)

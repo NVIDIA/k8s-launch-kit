@@ -210,7 +210,8 @@ func validateResolved(data []byte) error {
 	if err := decodeOne(data, &envelope); err != nil {
 		return fmt.Errorf("decode DPF resolved configuration: %w", err)
 	}
-	if envelope.FormatVersion != FormatVersion || envelope.Target != Target || envelope.Config.Kind != yaml.MappingNode {
+	// The index envelope remains v1alpha1; resolved metadata has its own schema.
+	if (envelope.FormatVersion != "v1alpha1" && envelope.FormatVersion != "v1alpha2") || envelope.Target != Target || envelope.Config.Kind != yaml.MappingNode {
 		return fmt.Errorf("unsupported DPF resolved configuration envelope")
 	}
 	return nil

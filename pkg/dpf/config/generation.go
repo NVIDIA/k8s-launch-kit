@@ -167,7 +167,7 @@ func ResolveGeneration(in Input) (Generation, error) {
 		g.ManagementUID = *in.Site.Management.ClusterUID
 	}
 	inv := in.Site.Inventory
-	if inv == nil || inv.FormatVersion != inventory.FormatVersion {
+	if inv == nil || (inv.FormatVersion != inventory.FormatVersion && inv.FormatVersion != "v1alpha1" && inv.FormatVersion != "v1alpha2") {
 		return g, fmt.Errorf("generation requires a supported discovery inventory")
 	}
 	if g.ManagementUID == "" && inv.Management != nil {
@@ -331,7 +331,7 @@ func resolveProvisioning(g *Generation, inv *inventory.Inventory) error {
 // Validate source inventory and retained bundle devices by the same contract.
 // Discovery evidence is a prerequisite; deploy still verifies live DPF access.
 func validateProvisioningDevice(d inventory.Device) error {
-	if d.ObservationState != "observed" || (d.Model != "BlueField-4" && (d.Model != "B4240" || d.ReaderAdapter != "bluefield-card-v1")) {
+	if d.ObservationState != "observed" || d.ReasonCode != "" || (d.Model != "BlueField-4" && (d.Model != "B4240" || d.ReaderAdapter != "bluefield-card-v1")) {
 		return fmt.Errorf("device %s requires observed BlueField-4 identity; B4240 requires the bluefield-card-v1 reader", d.ID)
 	}
 	admin := d.Observations["bmc-administrator"]

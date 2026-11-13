@@ -84,6 +84,30 @@ var _ = Describe("offline DPF generation", func() {
 		}
 	})
 
+	It("admits legacy resolved metadata without changing its retained digest", func() {
+		b, err := Build(context.Background(), in, configinput.Values{})
+		Expect(err).NotTo(HaveOccurred())
+		files := b.Files()
+		for i := range files {
+			if files[i].Path == bundle.ResolvedConfigPath {
+				g, err := config.DecodeResolved(files[i].Data)
+				Expect(err).NotTo(HaveOccurred())
+				files[i].Data, err = yaml.Marshal(config.Resolved{FormatVersion: "v1alpha1", Target: "dpf", Config: g})
+				Expect(err).NotTo(HaveOccurred())
+			}
+		}
+		index := b.Index()
+		index.BundleDigest = ""
+		for i := range index.Files {
+			index.Files[i].SHA256 = ""
+		}
+		legacy, err := bundle.New(index, files)
+		Expect(err).NotTo(HaveOccurred())
+		digest := legacy.Index().BundleDigest
+		_, err = Configuration(legacy, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(legacy.Index().BundleDigest).To(Equal(digest))
+	})
 	It("rejects an old inventory before publication and an old bundle before cluster access", func() {
 		b, err := Build(context.Background(), in, configinput.Values{})
 		Expect(err).NotTo(HaveOccurred())
@@ -216,8 +240,8 @@ var _ = Describe("offline DPF generation", func() {
 func generationInput(base, charts string) config.Input {
 	const psid = "MT_0000000010"
 	observed := inventory.Observation{State: "observed", Values: []string{psid}}
-	dpu := inventory.Device{ID: "dpu-1", SerialNumber: "BF4-SERIAL-1", Model: "B4240", ReaderAdapter: "bluefield-card-v1", ObservationState: "observed", BMCEndpoint: "https://192.0.2.21", Observations: map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"}}, Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{SerialNumber: "BF4-SERIAL-1", PSID: observed}}}}}
-	host := inventory.Device{ID: "host-1", Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{SerialNumber: "BF4-SERIAL-1", PSID: observed}}}}}
+	dpu := inventory.Device{ID: "dpu-1", SerialNumber: "BF4-SERIAL-1", Model: "B4240", ReaderAdapter: "bluefield-card-v1", ObservationState: "observed", BMCEndpoint: "https://192.0.2.21", Observations: map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"}}, Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{PCIAddress: "0000:21:00.0", Domain: "arm-pci", SerialNumber: "BF4-SERIAL-1", PSID: observed}}}}}
+	host := inventory.Device{ID: "host-1", ObservationState: "observed", SSHEndpoint: "ssh://192.0.2.10", ReaderAdapter: "linux-host-ssh-v1", Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{PCIAddress: "0000:21:00.0", Domain: "host-pci", SerialNumber: "BF4-SERIAL-1", PSID: observed}}}}}
 	site := config.Site{}
 	site.DPF.Release = stringPtr("26.8.0")
 	site.Management.KubeconfigRef.File = "missing/management.kubeconfig"
