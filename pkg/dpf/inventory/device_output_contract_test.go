@@ -50,7 +50,7 @@ var _ = ginkgo.Describe("typed firmware compatibility boundary", func() {
 		d := firmwareDevice()
 		d.Firmware = []inventory.Firmware{
 			{Component: "nic", State: "known", RawVersion: "32.38.1002", Activation: "running"},
-			{Component: "nic", State: "unknown", RawVersion: raw, Activation: "unknown", ReasonCode: "VERSION_NOT_EXPOSED"},
+			{Component: "nic", State: "unknown", RawVersion: raw, Activation: "unknown", ActivationReasonCode: "CROSS_ORIGIN_LINK", ReasonCode: "VERSION_NOT_EXPOSED"},
 		}
 		w, err := inventory.DeviceToOutput(d, "dpus")
 		Expect(err).NotTo(HaveOccurred())
@@ -59,6 +59,9 @@ var _ = ginkgo.Describe("typed firmware compatibility boundary", func() {
 		restored, err := inventory.DeviceFromOutput(w, "dpus")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nicCheck(restored).State).To(Equal("passed"))
+		again, err := inventory.DeviceToOutput(restored, "dpus")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(again).To(Equal(w))
 		_, err = json.Marshal(inventory.Inventory{FormatVersion: inventory.FormatVersion, DPUs: []inventory.Device{d}})
 		Expect(err).NotTo(HaveOccurred())
 	}, ginkgo.Entry("blank whitespace", "  "), ginkgo.Entry("newline", "v1.2\n"), ginkgo.Entry("control character", "v1.2\x00"))
@@ -75,6 +78,28 @@ var _ = ginkgo.Describe("typed firmware compatibility boundary", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nicCheck(restored).State).To(Equal("unknown"))
 		Expect(nicCheck(restored).ReasonCode).To(Equal("SOFTWARE_VERSION_CONFLICT"))
+	})
+
+	ginkgo.It("never clears a conflict veto with a later per-entry diagnostic", func() {
+		for _, activation := range []bool{false, true} {
+			for _, reverse := range []bool{false, true} {
+				d := firmwareDevice()
+				d.Firmware = []inventory.Firmware{{Component: "nic", State: "known", RawVersion: "32.38.1002", Activation: "unknown"}}
+				d.Runtime = &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{Domain: "arm-pci", PCIAddress: "0000:21:00.0", SerialNumber: d.SerialNumber, Firmware: inventory.Observation{State: "observed", Values: []string{"32.38.1002"}}}}}}
+				w, err := inventory.DeviceToOutput(d, "dpus")
+				Expect(err).NotTo(HaveOccurred())
+				w.Issues = []inventory.DeviceIssue{{Field: "firmware.nic", Code: "FIRMWARE_VERSION_CONFLICT"}, {Field: "firmware.nic[0]", Code: "VERSION_INVALID"}}
+				if activation {
+					w.Issues = []inventory.DeviceIssue{{Field: "firmware.nic.activation", Code: "ACTIVATION_CONFLICT"}, {Field: "firmware.nic[0].activation", Code: "CROSS_ORIGIN_LINK"}}
+				}
+				if reverse {
+					w.Issues[0], w.Issues[1] = w.Issues[1], w.Issues[0]
+				}
+				restored, err := inventory.DeviceFromOutput(w, "dpus")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(nicCheck(restored).ReasonCode).To(Equal("SOFTWARE_VERSION_CONFLICT"))
+			}
+		}
 	})
 
 	ginkgo.DescribeTable("rejects failure locations that would otherwise be ignored", func(field, code string) {
