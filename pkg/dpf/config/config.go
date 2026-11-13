@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/addresslookup"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/yamlinput"
@@ -73,8 +74,12 @@ type Limits struct {
 	MaxConcurrentBMCs *int    `yaml:"maxConcurrentBMCs,omitempty"`
 }
 type Site struct {
-	DPF struct {
-		Release *string `yaml:"release,omitempty"`
+	Provisioning *Provisioning `yaml:"provisioning,omitempty"`
+	DPF          struct {
+		Release   *string      `yaml:"release,omitempty"`
+		Namespace *string      `yaml:"namespace,omitempty"`
+		UseCase   *string      `yaml:"useCase,omitempty"`
+		HBN       *hbn.Options `yaml:"hbn,omitempty"`
 	} `yaml:"dpf,omitempty"`
 	Management struct {
 		KubeconfigRef FileRef `yaml:"kubeconfigRef"`
@@ -85,6 +90,7 @@ type Site struct {
 		AddressLookup *addresslookup.Config `yaml:"addressLookup,omitempty"`
 		DPUs          []Endpoint            `yaml:"dpus"`
 		Hosts         []Endpoint            `yaml:"hosts"`
+		Switches      []Switch              `yaml:"switches,omitempty"`
 		TLS           *TLS                  `yaml:"tls,omitempty"`
 		Probes        Probes                `yaml:"probes,omitempty"`
 		Limits        Limits                `yaml:"limits,omitempty"`
@@ -158,6 +164,11 @@ func (t Target) DisplayName() string {
 }
 
 type Request struct {
+	UseCase           string
+	DPFNamespace      string
+	HBN               *hbn.Profile
+	HBNGeneration     *hbn.Generation
+	Switches          []SwitchTarget
 	Software          *releases.Release
 	AddressLookup     *addresslookup.Request
 	Input             Input
@@ -285,18 +296,9 @@ func Resolve(in Input) (Request, error) {
 	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "management"}
 	s := in.Site
 	base := filepath.Dir(in.Path)
-	release := ""
-	if s.DPF.Release != nil {
-		if *s.DPF.Release == "" {
-			return r, fmt.Errorf("/dpf/release must not be empty")
-		}
-		release = *s.DPF.Release
-	}
-	software, err := releases.Resolve(release)
-	if err != nil {
+	if err := resolveUseCase(&r); err != nil {
 		return r, err
 	}
-	r.Software = &software
 	if s.Discovery.AddressLookup != nil {
 		lookup, err := addresslookup.Validate(*s.Discovery.AddressLookup)
 		if err != nil {
@@ -603,7 +605,7 @@ func rebase(n *yaml.Node, oldBase, newBase, p string) error {
 }
 
 func validateScalarTypes(n *yaml.Node, p string) error {
-	if p == "/inventory" {
+	if p == "/inventory" || p == "/provisioning/flavor" {
 		return nil
 	}
 	if n.Kind == yaml.AliasNode {
@@ -615,10 +617,10 @@ func validateScalarTypes(n *yaml.Node, p string) error {
 			return nil
 		}
 		expected := "!!str"
-		if p == "/discovery/limits/maxConcurrentBMCs" {
+		if p == "/discovery/limits/maxConcurrentBMCs" || hbnIntegerPath(p) || bootstrapIntegerPath(p) || p == "/provisioning/hbn/workloadGatewayIndex" {
 			expected = "!!int"
 		}
-		if strings.HasSuffix(p, "/tls/insecureSkipVerify") || strings.HasSuffix(p, "/ssh/sudo") {
+		if strings.HasSuffix(p, "/tls/insecureSkipVerify") || strings.HasSuffix(p, "/ssh/sudo") || p == "/provisioning/hbn/vxlanStartupProbeEnabled" {
 			expected = "!!bool"
 		}
 		if n.Tag != expected {

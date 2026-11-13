@@ -21,13 +21,15 @@ metadata remains visible, including cards without serials. Hardware support and
 deployment readiness checks do not block inventory collection. Overall deployment `acceptance` remains
 `not-evaluated`, even when `discovery.outcome` is `complete` and the command exits zero.
 
-Explicitly select `discovery.probes.mode: inventory`. The default `management`
-mode is unavailable in this preview; selecting it stops the command before
+Without a selected use case, explicitly set `discovery.probes.mode: inventory`.
+The default `management` mode is unavailable in this preview; selecting it stops the command before
 remote access. Inventory reports management topology when a kubeconfig is supplied,
 but does not test management-network connectivity. DPF generate/deploy/validate
 and the DPF pipeline are unavailable.
 
 ## Inputs and invocation
+
+For HBN-BGP, also see [Check HBN-BGP prerequisites](#check-hbn-bgp-prerequisites).
 
 Supply explicit host endpoints and DPU BMC endpoints for a complete inventory.
 Each endpoint selects exactly one source: Redfish (`bmcEndpoint`) or SSH (`ssh`).
@@ -273,8 +275,9 @@ Controller mTLS enrollment and provisioning readiness remain separate later-phas
 ## Software BOM and optional address lookup
 
 `dpf.release` selects the release's software BOM independently of live measurements.
-Omitted/null selects the `26.4.0` default; explicit empty or unknown releases
-are rejected. The resolved BOM is saved under `inventory.software`, with operator
+Omitted/null selects `26.4.0` for general inventory or the HBN-BGP profile
+default, `26.8.0`, when that use case is selected. Explicit empty or unknown
+releases are rejected. The resolved BOM is saved under `inventory.software`, with operator
 and component coordinates, exact hardware models and BFB version/URL plus a
 digest when known. Documented minima use named fields such as
 `minimumNICFirmware` and `minimumHostMFT`. Omitted minima remain unknown in
@@ -308,7 +311,11 @@ The PSID fact and eligibility contribute to the inventory fingerprint and refres
 diff. Release qualification and administrator authorization remain separate checks.
 
 SSH can report NIC firmware/PSID, MFT version, NVConfig and privilege observations
-when the existing tools and permissions permit the read. Current and next-boot
+when the existing tools and permissions permit the read. On hosts, if MFT cannot
+read a card's firmware or PSID, Launch Kit also reads `devlink -j dev info` and
+matches the same host PCI function. It retains the MFT failure reason. Running
+and stored firmware remain distinct; stored firmware cannot prove the running
+version. Contradictory readings remain failures. Current and next-boot
 configuration remain distinct. DPU Redfish firmware is grouped by named
 component under `firmware`, such as `bmc`, `nic`, `cec` and `uefi`. Each version
 retains activation when known; an absent activation does not mean running. Raw
@@ -452,3 +459,151 @@ when inputs, trust settings or an older saved inventory need to change.
 | 2 | Invalid input, incomplete required identity/mapping or DPU BMC administrator evidence, unavailable management mode or proven mismatch |
 | 3 | Required observation, authentication, TLS, API or remote cleanup failure |
 | 1 | Cancellation or local output error |
+
+## Check HBN-BGP prerequisites
+
+Use `--use-case hbn-bgp` to add fabric inspection to DPF inventory collection.
+The CLI reads your selected switches over SSH from the machine running Launch
+Kit. It runs NVUE commands for applied interfaces, VRFs, BGP and bridges, then
+reads operational interfaces, bridges, LLDP and FRR BGP summaries. It does not
+change switch configuration. Currently, switch inspection supports Cumulus
+Linux with NVUE.
+
+Add switch access and intended DPU uplink connections to your existing site
+file. Use the DPU serial numbers from physical inventory. A port binding is
+intent; an LLDP hostname alone does not verify it.
+
+```yaml
+dpf:
+  useCase: hbn-bgp
+  hbn:
+    fabricVRF: default
+credentials:
+  fabric-reader:
+    username: fabric-reader
+    passwordRef:
+      file: ./credentials/switch-password
+discovery:
+  switches:
+    - name: leaf-a
+      credentialRef: fabric-reader
+      ssh:
+        address: leaf-a.example
+        knownHostsFile: ./credentials/switch-known-hosts
+        sudo: true
+      ports:
+        - {name: swp1, dpuSerial: DPU-SERIAL-A, dpuInterface: p0}
+        - {name: swp2, dpuSerial: DPU-SERIAL-A, dpuInterface: p1}
+```
+
+Keep the host and DPU endpoints and their credentials alongside these additions.
+Each DPU needs one binding for `p0` and one for `p1`. If the mapping is unknown,
+retain the DPU in inventory and resolve the missing mapping before deployment.
+SSH requires a pinned known-hosts file; Redfish's TLS bypass does not apply.
+With `sudo: true`, only LLDP and FRR reads use sudo. Password authentication
+passes the sudo password through stdin; key authentication requires
+noninteractive sudo authorization.
+
+```bash
+l8k discover --target dpf --use-case hbn-bgp \
+  --user-config dpf-site.yaml --save-cluster-config dpf-discovered.yaml
+```
+
+The explicit CLI selection overrides `dpf.useCase` and is saved with the result.
+HBN-BGP defaults to inventory mode, DPF release `26.8.0`, and operator namespace
+`dpf-operator-system`. Override the latter two with `dpf.release` and
+`dpf.namespace`; the operator namespace is independent of the namespace used for
+optional management-network probes. Defaults are included in the binary.
+
+Supply `management.kubeconfigRef` to inspect the management cluster. Launch Kit
+reads its Kubernetes version and ready control-plane nodes, DPF operator
+Deployment, DPFOperatorConfig, tenant clusters, existing DPU enrollments, storage
+classes, and served DPF API schemas. These API calls run from the CLI machine;
+no management probe pod is created. Tenant clusters and DPU enrollments are read
+across namespaces so an existing tenant VIP or physical serial claim cannot be
+missed. Saved inventory includes the selected objects and concise conflict or
+missing-identity details; unrelated tenant and enrollment records are omitted.
+Denied or incomplete reads block readiness.
+An existing operator must match the selected release, and its configuration
+must use zero-trust mode. A release candidate does not match a selected GA
+release. A clean cluster can be planned for operator installation; leftover or
+incompatible resources require resolution before deployment. StorageClass
+presence alone does not prove storage health, and these reads do not yet verify
+provisioning permissions or reserve a tenant API address.
+
+For the tenant control plane, add the reserved VIP and the interface on the
+management control-plane nodes that will carry it. For example:
+
+```yaml
+provisioning:
+  bootstrap:
+    tenant:
+      vip: 192.0.2.20
+      interface: eth0
+```
+
+Replace both example values with your site's allocation. The VIP must be outside
+DHCP allocation and unused on that network. Launch Kit defaults the tenant names,
+capacity, pod CIDR and VRRP ID from the profile; verify that the address ranges
+and VRRP ID do not conflict with existing use. If discovery observes a literal
+management API IP and port, it can reuse them for the operator configuration.
+Otherwise, supply `provisioning.bootstrap.managementAPIIP` and
+`managementAPIPort`. Missing values block use-case readiness without discarding
+the hardware inventory. See the [configuration reference](../reference/configuration.md#dpf-discovery-configuration)
+for defaults and overrides.
+
+For each selected DPU, Launch Kit follows its verified host association to the
+matching PCI adapter. Through host SSH it checks the PCI functions, `mlx5_core`
+driver, network interfaces and IOMMU groups. It also inspects IPv4/IPv6 addresses,
+routes and bridge/bond relationships: a selected interface carrying a management
+address or default route blocks readiness. Missing tools or denied reads retain
+their specific failure reason. These checks do not assign host workload addresses.
+
+To check cabling, Launch Kit reads permanent network-function MAC addresses from
+the identity-selected DPU card through Redfish. It compares them with switch LLDP
+port MACs and p0/p1 names or descriptions. Each binding needs a unique match;
+a hostname or port label alone is insufficient. The saved DPU field
+`networkFunctionMACs` records MAC ownership, not a physical-port assignment.
+LLDP corroboration does not authenticate the peer or prove packet delivery.
+
+The switch address check reads interface addresses and IPv4/IPv6 routes from
+all routing tables. Specific routes or addresses overlapping the workload or
+loopback pool block readiness when they belong to the selected VRF; unresolved VRF ownership
+remains unknown. A default route is not an address allocation. The saved switch
+view retains selected peers and interfaces plus prefixes relevant to both pools.
+It does not contain the switch's complete routing table. Site and cluster
+IPAM allocation and effective BGP route policy are separate checks.
+
+Omit `dpf.hbn` to use the flat IPv4 BGP
+profile defaults, or override individual fields:
+
+| Field | Default | Purpose |
+| --- | --- | --- |
+| `fabricVRF` | `default` | Switch VRF expected on the selected uplinks |
+| `fabricASN` | `65000` | Expected switch BGP autonomous system |
+| `dpuASNBase` / `dpuASNStride` | `65101` / `100` | Per-DPU ASNs allocated in sorted serial-number order |
+| `uplinkMTU` / `workloadMTU` | `9216` / `9000` | Desired uplink and workload MTUs |
+| `workloadCIDR` / `workloadPrefix` | `10.0.120.0/22` / `29` | Desired workload address pool and per-allocation prefix |
+
+These defaults describe the desired configuration. They do not establish that
+ASNs or addresses are free, that ports are routed, or that the fabric is ready.
+Changing the selected DPU set can change ASN assignments; use a fresh output and
+review the resolved profile and assignments before deployment.
+
+Read **HBN-BGP readiness** separately from **physical inventory**. Missing switch
+access, unknown facts and configuration mismatches block readiness and return a
+nonzero status. A complete physical inventory can still be saved for diagnosis.
+The report names each failed check and its reason; the inventory stores the
+resolved profile and selected switch observations under `inventory.hbn`.
+
+The current preview also keeps unverified provisioning, artifact, host and
+routing-policy prerequisites blocked. It does not authorize deployment from a
+successful fabric read. Live BGP adjacency, advertised routes and workload
+traffic must be checked after deployment; discovery cannot prove those outcomes
+before the DPU services exist.
+
+After reviewing the inventory, follow [HBN-BGP generation](dpf-generation.md)
+to prepare a local deployment bundle. Generation can run before live prerequisites
+are remediated; its success does not change discovery's blocked readiness result.
+The default DPU ASN base and stride cover five devices. For a larger selection,
+override the allocation to fit the private ASN range and your fabric policy.

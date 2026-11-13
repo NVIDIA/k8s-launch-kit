@@ -13,7 +13,7 @@ Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, In
 
 The lifecycle commands operate on the `host` target by default. The `dpf` target
 provides an [experimental inventory discovery workflow](user/dpf-workflows.md)
-for a separate DPU estate. DPF provisioning phases remain unavailable.
+for a separate DPU estate, plus [HBN-BGP artifact generation](user/dpf-generation.md). DPF deployment and validation remain unavailable.
 
 ## Find Your Path
 

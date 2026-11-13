@@ -30,6 +30,64 @@ var _ = Describe("persisted software BOM", func() {
 		}
 	})
 
+	It("keeps the v26.4 summary wire shape and round-trips the BF4 artifact form", func() {
+		bf3, err := Resolve("26.4.0")
+		Expect(err).NotTo(HaveOccurred())
+		bf3JSON, err := json.Marshal(Summarize(bf3))
+		Expect(err).NotTo(HaveOccurred())
+		bf3YAML, err := yaml.Marshal(Summarize(bf3))
+		Expect(err).NotTo(HaveOccurred())
+		for _, encoded := range [][]byte{bf3JSON, bf3YAML} {
+			Expect(string(encoded)).NotTo(ContainSubstring("supportedKubernetes"))
+			Expect(string(encoded)).NotTo(ContainSubstring("supportLevel"))
+			Expect(string(encoded)).NotTo(ContainSubstring("blueFieldSoftware"))
+		}
+
+		original, err := Resolve("26.8.0")
+		Expect(err).NotTo(HaveOccurred())
+		summary := Summarize(original)
+		Expect(summary.SupportedKubernetes).To(Equal(&VersionRange{Minimum: "1.33", Maximum: "1.36"}))
+		bf4 := summary.Hardware[1]
+		Expect(bf4.Family).To(Equal("BlueField-4"))
+		Expect(bf4.Models).To(BeEmpty())
+		Expect(bf4.BFB).To(BeNil())
+		Expect(bf4.BlueFieldSoftware).NotTo(BeNil())
+		Expect(bf4.BlueFieldSoftware.PLDMFwBundle).To(BeEmpty())
+		encoded, err := yaml.Marshal(summary)
+		Expect(err).NotTo(HaveOccurred())
+		for _, removed := range []string{"sourceRef", "sources", "revision"} {
+			Expect(string(encoded)).NotTo(ContainSubstring(removed))
+		}
+		var saved Summary
+		Expect(yaml.Unmarshal(encoded, &saved)).To(Succeed())
+		restored, err := saved.Release()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restored.SupportedKubernetes).To(Equal(original.SupportedKubernetes))
+		Expect(restored.Hardware[1].Family).To(Equal("BlueField-4"))
+		Expect(restored.Hardware[1].Models).To(BeEmpty())
+		Expect(restored.Hardware[1].BFB).To(BeNil())
+		Expect(restored.Hardware[1].BlueFieldSoftware.OSISO.ReasonCode).To(Equal("BF4_ARTIFACT_NOT_PUBLIC"))
+		Expect(restored.Hardware[1].BlueFieldSoftware.PLDMFwBundle).To(BeEmpty())
+		for _, model := range []string{"B4240", "BlueField-4", "MT_0000001774"} {
+			_, found := restored.RequirementsFor(model)
+			Expect(found).To(BeFalse())
+		}
+
+		original.Hardware[1].BlueFieldSoftware.PLDMFwBundle = map[string]Artifact{
+			"MT_TESTPSID": {Version: "test-release", URL: "https://artifacts.example/test-pldm.bin",
+				Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		}
+		withPSID := Summarize(original)
+		withPSIDBytes, err := yaml.Marshal(withPSID)
+		Expect(err).NotTo(HaveOccurred())
+		var withPSIDSaved Summary
+		Expect(yaml.Unmarshal(withPSIDBytes, &withPSIDSaved)).To(Succeed())
+		withPSIDRestored, err := withPSIDSaved.Release()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(withPSIDRestored.Hardware[1].BlueFieldSoftware.PLDMFwBundle).To(HaveKey("MT_TESTPSID"))
+		Expect(withPSIDRestored.Hardware[1].BlueFieldSoftware.PLDMFwBundle["MT_TESTPSID"].URL).To(Equal("https://artifacts.example/test-pldm.bin"))
+	})
+
 	It("preserves known and unknown requirement meanings across a serialized round trip", func() {
 		original, err := Resolve(DefaultRelease)
 		Expect(err).NotTo(HaveOccurred())
@@ -115,6 +173,7 @@ var _ = Describe("persisted software BOM", func() {
 			{"insecure URL", func(s *Summary) { s.Hardware[0].BFB.URL = "http://example.com/a.bfb" }},
 			{"invalid chart digest", func(s *Summary) { s.Operator.ChartDigest = "sha256:invalid" }},
 			{"invalid BFB digest", func(s *Summary) { s.Hardware[0].BFB.Digest = "sha256:invalid" }},
+			{"incomplete Kubernetes range", func(s *Summary) { s.SupportedKubernetes = &VersionRange{Minimum: "1.33"} }},
 			{"component absent", func(s *Summary) { s.Components = nil }},
 			{"component duplicated", func(s *Summary) { s.Components = append(s.Components, s.Components[0]) }},
 			{"component applicability", func(s *Summary) { s.Components[0].Applicability = "qualified" }},
@@ -133,6 +192,12 @@ var _ = Describe("persisted software BOM", func() {
 			_, err := s.Release()
 			Expect(err).To(HaveOccurred())
 		}
+		bf4Release, err := Resolve("26.8.0")
+		Expect(err).NotTo(HaveOccurred())
+		bf4Summary := Summarize(bf4Release)
+		bf4Summary.Hardware[1].BlueFieldSoftware.OSISO.ReasonCode = ""
+		_, err = bf4Summary.Release()
+		Expect(err).To(HaveOccurred())
 	})
 })
 

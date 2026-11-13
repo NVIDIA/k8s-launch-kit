@@ -32,9 +32,10 @@ with a source filename and document number where applicable.
 
 ## Target selection and flag ownership
 
-Omitting `--target` selects `host`. `dpf` provides an
-[experimental discovery preview](../user/dpf-discovery.md). Its other phases
-are unavailable and return exit `2`; they do not run against the host cluster.
+Omitting `--target` selects `host`. `dpf` provides
+[discovery](../user/dpf-discovery.md) and
+[HBN-BGP manifest generation](../user/dpf-generation.md). DPF deployment, validation
+and the root pipeline remain unavailable in this preview and return exit `2`.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags
@@ -43,6 +44,7 @@ flag groups and `l8k schema` for each flag's `targets` list.
 
 | Flag | Applies to | Target scope | Description |
 | --- | --- | --- | --- |
+| `--use-case` | discover, generate | dpf | Select `hbn-bgp` readiness checks; overrides `dpf.useCase` in the input file. |
 | `--target` | discover, generate, deploy, validate, root pipeline | target-agnostic | Target name. Defaults to `host`. |
 | `--kubeconfig` | root, discover, generate with deploy, deploy, clean, validate, sosreport | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
 | `--user-config` | root, discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace and Helm-ownership resolution. |

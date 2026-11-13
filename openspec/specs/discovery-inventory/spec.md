@@ -259,6 +259,47 @@ MUST NOT substitute. Host-only and ARM-only observations SHALL remain partial.
 - **THEN** discovery accepts an NVIDIA B4240 physical Card with a matching System serial, or a serial-bearing B4240 BMC Component reciprocally contained by a physical Card and linked by that System.
 - **AND** missing System properties remain absent; conflicting properties, unsafe links, multiple matching candidates or a changed identity graph prevent complete inventory. Free-text descriptions and fuzzy model names do not supply identity.
 
+### Requirement: HBN-BGP prerequisite discovery
+
+DPF discovery with the HBN-BGP use case SHALL distinguish physical inventory
+completion from use-case readiness. Switch inspection SHALL use explicit access,
+pinned SSH trust and read-only commands. Applied configuration and operational
+state SHALL remain separate; unknown required facts and contradictions SHALL
+block readiness with specific reasons. LLDP names alone SHALL NOT establish
+authenticated physical cabling. Profile defaults SHALL express desired values,
+not observations or authorization to modify switches.
+
+#### Scenario: Complete inventory with missing fabric prerequisites
+
+- **WHEN** physical host/DPU inventory succeeds but required VRF, BGP, port, authorization or other use-case prerequisites cannot be verified
+- **THEN** the complete physical inventory may be saved, but HBN-BGP readiness is blocked and the command exits nonzero.
+- **AND** failed switch reads are retained with their reasons; prior switch observations are not substituted.
+
+#### Scenario: Applied and operational port state disagree
+
+- **WHEN** an applied setting appears suitable but operational MTU, VRF or bridge membership contradicts the intended routed uplink
+- **THEN** the corresponding prerequisite remains blocked rather than selecting whichever observation passes.
+
+#### Scenario: Future BGP adjacency does not yet exist
+
+- **WHEN** the selected DPU service has not been deployed
+- **THEN** discovery checks configured peer prerequisites without requiring an established adjacency to that future service.
+- **AND** adjacency, routes and traffic remain explicit post-deployment checks; prerequisite success does not imply those outcomes.
+
+#### Scenario: Corroborating a DPU uplink
+
+- **WHEN** a selected physical card exposes permanent Ethernet network-function MACs through Redfish
+- **THEN** the collector rechecks the identity-bound graph and invalidates the facts on identity change or cleanup failure.
+- **AND** a cabling check passes only with a unique switch LLDP port MAC owned by that card and a matching p0/p1 claim; it does not establish cryptographic peer authentication or packet delivery.
+
+#### Scenario: Host policy routing and saved empty sources
+
+- **WHEN** HBN checks management separation on the associated host adapter
+- **THEN** it includes IPv4 and IPv6 routes from all tables, including non-main defaults and multipath egresses.
+- **AND** incomplete required route observations block the check with their reason.
+- **WHEN** complete switch address or route observations contain no entries
+- **THEN** JSON and YAML handoff preserve known-empty separately from unavailable sources.
+
 ## Baseline and limits
 
 There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).

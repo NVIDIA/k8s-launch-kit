@@ -94,10 +94,26 @@ Host operation. Standalone deploy and validate orchestration live outside
 Cobra, process exit remains at the command boundary, and DPF is rejected
 before any Host dependency is constructed.
 
-The DPF generation dependency is also still open. Current `dpf-operator` main
-does not expose a public profile renderer or a stable `dpfctl generate`
-contract. Launch Kit must not copy documentation manifests to bypass this
-boundary.
+The current implementation stage is independent **HBN-BGP**, starting with
+discovery and followed by generation and deployment. Sentry and Host/DPF
+composition are outside this stage. The initial profile is flat IPv4 BGP with
+two unnumbered DPU uplinks, without mandatory EVPN or tenant VRFs. Desired
+profile defaults are overridable; they are never evidence of switch state.
+
+The inspected `dpfctl` implementation exposes an internal DPUFlavor template
+renderer, not a public full-profile generation library. Launch Kit will own a
+narrow native Go renderer for this profile, using release-matched DPF schemas
+and reference fixtures. A future public renderer may replace that boundary;
+its publication is not a prerequisite for this implementation. Do not copy
+static documentation manifests without typed selection, reference validation,
+and complete resource ownership and readiness handling.
+
+HBN discovery records applied switch intent separately from operational
+interfaces, LLDP hints and BGP sessions. CLI success requires both complete
+physical inventory and passing use-case prerequisites. Unknown required facts
+block readiness with specific reasons, while a complete inventory may still be
+saved. BGP establishment and data-path validation remain post-deployment gates.
+Switch inspection is read-only; desired defaults do not authorize switch writes.
 
 ## Responsibility boundaries
 
@@ -289,21 +305,23 @@ Exit criteria: omitted target and explicit `--target host` use the same
 concrete driver and are behaviorally equivalent across all four commands and
 the root pipeline.
 
-### Stage 2: Establish the DPF-owned generation contract — parallel prerequisite
+### Stage 2: Establish the release-matched generation contract
 
-DPF should provide, in preference order:
-
-1. a small separately versioned Go rendering module;
-2. a stable, release-matched `dpfctl generate` CLI contract;
-3. the external `dpf-install` process only as a temporary schedule bridge.
+Use a small separately versioned DPF rendering module if a suitable public
+contract becomes available. Until then, implement the bounded HBN-BGP renderer
+in Go inside the DPF target. Reference automation informs the resource graph;
+it is not executed as a Python runtime or imported as deployment authority.
 
 The contract must provide a typed profile schema, deterministic artifacts,
 artifact identities and ordering, release provenance, compatibility metadata,
 and golden fixtures. Launch Kit must not import the full operator dependency
 graph unnecessarily or copy DPF documentation manifests.
 
-Exit criteria: a released DPF-owned interface deterministically renders the
-selected profile and release without local Go `replace` directives.
+Exit criteria: the renderer deterministically renders the selected profile and
+release, validates against that release's DPF API schemas, and uses no local Go
+`replace` directives. BF4 uses BlueFieldSoftware with an OS ISO and PSID-specific
+PLDM artifacts; do not substitute a BF3 BFB. Experimental hardware support and
+production qualification are reported separately.
 
 ### Stage 3: DPF discovery and `dpf-install` import
 
@@ -366,11 +384,11 @@ fingerprints compare the public fact projection so removed provenance does not
 create false changes. Refresh preserves source backups and existing stable
 physical identity/scope conflict guards.
 
-### Stage 4: DPF generation for Zero Trust passthrough
+### Stage 4: DPF generation for HBN-BGP
 
 - enable `l8k generate --target dpf`;
-- consume the DPF-owned renderer;
-- render prerequisites, operator, system, and passthrough subplans under
+- use the release-matched native Go renderer described above;
+- render prerequisites, operator, system, and HBN-BGP subplans under
   `deployment/dpf/`;
 - produce checksums, a release lock, expected resource identities, readiness
   gates, and a target operation DAG;
@@ -467,10 +485,9 @@ native path passes identical fixtures and hardware-lab parity gates.
 | P2 | Multi-DPU roles | Place network, storage, and telemetry services without PF/VF conflicts |
 | P3 | Firefly/PTP and DOCA Weave | Follow-on work after core parity and upstream maturity |
 
-Zero Trust passthrough and Host Trusted HBN plus OVNK remain the first two use
-cases, but they ship sequentially. This reduces the first DPF milestone's
-dependency on environment composition while retaining HBN plus OVNK as the
-first full cross-plane proof.
+The current delivery prioritizes independent HBN-BGP. Passthrough and Host
+Trusted HBN plus OVNK remain roadmap use cases; they do not add prerequisites
+to this independent DPU-plane milestone.
 
 ## Acceptance strategy
 
@@ -517,3 +534,27 @@ Safe defaults remain: omission means Host, DPF 26.4 is the provisional parity
 baseline, Zero Trust passthrough ships first, Kubespray is optional, BMC
 password rotation is deferred, and environment composition begins only after
 both target drivers implement all four phases independently.
+
+### HBN native bootstrap and workload handoff
+
+The HBN path resolves profile defaults, explicit site allocations, and observed
+identities separately. `provisioning.bootstrap` provides the reserved tenant
+VIP and control-plane interface; profile defaults cover names, VRID, tenant
+capacity and pod CIDR. A literal observed management API endpoint can supply its
+IP/port. Missing allocations remain required unknowns during discovery.
+
+The management renderer emits namespaces, zero-trust `DPFOperatorConfig`, a
+Kamaji `DPUCluster`, and singleton `DPUDiscovery` scans for exactly the selected
+IPv4 BMC endpoints. It emits neither credential bytes nor fabricated
+`DPUDevice`/`DPUNode` objects. Operator Helm rendering must bind the same config
+name and namespace in its process arguments: CRD schema validity alone does
+not prove that the operator watches the generated configuration.
+
+The workload renderer consumes resolved HBN coordinates/effect settings,
+selected device and tenant selectors, PSID-specific artifacts, and explicit
+flavor/resource inputs. The executor must verify those selectors against live
+identities and release only selected external node-effect holds. HBN's chart
+source API has no digest field; retaining a desired digest is not verification
+of bytes fetched by DPF. Artifact consumption verification remains an explicit
+deployment gate. Discovery checks workload and loopback pool overlap against
+observed switch prefixes; cluster/site IPAM coverage remains a separate gate.

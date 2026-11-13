@@ -71,6 +71,34 @@ The DPF target SHALL resolve software coordinates from a release-owned BOM, sepa
 - **WHEN** identity collection succeeds for hardware outside the selected release BOM
 - **THEN** inventory remains useful and a reasoned later-phase compatibility check is unresolved; no supported tuple is invented.
 
+### Requirement: DPF use-case selection and desired profile defaults
+
+An explicitly supplied DPF `--use-case` SHALL override the YAML selection and be
+persisted in the effective saved configuration, without modifying the original
+source bytes used for concurrent-edit detection. Unknown or explicitly empty
+selections SHALL fail before remote access. Omitted/null HBN profile fields SHALL
+use profile defaults; explicit invalid values SHALL NOT silently default.
+Host target execution SHALL reject DPF-only use-case flags.
+
+#### Scenario: Saving an explicit HBN-BGP CLI selection
+
+- **WHEN** `--use-case hbn-bgp` overrides the source YAML
+- **THEN** saved YAML contains the effective selection, preserves unrelated inputs, and still detects concurrent changes against the original source file.
+
+#### Scenario: Refresh changes the requested fabric scope
+
+- **WHEN** selected switches, trusted host keys, requested sudo, port bindings or the effective HBN profile change
+- **THEN** the prior inventory cannot silently authorize that new scope; the operator uses a fresh seed and output.
+- **AND** credential alias renaming or secret rotation alone does not constitute new physical scope; every switch is freshly inspected under the supplied access.
+
+#### Scenario: BF4 artifact inputs are incomplete
+
+- **WHEN** HBN discovery lacks a selected OS ISO or a PLDM artifact for an observed PSID
+- **THEN** physical inventory collection may continue while readiness records the missing artifact input.
+- **AND** supplied artifact URLs SHALL exclude embedded credentials, queries and fragments; SHA-256 values SHALL be lowercase 64-character hexadecimal digests.
+- **AND** a complete selected PSID set SHALL resolve to exactly matching PLDM entries, rejecting case-insensitive duplicates and unrelated entries.
+- **AND** input validation SHALL NOT claim artifact reachability, consumed-byte verification or release compatibility.
+
 ## Baseline and limits
 
 Tag-driven wiring covers root/generate/discover; standalone deploy/validate also use typed Host mappings. Nonzero inference from `Options` cannot represent every explicit zero; use the existing presence-aware inputs. This contract does not promise purity for discovery. [Artifact handoff](../artifact-handoff/spec.md) owns persisted metadata and source selection.
@@ -80,3 +108,17 @@ Tag-driven wiring covers root/generate/discover; standalone deploy/validate also
 - Implementation: [config](../../../pkg/config), [option tags](../../../pkg/options/options.go), [config input](../../../pkg/configinput), [bindings](../../../pkg/configflags), [resolver](../../../pkg/resolve), [Host adapters](../../../pkg/target/host).
 - Existing regression suites to extend: [resolver](../../../pkg/resolve/resolver_test.go), [YAML input](../../../pkg/config/input_test.go), [Host mapping](../../../pkg/target/host/driver_test.go). These are evidence starting points, not proof for a new field.
 - User documentation: [configuration](../../../docs/reference/configuration.md).
+
+### DPF bootstrap and HBN generation inputs
+
+DPF HBN configuration keeps networking intent (`dpf.hbn`), release/profile generation options (`provisioning.hbn`), site bootstrap allocations (`provisioning.bootstrap`) and observed inventory separate. Omitted/null fields select profile defaults; explicit empty/zero/false values are preserved and validated. The resolver performs no credential reads or network access to fill bootstrap inputs. Only a literal observed management API IP/port may supply its endpoint defaults. Tenant VIP/interface remain required site allocations. Bootstrap-input completeness does not establish live address reservation, storage health, controller readiness or deployment permission.
+
+- GIVEN HBN discovery without tenant VIP/interface WHEN bootstrap inputs are evaluated THEN retain the inventory and report each missing allocation as a required unknown with a reason.
+- GIVEN a management API hostname WHEN deriving an operator endpoint THEN do not invent its resolved IP; require an explicit reachable API IP/port.
+- GIVEN selected BMC endpoints WHEN rendering enrollment resources THEN use one singleton DPUDiscovery scan per endpoint; never scan the range between targets or create synthetic DPUDevices/DPUNodes.
+- GIVEN custom operator configuration name/namespace WHEN installing the DPF operator THEN the Helm-rendered operator arguments must select that exact configuration; schema-valid ignored resources are not acceptable.
+- GIVEN nodeEffect hold WHEN deploying THEN release only the identity-verified selected maintenance requests and wait for provisioning; rendering or applying a held deployment is not completion.
+
+- GIVEN omitted HBN BMC reset policy WHEN resolving bootstrap THEN select the profile default `Never` and emit it explicitly in the DPF operator configuration; do not inherit an upstream factory-reset default.
+- GIVEN an explicit `OnInitialization` policy WHEN rendering THEN preserve it, while leaving stable DHCP address recovery and BMC reauthentication as required live enrollment checks; generation does not establish those conditions.
+- GIVEN an empty or unknown reset policy WHEN resolving THEN reject it with a field-specific error before artifact publication.

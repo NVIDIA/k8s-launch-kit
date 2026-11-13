@@ -11,7 +11,7 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
-This workflow uses the default `host` target; `--target host` is equivalent.
+The Host sections below use the default `host` target; `--target host` is equivalent.
 The CLI snapshots generation arguments and runs the concrete Host generation
 operation through the target registry; command syntax and artifacts are
 unchanged.
@@ -30,6 +30,19 @@ the component, and managed renders it. Automatic generation rejects ambiguous or
 unavailable observations. Offline configurations retain managed rendering with
 unverified ownership; deployment still performs live checks. See
 [ownership rules](../../docs/reference/configuration.md#secondary-network-ownership).
+
+## DPF HBN-BGP generation
+
+Use `l8k generate --target dpf --use-case hbn-bgp --user-config <DPF_SITE>
+--save-deployment-files <NEW_DIRECTORY>` after DPF discovery. Read
+[the DPF generation procedure](../../docs/user/dpf-generation.md) for the required
+bootstrap allocation, hardware flavor and exact software artifact inputs.
+Generation reads the saved inventory and downloads the pinned operator/HBN charts
+on the CLI machine. It does not open endpoint credentials or access Kubernetes,
+hosts, DPUs or switches. It preserves source YAML and atomically publishes a complete
+local bundle; an identical existing bundle is unchanged and a different one is rejected.
+DPF `--deploy` and deployment dry-run remain unavailable; generation does not prove
+live readiness. Host profile flags are rejected for this target.
 
 ## Usage
 

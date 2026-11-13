@@ -53,6 +53,78 @@ value from the YAML file.
 Invalid enum values are rejected when CLI inputs are bound. Cross-field
 requirements are checked after the effective configuration is resolved.
 
+## DPF discovery configuration
+
+`discover --target dpf` uses a separate site configuration described in
+[DPF discovery](../user/dpf-discovery.md). The Host configuration defaults above
+do not apply to it. Select `dpf.useCase: hbn-bgp` or explicitly supply
+`--use-case hbn-bgp` to evaluate that use case's prerequisites.
+
+The HBN-BGP profile supplies DPF release `26.8.0`, operator namespace
+`dpf-operator-system`, and networking defaults. Override release/namespace with
+`dpf.release` / `dpf.namespace` and individual networking fields under `dpf.hbn`.
+Omitted/null fields select defaults; explicit empty/zero values are validated.
+General DPF inventory without a use case retains its `26.4.0` release default.
+Switch endpoints, credentials, pinned SSH trust, and intended port bindings are
+site inputs under `discovery.switches`; they are not inferred from profile defaults.
+
+
+For BF4 provisioning, supply `provisioning.software.osISO` and
+`provisioning.software.pldm.<PSID>`. Each artifact has `url` (HTTPS without
+credentials, a query or a fragment) and `sha256` (64 lowercase hex characters).
+PLDM keys match the discovered PSIDs case-insensitively; duplicate or unused
+entries are rejected when the full selected PSID set is known. These artifacts
+have no public profile defaults. Missing inputs do not stop inventory collection,
+but HBN readiness reports them as blockers. Supplying URLs and digests does not
+prove that DPF can download the artifacts or that their bytes are compatible.
+
+`provisioning.bootstrap` supplies the management-plane installation inputs.
+Discovery reports missing inputs while continuing to collect hardware information:
+
+| Field | Default or source | Site responsibility |
+| --- | --- | --- |
+| `managementAPIIP`, `managementAPIPort` | Observed management API endpoint, when it contains a literal IP | Override when DPUs need a different reachable endpoint; a DNS name is not converted into an assumed IP |
+| `tenant.vip` | Required | Reserve an unused IPv4 address for the tenant API, outside DHCP allocation |
+| `tenant.interface` | Required | Identify the management interface on the selected control-plane nodes |
+| `tenant.routerID` | `126` | Verify that this VRRP ID is unused on that network; override collisions |
+| `tenant.name`, `tenant.namespace` | `dpu-cplane-tenant1` | Override when another tenant uses these names |
+| `tenant.nodeSelector` | `node-role.kubernetes.io/control-plane: ""` | Select the control-plane nodes that host the VIP |
+| `tenant.maxNodes` | `1000` | Must accommodate all selected DPUs |
+| `podCIDR` | `10.244.0.0/14` | Pod network for the DPU tenant cluster; verify separation from networks sharing its forwarding paths |
+| `artifactPVC` | Omitted: DPF uses host storage | Optionally select an existing PVC in the operator namespace; storage health is checked separately |
+| `operatorConfigName` | `dpfoperatorconfig` | Identifies the configuration watched by the operator |
+| `bmcFactoryResetPolicy` | `Never` | Preserve BMC network settings. Use `OnInitialization` only when DHCP will restore the same BMC addresses after a reset |
+
+The tenant VIP and interface are site allocations, not discoverable unused
+resources. A complete input check does not establish address reservation,
+reachable interfaces, healthy storage or installed controllers.
+
+The selected Kamaji controller uses `10.96.0.0/16` for the tenant service
+network; this release does not expose a service-CIDR override. Generation rejects
+an overlap between tenant pod and service ranges or their control-plane/BMC
+addresses. Matching ranges in independent clusters are not automatically a conflict;
+verify which ranges share a forwarding path.
+
+For generation, `provisioning.flavor` contains the concrete DPUFlavor `spec`
+for the selected hardware and HBN datapath. It is required and checked against
+the selected operator's schema. It is not inferred from a generic BlueField family.
+`provisioning.resources` is a flat map of Kubernetes quantities. Defaults are
+`memory: 6Gi` and `nvidia.com/bf_sf: "4"`; the HBN chart uses these values as both
+requests and limits. Partial maps override the supplied quantities; omitted/null
+uses defaults, and an explicitly empty map is invalid. See
+[HBN-BGP generation](../user/dpf-generation.md).
+
+`provisioning.hbn` overrides HBN generation settings independently of the
+networking values under `dpf.hbn`. The profile selects chart `3.5.0`, image
+`3.5.0-doca3.5.0` with a SHA-256 digest, startup format `HBN 2.4.0`, loopback
+pool `10.0.124.0/24`, workload gateway index `1`, `OnDelete` strategy, and
+`nodeEffect: hold`. The flat profile disables the VXLAN startup probe.
+`hold` pauses provisioning at the node-effect boundary until the selected
+maintenance request is released; it does not mean provisioning has completed.
+An overridden loopback pool must not overlap the workload pool. Software
+coordinate overrides require matching digests; their compatibility needs
+separate validation.
+
 ## Deploy And Validate Config Lookup
 
 Standalone deploy and validate choose the first existing candidate in this order:

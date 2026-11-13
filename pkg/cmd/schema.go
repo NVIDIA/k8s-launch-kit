@@ -319,6 +319,11 @@ func annotateSchemaFlagTargets(s *schema) {
 	if s == nil {
 		return
 	}
+	// DPF's coordinated site inputs use its typed resolver rather than Host
+	// options. Read CLI metadata from the registered flag itself.
+	if flag := discoverCmd.Flags().Lookup("use-case"); flag != nil {
+		s.Flags["--"+flag.Name] = flagSchema{Type: flag.Value.Type(), Default: flag.DefValue, Description: flag.Usage}
+	}
 	for _, definition := range configflags.Definitions() {
 		name := "--" + definition.FlagName
 		if _, exists := s.Flags[name]; exists {

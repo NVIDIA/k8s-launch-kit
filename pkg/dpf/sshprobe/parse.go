@@ -4,7 +4,9 @@ package sshprobe
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -189,14 +191,23 @@ func interfaces(text string) ([]inventory.Interface, error) {
 	return out, nil
 }
 
-func routes(text string, ifaces []inventory.Interface) ([]inventory.Route, error) {
+func routes(text string, ifaces []inventory.Interface, family int) ([]inventory.Route, error) {
+	if family != 4 && family != 6 {
+		return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+	}
+	type nextHop struct {
+		Gateway string `json:"gateway"`
+		Device  string `json:"dev"`
+	}
 	var rows []struct {
 		Destination string          `json:"dst"`
 		Gateway     string          `json:"gateway"`
 		Device      string          `json:"dev"`
 		Table       json.RawMessage `json:"table"`
+		Type        string          `json:"type"`
+		NextHops    []nextHop       `json:"nexthops"`
 	}
-	if err := json.Unmarshal([]byte(text), &rows); err != nil {
+	if err := json.Unmarshal([]byte(text), &rows); err != nil || rows == nil {
 		return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
 	}
 	if len(rows) > 8192 {
@@ -209,8 +220,15 @@ func routes(text string, ifaces []inventory.Interface) ([]inventory.Route, error
 	out := make([]inventory.Route, 0, len(rows))
 	for _, r := range rows {
 		dst := r.Destination
+		if len(dst) > 128 || len(r.Device) > 128 || len(r.Type) > 64 || len(r.NextHops) > 128 {
+			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+		}
 		if dst == "default" {
-			dst = "0.0.0.0/0"
+			if family == 6 {
+				dst = "::/0"
+			} else {
+				dst = "0.0.0.0/0"
+			}
 		}
 		if ip := net.ParseIP(dst); ip != nil {
 			if ip.To4() != nil {
@@ -219,22 +237,146 @@ func routes(text string, ifaces []inventory.Interface) ([]inventory.Route, error
 				dst += "/128"
 			}
 		}
-		if _, _, err := net.ParseCIDR(dst); err != nil {
+		_, destination, err := net.ParseCIDR(dst)
+		if err != nil || family == 4 && destination.IP.To4() == nil || family == 6 && destination.IP.To4() != nil {
 			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
 		}
-		if r.Gateway != "" && net.ParseIP(r.Gateway) == nil {
-			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
-		}
-		if indexes[r.Device] == 0 {
-			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
-		}
-		table := 254
-		if len(r.Table) > 0 && string(r.Table) != "\"main\"" {
-			if err := json.Unmarshal(r.Table, &table); err != nil {
+		if r.Gateway != "" {
+			gateway := net.ParseIP(r.Gateway)
+			if gateway == nil || family == 4 && gateway.To4() == nil || family == 6 && gateway.To4() != nil {
 				return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
 			}
 		}
-		out = append(out, inventory.Route{Destination: dst, Gateway: r.Gateway, InterfaceIndex: indexes[r.Device], Table: table})
+		table := 254
+		if len(r.Table) > 0 {
+			if err := decodeRouteTable(r.Table, &table); err != nil {
+				return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+			}
+		}
+		if len(r.NextHops) > 0 {
+			if r.Device != "" || r.Gateway != "" {
+				return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+			}
+			for _, hop := range r.NextHops {
+				if len(out) >= 8192 || len(hop.Device) > 128 || len(hop.Gateway) > 128 {
+					return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+				}
+				index, err := routeInterfaceIndex(indexes, hop.Device)
+				if err != nil || !validRouteGateway(hop.Gateway, family) {
+					return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+				}
+				out = append(out, inventory.Route{Destination: dst, Gateway: hop.Gateway, InterfaceIndex: index, Table: table})
+			}
+			continue
+		}
+		index := 0
+		if r.Device != "" {
+			var err error
+			index, err = routeInterfaceIndex(indexes, r.Device)
+			if err != nil {
+				return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+			}
+		} else if !nonForwardingRoute(r.Type) {
+			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+		}
+		if !validRouteGateway(r.Gateway, family) {
+			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+		}
+		out = append(out, inventory.Route{Destination: dst, Gateway: r.Gateway, InterfaceIndex: index, Table: table})
+		if len(out) > 8192 {
+			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
+		}
 	}
 	return out, nil
+}
+
+func decodeRouteTable(raw json.RawMessage, destination *int) error {
+	if len(raw) == 0 || destination == nil {
+		return fmt.Errorf("route table is missing")
+	}
+	var name string
+	if err := json.Unmarshal(raw, &name); err == nil {
+		switch name {
+		case "default":
+			*destination = 253
+			return nil
+		case "main":
+			*destination = 254
+			return nil
+		case "local":
+			*destination = 255
+			return nil
+		default:
+			value, err := strconv.Atoi(name)
+			if err != nil || value < 0 || strconv.Itoa(value) != name {
+				return fmt.Errorf("unsupported named route table")
+			}
+			*destination = value
+			return nil
+		}
+	}
+	if err := json.Unmarshal(raw, destination); err == nil && *destination >= 0 {
+		return nil
+	}
+	var numericString string
+	if err := json.Unmarshal(raw, &numericString); err != nil {
+		return fmt.Errorf("route table must be a known name or number")
+	}
+	value, err := strconv.Atoi(numericString)
+	if err != nil || value < 0 || strconv.Itoa(value) != numericString {
+		return fmt.Errorf("route table number is invalid")
+	}
+	*destination = value
+	return nil
+}
+
+func routeInterfaceIndex(indexes map[string]int, device string) (int, error) {
+	if device == "" || len(device) > 128 {
+		return 0, fmt.Errorf("route device is missing")
+	}
+	index := indexes[device]
+	if index < 1 {
+		return 0, fmt.Errorf("route device was not observed")
+	}
+	return index, nil
+}
+
+func validRouteGateway(value string, family int) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > 128 {
+		return false
+	}
+	ip := net.ParseIP(value)
+	return ip != nil && (family == 4 && ip.To4() != nil || family == 6 && ip.To4() == nil)
+}
+
+func nonForwardingRoute(routeType string) bool {
+	switch routeType {
+	case "blackhole", "unreachable", "prohibit", "throw":
+		return true
+	default:
+		return false
+	}
+}
+
+func iommuGroup(text string) (*int, bool, error) {
+	value := strings.TrimSpace(text)
+	if value == "absent" {
+		return nil, true, nil
+	}
+	const prefix = "/sys/kernel/iommu_groups/"
+	if !strings.HasPrefix(value, prefix) || path.Clean(value) != value {
+		return nil, false, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "iommu-group"}
+	}
+	name := strings.TrimPrefix(value, prefix)
+	if strings.Contains(name, "/") {
+		return nil, false, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "iommu-group"}
+	}
+	group, err := strconv.Atoi(name)
+	if err != nil || group < 0 || strconv.Itoa(group) != name {
+		return nil, false, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "iommu-group"}
+	}
+	return &group, false, nil
 }

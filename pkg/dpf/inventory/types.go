@@ -77,10 +77,11 @@ type TimeObservation struct {
 	ReasonCode string   `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
 }
 type PCIFunction struct {
-	Address  string   `json:"address" yaml:"address"`
-	Driver   string   `json:"driver,omitempty" yaml:"driver,omitempty"`
-	NUMANode string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
-	Netdevs  []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
+	Address    string   `json:"address" yaml:"address"`
+	Driver     string   `json:"driver,omitempty" yaml:"driver,omitempty"`
+	NUMANode   string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
+	IOMMUGroup *int     `json:"iommuGroup,omitempty" yaml:"iommuGroup,omitempty"`
+	Netdevs    []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
 }
 type Adapter struct {
 	PCIFunctions    []PCIFunction `json:"pciFunctions,omitempty" yaml:"pciFunctions,omitempty"`
@@ -112,6 +113,7 @@ type RuntimeObservation struct {
 
 // Device represents every requested endpoint, including failed observations.
 type Device struct {
+	NetworkFunctionMACs       []string               `json:"networkFunctionMACs,omitempty" yaml:"networkFunctionMACs,omitempty"`
 	PSID                      string                 `json:"psid,omitempty" yaml:"psid,omitempty"`
 	FirmwareInventoryComplete bool                   `json:"firmwareInventoryComplete,omitempty" yaml:"firmwareInventoryComplete,omitempty"`
 	Message                   string                 `json:"message,omitempty" yaml:"message,omitempty"`
@@ -179,6 +181,7 @@ type Association struct {
 	EvidenceRefs   []string `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Inventory struct {
+	HBN            *HBNInventory       `json:"hbn,omitempty" yaml:"hbn,omitempty"`
 	Software       *releases.Release   `json:"software,omitempty" yaml:"software,omitempty"`
 	AddressLookup  *AddressLookup      `json:"addressLookup,omitempty" yaml:"addressLookup,omitempty"`
 	FormatVersion  string              `json:"formatVersion" yaml:"formatVersion"`
@@ -236,6 +239,7 @@ type Discovery struct {
 	Cleanup Cleanup `json:"cleanup"`
 }
 type Report struct {
+	Readiness     *Readiness `json:"readiness,omitempty"`
 	SchemaVersion string     `json:"schemaVersion"`
 	Target        string     `json:"target"`
 	Phase         string     `json:"phase"`

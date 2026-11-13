@@ -16,6 +16,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
@@ -30,9 +31,10 @@ type Collector interface {
 	Collect(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error)
 }
 type Dependencies struct {
-	SSH    Collector
-	BMC    Collector
-	Probes ProbeRunner
+	Switches SwitchCollector
+	SSH      Collector
+	BMC      Collector
+	Probes   ProbeRunner
 }
 
 func NewReport() inventory.Report {
@@ -55,6 +57,9 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	for _, t := range r.Targets {
 		inv.RequestedScope = append(inv.RequestedScope, config.Scope(t))
 	}
+	for _, sw := range r.Switches {
+		inv.RequestedScope = append(inv.RequestedScope, config.Scope(config.Target{Role: "switches", Endpoint: sw.Endpoint, SSH: sw.Access}))
+	}
 	slices.SortFunc(inv.RequestedScope, func(a, b inventory.ScopeEndpoint) int {
 		return strings.Compare(a.Role+a.Endpoint+a.SystemURI, b.Role+b.Endpoint+b.SystemURI)
 	})
@@ -64,6 +69,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	var wg sync.WaitGroup
 	problem := func(p inventory.Problem) { mu.Lock(); defer mu.Unlock(); report.Errors = append(report.Errors, p) }
 	var mg ManagementClient
+	var provisioning *managementprobe.Snapshot
 	if r.Kubeconfig != "" {
 		var accessErr error
 		mg, accessErr = ManagementAccess(r)
@@ -80,6 +86,12 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 			if err != nil {
 				problem(inventory.Problem{Code: "MANAGEMENT_INSPECTION_FAILED", Message: err.Error(), InputRef: "/management", ExitCode: 3})
 				return
+			}
+			if r.HBN != nil {
+				output.Info("[CHECK] Management cluster: inspect DPF installation and provisioning APIs")
+				snapshot := mg.ObserveProvisioning(ctx, r.DPFNamespace)
+				provisioning = &snapshot
+				output.Info("[DONE] Management cluster: DPF installation and provisioning API inspection")
 			}
 			mu.Lock()
 			defer mu.Unlock()
@@ -279,6 +291,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	if len(report.Errors) > 0 || report.Discovery.Cleanup.State != "complete" {
 		report.Discovery.Outcome = "partial"
 	}
+	collectHBN(ctx, r, &report, deps.Switches, provisioning)
 	if ctx.Err() != nil {
 		report.Discovery.Outcome = "partial"
 		report.Execution = "failed"
@@ -397,11 +410,17 @@ func Canonicalize(inv *inventory.Inventory) {
 			Endpoints             []inventory.ScopeEndpoint
 		}{inv.Management.APIEndpoint, inv.Management.SystemNamespaceUID, inv.Management.TrustDigest, inv.Collection.Mode, inv.RequestedScope})
 	}
+	if inv.HBN != nil {
+		inv.ScopeDigest = inventory.Digest("dpf-hbn-scope-v1", []string{inv.ScopeDigest, hbnScope(inv.HBN)})
+	}
 }
 
 // Dedicated material projection excludes timestamps, readiness, credentials and aliases.
 func material(inv *inventory.Inventory) map[string]any {
 	fields := map[string]any{}
+	if inv.HBN != nil {
+		fields["hbn"] = inv.HBN
+	}
 	if inv.Software != nil {
 		fields["software"] = releases.Summarize(*inv.Software)
 	}
@@ -449,6 +468,7 @@ func material(inv *inventory.Inventory) map[string]any {
 			fields[key+".identity"] = []string{w.ID, w.SerialNumber, w.SystemUUID, w.Manufacturer, w.Model, w.Method}
 			fields[key+".endpoints"] = []string{w.SSHEndpoint, w.BMCEndpoint, w.SystemURI}
 			fields[key+".psid"] = w.PSID
+			fields[key+".networkFunctionMACs"] = w.NetworkFunctionMACs
 			fields[key+".bmcAdministratorVerified"] = w.BMCAdministratorVerified
 			fields[key+".firmwareInventoryComplete"] = w.FirmwareInventoryComplete
 			fields[key+".firmware"] = w.Firmware
@@ -524,6 +544,9 @@ func ExitCode(r inventory.Report) int {
 		return code
 	}
 	if r.Discovery.Outcome != "complete" {
+		return 2
+	}
+	if r.Readiness != nil && r.Readiness.State != "ready" {
 		return 2
 	}
 	return 0

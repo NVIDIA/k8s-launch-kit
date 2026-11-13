@@ -24,7 +24,10 @@ type Qualification struct {
 	Model              string
 	BMCFirmware        string
 }
-type Collector struct{ Qualifications []Qualification }
+type Collector struct {
+	Qualifications             []Qualification
+	IncludeNetworkFunctionMACs bool
+}
 
 func ValidSerial(raw string) bool {
 	s := strings.TrimSpace(raw)
@@ -70,6 +73,10 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		if cleanupErr := c.Close(cleanupCtx); cleanupErr != nil {
 			err = &ObservationError{Primary: err, Cleanup: cleanupErr, SessionURI: c.session}
 			device.ReasonCode = "CLEANUP_INCOMPLETE"
+		}
+		if target.Role == "dpus" && co.IncludeNetworkFunctionMACs && len(device.NetworkFunctionMACs) > 0 && err != nil {
+			device.NetworkFunctionMACs = nil
+			device.Observations["networkFunctionMACs"] = inventory.Observation{State: "unavailable", ReasonCode: "NETWORK_FUNCTION_MAC_RECHECK_FAILED", Message: "A required identity or Redfish session cleanup check failed; collected permanent MACs are ineligible.", Tool: "redfish"}
 		}
 		if err != nil && psidCard.URI != "" {
 			state := device.Observations["psid"]
@@ -202,6 +209,18 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		device.Model = Text(cards[0].Document, "Model")
 		device.IdentityKey = []string{"nvidia", device.SerialNumber}
 		device.ID = inventory.PhysicalID("dpu", device.IdentityKey)
+		if co.IncludeNetworkFunctionMACs {
+			begin("Optional NetworkDeviceFunction MAC inventory")
+			macs, state := networkFunctionMACs(ctx, c, cards[0])
+			device.Observations["networkFunctionMACs"] = state
+			if state.State == "observed" {
+				device.NetworkFunctionMACs = macs
+				pass("identity-selected permanent Ethernet MACs observed")
+			} else {
+				output.Info("[UNAVAILABLE] %s: %s (%s)", label, stage, state.ReasonCode)
+				stage = ""
+			}
+		}
 	} else {
 		if adapter != "hpe-standard-v1" && adapter != "dell-standard-v1" {
 			return device, evidence, &Error{Code: "UNSUPPORTED_HOST_ADAPTER"}

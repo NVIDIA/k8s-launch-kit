@@ -13,6 +13,16 @@ metadata:
 
 For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
 
+`--use-case hbn-bgp` adds read-only Cumulus NVUE/LLDP/FRR switch inspection and
+defaults to inventory mode. Supply explicit switch credentials, pinned SSH
+known-hosts trust and intended p0/p1 bindings under `discovery.switches`.
+The explicit flag overrides and persists `dpf.useCase`; `dpf.hbn` overrides
+desired profile defaults. Read `readiness.state` separately from physical
+`discovery.outcome`: required unknown or mismatched prerequisites return nonzero
+even when physical inventory is saved. This preview keeps unverified provisioning
+prerequisites blocked. It never applies switch changes or treats LLDP names as
+authenticated DPU identity. See the HBN-BGP section of the discovery reference.
+
 DPF live check status goes to stderr as operations run, including with JSON output;
 quiet suppresses progress. Human summaries show configured names/addresses and
 host/DPU mappings, separating discovery blockers from later prerequisites and

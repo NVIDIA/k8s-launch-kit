@@ -20,8 +20,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	dpftarget "github.com/nvidia/k8s-launch-kit/pkg/target/dpf"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
@@ -32,6 +34,7 @@ import (
 // (`feature.node.kubernetes.io/pci-15b3.present=true`) leak into the generate
 // flow and break the `--for` requires `--node-selector` validation.
 var (
+	generateUseCase       string
 	generateNodeSelector  string
 	generateConfigOptions options.Options
 )
@@ -43,9 +46,15 @@ var generateCmd = &cobra.Command{
 from a cluster configuration file.
 
 Supports SR-IOV, host-device, RDMA-shared, IPoIB, MacVLAN, and Spectrum-X profiles.
+With --target dpf, generates HBN-BGP artifacts from a DPF site file and saved inventory.
+DPF requires explicit --user-config and --save-deployment-files; --deploy is not yet available.
 File-backed configs remain unchanged; the resolved config is saved with the deployment bundle.
 Optionally deploy the generated manifests with --deploy.`,
-	Example: `  # SR-IOV Ethernet (most common for GPU clusters)
+	Example: `  # Independent DPF HBN-BGP bundle
+  l8k generate --target dpf --use-case hbn-bgp \
+    --user-config dpf-site.yaml --save-deployment-files ./hbn-bgp
+
+  # SR-IOV Ethernet (most common for GPU clusters)
   l8k generate --user-config cluster-config.yaml \
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output
@@ -82,6 +91,17 @@ Optionally deploy the generated manifests with --deploy.`,
     --fabric ethernet --deployment-type sriov \
     --save-deployment-files ./output`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if targetName == string(target.DPF) {
+			if len(args) > 0 {
+				exitWithError(apperrors.NewValidationError("generate takes no positional arguments", nil, "Use --user-config"), outputFormat)
+			}
+			var useCase *string
+			if cmd.Flags().Changed("use-case") {
+				useCase = &generateUseCase
+			}
+			runTargetCommand(cmd, target.Generate, dpftarget.NewGenerateAdapter(dpftarget.GenerateRequest{UserConfig: userConfig, UseCase: useCase, OutputPath: saveDeploymentFiles, Deploy: deploy}))
+			return
+		}
 		opts := mustCollectConfigFlags(cmd, generateConfigOptions)
 		opts.LaunchKitVersion = Version
 		opts.ConfigDir = configDir
@@ -110,6 +130,8 @@ Optionally deploy the generated manifests with --deploy.`,
 func init() {
 	rootCmd.AddCommand(generateCmd)
 	addTargetFlag(generateCmd)
+	generateCmd.Flags().StringVar(&generateUseCase, "use-case", "", "DPF use case: hbn-bgp (overrides dpf.useCase)")
+	setFlagGroup(generateCmd, "use-case", GroupProfile)
 
 	// Config
 	generateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (otherwise auto-detected from ./cluster-config.yaml; --for can use embedded defaults)")

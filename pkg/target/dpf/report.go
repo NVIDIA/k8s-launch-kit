@@ -35,6 +35,19 @@ func textReport(w io.Writer, report inventory.Report, input config.Input) error 
 	}
 	fmt.Fprintln(&out)
 	labels := reportLabels(input, report.Inventory)
+	if report.Readiness != nil {
+		fmt.Fprintf(&out, "HBN-BGP readiness: %s\n", displayText(report.Readiness.State))
+		var blockers []inventory.Check
+		for _, check := range report.Readiness.Checks {
+			if check.State != "passed" {
+				blockers = append(blockers, check)
+			}
+		}
+		if len(blockers) > 0 {
+			fmt.Fprintln(&out, "\nRequired before HBN-BGP deployment:")
+			writeChecks(&out, blockers, labels)
+		}
+	}
 	passed, required := 0, 0
 	for _, check := range report.Discovery.Checks {
 		if check.RequiredPhase == "discover" {
