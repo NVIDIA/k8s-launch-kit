@@ -32,6 +32,27 @@ var _ = Describe("DPF generation configuration", func() {
 		Expect(err).To(MatchError(ContainSubstring("supported discovery inventory")))
 	})
 
+	It("does not reuse legacy host measurements after a failed identity recheck", func() {
+		for _, version := range []string{"v1alpha1", "v1alpha2"} {
+			for _, state := range []string{"unknown", "unavailable", "observed"} {
+				in := validGenerationInput(GinkgoT().TempDir())
+				in.Site.Inventory.FormatVersion = version
+				in.Site.Inventory.DPUs[0].Runtime = nil // only the rejected host supplies PSID
+				h := &in.Site.Inventory.Hosts[0]
+				h.ObservationState, h.ReasonCode = state, "IDENTITY_CHANGED"
+				in = decodeGenerationInput(in)
+				_, err := ResolveGeneration(in)
+				Expect(err).To(MatchError(ContainSubstring("successfully observed host identity")), version+"/"+state)
+			}
+		}
+		in := validGenerationInput(GinkgoT().TempDir())
+		in.Site.Inventory.FormatVersion = "v1alpha1"
+		in.Site.Inventory.Hosts[0].ObservationState = ""
+		in = decodeGenerationInput(in)
+		_, err := ResolveGeneration(in)
+		Expect(err).To(MatchError(ContainSubstring("successfully observed host identity")))
+	})
+
 	It("uses named typed Redfish PSID without requiring an SSH measurement", func() {
 		in := validGenerationInput(GinkgoT().TempDir())
 		d := &in.Site.Inventory.DPUs[0]

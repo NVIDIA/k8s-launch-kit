@@ -280,6 +280,9 @@ func resolveProvisioning(g *Generation, inv *inventory.Inventory) error {
 		hosts := 0
 		for _, h := range inv.Hosts {
 			if h.ID == associations[0].HostID {
+				if h.ObservationState != "observed" || h.ReasonCode != "" {
+					return fmt.Errorf("device %s host association requires a successfully observed host identity", binding.ID)
+				}
 				hosts++
 				collectRuntimePSIDs(psids, d.SerialNumber, h)
 			}
