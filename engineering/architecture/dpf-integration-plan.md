@@ -337,7 +337,16 @@ state/value wrapper. ID is exported only for an eligible final identity.
 Version-aware decoding preserves these authority boundaries and rejects
 contradictions. Legacy `v1alpha1` and `v1alpha2` remain readable without inferring
 missing success. Required report check results and qualification boundaries stay
-separate from compact device facts.
+separate from compact device facts. Firmware conflict comparison follows the same
+whitespace handling as collection while retaining original measured strings;
+serialization does not make a padded version eligible for minimum-version checks.
+
+SSH collection keeps one connection for normal reads. A command deadline closes
+that transport to bound stalled session operations; the next independent read may
+reconnect with the original endpoint, credentials and trust snapshot. The failed
+command is not replayed. Reconnection failure remains a required-identity failure,
+and overall cancellation forbids recovery. Final physical identity rereads remain
+mandatory after optional observations.
 
 The public software BOM is a projection of the internal release catalog:
 operator/component coordinates, exact hardware applicability, BFB version/URL

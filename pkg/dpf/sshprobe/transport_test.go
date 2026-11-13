@@ -24,14 +24,18 @@ import (
 )
 
 type testServer struct {
-	listener    net.Listener
-	key         ssh.Signer
-	private     ed25519.PrivateKey
-	extraKeys   []ssh.Signer
-	mu          sync.Mutex
-	connections []net.Conn
-	wg          sync.WaitGroup
-	closing     bool
+	listener     net.Listener
+	key          ssh.Signer
+	private      ed25519.PrivateKey
+	extraKeys    []ssh.Signer
+	alternateKey ssh.Signer
+	rekeyAfter   int
+	rejectAfter  int
+	onCommand    func(ssh.Channel, string) bool
+	mu           sync.Mutex
+	connections  []net.Conn
+	wg           sync.WaitGroup
+	closing      bool
 }
 
 func startServer(extraKeys ...ssh.Signer) *testServer {
@@ -57,27 +61,42 @@ func startServer(extraKeys ...ssh.Signer) *testServer {
 				return
 			}
 			s.connections = append(s.connections, c)
+			connection := len(s.connections)
 			s.wg.Add(1)
 			s.mu.Unlock()
-			go func() { defer s.wg.Done(); defer c.Close(); s.serve(c) }()
+			go func() { defer s.wg.Done(); defer c.Close(); s.serve(c, connection) }()
 		}
 	}()
 	return s
 }
 
-func (s *testServer) serve(conn net.Conn) {
+func (s *testServer) serve(conn net.Conn, connection int) {
+	s.mu.Lock()
+	serverKey := s.key
+	if s.rekeyAfter > 0 && connection >= s.rekeyAfter {
+		serverKey = s.alternateKey
+	}
+	rejectAuth := s.rejectAfter > 0 && connection >= s.rejectAfter
+	onCommand := s.onCommand
+	s.mu.Unlock()
 	cfg := &ssh.ServerConfig{PublicKeyCallback: func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+		if rejectAuth {
+			return nil, fmt.Errorf("denied")
+		}
 		if meta.User() == "reader" && string(key.Marshal()) == string(s.key.PublicKey().Marshal()) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("denied")
 	}, PasswordCallback: func(meta ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+		if rejectAuth {
+			return nil, fmt.Errorf("denied")
+		}
 		if meta.User() == "reader" && string(password) == "test-password" {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("denied")
 	}}
-	cfg.AddHostKey(s.key)
+	cfg.AddHostKey(serverKey)
 	for _, key := range s.extraKeys {
 		cfg.AddHostKey(key)
 	}
@@ -113,6 +132,9 @@ func (s *testServer) serve(conn net.Conn) {
 					return
 				}
 				_ = req.Reply(true, nil)
+				if onCommand != nil && onCommand(ch, payload.Command) {
+					return
+				}
 				switch payload.Command {
 				case "LC_ALL=C slow":
 					for range reqs {

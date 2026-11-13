@@ -30,6 +30,60 @@ func nicCheck(d inventory.Device) inventory.Check {
 }
 
 var _ = ginkgo.Describe("typed firmware compatibility boundary", func() {
+	ginkgo.It("round trips reconciled whitespace variants without normalizing measured versions", func() {
+		d := firmwareDevice()
+		d.Firmware = []inventory.Firmware{
+			{Component: "bmc", State: "known", RawVersion: "1.0", Activation: "unknown", ActivationReasonCode: "ACTIVATION_NOT_EXPOSED"},
+			{Component: "bmc", State: "known", RawVersion: " 1.0 ", Activation: "running"},
+		}
+		in := inventory.Inventory{FormatVersion: inventory.FormatVersion, DPUs: []inventory.Device{d}}
+		encoded, err := json.Marshal(in)
+		Expect(err).NotTo(HaveOccurred())
+
+		var restored inventory.Inventory
+		Expect(json.Unmarshal(encoded, &restored)).To(Succeed())
+		Expect(restored.DPUs[0].Firmware).To(ContainElements(
+			And(HaveField("RawVersion", "1.0"), HaveField("Activation", "unknown")),
+			And(HaveField("RawVersion", " 1.0 "), HaveField("Activation", "running")),
+		))
+		check := nicCheck(inventory.Device{ID: "dpu-one", RecordKey: "dpu-source", SerialNumber: "CARDONE", Model: "B3210", ObservationState: "observed",
+			Observations: map[string]inventory.Observation{"firmware-inventory": {State: "observed"}},
+			Firmware:     []inventory.Firmware{{Component: "nic", State: "known", RawVersion: " 32.38.1002 ", Activation: "running"}},
+		})
+		Expect(check.State).To(Equal("unknown"))
+		Expect(check.ReasonCode).To(Equal("SOFTWARE_VERSION_UNCOMPARABLE"))
+	})
+
+	ginkgo.It("keeps actual conflicts and staged versions distinct with whitespace variants", func() {
+		conflict := firmwareDevice()
+		conflict.Firmware = []inventory.Firmware{
+			{Component: "bmc", State: "conflict", ReasonCode: "FIRMWARE_VERSION_CONFLICT", RawVersion: "1.0", Activation: "running"},
+			{Component: "bmc", State: "conflict", ReasonCode: "FIRMWARE_VERSION_CONFLICT", RawVersion: " 1.1 ", Activation: "unknown"},
+		}
+		wire, err := inventory.DeviceToOutput(conflict, "dpus")
+		Expect(err).NotTo(HaveOccurred())
+		restoredConflict, err := inventory.DeviceFromOutput(wire, "dpus")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restoredConflict.Firmware).To(HaveLen(2))
+		for _, fact := range restoredConflict.Firmware {
+			Expect(fact.State).To(Equal("conflict"))
+		}
+
+		staged := firmwareDevice()
+		staged.Firmware = []inventory.Firmware{
+			{Component: "bmc", State: "known", RawVersion: "1.0", Activation: "running"},
+			{Component: "bmc", State: "known", RawVersion: " 1.1 ", Activation: "staged"},
+		}
+		stagedWire, err := inventory.DeviceToOutput(staged, "dpus")
+		Expect(err).NotTo(HaveOccurred())
+		stagedRestored, err := inventory.DeviceFromOutput(stagedWire, "dpus")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stagedRestored.Firmware).To(ContainElements(
+			And(HaveField("RawVersion", "1.0"), HaveField("Activation", "running")),
+			And(HaveField("RawVersion", " 1.1 "), HaveField("Activation", "staged")),
+		))
+	})
+
 	ginkgo.It("preserves padded measured versions without promoting compatibility", func() {
 		d := firmwareDevice()
 		d.Firmware = []inventory.Firmware{{Component: "nic", State: "known", RawVersion: " 32.38.1002 ", Activation: "running"}}

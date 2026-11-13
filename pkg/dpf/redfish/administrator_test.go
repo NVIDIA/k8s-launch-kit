@@ -27,7 +27,7 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 			session, service, login Document
 			omitRoles, customRole   bool
 		}{
-			{name: "administrator", expected: "BMC_ADMIN_VERIFIED"}, {name: "custom full role", expected: "BMC_ADMIN_VERIFIED"}, {name: "absolute links", expected: "BMC_ADMIN_VERIFIED"}, {name: "unrelated account unreadable", expected: "BMC_ADMIN_VERIFIED"}, {name: "session role absent", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "session password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"}, {name: "malformed pagination", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "late password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"},
+			{name: "administrator", expected: "BMC_ADMIN_VERIFIED"}, {name: "custom full role", expected: "BMC_ADMIN_VERIFIED"}, {name: "absolute links", expected: "BMC_ADMIN_VERIFIED"}, {name: "unrelated account unreadable", expected: "BMC_ADMIN_VERIFIED"}, {name: "slash-terminated account member", expected: "BMC_ADMIN_VERIFIED"}, {name: "session role absent", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "session password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"}, {name: "malformed pagination", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "late password change", expected: "BMC_PASSWORD_CHANGE_REQUIRED"},
 			{name: "username admin read only", expected: "BMC_ADMIN_REQUIRED"}, {name: "operator", expected: "BMC_ADMIN_REQUIRED"}, {name: "OEM only", expected: "BMC_ADMIN_REQUIRED"},
 			{name: "account service denied", expected: "BMC_ADMIN_ACCESS_DENIED"}, {name: "account member denied", expected: "BMC_ADMIN_ACCESS_DENIED"}, {name: "role denied", expected: "BMC_ADMIN_ACCESS_DENIED"},
 			{name: "account service missing", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "missing user", expected: "BMC_ADMIN_UNVERIFIABLE"}, {name: "duplicate user", expected: "BMC_ADMIN_UNVERIFIABLE"},
@@ -150,7 +150,11 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 						doc[key] = value
 					}
 				case "/redfish/v1/AccountService/Accounts":
-					doc = Document{"Members@odata.count": 1, "Members": []any{link("/redfish/v1/AccountService/Accounts/7")}}
+					if scenario.name == "slash-terminated account member" {
+						doc = Document{"Members@odata.count": 1, "Members": []any{link("/redfish/v1/AccountService/Accounts/site-maintainer/")}}
+					} else {
+						doc = Document{"Members@odata.count": 1, "Members": []any{link("/redfish/v1/AccountService/Accounts/7")}}
+					}
 					if scenario.name == "unrelated account unreadable" {
 						doc["Members"] = []any{link("/redfish/v1/AccountService/Accounts/root"), link("/redfish/v1/AccountService/Accounts/admin")}
 						doc["Members@odata.count"] = 2
@@ -174,7 +178,7 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 				case "/redfish/v1/AccountService/Accounts/root":
 					w.WriteHeader(http.StatusInternalServerError)
 					return
-				case "/redfish/v1/AccountService/Accounts/7", "/redfish/v1/AccountService/Accounts/8", "/redfish/v1/AccountService/Accounts/admin":
+				case "/redfish/v1/AccountService/Accounts/7", "/redfish/v1/AccountService/Accounts/8", "/redfish/v1/AccountService/Accounts/admin", "/redfish/v1/AccountService/Accounts/site-maintainer/":
 					if scenario.name == "account member denied" {
 						w.WriteHeader(http.StatusForbidden)
 						return
@@ -261,6 +265,99 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 			Expect(visited).NotTo(ContainElement("/redfish/v1/Systems/unrelated"))
 			Expect(visited).NotTo(ContainElement("/redfish/v1/AccountService/Accounts/root"))
 			Expect(writes).To(Equal([]string{"POST /redfish/v1/SessionService/Sessions", "DELETE /redfish/v1/SessionService/Sessions/owned"}))
+			server.Close()
+		}
+	})
+})
+
+var _ = Describe("slash-terminated account links", func() {
+	It("canonicalizes the collection and direct or paginated member links before checking usernames", func() {
+		const collection = "/redfish/v1/AccountService/Accounts"
+		c := &Client{origin: "https://bmc.example.invalid"}
+		canonical, err := c.accountLink(collection+"/", collection)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(canonical).To(Equal(collection))
+
+		for _, scenario := range []struct {
+			name  string
+			paged bool
+		}{
+			{name: "direct username-addressed member"},
+			{name: "member on later page", paged: true},
+		} {
+			By(scenario.name)
+			var visited []string
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				visited = append(visited, r.URL.Path)
+				var doc Document
+				switch r.URL.Path {
+				case collection:
+					if scenario.paged && r.URL.Query().Get("$skip") == "1" {
+						doc = Document{"Members@odata.count": 2, "Members": []any{Document{"@odata.id": collection + "/7/"}}}
+					} else if scenario.paged {
+						doc = Document{"Members@odata.count": 2, "Members": []any{Document{"@odata.id": collection + "/8"}}, "Members@odata.nextLink": collection + "?$skip=1"}
+					} else {
+						doc = Document{"Members@odata.count": 1, "Members": []any{Document{"@odata.id": collection + "/site-maintainer/"}}}
+					}
+				case collection + "/8":
+					doc = Document{"UserName": "someone-else"}
+				case collection + "/7/", collection + "/site-maintainer/":
+					doc = Document{"UserName": "site-maintainer"}
+				default:
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(doc)
+			}))
+			client := &Client{origin: server.URL, http: server.Client()}
+			accounts, err := client.accounts(context.Background(), collection, "site-maintainer")
+			Expect(err).NotTo(HaveOccurred())
+			matches := 0
+			for _, account := range accounts {
+				if Text(account.Document, "UserName") == "site-maintainer" {
+					matches++
+				}
+			}
+			Expect(matches).To(Equal(1), "URI spelling must not replace authenticated username verification")
+			if scenario.paged {
+				Expect(visited).To(ContainElement(collection + "/7/"))
+			} else {
+				Expect(visited).To(ContainElement(collection + "/site-maintainer/"))
+			}
+			server.Close()
+		}
+	})
+
+	It("rejects duplicate member aliases and unsafe paths in direct and paginated lists", func() {
+		const collection = "/redfish/v1/AccountService/Accounts"
+		for _, scenario := range []struct {
+			name    string
+			members []any
+			next    bool
+			want    string
+		}{
+			{name: "duplicate terminal slash alias", members: []any{Document{"@odata.id": collection + "/7"}, Document{"@odata.id": collection + "/7/"}}, want: "DUPLICATE_MEMBER"},
+			{name: "nested member path", members: []any{Document{"@odata.id": collection + "/7/child"}}, want: "UNSAFE_ACCOUNT_LINK"},
+			{name: "query on member path", members: []any{Document{"@odata.id": collection + "/7/?$skip=1"}}, want: "UNSAFE_ACCOUNT_LINK"},
+			{name: "double terminal slash", members: []any{Document{"@odata.id": collection + "/7//"}}, want: "UNSAFE_LINK"},
+			{name: "duplicate aliases in paginated list", members: []any{Document{"@odata.id": collection + "/7"}, Document{"@odata.id": collection + "/7/"}}, next: true, want: "DUPLICATE_MEMBER"},
+		} {
+			By(scenario.name)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				doc := Document{"Members@odata.count": len(scenario.members), "Members": scenario.members}
+				if scenario.next && r.URL.Query().Get("$skip") == "" {
+					doc["Members@odata.count"] = len(scenario.members)
+					doc["Members@odata.nextLink"] = collection + "?$skip=1"
+				} else if scenario.next {
+					delete(doc, "Members@odata.nextLink")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(doc)
+			}))
+			client := &Client{origin: server.URL, http: server.Client()}
+			_, err := client.accounts(context.Background(), collection, "site-maintainer")
+			Expect(Code(err)).To(Equal(scenario.want))
 			server.Close()
 		}
 	})

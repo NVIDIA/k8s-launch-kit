@@ -358,6 +358,26 @@ func (c *Client) Collection(ctx context.Context, ref string) ([]Resource, error)
 	return c.collection(ctx, ref, "")
 }
 
+// accountMember validates one advertised account member and returns its
+// canonical identity path plus the guarded URI to use for the request. Only a
+// single terminal slash is normalized for comparisons; reads preserve the
+// exact advertised URI.
+func (c *Client) accountMember(ref, memberBase string) (canonical, requestURI string, err error) {
+	link, err := c.guard(ref)
+	if err != nil {
+		return "", "", err
+	}
+	if !strings.HasPrefix(link, memberBase) || strings.Contains(link, "?") {
+		return "", "", &Error{Code: "UNSAFE_ACCOUNT_LINK"}
+	}
+	id := strings.TrimPrefix(link, memberBase)
+	id = strings.TrimSuffix(id, "/")
+	if id == "" || strings.Contains(id, "/") {
+		return "", "", &Error{Code: "UNSAFE_ACCOUNT_LINK"}
+	}
+	return memberBase + id, link, nil
+}
+
 func (c *Client) collection(ctx context.Context, ref, memberBase string) ([]Resource, error) {
 	var members []Resource
 	seen := map[string]bool{}
@@ -392,17 +412,20 @@ func (c *Client) collection(ctx context.Context, ref, memberBase string) ([]Reso
 		}
 		for _, item := range list {
 			link := Link(Document{"member": item}, "member")
-			link, err = c.guard(link)
+			var identity string
+			if memberBase != "" {
+				identity, link, err = c.accountMember(link, memberBase)
+			} else {
+				link, err = c.guard(link)
+				identity = link
+			}
 			if err != nil {
 				return members, err
 			}
-			if memberBase != "" && (!strings.HasPrefix(link, memberBase) || strings.Contains(strings.TrimPrefix(link, memberBase), "/") || strings.Contains(link, "?") || link == memberBase) {
-				return members, &Error{Code: "UNSAFE_ACCOUNT_LINK"}
-			}
-			if link == "" || seen["member:"+link] {
+			if identity == "" || seen["member:"+identity] {
 				return members, &Error{Code: "DUPLICATE_MEMBER"}
 			}
-			seen["member:"+link] = true
+			seen["member:"+identity] = true
 			value, err := c.Get(ctx, link)
 			if err != nil {
 				return members, err

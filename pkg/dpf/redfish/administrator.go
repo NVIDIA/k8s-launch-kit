@@ -171,21 +171,23 @@ func (c *Client) accounts(ctx context.Context, uri, username string) ([]Resource
 		return c.collection(ctx, uri, uri+"/")
 	}
 	ownURI := uri + "/" + url.PathEscape(username)
-	found := false
+	ownRequestURI := ""
 	seen := map[string]bool{}
 	for _, member := range members {
-		ref, err := c.guard(Link(Document{"member": member}, "member"))
+		ref, requestURI, err := c.accountMember(Link(Document{"member": member}, "member"), uri+"/")
 		if err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(ref, uri+"/") || strings.Contains(strings.TrimPrefix(ref, uri+"/"), "/") || strings.Contains(ref, "?") || ref == uri+"/" || seen[ref] {
-			return nil, &Error{Code: "UNSAFE_ACCOUNT_LINK"}
+		if seen[ref] {
+			return nil, &Error{Code: "DUPLICATE_MEMBER"}
 		}
 		seen[ref] = true
-		found = found || ref == ownURI
+		if ref == ownURI {
+			ownRequestURI = requestURI
+		}
 	}
-	if found {
-		account, err := c.Get(ctx, ownURI)
+	if ownRequestURI != "" {
+		account, err := c.Get(ctx, ownRequestURI)
 		if err != nil {
 			return nil, err
 		}

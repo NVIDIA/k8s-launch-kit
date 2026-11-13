@@ -45,7 +45,11 @@ func (Collector) Collect(ctx context.Context, target config.Target, timeout time
 		return device, evidence, &Error{Code: device.ReasonCode, Stage: "target"}
 	}
 	user, password := target.SSH.Credentials()
-	c, err := connect(ctx, target.Endpoint, credentials{user: user, password: password, key: target.SSH.PrivateKey(), knownHosts: target.SSH.KnownHosts()}, timeout)
+	auth := credentials{user: user, password: password, key: target.SSH.PrivateKey(), knownHosts: target.SSH.KnownHosts()}
+	remote, err := newReconnectingRunner(ctx, target.Endpoint, auth, timeout)
+	clear(auth.key)
+	clear(auth.knownHosts)
+	auth.password = ""
 	if err != nil {
 		device.ReasonCode = Code(err)
 		device.Message = Reason(err)
@@ -57,7 +61,7 @@ func (Collector) Collect(ctx context.Context, target config.Target, timeout time
 		output.Info("[RUNNING] %s: SSH connection cleanup", label)
 		cleanupStarted := time.Now()
 		state := "complete"
-		if closeErr := c.Close(); closeErr != nil {
+		if closeErr := remote.Close(); closeErr != nil {
 			state = "unconfirmed"
 			output.Info("[UNAVAILABLE] %s: SSH connection cleanup could not be confirmed", label)
 		} else {
@@ -65,7 +69,7 @@ func (Collector) Collect(ctx context.Context, target config.Target, timeout time
 		}
 		logger.V(1).Info("SSH connection cleanup completed", "state", state, "duration", time.Since(cleanupStarted))
 	}()
-	return collect(ctx, target, c)
+	return collect(ctx, target, remote)
 }
 
 func emptyDevice(target config.Target) inventory.Device {

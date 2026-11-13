@@ -5,13 +5,15 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"testing"
+	"time"
+
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"os"
-	"testing"
-	"time"
+	"gopkg.in/yaml.v3"
 )
 
 func TestDiscovery(t *testing.T) { RegisterFailHandler(Fail); RunSpecs(t, "DPF discovery checks") }
@@ -119,6 +121,31 @@ var _ = Describe("inventory semantics", func() {
 		Expect(after.Fingerprint).To(Equal(before.Fingerprint))
 		Expect(after.ScopeDigest).To(Equal(before.ScopeDigest))
 		Expect(Diff(&before, &after)).To(BeEmpty())
+	})
+	It("keeps an unchanged SSH optional-read failure stable through v3 save and reload", func() {
+		before := estate()
+		before.Management.Nodes[0].Addresses = []string{}
+		before.Hosts[0].SSHEndpoint = "ssh://192.0.2.10:22"
+		before.Hosts[0].ReaderAdapter = "linux-host-ssh-v1"
+		before.Hosts[0].Runtime = &inventory.RuntimeObservation{Observations: map[string]inventory.Observation{
+			"routes": {State: "unavailable", Values: []string{}, ReasonCode: "COMMAND_FAILED", Message: "ip route failed", Tool: "ip"},
+		}}
+		Canonicalize(&before)
+
+		encoded, err := yaml.Marshal(before)
+		Expect(err).NotTo(HaveOccurred())
+		var after inventory.Inventory
+		Expect(yaml.Unmarshal(encoded, &after)).To(Succeed())
+		Canonicalize(&after)
+
+		failure := after.Hosts[0].Runtime.Observations["routes"]
+		Expect(failure.State).To(Equal("unavailable"))
+		Expect(failure.Values).To(BeEmpty())
+		Expect(failure.ReasonCode).To(Equal("COMMAND_FAILED"))
+		Expect(failure.Message).To(Equal("ip route failed"))
+		Expect(failure.Tool).To(Equal("ip"))
+		Expect(Diff(&before, &after)).To(BeEmpty())
+		Expect(after.Fingerprint).To(Equal(before.Fingerprint))
 	})
 	It("retains SSH host references when correlating with a BMC DPU without metadata", func() {
 		v := estate()

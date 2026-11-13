@@ -251,6 +251,12 @@ reported in `issues` with the affected `field`, a stable `code`, safe `message`
 and `tool` where applicable; required-source failures retain their cause too. It
 never infers a BMC address from an ARM IP or a serial from a hostname.
 
+If an optional SSH command times out, its result remains unavailable. Before the
+next read, Launch Kit reconnects to the same configured endpoint using the same
+credentials and verified host keys; it does not retry the timed-out command.
+Reconnection failures, failed final identity reads, changed identity, and the
+overall discovery deadline still prevent a complete inventory.
+
 Host and ARM PCI addresses belong to different domains; correlation uses physical
 serial identity, not matching PCI addresses. If a same-serial host adapter exposes
 a PCI vendor other than NVIDIA (`15b3`), the required association fails with

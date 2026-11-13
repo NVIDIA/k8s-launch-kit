@@ -135,7 +135,7 @@ Next: [Collect from selected endpoints](#initial-inventory-collect).
 
 ### 5. Selected host, DPU and BMC: read identity and facts {#initial-inventory-collect}
 
-Launch Kit uses the configured connection for each endpoint. Required identity reads and DPU BMC administrator verification must succeed to complete inventory. Optional reads add facts; a missing tool, denied operation or unsupported response leaves an explained gap instead of silently passing the check. After collecting optional facts, Launch Kit rereads identity to detect a changed or replaced device.
+Launch Kit uses the configured connection for each endpoint. Required identity reads and DPU BMC administrator verification must succeed to complete inventory. Optional reads add facts; a missing tool, denied operation or unsupported response leaves an explained gap instead of silently passing the check. After collecting optional facts, Launch Kit rereads identity to detect a changed or replaced device. If an optional SSH command times out, Launch Kit retains the reason and reconnects to the same configured endpoint with the same credentials and verified host keys before the next read. It does not retry the timed-out command. Failed reconnection, a failed identity reread or an expired overall deadline still prevents complete inventory.
 
 **On a host selected through SSH**
 

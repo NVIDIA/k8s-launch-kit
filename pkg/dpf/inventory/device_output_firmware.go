@@ -124,7 +124,10 @@ func firmwareFromOutput(w *FirmwareOutput, issues []DeviceIssue) ([]Firmware, er
 				f.Activation = "unknown"
 			}
 			if version.Activation != "staged" {
-				nonstaged[version.Version] = true
+				// Match Redfish reconciliation: whitespace variants are the same
+				// version for conflict detection, while the public fact retains the
+				// exact measured spelling for conservative compatibility checks.
+				nonstaged[strings.TrimSpace(version.Version)] = true
 			}
 			for _, issue := range issues {
 				entryField := fmt.Sprintf("%s[%d]", field, index)

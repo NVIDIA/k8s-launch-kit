@@ -177,6 +177,18 @@ New and changed discovery checks SHALL retain a stable reason code and safe huma
 - **WHEN** an SSH endpoint lacks an executable needed for an optional firmware observation
 - **THEN** the saved inventory identifies the missing tool and reason, without installing it or discarding successfully collected identity.
 
+#### Scenario: Optional SSH command times out
+
+- **WHEN** an optional SSH command times out while the overall discovery context is still active
+- **THEN** the command retains a specific unavailable reason and is not retried; subsequent reads may reconnect only to the original explicit endpoint with the same credentials and host-key trust snapshot.
+- **AND** reconnection authentication/trust failures, failed required identity rereads, changed identity and overall cancellation still prevent a complete observation. A command timeout never promotes earlier identity into a completed result.
+
+#### Scenario: Equivalent firmware spellings
+
+- **WHEN** multiple sources report versions differing only in surrounding whitespace
+- **THEN** collection and serialized inventory use the same conflict comparison, retain the measured spellings and activation states, and do not fail publication solely due to that whitespace.
+- **AND** a padded measured version remains ineligible to establish a software minimum; different versions without a staged-image distinction retain their conflict.
+
 #### Scenario: Restricted device rejects a query
 
 - **WHEN** an installed tool cannot read a restricted device

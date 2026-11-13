@@ -54,6 +54,78 @@ type client struct {
 	timeout time.Duration
 }
 
+// reconnectingRunner owns a single SSH session and reconnects only after a
+// timed-out command has closed that session. It never retries the command that
+// timed out; the next requested read starts on a newly authenticated session.
+type reconnectingRunner struct {
+	endpoint     string
+	auth         credentials
+	timeout      time.Duration
+	client       *client
+	reconnect    bool
+	reconnectErr error
+	closed       bool
+}
+
+func newReconnectingRunner(ctx context.Context, endpoint string, auth credentials, timeout time.Duration) (*reconnectingRunner, error) {
+	auth.key = bytes.Clone(auth.key)
+	auth.knownHosts = bytes.Clone(auth.knownHosts)
+	c, err := connect(ctx, endpoint, auth, timeout)
+	if err != nil {
+		clear(auth.key)
+		clear(auth.knownHosts)
+		auth.password = ""
+		return nil, err
+	}
+	return &reconnectingRunner{endpoint: endpoint, auth: auth, timeout: timeout, client: c}, nil
+}
+
+func (r *reconnectingRunner) Run(ctx context.Context, stage, command string) (string, error) {
+	if r.closed {
+		return "", &Error{Code: "SSH_COMMAND_FAILED", Stage: stage, Tool: commandTool(command)}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", &Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: stage, Tool: commandTool(command)}
+	}
+	if r.reconnectErr != nil {
+		return "", r.reconnectErr
+	}
+	if r.reconnect {
+		if r.client != nil {
+			_ = r.client.Close()
+		}
+		c, err := connect(ctx, r.endpoint, r.auth, r.timeout)
+		if err != nil {
+			r.reconnectErr = err
+			return "", err
+		}
+		r.client = c
+		r.reconnect = false
+	}
+	text, err := r.client.Run(ctx, stage, command)
+	if Code(err) == "SSH_TIMEOUT_OR_CANCELLED" && ctx.Err() == nil {
+		// Run's private command deadline expired. Its cancellation hook closed
+		// this transport to interrupt an unresponsive channel; reconnect before
+		// the next independent read, with the original endpoint and trust.
+		r.reconnect = true
+	}
+	return text, err
+}
+
+func (r *reconnectingRunner) Close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	clear(r.auth.key)
+	clear(r.auth.knownHosts)
+	r.auth.password = ""
+	if r.client != nil {
+		return r.client.Close()
+	}
+	return nil
+}
+
 // hostKeyCallback loads a stable snapshot through the upstream known_hosts
 // parser, preserving its hashed-host, wildcard, CA and revocation semantics.
 // The temporary file contains public host keys only and is removed before dial.
@@ -274,11 +346,11 @@ func (c *client) Run(ctx context.Context, stage, command string) (text string, e
 	err = session.Run("LC_ALL=C " + command)
 	output.mu.Lock()
 	defer output.mu.Unlock()
-	if output.exceeded {
-		return "", &Error{Code: "SSH_OUTPUT_LIMIT", Stage: stage, Tool: commandTool(command)}
-	}
 	if ctx.Err() != nil {
 		return "", &Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: stage, Tool: commandTool(command)}
+	}
+	if output.exceeded {
+		return "", &Error{Code: "SSH_OUTPUT_LIMIT", Stage: stage, Tool: commandTool(command)}
 	}
 	if err != nil {
 		return "", commandFailure(err, stage, command, output.stdout.String()+"\n"+output.stderr.String())

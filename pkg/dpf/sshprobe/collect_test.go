@@ -4,12 +4,17 @@ package sshprobe
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestSSHProbe(t *testing.T) { RegisterFailHandler(Fail); RunSpecs(t, "DPF SSH discovery") }
@@ -76,6 +81,158 @@ func hostRunner() *fakeRunner {
 }
 
 var _ = Describe("SSH inventory observations", func() {
+	It("reconnects after an optional command timeout and completes the required DPU identity recheck", func() {
+		for _, overflow := range []bool{false, true} {
+			server := startServer()
+			DeferCleanup(server.close)
+			var mu sync.Mutex
+			hostnameCalls, dmiCalls, fruCalls := 0, 0, 0
+			server.mu.Lock()
+			server.onCommand = func(ch ssh.Channel, command string) bool {
+				mu.Lock()
+				switch command {
+				case "LC_ALL=C hostname":
+					hostnameCalls++
+					if hostnameCalls == 1 {
+						mu.Unlock()
+						if overflow {
+							go func() { _, _ = ch.Write(make([]byte, maxOutput+1)) }()
+						}
+						time.Sleep(1300 * time.Millisecond)
+						return true
+					}
+					mu.Unlock()
+					return false
+				case "LC_ALL=C dmidecode -s system-serial-number":
+					dmiCalls++
+				case "LC_ALL=C ipmitool fru print 0":
+					fruCalls++
+				default:
+					mu.Unlock()
+					return false
+				}
+				mu.Unlock()
+				text := testSerial + "\n"
+				if command == "LC_ALL=C ipmitool fru print 0" {
+					text = testFRU
+				}
+				_, _ = ch.Write([]byte(text))
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+				return true
+			}
+			server.mu.Unlock()
+			runner, err := newReconnectingRunner(context.Background(), "ssh://"+server.listener.Addr().String(), server.auth(), time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(runner.Close)
+
+			device, _, err := collect(context.Background(), config.Target{Role: "dpus", Endpoint: "ssh://" + server.listener.Addr().String()}, runner)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(device.ObservationState).To(Equal("observed"))
+			Expect(device.ID).NotTo(BeEmpty())
+			Expect(device.Runtime.Observations["hostname"].ReasonCode).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
+			mu.Lock()
+			Expect(dmiCalls).To(Equal(2))
+			Expect(fruCalls).To(Equal(2))
+			mu.Unlock()
+			server.mu.Lock()
+			connectionCount := len(server.connections)
+			server.mu.Unlock()
+			Expect(connectionCount).To(Equal(2))
+		}
+	})
+	It("keeps cancellation, changed identity, and reconnect trust/authentication failures fatal", func() {
+		for _, scenario := range []string{"cancel", "identity-change", "auth-rejected", "host-key-changed"} {
+			By(scenario)
+			server := startServer()
+			DeferCleanup(server.close)
+			ctx, cancel := context.WithCancel(context.Background())
+			DeferCleanup(cancel)
+			var alternate ssh.Signer
+			if scenario == "host-key-changed" {
+				_, private, err := ed25519.GenerateKey(rand.Reader)
+				Expect(err).NotTo(HaveOccurred())
+				alternate, err = ssh.NewSignerFromKey(private)
+				Expect(err).NotTo(HaveOccurred())
+				server.mu.Lock()
+				server.alternateKey = alternate
+				server.rekeyAfter = 2
+				server.mu.Unlock()
+			}
+			if scenario == "auth-rejected" {
+				server.mu.Lock()
+				server.rejectAfter = 2
+				server.mu.Unlock()
+			}
+			var mu sync.Mutex
+			hostnameCalls, dmiCalls, fruCalls := 0, 0, 0
+			server.mu.Lock()
+			server.onCommand = func(ch ssh.Channel, command string) bool {
+				mu.Lock()
+				switch command {
+				case "LC_ALL=C hostname":
+					hostnameCalls++
+					if hostnameCalls == 1 {
+						mu.Unlock()
+						if scenario == "cancel" {
+							cancel()
+						}
+						time.Sleep(1300 * time.Millisecond)
+						return true
+					}
+				case "LC_ALL=C dmidecode -s system-serial-number":
+					dmiCalls++
+				case "LC_ALL=C ipmitool fru print 0":
+					fruCalls++
+				default:
+					mu.Unlock()
+					return false
+				}
+				serial := testSerial
+				if scenario == "identity-change" && dmiCalls > 1 {
+					serial = "REPLACED-CARD"
+				}
+				text := serial + "\n"
+				if command == "LC_ALL=C ipmitool fru print 0" {
+					text = strings.ReplaceAll(testFRU, testSerial, serial)
+				}
+				mu.Unlock()
+				_, _ = ch.Write([]byte(text))
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+				return true
+			}
+			server.mu.Unlock()
+			runner, err := newReconnectingRunner(context.Background(), "ssh://"+server.listener.Addr().String(), server.auth(), time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(runner.Close)
+			device, _, collectErr := collect(ctx, config.Target{Role: "dpus", Endpoint: "ssh://" + server.listener.Addr().String()}, runner)
+			cancel()
+			Expect(collectErr).To(HaveOccurred())
+			Expect(device.ObservationState).NotTo(Equal("observed"))
+			if scenario == "identity-change" {
+				Expect(Code(collectErr)).To(Equal("INVENTORY_CHANGED"))
+			}
+			if scenario == "cancel" {
+				Expect(Code(collectErr)).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
+				server.mu.Lock()
+				connectionCount := len(server.connections)
+				server.mu.Unlock()
+				Expect(connectionCount).To(Equal(1))
+			}
+			if scenario == "auth-rejected" {
+				Expect(Code(collectErr)).To(Equal("SSH_AUTHENTICATION_OR_HANDSHAKE_FAILED"))
+			}
+			if scenario == "host-key-changed" {
+				Expect(Code(collectErr)).To(Equal("SSH_HOST_KEY_REJECTED"))
+			}
+			if scenario == "auth-rejected" || scenario == "host-key-changed" {
+				server.mu.Lock()
+				connectionCount := len(server.connections)
+				server.mu.Unlock()
+				Expect(connectionCount).To(Equal(2))
+			}
+			_ = runner.Close()
+		}
+	})
 	It("corroborates ARM identity and observes a BMC address without contacting it", func() {
 		r := armRunner()
 		d, e, err := collect(context.Background(), config.Target{Role: "dpus", Endpoint: "ssh://192.0.2.41:22", InputRef: "/discovery/dpus/0", SSH: &config.SSHAccess{Sudo: true}}, r)
