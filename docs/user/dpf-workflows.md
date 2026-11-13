@@ -75,7 +75,7 @@ For SSH inventory, ask the endpoint administrator to make the required read tool
 
 Set `ssh.sudo: true` only where noninteractive elevated reads are authorized and configured. Launch Kit then uses `sudo -n`; it never prompts for a sudo password, installs tools, changes privileges or repairs device settings. Missing tools, denied permissions and unsupported or malformed outputs keep specific reason codes and explanations. Required identity failures stop a complete inventory; optional unknown observations remain visible for review.
 
-Prepare a DPU BMC account that is enabled, unlocked and does not require a password change, with all five standard Administrator privileges. A custom role with those privileges is accepted; names alone are insufficient. Discovery verifies the session, unique matching account and linked role using reads,. Handle password changes separately before rerunning; discovery never rotates passwords or tests privileges through writes.
+Prepare a DPU BMC account that is enabled, unlocked and does not require a password change, with all five standard Administrator privileges. A custom role with those privileges is accepted; names alone are insufficient. Discovery verifies the session, unique matching account and linked role using read requests. Handle password changes separately before rerunning; discovery never rotates passwords or tests privileges through writes.
 
 Next: [Access prepared](#initial-inventory-configure).
 
