@@ -390,7 +390,12 @@ func observedRedfishPSID(d inventory.Device) (string, error) {
 	}
 	psid := observation.Values[0]
 	if !strings.HasPrefix(psid, "MT_") || len(psid) > 32 || strings.IndexFunc(psid, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-')
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '.', r == '-':
+			return false
+		default:
+			return true
+		}
 	}) >= 0 {
 		return "", fmt.Errorf("device %s Redfish PSID is not supported for PLDM selection", d.ID)
 	}
