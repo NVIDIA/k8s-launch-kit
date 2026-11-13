@@ -13,6 +13,16 @@ metadata:
 
 For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
 
+DPF live check status goes to stderr as operations run, including with JSON output;
+quiet suppresses progress. Human summaries show configured names/addresses and
+host/DPU mappings, separating discovery blockers from later prerequisites and
+checks not requested. Internal evidence hashes remain in the structured artifacts.
+Add `--log-level debug` for source/stage timing, or `trace` for bounded request/tool
+metadata. Redirecting stderr hides live progress in the selected file. Never dump
+credentials or raw HTTP/SSH payloads to diagnose access. Password references can
+use an injected environment variable or an owner-only secret file; neither puts
+the resolved secret into inventory. See the guide for the tradeoffs and syntax.
+
 SSH requires explicit credential references and known-hosts trust; it never inherits
 Redfish TLS bypass, ambient keys or SSH configuration. ARM-local IPMI can report a
 BMC address but does not authorize connecting to it. A failed selected source is

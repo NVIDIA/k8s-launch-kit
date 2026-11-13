@@ -142,6 +142,29 @@ are verbatim. UTF-8 files lose at most one final LF/CRLF. File, SSH known-hosts 
 are relative to the input YAML and are rebased when saved elsewhere. Private files
 are not copied. BMC endpoints require HTTPS; redirected connections are not supported.
 
+Environment references are convenient for an automation system that injects
+secrets for one invocation. They are not required: environment values are
+inherited by child processes and can be exposed by process inspection or
+diagnostic dumps, depending on the operating system and permissions. Avoid
+typing literal passwords in shell commands or saving them in shell startup files.
+
+For a local secret file or a file supplied by a secret manager, use:
+
+```yaml
+credentials:
+  dpu-reader:
+    username: admin
+    passwordRef:
+      file: ./credentials/dpu-bmc-password
+```
+
+The file contains the password only, not YAML. Restrict the directory to its
+owner (`0700`) and the file to its owner (`0600`), keep it outside version control,
+and manage its lifecycle separately. A file reference avoids exporting the secret
+to the process environment; it does not encrypt the file. Choose one `env` or
+`file` reference per password. Discovery does not save resolved passwords in the
+inventory or logs.
+
 For BMCs with untrusted certificates, explicitly opt in per endpoint:
 
 ```yaml
@@ -286,6 +309,66 @@ Follow the [candidate procedure](dpf-workflows.md#address-candidates) to prepare
 lookup inputs, interpret ambiguity and explicitly add a verified endpoint.
 
 ## Observations, reports and refresh
+
+Normal output shows live status on stderr as work happens, followed by a final
+summary on stdout. Each status line identifies the selected source and the
+operation: session connection, administrator verification, inventory reads,
+identity rechecks, cleanup, host/card matching or output publication.
+`RUNNING` precedes the operation; `PASS` follows a successful check or completed
+read; `FAIL` identifies a failed operation. `UNAVAILABLE` identifies an optional
+fact that could not be measured, with a reason. Completing a read does not mean
+all optional facts were available. Concurrent endpoints can interleave whole
+status lines. `--quiet` suppresses progress; it does not change acceptance.
+
+The final text report uses configured endpoint names, falling back to addresses,
+and shows DPU model/serial, host association and BMC administrator status. It
+separates problems that prevent discovery from prerequisites for provisioning
+and checks not requested in this run. Identical later-stage findings are grouped
+with their affected sources. An unqualified hardware combination means this
+build has not established qualification; it is not a detected hardware fault.
+An unsupported BOM model means software compatibility is unknown. Neither is
+silently marked passed, and the JSON check states and exit rules are unchanged.
+
+For operation timing and source/check diagnostics, add `--log-level debug`.
+Use `--log-level trace` for Redfish request categories/statuses and SSH
+stage/tool metadata. Logging does not include credentials, session tokens,
+request/response bodies or raw remote command output. Debug/trace logs go to
+stderr unless `--log-file` selects a file; normal live progress remains on stderr.
+
+```bash
+l8k discover --target dpf --user-config dpf-site.yaml \
+  --save-cluster-config dpf-discovered.yaml --log-level debug
+```
+
+To watch progress while saving a machine-readable result, redirect only stdout:
+
+```bash
+l8k discover --target dpf --user-config dpf-site.yaml \
+  --save-cluster-config dpf-discovered.yaml --output json \
+  --log-level debug > discover.json
+```
+
+Redirecting `2>discover.log` saves progress and logs to that file instead of
+displaying them. `--output json` still emits one final JSON document on stdout.
+
+### Internal identifiers in saved inventory
+
+The detailed YAML/JSON retains identifiers for automation and traceability:
+
+| Field | Meaning |
+| --- | --- |
+| Device `recordKey` | Deterministic key for a selected observation source; used to connect checks to that device record. Normal text shows its name/address instead. |
+| `evidenceRefs` and `inventory.evidence` keys | References linking an observation to its source metadata: source configuration, Redfish resource/property or SSH stage, observation time and authentication state. |
+| `scopeDigest` | Digest of the selected scope and recorded trust policy, used to detect incompatible refresh inputs. |
+| `fingerprint` | Digest of selected material facts, used to compare inventories. |
+
+These `sha256:` values are internal identifiers/comparison digests, not secrets,
+signatures or independent proof that hardware is correct. Evidence identifiers
+identify the source/property; they are not checksums of the full raw response.
+To trace a fact, follow its `evidenceRefs` entries to the corresponding
+`inventory.evidence` records. Keep those records when sharing a diagnostic report.
+
+### Review and refresh the handoff
 
 Review each card's serial and its host association. Missing or conflicting identity
 must be resolved before accepting the inventory; an IP address, PCI address or

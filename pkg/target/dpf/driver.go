@@ -24,6 +24,8 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Descriptor exposes the inventory preview, keeping provisioning unavailable.
@@ -64,12 +66,21 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 	return target.OperationFunc(func(parent context.Context) error {
 		ctx, stop := signal.NotifyContext(parent, terminationSignals()...)
 		defer stop()
+		progress := ui.NewSilent()
+		if !inv.Output.Quiet {
+			progress = ui.NewWithWriter(r.Stderr)
+		}
+		ctx = ui.WithOutput(ctx, progress)
+		logger := log.FromContext(ctx).WithName("dpf-discovery")
+		ctx = log.IntoContext(ctx, logger)
 		report := discovery.NewReport()
 		var store *artifacts.Store
 		fail := func(code int, message string) {
 			report.Execution = "failed"
 			report.Errors = append(report.Errors, inventory.Problem{Code: "INVALID_CONFIGURATION", Message: message, ExitCode: code})
+			progress.Info("[FAIL] Discovery preparation: %s", displayText(message))
 		}
+		progress.Info("[RUNNING] Configuration: validating site inputs and access settings")
 		input, err := config.Load(r.UserConfig)
 		if err != nil {
 			fail(2, err.Error())
@@ -89,8 +100,9 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 					if err != nil {
 						fail(1, err.Error())
 					} else {
+						progress.Info("[PASS] Configuration: %d hosts, %d DPUs; %s mode", len(input.Site.Discovery.Hosts), len(input.Site.Discovery.DPUs), resolved.Mode)
+						logger.V(1).Info("Discovery configuration ready", "mode", resolved.Mode, "sources", len(resolved.Targets), "timeout", resolved.Timeout, "requestTimeout", resolved.RequestTimeout, "concurrency", resolved.MaxConcurrentBMCs)
 						if !inv.Output.Quiet {
-							fmt.Fprintln(r.Stderr, "Inspecting explicitly selected inventory sources")
 							for _, endpoint := range resolved.Targets {
 								if endpoint.Access.InsecureSkipVerify() {
 									fmt.Fprintf(r.Stderr, "Warning: BMC TLS certificate verification disabled for %s\n", endpoint.Endpoint)
@@ -102,14 +114,20 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 							resolved.Input.Site.Inventory = store.PriorInventory
 						}
 						report = discovery.Collect(ctx, resolved, store.RunID(), deps)
+						progress.Info("[RUNNING] Publication: saving inventory and detailed report")
+						publishStarted := time.Now()
 						publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 						err = store.Publish(publishCtx, &report)
 						cancel()
 						if err != nil {
+							progress.Info("[FAIL] Publication: output could not be published; see the result for details")
 							report.Execution = "failed"
 							report.Errors = append(report.Errors, inventory.Problem{Code: "PUBLICATION_FAILED", Message: err.Error(), ExitCode: 1})
 							_ = store.Report(&report)
+						} else {
+							progress.Info("[PASS] Publication: %s discovery artifacts saved", report.Discovery.Outcome)
 						}
+						logger.V(1).Info("Discovery publication finished", "outcome", report.Discovery.Outcome, "success", err == nil, "duration", time.Since(publishStarted))
 					}
 				}
 			}
@@ -120,17 +138,9 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 				return apperrors.MarkReported(apperrors.NewGeneralError("cannot encode DPF discovery result", nil))
 			}
 		} else {
-			fmt.Fprintf(r.Stdout, "DPF discovery: %s (%s)\n", report.Discovery.Outcome, report.Discovery.Mode)
-			for _, c := range report.Discovery.Checks {
-				if c.State != "passed" {
-					fmt.Fprintf(r.Stdout, "%s %s: %s (%s): %s\n", c.ID, c.Subject, c.State, c.ReasonCode, c.Message)
-				}
-			}
-			for _, e := range report.Errors {
-				fmt.Fprintf(r.Stdout, "%s: %s\n", e.Code, e.Message)
-			}
-			for _, a := range report.Artifacts {
-				fmt.Fprintf(r.Stdout, "%s: %s\n", a.Kind, a.Path)
+			if err := textReport(r.Stdout, report, input); err != nil {
+				fmt.Fprintln(r.Stderr, "cannot write DPF discovery result")
+				return apperrors.MarkReported(apperrors.NewGeneralError("cannot write DPF discovery result", nil))
 			}
 		}
 		return apperrors.NewExitStatus(discovery.ExitCode(report))

@@ -79,6 +79,8 @@ Set `ssh.sudo: true` only where noninteractive elevated reads are authorized and
 
 Prepare a DPU BMC account that is enabled, unlocked and does not require a password change, with all five standard Administrator privileges. A custom role with those privileges is accepted; names alone are insufficient. Discovery verifies the session, unique matching account and linked role using read requests. Handle password changes separately before rerunning; discovery never rotates passwords or tests privileges through writes.
 
+Passwords may use an environment reference supplied for the invocation or a `passwordRef.file` pointing to an owner-only UTF-8 password file. Environment variables are convenient for automation but can be inherited or exposed by diagnostics. File references avoid that export but remain plaintext files: keep them private and outside version control. Discovery saves references, never secret values.
+
 Next: [Access prepared](#initial-inventory-configure).
 
 ### 3. CLI machine: create the inventory configuration {#initial-inventory-configure}
@@ -126,6 +128,8 @@ l8k discover --target dpf --user-config dpf-site.yaml \
 Record the process exit status as well as the files. `discovery.json` contains the final result; progress and diagnostics go to `discovery.log`. The command creates its own run directory next to the requested YAML. It does not send credentials to addresses found during collection. Redfish uses a temporary login session and deletes that session; SSH runs read commands on explicitly selected endpoints.
 
 While this command runs, Launch Kit performs the collection and matching steps below automatically. You do not need to run the listed remote commands yourself. The example contacts the host over SSH and the explicitly selected DPU BMC over Redfish. Host-only input contacts no DPU endpoint and returns partial evidence with a nonzero exit.
+
+Watch live source/check status on stderr: RUNNING is emitted before the operation, followed by its result. Endpoint names/addresses distinguish concurrent work. To keep progress visible with JSON, redirect stdout only (`>discover.json`). Add `--log-level debug` for stage timing or `--log-level trace` for request/tool metadata; `2>discover.log` saves these messages instead of displaying them. Quiet suppresses progress.
 
 Next: [Collect from selected endpoints](#initial-inventory-collect).
 
@@ -191,6 +195,8 @@ Finally, the CLI checks collection and session-cleanup results, compares against
 Next: [Review saved results](#initial-inventory-inspect).
 
 ### 7. CLI machine: review inventory and reasons {#initial-inventory-inspect}
+
+The normal text summary shows the required-check result and named host/DPU mappings. It separates discovery blockers from later provisioning prerequisites and checks not requested. Repeated qualification/BOM gaps are grouped by affected sources; they do not mean a hardware failure was detected. Internal SHA identifiers remain in JSON/YAML for source/evidence links, not as operator-facing device names.
 
 Inspect `discovery.outcome`, `discovery.checks`, `errors`, `artifacts` and `acceptance` in the JSON report. Review saved `inventory.hosts`, `inventory.dpus`, `inventory.associations` and their evidence before using the handoff. Complete discovery writes `dpf-discovered.yaml`; partial discovery preserves an existing handoff and writes `partial.yaml` and `report.json` under `dpf-discovered.discovery/<run-id>/`. Use the report's artifact paths instead of guessing the run ID.
 
@@ -285,6 +291,8 @@ l8k discover --target dpf --user-config dpf-lookup.yaml \
 
 The selected endpoints undergo the same [identity and optional reads](#initial-inventory-collect) as first inventory. On the CLI machine, address lookup then reads the configured lease snapshots and matches the supplied MACs against those records and the neighbors returned by remote `ip -j neighbor show`. No candidate is contacted and no credential is sent to it.
 
+Watch live source/check status on stderr: RUNNING is emitted before the operation, followed by its result. Endpoint names/addresses distinguish concurrent work. To keep progress visible with JSON, redirect stdout only (`>discover.json`). Add `--log-level debug` for stage timing or `--log-level trace` for request/tool metadata; `2>discover.log` saves these messages instead of displaying them. Quiet suppresses progress.
+
 Next: [Candidate report available](#address-candidates-review).
 
 ### 4. CLI operator: review candidate addresses {#address-candidates-review}
@@ -345,6 +353,8 @@ l8k discover --target dpf --user-config dpf-discovered.yaml \
 ```
 
 A complete in-place refresh retains `source-before.yaml` before replacing inventory while preserving user sections, comments and input intent. A partial run leaves the original input unchanged and writes its new observations separately; it does not create this backup. Relative file references are rebased if saving elsewhere; private files are not copied. Avoid simultaneous external edits, and use real output directories rather than symlink aliases. Credentials, trust files and configured lease files cannot be used as output destinations.
+
+Watch live source/check status on stderr: RUNNING is emitted before the operation, followed by its result. Endpoint names/addresses distinguish concurrent work. To keep progress visible with JSON, redirect stdout only (`>discover.json`). Add `--log-level debug` for stage timing or `--log-level trace` for request/tool metadata; `2>discover.log` saves these messages instead of displaying them. Quiet suppresses progress.
 
 Next: [Refresh finished](#refresh-inventory-compare).
 

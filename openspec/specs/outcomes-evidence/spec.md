@@ -55,6 +55,14 @@ Output extensions SHALL preserve command-specific framing, existing public field
 - **WHEN** a new family is emitted
 - **THEN** existing result/report consumers retain existing families and can identify the added family without redefining older field meanings.
 
+#### Scenario: DPF operator-facing progress and results
+
+- **WHEN** DPF discovery runs with normal CLI output
+- **THEN** live operation/check status is emitted as work occurs on stderr, identifies the selected source by name/address, distinguishes running/passed/failed/unavailable states, and does not announce successful identity or cleanup before its required checks complete.
+- **AND** the final text summary distinguishes discovery blockers, later provisioning prerequisites and checks not requested; internal record/evidence hashes remain in structured artifacts rather than replacing source names.
+- **AND** JSON remains one final stdout document, quiet suppresses progress, and presentation changes preserve check states, evidence, acceptance and process exit status. A final output-write failure remains a command failure.
+- **AND** debug/trace uses the existing logging controls and bounded operation metadata; credentials, session tokens, raw vendor responses, SSH command output and secret-file contents are not logged.
+
 ### Requirement: Evidence existence and partial results
 
 An advertised report path SHALL identify an artifact that was successfully written. Extensions MUST safely handle partial initialization and retain useful failure evidence; unavailable reports SHALL be reported as unavailable rather than advertised as complete.
