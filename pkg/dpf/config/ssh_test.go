@@ -64,6 +64,19 @@ discovery:
 		Expect(string(out)).To(ContainSubstring("sudo: false"))
 		Expect(string(out)).NotTo(ContainSubstring("secret-canary"))
 	})
+	It("copies SSH endpoint names without changing the trust or identity scope", func() {
+		in, err := Decode([]byte(document), filepath.Join(dir, "site.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+		before, err := Resolve(in)
+		Expect(err).NotTo(HaveOccurred())
+		name := "Host A"
+		in.Site.Discovery.Hosts[0].Name = &name
+		after, err := Resolve(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after.Targets[0].Name).To(Equal(name))
+		Expect(after.Targets[0].DisplayName()).To(Equal(`"Host A" (ssh://host.example:22)`))
+		Expect(Scope(after.Targets[0])).To(Equal(Scope(before.Targets[0])))
+	})
 	It("rejects ambiguous transports, auth, invalid presence and management-mode SSH", func() {
 		for _, text := range []string{
 			strings.Replace(document, "ssh:", "bmcEndpoint: https://host.example\n      ssh:", 1),

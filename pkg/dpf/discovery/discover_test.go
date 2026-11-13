@@ -16,7 +16,7 @@ import (
 
 func TestDiscovery(t *testing.T) { RegisterFailHandler(Fail); RunSpecs(t, "DPF discovery checks") }
 func estate() inventory.Inventory {
-	return inventory.Inventory{Collection: inventory.Collection{Mode: "inventory"}, Management: &inventory.Management{APIEndpoint: "https://api.invalid", SystemNamespaceUID: "cluster-a", TrustDigest: "system-roots", KubernetesVersion: "v1", Nodes: []inventory.Node{{Name: "cp", UID: "node-a", Ready: true}}}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{{ID: "dpu-a", RecordKey: "a", SerialNumber: "CARD-A", ObservationState: "observed"}, {ID: "dpu-b", RecordKey: "b", SerialNumber: "CARD-B", ObservationState: "observed"}}, Hosts: []inventory.Device{{ObservationState: "observed", ID: "host-a", RecordKey: "host", Adapters: []inventory.Adapter{{Key: "adapter-a", SerialNumber: "CARD-A"}, {Key: "adapter-b", SerialNumber: "CARD-B"}, {Key: "adapter-c", SerialNumber: "CARD-C", Selection: "not-selected"}}}}, Associations: []inventory.Association{}}
+	return inventory.Inventory{Collection: inventory.Collection{Mode: "inventory"}, Management: &inventory.Management{APIEndpoint: "https://api.invalid", SystemNamespaceUID: "cluster-a", TrustDigest: "system-roots", KubernetesVersion: "v1", Nodes: []inventory.Node{{Name: "cp", UID: "node-a", Ready: true}}}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{{ID: "dpu-a", BMCEndpoint: "https://dpu-a.invalid", Model: "B4240", ReaderAdapter: "bluefield-card-v1", RecordKey: "a", SerialNumber: "CARD-A", ObservationState: "observed"}, {ID: "dpu-b", BMCEndpoint: "https://dpu-b.invalid", Model: "B4240", ReaderAdapter: "bluefield-card-v1", RecordKey: "b", SerialNumber: "CARD-B", ObservationState: "observed"}}, Hosts: []inventory.Device{{ObservationState: "observed", ID: "host-a", BMCEndpoint: "https://host.invalid", RecordKey: "host", Adapters: []inventory.Adapter{{Key: "adapter-a", SerialNumber: "CARD-A"}, {Key: "adapter-b", SerialNumber: "CARD-B"}, {Key: "adapter-c", SerialNumber: "CARD-C", Selection: "not-selected"}}}}, Associations: []inventory.Association{}}
 }
 
 var _ = Describe("inventory semantics", func() {
@@ -39,6 +39,58 @@ var _ = Describe("inventory semantics", func() {
 		Expect(a).To(BeEmpty())
 		Expect(c[0].State).To(Equal("failed"))
 	})
+	It("accepts NVIDIA or unknown adapter vendors without filtering mixed host inventory", func() {
+		for _, vendor := range []string{"15b3", ""} {
+			v := estate()
+			v.Hosts[0].Adapters[0].VendorID = vendor
+			v.Hosts[0].Adapters[2].VendorID = "8086"
+			before, err := json.Marshal(v.Hosts)
+			Expect(err).NotTo(HaveOccurred())
+			associations, checks := Correlate(v.DPUs, v.Hosts)
+			Expect(associations).To(HaveLen(2))
+			Expect(checks).To(ConsistOf(HaveField("State", "passed"), HaveField("State", "passed")))
+			after, err := json.Marshal(v.Hosts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after).To(Equal(before))
+		}
+	})
+	It("rejects a same-serial PCI vendor contradiction with both source evidence references", func() {
+		v := estate()
+		v.DPUs = v.DPUs[:1]
+		v.DPUs[0].EvidenceRefs = []string{"dpu-serial"}
+		v.Hosts[0].Adapters[0].VendorID = "8086"
+		v.Hosts[0].Adapters[0].EvidenceRefs = []string{"host-serial", "host-pci-vendor"}
+		before, err := json.Marshal(v)
+		Expect(err).NotTo(HaveOccurred())
+		associations, checks := Correlate(v.DPUs, v.Hosts)
+		Expect(associations).To(BeEmpty())
+		Expect(checks).To(HaveLen(1))
+		Expect(checks[0].State).To(Equal("failed"))
+		Expect(checks[0].ReasonCode).To(Equal("HOST_ADAPTER_VENDOR_CONFLICT"))
+		Expect(checks[0].EvidenceRefs).To(ConsistOf("dpu-serial", "host-serial", "host-pci-vendor"))
+		ExplainCheck(&checks[0])
+		Expect(checks[0].Message).To(ContainSubstring("Verify the selected endpoints"))
+		after, err := json.Marshal(v)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(Equal(before))
+	})
+	It("does not discard a contradictory candidate to accept another same-serial NVIDIA card", func() {
+		for _, reverse := range []bool{false, true} {
+			v := estate()
+			v.DPUs = v.DPUs[:1]
+			v.Hosts[0].Adapters[0].VendorID = "8086"
+			other := inventory.Device{ID: "host-b", RecordKey: "other-host", ObservationState: "observed", Adapters: []inventory.Adapter{{Key: "nvidia-card", SerialNumber: "CARD-A", VendorID: "15b3"}}}
+			if reverse {
+				v.Hosts = append([]inventory.Device{other}, v.Hosts...)
+			} else {
+				v.Hosts = append(v.Hosts, other)
+			}
+			associations, checks := Correlate(v.DPUs, v.Hosts)
+			Expect(associations).To(BeEmpty())
+			Expect(checks[0].ReasonCode).To(Equal("HOST_ADAPTER_VENDOR_CONFLICT"))
+			Expect(checks[0].State).To(Equal("failed"))
+		}
+	})
 	It("keeps fingerprints stable across order/time/readiness and changes them for identity", func() {
 		a := estate()
 		Canonicalize(&a)
@@ -52,6 +104,32 @@ var _ = Describe("inventory semantics", func() {
 		Canonicalize(&a)
 		Expect(a.Fingerprint).NotTo(Equal(first))
 	})
+	It("does not treat removal of legacy BMC metadata as a material or scope change", func() {
+		before, after := estate(), estate()
+		before.Evidence = map[string]inventory.Evidence{"old-bmc-ref": {Kind: "redfish", Authenticated: true}}
+		before.DPUs[0].EvidenceRefs = []string{"old-bmc-ref"}
+		before.Hosts[0].EvidenceRefs = []string{"old-bmc-ref"}
+		before.Hosts[0].Adapters[0].EvidenceRefs = []string{"old-bmc-ref"}
+		before.DPUs[0].Firmware = []inventory.Firmware{{Component: "bmc", State: "known", RawVersion: "1.0", Activation: "unknown", EvidenceRefs: []string{"old-bmc-ref"}}}
+		after.DPUs[0].Firmware = []inventory.Firmware{{Component: "bmc", State: "known", RawVersion: "1.0", Activation: "unknown"}}
+		before.Associations, _ = Correlate(before.DPUs, before.Hosts)
+		after.Associations, _ = Correlate(after.DPUs, after.Hosts)
+		Canonicalize(&before)
+		Canonicalize(&after)
+		Expect(after.Fingerprint).To(Equal(before.Fingerprint))
+		Expect(after.ScopeDigest).To(Equal(before.ScopeDigest))
+		Expect(Diff(&before, &after)).To(BeEmpty())
+	})
+	It("retains SSH host references when correlating with a BMC DPU without metadata", func() {
+		v := estate()
+		v.Hosts[0].SSHEndpoint = "ssh://192.0.2.1:22"
+		v.Hosts[0].Adapters[0].EvidenceRefs = []string{"ssh-host-card"}
+		v.DPUs[0].BMCEndpoint = "https://192.0.2.2"
+		associations, checks := Correlate(v.DPUs, v.Hosts)
+		Expect(associations).To(ContainElement(And(HaveField("DPUID", "dpu-a"), HaveField("EvidenceRefs", []string{"ssh-host-card"}))))
+		Expect(checks).To(ContainElement(And(HaveField("Subject", "a"), HaveField("State", "passed"))))
+	})
+
 	It("fingerprints Redfish PSID values and eligibility without diagnostic prose", func() {
 		before, after := estate(), estate()
 		before.DPUs[0].Observations = map[string]inventory.Observation{"psid": {State: "observed", Values: []string{"MT_0000001774"}, ReasonCode: "PSID_OBSERVED", Tool: "redfish", Message: "initial"}}

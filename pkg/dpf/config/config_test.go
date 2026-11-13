@@ -32,6 +32,25 @@ var _ = Describe("DPF input", func() {
 		Expect(os.Setenv("DPF_TEST_PASSWORD", " canary \n")).To(Succeed())
 		DeferCleanup(os.Unsetenv, "DPF_TEST_PASSWORD")
 	})
+	It("retains endpoint names for presentation without changing access scope", func() {
+		in, err := Decode([]byte(seed), "/site/input.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		before, err := Resolve(in)
+		Expect(err).NotTo(HaveOccurred())
+		name := "Rack A DPU"
+		in.Site.Discovery.DPUs[0].Name = &name
+		after, err := Resolve(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after.Targets[0].Name).To(Equal(name))
+		Expect(after.Targets[0].DisplayName()).To(Equal(`"Rack A DPU" (https://192.0.2.1)`))
+		Expect(Scope(after.Targets[0])).To(Equal(Scope(before.Targets[0])))
+	})
+	It("elides private URL components and escapes control characters in display labels", func() {
+		target := Target{Name: "Rack\nA\x1b", Endpoint: "https://user-canary:password-canary@host.example:443/private-path-canary?token=query-canary#fragment-canary"}
+		Expect(target.DisplayName()).To(Equal(`"Rack\nA\x1b" (https://host.example:443)`))
+		Expect(Target{Endpoint: "ssh://host.example:22"}.DisplayName()).To(Equal("ssh://host.example:22"))
+		Expect(Target{Endpoint: "invalid\nendpoint"}.DisplayName()).To(Equal("<invalid endpoint>"))
+	})
 	It("uses bounded defaults and keeps private values out of saved YAML", func() {
 		in, e := Decode([]byte(seed), "/site/input.yaml")
 		Expect(e).NotTo(HaveOccurred())

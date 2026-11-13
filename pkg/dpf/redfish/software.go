@@ -47,7 +47,7 @@ func unavailable(err error) inventory.Observation {
 	return inventory.Observation{State: "unavailable", ReasonCode: reason, Message: message}
 }
 
-func collectSoftware(ctx context.Context, reader Reader, root Document, system Resource, device *inventory.Device, add func(string, string) string) string {
+func collectSoftware(ctx context.Context, reader Reader, root Document, system Resource, device *inventory.Device) string {
 	if device.Observations == nil {
 		device.Observations = map[string]inventory.Observation{}
 	}
@@ -56,14 +56,14 @@ func collectSoftware(ctx context.Context, reader Reader, root Document, system R
 	device.Observations["managers"] = managerState
 	device.Time = inventory.TimeObservation{State: "unknown", ReasonCode: managerState.ReasonCode, Message: managerState.Message}
 	if managerState.State == "observed" {
-		collectManager(ctx, reader, manager, device, add)
+		collectManager(ctx, reader, manager, device)
 	} else {
 		device.Observations["bmc-time"], device.Observations["bmc-ntp"] = managerState, managerState
 	}
 	records, state := softwareInventory(ctx, reader, root)
 	device.Observations["firmware-inventory"] = state
 	for _, resource := range records {
-		firmware := firmwareRecord(resource, system.URI, manager.URI, device.BMCEndpoint, add)
+		firmware := firmwareRecord(resource, system.URI, manager.URI, device.BMCEndpoint)
 		device.Firmware = append(device.Firmware, firmware)
 	}
 	for _, component := range []string{"bmc", "cec", "atf", "uefi", "nic", "dpu-os", "dpu-bsp", "golden"} {
@@ -76,7 +76,7 @@ func collectSoftware(ctx context.Context, reader Reader, root Document, system R
 			if state.State == "observed" {
 				reason = missing("COMPONENT_NOT_EXPOSED", "The firmware inventory does not expose this component.")
 			}
-			device.Firmware = append(device.Firmware, inventory.Firmware{Component: component, State: "unknown", ReasonCode: reason.ReasonCode, Message: reason.Message, Activation: "unknown", ActivationReasonCode: "VERSION_UNAVAILABLE", ActivationMessage: "Activation cannot be established without the component observation.", EvidenceRefs: []string{}})
+			device.Firmware = append(device.Firmware, inventory.Firmware{Component: component, State: "unknown", ReasonCode: reason.ReasonCode, Message: reason.Message, Activation: "unknown", ActivationReasonCode: "VERSION_UNAVAILABLE", ActivationMessage: "Activation cannot be established without the component observation."})
 		}
 	}
 	return reconcileFirmware(device)
@@ -97,9 +97,9 @@ func softwareManager(ctx context.Context, reader Reader, root Document) (Resourc
 	return managers[0], inventory.Observation{State: "observed"}
 }
 
-func collectManager(ctx context.Context, reader Reader, manager Resource, device *inventory.Device, add func(string, string) string) {
+func collectManager(ctx context.Context, reader Reader, manager Resource, device *inventory.Device) {
 	if version := Text(manager.Document, "FirmwareVersion"); strings.TrimSpace(version) != "" {
-		device.Firmware = append(device.Firmware, inventory.Firmware{ResourceURI: manager.URI, Component: "bmc", State: "known", RawVersion: version, Activation: "unknown", ActivationReasonCode: "ACTIVATION_NOT_EXPOSED", ActivationMessage: "Manager firmware metadata does not identify an active software inventory image.", EvidenceRefs: []string{add(manager.URI, "FirmwareVersion")}})
+		device.Firmware = append(device.Firmware, inventory.Firmware{ResourceURI: manager.URI, Component: "bmc", State: "known", RawVersion: version, Activation: "unknown", ActivationReasonCode: "ACTIVATION_NOT_EXPOSED", ActivationMessage: "Manager firmware metadata does not identify an active software inventory image."})
 	}
 	datetime := Text(manager.Document, "DateTime")
 	state := missing("PROPERTY_NOT_EXPOSED", "The manager does not expose DateTime.")
@@ -112,7 +112,6 @@ func collectManager(ctx context.Context, reader Reader, manager Resource, device
 		} else {
 			device.Time.DateTime, device.Time.Offset = datetime, Text(manager.Document, "DateTimeLocalOffset")
 			state = inventory.Observation{State: "observed"}
-			add(manager.URI, "DateTime")
 		}
 	}
 	device.Time.State, device.Time.ReasonCode, device.Time.Message = state.State, state.ReasonCode, state.Message
@@ -152,7 +151,6 @@ func collectManager(ctx context.Context, reader Reader, manager Resource, device
 			if hasEnabled && validServers {
 				state = inventory.Observation{State: "observed"}
 			}
-			add(uri, "NTP")
 		}
 	}
 	device.Observations["bmc-ntp"] = state
@@ -189,12 +187,20 @@ func componentName(id, name string) string {
 	}
 	// Prefer a recognizable stable ID, then the display name; golden must precede
 	// component aliases because a golden BMC image is not the running BMC image.
+	// Keep explicitly identified BMC and CPU ERoTs separate from each other
+	// and from BMC firmware. An ERoT name alone does not identify CEC firmware.
 	for _, raw := range []string{id, name} {
 		s := normalize(raw)
 		words := "-" + s + "-"
 		switch {
 		case strings.Contains(words, "-golden-"):
 			return "golden"
+		case strings.Contains(words, "-erot-") && strings.Contains(words, "-bmc-") && !strings.Contains(words, "-cpu-"):
+			return "bmc-erot"
+		case strings.Contains(words, "-erot-") && strings.Contains(words, "-cpu-") && !strings.Contains(words, "-bmc-"):
+			return "cpu-erot"
+		case strings.Contains(words, "-erot-"):
+			return "erot"
 		case strings.Contains(words, "-bmc-"):
 			return "bmc"
 		case strings.Contains(words, "-cec-"):
@@ -216,8 +222,8 @@ func componentName(id, name string) string {
 	return "other"
 }
 
-func firmwareRecord(resource Resource, system, manager, origin string, add func(string, string) string) inventory.Firmware {
-	f := inventory.Firmware{ResourceURI: resource.URI, RawID: Text(resource.Document, "Id"), RawName: Text(resource.Document, "Name"), RawVersion: Text(resource.Document, "Version"), State: "known", Activation: "unknown", ActivationReasonCode: "ACTIVATION_NOT_EXPOSED", ActivationMessage: "No explicit active or staged target link identifies the selected device.", EvidenceRefs: []string{add(resource.URI, "Id,Name,Version")}}
+func firmwareRecord(resource Resource, system, manager, origin string) inventory.Firmware {
+	f := inventory.Firmware{ResourceURI: resource.URI, RawID: Text(resource.Document, "Id"), RawName: Text(resource.Document, "Name"), RawVersion: Text(resource.Document, "Version"), State: "known", Activation: "unknown", ActivationReasonCode: "ACTIVATION_NOT_EXPOSED", ActivationMessage: "No explicit active or staged target link identifies the selected device."}
 	f.Component = componentName(f.RawID, f.RawName)
 	if strings.TrimSpace(f.RawVersion) == "" {
 		f.State, f.ReasonCode, f.Message = "unknown", "VERSION_NOT_EXPOSED", "This firmware entry does not expose a nonempty Version."
@@ -289,7 +295,6 @@ func firmwareRecord(resource Resource, system, manager, origin string, add func(
 			f.Activation = "staged"
 		}
 		f.ActivationReasonCode, f.ActivationMessage = "", ""
-		f.EvidenceRefs = append(f.EvidenceRefs, add(resource.URI, "Links.ActiveTargets,Links.StagedTargets"))
 	} else if active {
 		f.ActivationReasonCode, f.ActivationMessage = "ACTIVATION_CONFLICT", "The selected target is reported as both active and staged."
 	}
@@ -299,7 +304,8 @@ func firmwareRecord(resource Resource, system, manager, origin string, add func(
 func reconcileFirmware(device *inventory.Device) string {
 	versions := map[string]map[string]bool{}
 	for _, f := range device.Firmware {
-		if f.State != "known" || f.Activation == "staged" || f.Component == "other" {
+		// Generic identities cannot establish that entries describe one component.
+		if f.State != "known" || f.Activation == "staged" || f.Component == "other" || f.Component == "erot" {
 			continue
 		}
 		if versions[f.Component] == nil {

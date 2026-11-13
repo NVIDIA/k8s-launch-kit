@@ -328,6 +328,37 @@ from completed discovery. Deployment independently verifies live DPF authenticat
 and provisioning prerequisites; saved facts do not authorize provisioning. The
 root DPF pipeline remains unavailable.
 
+Inventory `v1alpha3` has a versioned public projection for both host and DPU
+records; internal collector/check APIs keep their existing domain state. Public
+facts use dedicated fields: identity, PSID, administrator verification, runtime
+versions, per-card firmware/PSID, next-boot settings and host privileges. Named
+DPU firmware components retain version/activation; raw vendor metadata and
+command output are not serialized. `issues` carries only failures, mismatches
+and unavailable facts, with field/code/message/tool rather than a generic
+state/value wrapper. ID is exported only for an eligible final identity.
+Version-aware decoding preserves these authority boundaries and rejects
+contradictions. Legacy `v1alpha1` and `v1alpha2` remain readable without inferring
+missing success. Required report check results and qualification boundaries stay
+separate from compact device facts.
+
+The public software BOM is a projection of the internal release catalog:
+operator/component coordinates, exact hardware applicability, BFB version/URL
+and known digest, plus fixed named minimum fields. Missing minima reconstruct
+unknown requirements for compatibility checks; decoding uses saved coordinates
+rather than current catalog defaults. Catalog sources/revisions, generic
+requirements and static limitation prose stay internal. Host BMC collection is
+limited to identity, PCI mapping and advertised reset capabilities; DPU ERoT and
+BMC firmware remain distinct components.
+
+Host/DPU records do not create evidence tables or reference lists, regardless of
+transport. Mandatory live reads, identity and PSID rereads, administrator checks,
+cleanup and publication remain unchanged. Management/probe evidence retains its
+own contract. The public `scopeDigest` guards resolved refresh endpoints/trust;
+`requestedScope` and its detailed policy bookkeeping stay internal. Material
+fingerprints compare the public fact projection so removed provenance does not
+create false changes. Refresh preserves source backups and existing stable
+physical identity/scope conflict guards.
+
 ### Stage 4: DPF generation for Zero Trust passthrough
 
 - enable `l8k generate --target dpf`;

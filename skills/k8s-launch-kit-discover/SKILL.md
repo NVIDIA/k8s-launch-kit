@@ -13,6 +13,30 @@ metadata:
 
 For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
 
+DPF live check status goes to stderr as operations run, including with JSON output;
+quiet suppresses progress. Human summaries show configured names/addresses and
+host/DPU mappings, separating discovery blockers from later prerequisites and
+checks not requested. Both host and DPU results use named facts and an `issues`
+list (`field`, `code`, safe `message`, optional `tool`) for failures, mismatches
+and unavailable facts. Generic observations, successful per-value state, raw
+firmware/command dumps and device evidence references are omitted. Review `id`,
+`psid` and `bmcAdministratorVerified`; missing identity/authorization is not success.
+SSH card readings use `runtime.hardware.cards`, including `firmwareVersion`,
+`psid`, `nextBoot` settings and `hostPrivileges`; next-boot settings do not prove
+running mode. DPU firmware uses named component version lists with activation
+when known. Host BMC reads retain identity, adapters and reset types.
+`inventory.software` retains artifact coordinates and named documented minima,
+without source/revision lists or generic requirements. Missing minima remain
+unknown. `scopeDigest` guards the configured refresh scope/trust policy; the
+inventory does not repeat `requestedScope`. Management/probe source metadata and
+report check outcomes remain intact. New format is `v1alpha3`; legacy `v1alpha1`
+and `v1alpha2` remain readable without inferring missing verification.
+Add `--log-level debug` for source/stage timing, or `trace` for bounded request/tool
+metadata. Redirecting stderr hides live progress in the selected file. Never dump
+credentials or raw HTTP/SSH payloads to diagnose access. Password references can
+use an injected environment variable or an owner-only secret file; neither puts
+the resolved secret into inventory. See the guide for the tradeoffs and syntax.
+
 SSH requires explicit credential references and known-hosts trust; it never inherits
 Redfish TLS bypass, ambient keys or SSH configuration. ARM-local IPMI can report a
 BMC address but does not authorize connecting to it. A failed selected source is
@@ -25,9 +49,23 @@ and its linked role must grant all five standard Administrator privileges; names
 alone and OEM-only roles are insufficient. Missing or denied evidence fails closed.
 Discovery never changes passwords or tests privilege with a write.
 
-Supported BF4/B4240 Redfish discovery saves `inventory.dpus[].observations.psid`
-from System AssetTag, then the identity-selected chassis fallback, with Redfish
-property evidence and source rereads. Missing/N/A stays unknown. Invalid,
+The owned session must expose a matching effective role, or positively establish
+local authentication through its trusted local `UserAuthenticationSource`.
+The current `LocalAccountAuth: Enabled` policy alone does not prove the origin
+of an existing session. Disabled local authentication and explicitly external
+sources fail. Fallback/LocalFirst modes require an explicit local session source.
+Missing mode/source plus missing Roles is unverifiable; a same-named local
+administrator or absent LDAP configuration cannot substitute for session proof.
+
+Host/card correlation also rejects an exposed non-NVIDIA PCI vendor on any
+same-serial candidate (`HOST_ADAPTER_VENDOR_CONFLICT`). Inspect endpoint and
+serial/PCI evidence before rerunning; do not edit inventory or discard a
+contradictory candidate to force a match. Missing vendor information remains
+unknown, and unrelated mixed-vendor host adapters remain in inventory.
+
+Supported BF4/B4240 Redfish discovery saves `inventory.dpus[].psid`
+for successful reads from System AssetTag, then the identity-selected chassis fallback, with authenticated
+reads and final source rereads. Missing/N/A stays unknown. Invalid,
 conflicting, changed or failed-recheck PSIDs stay unavailable; a consumer requiring
 PSID must reject those states rather than inventing Runtime/SSH evidence or
 copying another card's PSID. This optional fact does not change inventory acceptance.
@@ -53,8 +91,8 @@ DPF BMC TLS verification defaults to enabled. For an explicitly requested lab
 bypass, set the endpoint's `tls.insecureSkipVerify: true`; the shared
 `discovery.tls` policy also supports it. An endpoint `tls` block replaces that
 policy, including an explicit `false`. Do not combine `caFile` with `true`.
-Retain stderr warnings and `inventory.requestedScope[].tlsInsecureSkipVerify` in
-the report. A policy change requires a fresh seed/output; it does not weaken
+Retain stderr warnings and the configured `discovery` TLS policy; the saved
+`inventory.scopeDigest` guards that policy during refresh. A policy change requires a fresh seed/output; it does not weaken
 management kubeconfig or network-probe TLS verification.
 Redfish login prefers the public root's `Links.Sessions`, including standard
 HPE trailing-slash links. A protected `SessionService` GET is not required when

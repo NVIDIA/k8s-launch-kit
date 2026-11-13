@@ -161,6 +161,17 @@ An inventory extension MUST cover fresh discovery and existing-config refresh. R
 
 New and changed discovery checks SHALL retain a stable reason code and safe human-readable explanation for failed, unavailable, unknown, skipped and deferred outcomes. Where known, the observation SHALL identify its subject, vantage, tool or resource, and provenance. Missing tools, denied access, malformed output, timeout, absent properties, unsupported capabilities and conflicts MUST NOT collapse into an unexplained not-measured result. Optional failures SHALL remain separate from required physical identity and association failures.
 
+#### Scenario: Typed DPF device results
+
+- **WHEN** DPF inventory is serialized as `v1alpha3`
+- **THEN** both host and DPU records publish available facts through dedicated domain fields and failures, mismatches and unavailable facts through `issues` entries with `field`, `code`, safe `message` and `tool` where known. Generic observation maps, successful per-value state, raw command strings, vendor firmware dumps and source-reference bookkeeping are omitted.
+- **AND** verified PSID, BMC administrator authorization, firmware enumeration completeness, runtime tool versions, per-card firmware/PSID, next-boot configuration and host privileges use named typed fields. Firmware versions retain known running/staged activation, and ERoT firmware remains distinct from BMC firmware.
+- **AND** a public device `id` requires successful final identity rechecks; failed candidate serial/model context does not become an eligible identity. Absence of a fact or diagnostic does not establish authorization or readiness.
+- **AND** version-aware decoding rejects contradictory facts and preserves identity, authorization, software-check and refresh semantics. Legacy `v1alpha1` and `v1alpha2` remain readable conservatively without promoting absent status to verified identity.
+- **AND** host BMC collection retains identity, PCI mappings and advertised reset types without general firmware/time inventory or DPU-only component placeholders.
+- **AND** the release BOM retains operator/component artifact coordinates, exact hardware applicability, BFB version/URL/known digest and named documented minimum fields. Omitted minima remain unknown; a BFB target never becomes a measured OS/BSP version. Catalog source/revision lists, generic requirement objects and static limitation prose are not exported or silently substituted from newer catalog defaults.
+- **AND** saved `scopeDigest` continues to guard resolved endpoint/trust selection for refresh without exporting a duplicate `requestedScope` list; removal of private provenance alone is not a material inventory change.
+
 #### Scenario: Firmware tool is absent
 
 - **WHEN** an SSH endpoint lacks an executable needed for an optional firmware observation
@@ -171,10 +182,16 @@ New and changed discovery checks SHALL retain a stable reason code and safe huma
 - **WHEN** an installed tool cannot read a restricted device
 - **THEN** the collector retains an access/query failure rather than claiming the tool is missing or the hardware absent, without changing privilege settings.
 
+#### Scenario: DPF serial match contradicts host PCI vendor
+
+- **WHEN** a same-serial host adapter exposes a non-NVIDIA PCI vendor for a discovered BlueField DPU
+- **THEN** the required association fails with a specific vendor-conflict reason and retains both identity sources and PCI evidence; discovery remains partial and preserves the prior complete handoff.
+- **AND** a contradictory candidate cannot be discarded to accept another same-serial match. Missing vendor information remains unknown, and unrelated mixed-vendor adapters remain in host inventory.
+
 #### Scenario: Supported BF4 Redfish PSID sources
 
 - **WHEN** the supported BF4 reader establishes physical identity and reads System/chassis AssetTags
-- **THEN** it persists a typed `observations.psid` Redfish fact, preferring System and falling back to the identity-selected chassis, with authenticated source-property evidence and no fabricated SSH/runtime data.
+- **THEN** it persists a typed `psid` Redfish fact on success, or an `issues` entry for `field: psid` on failure, preferring System and falling back to the identity-selected chassis, with authenticated reads and no fabricated SSH/runtime data.
 - **AND** absent/null/empty/N/A stays unknown; malformed or contradictory values remain unavailable, and any source-field change or failed required recheck prevents an observed value. Optional PSID gaps do not erase physical identity or independently fail discovery.
 - **AND** the PSID fact and eligibility affect inventory fingerprint/diff; consumers requiring PSID must reject invalid/conflicting selected-source evidence and require one observed identifier.
 
@@ -192,16 +209,31 @@ Address lookup SHALL operate only on explicit MAC selectors and bounded declared
 - **WHEN** a configured lease file is absent, unreadable, oversized or malformed
 - **THEN** its unavailable result retains a safe reason and it contributes no candidates; other source evidence remains separately visible.
 
+#### Scenario: Host/DPU facts without evidence-reference bookkeeping
+
+- **WHEN** discovery collects host or DPU inventory through Redfish or SSH
+- **THEN** published device records retain named facts and field-specific issues without device evidence records/references or raw vendor source metadata, including complete and partial artifacts.
+- **AND** removal of metadata does not remove any authentication, administrator, identity, association, firmware activation, PSID reread, cleanup or publication check. Report checks retain their result states and reasons.
+- **AND** legacy inventories containing device source metadata remain readable; refreshed facts replace that metadata without changing material fingerprints solely because the metadata is absent. Original source backups remain unchanged.
+- **AND** management, address-lookup and connectivity-probe source contracts remain independent.
+
 ### Requirement: DPU BMC administrator evidence
 
 DPF discovery SHALL require read-only evidence that each discovered DPU BMC's
-authenticated local account has the full standard Administrator privilege set.
+authenticated session has the full standard Administrator privilege set, with a
+uniquely matching local account and verified account state.
 It SHALL bind the session username to its advertised own account and linked role,
 or identify one matching account from a complete bounded collection,
 verify enabled/unlocked/no-password-change state, and reject missing, denied,
 malformed, unsafe or inconsistent evidence. Custom roles with the complete standard
 privilege set SHALL be accepted; username, role name and OEM privilege names alone
 MUST NOT substitute. Host-only and ARM-only observations SHALL remain partial.
+
+#### Scenario: External authentication collides with a local account
+
+- **WHEN** a session username matches a local administrator but effective-role or local-authentication evidence is absent or contradictory
+- **THEN** discovery fails the administrator check as unverifiable, retains physical observations and preserves the prior complete handoff.
+- **AND** matching session Roles or an explicit trusted local session UserAuthenticationSource is required; username equality, current LocalAccountAuth Enabled policy and absent external-provider settings do not prove an existing session's origin. Disabled local authentication and explicit external session sources remain unsupported; Fallback/LocalFirst require an explicit trusted local session source. Malformed exposed fields cannot use an absence fallback.
 
 #### Scenario: Administrator authorization cannot be established
 

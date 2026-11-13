@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type Document map[string]any
@@ -59,6 +61,7 @@ type Resource struct {
 	Document Document
 }
 type Client struct {
+	label                  string
 	origin                 string
 	http                   *http.Client
 	access                 config.Access
@@ -76,7 +79,35 @@ func New(target config.Target, timeout time.Duration) *Client {
 	transport.TLSClientConfig = target.Access.TLSConfig()
 	transport.TLSHandshakeTimeout = timeout
 	transport.ResponseHeaderTimeout = timeout
-	return &Client{origin: target.Endpoint, access: target.Access, http: &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &Client{label: target.DisplayName(), origin: target.Endpoint, access: target.Access, http: &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+}
+
+// Resource categories carry useful request metadata without exposing account
+// names, session IDs, opaque member identifiers or pagination tokens.
+func requestCategory(ref string) string {
+	u, err := url.Parse(ref)
+	if err != nil || !strings.HasPrefix(u.Path, "/redfish/v1/") {
+		return "other"
+	}
+	first, _, _ := strings.Cut(strings.TrimPrefix(u.Path, "/redfish/v1/"), "/")
+	switch first {
+	case "":
+		return "service-root"
+	case "SessionService":
+		return "session-service"
+	case "AccountService":
+		return "account-service"
+	case "Systems":
+		return "systems"
+	case "Chassis":
+		return "chassis"
+	case "Managers":
+		return "managers"
+	case "UpdateService":
+		return "update-service"
+	default:
+		return "other"
+	}
 }
 func (c *Client) guard(ref string) (string, error) {
 	u, e := url.Parse(ref)
@@ -106,7 +137,16 @@ func (c *Client) guard(ref string) (string, error) {
 	return u.String(), nil
 }
 func (c *Client) request(ctx context.Context, method, ref string, body []byte) (doc Document, headers http.Header, err error) {
+	started := time.Now()
+	status := 0
+	logger := log.FromContext(ctx)
+	logger.V(2).Info("Redfish request started", "method", method, "resource", requestCategory(ref))
 	defer func() {
+		reason := ""
+		if err != nil {
+			reason = Code(err)
+		}
+		logger.V(2).Info("Redfish request completed", "method", method, "resource", requestCategory(ref), "httpStatus", status, "reasonCode", reason, "duration", time.Since(started))
 		var failure *Error
 		if errors.As(err, &failure) {
 			failure.Method = method
@@ -145,6 +185,7 @@ func (c *Client) request(ctx context.Context, method, ref string, body []byte) (
 		return nil, nil, &Error{Code: "TRANSPORT_FAILED", URI: uri}
 	}
 	defer response.Body.Close()
+	status = response.StatusCode
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		code := "HTTP_FAILED"
 		if response.StatusCode == 401 {
@@ -279,8 +320,28 @@ func (c *Client) Open(ctx context.Context) (Document, error) {
 	c.sessionUncertain = false
 	return root, nil
 }
-func (c *Client) Close(ctx context.Context) error {
-	defer func() { c.token = ""; c.http.CloseIdleConnections() }()
+func (c *Client) Close(ctx context.Context) (err error) {
+	started := time.Now()
+	attempted := c.session != "" || c.sessionUncertain
+	if attempted {
+		ui.FromContext(ctx).Info("[RUNNING] %s: Redfish session cleanup", c.label)
+	}
+	defer func() {
+		c.token = ""
+		c.http.CloseIdleConnections()
+		state, reason := "complete", ""
+		if err != nil {
+			state, reason = "incomplete", Code(err)
+		}
+		log.FromContext(ctx).V(1).Info("Redfish session cleanup completed", "state", state, "attempted", attempted, "reasonCode", reason, "duration", time.Since(started))
+		if attempted {
+			if err != nil {
+				ui.FromContext(ctx).Info("[FAIL] %s: Redfish session cleanup (%s)", c.label, reason)
+			} else {
+				ui.FromContext(ctx).Info("[PASS] %s: Redfish session cleanup completed", c.label)
+			}
+		}
+	}()
 	if c.session != "" {
 		_, _, err := c.request(ctx, http.MethodDelete, c.session, nil)
 		return err

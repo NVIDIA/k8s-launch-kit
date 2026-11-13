@@ -191,12 +191,12 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 			req, err := config.Resolve(input)
 			Expect(err).NotTo(HaveOccurred())
 			d, evidence, err := (Collector{}).Collect(context.Background(), req.Targets[0], time.Second)
+			expectNoRedfishEvidence(d, evidence)
 			if scenario.code == "" {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(d.ObservationState).To(Equal("observed"))
 				Expect(d.SerialNumber).To(Equal("CARD-A"))
 				Expect(d.Model).To(Equal("B4240"))
-				Expect(evidence).NotTo(BeEmpty())
 				if strings.HasPrefix(scenario.name, "PSID ") {
 					expected := "PSID_OBSERVED"
 					switch scenario.name {
@@ -216,9 +216,7 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 					Expect(cardReads).To(Equal(2))
 					if expected == "PSID_OBSERVED" {
 						Expect(o.Values).To(Equal([]string{"MT_0000001774"}))
-						Expect(d.EvidenceRefs).To(ContainElement(Satisfy(func(ref string) bool {
-							return evidence[ref].Kind == "redfish" && evidence[ref].Property == "AssetTag" && evidence[ref].Authenticated
-						})))
+
 					} else {
 						Expect(o.Values).To(BeEmpty())
 					}

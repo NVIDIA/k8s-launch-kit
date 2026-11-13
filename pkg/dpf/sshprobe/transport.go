@@ -14,11 +14,13 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const maxOutput = 1 << 20
@@ -130,7 +132,17 @@ func preferredHostKeyAlgorithms(ctx context.Context, data []byte, verify ssh.Hos
 	return result, nil
 }
 
-func connect(ctx context.Context, endpoint string, auth credentials, timeout time.Duration) (*client, error) {
+func connect(ctx context.Context, endpoint string, auth credentials, timeout time.Duration) (connected *client, err error) {
+	started := time.Now()
+	logger := log.FromContext(ctx)
+	logger.V(2).Info("SSH connection negotiation started")
+	defer func() {
+		reason := ""
+		if err != nil {
+			reason = Code(err)
+		}
+		logger.V(2).Info("SSH connection negotiation completed", "reasonCode", reason, "duration", time.Since(started))
+	}()
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "ssh" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Hostname() == "" || u.Port() == "" || timeout <= 0 {
 		return nil, &Error{Code: "SSH_CONFIGURATION_INVALID", Stage: "endpoint"}
@@ -196,9 +208,9 @@ func connect(ctx context.Context, endpoint string, auth credentials, timeout tim
 	return &client{ssh: ssh.NewClient(cc, channels, requests), stop: stop, timeout: timeout}, nil
 }
 
-func (c *client) Close() {
+func (c *client) Close() error {
 	c.stop()
-	_ = c.ssh.Close()
+	return c.ssh.Close()
 }
 
 type commandOutput struct {
@@ -227,7 +239,20 @@ func (w outputWriter) Write(p []byte) (int, error) {
 	return o.stdout.Write(p)
 }
 
-func (c *client) Run(ctx context.Context, stage, command string) (string, error) {
+func (c *client) Run(ctx context.Context, stage, command string) (text string, err error) {
+	started := time.Now()
+	// Stage suffixes contain per-device identifiers; commands and remote output
+	// are intentionally excluded, including on failure.
+	name, _, _ := strings.Cut(stage, ":")
+	logger := log.FromContext(ctx)
+	logger.V(2).Info("SSH command stage started", "stage", name, "tool", commandTool(command))
+	defer func() {
+		reason := ""
+		if err != nil {
+			reason = Code(err)
+		}
+		logger.V(2).Info("SSH command stage completed", "stage", name, "tool", commandTool(command), "reasonCode", reason, "duration", time.Since(started))
+	}()
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	// Closing the connection also interrupts NewSession/Start if the server stops

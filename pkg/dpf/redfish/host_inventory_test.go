@@ -68,7 +68,7 @@ var _ = Describe("host inventory ownership and partial identity", func() {
 		defer closeServer()
 		system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
 		Expect(err).NotTo(HaveOccurred())
-		cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true, func(uri, prop string) string { return uri + "#" + prop })
+		cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cards).To(HaveLen(3))
 		Expect(cards[0].SerialNumber).To(Equal("DPU-A"))
@@ -77,7 +77,7 @@ var _ = Describe("host inventory ownership and partial identity", func() {
 		Expect(cards[0].VendorID).To(Equal("15b3"))
 		Expect(cards[0].DeviceID).To(Equal("a2df"))
 		Expect(cards[0].IdentityState).To(Equal("known"))
-		Expect(cards[0].EvidenceRefs).To(ContainElement("/redfish/v1/Systems/host/PCIDevices/dpu#DeviceResourceId"))
+		Expect(cards[0].EvidenceRefs).To(BeNil())
 		Expect(cards[2].SerialNumber).To(BeEmpty())
 		Expect(cards[2].ReasonCode).To(Equal("CARD_SERIAL_MISSING"))
 		Expect(cards[2].IdentityState).To(Equal("unknown"))
@@ -92,7 +92,7 @@ var _ = Describe("host inventory ownership and partial identity", func() {
 			c, closeServer := graphClient(docs, nil)
 			system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
 			Expect(err).NotTo(HaveOccurred())
-			cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true, func(uri, prop string) string { return uri + "#" + prop })
+			cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true)
 			closeServer()
 			Expect(err).NotTo(HaveOccurred())
 			found := false
@@ -121,7 +121,7 @@ var _ = Describe("host inventory ownership and partial identity", func() {
 			c, closeServer := graphClient(docs, nil)
 			system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
 			Expect(err).NotTo(HaveOccurred())
-			cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, hostID, true, func(uri, prop string) string { return uri + "#" + prop })
+			cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, hostID, true)
 			closeServer()
 			Expect(err).NotTo(HaveOccurred())
 			for _, card := range cards {
@@ -141,7 +141,7 @@ var _ = Describe("host inventory ownership and partial identity", func() {
 		defer closeServer()
 		system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
 		Expect(err).NotTo(HaveOccurred())
-		cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true, func(uri, prop string) string { return uri + "#" + prop })
+		cards, err := collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true)
 		Expect(err).NotTo(HaveOccurred())
 		for _, card := range cards {
 			Expect(card.SerialNumber).NotTo(Equal("DPU-A"))
@@ -158,7 +158,7 @@ var _ = Describe("host inventory ownership and partial identity", func() {
 			c, closeServer := graphClient(docs, nil)
 			system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
 			Expect(err).NotTo(HaveOccurred())
-			_, err = collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true, func(uri, prop string) string { return uri + "#" + prop })
+			_, err = collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true)
 			Expect(err).To(HaveOccurred())
 			if duplicateID {
 				Expect(Code(err)).To(Equal("ADAPTER_PCI_AMBIGUOUS"))
@@ -177,8 +177,26 @@ var _ = Describe("host inventory ownership and partial identity", func() {
 		defer closeServer()
 		system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
 		Expect(err).NotTo(HaveOccurred())
-		_, err = collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true, func(uri, prop string) string { return uri + "#" + prop })
+		_, err = collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true)
 		Expect(Code(err)).To(Equal("IDENTITY_CHANGED"))
+	})
+	It("still rechecks the owned System PCI join and vendor identity without reference metadata", func() {
+		for _, field := range []string{"DeviceResourceId", "VendorID"} {
+			c, closeServer := graphClient(hostGraph(), func(uri string, reads int, doc Document) {
+				if uri == "/redfish/v1/Systems/host/PCIDevices/dpu" && reads > 1 {
+					if field == "DeviceResourceId" {
+						doc[field] = "different-card"
+					} else {
+						doc[field] = 0x8086
+					}
+				}
+			})
+			system, err := c.Get(context.Background(), "/redfish/v1/Systems/host")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = collectHostAdapters(context.Background(), c, Resource{URI: "/redfish/v1/Systems/host", Document: system}, "host-a", true)
+			Expect(Code(err)).To(Equal("IDENTITY_CHANGED"))
+			closeServer()
+		}
 	})
 	It("does not guess a PCI domain or address when components are unavailable", func() {
 		Expect(hpePCIAddress(Document{"BusNumber": float64(42)})).To(BeEmpty())

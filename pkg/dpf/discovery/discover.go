@@ -17,7 +17,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type ProbeRunner interface {
@@ -36,7 +39,15 @@ func NewReport() inventory.Report {
 	return inventory.Report{SchemaVersion: inventory.FormatVersion, Target: "dpf", Phase: "discover", Execution: "completed", Acceptance: "not-evaluated", Discovery: inventory.Discovery{Outcome: "invalid", Checks: []inventory.Check{}, Cleanup: inventory.Cleanup{State: "complete", Leftovers: []string{}}}, Diff: []inventory.Change{}, PendingInputs: []inventory.Problem{}, Artifacts: []inventory.Artifact{}, Errors: []inventory.Problem{}}
 }
 func Collect(ctx context.Context, r config.Request, runID string, deps Dependencies) inventory.Report {
+	started := time.Now()
+	logger := log.FromContext(ctx).WithName("dpf.discovery")
+	ctx = log.IntoContext(ctx, logger)
+	output := ui.FromContext(ctx)
 	report := NewReport()
+	logger.V(1).Info("DPF discovery started", "mode", r.Mode, "endpointCount", len(r.Targets))
+	defer func() {
+		logger.V(1).Info("DPF discovery completed", "outcome", report.Discovery.Outcome, "execution", report.Execution, "cleanupState", report.Discovery.Cleanup.State, "problemCount", len(report.Errors), "duration", time.Since(started))
+	}()
 	report.Discovery.Mode = r.Mode
 	inv := &inventory.Inventory{FormatVersion: inventory.FormatVersion, Collection: inventory.Collection{RunID: runID, StartedAt: time.Now().UTC(), Mode: r.Mode, Collector: "l8k-go-discovery-v1"}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{}, Hosts: []inventory.Device{}, Associations: []inventory.Association{}, Evidence: map[string]inventory.Evidence{}}
 	report.Inventory = inv
@@ -83,13 +94,21 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		wg.Add(1)
 		go func(i int, t config.Target) {
 			defer wg.Done()
+			endpointLogger := logger.WithValues("endpoint", t.DisplayName(), "role", t.Role, "sourceIndex", i+1)
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
 				devices[i] = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{t.Role, t.Endpoint, t.SystemURI}), InputRef: t.InputRef, BMCEndpoint: t.Endpoint, ObservationState: "unavailable", ReasonCode: "CANCELLED"}
+				endpointLogger.V(1).Info("Endpoint observation not started", "reasonCode", "CANCELLED")
 				return
 			}
+			endpointStarted := time.Now()
+			endpointLogger.V(1).Info("Endpoint observation started")
+			defer func() {
+				d := devices[i]
+				endpointLogger.V(1).Info("Endpoint observation completed", "identityState", d.ObservationState, "identityEstablished", d.ID != "", "reasonCode", d.ReasonCode, "duration", time.Since(endpointStarted))
+			}()
 			collector := deps.BMC
 			if t.SSH != nil {
 				collector = deps.SSH
@@ -150,7 +169,13 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	if !requestedDPUs {
 		inv.DPUs = HostCards(inv.Hosts)
 	}
+	output.Info("[RUNNING] Host/DPU physical association")
 	inv.Associations, report.Discovery.Checks = Correlate(inv.DPUs, inv.Hosts)
+	if len(inv.Associations) == len(inv.DPUs) && len(inv.DPUs) > 0 {
+		output.Info("[PASS] Host/DPU physical association: %d unique matches", len(inv.Associations))
+	} else {
+		output.Info("[FAIL] Host/DPU physical association: %d/%d uniquely matched", len(inv.Associations), len(inv.DPUs))
+	}
 	selected := map[string]bool{}
 	for _, a := range inv.Associations {
 		selected[a.HostAdapterKey] = true
@@ -203,6 +228,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 			report.Errors = append(report.Errors, inventory.Problem{Code: "MANAGEMENT_SCOPE_CHANGED", Message: "management identity or node membership changed during collection", ExitCode: 3})
 		}
 	}
+	output.Info("[RUNNING] Required discovery checks")
 	report.Discovery.Checks = append(report.Discovery.Checks, ProbeChecks(inv, r.Targets)...)
 	for _, d := range append(slices.Clone(inv.DPUs), inv.Hosts...) {
 		addCheck("dpf.device.identity", d.RecordKey, d.ID != "" && d.ObservationState == "observed", "PHYSICAL_IDENTITY_REQUIRED", d.EvidenceRefs, "discover")
@@ -233,7 +259,16 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	}
 	report.Discovery.Checks = append(report.Discovery.Checks, SoftwareChecks(inv)...)
 	for i := range report.Discovery.Checks {
-		ExplainCheck(&report.Discovery.Checks[i])
+		check := &report.Discovery.Checks[i]
+		ExplainCheck(check)
+		checkLogger := logger
+		for index, device := range devices {
+			if check.Subject != "" && (check.Subject == device.RecordKey || check.Subject == device.ID) {
+				checkLogger = logger.WithValues("endpoint", r.Targets[index].DisplayName(), "role", r.Targets[index].Role, "sourceIndex", index+1)
+				break
+			}
+		}
+		checkLogger.V(1).Info("Discovery check evaluated", "check", check.ID, "state", check.State, "requiredPhase", check.RequiredPhase, "reasonCode", check.ReasonCode)
 	}
 	report.Discovery.Outcome = "complete"
 	for _, c := range report.Discovery.Checks {
@@ -270,6 +305,11 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	}
 	report.PendingInputs = []inventory.Problem{{Code: "LATER_PHASE_INPUT", Message: "DPU API allocation and selected service profile are evaluated by future generation", InputRef: "/networks/dpuAPI"}}
 	slices.SortFunc(report.Errors, func(a, b inventory.Problem) int { return strings.Compare(a.InputRef+a.Code, b.InputRef+b.Code) })
+	if report.Discovery.Outcome == "complete" {
+		output.Info("[PASS] Required discovery checks completed; publication pending")
+	} else {
+		output.Info("[FAIL] Required discovery checks: incomplete evidence; complete handoff will not be published")
+	}
 	return report
 }
 func scopeConflict(old, current *inventory.Inventory) bool {
@@ -297,6 +337,8 @@ func Correlate(dpus, hosts []inventory.Device) ([]inventory.Association, []inven
 	}
 	for _, d := range dpus {
 		matches := []inventory.Association{}
+		vendorConflict := false
+		refs := slices.Clone(d.EvidenceRefs)
 		for hi := range hosts {
 			h := &hosts[hi]
 			for ai := range h.Adapters {
@@ -304,15 +346,25 @@ func Correlate(dpus, hosts []inventory.Device) ([]inventory.Association, []inven
 				if d.ObservationState == "observed" && h.ObservationState == "observed" && d.SerialNumber != "" && a.SerialNumber == d.SerialNumber {
 					// Selection annotations are applied by the orchestrator after correlation.
 					matches = append(matches, inventory.Association{DPUID: d.ID, HostID: h.ID, HostAdapterKey: a.Key, SerialNumber: d.SerialNumber, EvidenceRefs: append(slices.Clone(d.EvidenceRefs), a.EvidenceRefs...)})
+					// Readers normalize known PCI vendors to four-digit lowercase hex.
+					// Keep contradictory candidates: dropping one could turn ambiguity
+					// into an apparently unique NVIDIA BlueField association.
+					if a.VendorID != "" && a.VendorID != "15b3" {
+						vendorConflict = true
+						refs = append(refs, a.EvidenceRefs...)
+					}
 				}
 			}
 		}
 		state := "failed"
-		if len(matches) == 1 && d.ID != "" && matches[0].HostID != "" && seenIDs[d.ID] == 1 && seenIDs[matches[0].HostID] == 1 {
+		reason := "UNIQUE_PHYSICAL_MATCH_REQUIRED"
+		if vendorConflict {
+			reason = "HOST_ADAPTER_VENDOR_CONFLICT"
+		} else if len(matches) == 1 && d.ID != "" && matches[0].HostID != "" && seenIDs[d.ID] == 1 && seenIDs[matches[0].HostID] == 1 {
 			state = "passed"
 			associations = append(associations, matches[0])
 		}
-		checks = append(checks, inventory.Check{ID: "dpf.inventory.association", Subject: d.RecordKey, Vantage: "executor", RequiredPhase: "discover", State: state, ReasonCode: "UNIQUE_PHYSICAL_MATCH_REQUIRED", EvidenceRefs: d.EvidenceRefs})
+		checks = append(checks, inventory.Check{ID: "dpf.inventory.association", Subject: d.RecordKey, Vantage: "executor", RequiredPhase: "discover", State: state, ReasonCode: reason, EvidenceRefs: refs})
 	}
 	return associations, checks
 }
@@ -330,6 +382,11 @@ func Canonicalize(inv *inventory.Inventory) {
 	sortDevices(inv.Hosts)
 	slices.SortFunc(inv.Associations, func(a, b inventory.Association) int { return strings.Compare(a.DPUID, b.DPUID) })
 	inv.Fingerprint = inventory.Digest("dpf-facts-v1", material(inv))
+	// A loaded v3 inventory retains only the digest. Fresh collections supply
+	// RequestedScope; do not replace a persisted guard with an empty scope.
+	if inv.RequestedScope == nil && inv.ScopeDigest != "" {
+		return
+	}
 	inv.ScopeDigest = inventory.Digest("dpf-infrastructure-scope-v1", struct {
 		Mode      string
 		Endpoints []inventory.ScopeEndpoint
@@ -346,7 +403,7 @@ func Canonicalize(inv *inventory.Inventory) {
 func material(inv *inventory.Inventory) map[string]any {
 	fields := map[string]any{}
 	if inv.Software != nil {
-		fields["software"] = inv.Software
+		fields["software"] = releases.Summarize(*inv.Software)
 	}
 	if inv.AddressLookup != nil {
 		fields["addressLookup"] = inv.AddressLookup
@@ -372,22 +429,37 @@ func material(inv *inventory.Inventory) map[string]any {
 
 		}
 	}
-	for _, devices := range [][]inventory.Device{inv.DPUs, inv.Hosts} {
-		for _, d := range devices {
+	for _, group := range []struct {
+		role    string
+		devices []inventory.Device
+	}{{"dpus", inv.DPUs}, {"hosts", inv.Hosts}} {
+		for _, d := range group.devices {
 			key := "device." + d.RecordKey
-			fields[key+".identity"] = []any{d.ID, d.IdentityKey, d.Model, d.ReaderAdapter, d.Qualification, d.InventoryCompleteness}
-			for _, a := range d.Adapters {
-				fields[key+".adapter."+a.Key] = []any{a.SerialNumber, a.Model, a.Slot, a.PCIAddress, a.VendorID, a.DeviceID, a.IdentityState, a.ReasonCode, canonicalFunctions(a.PCIFunctions)}
-			}
-			if psid, present := d.Observations["psid"]; present {
-				fields[key+".psid"] = []any{psid.State, psid.Values, psid.ReasonCode, psid.Tool}
-			}
-			fields[key+".endpoints"] = []string{d.SSHEndpoint, d.BMCEndpoint, d.BMCAddressState}
 			if d.Runtime != nil {
-				fields[key+".runtime"] = canonicalRuntime(*d.Runtime)
+				runtime := canonicalRuntime(*d.Runtime)
+				d.Runtime = &runtime
 			}
-			for _, fw := range d.Firmware {
-				fields[key+".firmware."+fw.Component+"."+fw.ResourceURI] = []string{fw.State, fw.RawVersion, fw.Activation}
+			w, err := inventory.DeviceToOutput(d, group.role)
+			if err != nil {
+				// Publication rejects malformed facts. Keep them visible in the
+				// comparison as well, rather than claiming an unchanged record.
+				fields[key+".invalid"] = err.Error()
+				continue
+			}
+			fields[key+".identity"] = []string{w.ID, w.SerialNumber, w.SystemUUID, w.Manufacturer, w.Model, w.Method}
+			fields[key+".endpoints"] = []string{w.SSHEndpoint, w.BMCEndpoint, w.SystemURI}
+			fields[key+".psid"] = w.PSID
+			fields[key+".bmcAdministratorVerified"] = w.BMCAdministratorVerified
+			fields[key+".firmwareInventoryComplete"] = w.FirmwareInventoryComplete
+			fields[key+".firmware"] = w.Firmware
+			fields[key+".runtime"] = w.Runtime
+			fields[key+".advertisedResetTypes"] = w.AdvertisedResetTypes
+			for _, a := range w.Adapters {
+				a.PCIFunctions = canonicalFunctions(a.PCIFunctions)
+				fields[key+".adapter."+a.Key] = a
+			}
+			for _, issue := range w.Issues {
+				fields[key+".issue."+issue.Field+"."+issue.Code] = issue.Tool
 			}
 		}
 	}

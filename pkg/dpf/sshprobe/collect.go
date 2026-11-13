@@ -13,6 +13,8 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type Collector struct{}
@@ -22,6 +24,19 @@ type runner interface {
 }
 
 func (Collector) Collect(ctx context.Context, target config.Target, timeout time.Duration) (device inventory.Device, evidence map[string]inventory.Evidence, err error) {
+	started := time.Now()
+	label := target.DisplayName()
+	logger := log.FromContext(ctx).WithName("ssh").WithValues("endpoint", label, "role", target.Role)
+	ctx = log.IntoContext(ctx, logger)
+	output := ui.FromContext(ctx)
+	output.Info("[RUNNING] %s: SSH connection/session", label)
+	connected := false
+	defer func() {
+		if !connected {
+			output.Info("[FAIL] %s: SSH connection/session (%s)", label, Code(err))
+		}
+		logger.V(1).Info("SSH collection completed", "identityState", device.ObservationState, "identityEstablished", device.ID != "", "reasonCode", device.ReasonCode, "duration", time.Since(started))
+	}()
 	device = emptyDevice(target)
 	evidence = map[string]inventory.Evidence{}
 	if target.SSH == nil || (target.Role != "hosts" && target.Role != "dpus") {
@@ -36,7 +51,20 @@ func (Collector) Collect(ctx context.Context, target config.Target, timeout time
 		device.Message = Reason(err)
 		return device, evidence, err
 	}
-	defer c.Close()
+	connected = true
+	output.Info("[PASS] %s: SSH connection/session established", label)
+	defer func() {
+		output.Info("[RUNNING] %s: SSH connection cleanup", label)
+		cleanupStarted := time.Now()
+		state := "complete"
+		if closeErr := c.Close(); closeErr != nil {
+			state = "unconfirmed"
+			output.Info("[UNAVAILABLE] %s: SSH connection cleanup could not be confirmed", label)
+		} else {
+			output.Info("[PASS] %s: SSH connection cleanup completed", label)
+		}
+		logger.V(1).Info("SSH connection cleanup completed", "state", state, "duration", time.Since(cleanupStarted))
+	}()
 	return collect(ctx, target, c)
 }
 
@@ -53,10 +81,15 @@ func emptyDevice(target config.Target) inventory.Device {
 }
 
 func collect(ctx context.Context, target config.Target, remote runner) (device inventory.Device, evidence map[string]inventory.Evidence, err error) {
+	label := target.DisplayName()
+	output := ui.FromContext(ctx)
+	stage := "Physical inventory"
+	output.Info("[RUNNING] %s: %s", label, stage)
 	device = emptyDevice(target)
 	evidence = map[string]inventory.Evidence{}
 	defer func() {
 		if err != nil {
+			output.Info("[FAIL] %s: %s (%s)", label, stage, Code(err))
 			device.ReasonCode = Code(err)
 			device.Message = Reason(err)
 			var diagnostic *Error
@@ -67,6 +100,9 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 			}
 		}
 	}()
+	if target.Role == "dpus" {
+		output.Info("[UNAVAILABLE] %s: DPU BMC administrator privileges require an explicit Redfish endpoint", label)
+	}
 	device.ReaderAdapter = "linux-host-ssh-v1"
 	if target.Role == "dpus" {
 		device.ReaderAdapter = "bluefield-arm-ssh-v1"
@@ -172,11 +208,22 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		}
 		device.Runtime.Observations["pciScope"] = inventory.Observation{State: "observed", Values: []string{"NVIDIA network PCI functions; grouped by host-local PCI slot"}}
 	}
+	output.Info("[RUNNING] %s: Physical inventory read completed; identity recheck pending", label)
+	stage = "Optional OS/network, firmware and tool observations"
+	output.Info("[RUNNING] %s: %s", label, stage)
 	collectNetwork(ctx, remote, device.Runtime, add)
 	collectRuntime(ctx, remote, device.Runtime, add)
 	collectHardware(ctx, remote, &device, privilege, target.Role, add)
+	observed, unavailableCount := optionalCounts(device.Runtime)
+	if unavailableCount > 0 {
+		output.Info("[UNAVAILABLE] %s: Optional OS/network/firmware reads completed; %d observed, %d unavailable or unknown; inspect the detailed report for reasons, compatibility not evaluated", label, observed, unavailableCount)
+	} else {
+		output.Info("[PASS] %s: Optional OS/network/firmware reads completed; %d observations measured, compatibility not evaluated", label, observed)
+	}
 	// Recheck physical identity after optional observations, so disconnects and
 	// device changes cannot publish stale identity as a successful observation.
+	stage = "Physical identity recheck"
+	output.Info("[RUNNING] %s: %s", label, stage)
 	if target.Role == "dpus" {
 		dmi, e := read("arm-dmi-recheck", privilege+"dmidecode -s system-serial-number")
 		if e != nil {
@@ -245,6 +292,7 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		return device, evidence, &Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: "collection"}
 	}
 	device.ObservationState = "observed"
+	output.Info("[PASS] %s: Physical identity recheck verified; connection cleanup pending", label)
 	device.InventoryCompleteness = "observed"
 	for _, a := range device.Adapters {
 		if a.IdentityState != "known" {
@@ -343,4 +391,34 @@ func collectRuntime(ctx context.Context, remote runner, runtime *inventory.Runti
 			add(probe.stage, probe.stage)
 		}
 	}
+}
+
+// Count the typed optional facts, including nested card measurements. Successful
+// commands alone do not make missing firmware/PSID/configuration observations pass.
+func optionalCounts(runtime *inventory.RuntimeObservation) (observed, unavailableCount int) {
+	count := func(observation inventory.Observation) {
+		if observation.ReasonCode == "NOT_APPLICABLE" {
+			return
+		}
+		if observation.State == "observed" {
+			observed++
+		} else {
+			unavailableCount++
+		}
+	}
+	for _, observation := range runtime.Observations {
+		count(observation)
+	}
+	if runtime.Hardware != nil {
+		count(runtime.Hardware.RShim)
+		for _, card := range runtime.Hardware.Cards {
+			count(card.Firmware)
+			count(card.PSID)
+			count(card.Privilege)
+			for _, observation := range card.NVConfig {
+				count(observation)
+			}
+		}
+	}
+	return observed, unavailableCount
 }

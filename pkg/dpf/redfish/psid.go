@@ -21,8 +21,8 @@ func psidUnavailable(code, message string) inventory.Observation {
 // then the identity-selected chassis. Both advertised values must agree and
 // remain unchanged through the existing identity rereads. No raw documents or
 // malformed AssetTag values are persisted, and no SSH runtime is manufactured.
-func bf4PSID(system, card Resource, currentSystem, currentCard Document, add func(string, string) string) inventory.Observation {
-	for _, source := range []struct{ initial, current Document }{{system.Document, currentSystem}, {card.Document, currentCard}} {
+func bf4PSID(system, card, currentSystem, currentCard Document) inventory.Observation {
+	for _, source := range []struct{ initial, current Document }{{system, currentSystem}, {card, currentCard}} {
 		initial, initialPresent := source.initial["AssetTag"]
 		current, currentPresent := source.current["AssetTag"]
 		if initialPresent != currentPresent || !reflect.DeepEqual(initial, current) {
@@ -30,8 +30,8 @@ func bf4PSID(system, card Resource, currentSystem, currentCard Document, add fun
 		}
 	}
 	value := ""
-	for _, source := range []Resource{system, card} {
-		raw, present := source.Document["AssetTag"]
+	for _, source := range []Document{system, card} {
+		raw, present := source["AssetTag"]
 		if !present || raw == nil {
 			continue
 		}
@@ -54,11 +54,6 @@ func bf4PSID(system, card Resource, currentSystem, currentCard Document, add fun
 	}
 	if value == "" {
 		return inventory.Observation{State: "unknown", ReasonCode: "PSID_NOT_EXPOSED", Message: "The supported BF4 System and identity-selected chassis do not expose a PSID AssetTag.", Tool: "redfish"}
-	}
-	for _, source := range []Resource{system, card} {
-		if Text(source.Document, "AssetTag") == value {
-			add(source.URI, "AssetTag")
-		}
 	}
 	return inventory.Observation{State: "observed", Values: []string{value}, ReasonCode: "PSID_OBSERVED", Message: "The supported BF4 AssetTag PSID was verified against unchanged identity-bound System and chassis observations.", Tool: "redfish"}
 }

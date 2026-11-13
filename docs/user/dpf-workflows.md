@@ -51,6 +51,8 @@ Choose each source explicitly: a host operating system over SSH or its BMC over 
 | Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` explicitly because the default management mode is unavailable in this preview. |
 | Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |
 
+Use an account whose own session proves its effective administrator role. If session Roles is absent, local authentication must be established by an explicit trusted local session `UserAuthenticationSource`. A current `LocalAccountAuth: Enabled` policy alone cannot prove how an existing session authenticated. Disabled local authentication and explicitly external session sources are unsupported; Fallback/LocalFirst require the explicit local session source. Missing origin plus missing Roles cannot inherit privileges from a same-named local administrator. Discovery reports unverifiable proof as partial without replacing a complete handoff.
+
 Do not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted or null `dpf.release` uses the pinned default; an empty or unknown release is rejected.
 
 All network connections start from the machine where you run `l8k`. Host and DPU endpoints do not need to connect to each other for this workflow.
@@ -59,7 +61,7 @@ All network connections start from the machine where you run `l8k`. Host and DPU
 | --- | --- | --- |
 | SSH to the selected host | Host operating system | Host identity, installed card serials and available host/card facts |
 | SSH to the selected DPU ARM address | DPU operating system | DPU identity, local hardware/network facts, and optionally its BMC address through local IPMI |
-| HTTPS to a selected host or DPU BMC | That BMC's Redfish service | System/card identity and available firmware, clock and NTP information |
+| HTTPS to a selected host or DPU BMC | That BMC's Redfish service | System/card identity, host PCI/reset information and available named DPU firmware versions |
 | HTTPS to the management API, only if a kubeconfig is supplied | Existing management Kubernetes API | Cluster identity, version and nodes, plus optional storage and advertised DPF API information |
 | No remote connection | CLI machine | Read input/trust/lease files, match identities, compare software requirements and save results |
 
@@ -76,6 +78,8 @@ For SSH inventory, ask the endpoint administrator to make the required read tool
 Set `ssh.sudo: true` only where noninteractive elevated reads are authorized and configured. Launch Kit then uses `sudo -n`; it never prompts for a sudo password, installs tools, changes privileges or repairs device settings. Missing tools, denied permissions and unsupported or malformed outputs keep specific reason codes and explanations. Required identity failures stop a complete inventory; optional unknown observations remain visible for review.
 
 Prepare a DPU BMC account that is enabled, unlocked and does not require a password change, with all five standard Administrator privileges. A custom role with those privileges is accepted; names alone are insufficient. Discovery verifies the session, unique matching account and linked role using read requests. Handle password changes separately before rerunning; discovery never rotates passwords or tests privileges through writes.
+
+Passwords may use an environment reference supplied for the invocation or a `passwordRef.file` pointing to an owner-only UTF-8 password file. Environment variables are convenient for automation but can be inherited or exposed by diagnostics. File references avoid that export but remain plaintext files: keep them private and outside version control. Discovery saves references, never secret values.
 
 Next: [Access prepared](#initial-inventory-configure).
 
@@ -125,6 +129,8 @@ Record the process exit status as well as the files. `discovery.json` contains t
 
 While this command runs, Launch Kit performs the collection and matching steps below automatically. You do not need to run the listed remote commands yourself. The example contacts the host over SSH and the explicitly selected DPU BMC over Redfish. Host-only input contacts no DPU endpoint and returns partial evidence with a nonzero exit.
 
+Watch live source/check status on stderr: RUNNING is emitted before the operation, followed by its result. Endpoint names/addresses distinguish concurrent work. To keep progress visible with JSON, redirect stdout only (`>discover.json`). Add `--log-level debug` for stage timing or `--log-level trace` for request/tool metadata; `2>discover.log` saves these messages instead of displaying them. Quiet suppresses progress.
+
 Next: [Collect from selected endpoints](#initial-inventory-collect).
 
 ### 5. Selected host, DPU and BMC: read identity and facts {#initial-inventory-collect}
@@ -168,7 +174,7 @@ These hardware and network reads are optional. `<PCI-address>` comes from that s
 
 **On a selected host or DPU BMC, through HTTPS Redfish**
 
-The CLI creates a temporary session, reads system and card inventory, and queries available firmware components, BMC time and NTP configuration. Host BMC reads locate cards associated with the selected host; DPU BMC reads identify that DPU and verify the authenticated session account and linked role through AccountService. All five standard Administrator privileges and enabled/unlocked/no-password-change state are required; denied or unverifiable evidence fails closed. The supported BF4/B4240 reader also records an optional PSID from the selected System or identity-selected chassis AssetTag, with source evidence and a final reread. Missing PSID stays unknown; invalid, contradictory or changed fields remain unavailable for consumers requiring PSID. No PSID is guessed from the model. No SSH commands run in either OS for this choice. System/card identity is required; optional firmware or clock properties may remain unknown. A firmware version is not assumed to be running unless the BMC explicitly identifies it as active. The CLI deletes its session afterward and reports any cleanup failure. It does not change passwords, roles, firmware, NTP, power or trust settings.
+The CLI creates a temporary session and reads system and card inventory. Host BMC reads locate cards associated with the selected host and retain advertised reset types; they do not collect host firmware/time/NTP or DPU-only component placeholders. DPU BMC reads identify that DPU, query available firmware components and verify the authenticated session account and linked role through AccountService. All five standard Administrator privileges and enabled/unlocked/no-password-change state are required; denied or unverifiable evidence fails closed. The supported BF4/B4240 reader also records an optional PSID from the selected System or identity-selected chassis AssetTag, with authenticated reads and a final reread. Missing PSID stays unknown; invalid, contradictory or changed fields remain unavailable for consumers requiring PSID. No PSID is guessed from the model. No SSH commands run in either OS for this choice. System/card identity is required; optional component versions may remain unknown. A firmware version is not assumed to be running unless the BMC explicitly identifies it as active. The CLI deletes its session afterward and reports any cleanup failure. It does not change passwords, roles, firmware, NTP, power or trust settings.
 
 **At the management Kubernetes API, if configured**
 
@@ -190,9 +196,15 @@ Next: [Review saved results](#initial-inventory-inspect).
 
 ### 7. CLI machine: review inventory and reasons {#initial-inventory-inspect}
 
-Inspect `discovery.outcome`, `discovery.checks`, `errors`, `artifacts` and `acceptance` in the JSON report. Review saved `inventory.hosts`, `inventory.dpus`, `inventory.associations` and their evidence before using the handoff. Complete discovery writes `dpf-discovered.yaml`; partial discovery preserves an existing handoff and writes `partial.yaml` and `report.json` under `dpf-discovered.discovery/<run-id>/`. Use the report's artifact paths instead of guessing the run ID.
+The normal text summary shows the required-check result and named host/DPU mappings. It separates discovery blockers from later provisioning prerequisites and checks not requested. Repeated qualification/BOM gaps are grouped by affected sources; they do not mean a hardware failure was detected. Internal identity/comparison SHA identifiers remain in JSON/YAML, not as operator-facing device names. Both host and DPU results use named facts and field-specific issues; device evidence references, raw command strings and vendor firmware metadata are omitted. Management observations and connectivity probes retain their own source metadata.
 
-Read each non-success observation's `reasonCode`, `message` and `tool` where present. A missing `mlxfwmanager` is an unavailable prerequisite, not proof of an incompatible NIC firmware. A denied Redfish firmware collection is different from a component property not being exposed. Conflicting versions or ambiguous activation cannot establish a software minimum.
+Inspect `discovery.outcome`, `discovery.checks`, `errors`, `artifacts` and `acceptance` in the JSON report. Review saved `inventory.hosts`, `inventory.dpus`, `inventory.associations` and field-specific issues before using the handoff. Complete discovery writes `dpf-discovered.yaml`; partial discovery preserves an existing handoff and writes `partial.yaml` and `report.json` under `dpf-discovered.discovery/<run-id>/`. Use the report's artifact paths instead of guessing the run ID.
+
+Read each host/DPU `issues` entry's `field`, `code`, `message` and `tool` where present. Successful values live in named fields such as `psid`, `bmcAdministratorVerified`, `runtime.mftVersion` and `runtime.hardware.cards[].firmwareVersion`. Cards also retain typed `nextBoot` settings and `hostPrivileges`; next-boot values do not prove the running mode. A public `id` requires successful final identity rechecks; a serial retained on a failed record is diagnostic context. Generic observation maps and repeated successful state are omitted.
+
+DPU `firmware` groups version lists by component, retaining known activation separately. `firmwareInventoryComplete: true` means enumeration completed, not that every version is known or compatible. ERoT firmware remains separate from BMC firmware. The JSON report retains all required check outcomes and deferred provisioning checks. New inventories use `v1alpha3`; the updated CLI also reads legacy `v1alpha1`/`v1alpha2` without inferring missing verification.
+
+A missing `mlxfwmanager` is an unavailable prerequisite, not proof of incompatible NIC firmware. A denied Redfish firmware read differs from a property that is not exposed. Conflicting versions or unknown activation cannot establish a software minimum.
 
 | Example reason | What to do |
 | --- | --- |
@@ -200,14 +212,15 @@ Read each non-success observation's `reasonCode`, `message` and `tool` where pre
 | `ACCESS_DENIED` / `PROPERTY_NOT_EXPOSED` | Distinguish an account permission problem from a property the service does not advertise. |
 | `SOFTWARE_VERSION_CONFLICT` / `SOFTWARE_IDENTITY_UNAVAILABLE` | Reconcile version/activation sources or the rejected physical identity before trusting software comparisons. |
 | `SOFTWARE_BELOW_MINIMUM` | Review the release requirement and plan a separate maintenance action; discovery does not update firmware. |
+| `HOST_ADAPTER_VENDOR_CONFLICT` | Inspect the selected endpoints and matching serial/PCI evidence: a same-serial host adapter reports a non-NVIDIA vendor. Correct the source and rediscover; do not edit observed identity or discard a contradictory candidate to force a match. |
 | `BMC_ADMIN_REQUIRED` / `BMC_ADMIN_ACCESS_DENIED` | Use an authorized account with all standard Administrator privileges and readable account/role evidence. |
-| `BMC_ADMIN_UNVERIFIABLE` / `BMC_ADMIN_NOT_VERIFIED` | Supply explicit trusted DPU BMC access and complete, consistent account/role evidence; host/ARM SSH is insufficient. |
+| `BMC_ADMIN_UNVERIFIABLE` / `BMC_ADMIN_NOT_VERIFIED` | Supply explicit trusted DPU BMC access and inspect session Roles, authentication origin and linked account/role evidence. Host/ARM SSH and a same-named local administrator cannot substitute for verified session privileges. |
 | `BMC_PASSWORD_CHANGE_REQUIRED` / `BMC_ADMIN_ACCOUNT_RESTRICTED` | Ask the administrator to resolve password-change, disabled or locked state separately, then rerun. Discovery does not repair access. |
 | `PUBLICATION_FAILED` | Read the error explanation, resolve the local output/path problem, and rerun; only listed successfully written artifacts exist. |
 
-The resolved software BOM is saved under `inventory.software`, including source references and unknown requirements. Release `26.4.0` has exact BlueField-3 model entries `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 are not sufficient for BOM applicability. The documented NIC/MFT minima can be evaluated when current measurements associated with the correct device exist. BMC, CEC, ATF, UEFI, OS/BSP and golden-image minima remain unknown where the catalog has no supported requirement. A BFB target is a desired artifact, not an observed OS/BSP version. An unknown requirement must remain unresolved; supplying a guessed minimum does not establish compatibility.
+The resolved software BOM is saved under `inventory.software`: operator/component coordinates, exact hardware models and BFB version/URL/known digest, with documented minima in named fields such as `minimumNICFirmware` and `minimumHostMFT`. Missing minima remain unknown; catalog sources/revisions and generic requirement lists are omitted. A missing artifact digest is not fabricated. Release `26.4.0` has exact BlueField-3 model entries `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 are not sufficient for BOM applicability. The documented NIC/MFT minima can be evaluated when current measurements associated with the correct device exist. BMC, CEC, ATF, UEFI, OS/BSP and golden-image minima remain unknown where the catalog has no supported requirement. A BFB target is a desired artifact, not an observed OS/BSP version. An unknown requirement must remain unresolved; supplying a guessed minimum does not establish compatibility.
 
-Exit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, DPU BMC administrator verification, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; the separate [Sentry BF4 procedure](dpf-sentry.md) provides generation, deployment and resource validation only after its additional prerequisites are met.
+Exit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; the separate [Sentry BF4 procedure](dpf-sentry.md) provides generation, deployment and resource validation only after its additional prerequisites are met.
 
 Next: [Complete inventory reviewed](#initial-inventory-finish); [Required failure or conflict](#initial-inventory-resolve).
 
@@ -282,6 +295,8 @@ l8k discover --target dpf --user-config dpf-lookup.yaml \
 
 The selected endpoints undergo the same [identity and optional reads](#initial-inventory-collect) as first inventory. On the CLI machine, address lookup then reads the configured lease snapshots and matches the supplied MACs against those records and the neighbors returned by remote `ip -j neighbor show`. No candidate is contacted and no credential is sent to it.
 
+Watch live source/check status on stderr: RUNNING is emitted before the operation, followed by its result. Endpoint names/addresses distinguish concurrent work. To keep progress visible with JSON, redirect stdout only (`>discover.json`). Add `--log-level debug` for stage timing or `--log-level trace` for request/tool metadata; `2>discover.log` saves these messages instead of displaying them. Quiet suppresses progress.
+
 Next: [Candidate report available](#address-candidates-review).
 
 ### 4. CLI operator: review candidate addresses {#address-candidates-review}
@@ -323,9 +338,11 @@ flowchart TD
 
 Start from the existing discovered YAML and keep its credential/trust references valid. Decide whether you are remeasuring the same host/DPU endpoints and trust policy. If endpoint selection, trust policy or physical identity has changed, create a fresh input without old `inventory` and use a new output path. Investigate unexpected replacement or ownership changes before accepting them.
 
+The saved `scopeDigest` guards resolved endpoint/trust selection; the inventory does not repeat the configured policy list as `requestedScope`. Removing private device provenance alone is not a physical change.
+
 Changing Redfish certificate verification or the contents of a custom CA file requires a new inventory. Moving an unchanged CA file to another path does not. Keep the CLI machine's operating-system trust store maintained; discovery does not report changes within that store.
 
-Some inventories saved by older preview versions cannot be refreshed. If the command reports that the old inventory is incompatible, verify endpoint ownership, create a fresh input without saved `inventory`, and use a new output path. Keep the previous file as history; do not edit its recorded identities or trust information to bypass the error.
+The CLI reads legacy `v1alpha1` and `v1alpha2` inventories conservatively, but some older identity/trust bindings cannot support safe refresh. If the command reports that the old inventory is incompatible, verify endpoint ownership, create a fresh input without saved `inventory`, and use a new output path. Keep the previous file as history; do not edit its recorded identities or trust information to bypass the error.
 
 Do not manually edit observed serials, associations, firmware or check outcomes. `dpf.release` selects the release's BOM; changing it does not upgrade software. An omitted release uses the CLI's default, so record the CLI version and review `inventory.software` when comparing runs from different versions. Specify the release explicitly when you want to retain that choice.
 
@@ -342,6 +359,8 @@ l8k discover --target dpf --user-config dpf-discovered.yaml \
 ```
 
 A complete in-place refresh retains `source-before.yaml` before replacing inventory while preserving user sections, comments and input intent. A partial run leaves the original input unchanged and writes its new observations separately; it does not create this backup. Relative file references are rebased if saving elsewhere; private files are not copied. Avoid simultaneous external edits, and use real output directories rather than symlink aliases. Credentials, trust files and configured lease files cannot be used as output destinations.
+
+Watch live source/check status on stderr: RUNNING is emitted before the operation, followed by its result. Endpoint names/addresses distinguish concurrent work. To keep progress visible with JSON, redirect stdout only (`>discover.json`). Add `--log-level debug` for stage timing or `--log-level trace` for request/tool metadata; `2>discover.log` saves these messages instead of displaying them. Quiet suppresses progress.
 
 Next: [Refresh finished](#refresh-inventory-compare).
 

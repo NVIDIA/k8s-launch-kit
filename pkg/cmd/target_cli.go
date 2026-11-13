@@ -289,7 +289,7 @@ func markDiscoverTargetScopes() {
 		"topology-scheme", "ip-version", "topology-file", "spectrum-x-config",
 		"spectrum-x-configmap-name")
 	markConfigFlagTargetScopes(discoverCmd, configflags.ScopeDiscover)
-	setFlagTargetScope(discoverCmd, []target.Name{target.Host, target.DPF}, "user-config", "save-cluster-config")
+	setFlagTargetScope(discoverCmd, []target.Name{target.Host, target.DPF}, "user-config", "save-cluster-config", "quiet")
 }
 
 func markGenerateTargetScopes() {

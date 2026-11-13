@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const FormatVersion = "v1alpha1"
+const FormatVersion = "v1alpha3"
 
 type Collection struct {
 	RunID      string    `json:"runID" yaml:"runID"`
@@ -58,9 +58,10 @@ type Firmware struct {
 	RawVersion           string   `json:"rawVersion,omitempty" yaml:"rawVersion,omitempty"`
 	Activation           string   `json:"activation" yaml:"activation"`
 	ReasonCode           string   `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
-	EvidenceRefs         []string `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs         []string `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Authentication struct {
+	BMCAdministrator         string `json:"bmcAdministrator,omitempty" yaml:"bmcAdministrator,omitempty"`
 	PasswordRead             string `json:"passwordRead" yaml:"passwordRead"`
 	Method                   string `json:"method,omitempty" yaml:"method,omitempty"`
 	ClientCertificateSupport string `json:"clientCertificateSupport" yaml:"clientCertificateSupport"`
@@ -94,7 +95,7 @@ type Adapter struct {
 	Model           string        `json:"model,omitempty" yaml:"model,omitempty"`
 	Slot            string        `json:"slot,omitempty" yaml:"slot,omitempty"`
 	Selection       string        `json:"selection" yaml:"selection"`
-	EvidenceRefs    []string      `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs    []string      `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 
 // RuntimeObservation contains OS-visible facts, separate from BMC management readiness.
@@ -111,33 +112,35 @@ type RuntimeObservation struct {
 
 // Device represents every requested endpoint, including failed observations.
 type Device struct {
-	Message               string                 `json:"message,omitempty" yaml:"message,omitempty"`
-	Observations          map[string]Observation `json:"observations,omitempty" yaml:"observations,omitempty"`
-	SSHEndpoint           string                 `json:"sshEndpoint,omitempty" yaml:"sshEndpoint,omitempty"`
-	BMCAddressState       string                 `json:"bmcAddressState,omitempty" yaml:"bmcAddressState,omitempty"`
-	Runtime               *RuntimeObservation    `json:"runtime,omitempty" yaml:"runtime,omitempty"`
-	RecordKey             string                 `json:"recordKey" yaml:"recordKey"`
-	InputRef              string                 `json:"inputRef" yaml:"inputRef"`
-	BMCEndpoint           string                 `json:"bmcEndpoint" yaml:"bmcEndpoint"`
-	SystemURI             string                 `json:"systemURI,omitempty" yaml:"systemURI,omitempty"`
-	ObservationState      string                 `json:"observationState" yaml:"observationState"`
-	ReasonCode            string                 `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
-	ID                    string                 `json:"id,omitempty" yaml:"id,omitempty"`
-	IdentityKey           []string               `json:"identityKey,omitempty" yaml:"identityKey,omitempty"`
-	SerialNumber          string                 `json:"serialNumber,omitempty" yaml:"serialNumber,omitempty"`
-	SerialNumberRaw       string                 `json:"serialNumberRaw,omitempty" yaml:"serialNumberRaw,omitempty"`
-	SystemUUID            string                 `json:"systemUUID,omitempty" yaml:"systemUUID,omitempty"`
-	Manufacturer          string                 `json:"manufacturer,omitempty" yaml:"manufacturer,omitempty"`
-	Model                 string                 `json:"model,omitempty" yaml:"model,omitempty"`
-	ReaderAdapter         string                 `json:"readerAdapter,omitempty" yaml:"readerAdapter,omitempty"`
-	InventoryCompleteness string                 `json:"inventoryCompleteness,omitempty" yaml:"inventoryCompleteness,omitempty"`
-	Qualification         string                 `json:"qualification" yaml:"qualification"`
-	Firmware              []Firmware             `json:"firmware" yaml:"firmware"`
-	Authentication        Authentication         `json:"authentication" yaml:"authentication"`
-	Time                  TimeObservation        `json:"time" yaml:"time"`
-	Adapters              []Adapter              `json:"adapters,omitempty" yaml:"adapters,omitempty"`
-	AdvertisedResetTypes  []string               `json:"advertisedResetTypes,omitempty" yaml:"advertisedResetTypes,omitempty"`
-	EvidenceRefs          []string               `json:"evidenceRefs" yaml:"evidenceRefs"`
+	PSID                      string                 `json:"psid,omitempty" yaml:"psid,omitempty"`
+	FirmwareInventoryComplete bool                   `json:"firmwareInventoryComplete,omitempty" yaml:"firmwareInventoryComplete,omitempty"`
+	Message                   string                 `json:"message,omitempty" yaml:"message,omitempty"`
+	Observations              map[string]Observation `json:"observations,omitempty" yaml:"observations,omitempty"`
+	SSHEndpoint               string                 `json:"sshEndpoint,omitempty" yaml:"sshEndpoint,omitempty"`
+	BMCAddressState           string                 `json:"bmcAddressState,omitempty" yaml:"bmcAddressState,omitempty"`
+	Runtime                   *RuntimeObservation    `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	RecordKey                 string                 `json:"recordKey" yaml:"recordKey"`
+	InputRef                  string                 `json:"inputRef" yaml:"inputRef"`
+	BMCEndpoint               string                 `json:"bmcEndpoint" yaml:"bmcEndpoint"`
+	SystemURI                 string                 `json:"systemURI,omitempty" yaml:"systemURI,omitempty"`
+	ObservationState          string                 `json:"observationState,omitempty" yaml:"observationState,omitempty"`
+	ReasonCode                string                 `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
+	ID                        string                 `json:"id,omitempty" yaml:"id,omitempty"`
+	IdentityKey               []string               `json:"identityKey,omitempty" yaml:"identityKey,omitempty"`
+	SerialNumber              string                 `json:"serialNumber,omitempty" yaml:"serialNumber,omitempty"`
+	SerialNumberRaw           string                 `json:"serialNumberRaw,omitempty" yaml:"serialNumberRaw,omitempty"`
+	SystemUUID                string                 `json:"systemUUID,omitempty" yaml:"systemUUID,omitempty"`
+	Manufacturer              string                 `json:"manufacturer,omitempty" yaml:"manufacturer,omitempty"`
+	Model                     string                 `json:"model,omitempty" yaml:"model,omitempty"`
+	ReaderAdapter             string                 `json:"readerAdapter,omitempty" yaml:"readerAdapter,omitempty"`
+	InventoryCompleteness     string                 `json:"inventoryCompleteness,omitempty" yaml:"inventoryCompleteness,omitempty"`
+	Qualification             string                 `json:"qualification" yaml:"qualification"`
+	Firmware                  []Firmware             `json:"firmware,omitempty" yaml:"firmware,omitempty"`
+	Authentication            Authentication         `json:"authentication" yaml:"authentication"`
+	Time                      TimeObservation        `json:"time,omitzero" yaml:"time,omitempty"`
+	Adapters                  []Adapter              `json:"adapters,omitempty" yaml:"adapters,omitempty"`
+	AdvertisedResetTypes      []string               `json:"advertisedResetTypes,omitempty" yaml:"advertisedResetTypes,omitempty"`
+	EvidenceRefs              []string               `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Node struct {
 	Interfaces    []Interface `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
@@ -155,7 +158,7 @@ type Observation struct {
 	Message    string   `json:"message,omitempty" yaml:"message,omitempty"`
 	Tool       string   `json:"tool,omitempty" yaml:"tool,omitempty"`
 	State      string   `json:"state" yaml:"state"`
-	Values     []string `json:"values" yaml:"values"`
+	Values     []string `json:"values,omitempty" yaml:"values,omitempty"`
 	ReasonCode string   `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
 }
 type Management struct {
@@ -166,14 +169,14 @@ type Management struct {
 	KubernetesVersion  string                 `json:"kubernetesVersion" yaml:"kubernetesVersion"`
 	Namespace          string                 `json:"namespace" yaml:"namespace"`
 	Nodes              []Node                 `json:"nodes" yaml:"nodes"`
-	EvidenceRefs       []string               `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs       []string               `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Association struct {
 	DPUID          string   `json:"dpuID" yaml:"dpuID"`
 	HostID         string   `json:"hostID" yaml:"hostID"`
 	HostAdapterKey string   `json:"hostAdapterKey" yaml:"hostAdapterKey"`
 	SerialNumber   string   `json:"serialNumber" yaml:"serialNumber"`
-	EvidenceRefs   []string `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs   []string `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Inventory struct {
 	Software       *releases.Release   `json:"software,omitempty" yaml:"software,omitempty"`
@@ -188,7 +191,7 @@ type Inventory struct {
 	Hosts          []Device            `json:"hosts" yaml:"hosts"`
 	Associations   []Association       `json:"associations" yaml:"associations"`
 	Probes         []ProbeResult       `json:"probes,omitempty" yaml:"probes,omitempty"`
-	Evidence       map[string]Evidence `json:"evidence" yaml:"evidence"`
+	Evidence       map[string]Evidence `json:"evidence,omitempty" yaml:"evidence,omitempty"`
 }
 type Check struct {
 	Message       string   `json:"message,omitempty"`
@@ -198,7 +201,7 @@ type Check struct {
 	RequiredPhase string   `json:"requiredPhase"`
 	State         string   `json:"state"`
 	ReasonCode    string   `json:"reasonCode"`
-	EvidenceRefs  []string `json:"evidenceRefs"`
+	EvidenceRefs  []string `json:"evidenceRefs,omitempty"`
 }
 type Problem struct {
 	Tool        string `json:"tool,omitempty"`

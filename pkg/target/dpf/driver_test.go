@@ -49,4 +49,28 @@ var _ = Describe("target boundary", func() {
 		_, e := NewDiscoverAdapter(Request{}).Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
 		Expect(e).To(HaveOccurred())
 	})
+	It("keeps live preparation status on stderr and suppresses it with quiet without changing JSON", func() {
+		for _, quiet := range []bool{false, true} {
+			var stdout, stderr bytes.Buffer
+			op, err := NewDiscoverAdapter(Request{Stdout: &stdout, Stderr: &stderr}).Bind(target.Invocation{Target: target.DPF, Phase: target.Discover, Output: target.OutputOptions{Format: "json", Quiet: quiet}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(errors.ExitCodeFromError(op.Run(context.Background()))).To(Equal(2))
+			var result map[string]any
+			Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+			Expect(result["execution"]).To(Equal("failed"))
+			if quiet {
+				Expect(stderr.String()).To(BeEmpty())
+			} else {
+				Expect(stderr.String()).To(ContainSubstring("[RUNNING] Configuration"))
+				Expect(stderr.String()).To(ContainSubstring("[FAIL] Discovery preparation"))
+			}
+		}
+	})
+	It("returns a local failure when the human summary cannot be written", func() {
+		var stderr bytes.Buffer
+		op, err := NewDiscoverAdapter(Request{Stdout: failedWriter{}, Stderr: &stderr}).Bind(target.Invocation{Target: target.DPF, Phase: target.Discover, Output: target.OutputOptions{Format: "text", Quiet: true}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(errors.ExitCodeFromError(op.Run(context.Background()))).To(Equal(1))
+		Expect(stderr.String()).To(ContainSubstring("cannot write DPF discovery result"))
+	})
 })
