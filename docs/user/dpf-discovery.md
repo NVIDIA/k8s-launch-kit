@@ -316,7 +316,8 @@ operation: session connection, administrator verification, inventory reads,
 identity rechecks, cleanup, host/card matching or output publication.
 `RUNNING` precedes the operation; `PASS` follows a successful check or completed
 read; `FAIL` identifies a failed operation. `UNAVAILABLE` identifies an optional
-fact that could not be measured, with a reason. Completing a read does not mean
+fact that could not be measured. Optional-read summaries count unavailable facts;
+the saved detailed report retains each reason. Completing a read does not mean
 all optional facts were available. Concurrent endpoints can interleave whole
 status lines. `--quiet` suppresses progress; it does not change acceptance.
 

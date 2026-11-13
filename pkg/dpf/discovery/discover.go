@@ -18,6 +18,8 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type ProbeRunner interface {
@@ -36,7 +38,15 @@ func NewReport() inventory.Report {
 	return inventory.Report{SchemaVersion: inventory.FormatVersion, Target: "dpf", Phase: "discover", Execution: "completed", Acceptance: "not-evaluated", Discovery: inventory.Discovery{Outcome: "invalid", Checks: []inventory.Check{}, Cleanup: inventory.Cleanup{State: "complete", Leftovers: []string{}}}, Diff: []inventory.Change{}, PendingInputs: []inventory.Problem{}, Artifacts: []inventory.Artifact{}, Errors: []inventory.Problem{}}
 }
 func Collect(ctx context.Context, r config.Request, runID string, deps Dependencies) inventory.Report {
+	started := time.Now()
+	logger := log.FromContext(ctx).WithName("dpf.discovery")
+	ctx = log.IntoContext(ctx, logger)
+	output := ui.FromContext(ctx)
 	report := NewReport()
+	logger.V(1).Info("DPF discovery started", "mode", r.Mode, "endpointCount", len(r.Targets))
+	defer func() {
+		logger.V(1).Info("DPF discovery completed", "outcome", report.Discovery.Outcome, "execution", report.Execution, "cleanupState", report.Discovery.Cleanup.State, "problemCount", len(report.Errors), "duration", time.Since(started))
+	}()
 	report.Discovery.Mode = r.Mode
 	inv := &inventory.Inventory{FormatVersion: inventory.FormatVersion, Collection: inventory.Collection{RunID: runID, StartedAt: time.Now().UTC(), Mode: r.Mode, Collector: "l8k-go-discovery-v1"}, RequestedScope: []inventory.ScopeEndpoint{}, DPUs: []inventory.Device{}, Hosts: []inventory.Device{}, Associations: []inventory.Association{}, Evidence: map[string]inventory.Evidence{}}
 	report.Inventory = inv
@@ -83,13 +93,21 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		wg.Add(1)
 		go func(i int, t config.Target) {
 			defer wg.Done()
+			endpointLogger := logger.WithValues("endpoint", t.DisplayName(), "role", t.Role, "sourceIndex", i+1)
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
 				devices[i] = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{t.Role, t.Endpoint, t.SystemURI}), InputRef: t.InputRef, BMCEndpoint: t.Endpoint, ObservationState: "unavailable", ReasonCode: "CANCELLED"}
+				endpointLogger.V(1).Info("Endpoint observation not started", "reasonCode", "CANCELLED")
 				return
 			}
+			endpointStarted := time.Now()
+			endpointLogger.V(1).Info("Endpoint observation started")
+			defer func() {
+				d := devices[i]
+				endpointLogger.V(1).Info("Endpoint observation completed", "identityState", d.ObservationState, "identityEstablished", d.ID != "", "reasonCode", d.ReasonCode, "duration", time.Since(endpointStarted))
+			}()
 			collector := deps.BMC
 			if t.SSH != nil {
 				collector = deps.SSH
@@ -150,7 +168,13 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	if !requestedDPUs {
 		inv.DPUs = HostCards(inv.Hosts)
 	}
+	output.Info("[RUNNING] Host/DPU physical association")
 	inv.Associations, report.Discovery.Checks = Correlate(inv.DPUs, inv.Hosts)
+	if len(inv.Associations) == len(inv.DPUs) && len(inv.DPUs) > 0 {
+		output.Info("[PASS] Host/DPU physical association: %d unique matches", len(inv.Associations))
+	} else {
+		output.Info("[FAIL] Host/DPU physical association: %d/%d uniquely matched", len(inv.Associations), len(inv.DPUs))
+	}
 	selected := map[string]bool{}
 	for _, a := range inv.Associations {
 		selected[a.HostAdapterKey] = true
@@ -203,6 +227,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 			report.Errors = append(report.Errors, inventory.Problem{Code: "MANAGEMENT_SCOPE_CHANGED", Message: "management identity or node membership changed during collection", ExitCode: 3})
 		}
 	}
+	output.Info("[RUNNING] Required discovery checks")
 	report.Discovery.Checks = append(report.Discovery.Checks, ProbeChecks(inv, r.Targets)...)
 	for _, d := range append(slices.Clone(inv.DPUs), inv.Hosts...) {
 		addCheck("dpf.device.identity", d.RecordKey, d.ID != "" && d.ObservationState == "observed", "PHYSICAL_IDENTITY_REQUIRED", d.EvidenceRefs, "discover")
@@ -233,7 +258,16 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	}
 	report.Discovery.Checks = append(report.Discovery.Checks, SoftwareChecks(inv)...)
 	for i := range report.Discovery.Checks {
-		ExplainCheck(&report.Discovery.Checks[i])
+		check := &report.Discovery.Checks[i]
+		ExplainCheck(check)
+		checkLogger := logger
+		for index, device := range devices {
+			if check.Subject != "" && (check.Subject == device.RecordKey || check.Subject == device.ID) {
+				checkLogger = logger.WithValues("endpoint", r.Targets[index].DisplayName(), "role", r.Targets[index].Role, "sourceIndex", index+1)
+				break
+			}
+		}
+		checkLogger.V(1).Info("Discovery check evaluated", "check", check.ID, "state", check.State, "requiredPhase", check.RequiredPhase, "reasonCode", check.ReasonCode)
 	}
 	report.Discovery.Outcome = "complete"
 	for _, c := range report.Discovery.Checks {
@@ -270,6 +304,11 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	}
 	report.PendingInputs = []inventory.Problem{{Code: "LATER_PHASE_INPUT", Message: "DPU API allocation and selected service profile are evaluated by future generation", InputRef: "/networks/dpuAPI"}}
 	slices.SortFunc(report.Errors, func(a, b inventory.Problem) int { return strings.Compare(a.InputRef+a.Code, b.InputRef+b.Code) })
+	if report.Discovery.Outcome == "complete" {
+		output.Info("[PASS] Required discovery checks completed; publication pending")
+	} else {
+		output.Info("[FAIL] Required discovery checks: incomplete evidence; complete handoff will not be published")
+	}
 	return report
 }
 func scopeConflict(old, current *inventory.Inventory) bool {

@@ -135,6 +135,7 @@ func (a Access) TrustDigest() string {
 }
 
 type Target struct {
+	Name      string
 	SSH       *SSHAccess
 	Endpoint  string
 	SystemURI string
@@ -142,6 +143,20 @@ type Target struct {
 	Role      string
 	Access    Access
 }
+
+// DisplayName is presentation only; names and URL-private components never
+// participate in physical identity or access-policy scope.
+func (t Target) DisplayName() string {
+	endpoint := "<invalid endpoint>"
+	if u, err := url.Parse(t.Endpoint); err == nil && (u.Scheme == "https" || u.Scheme == "ssh") && u.Hostname() != "" {
+		endpoint = (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
+	}
+	if t.Name != "" {
+		return strconv.Quote(t.Name) + " (" + endpoint + ")"
+	}
+	return endpoint
+}
+
 type Request struct {
 	Software          *releases.Release
 	AddressLookup     *addresslookup.Request
@@ -368,6 +383,10 @@ func Resolve(in Input) (Request, error) {
 	}{{"dpus", s.Discovery.DPUs}, {"hosts", s.Discovery.Hosts}} {
 		for i, e := range group.endpoints {
 			ptr := fmt.Sprintf("/discovery/%s/%d", group.role, i)
+			name := ""
+			if e.Name != nil {
+				name = *e.Name
+			}
 			if e.SSH != nil {
 				if r.Mode != "inventory" {
 					return r, fmt.Errorf("%s/ssh requires inventory mode; management probes require BMC targets", ptr)
@@ -391,7 +410,7 @@ func Resolve(in Input) (Request, error) {
 				if err != nil {
 					return r, fmt.Errorf("%s/ssh: %w", ptr, err)
 				}
-				r.Targets = append(r.Targets, Target{Endpoint: origin, InputRef: ptr, Role: group.role, SSH: access})
+				r.Targets = append(r.Targets, Target{Name: name, Endpoint: origin, InputRef: ptr, Role: group.role, SSH: access})
 				continue
 			}
 			origin, err := Origin(e.BMCEndpoint)
@@ -437,7 +456,7 @@ func Resolve(in Input) (Request, error) {
 				}
 				accesses[cacheKey] = a
 			}
-			r.Targets = append(r.Targets, Target{Endpoint: origin, SystemURI: selector, InputRef: ptr, Role: group.role, Access: a})
+			r.Targets = append(r.Targets, Target{Name: name, Endpoint: origin, SystemURI: selector, InputRef: ptr, Role: group.role, Access: a})
 		}
 	}
 	return r, nil

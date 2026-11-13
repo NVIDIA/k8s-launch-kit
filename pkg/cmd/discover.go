@@ -106,6 +106,8 @@ probes and hardware support require qualified release assets.`,
 func init() {
 	rootCmd.AddCommand(discoverCmd)
 	addTargetFlag(discoverCmd)
+	discoverCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress discovery progress (final result and errors still shown)")
+	setFlagGroup(discoverCmd, "quiet", GroupOutputLogging)
 
 	discoverCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Base config to merge with discovered hardware")
