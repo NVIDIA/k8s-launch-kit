@@ -39,6 +39,58 @@ var _ = Describe("inventory semantics", func() {
 		Expect(a).To(BeEmpty())
 		Expect(c[0].State).To(Equal("failed"))
 	})
+	It("accepts NVIDIA or unknown adapter vendors without filtering mixed host inventory", func() {
+		for _, vendor := range []string{"15b3", ""} {
+			v := estate()
+			v.Hosts[0].Adapters[0].VendorID = vendor
+			v.Hosts[0].Adapters[2].VendorID = "8086"
+			before, err := json.Marshal(v.Hosts)
+			Expect(err).NotTo(HaveOccurred())
+			associations, checks := Correlate(v.DPUs, v.Hosts)
+			Expect(associations).To(HaveLen(2))
+			Expect(checks).To(ConsistOf(HaveField("State", "passed"), HaveField("State", "passed")))
+			after, err := json.Marshal(v.Hosts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after).To(Equal(before))
+		}
+	})
+	It("rejects a same-serial PCI vendor contradiction with both source evidence references", func() {
+		v := estate()
+		v.DPUs = v.DPUs[:1]
+		v.DPUs[0].EvidenceRefs = []string{"dpu-serial"}
+		v.Hosts[0].Adapters[0].VendorID = "8086"
+		v.Hosts[0].Adapters[0].EvidenceRefs = []string{"host-serial", "host-pci-vendor"}
+		before, err := json.Marshal(v)
+		Expect(err).NotTo(HaveOccurred())
+		associations, checks := Correlate(v.DPUs, v.Hosts)
+		Expect(associations).To(BeEmpty())
+		Expect(checks).To(HaveLen(1))
+		Expect(checks[0].State).To(Equal("failed"))
+		Expect(checks[0].ReasonCode).To(Equal("HOST_ADAPTER_VENDOR_CONFLICT"))
+		Expect(checks[0].EvidenceRefs).To(ConsistOf("dpu-serial", "host-serial", "host-pci-vendor"))
+		ExplainCheck(&checks[0])
+		Expect(checks[0].Message).To(ContainSubstring("Verify the selected endpoints"))
+		after, err := json.Marshal(v)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(Equal(before))
+	})
+	It("does not discard a contradictory candidate to accept another same-serial NVIDIA card", func() {
+		for _, reverse := range []bool{false, true} {
+			v := estate()
+			v.DPUs = v.DPUs[:1]
+			v.Hosts[0].Adapters[0].VendorID = "8086"
+			other := inventory.Device{ID: "host-b", RecordKey: "other-host", ObservationState: "observed", Adapters: []inventory.Adapter{{Key: "nvidia-card", SerialNumber: "CARD-A", VendorID: "15b3"}}}
+			if reverse {
+				v.Hosts = append([]inventory.Device{other}, v.Hosts...)
+			} else {
+				v.Hosts = append(v.Hosts, other)
+			}
+			associations, checks := Correlate(v.DPUs, v.Hosts)
+			Expect(associations).To(BeEmpty())
+			Expect(checks[0].ReasonCode).To(Equal("HOST_ADAPTER_VENDOR_CONFLICT"))
+			Expect(checks[0].State).To(Equal("failed"))
+		}
+	})
 	It("keeps fingerprints stable across order/time/readiness and changes them for identity", func() {
 		a := estate()
 		Canonicalize(&a)

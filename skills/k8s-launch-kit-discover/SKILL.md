@@ -25,6 +25,12 @@ and its linked role must grant all five standard Administrator privileges; names
 alone and OEM-only roles are insufficient. Missing or denied evidence fails closed.
 Discovery never changes passwords or tests privilege with a write.
 
+Host/card correlation also rejects an exposed non-NVIDIA PCI vendor on any
+same-serial candidate (`HOST_ADAPTER_VENDOR_CONFLICT`). Inspect endpoint and
+serial/PCI evidence before rerunning; do not edit inventory or discard a
+contradictory candidate to force a match. Missing vendor information remains
+unknown, and unrelated mixed-vendor host adapters remain in inventory.
+
 Supported BF4/B4240 Redfish discovery saves `inventory.dpus[].observations.psid`
 from System AssetTag, then the identity-selected chassis fallback, with Redfish
 property evidence and source rereads. Missing/N/A stays unknown. Invalid,

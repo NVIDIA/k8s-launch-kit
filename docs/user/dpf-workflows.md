@@ -200,6 +200,7 @@ Read each non-success observation's `reasonCode`, `message` and `tool` where pre
 | `ACCESS_DENIED` / `PROPERTY_NOT_EXPOSED` | Distinguish an account permission problem from a property the service does not advertise. |
 | `SOFTWARE_VERSION_CONFLICT` / `SOFTWARE_IDENTITY_UNAVAILABLE` | Reconcile version/activation sources or the rejected physical identity before trusting software comparisons. |
 | `SOFTWARE_BELOW_MINIMUM` | Review the release requirement and plan a separate maintenance action; discovery does not update firmware. |
+| `HOST_ADAPTER_VENDOR_CONFLICT` | Inspect the selected endpoints and matching serial/PCI evidence: a same-serial host adapter reports a non-NVIDIA vendor. Correct the source and rediscover; do not edit observed identity or discard a contradictory candidate to force a match. |
 | `BMC_ADMIN_REQUIRED` / `BMC_ADMIN_ACCESS_DENIED` | Use an authorized account with all standard Administrator privileges and readable account/role evidence. |
 | `BMC_ADMIN_UNVERIFIABLE` / `BMC_ADMIN_NOT_VERIFIED` | Supply explicit trusted DPU BMC access and complete, consistent account/role evidence; host/ARM SSH is insufficient. |
 | `BMC_PASSWORD_CHANGE_REQUIRED` / `BMC_ADMIN_ACCOUNT_RESTRICTED` | Ask the administrator to resolve password-change, disabled or locked state separately, then rerun. Discovery does not repair access. |

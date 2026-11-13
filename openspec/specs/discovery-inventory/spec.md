@@ -171,6 +171,12 @@ New and changed discovery checks SHALL retain a stable reason code and safe huma
 - **WHEN** an installed tool cannot read a restricted device
 - **THEN** the collector retains an access/query failure rather than claiming the tool is missing or the hardware absent, without changing privilege settings.
 
+#### Scenario: DPF serial match contradicts host PCI vendor
+
+- **WHEN** a same-serial host adapter exposes a non-NVIDIA PCI vendor for a discovered BlueField DPU
+- **THEN** the required association fails with a specific vendor-conflict reason and retains both identity sources and PCI evidence; discovery remains partial and preserves the prior complete handoff.
+- **AND** a contradictory candidate cannot be discarded to accept another same-serial match. Missing vendor information remains unknown, and unrelated mixed-vendor adapters remain in host inventory.
+
 #### Scenario: Supported BF4 Redfish PSID sources
 
 - **WHEN** the supported BF4 reader establishes physical identity and reads System/chassis AssetTags

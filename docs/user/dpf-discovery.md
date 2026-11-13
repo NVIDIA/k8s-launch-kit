@@ -216,7 +216,14 @@ to that newly observed address. Missing optional tools/data remain unknown with 
 never infers a BMC address from an ARM IP or a serial from a hostname.
 
 Host and ARM PCI addresses belong to different domains; correlation uses physical
-serial identity, not matching PCI addresses. Host-reported identity alone does not
+serial identity, not matching PCI addresses. If a same-serial host adapter exposes
+a PCI vendor other than NVIDIA (`15b3`), the required association fails with
+`HOST_ADAPTER_VENDOR_CONFLICT`. Inspect the endpoint, serial and PCI evidence and
+rerun with corrected sources; a matching serial cannot override contradictory
+vendor identity. A missing vendor stays unknown and does not establish hardware
+qualification. Other vendors remain in host inventory, and a contradictory
+candidate is never discarded to make another same-serial candidate appear unique.
+Host-reported identity alone does not
 attest trusted DPU state. Sources and any conflicts stay in the output.
 SSH observations do not satisfy the required DPU BMC administrator check.
 Controller mTLS enrollment and provisioning readiness remain separate later-phase checks.

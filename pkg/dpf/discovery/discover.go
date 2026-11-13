@@ -297,6 +297,8 @@ func Correlate(dpus, hosts []inventory.Device) ([]inventory.Association, []inven
 	}
 	for _, d := range dpus {
 		matches := []inventory.Association{}
+		vendorConflict := false
+		refs := slices.Clone(d.EvidenceRefs)
 		for hi := range hosts {
 			h := &hosts[hi]
 			for ai := range h.Adapters {
@@ -304,15 +306,25 @@ func Correlate(dpus, hosts []inventory.Device) ([]inventory.Association, []inven
 				if d.ObservationState == "observed" && h.ObservationState == "observed" && d.SerialNumber != "" && a.SerialNumber == d.SerialNumber {
 					// Selection annotations are applied by the orchestrator after correlation.
 					matches = append(matches, inventory.Association{DPUID: d.ID, HostID: h.ID, HostAdapterKey: a.Key, SerialNumber: d.SerialNumber, EvidenceRefs: append(slices.Clone(d.EvidenceRefs), a.EvidenceRefs...)})
+					// Readers normalize known PCI vendors to four-digit lowercase hex.
+					// Keep contradictory candidates: dropping one could turn ambiguity
+					// into an apparently unique NVIDIA BlueField association.
+					if a.VendorID != "" && a.VendorID != "15b3" {
+						vendorConflict = true
+						refs = append(refs, a.EvidenceRefs...)
+					}
 				}
 			}
 		}
 		state := "failed"
-		if len(matches) == 1 && d.ID != "" && matches[0].HostID != "" && seenIDs[d.ID] == 1 && seenIDs[matches[0].HostID] == 1 {
+		reason := "UNIQUE_PHYSICAL_MATCH_REQUIRED"
+		if vendorConflict {
+			reason = "HOST_ADAPTER_VENDOR_CONFLICT"
+		} else if len(matches) == 1 && d.ID != "" && matches[0].HostID != "" && seenIDs[d.ID] == 1 && seenIDs[matches[0].HostID] == 1 {
 			state = "passed"
 			associations = append(associations, matches[0])
 		}
-		checks = append(checks, inventory.Check{ID: "dpf.inventory.association", Subject: d.RecordKey, Vantage: "executor", RequiredPhase: "discover", State: state, ReasonCode: "UNIQUE_PHYSICAL_MATCH_REQUIRED", EvidenceRefs: d.EvidenceRefs})
+		checks = append(checks, inventory.Check{ID: "dpf.inventory.association", Subject: d.RecordKey, Vantage: "executor", RequiredPhase: "discover", State: state, ReasonCode: reason, EvidenceRefs: refs})
 	}
 	return associations, checks
 }
