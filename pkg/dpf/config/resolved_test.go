@@ -9,9 +9,25 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	yaml "gopkg.in/yaml.v3"
 )
 
 var _ = Describe("resolved DPF generation", func() {
+	It("rejects legacy or failed administrator proof in retained deployment metadata", func() {
+		for _, admin := range []inventory.Observation{{}, {State: "failed", ReasonCode: "BMC_ADMIN_REQUIRED"}, {State: "failed", ReasonCode: "BMC_ADMIN_VERIFIED"}, {State: "observed", ReasonCode: "BMC_ADMIN_UNVERIFIABLE"}} {
+			generation := resolvedGeneration()
+			generation.Devices[0].Observations = map[string]inventory.Observation{"bmc-administrator": admin}
+			Expect(ValidateGeneration(generation)).To(MatchError(ContainSubstring("rerun discovery")))
+			_, err := EncodeResolved(generation)
+			Expect(err).To(MatchError(ContainSubstring("rerun discovery")))
+			// Marshal directly to represent metadata produced before this requirement.
+			legacy, err := yaml.Marshal(Resolved{FormatVersion: "v1alpha1", Target: "dpf", Config: generation})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = DecodeResolved(legacy)
+			Expect(err).To(MatchError(ContainSubstring("rerun discovery")))
+		}
+	})
+
 	It("round-trips a validated deployment config and returns independent values", func() {
 		generation := resolvedGeneration()
 		encoded, err := EncodeResolved(generation)

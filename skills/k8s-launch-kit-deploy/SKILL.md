@@ -23,6 +23,11 @@ review unresolved checks, then use an explicit `--deploy-timeout`. Real deploy
 can reimage devices and require host power handling. It never implicitly
 adopts/removes another owner or applies chart projections twice. Reports go to
 `<bundle>.runs/`; preserve the bundle and failed-run evidence before retrying.
+Bundles missing selected-device BMC administrator discovery proof require
+rediscovery and regeneration. Saved proof does not replace live DPF access.
+Legacy B4240 inventory can identify a card whose BMC schema is unsupported by
+the DPF operator/preflight; arrange supported firmware before enrollment and
+rediscover. Keep failed preflight closed; do not substitute SSH or edit identity.
 The Host procedure below applies to `host` only.
 
 ## Host workflow

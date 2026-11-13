@@ -34,6 +34,12 @@ A profile extension MUST define eligibility and preserve exact selected-group sc
 - **WHEN** the requested profile combination is outside declared eligibility
 - **THEN** selection rejects it or follows an explicitly documented selection policy.
 
+#### Scenario: DPF Sentry selects discovered BF4 devices
+
+- **WHEN** Sentry generation selects inventory device IDs
+- **THEN** every selected device has an observed `BlueField-4` identity, or exact `B4240` identity from `bluefield-card-v1`, an explicit BMC endpoint without an ARM SSH substitute, and successful `bmc-administrator` evidence (`observed`, `BMC_ADMIN_VERIFIED`). Measured model values are preserved; unselected records do not broaden or block the selection.
+- **AND** missing or failed administrator proof requires rediscovery and regeneration; saved evidence neither qualifies legacy firmware for provisioning nor replaces live DPF authentication and preflight.
+
 ### Requirement: Multiplicity and unique identities
 
 A template extension MUST declare render multiplicity, API scope and reference namespaces separately. New or changed identity rules SHALL detect collisions before output-map assignment can overwrite an artifact. Stable inputs SHALL produce stable identities.

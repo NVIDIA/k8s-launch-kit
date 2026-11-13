@@ -111,10 +111,7 @@ func ValidateGeneration(g Generation) error {
 			return fmt.Errorf("resolved device identities or bindings conflict")
 		}
 		ids[d.ID], serials[d.SerialNumber], names[binding.DPUDevice] = true, true, true
-		if d.Model != "BlueField-4" || d.ObservationState != "observed" {
-			return fmt.Errorf("resolved device %s has no observed BF4 identity", d.ID)
-		}
-		if _, err := Origin(d.BMCEndpoint); err != nil {
+		if err := validateProvisioningDevice(d); err != nil {
 			return err
 		}
 		psid := g.DevicePSIDs[d.ID]

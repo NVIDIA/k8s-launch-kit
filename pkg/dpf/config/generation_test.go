@@ -153,6 +153,65 @@ var _ = Describe("DPF generation configuration", func() {
 		}
 	})
 
+	It("retains the exact B4240 model only from the reviewed BlueField reader", func() {
+		in := validGenerationInput(GinkgoT().TempDir())
+		in.Site.Inventory.DPUs[0].Model = "B4240"
+		in.Site.Inventory.DPUs[0].ReaderAdapter = "bluefield-card-v1"
+		resolved, err := ResolveGeneration(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Devices[0].Model).To(Equal("B4240"))
+		Expect(in.Site.Inventory.DPUs[0].Model).To(Equal("B4240"))
+		encoded, err := EncodeResolved(resolved)
+		Expect(err).NotTo(HaveOccurred())
+		decoded, err := DecodeResolved(encoded)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(decoded.Devices[0].Model).To(Equal("B4240"))
+
+		for _, reader := range []string{"", "host-card-v1", "ssh"} {
+			By(reader)
+			in.Site.Inventory.DPUs[0].ReaderAdapter = reader
+			_, err = ResolveGeneration(in)
+			Expect(err).To(MatchError(ContainSubstring("B4240 requires the bluefield-card-v1 reader")))
+		}
+		in.Site.Inventory.DPUs[0].ReaderAdapter = "bluefield-card-v1"
+		in.Site.Inventory.DPUs[0].Model = "B4240X"
+		_, err = ResolveGeneration(in)
+		Expect(err).To(MatchError(ContainSubstring("requires observed BlueField-4 identity")))
+	})
+
+	It("requires successful BMC administrator discovery evidence for each selected device", func() {
+		for _, tc := range []struct {
+			name string
+			edit func(*inventory.Device)
+		}{
+			{"legacy inventory", func(d *inventory.Device) { d.Observations = nil }},
+			{"missing observation", func(d *inventory.Device) { delete(d.Observations, "bmc-administrator") }},
+			{"failed observation", func(d *inventory.Device) {
+				d.Observations["bmc-administrator"] = inventory.Observation{State: "failed", ReasonCode: "BMC_ADMIN_REQUIRED"}
+			}},
+			{"conflicting state", func(d *inventory.Device) {
+				d.Observations["bmc-administrator"] = inventory.Observation{State: "failed", ReasonCode: "BMC_ADMIN_VERIFIED"}
+			}},
+			{"unverified reason", func(d *inventory.Device) {
+				d.Observations["bmc-administrator"] = inventory.Observation{State: "observed", ReasonCode: "BMC_ADMIN_UNVERIFIABLE"}
+			}},
+			{"missing BMC", func(d *inventory.Device) { d.BMCEndpoint = "" }},
+			{"ARM SSH substitute", func(d *inventory.Device) { d.SSHEndpoint = "192.0.2.21:22" }},
+		} {
+			By(tc.name)
+			in := validGenerationInput(GinkgoT().TempDir())
+			tc.edit(&in.Site.Inventory.DPUs[0])
+			_, err := ResolveGeneration(in)
+			Expect(err).To(MatchError(ContainSubstring("rerun discovery with an explicit DPU BMC endpoint and administrator credentials")))
+		}
+
+		in := validGenerationInput(GinkgoT().TempDir())
+		in.Site.Inventory.DPUs = append(in.Site.Inventory.DPUs, inventory.Device{ID: "dpu-2", SerialNumber: "BF4-SERIAL-2", Model: "BlueField-4", ObservationState: "observed", BMCEndpoint: "https://192.0.2.22"})
+		in.Site.Provisioning.Devices = append(in.Site.Provisioning.Devices, DeviceBinding{ID: "dpu-2", DPUDevice: "dpu-device-2", DPUNode: "dpu-node-2"})
+		_, err := ResolveGeneration(in)
+		Expect(err).To(MatchError(ContainSubstring("device dpu-2 requires verified BMC administrator discovery evidence")))
+	})
+
 	It("requires explicit management context and either explicit or observed management UID", func() {
 		in := validGenerationInput(GinkgoT().TempDir())
 		in.Site.Management.Context = nil
@@ -315,7 +374,8 @@ func validGenerationInput(base string) Input {
 	psid := inventory.Observation{State: "observed", Values: []string{generationPSID}}
 	dpu := inventory.Device{
 		ID: "dpu-1", SerialNumber: "BF4-SERIAL-1", Model: "BlueField-4", ObservationState: "observed",
-		BMCEndpoint: "https://192.0.2.21",
+		BMCEndpoint:  "https://192.0.2.21",
+		Observations: map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"}},
 		Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{
 			SerialNumber: "BF4-SERIAL-1", PSID: psid,
 		}}}},

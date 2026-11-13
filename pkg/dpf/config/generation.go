@@ -261,8 +261,8 @@ func resolveProvisioning(g *Generation, inv *inventory.Inventory) error {
 			return fmt.Errorf("device %s does not resolve to exactly one observed serial", binding.ID)
 		}
 		d := matches[0]
-		if d.ObservationState != "observed" || d.Model != "BlueField-4" {
-			return fmt.Errorf("device %s requires observed BlueField-4 identity", binding.ID)
+		if err := validateProvisioningDevice(d); err != nil {
+			return err
 		}
 		associations := []inventory.Association{}
 		for _, a := range inv.Associations {
@@ -308,12 +308,6 @@ func resolveProvisioning(g *Generation, inv *inventory.Inventory) error {
 			}
 			g.DevicePSIDs[d.ID] = psid
 		}
-		if d.BMCEndpoint == "" {
-			return fmt.Errorf("device %s has no observed BMC endpoint", binding.ID)
-		}
-		if _, err := Origin(d.BMCEndpoint); err != nil {
-			return fmt.Errorf("device %s has invalid BMC endpoint", binding.ID)
-		}
 		b, err := yaml.Marshal(d)
 		if err != nil {
 			return err
@@ -342,6 +336,22 @@ func resolveProvisioning(g *Generation, inv *inventory.Inventory) error {
 	}
 	if p.Software.NICFirmware != nil {
 		return validateArtifact(*p.Software.NICFirmware)
+	}
+	return nil
+}
+
+// Validate source inventory and retained bundle devices by the same contract.
+// Discovery evidence is a prerequisite; deploy still verifies live DPF access.
+func validateProvisioningDevice(d inventory.Device) error {
+	if d.ObservationState != "observed" || (d.Model != "BlueField-4" && (d.Model != "B4240" || d.ReaderAdapter != "bluefield-card-v1")) {
+		return fmt.Errorf("device %s requires observed BlueField-4 identity; B4240 requires the bluefield-card-v1 reader", d.ID)
+	}
+	admin := d.Observations["bmc-administrator"]
+	if admin.State != "observed" || admin.ReasonCode != "BMC_ADMIN_VERIFIED" || d.BMCEndpoint == "" || d.SSHEndpoint != "" {
+		return fmt.Errorf("device %s requires verified BMC administrator discovery evidence; rerun discovery with an explicit DPU BMC endpoint and administrator credentials, then regenerate the bundle", d.ID)
+	}
+	if _, err := Origin(d.BMCEndpoint); err != nil {
+		return fmt.Errorf("device %s has invalid BMC endpoint", d.ID)
 	}
 	return nil
 }

@@ -18,7 +18,13 @@ For an explicit DPF request, use `--target dpf` and follow
 explicit selected device/tenant bindings, site networks, SHA-bound BF4 software
 and four catalogued local chart archives. `l8k schema` exposes `dpf.profiles`,
 `dpf.generationReleases` and `dpf.charts`. Generation reads no credentials and
-contacts no cluster. Core policy defaults to `llmInspection: false`; enabling
+contacts no cluster. Each selected device requires observed BMC administrator
+proof (`bmc-administrator`, `observed`, `BMC_ADMIN_VERIFIED`) from explicit BMC
+discovery; ARM SSH cannot substitute. Rediscover older inventories without this
+proof and regenerate old bundles into a new directory. The exact model `B4240`
+is accepted only from `bluefield-card-v1` and stays unchanged in metadata.
+Saved proof does not replace live deployment authentication or qualify legacy
+BMC firmware for provisioning. Core policy defaults to `llmInspection: false`; enabling
 LLM inspection requires a real inference Secret. The resolved bundle is
 immutable; use a new directory for changed desired intent. Do not apply chart
 projections separately. The Host procedure below applies to `host` only.

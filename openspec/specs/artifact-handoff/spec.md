@@ -100,6 +100,11 @@ explicit access-path relocation SHALL not replace captured deployment intent.
 - **WHEN** a bundle has consistent hashes but changed resources or stages inconsistent with its resolved profile
 - **THEN** deploy and validate reject it before cluster access or writes.
 
+#### Scenario: Retained DPF bundle predates administrator discovery evidence
+
+- **WHEN** selected devices in retained resolved metadata lack successful BMC administrator discovery proof
+- **THEN** source generation, resolved-metadata encoding and bundle consumption reject the missing proof with rediscovery/regeneration guidance before publication or cluster access. The inventory/sidecar format version alone does not satisfy the requirement.
+
 #### Scenario: Relocated discovery output
 
 - **WHEN** discovery saves a source config in another directory

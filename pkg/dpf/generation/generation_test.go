@@ -69,6 +69,7 @@ var _ = Describe("offline DPF generation", func() {
 		resolved, err := Configuration(loaded, "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Devices).To(HaveLen(1))
+		Expect(resolved.Devices[0].Model).To(Equal("B4240"))
 		Expect(loaded.Index().SelectedDevices).To(Equal([]string{resolved.Devices[0].ID}))
 		badIndex := loaded.Index()
 		badIndex.SelectedDevices = []string{"different-device"}
@@ -81,6 +82,38 @@ var _ = Describe("offline DPF generation", func() {
 			_, err := os.Stat(p)
 			Expect(os.IsNotExist(err)).To(BeTrue(), "generation must not create access-reference files")
 		}
+	})
+
+	It("rejects an old inventory before publication and an old bundle before cluster access", func() {
+		b, err := Build(context.Background(), in, configinput.Values{})
+		Expect(err).NotTo(HaveOccurred())
+		files := b.Files()
+		for i := range files {
+			if files[i].Path == bundle.ResolvedConfigPath {
+				g, err := config.DecodeResolved(files[i].Data)
+				Expect(err).NotTo(HaveOccurred())
+				g.Devices[0].Observations = nil
+				files[i].Data, err = yaml.Marshal(config.Resolved{FormatVersion: "v1alpha1", Target: "dpf", Config: g})
+				Expect(err).NotTo(HaveOccurred())
+			}
+		}
+		index := b.Index()
+		index.BundleDigest = ""
+		for i := range index.Files {
+			index.Files[i].SHA256 = ""
+		}
+		legacy, err := bundle.New(index, files)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = Configuration(legacy, "")
+		Expect(err).To(MatchError(ContainSubstring("rerun discovery")))
+
+		in.Site.Inventory.DPUs[0].Observations = nil
+		saveInput(in, configPath)
+		out := filepath.Join(work, "legacy-inventory")
+		_, err = Run(context.Background(), Request{UserConfig: configPath, OutputPath: out})
+		Expect(err).To(MatchError(ContainSubstring("rerun discovery")))
+		_, err = os.Stat(out)
+		Expect(os.IsNotExist(err)).To(BeTrue())
 	})
 
 	It("rejects a consistently rehashed bundle whose resources diverge from its intent", func() {
@@ -183,7 +216,7 @@ var _ = Describe("offline DPF generation", func() {
 func generationInput(base, charts string) config.Input {
 	const psid = "MT_0000000010"
 	observed := inventory.Observation{State: "observed", Values: []string{psid}}
-	dpu := inventory.Device{ID: "dpu-1", SerialNumber: "BF4-SERIAL-1", Model: "BlueField-4", ObservationState: "observed", BMCEndpoint: "https://192.0.2.21", Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{SerialNumber: "BF4-SERIAL-1", PSID: observed}}}}}
+	dpu := inventory.Device{ID: "dpu-1", SerialNumber: "BF4-SERIAL-1", Model: "B4240", ReaderAdapter: "bluefield-card-v1", ObservationState: "observed", BMCEndpoint: "https://192.0.2.21", Observations: map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"}}, Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{SerialNumber: "BF4-SERIAL-1", PSID: observed}}}}}
 	host := inventory.Device{ID: "host-1", Runtime: &inventory.RuntimeObservation{Hardware: &inventory.HardwareObservation{Cards: []inventory.CardHardware{{SerialNumber: "BF4-SERIAL-1", PSID: observed}}}}}
 	site := config.Site{}
 	site.DPF.Release = stringPtr("26.8.0")

@@ -78,6 +78,15 @@ device administration process:
 - Existing DPF BMC credentials, controller client certificates/trust and the
   necessary API permissions. Artifact serving, DPU management connectivity,
   DNS, time, image pulls and host power handling must work for the chosen cohort.
+- BMC firmware exposing the Redfish schema supported by the selected DPF
+  operator and this deployment preflight, including
+  `/redfish/v1/Systems/BlueField_0` and a serial-bearing
+  `/redfish/v1/Chassis/BlueField_0`. Discovery can identify older B4240 firmware
+  through its legacy component/Card graph; that does not make it provisionable.
+  Arrange a supported firmware update through the device administrator before
+  enrollment when that schema is missing, then rediscover and enroll through the
+  existing DPF process. Generation does not update firmware, and deployment
+  does not bypass a failed BMC preflight or substitute SSH access.
 
 For a functional host VF test, also prepare the host's VF allocation, device
 resource and network attachment separately. This DPF workflow does not install
@@ -96,6 +105,17 @@ Copy a successful [discovered configuration](dpf-discovery.md) to
 `deployment-site.yaml`, retaining its `inventory`. Add the desired settings
 below; replace every angle-bracket placeholder before generating. Do not edit
 the inventory to turn an unknown or conflicting observation into a fact.
+
+Every selected device must retain successful discovery evidence under
+`observations.bmc-administrator`: `state: observed` and
+`reasonCode: BMC_ADMIN_VERIFIED`, with an explicit BMC endpoint and no ARM SSH
+endpoint. Generation accepts the exact observed model `BlueField-4`, or `B4240`
+from the reviewed `bluefield-card-v1` reader, and preserves that measured model.
+Unselected records do not need to satisfy this selection gate. If older inventory
+or a retained bundle lacks this proof, rerun discovery with DPU BMC administrator
+credentials, review its completed report, and generate into a new bundle
+directory. Do not add the proof by editing YAML. Saved privileges are an
+observation; deployment still verifies live DPF access and its own prerequisites.
 
 | Input class | What belongs here |
 | --- | --- |
