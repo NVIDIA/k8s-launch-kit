@@ -21,7 +21,7 @@ type hostCard struct {
 // collectHostAdapters joins only advertised resources of the selected System.
 // Chassis membership alone is insufficient when a chassis is shared or its
 // ownership is unknown; HPE's System PCI DeviceResourceId provides that join.
-func collectHostAdapters(ctx context.Context, c *Client, system Resource, hostID string, hpe bool, add func(string, string) string) ([]inventory.Adapter, error) {
+func collectHostAdapters(ctx context.Context, c *Client, system Resource, hostID string, hpe bool) ([]inventory.Adapter, error) {
 	cards := map[string]*hostCard{}
 	collections := map[string][]Resource{}
 	observed := map[string]Document{system.URI: hostIdentityFields(system.Document)}
@@ -167,7 +167,7 @@ func collectHostAdapters(ctx context.Context, c *Client, system Resource, hostID
 		if model == "" {
 			model = Text(card.resource.Document, "Name")
 		}
-		a := inventory.Adapter{Key: adapterKey, SerialNumber: serial, SerialNumberRaw: raw, Model: model, IdentityState: state, ReasonCode: reason, Selection: "not-selected", Slot: Text(Object(Object(card.resource.Document, "Location"), "PartLocation"), "ServiceLabel"), EvidenceRefs: []string{add(card.resource.URI, "SerialNumber"), add(card.resource.URI, "Model")}}
+		a := inventory.Adapter{Key: adapterKey, SerialNumber: serial, SerialNumberRaw: raw, Model: model, IdentityState: state, ReasonCode: reason, Selection: "not-selected", Slot: Text(Object(Object(card.resource.Document, "Location"), "PartLocation"), "ServiceLabel")}
 		if card.pci != nil {
 			pci := card.pci.Document
 			a.PCIAddress = hpePCIAddress(pci)
@@ -175,9 +175,6 @@ func collectHostAdapters(ctx context.Context, c *Client, system Resource, hostID
 			a.DeviceID = hexID(pci, "DeviceID")
 			if slot := Text(pci, "LocationString"); slot != "" {
 				a.Slot = slot
-			}
-			for _, property := range []string{"DeviceResourceId", "SegmentNumber", "BusNumber", "DeviceNumber", "FunctionNumber", "VendorID", "DeviceID", "LocationString"} {
-				a.EvidenceRefs = append(a.EvidenceRefs, add(card.pci.URI, property))
 			}
 		}
 		adapters = append(adapters, a)

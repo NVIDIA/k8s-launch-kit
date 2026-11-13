@@ -58,7 +58,7 @@ type Firmware struct {
 	RawVersion           string   `json:"rawVersion,omitempty" yaml:"rawVersion,omitempty"`
 	Activation           string   `json:"activation" yaml:"activation"`
 	ReasonCode           string   `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
-	EvidenceRefs         []string `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs         []string `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Authentication struct {
 	PasswordRead             string `json:"passwordRead" yaml:"passwordRead"`
@@ -94,7 +94,7 @@ type Adapter struct {
 	Model           string        `json:"model,omitempty" yaml:"model,omitempty"`
 	Slot            string        `json:"slot,omitempty" yaml:"slot,omitempty"`
 	Selection       string        `json:"selection" yaml:"selection"`
-	EvidenceRefs    []string      `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs    []string      `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 
 // RuntimeObservation contains OS-visible facts, separate from BMC management readiness.
@@ -137,7 +137,7 @@ type Device struct {
 	Time                  TimeObservation        `json:"time" yaml:"time"`
 	Adapters              []Adapter              `json:"adapters,omitempty" yaml:"adapters,omitempty"`
 	AdvertisedResetTypes  []string               `json:"advertisedResetTypes,omitempty" yaml:"advertisedResetTypes,omitempty"`
-	EvidenceRefs          []string               `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs          []string               `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Node struct {
 	Interfaces    []Interface `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
@@ -166,14 +166,14 @@ type Management struct {
 	KubernetesVersion  string                 `json:"kubernetesVersion" yaml:"kubernetesVersion"`
 	Namespace          string                 `json:"namespace" yaml:"namespace"`
 	Nodes              []Node                 `json:"nodes" yaml:"nodes"`
-	EvidenceRefs       []string               `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs       []string               `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Association struct {
 	DPUID          string   `json:"dpuID" yaml:"dpuID"`
 	HostID         string   `json:"hostID" yaml:"hostID"`
 	HostAdapterKey string   `json:"hostAdapterKey" yaml:"hostAdapterKey"`
 	SerialNumber   string   `json:"serialNumber" yaml:"serialNumber"`
-	EvidenceRefs   []string `json:"evidenceRefs" yaml:"evidenceRefs"`
+	EvidenceRefs   []string `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Inventory struct {
 	Software       *releases.Release   `json:"software,omitempty" yaml:"software,omitempty"`
@@ -188,7 +188,7 @@ type Inventory struct {
 	Hosts          []Device            `json:"hosts" yaml:"hosts"`
 	Associations   []Association       `json:"associations" yaml:"associations"`
 	Probes         []ProbeResult       `json:"probes,omitempty" yaml:"probes,omitempty"`
-	Evidence       map[string]Evidence `json:"evidence" yaml:"evidence"`
+	Evidence       map[string]Evidence `json:"evidence,omitempty" yaml:"evidence,omitempty"`
 }
 type Check struct {
 	Message       string   `json:"message,omitempty"`
@@ -198,7 +198,7 @@ type Check struct {
 	RequiredPhase string   `json:"requiredPhase"`
 	State         string   `json:"state"`
 	ReasonCode    string   `json:"reasonCode"`
-	EvidenceRefs  []string `json:"evidenceRefs"`
+	EvidenceRefs  []string `json:"evidenceRefs,omitempty"`
 }
 type Problem struct {
 	Tool        string `json:"tool,omitempty"`

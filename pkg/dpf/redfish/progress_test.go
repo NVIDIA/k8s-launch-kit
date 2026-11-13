@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-logr/zapr"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -81,7 +82,7 @@ var _ = Describe("secret-safe Redfish progress and logs", func() {
 		}
 	})
 
-	It("emits live stages before I/O and completes only after recheck and deferred cleanup", func() {
+	It("emits live stages without host evidence on success or deferred cleanup failure", func() {
 		for _, cleanupFails := range []bool{false, true} {
 			docs := hostGraph()
 			docs["/redfish/v1/Systems/host"]["Manufacturer"] = "HPE"
@@ -166,8 +167,16 @@ var _ = Describe("secret-safe Redfish progress and logs", func() {
 			DeferCleanup(cancel)
 			progress := &progressBuffer{}
 			ctx = ui.WithOutput(ctx, ui.NewWithWriter(progress))
-			result := make(chan error, 1)
-			go func() { _, _, err := (Collector{}).Collect(ctx, req.Targets[0], 3*time.Second); result <- err }()
+			type collected struct {
+				device   inventory.Device
+				evidence map[string]inventory.Evidence
+				err      error
+			}
+			result := make(chan collected, 1)
+			go func() {
+				device, evidence, err := (Collector{}).Collect(ctx, req.Targets[0], 3*time.Second)
+				result <- collected{device: device, evidence: evidence, err: err}
+			}()
 			Eventually(entered, 3*time.Second).Should(BeClosed())
 			Expect(progress.String()).To(ContainSubstring("[RUNNING] \"Named host\""))
 			Expect(progress.String()).To(ContainSubstring(": Physical inventory"))
@@ -187,8 +196,10 @@ var _ = Describe("secret-safe Redfish progress and logs", func() {
 			Expect(progress.String()).NotTo(ContainSubstring(": Redfish session cleanup completed"))
 			cancel() // Deferred cleanup has its own context and must still finish.
 			release(releaseCleanup)
-			var collectionErr error
-			Eventually(result, 3*time.Second).Should(Receive(&collectionErr))
+			var collection collected
+			Eventually(result, 3*time.Second).Should(Receive(&collection))
+			expectNoRedfishEvidence(collection.device, collection.evidence)
+			collectionErr := collection.err
 			if cleanupFails {
 				Expect(collectionErr).To(HaveOccurred())
 				Expect(progress.String()).To(ContainSubstring(": Redfish session cleanup (ACCESS_DENIED)"))

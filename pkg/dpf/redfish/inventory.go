@@ -34,6 +34,8 @@ func ValidSerial(raw string) bool {
 	}
 	return strings.Trim(s, "0- ") != ""
 }
+
+// Collect returns typed Redfish facts without evidence metadata; the shared map return stays nil.
 func (co Collector) Collect(ctx context.Context, target config.Target, timeout time.Duration) (device inventory.Device, evidence map[string]inventory.Evidence, err error) {
 	started := time.Now()
 	label := target.DisplayName()
@@ -50,8 +52,7 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		output.Info("[PASS] %s: %s — %s", label, stage, detail)
 		stage = ""
 	}
-	device = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{target.Role, target.Endpoint, target.SystemURI}), InputRef: target.InputRef, BMCEndpoint: target.Endpoint, ObservationState: "unavailable", Qualification: "unqualified", InventoryCompleteness: "unknown", Authentication: inventory.Authentication{PasswordRead: "unknown", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"}, Time: inventory.TimeObservation{State: "unknown", ReasonCode: "PROPERTY_NOT_EXPOSED"}, Firmware: []inventory.Firmware{}, EvidenceRefs: []string{}}
-	evidence = map[string]inventory.Evidence{}
+	device = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{target.Role, target.Endpoint, target.SystemURI}), InputRef: target.InputRef, BMCEndpoint: target.Endpoint, ObservationState: "unavailable", Qualification: "unqualified", InventoryCompleteness: "unknown", Authentication: inventory.Authentication{PasswordRead: "unknown", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"}, Time: inventory.TimeObservation{State: "unknown", ReasonCode: "PROPERTY_NOT_EXPOSED"}, Firmware: []inventory.Firmware{}}
 	expectedSerials := map[string]string{}
 	bf4Identities := map[string]Document{}
 	var psidCard Resource
@@ -93,15 +94,10 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	}
 	pass("session established")
 	device.Authentication.Method = "session"
-	add := func(uri, property string) string {
-		id := inventory.Digest("dpf-evidence-v1", []string{device.RecordKey, uri, property})
-		evidence[id] = inventory.Evidence{Kind: "redfish", InputRef: target.InputRef, ResourceURI: uri, Property: property, ObservedAt: time.Now().UTC(), Vantage: "executor", Adapter: device.ReaderAdapter, Authenticated: true}
-		device.EvidenceRefs = append(device.EvidenceRefs, id)
-		return id
-	}
+
 	if target.Role == "dpus" {
 		begin("DPU BMC administrator privileges")
-		admin := c.administrator(ctx, root, add)
+		admin := c.administrator(ctx, root)
 		device.Observations = map[string]inventory.Observation{"bmc-administrator": admin}
 		logger.V(1).Info("BMC administrator verification completed", "state", admin.State, "reasonCode", admin.ReasonCode)
 		if admin.State == "observed" && admin.ReasonCode == "BMC_ADMIN_VERIFIED" {
@@ -163,7 +159,6 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 			}
 		}
 	}
-	add(system.URI, "UUID")
 	if target.Role == "dpus" {
 		if adapter != "bluefield-card-v1" {
 			return device, evidence, &Error{Code: "UNSUPPORTED_DPU_IDENTITY"}
@@ -204,7 +199,6 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		device.Model = Text(cards[0].Document, "Model")
 		device.IdentityKey = []string{"nvidia", device.SerialNumber}
 		device.ID = inventory.PhysicalID("dpu", device.IdentityKey)
-		add(cards[0].URI, "SerialNumber")
 	} else {
 		if adapter != "hpe-standard-v1" && adapter != "dell-standard-v1" {
 			return device, evidence, &Error{Code: "UNSUPPORTED_HOST_ADAPTER"}
@@ -214,7 +208,7 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		}
 		device.IdentityKey = []string{"system-uuid", strings.ToLower(device.SystemUUID)}
 		device.ID = inventory.PhysicalID("host", device.IdentityKey)
-		device.Adapters, err = collectHostAdapters(ctx, c, system, device.ID, adapter == "hpe-standard-v1", add)
+		device.Adapters, err = collectHostAdapters(ctx, c, system, device.ID, adapter == "hpe-standard-v1")
 		if err != nil {
 			return device, evidence, err
 		}
@@ -223,7 +217,7 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	output.Info("[RUNNING] %s: Physical inventory read completed; identity recheck pending", label)
 	stage = ""
 	begin("Optional BMC firmware/time/settings observations")
-	bmcFirmware := collectSoftware(ctx, c, root, system, &device, add)
+	bmcFirmware := collectSoftware(ctx, c, root, system, &device)
 	for _, q := range co.Qualifications {
 		if q.Adapter == adapter && q.Model == device.Model && q.BMCFirmware == bmcFirmware && bmcFirmware != "" && q.VerifyCompleteness != nil && q.VerifyCompleteness(ctx, c, system) == nil {
 			device.Qualification = "qualified"
@@ -264,7 +258,6 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		if uri == psidCard.URI {
 			currentPSIDCard = current
 		}
-		add(uri, "Model,Manufacturer,SerialNumber,ChassisType,Links")
 	}
 	for uri, raw := range expectedSerials {
 		current, e := c.Get(ctx, uri)
@@ -283,7 +276,7 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		return device, evidence, &Error{Code: "IDENTITY_CHANGED", URI: system.URI}
 	}
 	if bf4 {
-		device.Observations["psid"] = bf4PSID(system, psidCard, refreshed, currentPSIDCard, add)
+		device.Observations["psid"] = bf4PSID(system.Document, psidCard.Document, refreshed, currentPSIDCard)
 	}
 	if target.Role == "dpus" && c.passwordChangeRequired {
 		device.Observations["bmc-administrator"] = inventory.Observation{State: "failed", ReasonCode: "BMC_PASSWORD_CHANGE_REQUIRED", Message: "The BMC requires a password change; discovery does not change passwords.", Tool: "redfish"}

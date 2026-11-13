@@ -75,6 +75,7 @@ var _ = Describe("physical card identity", func() {
 			req, e := config.Resolve(in)
 			Expect(e).NotTo(HaveOccurred())
 			device, evidence, e := (Collector{}).Collect(context.Background(), req.Targets[0], time.Second)
+			expectNoRedfishEvidence(device, evidence)
 			if replace {
 				Expect(e).To(HaveOccurred())
 				Expect(Code(e)).To(Equal("IDENTITY_CHANGED"))
@@ -84,7 +85,6 @@ var _ = Describe("physical card identity", func() {
 				Expect(device.ObservationState).To(Equal("observed"))
 				Expect(device.Qualification).To(Equal("unqualified"))
 				Expect(device.Observations["psid"].ReasonCode).To(Equal("PSID_READER_UNSUPPORTED"))
-				Expect(evidence).NotTo(BeEmpty())
 			}
 			Expect(writes).To(Equal([]string{"POST /redfish/v1/SessionService/Sessions", "DELETE /redfish/v1/SessionService/Sessions/owned"}))
 			server.Close()

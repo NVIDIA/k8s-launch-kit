@@ -104,6 +104,32 @@ var _ = Describe("inventory semantics", func() {
 		Canonicalize(&a)
 		Expect(a.Fingerprint).NotTo(Equal(first))
 	})
+	It("does not treat removal of legacy BMC metadata as a material or scope change", func() {
+		before, after := estate(), estate()
+		before.Evidence = map[string]inventory.Evidence{"old-bmc-ref": {Kind: "redfish", Authenticated: true}}
+		before.DPUs[0].EvidenceRefs = []string{"old-bmc-ref"}
+		before.Hosts[0].EvidenceRefs = []string{"old-bmc-ref"}
+		before.Hosts[0].Adapters[0].EvidenceRefs = []string{"old-bmc-ref"}
+		before.DPUs[0].Firmware = []inventory.Firmware{{Component: "bmc", State: "known", RawVersion: "1.0", Activation: "unknown", EvidenceRefs: []string{"old-bmc-ref"}}}
+		after.DPUs[0].Firmware = []inventory.Firmware{{Component: "bmc", State: "known", RawVersion: "1.0", Activation: "unknown"}}
+		before.Associations, _ = Correlate(before.DPUs, before.Hosts)
+		after.Associations, _ = Correlate(after.DPUs, after.Hosts)
+		Canonicalize(&before)
+		Canonicalize(&after)
+		Expect(after.Fingerprint).To(Equal(before.Fingerprint))
+		Expect(after.ScopeDigest).To(Equal(before.ScopeDigest))
+		Expect(Diff(&before, &after)).To(BeEmpty())
+	})
+	It("retains SSH host references when correlating with a BMC DPU without metadata", func() {
+		v := estate()
+		v.Hosts[0].SSHEndpoint = "ssh://192.0.2.1:22"
+		v.Hosts[0].Adapters[0].EvidenceRefs = []string{"ssh-host-card"}
+		v.DPUs[0].BMCEndpoint = "https://192.0.2.2"
+		associations, checks := Correlate(v.DPUs, v.Hosts)
+		Expect(associations).To(ContainElement(And(HaveField("DPUID", "dpu-a"), HaveField("EvidenceRefs", []string{"ssh-host-card"}))))
+		Expect(checks).To(ContainElement(And(HaveField("Subject", "a"), HaveField("State", "passed"))))
+	})
+
 	It("fingerprints Redfish PSID values and eligibility without diagnostic prose", func() {
 		before, after := estate(), estate()
 		before.DPUs[0].Observations = map[string]inventory.Observation{"psid": {State: "observed", Values: []string{"MT_0000001774"}, ReasonCode: "PSID_OBSERVED", Tool: "redfish", Message: "initial"}}

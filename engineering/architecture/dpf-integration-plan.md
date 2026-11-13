@@ -326,6 +326,15 @@ The current DPF target still rejects generation, deployment and validation befor
 consuming inventory. A future generator must require fresh complete discovery and
 revalidate its own authorization needs; saved facts do not authorize provisioning.
 
+BMC discovery keeps typed values, status/reasons, endpoint and firmware resource
+paths, but does not create an evidence table or reference lists. Required live
+reads, identity and PSID rereads, and administrator checks remain mandatory;
+metadata references are not an authorization or validation gate. Shared evidence
+types remain readable for legacy inventories and other sources such as SSH and
+management probes. Empty metadata is omitted from saved complete/partial
+inventory and reports; refresh replaces old BMC metadata while retaining source
+backups and existing material identity/scope comparison rules.
+
 ### Stage 4: DPF generation for Zero Trust passthrough
 
 - enable `l8k generate --target dpf`;

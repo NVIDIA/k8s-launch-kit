@@ -240,6 +240,7 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 			request, err := config.Resolve(input)
 			Expect(err).NotTo(HaveOccurred())
 			device, evidence, err := (Collector{}).Collect(context.Background(), request.Targets[0], time.Second)
+			expectNoRedfishEvidence(device, evidence)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(device.ObservationState).To(Equal("observed"))
 			Expect(device.SerialNumber).To(Equal("CARD-A"))
@@ -248,11 +249,7 @@ var _ = Describe("DPU BMC administrator evidence", func() {
 			Expect(admin.Message).NotTo(BeEmpty())
 			if scenario.expected == "BMC_ADMIN_VERIFIED" {
 				Expect(admin.State).To(Equal("observed"))
-				binding := "owned-session.Roles"
-				if scenario.omitRoles {
-					binding = "owned-session.UserAuthenticationSource"
-				}
-				Expect(evidence).To(ContainElement(HaveField("Property", binding)))
+				Expect(visited).To(ContainElement("/redfish/v1/AccountService/Roles/" + roleID))
 			} else {
 				Expect(admin.State).To(Equal("failed"))
 			}

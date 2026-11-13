@@ -16,7 +16,9 @@ For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-
 DPF live check status goes to stderr as operations run, including with JSON output;
 quiet suppresses progress. Human summaries show configured names/addresses and
 host/DPU mappings, separating discovery blockers from later prerequisites and
-checks not requested. Internal evidence hashes remain in the structured artifacts.
+checks not requested. Host/DPU BMC results omit evidence maps/references; typed
+facts, reasons and required checks remain. Other discovery sources retain their
+existing metadata. Legacy inventories remain readable and refresh from fresh reads.
 Add `--log-level debug` for source/stage timing, or `trace` for bounded request/tool
 metadata. Redirecting stderr hides live progress in the selected file. Never dump
 credentials or raw HTTP/SSH payloads to diagnose access. Password references can
@@ -50,8 +52,8 @@ contradictory candidate to force a match. Missing vendor information remains
 unknown, and unrelated mixed-vendor host adapters remain in inventory.
 
 Supported BF4/B4240 Redfish discovery saves `inventory.dpus[].observations.psid`
-from System AssetTag, then the identity-selected chassis fallback, with Redfish
-property evidence and source rereads. Missing/N/A stays unknown. Invalid,
+from System AssetTag, then the identity-selected chassis fallback, with authenticated
+reads and final source rereads. Missing/N/A stays unknown. Invalid,
 conflicting, changed or failed-recheck PSIDs stay unavailable; a consumer requiring
 PSID must reject those states rather than inventing Runtime/SSH evidence or
 copying another card's PSID. This optional fact does not change inventory acceptance.

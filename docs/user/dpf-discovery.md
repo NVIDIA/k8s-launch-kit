@@ -280,15 +280,15 @@ identity-selected chassis's `AssetTag`. Missing, null, empty and `N/A` values
 remain unknown. Both values, when supplied, must be bounded ASCII identifiers
 and agree exactly; the selected value keeps its original spelling. The
 same identity-bound source fields are reread before the PSID becomes observed.
-This is a Redfish fact, with `Tool: redfish` and authenticated `AssetTag` evidence;
+This is a Redfish fact, with `tool: redfish`, obtained from authenticated `AssetTag` reads;
 it does not create an SSH/runtime observation or infer a PSID from a model.
 
 `PSID_NOT_EXPOSED` and `PSID_READER_UNSUPPORTED` mean this source supplies no PSID.
 `PSID_INVALID`, `PSID_CONFLICT`, `PSID_CHANGED` and `PSID_RECHECK_FAILED` keep the
 observation unavailable with no eligible values. These optional gaps preserve
 physical inventory and discovery's existing acceptance policy. A downstream
-consumer requiring PSID must require a single observed value, retain provenance
-and reject contradictory or invalid PSID evidence across its selected sources;
+consumer requiring PSID must require a single observed value associated with the
+selected device and reject contradictory or invalid readings across its sources;
 it must not turn an unavailable Redfish value into success by substituting SSH.
 The PSID fact and eligibility contribute to the inventory fingerprint and refresh
 diff. Release qualification and administrator authorization remain separate checks.
@@ -296,7 +296,7 @@ diff. Release qualification and administrator authorization remain separate chec
 SSH can report NIC firmware/PSID, MFT version, NVConfig and privilege observations
 when the existing tools and permissions permit the read. Current and next-boot
 configuration remain distinct. Redfish firmware keeps raw component identities,
-versions, source evidence and explicit activation where exposed. A failed source,
+versions, resource paths and explicit activation where exposed. A failed source,
 partial firmware collection, identity change or explicit version/activation conflict
 cannot satisfy a minimum through that source. An independent valid SSH observation
 can still satisfy a minimum unless explicit component conflicts remain.
@@ -359,15 +359,18 @@ The detailed YAML/JSON retains identifiers for automation and traceability:
 | Field | Meaning |
 | --- | --- |
 | Device `recordKey` | Deterministic key for a selected observation source; used to connect checks to that device record. Normal text shows its name/address instead. |
-| `evidenceRefs` and `inventory.evidence` keys | References linking an observation to its source metadata: source configuration, Redfish resource/property or SSH stage, observation time and authentication state. |
 | `scopeDigest` | Digest of the selected scope and recorded trust policy, used to detect incompatible refresh inputs. |
 | `fingerprint` | Digest of selected material facts, used to compare inventories. |
 
 These `sha256:` values are internal identifiers/comparison digests, not secrets,
-signatures or independent proof that hardware is correct. Evidence identifiers
-identify the source/property; they are not checksums of the full raw response.
-To trace a fact, follow its `evidenceRefs` entries to the corresponding
-`inventory.evidence` records. Keep those records when sharing a diagnostic report.
+signatures or independent proof that hardware is correct.
+
+Host and DPU BMC observations do not generate `evidence` records or
+`evidenceRefs`. Their results retain the observed values, status and failure
+reasons. Firmware resource paths and endpoint identity remain available where
+recorded. Other discovery sources, such as SSH or management-cluster probes,
+can still include their source metadata. Older saved inventories remain readable;
+a fresh BMC collection replaces their BMC metadata. Existing backups are preserved.
 
 ### Review and refresh the handoff
 

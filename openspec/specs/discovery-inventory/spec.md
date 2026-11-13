@@ -180,7 +180,7 @@ New and changed discovery checks SHALL retain a stable reason code and safe huma
 #### Scenario: Supported BF4 Redfish PSID sources
 
 - **WHEN** the supported BF4 reader establishes physical identity and reads System/chassis AssetTags
-- **THEN** it persists a typed `observations.psid` Redfish fact, preferring System and falling back to the identity-selected chassis, with authenticated source-property evidence and no fabricated SSH/runtime data.
+- **THEN** it persists a typed `observations.psid` Redfish fact, preferring System and falling back to the identity-selected chassis, with authenticated reads and no fabricated SSH/runtime data.
 - **AND** absent/null/empty/N/A stays unknown; malformed or contradictory values remain unavailable, and any source-field change or failed required recheck prevents an observed value. Optional PSID gaps do not erase physical identity or independently fail discovery.
 - **AND** the PSID fact and eligibility affect inventory fingerprint/diff; consumers requiring PSID must reject invalid/conflicting selected-source evidence and require one observed identifier.
 
@@ -197,6 +197,14 @@ Address lookup SHALL operate only on explicit MAC selectors and bounded declared
 
 - **WHEN** a configured lease file is absent, unreadable, oversized or malformed
 - **THEN** its unavailable result retains a safe reason and it contributes no candidates; other source evidence remains separately visible.
+
+#### Scenario: BMC observations without evidence-reference bookkeeping
+
+- **WHEN** discovery collects host or DPU BMC inventory
+- **THEN** it retains typed observations, values, status, reasons and resource paths, without producing BMC evidence records or references; empty evidence maps/ref lists are omitted from JSON/YAML, including complete and partial artifacts and report checks.
+- **AND** removal of metadata does not remove any authentication, administrator, identity, association, firmware activation, PSID reread, cleanup or publication check.
+- **AND** existing v1alpha1 inventories containing BMC evidence remain readable; refreshed observations replace that metadata without changing material fingerprints or scope solely because the metadata is absent. Original source backups remain unchanged.
+- **AND** non-BMC source metadata and provenance-dependent checks remain intact.
 
 ### Requirement: DPU BMC administrator evidence
 

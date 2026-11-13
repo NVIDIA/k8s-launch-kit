@@ -4,13 +4,17 @@ package artifacts
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +58,66 @@ var _ = Describe("safe publication", func() {
 		Expect(e).NotTo(HaveOccurred())
 		Expect(st.Mode().Perm()).To(Equal(os.FileMode(0600)))
 	})
+	It("omits BMC evidence bookkeeping from complete and partial saved inventories and reports", func() {
+		for _, complete := range []bool{true, false} {
+			output := filepath.Join(dir, fmt.Sprintf("no-evidence-%t.yaml", complete))
+			store, err := New(input, output, true)
+			Expect(err).NotTo(HaveOccurred())
+			r := report(complete)
+			r.Inventory.Hosts = []inventory.Device{{ID: "host-one", ObservationState: "observed", EvidenceRefs: []string{}, Adapters: []inventory.Adapter{{Key: "card-one", SerialNumber: "CARD-ONE", EvidenceRefs: []string{}}}, Firmware: []inventory.Firmware{{Component: "bmc", State: "known", RawVersion: "iLO 6 v1.50", Activation: "unknown", EvidenceRefs: []string{}}}}}
+			r.Inventory.DPUs = []inventory.Device{{ID: "dpu-one", SerialNumber: "CARD-ONE", ObservationState: "observed", Observations: map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"}}, EvidenceRefs: []string{}}}
+			r.Inventory.Associations = []inventory.Association{{HostID: "host-one", DPUID: "dpu-one", HostAdapterKey: "card-one", EvidenceRefs: []string{}}}
+			r.Inventory.Evidence = map[string]inventory.Evidence{}
+			r.Discovery.Checks = []inventory.Check{{ID: "dpf.management.bmc-administrator", State: "passed", RequiredPhase: "discover", ReasonCode: "BMC_ADMIN_VERIFIED", EvidenceRefs: []string{}}}
+			Expect(store.Publish(context.Background(), r)).To(Succeed())
+			path := output
+			if !complete {
+				path = filepath.Join(store.RunDir, "partial.yaml")
+			}
+			data, err := os.ReadFile(path)
+			Expect(err).NotTo(HaveOccurred())
+			var saved map[string]any
+			Expect(yaml.Unmarshal(data, &saved)).To(Succeed())
+			Expect(hasEvidenceKey(saved)).To(BeFalse())
+			loaded, err := config.Load(path)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded.Site.Inventory.Hosts[0].Firmware[0].RawVersion).To(Equal("iLO 6 v1.50"))
+			Expect(loaded.Site.Inventory.DPUs[0].Observations["bmc-administrator"].ReasonCode).To(Equal("BMC_ADMIN_VERIFIED"))
+			data, err = os.ReadFile(filepath.Join(store.RunDir, "report.json"))
+			Expect(err).NotTo(HaveOccurred())
+			var detailed map[string]any
+			Expect(json.Unmarshal(data, &detailed)).To(Succeed())
+			Expect(hasEvidenceKey(detailed)).To(BeFalse())
+		}
+	})
+	It("refreshes legacy BMC evidence without carrying it forward or changing the backup", func() {
+		legacy := &inventory.Inventory{FormatVersion: "v1alpha1", Evidence: map[string]inventory.Evidence{"legacy-ref": {Kind: "redfish", Authenticated: true}}, Hosts: []inventory.Device{{EvidenceRefs: []string{"legacy-ref"}}}}
+		data, err := config.Saved(input, legacy, input.Path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.WriteFile(input.Path, data, 0600)).To(Succeed())
+		previous, err := config.Load(input.Path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(previous.Site.Inventory.Evidence).To(HaveKey("legacy-ref"))
+		store, err := New(previous, previous.Path, true)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.Publish(context.Background(), report(true))).To(Succeed())
+		fresh, err := os.ReadFile(previous.Path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(fresh)).NotTo(ContainSubstring("legacy-ref"))
+		backup, err := os.ReadFile(filepath.Join(store.RunDir, "source-before.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(backup).To(Equal(data))
+	})
+	It("retains nonempty evidence from other discovery sources", func() {
+		inv := &inventory.Inventory{Evidence: map[string]inventory.Evidence{"ssh-ref": {Kind: "ssh", Authenticated: true}}, Hosts: []inventory.Device{{SSHEndpoint: "ssh://192.0.2.10:22", EvidenceRefs: []string{"ssh-ref"}}}}
+		data, err := config.Saved(input, inv, filepath.Join(dir, "mixed.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(data)).To(ContainSubstring("ssh-ref"))
+		encoded, err := json.Marshal(inv)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(`"evidenceRefs":["ssh-ref"]`))
+	})
+
 	It("creates an in-place source backup before replacement", func() {
 		s, e := New(input, input.Path, true)
 		Expect(e).NotTo(HaveOccurred())
@@ -146,3 +210,22 @@ var _ = Describe("safe publication", func() {
 	})
 
 })
+
+// Inspect parsed documents so scalar diagnostic text never resembles a field match.
+func hasEvidenceKey(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, child := range v {
+			if strings.EqualFold(key, "evidence") || strings.EqualFold(key, "evidenceRef") || strings.EqualFold(key, "evidenceRefs") || hasEvidenceKey(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if hasEvidenceKey(child) {
+				return true
+			}
+		}
+	}
+	return false
+}

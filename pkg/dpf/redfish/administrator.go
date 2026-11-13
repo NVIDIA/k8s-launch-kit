@@ -14,7 +14,7 @@ import (
 // administrator binds the owned session's privileges to a matching local account.
 // A username or a role name alone is not privilege evidence. Account documents
 // and arbitrary OEM privileges are never retained in inventory.
-func (c *Client) administrator(ctx context.Context, root Document, add func(string, string) string) inventory.Observation {
+func (c *Client) administrator(ctx context.Context, root Document) inventory.Observation {
 	fail := func(code, message string) inventory.Observation {
 		return inventory.Observation{State: "failed", ReasonCode: code, Message: message, Tool: "redfish"}
 	}
@@ -148,18 +148,6 @@ func (c *Client) administrator(ctx context.Context, root Document, add func(stri
 	if c.passwordChangeRequired {
 		return unavailable(&Error{Code: "PASSWORD_CHANGE_REQUIRED"})
 	}
-	add("/redfish/v1/SessionService/Sessions", "owned-session.UserName")
-	if _, present := session["Roles"]; present {
-		add("/redfish/v1/SessionService/Sessions", "owned-session.Roles")
-	}
-	if localSource {
-		add("/redfish/v1/SessionService/Sessions", "owned-session.UserAuthenticationSource")
-	}
-	if mode != "" {
-		add(service, "LocalAccountAuth")
-	}
-	add(account.URI, "Enabled,Locked,PasswordChangeRequired,RoleId")
-	add(roleURI, "AssignedPrivileges")
 	return inventory.Observation{State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED", Message: "The BMC session has verified standard Administrator privileges; its matching local account is enabled, unlocked and requires no password change.", Tool: "redfish"}
 }
 
