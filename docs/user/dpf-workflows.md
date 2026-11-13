@@ -14,7 +14,7 @@ Each diagram follows its procedure. Run commands from a CLI machine with the req
 
 ## Collect the first inventory {#initial-inventory}
 
-Use this workflow when you know the host access addresses. DPU ARM/BMC addresses are optional in inventory mode. Without explicit DPU endpoints, Launch Kit derives BlueField card records from host inventory and leaves their access bindings unknown.
+Use this workflow when you know the host access addresses. Explicit DPU BMC endpoints and verified administrator privileges are required for a complete inventory. Without explicit DPU endpoints, Launch Kit derives BlueField card records from host inventory and leaves their access bindings unknown; host-only or ARM-only discovery retains partial evidence and exits nonzero.
 
 ```mermaid
 flowchart TD
@@ -40,13 +40,13 @@ flowchart TD
 
 ### 1. CLI machine: choose sources and access inputs {#initial-inventory-choose-inputs}
 
-Choose each source explicitly: a host operating system over SSH or its BMC over Redfish; optionally choose the DPU ARM operating system over SSH or DPU BMC over Redfish. A selected source must succeed; Launch Kit does not silently replace failed Redfish access with SSH. Host SSH can supply host-to-card identity in Zero Trust when PCI/VPD access is available. ARM SSH needs a booted, reachable DPU operating system. Neither access path proves trusted DPU state.
+Choose each source explicitly: a host operating system over SSH or its BMC over Redfish; choose the DPU BMC over Redfish for a complete run. DPU ARM SSH is available for partial evidence but cannot verify BMC administrator privileges. A selected source must succeed; Launch Kit does not silently replace failed Redfish access with SSH. Host SSH can supply host-to-card identity in Zero Trust when PCI/VPD access is available. ARM SSH needs a booted, reachable DPU operating system. Neither access path proves trusted DPU state.
 
 | Input | What you supply or allow Launch Kit to determine |
 | --- | --- |
-| Always required | At least one host endpoint; the source type; a credential alias, username, and password reference or SSH key reference for each selected endpoint. Addresses and credentials are not guessed. |
+| Always required | At least one host endpoint and explicit DPU BMC endpoints with administrator credentials for completion; the source type; a credential alias, username, and password reference or SSH key reference for each selected endpoint. Addresses and credentials are not guessed. |
 | Required for SSH | A verified `knownHostsFile`; direct connectivity from the CLI machine. SSH port defaults to `22`; ambient SSH config, agents and ProxyJump are not used. |
-| Conditional | An explicit DPU endpoint for direct DPU measurements; a private CA for Redfish when system trust is insufficient; `systemURI` if a BMC exposes several Systems. |
+| Conditional | DPU ARM SSH for partial OS measurements; a private CA for Redfish when system trust is insufficient; `systemURI` if a BMC exposes several Systems. |
 | Optional | A management kubeconfig for additional observations. Inventory needs none, but an explicitly supplied kubeconfig must work. |
 | Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` explicitly because the default management mode is unavailable in this preview. |
 | Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |
@@ -75,11 +75,13 @@ For SSH inventory, ask the endpoint administrator to make the required read tool
 
 Set `ssh.sudo: true` only where noninteractive elevated reads are authorized and configured. Launch Kit then uses `sudo -n`; it never prompts for a sudo password, installs tools, changes privileges or repairs device settings. Missing tools, denied permissions and unsupported or malformed outputs keep specific reason codes and explanations. Required identity failures stop a complete inventory; optional unknown observations remain visible for review.
 
+Prepare a DPU BMC account that is enabled, unlocked and does not require a password change, with all five standard Administrator privileges. A custom role with those privileges is accepted; names alone are insufficient. Discovery verifies the session, unique matching account and linked role using reads,. Handle password changes separately before rerunning; discovery never rotates passwords or tests privileges through writes.
+
 Next: [Access prepared](#initial-inventory-configure).
 
 ### 3. CLI machine: create the inventory configuration {#initial-inventory-configure}
 
-Save this example as `dpf-site.yaml`, replacing the documentation address and credential paths with your host values. It intentionally starts with host SSH only and requires no Kubernetes cluster. Ensure the listed files exist before running.
+Save this example as `dpf-site.yaml`, replacing the documentation address and credential paths with your host values. It uses host SSH and DPU BMC Redfish and requires no Kubernetes cluster. Ensure the listed files exist before running.
 
 ```yaml
 dpf:
@@ -88,6 +90,9 @@ credentials:
   host-reader:
     username: inventory
     privateKeyRef: {file: ./credentials/host-key}
+  dpu-maintainer:
+    username: bmc-maintainer
+    passwordRef: {env: DPU_BMC_PASSWORD}
 discovery:
   hosts:
     - credentialRef: host-reader
@@ -95,11 +100,14 @@ discovery:
         address: 192.0.2.21:22
         knownHostsFile: ./credentials/known_hosts
         sudo: true
+  dpus:
+    - bmcEndpoint: https://192.0.2.11
+      credentialRef: dpu-maintainer
   probes:
     mode: inventory
 ```
 
-For direct DPU ARM discovery, add a separate credential alias and a `discovery.dpus` entry with the same SSH shape. For Redfish, use `bmcEndpoint` and a password credential reference instead of `ssh`; see the [complete access examples](dpf-discovery.md#inputs-and-invocation). Each endpoint has exactly one access source. Plain YAML is the CLI input, not a Kubernetes object. Do not copy previously observed `inventory` facts into a new seed as user assertions.
+For DPU ARM observations, use the SSH shape instead; ARM-only DPU input produces partial inventory with a nonzero exit because it cannot prove BMC administrator privileges. For Redfish, use `bmcEndpoint` and a password credential reference instead of `ssh`; see the [complete access examples](dpf-discovery.md#inputs-and-invocation). Each endpoint has exactly one access source. Plain YAML is the CLI input, not a Kubernetes object. Do not copy previously observed `inventory` facts into a new seed as user assertions.
 
 Next: [Configuration ready](#initial-inventory-run).
 
@@ -115,13 +123,13 @@ l8k discover --target dpf --user-config dpf-site.yaml \
 
 Record the process exit status as well as the files. `discovery.json` contains the final result; progress and diagnostics go to `discovery.log`. The command creates its own run directory next to the requested YAML. It does not send credentials to addresses found during collection. Redfish uses a temporary login session and deletes that session; SSH runs read commands on explicitly selected endpoints.
 
-While this command runs, Launch Kit performs the collection and matching steps below automatically. You do not need to run the listed remote commands yourself. The host-only example contacts the host over SSH; it does not contact any DPU ARM address or BMC unless you add that endpoint explicitly.
+While this command runs, Launch Kit performs the collection and matching steps below automatically. You do not need to run the listed remote commands yourself. The example contacts the host over SSH and the explicitly selected DPU BMC over Redfish. Host-only input contacts no DPU endpoint and returns partial evidence with a nonzero exit.
 
 Next: [Collect from selected endpoints](#initial-inventory-collect).
 
 ### 5. Selected host, DPU and BMC: read identity and facts {#initial-inventory-collect}
 
-Launch Kit uses the configured connection for each endpoint. Required identity reads must succeed to complete inventory. Optional reads add facts; a missing tool, denied operation or unsupported response leaves an explained gap instead of silently passing the check. After collecting optional facts, Launch Kit rereads identity to detect a changed or replaced device.
+Launch Kit uses the configured connection for each endpoint. Required identity reads and DPU BMC administrator verification must succeed to complete inventory. Optional reads add facts; a missing tool, denied operation or unsupported response leaves an explained gap instead of silently passing the check. After collecting optional facts, Launch Kit rereads identity to detect a changed or replaced device.
 
 **On a host selected through SSH**
 
@@ -160,7 +168,7 @@ These hardware and network reads are optional. `<PCI-address>` comes from that s
 
 **On a selected host or DPU BMC, through HTTPS Redfish**
 
-The CLI creates a temporary session, reads system and card inventory, and queries available firmware components, BMC time and NTP configuration. Host BMC reads locate cards associated with the selected host; DPU BMC reads identify that DPU. No SSH commands run in either OS for this choice. System/card identity is required; optional firmware or clock properties may remain unknown. A firmware version is not assumed to be running unless the BMC explicitly identifies it as active. The CLI deletes its session afterward and reports any cleanup failure. It does not change firmware, NTP, power or trust settings.
+The CLI creates a temporary session, reads system and card inventory, and queries available firmware components, BMC time and NTP configuration. Host BMC reads locate cards associated with the selected host; DPU BMC reads identify that DPU and verify the authenticated session account and linked role through AccountService. All five standard Administrator privileges and enabled/unlocked/no-password-change state are required; denied or unverifiable evidence fails closed. No SSH commands run in either OS for this choice. System/card identity is required; optional firmware or clock properties may remain unknown. A firmware version is not assumed to be running unless the BMC explicitly identifies it as active. The CLI deletes its session afterward and reports any cleanup failure. It does not change passwords, roles, firmware, NTP, power or trust settings.
 
 **At the management Kubernetes API, if configured**
 
@@ -170,7 +178,7 @@ Next: [Return facts and read failures to CLI](#initial-inventory-match).
 
 ### 6. CLI machine: match cards and assess results {#initial-inventory-match}
 
-Launch Kit compares physical card serials returned by the selected sources. Each explicit DPU must match exactly one adapter on one observed host. A missing serial, conflicting identity or multiple matches prevents a complete inventory; an IP address or PCI address cannot substitute for that match. With host-only input, the inventory lists host-reported BlueFields without claiming a working ARM or BMC connection.
+Launch Kit compares physical card serials returned by the selected sources. Each explicit DPU must match exactly one adapter on one observed host. A missing serial, conflicting identity or multiple matches prevents a complete inventory; an IP address or PCI address cannot substitute for that match. With host-only input, the inventory lists host-reported BlueFields without claiming a working ARM or BMC connection. These records remain partial and fail the required DPU BMC administrator check; ARM SSH cannot bypass that requirement.
 
 Next, the CLI compares eligible measured versions with the selected release's documented requirements. It reports unavailable measurements and unknown requirements separately from below-minimum versions. These comparisons do not install or update software.
 
@@ -192,11 +200,14 @@ Read each non-success observation's `reasonCode`, `message` and `tool` where pre
 | `ACCESS_DENIED` / `PROPERTY_NOT_EXPOSED` | Distinguish an account permission problem from a property the service does not advertise. |
 | `SOFTWARE_VERSION_CONFLICT` / `SOFTWARE_IDENTITY_UNAVAILABLE` | Reconcile version/activation sources or the rejected physical identity before trusting software comparisons. |
 | `SOFTWARE_BELOW_MINIMUM` | Review the release requirement and plan a separate maintenance action; discovery does not update firmware. |
+| `BMC_ADMIN_REQUIRED` / `BMC_ADMIN_ACCESS_DENIED` | Use an authorized account with all standard Administrator privileges and readable account/role evidence. |
+| `BMC_ADMIN_UNVERIFIABLE` / `BMC_ADMIN_NOT_VERIFIED` | Supply explicit trusted DPU BMC access and complete, consistent account/role evidence; host/ARM SSH is insufficient. |
+| `BMC_PASSWORD_CHANGE_REQUIRED` / `BMC_ADMIN_ACCOUNT_RESTRICTED` | Ask the administrator to resolve password-change, disabled or locked state separately, then rerun. Discovery does not repair access. |
 | `PUBLICATION_FAILED` | Read the error explanation, resolve the local output/path problem, and rerun; only listed successfully written artifacts exist. |
 
 The resolved software BOM is saved under `inventory.software`, including source references and unknown requirements. Release `26.4.0` has exact BlueField-3 model entries `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 are not sufficient for BOM applicability. The documented NIC/MFT minima can be evaluated when current measurements associated with the correct device exist. BMC, CEC, ATF, UEFI, OS/BSP and golden-image minima remain unknown where the catalog has no supported requirement. A BFB target is a desired artifact, not an observed OS/BSP version. An unknown requirement must remain unresolved; supplying a guessed minimum does not establish compatibility.
 
-Exit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; the separate [Sentry BF4 procedure](dpf-sentry.md) provides generation, deployment and resource validation only after its additional prerequisites are met.
+Exit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, DPU BMC administrator verification, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; the separate [Sentry BF4 procedure](dpf-sentry.md) provides generation, deployment and resource validation only after its additional prerequisites are met.
 
 Next: [Complete inventory reviewed](#initial-inventory-finish); [Required failure or conflict](#initial-inventory-resolve).
 

@@ -317,7 +317,14 @@ Start with Zero Trust passthrough:
 - report the provenance and resolution state of every required value.
 
 Exit criteria: `l8k discover --target dpf` produces a complete or explicitly
-unresolved DPF configuration and never guesses infrastructure values.
+unresolved DPF configuration and never guesses infrastructure values. Completed
+inventory requires read-only verification of the authenticated DPU BMC account and
+its effective Administrator privileges. Host/ARM-only inventory is partial and
+cannot bypass this gate. Preserve physical identity and authorization failure
+evidence independently; never rotate passwords or probe privilege by mutation.
+The current DPF target still rejects generation, deployment and validation before
+consuming inventory. A future generator must require fresh complete discovery and
+revalidate its own authorization needs; saved facts do not authorize provisioning.
 
 ### Stage 4: DPF generation for Zero Trust passthrough
 

@@ -11,13 +11,19 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
-For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities and unique host/card associations, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
+For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
 
 SSH requires explicit credential references and known-hosts trust; it never inherits
 Redfish TLS bypass, ambient keys or SSH configuration. ARM-local IPMI can report a
 BMC address but does not authorize connecting to it. A failed selected source is
 not silently replaced by another source. Host-only inventory preserves host-reported
-BlueFields without inventing ARM/BMC bindings.
+BlueFields without inventing ARM/BMC bindings and exits nonzero with partial evidence.
+ARM SSH alone cannot satisfy the required `dpf.management.bmc-administrator`
+check. Select explicit DPU Redfish endpoints with administrator credentials for
+completion. The account must be enabled, unlocked, not require a password change,
+and its linked role must grant all five standard Administrator privileges; names
+alone and OEM-only roles are insufficient. Missing or denied evidence fails closed.
+Discovery never changes passwords or tests privilege with a write.
 
 DPF inventory saves the resolved software BOM under `inventory.software`.
 `dpf.release` defaults to `26.4.0`; omit/null defaults, explicit empty/unknown

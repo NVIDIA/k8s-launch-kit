@@ -5,6 +5,10 @@ package discovery
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
@@ -16,6 +20,7 @@ import (
 
 type fixtureCollector struct {
 	fail   bool
+	admin  bool
 	cancel context.CancelFunc
 }
 
@@ -26,7 +31,14 @@ func (f fixtureCollector) Collect(_ context.Context, t config.Target, _ time.Dur
 	} else {
 		d.ID = "dpu-one"
 		d.SerialNumber = "CARD-ONE"
-		d.SSHEndpoint = t.Endpoint
+		if t.SSH != nil {
+			d.SSHEndpoint = t.Endpoint
+		} else {
+			d.BMCEndpoint = t.Endpoint
+		}
+		if f.admin {
+			d.Observations = map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED", Message: "fixture verified"}}
+		}
 	}
 	if f.fail {
 		d.ObservationState = "unavailable"
@@ -43,8 +55,11 @@ func inventoryRequest() config.Request {
 }
 
 var _ = Describe("independent inventory acceptance", func() {
-	It("completes identity and mapping without Kubernetes or DPU Redfish, retaining qualification and readiness gaps", func() {
-		r := Collect(context.Background(), inventoryRequest(), "run", Dependencies{BMC: fixtureCollector{}, SSH: fixtureCollector{}})
+	It("completes without Kubernetes when DPU BMC administrator privileges are verified, retaining qualification and readiness gaps", func() {
+		req := inventoryRequest()
+		req.Targets[1].SSH = nil
+		req.Targets[1].Endpoint = "https://dpu.invalid"
+		r := Collect(context.Background(), req, "run", Dependencies{BMC: fixtureCollector{admin: true}})
 		Expect(ExitCode(r)).To(Equal(0))
 		Expect(r.Inventory.Management).To(BeNil())
 		Expect(r.Inventory.Associations).To(HaveLen(1))
@@ -57,12 +72,51 @@ var _ = Describe("independent inventory acceptance", func() {
 		req := inventoryRequest()
 		req.Targets = req.Targets[:1]
 		r := Collect(context.Background(), req, "run", Dependencies{BMC: fixtureCollector{}})
-		Expect(ExitCode(r)).To(Equal(0))
+		Expect(ExitCode(r)).To(Equal(2))
+		Expect(r.Discovery.Outcome).To(Equal("partial"))
 		Expect(r.Inventory.DPUs).To(HaveLen(1))
 		Expect(r.Inventory.Associations).To(HaveLen(1))
 		Expect(r.Inventory.DPUs[0].BMCEndpoint).To(BeEmpty())
 		Expect(r.Inventory.DPUs[0].SSHEndpoint).To(BeEmpty())
 		Expect(r.Inventory.DPUs[0].ReaderAdapter).To(Equal("host-card-v1"))
+	})
+	It("fails closed for ARM SSH even when the collector claims admin or reports a local BMC address", func() {
+		r := Collect(context.Background(), inventoryRequest(), "run", Dependencies{BMC: fixtureCollector{}, SSH: fixtureCollector{admin: true}})
+		Expect(ExitCode(r)).To(Equal(2))
+		Expect(r.Discovery.Outcome).To(Equal("partial"))
+		Expect(r.Inventory.Associations).To(HaveLen(1))
+		Expect(r.Discovery.Checks).To(ContainElement(And(HaveField("ID", "dpf.management.bmc-administrator"), HaveField("State", "failed"), HaveField("RequiredPhase", "discover"))))
+	})
+	It("publishes completed admin-verified inventory and preserves its handoff after missing admin evidence", func() {
+		dir, err := filepath.EvalSymlinks(GinkgoT().TempDir())
+		Expect(err).NotTo(HaveOccurred())
+		seed := []byte("credentials:\n  read: {username: reader, passwordRef: {env: DPF_PUBLICATION_PASSWORD}}\ndiscovery:\n  hosts: [{bmcEndpoint: 'https://host.invalid', credentialRef: read}]\n  dpus: [{bmcEndpoint: 'https://dpu.invalid', credentialRef: read}]\n  probes: {mode: inventory}\n")
+		Expect(os.WriteFile(filepath.Join(dir, "seed.yaml"), seed, 0600)).To(Succeed())
+		input, err := config.Load(filepath.Join(dir, "seed.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+		req := inventoryRequest()
+		req.Input = input
+		req.Targets[1].SSH = nil
+		req.Targets[1].Endpoint = "https://dpu.invalid"
+		output := filepath.Join(dir, "discovered.yaml")
+		for _, verified := range []bool{true, false} {
+			store, err := artifacts.New(input, output, true)
+			Expect(err).NotTo(HaveOccurred())
+			report := Collect(context.Background(), req, store.RunID(), Dependencies{BMC: fixtureCollector{admin: verified}})
+			Expect(store.Publish(context.Background(), &report)).To(Succeed())
+			if verified {
+				Expect(ExitCode(report)).To(Equal(0))
+			} else {
+				Expect(ExitCode(report)).To(Equal(2))
+				Expect(report.Artifacts).To(ContainElement(HaveField("Path", filepath.Join(store.RunDir, "partial.yaml"))))
+				partial, err := os.ReadFile(filepath.Join(store.RunDir, "partial.yaml"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(partial)).To(ContainSubstring("BMC_ADMIN_NOT_VERIFIED"))
+			}
+			saved, err := config.Load(output)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(saved.Site.Inventory.DPUs[0].Observations["bmc-administrator"].ReasonCode).To(Equal("BMC_ADMIN_VERIFIED"))
+		}
 	})
 	It("retains observation and cleanup failures instead of substituting another source", func() {
 		r := Collect(context.Background(), inventoryRequest(), "run", Dependencies{BMC: fixtureCollector{fail: true}, SSH: fixtureCollector{}})
@@ -77,7 +131,7 @@ var _ = Describe("independent inventory acceptance", func() {
 		req := inventoryRequest()
 		req.Targets = req.Targets[:1]
 		first := Collect(context.Background(), req, "first", Dependencies{BMC: fixtureCollector{}})
-		Expect(ExitCode(first)).To(Equal(0))
+		Expect(ExitCode(first)).To(Equal(2))
 		Expect(inventory.LegacyHostCardBindings(first.Inventory)).To(BeFalse())
 		host := &first.Inventory.Hosts[0]
 		host.Adapters[0].Key = inventory.Digest("dpf-adapter-v1", []string{host.ID, host.Adapters[0].SerialNumber})

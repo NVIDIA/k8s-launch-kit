@@ -185,6 +185,29 @@ Address lookup SHALL operate only on explicit MAC selectors and bounded declared
 - **WHEN** a configured lease file is absent, unreadable, oversized or malformed
 - **THEN** its unavailable result retains a safe reason and it contributes no candidates; other source evidence remains separately visible.
 
+### Requirement: DPU BMC administrator evidence
+
+DPF discovery SHALL require read-only evidence that each discovered DPU BMC's
+authenticated local account has the full standard Administrator privilege set.
+It SHALL bind the session username to its advertised own account and linked role,
+or identify one matching account from a complete bounded collection,
+verify enabled/unlocked/no-password-change state, and reject missing, denied,
+malformed, unsafe or inconsistent evidence. Custom roles with the complete standard
+privilege set SHALL be accepted; username, role name and OEM privilege names alone
+MUST NOT substitute. Host-only and ARM-only observations SHALL remain partial.
+
+#### Scenario: Administrator authorization cannot be established
+
+- **WHEN** identity reads succeed but account or effective-role evidence is missing, denied, nonadministrator, restricted or requires a password change
+- **THEN** discovery retains physical identity evidence with a specific safe administrator failure reason and fails its required discovery check without publishing a complete handoff.
+- **AND** discovery neither changes passwords/roles nor tests authorization by mutation; only its normal temporary session creation and cleanup are permitted writes.
+
+#### Scenario: BF4 B4240 firmware exposes different identity graphs
+
+- **WHEN** the service advertises NVIDIA and the exact BF4/B4240 product
+- **THEN** discovery accepts an NVIDIA B4240 physical Card with a matching System serial, or a serial-bearing B4240 BMC Component reciprocally contained by a physical Card and linked by that System.
+- **AND** missing System properties remain absent; conflicting properties, unsafe links, multiple matching candidates or a changed identity graph prevent complete inventory. Free-text descriptions and fuzzy model names do not supply identity.
+
 ## Baseline and limits
 
 There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).

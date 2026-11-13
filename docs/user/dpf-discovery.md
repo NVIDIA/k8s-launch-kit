@@ -15,7 +15,7 @@ kubeconfig adds management observations and must work if supplied.
 
 This build exposes an **experimental inventory preview**. Inventory success means
 that selected sources were read, physical identities and unique host/card mappings
-were established, and cleanup/publication succeeded. It does **not** mean DPF
+were established, each DPU BMC account had verified administrator privileges, and cleanup/publication succeeded. It does **not** mean DPF
 provisioning readiness or production hardware support. Missing optional card
 metadata remains visible, including cards without serials. Hardware support and
 deployment readiness checks do not block inventory collection. Overall deployment `acceptance` remains
@@ -30,11 +30,12 @@ validation for an existing DPF environment. The root DPF pipeline remains unavai
 
 ## Inputs and invocation
 
-Supply explicit host endpoints and, optionally in inventory mode, DPU endpoints.
+Supply explicit host endpoints and DPU BMC endpoints for a complete inventory.
 Each endpoint selects exactly one source: Redfish (`bmcEndpoint`) or SSH (`ssh`).
 A host may contain several selected or unselected cards. With no explicit DPU
 endpoints, BlueField cards are derived from host observations; their BMC/ARM
-endpoints remain unknown. With explicit DPU endpoints, every selected source must
+endpoints remain unknown and discovery is partial with a nonzero exit status. ARM-only
+DPU sources also leave the required BMC administrator check failed. With explicit DPU endpoints, every selected source must
 succeed and its card identity must match exactly one host adapter. Sources are not
 silently substituted after access failures. The CLI does not scan subnets.
 
@@ -45,7 +46,7 @@ management:
   context: management
 credentials:
   dpu-reader:
-    username: bmc-reader
+    username: bmc-maintainer
     passwordRef:
       env: DPU_BMC_PASSWORD
   host-reader:
@@ -75,7 +76,7 @@ remote access. Lists and credentials stay in YAML; no password CLI flag exists.
 
 | Source | Values |
 | --- | --- |
-| Required site inputs | Nonempty host list; each selected endpoint and credential alias; username and password reference or SSH private-key reference |
+| Required site inputs | Nonempty host list and explicit DPU BMC endpoints with administrator credentials for completion; each selected endpoint and credential alias; username and password reference or SSH private-key reference |
 | Defaultable | `dpf.release: 26.4.0`; context from a supplied kubeconfig; system certificate trust; SSH port `22`; SSH sudo `false`; collection timeout `10m`; request timeout `15s`; up to four endpoints queried at once (`maxConcurrentBMCs`) |
 | Conditional | Kubeconfig for optional management observations; SSH known-hosts file; approved noninteractive sudo for protected reads; private Redfish CA; `systemURI` when a BMC exposes multiple systems |
 | Observed | Physical-card/system identities, linked host adapters, component firmware, auth/time unknowns, management nodes/version |
@@ -91,6 +92,40 @@ standard Redfish session login with the supplied username/password and allow
 the account to read inventory. Basic authentication and vendor-specific session
 paths are unsupported. Discovery deletes its login session when finished; a cleanup
 failure is reported. It does not guess passwords or repair credentials.
+
+DPU BMC administrator authorization is required during discovery. The CLI reads
+its own session, the advertised standard AccountService account collection and
+the authenticated account's linked role. An advertised account URI whose final
+component matches the session username is read first and its returned username
+is verified; unrelated account records need not be readable. For numeric/opaque
+account URIs, the bounded complete collection must identify one matching account. The account username must match the
+session, and the account must expose `Enabled: true`, `Locked: false` and
+`PasswordChangeRequired: false`. Its role must grant all five standard privileges:
+`Login`, `ConfigureManager`, `ConfigureUsers`, `ConfigureComponents` and
+`ConfigureSelf`. A custom role granting this set is accepted. A username of
+`admin`, a role name alone or OEM-only privileges do not establish authorization.
+Missing, denied, malformed or conflicting account/role evidence fails closed.
+External accounts that cannot be uniquely bound to a local account are unverified.
+This proves observed
+Redfish privileges, not future write success or DPF controller authentication.
+
+Review `observations.bmc-administrator` and the required
+`dpf.management.bmc-administrator` check. `BMC_ADMIN_REQUIRED` means the role lacks
+administrator privileges; `BMC_ADMIN_ACCESS_DENIED` means required account/role
+reads were denied; `BMC_ADMIN_UNVERIFIABLE` means evidence was missing, malformed,
+untrusted or inconsistent; `BMC_ADMIN_ACCOUNT_RESTRICTED` means disabled or locked;
+`BMC_PASSWORD_CHANGE_REQUIRED` means an administrator must handle the password
+change separately. Discovery never rotates passwords, changes roles, or tests
+privileges with a write. Physical identity evidence remains in partial output.
+Host BMC accounts need inventory read access; the administrator gate applies to
+DPU BMC accounts. BF4 B4240 identity requires the exact advertised NVIDIA service
+product and board model plus trusted System/chassis links. Newer firmware exposes
+matching system/card serials. Older firmware can expose the card serial on its
+B4240 BMC component, reciprocally contained by the physical Card linked to the
+same System. Absent System metadata stays absent; exposed conflicting identities
+fail. These graph and identity properties are reread before success. Free-text
+descriptions and similar model names cannot qualify other hardware. This identity
+support does not establish release qualification.
 
 Passwords resolve only from `{env: NAME}` or `{file: path}`. Environment values
 are verbatim. UTF-8 files lose at most one final LF/CRLF. File, SSH known-hosts and CA references
@@ -158,7 +193,9 @@ discovery:
   probes: {mode: inventory}
 ```
 
-This example needs no management kubeconfig or Redfish credential. Each SSH
+This example collects partial evidence without a management kubeconfig or Redfish
+credential; it exits nonzero because DPU BMC administrator proof is missing.
+For a complete inventory, select the DPU BMC through Redfish instead of ARM SSH. Each SSH
 credential uses exactly one password reference or unencrypted private-key file
 reference. SSH host keys must match the explicitly supplied known-hosts file;
 unknown/changed keys fail. Establish that trust through your site's trusted
@@ -182,8 +219,8 @@ never infers a BMC address from an ARM IP or a serial from a hostname.
 Host and ARM PCI addresses belong to different domains; correlation uses physical
 serial identity, not matching PCI addresses. Host-reported identity alone does not
 attest trusted DPU state. Sources and any conflicts stay in the output.
-SSH inventory success does not establish Redfish authorization,
-controller mTLS enrollment or provisioning readiness. Those checks remain separate.
+SSH observations do not satisfy the required DPU BMC administrator check.
+Controller mTLS enrollment and provisioning readiness remain separate later-phase checks.
 
 ## Software BOM and optional address lookup
 
@@ -243,6 +280,6 @@ when inputs, trust settings or an older saved inventory need to change.
 | Exit | Meaning |
 | --- | --- |
 | 0 | Explicit-mode checks, cleanup and publication completed |
-| 2 | Invalid input, incomplete required identity/mapping, unavailable management mode or proven mismatch |
+| 2 | Invalid input, incomplete required identity/mapping or DPU BMC administrator evidence, unavailable management mode or proven mismatch |
 | 3 | Required observation, authentication, TLS, API or remote cleanup failure |
 | 1 | Cancellation or local output error |
