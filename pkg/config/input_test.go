@@ -182,3 +182,62 @@ func TestLoadInputWithoutPathReturnsEmptyUserLayer(t *testing.T) {
 	assert.Nil(t, input.Config.Profile)
 	assert.Nil(t, input.Config.NetworkOperator)
 }
+
+func TestStartingGatewayNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, wantError string
+		want                    int
+	}{
+		{"omitted", "nvIpam: {}", "", 1},
+		{"null", "nvIpam: {startingGateway: null}", "", 1},
+		{"positive", "nvIpam: {startingGateway: 254}", "", 254},
+		{"network", "nvIpam: {startingGateway: 0}", "startingGateway must be > 0", 0},
+		{"negative", "nvIpam: {startingGateway: -1}", "startingGateway must be > 0", -1},
+		{"broadcast", "nvIpam: {startingSubnet: 192.168.2.128, mask: 25, offset: 1, startingGateway: 127}", "startingGateway", 127},
+		{"outside subnet", "nvIpam: {startingSubnet: 192.168.2.128, mask: 25, offset: 1, startingGateway: 254}", "startingGateway", 254},
+		{"larger subnet", "nvIpam: {startingSubnet: 192.168.0.0, mask: 22, offset: 1, startingGateway: 300}", "", 300},
+		{"manual gateway authoritative", "nvIpam: {mask: 30, startingGateway: 300, subnets: [{subnet: 192.168.2.0/24, gateway: 192.168.2.254}]}", "", 300},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input, err := DecodeInput([]byte(tc.source), "gateway.yaml")
+			require.NoError(t, err)
+			err = NormalizeResolvedConfigWithPresence(input.Config, input.SourcePath, input.Present)
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, input.Config.NvIpam.StartingGateway)
+			if len(input.Config.NvIpam.Subnets) > 0 {
+				assert.Equal(t, "192.168.2.254", input.Config.NvIpam.Subnets[0].Gateway)
+			}
+		})
+	}
+}
+
+func TestClusterNetworkOverridesPresenceIsolationAndHandoff(t *testing.T) {
+	for _, yaml := range []string{"cluster: {}", "cluster: {podCIDRs: null, serviceCIDRs: null}"} {
+		input, err := DecodeInput([]byte(yaml), "network.yaml")
+		require.NoError(t, err)
+		require.NoError(t, NormalizeResolvedConfigWithPresence(input.Config, input.SourcePath, input.Present))
+		require.Nil(t, input.Config.Cluster.PodCIDRs)
+		require.Nil(t, input.Config.Cluster.ServiceCIDRs)
+	}
+	for _, yaml := range []string{"cluster: {podCIDRs: []}", "cluster: {serviceCIDRs: []}", "cluster: {podCIDRs: [invalid]}", "cluster: {serviceCIDRs: ['::ffff:10.0.0.0/120']}"} {
+		input, err := DecodeInput([]byte(yaml), "network.yaml")
+		require.NoError(t, err)
+		require.ErrorContains(t, NormalizeResolvedConfigWithPresence(input.Config, input.SourcePath, input.Present), "cluster.")
+	}
+	input, err := DecodeInput([]byte("cluster:\n  podCIDRs: [10.244.0.0/16, 'fd00:1::/48']\n  serviceCIDRs: [10.96.0.0/12]\n"), "network.yaml")
+	require.NoError(t, err)
+	require.NoError(t, NormalizeResolvedConfigWithPresence(input.Config, input.SourcePath, input.Present))
+	clone, err := CloneConfig(input.Config)
+	require.NoError(t, err)
+	clone.Cluster.PodCIDRs[0] = "192.0.2.0/24"
+	require.Equal(t, "10.244.0.0/16", input.Config.Cluster.PodCIDRs[0])
+	path, err := WriteEffectiveConfig(t.TempDir(), input.Config)
+	require.NoError(t, err)
+	restored, err := LoadEffectiveConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, input.Config.Cluster, restored.Cluster)
+}

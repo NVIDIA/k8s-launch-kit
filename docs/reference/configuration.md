@@ -20,8 +20,8 @@ override is supplied.
 
 For generation, configuration source precedence is:
 
-1. Built-in configuration defaults.
-2. Resolved hardware defaults for missing profile fields.
+1. Canonical defaults from the repository-root `cluster-config.yaml`.
+2. Resolved hardware defaults for missing profile fields and host driver ownership.
 3. `--config-dir/l8k-config.yaml` or `--user-config` values.
 4. Explicit CLI flags.
 
@@ -35,8 +35,9 @@ Fresh discovery treats the selected reference file as a user layer except for
 its sample `profile`, which is discarded before hardware defaults are derived.
 Explicit non-profile values such as `docaDriver.enable: false` are preserved.
 
-Discovery with `--user-config` replaces `clusterConfig` and `discoveredSecondaryNetwork`, preserves every
-other loaded section, and then applies explicit CLI flags. It does not fill
+Discovery with `--user-config` replaces `clusterConfig`, `discoveredSecondaryNetwork`,
+and `discoveredDocaHost`, and clears any previously generated `discoveredDocaHostScope`.
+It preserves every other loaded section, then applies explicit CLI flags. It does not fill
 missing profile fields, recompute validation settings, or expand a release
 selected only in YAML.
 The refresh patches the source YAML, retaining explicit zero values, omitted
@@ -101,7 +102,10 @@ deployment intent changes.
 | `nicConfigurationOperator` | Optional NIC firmware/runtime tuning and interface naming templates. |
 | `spectrumX` | Spectrum-X naming defaults. |
 | `profile` | Selected fabric, deployment, routing, ARP, and Spectrum-X options. |
+| `cluster` | Optional authoritative pod/service CIDR overrides for IPPool collision checks (YAML only). |
 | `clusterConfig` | Discovered or preset-provided hardware groups. |
+| `discoveredDocaHost` | Discovery-time per-node host `doca-host` package status and complete version; used for driver defaults and DOCA release compatibility. |
+| `discoveredDocaHostScope` | Generated host-evidence membership (`workerNodes`, `membershipKnown`), preserved independently of render topology with host observations. Rediscovery clears it. |
 | `discoveredSecondaryNetwork` | Optional read-only API observations of Multus and reference CNI plugin installers; separate from desired policy. |
 
 ## Secondary-network ownership
@@ -241,6 +245,7 @@ validation:
   connectivity: true
   mode: strict
   checks:
+    - gateway
     - icmp
     - rping
     - ib_write_bw
@@ -256,7 +261,7 @@ validation:
 | `gpuDirect.gpuResourceType` | Qualified Kubernetes extended resource requested by the primary validation container. Defaults to `nvidia.com/gpu`. |
 | `connectivity` | Enables the data-plane stage. Static acceptance checks always run. |
 | `mode` | `quick`, `full`, or `strict`. |
-| `checks` | Any combination of `icmp`, `rping`, and `ib_write_bw`; an empty list disables all connectivity test families. |
+| `checks` | Any combination of `gateway`, `icmp`, `rping`, and `ib_write_bw` (all enabled by default); an empty list disables all connectivity test families. Gateway runs first and resolves the NAD's NV-IPAM IPPool in `networkOperator.namespace`, falling back to runtime interface routes for other IPAM/CIDRPool or an unset pool gateway. Explicit no-gateway rows are skipped. |
 | `rdma.rpingIterations` | Client iterations for each `rping` test. |
 | `rdma.ibWriteSize` | Message size passed to `ib_write_bw`. |
 | `rdma.ibWriteMinBandwidthGbps` | Minimum observed peak bandwidth. Set `0` to disable the bandwidth gate. |
@@ -287,13 +292,30 @@ docaDriver:
 
 | Field | Meaning |
 | --- | --- |
-| `enable` | Include DOCA/OFED driver configuration. |
+| `enable` | Include DOCA/OFED container driver configuration. Defaults to true. After discovery, complete all-worker host DOCA-HOST evidence changes an omitted/null choice to false; explicit true/false wins. |
 | `version` | Driver image tag; filled by the selected release catalog. |
 | `unloadStorageModules` | Allow unload of storage-over-RDMA dependencies before driver replacement. |
 | `unloadThirdPartyRDMAModules` | Allow unload of non-MLX RDMA dependencies before driver replacement. |
 | `enableNFSRDMA` | Enable NFS-over-RDMA support. |
 | `skipPreflightChecks` | Skip the init-container module dependency check. |
 | `env` | Advanced literal `name`/`value` environment entries forwarded through the generated NicClusterPolicy or NicNodePolicy. Custom values override generated values by name; the last custom duplicate wins. |
+
+Host observation scope is independent of topology. Generation retains original
+worker names and membership completeness in `discoveredDocaHostScope` when host
+observations exist. The optional scope contains unique, nonempty worker names;
+`membershipKnown: true` also requires a nonempty list. Incomplete membership
+remains unverified and cannot justify automatic container disablement. Without a
+preserved scope, host checks use `clusterConfig` worker membership. `--for`
+changes topology only; it does not replace this source of host evidence. The
+scope and observations round-trip in the generated bundle, including when reused
+without a preset. Rediscovery clears the old scope before replacing inventory.
+
+Host package observations are independent of desired driver ownership. Mixed
+installed/absent or installed/unknown workers require an explicit enable choice
+before generation; automatic inference covers the entire source inventory,
+including filtered generation. Discovery refresh preserves omitted enable fields.
+See [host-installed DOCA-HOST](../user/discovery.md#host-installed-doca-host)
+for observation status, release comparison granularity, and snapshot lifetime.
 
 Both unload controls default to `true`. Discovery does not populate the holder-module lists automatically. Confirm that no active workload depends on a module that the driver flow will unload.
 
@@ -326,6 +348,7 @@ nvIpam:
   startingSubnet: "192.168.0.0"
   mask: 22
   offset: 1
+  startingGateway: 1
   reserveFirstIPs: 10
   reserveLastIPs: 6
 ```
@@ -351,16 +374,70 @@ Reserved first/last IPs are merged with explicit exclusions for every subnet.
 | `startingSubnet` | Aligned IPv4 network address for automatic allocation. |
 | `mask` | Automatic subnet prefix length, from `/1` through `/30`. |
 | `offset` | Number of subnet-sized blocks between allocations; minimum `1`. |
+| `startingGateway` | Positive host offset from each automatic subnet network address; omitted/null defaults to `1`. Must be below the broadcast offset (`2^(32-mask)-1`); explicit `0` and negative values are rejected. Manual subnet gateways remain authoritative. YAML only. |
 | `reserveFirstIPs` / `reserveLastIPs` | Host addresses excluded from every automatic or manual subnet. |
 | `subnets` | Explicit `{subnet, gateway, exclusions}` entries. A non-empty list takes precedence over automatic fields. |
+
+For example, `startingGateway: 254` gives `192.168.2.254` for
+`192.168.2.0/24`. For `192.168.2.128/25`, `startingGateway: 126`
+gives `192.168.2.254`.
+Offsets can exceed 255: `startingGateway: 300` gives `192.168.1.44` for
+`192.168.0.0/22`. This is separate from `offset`, which spaces subnet networks.
+The generated `IPPool.spec.gateway` carries this address; NV-IPAM excludes its
+gateway from allocation independently of the optional reserved ranges.
 
 Automatic subnet allocation is precomputed across all final heterogeneous render buckets to avoid overlap within the generated bundle.
 
 These ranges are configurable defaults, not cluster-reserved address space.
-Launch Kit does not currently compare them with cluster pod or service CIDRs.
-Choose `startingSubnet` or explicit `subnets` that do not overlap those CIDRs
-or other site networks before deploying; discovery does not certify that the
-chosen address space is available.
+`l8k generate` checks the rendered IPPools against any explicit `cluster` ranges
+before replacing output. `l8k deploy` additionally reads live cluster addresses
+before any writes. Choose subnets that do not overlap other site networks either.
+
+### Cluster address overrides
+
+```yaml
+cluster:
+  podCIDRs: ["10.244.0.0/16", "fd00:1::/48"]
+  serviceCIDRs: ["10.96.0.0/12", "fd00:2::/112"]
+```
+
+Each supplied list is authoritative for its own address class and replaces live
+discovery of that class. Include every applicable IPv4/IPv6 range. Omitted/null
+lists request discovery; explicit empty lists, invalid CIDRs and IPv4-mapped
+IPv6 CIDRs are rejected. Host bits are masked for overlap comparisons. These
+YAML-only fields survive resolved-config handoff and discovery refresh without
+being filled from partial observations.
+
+Deployment inspects **all** Nodes, regardless of selected hardware groups:
+`spec.podCIDRs` (falling back to `spec.podCIDR`) and each `status.addresses`
+InternalIP. A Node's missing pod range or InternalIP produces a warning naming
+that Node. Node-list failures and malformed addresses fail the check. Node pod
+ranges are only best-effort evidence: CNIs managing their own IPAM may leave them
+empty or populate ranges different from actual pod allocation. Use `podCIDRs`
+for authoritative CNI ranges. Node InternalIPs are checked even with overrides;
+they identify individual addresses, not the node network's full subnet.
+
+On OpenShift, where OVN-Kubernetes leaves Node pod ranges empty, deployment
+first reads `spec.clusterNetwork` from the `config.openshift.io/v1` Network
+`cluster` and uses those ranges instead of Node pod ranges. The lookup happens on
+every run, so an expanded cluster network is checked without rediscovery. If the
+API or object is absent, or it lists no ranges, deployment falls back to Node pod
+ranges. Other read failures, including RBAC denial, and malformed ranges stop
+deployment. A supplied `podCIDRs` skips this lookup.
+
+Unless `serviceCIDRs` is supplied, deployment lists all ServiceCIDR objects,
+using `networking.k8s.io/v1` then `v1beta1` only if the GA API is absent. Failed
+reads (including RBAC denial), malformed ranges and an empty served API stop
+deployment. If neither API is served, deployment warns that service ranges are
+unverified; this supports Kubernetes 1.32 without MultiCIDRServiceAllocator.
+This is capability-based, not a version-string exemption: supply an override
+when the API is unavailable. See the [upstream ServiceCIDR guide](https://kubernetes.io/docs/tasks/network/reconfigure-default-service-ip-ranges/).
+
+Any detected overlap fails with the IPPool file/document/name and conflicting
+range or Node. Checks cover NV-IPAM **IPPool** resources, not Spectrum-X CIDRPool,
+other IPAM providers, or site-wide address reservation. Offline generation can
+check only explicit overrides; `discover` does not persist inferred cluster
+ranges. Standalone `validate` is not a replacement for this deployment guard.
 
 ## Profile Resource Settings
 

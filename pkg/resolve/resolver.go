@@ -83,6 +83,9 @@ func Resolve(request Request) (*Result, error) {
 	if err := config.MergeDefaults(effective, defaults.Config, present); err != nil {
 		return nil, fmt.Errorf("merge canonical defaults: %w", err)
 	}
+	if request.ApplyHardwareDefaults && ApplyDOCAHostDefault(effective, present) {
+		decisions = append(decisions, DefaultDecision{Flag: "--enable-doca-driver", Value: "false", Reason: "host DOCA-HOST installed on every inventory worker"})
+	}
 	if err := config.ApplyFlavorDefaultsWithPresence(effective, present); err != nil {
 		return nil, err
 	}

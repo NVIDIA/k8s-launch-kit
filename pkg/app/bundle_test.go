@@ -11,6 +11,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -64,6 +65,26 @@ var _ = ginkgo.Describe("generation snapshot", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(string(contents)).To(gomega.Equal("old"))
 		gomega.Expect(launcher.generatedBundles).NotTo(gomega.HaveKey(generatedProfileKey{Plugin: "test", Name: "fixture"}))
+	})
+
+	ginkgo.It("rejects configured IPPool overlap before replacing output", func() {
+		root := ginkgo.GinkgoT().TempDir()
+		output := filepath.Join(root, "test")
+		gomega.Expect(os.MkdirAll(output, 0o755)).To(gomega.Succeed())
+		sentinel := filepath.Join(output, "keep.txt")
+		gomega.Expect(os.WriteFile(sentinel, []byte("old"), 0o600)).To(gomega.Succeed())
+		plugin := &bundleTestPlugin{files: map[string]string{"20-pool.yaml": "apiVersion: nv-ipam.nvidia.com/v1alpha1\nkind: IPPool\nmetadata:\n  name: manual\nspec:\n  subnet: 192.168.0.0/22\n"}}
+		launcher := New(options.Options{SaveDeploymentFiles: root})
+		launcher.ui = ui.NewSilent()
+		launcher.plugins["test"] = plugin
+		cfg := &config.LaunchKitConfig{Cluster: &config.ClusterNetworkConfig{PodCIDRs: []string{"192.168.0.128/25"}}}
+		err := launcher.generateDeploymentFiles(&profiles.Profile{Plugin: "test", Name: "fixture"}, cfg)
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("overlaps")))
+		gomega.Expect(apperrors.StructuredFromError(err).Message).To(gomega.ContainSubstring("overlaps"))
+		contents, err := os.ReadFile(sentinel)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(string(contents)).To(gomega.Equal("old"))
+		gomega.Expect(launcher.generatedBundles).To(gomega.BeEmpty())
 	})
 
 	ginkgo.It("deploys the retained snapshot even after saved files change", func() {

@@ -65,7 +65,12 @@ type TestPod struct {
 	RDMADevsByRail map[string]string
 	// InterfacesByRail is "<rail>" → pod netdev name (e.g. "net1").
 	// Every runner uses this to pin or verify the source interface.
-	InterfacesByRail map[string]string
+	InterfacesByRail    map[string]string
+	NetworksByRail      map[string]string
+	GatewayErrorsByRail map[string]error
+	// networkSelection is retained privately because per-pod CNI args can
+	// override NV-IPAM pools and may contain credentials.
+	networkSelection string
 	// GPUIndicesByRail and GPUPCIAddressesByRail describe the host GPU
 	// connected to each NIC/rail. They come from discovered or preset PF
 	// topology and are intentionally endpoint-specific.
@@ -102,6 +107,8 @@ type TestPod struct {
 // test runner can pass `-d <dev>` for ib_write_bw.
 type PingTest struct {
 	Kind               PingTestKind
+	SrcNamespace       string `json:"SrcNamespace,omitempty"`
+	SrcNetwork         string `json:"SrcNetwork,omitempty"`
 	SrcPod             string
 	DstPod             string
 	SrcNode            string
@@ -123,6 +130,8 @@ type PingTest struct {
 	expectedRouteIface string
 	sourceRoute        RouteCheck
 	sourceRouteErr     error
+	gatewayEndpointErr error
+	sourceSelection    string
 }
 
 // PingTestKind enumerates the buckets the matrix renders into. Order
@@ -140,6 +149,7 @@ const (
 	RDMABwCrossRail
 	GPUDirectDMABufSameRail
 	GPUDirectDMABufCrossRail
+	Gateway
 )
 
 func (k PingTestKind) IsICMP() bool {
@@ -169,8 +179,8 @@ func (k PingTestKind) IsCrossRail() bool {
 }
 
 // MatrixSkip captures the soft-skip case where fewer than 2 schedulable
-// test pods were found — the matrix returns an empty TestSet plus this
-// reason for the operator to see.
+// test pods were found for pair checks. Gateway checks remain independently
+// runnable with one pod; the orchestrator applies selected-family policy.
 type MatrixSkip struct {
 	Reason string
 }
@@ -184,6 +194,7 @@ type MatrixSkip struct {
 // silently dropped: there's no `-d <dev>` to pass and the test
 // would fail with a confusing error.
 type MatrixPlan struct {
+	Gateway                  []PingTest
 	ICMPSameRail             []PingTest
 	ICMPCrossRail            []PingTest
 	RDMASameRail             []PingTest
@@ -207,16 +218,16 @@ type MatrixPlan struct {
 //     both pods have ≥2 rails. Catches routing misconfigurations that
 //     allow accidental rail-to-rail leakage (or, when blocked by
 //     design, confirms the isolation).
-//   - Soft-skip on <2 pods: no tests are emitted and Skip is set so
+//   - Soft-skip on <2 pods: pair tests are omitted and Skip is set so
 //     the caller can render "matrix skipped: only N schedulable test
-//     pod(s)".
+//     pod(s)". Gateway tests are still planned for each available source.
 func Plan(pods []TestPod) MatrixPlan {
 	return PlanWithOptions(pods, ModeQuick, config.RoutingDestinationBased)
 }
 
 func PlanWithOptions(pods []TestPod, mode Mode, routing string) MatrixPlan {
 	if len(pods) < 2 {
-		return MatrixPlan{Skip: &MatrixSkip{
+		return MatrixPlan{Gateway: planGatewayTests(pods), Skip: &MatrixSkip{
 			Reason: fmt.Sprintf("only %d schedulable test pod(s) — need ≥2 for a matrix", len(pods)),
 		}}
 	}
@@ -226,7 +237,7 @@ func PlanWithOptions(pods []TestPod, mode Mode, routing string) MatrixPlan {
 	copy(sorted, pods)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 
-	var plan MatrixPlan
+	plan := MatrixPlan{Gateway: planGatewayTests(pods)}
 	crossExpectation := crossRailExpectation(mode, routing)
 	for i, src := range sorted {
 		for j, dst := range sorted {

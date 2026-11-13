@@ -319,6 +319,16 @@ l8k generate \
 
 Add `--dry-run` for a server-side preview and `--overwrite-existing` only after reviewing preflight drift.
 
+## IPPool cluster address checks
+
+Before replacing output, generation checks the actual rendered IPPool subnets
+against explicitly configured `cluster.podCIDRs` and `cluster.serviceCIDRs`.
+Generation stays offline; unset ranges and live Node addresses are checked at
+deploy instead. This also applies to manually configured NV-IPAM subnets and
+selected group subsets. See [cluster address overrides](../reference/configuration.md#cluster-address-overrides)
+for precedence, validation and coverage limits. External installers consuming the
+bundle must perform their own live checks.
+
 ## SR-IOV admission helpers
 
 SR-IOV and Spectrum-X Helm values explicitly set

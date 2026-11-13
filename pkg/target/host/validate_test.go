@@ -95,6 +95,34 @@ func TestListNodesForReportAcceptsNilClient(t *testing.T) {
 	assert.Nil(t, listNodesForReport(context.Background(), nil))
 }
 
+func TestValidateRejectsDOCAHostMismatchAndMalformedSnapshotBeforeClusterAccess(t *testing.T) {
+	for _, tc := range []struct{ name, observations, expected string }{
+		{"mismatch", "- {node: worker-a, status: installed, version: 3.5.0-041000}", "does not match Network Operator 26.10 release SBOM DOCA 3.6.0"},
+		{"duplicate", "- {node: worker-a, status: installed, version: 3.5.0-041000}\n- {node: worker-a, status: unknown}", "unique, nonempty node names"},
+		{"missing version", "- {node: worker-a, status: installed}", "has no package version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			deployment := filepath.Join(tmp, "deployment")
+			require.NoError(t, os.Mkdir(deployment, 0o700))
+			input := filepath.Join(tmp, "config.yaml")
+			source := "networkOperator: {selectedRelease: '26.10'}\ndocaDriver: {enable: true}\nvalidation: {connectivity: false}\nclusterConfig:\n- workerNodes: [worker-a]\ndiscoveredDocaHost:\n" + tc.observations + "\n"
+			require.NoError(t, os.WriteFile(input, []byte(source), 0o600))
+			called := false
+			runner := validateRunner{newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) {
+				called = true
+				return nil, nil, errors.New("unexpected cluster access")
+			}}
+			err := runner.Run(context.Background(), ValidateRequest{UserConfig: input, DeploymentFiles: deployment,
+				Kubeconfig: filepath.Join(tmp, "kubeconfig"), ReportPath: filepath.Join(tmp, "report.html"), OutputFormat: "json"})
+			require.ErrorContains(t, err, tc.expected)
+			assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
+			assert.False(t, called)
+			assert.FileExists(t, filepath.Join(tmp, "report.html"))
+		})
+	}
+}
+
 func TestValidateDoesNotCreateMissingDeploymentDirectoryForDefaultReport(t *testing.T) {
 	workingDir := t.TempDir()
 	t.Chdir(workingDir)
@@ -131,11 +159,12 @@ func TestValidateRunsConnectivityOnlyFromExampleDaemonSet(t *testing.T) {
 			captured = opts
 			return &connectivity.MatrixResult{
 				PingResults: []connectivity.PingResult{
+					{Test: connectivity.PingTest{Kind: connectivity.Gateway}, OK: true},
 					{Test: connectivity.PingTest{Kind: connectivity.ICMPSameRail}, OK: true},
 					{Test: connectivity.PingTest{Kind: connectivity.RDMAPingSameRail}, OK: true},
 					{Test: connectivity.PingTest{Kind: connectivity.RDMABwSameRail}, OK: true},
 				},
-				Summary: connectivity.MatrixSummary{TotalTests: 3, Passed: 3},
+				Summary: connectivity.MatrixSummary{TotalTests: 4, Passed: 4},
 			}, nil
 		},
 	}
@@ -150,10 +179,12 @@ func TestValidateRunsConnectivityOnlyFromExampleDaemonSet(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, clientCreated)
+	assert.Equal(t, defaultOperatorNamespace, captured.IPAMNamespace)
 	assert.Equal(t, deploymentDir, captured.ManifestDir)
 	assert.Equal(t, connectivity.ModeStrict, captured.Mode)
 	assert.Equal(t, config.RoutingSourceBased, captured.Routing)
 	assert.Equal(t, []connectivity.Check{
+		connectivity.CheckGateway,
 		connectivity.CheckICMP,
 		connectivity.CheckRPing,
 		connectivity.CheckIBWriteBW,
@@ -242,11 +273,12 @@ func TestOpenShiftExternalAppliedStatesDoNotFailValidationReport(t *testing.T) {
 					require.True(t, opts.OpenShift)
 					matrix := &connectivity.MatrixResult{
 						PingResults: []connectivity.PingResult{
+							{Test: connectivity.PingTest{Kind: connectivity.Gateway}, OK: true},
 							{Test: connectivity.PingTest{Kind: connectivity.ICMPSameRail}, OK: true},
 							{Test: connectivity.PingTest{Kind: connectivity.RDMAPingSameRail}, OK: true},
 							{Test: connectivity.PingTest{Kind: connectivity.RDMABwSameRail}, OK: true},
 						},
-						Summary: connectivity.MatrixSummary{TotalTests: 3, Passed: 3},
+						Summary: connectivity.MatrixSummary{TotalTests: 4, Passed: 4},
 					}
 					if tc.connectivityFailed {
 						matrix.PingResults[0].OK = false
@@ -580,4 +612,42 @@ spec:
 	report, readErr := os.ReadFile(reportPath)
 	require.NoError(t, readErr)
 	require.Contains(t, string(report), "connectivity validation did not produce a result")
+}
+
+func TestGatewayCoverageDistinguishesOnlinkFromMissingEndpointsAndPairCoverage(t *testing.T) {
+	matrix := &connectivity.MatrixResult{
+		PingResults: []connectivity.PingResult{{Test: connectivity.PingTest{Kind: connectivity.Gateway}, Expectation: connectivity.ExpectRequired, SkipReason: "no configured gateway on secondary interface net1"}},
+		Summary:     connectivity.MatrixSummary{TotalTests: 1, Skipped: 1},
+	}
+	assert.True(t, connectivityOnlyVerdict(matrix, []connectivity.Check{connectivity.CheckGateway}).Pass)
+	verdict := connectivityOnlyVerdict(matrix, []connectivity.Check{connectivity.CheckGateway, connectivity.CheckRPing})
+	assert.False(t, verdict.Pass)
+	require.Len(t, verdict.Reasons, 1)
+	assert.Contains(t, verdict.Reasons[0], `"rping"`)
+	assert.False(t, connectivityOnlyVerdict(&connectivity.MatrixResult{}, []connectivity.Check{connectivity.CheckGateway}).Pass)
+	matrix.PingResults[0].SkipReason = ""
+	matrix.PingResults[0].Err = errors.New("gateway unreachable")
+	matrix.Summary.Failed, matrix.Summary.Skipped = 1, 0
+	assert.False(t, connectivityOnlyVerdict(matrix, []connectivity.Check{connectivity.CheckGateway}).Pass)
+}
+
+func TestValidateUsesEffectiveOperatorNamespaceForGatewayPoolLookup(t *testing.T) {
+	dir, path := writeConnectivityOnlyInputs(t, config.RoutingSourceBased)
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append(contents, []byte("\nnetworkOperator:\n  namespace: custom-ipam\n")...), 0o600))
+	captured := ""
+	capturedErr := errors.New("options captured; no cluster calls")
+	runner := validateRunner{
+		newKubeClient: func(kubeconfig string) (ctrlclient.Client, *rest.Config, error) {
+			assert.Equal(t, "test-kubeconfig", kubeconfig)
+			return nil, &rest.Config{}, nil
+		},
+		runConnectivityMatrix: func(_ context.Context, _ ctrlclient.Client, _ *rest.Config, _ ui.Output, _ *bundle.Bundle, opts connectivity.Options) (*connectivity.MatrixResult, error) {
+			captured = opts.IPAMNamespace
+			return nil, capturedErr
+		},
+	}
+	require.ErrorIs(t, runner.Run(context.Background(), ValidateRequest{Kubeconfig: "test-kubeconfig", DeploymentFiles: dir, UserConfig: path, ReportPath: "-", OutputFormat: "text"}), capturedErr)
+	assert.Equal(t, "custom-ipam", captured)
 }

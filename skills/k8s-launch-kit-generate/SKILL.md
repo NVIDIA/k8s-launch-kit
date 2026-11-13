@@ -49,6 +49,17 @@ character devices must be provisioned by the host owner. Check
 [IPoIB prerequisites](../../docs/user/profiles.md#ipoib-with-inbox-drivers);
 generated names and loaded-module lists do not prove host readiness.
 
+The container driver defaults to true. After discovery, generation changes an
+omitted/null enable choice to false only with installed host DOCA-HOST package
+evidence for every source-inventory worker.
+Explicit `docaDriver.enable` or `--enable-doca-driver` wins. Mixed installed and
+absent/unknown evidence requires an explicit choice, including filtered rendering;
+review ownership before enabling containers over host drivers. Presets apply only
+to topology: original discovery membership remains authoritative in the preserved
+`discoveredDocaHostScope`, including bundle validation and repeated generation
+with or without `--for`. Preset-only input without host observations retains true. See
+[host driver discovery](../../docs/user/discovery.md#host-installed-doca-host).
+
 ## Profile Selection Flags
 
 | Flag | Required | Values | Description |
@@ -114,9 +125,16 @@ l8k generate --user-config cluster-config.yaml \
 ## Choosing `l8k discover` vs `--for`
 
 - **`l8k discover` then `l8k generate`** — default flow. Discovery learns the hardware and persists the resolved profile, so generation needs only the resulting `cluster-config.yaml` unless an override is desired.
-- **`l8k generate --for <preset>`** — skip discovery entirely when the SKU is already known and there is a preset for it. Useful for ahead-of-time generation (CI scaffolding, lab runbooks, demos), or when you don't have `kubectl` access yet. Requires `--node-selector` to identify the target nodes at apply time.
+- **`l8k generate --for <preset>`** — use preset topology without a new discovery run when the SKU is already known. Existing discovery-time host observations still govern driver ownership and compatibility. Useful for ahead-of-time generation (CI scaffolding, lab runbooks, demos), or when you don't have `kubectl` access yet. Requires `--node-selector` to identify the target nodes at apply time.
 
 A preset used with `--for` must declare `capabilities.nodes.{sriov,rdma,ib}` in its `topology.yaml`. All bundled presets do.
+
+For a GB200 NVL tray with four ConnectX-7 InfiniBand rails and two north-south
+BlueField-3s, use `--for GB200-NVL-NVIDIA-GB200 --fabric infiniband
+--deployment-type sriov` with an explicit `--node-selector`. This preset contains
+the four rail PFs and both BlueField-3 PFs. Discovery that excludes host-restricted
+BlueFields reports a topology deviation; see [Topology Presets](../../docs/user/presets.md)
+for its discovery evidence and layout.
 
 ## Interface Naming And Group Selection
 
@@ -252,6 +270,13 @@ SR-IOV and Spectrum-X chart values disable both admission helpers through
 Do not put `enableInjector` or `enableOperatorWebhook` under the chart
 `sriovOperatorConfig` values: these are CR fields, not chart overrides.
 
+## IPPool cluster address checks
+
+Before replacing output, generation checks rendered IPPool subnets against
+explicit `cluster.podCIDRs` and `cluster.serviceCIDRs`. This is offline and cannot
+verify undiscovered ranges or Node addresses. Deploy performs fresh cluster
+checks; external installers must perform equivalent checks themselves.
+
 ## Common Mistakes
 
 - **There is no `--profile` flag.** Profiles are selected via `--fabric` + `--deployment-type` (or `--spectrum-x`). Do NOT invent flags.
@@ -300,6 +325,7 @@ visible selector-only, target-scope-unverified contract.
   `machineType` and `gpuType` strings.
 - Use `--groups <a,b,...>` (case-sensitive identifier list) or `--gpu-type <X>` (case-insensitive) to scope a generate to a subset of source groups in heterogeneous clusters. Mutually exclusive. Empty match is a validation error. Strict-subset filters split per-source rendering: NodePolicies emit one CR per source (each with its own machine-label nodeSelector but a shared bucket-level resourceName); IPPool/example DaemonSet emit one CR per bucket with an `In` list of source machine labels.
 - Generated IPPools use `nvIpam.perNodeBlockSize` (default `10`). Generation warns when it is lower than `sriov.numVfs`, since the per-node block may not have an address for every VF.
+- `nvIpam.startingGateway` is a YAML-only positive host offset in each automatic subnet (default `1`); it must select a usable host below broadcast. For `192.168.2.128/25`, use `126` for gateway `192.168.2.254`. Manual entries retain their own gateway. `nvIpam.offset` separately controls subnet spacing; NV-IPAM automatically excludes the gateway from allocation.
 
 > [!CAUTION]
 > Generation does not apply anything to the cluster. Use `--deploy` or `k8s-launch-kit-deploy` to apply.

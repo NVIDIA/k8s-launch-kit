@@ -12,7 +12,7 @@ Topology presets describe known server layouts by machine type, GPU type, PF PCI
 | Flow | Behavior |
 | --- | --- |
 | Discovery overlay | `l8k discover` matches a preset by exact `(machineType, gpuType)`, validates PF count, PCI addresses, and device IDs, and applies topology fields only when the hardware matches exactly. |
-| Offline generation | `l8k generate --for <preset>` replaces `clusterConfig` with the preset topology and renders manifests without cluster access. |
+| Offline generation | `l8k generate --for <preset>` replaces render topology in `clusterConfig` and renders manifests without cluster access. Existing host observations retain their discovery membership. |
 
 Presets are all-or-nothing. When a matched preset deviates from live hardware, l8k records the deviation and keeps live-discovered topology instead of partially overlaying stale rail data.
 
@@ -24,6 +24,7 @@ l8k preset list
 
 Bundled presets include:
 
+- `GB200-NVL-NVIDIA-GB200`
 - `GB300-DGX-Station-NVIDIA-GB300`
 - `GB300-NVL-NVIDIA-GB300`
 - `PowerEdge-R760xa-H100-NVL`
@@ -35,6 +36,14 @@ Bundled presets include:
 - `ThinkSystem-SR675-V3-System-Board-RTX-PRO-6000`
 - `ThinkSystem-SR680a-V3-H200`
 - `UCSC-885A-M8-H22-H200`
+
+The `GB200-NVL-NVIDIA-GB200` preset describes the four-rail ConnectX-7
+InfiniBand tray reported in [issue #323](https://github.com/NVIDIA/k8s-launch-kit/issues/323#issuecomment-6687952187).
+It preserves the discovered GPU0–GPU3 associations and `SYS` proximity, with
+rails 0–1 on NUMA 0 and rails 2–3 on NUMA 1. It also includes the two north-south
+BlueField-3s at `0006:03:00.0` and `0016:03:00.0`, without rail assignments.
+When those BlueFields are host-restricted, discovery excludes them; the resulting
+four-PF inventory reports a topology deviation from this six-PF preset.
 
 ## Update Presets
 
@@ -69,6 +78,21 @@ l8k generate \
 ```
 
 `--node-selector` is required because the synthesized cluster config has no live worker-node list.
+
+Presets apply only to topology. When `--user-config` includes discovery-time
+DOCA-HOST observations, the original discovery workers still determine driver
+ownership and release compatibility. All-installed evidence can disable the
+container driver; mixed evidence requires an explicit choice, and a release
+mismatch still warns during generation and fails later validation. Explicit
+driver choices retain precedence. Preset-only input without host observations
+keeps the container-driver default of `true`.
+
+Generation preserves the host observation membership separately in
+`discoveredDocaHostScope` in `.l8k/resolved-config.yaml`. It does not copy worker
+names or host package state into preset topology. Reusing that configuration,
+with or without `--for`, retains the same host checks. See
+[host discovery](discovery.md#host-installed-doca-host) for snapshot lifetime.
+
 
 ## Preset YAML
 

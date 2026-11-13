@@ -63,7 +63,8 @@ When generated deployment inputs are present, three checks are run:
   3. Connectivity (default ON, pass --connectivity=false to skip): the
      example DaemonSet is applied, the rollout is awaited until
      numberReady == desiredNumberScheduled > 0, and the configured
-     source-bound checks (icmp, rping, and/or ib_write_bw) run between
+     gateway checks run first per pod/rail, then source-bound checks
+     (icmp, rping, and/or ib_write_bw) run between
      the test pods' rail IPs. validation.mode controls coverage and
      cross-rail gating: quick, full, or strict. The DS is deleted on exit
      unless --keep is set. Skipped
@@ -82,7 +83,9 @@ by the selected checks.
 Exits non-zero on any missing manifest, version mismatch, or
 connectivity-matrix failure. A skipped, empty, or incomplete connectivity-only
 matrix also fails; every selected check family must produce a gating test, and
-non-gating cross-rail observations do not count.`,
+non-gating cross-rail observations do not count. A gateway check with verified
+absence of a configured gateway is explicitly skipped and does not require
+a successful probe; zero endpoints still fails coverage.`,
 	Example: `  # Full validate (manifest state + connectivity matrix)
   l8k validate
 
@@ -166,11 +169,11 @@ func init() {
 	validateCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (overrides config)")
 	validateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
 	validateCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm release version and values validation")
-	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a source-bound connectivity matrix (icmp + rping + ib_write_bw) between pods of the example DaemonSet. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
+	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a source-bound connectivity matrix (gateway + icmp + rping + ib_write_bw) between pods of the example DaemonSet. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
 	validateCmd.Flags().BoolVar(&validateKeep, "keep", false, "Leave the example DaemonSet running after --connectivity completes (useful for debugging).")
 	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 0, "Maximum wall-clock budget for connectivity workload setup and test execution. 0 (default) calculates the budget from the generated matrix plan.")
 	validateCmd.Flags().StringVar(&validateMode, "validation-mode", "", "Connectivity validation mode: quick, full, or strict. Overrides validation.mode from cluster-config.yaml.")
-	validateCmd.Flags().StringSliceVar(&validateChecks, "validation-checks", nil, "Comma-separated checks to run during connectivity validation. Supported: icmp, rping, ib_write_bw. Overrides validation.checks from cluster-config.yaml.")
+	validateCmd.Flags().StringSliceVar(&validateChecks, "validation-checks", nil, "Comma-separated checks to run during connectivity validation. Supported: gateway, icmp, rping, ib_write_bw. Overrides validation.checks from cluster-config.yaml.")
 	validateCmd.Flags().IntVar(&validateRDMAIterations, "rdma-rping-iterations", 0, "Number of rping client iterations. Overrides validation.rdma.rpingIterations from cluster-config.yaml.")
 	validateCmd.Flags().IntVar(&validateRDMAIBWriteSize, "rdma-ib-write-size", 0, "Message size for ib_write_bw -s. Overrides validation.rdma.ibWriteSize from cluster-config.yaml.")
 	validateCmd.Flags().Float64Var(&validateRDMAIBWriteMinGbps, "rdma-ib-write-min-bandwidth-gbps", 0, "Minimum observed ib_write_bw peak bandwidth in Gbps required for a test to pass. Use 0 to disable bandwidth gating. Overrides validation.rdma.ibWriteMinBandwidthGbps from cluster-config.yaml.")

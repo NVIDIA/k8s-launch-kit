@@ -39,6 +39,8 @@ type RouteCheck struct {
 // historical ICMP-first pipeline; callers and the JSON schema continue
 // to reference PingResult.
 type PingResult struct {
+	SkipReason       string `json:"SkipReason,omitempty"`
+	GatewayEvidence  string `json:"GatewayEvidence,omitempty"`
 	Test             PingTest
 	OK               bool
 	ObservedOK       bool
@@ -70,6 +72,8 @@ func (r PingResult) MarshalJSON() ([]byte, error) {
 
 func resultFamily(kind PingTestKind) string {
 	switch {
+	case kind == Gateway:
+		return "gateway"
 	case kind.IsICMP():
 		return "icmp"
 	case kind.IsRDMAPing():

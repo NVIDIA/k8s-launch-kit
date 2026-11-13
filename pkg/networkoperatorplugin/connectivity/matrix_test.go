@@ -107,7 +107,7 @@ func TestPlan_SoftSkipOnFewerThan2Pods(t *testing.T) {
 }
 
 func TestNormalizeChecks(t *testing.T) {
-	assert.Equal(t, []Check{CheckICMP, CheckRPing, CheckIBWriteBW}, normalizeChecks(nil))
+	assert.Equal(t, []Check{CheckGateway, CheckICMP, CheckRPing, CheckIBWriteBW}, normalizeChecks(nil))
 	assert.Empty(t, normalizeChecks([]Check{}))
 	assert.Equal(t, []Check{CheckIBWriteBW, CheckRPing},
 		normalizeChecks([]Check{CheckIBWriteBW, "", CheckRPing, CheckIBWriteBW}))

@@ -36,6 +36,15 @@ candidates with managed sections, even when their installer is absent; candidate
 are refreshed before any delete and checked by UID/resource-version preconditions.
 Policy strays without either managed section retain normal remediation. See [ownership guard](../../docs/advanced/deployment.md#secondary-network-ownership-guard).
 
+Before writes, NV-IPAM IPPool subnets are checked against authoritative
+`cluster.podCIDRs`/`cluster.serviceCIDRs` or fresh observations (OpenShift
+Network pod ranges when served, else Node pod ranges, and ServiceCIDRs), plus
+all Node InternalIPs. Overlaps and failed mandatory reads block dry-run,
+overwrite and external Helm too. Missing pod ranges warn by Node name; an absent
+ServiceCIDR API warns, whereas an empty served API fails. Read
+[the collision policy](../../docs/reference/configuration.md#cluster-address-overrides).
+Observations are per-deploy, not persisted as authoritative configuration.
+
 Before Helm/remediation/writes, affected SR-IOV policy and IPPool selectors must
 match exactly the worker union referenced by intended source metadata. Node-list
 permission errors, extra/missing nodes, duplicate IDs/workers, mixed empty/full

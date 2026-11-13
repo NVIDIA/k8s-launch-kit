@@ -17,10 +17,14 @@
 package networkoperatorplugin
 
 import (
+	"encoding/binary"
+	"fmt"
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,4 +122,89 @@ func TestIPPoolPerNodeBlockSizeFromConfig(t *testing.T) {
 			assert.EqualValues(t, 17, spec["perNodeBlockSize"])
 		}
 	}
+}
+
+func TestIPPoolStartingGatewayRender(t *testing.T) {
+	for _, profileName := range []string{"sriov-ethernet-rdma", "sriov-ib-rdma", "host-device-rdma", "ipoib-rdma-shared", "macvlan-rdma-shared"} {
+		for _, multirail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/multirail=%v", profileName, multirail), func(t *testing.T) {
+				cfg, err := config.LoadFullConfig(filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
+				require.NoError(t, err)
+				cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: multirail}
+				cfg.NvIpam.StartingGateway = 300
+				cfg.NvIpam.ReserveFirstIPs = 10
+				rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, profileName), cfg)
+				require.NoError(t, err)
+				files := make([]bundle.File, 0, len(rendered))
+				for name, content := range rendered {
+					files = append(files, bundle.File{Name: name, Content: content})
+				}
+				_, err = bundle.FromFiles(files)
+				require.NoError(t, err)
+				assertStartingGatewayPools(t, rendered, 300)
+				assert.Empty(t, cfg.NvIpam.Subnets, "generation must not mutate the caller's subnet list")
+			})
+		}
+	}
+}
+
+func TestProcessTemplateStartingGateway(t *testing.T) {
+	cfg, err := config.LoadFullConfig(filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
+	require.NoError(t, err)
+	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: true}
+	cfg.NvIpam.StartingSubnet = "192.168.2.128"
+	cfg.NvIpam.Mask = 25
+	cfg.NvIpam.StartingGateway = 126
+	rendered, err := ProcessTemplate(filepath.Join("..", "..", "profiles", "sriov-ethernet-rdma", "20-ippool.yaml"), cfg, "")
+	require.NoError(t, err)
+	assertStartingGatewayPools(t, rendered, 126)
+}
+
+func TestManualIPPoolGatewayRemainsAuthoritative(t *testing.T) {
+	cfg, err := config.LoadFullConfig(filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
+	require.NoError(t, err)
+	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: false}
+	cfg.NvIpam.StartingGateway = 300
+	cfg.NvIpam.Subnets = []config.NvIpamSubnetConfig{{Subnet: "192.168.2.0/24", Gateway: "192.168.2.254"}}
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma"), cfg)
+	require.NoError(t, err)
+	assertStartingGatewayPools(t, rendered, 254)
+	assert.Equal(t, "192.168.2.254", cfg.NvIpam.Subnets[0].Gateway)
+}
+
+func assertStartingGatewayPools(t *testing.T, rendered map[string]string, offset uint32) {
+	t.Helper()
+	names := fileNamesMatching(rendered, "ippool")
+	require.NotEmpty(t, names)
+	seen := 0
+	for _, name := range names {
+		for _, doc := range parseDocs(t, name, rendered[name]) {
+			spec, ok := doc["spec"].(map[string]any)
+			require.True(t, ok)
+			subnet, ok := spec["subnet"].(string)
+			require.True(t, ok)
+			_, network, err := net.ParseCIDR(subnet)
+			require.NoError(t, err)
+			gateway, ok := spec["gateway"].(string)
+			require.True(t, ok)
+			gatewayIP := net.ParseIP(gateway)
+			require.NotNil(t, gatewayIP)
+			require.True(t, network.Contains(gatewayIP))
+			assert.Equal(t, binary.BigEndian.Uint32(network.IP.To4())+offset, binary.BigEndian.Uint32(gatewayIP.To4()))
+			seen++
+		}
+	}
+	require.Positive(t, seen)
+}
+
+func TestProcessTemplateLegacyGatewayDefault(t *testing.T) {
+	cfg, err := config.LoadFullConfig(filepath.Join("testdata", "grouping", "mixed-same-type.yaml"), ctrllog.Log)
+	require.NoError(t, err)
+	cfg.Profile = &config.Profile{Fabric: "ethernet", Deployment: "sriov", Multirail: true}
+	// A caller compiled against the previous config shape omits the new field.
+	cfg.NvIpam.StartingGateway = 0
+	rendered, err := ProcessTemplate(filepath.Join("..", "..", "profiles", "sriov-ethernet-rdma", "20-ippool.yaml"), cfg, "")
+	require.NoError(t, err)
+	assertStartingGatewayPools(t, rendered, 1)
+	assert.Zero(t, cfg.NvIpam.StartingGateway, "rendering must preserve the caller's omitted field")
 }
