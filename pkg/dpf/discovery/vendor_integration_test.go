@@ -148,16 +148,15 @@ var _ = Describe("HPE PCI vendor evidence through discovery publication", func()
 				}
 				Expect(check.State).To(Equal("failed"))
 				Expect(check.Message).To(ContainSubstring("Verify the selected endpoints"))
-				vendorEvidence := false
-				for _, ref := range check.EvidenceRefs {
-					e := report.Inventory.Evidence[ref]
-					vendorEvidence = vendorEvidence || (e.Property == "VendorID" && e.ResourceURI == "/redfish/v1/Systems/host/PCIDevices/selected" && e.Authenticated)
-				}
-				Expect(vendorEvidence).To(BeTrue())
+				Expect(check.EvidenceRefs).To(BeEmpty())
+				Expect(selected.EvidenceRefs).To(BeEmpty())
+				Expect(report.Inventory.Evidence).To(BeEmpty())
 				Expect(report.Artifacts).To(ContainElement(HaveField("Path", filepath.Join(store.RunDir, "partial.yaml"))))
 				persisted, err := os.ReadFile(filepath.Join(store.RunDir, "report.json"))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(string(persisted)).To(ContainSubstring("HOST_ADAPTER_VENDOR_CONFLICT"))
+				Expect(string(persisted)).NotTo(ContainSubstring(`"evidenceRefs"`))
+				Expect(string(persisted)).NotTo(ContainSubstring(`"evidence"`))
 				Expect(string(persisted)).NotTo(ContainSubstring("fixture-password"))
 			} else {
 				if value < 0 {
