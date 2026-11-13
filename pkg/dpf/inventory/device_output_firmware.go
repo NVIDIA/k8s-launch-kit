@@ -128,7 +128,7 @@ func firmwareFromOutput(w *FirmwareOutput, issues []DeviceIssue) ([]Firmware, er
 			}
 			for _, issue := range issues {
 				entryField := fmt.Sprintf("%s[%d]", field, index)
-				if issue.Field == entryField || issue.Field == field && issue.Code == "FIRMWARE_VERSION_CONFLICT" && version.Activation != "staged" {
+				if issue.Field == entryField {
 					f.State, f.ReasonCode, f.Message = "unknown", issue.Code, issue.Message
 					if issue.Code == "FIRMWARE_VERSION_CONFLICT" {
 						f.State = "conflict"
@@ -140,7 +140,14 @@ func firmwareFromOutput(w *FirmwareOutput, issues []DeviceIssue) ([]Firmware, er
 					}
 					f.ActivationReasonCode, f.ActivationMessage = issue.Code, issue.Message
 				}
-				if issue.Field == field+".activation" && issue.Code == "ACTIVATION_CONFLICT" {
+			}
+			// Component conflicts veto compatibility regardless of issue order
+			// or an additional per-entry read failure.
+			if conflict {
+				f.State, f.ReasonCode = "conflict", "FIRMWARE_VERSION_CONFLICT"
+			}
+			for _, issue := range issues {
+				if (issue.Field == field+".activation" || issue.Field == fmt.Sprintf("%s[%d].activation", field, index)) && issue.Code == "ACTIVATION_CONFLICT" {
 					f.Activation, f.ActivationReasonCode, f.ActivationMessage = "unknown", issue.Code, issue.Message
 				}
 			}

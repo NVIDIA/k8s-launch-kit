@@ -45,8 +45,6 @@ func validateFirmwareIssues(w *FirmwareOutput, issues []DeviceIssue) error {
 			if _, valid := issueIndex(match[2], len(*versions)); !valid {
 				return fmt.Errorf("firmware issue names an absent version %q", issue.Field)
 			}
-		} else if activation && len(*versions) != 0 && issue.Code != "ACTIVATION_CONFLICT" {
-			return fmt.Errorf("firmware activation issue must name its version: %q", issue.Field)
 		}
 		if issue.Code == "ACTIVATION_CONFLICT" && !activation {
 			return fmt.Errorf("activation conflict requires an activation field: %q", issue.Field)
