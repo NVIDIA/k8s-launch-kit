@@ -100,8 +100,9 @@ The output directory contains:
 - The verified chart archives, original source YAML and `.l8k/resolved-config.yaml`.
 - An index recording the ordered stages and required deployment checks.
 
-The physical and host-facing interface definitions select only the intended DPU
-cluster and the selected DPUs' node names. HBN's resource requests are recorded
+The physical and host-facing interface definitions carry selectors derived from
+the intended DPU cluster and selected DPUs' node names. Generation does not check
+whether live labels uniquely identify those targets. HBN's resource requests are recorded
 both for its container and for DPF's check that the services fit the chosen DPU
 flavor. Generation verifies the manifest shapes; actual available resources and
 interface readiness still require deployment checks.
