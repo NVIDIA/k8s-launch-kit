@@ -187,14 +187,17 @@ func downloadChart(ctx context.Context, address string, transport http.RoundTrip
 		return nil, fmt.Errorf("chart download failed; verify HTTPS connectivity and CA trust")
 	}
 	defer response.Body.Close()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("chart server returned HTTP %d", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maximumGenerationChartBytes+1))
+	if contextErr := ctx.Err(); contextErr != nil {
+		return nil, contextErr
+	}
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
 		return nil, fmt.Errorf("cannot read complete chart archive")
 	}
 	if len(data) == 0 || len(data) > maximumGenerationChartBytes {

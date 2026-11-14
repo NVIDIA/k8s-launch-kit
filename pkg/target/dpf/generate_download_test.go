@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -141,3 +142,32 @@ func TestChartDownloadCancellationAndHTTPError(t *testing.T) {
 type chartTestTransport func(*http.Request) (*http.Response, error)
 
 func (f chartTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestChartDownloadPreservesCancellationWhenTransportReturnsNormally(t *testing.T) {
+	for _, phase := range []string{"headers", "body"} {
+		t.Run(phase, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			transport := chartTestTransport(func(*http.Request) (*http.Response, error) {
+				body := io.NopCloser(chartTestReader(func([]byte) (int, error) {
+					cancel()
+					return 0, io.EOF
+				}))
+				status := http.StatusOK
+				if phase == "headers" {
+					cancel()
+					status = http.StatusForbidden
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: body}, nil
+			})
+			data, err := downloadChart(ctx, "https://charts.example.test/chart.tgz", transport)
+			if !errors.Is(err, context.Canceled) || data != nil {
+				t.Fatalf("cancelled %s returned data=%q error=%v", phase, data, err)
+			}
+		})
+	}
+}
+
+type chartTestReader func([]byte) (int, error)
+
+func (r chartTestReader) Read(p []byte) (int, error) { return r(p) }

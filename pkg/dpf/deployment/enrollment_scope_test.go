@@ -98,7 +98,7 @@ func (*enrollmentScopeClient) executeEnrollmentSecret(context.Context, ResourceC
 
 func enrollmentScopeFixture(t *testing.T) (*managementExecution, *enrollmentScopeClient, []enrollmentBMC) {
 	t.Helper()
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatal(err)
 	}

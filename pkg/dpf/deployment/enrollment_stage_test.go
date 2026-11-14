@@ -108,7 +108,7 @@ func enrollmentStageFixture(t *testing.T) (*managementExecution, *enrollmentStag
 	input.Operator.Bootstrap.Devices[0].BMCIP = "192.0.2.30"
 	input.Workload.DPUClusterSelector = expected.Labels
 	setSiteAllocation(&input.Operator.Bootstrap.Tenant)
-	generated, err := generation.Generate(input)
+	generated, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestEnrollmentStageRejectsFinalDeviceReplacement(t *testing.T) {
 func TestControlPlaneRejectsFactoryResetBeforeAnyManagementAccess(t *testing.T) {
 	input := preflightGenerationInputs(t)
 	input.Operator.Bootstrap.BMCFactoryResetPolicy = bootstrap.BMCFactoryResetPolicyOnInitialization
-	generated, err := generation.Generate(input)
+	generated, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
 	}

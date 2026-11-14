@@ -19,7 +19,7 @@ import (
 )
 
 func TestControlPlaneRejectsIncompleteExecutionBeforeManagementAccess(t *testing.T) {
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestControlPlaneRejectsIncompleteExecutionBeforeManagementAccess(t *testing
 
 func TestControlPlaneRequiresSiteAllocationBeforeManagementEffects(t *testing.T) {
 	input := preflightGenerationInputs(t)
-	generated, err := generation.Generate(input)
+	generated, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
 	}

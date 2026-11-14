@@ -20,7 +20,6 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -112,7 +111,7 @@ func softwareStageFixture(t *testing.T) (*managementExecution, controlPlaneRecei
 	pldm := input.Workload.Software.PLDM["MT_0000001774"]
 	pldm.SHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(stagedPLDMBytes)))
 	input.Workload.Software.PLDM["MT_0000001774"] = pldm
-	generated, err := generation.Generate(input)
+	generated, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -226,7 +226,7 @@ func (f *managementFake) ensureOperatorPlan(context.Context, *operatorPlan) erro
 }
 
 func TestRunManagementValidatesBundleAndBindingBeforeManagementCalls(t *testing.T) {
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestRunManagementValidatesBundleAndBindingBeforeManagementCalls(t *testing.
 }
 
 func TestRunManagementPreflightAndHelmFailuresStopDependentEffects(t *testing.T) {
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestRunManagementPreflightAndHelmFailuresStopDependentEffects(t *testing.T)
 }
 
 func TestRunManagementReturnsOnlyBoundedBootstrapReceiptAfterReadyConfig(t *testing.T) {
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestRunManagementReturnsOnlyBoundedBootstrapReceiptAfterReadyConfig(t *test
 }
 
 func TestRunManagementRechecksSingletonBeforeConfigCreateAndVerifiesVersion(t *testing.T) {
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func (managementFailingFile) Sync() error               { return nil }
 func (managementFailingFile) Close() error              { return nil }
 
 func TestRunManagementJournalFailurePreventsManagementCalls(t *testing.T) {
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -242,8 +243,10 @@ func TestContextualSPDYDialerKeepsSuccessfulUpgradeConnectionOpen(t *testing.T) 
 		defer conn.Close()
 		_, _ = http.ReadRequest(bufio.NewReader(conn))
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: SPDY/3.1\r\n%s: %s\r\n\r\n", streamhttp.HeaderProtocolVersion, portforward.PortForwardProtocolV1Name)
-		var one [1]byte
-		_, _ = conn.Read(one[:])
+		// Drain the complete SPDY shutdown frame before closing the peer. A
+		// one-byte read races the client's GOAWAY write and can reset an otherwise
+		// healthy upgraded connection while connection.Close is still flushing.
+		_, _ = io.Copy(io.Discard, conn)
 		close(serverClosed)
 	}()
 

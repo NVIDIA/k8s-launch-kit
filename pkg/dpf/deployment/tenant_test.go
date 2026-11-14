@@ -12,7 +12,7 @@ import (
 
 func TestTenantPlanUsesIndependentReleaseVersionAndImmutableIntent(t *testing.T) {
 	input := preflightGenerationInputs(t)
-	generated, err := generation.Generate(input)
+	generated, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
 	}

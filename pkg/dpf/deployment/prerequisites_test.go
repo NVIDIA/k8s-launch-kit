@@ -30,7 +30,7 @@ import (
 )
 
 func TestManagementPreflightPlanRequiresPinnedBundleAndDependencies(t *testing.T) {
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatalf("generate exact HBN bundle: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestManagementPreflightPlanRequiresPinnedBundleAndDependencies(t *testing.T
 }
 
 func TestManagementPreflightPlanAcceptsActualGeneratedReleaseAndRejectsUnretainedArgoNamespace(t *testing.T) {
-	generated, err := generation.Generate(preflightGenerationInputs(t))
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatalf("generate actual DPF bundle: %v", err)
 	}

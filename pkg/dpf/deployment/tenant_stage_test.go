@@ -146,7 +146,7 @@ func TestRunTenantStageStopsBeforeCreateOnPrerequisiteFailure(t *testing.T) {
 			if test.allocation != nil {
 				test.allocation(&input)
 			}
-			generated, err := generation.Generate(input)
+			generated, err := generateFixtureBundle(input)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -227,7 +227,7 @@ func TestTenantStageJournalsPartialNetworkFailure(t *testing.T) {
 func TestRunTenantStagePreservesMissingAllocationAsUnknown(t *testing.T) {
 	input := preflightGenerationInputs(t)
 	input.Operator.Bootstrap.Tenant.Allocation = nil
-	generated, err := generation.Generate(input)
+	generated, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func newTenantStageFixture(t *testing.T) (*managementExecution, *tenantStageFake
 	t.Helper()
 	input := preflightGenerationInputs(t)
 	setSiteAllocation(&input.Operator.Bootstrap.Tenant)
-	generated, err := generation.Generate(input)
+	generated, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
 	}
