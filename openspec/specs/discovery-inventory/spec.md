@@ -311,6 +311,20 @@ not observations or authorization to modify switches.
 - **AND** deployment recollects the same prerequisites; current bound allocations
   do not establish remaining physical capacity or future write headroom.
 
+#### Scenario: Explicit management-network coverage
+
+- **WHEN** DPF discovery explicitly selects management mode on supported Linux/amd64 nodes
+- **THEN** the complete node scope is validated before temporary Pod/ConfigMap creation; each node runs both Pod-network and node-network probes to the management API and every selected DPU BMC.
+- **AND** failed DNS/TCP/TLS paths remain blocking, with specific reasons, while independent paths continue; structural, identity, image or malformed-response failures stop execution and preserve partial results and cleanup status.
+- **AND** inventory mode creates no probe resources; host SSH may accompany management probes, but DPU probes require explicit BMC endpoints. BMC probes reuse the explicit endpoint trust policy; successful bypassed handshakes remain `unverified` and cannot establish server identity. Management API probes always require verified TLS.
+
+#### Scenario: New HBN tenant interface and route prerequisites
+
+- **WHEN** HBN discovery has a tenant VIP, interface and node selector
+- **THEN** it selects current control-plane nodes using that selector and requires complete link-state, address-prefix and kernel VIP-route facts for every selected node.
+- **AND** unavailable facts remain unknown; a down interface, assigned VIP, wrong source/interface or gateway route blocks new-tenant network readiness.
+- **AND** node labels remain transient and label/scheduling changes during collection invalidate the snapshot. VIP/VRID reservation and network-wide uniqueness remain separate blocking requirements; route observations do not establish them.
+
 ## Baseline and limits
 
 There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).

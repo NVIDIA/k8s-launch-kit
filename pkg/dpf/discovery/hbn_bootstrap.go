@@ -10,6 +10,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementnetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
 )
 
@@ -60,5 +61,28 @@ func hbnBootstrapChecks(input *config.Provisioning, namespace string, inv *inven
 			Message: "OnInitialization clears BMC networking. Stable DHCP recovery to each selected BMC address and reauthentication after reset have not been verified; use Never to preserve existing BMC network settings.",
 		})
 	}
-	return append(checks, tenantClusterCheck(snapshot, &resolved)), tenantClusterProjection(snapshot, &resolved)
+	targetCheck := tenantClusterCheck(snapshot, &resolved)
+	var networkChecks []inventory.Check
+	switch {
+	case targetCheck.State == "passed" && targetCheck.ReasonCode == "TENANT_TARGET_ABSENT_FROM_DPUCLUSTERS":
+		var nodes []inventory.Node
+		if inv != nil && inv.Management != nil {
+			nodes = inv.Management.Nodes
+		}
+		networkChecks = managementnetwork.CheckNewTenantNetwork(nodes, resolved.Tenant)
+	case targetCheck.State == "passed" && targetCheck.ReasonCode == "TENANT_TARGET_MATCHES":
+		networkChecks = []inventory.Check{tenantNetworkScopeCheck(resolved.Tenant, "TENANT_EXISTING_NETWORK_UNVERIFIED", "The selected DPUCluster already exists; fresh API-backed, ownership-aware endpoint checks are required because its status does not prove current node VIP assignment or route state.")}
+	default:
+		networkChecks = []inventory.Check{tenantNetworkScopeCheck(resolved.Tenant, "TENANT_NETWORK_SCOPE_UNVERIFIED", "The selected tenant is not verified as absent or as a matching owned object; do not treat the requested VIP as free until cross-namespace ownership is resolved.")}
+	}
+	checks = append(checks, networkChecks...)
+	return append(checks, targetCheck), tenantClusterProjection(snapshot, &resolved)
+}
+
+func tenantNetworkScopeCheck(tenant bootstrap.Tenant, reason, message string) inventory.Check {
+	subject := "tenant network selection"
+	if tenant.Name != "" {
+		subject = "tenant " + tenant.Name + " network selection"
+	}
+	return inventory.Check{ID: "dpf.hbn.management.tenant-network", Subject: subject, Vantage: "management-cluster", RequiredPhase: "deploy", State: "unknown", ReasonCode: reason, Message: message, EvidenceRefs: []string{}}
 }

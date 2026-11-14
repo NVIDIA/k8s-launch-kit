@@ -68,7 +68,8 @@ the `host` target. Existing invocations must omit `--target` unless the user
 explicitly requests it; `--target host` is an equivalent explicit form.
 
 The `dpf` target exposes experimental inventory discovery through explicit
-SSH/Redfish sources, HBN-BGP prerequisite checks, and HBN-BGP artifact generation.
+SSH/Redfish sources, optional Linux/amd64 management-network probes, HBN-BGP
+prerequisite checks, and HBN-BGP artifact generation.
 Generation needs explicit `--user-config` and `--save-deployment-files`; it does
 not deploy or establish runtime readiness. DPF deploy, validate and pipeline
 remain unavailable. Use `l8k schema` and inspect

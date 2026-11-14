@@ -693,7 +693,26 @@ serialization; ownership metadata and execution/security settings remain checked
 Each Pod pulls the cataloged manifest for its observed node architecture, and its
 runtime ImageID must equal that requested repository and digest. The index digest
 is catalog metadata, not the requested runtime image. Other runtime ImageID forms
-remain unsupported until separately verified. The release asset gate remains
-separate from these comparison fixes. Inventory mode
-continues to omit probe Pods. Interface and route observations do not establish
-VIP reservation, network-wide VRID uniqueness, or successful tenant deployment.
+remain unsupported until separately verified. The catalog enables Linux/amd64;
+other architectures remain unavailable until qualified. Inventory mode continues
+to omit probe Pods. Host SSH collection can accompany management probes, while
+DPU probe destinations require explicit Redfish endpoints.
+
+The runner validates the complete node scope before creating resources. Validated
+DNS/TCP/TLS failures remain blockers but do not stop independent node/vantage
+collection; identity, admission and malformed-protocol errors still abort. The
+fixed collector adds administrative/operational interface state and a bounded
+IPv4 kernel route lookup for the configured HBN tenant VIP. Node selection uses
+fresh transient Kubernetes labels and rechecks identity and scheduling facts
+before publishing. New-tenant checks require the selected interface up, an on-link
+VIP prefix and matching route/source, and reject an already assigned VIP. Existing
+tenant reuse requires separate ownership-aware endpoint verification. Interface
+and route observations do not establish VIP reservation, network-wide VRID
+uniqueness, or successful tenant deployment.
+
+BMC connectivity probes reuse resolved endpoint trust policy. Explicit certificate
+bypass is carried only as public policy, never credentials, and successful TLS
+handshakes remain `unverified`. Management API probes remain strict. Protocol
+validation rejects unrequested bypass and false verification claims. This matches
+DPF's pre-bootstrap factory-certificate transport without claiming that later
+DPF-managed mTLS enrollment has already succeeded.

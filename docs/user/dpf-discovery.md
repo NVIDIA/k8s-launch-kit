@@ -21,11 +21,66 @@ metadata remains visible, including cards without serials. Hardware support and
 deployment readiness checks do not block inventory collection. Overall deployment `acceptance` remains
 `not-evaluated`, even when `discovery.outcome` is `complete` and the command exits zero.
 
-Without a selected use case, explicitly set `discovery.probes.mode: inventory`.
-The default `management` mode is unavailable in this preview; selecting it stops the command before
-remote access. Inventory reports management topology when a kubeconfig is supplied,
-but does not test management-network connectivity. HBN-BGP artifact generation
-is available; DPF deploy, validate, and the DPF pipeline remain unavailable.
+Without a selected use case, discovery defaults to `management` mode. Set
+`discovery.probes.mode: inventory` to collect inventory without temporary Pods.
+HBN-BGP defaults to inventory mode; explicitly select management mode to test
+network paths. Management probes currently support Linux/amd64 nodes. HBN-BGP
+artifact generation is available; DPF deploy, validate, and the DPF pipeline
+remain unavailable.
+
+## Management-network probes
+
+Set `discovery.probes.mode: management` and supply an explicit management
+kubeconfig. Hosts may use SSH or Redfish; every selected DPU must have an
+explicit Redfish BMC endpoint for the network checks. Select an existing namespace with `discovery.probes.namespace`;
+otherwise the kubeconfig namespace, then `default`, is used. The account must
+be able to read Nodes and the namespace and create, inspect, read logs from,
+and delete the temporary Pods and ConfigMap there. Namespace admission policy
+must allow host-network Pods. Launch Kit does not change admission policy.
+
+The cluster must have exactly three control-plane nodes. All management-cluster
+nodes selected for the probes must be Ready, schedulable Linux/amd64 nodes and
+able to pull the published, digest-pinned `nicolaka/netshoot` image. An optional
+`discovery.probes.imageRepository` mirror must contain the same pinned manifests.
+Unsupported node scope is rejected before probe resources are created.
+
+From the CLI, Launch Kit creates one immutable ConfigMap with public request
+and CA data. It then runs two temporary non-root Pods on each management node:
+
+| Probe | Where it runs | Operations |
+| --- | --- | --- |
+| Pod network | That node's ordinary Pod network namespace | Resolve the management API and each selected DPU BMC address, connect over TCP, and check HTTPS using each endpoint’s explicit trust policy. |
+| Node network | That node's host network namespace | Repeat the same connection checks; read interfaces, link state and routes. For HBN-BGP with a configured tenant VIP, ask the kernel which route it would use for that VIP. |
+
+These Pods receive no BMC credentials or Kubernetes service-account token,
+mount no host filesystem, and do not change networking. They make unauthenticated
+requests to the API version endpoint and each BMC's Redfish root. An HTTP
+401/403 can still prove that the HTTPS transport path works; it does
+not prove DPF controller authentication.
+
+BMC probes reuse the endpoint's TLS policy. With explicit `insecureSkipVerify: true`,
+a successful handshake is reported as `tls: unverified`; the connectivity check
+can pass, but it does not verify server identity. This supports the initial BMC
+bootstrap path. Later DPF controller authentication remains a separate check.
+Management API probes always verify TLS. For trusted BMC connections, supply
+the endpoint's public `caFile` and a certificate valid for its name or address.
+A failed DNS, TCP or TLS check remains a blocker while other independent paths
+are collected. Admission, identity, image or malformed-response failures stop
+probe execution. Live progress names each node and network namespace.
+
+The CLI records each created resource's UID and removes its own Pods and ConfigMap
+on completion or failure. Inspect cleanup failures and the saved resource journal
+before retrying; do not delete resources belonging to another run.
+
+For a new HBN tenant, interface/route checks require every node selected by the
+tenant selector to have the configured interface up, a suitable IPv4 prefix,
+and an on-link route with a source address on that interface. A VIP already
+assigned on a selected node is a conflict for new-tenant creation. These checks
+do not reserve the VIP, prove VRID uniqueness, or test failover. Missing allocation
+information continues to block readiness even when every network probe passes.
+
+Use the build that produced an experimental inventory, or a newer compatible
+build, for subsequent commands. Older builds can reject newly added fields.
 
 ## Inputs and invocation
 
@@ -456,7 +511,7 @@ when inputs, trust settings or an older saved inventory need to change.
 | Exit | Meaning |
 | --- | --- |
 | 0 | Explicit-mode checks, cleanup and publication completed |
-| 2 | Invalid input, incomplete required identity/mapping or DPU BMC administrator evidence, unavailable management mode or proven mismatch |
+| 2 | Invalid input, incomplete required identity/mapping or DPU BMC administrator evidence, unsupported probe platform or proven mismatch |
 | 3 | Required observation, authentication, TLS, API or remote cleanup failure |
 | 1 | Cancellation or local output error |
 
@@ -518,8 +573,9 @@ optional management-network probes. Defaults are included in the binary.
 Supply `management.kubeconfigRef` to inspect the management cluster. Launch Kit
 reads its Kubernetes version and ready control-plane nodes, DPF operator
 Deployment, DPFOperatorConfig, tenant clusters, existing DPU enrollments, storage
-classes, and served DPF API schemas. These API calls run from the CLI machine;
-no management probe pod is created. Tenant clusters and DPU enrollments are read
+classes, and served DPF API schemas. These API calls run from the CLI machine.
+The default inventory mode creates no probe Pods; explicit management mode adds
+the [management-network probes](#management-network-probes). Tenant clusters and DPU enrollments are read
 across namespaces so an existing tenant VIP or physical serial claim cannot be
 missed. Saved inventory includes the selected objects and concise conflict or
 missing-identity details; unrelated tenant and enrollment records are omitted.

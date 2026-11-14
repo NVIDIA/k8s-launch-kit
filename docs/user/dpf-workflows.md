@@ -8,7 +8,7 @@ openspec/workflows/dpf-discovery.json. Edit the source, then regenerate.
 
 # DPF discovery and generation workflows
 
-Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Start with **inventory mode**; management probe mode is unavailable in this preview. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.
+Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Start with **inventory mode**. Optional management mode adds temporary Linux/amd64 network probes as described below. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.
 
 For complete field and error details, see [DPF discovery reference](dpf-discovery.md). Each diagram follows the same steps as its procedure. Commands are examples to run deliberately from a machine with direct access to your selected endpoints.
 
@@ -50,7 +50,7 @@ Choose each source explicitly: a host operating system over SSH or its BMC over 
 | Required for SSH | A verified `knownHostsFile`; direct connectivity from the CLI machine. SSH port defaults to `22`; ambient SSH config, agents and ProxyJump are not used. |
 | Conditional | DPU ARM SSH for partial OS measurements; a private CA for Redfish when system trust is insufficient; `systemURI` if a BMC exposes several Systems. |
 | Optional | A management kubeconfig for additional observations. Inventory needs none, but an explicitly supplied kubeconfig must work. |
-| Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` explicitly because the default management mode is unavailable in this preview. |
+| Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` for this workflow to omit temporary management-network probes. HBN-BGP already defaults to inventory mode. |
 | Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |
 
 Use an account whose own session proves its effective administrator role. If session Roles is absent, local authentication must be established by an explicit trusted local session `UserAuthenticationSource`. A current `LocalAccountAuth: Enabled` policy alone cannot prove how an existing session authenticated. Disabled local authentication and explicitly external session sources are unsupported; Fallback/LocalFirst require the explicit local session source. Missing origin plus missing Roles cannot inherit privileges from a same-named local administrator. Discovery reports unverifiable proof as partial without replacing a complete handoff.
@@ -388,6 +388,61 @@ Create a new seed from the desired access configuration, without copying old `in
 
 Keep the current YAML, JSON/stdout report and stderr log, plus `source-before.yaml` when a complete in-place refresh created it. Discovery completion still means a successful inventory workflow, with deployment `acceptance: not-evaluated`. Unknown software requirements and unverified deployment prerequisites remain unresolved; a refreshed inventory does not enable DPF deployment.
 
+## Test management-network paths {#management-network}
+
+Use explicit management mode to check connections from the management cluster and inspect the node interfaces needed for a new DPF tenant. See [probe prerequisites](dpf-discovery.md#management-network-probes). Inventory-only discovery remains available without these temporary resources.
+
+```mermaid
+flowchart TD
+  n1["CLI operator: enable management mode and select access"]
+  n2["Management cluster: run bounded network probes"]
+  n3["CLI machine: remove owned probe resources"]
+  n4["CLI operator: distinguish path checks from allocation"]
+  n5["Infrastructure owner: resolve the reported prerequisite"]
+  n6["CLI operator: retain the observations"]
+  n1 -->|"Inputs and permissions prepared"| n2
+  n2 -->|"Collection completes or stops"| n3
+  n3 -->|"Cleanup complete"| n4
+  n3 -->|"Cleanup incomplete"| n5
+  n4 -->|"Required check failed or unknown"| n5
+  n4 -->|"Measured checks pass"| n6
+  n5 -->|"Cause resolved"| n1
+```
+
+### 1. CLI operator: enable management mode and select access {#management-network-prepare}
+
+Set `discovery.probes.mode: management`, an explicit management kubeconfig, and an existing probe namespace. Retain the selected DPU BMC endpoints. Provide public CA files where needed. An explicit BMC TLS bypass also applies to that BMC’s probe; its successful handshake is reported as unverified. Management API TLS verification remains required. For HBN-BGP, supply `provisioning.bootstrap.tenant.vip`, `interface`, and any node-selector override. The account needs namespace/Node reads and temporary Pod/ConfigMap create, inspect, log-read and delete permissions. Nodes must be Ready, schedulable Linux/amd64; admission must allow the requested non-root host-network Pods. Launch Kit does not change cluster policy.
+
+Next: [Inputs and permissions prepared](#management-network-collect).
+
+### 2. Management cluster: run bounded network probes {#management-network-collect}
+
+The CLI validates the complete management-node scope before creating a request ConfigMap. On each node it schedules one ordinary Pod-network probe and one host-network probe using the pinned published diagnostic image. Each checks address resolution, TCP and HTTPS to the management API and selected DPU BMCs. API certificates are always verified. BMC probes follow each endpoint’s explicit trust policy; a bypassed certificate remains reported as unverified even when the connection succeeds. The host-network probe also reads interface addresses/link state and routes, and performs a kernel route lookup for a configured HBN tenant VIP. No credentials are copied into Pods and no node or switch settings are changed. Live progress identifies the node and network namespace. A failed network path does not suppress independent probes, but remains a failed result. Admission, image, identity, invalid-response or deadline failures stop collection.
+
+Next: [Collection completes or stops](#management-network-cleanup).
+
+### 3. CLI machine: remove owned probe resources {#management-network-cleanup}
+
+The CLI removes only the temporary Pods and ConfigMap it created, checking their recorded UIDs and ownership. It records leftovers if cleanup cannot complete. Keep the report and resource journal when diagnosing a failure; do not remove another run’s resources.
+
+Next: [Cleanup complete](#management-network-review); [Cleanup incomplete](#management-network-correct).
+
+### 4. CLI operator: distinguish path checks from allocation {#management-network-review}
+
+Review every failed or unknown path and each selected node’s interface/tenant-VIP route check. Missing facts, a down interface, an off-link route or a VIP already assigned to a selected node block new-tenant readiness. Passing these checks establishes current node network facts only. VIP reservation, DHCP exclusion and network-wide VRID uniqueness remain separate requirements; DNS/ARP silence or absence from a DPUCluster list cannot prove them.
+
+Next: [Required check failed or unknown](#management-network-correct); [Measured checks pass](#management-network-finish).
+
+### 5. Infrastructure owner: resolve the reported prerequisite {#management-network-correct}
+
+Use the saved reason to correct trust, access, node state, desired interface/VIP, routing or incomplete cleanup. Arrange infrastructure changes with the responsible owner. Discovery does not apply switch configuration or reserve addresses. Rerun after the cause is resolved.
+
+Next: [Cause resolved](#management-network-prepare).
+
+### 6. CLI operator: retain the observations {#management-network-finish}
+
+Keep the saved inventory, report and logs. The HBN readiness report still requires all other deployment prerequisites; successful network probes do not mean DPF or HBN has been deployed.
+
 ## Check HBN-BGP fabric prerequisites {#hbn-bgp-preflight}
 
 Run this additional preflight for the independent HBN-BGP use case. Physical inventory and use-case readiness are separate results. See [HBN-BGP inputs](dpf-discovery.md#check-hbn-bgp-prerequisites) for the site fields and defaults.
@@ -415,7 +470,7 @@ Next: [Inputs prepared](#hbn-bgp-preflight-run).
 
 ### 2. CLI machine: run HBN-BGP discovery {#hbn-bgp-preflight-run}
 
-Run `l8k discover --target dpf --use-case hbn-bgp --user-config dpf-site.yaml --save-cluster-config dpf-discovered.yaml`. The CLI reads host/DPU identity and authorization, management observations when configured, and read-only switch facts. Host SSH checks selected PCI functions, drivers, IOMMU groups and management-path separation. DPU Redfish reads card-owned network-function MACs; unique switch LLDP MAC and p0/p1 claims corroborate uplink bindings. Management API reads check Kamaji default datastore validation, its linked etcd replicas and pods, bound claims and volumes, and the local-path provisioner. Missing, denied, stale or mismatched storage observations block readiness; these reads do not measure remaining disk capacity. NVUE reads applied and operational configuration and FRR supplies current BGP state. Only protected LLDP/FRR reads use configured sudo. No switch configuration is changed.
+Run `l8k discover --target dpf --use-case hbn-bgp --user-config dpf-site.yaml --save-cluster-config dpf-discovered.yaml`. The CLI reads host/DPU identity and authorization, management observations when configured, and read-only switch facts. Host SSH checks selected PCI functions, drivers, IOMMU groups and management-path separation. DPU Redfish reads card-owned network-function MACs; unique switch LLDP MAC and p0/p1 claims corroborate uplink bindings. Management API reads check Kamaji default datastore validation, its linked etcd replicas and pods, bound claims and volumes, and the local-path provisioner. Missing, denied, stale or mismatched storage observations block readiness; these reads do not measure remaining disk capacity. NVUE reads applied and operational configuration and FRR supplies current BGP state. Only protected LLDP/FRR reads use configured sudo. No switch configuration is changed. Set `discovery.probes.mode: management` to add the [management-network workflow](#management-network), including selected-interface and tenant-VIP route checks. This mode creates temporary Pods and a request ConfigMap; inventory mode does not.
 
 Next: [Collection and report finished](#hbn-bgp-preflight-review); [Access, input or collection failure](#hbn-bgp-preflight-correct).
 

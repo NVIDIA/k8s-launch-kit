@@ -68,7 +68,7 @@ var _ = Describe("published image runtime", func() {
 		port := listener.Addr().(*net.TCPAddr).Port
 		endpoint := fmt.Sprintf("https://host.docker.internal:%d", port)
 		ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
-		req := Request{Version: ProtocolVersion, RunID: "local-image-check", Deadline: time.Now().Add(2 * time.Minute), RequestTimeout: 3 * time.Second, Destinations: []Destination{}}
+		req := Request{TenantVIP: "192.0.2.20", Version: ProtocolVersion, RunID: "local-image-check", Deadline: time.Now().Add(2 * time.Minute), RequestTimeout: 3 * time.Second, Destinations: []Destination{}}
 		for _, p := range []string{"/ok", "/401", "/403", "/302", "/404", "/500", "/invalid", "/large", "/multi", "/scalar-object"} {
 			req.Destinations = append(req.Destinations, Destination{ID: p, Endpoint: endpoint, Path: p, ServerName: "example.com", CA: ca})
 		}
@@ -91,6 +91,7 @@ var _ = Describe("published image runtime", func() {
 			var result Response
 			Expect(json.Unmarshal(output, &result)).To(Succeed())
 			Expect(ValidateResponse(result, req, "node-local", "pod-local", mode)).To(Succeed())
+			Expect(ValidateNetworkResponse(result, req, mode)).To(Succeed())
 			expected := []string{"observed", "authentication-required", "authentication-required", "redirect-refused", "resource-unavailable", "application-error", "invalid-response", "invalid-response", "invalid-response", "invalid-response"}
 			for i, state := range expected {
 				Expect(result.Results[i].Addresses).NotTo(BeEmpty())
@@ -119,9 +120,12 @@ var _ = Describe("published image runtime", func() {
 			if mode == "node-network" {
 				Expect(result.Interfaces).NotTo(BeEmpty())
 				Expect(result.Routes).NotTo(BeEmpty())
+				Expect(result.TenantVIPRoute).NotTo(BeNil())
+				Expect(result.TenantVIPRoute.Destination).To(Equal(req.TenantVIP))
 			} else {
 				Expect(result.Interfaces).To(BeEmpty())
 				Expect(result.Routes).To(BeEmpty())
+				Expect(result.TenantVIPRoute).To(BeNil())
 			}
 		}
 	})

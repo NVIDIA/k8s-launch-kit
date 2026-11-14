@@ -351,6 +351,10 @@ func cloneInterfaces(in []Interface) []Interface {
 	out := slices.Clone(in)
 	for i := range out {
 		out[i].Addresses = slices.Clone(out[i].Addresses)
+		if out[i].AdminUp != nil {
+			up := *out[i].AdminUp
+			out[i].AdminUp = &up
+		}
 	}
 	return out
 }

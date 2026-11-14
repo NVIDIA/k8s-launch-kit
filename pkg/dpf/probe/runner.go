@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"io"
 	"net/netip"
 	"net/url"
@@ -16,9 +15,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -71,22 +72,42 @@ type Runner struct {
 
 func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.ManagementClient, inv *inventory.Inventory) (rows []inventory.ProbeResult, cleanup inventory.Cleanup, err error) {
 	cleanup = inventory.Cleanup{State: "complete", Leftovers: []string{}}
+	if ctx == nil || inv == nil || inv.Management == nil {
+		return nil, cleanup, fmt.Errorf("probe requires a context and management inventory")
+	}
+	if mg.Client == nil || mg.REST == nil || mg.Namespace == "" {
+		return nil, cleanup, fmt.Errorf("probe requires a management client, REST configuration, and namespace")
+	}
+	if r.Timeout < time.Second {
+		return nil, cleanup, fmt.Errorf("probe timeout must be at least one second")
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
+	defer cancel()
 	if err := runner.Assets.Validate(); err != nil {
 		return nil, cleanup, err
 	}
 	if runner.Journal == nil {
 		return nil, cleanup, fmt.Errorf("probe resource journal required")
 	}
+	if err := validateManagementNodes(inv.Management.Nodes, runner.Assets.PlatformDigests); err != nil {
+		return nil, cleanup, err
+	}
+	api, err := url.Parse(mg.REST.Host)
+	if err != nil || api.Scheme != "https" || api.Hostname() == "" || api.User != nil || api.RawQuery != "" || api.Fragment != "" {
+		return nil, cleanup, fmt.Errorf("probe requires a valid HTTPS management API endpoint")
+	}
 	ns, err := mg.Client.CoreV1().Namespaces().Get(ctx, mg.Namespace, metav1.GetOptions{})
-	if err != nil || ns.DeletionTimestamp != nil {
+	if err != nil || ns == nil || ns.DeletionTimestamp != nil {
 		return nil, cleanup, fmt.Errorf("probe namespace unavailable")
 	}
 	request := Request{RequestTimeout: r.RequestTimeout, Version: ProtocolVersion, RunID: inv.Collection.RunID, Deadline: time.Now().Add(r.Timeout), Destinations: []Destination{}}
-	api, _ := url.Parse(mg.REST.Host)
+	if r.UseCase == "hbn-bgp" && r.Input.Site.Provisioning != nil && r.Input.Site.Provisioning.Bootstrap != nil && r.Input.Site.Provisioning.Bootstrap.Tenant.VIP != nil {
+		request.TenantVIP = *r.Input.Site.Provisioning.Bootstrap.Tenant.VIP
+	}
 	request.Destinations = append(request.Destinations, Destination{ID: "management-api", Endpoint: api.Scheme + "://" + api.Host, Path: path.Join("/", api.Path, "version"), ServerName: mg.REST.ServerName, CA: mg.REST.CAData})
 	for _, t := range r.Targets {
 		if t.Role == "dpus" {
-			request.Destinations = append(request.Destinations, Destination{ID: inventory.Digest("probe-destination-v1", t.Endpoint), Endpoint: t.Endpoint, Path: "/redfish/v1/", CA: t.Access.PublicCA()})
+			request.Destinations = append(request.Destinations, Destination{ID: inventory.Digest("probe-destination-v1", t.Endpoint), Endpoint: t.Endpoint, Path: "/redfish/v1/", CA: t.Access.PublicCA(), InsecureSkipVerify: t.Access.InsecureSkipVerify()})
 		}
 	}
 	if deadline, ok := ctx.Deadline(); ok {
@@ -224,11 +245,15 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 	if err = runner.Journal(receipts); err != nil {
 		return nil, cleanup, err
 	}
+	if inv.Evidence == nil {
+		inv.Evidence = make(map[string]inventory.Evidence)
+	}
+	pathFailures := false
 	for _, node := range inv.Management.Nodes {
-		if !node.Ready || node.Unschedulable || node.OS != "linux" || runner.Assets.PlatformDigests[node.Architecture] == "" {
-			return rows, cleanup, fmt.Errorf("management node cannot run the qualified probe")
-		}
 		for _, mode := range []string{"pod-network", "node-network"} {
+			output := ui.FromContext(ctx)
+			output.Info("[RUNNING] Management node %s: %s probe", node.Name, mode)
+			modePathFailed := false
 			podName := name + "-" + strings.TrimPrefix(inventory.Digest("node", node.UID+mode), "sha256:")[:12]
 			image := runner.Assets.Repository
 			if r.ImageRepository != "" {
@@ -295,7 +320,7 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 				return rows, cleanup, fmt.Errorf("probe result too large")
 			}
 			var result Response
-			if json.Unmarshal(body, &result) != nil || ValidateResponse(result, request, node.UID, string(live.UID), mode) != nil {
+			if json.Unmarshal(body, &result) != nil || ValidateResponse(result, request, node.UID, string(live.UID), mode) != nil || ValidateNetworkResponse(result, request, mode) != nil {
 				return rows, cleanup, fmt.Errorf("probe result binding/coverage invalid")
 			}
 			frozenMap, mapErr := mg.Client.CoreV1().ConfigMaps(mg.Namespace).Get(ctx, name, metav1.GetOptions{})
@@ -307,6 +332,7 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 					if inv.Management.Nodes[i].UID == node.UID {
 						inv.Management.Nodes[i].Interfaces = result.Interfaces
 						inv.Management.Nodes[i].Routes = result.Routes
+						inv.Management.Nodes[i].TenantVIPRoute = result.TenantVIPRoute
 					}
 				}
 			}
@@ -316,17 +342,50 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 				inv.Evidence[id] = inventory.Evidence{Kind: "connectivity-probe", ObservedAt: result.FinishedAt, Vantage: node.UID + "/" + mode, ResourceURI: "pods/" + string(live.UID), Namespace: mg.Namespace, PodUID: string(live.UID), NodeUID: node.UID, ImageDigest: runner.Assets.PlatformDigests[node.Architecture], DNSPolicy: string(live.Spec.DNSPolicy), DestinationEndpoint: destinationEndpoint(request, row.Destination)}
 				rows = append(rows, row)
 				if row.DNS == "unavailable" || len(row.Addresses) == 0 {
-					return rows, cleanup, fmt.Errorf("required probe DNS coverage unavailable")
+					pathFailures = true
+					modePathFailed = true
+					continue
+				}
+				expectedTLS := "verified"
+				if destinationAllowsUnverified(request, row.Destination) {
+					expectedTLS = "unverified"
 				}
 				for _, a := range row.Addresses {
-					if a.TCP != "reachable" || a.TLS != "verified" {
-						return rows, cleanup, fmt.Errorf("required probe TCP/TLS path failed")
+					if a.TCP != "reachable" || a.TLS != expectedTLS {
+						pathFailures = true
+						modePathFailed = true
+						break
 					}
 				}
 			}
+			if modePathFailed {
+				output.Info("[BLOCKED] Management node %s: %s probe has a failed required path", node.Name, mode)
+			} else {
+				output.Info("[PASS] Management node %s: %s probe paths passed", node.Name, mode)
+			}
 		}
 	}
+	if pathFailures {
+		return rows, cleanup, fmt.Errorf("one or more required probe paths failed; see per-destination checks")
+	}
 	return rows, cleanup, nil
+}
+
+func validateManagementNodes(nodes []inventory.Node, platformDigests map[string]string) error {
+	if len(nodes) == 0 {
+		return fmt.Errorf("probe requires a non-empty management node scope")
+	}
+	names, uids := map[string]bool{}, map[string]bool{}
+	for _, node := range nodes {
+		if node.Name == "" || node.UID == "" || names[node.Name] || uids[node.UID] {
+			return fmt.Errorf("management probe node scope has a missing or duplicate name/UID")
+		}
+		names[node.Name], uids[node.UID] = true, true
+		if !node.Ready || node.Unschedulable || node.OS != "linux" || platformDigests[node.Architecture] == "" {
+			return fmt.Errorf("management node cannot run the qualified probe")
+		}
+	}
+	return nil
 }
 func ptr[T any](value T) *T { return &value }
 func Pod(name, namespace string, labels map[string]string, node inventory.Node, mode, image, configMap string, secrets []string, seconds int64) *corev1.Pod {
@@ -427,16 +486,22 @@ func ValidateResponse(out Response, req Request, node, pod, mode string) error {
 	if out.StartedAt.IsZero() || out.FinishedAt.Before(out.StartedAt) || out.FinishedAt.After(req.Deadline.Add(time.Minute)) {
 		return fmt.Errorf("invalid probe time bounds")
 	}
-	expected := map[string]bool{}
+	expected := map[string]Destination{}
 	for _, d := range req.Destinations {
-		expected[d.ID] = true
+		expected[d.ID] = d
 	}
 	for _, r := range out.Results {
-		if !expected[r.Destination] || r.NodeUID != node || r.NetworkMode != mode {
+		destination, present := expected[r.Destination]
+		if !present || r.NodeUID != node || r.NetworkMode != mode {
 			return fmt.Errorf("unexpected or duplicate row")
 		}
 		if err := validateRow(r); err != nil {
 			return err
+		}
+		for _, address := range r.Addresses {
+			if address.TLS == "unverified" && (!destination.InsecureSkipVerify || destination.ID == "management-api") || address.TLS == "verified" && destination.InsecureSkipVerify {
+				return fmt.Errorf("probe TLS result contradicts requested verification policy")
+			}
 		}
 		delete(expected, r.Destination)
 	}
@@ -465,6 +530,14 @@ func destinationEndpoint(request Request, id string) string {
 	}
 	return ""
 }
+func destinationAllowsUnverified(request Request, id string) bool {
+	for _, destination := range request.Destinations {
+		if destination.ID == id {
+			return id != "management-api" && destination.InsecureSkipVerify
+		}
+	}
+	return false
+}
 func validateRow(r inventory.ProbeResult) error {
 	if r.DNS != "resolved" && r.DNS != "not-applicable" && r.DNS != "unavailable" {
 		return fmt.Errorf("invalid DNS state")
@@ -478,7 +551,7 @@ func validateRow(r inventory.ProbeResult) error {
 			return fmt.Errorf("invalid/duplicate IP address")
 		}
 		seen[a.Address] = true
-		if a.TCP != "reachable" && a.TCP != "unavailable" || a.TLS != "verified" && a.TLS != "unavailable" || a.TLS == "verified" && a.TCP != "reachable" {
+		if a.TCP != "reachable" && a.TCP != "unavailable" || a.TLS != "verified" && a.TLS != "unverified" && a.TLS != "unavailable" || (a.TLS == "verified" || a.TLS == "unverified") && a.TCP != "reachable" {
 			return fmt.Errorf("invalid TCP/TLS state")
 		}
 		switch a.HTTP {

@@ -145,16 +145,18 @@ type Device struct {
 	EvidenceRefs              []string               `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Node struct {
-	Interfaces    []Interface `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
-	Routes        []Route     `json:"routes,omitempty" yaml:"routes,omitempty"`
-	Name          string      `json:"name" yaml:"name"`
-	UID           string      `json:"uid" yaml:"uid"`
-	ControlPlane  bool        `json:"controlPlane" yaml:"controlPlane"`
-	Ready         bool        `json:"ready" yaml:"ready"`
-	Unschedulable bool        `json:"unschedulable" yaml:"unschedulable"`
-	Architecture  string      `json:"architecture" yaml:"architecture"`
-	OS            string      `json:"os" yaml:"os"`
-	Addresses     []string    `json:"addresses" yaml:"addresses"`
+	TenantVIPRoute *RouteLookup      `json:"tenantVIPRoute,omitempty" yaml:"tenantVIPRoute,omitempty"`
+	Interfaces     []Interface       `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
+	Routes         []Route           `json:"routes,omitempty" yaml:"routes,omitempty"`
+	Labels         map[string]string `json:"-" yaml:"-"` // Transient labels for current API selector evaluation; never persisted.
+	Name           string            `json:"name" yaml:"name"`
+	UID            string            `json:"uid" yaml:"uid"`
+	ControlPlane   bool              `json:"controlPlane" yaml:"controlPlane"`
+	Ready          bool              `json:"ready" yaml:"ready"`
+	Unschedulable  bool              `json:"unschedulable" yaml:"unschedulable"`
+	Architecture   string            `json:"architecture" yaml:"architecture"`
+	OS             string            `json:"os" yaml:"os"`
+	Addresses      []string          `json:"addresses" yaml:"addresses"`
 }
 type Observation struct {
 	Message    string   `json:"message,omitempty" yaml:"message,omitempty"`

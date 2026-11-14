@@ -393,8 +393,8 @@ func Resolve(in Input) (Request, error) {
 				name = *e.Name
 			}
 			if e.SSH != nil {
-				if r.Mode != "inventory" {
-					return r, fmt.Errorf("%s/ssh requires inventory mode; management probes require BMC targets", ptr)
+				if r.Mode == "management" && group.role == "dpus" {
+					return r, fmt.Errorf("%s/ssh requires inventory mode; management probes require explicit DPU BMC targets", ptr)
 				}
 				if e.BMCEndpoint != "" || e.SystemURI != nil || e.TLS != nil {
 					return r, fmt.Errorf("%s must select exactly one SSH or Redfish source", ptr)

@@ -27,6 +27,36 @@ func TestProbe(t *testing.T) {
 	RunSpecs(t, "DPF probe ownership and protocol")
 }
 
+var _ = Describe("probe TLS policy binding", func() {
+	It("rejects unrequested bypass and false verification claims", func() {
+		for _, scenario := range []struct {
+			id     string
+			bypass bool
+			tls    string
+			valid  bool
+		}{
+			{"management-api", false, "verified", true},
+			{"management-api", false, "unverified", false},
+			{"management-api", true, "unverified", false},
+			{"bmc", false, "verified", true},
+			{"bmc", false, "unverified", false},
+			{"bmc", true, "unverified", true},
+			{"bmc", true, "verified", false},
+			{"bmc", true, "unavailable", true},
+		} {
+			now := time.Now()
+			req := Request{Version: ProtocolVersion, RunID: "run", Deadline: now.Add(time.Minute), Destinations: []Destination{{ID: scenario.id, InsecureSkipVerify: scenario.bypass}}}
+			out := Response{Version: ProtocolVersion, RunID: "run", NodeUID: "node", PodUID: "pod", NetworkMode: "pod-network", StartedAt: now, FinishedAt: now, Results: []inventory.ProbeResult{{NodeUID: "node", NetworkMode: "pod-network", Destination: scenario.id, DNS: "resolved", Addresses: []inventory.ProbeAddress{{Address: "192.0.2.10", TCP: "reachable", TLS: scenario.tls, HTTP: "http-unavailable"}}}}}
+			err := ValidateResponse(out, req, "node", "pod", "pod-network")
+			if scenario.valid {
+				Expect(err).NotTo(HaveOccurred())
+			} else {
+				Expect(err).To(HaveOccurred())
+			}
+		}
+	})
+})
+
 var _ = Describe("probe integrity", func() {
 	It("declares two network vantages without credentials or privileged mounts", func() {
 		node := inventory.Node{Name: "cp", UID: "node-uid"}
@@ -160,7 +190,7 @@ var _ = Describe("probe integrity", func() {
 		})
 		assets := Assets{Qualified: true, Repository: "repo/probe", ManifestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PlatformDigests: map[string]string{"amd64": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
 		runner := Runner{Assets: assets, Journal: func([]Receipt) error { return nil }}
-		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "run"}, Management: &inventory.Management{Nodes: []inventory.Node{}}, Evidence: map[string]inventory.Evidence{}}
+		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "run"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "cp", UID: "node", Ready: true, OS: "linux", Architecture: "amd64"}}}, Evidence: map[string]inventory.Evidence{}}
 		_, _, e := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 		Expect(e).To(MatchError(ContainSubstring("admission changed")))
 		for _, a := range client.Actions() {
@@ -184,8 +214,11 @@ var _ = Describe("probe failure regressions", func() {
 			Expect(client.Tracker().Delete(corev1.SchemeGroupVersion.WithResource("configmaps"), "default", name)).To(Succeed())
 			return true, nil, apierrors.NewConflict(corev1.Resource("configmaps"), name, fmt.Errorf("changed then removed"))
 		})
+		client.PrependReactor("create", "pods", func(k8stest.Action) (bool, runtime.Object, error) {
+			return true, nil, apierrors.NewForbidden(corev1.Resource("pods"), "probe", fmt.Errorf("denied"))
+		})
 		runner := Runner{Assets: Assets{Qualified: true, Repository: "repo/probe", ManifestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PlatformDigests: map[string]string{"amd64": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}, Journal: func([]Receipt) error { return nil }}
-		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "conflict"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "not-ready", UID: "node", Ready: false}}}}
+		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "conflict"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "ready", UID: "node", Ready: true, OS: "linux", Architecture: "amd64"}}}}
 		_, cleanup, err := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 		Expect(err).To(HaveOccurred())
 		Expect(cleanup.State).To(Equal("complete"))

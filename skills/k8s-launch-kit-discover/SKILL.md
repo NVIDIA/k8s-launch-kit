@@ -16,6 +16,16 @@ For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-
 `--use-case hbn-bgp` adds read-only Cumulus NVUE/LLDP/FRR switch inspection and
 defaults to inventory mode. Supply explicit switch credentials, pinned SSH
 known-hosts trust and intended p0/p1 bindings under `discovery.switches`.
+Explicit `discovery.probes.mode: management` adds the existing two-vantage
+network probes on Linux/amd64 management nodes. It creates temporary non-root
+Pods and an immutable request ConfigMap in an existing namespace, checks API
+and DPU BMC DNS/TCP/TLS paths, collects node interfaces/routes and an
+HBN tenant VIP route lookup, then cleans up by UID. Failed paths remain blockers
+while independent paths continue; structural/identity errors stop execution.
+BMC probes reuse explicit endpoint TLS policy and report bypassed handshakes as
+`unverified`; management API TLS remains strict. Host SSH sources can accompany
+these probes; explicit DPU BMC endpoints are required. Interface/route
+success does not prove VIP reservation or VRID uniqueness.
 The explicit flag overrides and persists `dpf.useCase`; `dpf.hbn` overrides
 desired profile defaults. Read `readiness.state` separately from physical
 `discovery.outcome`: required unknown or mismatched prerequisites return nonzero
@@ -103,7 +113,8 @@ bypass, set the endpoint's `tls.insecureSkipVerify: true`; the shared
 policy, including an explicit `false`. Do not combine `caFile` with `true`.
 Retain stderr warnings and the configured `discovery` TLS policy; the saved
 `inventory.scopeDigest` guards that policy during refresh. A policy change requires a fresh seed/output; it does not weaken
-management kubeconfig or network-probe TLS verification.
+management kubeconfig TLS verification. BMC network probes honor the explicit
+BMC policy and never describe a bypassed certificate as verified.
 Redfish login prefers the public root's `Links.Sessions`, including standard
 HPE trailing-slash links. A protected `SessionService` GET is not required when
 that login link is present; credentials are sent only to the same-origin standard

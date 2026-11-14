@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -180,7 +181,7 @@ func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, e
 			return nil, fmt.Errorf("management node inspection failed")
 		}
 		for _, n := range nodes.Items {
-			node := inventory.Node{Name: n.Name, UID: string(n.UID), Architecture: n.Status.NodeInfo.Architecture, OS: n.Status.NodeInfo.OperatingSystem, Unschedulable: n.Spec.Unschedulable, Addresses: []string{}}
+			node := inventory.Node{Labels: maps.Clone(n.Labels), Name: n.Name, UID: string(n.UID), Architecture: n.Status.NodeInfo.Architecture, OS: n.Status.NodeInfo.OperatingSystem, Unschedulable: n.Spec.Unschedulable, Addresses: []string{}}
 			_, cp := n.Labels["node-role.kubernetes.io/control-plane"]
 			_, master := n.Labels["node-role.kubernetes.io/master"]
 			node.ControlPlane = cp || master
