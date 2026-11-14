@@ -455,7 +455,7 @@ func material(inv *inventory.Inventory) map[string]any {
 			fields[key+".firmwareInventoryComplete"] = w.FirmwareInventoryComplete
 			fields[key+".firmware"] = w.Firmware
 			fields[key+".runtime"] = w.Runtime
-			fields[key+".advertisedResetTypes"] = w.AdvertisedResetTypes
+			fields[key+".advertisedResetTypes"] = canonicalEmptySlice(w.AdvertisedResetTypes)
 			for _, a := range w.Adapters {
 				a.PCIFunctions = canonicalFunctions(a.PCIFunctions)
 				fields[key+".adapter."+a.Key] = a
