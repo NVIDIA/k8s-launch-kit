@@ -414,11 +414,12 @@ The detailed YAML/JSON retains identifiers for automation and traceability:
 These `sha256:` values are internal identifiers/comparison digests, not secrets,
 signatures or independent proof that hardware is correct.
 
-Host and DPU records omit evidence maps, reference lists and raw vendor resource
-metadata. Named facts and field-specific issues remain available for review.
-Management observations and connectivity probes retain their own source metadata.
-A refresh preserves source backups; removing old device metadata alone does not
-report a physical change.
+The discovered YAML omits all `evidence`, `evidenceRef` and `evidenceRefs`
+bookkeeping, including management, SSH, address-lookup and connectivity-probe
+records. Named facts, measurements and field-specific issues remain available.
+The separate JSON diagnostic report retains source details where applicable.
+A refresh preserves source backups; removing bookkeeping alone does not report
+a physical change.
 
 ### Review and refresh the handoff
 

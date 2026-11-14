@@ -91,9 +91,9 @@ var _ = Describe("safe publication", func() {
 		}
 	})
 	It("refreshes legacy BMC evidence without carrying it forward or changing the backup", func() {
-		legacy := &inventory.Inventory{FormatVersion: "v1alpha1", Evidence: map[string]inventory.Evidence{"legacy-ref": {Kind: "redfish", Authenticated: true}}, Hosts: []inventory.Device{{EvidenceRefs: []string{"legacy-ref"}}}}
-		data, err := config.Saved(input, legacy, input.Path)
-		Expect(err).NotTo(HaveOccurred())
+		// Construct the historical wire bytes directly: the current writer must
+		// not emit the obsolete bookkeeping even for a legacy-format object.
+		data := append(append([]byte(nil), input.Source...), []byte("\ninventory:\n  formatVersion: v1alpha1\n  evidence:\n    legacy-ref: {kind: redfish, authenticated: true}\n  hosts:\n    - evidenceRefs: [legacy-ref]\n")...)
 		Expect(os.WriteFile(input.Path, data, 0600)).To(Succeed())
 		previous, err := config.Load(input.Path)
 		Expect(err).NotTo(HaveOccurred())
@@ -108,11 +108,14 @@ var _ = Describe("safe publication", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(backup).To(Equal(data))
 	})
-	It("retains nonempty evidence from other discovery sources", func() {
+	It("omits SSH evidence from config while preserving the diagnostic report", func() {
 		inv := &inventory.Inventory{Evidence: map[string]inventory.Evidence{"ssh-ref": {Kind: "ssh", Authenticated: true}}, Hosts: []inventory.Device{{SSHEndpoint: "ssh://192.0.2.10:22", EvidenceRefs: []string{"ssh-ref"}}}}
 		data, err := config.Saved(input, inv, filepath.Join(dir, "mixed.yaml"))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(data)).To(ContainSubstring("ssh-ref"))
+		var saved map[string]any
+		Expect(yaml.Unmarshal(data, &saved)).To(Succeed())
+		Expect(hasEvidenceKey(saved)).To(BeFalse())
+		Expect(string(data)).To(ContainSubstring("ssh://192.0.2.10:22"))
 		encoded, err := json.Marshal(inv)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(encoded)).To(ContainSubstring(`"evidenceRefs":["ssh-ref"]`))

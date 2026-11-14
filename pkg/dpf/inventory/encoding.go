@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
+	"strings"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -33,10 +35,113 @@ func (i Inventory) MarshalJSON() ([]byte, error) {
 }
 
 func (i Inventory) MarshalYAML() (any, error) {
+	var wire any
+	var err error
 	if i.FormatVersion == FormatVersion {
-		return i.output()
+		wire, err = i.output()
+	} else {
+		wire, err = i.compact()
 	}
-	return i.compact()
+	if err != nil {
+		return nil, err
+	}
+	var node yaml.Node
+	if err := node.Encode(wire); err != nil {
+		return nil, err
+	}
+	// Evidence is internal diagnostic bookkeeping, not a deployment input.
+	// Strip it at the config boundary, including nested management, SSH,
+	// address-lookup and probe records. The source model and JSON diagnostic
+	// report remain untouched; legacy configs can still be read.
+	removeConfigEvidence(&node, reflect.TypeOf(wire))
+	return &node, nil
+}
+
+// removeConfigEvidence drops only typed provenance fields. Mapping keys in
+// user data maps are always retained, even when they happen to be named
+// evidence/evidenceRef/evidenceRefs.
+func removeConfigEvidence(node *yaml.Node, typ reflect.Type) {
+	if node == nil || typ == nil {
+		return
+	}
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	switch node.Kind {
+	case yaml.MappingNode:
+		switch typ.Kind() {
+		case reflect.Map:
+			for index := 1; index < len(node.Content); index += 2 {
+				removeConfigEvidence(node.Content[index], typ.Elem())
+			}
+		case reflect.Struct:
+			fields := configYAMLFields(typ)
+			kept := node.Content[:0]
+			for index := 0; index < len(node.Content); index += 2 {
+				key, value := node.Content[index], node.Content[index+1]
+				field, exists := fields[key.Value]
+				if exists && isConfigEvidenceField(field.name) {
+					continue
+				}
+				if exists {
+					removeConfigEvidence(value, field.typ)
+				}
+				kept = append(kept, key, value)
+			}
+			node.Content = kept
+		}
+	case yaml.SequenceNode:
+		if typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
+			for _, child := range node.Content {
+				removeConfigEvidence(child, typ.Elem())
+			}
+		}
+	}
+}
+
+type configYAMLField struct {
+	name string
+	typ  reflect.Type
+}
+
+func configYAMLFields(typ reflect.Type) map[string]configYAMLField {
+	fields := make(map[string]configYAMLField, typ.NumField())
+	for index := 0; index < typ.NumField(); index++ {
+		field := typ.Field(index)
+		tag := field.Tag.Get("yaml")
+		parts := strings.Split(tag, ",")
+		name := parts[0]
+		if name == "-" {
+			continue
+		}
+		inline := slices.Contains(parts[1:], "inline")
+		if inline {
+			inlineType := field.Type
+			for inlineType.Kind() == reflect.Pointer {
+				inlineType = inlineType.Elem()
+			}
+			if inlineType.Kind() == reflect.Struct {
+				for key, value := range configYAMLFields(inlineType) {
+					fields[key] = value
+				}
+			}
+			continue
+		}
+		if name == "" {
+			name = strings.ToLower(field.Name)
+		}
+		fields[name] = configYAMLField{name: name, typ: field.Type}
+	}
+	return fields
+}
+
+func isConfigEvidenceField(name string) bool {
+	switch name {
+	case "evidence", "evidenceRef", "evidenceRefs":
+		return true
+	default:
+		return false
+	}
 }
 
 func (i *Inventory) UnmarshalJSON(data []byte) error {

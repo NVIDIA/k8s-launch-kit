@@ -196,7 +196,7 @@ Next: [Review saved results](#initial-inventory-inspect).
 
 ### 7. CLI machine: review inventory and reasons {#initial-inventory-inspect}
 
-The normal text summary shows the required-check result and named host/DPU mappings. It separates discovery blockers from later provisioning prerequisites and checks not requested. Repeated qualification/BOM gaps are grouped by affected sources; they do not mean a hardware failure was detected. Internal identity/comparison SHA identifiers remain in JSON/YAML, not as operator-facing device names. Both host and DPU results use named facts and field-specific issues; device evidence references, raw command strings and vendor firmware metadata are omitted. Management observations and connectivity probes retain their own source metadata.
+The normal text summary shows the required-check result and named host/DPU mappings. It separates discovery blockers from later provisioning prerequisites and checks not requested. Repeated qualification/BOM gaps are grouped by affected sources; they do not mean a hardware failure was detected. Internal identity/comparison SHA identifiers remain in JSON/YAML, not as operator-facing device names. Both host and DPU results use named facts and field-specific issues; device evidence references, raw command strings and vendor firmware metadata are omitted. Saved YAML omits evidence maps and references from every source, including management, SSH, address lookup and connectivity probes. Diagnostic JSON is separate and can retain internal bookkeeping.
 
 Inspect `discovery.outcome`, `discovery.checks`, `errors`, `artifacts` and `acceptance` in the JSON report. Review saved `inventory.hosts`, `inventory.dpus`, `inventory.associations` and field-specific issues before using the handoff. Complete discovery writes `dpf-discovered.yaml`; partial discovery preserves an existing handoff and writes `partial.yaml` and `report.json` under `dpf-discovered.discovery/<run-id>/`. Use the report's artifact paths instead of guessing the run ID.
 
@@ -301,7 +301,7 @@ Next: [Candidate report available](#address-candidates-review).
 
 ### 4. CLI operator: review candidate addresses {#address-candidates-review}
 
-Read `inventory.addressLookup.candidates` for the address, selected name/role/MAC, source and evidence reference. Read `inventory.addressLookup.observations` for each device and lease source. A single address is `ADDRESS_UNVERIFIED`; several addresses for a MAC remain ambiguous, and missing/expired/unreadable evidence keeps its reason. A candidate is not a host-to-DPU association and is never a readiness pass.
+Read `inventory.addressLookup.candidates` for the address, selected name/role/MAC and source. Read `inventory.addressLookup.observations` for each device and lease source. A single address is `ADDRESS_UNVERIFIED`; several addresses for a MAC remain ambiguous, and missing/expired/unreadable evidence keeps its reason. A candidate is not a host-to-DPU association and is never a readiness pass.
 
 Use your DHCP/network or asset owner to resolve multiple, missing or contradictory locators. Do not choose an address merely because it is the first result. Independent identity and endpoint trust are still required even for one candidate.
 

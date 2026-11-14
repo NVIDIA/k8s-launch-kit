@@ -227,7 +227,8 @@ Address lookup SHALL operate only on explicit MAC selectors and bounded declared
 - **THEN** published device records retain named facts and field-specific issues without device evidence records/references or raw vendor source metadata, including complete and partial artifacts.
 - **AND** removal of metadata does not remove any authentication, administrator, identity, association, firmware activation, PSID reread, cleanup or publication check. Report checks retain their result states and reasons.
 - **AND** legacy inventories containing device source metadata remain readable; refreshed facts replace that metadata without changing material fingerprints solely because the metadata is absent. Original source backups remain unchanged.
-- **AND** management, address-lookup and connectivity-probe source contracts remain independent.
+- **AND** the discovered YAML omits every evidence map and evidence reference, including nested management, SSH, address-lookup and probe records, while preserving typed facts, failures and legacy readability. The separate JSON diagnostic report and internal collectors retain their source contracts.
+- **AND** omission applies to typed diagnostic fields, not arbitrary data-map keys; interface names, DNS domains and user selectors named `evidence`, `evidenceRef` or `evidenceRefs` retain their values.
 
 ### Requirement: DPU BMC administrator evidence
 
