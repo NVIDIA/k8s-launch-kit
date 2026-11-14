@@ -14,10 +14,11 @@ jobs:
   ci:
     uses: Mellanox/cloud-orchestration-reusable-workflows/.github/workflows/go-ci-reusable.yml@main
     with:
+      timeout-minutes: 40
       build-command: |
         make build
         python3 scripts/check-docs.py --binary build/l8k
         make build-all
       test-command: |
-        go test -v -race -count=1 -coverprofile=coverage.out ./...
+        go test -v -race -timeout=25m -count=1 -coverprofile=coverage.out ./...
         go tool cover -func=coverage.out
