@@ -125,9 +125,22 @@ func ManagementAccess(r config.Request) (ManagementClient, error) {
 	}
 	return ManagementClient{Client: client, REST: rc, Namespace: ns}, nil
 }
-func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, error) {
+
+// ObserveIdentity reads only the authenticated cluster identity and API version.
+// Deploy callers use it to refresh the binding before effects without collecting
+// unrelated inventory or resolving credentials again.
+func (m ManagementClient) ObserveIdentity(ctx context.Context) (*inventory.Management, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if m.Client == nil || m.REST == nil {
+		return nil, fmt.Errorf("management client is unavailable")
+	}
 	ns, err := m.Client.CoreV1().Namespaces().Get(ctx, "kube-system", metav1.GetOptions{})
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("management cluster identity read failed")
 	}
 	if ns.UID == "" {
@@ -139,15 +152,27 @@ func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, e
 	}
 	data, err := m.Client.Discovery().RESTClient().Get().AbsPath("/version").Do(ctx).Raw()
 	if err != nil || json.Unmarshal(data, &version) != nil || version.GitVersion == "" {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("management version read failed")
 	}
-	result := &inventory.Management{APIEndpoint: m.REST.Host, SystemNamespaceUID: string(ns.UID), KubernetesVersion: version.GitVersion, Namespace: m.Namespace, TrustDigest: fmt.Sprintf("sha256:%x", sha256.Sum256(m.REST.CAData)), Nodes: []inventory.Node{}, EvidenceRefs: []string{"management-identity", "management-nodes"}}
+	result := &inventory.Management{APIEndpoint: m.REST.Host, SystemNamespaceUID: string(ns.UID), KubernetesVersion: version.GitVersion, Namespace: m.Namespace, TrustDigest: fmt.Sprintf("sha256:%x", sha256.Sum256(m.REST.CAData)), EvidenceRefs: []string{"management-identity"}}
 	if len(m.REST.CAData) == 0 {
 		result.TrustDigest = "system-roots"
 	}
 	if m.REST.ServerName != "" {
 		result.TrustDigest = inventory.Digest("management-trust-v1", []string{result.TrustDigest, m.REST.ServerName})
 	}
+	return result, nil
+}
+
+func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, error) {
+	result, err := m.ObserveIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result.Nodes = []inventory.Node{}
 	cursor := ""
 	for {
 		nodes, err := m.Client.CoreV1().Nodes().List(ctx, metav1.ListOptions{Limit: 64, Continue: cursor})
@@ -178,6 +203,7 @@ func (m ManagementClient) Observe(ctx context.Context) (*inventory.Management, e
 			break
 		}
 	}
+	result.EvidenceRefs = append(result.EvidenceRefs, "management-nodes")
 	result.Observations = map[string]inventory.Observation{}
 	storage, storageErr := m.Client.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{Limit: 256})
 	storageFact := apiObservationFailure(storageErr)

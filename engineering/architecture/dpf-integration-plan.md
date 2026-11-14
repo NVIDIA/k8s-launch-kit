@@ -558,3 +558,22 @@ source API has no digest field; retaining a desired digest is not verification
 of bytes fetched by DPF. Artifact consumption verification remains an explicit
 deployment gate. Discovery checks workload and loopback pool overlap against
 observed switch prefixes; cluster/site IPAM coverage remains a separate gate.
+
+Native execution helpers now provide explicit management access, identity checks
+around API operations, retained-chart Helm install or exact release verification,
+and resource-specific reported readiness. They do not yet enable the DPF deploy
+CLI. The remaining runner must enforce the fixed stage dependencies, ownership,
+RBAC, tenant convergence, enrollment identity, consumed artifact checks and
+physical-effect boundaries before it can report a deployment result.
+
+Bootstrap ordering follows resource ownership: external prerequisites precede
+the operator chart; the chart's manager and CRDs precede DPFOperatorConfig;
+that configuration creates DPF's system components. Waiting for those components
+before creating the configuration would prevent a clean install. DPUCluster
+does not publish generation freshness in the selected API, so its reported Ready
+state requires companion Kamaji desired/status and tenant API verification.
+
+Cancellation preserves partial effects for explicit recovery. The Helm transport
+keeps request cancellation active through response-body consumption. A failed
+identity check after Create can mean the write committed; the runner must retain
+that uncertain outcome and must not retry it against another cluster identity.
