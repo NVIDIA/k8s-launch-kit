@@ -22,9 +22,6 @@ repo_url: https://github.com/NVIDIA/k8s-launch-kit
 edit_uri: edit/main/docs/
 exclude_docs: |
   *.rst
-not_in_nav: |
-  /architecture/dpf-integration-plan.md
-  /architecture/host-target-migration-plan.md
 
 theme:
   name: material
@@ -90,6 +87,8 @@ nav:
       - Networking concepts: advanced/concepts.md
   - Deploy:
       - Discover cluster hardware: user/discovery.md
+      - DPF discovery workflows: user/dpf-workflows.md
+      - DPF discovery preview: user/dpf-discovery.md
       - Generate and review manifests: advanced/generation.md
       - Deploy manifests: advanced/deployment.md
       - Deploy on OpenShift: user/openshift.md
@@ -108,11 +107,6 @@ nav:
   - Reference:
       - CLI reference: reference/cli.md
       - Configuration reference: reference/configuration.md
-  - Contribute:
-      - Architecture: architecture/overview.md
-      - Artifact bundle internals: architecture/artifact-bundle.md
-      - Extend deployment targets: advanced/targets.md
-      - Maintain and publish documentation: reference/docs-publishing.md
 
 validation:
   omitted_files: warn

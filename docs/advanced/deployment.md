@@ -39,8 +39,7 @@ Launch Kit loads and checks the complete flat artifact directory before Helm
 installation, preflight remediation, or resource apply. Invalid YAML, missing
 resource identity fields, and duplicate declared resources stop deployment
 with the file and document number in the error. Only `values.yaml` is treated
-as Helm values; rename `values.yml` or case variants to `values.yaml`. The
-expected preflight inventory and applied objects come from that same snapshot.
+as Helm values; rename `values.yml` or case variants to `values.yaml`. Keep the bundle unchanged while deployment runs.
 
 ## IPPool address collision guard
 
@@ -98,7 +97,7 @@ authorizing overwrite.
 
 ## Helm Install Or Upgrade
 
-When the bundle contains `values.yaml` and the selected release supplies a Helm repository URL, Launch Kit uses the Helm Go SDK to manage the `network-operator` release:
+When the bundle contains `values.yaml` and the selected release supplies a Helm repository URL, Launch Kit manages the `network-operator` Helm release:
 
 - No release: install the selected chart in `networkOperator.namespace`.
 - Matching chart and values: no-op.
@@ -229,7 +228,7 @@ resource with missing configuration fails rather than falling back to this mode.
 
 ## Terminal State
 
-The shared resource-state registry classifies generated objects as:
+Deployment reports each generated resource in one of these states:
 
 | State | Meaning |
 | --- | --- |
@@ -245,9 +244,9 @@ CNI applied states when both desired and live specs leave those components
 external. It still requires ready status for every configured component in
 either spec and retains other component failures. Missing coverage waits;
 unrecognized or malformed evidence and policy-level reasons retain the original
-aggregate verdict. This is the same classifier used by
-[validation](../user/validation.md#external-networking-prerequisites); it does
-not change deployment's ownership guards or controller-observation gate.
+readiness result. [Validation](../user/validation.md#external-networking-prerequisites)
+also checks external networking prerequisites. Deployment still checks resource
+ownership and waits for controllers to observe the requested configuration.
 
 For `NicConfigurationTemplate` and `NicFirmwareTemplate`, Launch Kit first waits for the operator to publish matched device names in `status.nicDevices` and for that name set to reflect the current `nodeSelector`, NIC type, PCI-address, serial-number, and part-number selectors. It then evaluates only those `NicDevice` objects and waits for the corresponding `spec.configuration` or `spec.firmware` field to reflect the current template payload. A successful device condition is accepted only after its `observedGeneration` catches up with the `NicDevice` generation. A configuration template checks `FirmwareUpdateInProgress` only when the matched device carries `spec.firmware`; without a deployed firmware template, a stale firmware condition from an older device generation does not block configuration reconciliation. Other discovered NICs do not block on configuration or firmware state. Changed templates are also observation-gated before this status is accepted, so status left by an earlier generation cannot produce a false success.
 

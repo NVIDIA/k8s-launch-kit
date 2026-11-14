@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # CLI Reference
 
 Run `l8k <command> --help` for the authoritative flag list. Run `l8k schema` for machine-readable capabilities.
-Config-backed flags include a `configPaths` list in schema output, derived
-from the same field tags that register the flags and apply explicit values.
+Config-backed flags include a `configPaths` list in schema output showing the
+configuration fields they set.
 
 ## Commands
 
@@ -32,10 +32,9 @@ with a source filename and document number where applicable.
 
 ## Target selection and flag ownership
 
-Omitting `--target` selects `host`; adding `--target host` follows the same
-code path. `dpf` is a recognized target name whose phases are unavailable in
-this build. Selecting it returns validation exit code `2`. This explicit
-capability error prevents DPF invocations from falling through to host logic.
+Omitting `--target` selects `host`. `dpf` provides an
+[experimental discovery preview](../user/dpf-discovery.md). Its other phases
+are unavailable and return exit `2`; they do not run against the host cluster.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags
@@ -54,7 +53,7 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | `--flavor` | root, discover, generate, deploy, validate, clean | host | `k8s` or `ocp`, overriding config. Clean accepts the flag to reject OpenShift cleanup explicitly. |
 | `--output json` | all (inherited) | target-agnostic | Command-specific output; validation emits a stream, preset/sosreport success remains text, and standalone deploy has no success envelope. See [Automation](../integrator/automation.md#json-mode). |
 | `--yes`, `-y` | root pipeline only | target-agnostic | Auto-confirm root prompts. Subcommands reject this flag; lifecycle JSON mode auto-confirms. |
-| `--quiet` | root pipeline | target-agnostic | Suppress informational output. |
+| `--quiet` | root pipeline, discover | target-agnostic | Suppress informational output; discovery keeps the final result and errors. |
 | `--log-level` | all | target-agnostic | Enable `trace`, `debug`, `info`, `warn`, or `error` logging. `debug` shows structured progress; `trace` also shows bounded command output. |
 | `--log-file` | all | target-agnostic | Write logs to a file instead of `stderr`. |
 
@@ -90,7 +89,8 @@ available throughout the command tree.
 | `--overwrite-existing` | — | — | yes | yes | — | — |
 | `--skip-network-operator-helm` | yes | — | yes | yes | yes | — |
 | `--deployment-files` | — | — | — | yes | yes | — |
-| `--yes`, `--quiet` | yes | — | — | — | — | — |
+| `--yes` | yes | — | — | — | — | — |
+| `--quiet` | yes | yes | — | — | — | — |
 | Validation flags below | — | — | — | — | yes | — |
 | `--keep-helm-chart` | — | — | — | — | — | yes |
 

@@ -179,8 +179,7 @@ archives contain the collection script, and supported installers place it at
 `<installation-prefix>/share/l8k/scripts/kubectl-netop_sosreport`. The command
 does not download executable code at runtime. If the script is missing, its
 error reports the raw source URL and exact expected path so an executable copy
-can be installed manually. Source-tree developers can populate their checkout
-with `make download-sosreport`.
+can be installed manually.
 
 Start with the diagnostic summary and collection errors, then correlate:
 

@@ -317,7 +317,54 @@ Start with Zero Trust passthrough:
 - report the provenance and resolution state of every required value.
 
 Exit criteria: `l8k discover --target dpf` produces a complete or explicitly
-unresolved DPF configuration and never guesses infrastructure values.
+unresolved DPF configuration and never guesses infrastructure values. Completed
+inventory requires read-only verification of the authenticated DPU BMC account and
+its effective Administrator privileges. Host/ARM-only inventory is partial and
+cannot bypass this gate. Preserve physical identity and authorization failure
+evidence independently; never rotate passwords or probe privilege by mutation.
+The current DPF target still rejects generation, deployment and validation before
+consuming inventory. A future generator must require fresh complete discovery and
+revalidate its own authorization needs; saved facts do not authorize provisioning.
+
+Inventory `v1alpha3` has a versioned public projection for both host and DPU
+records; internal collector/check APIs keep their existing domain state. Public
+facts use dedicated fields: identity, PSID, administrator verification, runtime
+versions, per-card firmware/PSID, next-boot settings and host privileges. Named
+DPU firmware components retain version/activation; raw vendor metadata and
+command output are not serialized. `issues` carries only failures, mismatches
+and unavailable facts, with field/code/message/tool rather than a generic
+state/value wrapper. ID is exported only for an eligible final identity.
+Version-aware decoding preserves these authority boundaries and rejects
+contradictions. Legacy `v1alpha1` and `v1alpha2` remain readable without inferring
+missing success. Required report check results and qualification boundaries stay
+separate from compact device facts. Firmware conflict comparison follows the same
+whitespace handling as collection while retaining original measured strings;
+serialization does not make a padded version eligible for minimum-version checks.
+
+SSH collection keeps one connection for normal reads. A command deadline closes
+that transport to bound stalled session operations; the next independent read may
+reconnect with the original endpoint, credentials and trust snapshot. The failed
+command is not replayed. Reconnection failure remains a required-identity failure,
+and overall cancellation forbids recovery. Final physical identity rereads remain
+mandatory after optional observations.
+
+The public software BOM is a projection of the internal release catalog:
+operator/component coordinates, exact hardware applicability, BFB version/URL
+and known digest, plus fixed named minimum fields. Missing minima reconstruct
+unknown requirements for compatibility checks; decoding uses saved coordinates
+rather than current catalog defaults. Catalog sources/revisions, generic
+requirements and static limitation prose stay internal. Host BMC collection is
+limited to identity, PCI mapping and advertised reset capabilities; DPU ERoT and
+BMC firmware remain distinct components.
+
+Host/DPU records do not create evidence tables or reference lists, regardless of
+transport. Mandatory live reads, identity and PSID rereads, administrator checks,
+cleanup and publication remain unchanged. Management/probe evidence retains its
+own contract. The public `scopeDigest` guards resolved refresh endpoints/trust;
+`requestedScope` and its detailed policy bookkeeping stay internal. Material
+fingerprints compare the public fact projection so removed provenance does not
+create false changes. Refresh preserves source backups and existing stable
+physical identity/scope conflict guards.
 
 ### Stage 4: DPF generation for Zero Trust passthrough
 

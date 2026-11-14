@@ -169,7 +169,7 @@ namespace always matches the resolved Network Operator namespace, including
 **Release prerequisite:** Network Operator v26.10.0-beta.2 includes the rail-pool
 `swPlane` and `ovsConfig` fields, but its packaged NCO CRD lacks `platformType`.
 RA2.4/RA3.1 deployment requires a 26.10-or-newer operator build that includes the
-doSPCX NCO implementation and matching CRDs. Generation alone does not establish
+doSPCX-capable NIC Configuration Operator and matching CRDs. Generation alone does not establish
 that the selected published chart satisfies this prerequisite. Deploy reads the
 live NCO CRD after NicClusterPolicy/NicNodePolicy bootstrap and requires the NIC
 template's served API version to expose `platformType` as a string. An absent

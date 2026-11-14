@@ -1,6 +1,6 @@
 ---
 name: k8s-launch-kit-discover
-version: 1.2.6
+version: 1.2.7
 description: "Use this skill when the user wants to discover their Kubernetes cluster's network hardware capabilities using k8s-launch-kit (l8k). Activate for: cluster discovery, hardware detection, NIC detection, finding what GPUs or NICs are in a cluster, creating a cluster config file, or when the user says 'discover' in the context of l8k or NVIDIA networking."
 metadata:
   requires:
@@ -10,6 +10,94 @@ metadata:
 # l8k: Cluster Discovery
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
+
+For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md) and use its explicit SSH/Redfish YAML. Inventory mode needs no management kubeconfig unless management observations are requested. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while hardware qualification and DPF authentication remain later-phase checks. Keep those gaps visible; do not run Host discovery against the DPF estate.
+
+DPF live check status goes to stderr as operations run, including with JSON output;
+quiet suppresses progress. Human summaries show configured names/addresses and
+host/DPU mappings, separating discovery blockers from later prerequisites and
+checks not requested. Both host and DPU results use named facts and an `issues`
+list (`field`, `code`, safe `message`, optional `tool`) for failures, mismatches
+and unavailable facts. Generic observations, successful per-value state, raw
+firmware/command dumps and device evidence references are omitted. Review `id`,
+`psid` and `bmcAdministratorVerified`; missing identity/authorization is not success.
+SSH card readings use `runtime.hardware.cards`, including `firmwareVersion`,
+`psid`, `nextBoot` settings and `hostPrivileges`; next-boot settings do not prove
+running mode. DPU firmware uses named component version lists with activation
+when known. Host BMC reads retain identity, adapters and reset types.
+`inventory.software` retains artifact coordinates and named documented minima,
+without source/revision lists or generic requirements. Missing minima remain
+unknown. `scopeDigest` guards the configured refresh scope/trust policy; the
+inventory does not repeat `requestedScope`. Management/probe source metadata and
+report check outcomes remain intact. New format is `v1alpha3`; legacy `v1alpha1`
+and `v1alpha2` remain readable without inferring missing verification.
+Add `--log-level debug` for source/stage timing, or `trace` for bounded request/tool
+metadata. Redirecting stderr hides live progress in the selected file. Never dump
+credentials or raw HTTP/SSH payloads to diagnose access. Password references can
+use an injected environment variable or an owner-only secret file; neither puts
+the resolved secret into inventory. See the guide for the tradeoffs and syntax.
+
+SSH requires explicit credential references and known-hosts trust; it never inherits
+Redfish TLS bypass, ambient keys or SSH configuration. ARM-local IPMI can report a
+BMC address but does not authorize connecting to it. A failed selected source is
+not silently replaced by another source. Host-only inventory preserves host-reported
+BlueFields without inventing ARM/BMC bindings and exits nonzero with partial evidence.
+ARM SSH alone cannot satisfy the required `dpf.management.bmc-administrator`
+check. Select explicit DPU Redfish endpoints with administrator credentials for
+completion. The account must be enabled, unlocked, not require a password change,
+and its linked role must grant all five standard Administrator privileges; names
+alone and OEM-only roles are insufficient. Missing or denied evidence fails closed.
+Discovery never changes passwords or tests privilege with a write.
+
+The owned session must expose a matching effective role, or positively establish
+local authentication through its trusted local `UserAuthenticationSource`.
+The current `LocalAccountAuth: Enabled` policy alone does not prove the origin
+of an existing session. Disabled local authentication and explicitly external
+sources fail. Fallback/LocalFirst modes require an explicit local session source.
+Missing mode/source plus missing Roles is unverifiable; a same-named local
+administrator or absent LDAP configuration cannot substitute for session proof.
+
+Host/card correlation also rejects an exposed non-NVIDIA PCI vendor on any
+same-serial candidate (`HOST_ADAPTER_VENDOR_CONFLICT`). Inspect endpoint and
+serial/PCI evidence before rerunning; do not edit inventory or discard a
+contradictory candidate to force a match. Missing vendor information remains
+unknown, and unrelated mixed-vendor host adapters remain in inventory.
+
+Supported BF4/B4240 Redfish discovery saves `inventory.dpus[].psid`
+for successful reads from System AssetTag, then the identity-selected chassis fallback, with authenticated
+reads and final source rereads. Missing/N/A stays unknown. Invalid,
+conflicting, changed or failed-recheck PSIDs stay unavailable; a consumer requiring
+PSID must reject those states rather than inventing Runtime/SSH evidence or
+copying another card's PSID. This optional fact does not change inventory acceptance.
+
+DPF inventory saves the resolved software BOM under `inventory.software`.
+`dpf.release` defaults to `26.4.0`; omit/null defaults, explicit empty/unknown
+rejects. Exact BlueField-3 catalog applicability and observed current versions
+remain separate from hardware qualification. Never supply reference-script guessed
+minima or clear unknown observations to imply compatibility. Missing tools and
+failed checks retain specific safe reasons and tool names where applicable;
+existing tools and authorized noninteractive sudo are external prerequisites.
+
+Optional `discovery.addressLookup` requires explicit ARM/BMC MAC selectors and
+can read local dnsmasq IPv4 lease files or eligible observed SSH neighbors. Treat
+`inventory.addressLookup.candidates` as unverified hints, retain source/ambiguity
+reasons and never send credentials automatically. Have the user establish endpoint
+ownership and trust before adding an explicit endpoint and rerunning inventory.
+Use a fresh seed/output for scope changes; same-scope in-place refresh explicitly
+uses the same `--user-config` and `--save-cluster-config` path. Keep reports and
+stderr and do not treat a preserved old handoff after partial failure as fresh data.
+
+DPF BMC TLS verification defaults to enabled. For an explicitly requested lab
+bypass, set the endpoint's `tls.insecureSkipVerify: true`; the shared
+`discovery.tls` policy also supports it. An endpoint `tls` block replaces that
+policy, including an explicit `false`. Do not combine `caFile` with `true`.
+Retain stderr warnings and the configured `discovery` TLS policy; the saved
+`inventory.scopeDigest` guards that policy during refresh. A policy change requires a fresh seed/output; it does not weaken
+management kubeconfig or network-probe TLS verification.
+Redfish login prefers the public root's `Links.Sessions`, including standard
+HPE trailing-slash links. A protected `SessionService` GET is not required when
+that login link is present; credentials are sent only to the same-origin standard
+session collection, and cleanup uses its exact returned session child.
 
 This workflow uses the default `host` target; `--target host` is equivalent.
 The CLI snapshots discovery arguments and runs the concrete Host discovery
@@ -327,7 +415,7 @@ live (collapsed) classification is kept (a preset-deviation warning is emitted).
 - [k8s-launch-kit-shared](../k8s-launch-kit-shared/SKILL.md) — Global flags and output modes
 - [k8s-launch-kit-config](../k8s-launch-kit-config/SKILL.md) — Understand the config file discovery produces
 - [k8s-launch-kit-generate](../k8s-launch-kit-generate/SKILL.md) — Generate manifests from cluster config
-- [Read-only library discovery](../../docs/user/discovery.md#read-only-library-discovery) — Existing-daemon inventory and publisher-inspection permissions
+- [Read-only library discovery](../../engineering/architecture/discovery-library.md#read-only-library-discovery) — Existing-daemon inventory and publisher-inspection permissions
 
 ## OpenShift
 
