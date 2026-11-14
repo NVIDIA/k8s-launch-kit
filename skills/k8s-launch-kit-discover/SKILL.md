@@ -32,6 +32,10 @@ Missing/null values remain unknown and false values fail readiness. Never set
 them from profile defaults, route observations or absence from an API list.
 True values record site-owner declarations, not measured IPAM facts, and cannot
 waive known collisions or fresh deployment checks.
+For another tenant with the same VRRP ID, discovery compares observed node
+selectors: potentially overlapping placement fails, missing selector facts stay
+unknown, and disjoint selectors do not conflict. A verified absence of a
+Keepalived endpoint does not reserve a VRRP ID through that resource.
 The explicit flag overrides and persists `dpf.useCase`; `dpf.hbn` overrides
 desired profile defaults. Read `readiness.state` separately from physical
 `discovery.outcome`: required unknown or mismatched prerequisites return nonzero

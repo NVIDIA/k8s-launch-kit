@@ -5,6 +5,7 @@ package discovery
 
 import (
 	"fmt"
+	"maps"
 	"net/netip"
 	"sort"
 	"strings"
@@ -40,6 +41,11 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 		check.Message = "The desired tenant VIP is not a valid unicast IPv4 address."
 		return check
 	}
+	if len(target.Tenant.NodeSelector) == 0 {
+		check.ReasonCode = "TENANT_TARGET_SELECTOR_UNAVAILABLE"
+		check.Message = "A nonempty selected-node selector is required to compare Keepalived placement."
+		return check
+	}
 	if snapshot == nil {
 		check.ReasonCode = "TENANT_CLUSTERS_UNOBSERVED"
 		check.Message = "The cross-namespace DPUCluster list is unavailable or incomplete; tenant target and VIP conflicts remain unknown."
@@ -59,7 +65,8 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 	var selected *managementprobe.DPUCluster
 	unobservedEndpoint := false
 	unobservedRouterID := false
-	sharedRouterID := ""
+	unobservedSelector := ""
+	var overlappingRouterIDs []string
 	for i := range snapshot.DPUClusters.Items {
 		cluster := &snapshot.DPUClusters.Items[i]
 		if cluster.Namespace == target.Tenant.Namespace && cluster.Name == target.Tenant.Name {
@@ -76,40 +83,66 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 			selected = cluster
 			continue
 		}
-		if cluster.VIP == nil || *cluster.VIP == "" {
+		var observedVIP netip.Addr
+		if cluster.VIP != nil && *cluster.VIP != "" {
+			parsed, err := netip.ParseAddr(*cluster.VIP)
+			if err != nil || (!parsed.Is4() && !parsed.Is4In6()) || !parsed.IsGlobalUnicast() {
+				unobservedEndpoint = true
+				continue
+			}
+			observedVIP = parsed.Unmap()
+			if observedVIP == desiredVIP {
+				check.State, check.ReasonCode = "failed", "TENANT_VIP_CONFLICT"
+				check.Message = fmt.Sprintf("Desired tenant VIP is already specified by DPUCluster %s/%s.", cluster.Namespace, cluster.Name)
+				return check
+			}
+		}
+		if cluster.KeepalivedPresent != nil && !*cluster.KeepalivedPresent {
+			if observedVIP.IsValid() {
+				unobservedEndpoint = true // Contradictory object fields are not a collision-free observation.
+				continue
+			}
+			if cluster.Type != nil && (*cluster.Type == "kamaji" || *cluster.Type == "static") {
+				continue
+			}
 			unobservedEndpoint = true
 			continue
 		}
-		observedVIP, err := netip.ParseAddr(*cluster.VIP)
-		if err != nil {
+		if cluster.KeepalivedPresent == nil || !observedVIP.IsValid() {
 			unobservedEndpoint = true
 			continue
-		}
-		observedVIP = observedVIP.Unmap()
-		if observedVIP == desiredVIP {
-			check.State, check.ReasonCode = "failed", "TENANT_VIP_CONFLICT"
-			check.Message = fmt.Sprintf("Desired tenant VIP is already specified by DPUCluster %s/%s.", cluster.Namespace, cluster.Name)
-			return check
 		}
 		if cluster.VirtualRouterID == nil || *cluster.VirtualRouterID < 1 || *cluster.VirtualRouterID > 255 {
 			unobservedRouterID = true
 		} else if *cluster.VirtualRouterID == int64(target.Tenant.RouterID) {
-			sharedRouterID = cluster.Namespace + "/" + cluster.Name
+			if cluster.NodeSelector == nil {
+				if unobservedSelector == "" {
+					unobservedSelector = cluster.Namespace + "/" + cluster.Name
+				}
+			} else if selectorsMayOverlap(target.Tenant.NodeSelector, *cluster.NodeSelector) {
+				overlappingRouterIDs = append(overlappingRouterIDs, cluster.Namespace+"/"+cluster.Name)
+			}
 		}
+	}
+	if len(overlappingRouterIDs) > 0 {
+		sort.Strings(overlappingRouterIDs)
+		check.State, check.ReasonCode = "failed", "TENANT_VRID_CONFLICT"
+		check.Message = fmt.Sprintf("DPUCluster %s specifies the requested VRRP ID with a node selector that can overlap this tenant; choose a distinct VRID or disjoint node selectors.", overlappingRouterIDs[0])
+		return check
 	}
 	if snapshot.DPUClusters.State != managementprobe.CollectionComplete && snapshot.DPUClusters.State != managementprobe.CollectionAbsent {
 		check.ReasonCode = "TENANT_CLUSTERS_UNOBSERVED"
-		check.Message = "The cross-namespace DPUCluster list is incomplete; known VIP collisions are reported, but tenant selection cannot pass."
+		check.Message = "The cross-namespace DPUCluster list is incomplete; known VIP and VRID conflicts are reported, but tenant selection cannot pass."
 		return check
 	}
 	if unobservedEndpoint {
 		check.ReasonCode = "TENANT_ENDPOINT_UNOBSERVED"
-		check.Message = "At least one other existing DPUCluster has no observed VIP, so the desired tenant VIP cannot be compared completely."
+		check.Message = "At least one other existing DPUCluster has a missing or malformed Keepalived endpoint, so tenant VIP and VRID conflicts cannot be compared completely."
 		return check
 	}
-	if sharedRouterID != "" {
+	if unobservedSelector != "" {
 		check.ReasonCode = "TENANT_VRID_SCOPE_UNVERIFIED"
-		check.Message = fmt.Sprintf("DPUCluster %s specifies the requested VRRP ID. Discovery has not established whether its selected nodes overlap this tenant; a site declaration cannot clear this observation. Select a distinct VRRP ID or verify the placement before deployment.", sharedRouterID)
+		check.Message = fmt.Sprintf("DPUCluster %s specifies the requested VRRP ID but its node selector is missing or malformed; the placement overlap cannot be determined.", unobservedSelector)
 		return check
 	}
 	if unobservedRouterID {
@@ -147,6 +180,11 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 			return check
 		}
 	}
+	if selected.KeepalivedPresent == nil || !*selected.KeepalivedPresent {
+		check.ReasonCode = "TENANT_TARGET_ENDPOINT_UNOBSERVED"
+		check.Message = "The selected DPUCluster Keepalived endpoint is absent or malformed."
+		return check
+	}
 	if selected.VIP == nil || selected.Interface == nil || selected.VirtualRouterID == nil {
 		check.ReasonCode = "TENANT_TARGET_ENDPOINT_UNOBSERVED"
 		check.Message = "The selected DPUCluster does not report a complete keepalived endpoint."
@@ -157,13 +195,23 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 		check.Message = "The selected DPUCluster keepalived endpoint differs from the resolved tenant VIP, interface, or VRID."
 		return check
 	}
+	if selected.NodeSelector == nil {
+		check.ReasonCode = "TENANT_TARGET_SELECTOR_UNOBSERVED"
+		check.Message = "The selected DPUCluster Keepalived node selector is missing or malformed."
+		return check
+	}
+	if !maps.Equal(*selected.NodeSelector, target.Tenant.NodeSelector) {
+		check.State, check.ReasonCode = "failed", "TENANT_TARGET_SELECTOR_MISMATCH"
+		check.Message = "The selected DPUCluster Keepalived node selector differs from the resolved tenant placement."
+		return check
+	}
 	check.State, check.ReasonCode = "passed", "TENANT_TARGET_MATCHES"
-	check.Message = "The selected DPUCluster identity, type, and keepalived endpoint match the target. This is registry binding only, not a Ready result; deployment must verify controller, tenant API, and endpoint readiness from fresh API observations."
+	check.Message = "The selected DPUCluster identity, type, keepalived endpoint, and node selector match the target. This is registry binding only, not a Ready result; deployment must verify controller, tenant API, and endpoint readiness from fresh API observations."
 	return check
 }
 
 // tenantClusterProjection retains only records needed to explain the selected
-// target, a known VIP collision, or an endpoint that prevents a safe comparison.
+// target, a known VIP collision, or an endpoint/selector that prevents a safe comparison.
 // Target and VIP conflicts are still evaluated against the complete source snapshot.
 func tenantClusterProjection(snapshot *managementprobe.Snapshot, target *bootstrap.Inputs) []inventory.HBNManagementCluster {
 	result := []inventory.HBNManagementCluster{}
@@ -182,6 +230,7 @@ func tenantClusterProjection(snapshot *managementprobe.Snapshot, target *bootstr
 				Name: cluster.Name, Namespace: cluster.Namespace, UID: cluster.UID, ResourceVersion: cluster.ResourceVersion,
 				Type: deref(cluster.Type), Phase: deref(cluster.Phase), Version: deref(cluster.Version), VIP: deref(cluster.VIP),
 				Interface: deref(cluster.Interface), VirtualRouterID: copyInt64(cluster.VirtualRouterID),
+				NodeSelector:            cloneSelector(cluster.NodeSelector),
 				LaunchKitTenantLabelKey: deref(cluster.LaunchKitTenantLabelKey), LaunchKitTenantLabelValue: deref(cluster.LaunchKitTenantLabelValue),
 				Owners: ownerSummaries(cluster.Owners),
 			})
@@ -190,26 +239,36 @@ func tenantClusterProjection(snapshot *managementprobe.Snapshot, target *bootstr
 		if !desiredVIP.IsValid() {
 			continue
 		}
-		if cluster.VIP == nil || *cluster.VIP == "" {
-			result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace})
+		var observedVIP netip.Addr
+		if cluster.VIP != nil && *cluster.VIP != "" {
+			parsed, err := netip.ParseAddr(*cluster.VIP)
+			if err == nil && (parsed.Is4() || parsed.Is4In6()) && parsed.IsGlobalUnicast() {
+				observedVIP = parsed.Unmap()
+				if observedVIP == desiredVIP {
+					// The name and address identify a concrete collision. The rest
+					// of this unrelated tenant's spec is not needed.
+					result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace, VIP: *cluster.VIP})
+					continue
+				}
+			} else {
+				result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace, VirtualRouterID: copyInt64(cluster.VirtualRouterID), NodeSelector: cloneSelector(cluster.NodeSelector)})
+				continue
+			}
+		}
+		if cluster.KeepalivedPresent != nil && !*cluster.KeepalivedPresent && !observedVIP.IsValid() && cluster.Type != nil && (*cluster.Type == "kamaji" || *cluster.Type == "static") {
 			continue
 		}
-		observedVIP, err := netip.ParseAddr(*cluster.VIP)
-		if err != nil {
-			// Preserve only the object identity needed to investigate why its
-			// endpoint could not be compared with the requested VIP.
-			result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace})
+		if cluster.KeepalivedPresent == nil || !observedVIP.IsValid() {
+			result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace, VirtualRouterID: copyInt64(cluster.VirtualRouterID), NodeSelector: cloneSelector(cluster.NodeSelector)})
 			continue
 		}
-		observedVIP = observedVIP.Unmap()
-		if observedVIP == desiredVIP {
-			// The name and address identify a concrete collision. The rest of
-			// this unrelated tenant's spec and ownership are not needed.
-			result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace, VIP: *cluster.VIP})
-		} else if cluster.VirtualRouterID == nil || *cluster.VirtualRouterID < 1 || *cluster.VirtualRouterID > 255 || *cluster.VirtualRouterID == int64(target.Tenant.RouterID) {
+		selectorMayConflict := cluster.NodeSelector == nil || selectorsMayOverlap(target.Tenant.NodeSelector, *cluster.NodeSelector)
+		if cluster.KeepalivedPresent == nil || (cluster.KeepalivedPresent != nil && !*cluster.KeepalivedPresent) ||
+			cluster.VirtualRouterID == nil || *cluster.VirtualRouterID < 1 || *cluster.VirtualRouterID > 255 ||
+			(*cluster.VirtualRouterID == int64(target.Tenant.RouterID) && selectorMayConflict) {
 			// Retain only the identity and VRRP observation needed to explain
 			// an unresolved comparison; omit the unrelated tenant specification.
-			result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace, VirtualRouterID: copyInt64(cluster.VirtualRouterID)})
+			result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace, VirtualRouterID: copyInt64(cluster.VirtualRouterID), NodeSelector: cloneSelector(cluster.NodeSelector)})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -222,6 +281,23 @@ func tenantClusterProjection(snapshot *managementprobe.Snapshot, target *bootstr
 		return strings.Compare(result[i].UID, result[j].UID) < 0
 	})
 	return result
+}
+
+func selectorsMayOverlap(first, second map[string]string) bool {
+	for key, value := range first {
+		if other, exists := second[key]; exists && other != value {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneSelector(selector *map[string]string) *map[string]string {
+	if selector == nil {
+		return nil
+	}
+	copy := maps.Clone(*selector)
+	return &copy
 }
 
 func projectTenantIssues(snapshot *managementprobe.Snapshot, tenants []inventory.HBNManagementCluster) []inventory.HBNManagementIssue {

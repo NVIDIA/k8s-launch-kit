@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -115,17 +116,19 @@ type OperatorConfig struct {
 
 type DPUCluster struct {
 	ObjectSummary             `yaml:",inline"`
-	ResourceVersion           string  `json:"resourceVersion" yaml:"resourceVersion"`
-	Type                      *string `json:"type,omitempty" yaml:"type,omitempty"`
-	Phase                     *string `json:"phase,omitempty" yaml:"phase,omitempty"`
-	NodesCount                *int64  `json:"nodesCount,omitempty" yaml:"nodesCount,omitempty"`
-	Version                   *string `json:"version,omitempty" yaml:"version,omitempty"`
-	VIP                       *string `json:"vip,omitempty" yaml:"vip,omitempty"`
-	Interface                 *string `json:"interface,omitempty" yaml:"interface,omitempty"`
-	VirtualRouterID           *int64  `json:"virtualRouterID,omitempty" yaml:"virtualRouterID,omitempty"`
-	LaunchKitTenantLabelKey   *string `json:"launchKitTenantLabelKey,omitempty" yaml:"launchKitTenantLabelKey,omitempty"`
-	LaunchKitTenantLabelValue *string `json:"launchKitTenantLabelValue,omitempty" yaml:"launchKitTenantLabelValue,omitempty"`
-	TenantIdentityConflict    bool    `json:"tenantIdentityConflict,omitempty" yaml:"tenantIdentityConflict,omitempty"`
+	ResourceVersion           string             `json:"resourceVersion" yaml:"resourceVersion"`
+	Type                      *string            `json:"type,omitempty" yaml:"type,omitempty"`
+	Phase                     *string            `json:"phase,omitempty" yaml:"phase,omitempty"`
+	NodesCount                *int64             `json:"nodesCount,omitempty" yaml:"nodesCount,omitempty"`
+	Version                   *string            `json:"version,omitempty" yaml:"version,omitempty"`
+	VIP                       *string            `json:"vip,omitempty" yaml:"vip,omitempty"`
+	Interface                 *string            `json:"interface,omitempty" yaml:"interface,omitempty"`
+	VirtualRouterID           *int64             `json:"virtualRouterID,omitempty" yaml:"virtualRouterID,omitempty"`
+	KeepalivedPresent         *bool              `json:"keepalivedPresent,omitempty" yaml:"keepalivedPresent,omitempty"`
+	NodeSelector              *map[string]string `json:"nodeSelector,omitempty" yaml:"nodeSelector,omitempty"`
+	LaunchKitTenantLabelKey   *string            `json:"launchKitTenantLabelKey,omitempty" yaml:"launchKitTenantLabelKey,omitempty"`
+	LaunchKitTenantLabelValue *string            `json:"launchKitTenantLabelValue,omitempty" yaml:"launchKitTenantLabelValue,omitempty"`
+	TenantIdentityConflict    bool               `json:"tenantIdentityConflict,omitempty" yaml:"tenantIdentityConflict,omitempty"`
 }
 
 type DPUDevice struct {
@@ -199,7 +202,7 @@ var crds = []crdSpec{
 	{name: "dpudeployments.svc.dpu.nvidia.com", group: "svc.dpu.nvidia.com", plural: "dpudeployments", kind: "DPUDeployment", fields: []string{"spec.dpus.bfb", "spec.dpus.blueFieldSoftware", "spec.dpus.dpuSets[].nameSuffix", "spec.dpus.dpuSetStrategy", "spec.dpus.nodeEffect"}},
 	{name: "dpuflavors.provisioning.dpu.nvidia.com", group: "provisioning.dpu.nvidia.com", plural: "dpuflavors", kind: "DPUFlavor", fields: []string{"spec.configFiles"}},
 	{name: "dpfoperatorconfigs.operator.dpu.nvidia.com", group: "operator.dpu.nvidia.com", plural: "dpfoperatorconfigs", kind: "DPFOperatorConfig", fields: []string{"spec.deploymentMode", "status.conditions"}},
-	{name: "dpuclusters.provisioning.dpu.nvidia.com", group: "provisioning.dpu.nvidia.com", plural: "dpuclusters", kind: "DPUCluster", fields: []string{"spec.type", "spec.clusterEndpoint.keepalived.vip", "spec.clusterEndpoint.keepalived.interface", "spec.clusterEndpoint.keepalived.virtualRouterID", "status.phase", "status.nodesCount"}},
+	{name: "dpuclusters.provisioning.dpu.nvidia.com", group: "provisioning.dpu.nvidia.com", plural: "dpuclusters", kind: "DPUCluster", fields: []string{"spec.type", "spec.clusterEndpoint.keepalived.vip", "spec.clusterEndpoint.keepalived.interface", "spec.clusterEndpoint.keepalived.virtualRouterID", "spec.clusterEndpoint.keepalived.nodeSelector", "status.phase", "status.nodesCount"}},
 	{name: "dpudevices.provisioning.dpu.nvidia.com", group: "provisioning.dpu.nvidia.com", plural: "dpudevices", kind: "DPUDevice", fields: []string{"spec.serialNumber", "status.serialNumber", "status.psid"}},
 	{name: "dpus.provisioning.dpu.nvidia.com", group: "provisioning.dpu.nvidia.com", plural: "dpus", kind: "DPU", fields: []string{"spec.serialNumber", "spec.dpuDeviceName", "spec.dpuNodeName", "status.phase"}},
 }
@@ -630,10 +633,31 @@ func convertCustom[T any](obj unstructured.Unstructured, spec crdSpec, issues *[
 		setStringField(obj, spec, "spec.type", &item.Type, issues)
 		setStringField(obj, spec, "spec.clusterEndpoint.keepalived.vip", &item.VIP, issues)
 		setStringField(obj, spec, "spec.clusterEndpoint.keepalived.interface", &item.Interface, issues)
+		if _, found, err := unstructured.NestedMap(obj.Object, "spec", "clusterEndpoint"); err != nil {
+			*issues = append(*issues, malformedObjectIssue(spec, obj, "spec.clusterEndpoint"))
+		} else if !found {
+			present := false
+			item.KeepalivedPresent = &present
+		} else if _, found, err := unstructured.NestedMap(obj.Object, "spec", "clusterEndpoint", "keepalived"); err != nil {
+			*issues = append(*issues, malformedObjectIssue(spec, obj, "spec.clusterEndpoint.keepalived"))
+		} else {
+			present := found
+			item.KeepalivedPresent = &present
+		}
 		if value, found, err := unstructured.NestedInt64(obj.Object, "spec", "clusterEndpoint", "keepalived", "virtualRouterID"); err == nil && found {
 			item.VirtualRouterID = &value
 		} else if err != nil {
-			*issues = append(*issues, malformedIssue(spec, obj.GetName(), "spec.clusterEndpoint.keepalived.virtualRouterID"))
+			*issues = append(*issues, malformedObjectIssue(spec, obj, "spec.clusterEndpoint.keepalived.virtualRouterID"))
+		}
+		if selector, found, err := unstructured.NestedStringMap(obj.Object, "spec", "clusterEndpoint", "keepalived", "nodeSelector"); err != nil {
+			*issues = append(*issues, malformedObjectIssue(spec, obj, "spec.clusterEndpoint.keepalived.nodeSelector"))
+		} else if found {
+			if !validNodeSelector(selector) {
+				*issues = append(*issues, malformedObjectIssue(spec, obj, "spec.clusterEndpoint.keepalived.nodeSelector"))
+			} else {
+				copy := maps.Clone(selector)
+				item.NodeSelector = &copy
+			}
 		}
 		for _, key := range []string{"nvidia.kubernetes-launch-kit.dpf-tenant", "launch-kit.nvidia.com/dpf-tenant"} {
 			value, found, err := unstructured.NestedString(obj.Object, "metadata", "labels", key)
@@ -823,6 +847,21 @@ func issueForError(source, resource, field string, err error) Issue {
 
 func malformedIssue(spec crdSpec, resource, field string) Issue {
 	return Issue{Source: spec.name, Resource: resource, Field: field, Code: "API_RESPONSE_INVALID", Message: "The DPF API object does not match the expected typed observation fields."}
+}
+
+func malformedObjectIssue(spec crdSpec, object unstructured.Unstructured, field string) Issue {
+	issue := malformedIssue(spec, object.GetName(), field)
+	issue.Namespace = object.GetNamespace()
+	return issue
+}
+
+func validNodeSelector(selector map[string]string) bool {
+	for key, value := range selector {
+		if len(validation.IsQualifiedName(key)) != 0 || len(validation.IsValidLabelValue(value)) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func coverageIssue(source, message string) Issue {

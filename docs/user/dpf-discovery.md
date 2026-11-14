@@ -626,9 +626,13 @@ that the selected VRRP ID is available on the selected control-plane nodes.
 Omitting a declaration leaves it unknown; `false` reports a failed prerequisite.
 Both block readiness. Launch Kit records these as site declarations, not as
 independent DHCP or IPAM verification. They cannot override an observed collision.
-If another DPUCluster uses the same VRRP ID, discovery reports unknown readiness
-until its placement can be distinguished or you select a different ID. A missing
-VRRP ID on another observed endpoint also blocks this comparison.
+If another DPUCluster uses the same VRRP ID, Launch Kit compares its control-plane
+node selector with the requested selector. Selectors that can select the same
+nodes fail this check; selectors with conflicting values for a shared label key
+are disjoint and do not conflict. An explicitly empty selector covers all nodes.
+A missing or unreadable selector leaves the comparison unknown. A missing VRRP
+ID on another configured endpoint also blocks the comparison. A cluster with no
+Keepalived endpoint does not reserve a VIP or VRRP ID through that configuration.
 
 The VIP must be outside DHCP allocation and unused by another tenant. Launch Kit defaults the tenant names,
 capacity, pod CIDR and VRRP ID from the profile; verify that the address ranges

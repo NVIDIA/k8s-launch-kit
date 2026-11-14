@@ -5,6 +5,7 @@ package discovery
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,11 +52,15 @@ func TestPinnedDPUClusterStatusWithoutObservedGenerationClassifiesTargetOnly(t *
 	for key, value := range target.Tenant.Labels {
 		labels[key] = value
 	}
+	nodeSelector := map[string]any{}
+	for key, value := range target.Tenant.NodeSelector {
+		nodeSelector[key] = value
+	}
 	cluster := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1", "kind": "DPUCluster",
 		"metadata": map[string]any{"name": target.Tenant.Name, "namespace": target.Tenant.Namespace, "uid": "tenant-uid", "generation": int64(3), "resourceVersion": "8", "labels": labels},
 		"spec": map[string]any{"type": "kamaji", "clusterEndpoint": map[string]any{"keepalived": map[string]any{
-			"vip": target.Tenant.VIP, "interface": target.Tenant.Interface, "virtualRouterID": int64(target.Tenant.RouterID),
+			"vip": target.Tenant.VIP, "interface": target.Tenant.Interface, "virtualRouterID": int64(target.Tenant.RouterID), "nodeSelector": nodeSelector,
 		}}},
 		// DPF 26.8 writes phase and a metav1 Ready condition but no observedGeneration.
 		"status": map[string]any{"phase": "Ready", "conditions": []any{map[string]any{"type": "Ready", "status": "True", "reason": "HealthCheckPassed"}}},
@@ -154,35 +159,146 @@ func TestTenantClusterCheckRejectsDesiredVIPOwnedByDifferentCluster(t *testing.T
 	}
 }
 
-func TestTenantClusterCheckAllowsUnrelatedTenantAndDoesNotInferVRIDCollision(t *testing.T) {
+func TestTenantClusterCheckComparesUnrelatedKeepalivedNodeSelectors(t *testing.T) {
 	target := resolvedTenantTarget(t, "new-tenant", "new-namespace", "192.0.2.20")
 	otherTarget := resolvedTenantTarget(t, "existing-tenant", "existing-namespace", "192.0.2.21")
 	cluster := observedTenantCluster(otherTarget, "existing-uid", true)
-	// The same VRID alone is not proof of a collision, but unresolved placement
-	// also cannot establish readiness. A site declaration must not waive it.
+	disjoint := maps.Clone(target.Tenant.NodeSelector)
+	for key := range disjoint {
+		disjoint[key] = "other"
+		break
+	}
+	cluster.NodeSelector = selectorPointer(disjoint)
 	snapshot := tenantSnapshot(target, managementprobe.CollectionComplete, cluster)
 	check := tenantClusterCheck(&snapshot, &target)
-	if check.State != "unknown" || check.ReasonCode != "TENANT_VRID_SCOPE_UNVERIFIED" {
-		t.Fatalf("shared VRRP ID was accepted without node scope: %+v", check)
+	if check.State != "passed" || check.ReasonCode != "TENANT_TARGET_ABSENT_FROM_DPUCLUSTERS" {
+		t.Fatalf("disjoint selector with shared VRRP ID blocked tenant: %+v", check)
+	}
+	if projection := tenantClusterProjection(&snapshot, &target); len(projection) != 0 {
+		t.Fatalf("disjoint DPUCluster should not be projected: %+v", projection)
+	}
+
+	cluster.NodeSelector = selectorPointer(maps.Clone(target.Tenant.NodeSelector))
+	snapshot.DPUClusters.Items[0] = cluster
+	check = tenantClusterCheck(&snapshot, &target)
+	if check.State != "failed" || check.ReasonCode != "TENANT_VRID_CONFLICT" {
+		t.Fatalf("overlapping selector with shared VRRP ID was accepted: %+v", check)
 	}
 	projection := tenantClusterProjection(&snapshot, &target)
-	if len(projection) != 1 || projection[0].Name != cluster.Name || projection[0].Namespace != cluster.Namespace || projection[0].VirtualRouterID == nil || *projection[0].VirtualRouterID != int64(target.Tenant.RouterID) || projection[0].VIP != "" || projection[0].UID != "" || projection[0].Interface != "" {
-		t.Fatalf("unresolved VRRP scope lacks its minimal public observation: %+v", projection)
+	if len(projection) != 1 || projection[0].Name != cluster.Name || projection[0].Namespace != cluster.Namespace || projection[0].VirtualRouterID == nil || *projection[0].VirtualRouterID != int64(target.Tenant.RouterID) || projection[0].NodeSelector == nil || !maps.Equal(*projection[0].NodeSelector, *cluster.NodeSelector) || projection[0].VIP != "" || projection[0].UID != "" || projection[0].Interface != "" {
+		t.Fatalf("VRRP conflict lacks minimal selector projection: %+v", projection)
 	}
-	*projection[0].VirtualRouterID = 1
-	if *snapshot.DPUClusters.Items[0].VirtualRouterID != int64(target.Tenant.RouterID) {
-		t.Fatal("VRRP projection aliases the collected observation")
+	(*projection[0].NodeSelector)["changed"] = "value"
+	if _, found := (*snapshot.DPUClusters.Items[0].NodeSelector)["changed"]; found {
+		t.Fatal("VRRP projection aliases the collected selector")
 	}
+	cluster.NodeSelector = selectorPointer(map[string]string{})
+	snapshot.DPUClusters.Items[0] = cluster
+	check = tenantClusterCheck(&snapshot, &target)
+	if check.State != "failed" || check.ReasonCode != "TENANT_VRID_CONFLICT" {
+		t.Fatalf("explicit empty selector should overlap all selected nodes: %+v", check)
+	}
+
+	cluster.NodeSelector = nil
+	snapshot.DPUClusters.Items[0] = cluster
+	check = tenantClusterCheck(&snapshot, &target)
+	if check.State != "unknown" || check.ReasonCode != "TENANT_VRID_SCOPE_UNVERIFIED" {
+		t.Fatalf("missing selector incorrectly implied disjoint placement: %+v", check)
+	}
+	snapshot.Issues = []managementprobe.Issue{{Source: "dpuclusters.provisioning.dpu.nvidia.com", Resource: cluster.Name, Namespace: cluster.Namespace, Field: "spec.clusterEndpoint.keepalived.nodeSelector", Code: "API_RESPONSE_INVALID", Message: "selector invalid"}}
+	projection = tenantClusterProjection(&snapshot, &target)
+	if len(projection) != 1 || projection[0].NodeSelector != nil || projection[0].VirtualRouterID == nil {
+		t.Fatalf("missing selector scope did not retain minimal VRID evidence: %+v", projection)
+	}
+	if issues := projectTenantIssues(&snapshot, projection); len(issues) != 1 || issues[0].Field != "spec.clusterEndpoint.keepalived.nodeSelector" {
+		t.Fatalf("malformed selector issue was not retained with its candidate: %+v", issues)
+	}
+
 	different := int64(target.Tenant.RouterID + 1)
-	snapshot.DPUClusters.Items[0].VirtualRouterID = &different
+	cluster.VirtualRouterID = &different
+	cluster.NodeSelector = nil
+	snapshot.DPUClusters.Items[0] = cluster
 	check = tenantClusterCheck(&snapshot, &target)
 	if check.State != "passed" || check.ReasonCode != "TENANT_TARGET_ABSENT_FROM_DPUCLUSTERS" {
-		t.Fatalf("distinct VIP/VRRP ID was rejected: %+v", check)
+		t.Fatalf("distinct VRID should not need selector scope: %+v", check)
 	}
-	snapshot.DPUClusters.Items[0].VirtualRouterID = nil
+	cluster.VirtualRouterID = int64Pointer(int64(target.Tenant.RouterID))
+	cluster.VIP = stringPointer(target.Tenant.VIP)
+	snapshot.DPUClusters.Items[0] = cluster
 	check = tenantClusterCheck(&snapshot, &target)
-	if check.State != "unknown" || check.ReasonCode != "TENANT_VRID_UNOBSERVED" {
-		t.Fatalf("unobserved VRRP ID was accepted: %+v", check)
+	if check.State != "failed" || check.ReasonCode != "TENANT_VIP_CONFLICT" {
+		t.Fatalf("known VIP conflict lost priority to missing selector: %+v", check)
+	}
+}
+
+func TestTenantClusterCheckIgnoresKnownAbsentStaticEndpointAndPreservesMalformedEndpointAsUnknown(t *testing.T) {
+	target := resolvedTenantTarget(t, "new-tenant", "new-namespace", "192.0.2.20")
+	static := managementprobe.DPUCluster{
+		ObjectSummary: managementprobe.ObjectSummary{Name: "static-cluster", Namespace: "static-ns", UID: "static-uid"},
+		Type:          stringPointer("static"), KeepalivedPresent: boolPointer(false),
+	}
+	snapshot := tenantSnapshot(target, managementprobe.CollectionComplete, static)
+	if check := tenantClusterCheck(&snapshot, &target); check.State != "passed" || check.ReasonCode != "TENANT_TARGET_ABSENT_FROM_DPUCLUSTERS" {
+		t.Fatalf("a static DPUCluster without a Keepalived endpoint blocked tenant planning: %+v", check)
+	}
+	if projection := tenantClusterProjection(&snapshot, &target); len(projection) != 0 {
+		t.Fatalf("static DPUCluster without an endpoint was projected as a VRID candidate: %+v", projection)
+	}
+
+	malformed := static
+	malformed.Name = "malformed-cluster"
+	malformed.KeepalivedPresent = nil
+	snapshot.DPUClusters.Items[0] = malformed
+	check := tenantClusterCheck(&snapshot, &target)
+	if check.State != "unknown" || check.ReasonCode != "TENANT_ENDPOINT_UNOBSERVED" {
+		t.Fatalf("malformed endpoint was treated as known absence: %+v", check)
+	}
+}
+
+func TestTenantClusterCheckKeepsKnownVRIDConflictAheadOfUnrelatedUnknowns(t *testing.T) {
+	target := resolvedTenantTarget(t, "new-tenant", "new-namespace", "192.0.2.20")
+	otherTarget := resolvedTenantTarget(t, "overlap", "other-namespace", "192.0.2.21")
+	overlap := observedTenantCluster(otherTarget, "overlap-uid", true)
+	overlap.NodeSelector = selectorPointer(maps.Clone(target.Tenant.NodeSelector))
+	malformed := managementprobe.DPUCluster{
+		ObjectSummary: managementprobe.ObjectSummary{Name: "malformed", Namespace: "broken-namespace", UID: "broken-uid"},
+		Type:          stringPointer("kamaji"), // nil KeepalivedPresent means the endpoint observation was malformed or unavailable.
+	}
+	for _, test := range []struct {
+		name     string
+		state    managementprobe.CollectionState
+		clusters []managementprobe.DPUCluster
+	}{
+		{name: "malformed unrelated endpoint", state: managementprobe.CollectionComplete, clusters: []managementprobe.DPUCluster{overlap, malformed}},
+		{name: "partial list", state: managementprobe.CollectionIncomplete, clusters: []managementprobe.DPUCluster{overlap}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := tenantSnapshot(target, test.state, test.clusters...)
+			if check := tenantClusterCheck(&snapshot, &target); check.State != "failed" || check.ReasonCode != "TENANT_VRID_CONFLICT" {
+				t.Fatalf("known selector overlap was hidden by unrelated unknown state: %+v", check)
+			}
+		})
+	}
+}
+
+func TestTenantClusterCheckRequiresSelectedTargetNodeSelectorMatch(t *testing.T) {
+	target := resolvedTenantTarget(t, "existing-tenant", "tenant-ns", "192.0.2.20")
+	cluster := observedTenantCluster(target, "cluster-uid", true)
+	snapshot := tenantSnapshot(target, managementprobe.CollectionComplete, cluster)
+	cluster.NodeSelector = nil
+	snapshot.DPUClusters.Items[0] = cluster
+	if check := tenantClusterCheck(&snapshot, &target); check.State != "unknown" || check.ReasonCode != "TENANT_TARGET_SELECTOR_UNOBSERVED" {
+		t.Fatalf("missing selected target selector was accepted: %+v", check)
+	}
+	changed := maps.Clone(target.Tenant.NodeSelector)
+	for key := range changed {
+		changed[key] = "different"
+		break
+	}
+	cluster.NodeSelector = selectorPointer(changed)
+	snapshot.DPUClusters.Items[0] = cluster
+	if check := tenantClusterCheck(&snapshot, &target); check.State != "failed" || check.ReasonCode != "TENANT_TARGET_SELECTOR_MISMATCH" {
+		t.Fatalf("mismatched selected target selector was accepted: %+v", check)
 	}
 }
 
@@ -248,6 +364,9 @@ func TestTenantClusterCheckNeedsVIPAndCompleteCollection(t *testing.T) {
 
 	target = resolvedTenantTarget(t, "tenant-a", "tenant-ns", "192.0.2.20")
 	other := observedTenantCluster(resolvedTenantTarget(t, "tenant-b", "other-ns", "192.0.2.21"), "other-uid", true)
+	// Keep this case focused on incomplete observations; the independent known
+	// VIP and VRID conflict cases verify that concrete conflicts take priority.
+	other.VirtualRouterID = int64Pointer(201)
 	snapshot = tenantSnapshot(target, managementprobe.CollectionIncomplete, other)
 	check = tenantClusterCheck(&snapshot, &target)
 	if check.State != "unknown" || check.ReasonCode != "TENANT_CLUSTERS_UNOBSERVED" {
@@ -399,6 +518,7 @@ func observedTenantCluster(target bootstrap.Inputs, uid string, ready bool) mana
 	for key, value := range target.Tenant.Labels {
 		markerKey, markerValue = &key, &value
 	}
+	keepalivedPresent := true
 	return managementprobe.DPUCluster{
 		ObjectSummary: managementprobe.ObjectSummary{
 			Name: target.Tenant.Name, Namespace: target.Tenant.Namespace, UID: uid,
@@ -407,9 +527,14 @@ func observedTenantCluster(target bootstrap.Inputs, uid string, ready bool) mana
 		},
 		ResourceVersion: "42", Phase: &phase, Type: stringPointer("kamaji"), VIP: stringPointer(target.Tenant.VIP),
 		Interface: stringPointer(target.Tenant.Interface), VirtualRouterID: int64Pointer(int64(target.Tenant.RouterID)),
+		KeepalivedPresent: &keepalivedPresent, NodeSelector: selectorPointer(maps.Clone(target.Tenant.NodeSelector)),
 		LaunchKitTenantLabelKey: markerKey, LaunchKitTenantLabelValue: markerValue,
 	}
 }
+
+func selectorPointer(selector map[string]string) *map[string]string { return &selector }
+
+func boolPointer(value bool) *bool { return &value }
 
 func tenantSnapshot(target bootstrap.Inputs, state managementprobe.CollectionState, clusters ...managementprobe.DPUCluster) managementprobe.Snapshot {
 	return managementprobe.Snapshot{

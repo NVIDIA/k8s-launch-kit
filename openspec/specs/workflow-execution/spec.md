@@ -102,6 +102,18 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** failed probe cleanup or a changed selected node set stops creation; persisted discovery results cannot replace these observations.
 - **AND** an existing exact owned target follows ownership-aware verification rather than an unused-VIP check, and successful tenant API access does not claim enrollment or HBN traffic readiness.
 
+#### Scenario: DPF selected-device enrollment
+
+- **WHEN** the executor advances from the verified tenant API to selected-device enrollment
+- **THEN** it binds runtime BMC access to retained serials and exact endpoints, verifies fresh Administrator access, and requires credentials compatible with the selected DPF discovery path.
+- **AND** BMC credentials and TLS policy come from explicit runtime site access inputs; certificate failures never enable an implicit bypass, and an explicitly bypassed connection is not claimed as verified TLS.
+- **AND** before controller activation or shared credential installation, it inspects the complete relevant resource scope and stops if unrelated resources could be activated; denied or incomplete inspection is not verified absence.
+- **AND** the shared password is retained only in the required Kubernetes Secret; existing mismatched Secret data is never overwritten, and no password or password digest enters generated files or execution reports.
+- **AND** scan completion alone does not satisfy enrollment: exact DPUDevice and DPUNode association and current credential, certificate and trust readiness are required; a completed scan with zero newly found devices can reuse exact ready enrollments, but cannot substitute for a missing selected device.
+- **AND** factory-reset policy Never does not imply read-only enrollment, and partial effects are retained without implicit device deletion or recovery resets.
+- **AND** the full selected cohort is reobserved before success; replacing an observed device/node or changing the tenant or shared credential invalidates the result.
+- **AND** an existing DPUDevice without its required DPUNode is reported as partial enrollment that the upstream scan cannot repair; the executor does not hide it behind retries or automatically adopt another reboot mechanism.
+
 ## Baseline and limits
 
 The root pipeline runs discover/generate/deploy, not automatic validation. Exactly-once dispatch is not a promise of global idempotency or a non-reusable operation object. Discovery may mutate supplied config and use a global logger. It performs pre-clean before some worker validation and defers cleanup only after successful setup. See [effects](../managed-effects/spec.md), [artifacts](../artifact-handoff/spec.md) and [outcomes](../outcomes-evidence/spec.md) for those independent responsibilities.

@@ -709,6 +709,52 @@ bundle digest, without being emitted as DPF CR fields. Interface and routing
 success never establishes a DHCP reservation; site allocation and observed
 conflicts remain separate requirements.
 
+Selected-device enrollment follows the verified tenant API boundary. Runtime
+credential references are resolved separately from retained generation: the
+BlueField-4 crawler path requires the `admin` account and one common password
+for the selected BMCs. The executor matches literal BMC IP/port and physical
+serial to retained devices, rechecks Administrator privileges through fresh
+Redfish sessions, and rejects changed or contradictory PSID observations.
+An absent Redfish PSID property does not invalidate an identity-associated host
+PSID retained during generation. Password bytes are used only in memory and in
+the required Kubernetes `bmc-shared-password` Secret, never in bundle files,
+ownership digests, logs or execution reports. An existing exact Secret may be
+reused without adoption; a mismatch stops execution rather than overwriting it.
+
+Enrollment is a controller-mediated BMC change, not another read-only discovery
+pass. `BMCFactoryResetPolicy: Never` prevents factory reset, but DPF can initialize
+credentials and mTLS. Complete resource-scope inspection must precede controller
+activation and shared Secret installation, since either can activate unrelated
+pending resources. Singleton DPUDiscovery scan completion is insufficient: the
+executor must bind the resulting DPUDevice serial/IP/port and exactly one DPUNode
+reference, then require current identity, credential, server-certificate and
+CA-trust conditions. Partial effects remain in place for inspection; enrollment
+does not authorize deletion, replacement, recovery resets or HBN-ready claims.
+The initial executor supports `Never` only. Generation may retain an explicit
+`OnInitialization` preview, but execution must stop before operator effects
+until BMC DHCP recovery can be verified; a valid enum is not recovery evidence.
+
+BMC credentials and TLS trust are explicit runtime site access inputs. The
+retained enrollment plan binds serial, PSID and endpoint, not an earlier factory
+certificate or CA. No TLS bypass is inferred or enabled after a certificate
+failure; any bypass must already be explicit in the resolved site target. Fresh
+identity checks use that configured transport policy and do not attest verified
+TLS when bypass is selected. Management API identity/trust remains plan-bound.
+
+A current DPUDiscovery scan with zero newly found devices can finish the scan
+step because DPF skips already-enrolled BMC IPs. It cannot finish enrollment:
+every selected device and node must still match the retained identity and report
+required readiness. Enrollment polls that entire cohort without caching a prior
+ready result.
+It retains device and node UIDs, rejects replacement, and rechecks tenant sources,
+the shared credential, bootstrap identities and complete enrollment scope before
+issuing its receipt. A selected DPUDevice without its matching DPUNode is a
+specific partial-enrollment failure: the pinned DPF crawler skips an existing
+BMC IP and cannot repair that missing association on a rescan. The executor
+reports this reason and leaves resources available for inspection. Existing node
+associations must retain the external reboot method created by that crawler;
+an alternate reboot mechanism is not silently adopted.
+
 Management-node network investigation reuses the existing explicitly selected
 management-mode probe rather than introducing another node access mechanism.
 The runner binds results to Pod and Node UIDs and uses journaled, UID-preconditioned

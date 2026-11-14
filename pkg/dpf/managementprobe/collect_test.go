@@ -7,6 +7,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,6 +237,70 @@ func TestSelectedGAChartDPUClusterSchemaContainsObservedEndpointFields(t *testin
 		if !found {
 			t.Errorf("selected GA DPUCluster schema lacks required field %q", required)
 		}
+	}
+}
+
+func TestCollectDPUClusterKeepalivedScopeAndEndpointPresence(t *testing.T) {
+	newCluster := func(name, namespace, clusterType string, keepalived any) *unstructured.Unstructured {
+		spec := map[string]any{"type": clusterType}
+		if keepalived != nil {
+			spec["clusterEndpoint"] = map[string]any{"keepalived": keepalived}
+		}
+		object := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1", "kind": "DPUCluster",
+			"metadata": map[string]any{"name": name, "namespace": namespace}, "spec": spec,
+		}}
+		object.SetGroupVersionKind(schema.GroupVersionKind{Group: "provisioning.dpu.nvidia.com", Version: "v1alpha1", Kind: "DPUCluster"})
+		return object
+	}
+	valid := newCluster("valid", "tenant-a", "kamaji", map[string]any{
+		"vip": "192.0.2.20", "interface": "eth0", "virtualRouterID": int64(126),
+		"nodeSelector": map[string]any{"node-role.kubernetes.io/control-plane": "", "site": "blue"},
+	})
+	empty := newCluster("empty", "tenant-b", "kamaji", map[string]any{
+		"vip": "192.0.2.21", "interface": "eth0", "virtualRouterID": int64(127), "nodeSelector": map[string]any{},
+	})
+	missing := newCluster("static-without-endpoint", "tenant-c", "static", nil)
+	malformed := newCluster("malformed", "tenant-d", "kamaji", map[string]any{
+		"vip": "192.0.2.22", "interface": "eth0", "virtualRouterID": int64(128), "nodeSelector": map[string]any{"invalid key": "blue"},
+	})
+	collector := Collector{
+		Kubernetes: kubernetesfake.NewSimpleClientset(),
+		Dynamic:    newDynamicClient(valid, empty, missing, malformed),
+		Extensions: extensionsfake.NewClientset(crdFor(crds[4])),
+	}
+	snapshot := collector.Collect(context.Background(), "dpf-operator-system")
+	if snapshot.DPUClusters.State != CollectionComplete || len(snapshot.DPUClusters.Items) != 4 {
+		t.Fatalf("DPUCluster observation state/items = %s/%d", snapshot.DPUClusters.State, len(snapshot.DPUClusters.Items))
+	}
+	byName := make(map[string]DPUCluster, len(snapshot.DPUClusters.Items))
+	for _, cluster := range snapshot.DPUClusters.Items {
+		byName[cluster.Name] = cluster
+	}
+	validObservation := byName["valid"]
+	if validObservation.KeepalivedPresent == nil || !*validObservation.KeepalivedPresent || validObservation.NodeSelector == nil || !maps.Equal(*validObservation.NodeSelector, map[string]string{"node-role.kubernetes.io/control-plane": "", "site": "blue"}) {
+		t.Fatalf("valid typed Keepalived scope = %#v", validObservation)
+	}
+	emptyObservation := byName["empty"]
+	if emptyObservation.KeepalivedPresent == nil || !*emptyObservation.KeepalivedPresent || emptyObservation.NodeSelector == nil || len(*emptyObservation.NodeSelector) != 0 {
+		t.Fatalf("explicit empty selector was not preserved: %#v", emptyObservation)
+	}
+	missingObservation := byName["static-without-endpoint"]
+	if missingObservation.KeepalivedPresent == nil || *missingObservation.KeepalivedPresent || missingObservation.NodeSelector != nil {
+		t.Fatalf("static cluster endpoint absence was not distinguished: %#v", missingObservation)
+	}
+	malformedObservation := byName["malformed"]
+	if malformedObservation.KeepalivedPresent == nil || !*malformedObservation.KeepalivedPresent || malformedObservation.NodeSelector != nil {
+		t.Fatalf("malformed selector was treated as observed: %#v", malformedObservation)
+	}
+	foundIssue := false
+	for _, issue := range snapshot.Issues {
+		if issue.Source == crds[4].name && issue.Resource == "malformed" && issue.Namespace == "tenant-d" && issue.Field == "spec.clusterEndpoint.keepalived.nodeSelector" {
+			foundIssue = true
+		}
+	}
+	if !foundIssue {
+		t.Fatalf("missing namespace-bound malformed selector issue: %#v", snapshot.Issues)
 	}
 }
 

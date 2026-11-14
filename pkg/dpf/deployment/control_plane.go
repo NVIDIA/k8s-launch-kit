@@ -11,64 +11,74 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementnetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 )
 
-// runControlPlane executes the management bootstrap and then the independent
-// tenant API boundary. Site allocation declarations are required before any
-// management effects. Its result does not authorize enrollment or
-// establish HBN readiness. It is private until those remaining stages are wired.
-func runControlPlane(ctx context.Context, client *APIClient, retained *bundle.Bundle, journal *executionJournal,
-	probes probe.Runner, interval, requestTimeout time.Duration,
-) (tenantStageReceipt, error) {
+// runControlPlane executes the retained management, tenant and selected-device
+// enrollment stages using one prepared plan. Its receipt does not establish
+// workload or DPUDeployment readiness.
+func runControlPlane(ctx context.Context, client enrollmentManagementClient, retained *bundle.Bundle, journal *executionJournal,
+	probes probe.Runner, request config.Request, interval, requestTimeout time.Duration,
+) (enrollmentStageReceipt, error) {
 	if ctx == nil || client == nil || journal == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
-		return tenantStageReceipt{}, fmt.Errorf("control-plane execution requires a client, report and bounded polling/request controls")
+		return enrollmentStageReceipt{}, fmt.Errorf("control-plane execution requires a client, report and bounded polling/request controls")
 	}
 	if _, bounded := ctx.Deadline(); !bounded {
-		return tenantStageReceipt{}, fmt.Errorf("control-plane execution requires a deadline")
+		return enrollmentStageReceipt{}, fmt.Errorf("control-plane execution requires a deadline")
 	}
 	if err := ctx.Err(); err != nil {
-		return tenantStageReceipt{}, err
+		return enrollmentStageReceipt{}, err
 	}
 	if err := probes.Assets.Validate(); err != nil {
-		return tenantStageReceipt{}, err
+		return enrollmentStageReceipt{}, err
 	}
 	if probes.Journal == nil {
-		return tenantStageReceipt{}, fmt.Errorf("control-plane execution requires a durable probe resource journal")
+		return enrollmentStageReceipt{}, fmt.Errorf("control-plane execution requires a durable probe resource journal")
 	}
 	execution, err := prepareManagementExecution(retained, time.Until(deadline(ctx)))
 	if err != nil {
-		return tenantStageReceipt{}, err
+		return enrollmentStageReceipt{}, err
 	}
-	if execution.plan.Digest() != journal.digest {
-		return tenantStageReceipt{}, fmt.Errorf("control-plane execution report must identify the retained bundle")
+	if journal.digest != execution.plan.Digest() {
+		return enrollmentStageReceipt{}, fmt.Errorf("control-plane report must identify the retained bundle")
 	}
 	intent := execution.plan.Intent()
 	if !client.matchesBinding(intent.Management, intent.KubernetesVersion) {
-		return tenantStageReceipt{}, fmt.Errorf("management client binding differs from the retained control-plane plan")
+		return enrollmentStageReceipt{}, fmt.Errorf("management client binding differs from the retained plan")
 	}
-	for _, check := range managementnetwork.CheckTenantAllocation(intent.Bootstrap.Tenant) {
-		state := "confirmed"
-		if check.State != "passed" {
-			state = check.State
-		}
-		if err := journal.record(executionEvent{Stage: "site-allocation", Operation: "check", Subject: check.Subject,
-			State: state, ReasonCode: check.ReasonCode, Message: check.Message}); err != nil {
-			return tenantStageReceipt{}, err
-		}
-		if check.State != "passed" {
-			return tenantStageReceipt{}, fmt.Errorf("%s: %s", check.ReasonCode, check.Message)
-		}
-	}
-	management, err := runPreparedManagement(ctx, client, execution, journal, interval)
+	selected, password, err := bindEnrollmentBMCs(intent.Devices, request.Targets)
 	if err != nil {
-		return tenantStageReceipt{}, err
+		return enrollmentStageReceipt{}, err
+	}
+	if _, err := selectedEnrollmentDiscoveries(execution, selected); err != nil {
+		return enrollmentStageReceipt{}, err
+	}
+	if err := journalTenantChecks(journal, "site-allocation", managementnetwork.CheckTenantAllocation(intent.Bootstrap.Tenant)); err != nil {
+		return enrollmentStageReceipt{}, err
+	}
+	// DPU controllers may act as soon as the operator and configuration start.
+	// Verify physical BMC identity and the complete existing enrollment scope
+	// before either management effect can activate unrelated devices.
+	if err := client.verifyEnrollmentBMCs(ctx, selected, requestTimeout, journal); err != nil {
+		return enrollmentStageReceipt{}, err
+	}
+	if err := guardEnrollmentScope(ctx, client, execution, selected); err != nil {
+		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, "ENROLLMENT_SCOPE_UNSAFE", err.Error(), nil)
+	}
+	managementReceipt, err := runPreparedManagement(ctx, client, execution, journal, interval)
+	if err != nil {
+		return enrollmentStageReceipt{}, err
 	}
 	runID := "tenant-" + rand.Text()
 	observeNetwork := func(ctx context.Context, tenant bootstrap.Tenant) ([]inventory.Check, error) {
 		return client.checkTenantNetwork(ctx, tenant, probes, runID, requestTimeout)
 	}
-	return runTenantStage(ctx, client, execution, management, journal, interval, requestTimeout, observeNetwork)
+	tenantReceipt, err := runTenantStage(ctx, client, execution, managementReceipt, journal, interval, requestTimeout, observeNetwork)
+	if err != nil {
+		return enrollmentStageReceipt{}, err
+	}
+	return runEnrollmentStage(ctx, client, execution, managementReceipt, tenantReceipt, selected, password, journal, interval, requestTimeout)
 }

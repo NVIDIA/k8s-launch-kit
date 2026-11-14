@@ -34,19 +34,20 @@ type HBNManagementConfig struct {
 }
 
 type HBNManagementCluster struct {
-	Name                      string   `json:"name" yaml:"name"`
-	Namespace                 string   `json:"namespace" yaml:"namespace"`
-	UID                       string   `json:"uid,omitempty" yaml:"uid,omitempty"`
-	ResourceVersion           string   `json:"resourceVersion,omitempty" yaml:"resourceVersion,omitempty"`
-	Type                      string   `json:"type,omitempty" yaml:"type,omitempty"`
-	Phase                     string   `json:"phase,omitempty" yaml:"phase,omitempty"`
-	Version                   string   `json:"version,omitempty" yaml:"version,omitempty"`
-	VIP                       string   `json:"vip,omitempty" yaml:"vip,omitempty"`
-	Interface                 string   `json:"interface,omitempty" yaml:"interface,omitempty"`
-	VirtualRouterID           *int64   `json:"virtualRouterID,omitempty" yaml:"virtualRouterID,omitempty"`
-	LaunchKitTenantLabelKey   string   `json:"launchKitTenantLabelKey,omitempty" yaml:"launchKitTenantLabelKey,omitempty"`
-	LaunchKitTenantLabelValue string   `json:"launchKitTenantLabelValue,omitempty" yaml:"launchKitTenantLabelValue,omitempty"`
-	Owners                    []string `json:"owners,omitempty" yaml:"owners,omitempty"`
+	Name                      string             `json:"name" yaml:"name"`
+	Namespace                 string             `json:"namespace" yaml:"namespace"`
+	UID                       string             `json:"uid,omitempty" yaml:"uid,omitempty"`
+	ResourceVersion           string             `json:"resourceVersion,omitempty" yaml:"resourceVersion,omitempty"`
+	Type                      string             `json:"type,omitempty" yaml:"type,omitempty"`
+	Phase                     string             `json:"phase,omitempty" yaml:"phase,omitempty"`
+	Version                   string             `json:"version,omitempty" yaml:"version,omitempty"`
+	VIP                       string             `json:"vip,omitempty" yaml:"vip,omitempty"`
+	Interface                 string             `json:"interface,omitempty" yaml:"interface,omitempty"`
+	VirtualRouterID           *int64             `json:"virtualRouterID,omitempty" yaml:"virtualRouterID,omitempty"`
+	NodeSelector              *map[string]string `json:"nodeSelector,omitempty" yaml:"nodeSelector,omitempty"`
+	LaunchKitTenantLabelKey   string             `json:"launchKitTenantLabelKey,omitempty" yaml:"launchKitTenantLabelKey,omitempty"`
+	LaunchKitTenantLabelValue string             `json:"launchKitTenantLabelValue,omitempty" yaml:"launchKitTenantLabelValue,omitempty"`
+	Owners                    []string           `json:"owners,omitempty" yaml:"owners,omitempty"`
 }
 
 type HBNManagementEnrollment struct {
