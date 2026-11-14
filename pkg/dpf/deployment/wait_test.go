@@ -6,6 +6,7 @@ package deployment
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +166,40 @@ func TestWaitNativeReadyStopsOnTerminalControllerOutcome(t *testing.T) {
 				})
 			if obj != nil || err == nil || errors.Is(err, context.DeadlineExceeded) || reads != 1 || observations != 1 {
 				t.Fatalf("terminal outcome was retried or lost: obj=%v err=%v reads=%d observations=%d", obj, err, reads, observations)
+			}
+		})
+	}
+}
+
+func TestSoftwareWaitTracksConditionsAndStopsOnTerminalReason(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("terminal-%v", terminal), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			reads := 0
+			current := func(complete bool) *unstructured.Unstructured {
+				status, reason := "False", "Reconciling"
+				if complete {
+					status, reason = "True", "Success"
+				}
+				if terminal {
+					status, reason = "False", "Failed"
+				}
+				obj := dpfObject("BlueFieldSoftware", map[string]any{"phase": "Ready", "observedGeneration": int64(2), "conditions": []any{conditionMap("Downloaded", status, reason, 2), conditionMap("Ready", "True", "Success", 2)}})
+				obj.SetUID("software-uid")
+				return obj
+			}
+			client := resourceReadFunc(func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+				reads++
+				return current(reads > 1), nil
+			})
+			_, err := waitNativeReady(ctx, client, current(false), "software-uid", func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }, time.Millisecond, func(Readiness, bool) error { return nil })
+			if terminal {
+				if err == nil || reads != 1 || !strings.Contains(err.Error(), "RESOURCE_TERMINAL_FAILURE") || !strings.Contains(err.Error(), "Controller reason: Failed") {
+					t.Fatalf("terminal wait: reads=%d err=%v", reads, err)
+				}
+			} else if err != nil || reads != 2 {
+				t.Fatalf("pending wait: reads=%d err=%v", reads, err)
 			}
 		})
 	}

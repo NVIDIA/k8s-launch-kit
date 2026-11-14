@@ -566,6 +566,56 @@ CLI. The remaining runner must enforce the fixed stage dependencies, ownership,
 RBAC, tenant convergence, enrollment identity, consumed artifact checks and
 physical-effect boundaries before it can report a deployment result.
 
+Software preparation composes management, tenant and selected-device enrollment
+using one retained execution plan. Before a BlueFieldSoftware create it refreshes
+those prerequisites and checks permission to read/create the selected software
+resource and open the named registry Pod port-forward. An ordinary resource-create
+authorization is namespace-scoped; the port-forward authorization names the Pod
+and the portforward subresource. Actual registry reads and post-download checks
+remain required even when authorization succeeds.
+
+The generic BlueFieldSoftware readiness predicate and the staged-byte verifier
+share current-generation Downloaded/Ready condition checks in addition to the
+Ready phase. Missing or still-reconciling conditions remain pending; terminal
+conditions stop the wait. Software preparation is a management-side download and
+verification step, not a DPUDeployment, firmware installation or HBN traffic result.
+
+For BF4 software, the native verifier reads the bytes in DPF's staging cache.
+It reconstructs the ISO and selected PSID-specific PLDM cache paths from the
+retained BlueFieldSoftware specification and compares them with current
+controller status. It then streams HTTPS through a loopback-only Kubernetes
+Pod port-forward, using DPF's public CA bundle to verify the registry's service
+certificate. No verifier image, shell in the controller, or second download
+from the original artifact URL is required. Redirects, transformed responses,
+partial streams and digest mismatches block verification.
+
+The verifier binds the registry to the current provisioning leader and its
+actual shared storage. The active provisioning manager must use the retained
+release's DPF system image reference before a tunnel is opened. The pinned operator
+uses that same image coordinate for its provisioning manager; this comparison
+binds the release reference and does not attest image bytes. A hostPath must refer to the same path on the same node;
+a PVC must retain its bound claim identity. Software UID, generation, retained
+intent, controller readiness, paths, registry/storage identities and CA trust
+are checked again after streaming. Routine Lease renewal is allowed, but a
+leader transition invalidates the observation. Temporary tunnel cleanup must
+complete before a receipt is returned.
+
+The reader requires the selected release's declared nginx command, configuration
+mount and ConfigMap contents, and rejects unsupported custom mappings. This
+checks the current API configuration, not the configuration already loaded by
+the running process: a ConfigMap subPath mount does not refresh after updates.
+The cache-path interpretation assumes the operator-provided configuration was
+loaded and was not independently replaced. No process/configuration attestation
+or container exec is implied by the receipt.
+
+This establishes that the registry served bytes matching the retained locks
+at verification time. It does not prove that a later asynchronous BMC GET or
+PLDM upload consumed unchanged bytes: the pinned DPF API has no digest field
+and its cache is mutable. Nor does Pod port-forwarding establish BMC reachability
+through the registry Service or an external load balancer. Those delivery-path
+and runtime checks remain separate. These private verification helpers do not
+enable the deployment CLI or replace the remaining workload/effect stages.
+
 Bootstrap ordering follows resource ownership: external prerequisites precede
 the operator chart; the chart's manager and CRDs precede DPFOperatorConfig;
 that configuration creates DPF's system components. Waiting for those components

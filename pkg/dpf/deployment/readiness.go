@@ -71,7 +71,16 @@ func EvaluateReadiness(obj *unstructured.Unstructured) Readiness {
 		if terminal := terminalErrorReadiness(obj, "BlueFieldSoftware"); terminal != nil {
 			return *terminal
 		}
-		return phaseReadiness(obj, "BlueFieldSoftware", "SOFTWARE_STATUS_STALE", "Ready", "Error", "Deleting", false)
+		phase := phaseReadiness(obj, "BlueFieldSoftware", "SOFTWARE_STATUS_STALE", "Ready", "Error", "Deleting", false)
+		if !phase.Ready {
+			return phase
+		}
+		for _, conditionType := range []string{"Downloaded", "Ready"} {
+			if condition := conditionReadiness(obj, conditionType, "SOFTWARE_STATUS_STALE", true); !condition.Ready {
+				return condition
+			}
+		}
+		return ready("BlueFieldSoftware reports current Ready phase and Downloaded and Ready conditions.")
 	case "DPUDeployment":
 		if obj.GetAPIVersion() != "svc.dpu.nvidia.com/v1alpha1" {
 			return result("RESOURCE_API_UNSUPPORTED", "DPUDeployment readiness requires svc.dpu.nvidia.com/v1alpha1.")

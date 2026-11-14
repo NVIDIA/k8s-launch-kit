@@ -86,6 +86,7 @@ type preflightWorkload struct {
 
 type accessRequirement struct {
 	verb, group, version, resource, namespace, resourceName string
+	subresource                                             string
 }
 
 type preflightPlan struct {
@@ -835,17 +836,23 @@ func (c *APIClient) checkAccess(ctx context.Context, requirement accessRequireme
 	attributes := &authorizationv1.ResourceAttributes{
 		Verb: requirement.verb, Group: requirement.group, Version: requirement.version,
 		Resource: requirement.resource, Namespace: requirement.namespace, Name: requirement.resourceName,
+		Subresource: requirement.subresource,
 	}
 	review, err := c.access.Client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: attributes}}, metav1.CreateOptions{})
 	identity := strings.Join([]string{requirement.namespace, requirement.group, requirement.resource, requirement.resourceName, requirement.verb}, ".")
+	resource := requirement.resource
+	if requirement.subresource != "" {
+		identity += "." + requirement.subresource
+		resource += "/" + requirement.subresource
+	}
 	if err != nil {
 		return blockedPreflight("caller.rbac."+identity, apiFailureCode(err), "The configured identity's scoped authorization could not be verified.")
 	}
 	if review == nil || review.Status.EvaluationError != "" {
 		return blockedPreflight("caller.rbac."+identity, "RBAC_REVIEW_INCOMPLETE", "The API did not return a complete authorization decision.")
 	}
-	if !review.Status.Allowed {
-		return blockedPreflight("caller.rbac."+identity, "CALLER_PERMISSION_MISSING", fmt.Sprintf("The configured identity cannot %s %s in namespace %q.", requirement.verb, resourceDescription(requirement.group, requirement.resource), requirement.namespace))
+	if !review.Status.Allowed || review.Status.Denied {
+		return blockedPreflight("caller.rbac."+identity, "CALLER_PERMISSION_MISSING", fmt.Sprintf("The configured identity cannot %s %s in namespace %q.", requirement.verb, resourceDescription(requirement.group, resource), requirement.namespace))
 	}
 	return passedPreflight("caller.rbac."+identity, "The configured identity has the required scoped permission.")
 }

@@ -49,8 +49,8 @@ func TestEvaluateReadinessForPinnedDPFResources(t *testing.T) {
 			obj:  dpfObject("DPU", map[string]any{"phase": "Ready", "observedGeneration": int64(2), "conditions": []any{conditionMap("Ready", "True", "DPUReady", 0)}}),
 		},
 		{
-			name: "BlueField software phase and observed generation",
-			obj:  dpfObject("BlueFieldSoftware", map[string]any{"phase": "Ready", "observedGeneration": int64(2)}),
+			name: "BlueField software phase and current download and readiness conditions",
+			obj:  dpfObject("BlueFieldSoftware", map[string]any{"phase": "Ready", "observedGeneration": int64(2), "conditions": []any{conditionMap("Downloaded", "True", "Success", 2), conditionMap("Ready", "True", "Success", 2)}}),
 		},
 		{
 			name: "DPU deployment aggregate condition",
@@ -367,4 +367,39 @@ func conditionMap(conditionType, status, reason string, observedGeneration int64
 		condition["observedGeneration"] = observedGeneration
 	}
 	return condition
+}
+
+func TestSoftwareReadinessRequiresCurrentDownloadAndReadyConditions(t *testing.T) {
+	for _, conditionType := range []string{"Downloaded", "Ready"} {
+		for _, scenario := range []string{"missing", "stale", "false", "future", "duplicate"} {
+			t.Run(conditionType+"/"+scenario, func(t *testing.T) {
+				conditions := []any{}
+				for _, kind := range []string{"Downloaded", "Ready"} {
+					if kind == conditionType && scenario == "missing" {
+						continue
+					}
+					value := conditionMap(kind, "True", "Success", 2)
+					if kind == conditionType {
+						switch scenario {
+						case "stale":
+							value["observedGeneration"] = int64(1)
+						case "future":
+							value["observedGeneration"] = int64(3)
+						case "false":
+							value["status"] = "False"
+							value["reason"] = "Reconciling"
+						case "duplicate":
+							conditions = append(conditions, conditionMap(kind, "True", "Success", 2))
+						}
+					}
+					conditions = append(conditions, value)
+				}
+				object := dpfObject("BlueFieldSoftware", map[string]any{"phase": "Ready", "observedGeneration": int64(2), "conditions": conditions})
+				got := EvaluateReadiness(object)
+				if got.Ready || softwareReadiness(object) == nil {
+					t.Fatalf("incomplete software accepted: %#v", got)
+				}
+			})
+		}
+	}
 }

@@ -66,6 +66,15 @@ Equivalent entry points SHALL reuse common semantics for equivalent modes. Inten
 
 New and changed workflow checks SHALL persist a stable reason code and safe explanation for every failed, unavailable, unknown, skipped or deferred result. The result SHALL distinguish missing prerequisites from an attempted operation failure and identify the subject and source where known. Diagnostic persistence MUST NOT disclose credentials or treat optional unknowns as passes. Existing unrelated baseline paths are not retroactively migrated by this requirement.
 
+#### Scenario: DPF staged software verification
+
+- **WHEN** native DPF execution verifies staged BF4 software against retained artifact locks
+- **THEN** the software preparation stage uses the same retained plan as management, tenant and enrollment; it checks current enrollment and required download/tunnel permissions before creating the exact BlueFieldSoftware.
+- **AND** controller readiness requires the current generation, Ready phase, and current Downloaded and Ready conditions; a pending condition keeps the wait pending and a terminal condition stops it.
+- **AND** it hashes the selected ISO and PSID-specific PLDM bytes served from the verified DPF cache, rather than treating an origin URL download or controller Ready condition as digest verification.
+- **AND** it rejects partial, transformed, redirected or mismatched streams and rechecks software, active-controller, registry, shared-storage and public-CA bindings after reading; failed tunnel cleanup prevents a completed verification receipt.
+- **AND** a successful result describes the bytes served at verification time, not a guarantee of later hardware consumption or of reachability through a different delivery path.
+
 #### Scenario: Prerequisite executable is missing
 
 - **WHEN** a workflow cannot execute a check because a required tool is unavailable
