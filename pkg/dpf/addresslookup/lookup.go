@@ -138,7 +138,7 @@ func Collect(r Request, now time.Time, read func(string, int64) ([]byte, error),
 		}
 		ref := inventory.Digest("dpf-address-source-v1", []string{key, inventory.Digest("lease-bytes-v1", data)})
 		evidence[ref] = inventory.Evidence{Kind: "lease-file", InputRef: fmt.Sprintf("/discovery/addressLookup/sources/%d", i), ObservedAt: now, Vantage: "executor", Property: "MAC/IP/expiry"}
-		out.Observations[key] = inventory.Observation{State: "observed", Values: []string{ref}}
+		out.Observations[key] = inventory.Observation{State: "observed"}
 		for _, row := range rows {
 			if row.expired {
 				expired[row.mac] = true

@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -406,22 +407,23 @@ func material(inv *inventory.Inventory) map[string]any {
 		fields["software"] = releases.Summarize(*inv.Software)
 	}
 	if inv.AddressLookup != nil {
-		fields["addressLookup"] = inv.AddressLookup
+		fields["addressLookup"] = materialAddressLookup(*inv.AddressLookup)
 	}
 	if inv.Management != nil {
 		fields["management.identity"] = []string{inv.Management.APIEndpoint, inv.Management.SystemNamespaceUID, inv.Management.TrustDigest, inv.Management.KubernetesVersion}
 		for _, n := range inv.Management.Nodes {
-			addresses := slices.Clone(n.Addresses)
+			// Empty observed facts have one material form across YAML/JSON codecs.
+			addresses := append([]string(nil), n.Addresses...)
 			slices.Sort(addresses)
-			interfaces := slices.Clone(n.Interfaces)
+			interfaces := append([]inventory.Interface(nil), n.Interfaces...)
 			for i := range interfaces {
-				interfaces[i].Addresses = slices.Clone(interfaces[i].Addresses)
+				interfaces[i].Addresses = append([]string(nil), interfaces[i].Addresses...)
 				slices.Sort(interfaces[i].Addresses)
 			}
 			slices.SortFunc(interfaces, func(a, b inventory.Interface) int {
 				return cmp.Or(cmp.Compare(a.Index, b.Index), strings.Compare(a.Name, b.Name))
 			})
-			routes := slices.Clone(n.Routes)
+			routes := append([]inventory.Route(nil), n.Routes...)
 			slices.SortFunc(routes, func(a, b inventory.Route) int {
 				return cmp.Or(cmp.Compare(a.Table, b.Table), strings.Compare(a.Destination, b.Destination), strings.Compare(a.Gateway, b.Gateway), cmp.Compare(a.InterfaceIndex, b.InterfaceIndex))
 			})
@@ -468,6 +470,30 @@ func material(inv *inventory.Inventory) map[string]any {
 	}
 	return fields
 }
+
+// materialAddressLookup preserves candidate facts while excluding provenance
+// references, which are deliberately omitted from the saved YAML config.
+func materialAddressLookup(lookup inventory.AddressLookup) inventory.AddressLookup {
+	lookup.Candidates = slices.Clone(lookup.Candidates)
+	for i := range lookup.Candidates {
+		lookup.Candidates[i].EvidenceRef = ""
+	}
+	if len(lookup.Candidates) == 0 {
+		lookup.Candidates = nil
+	}
+	lookup.Observations = maps.Clone(lookup.Observations)
+	for key, observation := range lookup.Observations {
+		// Values are locators already represented by Candidates or transient
+		// source-byte evidence digests. Neither belongs in material comparison.
+		observation.Values = nil
+		lookup.Observations[key] = observation
+	}
+	if len(lookup.Observations) == 0 {
+		lookup.Observations = nil
+	}
+	return lookup
+}
+
 func Diff(old, current *inventory.Inventory) []inventory.Change {
 	out := []inventory.Change{}
 	if old == nil {

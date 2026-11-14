@@ -5,10 +5,13 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/addresslookup"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
@@ -287,5 +290,114 @@ discovery:
 		current.Management.SystemNamespaceUID = "replacement"
 		Canonicalize(&current)
 		Expect(scopeConflict(&old, &current)).To(BeTrue())
+	})
+	It("keeps address lookup material stable after YAML removes only provenance references", func() {
+		before := estate()
+		before.AddressLookup = &inventory.AddressLookup{Candidates: []inventory.AddressCandidate{{
+			Name: "dpu-a", Role: "dpus", MAC: "02:00:00:00:00:01", Address: "192.0.2.44", Source: "neighbor-cache", EvidenceRef: "transient-probe-1",
+		}}, Observations: map[string]inventory.Observation{
+			"source.0":     {State: "observed", Values: []string{"source-bytes-digest-old"}},
+			"device.dpu-a": {State: "candidate", Values: []string{"192.0.2.44"}, ReasonCode: "ADDRESS_UNVERIFIED", Message: "verify candidate"},
+		}}
+		originalLookup, err := json.Marshal(before.AddressLookup)
+		Expect(err).NotTo(HaveOccurred())
+		Canonicalize(&before)
+		original, err := json.Marshal(before)
+		Expect(err).NotTo(HaveOccurred())
+		saved, err := yaml.Marshal(before)
+		Expect(err).NotTo(HaveOccurred())
+		var reloaded inventory.Inventory
+		Expect(yaml.Unmarshal(saved, &reloaded)).To(Succeed())
+		Expect(reloaded.AddressLookup.Candidates[0].EvidenceRef).To(BeEmpty())
+		Canonicalize(&reloaded)
+		Expect(reloaded.Fingerprint).To(Equal(before.Fingerprint), "%#v", Diff(&before, &reloaded))
+		Expect(Diff(&before, &reloaded)).To(BeEmpty())
+		after, err := json.Marshal(before)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(Equal(original), "comparison must not mutate the source inventory")
+		lookupAfterJSON, err := json.Marshal(before.AddressLookup)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(lookupAfterJSON).To(Equal(originalLookup), "material projection must not strip provenance from its input")
+
+		for _, change := range []struct {
+			name string
+			edit func(*inventory.AddressCandidate)
+		}{
+			{name: "name", edit: func(candidate *inventory.AddressCandidate) { candidate.Name = "dpu-b" }},
+			{name: "role", edit: func(candidate *inventory.AddressCandidate) { candidate.Role = "hosts" }},
+			{name: "address", edit: func(candidate *inventory.AddressCandidate) { candidate.Address = "192.0.2.45" }},
+			{name: "MAC", edit: func(candidate *inventory.AddressCandidate) { candidate.MAC = "02:00:00:00:00:02" }},
+			{name: "source", edit: func(candidate *inventory.AddressCandidate) { candidate.Source = "arp-table" }},
+		} {
+			By(change.name)
+			current := reloaded
+			current.AddressLookup = &inventory.AddressLookup{Candidates: slices.Clone(reloaded.AddressLookup.Candidates), Observations: maps.Clone(reloaded.AddressLookup.Observations)}
+			Expect(Diff(&reloaded, &current)).To(BeEmpty(), "the candidate edit must be the only material change")
+			change.edit(&current.AddressLookup.Candidates[0])
+			Canonicalize(&current)
+			Expect(current.Fingerprint).NotTo(Equal(reloaded.Fingerprint))
+			Expect(Diff(&reloaded, &current)).NotTo(BeEmpty())
+		}
+		for _, change := range []struct {
+			name string
+			edit func(*inventory.Observation)
+		}{
+			{name: "state", edit: func(observation *inventory.Observation) { observation.State = "unavailable" }},
+			{name: "reason", edit: func(observation *inventory.Observation) { observation.ReasonCode = "ADDRESS_SOURCE_UNREADABLE" }},
+		} {
+			By(change.name)
+			current := reloaded
+			current.AddressLookup = &inventory.AddressLookup{Candidates: slices.Clone(reloaded.AddressLookup.Candidates), Observations: maps.Clone(reloaded.AddressLookup.Observations)}
+			observation := current.AddressLookup.Observations["source.0"]
+			change.edit(&observation)
+			current.AddressLookup.Observations["source.0"] = observation
+			Canonicalize(&current)
+			Expect(current.Fingerprint).NotTo(Equal(reloaded.Fingerprint))
+			Expect(Diff(&reloaded, &current)).NotTo(BeEmpty(), "source state and reason remain material")
+		}
+		current := reloaded
+		current.AddressLookup = &inventory.AddressLookup{Candidates: slices.Clone(reloaded.AddressLookup.Candidates), Observations: maps.Clone(reloaded.AddressLookup.Observations)}
+		candidate := current.AddressLookup.Candidates[0]
+		candidate.EvidenceRef = "different-transient-ref"
+		current.AddressLookup.Candidates[0] = candidate
+		source := current.AddressLookup.Observations["source.0"]
+		source.Values = []string{"source-bytes-digest-new"}
+		current.AddressLookup.Observations["source.0"] = source
+		device := current.AddressLookup.Observations["device.dpu-a"]
+		device.Values = []string{"192.0.2.44"}
+		current.AddressLookup.Observations["device.dpu-a"] = device
+		Canonicalize(&current)
+		Expect(current.Fingerprint).To(Equal(reloaded.Fingerprint))
+		Expect(Diff(&reloaded, &current)).To(BeEmpty())
+
+		current = reloaded
+		current.AddressLookup = &inventory.AddressLookup{Candidates: []inventory.AddressCandidate{}, Observations: maps.Clone(reloaded.AddressLookup.Observations)}
+		device = current.AddressLookup.Observations["device.dpu-a"]
+		device.State, device.Values, device.ReasonCode = "unknown", nil, "ADDRESS_LEASE_EXPIRED"
+		current.AddressLookup.Observations["device.dpu-a"] = device
+		Canonicalize(&current)
+		Expect(current.Fingerprint).NotTo(Equal(reloaded.Fingerprint), "expired candidate status remains material")
+		Expect(Diff(&reloaded, &current)).NotTo(BeEmpty())
+
+		request, err := addresslookup.Validate(addresslookup.Config{
+			Sources: []addresslookup.Source{{File: "leases", Format: "dnsmasq-leases"}},
+			Devices: []addresslookup.Selector{{Name: "dpu-a", Role: "arm", MAC: "02:00:00:00:00:01"}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		first, firstEvidence := addresslookup.Collect(request, time.Unix(100, 0), func(string, int64) ([]byte, error) {
+			return []byte("200 02:00:00:00:00:01 192.0.2.44 host-one *\n"), nil
+		}, nil)
+		second, secondEvidence := addresslookup.Collect(request, time.Unix(100, 0), func(string, int64) ([]byte, error) {
+			return []byte("200 02:00:00:00:00:01 192.0.2.44 host-two *\n"), nil
+		}, nil)
+		Expect(firstEvidence).NotTo(BeEmpty())
+		Expect(secondEvidence).NotTo(BeEmpty())
+		Expect(first.Candidates[0].EvidenceRef).NotTo(Equal(second.Candidates[0].EvidenceRef))
+		beforeLookup, afterLookup := estate(), estate()
+		beforeLookup.AddressLookup, afterLookup.AddressLookup = first, second
+		Canonicalize(&beforeLookup)
+		Canonicalize(&afterLookup)
+		Expect(afterLookup.Fingerprint).To(Equal(beforeLookup.Fingerprint))
+		Expect(Diff(&beforeLookup, &afterLookup)).To(BeEmpty())
 	})
 })

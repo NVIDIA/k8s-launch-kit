@@ -25,6 +25,23 @@ var _ = Describe("Explicit MAC address lookup", func() {
 		Expect(ev).To(HaveLen(1))
 		Expect(out.Observations["device.dpu1"].State).To(Equal("candidate"))
 		Expect(out.Candidates[0].EvidenceRef).NotTo(BeEmpty())
+		Expect(out.Observations["source.0"].Values).To(BeEmpty(), "source-byte digests remain in the evidence map and candidate provenance, not observation facts")
+	})
+	It("keeps source-byte evidence changes out of address facts", func() {
+		first, firstEvidence := Collect(r, time.Unix(100, 0), func(string, int64) ([]byte, error) {
+			return []byte("200 02:00:00:00:00:01 192.0.2.3 host-a *\n"), nil
+		}, nil)
+		second, secondEvidence := Collect(r, time.Unix(100, 0), func(string, int64) ([]byte, error) {
+			return []byte("200 02:00:00:00:00:01 192.0.2.3 host-b *\n"), nil
+		}, nil)
+		Expect(first.Candidates).To(HaveLen(1))
+		Expect(second.Candidates).To(HaveLen(1))
+		Expect(first.Candidates[0].Address).To(Equal(second.Candidates[0].Address))
+		Expect(first.Candidates[0].EvidenceRef).NotTo(Equal(second.Candidates[0].EvidenceRef))
+		Expect(firstEvidence).NotTo(BeEmpty())
+		Expect(secondEvidence).NotTo(BeEmpty())
+		Expect(first.Observations["source.0"].Values).To(BeEmpty())
+		Expect(second.Observations["source.0"].Values).To(BeEmpty())
 	})
 	It("reports expired, missing, unreadable and malformed sources distinctly", func() {
 		for _, tc := range []struct {
