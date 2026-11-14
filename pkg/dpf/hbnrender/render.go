@@ -107,14 +107,15 @@ func Render(input Inputs) ([]bundle.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode DPUFlavor spec: %w", err)
 	}
+	hostnames := selectedHostnames(devices)
 	resources := []map[string]any{
 		resource(provAPI, "BlueFieldSoftware", blueFieldName, input.Namespace, blueFieldSpec),
 		resource(provAPI, "DPUFlavor", flavorName, input.Namespace, flavorSpec),
 		ipam("hbn-loopback", input.Namespace, input.Generation.LoopbackCIDR, 32, input.DPUClusterSelector, nil, nil),
 		ipam("hbn-workload", input.Namespace, input.Profile.WorkloadCIDR, input.Profile.WorkloadPrefix, input.DPUClusterSelector, &input.Generation.WorkloadGatewayIndex, hostReservations),
-		iface("p0", input.Namespace, "physical", "p0", nil),
-		iface("p1", input.Namespace, "physical", "p1", nil),
-		iface("pf0hpf", input.Namespace, "pf", "", map[string]any{"pfID": int64(0)}),
+		iface("p0", input.Namespace, "physical", "p0", nil, input.DPUClusterSelector, hostnames),
+		iface("p1", input.Namespace, "physical", "p1", nil, input.DPUClusterSelector, hostnames),
+		iface("pf0hpf", input.Namespace, "pf", "", map[string]any{"pfID": int64(0)}, input.DPUClusterSelector, hostnames),
 		serviceTemplate(input.Namespace, input.Generation, cloneMap(input.HBNResources)),
 		serviceConfiguration(input.Namespace, input.Profile, input.Generation, devices),
 		deployment(input.Namespace, devices, input.DPUClusterSelector, blueFieldName, flavorName, input.Generation.ChartName, input.Generation.NodeEffect, input.Generation.DPUSetStrategy),
@@ -175,7 +176,7 @@ func validate(input Inputs) error {
 			return fmt.Errorf("device serials must be nonempty, trimmed, and unique")
 		}
 		hostname := hbnHostname(d.Serial)
-		if len(kvalidation.IsDNS1123Subdomain(hostname)) != 0 || seenHostname[hostname] {
+		if len(kvalidation.IsDNS1123Subdomain(hostname)) != 0 || len(kvalidation.IsValidLabelValue(hostname)) != 0 || seenHostname[hostname] {
 			return fmt.Errorf("device %q produces an invalid or duplicate DPF HBN hostname %q", d.Serial, hostname)
 		}
 		seenHostname[hostname] = true
@@ -249,7 +250,7 @@ func ipam(name, namespace, network string, prefix int, clusterSelector map[strin
 	return resource(apiVersion, "DPUServiceIPAM", name, namespace, map[string]any{"ipv4Network": config, "dpuClusterSelector": selector})
 }
 
-func iface(name, namespace, kind, physical string, extra map[string]any) map[string]any {
+func iface(name, namespace, kind, physical string, extra map[string]any, clusterSelector map[string]string, hostnames []string) map[string]any {
 	spec := map[string]any{"interfaceType": kind}
 	if kind == "physical" {
 		spec["physical"] = map[string]any{"interfaceName": physical}
@@ -257,17 +258,39 @@ func iface(name, namespace, kind, physical string, extra map[string]any) map[str
 	if kind == "pf" {
 		spec["pf"] = extra
 	}
-	return resource(apiVersion, "DPUServiceInterface", name, namespace, map[string]any{"template": map[string]any{"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{"labels": map[string]any{"interface": name}}, "spec": spec}}}})
+	return resource(apiVersion, "DPUServiceInterface", name, namespace, map[string]any{
+		"dpuClusterSelector": map[string]any{"matchLabels": cloneStringMap(clusterSelector)},
+		"template": map[string]any{
+			"spec": map[string]any{
+				"nodeSelector": map[string]any{"matchExpressions": []map[string]any{{
+					"key": "kubernetes.io/hostname", "operator": "In", "values": append([]string(nil), hostnames...),
+				}}},
+				"template": map[string]any{
+					"metadata": map[string]any{"labels": map[string]any{"interface": name}},
+					"spec":     spec,
+				},
+			},
+		},
+	})
 }
 
 func serviceTemplate(namespace string, coordinates hbn.Generation, resources map[string]any) map[string]any {
 	return resource(apiVersion, "DPUServiceTemplate", coordinates.ChartName, namespace, map[string]any{
 		"deploymentServiceName": coordinates.ChartName,
+		"resourceRequirements":  cloneMap(resources),
 		"helmChart": map[string]any{
 			"source": map[string]any{"repoURL": coordinates.ChartRepository, "version": coordinates.ChartVersion, "chart": coordinates.ChartName},
 			"values": map[string]any{"image": map[string]any{"repository": coordinates.ImageRepository, "tag": coordinates.ImageTag + "@" + coordinates.ImageDigest}, "resources": resources, "hbnSidecar": map[string]any{"vxlanStartupProbe": map[string]any{"enabled": false}}},
 		},
 	})
+}
+
+func selectedHostnames(devices []Device) []string {
+	hostnames := make([]string, 0, len(devices))
+	for _, device := range devices {
+		hostnames = append(hostnames, hbnHostname(device.Serial))
+	}
+	return hostnames
 }
 
 func serviceConfiguration(namespace string, p hbn.Profile, coordinates hbn.Generation, devices []Device) map[string]any {

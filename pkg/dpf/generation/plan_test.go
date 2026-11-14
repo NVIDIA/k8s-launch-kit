@@ -155,6 +155,21 @@ func TestLoadPlanRejectsMalformedOrInconsistentRetainedBundles(t *testing.T) {
 				_ = unstructured.SetNestedField(object.Object, "https://other.example/os.iso", "spec", "osIso")
 			})
 		}},
+		{name: "interface tenant selector removed", mutate: func(_ *bundle.Index, files *[]bundle.File) {
+			mutateManifest(t, files, "DPUServiceInterface", func(object *unstructured.Unstructured) {
+				unstructured.RemoveNestedField(object.Object, "spec", "dpuClusterSelector")
+			})
+		}},
+		{name: "interface node selector removed", mutate: func(_ *bundle.Index, files *[]bundle.File) {
+			mutateManifest(t, files, "DPUServiceInterface", func(object *unstructured.Unstructured) {
+				unstructured.RemoveNestedField(object.Object, "spec", "template", "spec", "nodeSelector")
+			})
+		}},
+		{name: "service flavor accounting understated", mutate: func(_ *bundle.Index, files *[]bundle.File) {
+			mutateManifest(t, files, "DPUServiceTemplate", func(object *unstructured.Unstructured) {
+				_ = unstructured.SetNestedField(object.Object, "1Gi", "spec", "resourceRequirements", "memory")
+			})
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -100,6 +100,14 @@ The output directory contains:
 - The verified chart archives, original source YAML and `.l8k/resolved-config.yaml`.
 - An index recording the ordered stages and required deployment checks.
 
+The physical and host-facing interface definitions select only the intended DPU
+cluster and the selected DPUs' node names. HBN's resource requests are recorded
+both for its container and for DPF's check that the services fit the chosen DPU
+flavor. Generation verifies the manifest shapes; actual available resources and
+interface readiness still require deployment checks.
+Regenerate older preview bundles that omit these selectors or DPF resource
+requirements; editing their manifests invalidates the retained deployment plan.
+
 The resolved configuration records the effective defaults and overrides,
 including the operator release name and namespace, each selected DPU's BMC
 address, the BMC reset policy, the release-selected tenant Kubernetes version,

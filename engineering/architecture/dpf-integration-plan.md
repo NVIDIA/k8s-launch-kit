@@ -552,7 +552,15 @@ not prove that the operator watches the generated configuration.
 
 The workload renderer consumes resolved HBN coordinates/effect settings,
 selected device and tenant selectors, PSID-specific artifacts, and explicit
-flavor/resource inputs. The executor must verify those selectors against live
+flavor/resource inputs. Every standalone DPUServiceInterface carries the selected
+tenant's `dpuClusterSelector` and a node selector containing the exact selected
+DPF node hostnames. An omitted selector would fan out to all tenants or nodes
+under the pinned controller semantics. The hostname derivation is shared with
+HBN's per-DPU ASN configuration and must fit a Kubernetes label value.
+The service template's `resourceRequirements` and chart values use the same
+resource quantities: DPF computes service-to-flavor fit from the former, whereas
+Helm uses the latter for container requests and limits.
+The executor must verify those selectors against live
 identities and release only selected external node-effect holds. HBN's chart
 source API has no digest field; retaining a desired digest is not verification
 of bytes fetched by DPF. Artifact consumption verification remains an explicit

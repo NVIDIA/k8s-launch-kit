@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -16,6 +17,8 @@ import (
 	apiextensionsinternal "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -104,6 +107,20 @@ func TestRenderProducesPinnedFlatWorkloadGraph(t *testing.T) {
 	for i, iface := range []string{"p0_if", "p1_if", "pf0hpf_if"} {
 		if got := nestedString(t, objects[8], "spec", "interfaces", fmt.Sprint(i), "name"); got != iface {
 			t.Fatalf("HBN service interface %d=%q, want %q", i, got, iface)
+		}
+	}
+	for _, index := range []int{4, 5, 6} {
+		if got := nestedString(t, objects[index], "spec", "dpuClusterSelector", "matchLabels", "inventory.example/tenant"); got != "tenant-a" {
+			t.Fatalf("interface %s tenant selector=%q", objects[index]["metadata"], got)
+		}
+		if got := nestedString(t, objects[index], "spec", "template", "spec", "nodeSelector", "matchExpressions", "0", "key"); got != "kubernetes.io/hostname" {
+			t.Fatalf("interface node selector key=%q", got)
+		}
+		if got := nestedString(t, objects[index], "spec", "template", "spec", "nodeSelector", "matchExpressions", "0", "operator"); got != "In" {
+			t.Fatalf("interface node selector operator=%q", got)
+		}
+		if got := nestedValue(t, objects[index], "spec", "template", "spec", "nodeSelector", "matchExpressions", "0", "values"); !reflect.DeepEqual(got, []any{"dpu-node-serial-a-serial-a"}) {
+			t.Fatalf("interface node selector values=%#v", got)
 		}
 	}
 	startup := nestedString(t, objects[8], "spec", "serviceConfiguration", "helmChart", "values", "configuration", "startupYAMLJ2")
@@ -300,6 +317,100 @@ func TestPerDPUASNUsesExactDerivedHostnameAndRejectsCollisions(t *testing.T) {
 	input.Devices[0].Serial = "MT_0000001774"
 	if _, err := Render(input); err == nil {
 		t.Fatal("serial producing an invalid DNS hostname was accepted")
+	}
+	input = testInputs(t)
+	input.Devices[0].Serial = strings.Repeat("a", 30)
+	if _, err := Render(input); err == nil {
+		t.Fatal("hostname exceeding Kubernetes label-value length was accepted")
+	}
+}
+
+func TestInterfaceSelectorsRestrictTenantAndSelectedNodes(t *testing.T) {
+	input := testInputs(t)
+	beforeClusterSelector := cloneStringMap(input.DPUClusterSelector)
+	serials := []string{"SERIAL-A", "SERIAL-B"}
+	asns, err := input.Profile.AllocateASNs(serials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Devices = append(input.Devices, Device{
+		Serial: "SERIAL-B", PSID: "MT_0000001774",
+		SelectorLabels: map[string]string{"inventory.example/serial-hash": "serial-b"}, ASN: asns["SERIAL-B"],
+	})
+	files, err := Render(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(input.DPUClusterSelector, beforeClusterSelector) {
+		t.Fatal("render mutated the tenant cluster selector")
+	}
+	type interfaceSelector struct {
+		Spec struct {
+			DPUClusterSelector metav1.LabelSelector `yaml:"dpuClusterSelector"`
+			Template           struct {
+				Spec struct {
+					NodeSelector metav1.LabelSelector `yaml:"nodeSelector"`
+				} `yaml:"spec"`
+			} `yaml:"template"`
+		} `yaml:"spec"`
+	}
+	for _, index := range []int{4, 5, 6} {
+		var object interfaceSelector
+		if err := sigsyaml.Unmarshal(files[index].Data, &object); err != nil {
+			t.Fatalf("decode interface %s: %v", files[index].Path, err)
+		}
+		clusterSelector, err := metav1.LabelSelectorAsSelector(&object.Spec.DPUClusterSelector)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nodeSelector, err := metav1.LabelSelectorAsSelector(&object.Spec.Template.Spec.NodeSelector)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !clusterSelector.Matches(labels.Set{"inventory.example/tenant": "tenant-a", "other": "kept"}) {
+			t.Fatalf("%s does not match selected tenant labels", files[index].Path)
+		}
+		if clusterSelector.Matches(labels.Set{"inventory.example/tenant": "tenant-b"}) {
+			t.Fatalf("%s matches excluded tenant", files[index].Path)
+		}
+		for _, hostname := range []string{"dpu-node-serial-a-serial-a", "dpu-node-serial-b-serial-b"} {
+			if !nodeSelector.Matches(labels.Set{"kubernetes.io/hostname": hostname}) {
+				t.Fatalf("%s does not match selected node %q", files[index].Path, hostname)
+			}
+		}
+		if nodeSelector.Matches(labels.Set{"kubernetes.io/hostname": "unselected-dpu-node"}) {
+			t.Fatalf("%s matches an unselected node", files[index].Path)
+		}
+		if nodeSelector.Matches(labels.Set{"kubernetes.io/os": "linux"}) {
+			t.Fatalf("%s matches a node without the selected hostname label", files[index].Path)
+		}
+	}
+
+	input.Devices[0], input.Devices[1] = input.Devices[1], input.Devices[0]
+	reversed, err := Render(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []int{4, 5, 6} {
+		if !bytes.Equal(files[index].Data, reversed[index].Data) {
+			t.Fatalf("interface selector %s changes with input device order", files[index].Path)
+		}
+	}
+}
+
+func TestServiceTemplateResourceRequirementsMatchHelmAndAreIndependent(t *testing.T) {
+	resources := map[string]any{"cpu": "2", "memory": "6Gi", "nvidia.com/bf_sf": int64(4)}
+	object := serviceTemplate("dpf-operator-system", hbn.Generation{ChartName: "doca-hbn"}, resources)
+	spec := object["spec"].(map[string]any)
+	requirements := spec["resourceRequirements"].(map[string]any)
+	values := spec["helmChart"].(map[string]any)["values"].(map[string]any)
+	chartResources := values["resources"].(map[string]any)
+	if !reflect.DeepEqual(requirements, chartResources) {
+		t.Fatalf("template resourceRequirements=%v differ from Helm resources=%v", requirements, chartResources)
+	}
+	chartResources["cpu"] = "4"
+	if requirements["cpu"] != "2" {
+		t.Fatal("template resourceRequirements shares its map with Helm values")
 	}
 }
 
