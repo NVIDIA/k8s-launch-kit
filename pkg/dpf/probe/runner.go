@@ -20,6 +20,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -233,7 +234,9 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 			if r.ImageRepository != "" {
 				image = r.ImageRepository
 			}
-			image += "@" + runner.Assets.ManifestDigest
+			// Pull the same architecture-specific manifest that the runtime identity
+			// check expects; CRI may report the requested index when pulling an index.
+			image += "@" + runner.Assets.PlatformDigests[node.Architecture]
 			desiredPod := Pod(podName, mg.Namespace, labels, node, mode, image, name, r.ImagePullSecrets, int64(r.Timeout/time.Second))
 			if err = journal("Pod", podName, ""); err != nil {
 				return rows, cleanup, err
@@ -279,7 +282,7 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 			if err != nil || string(currentNode.UID) != node.UID || live.Spec.NodeName != node.Name {
 				return rows, cleanup, fmt.Errorf("probe node identity changed")
 			}
-			if len(live.Status.ContainerStatuses) != 1 || !strings.HasSuffix(live.Status.ContainerStatuses[0].ImageID, runner.Assets.PlatformDigests[node.Architecture]) {
+			if len(live.Status.ContainerStatuses) != 1 || live.Status.ContainerStatuses[0].ImageID != image {
 				return rows, cleanup, fmt.Errorf("probe pulled image digest differs from qualified asset")
 			}
 			stream, err := mg.Client.CoreV1().Pods(mg.Namespace).GetLogs(podName, &corev1.PodLogOptions{Container: "probe", LimitBytes: ptr(int64(4 << 20))}).Stream(ctx)
@@ -413,7 +416,9 @@ func samePod(expected, actual *corev1.Pod) bool {
 	}
 	normalize(a)
 	normalize(b)
-	return reflect.DeepEqual(a, b) && reflect.DeepEqual(expected.Labels, actual.Labels) && reflect.DeepEqual(expected.OwnerReferences, actual.OwnerReferences) && reflect.DeepEqual(expected.Annotations, actual.Annotations)
+	// Kubernetes protobuf decoding can change resource.Quantity internals without
+	// changing the value. Compare API semantics after the explicit default normalization.
+	return apiequality.Semantic.DeepEqual(a, b) && reflect.DeepEqual(expected.Labels, actual.Labels) && reflect.DeepEqual(expected.OwnerReferences, actual.OwnerReferences) && reflect.DeepEqual(expected.Annotations, actual.Annotations)
 }
 func ValidateResponse(out Response, req Request, node, pod, mode string) error {
 	if out.Version != ProtocolVersion || out.RunID != req.RunID || out.NodeUID != node || out.PodUID != pod || out.NetworkMode != mode || len(out.Results) != len(req.Destinations) {

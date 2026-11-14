@@ -24,8 +24,8 @@ deployment readiness checks do not block inventory collection. Overall deploymen
 Without a selected use case, explicitly set `discovery.probes.mode: inventory`.
 The default `management` mode is unavailable in this preview; selecting it stops the command before
 remote access. Inventory reports management topology when a kubeconfig is supplied,
-but does not test management-network connectivity. DPF generate/deploy/validate
-and the DPF pipeline are unavailable.
+but does not test management-network connectivity. HBN-BGP artifact generation
+is available; DPF deploy, validate, and the DPF pipeline remain unavailable.
 
 ## Inputs and invocation
 

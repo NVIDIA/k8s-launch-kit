@@ -683,3 +683,17 @@ may share the store. The result establishes current backing-resource health,
 not a direct etcd transaction, remaining physical capacity or future growth.
 Deployment recollects instead of trusting the persisted discovery result;
 ordered tenant creation must repeat this prerequisite immediately before effects.
+
+Management-node network investigation reuses the existing explicitly selected
+management-mode probe rather than introducing another node access mechanism.
+The runner binds results to Pod and Node UIDs and uses journaled, UID-preconditioned
+cleanup. Admission checks compare normalized Pod specifications using Kubernetes
+API semantic equality, including resource quantities across JSON/protobuf
+serialization; ownership metadata and execution/security settings remain checked.
+Each Pod pulls the cataloged manifest for its observed node architecture, and its
+runtime ImageID must equal that requested repository and digest. The index digest
+is catalog metadata, not the requested runtime image. Other runtime ImageID forms
+remain unsupported until separately verified. The release asset gate remains
+separate from these comparison fixes. Inventory mode
+continues to omit probe Pods. Interface and route observations do not establish
+VIP reservation, network-wide VRID uniqueness, or successful tenant deployment.
