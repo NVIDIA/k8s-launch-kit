@@ -6,8 +6,10 @@ package dpf
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -131,29 +133,58 @@ func (d generateDriver) Bind(inv target.Invocation) (target.Operation, error) {
 const maximumGenerationChartBytes = 32 << 20
 
 func downloadGenerationChart(ctx context.Context, address string) ([]byte, error) {
-	validate := func(address string) error {
+	return downloadChart(ctx, address, http.DefaultTransport)
+}
+
+// Inputs remain unsigned public coordinates. NGC redirects these coordinates to
+// signed HTTPS object URLs; queries are allowed only on those server redirects.
+// Integrity is verified against the selected digest before bundle publication.
+func downloadChart(ctx context.Context, address string, transport http.RoundTripper) ([]byte, error) {
+	validate := func(address string, redirected bool) error {
 		parsed, err := url.Parse(address)
-		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return fmt.Errorf("chart download requires credential-free HTTPS without query or fragment")
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || (!redirected && parsed.RawQuery != "") || parsed.Fragment != "" {
+			return fmt.Errorf("chart URL requires HTTPS without user information or fragment; input coordinates must not contain a query")
 		}
 		return nil
 	}
-	if err := validate(address); err != nil {
+	if err := validate(address, false); err != nil {
 		return nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, fmt.Errorf("cannot construct chart download request")
 	}
-	client := &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	unsafeRedirect := errors.New("chart redirect requires HTTPS without user information or fragment")
+	redirectLimit := errors.New("chart redirect limit exceeded")
+	client := &http.Client{Transport: transport, Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
-			return fmt.Errorf("chart redirect limit exceeded")
+			return redirectLimit
 		}
-		return validate(req.URL.String())
+		if err := validate(req.URL.String(), true); err != nil {
+			return unsafeRedirect
+		}
+		// Do not propagate a prior signed object URL as a Referer on another hop.
+		req.Header.Del("Referer")
+		return nil
 	}}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("chart download failed: %w", err)
+		// net/http wraps failures with the final URL, which can contain a signed
+		// credential. Never return that wrapper or arbitrary server text.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, unsafeRedirect) {
+			return nil, unsafeRedirect
+		}
+		if errors.Is(err, redirectLimit) {
+			return nil, redirectLimit
+		}
+		var timeout net.Error
+		if errors.As(err, &timeout) && timeout.Timeout() {
+			return nil, fmt.Errorf("chart download timed out")
+		}
+		return nil, fmt.Errorf("chart download failed; verify HTTPS connectivity and CA trust")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -161,7 +192,10 @@ func downloadGenerationChart(ctx context.Context, address string) ([]byte, error
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maximumGenerationChartBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("cannot read complete chart archive: %w", err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("cannot read complete chart archive")
 	}
 	if len(data) == 0 || len(data) > maximumGenerationChartBytes {
 		return nil, fmt.Errorf("chart archive must be between 1 byte and %d bytes", maximumGenerationChartBytes)

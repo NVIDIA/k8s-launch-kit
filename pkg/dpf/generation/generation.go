@@ -25,6 +25,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnrender"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
@@ -502,6 +503,17 @@ func resolvedConfiguration(input Inputs, release, valuesPath, operatorChartPath,
 	if err != nil {
 		return nil, err
 	}
+	selectedPSIDs := make([]string, 0, len(input.Workload.Devices))
+	for _, device := range input.Workload.Devices {
+		selectedPSIDs = append(selectedPSIDs, device.PSID)
+	}
+	software, issues, err := config.ValidateProvisioningSoftware(&config.Provisioning{Software: input.Workload.Software}, selectedPSIDs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve selected provisioning software: %w", err)
+	}
+	if len(issues) != 0 {
+		return nil, fmt.Errorf("selected provisioning software is incomplete: %s", issues[0].Field)
+	}
 	selected := make([]resolvedDevice, 0, len(input.Workload.Devices))
 	for _, device := range input.Workload.Devices {
 		selected = append(selected, resolvedDevice{Serial: device.Serial, PSID: device.PSID, ASN: device.ASN, SelectorLabels: cloneLabels(device.SelectorLabels)})
@@ -513,9 +525,11 @@ func resolvedConfiguration(input Inputs, release, valuesPath, operatorChartPath,
 		KubernetesVersion: input.Operator.KubernetesVersion,
 		Networking:        input.Workload.Profile,
 		Generation:        input.Workload.Generation,
+		Software:          software,
 		Bootstrap: resolvedBootstrap{
-			OperatorConfigName: input.Operator.Bootstrap.OperatorConfigName,
-			ManagementAPIIP:    input.Operator.Bootstrap.ManagementAPIIP, ManagementAPIPort: input.Operator.Bootstrap.ManagementAPIPort,
+			OperatorConfigName:    input.Operator.Bootstrap.OperatorConfigName,
+			BMCFactoryResetPolicy: input.Operator.Bootstrap.BMCFactoryResetPolicy,
+			ManagementAPIIP:       input.Operator.Bootstrap.ManagementAPIIP, ManagementAPIPort: input.Operator.Bootstrap.ManagementAPIPort,
 			ArtifactPVC: input.Operator.Bootstrap.ArtifactPVC, PodCIDR: input.Operator.Bootstrap.PodCIDR,
 			Tenant: input.Operator.Bootstrap.Tenant,
 		},
@@ -543,6 +557,7 @@ type resolvedIntent struct {
 	KubernetesVersion string             `yaml:"kubernetesVersion"`
 	Networking        hbn.Profile        `yaml:"networking"`
 	Generation        hbn.Generation     `yaml:"generation"`
+	Software          config.Software    `yaml:"software"`
 	Bootstrap         resolvedBootstrap  `yaml:"bootstrap"`
 	OperatorChart     resolvedArtifact   `yaml:"operatorChart"`
 	OperatorValues    resolvedArtifact   `yaml:"operatorValues"`
@@ -551,12 +566,13 @@ type resolvedIntent struct {
 }
 
 type resolvedBootstrap struct {
-	OperatorConfigName string           `yaml:"operatorConfigName"`
-	ManagementAPIIP    string           `yaml:"managementAPIIP"`
-	ManagementAPIPort  int              `yaml:"managementAPIPort"`
-	ArtifactPVC        string           `yaml:"artifactPVC,omitempty"`
-	PodCIDR            string           `yaml:"podCIDR"`
-	Tenant             bootstrap.Tenant `yaml:"tenant"`
+	OperatorConfigName    string                          `yaml:"operatorConfigName"`
+	BMCFactoryResetPolicy bootstrap.BMCFactoryResetPolicy `yaml:"bmcFactoryResetPolicy"`
+	ManagementAPIIP       string                          `yaml:"managementAPIIP"`
+	ManagementAPIPort     int                             `yaml:"managementAPIPort"`
+	ArtifactPVC           string                          `yaml:"artifactPVC,omitempty"`
+	PodCIDR               string                          `yaml:"podCIDR"`
+	Tenant                bootstrap.Tenant                `yaml:"tenant"`
 }
 
 type resolvedArtifact struct {

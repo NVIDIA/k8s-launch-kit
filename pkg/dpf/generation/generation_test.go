@@ -146,6 +146,90 @@ func TestGenerateRetainsSourcesAndComposesOrderedStages(t *testing.T) {
 	}
 }
 
+func TestResolvedIntentRetainsNormalizedSoftwareLocks(t *testing.T) {
+	input := generationInputs(t)
+	input.Workload.Software.PLDM = map[string]config.Artifact{
+		"mt_0000001774": {URL: "https://artifacts.example/fw.pldm", SHA256: strings.Repeat("b", 64)},
+	}
+	generated, err := Generate(input)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	software := resolvedSoftware(t, generated)
+	if software.OSISO.URL != input.Workload.Software.OSISO.URL || software.OSISO.SHA256 != input.Workload.Software.OSISO.SHA256 {
+		t.Fatalf("resolved OS ISO lock = %#v, want %#v", software.OSISO, input.Workload.Software.OSISO)
+	}
+	if len(software.PLDM) != 1 || software.PLDM["MT_0000001774"] != input.Workload.Software.PLDM["mt_0000001774"] {
+		t.Fatalf("resolved PLDM locks = %#v, want one canonical selected PSID", software.PLDM)
+	}
+	originalName := generatedSoftwareName(t, generated)
+
+	changed := generationInputs(t)
+	changed.Workload.Software.OSISO.SHA256 = strings.Repeat("d", 64)
+	changedBundle, err := Generate(changed)
+	if err != nil {
+		t.Fatalf("Generate() with a distinct valid lock error = %v", err)
+	}
+	if generated.Index().BundleDigest == changedBundle.Index().BundleDigest {
+		t.Fatal("changing the software lock did not change the resolved bundle digest")
+	}
+	if got := resolvedSoftware(t, changedBundle).OSISO.SHA256; got != strings.Repeat("d", 64) {
+		t.Fatalf("resolved changed OS ISO digest = %q", got)
+	}
+	if got := generatedSoftwareName(t, changedBundle); got == originalName {
+		t.Fatalf("software CR identity %q did not change with the digest lock", got)
+	}
+}
+
+func TestResolvedIntentRejectsUnusedSoftwarePSID(t *testing.T) {
+	input := generationInputs(t)
+	input.Workload.Software.PLDM["MT_0000009999"] = config.Artifact{
+		URL: "https://artifacts.example/unused.pldm", SHA256: strings.Repeat("e", 64),
+	}
+	generated, err := Generate(input)
+	if err == nil || generated != nil || !strings.Contains(err.Error(), "unselected PSID") {
+		t.Fatalf("Generate() with an unused software lock = %v, %v; want rejection and no bundle", generated, err)
+	}
+}
+
+func resolvedSoftware(t *testing.T, generated *bundle.Bundle) config.Software {
+	t.Helper()
+	for _, file := range generated.Files() {
+		if file.Path != bundle.ResolvedConfigPath {
+			continue
+		}
+		var resolved struct {
+			Config struct {
+				Software config.Software `yaml:"software"`
+			} `yaml:"config"`
+		}
+		if err := yaml.Unmarshal(file.Data, &resolved); err != nil {
+			t.Fatal(err)
+		}
+		return resolved.Config.Software
+	}
+	t.Fatal("resolved configuration is missing")
+	return config.Software{}
+}
+
+func generatedSoftwareName(t *testing.T, generated *bundle.Bundle) string {
+	t.Helper()
+	for _, file := range generated.Files() {
+		if !strings.HasSuffix(file.Path, ".yaml") {
+			continue
+		}
+		object := &unstructured.Unstructured{}
+		if err := sigsyaml.Unmarshal(file.Data, &object.Object); err != nil {
+			t.Fatal(err)
+		}
+		if object.GetKind() == "BlueFieldSoftware" {
+			return object.GetName()
+		}
+	}
+	t.Fatal("BlueFieldSoftware resource is missing")
+	return ""
+}
+
 func TestGenerateRejectsInconsistentBindingsAndCharts(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -308,4 +392,36 @@ func cloneTestMap(in map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+// Resolved bootstrap intent must preserve the explicit reset policy for the
+// deploy consumer; omission would reintroduce the upstream resetting default.
+func TestGenerateRetainsResetPolicyInResolvedIntent(t *testing.T) {
+	for _, policy := range []bootstrap.BMCFactoryResetPolicy{bootstrap.BMCFactoryResetPolicyNever, bootstrap.BMCFactoryResetPolicyOnInitialization} {
+		t.Run(string(policy), func(t *testing.T) {
+			input := generationInputs(t)
+			input.Operator.Bootstrap.BMCFactoryResetPolicy = policy
+			generated, err := Generate(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var resolved struct {
+				Config struct {
+					Bootstrap struct {
+						Policy bootstrap.BMCFactoryResetPolicy `yaml:"bmcFactoryResetPolicy"`
+					} `yaml:"bootstrap"`
+				} `yaml:"config"`
+			}
+			for _, file := range generated.Files() {
+				if file.Path == bundle.ResolvedConfigPath {
+					if err := yaml.Unmarshal(file.Data, &resolved); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if resolved.Config.Bootstrap.Policy != policy {
+				t.Fatalf("resolved reset policy = %q, want %q", resolved.Config.Bootstrap.Policy, policy)
+			}
+		})
+	}
 }

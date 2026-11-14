@@ -71,6 +71,11 @@ The output directory contains:
 - The verified chart archives, original source YAML and `.l8k/resolved-config.yaml`.
 - An index recording the ordered stages and required deployment checks.
 
+The resolved configuration records the effective defaults and overrides,
+including the BMC reset policy and the selected OS and firmware URLs and
+checksums. Keep it with the manifests so deployment can verify the intended
+software bytes without resolving the inputs again.
+
 Generation validates the full bundle before publishing the directory. Repeating
 an identical generation leaves that directory unchanged. Use a new destination
 for changed inputs; generation does not replace a different or incomplete bundle.
