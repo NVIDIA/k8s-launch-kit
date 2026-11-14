@@ -110,6 +110,9 @@ func Generate(input Inputs) (*bundle.Bundle, error) {
 	if release.Version != definition.Defaults.Release {
 		return nil, fmt.Errorf("selected DPF release %s does not match HBN profile release %s", release.Version, definition.Defaults.Release)
 	}
+	if release.TenantKubernetesVersion == "" {
+		return nil, fmt.Errorf("selected DPF release %s has no sourced tenant Kubernetes version for HBN generation", release.Version)
+	}
 	if err := validateInputs(input); err != nil {
 		return nil, err
 	}
@@ -535,11 +538,12 @@ func resolvedConfiguration(input Inputs, release, valuesPath, operatorChartPath,
 		Generation:        input.Workload.Generation,
 		Software:          software,
 		Bootstrap: ResolvedBootstrap{
-			OperatorReleaseName:   input.Operator.ReleaseName,
-			OperatorNamespace:     input.Operator.Bootstrap.OperatorNamespace,
-			OperatorConfigName:    input.Operator.Bootstrap.OperatorConfigName,
-			BMCFactoryResetPolicy: input.Operator.Bootstrap.BMCFactoryResetPolicy,
-			ManagementAPIIP:       input.Operator.Bootstrap.ManagementAPIIP, ManagementAPIPort: input.Operator.Bootstrap.ManagementAPIPort,
+			OperatorReleaseName:     input.Operator.ReleaseName,
+			OperatorNamespace:       input.Operator.Bootstrap.OperatorNamespace,
+			OperatorConfigName:      input.Operator.Bootstrap.OperatorConfigName,
+			TenantKubernetesVersion: operatorRelease.TenantKubernetesVersion,
+			BMCFactoryResetPolicy:   input.Operator.Bootstrap.BMCFactoryResetPolicy,
+			ManagementAPIIP:         input.Operator.Bootstrap.ManagementAPIIP, ManagementAPIPort: input.Operator.Bootstrap.ManagementAPIPort,
 			ArtifactPVC: input.Operator.Bootstrap.ArtifactPVC, PodCIDR: input.Operator.Bootstrap.PodCIDR,
 			Tenant: input.Operator.Bootstrap.Tenant,
 		},
@@ -578,15 +582,16 @@ type ResolvedIntent struct {
 
 // ResolvedBootstrap records exact management bootstrap inputs without credentials.
 type ResolvedBootstrap struct {
-	OperatorReleaseName   string                          `yaml:"operatorReleaseName"`
-	OperatorNamespace     string                          `yaml:"operatorNamespace"`
-	OperatorConfigName    string                          `yaml:"operatorConfigName"`
-	BMCFactoryResetPolicy bootstrap.BMCFactoryResetPolicy `yaml:"bmcFactoryResetPolicy"`
-	ManagementAPIIP       string                          `yaml:"managementAPIIP"`
-	ManagementAPIPort     int                             `yaml:"managementAPIPort"`
-	ArtifactPVC           string                          `yaml:"artifactPVC,omitempty"`
-	PodCIDR               string                          `yaml:"podCIDR"`
-	Tenant                bootstrap.Tenant                `yaml:"tenant"`
+	OperatorReleaseName     string                          `yaml:"operatorReleaseName"`
+	OperatorNamespace       string                          `yaml:"operatorNamespace"`
+	OperatorConfigName      string                          `yaml:"operatorConfigName"`
+	TenantKubernetesVersion string                          `yaml:"tenantKubernetesVersion"`
+	BMCFactoryResetPolicy   bootstrap.BMCFactoryResetPolicy `yaml:"bmcFactoryResetPolicy"`
+	ManagementAPIIP         string                          `yaml:"managementAPIIP"`
+	ManagementAPIPort       int                             `yaml:"managementAPIPort"`
+	ArtifactPVC             string                          `yaml:"artifactPVC,omitempty"`
+	PodCIDR                 string                          `yaml:"podCIDR"`
+	Tenant                  bootstrap.Tenant                `yaml:"tenant"`
 }
 
 // ResolvedArtifact identifies retained bytes by path and SHA-256.

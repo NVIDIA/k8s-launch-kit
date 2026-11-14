@@ -54,6 +54,7 @@ var _ = Describe("release BOM resolution", func() {
 	It("describes the v26.8 BF4 beta artifact mechanism without claiming exact-model support", func() {
 		r, err := Resolve("26.8.0")
 		Expect(err).NotTo(HaveOccurred())
+		Expect(r.TenantKubernetesVersion).To(Equal("v1.35.6"))
 		Expect(r.SupportedKubernetes).To(Equal(&VersionRange{Minimum: "1.33", Maximum: "1.36"}))
 		Expect(r.Operator.Chart).To(Equal("dpf-operator"))
 		Expect(r.Operator.Version).To(Equal("v26.8.0"))
@@ -89,6 +90,17 @@ var _ = Describe("release BOM resolution", func() {
 		for _, model := range []string{"B4240", "BlueField-4", "MT_0000001774", "unknown"} {
 			_, found := r.RequirementsFor(model)
 			Expect(found).To(BeFalse(), "family-only beta entry must not match %q", model)
+		}
+	})
+	It("keeps tenant control-plane versions separate from management Kubernetes support", func() {
+		older, err := Resolve("26.4.0")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(older.TenantKubernetesVersion).To(BeEmpty(), "do not infer an older release's compiled tenant version")
+		for _, value := range []string{"", "v1.35", "1.35.6", "v01.35.6", "v1.035.6", "v1.35.06", "v1.35.6-rc.1", " v1.35.6"} {
+			Expect(validTenantKubernetesVersion(value)).To(BeFalse(), value)
+		}
+		for _, value := range []string{"v1.0.0", "v1.35.6"} {
+			Expect(validTenantKubernetesVersion(value)).To(BeTrue(), value)
 		}
 	})
 	It("validates PSID-specific BF4 artifact coordinates without fabricating catalog defaults", func() {
@@ -151,6 +163,7 @@ var _ = Describe("release BOM resolution", func() {
 			strings.Replace(string(catalogYAML), "chart: dpf-operator", "unknown: true", 1),
 			strings.Replace(string(catalogYAML), "message: Requires an authorized release-compatible BF4 ISO override; public v26.8 release material does not publish its version or URL.", "message: ''", 1),
 			strings.Replace(string(catalogYAML), "maximum: \"1.36\"", "maximum: \"1.32\"", 1),
+			strings.Replace(string(catalogYAML), "tenantKubernetesVersion: v1.35.6", "tenantKubernetesVersion: v1.35", 1),
 		} {
 			_, err := load([]byte(data))
 			Expect(err).To(HaveOccurred())

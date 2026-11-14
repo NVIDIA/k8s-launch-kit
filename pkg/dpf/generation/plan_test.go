@@ -36,6 +36,9 @@ func TestLoadPlanRegeneratesExactRetainedBundleAndReturnsCopies(t *testing.T) {
 	if intent.Bootstrap.OperatorReleaseName != input.Operator.ReleaseName || intent.Bootstrap.OperatorNamespace != input.Operator.Bootstrap.OperatorNamespace {
 		t.Fatalf("retained operator identity = %s/%s", intent.Bootstrap.OperatorNamespace, intent.Bootstrap.OperatorReleaseName)
 	}
+	if intent.KubernetesVersion != input.Operator.KubernetesVersion || intent.Bootstrap.TenantKubernetesVersion != "v1.35.6" {
+		t.Fatalf("management/tenant Kubernetes versions = %q/%q, want %q/v1.35.6", intent.KubernetesVersion, intent.Bootstrap.TenantKubernetesVersion, input.Operator.KubernetesVersion)
+	}
 	if len(intent.Devices) != 1 || intent.Devices[0].Serial != "SERIAL-A" || intent.Devices[0].PSID != "MT_0000001774" || intent.Devices[0].BMCIP != "192.0.2.20" || intent.Devices[0].BMCPort != 443 {
 		t.Fatalf("retained selected device = %#v", intent.Devices)
 	}
@@ -116,6 +119,26 @@ func TestLoadPlanRejectsMalformedOrInconsistentRetainedBundles(t *testing.T) {
 				}
 				device := root["config"].(map[string]any)["devices"].([]any)[0].(map[string]any)
 				device["bmcIP"] = "192.0.2.21"
+				return marshalYAML(t, root)
+			})
+		}},
+		{name: "tenant Kubernetes version missing", mutate: func(_ *bundle.Index, files *[]bundle.File) {
+			mutateFile(t, files, bundle.ResolvedConfigPath, func(data []byte) []byte {
+				var root map[string]any
+				if err := yaml.Unmarshal(data, &root); err != nil {
+					t.Fatal(err)
+				}
+				delete(root["config"].(map[string]any)["bootstrap"].(map[string]any), "tenantKubernetesVersion")
+				return marshalYAML(t, root)
+			})
+		}},
+		{name: "tenant Kubernetes version tampered", mutate: func(_ *bundle.Index, files *[]bundle.File) {
+			mutateFile(t, files, bundle.ResolvedConfigPath, func(data []byte) []byte {
+				var root map[string]any
+				if err := yaml.Unmarshal(data, &root); err != nil {
+					t.Fatal(err)
+				}
+				root["config"].(map[string]any)["bootstrap"].(map[string]any)["tenantKubernetesVersion"] = "v1.36.0"
 				return marshalYAML(t, root)
 			})
 		}},

@@ -633,3 +633,35 @@ will accept a write. NFD worker readiness is required only when the retained
 configuration uses host-side detection. Zero-trust Redfish discovery with that
 detector disabled still requires the NFD API and master, but does not require
 management nodes to run NFD workers.
+
+HBN workload address reservation is profile-managed. Generation emits one
+singleton DPUServiceIPAM exclusion per possible per-DPU subnet, reserving the
+configured host index from ordinary dynamic IPAM allocation without excluding
+the subnet itself. The gateway and host indexes must differ and remain usable;
+reservation enumeration is bounded to 4096 subnets. Explicit static IPAM requests
+can bypass exclusions and must not target the reserved host slot.
+
+Discovery validates this address plan separately from host readiness. Actual
+host address selection joins the selected DPU identity to its tenant Node and
+CIDRPool allocation, then verifies the host PF0 interface. It must never infer
+subnet assignment or PF0 identity from list order. The later host operation adds
+only the workload-specific route; the management/default route is preserved.
+Until those runtime steps exist and pass, a valid reservation does not mark
+host configuration ready.
+
+Tenant access uses a separate client for the independent cluster. The management
+client reads the selected DPUCluster, its Kamaji TenantControlPlane, API Service,
+keepalived resources and deterministic admin Secret. Resource convergence checks
+use the selected release's tenant Kubernetes version; the management Kubernetes
+version remains a separate input. Tenant access requires embedded, verified TLS
+credentials from `super-admin.conf`, with no local-file, executable plugin,
+impersonation, proxy or server override. Requests reject redirects.
+
+The endpoint is the retained tenant VIP and Kamaji's allocated API NodePort.
+The client binds source resource identities and specs plus the Secret UID and
+credential bytes, then observes the tenant's own `kube-system` UID and API version.
+Source replacement, credential rotation or tenant identity changes stop this
+client and require reopening access after fresh inspection. Routine metadata or
+status updates alone do not invalidate unchanged identity. Resource convergence
+and authenticated API access remain separate from external VIP allocation,
+keepalived image qualification, storage behavior, enrollment and HBN traffic.

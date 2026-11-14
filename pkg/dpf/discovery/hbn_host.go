@@ -35,7 +35,7 @@ func hostHBNChecks(inv *inventory.Inventory) []inventory.Check {
 				hostCheck("host-pf", subject, "unknown", "HOST_PF_ASSOCIATION_UNAVAILABLE", "Selected host PCI functions cannot be evaluated without one exact DPU-to-host-adapter association."),
 				hostCheck("host-iommu-group", subject, "unknown", "HOST_IOMMU_ASSOCIATION_UNAVAILABLE", "Selected host IOMMU groups cannot be evaluated without one exact DPU-to-host-adapter association."),
 				hostCheck("host-management-separation", subject, "unknown", "HOST_PATH_ASSOCIATION_UNAVAILABLE", "Management-path separation cannot be evaluated without one exact DPU-to-host-adapter association."),
-				hostCheck("host-configuration", subject, "unknown", "HOST_PROFILE_CONFIGURATION_UNVERIFIED", "The deployment-specific host PF address and route assignment is not represented in the selected profile."),
+				hostCheck("host-configuration", subject, "unknown", "HOST_CONFIGURATION_NOT_VERIFIED", "The selected host PF0 binding and host network configuration have not been verified; an address reservation alone does not establish host readiness."),
 			)
 			continue
 		}
@@ -45,7 +45,7 @@ func hostHBNChecks(inv *inventory.Inventory) []inventory.Check {
 		checks = append(checks, iommuChecks...)
 		separation := managementPathCheck(*host, netdevs, subject)
 		checks = append(checks, separation)
-		checks = append(checks, hostCheck("host-configuration", subject, "unknown", "HOST_PROFILE_CONFIGURATION_UNVERIFIED", "The deployment-specific host PF address and route assignment is not represented in the selected profile."))
+		checks = append(checks, hostCheck("host-configuration", subject, "unknown", "HOST_CONFIGURATION_NOT_VERIFIED", "The selected host PF0 binding and host network configuration have not been verified; an address reservation alone does not establish host readiness."))
 	}
 	return checks
 }

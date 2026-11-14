@@ -346,10 +346,10 @@ func TestPublishIsAtomicAndIdempotent(t *testing.T) {
 		t.Fatalf("idempotent Publish() = %#v, %v", second, err)
 	}
 	changedInput := generationInputs(t)
-	changedInput.Workload.Generation.WorkloadGatewayIndex++
+	changedInput.Workload.Generation.HostAddressIndex++
 	changed, err := Generate(changedInput)
 	if err == nil {
-		// Increasing to an in-range value is valid and should create a distinct plan.
+		// Changing to another usable host address produces a valid distinct plan.
 		_, err = Publish(context.Background(), changed, destination)
 	}
 	if err == nil || !strings.Contains(err.Error(), "destination differs") {

@@ -27,22 +27,24 @@ var _ = Describe("HBN use-case inputs", func() {
 		Expect(r.DPFNamespace).To(Equal("dpf-operator-system"))
 		Expect(r.Mode).To(Equal("inventory"))
 		Expect(r.HBN.FabricVRF).To(Equal("default"))
+		Expect(r.HBNGeneration.HostAddressIndex).To(Equal(2))
 		Expect(in.Site.DPF.HBN).To(BeNil())
 		Expect(r.Switches).To(BeEmpty()) // Readiness reports missing access.
 	})
 	It("resolves generation overrides without coercing scalars or modifying omitted inputs", func() {
-		document := "dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {nodeEffect: noEffect, workloadGatewayIndex: 2, vxlanStartupProbeEnabled: false}}\n" + seed
+		document := "dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {nodeEffect: noEffect, workloadGatewayIndex: 2, hostAddressIndex: 3, vxlanStartupProbeEnabled: false}}\n" + seed
 		in, err := Decode([]byte(document), "/site/input.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		r, err := Resolve(in)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(r.HBNGeneration.NodeEffect)).To(Equal("noEffect"))
 		Expect(r.HBNGeneration.WorkloadGatewayIndex).To(Equal(2))
+		Expect(r.HBNGeneration.HostAddressIndex).To(Equal(3))
 		Expect(r.HBNGeneration.VXLANStartupProbeEnabled).To(BeFalse())
 		Expect(r.HBNGeneration.ChartVersion).To(Equal("3.5.0"))
 		Expect(in.Site.Provisioning.HBN.ChartVersion).To(BeNil())
 		Expect(string(in.Source)).To(Equal(document))
-		for _, value := range []string{"workloadGatewayIndex: '2'", "vxlanStartupProbeEnabled: 'false'", "chartVersion: 3.5"} {
+		for _, value := range []string{"hostAddressIndex: '3'", "workloadGatewayIndex: '2'", "vxlanStartupProbeEnabled: 'false'", "chartVersion: 3.5"} {
 			_, err := Decode([]byte("dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {"+value+"}}\n"+seed), "/site/input.yaml")
 			Expect(err).To(HaveOccurred())
 		}
@@ -53,6 +55,8 @@ var _ = Describe("HBN use-case inputs", func() {
 			"provisioning: {bootstrap: {}}\n",
 			"dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {chartVersion: ''}}\n",
 			"dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {workloadGatewayIndex: 0}}\n",
+			"dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {hostAddressIndex: 0}}\n",
+			"dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {hostAddressIndex: 1}}\n",
 			"dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {nodeEffect: ''}}\n",
 			"dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {loopbackCIDR: 10.0.120.0/24}}\n",
 		} {

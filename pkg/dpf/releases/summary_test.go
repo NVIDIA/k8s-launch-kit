@@ -39,6 +39,7 @@ var _ = Describe("persisted software BOM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		for _, encoded := range [][]byte{bf3JSON, bf3YAML} {
 			Expect(string(encoded)).NotTo(ContainSubstring("supportedKubernetes"))
+			Expect(string(encoded)).NotTo(ContainSubstring("tenantKubernetesVersion"))
 			Expect(string(encoded)).NotTo(ContainSubstring("supportLevel"))
 			Expect(string(encoded)).NotTo(ContainSubstring("blueFieldSoftware"))
 		}
@@ -47,6 +48,7 @@ var _ = Describe("persisted software BOM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		summary := Summarize(original)
 		Expect(summary.SupportedKubernetes).To(Equal(&VersionRange{Minimum: "1.33", Maximum: "1.36"}))
+		Expect(summary.TenantKubernetesVersion).To(Equal("v1.35.6"))
 		bf4 := summary.Hardware[1]
 		Expect(bf4.Family).To(Equal("BlueField-4"))
 		Expect(bf4.Models).To(BeEmpty())
@@ -63,6 +65,7 @@ var _ = Describe("persisted software BOM", func() {
 		restored, err := saved.Release()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(restored.SupportedKubernetes).To(Equal(original.SupportedKubernetes))
+		Expect(restored.TenantKubernetesVersion).To(Equal(original.TenantKubernetesVersion))
 		Expect(restored.Hardware[1].Family).To(Equal("BlueField-4"))
 		Expect(restored.Hardware[1].Models).To(BeEmpty())
 		Expect(restored.Hardware[1].BFB).To(BeNil())
@@ -174,6 +177,7 @@ var _ = Describe("persisted software BOM", func() {
 			{"invalid chart digest", func(s *Summary) { s.Operator.ChartDigest = "sha256:invalid" }},
 			{"invalid BFB digest", func(s *Summary) { s.Hardware[0].BFB.Digest = "sha256:invalid" }},
 			{"incomplete Kubernetes range", func(s *Summary) { s.SupportedKubernetes = &VersionRange{Minimum: "1.33"} }},
+			{"invalid tenant Kubernetes version", func(s *Summary) { s.TenantKubernetesVersion = "1.35.6" }},
 			{"component absent", func(s *Summary) { s.Components = nil }},
 			{"component duplicated", func(s *Summary) { s.Components = append(s.Components, s.Components[0]) }},
 			{"component applicability", func(s *Summary) { s.Components[0].Applicability = "qualified" }},

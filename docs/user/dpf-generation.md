@@ -61,6 +61,35 @@ Review [bootstrap and HBN defaults](../reference/configuration.md). Tenant pod a
 service ranges belong to the independent DPU cluster. The default ASN allocation
 fits five DPUs; a larger estate requires an appropriate base/stride override.
 
+## Plan host workload addresses
+
+Each DPU receives a subnet from the workload address pool. The default pool is
+`10.0.120.0/22`, divided into `/29` subnets. HBN uses address index `1` in its
+allocated subnet as the gateway, and Launch Kit reserves index `2` for the host.
+For example, an allocation of `10.0.120.8/29` gives HBN gateway `10.0.120.9` and
+reserves `10.0.120.10` for its host.
+
+Override these indexes together when necessary:
+
+```yaml
+provisioning:
+  hbn:
+    workloadGatewayIndex: 1
+    hostAddressIndex: 2
+```
+
+The indexes must be different usable addresses within each subnet. Generation
+excludes the host address from ordinary dynamic IPAM allocation in every possible
+subnet; it does not predict which DPU will receive which subnet. The pool may
+contain at most 4096 such subnets. A larger pool needs a broader per-DPU subnet
+or a smaller workload range.
+
+The host address can only be configured after DPF has allocated that DPU's subnet
+and its host-facing interface has been identified. The intended host route covers
+the workload pool through that DPU's HBN gateway. It preserves the existing host
+default route and management network. This preview generates the address
+reservations; it does not configure host interfaces or routes.
+
 ## Review the output
 
 The output directory contains:
@@ -73,8 +102,10 @@ The output directory contains:
 
 The resolved configuration records the effective defaults and overrides,
 including the operator release name and namespace, each selected DPU's BMC
-address, the BMC reset policy, and the selected OS and firmware URLs and
-checksums. Keep it with the manifests so later steps can verify the selected
+address, the BMC reset policy, the release-selected tenant Kubernetes version,
+and the selected OS and firmware URLs and checksums. The management cluster and
+DPU cluster have separate Kubernetes versions; generation does not upgrade the
+management cluster. Keep it with the manifests so later steps can verify the selected
 devices and software without resolving the inputs again. To change the plan,
 edit the site configuration and generate a new directory; do not edit files
 inside an existing bundle.

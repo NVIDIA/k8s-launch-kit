@@ -138,7 +138,7 @@ func TestHostHBNChecksIncompleteFactsCannotPassAndKeepSourceReason(t *testing.T)
 	if got := hostHBNCheck(t, checks, "host-management-separation", "SERIAL-1 @ worker-01"); got.State != "unknown" || got.ReasonCode != "API_ACCESS_DENIED" {
 		t.Fatalf("incomplete combined routes cannot pass and must retain source reason: %#v", got)
 	}
-	if got := hostHBNCheck(t, checks, "host-configuration", "SERIAL-1 @ worker-01"); got.State != "unknown" || got.ReasonCode != "HOST_PROFILE_CONFIGURATION_UNVERIFIED" {
+	if got := hostHBNCheck(t, checks, "host-configuration", "SERIAL-1 @ worker-01"); got.State != "unknown" || got.ReasonCode != "HOST_CONFIGURATION_NOT_VERIFIED" {
 		t.Fatalf("deployment-specific host address assignment should remain explicit: %#v", got)
 	}
 

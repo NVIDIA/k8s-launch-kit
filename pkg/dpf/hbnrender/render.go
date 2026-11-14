@@ -83,6 +83,10 @@ func Render(input Inputs) ([]bundle.File, error) {
 			return nil, fmt.Errorf("device %q ASN %d does not match profile assignment %d", device.Serial, device.ASN, asns[device.Serial])
 		}
 	}
+	hostReservations, err := hbn.HostReservations(input.Profile, input.Generation)
+	if err != nil {
+		return nil, fmt.Errorf("build workload host reservations: %w", err)
+	}
 
 	pldm := make(map[string]string, len(software.PLDM))
 	for psid, artifact := range software.PLDM {
@@ -106,8 +110,8 @@ func Render(input Inputs) ([]bundle.File, error) {
 	resources := []map[string]any{
 		resource(provAPI, "BlueFieldSoftware", blueFieldName, input.Namespace, blueFieldSpec),
 		resource(provAPI, "DPUFlavor", flavorName, input.Namespace, flavorSpec),
-		ipam("hbn-loopback", input.Namespace, input.Generation.LoopbackCIDR, 32, input.DPUClusterSelector, nil),
-		ipam("hbn-workload", input.Namespace, input.Profile.WorkloadCIDR, input.Profile.WorkloadPrefix, input.DPUClusterSelector, &input.Generation.WorkloadGatewayIndex),
+		ipam("hbn-loopback", input.Namespace, input.Generation.LoopbackCIDR, 32, input.DPUClusterSelector, nil, nil),
+		ipam("hbn-workload", input.Namespace, input.Profile.WorkloadCIDR, input.Profile.WorkloadPrefix, input.DPUClusterSelector, &input.Generation.WorkloadGatewayIndex, hostReservations),
 		iface("p0", input.Namespace, "physical", "p0", nil),
 		iface("p1", input.Namespace, "physical", "p1", nil),
 		iface("pf0hpf", input.Namespace, "pf", "", map[string]any{"pfID": int64(0)}),
@@ -228,10 +232,17 @@ func resource(api, kind, name, namespace string, spec map[string]any) map[string
 	return map[string]any{"apiVersion": api, "kind": kind, "metadata": map[string]any{"name": name, "namespace": namespace}, "spec": spec}
 }
 
-func ipam(name, namespace, network string, prefix int, clusterSelector map[string]string, gatewayIndex *int) map[string]any {
+func ipam(name, namespace, network string, prefix int, clusterSelector map[string]string, gatewayIndex *int, excludeRanges []hbn.AddressRange) map[string]any {
 	config := map[string]any{"network": network, "prefixSize": int64(prefix)}
 	if gatewayIndex != nil {
 		config["gatewayIndex"] = int64(*gatewayIndex)
+	}
+	if excludeRanges != nil {
+		ranges := make([]map[string]any, len(excludeRanges))
+		for i, r := range excludeRanges {
+			ranges[i] = map[string]any{"startIP": r.StartIP, "endIP": r.EndIP}
+		}
+		config["excludeRanges"] = ranges
 	}
 	labels := cloneStringMap(clusterSelector)
 	selector := map[string]any{"matchLabels": labels}

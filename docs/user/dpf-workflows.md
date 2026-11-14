@@ -464,13 +464,13 @@ Next: [Inputs supplied](#hbn-bgp-generation-resolve).
 
 ### 2. CLI machine: resolve and check selected identities {#hbn-bgp-generation-resolve}
 
-Run `l8k generate --target dpf --use-case hbn-bgp --user-config dpf-site.yaml --save-deployment-files ./hbn-bgp`. Launch Kit matches the selected source endpoints to the saved DPU identities and host associations, verifies that administrator access was recorded, and resolves exact PSIDs and desired settings. Missing identities or required inputs stop generation before chart downloads.
+Run `l8k generate --target dpf --use-case hbn-bgp --user-config dpf-site.yaml --save-deployment-files ./hbn-bgp`. Launch Kit matches the selected source endpoints to the saved DPU identities and host associations, verifies that administrator access was recorded, and resolves exact PSIDs and desired settings. Missing identities or required inputs stop generation before chart downloads. Host address index 2 and gateway index 1 default from the profile and may be overridden under provisioning.hbn. They must be different usable addresses in every per-DPU subnet; plans requiring more than 4096 subnet reservations are rejected.
 
 Next: [Inputs valid](#hbn-bgp-generation-charts); [Missing or conflicting input](#hbn-bgp-generation-repair).
 
 ### 3. CLI machine: retrieve charts and validate resources {#hbn-bgp-generation-charts}
 
-The CLI downloads the selected DPF operator and HBN chart archives over HTTPS and verifies their recorded SHA-256 digests and metadata. It renders management bootstrap and HBN manifests locally, checks custom-resource structure against the selected operator schemas, and validates the complete artifact bundle. It does not connect to or modify the management cluster, hosts, DPUs or switches. A render or validation failure leaves the destination untouched.
+The CLI downloads the selected DPF operator and HBN chart archives over HTTPS and verifies their recorded SHA-256 digests and metadata. It renders management bootstrap and HBN manifests locally, checks custom-resource structure against the selected operator schemas, and validates the complete artifact bundle. It does not connect to or modify the management cluster, hosts, DPUs or switches. A render or validation failure leaves the destination untouched. The workload IPAM manifest excludes the selected host address from ordinary dynamic allocation in every possible DPU subnet. It does not assign subnets to specific DPUs or configure host addresses and routes.
 
 Next: [Bundle validates](#hbn-bgp-generation-publish); [Download, digest or validation failure](#hbn-bgp-generation-repair).
 

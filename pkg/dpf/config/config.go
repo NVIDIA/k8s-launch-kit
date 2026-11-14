@@ -617,7 +617,7 @@ func validateScalarTypes(n *yaml.Node, p string) error {
 			return nil
 		}
 		expected := "!!str"
-		if p == "/discovery/limits/maxConcurrentBMCs" || hbnIntegerPath(p) || bootstrapIntegerPath(p) || p == "/provisioning/hbn/workloadGatewayIndex" {
+		if p == "/discovery/limits/maxConcurrentBMCs" || hbnIntegerPath(p) || bootstrapIntegerPath(p) || p == "/provisioning/hbn/workloadGatewayIndex" || p == "/provisioning/hbn/hostAddressIndex" {
 			expected = "!!int"
 		}
 		if strings.HasSuffix(p, "/tls/insecureSkipVerify") || strings.HasSuffix(p, "/ssh/sudo") || p == "/provisioning/hbn/vxlanStartupProbeEnabled" {

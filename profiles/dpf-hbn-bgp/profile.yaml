@@ -27,6 +27,7 @@ defaults:
     startupVersion: HBN 2.4.0
     loopbackCIDR: 10.0.124.0/24
     workloadGatewayIndex: 1
+    hostAddressIndex: 2
     dpuSetStrategy: OnDelete
     nodeEffect: hold
     vxlanStartupProbeEnabled: false

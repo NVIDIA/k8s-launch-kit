@@ -52,6 +52,7 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 	inv.HBN.Management = managementFacts
 	additionalChecks := append(managementChecks, hbnSoftwareChecks(r.Input.Site.Provisioning, inv)...)
 	additionalChecks = append(additionalChecks, hbnGenerationInputChecks(r.Input.Site.Provisioning)...)
+	additionalChecks = append(additionalChecks, hbnHostAddressPlanCheck(r.HBN, r.HBNGeneration))
 	bootstrapChecks, tenantFacts := hbnBootstrapChecks(r.Input.Site.Provisioning, r.DPFNamespace, inv, provisioning)
 	additionalChecks = append(additionalChecks, bootstrapChecks...)
 	inv.HBN.Management.TenantClusters = tenantFacts

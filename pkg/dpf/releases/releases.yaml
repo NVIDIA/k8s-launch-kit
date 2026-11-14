@@ -108,6 +108,7 @@ releases:
       - BFB and component image bytes are not digest-locked by this catalog; provisioning must resolve and verify immutable artifacts before use.
   "26.8.0":
     version: "26.8.0"
+    tenantKubernetesVersion: v1.35.6
     supportedKubernetes:
       minimum: "1.33"
       maximum: "1.36"

@@ -159,6 +159,24 @@ func TestRenderProducesPinnedFlatWorkloadGraph(t *testing.T) {
 	if got := nestedString(t, objects[3], "spec", "ipv4Network", "gatewayIndex"); got != fmt.Sprint(input.Generation.WorkloadGatewayIndex) {
 		t.Fatalf("workload gateway index=%q", got)
 	}
+	exclusions, ok := nestedValue(t, objects[3], "spec", "ipv4Network", "excludeRanges").([]any)
+	if !ok || len(exclusions) != 128 {
+		t.Fatalf("workload exclusions = %#v, want 128 singleton host reservations", exclusions)
+	}
+	for i, want := range []string{"10.0.120.2", "10.0.120.10", "10.0.123.250"} {
+		index := []int{0, 1, len(exclusions) - 1}[i]
+		rangeMap, ok := exclusions[index].(map[string]any)
+		if !ok || rangeMap["startIP"] != want || rangeMap["endIP"] != want {
+			t.Fatalf("workload exclusion %d=%#v, want singleton %s", index, exclusions[index], want)
+		}
+	}
+	loopbackNetwork, ok := nestedValue(t, objects[2], "spec", "ipv4Network").(map[string]any)
+	if !ok {
+		t.Fatal("loopback ipv4Network is not an object")
+	}
+	if _, ok := loopbackNetwork["excludeRanges"]; ok {
+		t.Fatal("loopback pool unexpectedly has host exclusions")
+	}
 }
 
 func TestRenderDeterministicAndDoesNotMutateInputs(t *testing.T) {
@@ -378,17 +396,24 @@ func TestRenderRejectsMissingArtifactsAndUnreviewedFlavor(t *testing.T) {
 
 func nestedString(t *testing.T, root map[string]any, fields ...string) string {
 	t.Helper()
+	return fmt.Sprint(nestedValue(t, root, fields...))
+}
+
+func nestedValue(t *testing.T, root map[string]any, fields ...string) any {
+	t.Helper()
 	var value any = root
 	for _, field := range fields {
 		if index, err := fmt.Sscanf(field, "%d", new(int)); err == nil && index == 1 {
 			list, ok := value.([]any)
 			if !ok {
 				t.Fatalf("%v is not list at %q", value, field)
+				return nil
 			}
 			var n int
 			_, _ = fmt.Sscanf(field, "%d", &n)
 			if n >= len(list) {
 				t.Fatalf("index out of range: %s", field)
+				return nil
 			}
 			value = list[n]
 			continue
@@ -396,14 +421,16 @@ func nestedString(t *testing.T, root map[string]any, fields ...string) string {
 		m, ok := value.(map[string]any)
 		if !ok {
 			t.Fatalf("%v is not map at %q", value, field)
+			return nil
 		}
 		var exists bool
 		value, exists = m[field]
 		if !exists {
 			t.Fatalf("missing field %q in %v", field, m)
+			return nil
 		}
 	}
-	return fmt.Sprint(value)
+	return value
 }
 
 func nestedBool(t *testing.T, root map[string]any, fields ...string) bool {

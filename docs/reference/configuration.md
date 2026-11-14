@@ -117,10 +117,15 @@ uses defaults, and an explicitly empty map is invalid. See
 `provisioning.hbn` overrides HBN generation settings independently of the
 networking values under `dpf.hbn`. The profile selects chart `3.5.0`, image
 `3.5.0-doca3.5.0` with a SHA-256 digest, startup format `HBN 2.4.0`, loopback
-pool `10.0.124.0/24`, workload gateway index `1`, `OnDelete` strategy, and
+pool `10.0.124.0/24`, workload gateway index `1`, host address index `2`,
+`OnDelete` strategy, and
 `nodeEffect: hold`. The flat profile disables the VXLAN startup probe.
 `hold` pauses provisioning at the node-effect boundary until the selected
 maintenance request is released; it does not mean provisioning has completed.
+Host and gateway indexes must be different usable addresses in each per-DPU
+subnet. Generation reserves the host slot from ordinary dynamic IPAM allocation;
+the actual address follows the DPU subnet allocated during deployment. At most
+4096 subnets can be reserved. See [host workload addressing](../user/dpf-generation.md#plan-host-workload-addresses).
 An overridden loopback pool must not overlap the workload pool. Software
 coordinate overrides require matching digests; their compatibility needs
 separate validation.

@@ -57,7 +57,7 @@ func TestLoadDefinitionMetadataAndEmbeddedDefaults(t *testing.T) {
 	if definition.Defaults.Release != "26.8.0" || definition.Defaults.Namespace != "dpf-operator-system" {
 		t.Fatalf("unexpected profile release/namespace defaults: %#v", definition.Defaults)
 	}
-	if got := definition.Defaults.Generation; got.ChartName != "doca-hbn" || got.ChartVersion != "3.5.0" || got.ImageTag != "3.5.0-doca3.5.0" || got.StartupVersion != "HBN 2.4.0" || got.NodeEffect != NodeEffectHold || got.DPUSetStrategy != DPUSetStrategyOnDelete || got.VXLANStartupProbeEnabled {
+	if got := definition.Defaults.Generation; got.ChartName != "doca-hbn" || got.ChartVersion != "3.5.0" || got.ImageTag != "3.5.0-doca3.5.0" || got.StartupVersion != "HBN 2.4.0" || got.NodeEffect != NodeEffectHold || got.DPUSetStrategy != DPUSetStrategyOnDelete || got.WorkloadGatewayIndex != 1 || got.HostAddressIndex != 2 || got.VXLANStartupProbeEnabled {
 		t.Fatalf("unexpected generation defaults: %#v", got)
 	}
 	bootstrap := definition.Defaults.Bootstrap
@@ -103,7 +103,7 @@ func TestValidateResources(t *testing.T) {
 
 func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 	var omitted GenerationOptions
-	if err := yaml.Unmarshal([]byte("chartDigest: null\nworkloadGatewayIndex: null\nvxlanStartupProbeEnabled: null\n"), &omitted); err != nil {
+	if err := yaml.Unmarshal([]byte("chartDigest: null\nworkloadGatewayIndex: null\nhostAddressIndex: null\nvxlanStartupProbeEnabled: null\n"), &omitted); err != nil {
 		t.Fatalf("decode null generation options: %v", err)
 	}
 	generation, err := ResolveGeneration(omitted)
@@ -121,6 +121,7 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 		StartupVersion:           "HBN 2.4.0",
 		LoopbackCIDR:             "10.0.124.0/24",
 		WorkloadGatewayIndex:     1,
+		HostAddressIndex:         2,
 		DPUSetStrategy:           DPUSetStrategyOnDelete,
 		NodeEffect:               NodeEffectHold,
 		VXLANStartupProbeEnabled: false,
@@ -136,7 +137,7 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 		t.Fatalf("ValidateGeneration(defaults) error = %v", err)
 	}
 
-	noEffect, rolling, enabledProbe, gateway := NodeEffectNoEffect, DPUSetStrategyRollingUpdate, true, 2
+	noEffect, rolling, enabledProbe, gateway, hostIndex := NodeEffectNoEffect, DPUSetStrategyRollingUpdate, true, 2, 3
 	chartRepository, chartName, chartVersion := "https://mirror.example.net/charts", "doca-hbn-custom", "3.6.0"
 	chartDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	imageRepository, imageTag := "registry.example.net/team/hbn", "custom-build.1"
@@ -152,6 +153,7 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 		StartupVersion:           &startupVersion,
 		LoopbackCIDR:             &loopbackCIDR,
 		WorkloadGatewayIndex:     &gateway,
+		HostAddressIndex:         &hostIndex,
 		DPUSetStrategy:           &rolling,
 		NodeEffect:               &noEffect,
 		VXLANStartupProbeEnabled: &enabledProbe,
@@ -159,7 +161,7 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveGeneration(overrides) error = %v", err)
 	}
-	if overridden.ChartRepository != chartRepository || overridden.ChartName != chartName || overridden.ChartVersion != chartVersion || overridden.ChartDigest != chartDigest || overridden.ImageRepository != imageRepository || overridden.ImageTag != imageTag || overridden.ImageDigest != imageDigest || overridden.StartupVersion != startupVersion || overridden.LoopbackCIDR != loopbackCIDR || overridden.WorkloadGatewayIndex != gateway || overridden.DPUSetStrategy != rolling || overridden.NodeEffect != noEffect || !overridden.VXLANStartupProbeEnabled {
+	if overridden.ChartRepository != chartRepository || overridden.ChartName != chartName || overridden.ChartVersion != chartVersion || overridden.ChartDigest != chartDigest || overridden.ImageRepository != imageRepository || overridden.ImageTag != imageTag || overridden.ImageDigest != imageDigest || overridden.StartupVersion != startupVersion || overridden.LoopbackCIDR != loopbackCIDR || overridden.WorkloadGatewayIndex != gateway || overridden.HostAddressIndex != hostIndex || overridden.DPUSetStrategy != rolling || overridden.NodeEffect != noEffect || !overridden.VXLANStartupProbeEnabled {
 		t.Fatalf("generation overrides lost explicit values: %#v", overridden)
 	}
 	if err := ValidateGeneration(profile, overridden); err != nil {
@@ -182,6 +184,7 @@ func TestResolveGenerationRejectsExplicitEmptyZeroAndMalformedValues(t *testing.
 		{name: "invalid image digest", options: GenerationOptions{ImageDigest: &badDigest}},
 		{name: "image reference includes tag syntax", options: GenerationOptions{ImageRepository: stringPointer("nvcr.io/nvidia/doca/doca_hbn:latest")}},
 		{name: "zero gateway index", options: GenerationOptions{WorkloadGatewayIndex: &zero}},
+		{name: "zero host address index", options: GenerationOptions{HostAddressIndex: &zero}},
 		{name: "empty loopback pool", options: GenerationOptions{LoopbackCIDR: &empty}},
 		{name: "invalid node effect", options: GenerationOptions{NodeEffect: &badNodeEffect}},
 		{name: "invalid update strategy", options: GenerationOptions{DPUSetStrategy: &badStrategy}},
@@ -195,10 +198,10 @@ func TestResolveGenerationRejectsExplicitEmptyZeroAndMalformedValues(t *testing.
 	}
 
 	var decoded GenerationOptions
-	if err := yaml.Unmarshal([]byte("chartName: ''\nworkloadGatewayIndex: 0\nvxlanStartupProbeEnabled: true\n"), &decoded); err != nil {
+	if err := yaml.Unmarshal([]byte("chartName: ''\nworkloadGatewayIndex: 0\nhostAddressIndex: 0\nvxlanStartupProbeEnabled: true\n"), &decoded); err != nil {
 		t.Fatalf("decode explicit values: %v", err)
 	}
-	if decoded.ChartName == nil || *decoded.ChartName != "" || decoded.WorkloadGatewayIndex == nil || *decoded.WorkloadGatewayIndex != 0 || decoded.VXLANStartupProbeEnabled == nil || !*decoded.VXLANStartupProbeEnabled {
+	if decoded.ChartName == nil || *decoded.ChartName != "" || decoded.WorkloadGatewayIndex == nil || *decoded.WorkloadGatewayIndex != 0 || decoded.HostAddressIndex == nil || *decoded.HostAddressIndex != 0 || decoded.VXLANStartupProbeEnabled == nil || !*decoded.VXLANStartupProbeEnabled {
 		t.Fatalf("YAML decode lost explicit values: %#v", decoded)
 	}
 	if _, err := ResolveGeneration(decoded); err == nil {
@@ -206,10 +209,10 @@ func TestResolveGenerationRejectsExplicitEmptyZeroAndMalformedValues(t *testing.
 	}
 
 	var jsonDecoded GenerationOptions
-	if err := json.Unmarshal([]byte(`{"chartName":"","workloadGatewayIndex":0,"vxlanStartupProbeEnabled":true}`), &jsonDecoded); err != nil {
+	if err := json.Unmarshal([]byte(`{"chartName":"","workloadGatewayIndex":0,"hostAddressIndex":0,"vxlanStartupProbeEnabled":true}`), &jsonDecoded); err != nil {
 		t.Fatalf("decode JSON explicit values: %v", err)
 	}
-	if jsonDecoded.ChartName == nil || *jsonDecoded.ChartName != "" || jsonDecoded.WorkloadGatewayIndex == nil || *jsonDecoded.WorkloadGatewayIndex != 0 || jsonDecoded.VXLANStartupProbeEnabled == nil || !*jsonDecoded.VXLANStartupProbeEnabled {
+	if jsonDecoded.ChartName == nil || *jsonDecoded.ChartName != "" || jsonDecoded.WorkloadGatewayIndex == nil || *jsonDecoded.WorkloadGatewayIndex != 0 || jsonDecoded.HostAddressIndex == nil || *jsonDecoded.HostAddressIndex != 0 || jsonDecoded.VXLANStartupProbeEnabled == nil || !*jsonDecoded.VXLANStartupProbeEnabled {
 		t.Fatalf("JSON decode lost explicit values: %#v", jsonDecoded)
 	}
 	if _, err := ResolveGeneration(jsonDecoded); err == nil {

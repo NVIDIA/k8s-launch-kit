@@ -16,11 +16,12 @@ import (
 // Summary is the persisted software BOM. Catalog research provenance remains in
 // Release; omitted minima mean unknown requirements, never inferred constraints.
 type Summary struct {
-	Version             string             `json:"version" yaml:"version"`
-	SupportedKubernetes *VersionRange      `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
-	Operator            OperatorSummary    `json:"operator" yaml:"operator"`
-	Components          []ComponentSummary `json:"components" yaml:"components"`
-	Hardware            []HardwareSummary  `json:"hardware" yaml:"hardware"`
+	Version                 string             `json:"version" yaml:"version"`
+	SupportedKubernetes     *VersionRange      `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
+	TenantKubernetesVersion string             `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
+	Operator                OperatorSummary    `json:"operator" yaml:"operator"`
+	Components              []ComponentSummary `json:"components" yaml:"components"`
+	Hardware                []HardwareSummary  `json:"hardware" yaml:"hardware"`
 }
 
 type OperatorSummary struct {
@@ -94,8 +95,9 @@ func (h *HardwareSummary) minimumFields() []struct {
 // It returns independent slices and never adds a digest or a numeric minimum.
 func Summarize(r Release) Summary {
 	s := Summary{
-		Version:             r.Version,
-		SupportedKubernetes: cloneVersionRange(r.SupportedKubernetes),
+		Version:                 r.Version,
+		SupportedKubernetes:     cloneVersionRange(r.SupportedKubernetes),
+		TenantKubernetesVersion: r.TenantKubernetesVersion,
 		Operator: OperatorSummary{Chart: r.Operator.Chart, ChartRepository: r.Operator.ChartRepository,
 			Version: r.Operator.Version, ChartDigest: r.Operator.ChartDigest, Image: r.Operator.Image},
 		Components: make([]ComponentSummary, 0, len(r.Components)),
@@ -143,13 +145,14 @@ func (s Summary) Release() (Release, error) {
 	if !summaryReleaseVersion.MatchString(s.Version) || s.Operator.Version != "v"+s.Version ||
 		!summaryToken(s.Operator.Chart) || !summaryHTTPS(s.Operator.ChartRepository) ||
 		!summaryDigest(s.Operator.ChartDigest) || !summaryToken(s.Operator.Image) ||
-		s.SupportedKubernetes != nil && !validVersionRange(*s.SupportedKubernetes) {
+		s.SupportedKubernetes != nil && !validVersionRange(*s.SupportedKubernetes) ||
+		s.TenantKubernetesVersion != "" && !validTenantKubernetesVersion(s.TenantKubernetesVersion) {
 		return Release{}, fmt.Errorf("invalid saved DPF release coordinates")
 	}
 	if len(s.Components) == 0 || len(s.Hardware) == 0 {
 		return Release{}, fmt.Errorf("saved DPF software BOM requires components and hardware applicability")
 	}
-	r := Release{Version: s.Version, SupportedKubernetes: cloneVersionRange(s.SupportedKubernetes),
+	r := Release{Version: s.Version, SupportedKubernetes: cloneVersionRange(s.SupportedKubernetes), TenantKubernetesVersion: s.TenantKubernetesVersion,
 		Operator: Operator{Chart: s.Operator.Chart, ChartRepository: s.Operator.ChartRepository,
 			Version: s.Operator.Version, ChartDigest: s.Operator.ChartDigest, Image: s.Operator.Image},
 		Components: make([]Component, 0, len(s.Components)), Hardware: make([]HardwareBOM, 0, len(s.Hardware))}

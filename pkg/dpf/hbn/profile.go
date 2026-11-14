@@ -97,6 +97,7 @@ type GenerationOptions struct {
 	StartupVersion           *string         `yaml:"startupVersion,omitempty" json:"startupVersion,omitempty"`
 	LoopbackCIDR             *string         `yaml:"loopbackCIDR,omitempty" json:"loopbackCIDR,omitempty"`
 	WorkloadGatewayIndex     *int            `yaml:"workloadGatewayIndex,omitempty" json:"workloadGatewayIndex,omitempty"`
+	HostAddressIndex         *int            `yaml:"hostAddressIndex,omitempty" json:"hostAddressIndex,omitempty"`
 	DPUSetStrategy           *DPUSetStrategy `yaml:"dpuSetStrategy,omitempty" json:"dpuSetStrategy,omitempty"`
 	NodeEffect               *NodeEffect     `yaml:"nodeEffect,omitempty" json:"nodeEffect,omitempty"`
 	VXLANStartupProbeEnabled *bool           `yaml:"vxlanStartupProbeEnabled,omitempty" json:"vxlanStartupProbeEnabled,omitempty"`
@@ -115,6 +116,7 @@ type Generation struct {
 	StartupVersion           string         `yaml:"startupVersion" json:"startupVersion"`
 	LoopbackCIDR             string         `yaml:"loopbackCIDR" json:"loopbackCIDR"`
 	WorkloadGatewayIndex     int            `yaml:"workloadGatewayIndex" json:"workloadGatewayIndex"`
+	HostAddressIndex         int            `yaml:"hostAddressIndex" json:"hostAddressIndex"`
 	DPUSetStrategy           DPUSetStrategy `yaml:"dpuSetStrategy" json:"dpuSetStrategy"`
 	NodeEffect               NodeEffect     `yaml:"nodeEffect" json:"nodeEffect"`
 	VXLANStartupProbeEnabled bool           `yaml:"vxlanStartupProbeEnabled" json:"vxlanStartupProbeEnabled"`
@@ -325,6 +327,9 @@ func ResolveGeneration(options GenerationOptions) (Generation, error) {
 	if options.WorkloadGatewayIndex != nil {
 		generation.WorkloadGatewayIndex = *options.WorkloadGatewayIndex
 	}
+	if options.HostAddressIndex != nil {
+		generation.HostAddressIndex = *options.HostAddressIndex
+	}
 	if options.DPUSetStrategy != nil {
 		generation.DPUSetStrategy = *options.DPUSetStrategy
 	}
@@ -357,6 +362,9 @@ func ValidateGeneration(profile Profile, generation Generation) error {
 	allocationSize := uint64(1) << uint(32-profile.WorkloadPrefix)
 	if uint64(generation.WorkloadGatewayIndex) >= allocationSize-1 {
 		return fmt.Errorf("workloadGatewayIndex must fit within a workload allocation of prefix /%d", profile.WorkloadPrefix)
+	}
+	if _, _, _, err := workloadAddressPlan(profile, generation); err != nil {
+		return err
 	}
 	return nil
 }
@@ -393,6 +401,9 @@ func validateGeneration(generation Generation) error {
 	}
 	if generation.WorkloadGatewayIndex < 1 {
 		return fmt.Errorf("workloadGatewayIndex must be greater than zero")
+	}
+	if generation.HostAddressIndex < 1 {
+		return fmt.Errorf("hostAddressIndex must be greater than zero")
 	}
 	if generation.DPUSetStrategy != DPUSetStrategyOnDelete && generation.DPUSetStrategy != DPUSetStrategyRollingUpdate {
 		return fmt.Errorf("dpuSetStrategy must be OnDelete or RollingUpdate")

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	k8sversion "k8s.io/apimachinery/pkg/util/version"
 )
 
 // DefaultRelease is deliberately pinned. Adding a catalog entry never selects it
@@ -101,11 +102,15 @@ type HardwareBOM struct {
 type Release struct {
 	Version             string        `json:"version" yaml:"version"`
 	SupportedKubernetes *VersionRange `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
-	Operator            Operator      `json:"operator" yaml:"operator"`
-	Components          []Component   `json:"components" yaml:"components"`
-	Hardware            []HardwareBOM `json:"hardware" yaml:"hardware"`
-	Sources             []Source      `json:"sources" yaml:"sources"`
-	Limitations         []string      `json:"limitations" yaml:"limitations"`
+	// TenantKubernetesVersion is the release-owned Kamaji tenant control-plane
+	// version. It is separate from SupportedKubernetes, which describes the
+	// management cluster running the DPF operator.
+	TenantKubernetesVersion string        `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
+	Operator                Operator      `json:"operator" yaml:"operator"`
+	Components              []Component   `json:"components" yaml:"components"`
+	Hardware                []HardwareBOM `json:"hardware" yaml:"hardware"`
+	Sources                 []Source      `json:"sources" yaml:"sources"`
+	Limitations             []string      `json:"limitations" yaml:"limitations"`
 }
 
 type catalog struct {
@@ -208,6 +213,9 @@ func validate(key string, r Release) error {
 	if r.SupportedKubernetes != nil && !validVersionRange(*r.SupportedKubernetes) {
 		return fmt.Errorf("invalid supported Kubernetes version range")
 	}
+	if r.TenantKubernetesVersion != "" && !validTenantKubernetesVersion(r.TenantKubernetesVersion) {
+		return fmt.Errorf("invalid tenant Kubernetes version")
+	}
 	components := map[string]bool{}
 	for _, c := range r.Components {
 		if c.Name == "" || components[c.Name] || c.Version == "" || c.Repository == "" || !sources[c.SourceRef] || !slices.Contains([]string{"base", "conditional", "optional"}, c.Applicability) {
@@ -256,6 +264,14 @@ func validate(key string, r Release) error {
 		}
 	}
 	return nil
+}
+
+func validTenantKubernetesVersion(value string) bool {
+	if !strings.HasPrefix(value, "v") || strings.ContainsAny(value, "-+") || strings.Count(value, ".") != 2 {
+		return false
+	}
+	parsed, err := k8sversion.ParseSemantic(value)
+	return err == nil && parsed.Major() > 0 && parsed.String() == strings.TrimPrefix(value, "v")
 }
 
 func validVersionRange(r VersionRange) bool {
