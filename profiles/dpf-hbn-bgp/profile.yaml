@@ -1,0 +1,48 @@
+# Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+plugin: dpf
+name: hbn-bgp
+target: dpf
+description: Flat IPv4 BGP HBN profile for the DPF target.
+defaults:
+  release: "26.8.0"
+  namespace: dpf-operator-system
+  networking:
+    fabricVRF: default
+    fabricASN: 65000
+    dpuASNBase: 65101
+    dpuASNStride: 100
+    uplinkMTU: 9216
+    workloadMTU: 9000
+    workloadCIDR: 10.0.120.0/22
+    workloadPrefix: 29
+  generation:
+    chartRepository: https://helm.ngc.nvidia.com/nvidia/doca
+    chartName: doca-hbn
+    chartVersion: 3.5.0
+    chartDigest: sha256:85dc3b44307b92088fc3d05561e66cada4a7d8390ff6ff3e6c6fde8f9c5a42d9
+    imageRepository: nvcr.io/nvidia/doca/doca_hbn
+    imageTag: 3.5.0-doca3.5.0
+    imageDigest: sha256:675ff5bf03acf5e2c777309d9dbe570754d3348be661278df094783f18962d93
+    startupVersion: HBN 2.4.0
+    loopbackCIDR: 10.0.124.0/24
+    workloadGatewayIndex: 1
+    hostAddressIndex: 2
+    dpuSetStrategy: OnDelete
+    nodeEffect: hold
+    vxlanStartupProbeEnabled: false
+  resources:
+    memory: 6Gi
+    nvidia.com/bf_sf: "4"
+  bootstrap:
+    bmcFactoryResetPolicy: Never
+    # Fixed by the selected DPF Kamaji controller, not a user-configurable range.
+    tenantServiceCIDR: 10.96.0.0/16
+    operatorConfigName: dpfoperatorconfig
+    tenantName: dpu-cplane-tenant1
+    tenantNamespace: dpu-cplane-tenant1
+    tenantMaxNodes: 1000
+    tenantRouterID: 126
+    tenantNodeSelector:
+      node-role.kubernetes.io/control-plane: ""
+    podCIDR: 10.244.0.0/14

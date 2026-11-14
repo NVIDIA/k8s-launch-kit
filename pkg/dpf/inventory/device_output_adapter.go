@@ -5,10 +5,15 @@ package inventory
 
 import (
 	"fmt"
+	"net"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
 )
+
+var pciFunctionAddress = regexp.MustCompile(`(?i)^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$`)
+var permanentMACAddress = regexp.MustCompile(`^[0-9a-f]{2}(:[0-9a-f]{2}){5}$`)
 
 // DeviceToOutput is the explicit boundary between collector observations and
 // public facts. It does not mutate the collector's retained result.
@@ -19,7 +24,7 @@ func DeviceToOutput(d Device, role string) (DeviceOutput, error) {
 	}
 	w := DeviceOutput{RecordKey: d.RecordKey, InputRef: d.InputRef, BMCEndpoint: d.BMCEndpoint, SSHEndpoint: d.SSHEndpoint,
 		SystemURI: d.SystemURI, SerialNumber: d.SerialNumber, SystemUUID: d.SystemUUID, Manufacturer: d.Manufacturer,
-		Model: d.Model, AdvertisedResetTypes: slices.Clone(d.AdvertisedResetTypes)}
+		Model: d.Model, AdvertisedResetTypes: slices.Clone(d.AdvertisedResetTypes), NetworkFunctionMACs: slices.Clone(d.NetworkFunctionMACs)}
 	switch {
 	case d.SSHEndpoint != "":
 		w.Method = "ssh"
@@ -67,12 +72,25 @@ func DeviceToOutput(d Device, role string) (DeviceOutput, error) {
 				w.FirmwareInventoryComplete = o.State == "observed"
 				addIssue(&w.Issues, "firmwareInventoryComplete", o)
 			}
+		case "networkFunctionMACs":
+			if o.State == "observed" {
+				if o.Tool != "redfish" || !slices.Equal(o.Values, d.NetworkFunctionMACs) || len(o.Values) == 0 {
+					return DeviceOutput{}, fmt.Errorf("device %s has inconsistent Redfish NetworkDeviceFunction MAC evidence", d.RecordKey)
+				}
+			} else {
+				addIssue(&w.Issues, "networkFunctionMACs", o)
+			}
 		case "managers", "bmc-time", "bmc-ntp", "client-certificate-support":
 			// These reads have no public fact consumer.
 		default:
 			if !strings.HasPrefix(key, "firmware.") {
 				addIssue(&w.Issues, key, o)
 			}
+		}
+	}
+	if len(d.NetworkFunctionMACs) > 0 {
+		if observation, exists := d.Observations["networkFunctionMACs"]; exists && (observation.State != "observed" || observation.Tool != "redfish" || !slices.Equal(observation.Values, d.NetworkFunctionMACs)) {
+			return DeviceOutput{}, fmt.Errorf("device %s has inconsistent Redfish NetworkDeviceFunction MAC evidence", d.RecordKey)
 		}
 	}
 	if d.PSID != "" {
@@ -96,6 +114,10 @@ func DeviceToOutput(d Device, role string) (DeviceOutput, error) {
 	// Positive source claims cannot outlive the identity/source recheck.
 	if w.ID == "" {
 		w.PSID, w.BMCAdministratorVerified, w.FirmwareInventoryComplete = "", false, false
+		w.NetworkFunctionMACs = nil
+	}
+	if len(w.NetworkFunctionMACs) > 0 && (role != "dpus" || w.ID == "" || w.Method != "redfish" || d.ReaderAdapter != "bluefield-card-v1" || hasIssue(w.Issues, "networkFunctionMACs") || !validNetworkFunctionMACs(w.NetworkFunctionMACs)) {
+		return DeviceOutput{}, fmt.Errorf("device %s has inconsistent identity-bound NetworkDeviceFunction MACs", d.RecordKey)
 	}
 	if w.PSID != "" && (d.ReaderAdapter != "bluefield-card-v1" || w.Model != "B4240") {
 		return DeviceOutput{}, fmt.Errorf("device %s PSID lacks supported identity-bound Redfish evidence", d.RecordKey)
@@ -147,7 +169,8 @@ func DeviceFromOutput(w DeviceOutput, role string) (Device, error) {
 	d := Device{RecordKey: w.RecordKey, InputRef: w.InputRef, ID: w.ID, BMCEndpoint: w.BMCEndpoint, SSHEndpoint: w.SSHEndpoint,
 		SystemURI: w.SystemURI, SerialNumber: w.SerialNumber, SerialNumberRaw: w.SerialNumber, SystemUUID: w.SystemUUID,
 		Manufacturer: w.Manufacturer, Model: w.Model, AdvertisedResetTypes: slices.Clone(w.AdvertisedResetTypes),
-		ObservationState: "unknown", Observations: map[string]Observation{}}
+		NetworkFunctionMACs: slices.Clone(w.NetworkFunctionMACs),
+		ObservationState:    "unknown", Observations: map[string]Observation{}}
 	if w.ID != "" {
 		d.ObservationState = "observed"
 		if role == "hosts" && w.SystemUUID != "" {
@@ -177,6 +200,9 @@ func DeviceFromOutput(w DeviceOutput, role string) (Device, error) {
 	}
 	if w.FirmwareInventoryComplete {
 		d.Observations["firmware-inventory"] = Observation{State: "observed"}
+	}
+	if len(w.NetworkFunctionMACs) > 0 {
+		d.Observations["networkFunctionMACs"] = Observation{State: "observed", Values: slices.Clone(w.NetworkFunctionMACs), Tool: "redfish"}
 	}
 	d.Firmware, err = firmwareFromOutput(w.Firmware, w.Issues)
 	if err != nil {
@@ -237,7 +263,7 @@ func validateDeviceOutput(w DeviceOutput, role string) error {
 		if issue.Field == "" || issue.Code == "" || !safeFact(issue.Field) || !safeFact(issue.Code) {
 			return fmt.Errorf("device %s has an invalid issue", w.RecordKey)
 		}
-		if issue.Field == "identity" || issue.Field == "psid" || issue.Field == "bmcAdministratorVerified" || issue.Field == "firmwareInventoryComplete" {
+		if issue.Field == "identity" || issue.Field == "psid" || issue.Field == "bmcAdministratorVerified" || issue.Field == "firmwareInventoryComplete" || issue.Field == "networkFunctionMACs" {
 			if securityIssues[issue.Field] {
 				return fmt.Errorf("device %s has ambiguous %s issues", w.RecordKey, issue.Field)
 			}
@@ -246,6 +272,12 @@ func validateDeviceOutput(w DeviceOutput, role string) error {
 	}
 	if w.ID != "" && hasIssue(w.Issues, "identity") {
 		return fmt.Errorf("device %s publishes identity with a failed recheck", w.RecordKey)
+	}
+	if len(w.NetworkFunctionMACs) > 0 && (role != "dpus" || w.Method != "redfish" || w.ID == "" || hasIssue(w.Issues, "networkFunctionMACs") || !validNetworkFunctionMACs(w.NetworkFunctionMACs)) {
+		return fmt.Errorf("device %s has invalid identity-bound NetworkDeviceFunction MACs", w.RecordKey)
+	}
+	if hasIssue(w.Issues, "networkFunctionMACs") && (role != "dpus" || w.Method != "redfish") {
+		return fmt.Errorf("device %s NetworkDeviceFunction MAC issue requires a DPU Redfish source", w.RecordKey)
 	}
 	switch w.Method {
 	case "redfish":
@@ -266,6 +298,22 @@ func validateDeviceOutput(w DeviceOutput, role string) error {
 		}
 	default:
 		return fmt.Errorf("device %s has unsupported method %q", w.RecordKey, w.Method)
+	}
+	for _, adapter := range w.Adapters {
+		for _, pf := range adapter.PCIFunctions {
+			if pf.IOMMUGroup == nil {
+				continue
+			}
+			if role != "hosts" || w.Method != "ssh" || *pf.IOMMUGroup < 0 || hasIssue(w.Issues, "runtime.host-pf:"+pf.Address+":iommu-group") {
+				return fmt.Errorf("device %s has an invalid or contradictory host PCI IOMMU group", w.RecordKey)
+			}
+			if !pciFunctionAddress.MatchString(pf.Address) || !pciFunctionAddress.MatchString(adapter.PCIAddress) {
+				return fmt.Errorf("device %s IOMMU group requires valid host PCI function and adapter addresses", w.RecordKey)
+			}
+			if !strings.EqualFold(pf.Address[:10], adapter.PCIAddress[:10]) {
+				return fmt.Errorf("device %s IOMMU function belongs to a different PCI slot than its adapter", w.RecordKey)
+			}
+		}
 	}
 	if w.PSID != "" && (role != "dpus" || w.ID == "" || w.Method != "redfish" || w.Model != "B4240" || !validPSID(w.PSID) || hasIssue(w.Issues, "psid")) {
 		return fmt.Errorf("device %s has inconsistent verified Redfish PSID", w.RecordKey)
@@ -360,10 +408,39 @@ func validPSID(value string) bool {
 	}) < 0
 }
 
+func validNetworkFunctionMACs(values []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	previous := ""
+	for _, value := range values {
+		if !permanentMACAddress.MatchString(value) || previous != "" && value <= previous {
+			return false
+		}
+		parsed, err := net.ParseMAC(value)
+		if err != nil || len(parsed) != 6 || parsed[0]&1 != 0 {
+			return false
+		}
+		allZero := true
+		for _, octet := range parsed {
+			allZero = allZero && octet == 0
+		}
+		if allZero {
+			return false
+		}
+		previous = value
+	}
+	return true
+}
+
 func cloneFunctions(functions []PCIFunction) []PCIFunction {
 	out := slices.Clone(functions)
 	for i := range out {
 		out[i].Netdevs = slices.Clone(out[i].Netdevs)
+		if out[i].IOMMUGroup != nil {
+			group := *out[i].IOMMUGroup
+			out[i].IOMMUGroup = &group
+		}
 	}
 	return out
 }

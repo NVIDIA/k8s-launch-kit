@@ -80,6 +80,35 @@ var _ = ginkgo.Describe("compact inventory", func() {
 		Expect(againYAML).To(Equal(encodedYAML))
 	})
 
+	ginkgo.It("preserves explicit empty and populated DPUCluster selectors in the public projection", func() {
+		empty := map[string]string{}
+		selector := map[string]string{"node-role.kubernetes.io/control-plane": "", "site": "blue"}
+		in := Inventory{FormatVersion: FormatVersion, HBN: &HBNInventory{Management: &HBNManagement{TenantClusters: []HBNManagementCluster{
+			{Name: "empty-selector", Namespace: "tenant-a", NodeSelector: &empty},
+			{Name: "selected", Namespace: "tenant-b", VirtualRouterID: ptrInt64(126), NodeSelector: &selector},
+		}}}}
+		encodedJSON, err := json.Marshal(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encodedJSON)).To(ContainSubstring(`"nodeSelector":{}`))
+		var fromJSON Inventory
+		Expect(json.Unmarshal(encodedJSON, &fromJSON)).To(Succeed())
+		encodedYAML, err := yaml.Marshal(in)
+		Expect(err).NotTo(HaveOccurred())
+		var fromYAML Inventory
+		Expect(yaml.Unmarshal(encodedYAML, &fromYAML)).To(Succeed())
+		Expect(NormalizeInventory(&fromYAML)).To(Succeed())
+		for _, restored := range []Inventory{fromJSON, fromYAML} {
+			clusters := restored.HBN.Management.TenantClusters
+			Expect(clusters).To(HaveLen(2))
+			Expect(clusters[0].NodeSelector).NotTo(BeNil())
+			Expect(*clusters[0].NodeSelector).To(BeEmpty())
+			Expect(*clusters[1].VirtualRouterID).To(Equal(int64(126)))
+			Expect(*clusters[1].NodeSelector).To(Equal(selector))
+		}
+		(*fromJSON.HBN.Management.TenantClusters[1].NodeSelector)["site"] = "changed"
+		Expect(selector["site"]).To(Equal("blue"))
+	})
+
 	ginkgo.It("preserves explicit failures and unknown records even when an ID was assigned", func() {
 		in := Inventory{FormatVersion: "v1alpha2", DPUs: []Device{
 			{ID: "before-recheck", ObservationState: "unavailable", ReasonCode: "IDENTITY_CHANGED"},
@@ -146,3 +175,5 @@ var _ = ginkgo.Describe("compact inventory", func() {
 		Expect(json.Unmarshal([]byte(`{"formatVersion":"v1alpha2","dpus":[{"authentication":{"administratorTypo":"verified"}}]}`), &result)).To(HaveOccurred())
 	})
 })
+
+func ptrInt64(value int64) *int64 { return &value }

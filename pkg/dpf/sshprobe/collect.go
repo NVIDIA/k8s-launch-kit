@@ -308,6 +308,11 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 
 func collectPF(ctx context.Context, remote runner, bdf string, runtime *inventory.RuntimeObservation, add func(string, string) string) inventory.PCIFunction {
 	pf := inventory.PCIFunction{Address: bdf, Netdevs: []string{}}
+	if !bdfToken.MatchString(bdf) {
+		stage := "host-pf:" + bdf + ":iommu-group"
+		runtime.Observations[stage] = unavailable(&Error{Code: "SSH_PCI_INVENTORY_INVALID", Stage: stage}, "sysfs")
+		return pf
+	}
 	base := "/sys/bus/pci/devices/" + bdf
 	for _, p := range []struct{ field, command string }{{"driver", "readlink " + base + "/driver"}, {"numa", "cat " + base + "/numa_node"}, {"netdevs", "ls -1 " + base + "/net"}} {
 		stage := "host-pf:" + bdf + ":" + p.field
@@ -341,12 +346,33 @@ func collectPF(ctx context.Context, remote runner, bdf string, runtime *inventor
 			add(stage, p.field)
 		}
 	}
+	stage := "host-pf:" + bdf + ":iommu-group"
+	path := base + "/iommu_group"
+	command := `sh -c 'p=` + path + `; d=` + base + `; [ -d "$d" ] || exit 1; if [ -L "$p" ]; then readlink -f "$p"; elif [ -e "$p" ]; then exit 1; else printf "absent\n"; fi'`
+	text, err := remote.Run(ctx, stage, command)
+	if err == nil {
+		var absent bool
+		pf.IOMMUGroup, absent, err = iommuGroup(text)
+		if err == nil && absent {
+			runtime.Observations[stage] = inventory.Observation{State: "unknown", ReasonCode: "IOMMU_GROUP_ABSENT", Message: "No IOMMU group is exposed for this PCI function.", Tool: "sysfs"}
+			return pf
+		}
+		if err == nil && pf.IOMMUGroup == nil {
+			err = &Error{Code: "SSH_RUNTIME_INVALID", Stage: stage}
+		}
+	}
+	if err != nil {
+		runtime.Observations[stage] = unavailable(err, "sysfs")
+		return pf
+	}
+	runtime.Observations[stage] = observed("sysfs", "group="+strconv.Itoa(*pf.IOMMUGroup))
+	add(stage, "IOMMUGroup")
 	return pf
 }
 
 func collectRuntime(ctx context.Context, remote runner, runtime *inventory.RuntimeObservation, add func(string, string) string) {
 	for _, probe := range []struct{ stage, command string }{
-		{"hostname", "hostname"}, {"os", "cat /etc/os-release"}, {"interfaces", "ip -j address show"}, {"routes", "ip -j -4 route show"}, {"dns", "cat /etc/resolv.conf"},
+		{"hostname", "hostname"}, {"os", "cat /etc/os-release"}, {"interfaces", "ip -j address show"}, {"dns", "cat /etc/resolv.conf"},
 	} {
 		text, err := remote.Run(ctx, probe.stage, probe.command)
 		if err == nil {
@@ -368,8 +394,6 @@ func collectRuntime(ctx context.Context, remote runner, runtime *inventory.Runti
 				}
 			case "interfaces":
 				runtime.Interfaces, err = interfaces(text)
-			case "routes":
-				runtime.Routes, err = routes(text, runtime.Interfaces)
 			case "dns":
 				for _, line := range strings.Split(text, "\n") {
 					f := strings.Fields(line)
@@ -395,6 +419,37 @@ func collectRuntime(ctx context.Context, remote runner, runtime *inventory.Runti
 			add(probe.stage, probe.stage)
 		}
 	}
+	collectRoutes(ctx, remote, runtime, add)
+}
+
+func collectRoutes(ctx context.Context, remote runner, runtime *inventory.RuntimeObservation, add func(string, string) string) {
+	collected := []inventory.Route{}
+	var firstErr error
+	for _, probe := range []struct {
+		stage   string
+		command string
+		family  int
+	}{{"routes", "ip -j -4 route show table all", 4}, {"routes-v6", "ip -j -6 route show table all", 6}} {
+		text, err := remote.Run(ctx, probe.stage, probe.command)
+		if err == nil {
+			var routesForFamily []inventory.Route
+			routesForFamily, err = routes(text, runtime.Interfaces, probe.family)
+			if err == nil {
+				collected = append(collected, routesForFamily...)
+			}
+		}
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		runtime.Routes = nil
+		runtime.Observations["routes"] = unavailable(firstErr, "ip")
+		return
+	}
+	runtime.Routes = collected
+	runtime.Observations["routes"] = observed("ip")
+	add("routes", "IPv4 and IPv6 routes")
 }
 
 // Count the typed optional facts, including nested card measurements. Successful

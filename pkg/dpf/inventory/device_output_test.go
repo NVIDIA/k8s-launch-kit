@@ -186,3 +186,15 @@ var _ = ginkgo.Describe("typed DeviceOutput", func() {
 		}
 	})
 })
+
+var _ = ginkgo.Describe("interface output ownership", func() {
+	ginkgo.It("copies optional administrative state without aliasing the observation", func() {
+		up := true
+		source := []Interface{{Name: "eth0", Index: 2, MTU: 1500, AdminUp: &up, Addresses: []string{"192.0.2.10/24"}}}
+		cloned := cloneInterfaces(source)
+		*cloned[0].AdminUp = false
+		cloned[0].Addresses[0] = "192.0.2.20/24"
+		Expect(*source[0].AdminUp).To(BeTrue())
+		Expect(source[0].Addresses).To(Equal([]string{"192.0.2.10/24"}))
+	})
+})

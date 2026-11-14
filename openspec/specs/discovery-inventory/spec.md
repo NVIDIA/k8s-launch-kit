@@ -259,6 +259,80 @@ MUST NOT substitute. Host-only and ARM-only observations SHALL remain partial.
 - **THEN** discovery accepts an NVIDIA B4240 physical Card with a matching System serial, or a serial-bearing B4240 BMC Component reciprocally contained by a physical Card and linked by that System.
 - **AND** missing System properties remain absent; conflicting properties, unsafe links, multiple matching candidates or a changed identity graph prevent complete inventory. Free-text descriptions and fuzzy model names do not supply identity.
 
+### Requirement: HBN-BGP prerequisite discovery
+
+DPF discovery with the HBN-BGP use case SHALL distinguish physical inventory
+completion from use-case readiness. Switch inspection SHALL use explicit access,
+pinned SSH trust and read-only commands. Applied configuration and operational
+state SHALL remain separate; unknown required facts and contradictions SHALL
+block readiness with specific reasons. LLDP names alone SHALL NOT establish
+authenticated physical cabling. Profile defaults SHALL express desired values,
+not observations or authorization to modify switches.
+
+#### Scenario: Complete inventory with missing fabric prerequisites
+
+- **WHEN** physical host/DPU inventory succeeds but required VRF, BGP, port, authorization or other use-case prerequisites cannot be verified
+- **THEN** the complete physical inventory may be saved, but HBN-BGP readiness is blocked and the command exits nonzero.
+- **AND** failed switch reads are retained with their reasons; prior switch observations are not substituted.
+
+#### Scenario: Applied and operational port state disagree
+
+- **WHEN** an applied setting appears suitable but operational MTU, VRF or bridge membership contradicts the intended routed uplink
+- **THEN** the corresponding prerequisite remains blocked rather than selecting whichever observation passes.
+
+#### Scenario: Future BGP adjacency does not yet exist
+
+- **WHEN** the selected DPU service has not been deployed
+- **THEN** discovery checks configured peer prerequisites without requiring an established adjacency to that future service.
+- **AND** adjacency, routes and traffic remain explicit post-deployment checks; prerequisite success does not imply those outcomes.
+
+#### Scenario: Corroborating a DPU uplink
+
+- **WHEN** a selected physical card exposes permanent Ethernet network-function MACs through Redfish
+- **THEN** the collector rechecks the identity-bound graph and invalidates the facts on identity change or cleanup failure.
+- **AND** a cabling check passes only with a unique switch LLDP port MAC owned by that card and a matching p0/p1 claim; it does not establish cryptographic peer authentication or packet delivery.
+
+#### Scenario: Host policy routing and saved empty sources
+
+- **WHEN** HBN checks management separation on the associated host adapter
+- **THEN** it includes IPv4 and IPv6 routes from all tables, including non-main defaults and multipath egresses.
+- **AND** incomplete required route observations block the check with their reason.
+- **WHEN** complete switch address or route observations contain no entries
+- **THEN** JSON and YAML handoff preserve known-empty separately from unavailable sources.
+
+#### Scenario: HBN tenant storage prerequisites
+
+- **WHEN** HBN discovery inspects the management cluster
+- **THEN** tenant storage readiness requires the current selected Kamaji datastore,
+  its correlated etcd replicas and pods, matching bound claims and volumes, and
+  the supported storage provisioner; class presence alone cannot pass the check.
+- **AND** denied, missing, stale, unsupported or inconsistent observations retain
+  a blocking reason. Shared use by another tenant is not itself a conflict.
+- **AND** deployment recollects the same prerequisites; current bound allocations
+  do not establish remaining physical capacity or future write headroom.
+
+#### Scenario: HBN management caller permissions
+
+- **WHEN** HBN discovery has complete provisioning inputs and current selected-device and management-cluster identities
+- **THEN** the target derives scoped caller authorization checks from the verified deployment bundle and checks them against that same management cluster.
+- **AND** saved inventory cannot replace current identities; missing inputs, failed chart validation, denied permissions, cancellation and incomplete or contradictory results block readiness with reasons.
+- **AND** caller authorization does not establish controller service-account privileges, tenant access, host or switch access, or runtime readiness. Discovery installs no generated resources while checking permissions.
+- **AND** the console summarizes successful caller checks while retaining individual blocking details; structured readiness retains every required authorization result.
+
+#### Scenario: Explicit management-network coverage
+
+- **WHEN** DPF discovery explicitly selects management mode on supported Linux/amd64 nodes
+- **THEN** the complete node scope is validated before temporary Pod/ConfigMap creation; each node runs both Pod-network and node-network probes to the management API and every selected DPU BMC.
+- **AND** failed DNS/TCP/TLS paths remain blocking, with specific reasons, while independent paths continue; structural, identity, image or malformed-response failures stop execution and preserve partial results and cleanup status.
+- **AND** inventory mode creates no probe resources; host SSH may accompany management probes, but DPU probes require explicit BMC endpoints. BMC probes reuse the explicit endpoint trust policy; successful bypassed handshakes remain `unverified` and cannot establish server identity. Management API probes always require verified TLS.
+
+#### Scenario: New HBN tenant interface and route prerequisites
+
+- **WHEN** HBN discovery has a tenant VIP, interface and node selector
+- **THEN** it selects current control-plane nodes using that selector and requires complete link-state, address-prefix and kernel VIP-route facts for every selected node.
+- **AND** unavailable facts remain unknown; a down interface, assigned VIP, wrong source/interface or gateway route blocks new-tenant network readiness.
+- **AND** node labels remain transient and label/scheduling changes during collection invalidate the snapshot. VIP/VRID reservation and network-wide uniqueness remain separate blocking requirements; route observations do not establish them.
+
 ## Baseline and limits
 
 There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).
@@ -268,3 +342,10 @@ There is no universal probe registry or typed provenance/unknown framework. Exis
 - Implementation: [discovery](../../../pkg/networkoperatorplugin/discovery/discover.go), [GPU topology](../../../pkg/networkoperatorplugin/discovery/gputopology.go), [presets](../../../pkg/presets), [application integration](../../../pkg/app/discover.go).
 - Existing suites: [discovery](../../../pkg/networkoperatorplugin/discovery/discover_test.go), [topology](../../../pkg/networkoperatorplugin/discovery/gputopology_test.go), [library](../../../pkg/networkoperatorplugin/discovery/library_test.go).
 - User documentation: [discovery](../../../docs/user/discovery.md), [presets](../../../docs/user/presets.md).
+
+#### Scenario: Existing HBN tenant registry match is not runtime readiness
+
+- **WHEN** a complete cross-namespace DPUCluster observation matches the selected tenant identity and keepalived endpoint without a VIP collision
+- **THEN** the registry binding check can pass without requiring a generation-freshness field that the selected DPF release does not expose.
+- **AND** missing, stale-looking or non-Ready DPUCluster status cannot become proof of runtime readiness; the existing-tenant network/API prerequisite remains separately required and unknown until live verification succeeds.
+- **AND** conflicting identity, incomplete enumeration or another tenant using the VIP remains blocking.

@@ -9,8 +9,9 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 )
 
-// ProbeAssets pins the existing netshoot v0.16 image. Registry and local non-root
-// tool checks do not qualify Kubernetes admission, so activation remains gated.
+// ProbeAssets pins the existing netshoot v0.16 image. Linux/amd64 Pod and host
+// network execution has passed the controlled Kubernetes runtime checks. Other
+// architectures remain unavailable until tested with the same protocol and cleanup.
 // No discovery image is built or published by Launch Kit.
 func ProbeAssets() probe.Assets {
 	return probe.Assets{
@@ -18,9 +19,8 @@ func ProbeAssets() probe.Assets {
 		ManifestDigest: "sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70",
 		PlatformDigests: map[string]string{
 			"amd64": "sha256:147f2c4cb0aa7a741151bce2bfef71d9e1a04631636e24665ee2a5ed799feb47",
-			"arm64": "sha256:f460dc5e85890cad42b14973f5724b40831cbb3e1f745470caf6b8cf0d6ec7fe",
 		},
-		Qualified: false,
+		Qualified: true,
 	}
 }
 

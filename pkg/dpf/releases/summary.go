@@ -16,10 +16,12 @@ import (
 // Summary is the persisted software BOM. Catalog research provenance remains in
 // Release; omitted minima mean unknown requirements, never inferred constraints.
 type Summary struct {
-	Version    string             `json:"version" yaml:"version"`
-	Operator   OperatorSummary    `json:"operator" yaml:"operator"`
-	Components []ComponentSummary `json:"components" yaml:"components"`
-	Hardware   []HardwareSummary  `json:"hardware" yaml:"hardware"`
+	Version                 string             `json:"version" yaml:"version"`
+	SupportedKubernetes     *VersionRange      `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
+	TenantKubernetesVersion string             `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
+	Operator                OperatorSummary    `json:"operator" yaml:"operator"`
+	Components              []ComponentSummary `json:"components" yaml:"components"`
+	Hardware                []HardwareSummary  `json:"hardware" yaml:"hardware"`
 }
 
 type OperatorSummary struct {
@@ -38,24 +40,33 @@ type ComponentSummary struct {
 }
 
 type ArtifactSummary struct {
-	Version string `json:"version" yaml:"version"`
-	URL     string `json:"url" yaml:"url"`
-	Digest  string `json:"digest,omitempty" yaml:"digest,omitempty"`
+	Version    string `json:"version,omitempty" yaml:"version,omitempty"`
+	URL        string `json:"url,omitempty" yaml:"url,omitempty"`
+	Digest     string `json:"digest,omitempty" yaml:"digest,omitempty"`
+	ReasonCode string `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
+	Message    string `json:"message,omitempty" yaml:"message,omitempty"`
+}
+
+type BlueFieldSoftwareSummary struct {
+	OSISO        ArtifactSummary            `json:"osIso" yaml:"osIso"`
+	PLDMFwBundle map[string]ArtifactSummary `json:"pldmFwBundle,omitempty" yaml:"pldmFwBundle,omitempty"`
 }
 
 type HardwareSummary struct {
-	Family              string          `json:"family" yaml:"family"`
-	Models              []string        `json:"models" yaml:"models"`
-	BFB                 ArtifactSummary `json:"bfb" yaml:"bfb"`
-	MinimumNICFirmware  string          `json:"minimumNICFirmware,omitempty" yaml:"minimumNICFirmware,omitempty"`
-	MinimumHostMFT      string          `json:"minimumHostMFT,omitempty" yaml:"minimumHostMFT,omitempty"`
-	MinimumBMCFirmware  string          `json:"minimumBMCFirmware,omitempty" yaml:"minimumBMCFirmware,omitempty"`
-	MinimumCECFirmware  string          `json:"minimumCECFirmware,omitempty" yaml:"minimumCECFirmware,omitempty"`
-	MinimumATFFirmware  string          `json:"minimumATFFirmware,omitempty" yaml:"minimumATFFirmware,omitempty"`
-	MinimumUEFIFirmware string          `json:"minimumUEFIFirmware,omitempty" yaml:"minimumUEFIFirmware,omitempty"`
-	MinimumDPUBSP       string          `json:"minimumDPUBSP,omitempty" yaml:"minimumDPUBSP,omitempty"`
-	MinimumDPUOS        string          `json:"minimumDPUOS,omitempty" yaml:"minimumDPUOS,omitempty"`
-	MinimumGoldenImage  string          `json:"minimumGoldenImage,omitempty" yaml:"minimumGoldenImage,omitempty"`
+	Family              string                    `json:"family" yaml:"family"`
+	Models              []string                  `json:"models" yaml:"models"`
+	SupportLevel        string                    `json:"supportLevel,omitempty" yaml:"supportLevel,omitempty"`
+	BFB                 *ArtifactSummary          `json:"bfb,omitempty" yaml:"bfb,omitempty"`
+	BlueFieldSoftware   *BlueFieldSoftwareSummary `json:"blueFieldSoftware,omitempty" yaml:"blueFieldSoftware,omitempty"`
+	MinimumNICFirmware  string                    `json:"minimumNICFirmware,omitempty" yaml:"minimumNICFirmware,omitempty"`
+	MinimumHostMFT      string                    `json:"minimumHostMFT,omitempty" yaml:"minimumHostMFT,omitempty"`
+	MinimumBMCFirmware  string                    `json:"minimumBMCFirmware,omitempty" yaml:"minimumBMCFirmware,omitempty"`
+	MinimumCECFirmware  string                    `json:"minimumCECFirmware,omitempty" yaml:"minimumCECFirmware,omitempty"`
+	MinimumATFFirmware  string                    `json:"minimumATFFirmware,omitempty" yaml:"minimumATFFirmware,omitempty"`
+	MinimumUEFIFirmware string                    `json:"minimumUEFIFirmware,omitempty" yaml:"minimumUEFIFirmware,omitempty"`
+	MinimumDPUBSP       string                    `json:"minimumDPUBSP,omitempty" yaml:"minimumDPUBSP,omitempty"`
+	MinimumDPUOS        string                    `json:"minimumDPUOS,omitempty" yaml:"minimumDPUOS,omitempty"`
+	MinimumGoldenImage  string                    `json:"minimumGoldenImage,omitempty" yaml:"minimumGoldenImage,omitempty"`
 }
 
 // minimumFields fixes the supported requirement names and measurement scopes.
@@ -84,7 +95,9 @@ func (h *HardwareSummary) minimumFields() []struct {
 // It returns independent slices and never adds a digest or a numeric minimum.
 func Summarize(r Release) Summary {
 	s := Summary{
-		Version: r.Version,
+		Version:                 r.Version,
+		SupportedKubernetes:     cloneVersionRange(r.SupportedKubernetes),
+		TenantKubernetesVersion: r.TenantKubernetesVersion,
 		Operator: OperatorSummary{Chart: r.Operator.Chart, ChartRepository: r.Operator.ChartRepository,
 			Version: r.Operator.Version, ChartDigest: r.Operator.ChartDigest, Image: r.Operator.Image},
 		Components: make([]ComponentSummary, 0, len(r.Components)),
@@ -94,8 +107,20 @@ func Summarize(r Release) Summary {
 		s.Components = append(s.Components, ComponentSummary{Name: c.Name, Version: c.Version, Repository: c.Repository, Applicability: c.Applicability})
 	}
 	for _, h := range r.Hardware {
-		out := HardwareSummary{Family: h.Family, Models: slices.Clone(h.Models),
-			BFB: ArtifactSummary{Version: h.BFB.Version, URL: h.BFB.URL, Digest: h.BFB.Digest}}
+		out := HardwareSummary{Family: h.Family, Models: slices.Clone(h.Models), SupportLevel: h.SupportLevel}
+		if h.BFB != nil {
+			out.BFB = &ArtifactSummary{Version: h.BFB.Version, URL: h.BFB.URL, Digest: h.BFB.Digest}
+		}
+		if h.BlueFieldSoftware != nil {
+			software := &BlueFieldSoftwareSummary{OSISO: artifactSummary(h.BlueFieldSoftware.OSISO)}
+			if len(h.BlueFieldSoftware.PLDMFwBundle) > 0 {
+				software.PLDMFwBundle = make(map[string]ArtifactSummary, len(h.BlueFieldSoftware.PLDMFwBundle))
+				for psid, artifact := range h.BlueFieldSoftware.PLDMFwBundle {
+					software.PLDMFwBundle[psid] = artifactSummary(artifact)
+				}
+			}
+			out.BlueFieldSoftware = software
+		}
 		for _, field := range out.minimumFields() {
 			for _, requirement := range h.Requirements {
 				if requirement.Component == field.component && requirement.Scope == field.scope && requirement.State == "known" {
@@ -119,13 +144,15 @@ var (
 func (s Summary) Release() (Release, error) {
 	if !summaryReleaseVersion.MatchString(s.Version) || s.Operator.Version != "v"+s.Version ||
 		!summaryToken(s.Operator.Chart) || !summaryHTTPS(s.Operator.ChartRepository) ||
-		!summaryDigest(s.Operator.ChartDigest) || !summaryToken(s.Operator.Image) {
+		!summaryDigest(s.Operator.ChartDigest) || !summaryToken(s.Operator.Image) ||
+		s.SupportedKubernetes != nil && !validVersionRange(*s.SupportedKubernetes) ||
+		s.TenantKubernetesVersion != "" && !validTenantKubernetesVersion(s.TenantKubernetesVersion) {
 		return Release{}, fmt.Errorf("invalid saved DPF release coordinates")
 	}
 	if len(s.Components) == 0 || len(s.Hardware) == 0 {
 		return Release{}, fmt.Errorf("saved DPF software BOM requires components and hardware applicability")
 	}
-	r := Release{Version: s.Version,
+	r := Release{Version: s.Version, SupportedKubernetes: cloneVersionRange(s.SupportedKubernetes), TenantKubernetesVersion: s.TenantKubernetesVersion,
 		Operator: Operator{Chart: s.Operator.Chart, ChartRepository: s.Operator.ChartRepository,
 			Version: s.Operator.Version, ChartDigest: s.Operator.ChartDigest, Image: s.Operator.Image},
 		Components: make([]Component, 0, len(s.Components)), Hardware: make([]HardwareBOM, 0, len(s.Hardware))}
@@ -140,8 +167,20 @@ func (s Summary) Release() (Release, error) {
 	}
 	models := map[string]bool{}
 	for _, h := range s.Hardware {
-		if !summaryToken(h.Family) || len(h.Models) == 0 || !summaryToken(h.BFB.Version) || !summaryHTTPS(h.BFB.URL) ||
-			h.BFB.Digest != "" && !summaryDigest(h.BFB.Digest) {
+		bf4FamilyOnly := h.Family == "BlueField-4" && len(h.Models) == 0 && h.SupportLevel == "beta" && h.BlueFieldSoftware != nil && h.BFB == nil
+		if !summaryToken(h.Family) || len(h.Models) == 0 && !bf4FamilyOnly || h.SupportLevel != "" && h.SupportLevel != "ga" && h.SupportLevel != "beta" {
+			return Release{}, fmt.Errorf("invalid saved DPF hardware applicability or BFB coordinate")
+		}
+		if bf4FamilyOnly {
+			software, err := blueFieldSoftwareFromSummary(*h.BlueFieldSoftware)
+			if err != nil {
+				return Release{}, err
+			}
+			out := HardwareBOM{Family: h.Family, SupportLevel: h.SupportLevel, BlueFieldSoftware: software, Requirements: []Requirement{}}
+			r.Hardware = append(r.Hardware, out)
+			continue
+		}
+		if h.BlueFieldSoftware != nil || h.BFB == nil || !summaryToken(h.BFB.Version) || !summaryHTTPS(h.BFB.URL) || h.BFB.Digest != "" && !summaryDigest(h.BFB.Digest) {
 			return Release{}, fmt.Errorf("invalid saved DPF hardware applicability or BFB coordinate")
 		}
 		for _, model := range h.Models {
@@ -151,8 +190,9 @@ func (s Summary) Release() (Release, error) {
 			}
 			models[key] = true
 		}
-		out := HardwareBOM{Family: h.Family, Models: slices.Clone(h.Models),
-			BFB: Artifact{Version: h.BFB.Version, URL: h.BFB.URL, Digest: h.BFB.Digest}, Requirements: []Requirement{}}
+		bfb := &Artifact{Version: h.BFB.Version, URL: h.BFB.URL, Digest: h.BFB.Digest}
+		out := HardwareBOM{Family: h.Family, Models: slices.Clone(h.Models), SupportLevel: h.SupportLevel,
+			BFB: bfb, Requirements: []Requirement{}}
 		for _, field := range h.minimumFields() {
 			requirement := Requirement{Component: field.component, Scope: field.scope, State: "unknown",
 				ReasonCode: "RELEASE_REQUIREMENT_NOT_DOCUMENTED", Message: "The saved release BOM records no minimum for this component."}
@@ -168,6 +208,45 @@ func (s Summary) Release() (Release, error) {
 		r.Hardware = append(r.Hardware, out)
 	}
 	return r, nil
+}
+
+func artifactSummary(a Artifact) ArtifactSummary {
+	return ArtifactSummary{Version: a.Version, URL: a.URL, Digest: a.Digest, ReasonCode: a.ReasonCode, Message: a.Message}
+}
+
+func blueFieldSoftwareFromSummary(s BlueFieldSoftwareSummary) (*BlueFieldSoftware, error) {
+	osISO := Artifact{Version: s.OSISO.Version, URL: s.OSISO.URL, Digest: s.OSISO.Digest,
+		ReasonCode: s.OSISO.ReasonCode, Message: s.OSISO.Message}
+	if !validArtifactSummary(s.OSISO) {
+		return nil, fmt.Errorf("invalid saved BlueFieldSoftware OS ISO coordinate")
+	}
+	software := &BlueFieldSoftware{OSISO: osISO}
+	if len(s.PLDMFwBundle) > 0 {
+		software.PLDMFwBundle = make(map[string]Artifact, len(s.PLDMFwBundle))
+		for psid, item := range s.PLDMFwBundle {
+			if !summaryToken(psid) || !validArtifactSummary(item) {
+				return nil, fmt.Errorf("invalid saved BlueFieldSoftware PLDM coordinate for PSID %q", psid)
+			}
+			software.PLDMFwBundle[psid] = Artifact{Version: item.Version, URL: item.URL, Digest: item.Digest,
+				ReasonCode: item.ReasonCode, Message: item.Message}
+		}
+	}
+	return software, nil
+}
+
+func validArtifactSummary(a ArtifactSummary) bool {
+	if a.Version == "" && a.URL == "" && a.Digest == "" {
+		return a.ReasonCode != "" && a.Message != ""
+	}
+	return summaryToken(a.Version) && summaryHTTPS(a.URL) && (a.Digest == "" && a.ReasonCode != "" && a.Message != "" || a.Digest != "" && summaryDigest(a.Digest))
+}
+
+func cloneVersionRange(r *VersionRange) *VersionRange {
+	if r == nil {
+		return nil
+	}
+	copy := *r
+	return &copy
 }
 
 func summaryToken(s string) bool {

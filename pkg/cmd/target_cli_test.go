@@ -250,7 +250,7 @@ func TestTargetDescriptors(t *testing.T) {
 	assert.Equal(t, target.DPF, descriptors[1].Name)
 	for _, phase := range target.PublicPhases() {
 		assert.True(t, descriptors[0].Capability(phase).Available)
-		assert.Equal(t, phase == target.Discover, descriptors[1].Capability(phase).Available)
+		assert.Equal(t, phase == target.Discover || phase == target.Generate, descriptors[1].Capability(phase).Available)
 		assert.NotEmpty(t, descriptors[1].Capability(phase).Reason)
 	}
 }
@@ -276,6 +276,7 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.False(t, actual.Targets[1].Phases["validate"].Available)
 		assert.Equal(t, []string{"host", "dpf"}, actual.Flags["--output"].Targets)
 		assert.Equal(t, []string{"host"}, actual.Flags["--fabric"].Targets)
+		assert.Equal(t, []string{"dpf"}, actual.Flags["--use-case"].Targets)
 	})
 
 	t.Run("omitted and explicit host preserve output and exit code", func(t *testing.T) {
@@ -289,9 +290,22 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Equal(t, 1, omittedExit)
 		assert.Contains(t, omittedOutput, "cluster config file does not exist")
 	})
+	t.Run("HBN selection cannot enter Host discovery", func(t *testing.T) {
+		output, exitCode := runCLIHelper(t, "discover", "--target", "host", "--use-case", "hbn-bgp", "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "--use-case (targets: dpf)")
+	})
+	t.Run("unknown DPF use-case fails before infrastructure access", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "site.yaml")
+		require.NoError(t, os.WriteFile(file, []byte("discovery: {}\n"), 0600))
+		output, exitCode := runCLIHelper(t, "discover", "--target", "dpf", "--use-case", "unknown", "--user-config", file, "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "--use-case must be hbn-bgp")
+		assert.Contains(t, output, "INVALID_CONFIGURATION")
+	})
 
 	for _, phase := range target.PublicPhases() {
-		if phase == target.Discover {
+		if phase == target.Discover || phase == target.Generate {
 			continue
 		}
 		t.Run("dpf "+string(phase)+" capability error", func(t *testing.T) {
@@ -301,6 +315,21 @@ func TestTargetCLIProcess(t *testing.T) {
 			assert.Contains(t, output, `target "dpf" does not implement phase "`+string(phase)+`"`)
 		})
 	}
+
+	t.Run("DPF generation validates its own inputs without host fallback", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "dpf-site.yaml")
+		require.NoError(t, os.WriteFile(file, []byte("dpf: {useCase: hbn-bgp}\n"), 0600))
+		output, exitCode := runCLIHelper(t, "generate", "--target", "dpf", "--use-case", "hbn-bgp", "--user-config", file, "--save-deployment-files", filepath.Join(t.TempDir(), "bundle"), "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "current-format HBN discovery inventory")
+		assert.NotContains(t, output, "does not implement phase")
+		assert.NotContains(t, output, "network-operator namespace")
+	})
+	t.Run("DPF generation rejects explicit host options", func(t *testing.T) {
+		output, exitCode := runCLIHelper(t, "generate", "--target", "dpf", "--fabric", "ethernet", "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "--fabric (targets: host)")
+	})
 
 	t.Run("root dpf pipeline cannot enter host path", func(t *testing.T) {
 		output, exitCode := runCLIHelper(t, "--target", "dpf")

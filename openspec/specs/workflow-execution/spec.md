@@ -66,6 +66,15 @@ Equivalent entry points SHALL reuse common semantics for equivalent modes. Inten
 
 New and changed workflow checks SHALL persist a stable reason code and safe explanation for every failed, unavailable, unknown, skipped or deferred result. The result SHALL distinguish missing prerequisites from an attempted operation failure and identify the subject and source where known. Diagnostic persistence MUST NOT disclose credentials or treat optional unknowns as passes. Existing unrelated baseline paths are not retroactively migrated by this requirement.
 
+#### Scenario: DPF staged software verification
+
+- **WHEN** native DPF execution verifies staged BF4 software against retained artifact locks
+- **THEN** the software preparation stage uses the same retained plan as management, tenant and enrollment; it checks current enrollment and required download/tunnel permissions before creating the exact BlueFieldSoftware.
+- **AND** controller readiness requires the current generation, Ready phase, and current Downloaded and Ready conditions; a pending condition keeps the wait pending and a terminal condition stops it.
+- **AND** it hashes the selected ISO and PSID-specific PLDM bytes served from the verified DPF cache, rather than treating an origin URL download or controller Ready condition as digest verification.
+- **AND** it rejects partial, transformed, redirected or mismatched streams and rechecks software, active-controller, registry, shared-storage and public-CA bindings after reading; failed tunnel cleanup prevents a completed verification receipt.
+- **AND** a successful result describes the bytes served at verification time, not a guarantee of later hardware consumption or of reachability through a different delivery path.
+
 #### Scenario: Prerequisite executable is missing
 
 - **WHEN** a workflow cannot execute a check because a required tool is unavailable
@@ -75,6 +84,44 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 
 - **WHEN** a check depends on an operator-created endpoint before that operator is installed
 - **THEN** it is deferred with a reason and required phase, not reported as passed or used to fail initial hardware inventory.
+
+#### Scenario: DPF execution receipt cannot be persisted
+
+- **WHEN** a native DPF object operation cannot durably record its attempt or result
+- **THEN** no dependent effect begins; an attempt without a confirmed result remains uncertain and a later run must inspect actual cluster state.
+- **AND** readiness polling cannot accept a replacement UID, ownership drift, or desired-spec mismatch even when the controller reports Ready.
+
+#### Scenario: DPF management bootstrap completes
+
+- **WHEN** the retained operator release, API schemas, manager and DPFOperatorConfig become ready
+- **THEN** the management receipt requires the selected configuration version, stable namespace and manager UIDs, and the complete manager specification after supported API defaults.
+- **AND** this receipt does not claim tenant, enrollment, HBN service or traffic readiness.
+
+#### Scenario: Conflicting DPF configuration appears during bootstrap
+
+- **WHEN** another DPFOperatorConfig appears while the operator is installing or becoming ready
+- **THEN** a fresh cluster-wide ownership check stops dependent configuration creation without adoption or deletion.
+- **AND** the caller must exclude concurrent provisioning because a list followed by creation is not an atomic cluster-wide lock.
+
+#### Scenario: DPF tenant creation follows management bootstrap
+
+- **WHEN** the private control-plane executor advances from management bootstrap to a new tenant
+- **THEN** explicit retained site declarations for VIP reservation, DHCP exclusion and selected-node VRRP ID availability are required; missing or false declarations stop effects and are never inferred from profile defaults or network observations.
+- **AND** it verifies the retained bootstrap identities, current backing storage, complete tenant registry and fresh network facts for the selected control-plane nodes before creating the DPUCluster.
+- **AND** failed probe cleanup or a changed selected node set stops creation; persisted discovery results cannot replace these observations.
+- **AND** an existing exact owned target follows ownership-aware verification rather than an unused-VIP check, and successful tenant API access does not claim enrollment or HBN traffic readiness.
+
+#### Scenario: DPF selected-device enrollment
+
+- **WHEN** the executor advances from the verified tenant API to selected-device enrollment
+- **THEN** it binds runtime BMC access to retained serials and exact endpoints, verifies fresh Administrator access, and requires credentials compatible with the selected DPF discovery path.
+- **AND** BMC credentials and TLS policy come from explicit runtime site access inputs; certificate failures never enable an implicit bypass, and an explicitly bypassed connection is not claimed as verified TLS.
+- **AND** before controller activation or shared credential installation, it inspects the complete relevant resource scope and stops if unrelated resources could be activated; denied or incomplete inspection is not verified absence.
+- **AND** the shared password is retained only in the required Kubernetes Secret; existing mismatched Secret data is never overwritten, and no password or password digest enters generated files or execution reports.
+- **AND** scan completion alone does not satisfy enrollment: exact DPUDevice and DPUNode association and current credential, certificate and trust readiness are required; a completed scan with zero newly found devices can reuse exact ready enrollments, but cannot substitute for a missing selected device.
+- **AND** factory-reset policy Never does not imply read-only enrollment, and partial effects are retained without implicit device deletion or recovery resets.
+- **AND** the full selected cohort is reobserved before success; replacing an observed device/node or changing the tenant or shared credential invalidates the result.
+- **AND** an existing DPUDevice without its required DPUNode is reported as partial enrollment that the upstream scan cannot repair; the executor does not hide it behind retries or automatically adopt another reboot mechanism.
 
 ## Baseline and limits
 

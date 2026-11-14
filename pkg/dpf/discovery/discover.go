@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
@@ -30,9 +32,11 @@ type Collector interface {
 	Collect(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error)
 }
 type Dependencies struct {
-	SSH    Collector
-	BMC    Collector
-	Probes ProbeRunner
+	Switches       SwitchCollector
+	SSH            Collector
+	BMC            Collector
+	Probes         ProbeRunner
+	HBNPermissions HBNPermissionObserver
 }
 
 func NewReport() inventory.Report {
@@ -55,6 +59,9 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	for _, t := range r.Targets {
 		inv.RequestedScope = append(inv.RequestedScope, config.Scope(t))
 	}
+	for _, sw := range r.Switches {
+		inv.RequestedScope = append(inv.RequestedScope, config.Scope(config.Target{Role: "switches", Endpoint: sw.Endpoint, SSH: sw.Access}))
+	}
 	slices.SortFunc(inv.RequestedScope, func(a, b inventory.ScopeEndpoint) int {
 		return strings.Compare(a.Role+a.Endpoint+a.SystemURI, b.Role+b.Endpoint+b.SystemURI)
 	})
@@ -64,6 +71,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	var wg sync.WaitGroup
 	problem := func(p inventory.Problem) { mu.Lock(); defer mu.Unlock(); report.Errors = append(report.Errors, p) }
 	var mg ManagementClient
+	var provisioning *managementprobe.Snapshot
 	if r.Kubeconfig != "" {
 		var accessErr error
 		mg, accessErr = ManagementAccess(r)
@@ -80,6 +88,12 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 			if err != nil {
 				problem(inventory.Problem{Code: "MANAGEMENT_INSPECTION_FAILED", Message: err.Error(), InputRef: "/management", ExitCode: 3})
 				return
+			}
+			if r.HBN != nil {
+				output.Info("[CHECK] Management cluster: inspect DPF installation and provisioning APIs")
+				snapshot := mg.ObserveProvisioning(ctx, r.DPFNamespace)
+				provisioning = &snapshot
+				output.Info("[DONE] Management cluster: DPF installation and provisioning API inspection")
 			}
 			mu.Lock()
 			defer mu.Unlock()
@@ -225,7 +239,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		if err != nil {
 			report.Errors = append(report.Errors, inventory.Problem{Code: "MANAGEMENT_RECHECK_FAILED", Message: "management identity recheck unavailable", InputRef: "/management", ExitCode: 3})
 		} else if fresh.SystemNamespaceUID != inv.Management.SystemNamespaceUID || !sameNodes(fresh.Nodes, inv.Management.Nodes) {
-			report.Errors = append(report.Errors, inventory.Problem{Code: "MANAGEMENT_SCOPE_CHANGED", Message: "management identity or node membership changed during collection", ExitCode: 3})
+			report.Errors = append(report.Errors, inventory.Problem{Code: "MANAGEMENT_SCOPE_CHANGED", Message: "management identity, node membership or scheduling facts changed during collection", ExitCode: 3})
 		}
 	}
 	output.Info("[RUNNING] Required discovery checks")
@@ -279,6 +293,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	if len(report.Errors) > 0 || report.Discovery.Cleanup.State != "complete" {
 		report.Discovery.Outcome = "partial"
 	}
+	collectHBN(ctx, r, &report, deps.Switches, provisioning, deps.HBNPermissions)
 	if ctx.Err() != nil {
 		report.Discovery.Outcome = "partial"
 		report.Execution = "failed"
@@ -320,7 +335,7 @@ func sameNodes(a, b []inventory.Node) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].UID != b[i].UID || a[i].Name != b[i].Name {
+		if a[i].UID != b[i].UID || a[i].Name != b[i].Name || a[i].ControlPlane != b[i].ControlPlane || a[i].Ready != b[i].Ready || a[i].Unschedulable != b[i].Unschedulable || a[i].OS != b[i].OS || a[i].Architecture != b[i].Architecture || !maps.Equal(a[i].Labels, b[i].Labels) {
 			return false
 		}
 	}
@@ -397,11 +412,17 @@ func Canonicalize(inv *inventory.Inventory) {
 			Endpoints             []inventory.ScopeEndpoint
 		}{inv.Management.APIEndpoint, inv.Management.SystemNamespaceUID, inv.Management.TrustDigest, inv.Collection.Mode, inv.RequestedScope})
 	}
+	if inv.HBN != nil {
+		inv.ScopeDigest = inventory.Digest("dpf-hbn-scope-v1", []string{inv.ScopeDigest, hbnScope(inv.HBN)})
+	}
 }
 
 // Dedicated material projection excludes timestamps, readiness, credentials and aliases.
 func material(inv *inventory.Inventory) map[string]any {
 	fields := map[string]any{}
+	if inv.HBN != nil {
+		fields["hbn"] = inv.HBN
+	}
 	if inv.Software != nil {
 		fields["software"] = releases.Summarize(*inv.Software)
 	}
@@ -425,7 +446,7 @@ func material(inv *inventory.Inventory) map[string]any {
 			slices.SortFunc(routes, func(a, b inventory.Route) int {
 				return cmp.Or(cmp.Compare(a.Table, b.Table), strings.Compare(a.Destination, b.Destination), strings.Compare(a.Gateway, b.Gateway), cmp.Compare(a.InterfaceIndex, b.InterfaceIndex))
 			})
-			fields["management.node."+n.UID] = []any{n.Name, n.OS, n.Architecture, addresses, interfaces, routes}
+			fields["management.node."+n.UID] = []any{n.Name, n.OS, n.Architecture, addresses, interfaces, routes, n.TenantVIPRoute}
 
 		}
 	}
@@ -449,6 +470,7 @@ func material(inv *inventory.Inventory) map[string]any {
 			fields[key+".identity"] = []string{w.ID, w.SerialNumber, w.SystemUUID, w.Manufacturer, w.Model, w.Method}
 			fields[key+".endpoints"] = []string{w.SSHEndpoint, w.BMCEndpoint, w.SystemURI}
 			fields[key+".psid"] = w.PSID
+			fields[key+".networkFunctionMACs"] = w.NetworkFunctionMACs
 			fields[key+".bmcAdministratorVerified"] = w.BMCAdministratorVerified
 			fields[key+".firmwareInventoryComplete"] = w.FirmwareInventoryComplete
 			fields[key+".firmware"] = w.Firmware
@@ -526,22 +548,30 @@ func ExitCode(r inventory.Report) int {
 	if r.Discovery.Outcome != "complete" {
 		return 2
 	}
+	if r.Readiness != nil && r.Readiness.State != "ready" {
+		return 2
+	}
 	return 0
 }
 
 // ProbeChecks derives required rows from frozen node/endpoint scope, never aggregate counts.
 func ProbeChecks(inv *inventory.Inventory, targets []config.Target) []inventory.Check {
 	if inv.Collection.Mode != "management" {
-		return []inventory.Check{{ID: "dpf.management.path", Subject: "management", RequiredPhase: "generate", State: "not-requested", ReasonCode: "INVENTORY_MODE", EvidenceRefs: []string{}}}
+		return []inventory.Check{{ID: "dpf.management.path", Subject: "management", RequiredPhase: "generate", State: "not-requested", ReasonCode: "INVENTORY_MODE", Message: "Inventory mode omits management-network probes.", EvidenceRefs: []string{}}}
 	}
 	checks := []inventory.Check{}
 	if inv.Management == nil {
 		return checks
 	}
 	destinations := []string{"management-api"}
+	names := map[string]string{"management-api": "management API"}
+	allowUnverified := map[string]bool{}
 	for _, t := range targets {
 		if t.Role == "dpus" {
-			destinations = append(destinations, inventory.Digest("probe-destination-v1", t.Endpoint))
+			id := inventory.Digest("probe-destination-v1", t.Endpoint)
+			destinations = append(destinations, id)
+			names[id] = t.DisplayName()
+			allowUnverified[id] = t.Access.InsecureSkipVerify()
 		}
 	}
 	rows := map[string][]inventory.ProbeResult{}
@@ -553,7 +583,7 @@ func ProbeChecks(inv *inventory.Inventory, targets []config.Target) []inventory.
 		for _, mode := range []string{"pod-network", "node-network"} {
 			for _, destination := range destinations {
 				key := n.UID + "/" + mode + "/" + destination
-				state := "unknown"
+				state, code, message := "unknown", "PROBE_NOT_OBSERVED", "No validated probe result was collected for this path."
 				refs := []string{}
 				values := rows[key]
 				if len(values) == 1 {
@@ -563,19 +593,36 @@ func ProbeChecks(inv *inventory.Inventory, targets []config.Target) []inventory.
 							refs = append(refs, v.EvidenceRef)
 						}
 					}
-					state = "passed"
-					if len(refs) == 0 || len(v.Addresses) == 0 || v.DNS == "unavailable" {
-						state = "unknown"
-					}
-					for _, a := range v.Addresses {
-						if a.TCP != "reachable" || a.TLS != "verified" {
-							state = "failed"
+					switch {
+					case len(refs) == 0:
+						code, message = "PROBE_SOURCE_UNVERIFIED", "The result lacks a verified source binding."
+					case v.DNS != "resolved" && v.DNS != "not-applicable":
+						code, message = "PROBE_DNS_UNAVAILABLE", "The destination could not be resolved from this network namespace."
+					case len(v.Addresses) == 0:
+						code, message = "PROBE_ADDRESSES_UNAVAILABLE", "No destination address was available for the connection checks."
+					default:
+						state, code, message = "passed", "NETWORK_PATH_VERIFIED", "DNS/address resolution, TCP connectivity and TLS verification passed for every resolved address."
+						expectedTLS := "verified"
+						if allowUnverified[destination] {
+							expectedTLS = "unverified"
+						}
+						for _, a := range v.Addresses {
+							if a.TCP != "reachable" {
+								state, code, message = "failed", "PROBE_TCP_UNREACHABLE", "TCP connectivity failed for at least one destination address."
+								break
+							}
+							if a.TLS != expectedTLS {
+								state, code, message = "failed", "PROBE_TLS_UNVERIFIED", "TLS verification failed for at least one destination address; provide trusted CA material and a matching certificate identity."
+							}
+						}
+						if state == "passed" && allowUnverified[destination] {
+							code, message = "NETWORK_PATH_REACHABLE_TLS_UNVERIFIED", "TCP and TLS handshakes succeeded with explicitly disabled BMC certificate verification; server identity remains unverified."
 						}
 					}
 				} else if len(values) > 1 {
-					state = "failed"
+					state, code, message = "failed", "PROBE_COVERAGE_AMBIGUOUS", "Multiple results claim this same node, network namespace and destination."
 				}
-				checks = append(checks, inventory.Check{ID: "dpf.management.path", Subject: key, Vantage: n.UID + "/" + mode, RequiredPhase: "discover", State: state, ReasonCode: "EXACT_NETWORK_COVERAGE_REQUIRED", EvidenceRefs: refs})
+				checks = append(checks, inventory.Check{ID: "dpf.management.path", Subject: n.Name + "/" + mode + "/" + names[destination], Vantage: n.UID + "/" + mode, RequiredPhase: "discover", State: state, ReasonCode: code, Message: message, EvidenceRefs: refs})
 			}
 		}
 	}

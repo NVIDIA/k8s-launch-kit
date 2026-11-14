@@ -6,7 +6,6 @@ package dpf
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -22,24 +21,27 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/switchprobe"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// Descriptor exposes the inventory preview, keeping provisioning unavailable.
+// Descriptor advertises implemented phases; deployment remains independently gated.
 func Descriptor() target.Descriptor {
 	phases := map[target.Phase]target.Capability{}
 	for _, p := range append(target.PublicPhases(), target.Pipeline) {
 		phases[p] = target.Capability{Available: false, Reason: "DPF provisioning is not implemented in this build"}
 	}
+	phases[target.Generate] = target.Capability{Available: true, Reason: "HBN-BGP artifact generation; deployment readiness requires fresh checks"}
 	phases[target.Discover] = target.Capability{Available: true, Reason: "experimental inventory discovery; management probes require qualified release assets; hardware catalog qualification pending"}
-	return target.Descriptor{Name: target.DPF, Description: "Independent DPF inventory discovery preview", Phases: phases}
+	return target.Descriptor{Name: target.DPF, Description: "Independent DPF discovery and HBN-BGP generation", Phases: phases}
 }
 
 type Request struct {
 	UserConfig     string
+	UseCase        *string
 	OutputPath     string
 	ExplicitOutput bool
 	Stdout         io.Writer
@@ -82,6 +84,9 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 		}
 		progress.Info("[RUNNING] Configuration: validating site inputs and access settings")
 		input, err := config.Load(r.UserConfig)
+		if err == nil {
+			input, err = config.WithUseCase(input, r.UseCase)
+		}
 		if err != nil {
 			fail(2, err.Error())
 		} else {
@@ -109,7 +114,8 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 								}
 							}
 						}
-						deps := discovery.Dependencies{SSH: sshprobe.Collector{}, BMC: redfish.Collector{Qualifications: catalog.Hardware()}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
+						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{Qualifications: catalog.Hardware(), IncludeNetworkFunctionMACs: resolved.HBN != nil}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
+						deps.HBNPermissions = newHBNPermissionObserver().observe
 						if resolved.Input.Site.Inventory == nil {
 							resolved.Input.Site.Inventory = store.PriorInventory
 						}
@@ -120,6 +126,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 						err = store.Publish(publishCtx, &report)
 						cancel()
 						if err != nil {
+							logger.Error(err, "Discovery publication failed")
 							progress.Info("[FAIL] Publication incomplete; see the result for details")
 							report.Execution = "failed"
 							report.Errors = append(report.Errors, inventory.Problem{Code: "PUBLICATION_FAILED", Message: err.Error(), ExitCode: 1})
@@ -133,9 +140,10 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 			}
 		}
 		if inv.Output.Format == "json" {
-			if err := json.NewEncoder(r.Stdout).Encode(report); err != nil {
-				fmt.Fprintln(r.Stderr, "cannot encode DPF discovery result")
-				return apperrors.MarkReported(apperrors.NewGeneralError("cannot encode DPF discovery result", nil))
+			if err := writeJSONReport(r.Stdout, report); err != nil {
+				logger.Error(err, "Discovery result output failed")
+				fmt.Fprintln(r.Stderr, "cannot write complete DPF discovery result:", err)
+				return apperrors.MarkReported(apperrors.NewGeneralError("cannot write complete DPF discovery result", nil))
 			}
 		} else {
 			if err := textReport(r.Stdout, report, input); err != nil {

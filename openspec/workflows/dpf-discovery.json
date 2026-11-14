@@ -1,8 +1,8 @@
 {
   "$comment": "Copyright 2026 NVIDIA CORPORATION & AFFILIATES; SPDX-License-Identifier: Apache-2.0",
   "formatVersion": 1,
-  "title": "DPF discovery workflows",
-  "introduction": "Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Start with **inventory mode**; management probe mode is unavailable in this preview. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.\n\nFor complete field and error details, see [DPF discovery reference](dpf-discovery.md). Each diagram follows the same steps as its procedure. Commands are examples to run deliberately from a machine with direct access to your selected endpoints.",
+  "title": "DPF discovery and generation workflows",
+  "introduction": "Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Start with **inventory mode**. Optional management mode adds temporary Linux/amd64 network probes as described below. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.\n\nFor complete field and error details, see [DPF discovery reference](dpf-discovery.md). Each diagram follows the same steps as its procedure. Commands are examples to run deliberately from a machine with direct access to your selected endpoints.\n\nThe HBN-BGP generation procedure prepares local artifacts from the discovery handoff. It does not install them.",
   "workflows": [
     {
       "id": "initial-inventory",
@@ -12,7 +12,7 @@
         {
           "id": "choose-inputs",
           "title": "CLI machine: choose sources and access inputs",
-          "body": "Choose each source explicitly: a host operating system over SSH or its BMC over Redfish; choose the DPU BMC over Redfish for a complete run. DPU ARM SSH is available for partial evidence but cannot verify BMC administrator privileges. A selected source must succeed; Launch Kit does not silently replace failed Redfish access with SSH. Host SSH can supply host-to-card identity in Zero Trust when PCI/VPD access is available. ARM SSH needs a booted, reachable DPU operating system. Neither access path proves trusted DPU state.\n\n| Input | What you supply or allow Launch Kit to determine |\n| --- | --- |\n| Always required | At least one host endpoint and explicit DPU BMC endpoints with administrator credentials for completion; the source type; a credential alias, username, and password reference or SSH key reference for each selected endpoint. Addresses and credentials are not guessed. |\n| Required for SSH | A verified `knownHostsFile`; direct connectivity from the CLI machine. SSH port defaults to `22`; ambient SSH config, agents and ProxyJump are not used. |\n| Conditional | DPU ARM SSH for partial OS measurements; a private CA for Redfish when system trust is insufficient; `systemURI` if a BMC exposes several Systems. |\n| Optional | A management kubeconfig for additional observations. Inventory needs none, but an explicitly supplied kubeconfig must work. |\n| Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` explicitly because the default management mode is unavailable in this preview. |\n| Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |\n\nUse an account whose own session proves its effective administrator role. If session Roles is absent, local authentication must be established by an explicit trusted local session `UserAuthenticationSource`. A current `LocalAccountAuth: Enabled` policy alone cannot prove how an existing session authenticated. Disabled local authentication and explicitly external session sources are unsupported; Fallback/LocalFirst require the explicit local session source. Missing origin plus missing Roles cannot inherit privileges from a same-named local administrator. Discovery reports unverifiable proof as partial without replacing a complete handoff.\n\nDo not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted or null `dpf.release` uses the pinned default; an empty or unknown release is rejected.\n\nAll network connections start from the machine where you run `l8k`. Host and DPU endpoints do not need to connect to each other for this workflow.\n\n| Connection from the CLI machine | Where the operation runs | What it provides |\n| --- | --- | --- |\n| SSH to the selected host | Host operating system | Host identity, installed card serials and available host/card facts |\n| SSH to the selected DPU ARM address | DPU operating system | DPU identity, local hardware/network facts, and optionally its BMC address through local IPMI |\n| HTTPS to a selected host or DPU BMC | That BMC's Redfish service | System/card identity, host PCI/reset information and available named DPU firmware versions |\n| HTTPS to the management API, only if a kubeconfig is supplied | Existing management Kubernetes API | Cluster identity, version and nodes, plus optional storage and advertised DPF API information |\n| No remote connection | CLI machine | Read input/trust/lease files, match identities, compare software requirements and save results |\n\nChoose SSH or Redfish separately for each endpoint. Selecting host Redfish does not run tools in the host OS. Selecting DPU SSH does not log in to DPU Redfish. The [collection step](#initial-inventory-collect) lists the operations for each choice.",
+          "body": "Choose each source explicitly: a host operating system over SSH or its BMC over Redfish; choose the DPU BMC over Redfish for a complete run. DPU ARM SSH is available for partial evidence but cannot verify BMC administrator privileges. A selected source must succeed; Launch Kit does not silently replace failed Redfish access with SSH. Host SSH can supply host-to-card identity in Zero Trust when PCI/VPD access is available. ARM SSH needs a booted, reachable DPU operating system. Neither access path proves trusted DPU state.\n\n| Input | What you supply or allow Launch Kit to determine |\n| --- | --- |\n| Always required | At least one host endpoint and explicit DPU BMC endpoints with administrator credentials for completion; the source type; a credential alias, username, and password reference or SSH key reference for each selected endpoint. Addresses and credentials are not guessed. |\n| Required for SSH | A verified `knownHostsFile`; direct connectivity from the CLI machine. SSH port defaults to `22`; ambient SSH config, agents and ProxyJump are not used. |\n| Conditional | DPU ARM SSH for partial OS measurements; a private CA for Redfish when system trust is insufficient; `systemURI` if a BMC exposes several Systems. |\n| Optional | A management kubeconfig for additional observations. Inventory needs none, but an explicitly supplied kubeconfig must work. |\n| Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` for this workflow to omit temporary management-network probes. HBN-BGP already defaults to inventory mode. |\n| Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |\n\nUse an account whose own session proves its effective administrator role. If session Roles is absent, local authentication must be established by an explicit trusted local session `UserAuthenticationSource`. A current `LocalAccountAuth: Enabled` policy alone cannot prove how an existing session authenticated. Disabled local authentication and explicitly external session sources are unsupported; Fallback/LocalFirst require the explicit local session source. Missing origin plus missing Roles cannot inherit privileges from a same-named local administrator. Discovery reports unverifiable proof as partial without replacing a complete handoff.\n\nDo not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted or null `dpf.release` uses the pinned default; an empty or unknown release is rejected.\n\nAll network connections start from the machine where you run `l8k`. Host and DPU endpoints do not need to connect to each other for this workflow.\n\n| Connection from the CLI machine | Where the operation runs | What it provides |\n| --- | --- | --- |\n| SSH to the selected host | Host operating system | Host identity, installed card serials and available host/card facts |\n| SSH to the selected DPU ARM address | DPU operating system | DPU identity, local hardware/network facts, and optionally its BMC address through local IPMI |\n| HTTPS to a selected host or DPU BMC | That BMC's Redfish service | System/card identity, host PCI/reset information and available named DPU firmware versions |\n| HTTPS to the management API, only if a kubeconfig is supplied | Existing management Kubernetes API | Cluster identity, version and nodes, plus optional storage and advertised DPF API information |\n| No remote connection | CLI machine | Read input/trust/lease files, match identities, compare software requirements and save results |\n\nChoose SSH or Redfish separately for each endpoint. Selecting host Redfish does not run tools in the host OS. Selecting DPU SSH does not log in to DPU Redfish. The [collection step](#initial-inventory-collect) lists the operations for each choice.",
           "transitions": [
             {
               "to": "prepare",
@@ -241,6 +241,223 @@
           "id": "retain",
           "title": "CLI machine: retain the refreshed files",
           "body": "Keep the current YAML, JSON/stdout report and stderr log, plus `source-before.yaml` when a complete in-place refresh created it. Discovery completion still means a successful inventory workflow, with deployment `acceptance: not-evaluated`. Unknown software requirements and unverified deployment prerequisites remain unresolved; a refreshed inventory does not enable DPF deployment.",
+          "transitions": []
+        }
+      ]
+    },
+    {
+      "id": "management-network",
+      "title": "Test management-network paths",
+      "introduction": "Use explicit management mode to check connections from the management cluster and inspect the node interfaces needed for a new DPF tenant. See [probe prerequisites](dpf-discovery.md#management-network-probes). Inventory-only discovery remains available without these temporary resources.",
+      "steps": [
+        {
+          "id": "prepare",
+          "title": "CLI operator: enable management mode and select access",
+          "body": "Set `discovery.probes.mode: management`, an explicit management kubeconfig, and an existing probe namespace. Retain the selected DPU BMC endpoints. Provide public CA files where needed. An explicit BMC TLS bypass also applies to that BMC’s probe; its successful handshake is reported as unverified. Management API TLS verification remains required. For HBN-BGP, supply `provisioning.bootstrap.tenant.vip`, `interface`, and any node-selector override. The account needs namespace/Node reads and temporary Pod/ConfigMap create, inspect, log-read and delete permissions. Nodes must be Ready, schedulable Linux/amd64; admission must allow the requested non-root host-network Pods. Launch Kit does not change cluster policy.",
+          "transitions": [
+            {
+              "to": "collect",
+              "label": "Inputs and permissions prepared"
+            }
+          ]
+        },
+        {
+          "id": "collect",
+          "title": "Management cluster: run bounded network probes",
+          "body": "The CLI validates the complete management-node scope before creating a request ConfigMap. On each node it schedules one ordinary Pod-network probe and one host-network probe using the pinned published diagnostic image. Each checks address resolution, TCP and HTTPS to the management API and selected DPU BMCs. API certificates are always verified. BMC probes follow each endpoint’s explicit trust policy; a bypassed certificate remains reported as unverified even when the connection succeeds. The host-network probe also reads interface addresses/link state and routes, and performs a kernel route lookup for a configured HBN tenant VIP. No credentials are copied into Pods and no node or switch settings are changed. Live progress identifies the node and network namespace. A failed network path does not suppress independent probes, but remains a failed result. Admission, image, identity, invalid-response or deadline failures stop collection.",
+          "transitions": [
+            {
+              "to": "cleanup",
+              "label": "Collection completes or stops"
+            }
+          ]
+        },
+        {
+          "id": "cleanup",
+          "title": "CLI machine: remove owned probe resources",
+          "body": "The CLI removes only the temporary Pods and ConfigMap it created, checking their recorded UIDs and ownership. It records leftovers if cleanup cannot complete. Keep the report and resource journal when diagnosing a failure; do not remove another run’s resources.",
+          "transitions": [
+            {
+              "to": "review",
+              "label": "Cleanup complete"
+            },
+            {
+              "to": "correct",
+              "label": "Cleanup incomplete"
+            }
+          ]
+        },
+        {
+          "id": "review",
+          "title": "CLI operator: distinguish path checks from allocation",
+          "body": "Review every failed or unknown path and each selected node’s interface/tenant-VIP route check. Missing facts, a down interface, an off-link route or a VIP already assigned to a selected node block new-tenant readiness. Passing these checks establishes current node network facts only. Supply the three tenant.allocation declarations only after confirming VIP reservation, DHCP exclusion and VRRP ID availability on the selected control-plane nodes with the site owner. Missing declarations remain unknown and false declarations fail readiness. True values are site declarations, not independently measured IPAM facts; they cannot override an observed collision. DNS/ARP silence or absence from a DPUCluster list cannot prove an allocation. For another tenant with the same VRRP ID, Launch Kit compares control-plane node selectors: potentially overlapping placement fails, disjoint selectors do not conflict, and missing selector facts remain unknown. A cluster with no Keepalived endpoint does not reserve a VIP or VRRP ID through that configuration.",
+          "transitions": [
+            {
+              "to": "correct",
+              "label": "Required check failed or unknown"
+            },
+            {
+              "to": "finish",
+              "label": "Measured checks pass"
+            }
+          ]
+        },
+        {
+          "id": "correct",
+          "title": "Infrastructure owner: resolve the reported prerequisite",
+          "body": "Use the saved reason to correct trust, access, node state, desired interface/VIP, routing or incomplete cleanup. Arrange infrastructure changes with the responsible owner. Discovery does not apply switch configuration or reserve addresses. Rerun after the cause is resolved.",
+          "transitions": [
+            {
+              "to": "prepare",
+              "label": "Cause resolved"
+            }
+          ]
+        },
+        {
+          "id": "finish",
+          "title": "CLI operator: retain the observations",
+          "body": "Keep the saved inventory, report and logs. The HBN readiness report still requires all other deployment prerequisites; successful network probes do not mean DPF or HBN has been deployed.",
+          "transitions": []
+        }
+      ]
+    },
+    {
+      "id": "hbn-bgp-preflight",
+      "title": "Check HBN-BGP fabric prerequisites",
+      "introduction": "Run this additional preflight for the independent HBN-BGP use case. Physical inventory and use-case readiness are separate results. See [HBN-BGP inputs](dpf-discovery.md#check-hbn-bgp-prerequisites) for the site fields and defaults.",
+      "steps": [
+        {
+          "id": "inputs",
+          "title": "CLI operator: select the desired profile and switch access",
+          "body": "Retain explicit host and DPU BMC targets. Add each switch SSH address, credential reference, pinned known-hosts file and intended p0/p1-to-switch-port bindings. Omit networking fields to use defaults or override them in `dpf.hbn`. Supply the tenant VIP and control-plane management interface under `provisioning.bootstrap.tenant`; discovery can reuse a literal observed management API IP and port. Missing allocations remain blockers. HBN software and node-effect defaults can be overridden under `provisioning.hbn`. Unknown cabling must remain unresolved; do not guess a mapping from LLDP names.",
+          "transitions": [
+            {
+              "to": "run",
+              "label": "Inputs prepared"
+            }
+          ]
+        },
+        {
+          "id": "run",
+          "title": "CLI machine: run HBN-BGP discovery",
+          "body": "Run `l8k discover --target dpf --use-case hbn-bgp --user-config dpf-site.yaml --save-cluster-config dpf-discovered.yaml`. The CLI reads host/DPU identity and authorization, management observations when configured, and read-only switch facts. Host SSH checks selected PCI functions, drivers, IOMMU groups and management-path separation. DPU Redfish reads card-owned network-function MACs; unique switch LLDP MAC and p0/p1 claims corroborate uplink bindings. Management API reads check Kamaji default datastore validation, its linked etcd replicas and pods, bound claims and volumes, and the local-path provisioner. Missing, denied, stale or mismatched storage observations block readiness; these reads do not measure remaining disk capacity. When provisioning inputs and current identities are complete, the CLI downloads and verifies the selected charts, derives the management deployment plan, and asks the management API to check the configured caller’s scoped permissions. Missing plan inputs, failed chart validation and denied or incomplete authorization responses block readiness. These authorization reviews do not install the generated resources. NVUE reads applied and operational configuration and FRR supplies current BGP state. Only protected LLDP/FRR reads use configured sudo. No switch configuration is changed. Set `discovery.probes.mode: management` to add the [management-network workflow](#management-network), including selected-interface and tenant-VIP route checks. This mode creates temporary Pods and a request ConfigMap; inventory mode does not.",
+          "transitions": [
+            {
+              "to": "review",
+              "label": "Collection and report finished"
+            },
+            {
+              "to": "correct",
+              "label": "Access, input or collection failure"
+            }
+          ]
+        },
+        {
+          "id": "review",
+          "title": "CLI operator: review inventory and readiness separately",
+          "body": "Inspect `discovery.outcome`, `readiness.state`, each failed readiness check, and the command exit status. Complete physical inventory may be saved even when HBN-BGP readiness is blocked. Missing required facts, mismatched VRF/ASN/MTU, absent unnumbered neighbors and unknown uplink mapping cannot count as passes. The current preview retains unverified provisioning prerequisites as blockers. BGP establishment and traffic validation are post-deployment checks.",
+          "transitions": [
+            {
+              "to": "correct",
+              "label": "Required check blocked or unknown"
+            },
+            {
+              "to": "finish",
+              "label": "Required checks verified"
+            }
+          ]
+        },
+        {
+          "id": "correct",
+          "title": "Infrastructure owner: resolve the reported cause",
+          "body": "Correct access or desired inputs, or arrange the needed infrastructure change with its owner. Defaults are desired values, not permission to reconfigure a switch. Review switch changes separately. Preserve the recorded reason and rerun after correction; do not edit observations to force a pass.",
+          "transitions": [
+            {
+              "to": "inputs",
+              "label": "Inputs or infrastructure corrected"
+            }
+          ]
+        },
+        {
+          "id": "finish",
+          "title": "CLI operator: retain the handoff and verification limits",
+          "body": "Keep the saved configuration and report. Passing prerequisite checks does not establish live BGP adjacency, workload traffic or production hardware qualification. Those require the deployment and validation workflow.",
+          "transitions": []
+        }
+      ]
+    },
+    {
+      "id": "hbn-bgp-generation",
+      "title": "Generate HBN-BGP deployment files",
+      "introduction": "Run generation on the CLI machine after collecting the selected estate. A blocked readiness result can still be used to prepare manifests, provided required generation inputs are complete. Deployment must resolve and recheck the blockers. See [generation inputs and outputs](dpf-generation.md).",
+      "steps": [
+        {
+          "id": "inputs",
+          "title": "CLI operator: complete the saved site configuration",
+          "body": "Keep the discovered inventory in the site file. Supply the reserved tenant API VIP/interface and explicit tenant.allocation declarations, the hardware-specific DPUFlavor spec, and the HTTPS OS ISO and PSID-specific PLDM URLs with SHA-256 digests. Review profile defaults and override only the values needed for your site. Endpoint credentials remain references; generation does not read them. The default BMC reset policy is Never. An OnInitialization override requires verified DHCP recovery to the same BMC addresses before enrollment; a reset clears existing BMC networking.",
+          "transitions": [
+            {
+              "to": "resolve",
+              "label": "Inputs supplied"
+            }
+          ]
+        },
+        {
+          "id": "resolve",
+          "title": "CLI machine: resolve and check selected identities",
+          "body": "Run `l8k generate --target dpf --use-case hbn-bgp --user-config dpf-site.yaml --save-deployment-files ./hbn-bgp`. Launch Kit matches the selected source endpoints to the saved DPU identities and host associations, verifies that administrator access was recorded, and resolves exact PSIDs and desired settings. Missing identities or required inputs stop generation before chart downloads. Host address index 2 and gateway index 1 default from the profile and may be overridden under provisioning.hbn. They must be different usable addresses in every per-DPU subnet; plans requiring more than 4096 subnet reservations are rejected.",
+          "transitions": [
+            {
+              "to": "charts",
+              "label": "Inputs valid"
+            },
+            {
+              "to": "repair",
+              "label": "Missing or conflicting input"
+            }
+          ]
+        },
+        {
+          "id": "charts",
+          "title": "CLI machine: retrieve charts and validate resources",
+          "body": "The CLI downloads the selected DPF operator and HBN chart archives over HTTPS and verifies their recorded SHA-256 digests and metadata. It renders management bootstrap and HBN manifests locally, checks custom-resource structure against the selected operator schemas, and validates the complete artifact bundle. It does not connect to or modify the management cluster, hosts, DPUs or switches. A render or validation failure leaves the destination untouched. The interface manifests carry selectors derived from the selected DPU cluster and DPU node names. Generation does not check whether live labels uniquely identify those targets. HBN resource requests are included in both the container configuration and DPF service capacity accounting. The workload IPAM manifest excludes the selected host address from ordinary dynamic allocation in every possible DPU subnet. It does not assign subnets to specific DPUs or configure host addresses and routes.",
+          "transitions": [
+            {
+              "to": "publish",
+              "label": "Bundle validates"
+            },
+            {
+              "to": "repair",
+              "label": "Download, digest or validation failure"
+            }
+          ]
+        },
+        {
+          "id": "publish",
+          "title": "CLI machine: save a complete bundle",
+          "body": "A new directory is published only after all files validate. A byte-identical existing bundle is unchanged; a different or incomplete destination is rejected. Choose a new directory when changing the desired deployment. Retain the original site YAML, resolved configuration, verified archives and ordered manifests together.",
+          "transitions": [
+            {
+              "to": "review",
+              "label": "Published"
+            }
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "CLI operator: correct the reported problem",
+          "body": "Correct the named input or archive problem. Rerun discovery if device selection or identity has changed; do not edit observations to manufacture a successful check. Choose a new destination if the previous directory contains a different bundle. Rerun generation after correcting the cause.",
+          "transitions": [
+            {
+              "to": "inputs",
+              "label": "Corrected"
+            }
+          ]
+        },
+        {
+          "id": "review",
+          "title": "CLI operator: review artifacts and remaining readiness checks",
+          "body": "Review the tenant endpoint, selected DPU serials, software URLs, flavor settings and HBN network allocation. Generation success proves that local artifacts were constructed and validated; it does not prove API admission, artifact consumption, tenant health, live BGP sessions or workload traffic. Deployment remains unavailable in this preview.",
           "transitions": []
         }
       ]

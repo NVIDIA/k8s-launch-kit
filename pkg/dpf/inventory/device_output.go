@@ -7,6 +7,7 @@ package inventory
 // physical identity rechecks succeed; an endpoint or retained serial is context,
 // not a successful identity assertion. Collector bookkeeping stays private.
 type DeviceOutput struct {
+	NetworkFunctionMACs       []string        `json:"networkFunctionMACs,omitempty" yaml:"networkFunctionMACs,omitempty"`
 	RecordKey                 string          `json:"recordKey" yaml:"recordKey"`
 	InputRef                  string          `json:"inputRef" yaml:"inputRef"`
 	Method                    string          `json:"method,omitempty" yaml:"method,omitempty"`

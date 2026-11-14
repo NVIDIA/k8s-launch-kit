@@ -57,6 +57,7 @@ var _ = Describe("explicit management access", func() {
 		Expect(observed.SystemNamespaceUID).To(Equal("cluster-one"))
 		Expect(observed.TrustDigest).NotTo(Equal("system-roots"))
 		Expect(observed.Nodes).To(HaveLen(1))
+		Expect(observed.Nodes[0].Labels).To(HaveKeyWithValue("node-role.kubernetes.io/control-plane", ""))
 	})
 	It("rejects anonymous, exec and HTTP configurations before client construction", func() {
 		dir, e := os.MkdirTemp("", "dpf-management-")

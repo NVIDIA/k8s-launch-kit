@@ -12,11 +12,15 @@ import (
 	"crypto/rsa"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"golang.org/x/crypto/ssh"
@@ -152,6 +156,19 @@ func (s *testServer) serve(conn net.Conn, connection int) {
 					_, _ = ch.Stderr().Write([]byte("sh: 1: sudo: not found"))
 					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{127}))
 					return
+				case "LC_ALL=C sudo -S -p '' nv show bgp":
+					input, readErr := io.ReadAll(ch)
+					if readErr != nil || string(input) != "sudo-secret\n" {
+						_, _ = ch.Stderr().Write([]byte("invalid input"))
+						_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
+						return
+					}
+					_, _ = ch.Write([]byte("switch-state\n"))
+				case "LC_ALL=C sudo -S -p '' fail":
+					input, _ := io.ReadAll(ch)
+					_, _ = ch.Stderr().Write(append([]byte("rejected "), input...))
+					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{7}))
+					return
 				case "LC_ALL=C fail":
 					_, _ = ch.Stderr().Write([]byte("remote sensitive diagnostic"))
 					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{7}))
@@ -181,6 +198,45 @@ func (s *testServer) auth() credentials {
 	return credentials{user: "reader", password: "test-password", knownHosts: []byte(knownhosts.Line([]string{s.listener.Addr().String()}, s.key.PublicKey()) + "\n")}
 }
 
+func resolvedTestAccess(server *testServer, knownHosts []byte) (*config.SSHAccess, error) {
+	dir, err := os.MkdirTemp("", "l8k-ssh-access-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, "known_hosts"), knownHosts, 0600); err != nil {
+		return nil, err
+	}
+	previous, existed := os.LookupEnv("L8K_SSHPROBE_TEST_PASSWORD")
+	if err := os.Setenv("L8K_SSHPROBE_TEST_PASSWORD", "test-password"); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if existed {
+			_ = os.Setenv("L8K_SSHPROBE_TEST_PASSWORD", previous)
+		} else {
+			_ = os.Unsetenv("L8K_SSHPROBE_TEST_PASSWORD")
+		}
+	}()
+	document := `credentials:
+  reader: {username: reader, passwordRef: {env: L8K_SSHPROBE_TEST_PASSWORD}}
+discovery:
+  hosts:
+    - credentialRef: reader
+      ssh: {address: ` + server.listener.Addr().String() + `, knownHostsFile: known_hosts, sudo: true}
+  probes: {mode: inventory}
+`
+	in, err := config.Decode([]byte(document), filepath.Join(dir, "site.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := config.Resolve(in)
+	if err != nil {
+		return nil, err
+	}
+	return resolved.Targets[0].SSH, nil
+}
+
 var _ = Describe("bounded SSH transport", func() {
 	var server *testServer
 	BeforeEach(func() { server = startServer() })
@@ -192,6 +248,67 @@ var _ = Describe("bounded SSH transport", func() {
 		out, err := c.Run(context.Background(), "query", "query")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(Equal("observed\n"))
+	})
+	It("opens a reusable authenticated read session and sends secret input only on stdin", func() {
+		access, err := resolvedTestAccess(server, server.auth().knownHosts)
+		Expect(err).NotTo(HaveOccurred())
+		session, err := OpenReadSession(context.Background(), "ssh://"+server.listener.Addr().String(), access, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		defer session.Close()
+
+		command := "sudo -S -p '' nv show bgp"
+		out, err := session.RunWithInput(context.Background(), "switch BGP", command, []byte("sudo-secret\n"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(Equal("switch-state\n"))
+		Expect(command).NotTo(ContainSubstring("sudo-secret"))
+	})
+	It("bounds stdin and guards nil session inputs", func() {
+		_, err := OpenReadSession(context.Background(), "ssh://127.0.0.1:22", nil, time.Second)
+		Expect(err).To(HaveOccurred())
+		wrongTrust := []byte(knownhosts.Line([]string{"other.example"}, server.key.PublicKey()) + "\n")
+		access, err := resolvedTestAccess(server, wrongTrust)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = OpenReadSession(context.Background(), "ssh://"+server.listener.Addr().String(), access, time.Second)
+		Expect(Code(err)).To(Equal("SSH_HOST_KEY_REJECTED"))
+
+		access, err = resolvedTestAccess(server, server.auth().knownHosts)
+		Expect(err).NotTo(HaveOccurred())
+		session, err := OpenReadSession(context.Background(), "ssh://"+server.listener.Addr().String(), access, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		defer session.Close()
+		_, err = session.RunWithInput(context.Background(), "switch", "query", bytes.Repeat([]byte("x"), maxInput+1))
+		Expect(Code(err)).To(Equal("SSH_CONFIGURATION_INVALID"))
+	})
+	It("redacts stdin from command failures and reconnects after a command timeout", func() {
+		access, err := resolvedTestAccess(server, server.auth().knownHosts)
+		Expect(err).NotTo(HaveOccurred())
+		session, err := OpenReadSession(context.Background(), "ssh://"+server.listener.Addr().String(), access, 120*time.Millisecond)
+		Expect(err).NotTo(HaveOccurred())
+		defer session.Close()
+
+		_, err = session.RunWithInput(context.Background(), "switch", "sudo -S -p '' fail", []byte("hidden-secret\n"))
+		Expect(Code(err)).To(Equal("SSH_COMMAND_FAILED"))
+		Expect(err.Error()).NotTo(ContainSubstring("hidden-secret"))
+
+		_, err = session.Run(context.Background(), "slow", "slow")
+		Expect(Code(err)).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
+		out, err := session.Run(context.Background(), "query", "query")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(Equal("observed\n"))
+	})
+	It("honors caller cancellation without reconnecting", func() {
+		access, err := resolvedTestAccess(server, server.auth().knownHosts)
+		Expect(err).NotTo(HaveOccurred())
+		session, err := OpenReadSession(context.Background(), "ssh://"+server.listener.Addr().String(), access, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		defer session.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		_, err = session.Run(ctx, "slow", "slow")
+		Expect(Code(err)).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
+		_, err = session.Run(context.Background(), "after-cancel", "query")
+		Expect(Code(err)).To(Equal("SSH_COMMAND_FAILED"))
 	})
 	It("accepts hashed known-hosts entries through the upstream parser", func() {
 		auth := server.auth()

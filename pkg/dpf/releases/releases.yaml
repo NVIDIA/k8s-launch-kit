@@ -106,3 +106,126 @@ releases:
       - Component applicability mirrors the upstream component matrix; it does not select services or authorize changing the independent host cluster.
       - The published chart records build commit 50fab50af0bfa67be22e8bb4768548ad7dae57bf, separately from the public source tag commit used for documentation.
       - BFB and component image bytes are not digest-locked by this catalog; provisioning must resolve and verify immutable artifacts before use.
+  "26.8.0":
+    version: "26.8.0"
+    tenantKubernetesVersion: v1.35.6
+    supportedKubernetes:
+      minimum: "1.33"
+      maximum: "1.36"
+    operator:
+      chart: dpf-operator
+      chartRepository: https://helm.ngc.nvidia.com/nvidia/doca
+      version: v26.8.0
+      chartDigest: sha256:0252d473beaf473e93a09b23a39b7b78fff931c9a801f4e60ef93bface5e28c8
+      image: nvcr.io/nvidia/doca/dpf-system:v26.8.0
+      sourceRef: published-chart
+    components:
+      - {name: argocd, version: v3.3.0, repository: quay.io/argoproj/argocd, applicability: base, sourceRef: platform-support}
+      - {name: cert-manager-controller, version: v1.19.3, repository: quay.io/jetstack/cert-manager-controller, applicability: base, sourceRef: platform-support}
+      - {name: flannel, version: v0.26.5, repository: docker.io/flannel/flannel, applicability: base, sourceRef: platform-support}
+      - {name: multus, version: v3.9.3, repository: ghcr.io/k8snetworkplumbingwg/multus-cni, applicability: base, sourceRef: platform-support}
+      - {name: nvidia-k8s-ipam, version: v0.3.5, repository: ghcr.io/mellanox/nvidia-k8s-ipam, applicability: base, sourceRef: platform-support}
+      - {name: maintenance-operator, version: v0.3.0, repository: ghcr.io/mellanox/maintenance-operator, applicability: base, sourceRef: platform-support}
+      - {name: network-operator, version: v26.1.0, repository: nvcr.io/nvidia/cloud-native/network-operator, applicability: base, sourceRef: platform-support}
+      - {name: node-feature-discovery, version: v0.18.3, repository: registry.k8s.io/nfd/node-feature-discovery, applicability: base, sourceRef: platform-support}
+      - {name: sriov-device-plugin, version: v3.11.0, repository: ghcr.io/k8snetworkplumbingwg/sriov-network-device-plugin, applicability: base, sourceRef: platform-support}
+      - {name: etcd-defrag, version: v0.22.0, repository: ghcr.io/ahrtr/etcd-defrag, applicability: optional, sourceRef: platform-support}
+      - {name: kamaji, version: v1.36.0-26.6.4, repository: ghcr.io/nvidia/kamaji, applicability: conditional, sourceRef: platform-support}
+      - {name: local-path-provisioner, version: v0.0.34, repository: docker.io/rancher/local-path-provisioner, applicability: conditional, sourceRef: platform-support}
+      - {name: openbao, version: v2.5.5, repository: quay.io/openbao/openbao, applicability: optional, sourceRef: platform-support}
+      - {name: external-secrets, version: v2.7.0, repository: ghcr.io/external-secrets/external-secrets, applicability: optional, sourceRef: platform-support}
+      - {name: kube-state-metrics, version: v2.18.0, repository: registry.k8s.io/kube-state-metrics/kube-state-metrics, applicability: optional, sourceRef: platform-support}
+      - {name: node-problem-detector, version: v1.35.1, repository: registry.k8s.io/node-problem-detector/node-problem-detector, applicability: optional, sourceRef: platform-support}
+      - {name: prometheus, version: v2.54.1, repository: quay.io/prometheus/prometheus, applicability: optional, sourceRef: platform-support}
+      - {name: grafana, version: "11.1.0", repository: docker.io/grafana/grafana, applicability: optional, sourceRef: platform-support}
+    hardware:
+      - family: BlueField-3
+        models: [B3210, B3220, B3240]
+        supportLevel: ga
+        bfb:
+          version: "3.5.0-89_26.07"
+          url: https://content.mellanox.com/BlueField/BFBs/Ubuntu24.04/bf-bundle-3.5.0-89_26.07_ubuntu-24.04_64k_prod.bfb
+          reasonCode: ARTIFACT_DIGEST_NOT_RECORDED
+          message: The v26.8 guide selects the 3.5 BFB train but does not publish an artifact digest; immutable artifact verification remains required before provisioning.
+          sourceRef: hbn-guide
+        requirements:
+          - component: nic
+            scope: dpu
+            state: known
+            minimum: "32.38.1002"
+            sourceRef: platform-support
+          - component: mft
+            scope: host
+            state: known
+            minimum: "4.33.0-169"
+            sourceRef: platform-support
+          - component: bmc
+            scope: dpu
+            state: unknown
+            reasonCode: RELEASE_REQUIREMENT_NOT_DOCUMENTED
+            message: The pinned platform requirements do not specify a BMC firmware minimum or target. The PoC capability threshold is not substituted for an official release requirement.
+            sourceRef: platform-support
+          - component: cec
+            scope: dpu
+            state: unknown
+            reasonCode: RELEASE_REQUIREMENT_NOT_DOCUMENTED
+            message: No standalone CEC requirement is declared by the pinned platform requirements; retain the observed version without inferring compatibility.
+            sourceRef: platform-support
+          - component: atf
+            scope: dpu
+            state: unknown
+            reasonCode: RELEASE_REQUIREMENT_NOT_DOCUMENTED
+            message: No standalone ATF requirement is declared by the pinned platform requirements; retain the observed version without inferring compatibility.
+            sourceRef: platform-support
+          - component: uefi
+            scope: dpu
+            state: unknown
+            reasonCode: RELEASE_REQUIREMENT_NOT_DOCUMENTED
+            message: No standalone UEFI requirement is declared by the pinned platform requirements; retain the observed version without inferring compatibility.
+            sourceRef: platform-support
+          - component: dpu-bsp
+            scope: dpu
+            state: unknown
+            reasonCode: RELEASE_REQUIREMENT_NOT_DOCUMENTED
+            message: The guide selects a BFB bundle but does not specify the BSP inventory version string; do not equate a bundle version with a BSP version.
+            sourceRef: platform-support
+          - component: dpu-os
+            scope: dpu
+            state: unknown
+            reasonCode: RELEASE_REQUIREMENT_NOT_DOCUMENTED
+            message: The guide selects a BFB bundle but does not specify the DPU OS inventory version string; do not equate a bundle version with an OS version.
+            sourceRef: platform-support
+          - component: golden
+            scope: dpu
+            state: unknown
+            reasonCode: RELEASE_REQUIREMENT_NOT_DOCUMENTED
+            message: No standalone golden-image requirement is declared by the pinned platform requirements; retain the observed version without inferring compatibility.
+            sourceRef: platform-support
+      - family: BlueField-4
+        models: []
+        supportLevel: beta
+        blueFieldSoftware:
+          osIso:
+            reasonCode: BF4_ARTIFACT_NOT_PUBLIC
+            message: Requires an authorized release-compatible BF4 ISO override; public v26.8 release material does not publish its version or URL.
+            sourceRef: release-notes
+        requirements: []
+    sources:
+      - id: platform-support
+        url: https://github.com/NVIDIA/doca-platform/blob/v26.8.0/docs/public/platform-support.md
+        revision: fc4974ed3bc026ae27634673c2fdf818a2972235
+      - id: release-notes
+        url: https://github.com/NVIDIA/doca-platform/blob/v26.8.0/docs/public/release-notes/v26.8.0.md
+        revision: fc4974ed3bc026ae27634673c2fdf818a2972235
+      - id: published-chart
+        url: https://helm.ngc.nvidia.com/nvidia/doca/charts/dpf-operator-v26.8.0.tgz
+        revision: 1751dc679f702fdf91c2641d925e69908ae4921f
+      - id: hbn-guide
+        url: https://github.com/NVIDIA/doca-platform/blob/v26.8.0/docs/public/user-guides/zero-trust/use-cases/hbn/README.md
+        revision: fc4974ed3bc026ae27634673c2fdf818a2972235
+    limitations:
+      - BlueField-4 DPF, Zero Trust, and DOCA HBN support are Beta in v26.8 for selected partners/customers; this catalog entry does not establish B4240 or any other exact BF4 model qualification.
+      - Public v26.8 material does not publish BF4 OS ISO or PLDM bundle coordinates; supply authorized, release-compatible artifacts per observed PSID before provisioning.
+      - Software coordinates are upstream release metadata, not proof of installed versions, active firmware, runtime compatibility, or Launch Kit hardware qualification.
+      - Component applicability mirrors the upstream component matrix; it does not select services or authorize changing the independent host cluster.
+      - BFB and component image bytes are not digest-locked by this catalog; provisioning must resolve and verify immutable artifacts before use.

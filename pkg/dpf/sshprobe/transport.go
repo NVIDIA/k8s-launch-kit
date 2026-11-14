@@ -18,12 +18,40 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const maxOutput = 1 << 20
+const maxInput = 1 << 20
+
+// ReadSession is an authenticated, bounded SSH connection to one explicit
+// endpoint for callers that enforce their own read-only command allowlist. It
+// has no ambient configuration or endpoint fallback.
+// Calls must be made sequentially; the transport reconnects after an individual
+// command deadline but not after caller cancellation.
+type ReadSession interface {
+	Run(context.Context, string, string) (string, error)
+	RunWithInput(context.Context, string, string, []byte) (string, error)
+	Close() error
+}
+
+// OpenReadSession establishes an SSH transport using the supplied credential
+// and known-hosts snapshot. The caller owns and must close it.
+func OpenReadSession(ctx context.Context, endpoint string, access *config.SSHAccess, timeout time.Duration) (ReadSession, error) {
+	if ctx == nil || access == nil {
+		return nil, &Error{Code: "SSH_CONFIGURATION_INVALID", Stage: "session"}
+	}
+	user, password := access.Credentials()
+	auth := credentials{user: user, password: password, key: access.PrivateKey(), knownHosts: access.KnownHosts()}
+	runner, err := newReconnectingRunner(ctx, endpoint, auth, timeout)
+	clear(auth.key)
+	clear(auth.knownHosts)
+	auth.password = ""
+	return runner, err
+}
 
 // Error carries a stable diagnostic without remote output or credential material.
 type Error struct {
@@ -81,8 +109,15 @@ func newReconnectingRunner(ctx context.Context, endpoint string, auth credential
 }
 
 func (r *reconnectingRunner) Run(ctx context.Context, stage, command string) (string, error) {
+	return r.RunWithInput(ctx, stage, command, nil)
+}
+
+func (r *reconnectingRunner) RunWithInput(ctx context.Context, stage, command string, input []byte) (string, error) {
 	if r.closed {
 		return "", &Error{Code: "SSH_COMMAND_FAILED", Stage: stage, Tool: commandTool(command)}
+	}
+	if ctx == nil || len(input) > maxInput {
+		return "", &Error{Code: "SSH_CONFIGURATION_INVALID", Stage: stage, Tool: commandTool(command)}
 	}
 	if err := ctx.Err(); err != nil {
 		return "", &Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: stage, Tool: commandTool(command)}
@@ -102,7 +137,7 @@ func (r *reconnectingRunner) Run(ctx context.Context, stage, command string) (st
 		r.client = c
 		r.reconnect = false
 	}
-	text, err := r.client.Run(ctx, stage, command)
+	text, err := r.client.RunWithInput(ctx, stage, command, input)
 	if Code(err) == "SSH_TIMEOUT_OR_CANCELLED" && ctx.Err() == nil {
 		// Run's private command deadline expired. Its cancellation hook closed
 		// this transport to interrupt an unresponsive channel; reconnect before
@@ -312,6 +347,10 @@ func (w outputWriter) Write(p []byte) (int, error) {
 }
 
 func (c *client) Run(ctx context.Context, stage, command string) (text string, err error) {
+	return c.RunWithInput(ctx, stage, command, nil)
+}
+
+func (c *client) RunWithInput(ctx context.Context, stage, command string, input []byte) (text string, err error) {
 	started := time.Now()
 	// Stage suffixes contain per-device identifiers; commands and remote output
 	// are intentionally excluded, including on failure.
@@ -325,6 +364,9 @@ func (c *client) Run(ctx context.Context, stage, command string) (text string, e
 		}
 		logger.V(2).Info("SSH command stage completed", "stage", name, "tool", commandTool(command), "reasonCode", reason, "duration", time.Since(started))
 	}()
+	if ctx == nil || len(input) > maxInput {
+		return "", &Error{Code: "SSH_CONFIGURATION_INVALID", Stage: stage, Tool: commandTool(command)}
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	// Closing the connection also interrupts NewSession/Start if the server stops
@@ -340,6 +382,11 @@ func (c *client) Run(ctx context.Context, stage, command string) (text string, e
 		return "", &Error{Code: code, Stage: stage, Tool: commandTool(command)}
 	}
 	defer session.Close()
+	if len(input) > 0 {
+		stdin := bytes.Clone(input)
+		defer clear(stdin)
+		session.Stdin = bytes.NewReader(stdin)
+	}
 	output := &commandOutput{}
 	session.Stdout = outputWriter{output: output}
 	session.Stderr = outputWriter{output: output, stderr: true}
