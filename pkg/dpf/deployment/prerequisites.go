@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -127,6 +128,7 @@ func (c *APIClient) CheckManagementPreflight(ctx context.Context, request Manage
 	for _, workload := range pinnedHBNWorkloads(plan.overrides, plan.requireNFDWorker) {
 		result.Checks = append(result.Checks, c.checkPreflightWorkload(ctx, workload))
 	}
+	result.Checks = append(result.Checks, c.checkTenantStorage(ctx, plan.overrides.Kamaji))
 	result.Checks = append(result.Checks, c.checkCertManagerWebhookCA(ctx))
 	result.Checks = append(result.Checks, c.checkArgoApplicationScope(ctx, plan.operatorNamespace, plan.overrides.ArgoCD))
 
@@ -164,6 +166,19 @@ func (c *APIClient) CheckManagementPreflight(ctx context.Context, request Manage
 		}
 	}
 	return result
+}
+
+// checkTenantStorage recollects external backing storage; saved discovery results
+// are never sufficient to authorize the later tenant creation stage.
+func (c *APIClient) checkTenantStorage(ctx context.Context, namespace string) PreflightCheck {
+	if c == nil {
+		return blockedPreflight("external.kamaji.storage", "MANAGEMENT_CLIENT_UNAVAILABLE", "The bound management API client is unavailable.")
+	}
+	result := (managementprobe.Collector{Kubernetes: c.access.Client, Dynamic: c.dynamic}).CollectTenantStorage(ctx, namespace)
+	if result.State != "passed" {
+		return blockedPreflight("external.kamaji.storage", result.ReasonCode, result.Message)
+	}
+	return PreflightCheck{ID: "external.kamaji.storage", State: result.State, ReasonCode: result.ReasonCode, Message: result.Message}
 }
 
 func managementPreflightPlan(request ManagementPreflightRequest) (preflightPlan, error) {
@@ -288,6 +303,7 @@ func pinnedHBNAPIs() []preflightAPIRequirement {
 		{id: "argo.projects", crd: "appprojects.argoproj.io", group: "argoproj.io", version: "v1alpha1", resource: "appprojects", kind: "AppProject", namespaced: true},
 		{id: "nfd.node-feature-rules", crd: "nodefeaturerules.nfd.k8s-sigs.io", group: "nfd.k8s-sigs.io", version: "v1alpha1", resource: "nodefeaturerules", kind: "NodeFeatureRule"},
 		{id: "maintenance.node-maintenances", crd: "nodemaintenances.maintenance.nvidia.com", group: "maintenance.nvidia.com", version: "v1alpha1", resource: "nodemaintenances", kind: "NodeMaintenance", namespaced: true},
+		{id: "kamaji.datastores", crd: "datastores.kamaji.clastix.io", group: "kamaji.clastix.io", version: "v1alpha1", resource: "datastores", kind: "DataStore", namespaced: false},
 		{id: "kamaji.tenant-control-planes", crd: "tenantcontrolplanes.kamaji.clastix.io", group: "kamaji.clastix.io", version: "v1alpha1", resource: "tenantcontrolplanes", kind: "TenantControlPlane", namespaced: true},
 	}
 }

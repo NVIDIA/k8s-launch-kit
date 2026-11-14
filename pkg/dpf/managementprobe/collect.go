@@ -42,12 +42,12 @@ const (
 )
 
 type Issue struct {
-	Source   string `json:"source" yaml:"source"`
-	Resource string `json:"resource,omitempty" yaml:"resource,omitempty"`
+	Source    string `json:"source" yaml:"source"`
+	Resource  string `json:"resource,omitempty" yaml:"resource,omitempty"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Field    string `json:"field,omitempty" yaml:"field,omitempty"`
-	Code     string `json:"code" yaml:"code"`
-	Message  string `json:"message" yaml:"message"`
+	Field     string `json:"field,omitempty" yaml:"field,omitempty"`
+	Code      string `json:"code" yaml:"code"`
+	Message   string `json:"message" yaml:"message"`
 }
 
 type ResourceSet[T any] struct {
@@ -56,6 +56,7 @@ type ResourceSet[T any] struct {
 }
 
 type Snapshot struct {
+	TenantStorage   *TenantStorageResult        `json:"tenantStorage,omitempty" yaml:"tenantStorage,omitempty"`
 	Namespace       string                      `json:"namespace" yaml:"namespace"`
 	ObservedAt      time.Time                   `json:"observedAt" yaml:"observedAt"`
 	Deployments     ResourceSet[Deployment]     `json:"deployments" yaml:"deployments"`
@@ -254,6 +255,8 @@ func (c Collector) Collect(ctx context.Context, namespace string) Snapshot {
 		dpuSpecs := findCRD(crdReads, "dpus.provisioning.dpu.nvidia.com")
 		result.DPUs = listCustom[DPU](ctx, c.Dynamic, metav1.NamespaceAll, dpuSpecs, &result.Issues)
 	}
+	storage := c.CollectTenantStorage(ctx, namespace)
+	result.TenantStorage = &storage
 	return result
 }
 

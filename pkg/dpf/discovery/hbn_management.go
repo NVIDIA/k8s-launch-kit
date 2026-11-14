@@ -79,8 +79,22 @@ func managementHBNChecks(snapshot *managementprobe.Snapshot, inv *inventory.Inve
 	add(enrollmentCheck(snapshot, inv))
 	add(managementCheck{"tenant-allocation", namespace, "unknown", "TENANT_NETWORK_ALLOCATION_UNMEASURED", "Tenant VIP reservation, reachability through the selected management interface, and VRID uniqueness on that network have not been verified; the DPUCluster registry check does not establish these network facts."})
 	add(managementCheck{"rbac", namespace, "unknown", "DPF_RBAC_UNMEASURED", "The permissions required by the DPF operator and deployment workflow have not been verified."})
-	add(managementCheck{"storage-health", namespace, "unknown", "STORAGE_HEALTH_UNMEASURED", "StorageClass presence does not establish provisioner or volume health."})
+	add(tenantStorageCheck(snapshot, namespace))
 	return checks, projection
+}
+
+func tenantStorageCheck(snapshot *managementprobe.Snapshot, namespace string) managementCheck {
+	check := managementCheck{"storage-health", namespace, "unknown", "STORAGE_HEALTH_UNMEASURED", "Kamaji datastore and backing storage health were not observed."}
+	if snapshot == nil || snapshot.TenantStorage == nil {
+		return check
+	}
+	storage := snapshot.TenantStorage
+	if storage.State != "passed" && storage.State != "failed" && storage.State != "unknown" || storage.ReasonCode == "" || storage.Message == "" {
+		check.reason, check.message = "STORAGE_RESULT_INVALID", "The storage observation is incomplete or has an unsupported result."
+		return check
+	}
+	check.state, check.reason, check.message = storage.State, storage.ReasonCode, storage.Message
+	return check
 }
 
 func projectHBNManagement(snapshot *managementprobe.Snapshot, inv *inventory.Inventory, namespace string) *inventory.HBNManagement {

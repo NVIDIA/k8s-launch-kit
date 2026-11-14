@@ -527,9 +527,23 @@ Denied or incomplete reads block readiness.
 An existing operator must match the selected release, and its configuration
 must use zero-trust mode. A release candidate does not match a selected GA
 release. A clean cluster can be planned for operator installation; leftover or
-incompatible resources require resolution before deployment. StorageClass
-presence alone does not prove storage health, and these reads do not yet verify
-provisioning permissions or reserve a tenant API address.
+incompatible resources require resolution before deployment.
+
+For tenant storage, Launch Kit checks Kamaji's shared `default` datastore and
+its existing etcd backend in the selected DPF namespace. It verifies current
+validation status, ready replicas and pods, the pods' persistent-volume claims,
+and matching bound volumes. It also checks the `local-path` StorageClass and
+its provisioner Deployment in namespace `local-path-provisioner`. These are
+read-only API checks against the release's supported prerequisite layout
+with the default `cluster.local` service DNS domain;
+missing permissions, stale status, mismatched bindings and unsupported storage
+layouts block readiness. Existing tenants may share this datastore.
+
+A successful storage check describes the current backend and its bound volumes.
+It does not measure remaining filesystem space or guarantee capacity for future
+growth. Deployment repeats the storage check instead of trusting a saved
+inventory. Discovery still does not verify all provisioning permissions or
+reserve a tenant API address.
 
 For the tenant control plane, add the reserved VIP and the interface on the
 management control-plane nodes that will carry it. For example:

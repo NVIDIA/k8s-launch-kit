@@ -300,6 +300,17 @@ not observations or authorization to modify switches.
 - **WHEN** complete switch address or route observations contain no entries
 - **THEN** JSON and YAML handoff preserve known-empty separately from unavailable sources.
 
+#### Scenario: HBN tenant storage prerequisites
+
+- **WHEN** HBN discovery inspects the management cluster
+- **THEN** tenant storage readiness requires the current selected Kamaji datastore,
+  its correlated etcd replicas and pods, matching bound claims and volumes, and
+  the supported storage provisioner; class presence alone cannot pass the check.
+- **AND** denied, missing, stale, unsupported or inconsistent observations retain
+  a blocking reason. Shared use by another tenant is not itself a conflict.
+- **AND** deployment recollects the same prerequisites; current bound allocations
+  do not establish remaining physical capacity or future write headroom.
+
 ## Baseline and limits
 
 There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).

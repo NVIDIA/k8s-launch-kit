@@ -40,6 +40,9 @@ func TestCollectMissingCRDsAreAbsentAndNotQueried(t *testing.T) {
 	collector := Collector{Kubernetes: kube, Dynamic: dynamic, Extensions: extensionsfake.NewClientset()}
 
 	snapshot := collector.Collect(context.Background(), "dpf-operator-system")
+	if snapshot.TenantStorage == nil || snapshot.TenantStorage.State == "passed" || snapshot.TenantStorage.ReasonCode == "" || snapshot.TenantStorage.Message == "" {
+		t.Fatalf("absent tenant storage did not retain a blocking observation: %#v", snapshot.TenantStorage)
+	}
 	if snapshot.OperatorConfigs.State != CollectionAbsent || snapshot.DPUDevices.State != CollectionAbsent {
 		t.Fatalf("missing CRDs should be represented as absent: operator=%s devices=%s", snapshot.OperatorConfigs.State, snapshot.DPUDevices.State)
 	}

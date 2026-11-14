@@ -357,3 +357,32 @@ func TestManagementHBNOutputOmitsSuccessfulAPIDumpAndNamesSchemaFailure(t *testi
 		t.Fatalf("API identity failure does not identify its resource: %#v", check)
 	}
 }
+
+func TestHBNManagementStorageUsesMeasuredResult(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		observation   *managementprobe.TenantStorageResult
+		state, reason string
+	}{
+		{name: "not collected", state: "unknown", reason: "STORAGE_HEALTH_UNMEASURED"},
+		{name: "healthy", observation: &managementprobe.TenantStorageResult{State: "passed", ReasonCode: "TENANT_STORAGE_READY", Message: "Current backing storage is ready."}, state: "passed", reason: "TENANT_STORAGE_READY"},
+		{name: "denied", observation: &managementprobe.TenantStorageResult{State: "unknown", ReasonCode: "API_ACCESS_DENIED", Message: "Storage observation was denied."}, state: "unknown", reason: "API_ACCESS_DENIED"},
+		{name: "mismatch", observation: &managementprobe.TenantStorageResult{State: "failed", ReasonCode: "STORAGE_BINDING_MISMATCH", Message: "The PV claim binding differs."}, state: "failed", reason: "STORAGE_BINDING_MISMATCH"},
+		{name: "invalid state", observation: &managementprobe.TenantStorageResult{State: "ready", ReasonCode: "CLAIM", Message: "Unsupported result."}, state: "unknown", reason: "STORAGE_RESULT_INVALID"},
+		{name: "missing explanation", observation: &managementprobe.TenantStorageResult{State: "passed", ReasonCode: "CLAIM"}, state: "unknown", reason: "STORAGE_RESULT_INVALID"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := freshAbsentHBNManagementSnapshot()
+			snapshot.TenantStorage = test.observation
+			checks, _ := managementHBNChecks(&snapshot, nil, snapshot.Namespace)
+			got := managementCheckByID(t, checks, "storage-health")
+			if got.State != test.state || got.ReasonCode != test.reason || got.RequiredPhase != "deploy" {
+				t.Fatalf("storage result = %#v; want %s/%s deployment gate", got, test.state, test.reason)
+			}
+			checks, _ = managementHBNChecks(&snapshot, nil, "different-namespace")
+			if got := managementCheckByID(t, checks, "storage-health"); got.State == "passed" {
+				t.Fatal("storage collected from another namespace was accepted")
+			}
+		})
+	}
+}

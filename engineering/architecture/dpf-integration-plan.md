@@ -665,3 +665,21 @@ client and require reopening access after fresh inspection. Routine metadata or
 status updates alone do not invalidate unchanged identity. Resource convergence
 and authenticated API access remain separate from external VIP allocation,
 keepalived image qualification, storage behavior, enrollment and HBN traffic.
+
+
+Tenant storage discovery and management preflight share the bounded
+`managementprobe.Collector.CollectTenantStorage` reader. For the supported DPF
+Kamaji layout, it reads `DataStore/default`, correlates ordinal endpoints through
+the headless Service and StatefulSet to ready pods, and checks the pods' claims
+against their bound PV identities. Fresh datastore/controller status and the
+local-path provisioner are required. The supported layout currently requires the
+pinned default `cluster.local` DNS domain; custom cluster domains require an
+explicit retained input and collector adaptation before they can pass. Read
+failures and unsupported layouts retain
+specific reasons; neither class presence nor datastore validation alone passes.
+Raw datastore TLS/authentication fields remain transient and are not logged or
+saved. No Secrets or probe PVCs are read/created by this check. Existing tenants
+may share the store. The result establishes current backing-resource health,
+not a direct etcd transaction, remaining physical capacity or future growth.
+Deployment recollects instead of trusting the persisted discovery result;
+ordered tenant creation must repeat this prerequisite immediately before effects.
