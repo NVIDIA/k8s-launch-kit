@@ -117,8 +117,8 @@ func TestGenerateRetainsSourcesAndComposesOrderedStages(t *testing.T) {
 		t.Fatal("exact HBN chart archive bytes were not retained")
 	}
 	resolved := string(byPath[bundle.ResolvedConfigPath])
-	if strings.Contains(resolved, "192.0.2.20") || strings.Contains(resolved, "password") || strings.Contains(resolved, "credentials") {
-		t.Fatal("resolved configuration contains enrollment endpoint or credential material")
+	if !strings.Contains(resolved, "bmcIP: 192.0.2.20") || strings.Contains(resolved, "password") || strings.Contains(resolved, "credentials") {
+		t.Fatal("resolved configuration did not retain the selected BMC endpoint safely")
 	}
 	if !strings.Contains(resolved, "https://api.example.test/prefix") {
 		t.Fatal("resolved configuration dropped the authenticated API proxy base path")

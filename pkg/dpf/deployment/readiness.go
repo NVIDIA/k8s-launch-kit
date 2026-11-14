@@ -367,7 +367,7 @@ func phaseReadiness(obj *unstructured.Unstructured, resource, staleCode, readyPh
 		return result("RESOURCE_DELETING", fmt.Sprintf("%s phase is %s.", resource, phase))
 	}
 	if phase != readyPhase {
-		return result("RESOURCE_PROGRESSING", fmt.Sprintf("%s phase is %s.", resource, phase))
+		return result("RESOURCE_PROGRESSING", fmt.Sprintf("%s has not reached its ready phase.", resource))
 	}
 	if requireReadyCondition {
 		condition, readiness := findCondition(obj, "Ready")
@@ -415,6 +415,15 @@ func kubernetesDeploymentReadiness(obj *unstructured.Unstructured) Readiness {
 	if desired == 0 {
 		return result("DEPLOYMENT_SCALED_TO_ZERO", "A Deployment with zero desired replicas does not establish an available dependency.")
 	}
+	conditions, readiness := optionalConditions(obj)
+	if !readiness.Ready && readiness.ReasonCode != "" {
+		return readiness
+	}
+	for _, condition := range conditions {
+		if condition.typeName == "Progressing" && condition.status == "False" && condition.reason == "ProgressDeadlineExceeded" {
+			return result("DEPLOYMENT_ROLLOUT_FAILED", "The Deployment exceeded its progress deadline.")
+		}
+	}
 	for _, field := range []string{"updatedReplicas", "readyReplicas", "availableReplicas"} {
 		count, present, err := unstructured.NestedInt64(obj.Object, "status", field)
 		if err != nil || present && count < 0 {
@@ -425,15 +434,6 @@ func kubernetesDeploymentReadiness(obj *unstructured.Unstructured) Readiness {
 		}
 		if count != desired {
 			return result("DEPLOYMENT_ROLLOUT_INCOMPLETE", "Deployment updated, ready, and available replica counts do not match the desired replica count.")
-		}
-	}
-	conditions, readiness := optionalConditions(obj)
-	if !readiness.Ready && readiness.ReasonCode != "" {
-		return readiness
-	}
-	for _, condition := range conditions {
-		if condition.typeName == "Progressing" && condition.status == "False" && condition.reason == "ProgressDeadlineExceeded" {
-			return result("DEPLOYMENT_ROLLOUT_FAILED", "The Deployment exceeded its progress deadline.")
 		}
 	}
 	return ready("Deployment controller observed the current generation and all desired replicas are updated, ready, and available.")

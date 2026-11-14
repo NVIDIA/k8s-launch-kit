@@ -26,9 +26,11 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/postrender"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -71,6 +73,7 @@ type operatorInstall struct {
 
 type operatorActions interface {
 	Get(ctx context.Context, name string) (*release.Release, error)
+	CheckNoRenderedResources(ctx context.Context, manifest []byte) error
 	Install(ctx context.Context, request operatorInstall) (*release.Release, error)
 }
 
@@ -128,6 +131,9 @@ func prepareOperator(request OperatorRequest) (*operatorPlan, error) {
 	if len(operatorChart.Dependencies()) != 0 {
 		return nil, fmt.Errorf("retained DPF operator chart has subcharts that Helm does not preserve in release metadata")
 	}
+	if err := validateInstallableChartShape(operatorChart); err != nil {
+		return nil, err
+	}
 	fingerprint, err := chartFingerprint(operatorChart)
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint retained DPF operator chart: %w", err)
@@ -175,6 +181,15 @@ func ensureOperator(ctx context.Context, plan *operatorPlan, actions operatorAct
 	}
 	if !errors.Is(err, driver.ErrReleaseNotFound) {
 		return fmt.Errorf("inspect DPF Helm release %q: %w", plan.releaseName, safeAPIError("inspect DPF Helm release", err))
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := actions.CheckNoRenderedResources(ctx, bytes.Clone(plan.renderedManifest)); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("selected DPF chart resources are not safe to install")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -243,11 +258,58 @@ func (c helmActionClient) Get(ctx context.Context, name string) (*release.Releas
 	return action.NewGet(c.config).Run(name)
 }
 
+// CheckNoRenderedResources rejects every existing object in the chart's
+// rendered projection before Helm records or installs the release. Helm's
+// normal install path adopts resources carrying matching release annotations,
+// so absence is required even for objects that appear Helm-owned.
+func (c helmActionClient) CheckNoRenderedResources(ctx context.Context, manifest []byte) error {
+	if ctx == nil || c.config == nil || c.config.KubeClient == nil {
+		return fmt.Errorf("context and Helm Kubernetes client are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	resources, err := c.config.KubeClient.Build(bytes.NewReader(manifest), false)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("cannot inspect rendered chart resources")
+	}
+	if len(resources) == 0 {
+		return fmt.Errorf("selected DPF chart renders no Kubernetes resources")
+	}
+	for _, resource := range resources {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if resource == nil || resource.Mapping == nil {
+			return fmt.Errorf("rendered chart contains an unidentifiable resource")
+		}
+		if resource.Mapping.GroupVersionKind.Kind == "Namespace" {
+			return fmt.Errorf("selected DPF chart must not manage namespaces")
+		}
+		if err := resource.Get(); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return fmt.Errorf("cannot verify absence of a rendered chart resource")
+		}
+		return fmt.Errorf("a rendered DPF chart resource already exists")
+	}
+	return nil
+}
+
 func (c helmActionClient) Install(ctx context.Context, request operatorInstall) (*release.Release, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	install := action.NewInstall(c.config)
+	installConfig := *c.config
+	installConfig.KubeClient = createOnlyKubeClient{Interface: c.config.KubeClient}
+	install := action.NewInstall(&installConfig)
 	install.ReleaseName = request.releaseName
 	install.Namespace = request.namespace
 	install.CreateNamespace = false
@@ -258,7 +320,35 @@ func (c helmActionClient) Install(ctx context.Context, request operatorInstall) 
 	install.Wait = request.wait
 	install.Timeout = request.timeout
 	install.PostRenderer = request.postRenderer
+	install.TakeOwnership = false
 	return install.RunWithContext(ctx, request.chart, request.values)
+}
+
+// createOnlyKubeClient prevents Helm's install path from adopting matching-
+// ownership resources that appear after the preflight GETs. With this wrapper,
+// Helm's empty-adoption path still uses Create, whose API operation rejects a
+// concurrent name collision.
+type createOnlyKubeClient struct {
+	kube.Interface
+}
+
+func (createOnlyKubeClient) Update(kube.ResourceList, kube.ResourceList, bool) (*kube.Result, error) {
+	return nil, fmt.Errorf("DPF operator install cannot update or adopt existing resources")
+}
+
+func validateInstallableChartShape(operatorChart *chart.Chart) error {
+	if operatorChart == nil {
+		return fmt.Errorf("retained DPF operator chart is required")
+	}
+	if len(operatorChart.CRDObjects()) != 0 {
+		return fmt.Errorf("retained DPF operator chart CRDs require a separate reviewed installation path")
+	}
+	for _, template := range operatorChart.Templates {
+		if template != nil && bytes.Contains(template.Data, []byte("helm.sh/hook")) {
+			return fmt.Errorf("retained DPF operator chart hooks are not supported for no-adoption install")
+		}
+	}
+	return nil
 }
 
 func operatorRESTConfig(ctx context.Context, original *rest.Config, timeout time.Duration) (*rest.Config, error) {
@@ -447,6 +537,9 @@ func canonicalManifest(manifest []byte) ([]byte, error) {
 		var object unstructured.Unstructured
 		if err := sigsyaml.Unmarshal(raw, &object.Object); err != nil {
 			return nil, fmt.Errorf("decode manifest document %d: %w", ordinal, err)
+		}
+		if object.GetKind() == "Namespace" {
+			return nil, fmt.Errorf("selected DPF operator chart must not manage namespaces")
 		}
 		key := documentIdentity(object.GroupVersionKind(), object.GetNamespace(), object.GetName())
 		if key == "" {

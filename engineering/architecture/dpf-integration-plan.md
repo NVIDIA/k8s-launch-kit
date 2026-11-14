@@ -577,3 +577,59 @@ Cancellation preserves partial effects for explicit recovery. The Helm transport
 keeps request cancellation active through response-body consumption. A failed
 identity check after Create can mean the write committed; the runner must retain
 that uncertain outcome and must not retry it against another cluster identity.
+
+The native plan loader strictly decodes the retained intent, reconstructs the
+explicit generation inputs from the bundle, and invokes the existing generator
+to compare the entire result before API access. It does not resolve site defaults
+again or reinterpret relative credential paths from the retained source file.
+Operator release identity and serial-bound BMC endpoints are explicit retained
+inputs. Older bundles missing those inputs require regeneration.
+
+Native custom-resource reconciliation uses create-or-verify. Existing resources
+require matching bundle and desired-object ownership markers and complete spec
+equality after applying the retained CRD schemas' defaults. Status is checked
+separately. The pinned DPUCluster controller's deterministic admin-kubeconfig
+name is the narrowly permitted spec addition. Other conflicts stop execution;
+there is no implicit adoption, patch, deletion or rollback.
+
+The object execution boundary records and synchronizes an attempt before
+reconciliation, then persists the result before dependent work. A report-write
+failure stops execution. Readiness polling rechecks UID, ownership and desired
+content before evaluating current status; it never recreates a disappeared
+object. Reports record safe reasons instead of arbitrary API response bodies.
+These primitives do not complete the remaining tenant, enrollment, consumed
+artifact or HBN data-plane stages and do not enable the deploy CLI.
+
+Namespace execution treats namespaces as shared infrastructure: it creates only
+an absent namespace and otherwise verifies an active, non-deleting identity
+without changing existing metadata or policy. Dependent stages retain the
+namespace UID so deletion and recreation cannot silently change their boundary.
+
+The operator installer checks that every rendered object is absent before a new
+Helm install and disables Helm's update path during that install. This prevents
+adoption even if an object with matching Helm annotations appears after the
+absence check. The pinned chart must not introduce hooks, separately installed
+CRDs, or namespace ownership. Installation is not transactional: earlier creates
+and a failed Helm release record can remain after an error. Exact release-record
+verification and current controller/resource health are separate checks.
+
+The management bootstrap composition validates the retained plan before API
+access, checks external dependencies and scoped permissions, creates or verifies
+namespaces, installs or verifies the retained Helm release, waits for matching
+CRDs and manager configuration, then creates or verifies DPFOperatorConfig.
+It checks cluster-wide configuration ownership before effects and again after
+the manager becomes ready. These observations do not provide an atomic
+cluster-wide lock; concurrent provisioning must be excluded by the caller.
+The final receipt requires the selected configuration version, namespace UIDs,
+and manager identity and full default-normalized specification to remain valid.
+Only manager-relevant Kubernetes defaults are normalized; unknown fields fail
+closed. This receipt covers management bootstrap, not a complete HBN deployment.
+
+Management permission checks use explicit, resource-scoped authorization
+reviews, including named RBAC escalation and binding rights for chart resources.
+Missing explicit rights leave implicit RBAC coverage unverified; a union of rules
+from multiple authorizers is not proof that Kubernetes' RBAC escalation checks
+will accept a write. NFD worker readiness is required only when the retained
+configuration uses host-side detection. Zero-trust Redfish discovery with that
+detector disabled still requires the NFD API and master, but does not require
+management nodes to run NFD workers.

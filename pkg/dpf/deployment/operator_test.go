@@ -9,15 +9,25 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/rest"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -136,6 +146,161 @@ func TestEnsureOperatorDoesNotInstallAfterReleaseInspectionFailure(t *testing.T)
 	if len(actions.installs) != 0 {
 		t.Fatalf("inspection error caused %d installs, want none", len(actions.installs))
 	}
+}
+
+func TestEnsureOperatorRejectsRenderedResourceCollisionBeforeInstall(t *testing.T) {
+	request := operatorTestRequest(t)
+	plan, err := prepareOperator(request)
+	if err != nil {
+		t.Fatalf("prepareOperator() error = %v", err)
+	}
+	guardErr := errors.New("a rendered DPF chart resource already exists")
+	actions := &fakeOperatorActions{getErr: driver.ErrReleaseNotFound, resourceCheckErr: guardErr}
+	err = ensureOperator(context.Background(), plan, actions)
+	if err == nil || !strings.Contains(err.Error(), "not safe to install") {
+		t.Fatalf("ensureOperator() error = %v, want fail-closed resource collision", err)
+	}
+	if len(actions.installs) != 0 {
+		t.Fatalf("collision caused %d Helm installs, want none", len(actions.installs))
+	}
+	if actions.resourceChecks != 1 {
+		t.Fatalf("preflight checks = %d, want 1", actions.resourceChecks)
+	}
+}
+
+func TestEnsureOperatorDoesNotExposeResourceGuardErrors(t *testing.T) {
+	request := operatorTestRequest(t)
+	plan, err := prepareOperator(request)
+	if err != nil {
+		t.Fatalf("prepareOperator() error = %v", err)
+	}
+	actions := &fakeOperatorActions{getErr: driver.ErrReleaseNotFound, resourceCheckErr: errors.New("secret request path and server detail")}
+	err = ensureOperator(context.Background(), plan, actions)
+	if err == nil || strings.Contains(err.Error(), "secret request path") {
+		t.Fatalf("ensureOperator() error = %v, want a redacted guard failure", err)
+	}
+	if len(actions.installs) != 0 {
+		t.Fatalf("guard error caused %d Helm installs, want none", len(actions.installs))
+	}
+}
+
+func TestCreateOnlyKubeClientRejectsHelmAdoption(t *testing.T) {
+	delegate := &updateSpyKubeClient{}
+	client := createOnlyKubeClient{Interface: delegate}
+	if _, err := client.Update(nil, nil, false); err == nil || !strings.Contains(err.Error(), "cannot update or adopt") {
+		t.Fatalf("Update() error = %v, want adoption rejection", err)
+	}
+	if delegate.updates != 0 {
+		t.Fatalf("adoption guard delegated %d updates", delegate.updates)
+	}
+	if _, ok := any(client).(kube.InterfaceThreeWayMerge); ok {
+		t.Fatal("create-only wrapper unexpectedly exposes Helm's three-way adoption interface")
+	}
+}
+
+func TestHelmActionClientResourceGuardChecksExactRenderedIdentities(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantErr    string
+	}{
+		{name: "all absent", statusCode: http.StatusNotFound},
+		{name: "existing collision", statusCode: http.StatusOK, wantErr: "already exists"},
+		{name: "permission denied", statusCode: http.StatusForbidden, wantErr: "cannot verify absence"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/api/v1/namespaces/custom-dpf-operator-system" {
+					writer.WriteHeader(http.StatusNotFound)
+					return
+				}
+				if request.URL.Path != "/api/v1/namespaces/custom-dpf-operator-system/configmaps/operator" {
+					t.Errorf("GET path = %s", request.URL.Path)
+				}
+				if test.statusCode == http.StatusOK {
+					writer.Header().Set("Content-Type", "application/json")
+					writer.WriteHeader(test.statusCode)
+					_, _ = io.WriteString(writer, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"operator","namespace":"custom-dpf-operator-system","labels":{"app.kubernetes.io/managed-by":"Helm"},"annotations":{"meta.helm.sh/release-name":"dpf","meta.helm.sh/release-namespace":"custom-dpf-operator-system"}}}`)
+					return
+				}
+				writer.WriteHeader(test.statusCode)
+			}))
+			defer server.Close()
+			client := resourceRESTClient(t, server.URL)
+			resourceInfo := &resource.Info{
+				Client:    client,
+				Mapping:   &meta.RESTMapping{Resource: schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}, GroupVersionKind: schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, Scope: meta.RESTScopeNamespace},
+				Namespace: "custom-dpf-operator-system",
+				Name:      "operator",
+			}
+			actions := &fixedBuildKubeClient{resources: kube.ResourceList{resourceInfo}}
+			actionConfig := &action.Configuration{KubeClient: actions}
+			err := (helmActionClient{config: actionConfig}).CheckNoRenderedResources(context.Background(), []byte("manifest"))
+			if test.name == "existing collision" {
+				if getErr := resourceInfo.Get(); getErr != nil {
+					t.Fatalf("direct Info.Get() error = %v", getErr)
+				}
+			}
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("CheckNoRenderedResources() error = %v", err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("CheckNoRenderedResources() error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestHelmActionClientResourceGuardRejectsNamespaceBeforeRead(t *testing.T) {
+	resourceInfo := &resource.Info{Mapping: &meta.RESTMapping{
+		Resource:         schema.GroupVersionResource{Version: "v1", Resource: "namespaces"},
+		GroupVersionKind: schema.GroupVersionKind{Version: "v1", Kind: "Namespace"},
+		Scope:            meta.RESTScopeRoot,
+	}}
+	client := &fixedBuildKubeClient{resources: kube.ResourceList{resourceInfo}}
+	guard := helmActionClient{config: &action.Configuration{KubeClient: client}}
+	if err := guard.CheckNoRenderedResources(context.Background(), []byte("manifest")); err == nil || !strings.Contains(err.Error(), "must not manage namespaces") {
+		t.Fatalf("CheckNoRenderedResources() error = %v, want namespace projection rejection", err)
+	}
+}
+
+func TestValidateInstallableChartShapeRejectsAdditionalEffectPaths(t *testing.T) {
+	for _, operatorChart := range []*chart.Chart{
+		{Files: []*chart.File{{Name: "crds/example.yaml", Data: []byte("apiVersion: apiextensions.k8s.io/v1")}}},
+		{Templates: []*chart.File{{Name: "templates/hook.yaml", Data: []byte("metadata:\n  annotations:\n    helm.sh/hook: pre-install")}}},
+	} {
+		if err := validateInstallableChartShape(operatorChart); err == nil {
+			t.Fatal("validateInstallableChartShape() accepted unsupported effects")
+		}
+	}
+}
+
+func TestCanonicalManifestRejectsNamespaceResources(t *testing.T) {
+	manifest := []byte("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: dpf-system\n")
+	if _, err := canonicalManifest(manifest); err == nil || !strings.Contains(err.Error(), "must not manage namespaces") {
+		t.Fatalf("canonicalManifest() error = %v, want namespace rejection", err)
+	}
+}
+
+func resourceRESTClient(t *testing.T, serverURL string) *rest.RESTClient {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register core API types: %v", err)
+	}
+	config := &rest.Config{
+		Host: serverURL, APIPath: "/api",
+		ContentConfig: rest.ContentConfig{
+			GroupVersion:         &schema.GroupVersion{Version: "v1"},
+			NegotiatedSerializer: serializer.NewCodecFactory(scheme).WithoutConversion(),
+		},
+	}
+	client, err := rest.RESTClientFor(config)
+	if err != nil {
+		t.Fatalf("create REST client: %v", err)
+	}
+	return client
 }
 
 func TestEnsureOperatorCancellationStopsFurtherActionCalls(t *testing.T) {
@@ -399,14 +564,40 @@ func jsonMap(data []byte) (map[string]interface{}, error) {
 }
 
 type fakeOperatorActions struct {
-	installed       *release.Release
-	getErr          error
-	getWait         bool
-	getStarted      chan struct{}
-	installRelease  *release.Release
-	installErr      error
-	cancelOnInstall context.CancelFunc
-	installs        []operatorInstall
+	installed        *release.Release
+	getErr           error
+	resourceCheckErr error
+	resourceChecks   int
+	getWait          bool
+	getStarted       chan struct{}
+	installRelease   *release.Release
+	installErr       error
+	cancelOnInstall  context.CancelFunc
+	installs         []operatorInstall
+}
+
+type fixedBuildKubeClient struct {
+	kube.Interface
+	resources kube.ResourceList
+}
+
+type updateSpyKubeClient struct {
+	kube.Interface
+	updates int
+}
+
+func (c *updateSpyKubeClient) Update(kube.ResourceList, kube.ResourceList, bool) (*kube.Result, error) {
+	c.updates++
+	return nil, nil
+}
+
+func (c *fixedBuildKubeClient) Build(io.Reader, bool) (kube.ResourceList, error) {
+	return c.resources, nil
+}
+
+func (f *fakeOperatorActions) CheckNoRenderedResources(context.Context, []byte) error {
+	f.resourceChecks++
+	return f.resourceCheckErr
 }
 
 func (f *fakeOperatorActions) Get(ctx context.Context, _ string) (*release.Release, error) {

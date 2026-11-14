@@ -76,6 +76,24 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **WHEN** a check depends on an operator-created endpoint before that operator is installed
 - **THEN** it is deferred with a reason and required phase, not reported as passed or used to fail initial hardware inventory.
 
+#### Scenario: DPF execution receipt cannot be persisted
+
+- **WHEN** a native DPF object operation cannot durably record its attempt or result
+- **THEN** no dependent effect begins; an attempt without a confirmed result remains uncertain and a later run must inspect actual cluster state.
+- **AND** readiness polling cannot accept a replacement UID, ownership drift, or desired-spec mismatch even when the controller reports Ready.
+
+#### Scenario: DPF management bootstrap completes
+
+- **WHEN** the retained operator release, API schemas, manager and DPFOperatorConfig become ready
+- **THEN** the management receipt requires the selected configuration version, stable namespace and manager UIDs, and the complete manager specification after supported API defaults.
+- **AND** this receipt does not claim tenant, enrollment, HBN service or traffic readiness.
+
+#### Scenario: Conflicting DPF configuration appears during bootstrap
+
+- **WHEN** another DPFOperatorConfig appears while the operator is installing or becoming ready
+- **THEN** a fresh cluster-wide ownership check stops dependent configuration creation without adoption or deletion.
+- **AND** the caller must exclude concurrent provisioning because a list followed by creation is not an atomic cluster-wide lock.
+
 ## Baseline and limits
 
 The root pipeline runs discover/generate/deploy, not automatic validation. Exactly-once dispatch is not a promise of global idempotency or a non-reusable operation object. Discovery may mutate supplied config and use a global logger. It performs pre-clean before some worker validation and defers cleanup only after successful setup. See [effects](../managed-effects/spec.md), [artifacts](../artifact-handoff/spec.md) and [outcomes](../outcomes-evidence/spec.md) for those independent responsibilities.

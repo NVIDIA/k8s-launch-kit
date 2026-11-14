@@ -72,9 +72,12 @@ The output directory contains:
 - An index recording the ordered stages and required deployment checks.
 
 The resolved configuration records the effective defaults and overrides,
-including the BMC reset policy and the selected OS and firmware URLs and
-checksums. Keep it with the manifests so deployment can verify the intended
-software bytes without resolving the inputs again.
+including the operator release name and namespace, each selected DPU's BMC
+address, the BMC reset policy, and the selected OS and firmware URLs and
+checksums. Keep it with the manifests so later steps can verify the selected
+devices and software without resolving the inputs again. To change the plan,
+edit the site configuration and generate a new directory; do not edit files
+inside an existing bundle.
 
 Generation validates the full bundle before publishing the directory. Repeating
 an identical generation leaves that directory unchanged. Use a new destination

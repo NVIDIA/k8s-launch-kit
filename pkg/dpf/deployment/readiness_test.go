@@ -11,6 +11,18 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+func TestReadinessDoesNotExposeArbitraryPhaseText(t *testing.T) {
+	for _, kind := range []string{"DPU", "DPUCluster", "BlueFieldSoftware"} {
+		object := dpfObject(kind, map[string]any{
+			"phase": "private?token=secret\n" + strings.Repeat("x", 4096), "observedGeneration": int64(2),
+		})
+		got := EvaluateReadiness(object)
+		if got.Ready || strings.Contains(got.Message, "secret") || len(got.Message) > 256 {
+			t.Fatalf("untrusted phase escaped readiness classification for %s: %#v", kind, got)
+		}
+	}
+}
+
 func TestEvaluateReadinessForPinnedDPFResources(t *testing.T) {
 	tests := []struct {
 		name string
@@ -91,6 +103,11 @@ func TestDeploymentReadinessAllowsOmittedOptionalConditions(t *testing.T) {
 	deployment.Object["status"].(map[string]any)["conditions"] = []any{conditionMap("Progressing", "False", "ProgressDeadlineExceeded", 0)}
 	if got := EvaluateReadiness(deployment); got.Ready || got.ReasonCode != "DEPLOYMENT_ROLLOUT_FAILED" {
 		t.Fatalf("Deployment past progress deadline = %#v, want terminal rollout failure", got)
+	}
+	deployment.Object["status"].(map[string]any)["readyReplicas"] = int64(0)
+	deployment.Object["status"].(map[string]any)["availableReplicas"] = int64(0)
+	if got := EvaluateReadiness(deployment); got.Ready || got.ReasonCode != "DEPLOYMENT_ROLLOUT_FAILED" {
+		t.Fatalf("Failed rollout with missing replicas = %#v, want failure rather than ordinary progression", got)
 	}
 }
 

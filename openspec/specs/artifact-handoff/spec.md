@@ -158,3 +158,9 @@ readiness from archive or schema validation.
 
 - **WHEN** rendering, schema validation or digest verification fails
 - **THEN** no destination is published; an existing different or incomplete directory is retained and rejected.
+
+#### Scenario: Retained DPF intent and manifests disagree
+
+- **WHEN** a native lifecycle consumer loads an HBN bundle with an altered stage, selection, artifact, or desired resource, even with recalculated file hashes
+- **THEN** it rejects the bundle before API access unless the full retained content matches generation from its explicit resolved inputs.
+- **AND** omitted required operator identity or serial-bound BMC endpoints require regeneration; the consumer does not infer them from ambient configuration.

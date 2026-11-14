@@ -514,34 +514,44 @@ func resolvedConfiguration(input Inputs, release, valuesPath, operatorChartPath,
 	if len(issues) != 0 {
 		return nil, fmt.Errorf("selected provisioning software is incomplete: %s", issues[0].Field)
 	}
-	selected := make([]resolvedDevice, 0, len(input.Workload.Devices))
+	bootstrapDevices := make(map[string]bootstrap.Device, len(input.Operator.Bootstrap.Devices))
+	for _, device := range input.Operator.Bootstrap.Devices {
+		bootstrapDevices[device.Serial] = device
+	}
+	selected := make([]ResolvedDevice, 0, len(input.Workload.Devices))
 	for _, device := range input.Workload.Devices {
-		selected = append(selected, resolvedDevice{Serial: device.Serial, PSID: device.PSID, ASN: device.ASN, SelectorLabels: cloneLabels(device.SelectorLabels)})
+		bmc := bootstrapDevices[device.Serial]
+		selected = append(selected, ResolvedDevice{
+			Serial: device.Serial, PSID: device.PSID, ASN: device.ASN, BMCIP: bmc.BMCIP, BMCPort: bmc.BMCPort,
+			SelectorLabels: cloneLabels(device.SelectorLabels),
+		})
 	}
 	sort.Slice(selected, func(i, j int) bool { return selected[i].Serial < selected[j].Serial })
-	intent := resolvedIntent{
+	intent := ResolvedIntent{
 		UseCase: "hbn-bgp", Release: release, Namespace: input.Workload.Namespace,
 		Management:        input.Management,
 		KubernetesVersion: input.Operator.KubernetesVersion,
 		Networking:        input.Workload.Profile,
 		Generation:        input.Workload.Generation,
 		Software:          software,
-		Bootstrap: resolvedBootstrap{
+		Bootstrap: ResolvedBootstrap{
+			OperatorReleaseName:   input.Operator.ReleaseName,
+			OperatorNamespace:     input.Operator.Bootstrap.OperatorNamespace,
 			OperatorConfigName:    input.Operator.Bootstrap.OperatorConfigName,
 			BMCFactoryResetPolicy: input.Operator.Bootstrap.BMCFactoryResetPolicy,
 			ManagementAPIIP:       input.Operator.Bootstrap.ManagementAPIIP, ManagementAPIPort: input.Operator.Bootstrap.ManagementAPIPort,
 			ArtifactPVC: input.Operator.Bootstrap.ArtifactPVC, PodCIDR: input.Operator.Bootstrap.PodCIDR,
 			Tenant: input.Operator.Bootstrap.Tenant,
 		},
-		OperatorChart:  resolvedArtifact{Path: operatorChartPath, SHA256: operatorRelease.Operator.ChartDigest},
-		OperatorValues: resolvedArtifact{Path: valuesPath, SHA256: digest(helmValues)},
-		HBNChart:       resolvedArtifact{Path: hbnChartPath, SHA256: input.Workload.Generation.ChartDigest},
+		OperatorChart:  ResolvedArtifact{Path: operatorChartPath, SHA256: operatorRelease.Operator.ChartDigest},
+		OperatorValues: ResolvedArtifact{Path: valuesPath, SHA256: digest(helmValues)},
+		HBNChart:       ResolvedArtifact{Path: hbnChartPath, SHA256: input.Workload.Generation.ChartDigest},
 		Devices:        selected,
 	}
 	data, err := yaml.Marshal(struct {
 		FormatVersion string         `yaml:"formatVersion"`
 		Target        string         `yaml:"target"`
-		Config        resolvedIntent `yaml:"config"`
+		Config        ResolvedIntent `yaml:"config"`
 	}{FormatVersion: bundle.FormatVersion, Target: bundle.Target, Config: intent})
 	if err != nil {
 		return nil, fmt.Errorf("encode resolved DPF intent: %w", err)
@@ -549,7 +559,8 @@ func resolvedConfiguration(input Inputs, release, valuesPath, operatorChartPath,
 	return data, nil
 }
 
-type resolvedIntent struct {
+// ResolvedIntent is the typed effective configuration retained in a generated DPF bundle.
+type ResolvedIntent struct {
 	UseCase           string             `yaml:"useCase"`
 	Release           string             `yaml:"release"`
 	Namespace         string             `yaml:"namespace"`
@@ -558,14 +569,17 @@ type resolvedIntent struct {
 	Networking        hbn.Profile        `yaml:"networking"`
 	Generation        hbn.Generation     `yaml:"generation"`
 	Software          config.Software    `yaml:"software"`
-	Bootstrap         resolvedBootstrap  `yaml:"bootstrap"`
-	OperatorChart     resolvedArtifact   `yaml:"operatorChart"`
-	OperatorValues    resolvedArtifact   `yaml:"operatorValues"`
-	HBNChart          resolvedArtifact   `yaml:"hbnChart"`
-	Devices           []resolvedDevice   `yaml:"devices"`
+	Bootstrap         ResolvedBootstrap  `yaml:"bootstrap"`
+	OperatorChart     ResolvedArtifact   `yaml:"operatorChart"`
+	OperatorValues    ResolvedArtifact   `yaml:"operatorValues"`
+	HBNChart          ResolvedArtifact   `yaml:"hbnChart"`
+	Devices           []ResolvedDevice   `yaml:"devices"`
 }
 
-type resolvedBootstrap struct {
+// ResolvedBootstrap records exact management bootstrap inputs without credentials.
+type ResolvedBootstrap struct {
+	OperatorReleaseName   string                          `yaml:"operatorReleaseName"`
+	OperatorNamespace     string                          `yaml:"operatorNamespace"`
 	OperatorConfigName    string                          `yaml:"operatorConfigName"`
 	BMCFactoryResetPolicy bootstrap.BMCFactoryResetPolicy `yaml:"bmcFactoryResetPolicy"`
 	ManagementAPIIP       string                          `yaml:"managementAPIIP"`
@@ -575,15 +589,19 @@ type resolvedBootstrap struct {
 	Tenant                bootstrap.Tenant                `yaml:"tenant"`
 }
 
-type resolvedArtifact struct {
+// ResolvedArtifact identifies retained bytes by path and SHA-256.
+type ResolvedArtifact struct {
 	Path   string `yaml:"path"`
 	SHA256 string `yaml:"sha256"`
 }
 
-type resolvedDevice struct {
+// ResolvedDevice binds the selected DPU identity to its enrollment endpoint.
+type ResolvedDevice struct {
 	Serial         string            `yaml:"serial"`
 	PSID           string            `yaml:"psid"`
 	ASN            uint32            `yaml:"asn"`
+	BMCIP          string            `yaml:"bmcIP"`
+	BMCPort        int               `yaml:"bmcPort"`
 	SelectorLabels map[string]string `yaml:"selectorLabels"`
 }
 
