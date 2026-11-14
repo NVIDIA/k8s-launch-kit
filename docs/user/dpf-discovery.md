@@ -601,8 +601,27 @@ layouts block readiness. Existing tenants may share this datastore.
 A successful storage check describes the current backend and its bound volumes.
 It does not measure remaining filesystem space or guarantee capacity for future
 growth. Deployment repeats the storage check instead of trusting a saved
-inventory. Discovery still does not verify all provisioning permissions or
-reserve a tenant API address.
+inventory. Discovery does not reserve a tenant API address.
+
+Once the provisioning inputs and current device identities are complete, the
+CLI downloads the selected operator and HBN charts over HTTPS and verifies
+their digests and generated resource schemas. It uses that plan to ask the
+management API whether the configured Kubernetes identity has the scoped
+permissions needed for management-side provisioning. These checks include
+operator installation, selected DPF resources, backing-resource inspection and
+the software registry port-forward. Missing inputs, failed chart verification,
+denied permissions and incomplete authorization responses block readiness with
+a recorded reason.
+
+The console summarizes successful permission checks in one line and lists each
+denied or unmeasured operation separately. The structured readiness report keeps
+the individual results for automation and troubleshooting.
+
+The authorization results concern the CLI caller on the management cluster.
+Controller service accounts, tenant credentials and host/switch access must be
+verified separately. Roles and credentials can change, so deployment repeats its
+permission checks before performing operations. No generated resources are
+installed during this discovery check.
 
 For the tenant control plane, add the reserved VIP and the interface on the
 management control-plane nodes that will carry it. For example:

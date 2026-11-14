@@ -311,6 +311,14 @@ not observations or authorization to modify switches.
 - **AND** deployment recollects the same prerequisites; current bound allocations
   do not establish remaining physical capacity or future write headroom.
 
+#### Scenario: HBN management caller permissions
+
+- **WHEN** HBN discovery has complete provisioning inputs and current selected-device and management-cluster identities
+- **THEN** the target derives scoped caller authorization checks from the verified deployment bundle and checks them against that same management cluster.
+- **AND** saved inventory cannot replace current identities; missing inputs, failed chart validation, denied permissions, cancellation and incomplete or contradictory results block readiness with reasons.
+- **AND** caller authorization does not establish controller service-account privileges, tenant access, host or switch access, or runtime readiness. Discovery installs no generated resources while checking permissions.
+- **AND** the console summarizes successful caller checks while retaining individual blocking details; structured readiness retains every required authorization result.
+
 #### Scenario: Explicit management-network coverage
 
 - **WHEN** DPF discovery explicitly selects management mode on supported Linux/amd64 nodes

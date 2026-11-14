@@ -115,6 +115,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 							}
 						}
 						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{Qualifications: catalog.Hardware(), IncludeNetworkFunctionMACs: resolved.HBN != nil}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
+						deps.HBNPermissions = newHBNPermissionObserver().observe
 						if resolved.Input.Site.Inventory == nil {
 							resolved.Input.Site.Inventory = store.PriorInventory
 						}

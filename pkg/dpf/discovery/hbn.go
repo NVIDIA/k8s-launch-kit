@@ -24,7 +24,7 @@ type SwitchCollector interface {
 	Collect(context.Context, config.SwitchTarget, time.Duration) fabric.Snapshot
 }
 
-func collectHBN(ctx context.Context, r config.Request, report *inventory.Report, collector SwitchCollector, provisioning *managementprobe.Snapshot) {
+func collectHBN(ctx context.Context, r config.Request, report *inventory.Report, collector SwitchCollector, provisioning *managementprobe.Snapshot, permissionObserver HBNPermissionObserver) {
 	if r.HBN == nil {
 		return
 	}
@@ -57,6 +57,7 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 	additionalChecks = append(additionalChecks, bootstrapChecks...)
 	inv.HBN.Management.TenantClusters = tenantFacts
 	inv.HBN.Management.Issues = append(inv.HBN.Management.Issues, projectTenantIssues(provisioning, tenantFacts)...)
+	additionalChecks = append(additionalChecks, hbnPermissionChecks(ctx, r, inv, permissionObserver)...)
 	if r.HBNGeneration != nil {
 		for _, sw := range inv.HBN.Switches {
 			additionalChecks = append(additionalChecks, hbnFabricPoolCheck(sw, r.HBN.FabricVRF, r.HBNGeneration.LoopbackCIDR, "loopback"))
@@ -69,13 +70,7 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 		}
 	}
 	report.Readiness = &readiness
-	for _, check := range readiness.Checks {
-		status := "PASS"
-		if check.State != "passed" {
-			status = "BLOCKED"
-		}
-		ui.FromContext(ctx).Info("[%s] HBN-BGP %q: %s", status, check.Subject, check.Message)
-	}
+	logHBNReadiness(ctx, readiness.Checks)
 	// Keep unrelated switch inventory out of the handoff. The readiness pass
 	// above sees the complete snapshot to detect collisions and ambiguity.
 	for i := range inv.HBN.Switches {
@@ -84,6 +79,25 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 			pools = append(pools, r.HBNGeneration.LoopbackCIDR)
 		}
 		restrictFabric(&inv.HBN.Switches[i], r.HBN.FabricVRF, pools...)
+	}
+}
+
+func logHBNReadiness(ctx context.Context, checks []inventory.Check) {
+	output := ui.FromContext(ctx)
+	passedCallerPermissions := 0
+	for _, check := range checks {
+		if strings.HasPrefix(check.ID, hbnCallerRBACPrefix) && check.State == "passed" {
+			passedCallerPermissions++
+			continue
+		}
+		status := "PASS"
+		if check.State != "passed" {
+			status = "BLOCKED"
+		}
+		output.Info("[%s] HBN-BGP %q: %s", status, check.Subject, check.Message)
+	}
+	if passedCallerPermissions > 0 {
+		output.Info("[PASS] HBN-BGP caller authorization: %d scoped permission checks passed.", passedCallerPermissions)
 	}
 }
 

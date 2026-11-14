@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -86,7 +87,7 @@ type preflightWorkload struct {
 
 type accessRequirement struct {
 	verb, group, version, resource, namespace, resourceName string
-	subresource                                             string
+	subresource, nonResourceURL, checkID                    string
 }
 
 type preflightPlan struct {
@@ -95,6 +96,8 @@ type preflightPlan struct {
 	projection        []*unstructured.Unstructured
 	overrides         ExternalNamespaceOverrides
 	requireNFDWorker  bool
+	intent            generation.ResolvedIntent
+	stages            []bundle.StageView
 }
 
 // CheckManagementPreflight reads the required external APIs/controllers and
@@ -117,6 +120,10 @@ func (c *APIClient) CheckManagementPreflight(ctx context.Context, request Manage
 		result.Checks = append(result.Checks, blockedPreflight("management.identity", "PREFLIGHT_CONTEXT_MISSING", "A management preflight context is required."))
 		return result
 	}
+	if !c.matchesBinding(plan.intent.Management, plan.intent.KubernetesVersion) {
+		result.Checks = append(result.Checks, blockedPreflight("management.identity", "MANAGEMENT_BUNDLE_BINDING_MISMATCH", "The authenticated management client does not match the generated bundle identity and Kubernetes version."))
+		return result
+	}
 	if err := c.VerifyIdentity(ctx); err != nil {
 		result.Checks = append(result.Checks, blockedPreflight("management.identity", "MANAGEMENT_IDENTITY_UNVERIFIED", "The authenticated management identity does not match the generated bundle."))
 		return result
@@ -133,21 +140,7 @@ func (c *APIClient) CheckManagementPreflight(ctx context.Context, request Manage
 	result.Checks = append(result.Checks, c.checkCertManagerWebhookCA(ctx))
 	result.Checks = append(result.Checks, c.checkArgoApplicationScope(ctx, plan.operatorNamespace, plan.overrides.ArgoCD))
 
-	for _, namespace := range plan.namespaces {
-		result.Checks = append(result.Checks, c.checkNamespacePermissions(ctx, namespace))
-	}
-	permissions, permissionErr := c.projectedOperatorPermissions(ctx, plan)
-	if permissionErr != nil {
-		result.Checks = append(result.Checks, blockedPreflight("caller.rbac.operator-projection", "OPERATOR_PROJECTION_UNAVAILABLE", "The retained operator projection could not be mapped to served APIs."))
-	} else {
-		for _, permission := range permissions {
-			result.Checks = append(result.Checks, c.checkAccess(ctx, permission))
-		}
-	}
-	for _, verb := range []string{"get", "list", "create", "update"} {
-		result.Checks = append(result.Checks, c.checkAccess(ctx, accessRequirement{verb: verb, resource: "secrets", namespace: plan.operatorNamespace}))
-	}
-	result.Checks = append(result.Checks, c.checkProjectedRBACPermissions(ctx, plan)...)
+	result.Checks = append(result.Checks, c.checkBootstrapCallerPermissions(ctx, plan)...)
 
 	if err := ctx.Err(); err != nil {
 		result.Checks = append(result.Checks, blockedPreflight("management.identity", "PREFLIGHT_CANCELLED", "Management preflight was cancelled before identity revalidation."))
@@ -189,6 +182,10 @@ func managementPreflightPlan(request ManagementPreflightRequest) (preflightPlan,
 	index := request.Bundle.Index()
 	if index.Target != bundle.Target || index.Phase != bundle.Phase || index.Profile != "hbn-bgp" || index.Release != "26.8.0" {
 		return preflightPlan{}, fmt.Errorf("management preflight requires a generated DPF HBN-BGP bundle")
+	}
+	validated, err := generation.LoadPlan(request.Bundle)
+	if err != nil {
+		return preflightPlan{}, fmt.Errorf("validate retained HBN generation: %w", err)
 	}
 	namespaceStage, ok := request.Bundle.Stage(preflightNamespaceStage)
 	if !ok {
@@ -258,7 +255,8 @@ func managementPreflightPlan(request ManagementPreflightRequest) (preflightPlan,
 			return preflightPlan{}, fmt.Errorf("external dependency namespaces must be valid Kubernetes namespaces")
 		}
 	}
-	return preflightPlan{operatorNamespace: operatorNamespace, namespaces: namespaces, projection: objects, overrides: defaults, requireNFDWorker: requireNFDWorker}, nil
+	return preflightPlan{operatorNamespace: operatorNamespace, namespaces: namespaces, projection: objects, overrides: defaults,
+		requireNFDWorker: requireNFDWorker, intent: validated.Intent(), stages: validated.Stages()}, nil
 }
 
 func nfdWorkerRequiredFromBootstrap(generated *bundle.Bundle, operatorNamespace string) (bool, error) {
@@ -624,22 +622,6 @@ func webhookCABundlesPresentMutating(configuration *admissionregistrationv1.Muta
 	return true
 }
 
-func (c *APIClient) checkNamespacePermissions(ctx context.Context, namespace preflightNamespace) PreflightCheck {
-	for _, verb := range []string{"get", "create"} {
-		requirement := accessRequirement{verb: verb, version: "v1", resource: "namespaces"}
-		if verb == "get" {
-			requirement.resourceName = namespace.name
-		}
-		check := c.checkAccess(ctx, requirement)
-		if check.State != "passed" {
-			check.ID = "caller.rbac.namespace." + namespace.name + "." + verb
-			check.Message = fmt.Sprintf("The configured identity lacks %s permission for the generated namespace %q.", verb, namespace.name)
-			return check
-		}
-	}
-	return passedPreflight("caller.rbac.namespace."+namespace.name, "The configured identity can verify or create the generated namespace.")
-}
-
 func (c *APIClient) projectedOperatorPermissions(ctx context.Context, plan preflightPlan) ([]accessRequirement, error) {
 	requirements := map[accessRequirement]bool{}
 	projectedDefinitions := projectedCRDDefinitions(plan.projection)
@@ -730,19 +712,20 @@ func (c *APIClient) checkProjectedRBACPermissions(ctx context.Context, plan pref
 		if !ok {
 			return []PreflightCheck{blockedPreflight("caller.rbac.role-rules", "RBAC_RULES_UNVERIFIABLE", "A rendered Role or ClusterRole has malformed or unsupported policy rules.")}
 		}
-		check := passedPreflight("caller.rbac.escalate."+role.kind+"."+role.name, "The rendered RBAC role grants no permissions and needs no escalate authorization.")
+		checkID := strings.Join([]string{"caller.rbac.escalate", role.kind, role.namespace, role.name}, ".")
+		check := passedPreflight(checkID, "The rendered RBAC role grants no permissions and needs no escalate authorization.")
 		if len(role.rules) > 0 {
 			resource := "roles"
 			if role.kind == "ClusterRole" {
 				resource = "clusterroles"
 			}
 			check = c.checkAccess(ctx, accessRequirement{verb: "escalate", group: "rbac.authorization.k8s.io", resource: resource, namespace: role.namespace, resourceName: role.name})
-			check.ID = "caller.rbac.escalate." + role.kind + "." + role.name
-			if check.State != "passed" {
+			check.ID = checkID
+			if check.State == "passed" {
+				check.Message = "The configured identity has explicit escalate permission for the rendered RBAC role."
+			} else if check.ReasonCode == "CALLER_PERMISSION_MISSING" {
 				check.ReasonCode = "RBAC_ROLE_PRIVILEGE_UNVERIFIABLE"
 				check.Message = "The configured identity lacks explicit escalate permission for the rendered role; implicit permission coverage is not established by this preflight."
-			} else {
-				check.Message = "The configured identity has explicit escalate permission for the rendered RBAC role."
 			}
 		}
 		roleChecks = append(roleChecks, check)
@@ -812,12 +795,12 @@ func (c *APIClient) checkProjectedRoleBinding(ctx context.Context, binding *unst
 		bindNamespace = ""
 	}
 	check := c.checkAccess(ctx, accessRequirement{verb: "bind", group: "rbac.authorization.k8s.io", resource: resource, namespace: bindNamespace, resourceName: roleName})
-	check.ID = "caller.rbac.bind." + name
-	if check.State != "passed" {
+	check.ID = strings.Join([]string{"caller.rbac.bind", binding.GetKind(), binding.GetNamespace(), name}, ".")
+	if check.State == "passed" {
+		check.Message = "The configured identity has explicit bind permission for the referenced role."
+	} else if check.ReasonCode == "CALLER_PERMISSION_MISSING" {
 		check.ReasonCode = "RBAC_BIND_PRIVILEGE_UNVERIFIABLE"
 		check.Message = "The configured identity lacks explicit bind permission for the referenced role; implicit permission coverage is not established by this preflight."
-	} else {
-		check.Message = "The configured identity has explicit bind permission for the referenced role."
 	}
 	return check
 }
@@ -833,28 +816,53 @@ func helmHookUsesWatch(object *unstructured.Unstructured) bool {
 }
 
 func (c *APIClient) checkAccess(ctx context.Context, requirement accessRequirement) PreflightCheck {
-	attributes := &authorizationv1.ResourceAttributes{
-		Verb: requirement.verb, Group: requirement.group, Version: requirement.version,
-		Resource: requirement.resource, Namespace: requirement.namespace, Name: requirement.resourceName,
-		Subresource: requirement.subresource,
+	var spec authorizationv1.SelfSubjectAccessReviewSpec
+	if requirement.nonResourceURL != "" {
+		spec.NonResourceAttributes = &authorizationv1.NonResourceAttributes{Verb: requirement.verb, Path: requirement.nonResourceURL}
+	} else {
+		spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Verb: requirement.verb, Group: requirement.group, Version: requirement.version,
+			Resource: requirement.resource, Namespace: requirement.namespace, Name: requirement.resourceName,
+			Subresource: requirement.subresource,
+		}
 	}
-	review, err := c.access.Client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: attributes}}, metav1.CreateOptions{})
+	review, err := c.access.Client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: spec}, metav1.CreateOptions{})
 	identity := strings.Join([]string{requirement.namespace, requirement.group, requirement.resource, requirement.resourceName, requirement.verb}, ".")
+	resourceDescriptionText := resourceDescription(requirement.group, requirement.resource)
+	if requirement.nonResourceURL != "" {
+		identity = strings.Join([]string{"nonresource", requirement.verb, requirement.nonResourceURL}, ".")
+		resourceDescriptionText = requirement.nonResourceURL
+	}
 	resource := requirement.resource
 	if requirement.subresource != "" {
 		identity += "." + requirement.subresource
 		resource += "/" + requirement.subresource
+		resourceDescriptionText = resourceDescription(requirement.group, resource)
+	}
+	if requirement.checkID != "" {
+		identity = requirement.checkID
+	}
+	operation := fmt.Sprintf("%s %s", requirement.verb, resourceDescriptionText)
+	if requirement.resourceName != "" {
+		operation += fmt.Sprintf(" %q", requirement.resourceName)
+	}
+	if requirement.namespace != "" {
+		operation += fmt.Sprintf(" in namespace %q", requirement.namespace)
+	}
+	checkID := "caller.rbac." + identity
+	if requirement.checkID != "" {
+		checkID = requirement.checkID
 	}
 	if err != nil {
-		return blockedPreflight("caller.rbac."+identity, apiFailureCode(err), "The configured identity's scoped authorization could not be verified.")
+		return blockedPreflight(checkID, apiFailureCode(err), "Could not verify caller permission for "+operation+".")
 	}
 	if review == nil || review.Status.EvaluationError != "" {
-		return blockedPreflight("caller.rbac."+identity, "RBAC_REVIEW_INCOMPLETE", "The API did not return a complete authorization decision.")
+		return blockedPreflight(checkID, "RBAC_REVIEW_INCOMPLETE", "The API did not return a complete authorization decision for "+operation+".")
 	}
 	if !review.Status.Allowed || review.Status.Denied {
-		return blockedPreflight("caller.rbac."+identity, "CALLER_PERMISSION_MISSING", fmt.Sprintf("The configured identity cannot %s %s in namespace %q.", requirement.verb, resourceDescription(requirement.group, resource), requirement.namespace))
+		return blockedPreflight(checkID, "CALLER_PERMISSION_MISSING", "The configured identity cannot "+operation+".")
 	}
-	return passedPreflight("caller.rbac."+identity, "The configured identity has the required scoped permission.")
+	return passedPreflight(checkID, "The configured identity can "+operation+".")
 }
 
 func resourceDescription(group, resource string) string {

@@ -32,10 +32,11 @@ type Collector interface {
 	Collect(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error)
 }
 type Dependencies struct {
-	Switches SwitchCollector
-	SSH      Collector
-	BMC      Collector
-	Probes   ProbeRunner
+	Switches       SwitchCollector
+	SSH            Collector
+	BMC            Collector
+	Probes         ProbeRunner
+	HBNPermissions HBNPermissionObserver
 }
 
 func NewReport() inventory.Report {
@@ -292,7 +293,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	if len(report.Errors) > 0 || report.Discovery.Cleanup.State != "complete" {
 		report.Discovery.Outcome = "partial"
 	}
-	collectHBN(ctx, r, &report, deps.Switches, provisioning)
+	collectHBN(ctx, r, &report, deps.Switches, provisioning, deps.HBNPermissions)
 	if ctx.Err() != nil {
 		report.Discovery.Outcome = "partial"
 		report.Execution = "failed"

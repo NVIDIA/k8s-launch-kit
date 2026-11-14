@@ -48,7 +48,6 @@ func managementHBNChecks(snapshot *managementprobe.Snapshot, inv *inventory.Inve
 			{"operator-config", namespace, "unknown", "DPF_OPERATOR_CONFIG_UNOBSERVED", "DPFOperatorConfig state was not observed."},
 			{"apis", namespace, "unknown", "DPF_APIS_UNOBSERVED", "DPF API schemas were not observed."},
 			{"enrollments", namespace, "unknown", "DPU_ENROLLMENTS_UNOBSERVED", "Existing DPU ownership was not observed."},
-			{"rbac", namespace, "unknown", "DPF_RBAC_UNMEASURED", "The permissions required by the DPF operator and deployment workflow have not been verified."},
 			{"storage-health", namespace, "unknown", "STORAGE_HEALTH_UNMEASURED", "StorageClass presence does not establish provisioner or volume health."},
 		} {
 			add(c)
@@ -63,7 +62,6 @@ func managementHBNChecks(snapshot *managementprobe.Snapshot, inv *inventory.Inve
 		for _, id := range []string{"kubernetes-version", "control-plane", "apis", "operator", "operator-config", "enrollments"} {
 			add(managementCheck{id, namespace, "unknown", "MANAGEMENT_NAMESPACE_MISMATCH", "The management observation was scoped to a different namespace."})
 		}
-		add(managementCheck{"rbac", namespace, "unknown", "DPF_RBAC_UNMEASURED", "The permissions required by the DPF operator and deployment workflow have not been verified."})
 		add(managementCheck{"storage-health", namespace, "unknown", "STORAGE_HEALTH_UNMEASURED", "StorageClass presence does not establish provisioner or volume health."})
 		return checks, projection
 	}
@@ -75,7 +73,6 @@ func managementHBNChecks(snapshot *managementprobe.Snapshot, inv *inventory.Inve
 	add(operatorCheck(snapshot, inv, namespace))
 	add(operatorConfigCheck(snapshot, inv, namespace))
 	add(enrollmentCheck(snapshot, inv))
-	add(managementCheck{"rbac", namespace, "unknown", "DPF_RBAC_UNMEASURED", "The permissions required by the DPF operator and deployment workflow have not been verified."})
 	add(tenantStorageCheck(snapshot, namespace))
 	return checks, projection
 }

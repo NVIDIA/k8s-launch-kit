@@ -43,6 +43,14 @@ even when physical inventory is saved. This preview keeps unverified provisionin
 prerequisites blocked. It never applies switch changes or treats LLDP names as
 authenticated DPU identity. See the HBN-BGP section of the discovery reference.
 
+With complete provisioning inputs and current identities, HBN discovery retrieves
+and verifies the selected operator/HBN charts and derives an in-memory deployment
+plan for scoped management API authorization reviews. Read the caller permission
+checks separately from controller, tenant and host/switch access. Missing inputs,
+chart validation failures, denied rights or incomplete decisions remain blockers;
+saved inventory must not substitute for the current cluster identity. Authorization
+reviews do not install the generated resources. Deployment repeats its checks.
+
 DPF live check status goes to stderr as operations run, including with JSON output;
 quiet suppresses progress. Human summaries show configured names/addresses and
 host/DPU mappings, separating discovery blockers from later prerequisites and

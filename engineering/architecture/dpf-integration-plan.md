@@ -685,6 +685,16 @@ closed. This receipt covers management bootstrap, not a complete HBN deployment.
 
 Management permission checks use explicit, resource-scoped authorization
 reviews, including named RBAC escalation and binding rights for chart resources.
+HBN discovery injects a permission observer from the target adapter after the
+current inventory and management projection have been assembled. The adapter
+uses the existing generation resolver and verified charts to build an in-memory
+bundle, then calls the shared deployment caller-permission checker with a client
+bound to the current cluster identity. This avoids a discovery-to-deployment
+import cycle and a second permission resolver. It never substitutes saved
+inventory for current observations. Missing, empty, malformed or cancelled
+authorization observations remain explicit readiness blockers. This covers the
+caller's management API permissions; it is not a controller-service-account or
+tenant authorization proof.
 Missing explicit rights leave implicit RBAC coverage unverified; a union of rules
 from multiple authorizers is not proof that Kubernetes' RBAC escalation checks
 will accept a write. NFD worker readiness is required only when the retained
