@@ -75,6 +75,53 @@ var _ = Describe("Bootstrap resolution", func() {
 			Expect(err).To(HaveOccurred())
 		}
 	})
+	It("preserves omitted, explicit false and true allocation declarations without aliasing", func() {
+		options := complete()
+		reserved, excluded := true, false
+		options.Tenant.Allocation = &bootstrap.SiteAllocation{VIPReserved: &reserved, VIPExcludedFromDHCP: &excluded}
+		resolved, issues, err := ResolveBootstrap(options, "dpf-system", "https://192.0.2.10:6443", selected)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(issues).To(BeEmpty())
+		Expect(resolved.Tenant.Allocation).NotTo(BeNil())
+		Expect(*resolved.Tenant.Allocation.VIPReserved).To(BeTrue())
+		Expect(*resolved.Tenant.Allocation.VIPExcludedFromDHCP).To(BeFalse())
+		Expect(resolved.Tenant.Allocation.RouterIDUniqueOnSelectedNodes).To(BeNil())
+		Expect(resolved.Tenant.Allocation.VIPReserved).NotTo(BeIdenticalTo(options.Tenant.Allocation.VIPReserved))
+		Expect(resolved.Tenant.Allocation.VIPExcludedFromDHCP).NotTo(BeIdenticalTo(options.Tenant.Allocation.VIPExcludedFromDHCP))
+
+		reserved, excluded = false, true
+		Expect(*resolved.Tenant.Allocation.VIPReserved).To(BeTrue())
+		Expect(*resolved.Tenant.Allocation.VIPExcludedFromDHCP).To(BeFalse())
+		*resolved.Tenant.Allocation.VIPReserved = false
+		*resolved.Tenant.Allocation.VIPExcludedFromDHCP = true
+		Expect(reserved).To(BeFalse())
+		Expect(excluded).To(BeTrue())
+
+		decoded, err := Decode([]byte("provisioning: {bootstrap: {tenant: {allocation: {vipReserved: true, vipExcludedFromDHCP: false, routerIDUniqueOnSelectedNodes: null}}}}\n"+seed), "/input.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		allocation := decoded.Site.Provisioning.Bootstrap.Tenant.Allocation
+		Expect(allocation).NotTo(BeNil())
+		Expect(allocation.VIPReserved).NotTo(BeNil())
+		Expect(*allocation.VIPReserved).To(BeTrue())
+		Expect(allocation.VIPExcludedFromDHCP).NotTo(BeNil())
+		Expect(*allocation.VIPExcludedFromDHCP).To(BeFalse())
+		Expect(allocation.RouterIDUniqueOnSelectedNodes).To(BeNil())
+
+		missing, _, err := ResolveBootstrap(complete(), "dpf-system", "https://192.0.2.10:6443", selected)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(missing.Tenant.Allocation).To(BeNil())
+	})
+	It("rejects quoted scalar booleans at each allocation field while retaining null as omitted", func() {
+		for _, field := range []string{"vipReserved", "vipExcludedFromDHCP", "routerIDUniqueOnSelectedNodes"} {
+			_, err := Decode([]byte("provisioning: {bootstrap: {tenant: {allocation: {"+field+": 'true'}}}}\n"+seed), "/input.yaml")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("/provisioning/bootstrap/tenant/allocation/" + field))
+		}
+		decoded, err := Decode([]byte("provisioning: {bootstrap: {tenant: {allocation: {vipReserved: null}}}}\n"+seed), "/input.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(decoded.Site.Provisioning.Bootstrap.Tenant.Allocation).NotTo(BeNil())
+		Expect(decoded.Site.Provisioning.Bootstrap.Tenant.Allocation.VIPReserved).To(BeNil())
+	})
 	It("strictly decodes nested integers and preserves null defaults", func() {
 		in, err := Decode([]byte("provisioning: {bootstrap: {managementAPIPort: 6443, tenant: {routerID: 126, maxNodes: null}}}\n"+seed), "/input.yaml")
 		Expect(err).NotTo(HaveOccurred())

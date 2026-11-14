@@ -14,6 +14,27 @@ import (
 
 var _ = Describe("HBN bootstrap input checks", func() {
 	str := func(value string) *string { return &value }
+	It("requires explicit allocation declarations without allowing them to waive observed conflicts", func() {
+		input, inv, target := hbnBootstrapNetworkFixture()
+		absent := tenantSnapshot(target, managementprobe.CollectionComplete)
+		checks, _ := hbnBootstrapChecks(input, "dpf-system", inv, &absent)
+		Expect(checks).To(ContainElement(And(HaveField("ReasonCode", "TENANT_SITE_ALLOCATION_MISSING"), HaveField("State", "unknown"))))
+		declared := true
+		input.Bootstrap.Tenant.Allocation = &bootstrap.SiteAllocation{
+			VIPReserved: &declared, VIPExcludedFromDHCP: &declared, RouterIDUniqueOnSelectedNodes: &declared,
+		}
+		checks, _ = hbnBootstrapChecks(input, "dpf-system", inv, &absent)
+		Expect(checks).NotTo(ContainElement(HaveField("ReasonCode", "TENANT_SITE_ALLOCATION_MISSING")))
+		Expect(checks).To(ContainElement(And(HaveField("ReasonCode", "TENANT_SITE_ALLOCATION_DECLARED"), HaveField("State", "passed"), HaveField("Vantage", "site-config"))))
+		other := observedTenantCluster(target, "other-uid", true)
+		other.Name = "other-tenant"
+		conflict := tenantSnapshot(target, managementprobe.CollectionComplete, other)
+		checks, _ = hbnBootstrapChecks(input, "dpf-system", inv, &conflict)
+		Expect(findCheck(checks, "dpf.hbn.management.tenant-clusters").State).To(Equal("failed"))
+		declared = false
+		checks, _ = hbnBootstrapChecks(input, "dpf-system", inv, &absent)
+		Expect(checks).To(ContainElement(And(HaveField("ReasonCode", "TENANT_SITE_ALLOCATION_REJECTED"), HaveField("State", "failed"))))
+	})
 	It("keeps explicit BMC reset recovery separate from complete generation inputs", func() {
 		policy := bootstrap.BMCFactoryResetPolicyOnInitialization
 		input := &config.Provisioning{Bootstrap: &config.BootstrapOptions{BMCFactoryResetPolicy: &policy, Tenant: config.TenantOptions{VIP: str("192.0.2.20"), Interface: str("eth0")}}}

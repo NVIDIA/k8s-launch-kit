@@ -337,6 +337,7 @@ func cloneTenant(input bootstrap.Tenant) bootstrap.Tenant {
 	output := input
 	output.Labels = cloneLabels(input.Labels)
 	output.NodeSelector = cloneLabels(input.NodeSelector)
+	output.Allocation = input.Allocation.Clone()
 	return output
 }
 

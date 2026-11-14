@@ -94,6 +94,14 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **THEN** a fresh cluster-wide ownership check stops dependent configuration creation without adoption or deletion.
 - **AND** the caller must exclude concurrent provisioning because a list followed by creation is not an atomic cluster-wide lock.
 
+#### Scenario: DPF tenant creation follows management bootstrap
+
+- **WHEN** the private control-plane executor advances from management bootstrap to a new tenant
+- **THEN** explicit retained site declarations for VIP reservation, DHCP exclusion and selected-node VRRP ID availability are required; missing or false declarations stop effects and are never inferred from profile defaults or network observations.
+- **AND** it verifies the retained bootstrap identities, current backing storage, complete tenant registry and fresh network facts for the selected control-plane nodes before creating the DPUCluster.
+- **AND** failed probe cleanup or a changed selected node set stops creation; persisted discovery results cannot replace these observations.
+- **AND** an existing exact owned target follows ownership-aware verification rather than an unused-VIP check, and successful tenant API access does not claim enrollment or HBN traffic readiness.
+
 ## Baseline and limits
 
 The root pipeline runs discover/generate/deploy, not automatic validation. Exactly-once dispatch is not a promise of global idempotency or a non-reusable operation object. Discovery may mutate supplied config and use a global logger. It performs pre-clean before some worker validation and defers cleanup only after successful setup. See [effects](../managed-effects/spec.md), [artifacts](../artifact-handoff/spec.md) and [outcomes](../outcomes-evidence/spec.md) for those independent responsibilities.

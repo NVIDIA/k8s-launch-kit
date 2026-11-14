@@ -684,6 +684,31 @@ not a direct etcd transaction, remaining physical capacity or future growth.
 Deployment recollects instead of trusting the persisted discovery result;
 ordered tenant creation must repeat this prerequisite immediately before effects.
 
+The private control-plane executor composes management bootstrap with tenant
+creation and independent API verification. It validates the retained plan and
+execution controls before effects, refreshes bootstrap resource identities, and
+checks the complete DPUCluster registry before the tenant stage. A new target
+requires fresh network probes on exactly the selected management control-plane
+nodes. Probe cleanup must complete, and a second API observation must retain the
+same node identities, labels and scheduling state. Saved discovery inventory
+cannot satisfy these checks. An existing target instead requires exact retained
+ownership and specification; an active VIP is expected for that target and is
+not evaluated as an unused address.
+
+The tenant executor repeats storage and collision checks before create-or-verify,
+then waits for controller convergence and authenticates to the independent
+tenant API. A tenant API result does not establish enrollment, HBN services or
+traffic readiness. This composition remains private while the full deployment
+entry point is being completed. The retained tenant allocation fields require
+explicit site declarations for reserved VIP, DHCP exclusion and VRRP ID
+availability on selected nodes. Both control-plane and tenant execution reject
+missing or false declarations before their effects. Discovery uses the same
+checker, with a site-config source and explicit declaration wording. These
+fields have no profile defaults and are retained in the generated intent and
+bundle digest, without being emitted as DPF CR fields. Interface and routing
+success never establishes a DHCP reservation; site allocation and observed
+conflicts remain separate requirements.
+
 Management-node network investigation reuses the existing explicitly selected
 management-mode probe rather than introducing another node access mechanism.
 The runner binds results to Pod and Node UIDs and uses journaled, UID-preconditioned

@@ -26,6 +26,12 @@ BMC probes reuse explicit endpoint TLS policy and report bypassed handshakes as
 `unverified`; management API TLS remains strict. Host SSH sources can accompany
 these probes; explicit DPU BMC endpoints are required. Interface/route
 success does not prove VIP reservation or VRID uniqueness.
+Require explicit `provisioning.bootstrap.tenant.allocation` declarations for
+`vipReserved`, `vipExcludedFromDHCP` and `routerIDUniqueOnSelectedNodes`.
+Missing/null values remain unknown and false values fail readiness. Never set
+them from profile defaults, route observations or absence from an API list.
+True values record site-owner declarations, not measured IPAM facts, and cannot
+waive known collisions or fresh deployment checks.
 The explicit flag overrides and persists `dpf.useCase`; `dpf.hbn` overrides
 desired profile defaults. Read `readiness.state` separately from physical
 `discovery.outcome`: required unknown or mismatched prerequisites return nonzero

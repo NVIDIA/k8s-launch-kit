@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"gopkg.in/yaml.v3"
@@ -162,6 +163,45 @@ func TestLoadPlanRejectsMalformedOrInconsistentRetainedBundles(t *testing.T) {
 				t.Fatal("LoadPlan() accepted an inconsistent retained bundle")
 			}
 		})
+	}
+}
+
+func TestLoadPlanDeepCopiesTenantAllocationDeclarations(t *testing.T) {
+	input := generationInputs(t)
+	reserved, excluded, unique := true, false, true
+	input.Operator.Bootstrap.Tenant.Allocation = &bootstrap.SiteAllocation{
+		VIPReserved: &reserved, VIPExcludedFromDHCP: &excluded, RouterIDUniqueOnSelectedNodes: &unique,
+	}
+	retained, err := Generate(input)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	plan, err := LoadPlan(retained)
+	if err != nil {
+		t.Fatalf("LoadPlan() error = %v", err)
+	}
+	intent := plan.Intent()
+	operator, _ := plan.Operator()
+	if intent.Bootstrap.Tenant.Allocation == nil || operator.Bootstrap.Tenant.Allocation == nil {
+		t.Fatal("retained plan dropped tenant allocation declarations")
+	}
+	if !*intent.Bootstrap.Tenant.Allocation.VIPReserved || *intent.Bootstrap.Tenant.Allocation.VIPExcludedFromDHCP || !*intent.Bootstrap.Tenant.Allocation.RouterIDUniqueOnSelectedNodes {
+		t.Fatalf("retained intent declarations = %#v", intent.Bootstrap.Tenant.Allocation)
+	}
+	if !*operator.Bootstrap.Tenant.Allocation.VIPReserved || *operator.Bootstrap.Tenant.Allocation.VIPExcludedFromDHCP || !*operator.Bootstrap.Tenant.Allocation.RouterIDUniqueOnSelectedNodes {
+		t.Fatalf("operator intent declarations = %#v", operator.Bootstrap.Tenant.Allocation)
+	}
+
+	reserved, excluded, unique = false, true, false
+	operatorAgain, _ := plan.Operator()
+	if !*plan.Intent().Bootstrap.Tenant.Allocation.VIPReserved || *operatorAgain.Bootstrap.Tenant.Allocation.VIPExcludedFromDHCP {
+		t.Fatal("caller mutation of generation input changed the retained bundle")
+	}
+	*intent.Bootstrap.Tenant.Allocation.VIPReserved = false
+	*operator.Bootstrap.Tenant.Allocation.RouterIDUniqueOnSelectedNodes = false
+	operatorAgain, _ = plan.Operator()
+	if !*plan.Intent().Bootstrap.Tenant.Allocation.VIPReserved || !*operatorAgain.Bootstrap.Tenant.Allocation.RouterIDUniqueOnSelectedNodes {
+		t.Fatal("Intent() or Operator() returned allocation pointers into the retained plan")
 	}
 }
 

@@ -54,6 +54,7 @@ func hbnBootstrapChecks(input *config.Provisioning, namespace string, inv *inven
 	if len(checks) == 0 {
 		add("provisioning.bootstrap", "passed", "BOOTSTRAP_INPUTS_COMPLETE", "Bootstrap inputs and exact BMC scan targets are specified; VIP/VRID reservation, interface reachability, storage health and installed controllers require separate checks.")
 	}
+	checks = append(checks, managementnetwork.CheckTenantAllocation(resolved.Tenant)...)
 	if resolved.BMCFactoryResetPolicy == bootstrap.BMCFactoryResetPolicyOnInitialization {
 		checks = append(checks, inventory.Check{
 			ID: "dpf.hbn.bmc-reset-recovery", Subject: "selected DPU BMCs", Vantage: "executor", RequiredPhase: "deploy",

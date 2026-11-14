@@ -86,7 +86,10 @@ Discovery reports missing inputs while continuing to collect hardware informatio
 | `managementAPIIP`, `managementAPIPort` | Observed management API endpoint, when it contains a literal IP | Override when DPUs need a different reachable endpoint; a DNS name is not converted into an assumed IP |
 | `tenant.vip` | Required | Reserve an unused IPv4 address for the tenant API, outside DHCP allocation |
 | `tenant.interface` | Required | Identify the management interface on the selected control-plane nodes |
-| `tenant.routerID` | `126` | Verify that this VRRP ID is unused on that network; override collisions |
+| `tenant.routerID` | `126` | Verify that this VRRP ID is unused on the selected control-plane nodes; override collisions |
+| `tenant.allocation.vipReserved` | No default | Explicit site declaration that the VIP is reserved for this tenant; readiness requires `true` |
+| `tenant.allocation.vipExcludedFromDHCP` | No default | Explicit site declaration that dynamic DHCP cannot allocate the VIP; readiness requires `true` |
+| `tenant.allocation.routerIDUniqueOnSelectedNodes` | No default | Explicit site declaration that the selected VRRP ID is available on the selected control-plane nodes; readiness requires `true` |
 | `tenant.name`, `tenant.namespace` | `dpu-cplane-tenant1` | Override when another tenant uses these names |
 | `tenant.nodeSelector` | `node-role.kubernetes.io/control-plane: ""` | Select the control-plane nodes that host the VIP |
 | `tenant.maxNodes` | `1000` | Must accommodate all selected DPUs |

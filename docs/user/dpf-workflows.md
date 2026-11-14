@@ -429,7 +429,7 @@ Next: [Cleanup complete](#management-network-review); [Cleanup incomplete](#mana
 
 ### 4. CLI operator: distinguish path checks from allocation {#management-network-review}
 
-Review every failed or unknown path and each selected node’s interface/tenant-VIP route check. Missing facts, a down interface, an off-link route or a VIP already assigned to a selected node block new-tenant readiness. Passing these checks establishes current node network facts only. VIP reservation, DHCP exclusion and network-wide VRID uniqueness remain separate requirements; DNS/ARP silence or absence from a DPUCluster list cannot prove them.
+Review every failed or unknown path and each selected node’s interface/tenant-VIP route check. Missing facts, a down interface, an off-link route or a VIP already assigned to a selected node block new-tenant readiness. Passing these checks establishes current node network facts only. Supply the three tenant.allocation declarations only after confirming VIP reservation, DHCP exclusion and VRRP ID availability on the selected control-plane nodes with the site owner. Missing declarations remain unknown and false declarations fail readiness. True values are site declarations, not independently measured IPAM facts; they cannot override an observed collision. DNS/ARP silence or absence from a DPUCluster list cannot prove an allocation.
 
 Next: [Required check failed or unknown](#management-network-correct); [Measured checks pass](#management-network-finish).
 
@@ -513,7 +513,7 @@ flowchart TD
 
 ### 1. CLI operator: complete the saved site configuration {#hbn-bgp-generation-inputs}
 
-Keep the discovered inventory in the site file. Supply the reserved tenant API VIP/interface, the hardware-specific DPUFlavor spec, and the HTTPS OS ISO and PSID-specific PLDM URLs with SHA-256 digests. Review profile defaults and override only the values needed for your site. Endpoint credentials remain references; generation does not read them. The default BMC reset policy is Never. An OnInitialization override requires verified DHCP recovery to the same BMC addresses before enrollment; a reset clears existing BMC networking.
+Keep the discovered inventory in the site file. Supply the reserved tenant API VIP/interface and explicit tenant.allocation declarations, the hardware-specific DPUFlavor spec, and the HTTPS OS ISO and PSID-specific PLDM URLs with SHA-256 digests. Review profile defaults and override only the values needed for your site. Endpoint credentials remain references; generation does not read them. The default BMC reset policy is Never. An OnInitialization override requires verified DHCP recovery to the same BMC addresses before enrollment; a reset clears existing BMC networking.
 
 Next: [Inputs supplied](#hbn-bgp-generation-resolve).
 

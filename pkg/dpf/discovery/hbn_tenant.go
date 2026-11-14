@@ -58,6 +58,8 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 
 	var selected *managementprobe.DPUCluster
 	unobservedEndpoint := false
+	unobservedRouterID := false
+	sharedRouterID := ""
 	for i := range snapshot.DPUClusters.Items {
 		cluster := &snapshot.DPUClusters.Items[i]
 		if cluster.Namespace == target.Tenant.Namespace && cluster.Name == target.Tenant.Name {
@@ -89,6 +91,11 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 			check.Message = fmt.Sprintf("Desired tenant VIP is already specified by DPUCluster %s/%s.", cluster.Namespace, cluster.Name)
 			return check
 		}
+		if cluster.VirtualRouterID == nil || *cluster.VirtualRouterID < 1 || *cluster.VirtualRouterID > 255 {
+			unobservedRouterID = true
+		} else if *cluster.VirtualRouterID == int64(target.Tenant.RouterID) {
+			sharedRouterID = cluster.Namespace + "/" + cluster.Name
+		}
 	}
 	if snapshot.DPUClusters.State != managementprobe.CollectionComplete && snapshot.DPUClusters.State != managementprobe.CollectionAbsent {
 		check.ReasonCode = "TENANT_CLUSTERS_UNOBSERVED"
@@ -98,6 +105,16 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 	if unobservedEndpoint {
 		check.ReasonCode = "TENANT_ENDPOINT_UNOBSERVED"
 		check.Message = "At least one other existing DPUCluster has no observed VIP, so the desired tenant VIP cannot be compared completely."
+		return check
+	}
+	if sharedRouterID != "" {
+		check.ReasonCode = "TENANT_VRID_SCOPE_UNVERIFIED"
+		check.Message = fmt.Sprintf("DPUCluster %s specifies the requested VRRP ID. Discovery has not established whether its selected nodes overlap this tenant; a site declaration cannot clear this observation. Select a distinct VRRP ID or verify the placement before deployment.", sharedRouterID)
+		return check
+	}
+	if unobservedRouterID {
+		check.ReasonCode = "TENANT_VRID_UNOBSERVED"
+		check.Message = "An existing DPUCluster endpoint has no valid observed VRRP ID; conflicts with the selected tenant cannot be excluded."
 		return check
 	}
 	if selected == nil {
@@ -189,6 +206,10 @@ func tenantClusterProjection(snapshot *managementprobe.Snapshot, target *bootstr
 			// The name and address identify a concrete collision. The rest of
 			// this unrelated tenant's spec and ownership are not needed.
 			result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace, VIP: *cluster.VIP})
+		} else if cluster.VirtualRouterID == nil || *cluster.VirtualRouterID < 1 || *cluster.VirtualRouterID > 255 || *cluster.VirtualRouterID == int64(target.Tenant.RouterID) {
+			// Retain only the identity and VRRP observation needed to explain
+			// an unresolved comparison; omit the unrelated tenant specification.
+			result = append(result, inventory.HBNManagementCluster{Name: cluster.Name, Namespace: cluster.Namespace, VirtualRouterID: copyInt64(cluster.VirtualRouterID)})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {

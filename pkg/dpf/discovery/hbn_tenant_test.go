@@ -158,12 +158,31 @@ func TestTenantClusterCheckAllowsUnrelatedTenantAndDoesNotInferVRIDCollision(t *
 	target := resolvedTenantTarget(t, "new-tenant", "new-namespace", "192.0.2.20")
 	otherTarget := resolvedTenantTarget(t, "existing-tenant", "existing-namespace", "192.0.2.21")
 	cluster := observedTenantCluster(otherTarget, "existing-uid", true)
-	// Reusing a VRID and interface name in a different tenant is not a collision
-	// proof without evidence that both endpoints share the same L2 scope.
+	// The same VRID alone is not proof of a collision, but unresolved placement
+	// also cannot establish readiness. A site declaration must not waive it.
 	snapshot := tenantSnapshot(target, managementprobe.CollectionComplete, cluster)
 	check := tenantClusterCheck(&snapshot, &target)
+	if check.State != "unknown" || check.ReasonCode != "TENANT_VRID_SCOPE_UNVERIFIED" {
+		t.Fatalf("shared VRRP ID was accepted without node scope: %+v", check)
+	}
+	projection := tenantClusterProjection(&snapshot, &target)
+	if len(projection) != 1 || projection[0].Name != cluster.Name || projection[0].Namespace != cluster.Namespace || projection[0].VirtualRouterID == nil || *projection[0].VirtualRouterID != int64(target.Tenant.RouterID) || projection[0].VIP != "" || projection[0].UID != "" || projection[0].Interface != "" {
+		t.Fatalf("unresolved VRRP scope lacks its minimal public observation: %+v", projection)
+	}
+	*projection[0].VirtualRouterID = 1
+	if *snapshot.DPUClusters.Items[0].VirtualRouterID != int64(target.Tenant.RouterID) {
+		t.Fatal("VRRP projection aliases the collected observation")
+	}
+	different := int64(target.Tenant.RouterID + 1)
+	snapshot.DPUClusters.Items[0].VirtualRouterID = &different
+	check = tenantClusterCheck(&snapshot, &target)
 	if check.State != "passed" || check.ReasonCode != "TENANT_TARGET_ABSENT_FROM_DPUCLUSTERS" {
-		t.Fatalf("unrelated tenant blocked selected target: %#v", check)
+		t.Fatalf("distinct VIP/VRRP ID was rejected: %+v", check)
+	}
+	snapshot.DPUClusters.Items[0].VirtualRouterID = nil
+	check = tenantClusterCheck(&snapshot, &target)
+	if check.State != "unknown" || check.ReasonCode != "TENANT_VRID_UNOBSERVED" {
+		t.Fatalf("unobserved VRRP ID was accepted: %+v", check)
 	}
 }
 
@@ -287,6 +306,8 @@ func TestTenantProjectionKeepsOnlySelectedConflictingAndUnobservableEndpoints(t 
 	selected := observedTenantCluster(target, "selected-uid", true)
 	collision := observedTenantCluster(resolvedTenantTarget(t, "conflict", "other-ns", "192.0.2.50"), "conflict-uid", true)
 	unrelated := observedTenantCluster(resolvedTenantTarget(t, "unrelated", "third-ns", "192.0.2.51"), "unrelated-uid", true)
+	differentRouterID := int64(target.Tenant.RouterID + 1)
+	unrelated.VirtualRouterID = &differentRouterID
 	unknown := observedTenantCluster(resolvedTenantTarget(t, "unknown", "fourth-ns", "192.0.2.52"), "unknown-uid", true)
 	unknown.VIP = nil
 	collision.VIP = stringPointer("::ffff:192.0.2.50")
@@ -335,6 +356,9 @@ func TestUnrelatedAliasConflictDoesNotBlockTenantOrLeakIssue(t *testing.T) {
 	target := resolvedTenantTarget(t, "selected", "selected-ns", "192.0.2.20")
 	selected := observedTenantCluster(target, "selected-uid", true)
 	other := observedTenantCluster(resolvedTenantTarget(t, "other", "other-ns", "192.0.2.21"), "other-uid", true)
+	// Isolate label ownership from independent endpoint/VRRP conflicts.
+	differentRouterID := int64(target.Tenant.RouterID + 1)
+	other.VirtualRouterID = &differentRouterID
 	other.TenantIdentityConflict = true
 	snapshot := tenantSnapshot(target, managementprobe.CollectionComplete, selected, other)
 	snapshot.Issues = []managementprobe.Issue{{Source: "dpuclusters.provisioning.dpu.nvidia.com", Namespace: "other-ns", Resource: "other", Code: "TENANT_LABEL_CONFLICT", Message: "conflicting aliases"}}

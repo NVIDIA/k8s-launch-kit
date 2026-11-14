@@ -29,13 +29,14 @@ type BootstrapOptions struct {
 }
 
 type TenantOptions struct {
-	Name         *string            `yaml:"name,omitempty" json:"name,omitempty"`
-	Namespace    *string            `yaml:"namespace,omitempty" json:"namespace,omitempty"`
-	VIP          *string            `yaml:"vip,omitempty" json:"vip,omitempty"`
-	Interface    *string            `yaml:"interface,omitempty" json:"interface,omitempty"`
-	RouterID     *int               `yaml:"routerID,omitempty" json:"routerID,omitempty"`
-	MaxNodes     *int               `yaml:"maxNodes,omitempty" json:"maxNodes,omitempty"`
-	NodeSelector *map[string]string `yaml:"nodeSelector,omitempty" json:"nodeSelector,omitempty"`
+	Name         *string                   `yaml:"name,omitempty" json:"name,omitempty"`
+	Namespace    *string                   `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+	VIP          *string                   `yaml:"vip,omitempty" json:"vip,omitempty"`
+	Interface    *string                   `yaml:"interface,omitempty" json:"interface,omitempty"`
+	RouterID     *int                      `yaml:"routerID,omitempty" json:"routerID,omitempty"`
+	MaxNodes     *int                      `yaml:"maxNodes,omitempty" json:"maxNodes,omitempty"`
+	NodeSelector *map[string]string        `yaml:"nodeSelector,omitempty" json:"nodeSelector,omitempty"`
+	Allocation   *bootstrap.SiteAllocation `yaml:"allocation,omitempty" json:"allocation,omitempty"`
 }
 
 // ResolveBootstrap computes a desired management bootstrap plan without reading
@@ -99,6 +100,7 @@ func ResolveBootstrap(options *BootstrapOptions, namespace, observedAPI string, 
 	if options.Tenant.NodeSelector != nil {
 		in.Tenant.NodeSelector = maps.Clone(*options.Tenant.NodeSelector)
 	}
+	in.Tenant.Allocation = options.Tenant.Allocation.Clone()
 	identity := sha256.Sum256([]byte(in.Tenant.Namespace + "/" + in.Tenant.Name))
 	in.Tenant.Labels = map[string]string{"launch-kit.nvidia.com/dpf-tenant": fmt.Sprintf("%x", identity[:16])}
 	issues := []ProvisioningIssue{}

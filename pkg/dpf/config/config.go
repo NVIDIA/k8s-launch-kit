@@ -620,7 +620,7 @@ func validateScalarTypes(n *yaml.Node, p string) error {
 		if p == "/discovery/limits/maxConcurrentBMCs" || hbnIntegerPath(p) || bootstrapIntegerPath(p) || p == "/provisioning/hbn/workloadGatewayIndex" || p == "/provisioning/hbn/hostAddressIndex" {
 			expected = "!!int"
 		}
-		if strings.HasSuffix(p, "/tls/insecureSkipVerify") || strings.HasSuffix(p, "/ssh/sudo") || p == "/provisioning/hbn/vxlanStartupProbeEnabled" {
+		if strings.HasSuffix(p, "/tls/insecureSkipVerify") || strings.HasSuffix(p, "/ssh/sudo") || bootstrapBooleanPath(p) || p == "/provisioning/hbn/vxlanStartupProbeEnabled" {
 			expected = "!!bool"
 		}
 		if n.Tag != expected {
@@ -640,6 +640,16 @@ func validateScalarTypes(n *yaml.Node, p string) error {
 		}
 	}
 	return nil
+}
+
+func bootstrapBooleanPath(path string) bool {
+	switch path {
+	case "/provisioning/bootstrap/tenant/allocation/vipReserved",
+		"/provisioning/bootstrap/tenant/allocation/vipExcludedFromDHCP",
+		"/provisioning/bootstrap/tenant/allocation/routerIDUniqueOnSelectedNodes":
+		return true
+	}
+	return false
 }
 
 // ReadReference rejects streams/devices and bounds local reference reads.

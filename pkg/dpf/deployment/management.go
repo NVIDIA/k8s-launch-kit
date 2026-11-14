@@ -75,10 +75,74 @@ func runManagement(ctx context.Context, client managementRunnerClient, retained 
 	if err := ctx.Err(); err != nil {
 		return managementBootstrapReceipt{}, err
 	}
+	execution, err := prepareManagementExecution(retained, time.Until(deadline(ctx)))
+	if err != nil {
+		return managementBootstrapReceipt{}, err
+	}
+	return runPreparedManagement(ctx, client, execution, journal, pollInterval)
+}
+
+// managementExecution owns one validated desired snapshot for the management
+// and tenant stages. Resource clients receive copies; refreshes read live state
+// without reconstructing or replacing the retained desired objects.
+type managementExecution struct {
+	retained          *bundle.Bundle
+	plan              *generation.Plan
+	operator          *operatorPlan
+	operatorVersion   string
+	reconciler        *Reconciler
+	namespaces        []*unstructured.Unstructured
+	operatorNamespace string
+	kamajiNamespace   string
+	configObject      *unstructured.Unstructured
+	manager           *unstructured.Unstructured
+	crds              []operatorCRDExpectation
+}
+
+func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) (*managementExecution, error) {
 	plan, err := generation.LoadPlan(retained)
 	if err != nil {
-		return managementBootstrapReceipt{}, fmt.Errorf("validate retained DPF plan before management access: %w", err)
+		return nil, fmt.Errorf("validate retained DPF plan before management access: %w", err)
 	}
+	prerequisites, err := managementPreflightPlan(ManagementPreflightRequest{Bundle: retained})
+	if err != nil {
+		return nil, err
+	}
+	inputs, archive := plan.Operator()
+	operator, err := prepareOperator(OperatorRequest{Archive: archive, Inputs: inputs, Timeout: timeout})
+	if err != nil {
+		return nil, fmt.Errorf("prepare retained operator installation: %w", err)
+	}
+	manager, crds, err := operatorReadinessObjects(operator)
+	if err != nil {
+		return nil, err
+	}
+	reconciler, err := NewReconciler(operator.renderedManifest, plan.Digest())
+	if err != nil {
+		return nil, fmt.Errorf("prepare retained DPF resource verifier: %w", err)
+	}
+	namespaces, namespace, configObject, err := managementBootstrapObjects(retained, inputs)
+	if err != nil {
+		return nil, err
+	}
+	return &managementExecution{retained: retained, plan: plan, operator: operator, operatorVersion: "v" + inputs.ReleaseVersion, reconciler: reconciler,
+		namespaces: namespaces, operatorNamespace: namespace, kamajiNamespace: prerequisites.overrides.Kamaji,
+		configObject: configObject, manager: manager, crds: crds}, nil
+}
+
+func runPreparedManagement(ctx context.Context, client managementRunnerClient, execution *managementExecution,
+	journal *executionJournal, pollInterval time.Duration,
+) (managementBootstrapReceipt, error) {
+	if ctx == nil || client == nil || execution == nil || execution.plan == nil || execution.operator == nil || execution.reconciler == nil || journal == nil || pollInterval <= 0 {
+		return managementBootstrapReceipt{}, fmt.Errorf("management runner requires a prepared execution, client, report and positive polling interval")
+	}
+	if _, bounded := ctx.Deadline(); !bounded {
+		return managementBootstrapReceipt{}, fmt.Errorf("management runner requires an execution deadline")
+	}
+	if err := ctx.Err(); err != nil {
+		return managementBootstrapReceipt{}, err
+	}
+	plan, retained := execution.plan, execution.retained
 	if journal.digest == "" || journal.digest != plan.Digest() {
 		return managementBootstrapReceipt{}, fmt.Errorf("execution report and retained DPF bundle must have the same digest")
 	}
@@ -86,27 +150,9 @@ func runManagement(ctx context.Context, client managementRunnerClient, retained 
 	if !client.matchesBinding(intent.Management, intent.KubernetesVersion) {
 		return managementBootstrapReceipt{}, fmt.Errorf("management client binding differs from the retained plan; repeat discovery and generation")
 	}
-	operatorInputs, operatorArchive := plan.Operator()
-	operatorPlan, err := prepareOperator(OperatorRequest{
-		Archive: operatorArchive,
-		Inputs:  operatorInputs,
-		Timeout: time.Until(deadline(ctx)),
-	})
-	if err != nil {
-		return managementBootstrapReceipt{}, fmt.Errorf("prepare retained operator installation: %w", err)
-	}
-	manager, crds, err := operatorReadinessObjects(operatorPlan)
-	if err != nil {
-		return managementBootstrapReceipt{}, err
-	}
-	reconciler, err := NewReconciler(operatorPlan.renderedManifest, plan.Digest())
-	if err != nil {
-		return managementBootstrapReceipt{}, fmt.Errorf("prepare retained DPF resource verifier: %w", err)
-	}
-	namespaces, operatorNamespace, configObject, err := managementBootstrapObjects(retained, operatorInputs)
-	if err != nil {
-		return managementBootstrapReceipt{}, err
-	}
+	operatorPlan, reconciler := execution.operator, execution.reconciler
+	manager, crds := execution.manager, execution.crds
+	namespaces, operatorNamespace, configObject := execution.namespaces, execution.operatorNamespace, execution.configObject
 
 	preflightEvent := executionEvent{Stage: "management-preflight", Operation: "observe", State: "attempted", ReasonCode: "MANAGEMENT_PREFLIGHT_STARTED", Message: "Verify external prerequisites and caller permissions before management changes."}
 	if err := journal.record(preflightEvent); err != nil {
@@ -238,7 +284,7 @@ func runManagement(ctx context.Context, client managementRunnerClient, retained 
 	if err != nil {
 		return managementBootstrapReceipt{}, err
 	}
-	currentConfig, err = waitOperatorConfigReady(ctx, client, reconciler, configObject, currentConfig, "v"+operatorInputs.ReleaseVersion, journal, pollInterval)
+	currentConfig, err = waitOperatorConfigReady(ctx, client, reconciler, configObject, currentConfig, execution.operatorVersion, journal, pollInterval)
 	if err != nil {
 		return managementBootstrapReceipt{}, err
 	}
@@ -373,9 +419,7 @@ func waitOperatorConfigReady(ctx context.Context, client managementRunnerClient,
 			}
 			readiness := EvaluateReadiness(current)
 			if readiness.Ready {
-				version, versionFound, versionErr := unstructured.NestedString(current.Object, "status", "version")
-				target, targetFound, targetErr := unstructured.NestedString(current.Object, "status", "targetVersion")
-				if versionErr != nil || targetErr != nil || !versionFound || !targetFound || version != expectedVersion || target != expectedVersion {
+				if !operatorConfigVersionMatches(current, expectedVersion) {
 					return nil, journalFailure(journal, event, false, "DPF_CONFIG_VERSION_MISMATCH", "DPFOperatorConfig is Ready for a different or unreported DPF version.", nil)
 				}
 				event.State, event.ReasonCode, event.Message = "ready", "DPF_CONFIG_READY", "The retained DPFOperatorConfig generation is Ready for the selected operator version."
@@ -397,6 +441,15 @@ func waitOperatorConfigReady(ctx context.Context, client managementRunnerClient,
 			return nil, journalFailure(journal, event, false, "DPF_CONFIG_READINESS_TIMEOUT", "DPFOperatorConfig did not become Ready before the execution deadline.", err)
 		}
 	}
+}
+
+func operatorConfigVersionMatches(current *unstructured.Unstructured, expectedVersion string) bool {
+	if current == nil || expectedVersion == "" {
+		return false
+	}
+	version, versionFound, versionErr := unstructured.NestedString(current.Object, "status", "version")
+	target, targetFound, targetErr := unstructured.NestedString(current.Object, "status", "targetVersion")
+	return versionErr == nil && targetErr == nil && versionFound && targetFound && version == expectedVersion && target == expectedVersion
 }
 
 func managementBootstrapObjects(retained *bundle.Bundle, inputs bootstrap.OperatorRenderInputs) ([]*unstructured.Unstructured, string, *unstructured.Unstructured, error) {

@@ -39,9 +39,39 @@ type Tenant struct {
 	RouterID     int               `yaml:"routerID" json:"routerID"`
 	NodeSelector map[string]string `yaml:"nodeSelector" json:"nodeSelector"`
 	MaxNodes     int               `yaml:"maxNodes" json:"maxNodes"`
+	Allocation   *SiteAllocation   `yaml:"allocation,omitempty" json:"allocation,omitempty"`
 	// ServiceCIDR is fixed by the selected DPF Kamaji controller. It is retained
 	// for collision checks and live comparison, not emitted as an unsupported CR field.
 	ServiceCIDR string `yaml:"serviceCIDR" json:"serviceCIDR"`
+}
+
+// SiteAllocation records explicit site declarations needed before creating a
+// tenant endpoint. These are configuration assertions, not live IPAM or host
+// observations; nil preserves the distinction between omitted and false.
+type SiteAllocation struct {
+	VIPReserved                   *bool `yaml:"vipReserved,omitempty" json:"vipReserved,omitempty"`
+	VIPExcludedFromDHCP           *bool `yaml:"vipExcludedFromDHCP,omitempty" json:"vipExcludedFromDHCP,omitempty"`
+	RouterIDUniqueOnSelectedNodes *bool `yaml:"routerIDUniqueOnSelectedNodes,omitempty" json:"routerIDUniqueOnSelectedNodes,omitempty"`
+}
+
+// Clone returns an independent copy, preserving omitted fields as nil.
+func (a *SiteAllocation) Clone() *SiteAllocation {
+	if a == nil {
+		return nil
+	}
+	copy := *a
+	copy.VIPReserved = cloneBool(a.VIPReserved)
+	copy.VIPExcludedFromDHCP = cloneBool(a.VIPExcludedFromDHCP)
+	copy.RouterIDUniqueOnSelectedNodes = cloneBool(a.RouterIDUniqueOnSelectedNodes)
+	return &copy
+}
+
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 // Inputs is resolved desired state. Defaults belong to the selected profile,

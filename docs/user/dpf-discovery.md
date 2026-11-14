@@ -613,12 +613,27 @@ provisioning:
     tenant:
       vip: 192.0.2.20
       interface: eth0
+      allocation:
+        vipReserved: true
+        vipExcludedFromDHCP: true
+        routerIDUniqueOnSelectedNodes: true
 ```
 
-Replace both example values with your site's allocation. The VIP must be outside
-DHCP allocation and unused on that network. Launch Kit defaults the tenant names,
+Replace the example address and interface with your site's allocation. Set the
+three allocation declarations to `true` only after the site owner has reserved
+the VIP for this tenant, excluded it from dynamic DHCP allocation, and verified
+that the selected VRRP ID is available on the selected control-plane nodes.
+Omitting a declaration leaves it unknown; `false` reports a failed prerequisite.
+Both block readiness. Launch Kit records these as site declarations, not as
+independent DHCP or IPAM verification. They cannot override an observed collision.
+If another DPUCluster uses the same VRRP ID, discovery reports unknown readiness
+until its placement can be distinguished or you select a different ID. A missing
+VRRP ID on another observed endpoint also blocks this comparison.
+
+The VIP must be outside DHCP allocation and unused by another tenant. Launch Kit defaults the tenant names,
 capacity, pod CIDR and VRRP ID from the profile; verify that the address ranges
-and VRRP ID do not conflict with existing use. If discovery observes a literal
+and VRRP ID do not conflict with existing use. Changing the VIP, VRRP ID or selected
+nodes requires reviewing the declarations again. If discovery observes a literal
 management API IP and port, it can reuse them for the operator configuration.
 Otherwise, supply `provisioning.bootstrap.managementAPIIP` and
 `managementAPIPort`. Missing values block use-case readiness without discarding
