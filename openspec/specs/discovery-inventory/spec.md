@@ -334,3 +334,10 @@ There is no universal probe registry or typed provenance/unknown framework. Exis
 - Implementation: [discovery](../../../pkg/networkoperatorplugin/discovery/discover.go), [GPU topology](../../../pkg/networkoperatorplugin/discovery/gputopology.go), [presets](../../../pkg/presets), [application integration](../../../pkg/app/discover.go).
 - Existing suites: [discovery](../../../pkg/networkoperatorplugin/discovery/discover_test.go), [topology](../../../pkg/networkoperatorplugin/discovery/gputopology_test.go), [library](../../../pkg/networkoperatorplugin/discovery/library_test.go).
 - User documentation: [discovery](../../../docs/user/discovery.md), [presets](../../../docs/user/presets.md).
+
+#### Scenario: Existing HBN tenant registry match is not runtime readiness
+
+- **WHEN** a complete cross-namespace DPUCluster observation matches the selected tenant identity and keepalived endpoint without a VIP collision
+- **THEN** the registry binding check can pass without requiring a generation-freshness field that the selected DPF release does not expose.
+- **AND** missing, stale-looking or non-Ready DPUCluster status cannot become proof of runtime readiness; the existing-tenant network/API prerequisite remains separately required and unknown until live verification succeeds.
+- **AND** conflicting identity, incomplete enumeration or another tenant using the VIP remains blocking.

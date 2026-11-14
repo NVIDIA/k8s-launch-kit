@@ -140,63 +140,14 @@ func tenantClusterCheck(snapshot *managementprobe.Snapshot, target *bootstrap.In
 		check.Message = "The selected DPUCluster keepalived endpoint differs from the resolved tenant VIP, interface, or VRID."
 		return check
 	}
-	if selected.StatusFreshness == "stale" {
-		check.State, check.ReasonCode = "failed", "TENANT_TARGET_STATUS_STALE"
-		check.Message = "The selected DPUCluster status does not reflect its current generation."
-		return check
-	}
-	if selected.StatusFreshness != "current" || selected.Phase == nil {
-		check.ReasonCode = "TENANT_TARGET_READINESS_UNKNOWN"
-		check.Message = "The selected DPUCluster readiness is missing or not current for its generation."
-		return check
-	}
-	ready, readyState := tenantReadyCondition(selected.Generation, selected.Conditions)
-	if readyState == "unknown" {
-		check.ReasonCode = "TENANT_TARGET_READINESS_UNKNOWN"
-		check.Message = "The selected DPUCluster has no current Ready condition."
-		return check
-	}
-	if readyState == "stale" {
-		check.State, check.ReasonCode = "failed", "TENANT_TARGET_STATUS_STALE"
-		check.Message = "The selected DPUCluster Ready condition does not reflect its current generation."
-		return check
-	}
-	if *selected.Phase != "Ready" || !ready {
-		check.State, check.ReasonCode = "failed", "TENANT_TARGET_NOT_READY"
-		check.Message = "The selected DPUCluster is not Ready for its current generation."
-		return check
-	}
 	check.State, check.ReasonCode = "passed", "TENANT_TARGET_MATCHES"
-	check.Message = "The selected DPUCluster has the matching Launch Kit tenant identity, desired keepalived endpoint, and current Ready status; this does not prove external VIP reservation."
+	check.Message = "The selected DPUCluster identity, type, and keepalived endpoint match the target. This is registry binding only, not a Ready result; deployment must verify controller, tenant API, and endpoint readiness from fresh API observations."
 	return check
-}
-
-func tenantReadyCondition(generation int64, conditions []managementprobe.Condition) (bool, string) {
-	var ready *managementprobe.Condition
-	for i := range conditions {
-		if conditions[i].Type != "Ready" {
-			continue
-		}
-		if ready != nil {
-			return false, "unknown"
-		}
-		ready = &conditions[i]
-	}
-	if ready == nil || ready.Status != "True" && ready.Status != "False" {
-		return false, "unknown"
-	}
-	if ready.ObservedGeneration == nil || *ready.ObservedGeneration > generation {
-		return false, "unknown"
-	}
-	if *ready.ObservedGeneration < generation {
-		return false, "stale"
-	}
-	return ready.Status == "True", "current"
 }
 
 // tenantClusterProjection retains only records needed to explain the selected
 // target, a known VIP collision, or an endpoint that prevents a safe comparison.
-// Readiness is still evaluated against the complete source snapshot.
+// Target and VIP conflicts are still evaluated against the complete source snapshot.
 func tenantClusterProjection(snapshot *managementprobe.Snapshot, target *bootstrap.Inputs) []inventory.HBNManagementCluster {
 	result := []inventory.HBNManagementCluster{}
 	if snapshot == nil || target == nil || snapshot.Namespace != target.OperatorNamespace ||

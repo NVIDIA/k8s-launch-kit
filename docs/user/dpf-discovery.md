@@ -78,6 +78,9 @@ and an on-link route with a source address on that interface. A VIP already
 assigned on a selected node is a conflict for new-tenant creation. These checks
 do not reserve the VIP, prove VRID uniqueness, or test failover. Missing allocation
 information continues to block readiness even when every network probe passes.
+A matching registered tenant confirms its identity and configured endpoint only.
+It does not prove that its control plane, virtual IP or API is currently healthy;
+those require separate live checks before reuse.
 
 Use the build that produced an experimental inventory, or a newer compatible
 build, for subsequent commands. Older builds can reject newly added fields.

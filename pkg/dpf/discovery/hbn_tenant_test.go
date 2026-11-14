@@ -37,6 +37,53 @@ func TestTenantClusterCheckSelectsReadyCrossNamespaceTarget(t *testing.T) {
 	}
 }
 
+func TestPinnedDPUClusterStatusWithoutObservedGenerationClassifiesTargetOnly(t *testing.T) {
+	input, inv, target := hbnBootstrapNetworkFixture()
+	crdData, err := os.ReadFile(filepath.Join("..", "bootstrap", "testdata", "dpuclusters.provisioning.dpu.nvidia.com.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var crd extensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal(crdData, &crd); err != nil {
+		t.Fatal(err)
+	}
+	labels := map[string]any{}
+	for key, value := range target.Tenant.Labels {
+		labels[key] = value
+	}
+	cluster := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1", "kind": "DPUCluster",
+		"metadata": map[string]any{"name": target.Tenant.Name, "namespace": target.Tenant.Namespace, "uid": "tenant-uid", "generation": int64(3), "resourceVersion": "8", "labels": labels},
+		"spec": map[string]any{"type": "kamaji", "clusterEndpoint": map[string]any{"keepalived": map[string]any{
+			"vip": target.Tenant.VIP, "interface": target.Tenant.Interface, "virtualRouterID": int64(target.Tenant.RouterID),
+		}}},
+		// DPF 26.8 writes phase and a metav1 Ready condition but no observedGeneration.
+		"status": map[string]any{"phase": "Ready", "conditions": []any{map[string]any{"type": "Ready", "status": "True", "reason": "HealthCheckPassed"}}},
+	}}
+	cluster.SetGroupVersionKind(schema.GroupVersionKind{Group: "provisioning.dpu.nvidia.com", Version: "v1alpha1", Kind: "DPUCluster"})
+	listKinds := map[schema.GroupVersionResource]string{{Group: "provisioning.dpu.nvidia.com", Version: "v1alpha1", Resource: "dpuclusters"}: "DPUClusterList"}
+	dynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, cluster)
+	collector := managementprobe.Collector{
+		Kubernetes: kubernetesfake.NewSimpleClientset(), Dynamic: dynamic,
+		Extensions: extensionsfake.NewClientset(&crd),
+	}
+	snapshot := collector.Collect(context.Background(), target.OperatorNamespace)
+	if snapshot.DPUClusters.State != managementprobe.CollectionComplete || len(snapshot.DPUClusters.Items) != 1 {
+		t.Fatalf("collected DPUCluster state/items = %s/%d", snapshot.DPUClusters.State, len(snapshot.DPUClusters.Items))
+	}
+	observed := snapshot.DPUClusters.Items[0]
+	if observed.StatusFreshness != "unknown" || len(observed.Conditions) != 1 || observed.Conditions[0].ObservedGeneration != nil {
+		t.Fatalf("pinned status shape was fabricated as generation-current: %#v", observed)
+	}
+	if got := tenantClusterCheck(&snapshot, &target); got.State != "passed" || got.ReasonCode != "TENANT_TARGET_MATCHES" || !strings.Contains(got.Message, "deployment must verify") {
+		t.Fatalf("matching target classification=%#v", got)
+	}
+	checks, _ := hbnBootstrapChecks(input, target.OperatorNamespace, inv, &snapshot)
+	if got := findCheck(checks, "dpf.hbn.management.tenant-network"); got.State != "unknown" || got.ReasonCode != "TENANT_EXISTING_NETWORK_UNVERIFIED" {
+		t.Fatalf("identity classification incorrectly proved endpoint readiness: %#v", got)
+	}
+}
+
 func TestCollectedConflictingTenantAliasesBlockSelectedTarget(t *testing.T) {
 	target := resolvedTenantTarget(t, "tenant-a", "tenant-a", "192.0.2.20")
 	crdData, err := os.ReadFile(filepath.Join("..", "bootstrap", "testdata", "dpuclusters.provisioning.dpu.nvidia.com.yaml"))
@@ -139,46 +186,36 @@ func TestTenantClusterCheckDoesNotAdoptMatchingNameWithoutIdentity(t *testing.T)
 	}
 }
 
-func TestTenantClusterCheckRequiresReadyConditionGeneration(t *testing.T) {
-	target := resolvedTenantTarget(t, "tenant-a", "tenant-ns", "192.0.2.20")
-	for _, generation := range []*int64{nil, int64Pointer(4)} {
-		cluster := observedTenantCluster(target, "tenant-uid", true)
-		cluster.Conditions[0].ObservedGeneration = generation
-		// Another condition makes aggregate status look current, but cannot
-		// establish freshness of the Ready condition itself.
-		cluster.Conditions = append(cluster.Conditions, managementprobe.Condition{Type: "Other", Status: "True", ObservedGeneration: int64Pointer(cluster.Generation)})
-		snapshot := tenantSnapshot(target, managementprobe.CollectionComplete, cluster)
-		check := tenantClusterCheck(&snapshot, &target)
-		if check.State != "unknown" || check.ReasonCode != "TENANT_TARGET_READINESS_UNKNOWN" {
-			t.Fatalf("unversioned or future Ready condition passed: %#v", check)
-		}
-	}
-}
-
-func TestTenantClusterCheckRequiresFreshReadyStatus(t *testing.T) {
-	target := resolvedTenantTarget(t, "tenant-a", "tenant-ns", "192.0.2.20")
-	cluster := observedTenantCluster(target, "tenant-uid", true)
-	staleGeneration := cluster.Generation - 1
-	cluster.Conditions[0].ObservedGeneration = &staleGeneration
-	snapshot := tenantSnapshot(target, managementprobe.CollectionComplete, cluster)
-	check := tenantClusterCheck(&snapshot, &target)
-	if check.State != "failed" || check.ReasonCode != "TENANT_TARGET_STATUS_STALE" {
-		t.Fatalf("stale Ready condition passed: %#v", check)
-	}
-
-	cluster = observedTenantCluster(target, "tenant-uid", true)
-	cluster.Conditions = append(cluster.Conditions, managementprobe.Condition{Type: "Ready", Status: "False"})
-	snapshot = tenantSnapshot(target, managementprobe.CollectionComplete, cluster)
-	check = tenantClusterCheck(&snapshot, &target)
-	if check.State != "unknown" || check.ReasonCode != "TENANT_TARGET_READINESS_UNKNOWN" {
-		t.Fatalf("duplicate Ready conditions were resolved by arbitrary order: %#v", check)
-	}
-
-	cluster = observedTenantCluster(target, "tenant-uid", false)
-	snapshot = tenantSnapshot(target, managementprobe.CollectionComplete, cluster)
-	check = tenantClusterCheck(&snapshot, &target)
-	if check.State != "failed" || check.ReasonCode != "TENANT_TARGET_NOT_READY" {
-		t.Fatalf("non-Ready selected tenant passed: %#v", check)
+func TestTenantClusterTargetClassificationDoesNotClaimReadiness(t *testing.T) {
+	input, inv, target := hbnBootstrapNetworkFixture()
+	for _, scenario := range []struct {
+		name   string
+		mutate func(*managementprobe.DPUCluster)
+	}{
+		{name: "stale non-ready status", mutate: func(cluster *managementprobe.DPUCluster) {
+			phase := "NotReady"
+			cluster.Phase = &phase
+			cluster.StatusFreshness = "stale"
+			cluster.Conditions = []managementprobe.Condition{{Type: "Ready", Status: "False", ObservedGeneration: int64Pointer(cluster.Generation - 1)}}
+		}},
+		{name: "missing status", mutate: func(cluster *managementprobe.DPUCluster) {
+			cluster.Phase = nil
+			cluster.StatusFreshness = "unknown"
+			cluster.Conditions = nil
+		}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			cluster := observedTenantCluster(target, "tenant-uid", true)
+			scenario.mutate(&cluster)
+			snapshot := tenantSnapshot(target, managementprobe.CollectionComplete, cluster)
+			if got := tenantClusterCheck(&snapshot, &target); got.State != "passed" || got.ReasonCode != "TENANT_TARGET_MATCHES" || !strings.Contains(got.Message, "This is registry binding only") {
+				t.Fatalf("target classification was conflated with controller readiness: %#v", got)
+			}
+			checks, _ := hbnBootstrapChecks(input, target.OperatorNamespace, inv, &snapshot)
+			if got := findCheck(checks, "dpf.hbn.management.tenant-network"); got.State != "unknown" || got.ReasonCode != "TENANT_EXISTING_NETWORK_UNVERIFIED" {
+				t.Fatalf("existing tenant received an endpoint readiness pass: %#v", got)
+			}
+		})
 	}
 }
 
