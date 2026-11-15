@@ -211,8 +211,12 @@ func (o *deploymentOperation) save(ctx context.Context) error {
 	}
 	desired := o.object.DeepCopy()
 	desired.Data = map[string]string{"checkpoint.json": data}
+	// Kubernetes can elide an unchanged update without advancing the resource
+	// version. Still perform the CAS: a stale or replaced checkpoint must fail
+	// even when this caller has no new progress to persist.
+	unchanged := data == o.object.Data["checkpoint.json"]
 	updated, err := o.store.updateOperation(ctx, desired)
-	if err != nil || !operationObjectMatches(updated, desired.Namespace, desired.Name) || updated.UID != desired.UID || updated.ResourceVersion == desired.ResourceVersion || updated.Data["checkpoint.json"] != data {
+	if err != nil || !operationObjectMatches(updated, desired.Namespace, desired.Name) || updated.UID != desired.UID || updated.ResourceVersion == desired.ResourceVersion && !unchanged || updated.Data["checkpoint.json"] != data {
 		o.failed = true
 		return fmt.Errorf("OPERATION_CHECKPOINT_UNCERTAIN: checkpoint CAS failed; resume from live evidence before another effect")
 	}

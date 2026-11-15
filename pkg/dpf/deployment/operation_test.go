@@ -34,6 +34,7 @@ type operationMemoryStore struct {
 	fail           bool
 	committedError bool
 	updates        int
+	noops          int
 }
 
 func (s *operationMemoryStore) getOperation(context.Context, string, string) (*corev1.ConfigMap, error) {
@@ -56,9 +57,14 @@ func (s *operationMemoryStore) updateOperation(_ context.Context, object *corev1
 	if s.object == nil || object.UID != s.object.UID || object.ResourceVersion != s.object.ResourceVersion {
 		return nil, apierrors.NewConflict(schema.GroupResource{Resource: "configmaps"}, object.Name, errors.New("stale version"))
 	}
-	version, _ := strconv.Atoi(s.object.ResourceVersion)
-	s.object = object.DeepCopy()
-	s.object.ResourceVersion = strconv.Itoa(version + 1)
+	if reflect.DeepEqual(object, s.object) {
+		// Model API storage eliding a byte-identical update after its CAS check.
+		s.noops++
+	} else {
+		version, _ := strconv.Atoi(s.object.ResourceVersion)
+		s.object = object.DeepCopy()
+		s.object.ResourceVersion = strconv.Itoa(version + 1)
+	}
 	if s.committedError {
 		return nil, errors.New("checkpoint response lost")
 	}
@@ -220,6 +226,7 @@ func TestOperationCheckpointCASAndTamperFailClosed(t *testing.T) {
 	fixture := newActivationIntegrationFixture(t)
 	first, store := checkpointFixture(t, fixture)
 	stale := reopenOperation(t, store)
+	first.state.DeploymentUID = activationIntegrationDeploymentUID
 	if err := first.save(fixture.ctx); err != nil {
 		t.Fatal(err)
 	}
