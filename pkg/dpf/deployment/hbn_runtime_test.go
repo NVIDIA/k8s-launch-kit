@@ -33,9 +33,28 @@ import (
 
 type runtimeStageFake struct {
 	*activationIntegrationFake
-	service, app   *unstructured.Unstructured
-	interfaces     []unstructured.Unstructured
-	denyManagement bool
+	service, app    *unstructured.Unstructured
+	interfaces      []unstructured.Unstructured
+	denyManagement  bool
+	physicalChecks  int
+	physicalCohorts [][]string
+	physicalHook    func(int) error
+}
+
+func (f *runtimeStageFake) verifyEnrollmentBMCs(ctx context.Context, selected []enrollmentBMC, timeout time.Duration, journal *executionJournal) error {
+	f.physicalChecks++
+	serials := make([]string, 0, len(selected))
+	for _, item := range selected {
+		serials = append(serials, item.device.Serial)
+	}
+	f.physicalCohorts = append(f.physicalCohorts, serials)
+	if err := f.activationIntegrationFake.verifyEnrollmentBMCs(ctx, selected, timeout, journal); err != nil {
+		return err
+	}
+	if f.physicalHook != nil {
+		return f.physicalHook(f.physicalChecks)
+	}
+	return nil
 }
 
 func (f *runtimeStageFake) checkHBNRuntimeAccess(context.Context, string, string, string) []PreflightCheck {

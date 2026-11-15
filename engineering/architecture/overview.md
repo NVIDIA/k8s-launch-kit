@@ -300,6 +300,16 @@ the checkpoint does not provide physical fencing or automatic adoption. Existing
 claims select observation-only recovery, and completed host work is inspected
 without configuration fallback. Each attempt produces fresh runtime evidence.
 
+DPF runtime measurement uses a resource/allocation fence distinct from the full
+physical mutation fence. Both share management, tenant, workload/software,
+credential and complete selected-resource verification. The physical wrapper
+preserves its ordering around BMC identity/Administrator collection; host
+configuration and reset paths keep that wrapper. Runtime performs it at phase
+entry and before final acceptance, with a final pod/allocation observation after
+the physical exit read. Every measurement retains fresh complete resource,
+lease, pod/container/image and host/PF/route checks; no successful observation is
+cached across measurements.
+
 ## Deployment and validation internals
 
 ```mermaid

@@ -122,6 +122,13 @@ selected service and interface resources and performs final HBN acceptance only
 after host workload networking. Do not treat a declared service, ready artifact
 cache or DPU provisioning result as proof of BGP or traffic.
 
+Each routing and traffic measurement rechecks the complete selected runtime
+cohort, allocations and container identities. Physical DPU/BMC identity and
+Administrator access are reverified at the start and final acceptance of the
+runtime phase. A failed final physical or runtime check prevents `validated`,
+even when earlier measurement rows passed. Provisioning, resets and host-network
+changes retain their immediate full physical safety checks.
+
 ## Read the result and recover from a stop
 
 `validated` means the selected multi-host BGP, installed-route and directed

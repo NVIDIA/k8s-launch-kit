@@ -113,6 +113,14 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	}
 	execution := prepared.execution
 	desired := execution.plan.Intent()
+	objects, err := retainedWorkloadObjects(execution)
+	if err != nil {
+		return fail("HBN_RUNTIME_PLAN_INVALID", "The retained workload prerequisite set is invalid.")
+	}
+	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, activation.selected, activation.DeploymentUID, objects, journal, timeout); err != nil {
+		return fail("HBN_RUNTIME_PHYSICAL_ENTRY_FAILED", "The complete physical and control/resource cohort could not be verified before runtime observation.")
+	}
+
 	selected := append([]activationSelectedDevice(nil), activation.selected...)
 	sort.Slice(selected, func(i, j int) bool { return selected[i].item.device.Serial < selected[j].item.device.Serial })
 	asns := map[string]uint32{}
@@ -129,7 +137,7 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	if err != nil || image.Reference != reference || !image.valid() {
 		return fail("HBN_RUNTIME_IMAGE_IDENTITY_UNAVAILABLE", "The immutable HBN platform image identity could not be verified.")
 	}
-	allocationObserver, err := newHostNetworkFenceObserver(ctx, client, prepared, controlPlane, workload, activation, journal, timeout, transports.readLeases, hbnRuntimeStage, "HBN_RUNTIME")
+	allocationObserver, err := newRuntimeAllocationFenceObserver(ctx, client, prepared, controlPlane, workload, activation, journal, timeout, transports.readLeases, hbnRuntimeStage, "HBN_RUNTIME")
 	if err != nil {
 		return fail("HBN_RUNTIME_PLAN_INVALID", "The retained activation/allocation plan is invalid.")
 	}
@@ -316,6 +324,11 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 			}
 			ui.FromContext(ctx).Info("[PASS] Host %s → %s: natural route and both 3/3 packet probes verified", source.host.InputRef, destination.host.InputRef)
 		}
+	}
+	// Rebind physical identity/admin before final acceptance. The final runtime
+	// observe follows it, catching allocation/pod/source drift during BMC reads.
+	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, activation.selected, activation.DeploymentUID, objects, journal, timeout); err != nil {
+		return fail("HBN_RUNTIME_PHYSICAL_EXIT_FAILED", "The complete physical and control/resource cohort could not be reverified after runtime measurements.")
 	}
 	if _, err := observe(); err != nil {
 		return fail("HBN_RUNTIME_FINAL_FENCE_FAILED", "The complete final activation, allocation or runtime identity observation failed.")

@@ -14,9 +14,33 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+// verifyActivationBoundary is the full physical policy for mutation boundaries
+// and runtime phase acceptance. Keep BMC reads between the control checks and
+// the final shared-credential/selected-scope inspection.
 func verifyActivationBoundary(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts,
 	workload workloadPreparationReceipt, selected []activationSelectedDevice, deploymentUID types.UID, objects []*unstructured.Unstructured, journal *executionJournal, requestTimeout time.Duration,
 ) error {
+	if err := verifyActivationControlResources(ctx, client, prepared, controlPlane, workload, objects, journal); err != nil {
+		return err
+	}
+	if err := client.verifyEnrollmentBMCs(ctx, prepared.selected, requestTimeout, journal); err != nil {
+		return activationFailure(journal, "ACTIVATION_BMC_IDENTITY_CHANGED", "Selected BMC identities could not be reverified at the activation boundary.", err)
+	}
+	return verifyActivationEnrollmentResources(ctx, client, prepared, controlPlane, selected, deploymentUID, journal)
+}
+
+// verifyActivationResourceBoundary is the read-only runtime policy. It retains
+// every control/resource check, including shared credentials and complete
+// selected ownership, without collecting physical BMC identity per measurement.
+// Mutation callers must use verifyActivationBoundary instead.
+func verifyActivationResourceBoundary(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, selected []activationSelectedDevice, deploymentUID types.UID, objects []*unstructured.Unstructured, journal *executionJournal) error {
+	if err := verifyActivationControlResources(ctx, client, prepared, controlPlane, workload, objects, journal); err != nil {
+		return err
+	}
+	return verifyActivationEnrollmentResources(ctx, client, prepared, controlPlane, selected, deploymentUID, journal)
+}
+
+func verifyActivationControlResources(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, objects []*unstructured.Unstructured, journal *executionJournal) error {
 	if err := client.VerifyIdentity(ctx); err != nil {
 		return activationFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed at the activation boundary.", err)
 	}
@@ -35,9 +59,10 @@ func verifyActivationBoundary(ctx context.Context, client activationStageClient,
 	if err := verifyActivationSoftware(ctx, client, prepared.execution, workload.Software); err != nil {
 		return activationFailure(journal, "ACTIVATION_SOFTWARE_RECEIPT_CHANGED", "The retained software resource, component receipt or release-bound registry identity changed at the activation boundary.", err)
 	}
-	if err := client.verifyEnrollmentBMCs(ctx, prepared.selected, requestTimeout, journal); err != nil {
-		return activationFailure(journal, "ACTIVATION_BMC_IDENTITY_CHANGED", "Selected BMC identities could not be reverified at the activation boundary.", err)
-	}
+	return nil
+}
+
+func verifyActivationEnrollmentResources(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, selected []activationSelectedDevice, deploymentUID types.UID, journal *executionJournal) error {
 	secret := controlPlane.enrollment.Secret
 	if controlPlane.enrollment.BundleDigest != prepared.execution.plan.Digest() || controlPlane.enrollment.TenantUID != controlPlane.tenant.ClusterUID || secret.Namespace != prepared.execution.operatorNamespace || secret.UID == "" {
 		return activationFailure(journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "The enrollment receipt differs from the retained plan, tenant or credential identity.", nil)
