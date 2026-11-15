@@ -167,7 +167,9 @@ func validateHBNPodBinding(intent hbnPodBindingIntent, service, application *uns
 	ds := &matches[0]
 	if ds.UID == "" || ds.ResourceVersion == "" || ds.DeletionTimestamp != nil || ds.Generation < 1 ||
 		ds.Status.ObservedGeneration != ds.Generation || ds.Status.DesiredNumberScheduled < 1 ||
-		ds.Status.UpdatedNumberScheduled != ds.Status.DesiredNumberScheduled || ds.Status.NumberReady != ds.Status.DesiredNumberScheduled || ds.Status.NumberUnavailable != 0 {
+		ds.Status.CurrentNumberScheduled != ds.Status.DesiredNumberScheduled || ds.Status.UpdatedNumberScheduled != ds.Status.DesiredNumberScheduled ||
+		ds.Status.NumberReady != ds.Status.DesiredNumberScheduled || ds.Status.NumberAvailable != ds.Status.DesiredNumberScheduled ||
+		ds.Status.NumberUnavailable != 0 || ds.Status.NumberMisscheduled != 0 {
 		return hbnPodBindingAnchor{}, bindingError(hbnBindingResourceUnknown)
 	}
 	if ds.Labels[hbnServiceIDLabel] != intent.ServiceID || ds.Spec.Template.Labels[hbnServiceIDLabel] != intent.ServiceID ||

@@ -184,6 +184,7 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 	}
 	f.client.app = hbnApplicationFixture(intent, time.Now().UTC())
 	f.ds, _ = bindingFixture(intent, "cluster-dpu-hbn-ds")
+	f.ds.Status.CurrentNumberScheduled = int32(len(desired.Devices))
 	f.ds.Status.DesiredNumberScheduled = int32(len(desired.Devices))
 	f.ds.Status.UpdatedNumberScheduled = int32(len(desired.Devices))
 	f.ds.Status.NumberReady = int32(len(desired.Devices))

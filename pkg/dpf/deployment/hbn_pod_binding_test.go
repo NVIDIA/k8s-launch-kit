@@ -91,6 +91,21 @@ func TestValidateHBNPodBinding(t *testing.T) {
 		}, want: hbnBindingResourceUnknown},
 		{name: "missing daemonset", omitDS: true, want: hbnBindingDaemonSetMissing},
 		{name: "duplicate daemonset observation", duplicateDS: true, want: hbnBindingDaemonSetAmbiguous},
+		{name: "daemonset current cohort is incomplete", mutate: func(_ *hbnPodBindingIntent, _ *unstructured.Unstructured, ds *appsv1.DaemonSet, _ *corev1.Pod) {
+			ds.Status.CurrentNumberScheduled = 0
+		}, want: hbnBindingResourceUnknown},
+		{name: "daemonset current cohort exceeds desired", mutate: func(_ *hbnPodBindingIntent, _ *unstructured.Unstructured, ds *appsv1.DaemonSet, _ *corev1.Pod) {
+			ds.Status.CurrentNumberScheduled = 2
+		}, want: hbnBindingResourceUnknown},
+		{name: "daemonset available cohort is incomplete", mutate: func(_ *hbnPodBindingIntent, _ *unstructured.Unstructured, ds *appsv1.DaemonSet, _ *corev1.Pod) {
+			ds.Status.NumberAvailable = 0
+		}, want: hbnBindingResourceUnknown},
+		{name: "daemonset available cohort exceeds desired", mutate: func(_ *hbnPodBindingIntent, _ *unstructured.Unstructured, ds *appsv1.DaemonSet, _ *corev1.Pod) {
+			ds.Status.NumberAvailable = 2
+		}, want: hbnBindingResourceUnknown},
+		{name: "daemonset has misscheduled pods", mutate: func(_ *hbnPodBindingIntent, _ *unstructured.Unstructured, ds *appsv1.DaemonSet, _ *corev1.Pod) {
+			ds.Status.NumberMisscheduled = 1
+		}, want: hbnBindingResourceUnknown},
 		{name: "wrong service label", mutate: func(_ *hbnPodBindingIntent, _ *unstructured.Unstructured, ds *appsv1.DaemonSet, _ *corev1.Pod) {
 			ds.Labels[hbnServiceIDLabel] = "another-service"
 		}, want: hbnBindingServiceMismatch},
@@ -246,7 +261,7 @@ func bindingFixture(intent hbnPodBindingIntent, daemonSetName string) (appsv1.Da
 			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: hbnContainerName, Image: intent.Image.Reference}}},
 		}},
 	}
-	daemonSet.Status = appsv1.DaemonSetStatus{ObservedGeneration: 1, DesiredNumberScheduled: 1, UpdatedNumberScheduled: 1, NumberReady: 1, NumberAvailable: 1}
+	daemonSet.Status = appsv1.DaemonSetStatus{ObservedGeneration: 1, CurrentNumberScheduled: 1, DesiredNumberScheduled: 1, UpdatedNumberScheduled: 1, NumberReady: 1, NumberAvailable: 1}
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: intent.TargetNamespace, Name: "hbn-pod", UID: "pod-uid", ResourceVersion: "34",
 			Labels: maps.Clone(labels), OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "DaemonSet", Name: daemonSet.Name, UID: daemonSet.UID, Controller: &controller}}},
