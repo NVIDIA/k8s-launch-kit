@@ -118,7 +118,11 @@ func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) 
 	if err != nil {
 		return nil, err
 	}
-	reconciler, err := NewReconciler(operator.renderedManifest, plan.Digest())
+	metadata, err := controllerMetadataForPlan(plan)
+	if err != nil {
+		return nil, fmt.Errorf("prepare retained controller metadata: %w", err)
+	}
+	reconciler, err := newReconciler(operator.renderedManifest, plan.Digest(), metadata)
 	if err != nil {
 		return nil, fmt.Errorf("prepare retained DPF resource verifier: %w", err)
 	}
@@ -415,8 +419,11 @@ func waitOperatorConfigReady(ctx context.Context, client managementRunnerClient,
 				return nil, journalFailure(journal, event, false, "DPF_CONFIG_READ_FAILED", "The retained DPFOperatorConfig could not be read.", err)
 			}
 		} else {
-			if current == nil || current.GetUID() == "" || current.GetUID() != uid || current.GetResourceVersion() == "" || current.GetDeletionTimestamp() != nil || reconciler.Verify(desired, current) != nil {
+			if current == nil || current.GetUID() == "" || current.GetUID() != uid || current.GetResourceVersion() == "" || current.GetDeletionTimestamp() != nil {
 				return nil, journalFailure(journal, event, false, "DPF_CONFIG_INTENT_CHANGED", "The DPFOperatorConfig identity or retained intent changed while waiting.", nil)
+			}
+			if err := reconciler.Verify(desired, current); err != nil {
+				return nil, journalFailure(journal, event, false, "DPF_CONFIG_INTENT_CHANGED", operatorConfigIntentMismatchMessage(err), nil)
 			}
 			readiness := EvaluateReadiness(current)
 			if readiness.Ready {
@@ -442,6 +449,21 @@ func waitOperatorConfigReady(ctx context.Context, client managementRunnerClient,
 			return nil, journalFailure(journal, event, false, "DPF_CONFIG_READINESS_TIMEOUT", "DPFOperatorConfig did not become Ready before the execution deadline.", err)
 		}
 	}
+}
+
+// Only fixed verification categories may enter the durable readiness journal.
+// Reconciliation error messages and causes can contain untrusted API values.
+func operatorConfigIntentMismatchMessage(err error) string {
+	const message = "The DPFOperatorConfig retained intent changed while waiting."
+	var conflict *ReconciliationError
+	if errors.As(err, &conflict) && conflict != nil {
+		switch conflict.ReasonCode {
+		case "RECONCILER_INVALID", "DESIRED_OBJECT_INVALID", "RESOURCE_IDENTITY_MISMATCH", "RESOURCE_UNAVAILABLE",
+			"RESOURCE_OWNERSHIP_CONFLICT", "RESOURCE_METADATA_CONFLICT", "RESOURCE_SCHEMA_INVALID", "RESOURCE_CONTENT_CONFLICT":
+			return message + " Verification category: " + conflict.ReasonCode + "."
+		}
+	}
+	return message + " Verification category is unavailable."
 }
 
 func operatorConfigVersionMatches(current *unstructured.Unstructured, expectedVersion string) bool {

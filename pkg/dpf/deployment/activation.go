@@ -291,7 +291,11 @@ func bindActivationHosts(selected []enrollmentBMC, enrollment enrollmentStageRec
 	if inv == nil || deployment == nil || len(selected) == 0 || len(enrollment.Devices) != len(selected) {
 		return nil, nil, fmt.Errorf("selected inventory and enrollment receipt are incomplete")
 	}
-	sets, err := activationSetIntents(deployment, selected)
+	devices := make([]generation.ResolvedDevice, len(selected))
+	for i := range selected {
+		devices[i] = selected[i].device
+	}
+	sets, err := activationSetIntents(deployment, devices)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -387,7 +391,17 @@ func uniqueInventoryHost(inv *inventory.Inventory, id string) *inventory.Device 
 	return result
 }
 
-func activationSetIntents(deployment *unstructured.Unstructured, selected []enrollmentBMC) (map[string]*unstructured.Unstructured, error) {
+func activationSetIntents(deployment *unstructured.Unstructured, selected []generation.ResolvedDevice) (map[string]*unstructured.Unstructured, error) {
+	if deployment == nil || deployment.GetAPIVersion() != "svc.dpu.nvidia.com/v1alpha1" || deployment.GetKind() != "DPUDeployment" ||
+		len(validation.IsDNS1123Subdomain(deployment.GetName())) != 0 || len(validation.IsDNS1123Label(deployment.GetNamespace())) != 0 || len(selected) == 0 {
+		return nil, fmt.Errorf("retained DPUDeployment and selected device identities are required")
+	}
+	software, softwareFound, softwareErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "blueFieldSoftware")
+	flavor, flavorFound, flavorErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "flavor")
+	if softwareErr != nil || !softwareFound || len(validation.IsDNS1123Subdomain(software)) != 0 || flavorErr != nil || !flavorFound || len(validation.IsDNS1123Subdomain(flavor)) != 0 ||
+		nestedFieldPresent(deployment.Object, "spec", "dpus", "bfb") || nestedFieldPresent(deployment.Object, "spec", "dpus", "flavorTemplate") {
+		return nil, fmt.Errorf("native activation requires explicit BlueFieldSoftware and flavor names, without BFB or flavor templates")
+	}
 	settings, found, err := unstructured.NestedSlice(deployment.Object, "spec", "dpus", "dpuSets")
 	if err != nil || !found || len(settings) != len(selected) {
 		return nil, fmt.Errorf("retained DPUDeployment does not contain one DPUSet selector per selected DPU")
@@ -411,10 +425,10 @@ func activationSetIntents(deployment *unstructured.Unstructured, selected []enro
 		matches := 0
 		serial := ""
 		for _, item := range selected {
-			labels := item.device.SelectorLabels
+			labels := item.SelectorLabels
 			if len(labels) > 0 && reflect.DeepEqual(selector, labels) {
 				matches++
-				serial = strings.ToLower(item.device.Serial)
+				serial = strings.ToLower(item.Serial)
 			}
 		}
 		if matches != 1 || sets[serial] != nil {
@@ -436,6 +450,8 @@ func activationSetIntents(deployment *unstructured.Unstructured, selected []enro
 				"dpuDeviceSelector": map[string]any{"matchLabels": stringMapJSON(selector)},
 				"dpuTemplate": map[string]any{
 					"spec": map[string]any{
+						"blueFieldSoftware": map[string]any{"name": software},
+						"dpuFlavor":         flavor,
 						"cluster": map[string]any{
 							"selector": map[string]any{"matchLabels": stringMapJSON(clusterSelector)},
 						},
@@ -586,7 +602,32 @@ func validateActivationDPUNode(node *unstructured.Unstructured, selected activat
 
 func (s activationSelectedDevice) deviceName() string { return strings.ToLower(s.item.device.Serial) }
 
+// Read only the qualified consumed references; other controller-populated
+// template fields retain their existing dedicated activation checks.
+func activationSetReferences(set *unstructured.Unstructured) (string, string, error) {
+	if set == nil {
+		return "", "", fmt.Errorf("selected DPUSet intent is missing")
+	}
+	software, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuTemplate", "spec", "blueFieldSoftware")
+	flavor, flavorFound, flavorErr := unstructured.NestedString(set.Object, "spec", "dpuTemplate", "spec", "dpuFlavor")
+	if err != nil || !found || len(software) != 1 || len(validation.IsDNS1123Subdomain(software["name"])) != 0 || flavorErr != nil || !flavorFound || len(validation.IsDNS1123Subdomain(flavor)) != 0 ||
+		nestedFieldPresent(set.Object, "spec", "dpuTemplate", "spec", "bfb") || nestedFieldPresent(set.Object, "spec", "dpuTemplate", "spec", "dpuFlavorTemplate") {
+		return "", "", fmt.Errorf("selected DPUSet consumed software or flavor reference is missing or unsupported")
+	}
+	return software["name"], flavor, nil
+}
+
+func nestedFieldPresent(object map[string]any, fields ...string) bool {
+	_, found, err := unstructured.NestedFieldNoCopy(object, fields...)
+	return found || err != nil
+}
+
 func activationDPUSetMatches(set *unstructured.Unstructured, selected activationSelectedDevice) bool {
+	software, flavor, err := activationSetReferences(set)
+	wantSoftware, wantFlavor, wantErr := activationSetReferences(selected.dpuSet)
+	if err != nil || wantErr != nil || software != wantSoftware || flavor != wantFlavor {
+		return false
+	}
 	selector, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuDeviceSelector", "matchLabels")
 	if err != nil || !found || !reflect.DeepEqual(selector, selected.item.device.SelectorLabels) {
 		return false
@@ -608,6 +649,12 @@ func activationDPUSetMatches(set *unstructured.Unstructured, selected activation
 }
 
 func activationDPUMatches(dpu *unstructured.Unstructured, selected activationSelectedDevice) bool {
+	wantSoftware, wantFlavor, wantErr := activationSetReferences(selected.dpuSet)
+	software, softwareFound, softwareErr := unstructured.NestedString(dpu.Object, "spec", "blueFieldSoftware")
+	flavor, flavorFound, flavorErr := unstructured.NestedString(dpu.Object, "spec", "dpuFlavor")
+	if wantErr != nil || softwareErr != nil || !softwareFound || software != wantSoftware || flavorErr != nil || !flavorFound || flavor != wantFlavor || nestedFieldPresent(dpu.Object, "spec", "bfb") {
+		return false
+	}
 	nodeName, _, nodeErr := unstructured.NestedString(dpu.Object, "spec", "dpuNodeName")
 	deviceName, _, deviceErr := unstructured.NestedString(dpu.Object, "spec", "dpuDeviceName")
 	serial, _, serialErr := unstructured.NestedString(dpu.Object, "spec", "serialNumber")

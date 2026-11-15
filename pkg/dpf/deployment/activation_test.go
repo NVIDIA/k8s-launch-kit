@@ -4,9 +4,13 @@
 package deployment
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
@@ -15,14 +19,11 @@ import (
 )
 
 func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
-	devices := []enrollmentBMC{
-		{device: resolvedActivationDevice("SERIAL-A", "serial-a")},
-		{device: resolvedActivationDevice("SERIAL-B", "serial-b")},
-	}
+	devices := []generation.ResolvedDevice{resolvedActivationDevice("SERIAL-A", "serial-a"), resolvedActivationDevice("SERIAL-B", "serial-b")}
 	deployment := activationDeploymentIntent(map[string]string{"tenant.example/id": "tenant-a"})
 	selected := []activationSelectedDevice{
-		{item: devices[0], device: inventory.Device{SerialNumber: "SERIAL-A"}},
-		{item: devices[1], device: inventory.Device{SerialNumber: "SERIAL-B"}},
+		{item: enrollmentBMC{device: devices[0]}, device: inventory.Device{SerialNumber: "SERIAL-A"}},
+		{item: enrollmentBMC{device: devices[1]}, device: inventory.Device{SerialNumber: "SERIAL-B"}},
 	}
 	before := deployment.DeepCopy()
 	sets, err := activationSetIntents(deployment, devices)
@@ -31,6 +32,13 @@ func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
 	}
 	if len(sets) != len(devices) {
 		t.Fatalf("got %d set intents, want %d", len(sets), len(devices))
+	}
+	for _, set := range sets {
+		software, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuTemplate", "spec", "blueFieldSoftware")
+		flavor, flavorFound, flavorErr := unstructured.NestedString(set.Object, "spec", "dpuTemplate", "spec", "dpuFlavor")
+		if err != nil || !found || !reflect.DeepEqual(software, map[string]string{"name": "hbn-software"}) || flavorErr != nil || !flavorFound || flavor != "hbn-flavor" {
+			t.Fatal("compiled consumed references differ from explicit retainedDD inputs")
+		}
 	}
 	selected[0].dpuSet = sets["serial-a"]
 	selected[1].dpuSet = sets["serial-b"]
@@ -53,8 +61,8 @@ func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
 		t.Fatalf("build drifted tenant selector fixture: %v", err)
 	}
 	wrongTenantSelected := []activationSelectedDevice{
-		{item: devices[0], dpuSet: wrongTenantSets["serial-a"]},
-		{item: devices[1], dpuSet: wrongTenantSets["serial-b"]},
+		{item: enrollmentBMC{device: devices[0]}, dpuSet: wrongTenantSets["serial-a"]},
+		{item: enrollmentBMC{device: devices[1]}, dpuSet: wrongTenantSets["serial-b"]},
 	}
 	if err := validateActivationDeployment(bad, wrongTenantSelected, "dpf", TenantReadinessExpected{Namespace: "tenant", Labels: map[string]string{"tenant.example/id": "tenant-a"}}); err == nil {
 		got, _, _ := unstructured.NestedStringMap(wrongTenantSelected[0].dpuSet.Object, "spec", "dpuTemplate", "spec", "cluster", "selector", "matchLabels")
@@ -190,9 +198,193 @@ func activationDeploymentIntent(tenantSelector map[string]string) *unstructured.
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "svc.dpu.nvidia.com/v1alpha1", "kind": "DPUDeployment",
 		"metadata": map[string]any{"name": "hbn", "namespace": "dpf"},
-		"spec": map[string]any{"dpus": map[string]any{"nodeEffect": map[string]any{"hold": true}, "dpuSets": []any{
+		"spec": map[string]any{"dpus": map[string]any{"blueFieldSoftware": "hbn-software", "flavor": "hbn-flavor", "nodeEffect": map[string]any{"hold": true}, "dpuSets": []any{
 			map[string]any{"nameSuffix": "a", "dpuDeviceSelector": map[string]any{"matchLabels": map[string]any{"inventory.example/serial": "serial-a"}}, "dpuClusterSelector": map[string]any{"tenant.example/id": tenantSelector["tenant.example/id"]}},
 			map[string]any{"nameSuffix": "b", "dpuDeviceSelector": map[string]any{"matchLabels": map[string]any{"inventory.example/serial": "serial-b"}}, "dpuClusterSelector": map[string]any{"tenant.example/id": tenantSelector["tenant.example/id"]}},
 		}}},
 	}}
+}
+
+func TestActivationScopeRejectsChangedConsumedReferences(t *testing.T) {
+	fixture, baseline := activationBoundaryScopeFixture(t)
+	if err := validateActivationScope(baseline, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err != nil {
+		t.Fatalf("invalid baseline: %v", err)
+	}
+	for _, tc := range []struct {
+		name, kind string
+		path       []string
+	}{
+		{name: "set software", kind: "DPUSet", path: []string{"spec", "dpuTemplate", "spec", "blueFieldSoftware", "name"}},
+		{name: "set flavor", kind: "DPUSet", path: []string{"spec", "dpuTemplate", "spec", "dpuFlavor"}},
+		{name: "DPU software", kind: "DPU", path: []string{"spec", "blueFieldSoftware"}},
+		{name: "DPU flavor", kind: "DPU", path: []string{"spec", "dpuFlavor"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := copyEnrollmentScope(baseline)
+			objects := snapshot.objects(tc.kind)
+			if len(objects) == 0 {
+				t.Fatal("missing consumed child")
+			}
+			if err := unstructured.SetNestedField(objects[0].Object, "foreign-reference", tc.path...); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateActivationScope(snapshot, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
+				t.Fatal("foreign consumed reference passed complete activation scope")
+			}
+		})
+	}
+}
+
+func TestActivationSetIntentsRejectsUnsupportedReferenceModes(t *testing.T) {
+	devices := []generation.ResolvedDevice{resolvedActivationDevice("SERIAL-A", "serial-a"), resolvedActivationDevice("SERIAL-B", "serial-b")}
+	baseline := activationDeploymentIntent(map[string]string{"tenant.example/id": "tenant-a"})
+	for _, tc := range []struct {
+		name, field string
+		value       any
+		remove      bool
+	}{
+		{name: "missing software", field: "blueFieldSoftware", remove: true},
+		{name: "empty software", field: "blueFieldSoftware", value: ""},
+		{name: "object software", field: "blueFieldSoftware", value: map[string]any{"name": "hbn-software"}},
+		{name: "invalid software name", field: "blueFieldSoftware", value: "foreign/name"},
+		{name: "missing flavor", field: "flavor", remove: true},
+		{name: "empty flavor", field: "flavor", value: ""},
+		{name: "object flavor", field: "flavor", value: map[string]any{"name": "hbn-flavor"}},
+		{name: "BFB mode", field: "bfb", value: "foreign"},
+		{name: "null BFB mode", field: "bfb", value: nil},
+		{name: "flavor template mode", field: "flavorTemplate", value: map[string]any{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deployment := baseline.DeepCopy()
+			if tc.remove {
+				unstructured.RemoveNestedField(deployment.Object, "spec", "dpus", tc.field)
+			} else if err := unstructured.SetNestedField(deployment.Object, tc.value, "spec", "dpus", tc.field); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := activationSetIntents(deployment, devices); err == nil {
+				t.Fatal("unsupported retained reference mode compiled")
+			}
+		})
+	}
+	if _, err := activationSetIntents(nil, devices); err == nil {
+		t.Fatal("nil deployment compiled")
+	}
+	if _, err := activationSetIntents(baseline, nil); err == nil {
+		t.Fatal("empty selected cohort compiled")
+	}
+}
+
+func TestActivationScopeRejectsMissingMalformedAndAlternativeConsumedReferences(t *testing.T) {
+	fixture, baseline := activationBoundaryScopeFixture(t)
+	for _, reference := range []struct {
+		name, kind string
+		path       []string
+	}{
+		{name: "set software", kind: "DPUSet", path: []string{"spec", "dpuTemplate", "spec", "blueFieldSoftware"}},
+		{name: "set flavor", kind: "DPUSet", path: []string{"spec", "dpuTemplate", "spec", "dpuFlavor"}},
+		{name: "DPU software", kind: "DPU", path: []string{"spec", "blueFieldSoftware"}},
+		{name: "DPU flavor", kind: "DPU", path: []string{"spec", "dpuFlavor"}},
+	} {
+		for _, mode := range []string{"missing", "malformed", "empty"} {
+			t.Run(reference.name+" "+mode, func(t *testing.T) {
+				snapshot := copyEnrollmentScope(baseline)
+				objects := snapshot.objects(reference.kind)
+				if len(objects) == 0 {
+					t.Fatal("missing child")
+				}
+				if mode == "missing" {
+					unstructured.RemoveNestedField(objects[0].Object, reference.path...)
+				} else {
+					var value any = int64(1)
+					if mode == "empty" {
+						value = ""
+					}
+					if err := unstructured.SetNestedField(objects[0].Object, value, reference.path...); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := validateActivationScope(snapshot, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
+					t.Fatal("unsupported consumed reference passed complete scope")
+				}
+			})
+		}
+	}
+	for _, tc := range []struct {
+		kind string
+		path []string
+	}{
+		{kind: "DPUSet", path: []string{"spec", "dpuTemplate", "spec", "bfb"}},
+		{kind: "DPUSet", path: []string{"spec", "dpuTemplate", "spec", "dpuFlavorTemplate"}},
+		{kind: "DPU", path: []string{"spec", "bfb"}},
+	} {
+		t.Run(tc.kind+" "+strings.Join(tc.path, "/"), func(t *testing.T) {
+			snapshot := copyEnrollmentScope(baseline)
+			objects := snapshot.objects(tc.kind)
+			if len(objects) == 0 {
+				t.Fatal("missing child")
+			}
+			if err := unstructured.SetNestedField(objects[0].Object, "foreign", tc.path...); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateActivationScope(snapshot, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
+				t.Fatal("alternative consumed mode passed complete scope")
+			}
+		})
+	}
+}
+
+type activationConsumedReferenceClient struct {
+	*activationIntegrationFake
+	kind    string
+	path    []string
+	mutated bool
+}
+
+func (c *activationConsumedReferenceClient) Create(ctx context.Context, desired *unstructured.Unstructured, dry bool) (*unstructured.Unstructured, error) {
+	created, err := c.activationIntegrationFake.Create(ctx, desired, dry)
+	if err != nil || desired.GetKind() != "DPUDeployment" {
+		return created, err
+	}
+	objects := c.dpus
+	if c.kind == "DPUSet" {
+		objects = c.sets
+	}
+	if len(objects) == 0 {
+		return nil, fmt.Errorf("fixture consumed child is missing")
+	}
+	if err := unstructured.SetNestedField(objects[0].Object, "foreign-consumed-reference", c.path...); err != nil {
+		return nil, err
+	}
+	c.mutated = true
+	return created, nil
+}
+
+func TestRunActivationRejectsForeignConsumedReferencesBeforeHoldOrReboot(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind string
+		path       []string
+	}{
+		{name: "set software", kind: "DPUSet", path: []string{"spec", "dpuTemplate", "spec", "blueFieldSoftware", "name"}},
+		{name: "set flavor", kind: "DPUSet", path: []string{"spec", "dpuTemplate", "spec", "dpuFlavor"}},
+		{name: "DPU software", kind: "DPU", path: []string{"spec", "blueFieldSoftware"}},
+		{name: "DPU flavor", kind: "DPU", path: []string{"spec", "dpuFlavor"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newActivationIntegrationFixture(t)
+			ctx, cancel := context.WithTimeout(fixture.ctx, 10*time.Second)
+			defer cancel()
+			client := &activationConsumedReferenceClient{activationIntegrationFake: fixture.client, kind: tc.kind, path: tc.path}
+			// Tenant binding must identify the actual wrapper used by this stage.
+			fixture.controlPlane.tenant.Client.source = client
+			callbacks := 0
+			rebooter := RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
+				callbacks++
+				return ActivationObservation{}, fmt.Errorf("unexpected reboot")
+			})
+			_, err := runActivationStage(ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, rebooter)
+			if err == nil || !strings.Contains(err.Error(), "ACTIVATION_SCOPE_CHANGED") || !client.mutated || len(client.patches) != 0 || client.guardCalls != 0 || callbacks != 0 {
+				t.Fatalf("foreign consumed reference reached effect: error=%v mutated=%v patches=%v claims=%d reboots=%d", err, client.mutated, client.patches, client.guardCalls, callbacks)
+			}
+		})
+	}
 }

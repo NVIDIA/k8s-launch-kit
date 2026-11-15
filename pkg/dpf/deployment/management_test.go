@@ -47,6 +47,7 @@ type managementFake struct {
 	alterManagerOnConfig     bool
 	failIdentityAfterConfig  bool
 	createConfig             int
+	configOnRead             func(*unstructured.Unstructured)
 	listConfig               int
 	listHook                 func(*managementFake)
 }
@@ -200,6 +201,9 @@ func (f *managementFake) Get(_ context.Context, wanted *unstructured.Unstructure
 		return f.manager.DeepCopy(), nil
 	case "DPFOperatorConfig":
 		if f.config != nil {
+			if f.configOnRead != nil {
+				f.configOnRead(f.config)
+			}
 			return f.config.DeepCopy(), nil
 		}
 	}
@@ -390,6 +394,44 @@ func TestRunManagementReturnsOnlyBoundedBootstrapReceiptAfterReadyConfig(t *test
 	}
 	if !strings.Contains(journalFile.String(), "DPF_CONFIG_READY") {
 		t.Fatalf("readiness receipt missing from durable journal: %s", journalFile.String())
+	}
+}
+
+func TestRunManagementAcceptsOperatorConfigControllerFinalizerAfterCreate(t *testing.T) {
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := prepareManagementExecution(generated, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := managementFakeWithReadiness(t, execution.plan.Digest(), execution.manager, execution.crds)
+	client.configOnRead = func(config *unstructured.Unstructured) {
+		config.SetFinalizers([]string{"dpu.nvidia.com/dpfoperatorconfig"})
+		config.SetResourceVersion("2")
+	}
+	journalFile := &managementMemoryFile{}
+	journal := &executionJournal{file: journalFile, digest: execution.plan.Digest()}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	receipt, err := runPreparedManagement(ctx, client, execution, journal, time.Millisecond)
+	if err != nil {
+		t.Fatalf("normal controller finalizer rejected after a verified create: %v", err)
+	}
+	if receipt.OperatorConfigUID != "config-uid" || !strings.Contains(journalFile.String(), "DPF_CONFIG_READY") || client.createConfig != 1 {
+		t.Fatal("controller finalizer transition did not produce one exact ready bootstrap receipt")
+	}
+	// Later tenant bootstrap uses this same full verifier, and existing-object
+	// reconciliation must not turn the controller's finalizer into a second create.
+	current, disposition, err := execution.reconciler.Ensure(ctx, client, execution.configObject)
+	if err != nil || current == nil || disposition != DispositionExisting || client.createConfig != 1 {
+		t.Fatalf("exact existing config with its controller finalizer was not preserved: %v", err)
+	}
+	tenantClient := newTenantStageFake(t, execution)
+	tenantClient.resources[tenantStageKey(current)] = current.DeepCopy()
+	if err := verifyManagementBootstrap(ctx, tenantClient, execution, tenantStageBootstrapReceipt(execution, tenantClient)); err != nil {
+		t.Fatalf("tenant bootstrap rejected the same exact finalized operator config: %v", err)
 	}
 }
 
@@ -698,5 +740,122 @@ func TestDecodeOperatorManifestPreservesKubernetesIntegers(t *testing.T) {
 	count, found, err := unstructured.NestedInt64(objects[0].Object, "spec", "replicas")
 	if err != nil || !found || count != 2 {
 		t.Fatalf("replica integer lost: count=%d found=%v err=%v", count, found, err)
+	}
+}
+
+func TestOperatorConfigIntentMismatchMessageUsesOnlyFixedCategories(t *testing.T) {
+	const sentinel = "untrusted-sentinel"
+	var typedNil *ReconciliationError
+	for _, tc := range []struct {
+		name     string
+		err      error
+		category string
+	}{
+		{name: "known category", err: &ReconciliationError{ReasonCode: "RESOURCE_METADATA_CONFLICT", Message: sentinel, cause: errors.New(sentinel)}, category: "RESOURCE_METADATA_CONFLICT"},
+		{name: "unknown category", err: &ReconciliationError{ReasonCode: sentinel, Message: sentinel, cause: errors.New(sentinel)}, category: "unavailable"},
+		{name: "plain error", err: errors.New(sentinel), category: "unavailable"},
+		{name: "typed nil", err: typedNil, category: "unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			message := operatorConfigIntentMismatchMessage(tc.err)
+			if strings.Contains(message, sentinel) || !strings.Contains(message, tc.category) {
+				t.Fatalf("unsafe or unclassified diagnostic: %q", message)
+			}
+		})
+	}
+}
+
+func TestOperatorConfigFinalizerDoesNotRelaxReadinessOwnershipOrIntent(t *testing.T) {
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := prepareManagementExecution(generated, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := execution.reconciler.markedDesired(execution.configObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline.SetUID("config-uid")
+	baseline.SetResourceVersion("1")
+	baseline.SetFinalizers([]string{"dpu.nvidia.com/dpfoperatorconfig"})
+	for _, tc := range []struct {
+		name         string
+		mutate       func(*unstructured.Unstructured)
+		category     string
+		ensureReject bool
+	}{
+		{name: "unknown finalizer", mutate: func(o *unstructured.Unstructured) { o.SetFinalizers([]string{"untrusted-sentinel"}) }, category: "RESOURCE_METADATA_CONFLICT", ensureReject: true},
+		{name: "duplicate finalizer", mutate: func(o *unstructured.Unstructured) {
+			o.SetFinalizers([]string{"dpu.nvidia.com/dpfoperatorconfig", "dpu.nvidia.com/dpfoperatorconfig"})
+		}, category: "RESOURCE_METADATA_CONFLICT", ensureReject: true},
+		{name: "bundle marker", mutate: func(o *unstructured.Unstructured) {
+			a := o.GetAnnotations()
+			a[BundleDigestAnnotation] = "untrusted-sentinel"
+			o.SetAnnotations(a)
+		}, category: "RESOURCE_OWNERSHIP_CONFLICT", ensureReject: true},
+		{name: "object marker", mutate: func(o *unstructured.Unstructured) {
+			a := o.GetAnnotations()
+			a[IntentDigestAnnotation] = "untrusted-sentinel"
+			o.SetAnnotations(a)
+		}, category: "RESOURCE_OWNERSHIP_CONFLICT", ensureReject: true},
+		{name: "owner reference", mutate: func(o *unstructured.Unstructured) {
+			o.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "Secret", Name: "untrusted-sentinel", UID: "untrusted-sentinel"}})
+		}, category: "RESOURCE_METADATA_CONFLICT", ensureReject: true},
+		{name: "spec drift", mutate: func(o *unstructured.Unstructured) {
+			if err := unstructured.SetNestedField(o.Object, int64(9000), "spec", "networking", "highSpeedMTU"); err != nil {
+				t.Fatal(err)
+			}
+		}, category: "RESOURCE_CONTENT_CONFLICT", ensureReject: true},
+		{name: "unknown spec field", mutate: func(o *unstructured.Unstructured) {
+			if err := unstructured.SetNestedField(o.Object, "untrusted-sentinel", "spec", "untrusted-sentinel"); err != nil {
+				t.Fatal(err)
+			}
+		}, category: "RESOURCE_SCHEMA_INVALID", ensureReject: true},
+		{name: "extra annotation", mutate: func(o *unstructured.Unstructured) {
+			a := o.GetAnnotations()
+			a["untrusted-sentinel"] = "untrusted-sentinel"
+			o.SetAnnotations(a)
+		}, category: "RESOURCE_METADATA_CONFLICT", ensureReject: true},
+		{name: "extra label", mutate: func(o *unstructured.Unstructured) {
+			o.SetLabels(map[string]string{"untrusted-sentinel": "untrusted-sentinel"})
+		}, category: "RESOURCE_METADATA_CONFLICT", ensureReject: true},
+		{name: "UID replacement", mutate: func(o *unstructured.Unstructured) { o.SetUID("untrusted-sentinel") }, category: "identity or retained intent", ensureReject: false},
+		{name: "missing resource version", mutate: func(o *unstructured.Unstructured) { o.SetResourceVersion("") }, category: "identity or retained intent", ensureReject: true},
+		{name: "deleting", mutate: func(o *unstructured.Unstructured) { now := metav1.Now(); o.SetDeletionTimestamp(&now) }, category: "identity or retained intent", ensureReject: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			client := managementFakeWithReadiness(t, execution.plan.Digest(), execution.manager, execution.crds)
+			client.config = baseline.DeepCopy()
+			tc.mutate(client.config)
+			file := &managementMemoryFile{}
+			journal := &executionJournal{file: file, digest: execution.plan.Digest()}
+			current, waitErr := waitOperatorConfigReady(ctx, client, execution.reconciler, execution.configObject, baseline, execution.operatorVersion, journal, time.Millisecond)
+			if waitErr == nil || current != nil || !strings.Contains(waitErr.Error(), "DPF_CONFIG_INTENT_CHANGED") {
+				t.Fatalf("modified finalized config passed readiness: %v", waitErr)
+			}
+			lines := strings.Split(strings.TrimSpace(file.String()), "\n")
+			var last executionEvent
+			if len(lines) != 2 || json.Unmarshal([]byte(lines[1]), &last) != nil || last.State != "failed" || last.ReasonCode != "DPF_CONFIG_INTENT_CHANGED" || !strings.Contains(last.Message, tc.category) || strings.Contains(file.String(), "untrusted-sentinel") || strings.Contains(file.String(), "DPF_CONFIG_READY") {
+				t.Fatalf("unsafe or nonspecific failure journal: %s", file.String())
+			}
+			if tc.ensureReject {
+				if _, _, err := execution.reconciler.Ensure(ctx, client, execution.configObject); err == nil {
+					t.Fatal("modified existing config passed reconciliation")
+				}
+			}
+			tenantClient := newTenantStageFake(t, execution)
+			tenantClient.resources[tenantStageKey(client.config)] = client.config.DeepCopy()
+			if err := verifyManagementBootstrap(ctx, tenantClient, execution, tenantStageBootstrapReceipt(execution, tenantClient)); err == nil {
+				t.Fatal("modified config passed tenant bootstrap")
+			}
+			if client.createConfig != 0 || tenantClient.createCount != 0 {
+				t.Fatal("failure allowed dependent effects")
+			}
+		})
 	}
 }

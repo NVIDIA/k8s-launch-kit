@@ -169,7 +169,9 @@ func (f *activationIntegrationFake) Create(ctx context.Context, desired *unstruc
 	}
 	f.deployment = created.DeepCopy()
 	f.base.resources[tenantStageKey(created)] = created.DeepCopy()
-	f.seedActivationChildren(created)
+	if err := f.seedActivationChildren(created); err != nil {
+		return nil, err
+	}
 	if f.nodeReadyOnCreate != "" {
 		for _, selected := range f.activationSelected {
 			f.setDPUNodeReady(selected.nodeName, f.nodeReadyOnCreate)
@@ -354,13 +356,17 @@ func (f *activationIntegrationFake) replaceActivationObject(objects []unstructur
 	}
 }
 
-func (f *activationIntegrationFake) seedActivationChildren(deployment *unstructured.Unstructured) {
-	sets, err := activationSetIntents(deployment, f.selected)
-	if err != nil {
-		panic(err)
+func (f *activationIntegrationFake) seedActivationChildren(deployment *unstructured.Unstructured) error {
+	software, softwareFound, softwareErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "blueFieldSoftware")
+	flavor, flavorFound, flavorErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "flavor")
+	if softwareErr != nil || !softwareFound || software == "" || flavorErr != nil || !flavorFound || flavor == "" {
+		return fmt.Errorf("fixture retained consumed software and flavor are missing")
 	}
 	for _, selected := range f.activationSelected {
-		set := sets[selected.deviceName()].DeepCopy()
+		if selected.dpuSet == nil {
+			return fmt.Errorf("fixture selected DPUSet intent is missing")
+		}
+		set := selected.dpuSet.DeepCopy()
 		set.SetUID(activationIntegrationUID(activationIntegrationSetUID, selected.item.device.Serial))
 		set.SetResourceVersion("1")
 		set.SetGeneration(1)
@@ -374,7 +380,7 @@ func (f *activationIntegrationFake) seedActivationChildren(deployment *unstructu
 				"ownerReferences": []any{map[string]any{"apiVersion": set.GetAPIVersion(), "kind": set.GetKind(), "name": set.GetName(), "uid": string(set.GetUID())}},
 				"labels":          map[string]any{activationDPUSetNameLabel: set.GetName(), activationDPUSetNSLabel: set.GetNamespace(), activationDPUDeviceLabel: selected.deviceName()}},
 			// Mirror DPF's selected tenant reference for post-activation lease joins.
-			"spec": map[string]any{"dpuNodeName": selected.nodeName, "dpuDeviceName": selected.deviceName(), "serialNumber": selected.item.device.Serial,
+			"spec": map[string]any{"blueFieldSoftware": software, "dpuFlavor": flavor, "dpuNodeName": selected.nodeName, "dpuDeviceName": selected.deviceName(), "serialNumber": selected.item.device.Serial,
 				"cluster": map[string]any{"name": f.tenant.expected.Name, "namespace": f.tenant.expected.Namespace}},
 			"status": map[string]any{"phase": "Rebooting", "previousPhase": "Update Firmware", "rebootStatus": map[string]any{"phase": "Pending", "reason": activationManualWaitReason, "method": "SystemLevelReset", "lastTransitionTime": "2026-11-13T13:00:00Z"},
 				"agentStatus": map[string]any{"lastStartupTime": "2026-11-13T12:00:00Z", "initialBootID": "11111111-1111-4111-8111-111111111111", "lastObservedPendingNvconfig": map[string]any{"bootID": "11111111-1111-4111-8111-111111111111"}},
@@ -387,7 +393,7 @@ func (f *activationIntegrationFake) seedActivationChildren(deployment *unstructu
 
 		node, err := f.base.Get(context.Background(), dpuNodeIdentity(deployment.GetNamespace(), selected.nodeName))
 		if err != nil {
-			panic(err)
+			return err
 		}
 		annotations := node.GetAnnotations()
 		if annotations == nil {
@@ -407,6 +413,7 @@ func (f *activationIntegrationFake) seedActivationChildren(deployment *unstructu
 		}}
 		f.maint = append(f.maint, *maintenance)
 	}
+	return nil
 }
 
 func (f *activationIntegrationFake) setSelected(selected []activationSelectedDevice, enrollment []enrollmentBMC) {

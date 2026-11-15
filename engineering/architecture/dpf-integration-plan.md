@@ -658,6 +658,20 @@ separately. The pinned DPUCluster controller's deterministic admin-kubeconfig
 name is the narrowly permitted spec addition. Other conflicts stop execution;
 there is no implicit adoption, patch, deletion or rollback.
 
+Known controller finalizers use a finite policy for each resource kind, including
+`dpu.nvidia.com/dpfoperatorconfig` on DPFOperatorConfig. Accepting controller
+metadata preserves the bundle and object ownership markers, namespace and UID
+checks, and complete default-normalized desired specification. Unknown or
+duplicate finalizers remain conflicts. Operator-configuration readiness records
+the safe verification category without copying remote field values into reports.
+Per-DPUSet software protection finalizers are matched to a finite, immutable
+policy compiled from the retained deployment's selected DPUSet names and exact
+BlueFieldSoftware namespace and name. Finalizer names do not establish object
+UID ownership. Before releasing holds or resetting a host, cohort verification
+also compares the consumed software and flavor references on both DPUSet
+templates and DPUs with the retained deployment, alongside the existing UID,
+owner, selector and physical-identity checks.
+
 The object execution boundary records and synchronizes an attempt before
 reconciliation, then persists the result before dependent work. A report-write
 failure stops execution. Readiness polling rechecks UID, ownership and desired

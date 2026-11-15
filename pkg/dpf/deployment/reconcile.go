@@ -64,12 +64,19 @@ const (
 // Reconciler verifies DPF objects against the CRD schemas retained from the
 // selected operator chart and one immutable bundle identity.
 type Reconciler struct {
-	schemas      *generation.ObjectSchemas
-	bundleDigest string
+	schemas            *generation.ObjectSchemas
+	bundleDigest       string
+	controllerMetadata controllerMetadataPolicy
 }
 
 // NewReconciler validates the retained operator projection and bundle digest.
 func NewReconciler(operatorManifest []byte, bundleDigest string) (*Reconciler, error) {
+	return newReconciler(operatorManifest, bundleDigest, nil)
+}
+
+// The native runner binds dynamic metadata once, before any API effects.
+// Public callers retain the strict static-only metadata policy.
+func newReconciler(operatorManifest []byte, bundleDigest string, policy controllerMetadataPolicy) (*Reconciler, error) {
 	if len(operatorManifest) == 0 {
 		return nil, fmt.Errorf("retained operator manifest is required")
 	}
@@ -80,7 +87,7 @@ func NewReconciler(operatorManifest []byte, bundleDigest string) (*Reconciler, e
 	if err != nil {
 		return nil, fmt.Errorf("compile retained operator CRD schemas: %w", err)
 	}
-	return &Reconciler{schemas: schemas, bundleDigest: bundleDigest}, nil
+	return &Reconciler{schemas: schemas, bundleDigest: bundleDigest, controllerMetadata: policy.clone()}, nil
 }
 
 // BundleDigest returns the immutable bundle identity bound to this reconciler.
@@ -174,7 +181,7 @@ func (r *Reconciler) Verify(desired, current *unstructured.Unstructured) error {
 	if !reflect.DeepEqual(marked.GetOwnerReferences(), current.GetOwnerReferences()) {
 		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource owner references differ from desired", nil)
 	}
-	if err := validateControllerMetadata(current); err != nil {
+	if err := validateControllerMetadata(current, r.controllerMetadata); err != nil {
 		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource has unsupported controller metadata", err)
 	}
 	want, err := r.schemas.DefaultedCopy(marked)
@@ -253,25 +260,6 @@ func allowDPUClusterKubeconfig(desired, current *unstructured.Unstructured) erro
 			return fmt.Errorf("DPUCluster kubeconfig differs from deterministic controller-owned Secret name")
 		}
 		unstructured.RemoveNestedField(current.Object, "spec", "kubeconfig")
-	}
-	return nil
-}
-
-func validateControllerMetadata(object *unstructured.Unstructured) error {
-	allowed := map[string]map[string]bool{
-		"DPUCluster":              {"provisioning.dpu.nvidia.com/cluster-manager-clean-up": true},
-		"DPUDeployment":           {"dpu.nvidia.com/dpudeployment": true},
-		"BlueFieldSoftware":       {"dpu.nvidia.com/dpudeployment": true},
-		"DPUFlavor":               {"dpu.nvidia.com/dpudeployment": true},
-		"DPUServiceTemplate":      {"dpu.nvidia.com/dpudeployment": true},
-		"DPUServiceConfiguration": {"dpu.nvidia.com/dpudeployment": true},
-	}
-	seen := make(map[string]bool, len(object.GetFinalizers()))
-	for _, finalizer := range object.GetFinalizers() {
-		if !allowed[object.GetKind()][finalizer] || seen[finalizer] {
-			return fmt.Errorf("current object has an unrecognized finalizer")
-		}
-		seen[finalizer] = true
 	}
 	return nil
 }

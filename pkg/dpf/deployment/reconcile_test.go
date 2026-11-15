@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -193,7 +194,7 @@ func TestReconcilerAllowsOnlyDocumentedDPUClusterControllerFields(t *testing.T) 
 	if err := unstructured.SetNestedField(current.Object, desired.GetName()+"-admin-kubeconfig", "spec", "kubeconfig"); err != nil {
 		t.Fatal(err)
 	}
-	current.SetFinalizers([]string{"provisioning.dpu.nvidia.com/cluster-manager-clean-up"})
+	current.SetFinalizers([]string{"provisioning.dpu.nvidia.com/cluster-manager-internal-clean-up", "provisioning.dpu.nvidia.com/cluster-manager-clean-up"})
 	if err := r.Verify(desired, current); err != nil {
 		t.Fatalf("Verify() rejected documented DPUCluster controller fields: %v", err)
 	}
@@ -267,5 +268,72 @@ func TestReconcilerReportsUncertainCreateErrorsAndPostCreateMismatch(t *testing.
 	}}
 	if _, disposition, err := r.Ensure(context.Background(), client, desired); err == nil || disposition != DispositionCreated || !strings.Contains(err.Error(), "re-read before retry") {
 		t.Fatalf("Ensure() = %q, %v; want partial create diagnostic", disposition, err)
+	}
+}
+
+func TestReconcilerRestrictsOperatorConfigFinalizerToItsOwnKind(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind string
+		finalizers []string
+		accepted   bool
+	}{
+		{name: "config without finalizer", kind: "DPFOperatorConfig", finalizers: nil, accepted: true},
+		{name: "config own finalizer", kind: "DPFOperatorConfig", finalizers: []string{"dpu.nvidia.com/dpfoperatorconfig"}, accepted: true},
+		{name: "duplicate", kind: "DPFOperatorConfig", finalizers: []string{"dpu.nvidia.com/dpfoperatorconfig", "dpu.nvidia.com/dpfoperatorconfig"}, accepted: false},
+		{name: "unknown", kind: "DPFOperatorConfig", finalizers: []string{"untrusted-sentinel"}, accepted: false},
+		{name: "other controller on config", kind: "DPFOperatorConfig", finalizers: []string{"dpu.nvidia.com/dpudeployment"}, accepted: false},
+		{name: "config controller on cluster", kind: "DPUCluster", finalizers: []string{"dpu.nvidia.com/dpfoperatorconfig"}, accepted: false},
+		{name: "config controller on dependency", kind: "DPUServiceTemplate", finalizers: []string{"dpu.nvidia.com/dpfoperatorconfig"}, accepted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			object := &unstructured.Unstructured{}
+			object.SetKind(tc.kind)
+			object.SetFinalizers(tc.finalizers)
+			if err := validateControllerMetadata(object, nil); (err == nil) != tc.accepted {
+				t.Fatalf("finalizer acceptance=%v, want %v", err == nil, tc.accepted)
+			}
+		})
+	}
+}
+
+func TestReconcilerRecognizesOnlyPinnedStaticControllerFinalizers(t *testing.T) {
+	// These combinations come from the qualified 26.8 controller source and
+	// retained manual lifecycle metadata. DPUSet-specific BFS finalizers need
+	// separate plan-bound ownership proof and are deliberately not allowed here.
+	for _, tc := range []struct {
+		name, kind string
+		finalizers []string
+		accepted   bool
+	}{
+		{name: "cluster controller combination", kind: "DPUCluster", finalizers: []string{"provisioning.dpu.nvidia.com/cluster-manager-internal-clean-up", "provisioning.dpu.nvidia.com/cluster-manager-clean-up"}, accepted: true},
+		{name: "BFS static controller combination", kind: "BlueFieldSoftware", finalizers: []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection", "dpu.nvidia.com/dpudeployment"}, accepted: true},
+		{name: "template controller combination", kind: "DPUServiceTemplate", finalizers: []string{"dpu.nvidia.com/dpuservicetemplate", "dpu.nvidia.com/dpudeployment"}, accepted: true},
+		{name: "service interface controller", kind: "DPUServiceInterface", finalizers: []string{"svc.dpu.nvidia.com/dpuserviceinterface"}, accepted: true},
+		{name: "service IPAM controller", kind: "DPUServiceIPAM", finalizers: []string{"svc.dpu.nvidia.com/dpuserviceipam"}, accepted: true},
+		{name: "cluster duplicate", kind: "DPUCluster", finalizers: []string{"provisioning.dpu.nvidia.com/cluster-manager-internal-clean-up", "provisioning.dpu.nvidia.com/cluster-manager-internal-clean-up"}, accepted: false},
+		{name: "BFS duplicate", kind: "BlueFieldSoftware", finalizers: []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection", "provisioning.dpu.nvidia.com/bluefieldsoftware-protection"}, accepted: false},
+		{name: "template duplicate", kind: "DPUServiceTemplate", finalizers: []string{"dpu.nvidia.com/dpuservicetemplate", "dpu.nvidia.com/dpuservicetemplate"}, accepted: false},
+		{name: "interface duplicate", kind: "DPUServiceInterface", finalizers: []string{"svc.dpu.nvidia.com/dpuserviceinterface", "svc.dpu.nvidia.com/dpuserviceinterface"}, accepted: false},
+		{name: "IPAM duplicate", kind: "DPUServiceIPAM", finalizers: []string{"svc.dpu.nvidia.com/dpuserviceipam", "svc.dpu.nvidia.com/dpuserviceipam"}, accepted: false},
+		{name: "cluster token on BFS", kind: "BlueFieldSoftware", finalizers: []string{"provisioning.dpu.nvidia.com/cluster-manager-internal-clean-up"}, accepted: false},
+		{name: "BFS token on cluster", kind: "DPUCluster", finalizers: []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection"}, accepted: false},
+		{name: "template token on interface", kind: "DPUServiceInterface", finalizers: []string{"dpu.nvidia.com/dpuservicetemplate"}, accepted: false},
+		{name: "interface token on IPAM", kind: "DPUServiceIPAM", finalizers: []string{"svc.dpu.nvidia.com/dpuserviceinterface"}, accepted: false},
+		{name: "IPAM token on template", kind: "DPUServiceTemplate", finalizers: []string{"svc.dpu.nvidia.com/dpuserviceipam"}, accepted: false},
+		{name: "unknown token with valid interface", kind: "DPUServiceInterface", finalizers: []string{"svc.dpu.nvidia.com/dpuserviceinterface", "untrusted-sentinel"}, accepted: false},
+		{name: "dynamic BFS unproven", kind: "BlueFieldSoftware", finalizers: []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection", "dpu.nvidia.com/dpudeployment", "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-bgp-dpu-74abadc2ddbdca64", "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-bgp-dpu-4b30517bb67d5c9c"}, accepted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			object := &unstructured.Unstructured{}
+			object.SetKind(tc.kind)
+			object.SetFinalizers(tc.finalizers)
+			before := object.DeepCopy()
+			if err := validateControllerMetadata(object, nil); (err == nil) != tc.accepted {
+				t.Fatalf("finalizer acceptance=%v, want %v", err == nil, tc.accepted)
+			}
+			if !reflect.DeepEqual(before.Object, object.Object) {
+				t.Fatal("controller metadata validation mutated its input")
+			}
+		})
 	}
 }

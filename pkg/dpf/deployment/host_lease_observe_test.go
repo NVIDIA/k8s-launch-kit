@@ -143,9 +143,14 @@ func newHostLeaseObservationHarness(t *testing.T) *hostLeaseObservationHarness {
 	for i := range intentDevices {
 		selectedBMCs[i] = enrollmentBMC{device: intentDevices[i]}
 	}
-	setIntents, err := activationSetIntents(deployment, selectedBMCs)
+	setIntents, err := activationSetIntents(deployment, intentDevices)
 	if err != nil {
 		t.Fatal(err)
+	}
+	software, softwareFound, softwareErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "blueFieldSoftware")
+	flavor, flavorFound, flavorErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "flavor")
+	if softwareErr != nil || !softwareFound || software == "" || flavorErr != nil || !flavorFound || flavor == "" {
+		t.Fatal("fixture retained consumed refs are missing")
 	}
 	selected := make([]activationSelectedDevice, 0, len(intentDevices))
 	activation := activationObservation{sets: map[string]*unstructured.Unstructured{}, dpus: map[string]*unstructured.Unstructured{}, nodes: map[string]*unstructured.Unstructured{}, complete: true}
@@ -169,7 +174,7 @@ func newHostLeaseObservationHarness(t *testing.T) *hostLeaseObservationHarness {
 				"labels":          map[string]any{activationDPUSetNameLabel: set.GetName(), activationDPUSetNSLabel: set.GetNamespace(), activationDPUDeviceLabel: deviceName},
 				"ownerReferences": []any{map[string]any{"apiVersion": set.GetAPIVersion(), "kind": set.GetKind(), "name": set.GetName(), "uid": string(set.GetUID())}},
 			},
-			"spec": map[string]any{"dpuNodeName": nodeName, "dpuDeviceName": deviceName, "serialNumber": item.device.Serial,
+			"spec": map[string]any{"blueFieldSoftware": software, "dpuFlavor": flavor, "dpuNodeName": nodeName, "dpuDeviceName": deviceName, "serialNumber": item.device.Serial,
 				"cluster": map[string]any{"name": expected.Name, "namespace": expected.Namespace}},
 		}}
 		activation.dpus[dpuName] = dpu
