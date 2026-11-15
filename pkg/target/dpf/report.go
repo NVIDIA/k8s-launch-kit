@@ -271,8 +271,6 @@ func writeChecks(out io.Writer, checks []inventory.Check, labels map[string]stri
 		slices.Sort(g.subjects)
 		message := g.check.Message
 		switch g.check.ReasonCode {
-		case "QUALIFIED_ADAPTER_REQUIRED":
-			message = "Hardware/firmware qualification is not established in this build; this is not a detected hardware fault."
 		case "BOM_MODEL_UNSUPPORTED":
 			message = "Software compatibility is unknown: the selected discovery BOM has no matching model entry."
 		case "INVENTORY_MODE":

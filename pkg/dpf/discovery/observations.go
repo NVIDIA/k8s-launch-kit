@@ -28,9 +28,9 @@ func HostCards(hosts []inventory.Device) []inventory.Device {
 				RecordKey: inventory.Digest("dpf-host-card-v1", []string{host.ID, card.Key}),
 				InputRef:  host.InputRef, Model: card.Model, SerialNumber: card.SerialNumber,
 				SerialNumberRaw: card.SerialNumberRaw, ReaderAdapter: "host-card-v1",
-				ObservationState: "observed", Qualification: "unqualified", InventoryCompleteness: "partial",
-				Authentication:  inventory.Authentication{PasswordRead: "not-evaluated", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"},
-				BMCAddressState: "unknown", EvidenceRefs: slices.Clone(card.EvidenceRefs),
+				ObservationState: "observed",
+				Authentication:   inventory.Authentication{PasswordRead: "not-evaluated", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"},
+				BMCAddressState:  "unknown", EvidenceRefs: slices.Clone(card.EvidenceRefs),
 			}
 			if redfish.ValidSerial(card.SerialNumber) {
 				d.IdentityKey = []string{"nvidia", card.SerialNumber}

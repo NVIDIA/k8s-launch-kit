@@ -84,6 +84,12 @@ func requestFiles(request Request) (map[string]string, error) {
 	destinations := []toolDestination{}
 	seen := map[string]bool{}
 	for i, destination := range request.Destinations {
+		if destination.InsecureSkipVerify && destination.ID == "management-api" {
+			return nil, fmt.Errorf("TLS verification bypass is not allowed for the management API")
+		}
+		if destination.InsecureSkipVerify && len(destination.CA) > 0 {
+			return nil, fmt.Errorf("TLS verification bypass cannot be combined with a CA bundle")
+		}
 		u, err := url.Parse(destination.Endpoint)
 		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || strings.ContainsAny(u.Host, "\r\n") || !strings.HasPrefix(destination.Path, "/") || destination.ID == "" || seen[destination.ID] {
 			return nil, fmt.Errorf("invalid or duplicate probe destination")

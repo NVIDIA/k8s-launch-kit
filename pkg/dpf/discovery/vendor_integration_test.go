@@ -33,8 +33,8 @@ func (vendorBindingCollector) Collect(ctx context.Context, target config.Target,
 	}
 	return inventory.Device{
 		ID: "dpu-one", RecordKey: target.InputRef, InputRef: target.InputRef,
-		ObservationState: "observed", Qualification: "unqualified", InventoryCompleteness: "partial",
-		SerialNumber: "CARD-ONE", BMCEndpoint: target.Endpoint,
+		ObservationState: "observed",
+		SerialNumber:     "CARD-ONE", BMCEndpoint: target.Endpoint,
 		Observations: map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED", Message: "fixture verified"}},
 	}, nil, nil
 }

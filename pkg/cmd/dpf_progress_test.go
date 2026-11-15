@@ -57,7 +57,7 @@ func TestDPFCLIProgressWhileRemoteRequestIsPending(t *testing.T) {
 			dir, pathErr := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, pathErr)
 			seed := filepath.Join(dir, "site.yaml")
-			source := fmt.Sprintf("credentials:\n  reader: {username: admin, passwordRef: {env: DPF_PROGRESS_TEST_PASSWORD}}\ndiscovery:\n  tls: {insecureSkipVerify: true}\n  hosts: [{name: worker-dpu, bmcEndpoint: '%s', credentialRef: reader}]\n  probes: {mode: inventory}\n", server.URL)
+			source := fmt.Sprintf("credentials:\n  reader: {username: admin, passwordRef: {env: DPF_PROGRESS_TEST_PASSWORD}}\ndiscovery:\n  tls: {insecureSkipVerify: true}\n  hosts: [{name: worker-dpu, bmcEndpoint: '%s', credentialRef: reader}]\n", server.URL)
 			require.NoError(t, os.WriteFile(seed, []byte(source), 0600))
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()

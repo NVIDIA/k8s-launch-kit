@@ -10,8 +10,8 @@ address-candidate lookup and refresh. This page provides the access and output r
 
 `l8k discover --target dpf` collects hardware inventory from explicitly selected
 host/DPU Redfish or SSH endpoints. The DPF estate is independent of Host networking.
-Inventory mode can run before Kubernetes exists; an explicitly supplied management
-kubeconfig adds management observations and must work if supplied.
+Inventory mode is the default and can run before Kubernetes exists. An explicitly
+supplied management kubeconfig adds management observations and must work if supplied.
 
 DPF discovery remains an **experimental** capability. Inventory success means
 selected sources were read and the requested inventory was saved; it does not
@@ -19,12 +19,15 @@ mean DPF provisioning readiness or hardware qualification. Missing optional card
 metadata remains visible. Hardware support and deployment readiness checks do
 not block inventory collection.
 
-Without a selected use case, discovery defaults to `management` mode. Set
-`discovery.probes.mode: inventory` to collect inventory without temporary Pods.
-HBN-BGP defaults to inventory mode; explicitly select management mode to test
-network paths. Management probes currently support Linux/amd64 nodes. DPF HBN-BGP
+Discovery defaults to `inventory` mode, including with HBN-BGP. Supply a
+kubeconfig to add management topology observations. Explicitly select
+`discovery.probes.mode: management` to test per-node network paths. Management probes currently support Linux/amd64 nodes. DPF HBN-BGP
 artifact generation and standalone [deployment](dpf-deployment.md) are available.
 DPF standalone validation and the composite DPF pipeline are not available.
+
+Inventory establishes physical identities, host associations and BMC access. It
+does not certify hardware support for every deployment. A selected use case
+checks its own required hardware, firmware and controller capabilities.
 
 ## Management-network probes
 
@@ -36,8 +39,8 @@ be able to read Nodes and the namespace and create, inspect, read logs from,
 and delete the temporary Pods and ConfigMap there. Namespace admission policy
 must allow host-network Pods. Launch Kit does not change admission policy.
 
-The cluster must have exactly three control-plane nodes. All management-cluster
-nodes selected for the probes must be Ready, schedulable Linux/amd64 nodes and
+The cluster must have exactly three control-plane nodes. All nodes reported by the management cluster
+must be Ready, schedulable Linux/amd64 nodes and
 able to pull the published, digest-pinned `nicolaka/netshoot` image. An optional
 `discovery.probes.imageRepository` mirror must contain the same pinned manifests.
 Unsupported node scope is rejected before probe resources are created.
@@ -97,10 +100,6 @@ succeed and its card identity must match exactly one host adapter. Sources are n
 silently substituted after access failures. The CLI does not scan subnets.
 
 ```yaml
-management:
-  kubeconfigRef:
-    file: ./credentials/management.kubeconfig
-  context: management
 credentials:
   dpu-reader:
     username: bmc-maintainer
@@ -117,8 +116,6 @@ discovery:
   hosts:
     - bmcEndpoint: https://192.0.2.21
       credentialRef: host-reader
-  probes:
-    mode: inventory
 ```
 
 ```bash
@@ -406,10 +403,9 @@ The final text report uses configured endpoint names, falling back to addresses,
 and shows DPU model/serial, host association and BMC administrator status. It
 separates problems that prevent discovery from prerequisites for provisioning
 and checks not requested in this run. Identical later-stage findings are grouped
-with their affected sources. An unqualified hardware combination means this
-build has not established qualification; it is not a detected hardware fault.
-An unsupported BOM model means software compatibility is unknown. Neither is
-silently marked passed, and the JSON check states and exit rules are unchanged.
+with their affected sources. An unsupported BOM model means software
+compatibility is unknown; it does not mean a hardware failure was detected.
+Inventory does not claim release or hardware qualification.
 
 For operation timing and source/check diagnostics, add `--log-level debug`.
 Use `--log-level trace` for Redfish request categories/statuses and SSH
@@ -488,6 +484,9 @@ Complete discovery writes the requested YAML. Partial collection preserves an
 existing handoff and writes `partial.yaml` plus `report.json` beneath
 `<output-stem>.discovery/<run-id>/`. JSON stdout is one final DPF result, with
 progress on stderr. Invalid command-line arguments are reported on stderr.
+Configuration failures identify the field path and original YAML line/column
+when available. Correct that location and retry; diagnostics omit field values
+and source snippets so credential values are not repeated in errors.
 The report contains facts, checks, factual diffs, later-phase gaps, errors and
 successfully written artifacts. Redfish errors retain sanitized method/resource,
 HTTP status and observation/cleanup stage. Cleanup failures retain the exact

@@ -61,7 +61,7 @@ var _ = Describe("persisted host permanent MAC facts", func() {
 		}{{name: "YAML", encode: yaml.Marshal, decode: yaml.Unmarshal}, {name: "JSON", encode: json.Marshal, decode: json.Unmarshal}} {
 			By(codec.name)
 			source := inventory.Inventory{FormatVersion: inventory.FormatVersion, Hosts: []inventory.Device{{
-				ID: "host-one", RecordKey: "host-one", ObservationState: "observed", Qualification: "unqualified",
+				ID: "host-one", RecordKey: "host-one", ObservationState: "observed",
 				SSHEndpoint: "ssh://192.0.2.11:22", Authentication: inventory.Authentication{Method: "ssh"},
 				Runtime: &inventory.RuntimeObservation{Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{
 					Name: "data0", PCIAddress: "0000:21:00.0", MAC: "02:00:00:00:00:99", PermanentMAC: "02:00:00:00:00:01",

@@ -92,9 +92,6 @@ func resolveUseCase(r *Request) error {
 	if r.HBN == nil {
 		return nil
 	}
-	// HBN readiness adds direct read-only fabric inspection. It does not need
-	// the optional management-network probe Job to collect physical inventory.
-	r.Mode = "inventory"
 	if len(s.Discovery.Switches) > 32 {
 		return fmt.Errorf("at most 32 discovery switches are supported")
 	}

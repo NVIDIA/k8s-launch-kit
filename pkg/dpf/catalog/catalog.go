@@ -6,12 +6,11 @@ package catalog
 
 import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 )
 
-// ProbeAssets pins the existing netshoot v0.16 image. Linux/amd64 Pod and host
-// network execution has passed the controlled Kubernetes runtime checks. Other
-// architectures remain unavailable until tested with the same protocol and cleanup.
+// ProbeAssets pins the existing netshoot v0.16 image. The installed protocol is
+// supported on Linux/amd64 in pod and host networking; other architectures
+// remain unavailable.
 // No discovery image is built or published by Launch Kit.
 func ProbeAssets() probe.Assets {
 	return probe.Assets{
@@ -23,7 +22,3 @@ func ProbeAssets() probe.Assets {
 		Qualified: true,
 	}
 }
-
-// Hardware is empty until real resource graphs and adapter completeness predicates
-// have been qualified for specific models/firmware. Candidate reads remain useful.
-func Hardware() []redfish.Qualification { return nil }

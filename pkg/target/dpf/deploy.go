@@ -170,7 +170,7 @@ func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string) deploy
 		}
 		deps := discovery.Dependencies{
 			Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, HostLLDP: sshprobe.Collector{},
-			BMC:            redfish.Collector{Qualifications: catalog.Hardware(), IncludeNetworkFunctionMACs: true, ProvisioningRelease: plan.Intent().Release},
+			BMC:            redfish.Collector{IncludeNetworkFunctionMACs: true, ProvisioningRelease: plan.Intent().Release},
 			Probes:         probe.Runner{Assets: catalog.ProbeAssets(), Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))},
 			HBNPermissions: newHBNPermissionObserver().observe, HBNEnrollment: hbnEnrollmentAccessCheck, Artifacts: artifactcheck.Verifier{}, HostNetworking: sshprobe.ObserveHostWorkloadNetwork,
 		}

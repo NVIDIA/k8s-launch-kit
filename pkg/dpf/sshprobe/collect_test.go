@@ -243,7 +243,6 @@ var _ = Describe("SSH inventory observations", func() {
 		Expect(d.BMCEndpoint).To(Equal("https://192.0.2.42"))
 		Expect(d.BMCAddressState).To(Equal("observed-local-ipmi"))
 		Expect(d.ObservationState).To(Equal("observed"))
-		Expect(d.Qualification).To(Equal("unqualified"))
 		Expect(d.Authentication.DPFClientAuthentication).To(Equal("not-evaluated"))
 		Expect(d.Runtime.Interfaces).To(HaveLen(1))
 		Expect(d.Runtime.Routes[0].InterfaceIndex).To(Equal(2))
@@ -288,7 +287,6 @@ var _ = Describe("SSH inventory observations", func() {
 		Expect(d.Adapters[1].SerialNumber).To(BeEmpty())
 		Expect(d.Adapters[0].IdentityState).To(Equal("known"))
 		Expect(d.Adapters[1].IdentityState).To(Equal("unknown"))
-		Expect(d.InventoryCompleteness).To(Equal("partial"))
 		Expect(d.Runtime.Observations["interfaces"].State).To(Equal("unavailable"))
 	})
 	It("does not combine separate PCI slots with the same serial", func() {

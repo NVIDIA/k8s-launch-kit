@@ -226,7 +226,7 @@ func Decode(b []byte, p string) (Input, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	var doc yaml.Node
 	if err := dec.Decode(&doc); err != nil {
-		return Input{}, fmt.Errorf("invalid YAML")
+		return Input{}, yamlSyntaxDiagnostic(err)
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
@@ -255,7 +255,7 @@ func Decode(b []byte, p string) (Input, error) {
 	strict := yaml.NewDecoder(bytes.NewReader(encoded))
 	strict.KnownFields(true)
 	if err := strict.Decode(&site); err != nil {
-		return Input{}, fmt.Errorf("unknown field or invalid type in DPF configuration")
+		return Input{}, strictDiagnostic(err, encoded, expanded)
 	}
 	if err := inventory.NormalizeInventory(site.Inventory); err != nil {
 		return Input{}, err
@@ -293,7 +293,7 @@ func validateKeys(n *yaml.Node, active, visited map[*yaml.Node]bool, depth int) 
 	return nil
 }
 func Resolve(in Input) (Request, error) {
-	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "management"}
+	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "inventory"}
 	s := in.Site
 	base := filepath.Dir(in.Path)
 	if err := resolveUseCase(&r); err != nil {
@@ -624,7 +624,7 @@ func validateScalarTypes(n *yaml.Node, p string) error {
 			expected = "!!bool"
 		}
 		if n.Tag != expected {
-			return fmt.Errorf("%s has invalid scalar type at line %d", p, n.Line)
+			return yamlDiagnostic("invalid scalar type", p, n)
 		}
 	case yaml.MappingNode:
 		for i := 0; i < len(n.Content); i += 2 {

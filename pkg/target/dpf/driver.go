@@ -37,7 +37,7 @@ func Descriptor() target.Descriptor {
 	}
 	phases[target.Deploy] = target.Capability{Available: true, Reason: "HBN-BGP provisioning and runtime validation for the explicitly selected hosts and DPUs"}
 	phases[target.Generate] = target.Capability{Available: true, Reason: "HBN-BGP artifact generation; deployment readiness requires fresh checks"}
-	phases[target.Discover] = target.Capability{Available: true, Reason: "experimental inventory discovery; management probes require qualified release assets; hardware catalog qualification pending"}
+	phases[target.Discover] = target.Capability{Available: true, Reason: "inventory discovery and management-network diagnostics; deployment eligibility is evaluated by the selected use case"}
 	return target.Descriptor{Name: target.DPF, Description: "Independent DPF discovery and HBN-BGP generation and deployment", Phases: phases}
 }
 
@@ -120,7 +120,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 						if resolved.HBN != nil && resolved.Software != nil {
 							provisioningRelease = resolved.Software.Version
 						}
-						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{Qualifications: catalog.Hardware(), IncludeNetworkFunctionMACs: resolved.HBN != nil, ProvisioningRelease: provisioningRelease}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
+						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{IncludeNetworkFunctionMACs: resolved.HBN != nil, ProvisioningRelease: provisioningRelease}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
 						deps.HBNPermissions = newHBNPermissionObserver().observe
 						deps.HBNEnrollment = hbnEnrollmentAccessCheck
 						deps.Artifacts = artifactcheck.Verifier{}
