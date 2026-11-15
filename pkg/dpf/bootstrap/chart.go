@@ -28,8 +28,7 @@ import (
 )
 
 const (
-	maxOperatorChartBytes     = 32 << 20
-	operatorProjectionRelease = "26.8.0"
+	maxOperatorChartBytes = 32 << 20
 )
 
 // OperatorRenderInputs are explicit inputs for offline rendering. The
@@ -59,8 +58,8 @@ func RenderOperator(archive []byte, in OperatorRenderInputs) (OperatorRenderResu
 	if err != nil {
 		return OperatorRenderResult{}, fmt.Errorf("resolve DPF release: %w", err)
 	}
-	if release.Version != operatorProjectionRelease {
-		return OperatorRenderResult{}, fmt.Errorf("offline operator projection is supported only for DPF %s", operatorProjectionRelease)
+	if !release.Capabilities.NativeOperatorProjection {
+		return OperatorRenderResult{}, fmt.Errorf("offline operator projection is not supported for DPF %s", release.Version)
 	}
 	if err := validateOperatorRenderInputs(in, release); err != nil {
 		return OperatorRenderResult{}, err

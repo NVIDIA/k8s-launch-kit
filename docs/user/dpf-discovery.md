@@ -326,8 +326,8 @@ Controller mTLS enrollment and provisioning readiness remain separate later-phas
 ## Software BOM and optional address lookup
 
 `dpf.release` selects the release's software BOM independently of live measurements.
-Omitted/null selects `26.4.0` for general inventory or the HBN-BGP profile
-default, `26.8.0`, when that use case is selected. Explicit empty or unknown
+Omitted/null selects `26.4.0` for general inventory or the release catalog's
+HBN-BGP default, `26.8.0` today, when that use case is selected. Explicit empty or unknown
 releases are rejected. The resolved BOM is saved under `inventory.software`, with operator
 and component coordinates, exact hardware models and BFB version/URL plus a
 digest when known. Documented minima use named fields such as
@@ -556,9 +556,11 @@ l8k discover --target dpf --use-case hbn-bgp \
 ```
 
 The explicit CLI selection overrides `dpf.useCase` and is saved with the result.
-HBN-BGP defaults to inventory mode, DPF release `26.8.0`, and operator namespace
-`dpf-operator-system`. The profile currently supports only DPF release `26.8.0`;
-other `dpf.release` values are rejected during shared configuration resolution.
+HBN-BGP defaults to inventory mode and the release catalog's HBN-BGP release
+`26.8.0`; the same catalog row supplies default HBN chart and image
+coordinates. Other `dpf.release` values are rejected unless the catalog
+explicitly supports HBN-BGP for them. The profile supplies operator namespace
+`dpf-operator-system` and networking/policy defaults.
 Override the operator namespace with `dpf.namespace`; it is independent of the
 namespace used for optional management-network probes. Defaults are included in
 the binary.

@@ -48,12 +48,12 @@ Choose each source explicitly: a host operating system over SSH or its BMC over 
 | Required for SSH | A verified `knownHostsFile`; direct connectivity from the CLI machine. SSH port defaults to `22`; ambient SSH config, agents and ProxyJump are not used. |
 | Conditional | DPU ARM SSH for partial OS measurements; a private CA for Redfish when system trust is insufficient; `systemURI` if a BMC exposes several Systems. |
 | Optional | A management kubeconfig for additional observations. Inventory needs none, but an explicitly supplied kubeconfig must work. |
-| Defaultable | For generic inventory, `dpf.release` defaults to `26.4.0`; HBN-BGP defaults to and requires `26.8.0`. Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Inventory is the default and omits temporary management-network probes. Explicit management mode requests those probes. |
+| Defaultable | For generic inventory, `dpf.release` defaults to `26.4.0`; HBN-BGP defaults to and requires its catalog-declared release (`26.8.0` today). Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Inventory is the default and omits temporary management-network probes. Explicit management mode requests those probes. |
 | Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |
 
 Use an account whose own session proves its effective administrator role. If session Roles is absent, local authentication must be established by an explicit trusted local session `UserAuthenticationSource`. A current `LocalAccountAuth: Enabled` policy alone cannot prove how an existing session authenticated. Disabled local authentication and explicitly external session sources are unsupported; Fallback/LocalFirst require the explicit local session source. Missing origin plus missing Roles cannot inherit privileges from a same-named local administrator. Discovery reports unverifiable proof as partial without replacing a complete handoff.
 
-Do not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted or null `dpf.release` uses the selected profile or generic inventory default; an empty or unknown release is rejected. The example below pins `26.8.0` so its inventory can be reused for HBN-BGP. An existing explicit release is preserved when you select a use case; change an older release to `26.8.0`, or remove that field to use the HBN-BGP profile default, before the HBN-BGP readiness step.
+Do not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted or null `dpf.release` uses the selected use-case or generic inventory default; an empty or unknown release is rejected. The example below pins `26.8.0` so its inventory can be reused for HBN-BGP. An existing explicit release is preserved when you select a use case; change an older release to a catalog-supported HBN-BGP release, or remove that field to use the HBN-BGP default, before the HBN-BGP readiness step.
 
 All network connections start from the machine where you run `l8k`. Host and DPU endpoints do not need to connect to each other for this workflow.
 
@@ -391,11 +391,11 @@ flowchart TD
 
 ### 1. CLI operator: select the desired profile and switch access {#hbn-bgp-preflight-inputs}
 
-Use DPF `26.8.0` for HBN-BGP. Keep `dpf.release: 26.8.0`, or omit that field to use the HBN-BGP profile default. If the saved inventory explicitly selects an older release, update or remove it before adding `--use-case hbn-bgp`; a use-case selection does not overwrite an explicit release.
+Use DPF `26.8.0` for HBN-BGP. Keep `dpf.release: 26.8.0`, or omit that field to use the release catalog's HBN-BGP default. If the saved inventory explicitly selects an older release, update or remove it before adding `--use-case hbn-bgp`; a use-case selection does not overwrite an explicit release.
 
 Retain explicit host and DPU BMC targets. Add each switch SSH address, credential reference, pinned known-hosts file and intended p0/p1-to-switch-port bindings. Omit networking fields to use defaults or override them in `dpf.hbn`. Supply the tenant VIP and control-plane management interface under `provisioning.bootstrap.tenant`; discovery can reuse a literal observed management API IP and port. Missing allocations remain blockers. HBN software and node-effect defaults can be overridden under `provisioning.hbn`. Unknown cabling must remain unresolved; do not guess a mapping from LLDP names.
 
-The selected HBN-BGP profile supplies the expected network configuration. Omit `dpf.hbn` to use its defaults, or override individual VRF, ASN, MTU and address-pool fields for your environment. Discovery compares the live fabric with these resolved values; it does not adopt conflicting switch settings as new defaults. Generation uses the same effective configuration. Keep credentials, access endpoints and physical port bindings in their separate site inputs.
+The selected HBN-BGP profile supplies the expected network configuration and policy defaults; the selected release row supplies default HBN artifact coordinates. Omit `dpf.hbn` to use its defaults, or override individual VRF, ASN, MTU and address-pool fields for your environment. Discovery compares the live fabric with these resolved values; it does not adopt conflicting switch settings as new defaults. Generation uses the same effective configuration. Keep credentials, access endpoints and physical port bindings in their separate site inputs.
 
 Next: [Inputs prepared](#hbn-bgp-preflight-run).
 

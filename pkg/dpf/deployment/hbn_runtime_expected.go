@@ -125,7 +125,7 @@ func compileHBNRuntimeBinding(execution *managementExecution, activation activat
 	return hbnPodBindingIntent{DPUDeploymentName: deployment.GetName(), DPUDeploymentUID: string(activation.DeploymentUID), DPUServiceUID: string(service.GetUID()),
 		ExpectedServiceSpec: expectedSpec, ApplicationValues: effective, ArgoNamespace: execution.operatorNamespace, DPUServiceName: service.GetName(), DPUServiceNamespace: desired.Namespace,
 		DPUServiceCreatedAt: service.GetCreationTimestamp().Time, DPUClusterName: desired.Bootstrap.Tenant.Name, DPUClusterNamespace: desired.Bootstrap.Tenant.Namespace, TargetNamespace: desired.Namespace,
-		ChartRepoURL: strings.TrimPrefix(stringValue(source, "repoURL"), "oci://"), ChartName: reference, ChartPath: stringValue(source, "path"), ChartVersion: stringValue(source, "version"), ChartReleaseName: stringValue(source, "releaseName"), ServiceID: id, Image: image}, nil
+		ChartRepoURL: strings.TrimPrefix(stringValue(source, "repoURL"), "oci://"), ChartName: desired.Generation.Chart, ChartPath: stringValue(source, "path"), ChartVersion: stringValue(source, "version"), ChartReleaseName: stringValue(source, "releaseName"), ServiceID: id, Image: image}, nil
 }
 
 type hbnServiceProjection struct {

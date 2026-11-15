@@ -356,16 +356,16 @@ not observations or authorization to modify switches.
 
 ## Baseline and limits
 
-#### Scenario: HBN expected configuration comes from one resolved profile
+#### Scenario: HBN expected configuration comes from one resolved intent
 
 - **WHEN** HBN discovery validates a site with omitted settings or explicit overrides
-- **THEN** the selected release/profile supplies defaults and present user values override them before observation; explicit false, zero and empty values undergo validation.
+- **THEN** the release catalog supplies the HBN-BGP default release and artifact tuple, the profile supplies networking and policy defaults, and present user values override them before observation; explicit false, zero and empty values undergo validation.
 - **AND** checks, generated resources and suggested infrastructure changes use the same resolved intent; conflicting observed settings do not silently change that intent.
 - **AND** required environment inputs and physical identities are supplied or discovered independently rather than invented from profile defaults.
 
 #### Scenario: Unsupported profile overrides fail before discovery
 
-- **WHEN** HBN-BGP selects a DPF release outside its embedded profile, enables the flat profile's unsupported VXLAN startup probe or supplies a chart name beyond the DPF deployment-service API limit
+- **WHEN** HBN-BGP selects a release not declared for that use case, enables the flat profile's unsupported VXLAN startup probe or supplies a chart name beyond the DPF deployment-service API limit
 - **THEN** shared intent validation rejects the configuration before credentials or remote observations are opened.
 - **AND** generation and rendering use the same profile constraints; valid explicit false and supported environment overrides remain valid.
 - **AND** the per-DPU workload prefix must be more specific than the workload pool. A single allocation equal to the entire pool is rejected by common intent validation, before host access, because the planned pool route would conflict with its connected subnet.

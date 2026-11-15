@@ -5,9 +5,11 @@ package redfish
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 )
 
 // provisioningAPIReads checks the initial BF4 reads made by the selected DPF
@@ -18,8 +20,9 @@ func provisioningAPIReads(ctx context.Context, reader Reader, release string, bf
 	unknown := func(code, message string) inventory.Observation {
 		return inventory.Observation{State: "unknown", Tool: "redfish", ReasonCode: code, Message: message}
 	}
-	if release != "26.8.0" || !bf4 {
-		return unknown("DPF_PROVISIONING_API_UNSUPPORTED", "Release-specific enrollment API checks are implemented for DPF 26.8.0 on BlueField-4 only.")
+	selected, err := releases.Resolve(release)
+	if err != nil || !selected.Capabilities.BF4ProvisioningAPI || !bf4 {
+		return unknown("DPF_PROVISIONING_API_UNSUPPORTED", "The selected DPF release does not declare this provisioning API contract, or the selected device is not BlueField-4.")
 	}
 	if reader == nil || !ValidSerial(serial) || system.URI == "" {
 		return unknown("DPF_PROVISIONING_IDENTITY_REQUIRED", "A verified DPU identity and selected system are required before release-specific API reads.")
@@ -61,7 +64,7 @@ func provisioningAPIReads(ctx context.Context, reader Reader, release string, bf
 		!reflect.DeepEqual(networkFunctionIdentity(function), networkFunctionIdentity(currentFunction)) {
 		return unknown("DPF_PROVISIONING_API_CHANGED", "The selected identity, PSID or PF0 changed during release-specific API verification.")
 	}
-	return inventory.Observation{State: "observed", Tool: "redfish", Values: []string{release, mac}, ReasonCode: "DPF_PROVISIONING_API_READS_VERIFIED", Message: "DPF 26.8.0's BF4 chassis, PSID and PF0 reads identify this selected DPU; controller authentication and provisioning actions remain later checks."}
+	return inventory.Observation{State: "observed", Tool: "redfish", Values: []string{release, mac}, ReasonCode: "DPF_PROVISIONING_API_READS_VERIFIED", Message: fmt.Sprintf("DPF %s's BF4 chassis, PSID and PF0 reads identify this selected DPU; controller authentication and provisioning actions remain later checks.", release)}
 }
 
 func provisioningAPIReadFailure(resource string, err error) inventory.Observation {
@@ -69,7 +72,7 @@ func provisioningAPIReadFailure(resource string, err error) inventory.Observatio
 	message := "DPF enrollment read " + resource + " failed: " + code + "."
 	if code == "RESOURCE_NOT_FOUND" {
 		code = "DPF_PROVISIONING_API_NOT_EXPOSED"
-		message = "The BMC does not expose " + resource + ", required by DPF 26.8.0's BF4 enrollment client. Update to compatible BMC firmware before provisioning; physical inventory success does not establish this prerequisite."
+		message = "The BMC does not expose " + resource + ", required by the selected DPF release's BF4 enrollment client. Update to compatible BMC firmware before provisioning; physical inventory success does not establish this prerequisite."
 	}
 	return inventory.Observation{State: "unknown", Tool: "redfish", ReasonCode: code, Message: message}
 }

@@ -274,7 +274,7 @@ func serviceTemplate(namespace string, coordinates hbn.Generation, resources map
 		"deploymentServiceName": coordinates.ChartName,
 		"resourceRequirements":  cloneMap(resources),
 		"helmChart": map[string]any{
-			"source": map[string]any{"repoURL": coordinates.ChartRepository, "version": coordinates.ChartVersion, "chart": coordinates.ChartName},
+			"source": map[string]any{"repoURL": coordinates.ChartRepository, "version": coordinates.ChartVersion, "chart": coordinates.Chart},
 			"values": map[string]any{"image": map[string]any{"repository": coordinates.ImageRepository, "tag": coordinates.ImageTag + "@" + coordinates.ImageDigest}, "resources": resources, "hbnSidecar": map[string]any{"vxlanStartupProbe": map[string]any{"enabled": false}}},
 		},
 	})

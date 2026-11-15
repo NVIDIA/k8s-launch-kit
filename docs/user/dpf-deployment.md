@@ -66,8 +66,9 @@ not imply that the native deployment path supports it; see
 `dpf.hbn.fabricVRF` describes the VRF expected on the selected switch uplinks;
 the profile default is `default`. DPU FRR uses its default VRF. These are separate
 routing roles, so review the switch fabric and DPU routing settings independently
-in the resolved bundle. The profile provides defaultable release, ASN,
-address-pool and MTU values. Override the site file only when needed, then
+in the resolved bundle. The release catalog provides the HBN-BGP release and
+artifact defaults; the profile provides defaultable ASN, address-pool and MTU
+values. Override the site file only when needed, then
 regenerate and review a new bundle. Do not edit files in an existing generated
 directory.
 

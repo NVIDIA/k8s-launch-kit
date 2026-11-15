@@ -1,6 +1,8 @@
 # Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 # SPDX-License-Identifier: Apache-2.0
 # Curated software coordinates, not a Launch Kit hardware qualification catalog.
+defaultUseCases:
+  hbn-bgp: "26.8.0"
 releases:
   "26.4.0":
     version: "26.4.0"
@@ -108,6 +110,25 @@ releases:
       - BFB and component image bytes are not digest-locked by this catalog; provisioning must resolve and verify immutable artifacts before use.
   "26.8.0":
     version: "26.8.0"
+    useCases: [hbn-bgp]
+    hbnWorkload:
+      chartRepository: https://helm.ngc.nvidia.com/nvidia/doca
+      chart: doca-hbn
+      chartVersion: 3.5.0
+      chartDigest: sha256:85dc3b44307b92088fc3d05561e66cada4a7d8390ff6ff3e6c6fde8f9c5a42d9
+      imageRepository: nvcr.io/nvidia/doca/doca_hbn
+      imageTag: 3.5.0-doca3.5.0
+      imageDigest: sha256:675ff5bf03acf5e2c777309d9dbe570754d3348be661278df094783f18962d93
+      startupVersion: HBN 2.4.0
+      sourceRef: hbn-guide
+      resetSafety:
+        contract: bf4-reset-safety-v1
+        bmcFirmware: BF4-26.10-0001
+        cpuFirmware: 26.10-0001
+        models: [B4240]
+    capabilities:
+      nativeOperatorProjection: true
+      bf4ProvisioningAPI: true
     tenantKubernetesVersion: v1.35.6
     supportedKubernetes:
       minimum: "1.33"

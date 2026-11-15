@@ -123,6 +123,9 @@ only its own address class. Observed ranges SHALL NOT become persisted overrides
 
 DPF HBN-BGP generation SHALL retain verified operator and HBN chart archives,
 the original source YAML and resolved desired inputs in a single validated bundle.
+Release-owned default HBN chart and image coordinates SHALL be resolved from
+the selected release row; explicit `provisioning.hbn` overrides SHALL remain
+visible in resolved intent and SHALL NOT imply release compatibility.
 It SHALL validate generated DPF custom resources against the selected operator's
 schemas and reject fields the API would prune, while preserving fields explicitly
 allowed by the schema. An operator post-render adjustment SHALL apply identically

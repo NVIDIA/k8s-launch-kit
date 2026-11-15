@@ -24,6 +24,8 @@ var _ = Describe("HBN use-case inputs", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.UseCase).To(Equal("hbn-bgp"))
 		Expect(r.Software.Version).To(Equal("26.8.0"))
+		Expect(r.HBNGeneration.Chart).To(Equal("doca-hbn"))
+		Expect(r.HBNGeneration.ChartName).To(Equal("doca-hbn"), "the DPF service identity remains distinct from the upstream chart coordinate")
 		Expect(r.DPFNamespace).To(Equal("dpf-operator-system"))
 		Expect(r.Mode).To(Equal("inventory"))
 		Expect(r.HBN.FabricVRF).To(Equal("default"))
@@ -81,7 +83,7 @@ var _ = Describe("HBN use-case inputs", func() {
 		}
 	})
 
-	It("uses the HBN profile release while preserving supported namespace overrides", func() {
+	It("uses the HBN catalog default while preserving supported namespace overrides", func() {
 		for _, doc := range []string{
 			"dpf: {useCase: hbn-bgp, release: null, namespace: null}\n",
 			"dpf: {useCase: hbn-bgp, release: '26.8.0', namespace: selected-dpf}\n",
@@ -99,7 +101,7 @@ var _ = Describe("HBN use-case inputs", func() {
 			}
 		}
 	})
-	It("rejects release overrides outside the selected HBN profile before access resolution", func() {
+	It("rejects release overrides outside the selected HBN use case before access resolution", func() {
 		in, err := Decode([]byte("dpf: {useCase: hbn-bgp, release: '26.4.0'}\n"+seed), "/site/input.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		_, err = Resolve(in)

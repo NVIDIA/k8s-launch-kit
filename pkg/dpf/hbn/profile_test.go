@@ -54,10 +54,10 @@ func TestLoadDefinitionMetadataAndEmbeddedDefaults(t *testing.T) {
 	if definition.Plugin != "dpf" || definition.Name != "hbn-bgp" || definition.Target != "dpf" || definition.Description == "" {
 		t.Fatalf("unexpected profile metadata: %#v", definition)
 	}
-	if definition.Defaults.Release != "26.8.0" || definition.Defaults.Namespace != "dpf-operator-system" {
-		t.Fatalf("unexpected profile release/namespace defaults: %#v", definition.Defaults)
+	if definition.Defaults.Namespace != "dpf-operator-system" {
+		t.Fatalf("unexpected profile namespace default: %#v", definition.Defaults)
 	}
-	if got := definition.Defaults.Generation; got.ChartName != "doca-hbn" || got.ChartVersion != "3.5.0" || got.ImageTag != "3.5.0-doca3.5.0" || got.StartupVersion != "HBN 2.4.0" || got.NodeEffect != NodeEffectHold || got.DPUSetStrategy != DPUSetStrategyOnDelete || got.WorkloadGatewayIndex != 1 || got.HostAddressIndex != 2 || got.VXLANStartupProbeEnabled {
+	if got := definition.Defaults.Generation; got.NodeEffect != NodeEffectHold || got.DPUSetStrategy != DPUSetStrategyOnDelete || got.WorkloadGatewayIndex != 1 || got.HostAddressIndex != 2 || got.VXLANStartupProbeEnabled {
 		t.Fatalf("unexpected generation defaults: %#v", got)
 	}
 	bootstrap := definition.Defaults.Bootstrap
@@ -113,6 +113,7 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 	want := Generation{
 		ChartRepository:          "https://helm.ngc.nvidia.com/nvidia/doca",
 		ChartName:                "doca-hbn",
+		Chart:                    "doca-hbn",
 		ChartVersion:             "3.5.0",
 		ChartDigest:              "sha256:85dc3b44307b92088fc3d05561e66cada4a7d8390ff6ff3e6c6fde8f9c5a42d9",
 		ImageRepository:          "nvcr.io/nvidia/doca/doca_hbn",
@@ -166,6 +167,37 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 	}
 	if err := ValidateGeneration(profile, overridden); err != nil {
 		t.Fatalf("ValidateGeneration(overrides) error = %v", err)
+	}
+}
+
+func TestResolveGenerationFromSelectedReleaseCoordinates(t *testing.T) {
+	definition, err := LoadDefinition()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := GenerationCoordinates{ChartRepository: "https://helm.example/first", Chart: "first-chart", ChartVersion: "1.2.3", ChartDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ImageRepository: "registry.example/team/first", ImageTag: "first.1", ImageDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", StartupVersion: "HBN 1.2.3"}
+	selected, err := ResolveGenerationFrom(definition.Defaults.Generation, base, GenerationOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := base
+	second.ChartRepository, second.Chart, second.ChartVersion = "https://mirror.example/second", "second-chart", "2.3.4"
+	second.ImageRepository, second.ImageTag, second.StartupVersion = "registry.example/team/second", "second.2", "HBN 2.3.4"
+	second.ChartDigest, second.ImageDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	other, err := ResolveGenerationFrom(definition.Defaults.Generation, second, GenerationOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Chart != "first-chart" || other.Chart != "second-chart" || selected.ChartVersion == other.ChartVersion || selected.ImageRepository == other.ImageRepository {
+		t.Fatalf("generation did not consume its selected release coordinates: first=%#v second=%#v", selected, other)
+	}
+	customTag := "site-approved"
+	overridden, err := ResolveGenerationFrom(definition.Defaults.Generation, second, GenerationOptions{ImageTag: &customTag})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overridden.ImageTag != customTag || overridden.Chart != second.Chart {
+		t.Fatalf("explicit user artifact override lost or replaced release-owned defaults: %#v", overridden)
 	}
 }
 
@@ -228,7 +260,10 @@ func TestValidateGenerationChecksWorkloadPoolRelationship(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := definition.Defaults.Networking
-	generation := definition.Defaults.Generation
+	generation, err := ResolveGeneration(GenerationOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	profile.WorkloadCIDR = "10.0.124.0/22"
 	if err := ValidateGeneration(profile, generation); err == nil {
 		t.Fatal("ValidateGeneration() accepted overlapping loopback/workload pools")
@@ -257,7 +292,6 @@ func TestLoadDefinitionStrictlyValidatesEmbeddedProfile(t *testing.T) {
 		{name: "name", data: replace("name: hbn-bgp", "name: other")},
 		{name: "target", data: replace("target: dpf", "target: host")},
 		{name: "empty description", data: replace("description: Flat IPv4 BGP HBN profile for the DPF target.", "description: ''")},
-		{name: "missing release", data: replace("release: \"26.8.0\"", "release: ''")},
 		{name: "missing namespace", data: replace("namespace: dpf-operator-system", "namespace: ''")},
 		{name: "missing networking field", data: replace("    workloadPrefix: 29\n", "")},
 		{name: "missing generation defaults", data: replace("  generation:\n", "  removed-generation:\n")},

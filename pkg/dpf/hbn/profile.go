@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	dpfassets "github.com/nvidia/k8s-launch-kit/profiles"
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -24,6 +25,7 @@ import (
 )
 
 const (
+	ServiceName    = "doca-hbn"
 	maxDevices     = 256
 	minUplinkMTU   = 1280
 	minWorkloadMTU = 576
@@ -103,11 +105,12 @@ type GenerationOptions struct {
 	VXLANStartupProbeEnabled *bool           `yaml:"vxlanStartupProbeEnabled,omitempty" json:"vxlanStartupProbeEnabled,omitempty"`
 }
 
-// Generation is the resolved, desired manifest-generation contract. These
-// values are profile inputs, not observations of installed artifacts or state.
+// Generation is the resolved desired manifest contract: release-owned artifact
+// coordinates plus profile-owned policy, with presence-aware user overrides.
 type Generation struct {
 	ChartRepository          string         `yaml:"chartRepository" json:"chartRepository"`
 	ChartName                string         `yaml:"chartName" json:"chartName"`
+	Chart                    string         `yaml:"chart" json:"chart"`
 	ChartVersion             string         `yaml:"chartVersion" json:"chartVersion"`
 	ChartDigest              string         `yaml:"chartDigest" json:"chartDigest"`
 	ImageRepository          string         `yaml:"imageRepository" json:"imageRepository"`
@@ -120,6 +123,30 @@ type Generation struct {
 	DPUSetStrategy           DPUSetStrategy `yaml:"dpuSetStrategy" json:"dpuSetStrategy"`
 	NodeEffect               NodeEffect     `yaml:"nodeEffect" json:"nodeEffect"`
 	VXLANStartupProbeEnabled bool           `yaml:"vxlanStartupProbeEnabled" json:"vxlanStartupProbeEnabled"`
+}
+
+// GenerationDefaults contains profile-owned HBN policy. Versioned artifact
+// coordinates come from the selected release catalog row instead.
+type GenerationDefaults struct {
+	LoopbackCIDR             string         `yaml:"loopbackCIDR" json:"loopbackCIDR"`
+	WorkloadGatewayIndex     int            `yaml:"workloadGatewayIndex" json:"workloadGatewayIndex"`
+	HostAddressIndex         int            `yaml:"hostAddressIndex" json:"hostAddressIndex"`
+	DPUSetStrategy           DPUSetStrategy `yaml:"dpuSetStrategy" json:"dpuSetStrategy"`
+	NodeEffect               NodeEffect     `yaml:"nodeEffect" json:"nodeEffect"`
+	VXLANStartupProbeEnabled bool           `yaml:"vxlanStartupProbeEnabled" json:"vxlanStartupProbeEnabled"`
+}
+
+// GenerationCoordinates is the HBN artifact tuple selected from the release
+// BOM. Site overrides are applied only after this explicit default is supplied.
+type GenerationCoordinates struct {
+	ChartRepository string
+	Chart           string
+	ChartVersion    string
+	ChartDigest     string
+	ImageRepository string
+	ImageTag        string
+	ImageDigest     string
+	StartupVersion  string
 }
 
 // BootstrapDefaults contains profile-owned names and safe defaults for a
@@ -148,12 +175,11 @@ type Definition struct {
 }
 
 type DefinitionDefaults struct {
-	Release    string            `yaml:"release"`
-	Namespace  string            `yaml:"namespace"`
-	Networking Profile           `yaml:"networking"`
-	Generation Generation        `yaml:"generation"`
-	Resources  Resources         `yaml:"resources"`
-	Bootstrap  BootstrapDefaults `yaml:"bootstrap"`
+	Namespace  string             `yaml:"namespace"`
+	Networking Profile            `yaml:"networking"`
+	Generation GenerationDefaults `yaml:"generation"`
+	Resources  Resources          `yaml:"resources"`
+	Bootstrap  BootstrapDefaults  `yaml:"bootstrap"`
 }
 
 // LoadDefinition strictly decodes the build-embedded HBN profile. It performs
@@ -186,13 +212,13 @@ func validateDefinition(definition Definition) error {
 	if strings.TrimSpace(definition.Description) == "" {
 		return fmt.Errorf("profile description is required")
 	}
-	if strings.TrimSpace(definition.Defaults.Release) == "" || strings.TrimSpace(definition.Defaults.Namespace) == "" {
-		return fmt.Errorf("profile defaults require a release and namespace")
+	if strings.TrimSpace(definition.Defaults.Namespace) == "" {
+		return fmt.Errorf("profile defaults require a namespace")
 	}
 	if err := validateProfile(definition.Defaults.Networking); err != nil {
 		return fmt.Errorf("invalid profile networking defaults: %w", err)
 	}
-	if err := ValidateGeneration(definition.Defaults.Networking, definition.Defaults.Generation); err != nil {
+	if err := validateGenerationDefaults(definition.Defaults.Generation); err != nil {
 		return fmt.Errorf("invalid profile generation defaults: %w", err)
 	}
 	if err := ValidateResources(definition.Defaults.Resources); err != nil {
@@ -289,14 +315,36 @@ func validateBootstrapDefaults(defaults BootstrapDefaults) error {
 	return nil
 }
 
-// ResolveGeneration fills omitted generation values from the embedded profile
-// and validates the resulting coordinates and generation settings.
+// ResolveGeneration is a compatibility helper for package consumers. Workflow
+// resolution should use ResolveGenerationFrom with its already selected BOM.
 func ResolveGeneration(options GenerationOptions) (Generation, error) {
 	definition, err := LoadDefinition()
 	if err != nil {
 		return Generation{}, err
 	}
-	generation := definition.Defaults.Generation
+	release, err := releases.DefaultForUseCase(releases.UseCaseHBNBGP)
+	if err != nil {
+		return Generation{}, err
+	}
+	w := release.HBNWorkload
+	if w == nil {
+		return Generation{}, fmt.Errorf("default HBN release has no workload coordinates")
+	}
+	return ResolveGenerationFrom(definition.Defaults.Generation, GenerationCoordinates{ChartRepository: w.ChartRepository, Chart: w.Chart, ChartVersion: w.ChartVersion, ChartDigest: w.ChartDigest, ImageRepository: w.ImageRepository, ImageTag: w.ImageTag, ImageDigest: w.ImageDigest, StartupVersion: w.StartupVersion}, options)
+}
+
+// ResolveGenerationFrom combines profile-owned policy with explicit release
+// BOM artifact defaults, then applies presence-aware user overrides.
+func ResolveGenerationFrom(defaults GenerationDefaults, coordinates GenerationCoordinates, options GenerationOptions) (Generation, error) {
+	generation := Generation{
+		ChartRepository: coordinates.ChartRepository, ChartName: ServiceName, Chart: coordinates.Chart,
+		ChartVersion: coordinates.ChartVersion, ChartDigest: coordinates.ChartDigest,
+		ImageRepository: coordinates.ImageRepository, ImageTag: coordinates.ImageTag,
+		ImageDigest: coordinates.ImageDigest, StartupVersion: coordinates.StartupVersion,
+		LoopbackCIDR: defaults.LoopbackCIDR, WorkloadGatewayIndex: defaults.WorkloadGatewayIndex,
+		HostAddressIndex: defaults.HostAddressIndex, DPUSetStrategy: defaults.DPUSetStrategy,
+		NodeEffect: defaults.NodeEffect, VXLANStartupProbeEnabled: defaults.VXLANStartupProbeEnabled,
+	}
 	if options.ChartRepository != nil {
 		generation.ChartRepository = *options.ChartRepository
 	}
@@ -370,39 +418,59 @@ func ValidateGeneration(profile Profile, generation Generation) error {
 }
 
 func validateGeneration(generation Generation) error {
-	chartRepository, err := url.Parse(generation.ChartRepository)
-	if err != nil || chartRepository.Scheme != "https" || chartRepository.Host == "" || chartRepository.User != nil || chartRepository.RawQuery != "" || chartRepository.Fragment != "" || strings.TrimSpace(generation.ChartRepository) != generation.ChartRepository {
-		return fmt.Errorf("chartRepository must be an HTTPS URL without credentials, query, or fragment")
-	}
-	if !chartNamePattern.MatchString(generation.ChartName) {
-		return fmt.Errorf("chartName must be a lowercase DNS-style name")
-	}
 	if len(generation.ChartName) > 28 {
 		return fmt.Errorf("chartName must be at most 28 characters for the DPF deploymentServiceName API")
 	}
-	// Native runtime service binding is qualified for this chart identity. Keep
-	// source/version/digest overrides separate from that fixed service ABI.
-	if generation.ChartName != "doca-hbn" {
-		return fmt.Errorf("chartName must be doca-hbn for the supported native HBN workflow")
+	// ChartName is the stable DPF service ABI. The upstream Helm chart is a
+	// separate release-owned coordinate and may change independently.
+	if generation.ChartName != ServiceName {
+		return fmt.Errorf("chartName must be %s for the supported native HBN workflow", ServiceName)
 	}
-	if !chartVersionPattern.MatchString(generation.ChartVersion) {
+	if err := validateGenerationCoordinates(GenerationCoordinates{
+		ChartRepository: generation.ChartRepository, Chart: generation.Chart,
+		ChartVersion: generation.ChartVersion, ChartDigest: generation.ChartDigest,
+		ImageRepository: generation.ImageRepository, ImageTag: generation.ImageTag,
+		ImageDigest: generation.ImageDigest, StartupVersion: generation.StartupVersion,
+	}); err != nil {
+		return err
+	}
+	return validateGenerationDefaults(GenerationDefaults{
+		LoopbackCIDR: generation.LoopbackCIDR, WorkloadGatewayIndex: generation.WorkloadGatewayIndex,
+		HostAddressIndex: generation.HostAddressIndex, DPUSetStrategy: generation.DPUSetStrategy,
+		NodeEffect: generation.NodeEffect, VXLANStartupProbeEnabled: generation.VXLANStartupProbeEnabled,
+	})
+}
+
+func validateGenerationCoordinates(coordinates GenerationCoordinates) error {
+	chartRepository, err := url.Parse(coordinates.ChartRepository)
+	if err != nil || chartRepository.Scheme != "https" || chartRepository.Host == "" || chartRepository.User != nil || chartRepository.RawQuery != "" || chartRepository.Fragment != "" || strings.TrimSpace(coordinates.ChartRepository) != coordinates.ChartRepository {
+		return fmt.Errorf("chartRepository must be an HTTPS URL without credentials, query, or fragment")
+	}
+	if !chartNamePattern.MatchString(coordinates.Chart) {
+		return fmt.Errorf("chart must be a lowercase DNS-style name")
+	}
+	if !chartVersionPattern.MatchString(coordinates.ChartVersion) {
 		return fmt.Errorf("chartVersion must be an exact numeric major.minor.patch version")
 	}
-	if !sha256DigestPattern.MatchString(generation.ChartDigest) {
+	if !sha256DigestPattern.MatchString(coordinates.ChartDigest) {
 		return fmt.Errorf("chartDigest must be sha256 followed by 64 lowercase hexadecimal characters")
 	}
-	if !imageRepositoryPattern.MatchString(generation.ImageRepository) {
+	if !imageRepositoryPattern.MatchString(coordinates.ImageRepository) {
 		return fmt.Errorf("imageRepository must be a lowercase OCI repository path without tag or digest")
 	}
-	if !imageTagPattern.MatchString(generation.ImageTag) {
+	if !imageTagPattern.MatchString(coordinates.ImageTag) {
 		return fmt.Errorf("imageTag must be a valid OCI tag without a digest")
 	}
-	if !sha256DigestPattern.MatchString(generation.ImageDigest) {
+	if !sha256DigestPattern.MatchString(coordinates.ImageDigest) {
 		return fmt.Errorf("imageDigest must be sha256 followed by 64 lowercase hexadecimal characters")
 	}
-	if !startupVersionPattern.MatchString(generation.StartupVersion) {
+	if !startupVersionPattern.MatchString(coordinates.StartupVersion) {
 		return fmt.Errorf("startupVersion must use the form HBN major.minor.patch")
 	}
+	return nil
+}
+
+func validateGenerationDefaults(generation GenerationDefaults) error {
 	loopback, err := netip.ParsePrefix(generation.LoopbackCIDR)
 	if err != nil || !loopback.Addr().Is4() || loopback != loopback.Masked() || !loopback.Addr().IsGlobalUnicast() {
 		return fmt.Errorf("loopbackCIDR %q must be a canonical IPv4 unicast CIDR", generation.LoopbackCIDR)

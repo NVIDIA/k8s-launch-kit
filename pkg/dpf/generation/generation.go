@@ -103,18 +103,17 @@ func Generate(input Inputs) (*bundle.Bundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve selected DPF release: %w", err)
 	}
-	definition, err := hbn.LoadDefinition()
-	if err != nil {
-		return nil, err
-	}
-	if release.Version != definition.Defaults.Release {
-		return nil, fmt.Errorf("selected DPF release %s does not match HBN profile release %s", release.Version, definition.Defaults.Release)
+	if !release.SupportsUseCase(releases.UseCaseHBNBGP) {
+		return nil, fmt.Errorf("selected DPF release %s does not support HBN-BGP generation", release.Version)
 	}
 	if release.TenantKubernetesVersion == "" {
 		return nil, fmt.Errorf("selected DPF release %s has no sourced tenant Kubernetes version for HBN generation", release.Version)
 	}
 	if err := validateInputs(input); err != nil {
 		return nil, err
+	}
+	if err := hbn.ValidateGeneration(input.Workload.Profile, input.Workload.Generation); err != nil {
+		return nil, fmt.Errorf("validate resolved HBN generation: %w", err)
 	}
 	if err := validateHBNChartArchive(input.HBNChartArchive, input.Workload.Generation); err != nil {
 		return nil, fmt.Errorf("validate HBN chart archive: %w", err)
@@ -182,7 +181,7 @@ func validateRenderedHBNChart(archive []byte, input hbnrender.Inputs, workloadFi
 	if err != nil {
 		return fmt.Errorf("load verified chart: %w", err)
 	}
-	if chart.Metadata == nil || chart.Metadata.Name != input.Generation.ChartName || chart.Metadata.Version != input.Generation.ChartVersion {
+	if chart.Metadata == nil || chart.Metadata.Name != input.Generation.Chart || chart.Metadata.Version != input.Generation.ChartVersion {
 		return fmt.Errorf("loaded chart metadata does not match resolved chart coordinates")
 	}
 	var values map[string]any
@@ -343,7 +342,7 @@ func validateHBNChartArchive(archive []byte, generation hbn.Generation) error {
 	reader := tar.NewReader(bounded)
 	seen := make(map[string]bool)
 	var chartYAML []byte
-	root := generation.ChartName + "/"
+	root := generation.Chart + "/"
 	for entries := 0; ; entries++ {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -360,7 +359,7 @@ func validateHBNChartArchive(archive []byte, generation hbn.Generation) error {
 			archiveName = strings.TrimSuffix(archiveName, "/")
 		}
 		clean := path.Clean(archiveName)
-		chartRootDirectory := header.Typeflag == tar.TypeDir && clean == generation.ChartName
+		chartRootDirectory := header.Typeflag == tar.TypeDir && clean == generation.Chart
 		if clean != archiveName || strings.HasPrefix(clean, "/") || clean == "." || (!chartRootDirectory && !strings.HasPrefix(clean, root)) {
 			return fmt.Errorf("chart archive contains an unsafe or unexpected path")
 		}
@@ -415,7 +414,7 @@ func validateHBNChartArchive(archive []byte, generation hbn.Generation) error {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return fmt.Errorf("chart metadata must contain one YAML document")
 	}
-	if metadata.Name != generation.ChartName || metadata.Version != generation.ChartVersion {
+	if metadata.Name != generation.Chart || metadata.Version != generation.ChartVersion {
 		return fmt.Errorf("chart metadata does not match resolved chart name and version")
 	}
 	return nil
@@ -439,7 +438,7 @@ func buildFiles(input Inputs, release string, operator bootstrap.OperatorRenderR
 	operatorChartPath := "charts/dpf-operator-" + release + ".tgz"
 	operatorValuesPath := "helm/dpf-operator-values.yaml"
 	operatorProjectionPath := "projections/dpf-operator-install.yaml"
-	hbnChartPath := "charts/" + input.Workload.Generation.ChartName + "-" + input.Workload.Generation.ChartVersion + ".tgz"
+	hbnChartPath := "charts/" + input.Workload.Generation.Chart + "-" + input.Workload.Generation.ChartVersion + ".tgz"
 	add(bundle.File{Path: operatorChartPath, Data: input.OperatorArchive}, bundle.Chart)
 	add(bundle.File{Path: operatorValuesPath, Data: operator.HelmValues}, bundle.HelmValues)
 	add(bundle.File{Path: operatorProjectionPath, Data: operator.Manifest}, bundle.Projection)

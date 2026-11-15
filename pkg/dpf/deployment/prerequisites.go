@@ -15,6 +15,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -198,7 +199,8 @@ func managementPreflightPlan(request ManagementPreflightRequest) (preflightPlan,
 		return preflightPlan{}, fmt.Errorf("an immutable generated bundle is required")
 	}
 	index := request.Bundle.Index()
-	if index.Target != bundle.Target || index.Phase != bundle.Phase || index.Profile != "hbn-bgp" || index.Release != "26.8.0" {
+	release, releaseErr := releases.Resolve(index.Release)
+	if releaseErr != nil || index.Target != bundle.Target || index.Phase != bundle.Phase || index.Profile != "hbn-bgp" || !release.SupportsUseCase(releases.UseCaseHBNBGP) {
 		return preflightPlan{}, fmt.Errorf("management preflight requires a generated DPF HBN-BGP bundle")
 	}
 	validated, err := generation.LoadPlan(request.Bundle)
@@ -217,7 +219,8 @@ func managementPreflightPlanFromValidated(request ManagementPreflightRequest, va
 		return preflightPlan{}, fmt.Errorf("an immutable generated bundle is required")
 	}
 	index := request.Bundle.Index()
-	if index.Target != bundle.Target || index.Phase != bundle.Phase || index.Profile != "hbn-bgp" || index.Release != "26.8.0" {
+	release, releaseErr := releases.Resolve(index.Release)
+	if releaseErr != nil || index.Target != bundle.Target || index.Phase != bundle.Phase || index.Profile != "hbn-bgp" || !release.SupportsUseCase(releases.UseCaseHBNBGP) {
 		return preflightPlan{}, fmt.Errorf("management preflight requires a generated DPF HBN-BGP bundle")
 	}
 	if validated == nil || validated.Digest() == "" || validated.Digest() != index.BundleDigest {

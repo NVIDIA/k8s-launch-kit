@@ -71,13 +71,16 @@ The DPF target SHALL resolve software coordinates from a release-owned BOM, sepa
 - **WHEN** identity collection succeeds for hardware outside the selected release BOM
 - **THEN** inventory remains useful and a reasoned later-phase compatibility check is unresolved; no supported tuple is invented.
 
-### Requirement: DPF use-case selection and desired profile defaults
+### Requirement: DPF use-case selection and desired defaults
 
 An explicitly supplied DPF `--use-case` SHALL override the YAML selection and be
 persisted in the effective saved configuration, without modifying the original
 source bytes used for concurrent-edit detection. Unknown or explicitly empty
-selections SHALL fail before remote access. Omitted/null HBN profile fields SHALL
-use profile defaults; explicit invalid values SHALL NOT silently default.
+selections SHALL fail before remote access. The release catalog SHALL declare
+HBN-BGP-compatible releases and its workflow default separately from the generic
+inventory default; selected release rows SHALL own HBN artifact defaults.
+Networking and policy defaults SHALL remain profile-owned. Explicit invalid
+values SHALL NOT silently default.
 Host target execution SHALL reject DPF-only use-case flags.
 
 #### Scenario: Saving an explicit HBN-BGP CLI selection
@@ -111,7 +114,7 @@ Tag-driven wiring covers root/generate/discover; standalone deploy/validate also
 
 ### DPF bootstrap and HBN generation inputs
 
-DPF HBN configuration keeps networking intent (`dpf.hbn`), release/profile generation options (`provisioning.hbn`), site bootstrap allocations (`provisioning.bootstrap`) and observed inventory separate. Omitted/null fields select profile defaults; explicit empty/zero/false values are preserved and validated. The resolver performs no credential reads or network access to fill bootstrap inputs. Only a literal observed management API IP/port may supply its endpoint defaults. Tenant VIP/interface remain required site allocations. Bootstrap-input completeness does not establish live address reservation, storage health, controller readiness or deployment permission.
+DPF HBN configuration keeps networking intent (`dpf.hbn`), profile policy and release-owned artifact defaults (with user overrides under `provisioning.hbn`), site bootstrap allocations (`provisioning.bootstrap`) and observed inventory separate. Omitted/null fields select their owning catalog/profile defaults; explicit empty/zero/false values are preserved and validated. The resolver performs no credential reads or network access to fill bootstrap inputs. Only a literal observed management API IP/port may supply its endpoint defaults. Tenant VIP/interface remain required site allocations. Bootstrap-input completeness does not establish live address reservation, storage health, controller readiness or deployment permission.
 
 - GIVEN HBN discovery without tenant VIP/interface WHEN bootstrap inputs are evaluated THEN retain the inventory and report each missing allocation as a required unknown with a reason.
 - GIVEN a management API hostname WHEN deriving an operator endpoint THEN do not invent its resolved IP; require an explicit reachable API IP/port.

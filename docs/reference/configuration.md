@@ -60,11 +60,14 @@ requirements are checked after the effective configuration is resolved.
 do not apply to it. Select `dpf.useCase: hbn-bgp` or explicitly supply
 `--use-case hbn-bgp` to evaluate that use case's prerequisites.
 
-The HBN-BGP profile supplies DPF release `26.8.0`, operator namespace
-`dpf-operator-system`, and networking defaults. This profile currently supports
-only release `26.8.0`; a different `dpf.release` is rejected during shared
-configuration resolution. Override the namespace with `dpf.namespace` and
-networking fields under `dpf.hbn`.
+The release catalog declares the HBN-BGP default and supported release as
+`26.8.0`; it also supplies that release's default HBN chart and image
+coordinates. An explicit unsupported `dpf.release` is rejected during shared
+configuration resolution. The profile supplies operator namespace
+`dpf-operator-system` and networking/policy defaults. Override the namespace
+with `dpf.namespace` and networking fields under `dpf.hbn`. Explicit
+`provisioning.hbn` artifact values remain user-owned overrides and are
+validated and recorded as supplied.
 Omitted/null fields select defaults; explicit empty/zero values are validated.
 General DPF inventory without a use case retains its `26.4.0` release default.
 Switch endpoints, credentials, pinned SSH trust, and intended port bindings are
@@ -122,17 +125,20 @@ uses defaults, and an explicitly empty map is invalid. See
 [HBN-BGP generation](../user/dpf-generation.md).
 
 `provisioning.hbn` overrides HBN generation settings independently of the
-networking values under `dpf.hbn`. The profile selects chart `3.5.0`, image
-`3.5.0-doca3.5.0` with a SHA-256 digest, startup format `HBN 2.4.0`, loopback
-pool `10.0.124.0/24`, workload gateway index `1`, host address index `2`,
+networking values under `dpf.hbn`. The selected release row supplies default
+chart `3.5.0`, image `3.5.0-doca3.5.0` with a SHA-256 digest, and startup
+format `HBN 2.4.0`. The profile supplies loopback pool `10.0.124.0/24`,
+workload gateway index `1`, host address index `2`,
 `OnDelete` strategy, and
 `nodeEffect: hold`. The flat profile disables the VXLAN startup probe.
 Shared resolution requires `nodeEffect: hold` and `chartName: doca-hbn` for
 this native workflow. Explicit `noEffect` or another chart name is unsupported
 and rejected before credential resolution or artifact retrieval; these values
-are never silently replaced by defaults. The runtime service binding uses the
-`doca-hbn` chart identity. Chart repository, version and digest overrides remain
-available, with matching artifact bytes and separately validated compatibility.
+are never silently replaced by defaults. The DPF service identity remains
+`doca-hbn`; the upstream Helm chart name is a separate release coordinate.
+Chart repository/version/digest, image repository/tag/digest and startup version
+overrides remain available. Overrides are preserved, and matching artifact
+bytes are verified; custom coordinates are not thereby certified compatible.
 Shared resolution also rejects enabling the VXLAN startup probe.
 `hold` pauses provisioning at the node-effect boundary until the selected
 maintenance request is released; it does not mean provisioning has completed.

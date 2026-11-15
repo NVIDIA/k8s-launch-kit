@@ -16,12 +16,29 @@ import (
 // Summary is the persisted software BOM. Catalog research provenance remains in
 // Release; omitted minima mean unknown requirements, never inferred constraints.
 type Summary struct {
-	Version                 string             `json:"version" yaml:"version"`
-	SupportedKubernetes     *VersionRange      `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
-	TenantKubernetesVersion string             `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
-	Operator                OperatorSummary    `json:"operator" yaml:"operator"`
-	Components              []ComponentSummary `json:"components" yaml:"components"`
-	Hardware                []HardwareSummary  `json:"hardware" yaml:"hardware"`
+	Version                 string              `json:"version" yaml:"version"`
+	UseCases                []string            `json:"useCases,omitempty" yaml:"useCases,omitempty"`
+	HBNWorkload             *HBNWorkloadSummary `json:"hbnWorkload,omitempty" yaml:"hbnWorkload,omitempty"`
+	Capabilities            Capabilities        `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
+	SupportedKubernetes     *VersionRange       `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
+	TenantKubernetesVersion string              `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
+	Operator                OperatorSummary     `json:"operator" yaml:"operator"`
+	Components              []ComponentSummary  `json:"components" yaml:"components"`
+	Hardware                []HardwareSummary   `json:"hardware" yaml:"hardware"`
+}
+
+// HBNWorkloadSummary is the compact, source-reference-free projection of the
+// selected release's HBN artifact defaults for persisted inventory.
+type HBNWorkloadSummary struct {
+	ChartRepository string               `json:"chartRepository" yaml:"chartRepository"`
+	Chart           string               `json:"chart" yaml:"chart"`
+	ChartVersion    string               `json:"chartVersion" yaml:"chartVersion"`
+	ChartDigest     string               `json:"chartDigest" yaml:"chartDigest"`
+	ImageRepository string               `json:"imageRepository" yaml:"imageRepository"`
+	ImageTag        string               `json:"imageTag" yaml:"imageTag"`
+	ImageDigest     string               `json:"imageDigest" yaml:"imageDigest"`
+	StartupVersion  string               `json:"startupVersion" yaml:"startupVersion"`
+	ResetSafety     *ResetSafetyContract `json:"resetSafety,omitempty" yaml:"resetSafety,omitempty"`
 }
 
 type OperatorSummary struct {
@@ -96,12 +113,24 @@ func (h *HardwareSummary) minimumFields() []struct {
 func Summarize(r Release) Summary {
 	s := Summary{
 		Version:                 r.Version,
+		UseCases:                slices.Clone(r.UseCases),
+		Capabilities:            r.Capabilities,
 		SupportedKubernetes:     cloneVersionRange(r.SupportedKubernetes),
 		TenantKubernetesVersion: r.TenantKubernetesVersion,
 		Operator: OperatorSummary{Chart: r.Operator.Chart, ChartRepository: r.Operator.ChartRepository,
 			Version: r.Operator.Version, ChartDigest: r.Operator.ChartDigest, Image: r.Operator.Image},
 		Components: make([]ComponentSummary, 0, len(r.Components)),
 		Hardware:   make([]HardwareSummary, 0, len(r.Hardware)),
+	}
+	if r.HBNWorkload != nil {
+		w := r.HBNWorkload
+		s.HBNWorkload = &HBNWorkloadSummary{ChartRepository: w.ChartRepository, Chart: w.Chart, ChartVersion: w.ChartVersion,
+			ChartDigest: w.ChartDigest, ImageRepository: w.ImageRepository, ImageTag: w.ImageTag, ImageDigest: w.ImageDigest, StartupVersion: w.StartupVersion}
+		if w.ResetSafety != nil {
+			reset := *w.ResetSafety
+			reset.Models = slices.Clone(w.ResetSafety.Models)
+			s.HBNWorkload.ResetSafety = &reset
+		}
 	}
 	for _, c := range r.Components {
 		s.Components = append(s.Components, ComponentSummary{Name: c.Name, Version: c.Version, Repository: c.Repository, Applicability: c.Applicability})
@@ -153,9 +182,29 @@ func (s Summary) Release() (Release, error) {
 		return Release{}, fmt.Errorf("saved DPF software BOM requires components and hardware applicability")
 	}
 	r := Release{Version: s.Version, SupportedKubernetes: cloneVersionRange(s.SupportedKubernetes), TenantKubernetesVersion: s.TenantKubernetesVersion,
+		UseCases:     slices.Clone(s.UseCases),
+		Capabilities: s.Capabilities,
 		Operator: Operator{Chart: s.Operator.Chart, ChartRepository: s.Operator.ChartRepository,
 			Version: s.Operator.Version, ChartDigest: s.Operator.ChartDigest, Image: s.Operator.Image},
 		Components: make([]Component, 0, len(s.Components)), Hardware: make([]HardwareBOM, 0, len(s.Hardware))}
+	if s.HBNWorkload != nil {
+		w := HBNWorkload{ChartRepository: s.HBNWorkload.ChartRepository, Chart: s.HBNWorkload.Chart, ChartVersion: s.HBNWorkload.ChartVersion,
+			ChartDigest: s.HBNWorkload.ChartDigest, ImageRepository: s.HBNWorkload.ImageRepository, ImageTag: s.HBNWorkload.ImageTag,
+			ImageDigest: s.HBNWorkload.ImageDigest, StartupVersion: s.HBNWorkload.StartupVersion, ResetSafety: cloneResetSafetyContract(s.HBNWorkload.ResetSafety)}
+		if !validHBNWorkloadCoordinates(w) || !validResetSafetyContract(w.ResetSafety) || !slices.Contains(s.UseCases, UseCaseHBNBGP) {
+			return Release{}, fmt.Errorf("invalid saved HBN workload coordinates")
+		}
+		r.HBNWorkload = &w
+	}
+	for _, useCase := range s.UseCases {
+		if useCase != UseCaseHBNBGP {
+			return Release{}, fmt.Errorf("invalid saved DPF use case %q", useCase)
+		}
+	}
+	if slices.Contains(s.UseCases, UseCaseHBNBGP) && (s.HBNWorkload == nil || !s.Capabilities.NativeOperatorProjection) ||
+		!slices.Contains(s.UseCases, UseCaseHBNBGP) && (s.Capabilities.NativeOperatorProjection || s.Capabilities.BF4ProvisioningAPI) {
+		return Release{}, fmt.Errorf("invalid saved DPF use-case capabilities")
+	}
 	components := map[string]bool{}
 	for _, c := range s.Components {
 		if !summaryToken(c.Name) || components[c.Name] || !summaryToken(c.Version) || !summaryToken(c.Repository) ||
@@ -208,6 +257,15 @@ func (s Summary) Release() (Release, error) {
 		r.Hardware = append(r.Hardware, out)
 	}
 	return r, nil
+}
+
+func cloneResetSafetyContract(in *ResetSafetyContract) *ResetSafetyContract {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Models = slices.Clone(in.Models)
+	return &out
 }
 
 func artifactSummary(a Artifact) ArtifactSummary {

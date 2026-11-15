@@ -95,6 +95,12 @@ func TestRenderProducesPinnedFlatWorkloadGraph(t *testing.T) {
 	if got := objects[9]["kind"]; got != "DPUDeployment" {
 		t.Fatalf("last resource kind=%v", got)
 	}
+	if got := nestedString(t, objects[7], "metadata", "name"); got != "doca-hbn" {
+		t.Fatalf("DPF service identity=%q", got)
+	}
+	if got := nestedString(t, objects[7], "spec", "helmChart", "source", "chart"); got != input.Generation.Chart {
+		t.Fatalf("upstream Helm chart=%q, want resolved release chart %q", got, input.Generation.Chart)
+	}
 	if got := nestedString(t, objects[0], "spec", "osIso"); got != input.Software.OSISO.URL {
 		t.Fatalf("OS ISO URL=%q", got)
 	}

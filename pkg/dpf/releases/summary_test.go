@@ -47,6 +47,10 @@ var _ = Describe("persisted software BOM", func() {
 		original, err := Resolve("26.8.0")
 		Expect(err).NotTo(HaveOccurred())
 		summary := Summarize(original)
+		Expect(summary.UseCases).To(Equal([]string{UseCaseHBNBGP}))
+		Expect(summary.Capabilities).To(Equal(original.Capabilities))
+		Expect(summary.HBNWorkload).NotTo(BeNil())
+		Expect(summary.HBNWorkload.ResetSafety).To(Equal(original.HBNWorkload.ResetSafety))
 		Expect(summary.SupportedKubernetes).To(Equal(&VersionRange{Minimum: "1.33", Maximum: "1.36"}))
 		Expect(summary.TenantKubernetesVersion).To(Equal("v1.35.6"))
 		bf4 := summary.Hardware[1]
@@ -64,6 +68,10 @@ var _ = Describe("persisted software BOM", func() {
 		Expect(yaml.Unmarshal(encoded, &saved)).To(Succeed())
 		restored, err := saved.Release()
 		Expect(err).NotTo(HaveOccurred())
+		withoutResearchRef := *original.HBNWorkload
+		withoutResearchRef.SourceRef = ""
+		Expect(restored.HBNWorkload).To(Equal(&withoutResearchRef))
+		Expect(restored.Capabilities).To(Equal(original.Capabilities))
 		Expect(restored.SupportedKubernetes).To(Equal(original.SupportedKubernetes))
 		Expect(restored.TenantKubernetesVersion).To(Equal(original.TenantKubernetesVersion))
 		Expect(restored.Hardware[1].Family).To(Equal("BlueField-4"))

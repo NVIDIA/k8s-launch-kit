@@ -11,6 +11,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,8 +20,8 @@ import (
 	k8sversion "k8s.io/apimachinery/pkg/util/version"
 )
 
-// DefaultRelease is deliberately pinned. Adding a catalog entry never selects it
-// automatically; promoting the default is a separate reviewed change.
+// DefaultRelease is the generic-inventory default. HBN-BGP uses the separately
+// reviewed default declared under defaultUseCases in the embedded catalog.
 const DefaultRelease = "26.4.0"
 
 //go:embed releases.yaml
@@ -99,6 +100,38 @@ type HardwareBOM struct {
 	Requirements      []Requirement      `json:"requirements" yaml:"requirements"`
 }
 
+// HBNWorkload records release-owned artifact coordinates used by the native
+// HBN-BGP renderer. It is a default tuple; an explicit site configuration may
+// select a custom tuple, which is recorded and verified independently.
+type HBNWorkload struct {
+	ChartRepository string               `json:"chartRepository" yaml:"chartRepository"`
+	Chart           string               `json:"chart" yaml:"chart"`
+	ChartVersion    string               `json:"chartVersion" yaml:"chartVersion"`
+	ChartDigest     string               `json:"chartDigest" yaml:"chartDigest"`
+	ImageRepository string               `json:"imageRepository" yaml:"imageRepository"`
+	ImageTag        string               `json:"imageTag" yaml:"imageTag"`
+	ImageDigest     string               `json:"imageDigest" yaml:"imageDigest"`
+	StartupVersion  string               `json:"startupVersion" yaml:"startupVersion"`
+	SourceRef       string               `json:"sourceRef" yaml:"sourceRef"`
+	ResetSafety     *ResetSafetyContract `json:"resetSafety,omitempty" yaml:"resetSafety,omitempty"`
+}
+
+// ResetSafetyContract is the exact firmware/model contract consumed by the
+// native Redfish reset-safety reader. It does not qualify broader BF4 support.
+type ResetSafetyContract struct {
+	Contract    string   `json:"contract" yaml:"contract"`
+	BMCFirmware string   `json:"bmcFirmware" yaml:"bmcFirmware"`
+	CPUFirmware string   `json:"cpuFirmware" yaml:"cpuFirmware"`
+	Models      []string `json:"models" yaml:"models"`
+}
+
+// Capabilities identifies reviewed implementation contracts for a release.
+// These flags do not qualify a hardware model or prove runtime readiness.
+type Capabilities struct {
+	NativeOperatorProjection bool `json:"nativeOperatorProjection,omitempty" yaml:"nativeOperatorProjection,omitempty"`
+	BF4ProvisioningAPI       bool `json:"bf4ProvisioningAPI,omitempty" yaml:"bf4ProvisioningAPI,omitempty"`
+}
+
 type Release struct {
 	Version             string        `json:"version" yaml:"version"`
 	SupportedKubernetes *VersionRange `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
@@ -107,6 +140,9 @@ type Release struct {
 	// management cluster running the DPF operator.
 	TenantKubernetesVersion string        `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
 	Operator                Operator      `json:"operator" yaml:"operator"`
+	UseCases                []string      `json:"useCases,omitempty" yaml:"useCases,omitempty"`
+	HBNWorkload             *HBNWorkload  `json:"hbnWorkload,omitempty" yaml:"hbnWorkload,omitempty"`
+	Capabilities            Capabilities  `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
 	Components              []Component   `json:"components" yaml:"components"`
 	Hardware                []HardwareBOM `json:"hardware" yaml:"hardware"`
 	Sources                 []Source      `json:"sources" yaml:"sources"`
@@ -114,8 +150,18 @@ type Release struct {
 }
 
 type catalog struct {
-	Releases map[string]Release `yaml:"releases"`
+	DefaultUseCases map[string]string  `yaml:"defaultUseCases"`
+	Releases        map[string]Release `yaml:"releases"`
 }
+
+const UseCaseHBNBGP = "hbn-bgp"
+
+var (
+	hbnVersionPattern   = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	hbnTagPattern       = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+	hbnImageRepoPattern = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+	hbnStartupPattern   = regexp.MustCompile(`^HBN [0-9]+\.[0-9]+\.[0-9]+$`)
+)
 
 // Resolve returns a fresh BOM with no shared mutable values. It performs no
 // network access. Empty means the pinned default; callers with presence-aware
@@ -133,6 +179,47 @@ func Resolve(version string) (Release, error) {
 		return Release{}, fmt.Errorf("unknown DPF release %q; catalog releases: %s", version, strings.Join(keys(c), ", "))
 	}
 	return r, nil
+}
+
+// DefaultForUseCase resolves the reviewed default release for a use case.
+// It is deliberately separate from DefaultRelease, which serves generic
+// inventory without a selected workflow.
+func DefaultForUseCase(useCase string) (Release, error) {
+	c, err := load(catalogYAML)
+	if err != nil {
+		return Release{}, err
+	}
+	version, ok := c.DefaultUseCases[useCase]
+	if !ok {
+		return Release{}, fmt.Errorf("no default DPF release is declared for use case %q", useCase)
+	}
+	r, ok := c.Releases[version]
+	if !ok || !r.SupportsUseCase(useCase) {
+		return Release{}, fmt.Errorf("default DPF release %q does not support use case %q", version, useCase)
+	}
+	return r, nil
+}
+
+// SupportsUseCase reports only a catalog-declared release contract.
+func (r Release) SupportsUseCase(useCase string) bool {
+	return slices.Contains(r.UseCases, useCase)
+}
+
+// SupportedUseCaseReleases returns catalog rows with an explicit use-case
+// contract. Catalog membership alone does not imply workflow support.
+func SupportedUseCaseReleases(useCase string) []string {
+	c, err := load(catalogYAML)
+	if err != nil {
+		return nil
+	}
+	versions := make([]string, 0, len(c.Releases))
+	for version, release := range c.Releases {
+		if release.SupportsUseCase(useCase) {
+			versions = append(versions, version)
+		}
+	}
+	slices.Sort(versions)
+	return versions
 }
 
 // SupportedReleases returns catalog keys. Presence does not assert runtime
@@ -193,6 +280,12 @@ func load(data []byte) (catalog, error) {
 			return catalog{}, fmt.Errorf("invalid DPF release %q: %w", key, err)
 		}
 	}
+	for useCase, version := range c.DefaultUseCases {
+		r, ok := c.Releases[version]
+		if useCase == "" || !ok || !r.SupportsUseCase(useCase) {
+			return catalog{}, fmt.Errorf("default release for use case %q is missing or unsupported", useCase)
+		}
+	}
 	return c, nil
 }
 
@@ -209,6 +302,23 @@ func validate(key string, r Release) error {
 	}
 	if !sources[r.Operator.SourceRef] {
 		return fmt.Errorf("operator source is not declared")
+	}
+	seenUseCases := map[string]bool{}
+	for _, useCase := range r.UseCases {
+		if useCase != UseCaseHBNBGP || seenUseCases[useCase] {
+			return fmt.Errorf("invalid or duplicate supported use case %q", useCase)
+		}
+		seenUseCases[useCase] = true
+	}
+	if seenUseCases[UseCaseHBNBGP] {
+		if r.HBNWorkload == nil || !r.Capabilities.NativeOperatorProjection {
+			return fmt.Errorf("HBN-BGP support requires workload coordinates and the native operator projection contract")
+		}
+		if err := validateHBNWorkload(*r.HBNWorkload, sources); err != nil {
+			return err
+		}
+	} else if r.HBNWorkload != nil || r.Capabilities.NativeOperatorProjection || r.Capabilities.BF4ProvisioningAPI {
+		return fmt.Errorf("HBN workload coordinates and native HBN capabilities require HBN-BGP support")
 	}
 	if r.SupportedKubernetes != nil && !validVersionRange(*r.SupportedKubernetes) {
 		return fmt.Errorf("invalid supported Kubernetes version range")
@@ -264,6 +374,39 @@ func validate(key string, r Release) error {
 		}
 	}
 	return nil
+}
+
+func validateHBNWorkload(w HBNWorkload, sources map[string]bool) error {
+	if !validHBNWorkloadCoordinates(w) || !sources[w.SourceRef] {
+		return fmt.Errorf("invalid HBN workload coordinates or source")
+	}
+	if !validResetSafetyContract(w.ResetSafety) {
+		return fmt.Errorf("invalid HBN reset-safety contract")
+	}
+	return nil
+}
+
+func validResetSafetyContract(r *ResetSafetyContract) bool {
+	if r == nil {
+		return true
+	}
+	if r.Contract != "bf4-reset-safety-v1" || !summaryToken(r.BMCFirmware) || !summaryToken(r.CPUFirmware) || len(r.Models) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, model := range r.Models {
+		if !summaryToken(model) || seen[model] {
+			return false
+		}
+		seen[model] = true
+	}
+	return true
+}
+
+func validHBNWorkloadCoordinates(w HBNWorkload) bool {
+	return summaryHTTPS(w.ChartRepository) && summaryToken(w.Chart) && hbnVersionPattern.MatchString(w.ChartVersion) &&
+		summaryDigest(w.ChartDigest) && hbnImageRepoPattern.MatchString(w.ImageRepository) && hbnTagPattern.MatchString(w.ImageTag) &&
+		summaryDigest(w.ImageDigest) && hbnStartupPattern.MatchString(w.StartupVersion)
 }
 
 func validTenantKubernetesVersion(value string) bool {
