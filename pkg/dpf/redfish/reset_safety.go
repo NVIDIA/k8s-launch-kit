@@ -160,7 +160,7 @@ func resetHealthError(status Document, uri string) error {
 }
 
 func resetTasks(ctx context.Context, c *Client, root Document) (map[string]any, error) {
-	service, err := c.Get(ctx, Link(root, "TaskService"))
+	service, err := c.Get(ctx, Link(root, "Tasks"))
 	if err != nil {
 		return nil, err
 	}

@@ -41,7 +41,7 @@ func newResetFixture() *resetFixture {
 	f := &resetFixture{reads: map[string]int{}, writes: []string{}, docs: map[string]Document{
 		"/redfish/v1": {"Vendor": "NVIDIA", "Product": "BlueField-4", "Links": Document{"Sessions": link("/redfish/v1/SessionService/Sessions")},
 			"Systems": link("/redfish/v1/Systems"), "Chassis": link("/redfish/v1/Chassis"), "AccountService": link("/redfish/v1/AccountService"),
-			"UpdateService": link("/redfish/v1/UpdateService"), "TaskService": link("/redfish/v1/TaskService")},
+			"UpdateService": link("/redfish/v1/UpdateService"), "Tasks": link("/redfish/v1/TaskService")},
 		"/redfish/v1/SessionService/Sessions/owned":      {"UserName": "admin", "Roles": []any{"Administrator"}},
 		"/redfish/v1/AccountService":                     {"LocalAccountAuth": "Enabled", "Accounts": link("/redfish/v1/AccountService/Accounts")},
 		"/redfish/v1/AccountService/Accounts":            list("/redfish/v1/AccountService/Accounts/admin"),
@@ -193,9 +193,7 @@ var _ = Describe("fresh modern BF4 reset safety", func() {
 		}
 		Expect(observed).To(BeZero())
 		Expect(err.Error()).NotTo(ContainSubstring("canary"))
-		for _, write := range fixture.writes {
-			Expect(write).To(Or(Equal("POST /redfish/v1/SessionService/Sessions"), Equal("DELETE /redfish/v1/SessionService/Sessions/owned")))
-		}
+		Expect(fixture.writes).To(Equal([]string{"POST /redfish/v1/SessionService/Sessions", "DELETE /redfish/v1/SessionService/Sessions/owned"}))
 	},
 		Entry("actual UEFI false-Off", func(f *resetFixture) {
 			Object(f.docs[resetSystem], "BootProgress")["LastState"] = "PCIResourceConfigStarted"
@@ -228,6 +226,16 @@ var _ = Describe("fresh modern BF4 reset safety", func() {
 		Entry("legacy critical severity", func(f *resetFixture) {
 			f.docs["/redfish/v1/TaskService/Tasks/7"]["Messages"] = []any{Document{"Severity": "Critical", "MessageSeverity": "OK"}}
 		}, "RESET_TASKS_UNVERIFIED"),
+		Entry("missing advertised task service", func(f *resetFixture) { delete(f.docs["/redfish/v1"], "Tasks") }, "UNSAFE_LINK"),
+		Entry("malformed advertised task service link", func(f *resetFixture) {
+			f.docs["/redfish/v1"]["Tasks"] = Document{"@odata.id": 7}
+		}, "UNSAFE_LINK"),
+		Entry("cross-origin advertised task service link", func(f *resetFixture) {
+			f.docs["/redfish/v1"]["Tasks"] = Document{"@odata.id": "https://foreign.invalid/redfish/v1/TaskService"}
+		}, "CROSS_ORIGIN_LINK"),
+		Entry("path-traversing advertised task service link", func(f *resetFixture) {
+			f.docs["/redfish/v1"]["Tasks"] = Document{"@odata.id": "/redfish/v1/../TaskService"}
+		}, "UNSAFE_LINK"),
 		Entry("partial tasks", func(f *resetFixture) { f.docs["/redfish/v1/TaskService/Tasks"]["Members@odata.count"] = 2 }, "INCOMPLETE_COLLECTION"),
 		Entry("malformed task count cannot appear complete", func(f *resetFixture) { f.docs["/redfish/v1/TaskService/Tasks"]["Members@odata.count"] = "1" }, "INCOMPLETE_COLLECTION"),
 		Entry("malformed task pagination cannot appear complete", func(f *resetFixture) { f.docs["/redfish/v1/TaskService/Tasks"]["Members@odata.nextLink"] = false }, "INVALID_RESPONSE"),
