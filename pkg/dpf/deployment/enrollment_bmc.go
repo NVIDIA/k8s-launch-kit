@@ -163,6 +163,14 @@ func collectEnrollmentBMCs(ctx context.Context, selected []enrollmentBMC, reques
 			event.ReasonCode, event.Message = "ENROLLMENT_BMC_PSID_CHANGED", "The fresh DPU PSID conflicts with the selected hardware or its source is inconsistent; repeat discovery and generation."
 		case !redfish.ResetSupportVerified(observed, selected.release):
 			event.ReasonCode, event.Message = "ENROLLMENT_RESET_SUPPORT_UNVERIFIED", "The observed DPU model/BMC firmware is not verified against the selected release's supported host reset backend; repeat discovery after resolving this prerequisite."
+			switch observed.Observations["host-reset-support"].ReasonCode {
+			case "RESET_PLATFORM_UNQUALIFIED":
+				event.ReasonCode, event.Message = "ENROLLMENT_RESET_PLATFORM_UNSUPPORTED", "The selected release does not support the observed DPU model/BMC firmware for host reset; use supported firmware and repeat discovery."
+			case "RESET_FIRMWARE_RESOURCE_INVALID":
+				event.ReasonCode, event.Message = "ENROLLMENT_RESET_PLATFORM_INVALID", "The BMC firmware endpoint returned an invalid or changed resource identity; resolve it before provisioning."
+			case "RESET_FIRMWARE_CHANGED":
+				event.ReasonCode, event.Message = "ENROLLMENT_RESET_PLATFORM_CHANGED", "BMC firmware changed or could not be rechecked; repeat discovery against stable firmware before provisioning."
+			}
 		default:
 			event.State, event.ReasonCode = "confirmed", "ENROLLMENT_BMC_IDENTITY_VERIFIED"
 			event.Message = "The selected physical serial and BMC Administrator session were verified and the session was closed."

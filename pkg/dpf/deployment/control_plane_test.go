@@ -6,6 +6,7 @@ package deployment
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,9 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestControlPlaneRejectsIncompleteExecutionBeforeManagementAccess(t *testing.T) {
@@ -113,3 +116,51 @@ func controlPlaneTestRequest(t *testing.T) config.Request {
 }
 
 func strPtr(value string) *string { return &value }
+
+// Keep the actual preparation/enrollment checker in this test. Only hardware
+// reads and management effects are replaced, so moving the check after an
+// installation or create would fail the zero-effect assertion.
+type unsupportedResetControlPlane struct {
+	*enrollmentStageFake
+	reads   int
+	effects int
+}
+
+func (f *unsupportedResetControlPlane) verifyEnrollmentBMCs(ctx context.Context, selected []enrollmentBMC, timeout time.Duration, journal *executionJournal) error {
+	return collectEnrollmentBMCs(ctx, selected, timeout, journal, enrollmentCollectorFunc(func(_ context.Context, _ config.Target, _ time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
+		f.reads++
+		return inventory.Device{ID: "verified-device", SerialNumber: selected[0].device.Serial, PSID: selected[0].device.PSID, Model: "B4240", ObservationState: "observed", Observations: map[string]inventory.Observation{
+			"bmc-administrator":  {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"},
+			"host-reset-support": {State: "failed", Tool: "redfish", ReasonCode: "RESET_PLATFORM_UNQUALIFIED", Message: "Unsupported BMC build."},
+			"psid":               {State: "observed", Values: []string{selected[0].device.PSID}},
+		}}, nil, nil
+	}))
+}
+func (f *unsupportedResetControlPlane) ensureOperatorPlan(context.Context, *operatorPlan) error {
+	f.effects++
+	return fmt.Errorf("unexpected operator installation")
+}
+func (f *unsupportedResetControlPlane) Create(context.Context, *unstructured.Unstructured, bool) (*unstructured.Unstructured, error) {
+	f.effects++
+	return nil, fmt.Errorf("unexpected management resource create")
+}
+func TestControlPlaneResetSupportFailurePreventsManagementEffects(t *testing.T) {
+	execution, fake, _, _, _ := enrollmentStageFixture(t)
+	client := &unsupportedResetControlPlane{enrollmentStageFake: fake}
+	request := controlPlaneTestRequest(t)
+	request.Targets = make([]config.Target, len(fake.selected))
+	for i, item := range fake.selected {
+		request.Targets[i] = item.target
+	}
+	journal := testJournal(execution)
+	probes := probe.Runner{Assets: catalog.ProbeAssets(), Journal: func([]probe.Receipt) error { t.Fatal("reset support failure reached probe effects"); return nil }}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, err := runControlPlane(ctx, client, execution.retained, journal, probes, request, time.Millisecond, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "ENROLLMENT_RESET_PLATFORM_UNSUPPORTED") || client.reads != 1 {
+		t.Fatalf("unsupported reset backend was not checked: reads=%d err=%v", client.reads, err)
+	}
+	if client.effects != 0 || fake.base.createCount != 0 || fake.selectorPatches != 0 {
+		t.Fatalf("management effects began before reset support passed: effects=%d creates=%d patches=%d", client.effects, fake.base.createCount, fake.selectorPatches)
+	}
+}

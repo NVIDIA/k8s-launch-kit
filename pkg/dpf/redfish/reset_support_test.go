@@ -16,7 +16,7 @@ var _ = Describe("release-owned static host reset support", func() {
 	const uri = "/redfish/v1/UpdateService/FirmwareInventory/BlueField_FW_BMC_0"
 	It("checks the observed build twice through reads only, without requiring a shut-down DPU", func() {
 		f := newNetworkGraphFixture()
-		f.docs[uri] = Document{"Version": "BF4-26.10-0001"}
+		f.docs[uri] = Document{"Id": "BlueField_FW_BMC_0", "@odata.id": uri, "Version": "BF4-26.10-0001"}
 		client, closeServer := networkGraphClient(f)
 		defer closeServer()
 		observed := resetSupportReads(context.Background(), client, "26.8.0", "B4240")
@@ -38,9 +38,9 @@ var _ = Describe("release-owned static host reset support", func() {
 		}
 	})
 	It("keeps absent, denied, changed and unsupported firmware ineligible", func() {
-		for _, scenario := range []string{"absent", "denied", "changed", "unsupported"} {
+		for _, scenario := range []string{"absent", "denied", "changed", "unsupported", "missing-id", "wrong-id", "wrong-uri", "changed-identity"} {
 			f := newNetworkGraphFixture()
-			f.docs[uri] = Document{"Version": "BF4-26.10-0001"}
+			f.docs[uri] = Document{"Id": "BlueField_FW_BMC_0", "@odata.id": uri, "Version": "BF4-26.10-0001"}
 			switch scenario {
 			case "absent":
 				delete(f.docs[uri], "Version")
@@ -50,6 +50,18 @@ var _ = Describe("release-owned static host reset support", func() {
 				f.mutate = func(_ string, n int, d Document) {
 					if n == 2 {
 						d["Version"] = "BF4-changed"
+					}
+				}
+			case "missing-id":
+				delete(f.docs[uri], "Id")
+			case "wrong-id":
+				f.docs[uri]["Id"] = "some-other-resource"
+			case "wrong-uri":
+				f.docs[uri]["@odata.id"] = "/redfish/v1/UpdateService/FirmwareInventory/other"
+			case "changed-identity":
+				f.mutate = func(_ string, n int, d Document) {
+					if n == 2 {
+						d["Id"] = "other"
 					}
 				}
 			case "unsupported":

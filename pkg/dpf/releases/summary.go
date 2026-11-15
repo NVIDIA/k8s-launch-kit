@@ -30,15 +30,14 @@ type Summary struct {
 // HBNWorkloadSummary is the compact, source-reference-free projection of the
 // selected release's HBN artifact defaults for persisted inventory.
 type HBNWorkloadSummary struct {
-	ChartRepository string               `json:"chartRepository" yaml:"chartRepository"`
-	Chart           string               `json:"chart" yaml:"chart"`
-	ChartVersion    string               `json:"chartVersion" yaml:"chartVersion"`
-	ChartDigest     string               `json:"chartDigest" yaml:"chartDigest"`
-	ImageRepository string               `json:"imageRepository" yaml:"imageRepository"`
-	ImageTag        string               `json:"imageTag" yaml:"imageTag"`
-	ImageDigest     string               `json:"imageDigest" yaml:"imageDigest"`
-	StartupVersion  string               `json:"startupVersion" yaml:"startupVersion"`
-	ResetSafety     *ResetSafetyContract `json:"resetSafety,omitempty" yaml:"resetSafety,omitempty"`
+	ChartRepository string `json:"chartRepository" yaml:"chartRepository"`
+	Chart           string `json:"chart" yaml:"chart"`
+	ChartVersion    string `json:"chartVersion" yaml:"chartVersion"`
+	ChartDigest     string `json:"chartDigest" yaml:"chartDigest"`
+	ImageRepository string `json:"imageRepository" yaml:"imageRepository"`
+	ImageTag        string `json:"imageTag" yaml:"imageTag"`
+	ImageDigest     string `json:"imageDigest" yaml:"imageDigest"`
+	StartupVersion  string `json:"startupVersion" yaml:"startupVersion"`
 }
 
 type OperatorSummary struct {
@@ -126,11 +125,6 @@ func Summarize(r Release) Summary {
 		w := r.HBNWorkload
 		s.HBNWorkload = &HBNWorkloadSummary{ChartRepository: w.ChartRepository, Chart: w.Chart, ChartVersion: w.ChartVersion,
 			ChartDigest: w.ChartDigest, ImageRepository: w.ImageRepository, ImageTag: w.ImageTag, ImageDigest: w.ImageDigest, StartupVersion: w.StartupVersion}
-		if w.ResetSafety != nil {
-			reset := *w.ResetSafety
-			reset.Models = slices.Clone(w.ResetSafety.Models)
-			s.HBNWorkload.ResetSafety = &reset
-		}
 	}
 	for _, c := range r.Components {
 		s.Components = append(s.Components, ComponentSummary{Name: c.Name, Version: c.Version, Repository: c.Repository, Applicability: c.Applicability})
@@ -190,8 +184,8 @@ func (s Summary) Release() (Release, error) {
 	if s.HBNWorkload != nil {
 		w := HBNWorkload{ChartRepository: s.HBNWorkload.ChartRepository, Chart: s.HBNWorkload.Chart, ChartVersion: s.HBNWorkload.ChartVersion,
 			ChartDigest: s.HBNWorkload.ChartDigest, ImageRepository: s.HBNWorkload.ImageRepository, ImageTag: s.HBNWorkload.ImageTag,
-			ImageDigest: s.HBNWorkload.ImageDigest, StartupVersion: s.HBNWorkload.StartupVersion, ResetSafety: cloneResetSafetyContract(s.HBNWorkload.ResetSafety)}
-		if !validHBNWorkloadCoordinates(w) || !validResetSafetyContract(w.ResetSafety) || !slices.Contains(s.UseCases, UseCaseHBNBGP) {
+			ImageDigest: s.HBNWorkload.ImageDigest, StartupVersion: s.HBNWorkload.StartupVersion}
+		if !validHBNWorkloadCoordinates(w) || !slices.Contains(s.UseCases, UseCaseHBNBGP) {
 			return Release{}, fmt.Errorf("invalid saved HBN workload coordinates")
 		}
 		r.HBNWorkload = &w
@@ -257,15 +251,6 @@ func (s Summary) Release() (Release, error) {
 		r.Hardware = append(r.Hardware, out)
 	}
 	return r, nil
-}
-
-func cloneResetSafetyContract(in *ResetSafetyContract) *ResetSafetyContract {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	out.Models = slices.Clone(in.Models)
-	return &out
 }
 
 func artifactSummary(a Artifact) ArtifactSummary {

@@ -44,12 +44,20 @@ func resetSupportReads(ctx context.Context, reader Reader, version, model string
 		observation.Message = "The BMC firmware required to establish host reset support could not be read: " + Code(err) + "."
 		return observation
 	}
+	if Text(first, "Id") != "BlueField_FW_BMC_0" || !resetMember("/redfish/v1/UpdateService/FirmwareInventory", Resource{URI: uri, Document: first}) {
+		observation.ReasonCode, observation.Message = "RESET_FIRMWARE_RESOURCE_INVALID", "The BMC firmware endpoint did not return its expected resource identity."
+		return observation
+	}
 	firmware := Text(first, "Version")
 	if firmware == "" || len(firmware) > 128 {
 		observation.ReasonCode = "RESET_FIRMWARE_VERSION_UNAVAILABLE"
 		return observation
 	}
 	second, err := reader.Get(ctx, uri)
+	if err == nil && (Text(second, "Id") != "BlueField_FW_BMC_0" || !resetMember("/redfish/v1/UpdateService/FirmwareInventory", Resource{URI: uri, Document: second})) {
+		observation.ReasonCode, observation.Message = "RESET_FIRMWARE_RESOURCE_INVALID", "The BMC firmware resource identity changed or is missing on recheck."
+		return observation
+	}
 	if err != nil || Text(second, "Version") != firmware {
 		observation.ReasonCode = "RESET_FIRMWARE_CHANGED"
 		observation.Message = "BMC firmware changed or could not be rechecked during reset support discovery."

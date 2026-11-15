@@ -50,7 +50,6 @@ var _ = Describe("persisted software BOM", func() {
 		Expect(summary.UseCases).To(Equal([]string{UseCaseHBNBGP}))
 		Expect(summary.Capabilities).To(Equal(original.Capabilities))
 		Expect(summary.HBNWorkload).NotTo(BeNil())
-		Expect(summary.HBNWorkload.ResetSafety).To(Equal(original.HBNWorkload.ResetSafety))
 		Expect(summary.SupportedKubernetes).To(Equal(&VersionRange{Minimum: "1.33", Maximum: "1.36"}))
 		Expect(summary.TenantKubernetesVersion).To(Equal("v1.35.6"))
 		bf4 := summary.Hardware[1]
@@ -61,7 +60,7 @@ var _ = Describe("persisted software BOM", func() {
 		Expect(bf4.BlueFieldSoftware.PLDMFwBundle).To(BeEmpty())
 		encoded, err := yaml.Marshal(summary)
 		Expect(err).NotTo(HaveOccurred())
-		for _, removed := range []string{"sourceRef", "sources", "revision"} {
+		for _, removed := range []string{"sourceRef", "sources", "revision", "resetSafety", "cpuFirmware", "bf4-reset-safety-v1"} {
 			Expect(string(encoded)).NotTo(ContainSubstring(removed))
 		}
 		var saved Summary
@@ -70,6 +69,7 @@ var _ = Describe("persisted software BOM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		withoutResearchRef := *original.HBNWorkload
 		withoutResearchRef.SourceRef = ""
+		withoutResearchRef.ResetSafety = nil
 		Expect(restored.HBNWorkload).To(Equal(&withoutResearchRef))
 		Expect(restored.Capabilities).To(Equal(original.Capabilities))
 		Expect(restored.SupportedKubernetes).To(Equal(original.SupportedKubernetes))
