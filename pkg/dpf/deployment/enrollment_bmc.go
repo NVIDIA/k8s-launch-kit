@@ -39,9 +39,10 @@ func ValidateEnrollmentBMCs(release string, devices []generation.ResolvedDevice,
 	return err
 }
 
-// The HBN BlueField-4 cohort uses admin; DPF 26.8's crawler consumes one shared
-// password per namespace (its account fallback is root then admin).
-// Reject incompatible runtime inputs before any management or BMC operation.
+// The pinned BF4 initial-enrollment InitPassword path selects admin from the
+// BMC model and consumes one shared password per namespace. The root/admin
+// fallback belongs to a separate recovery path and does not authorize initial
+// enrollment with another username. Reject incompatible inputs before I/O.
 func bindEnrollmentBMCs(release string, devices []generation.ResolvedDevice, targets []config.Target) ([]enrollmentBMC, string, error) {
 	if release == "" {
 		return nil, "", fmt.Errorf("enrollment requires an explicit DPF release")
