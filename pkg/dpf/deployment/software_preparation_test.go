@@ -101,6 +101,10 @@ func (f *softwarePreparationFake) getTenantWorkloadChild(_ context.Context, tena
 		}
 		labels, _, _ := unstructured.NestedStringMap(parent.Object, "spec", "template", "metadata", "labels")
 		annotations, _, _ := unstructured.NestedStringMap(parent.Object, "spec", "template", "metadata", "annotations")
+		annotations = cloneTestStringMap(annotations)
+		// The closed flat-profile fixture models the tenant controller's NSI
+		// stamp independently of the production metadata comparison.
+		annotations["svc.dpu.nvidia.com/interface-mode"] = "nsi"
 		return workloadChildObject("svc.dpu.nvidia.com/v1alpha1", "ServiceInterfaceSet", parent.GetName(), parent.GetNamespace(), map[string]any{"spec": runtime.DeepCopyJSONValue(spec)}, labels, annotations), nil
 	case "DPUServiceIPAM":
 		network, found, err := unstructured.NestedMap(parent.Object, "spec", "ipv4Network")
@@ -140,20 +144,19 @@ func cloneTestStringMap(in map[string]string) map[string]string {
 
 func workloadChildObject(apiVersion, kind, name, namespace string, object map[string]any, labels, annotations map[string]string) *unstructured.Unstructured {
 	result := &unstructured.Unstructured{Object: map[string]any{"apiVersion": apiVersion, "kind": kind, "metadata": map[string]any{
-		"name": name, "namespace": namespace, "uid": "child-" + name, "resourceVersion": "1", "labels": stringMapObject(labels), "annotations": stringMapObject(annotations),
+		"name": name, "namespace": namespace, "uid": "child-" + name, "resourceVersion": "1",
 	}}}
+	// metav1.ObjectMeta's JSON wire format omits empty labels/annotations.
+	if len(labels) > 0 {
+		result.SetLabels(labels)
+	}
+	if len(annotations) > 0 {
+		result.SetAnnotations(annotations)
+	}
 	for key, value := range object {
 		result.Object[key] = value
 	}
 	return result
-}
-
-func stringMapObject(in map[string]string) map[string]any {
-	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
 }
 
 func (f *softwarePreparationFake) checkManagementPreflight(ctx context.Context, plan preflightPlan) PreflightResult {

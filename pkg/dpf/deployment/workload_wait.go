@@ -54,7 +54,7 @@ func waitWorkloadResource(ctx context.Context, client workloadStageClient, recon
 				} else if child == nil {
 					return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_INVALID", "The selected tenant child observation is empty.", nil)
 				} else if err := verifyWorkloadChild(current, child, tenant.expected); err != nil {
-					return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_MISMATCH", "The controller-created tenant child does not match the retained parent resource.", nil)
+					return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_MISMATCH", workloadChildVerificationMessage("The controller-created tenant child does not match the retained parent resource.", err), nil)
 				} else if childUID != "" && childUID != child.GetUID() {
 					return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_REPLACED", "The selected tenant child was replaced while waiting.", nil)
 				} else {
@@ -72,8 +72,12 @@ func waitWorkloadResource(ctx context.Context, client workloadStageClient, recon
 				last = workloadResourceReadiness(final, spec.mode)
 				if last.Ready && spec.mode != workloadTemplateReadiness {
 					finalChild, finalChildErr := client.getTenantWorkloadChild(ctx, tenant, spec.object)
-					if finalChildErr != nil || finalChild == nil || finalChild.GetUID() != childUID || verifyWorkloadChild(final, finalChild, tenant.expected) != nil {
-						return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_CHANGED", "The selected tenant child changed before readiness was confirmed.", safeAPIError("recheck tenant workload child", finalChildErr))
+					var verificationErr error
+					if finalChildErr == nil && finalChild != nil && finalChild.GetUID() == childUID {
+						verificationErr = verifyWorkloadChild(final, finalChild, tenant.expected)
+					}
+					if finalChildErr != nil || finalChild == nil || finalChild.GetUID() != childUID || verificationErr != nil {
+						return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_CHANGED", workloadChildVerificationMessage("The selected tenant child changed before readiness was confirmed.", verificationErr), safeAPIError("recheck tenant workload child", finalChildErr))
 					}
 				}
 				if last.Ready {

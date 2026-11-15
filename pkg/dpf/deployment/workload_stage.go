@@ -5,6 +5,7 @@ package deployment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -327,7 +328,7 @@ func runWorkloadStage(ctx context.Context, client workloadStageClient, execution
 		return receipts, workloadStageFailure(journal, "WORKLOAD_SOFTWARE_RESOURCE_CHANGED", "The verified BlueFieldSoftware resource changed before the workload-preparation receipt.", err)
 	}
 	if err := verifyWorkloadReceiptSet(ctx, client, execution, controlPlane.tenant.Client, objects, receipts); err != nil {
-		return receipts, workloadStageFailure(journal, "WORKLOAD_RESOURCE_SET_CHANGED", "A previously verified workload prerequisite or tenant child changed before the preparation receipt.", err)
+		return receipts, workloadStageFailure(journal, "WORKLOAD_RESOURCE_SET_CHANGED", workloadChildVerificationMessage("A previously verified workload prerequisite or tenant child changed before the preparation receipt.", err), err)
 	}
 	if err := validateWorkloadTargeting(ctx, client, execution, controlPlane.tenant, selected, objects); err != nil {
 		return receipts, workloadStageFailure(journal, "WORKLOAD_TARGET_SCOPE_CHANGED", "The selected DPUCluster target scope changed during workload preparation.", err)
@@ -540,8 +541,16 @@ func verifyWorkloadReceiptSet(ctx context.Context, client workloadStageClient, e
 			if err != nil {
 				return safeAPIError("recheck tenant workload child", err)
 			}
-			if child == nil || child.GetUID() != receipt.ChildUID || verifyWorkloadChild(current, child, tenant.expected) != nil {
-				return fmt.Errorf("tenant child for %s/%s changed before the preparation receipt", desired.GetKind(), desired.GetName())
+			var verificationErr error
+			if child != nil && child.GetUID() == receipt.ChildUID {
+				verificationErr = verifyWorkloadChild(current, child, tenant.expected)
+			}
+			if child == nil || child.GetUID() != receipt.ChildUID || verificationErr != nil {
+				message := fmt.Sprintf("tenant child for %s/%s changed before the preparation receipt", desired.GetKind(), desired.GetName())
+				if reason := workloadChildVerificationReason(verificationErr); reason != "" {
+					return reconcileError(reason, message, nil)
+				}
+				return errors.New(message)
 			}
 		} else if receipt.ChildUID != "" {
 			return fmt.Errorf("unexpected tenant-child receipt for %s/%s", desired.GetKind(), desired.GetName())
