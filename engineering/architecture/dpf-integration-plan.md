@@ -340,6 +340,10 @@ missing success. Required report check results and qualification boundaries stay
 separate from compact device facts. Firmware conflict comparison follows the same
 whitespace handling as collection while retaining original measured strings;
 serialization does not make a padded version eligible for minimum-version checks.
+The BF4 Redfish reader and typed PSID boundary share one syntax predicate.
+An inadmissible optional AssetTag becomes a field-specific issue before it can
+block YAML publication or JSON reporting; forged or contradictory typed facts
+remain errors at the public boundary.
 
 SSH collection keeps one connection for normal reads. A command deadline closes
 that transport to bound stalled session operations; the next independent read may

@@ -25,7 +25,7 @@ var _ = Describe("BF4 Redfish PSID observation", func() {
 			{"empty System fallback", Document{"AssetTag": ""}, Document{"AssetTag": a}, "PSID_OBSERVED"},
 			{"N/A System fallback", Document{"AssetTag": "N/A"}, Document{"AssetTag": a}, "PSID_OBSERVED"},
 			{"matching values", Document{"AssetTag": a}, Document{"AssetTag": a}, "PSID_OBSERVED"},
-			{"different spelling", Document{"AssetTag": a}, Document{"AssetTag": strings.ToLower(a)}, "PSID_CONFLICT"},
+			{"invalid lowercase prefix", Document{"AssetTag": a}, Document{"AssetTag": strings.ToLower(a)}, "PSID_INVALID"},
 			{"System with N/A chassis", Document{"AssetTag": a}, Document{"AssetTag": "N/A"}, "PSID_OBSERVED"},
 			{"contradictory values", Document{"AssetTag": a}, Document{"AssetTag": b}, "PSID_CONFLICT"},
 			{"malformed System type", Document{"AssetTag": 42}, Document{"AssetTag": a}, "PSID_INVALID"},

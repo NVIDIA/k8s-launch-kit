@@ -5,13 +5,10 @@ package redfish
 
 import (
 	"reflect"
-	"regexp"
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 )
-
-var psidToken = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 func psidUnavailable(code, message string) inventory.Observation {
 	return inventory.Observation{State: "unavailable", ReasonCode: code, Message: message, Tool: "redfish"}
@@ -42,7 +39,7 @@ func bf4PSID(system, card, currentSystem, currentCard Document) inventory.Observ
 		if strings.TrimSpace(text) == "" || strings.EqualFold(strings.TrimSpace(text), "N/A") {
 			continue
 		}
-		if !psidToken.MatchString(text) {
+		if !inventory.ValidRedfishPSID(text) {
 			return psidUnavailable("PSID_INVALID", "A supported BF4 AssetTag is not a valid bounded ASCII PSID identifier.")
 		}
 		if value != "" && value != text {
