@@ -139,12 +139,16 @@ are never silently replaced by defaults. The DPF service identity remains
 Chart repository/version/digest, image repository/tag/digest and startup version
 overrides remain available. `imageRepository` must include an explicit registry
 host and lowercase repository path, without a tag or digest; do not use a
-Docker Hub familiar name such as `team/hbn`. Registry ports from 1 through
-65535 are supported (for example, `registry.example:5000/team/hbn`). Use
-`docker.io/team/hbn` to name a Docker Hub repository explicitly. Keep the image
-tag and digest in their separate fields. Overrides are preserved, and matching
+familiar name such as `team/hbn`. Registry ports from 1 through 65535 are
+supported (for example, `registry.example:5000/team/hbn`). Keep the image tag
+and digest in their separate fields. Overrides are preserved, and matching
 artifact bytes are verified; custom coordinates are not thereby certified
-compatible.
+compatible. Repository syntax alone does not establish native deployment
+support: the CLI must read manifest/config metadata over anonymous HTTPS, with
+only same-origin anonymous Bearer token exchange. Docker/kubelet pull credentials
+do not grant this CLI access. Deployment rejects unsupported metadata access
+before discovery probes or cluster changes, and runtime reads it again; see
+[image metadata prerequisites](../user/dpf-deployment.md#prepare-the-site-and-review-the-bundle).
 Shared resolution also rejects enabling the VXLAN startup probe.
 `hold` pauses provisioning at the node-effect boundary until the selected
 maintenance request is released; it does not mean provisioning has completed.

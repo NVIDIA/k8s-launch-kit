@@ -64,7 +64,7 @@ type hbnRuntimeTransports struct {
 	readCommand    hbnRuntimeRead
 	probeTraffic   hbnHostTrafficProbe
 	imageTransport http.RoundTripper
-	resolveImage   func(context.Context, string, time.Duration, http.RoundTripper) (hbnPodImageIdentity, error)
+	resolveImage   hbnImageResolver
 }
 type hbnRuntimeFence struct {
 	allocation hostNetworkLeaseFence
@@ -127,7 +127,7 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	for _, device := range desired.Devices {
 		asns[device.Serial] = device.ASN
 	}
-	reference := desired.Generation.ImageRepository + ":" + desired.Generation.ImageTag + "@" + desired.Generation.ImageDigest
+	reference := hbnImageReference(desired.Generation)
 	ui.FromContext(ctx).Info("[RUNNING] HBN runtime: verify retained Linux/arm64 image identity")
 	resolveImage := transports.resolveImage
 	if resolveImage == nil {

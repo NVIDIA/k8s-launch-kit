@@ -189,7 +189,16 @@ type ActivationObjectID struct {
 // one identity-bound client and the explicit selected host access.
 // A complete cross-host matrix establishes point-in-time HBN workload traffic;
 // a one-host run remains provisioned with cross-host traffic unmeasured.
-func Run(ctx context.Context, request RunRequest) (result RunResult, runErr error) {
+func Run(ctx context.Context, request RunRequest) (RunResult, error) {
+	return runWithImageResolver(ctx, request, resolveHBNRuntimeImage)
+}
+
+// Keep the metadata transport dependency private. Both the early prerequisite
+// and fresh runtime acceptance use it; the early identity is never cached.
+func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage hbnImageResolver) (result RunResult, runErr error) {
+	if resolveImage == nil {
+		return RunResult{}, fmt.Errorf("deployment requires an image metadata resolver")
+	}
 	if ctx == nil {
 		return RunResult{}, fmt.Errorf("deployment run requires a context")
 	}
@@ -250,6 +259,29 @@ func Run(ctx context.Context, request RunRequest) (result RunResult, runErr erro
 	access := request.Access
 	access.RequestTimeout = requestTimeout
 	intent := plan.Intent()
+	// Run before even discovery probes: a known unsupported metadata transport
+	// must not first be discovered after provisioning/reset/host-network effects.
+	progress.Update("Verifying retained HBN image metadata access")
+	if err := journal.record(executionEvent{Stage: "fresh-prerequisites", Operation: "image-metadata", State: "attempted",
+		ReasonCode: "HBN_IMAGE_METADATA_STARTED", Message: "Verify current anonymous HTTPS metadata access and Linux/arm64 identity for the retained HBN image before deployment effects."}); err != nil {
+		return result, err
+	}
+	imageReference := hbnImageReference(intent.Generation)
+	image, imageErr := resolveImage(ctx, imageReference, requestTimeout, nil)
+	imageCheck := inventory.Check{ID: "dpf.hbn.deployment.image-metadata", Subject: intent.Namespace, Vantage: "cli",
+		RequiredPhase: "deploy", State: "unknown", ReasonCode: "HBN_IMAGE_METADATA_UNAVAILABLE",
+		Message: "Retained HBN image metadata access, digests or Linux/arm64 identity could not be verified. The CLI requires anonymous HTTPS manifest/config access with only same-origin anonymous Bearer token exchange. Kubelet pull credentials are separate; correct image metadata/access before retrying."}
+	if imageErr == nil && image.Reference == imageReference && image.valid() {
+		imageCheck.State, imageCheck.ReasonCode = "passed", "HBN_IMAGE_METADATA_VERIFIED"
+		imageCheck.Message = "Current retained HBN image metadata access, digests and Linux/arm64 identity were verified; future pulls and traffic remain unverified. Runtime will resolve metadata again."
+	}
+	result.Checks = append(result.Checks, imageCheck)
+	if err := journalPrerequisiteChecks(journal, []inventory.Check{imageCheck}); err != nil {
+		return result, err
+	}
+	if imageCheck.State != "passed" {
+		return result, reconcileError(imageCheck.ReasonCode, imageCheck.Message, nil)
+	}
 	if err := journal.record(executionEvent{Stage: "fresh-prerequisites", Operation: "observe", State: "attempted",
 		ReasonCode: "FRESH_PREREQUISITES_STARTED", Message: "Bind current management and host observations to the retained deployment plan."}); err != nil {
 		return result, err
@@ -377,7 +409,7 @@ func Run(ctx context.Context, request RunRequest) (result RunResult, runErr erro
 		readLeases: func(observeCtx context.Context) (hostWorkloadLeaseSnapshot, error) {
 			return observeHostWorkloadLeaseSnapshot(observeCtx, client, controlPlane.tenant.Client, execution.plan, execution.reconciler, workload, requestTimeout)
 		},
-		readCommand: controlPlane.tenant.Client.hbnExec.read, probeTraffic: sshprobe.ProbeHostWorkloadTraffic,
+		readCommand: controlPlane.tenant.Client.hbnExec.read, probeTraffic: sshprobe.ProbeHostWorkloadTraffic, resolveImage: resolveImage,
 	})
 	result.HBNRuntime = &runtimeResult
 	if err != nil {

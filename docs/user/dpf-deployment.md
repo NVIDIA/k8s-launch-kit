@@ -48,6 +48,18 @@ reachability alone is insufficient. Each selected host must be able to boot its
 existing local operating system after a system reboot. Host firmware setup is
 outside this procedure.
 
+The CLI machine must also reach the retained HBN image's manifest and config
+metadata over anonymous HTTPS. The bounded verifier supports only anonymous
+access or an anonymous Bearer token exchange on the same registry origin; it
+does not use Docker credentials, kubelet pull credentials or credential providers.
+A custom repository that requires Basic authentication or a foreign-origin token
+realm is unsupported by this CLI verifier even if Kubernetes can pull it.
+Deployment checks this exact retained image and its Linux/arm64 metadata before
+any discovery probes or cluster changes, including on every `--resume` attempt.
+An early pass proves current metadata access and identity; it does not prove
+future image pulls, running containers or traffic. Runtime acceptance reads the
+metadata again.
+
 For the current BF4 enrollment path, each selected DPU BMC must grant
 Administrator access, use the `admin` username and resolve to the same nonempty
 password value. Separate protected credential aliases may reference that value.
@@ -112,6 +124,7 @@ adoption path.
 
 | Operation | Where it runs | What must be observed before continuing |
 | --- | --- | --- |
+| Verify HBN image metadata | The CLI reads bounded anonymous HTTPS registry metadata for the exact retained image. | Manifest/config digests and Linux/arm64 identity are verified before discovery probes or cluster changes; this is repeated on resume and again at runtime. |
 | Refresh deployment prerequisites | The CLI reads selected hosts, BMCs, switches and the management API. | Required identities, access and desired settings still match the reviewed bundle; required unknown or failed facts stop deployment. |
 | Install DPF management | The CLI uses the management Kubernetes API and retained chart; DPF controllers run on the management cluster. | Operator and configuration are ready with intended ownership. Conflicts are reported rather than silently adopted. |
 | Create the DPU control plane | DPF and its controllers create the selected tenant cluster on the management nodes; the CLI checks through management and tenant APIs. | The tenant API and backing prerequisites are available and match the plan. This does not mean selected DPUs are installed. |

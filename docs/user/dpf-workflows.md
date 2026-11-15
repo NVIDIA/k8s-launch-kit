@@ -625,6 +625,8 @@ l8k deploy --target dpf \
 
 Both paths are required explicitly. The default and maximum deployment timeout is two hours; a shorter positive timeout may be selected. The CLI rereads current management, host, BMC and switch prerequisites and checks that identities and desired settings still match the reviewed bundle. Missing, denied, unknown or changed required facts stop dependent changes before deployment continues.
 
+Before discovery probes or cluster changes, the CLI verifies anonymous HTTPS manifest/config metadata, digests and Linux/arm64 identity for the exact retained HBN image. Only anonymous access or same-origin anonymous Bearer token exchange is supported; Docker and kubelet pull credentials are separate. Basic authentication, foreign token realms and unavailable or mismatched metadata stop dependent work. Each resume repeats this check, and runtime reads metadata again. An early pass does not establish future pulls or traffic.
+
 Next: [Fresh checks still match](#hbn-bgp-deployment-management); [A required check fails or is unavailable](#hbn-bgp-deployment-blocked).
 
 ### 7. Management cluster: install and configure DPF {#hbn-bgp-deployment-management}

@@ -15,6 +15,8 @@ import (
 	strictjson "sigs.k8s.io/json"
 	"strings"
 	"time"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 )
 
 const hbnImageMetadataLimit = 2 << 20
@@ -31,6 +33,12 @@ type hbnImageDescriptor struct {
 		Architecture string `json:"architecture"`
 		Variant      string `json:"variant"`
 	} `json:"platform"`
+}
+
+type hbnImageResolver func(context.Context, string, time.Duration, http.RoundTripper) (hbnPodImageIdentity, error)
+
+func hbnImageReference(image hbn.Generation) string {
+	return image.ImageRepository + ":" + image.ImageTag + "@" + image.ImageDigest
 }
 
 // resolveHBNRuntimeImage reads only bounded anonymous immutable OCI metadata.

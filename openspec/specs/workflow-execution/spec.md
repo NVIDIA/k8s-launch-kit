@@ -66,6 +66,19 @@ Equivalent entry points SHALL reuse common semantics for equivalent modes. Inten
 
 New and changed workflow checks SHALL persist a stable reason code and safe explanation for every failed, unavailable, unknown, skipped or deferred result. The result SHALL distinguish missing prerequisites from an attempted operation failure and identify the subject and source where known. Diagnostic persistence MUST NOT disclose credentials or treat optional unknowns as passes. Existing unrelated baseline paths are not retroactively migrated by this requirement.
 
+#### Scenario: DPF HBN image metadata prerequisite
+
+- **WHEN** native DPF deployment starts or resumes the retained plan
+- **THEN** before discovery probes or management, enrollment, activation or host
+  effects, it verifies bounded anonymous HTTPS manifest/config metadata, digests
+  and Linux/arm64 identity for the exact retained HBN image reference.
+- **AND** only anonymous or same-origin anonymous Bearer token exchange is
+  supported by the CLI verifier; kubelet pull credentials are separate authority.
+- **AND** failure persists an actionable non-success check and starts no dependent
+  effect; runtime resolves metadata afresh rather than reusing the early identity.
+- **AND** an early pass does not establish future image pulls, runtime readiness
+  or workload traffic.
+
 #### Scenario: DPF staged software verification
 
 - **WHEN** native DPF execution verifies staged BF4 software against retained artifact locks

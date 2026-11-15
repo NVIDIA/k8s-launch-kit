@@ -16,6 +16,13 @@ equivalent. For the independent DPU cluster, use the DPF procedure below.
 
 ## DPF HBN-BGP
 
+The CLI must read the retained HBN image's manifest/config metadata over
+anonymous HTTPS, with only same-origin anonymous Bearer token exchange. Docker
+and kubelet pull credentials are not used by this verifier. Basic authentication
+or a foreign token realm blocks the command before discovery probes or cluster
+changes, including on resume. The early image check proves current metadata
+identity/access only; runtime repeats it before accepting traffic results.
+
 The standalone DPF command path is available; the current BF4/HBN-BGP cohort
 remains beta. A successful run checks the selected provisioning, BGP, route and
 traffic conditions and does not qualify other hardware or release combinations.

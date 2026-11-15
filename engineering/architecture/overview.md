@@ -285,8 +285,13 @@ sequenceDiagram
 ```
 
 Selecting `dpf` binds its independent discovery, generation or standalone deploy
-adapter. The deploy adapter validates a retained bundle and explicit site access,
-refreshes prerequisites, then runs management, tenant, enrollment, software,
+adapter. The deploy adapter validates a retained bundle and explicit site access.
+Before discovery probes or cluster effects, it verifies bounded anonymous HTTPS
+manifest/config metadata for the exact retained HBN image, permitting only
+same-origin anonymous Bearer token exchange. Kubelet pull credentials are a
+separate authority. Each resume repeats this prerequisite, and runtime resolves
+metadata afresh; an early identity is not a future-pull or traffic receipt. It
+then refreshes prerequisites and runs management, tenant, enrollment, software,
 workload declarations, activation, host networking and native HBN runtime checks.
 It never enters a Host lifecycle service. DPF standalone validation and the root
 pipeline remain capability rejections before client construction.
