@@ -119,16 +119,6 @@ only its own address class. Observed ranges SHALL NOT become persisted overrides
 - **THEN** deployment warns by Node name while checking all available ranges.
 - **AND** absent GA and beta ServiceCIDR APIs warn; denied reads, malformed ranges and an empty served API fail unless authoritative service ranges bypass that API read.
 
-## Baseline and limits
-
-Structural validation does not prove CRD schema/admission or readiness. Sidecar handling lives outside `pkg/bundle`. Atomic sidecar writing does not promise whole-directory atomicity or cluster transactions. No content hash binds manifests to effective config; explicit override may differ from generated intent. Bundle checks cannot recover artifacts already lost to render-map overwrite; [profile planning](../profile-planning/spec.md) owns that boundary.
-
-## Integration and evidence
-
-- Implementation: [bundle](../../../pkg/bundle), [effective config](../../../pkg/config/effective.go), [Host paths](../../../pkg/target/host/paths.go).
-- Existing suites: [bundle](../../../pkg/bundle/bundle_test.go), [application bundle](../../../pkg/app/bundle_test.go), [Host bundle](../../../pkg/target/host/bundle_test.go), [effective config](../../../pkg/config/effective_test.go), [paths](../../../pkg/target/host/paths_test.go).
-- Architecture: [artifact bundle](../../../engineering/architecture/artifact-bundle.md).
-
 ### Requirement: DPF generation preserves the complete selected chart and resource intent
 
 DPF HBN-BGP generation SHALL retain verified operator and HBN chart archives,
@@ -164,3 +154,13 @@ readiness from archive or schema validation.
 - **WHEN** a native lifecycle consumer loads an HBN bundle with an altered stage, selection, artifact, or desired resource, even with recalculated file hashes
 - **THEN** it rejects the bundle before API access unless the full retained content matches generation from its explicit resolved inputs.
 - **AND** omitted required operator identity or serial-bound BMC endpoints require regeneration; the consumer does not infer them from ambient configuration.
+
+## Baseline and limits
+
+Structural validation does not prove CRD schema/admission or readiness. Sidecar handling lives outside `pkg/bundle`. Atomic sidecar writing does not promise whole-directory atomicity or cluster transactions. No content hash binds manifests to effective config; explicit override may differ from generated intent. Bundle checks cannot recover artifacts already lost to render-map overwrite; [profile planning](../profile-planning/spec.md) owns that boundary.
+
+## Integration and evidence
+
+- Implementation: [bundle](../../../pkg/bundle), [effective config](../../../pkg/config/effective.go), [Host paths](../../../pkg/target/host/paths.go).
+- Existing suites: [bundle](../../../pkg/bundle/bundle_test.go), [application bundle](../../../pkg/app/bundle_test.go), [Host bundle](../../../pkg/target/host/bundle_test.go), [effective config](../../../pkg/config/effective_test.go), [paths](../../../pkg/target/host/paths_test.go).
+- Architecture: [artifact bundle](../../../engineering/architecture/artifact-bundle.md).
