@@ -496,7 +496,12 @@ func hostNetworkStageFixture(t *testing.T) (activationIntegrationFixture, activa
 
 func hostNetworkStageFixtureForSerials(t *testing.T, serials []string) (activationIntegrationFixture, activationStageReceipt, hostWorkloadLeaseSnapshot) {
 	t.Helper()
-	fixture := newActivationIntegrationFixtureForSerials(t, serials)
+	return hostNetworkStageFixtureFromExecution(t, prepareSoftwareStageExecution(t, serials))
+}
+
+func hostNetworkStageFixtureFromExecution(t *testing.T, execution *managementExecution) (activationIntegrationFixture, activationStageReceipt, hostWorkloadLeaseSnapshot) {
+	t.Helper()
+	fixture := newActivationIntegrationFixtureFromExecution(t, execution, false)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 	fixture.ctx = ctx

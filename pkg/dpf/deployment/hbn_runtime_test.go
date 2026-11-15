@@ -4,6 +4,7 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -76,7 +77,12 @@ type runtimeStageFixture struct {
 
 func newRuntimeStageFixture(t *testing.T, serials []string) *runtimeStageFixture {
 	t.Helper()
-	base, activation, snapshot := hostNetworkStageFixtureForSerials(t, serials)
+	return newRuntimeStageFixtureFromExecution(t, prepareSoftwareStageExecution(t, serials))
+}
+
+func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExecution) *runtimeStageFixture {
+	t.Helper()
+	base, activation, snapshot := hostNetworkStageFixtureFromExecution(t, execution)
 	f := &runtimeStageFixture{activationIntegrationFixture: base, activation: activation, snapshot: snapshot, client: &runtimeStageFake{activationIntegrationFake: base.client}}
 	desired := base.prepared.execution.plan.Intent()
 	namespace := desired.Namespace
@@ -178,10 +184,10 @@ func newRuntimeStageFixture(t *testing.T, serials []string) *runtimeStageFixture
 	}
 	f.client.app = hbnApplicationFixture(intent, time.Now().UTC())
 	f.ds, _ = bindingFixture(intent, "cluster-dpu-hbn-ds")
-	f.ds.Status.DesiredNumberScheduled = int32(len(serials))
-	f.ds.Status.UpdatedNumberScheduled = int32(len(serials))
-	f.ds.Status.NumberReady = int32(len(serials))
-	f.ds.Status.NumberAvailable = int32(len(serials))
+	f.ds.Status.DesiredNumberScheduled = int32(len(desired.Devices))
+	f.ds.Status.UpdatedNumberScheduled = int32(len(desired.Devices))
+	f.ds.Status.NumberReady = int32(len(desired.Devices))
+	f.ds.Status.NumberAvailable = int32(len(desired.Devices))
 	for _, lease := range leases {
 		selectedIntent := intent
 		selectedIntent.TenantNodeName = lease.TenantNodeName
@@ -356,9 +362,10 @@ func TestHBNRuntimeStageActualTwoHostFlow(t *testing.T) {
 }
 
 func TestHBNRuntimeStageRejectsPartialMeasurementsAndDrift(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
 	for _, scenario := range []string{"wrong-asn", "wrong-route", "ordinary-loss", "df-loss", "service-values", "container-restart", "sidecar-restart", "completed-init-restart", "sidecar-image", "pod-replacement", "interface-replacement", "lease-replaced", "assignment-drift", "tenant-denied", "management-denied", "incomplete-list", "canceled", "cancel-after-read", "later-exec-failure", "host-receipt-mismatch"} {
 		t.Run(scenario, func(t *testing.T) {
-			f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
+			f := newRuntimeStageFixtureFromExecution(t, execution)
 			original := f.transports.readCommand
 			switch scenario {
 			case "wrong-asn":
@@ -499,9 +506,10 @@ func TestHBNRuntimeStageSingleHostNeverValidatesTraffic(t *testing.T) {
 }
 
 func TestHBNRuntimeStageJournalFailureRetainsPartialResult(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
 	for _, failAt := range []int{1, 2, 3, 19} {
 		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
-			f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
+			f := newRuntimeStageFixtureFromExecution(t, execution)
 			journal := testJournal(f.prepared.execution)
 			journal.file = &hostNetworkStageFailingJournalFile{managementMemoryFile: journal.file.(*managementMemoryFile), failSyncAt: failAt}
 			result, err := f.run(journal)
@@ -542,5 +550,95 @@ func TestHBNRuntimeFactoryInputsAreIndependent(t *testing.T) {
 	}
 	if _, err = compileHBNRuntimeBinding(f.prepared.execution, f.activation, fence, f.client.service, f.client.interfaces, f.image); err == nil {
 		t.Fatal("factory accepted unretained values")
+	}
+}
+
+// A shared prepared execution must not become a cache of mutable API state,
+// transports, closures or cleanup ownership from an earlier table case.
+func TestRuntimeStagePreparedExecutionKeepsInstancesIndependent(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
+	snapshotPrepared := func() []byte {
+		chart, err := chartFingerprint(execution.operator.chart)
+		if err != nil {
+			t.Fatal(err)
+		}
+		crds := make([]any, 0, len(execution.crds))
+		for _, crd := range execution.crds {
+			crds = append(crds, map[string]any{"name": crd.name, "spec": crd.spec, "versions": crd.versions})
+		}
+		snapshot := map[string]any{"intent": execution.plan.Intent(), "bundle": execution.retained.Files(), "manager": execution.manager, "config": execution.configObject, "namespaces": execution.namespaces, "crds": crds, "chart": chart, "operatorManifest": execution.operator.renderedManifest, "operatorValues": execution.operator.valuesYAML}
+		data, err := json.Marshal(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	before := snapshotPrepared()
+	var firstContext context.Context
+	const canary = "first-fixture-only"
+	t.Run("mutate and release first instance", func(t *testing.T) {
+		f := newRuntimeStageFixtureFromExecution(t, execution)
+		firstContext = f.ctx
+		if firstContext.Err() != nil {
+			t.Fatal("first fixture did not start with a live independent context")
+		}
+		software, err := retainedBlueFieldSoftware(execution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current := f.client.base.resources[tenantStageKey(software)]
+		if current == nil {
+			t.Fatal("software fixture is missing")
+		}
+		if err := unstructured.SetNestedField(current.Object, canary, "spec", "osIso"); err != nil {
+			t.Fatal(err)
+		}
+		if len(execution.crds) == 0 {
+			t.Fatal("prepared CRD expectations missing")
+		}
+		crd := f.client.operator.crds[execution.crds[0].name]
+		if crd == nil {
+			t.Fatal("observed CRD fixture missing")
+		}
+		if err := unstructured.SetNestedField(crd.Object, canary, "spec", "group"); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.pods) == 0 || len(f.pods[0].Status.ContainerStatuses) == 0 || f.snapshot.CIDRPool == nil {
+			t.Fatal("mutable Pod/lease fixture missing")
+		}
+		f.pods[0].Status.ContainerStatuses[0].ContainerID = canary
+		f.snapshot.CIDRPool.SetUID(types.UID(canary))
+		f.commandReads, f.trafficReads, f.leaseReads = 91, 92, 93
+		f.denyTenant, f.client.denyManagement = true, true
+		f.commandHook = func(int, hbnRuntimeCommand) { f.client.denyManagement = true }
+		f.transports.readCommand = func(context.Context, string, string, hbnRuntimeCommand, netip.Prefix) ([]byte, error) {
+			return nil, errors.New(canary)
+		}
+	})
+	if firstContext == nil || !errors.Is(firstContext.Err(), context.Canceled) {
+		t.Fatal("first child fixture did not cancel its own context during cleanup")
+	}
+	if !bytes.Equal(before, snapshotPrepared()) {
+		t.Fatal("first observed-state mutations changed the retained prepared execution")
+	}
+	t.Run("fresh second instance runs normally", func(t *testing.T) {
+		f := newRuntimeStageFixtureFromExecution(t, execution)
+		if f.ctx.Err() != nil || f.commandReads != 0 || f.trafficReads != 0 || f.leaseReads != 0 || f.denyTenant || f.client.denyManagement {
+			t.Fatal("second fixture inherited closed context, counters or permission hooks")
+		}
+		observed, err := json.Marshal(map[string]any{"pods": f.pods, "lease": f.snapshot.CIDRPool, "resources": f.client.base.resources, "crds": f.client.operator.crds})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(observed, []byte(canary)) {
+			t.Fatal("second fixture inherited a first-instance deep API mutation")
+		}
+		result, err := f.run(testJournal(execution))
+		if err != nil || !result.TrafficValidated || result.State != "passed" || len(result.BGP) != 2 || len(result.Routes) != 2 || len(result.Traffic) != 2 || f.commandReads != 4 || f.trafficReads != 2 {
+			t.Fatalf("fresh second real runtime flow failed: result=%+v commands=%d traffic=%d err=%v", result, f.commandReads, f.trafficReads, err)
+		}
+	})
+	if !bytes.Equal(before, snapshotPrepared()) {
+		t.Fatal("second runtime flow mutated the shared prepared input")
 	}
 }

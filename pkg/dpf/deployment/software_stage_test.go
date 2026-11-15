@@ -105,10 +105,19 @@ func softwareStageFixture(t *testing.T) (*managementExecution, controlPlaneRecei
 
 func softwareStageFixtureForSerials(t *testing.T, serials []string) (*managementExecution, controlPlaneReceipts, []enrollmentBMC, string, *softwareStageFake, *executionJournal) {
 	t.Helper()
+	execution := prepareSoftwareStageExecution(t, serials)
+	receipts, selected, password, fake, journal := softwareStageFixtureFromExecution(t, execution)
+	return execution, receipts, selected, password, fake, journal
+}
+
+// The validated desired snapshot is read-only across cases in one table.
+// Live API objects, transports and credentials are created separately below.
+func prepareSoftwareStageExecution(t *testing.T, serials []string) *managementExecution {
+	t.Helper()
 	if len(serials) == 0 {
 		t.Fatal("software stage fixture requires at least one selected serial")
 	}
-	expected, sources := tenantSourceFixture(t)
+	expected := readyTenantExpectedFixture()
 	input := preflightGenerationInputs(t)
 	input.Operator.Bootstrap.Tenant = bootstrap.Tenant{Name: expected.Name, Namespace: expected.Namespace, Labels: expected.Labels, MaxNodes: int(expected.MaxNodes), VIP: expected.VIP, Interface: expected.Interface, RouterID: int(expected.VirtualRouterID), NodeSelector: expected.NodeSelector, ServiceCIDR: expected.ServiceCIDR}
 	input.Operator.Bootstrap.PodCIDR = expected.PodCIDR
@@ -138,21 +147,34 @@ func softwareStageFixtureForSerials(t *testing.T, serials []string) (*management
 	if err != nil {
 		t.Fatal(err)
 	}
+	return execution
+}
+
+func softwareStageFixtureFromExecution(t *testing.T, execution *managementExecution) (controlPlaneReceipts, []enrollmentBMC, string, *softwareStageFake, *executionJournal) {
+	t.Helper()
+	if execution == nil || execution.plan == nil {
+		t.Fatal("software fixture requires a prepared execution")
+	}
+	expected, sources := tenantSourceFixture(t)
+	devices := execution.plan.Intent().Devices
+	if len(devices) == 0 {
+		t.Fatal("software fixture requires a selected cohort")
+	}
 	request := controlPlaneTestRequest(t)
 	firstDPUTarget := -1
 	for i := range request.Targets {
 		if request.Targets[i].Endpoint == "https://192.0.2.20" {
-			request.Targets[i].Endpoint = "https://192.0.2.30"
+			request.Targets[i].Endpoint = "https://" + devices[0].BMCIP
 			firstDPUTarget = i
 		}
 	}
 	if firstDPUTarget < 0 {
 		t.Fatal("software fixture is missing its initial DPU target")
 	}
-	for i := 1; i < len(serials); i++ {
+	for i := 1; i < len(devices); i++ {
 		target := request.Targets[firstDPUTarget]
 		target.InputRef = fmt.Sprintf("dpu-input-%d", i+1)
-		target.Endpoint = fmt.Sprintf("https://192.0.2.%d", 30+i)
+		target.Endpoint = "https://" + devices[i].BMCIP
 		request.Targets = append(request.Targets, target)
 	}
 	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Devices, request.Targets)
@@ -189,7 +211,7 @@ func softwareStageFixtureForSerials(t *testing.T, serials []string) (*management
 	management.base.events = nil
 	management.base.createCount = 0
 	receipts := controlPlaneReceipts{management: managementReceipt, tenant: tenant, enrollment: enrollment}
-	return execution, receipts, selected, password, management, testJournal(execution)
+	return receipts, selected, password, management, testJournal(execution)
 }
 
 func TestRunSoftwareStageCreatesWaitsAndVerifiesRetainedCache(t *testing.T) {
@@ -204,6 +226,7 @@ func TestRunSoftwareStageCreatesWaitsAndVerifiesRetainedCache(t *testing.T) {
 }
 
 func TestRunSoftwareStageStopsBeforeCreateOnReceiptPermissionOrManagerMismatch(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, tc := range []struct {
 		name   string
 		mutate func(*controlPlaneReceipts, *softwareStageFake)
@@ -221,7 +244,7 @@ func TestRunSoftwareStageStopsBeforeCreateOnReceiptPermissionOrManagerMismatch(t
 		{name: "manager release", mutate: func(_ *controlPlaneReceipts, f *softwareStageFake) { f.managerImage = "example.test/other:tag" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			execution, receipts, selected, password, fake, journal := softwareStageFixture(t)
+			receipts, selected, password, fake, journal := softwareStageFixtureFromExecution(t, execution)
 			tc.mutate(&receipts, fake)
 			_, err := runSoftwareStage(tenantStageContext(t), fake, execution, receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
 			if err == nil || fake.createSoftware != 0 {
@@ -244,9 +267,10 @@ func TestRunSoftwarePreparationRejectsInvalidByteLimitsBeforeManagement(t *testi
 }
 
 func TestSoftwareStageFailuresAfterCreateCannotIssueReceipt(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, scenario := range []string{"digest", "cleanup", "final-device-replacement"} {
 		t.Run(scenario, func(t *testing.T) {
-			execution, receipts, selected, password, fake, journal := softwareStageFixture(t)
+			receipts, selected, password, fake, journal := softwareStageFixtureFromExecution(t, execution)
 			switch scenario {
 			case "digest":
 				fake.streamMismatch.Store(true)

@@ -113,14 +113,19 @@ func TestEvaluateTenantReadinessUsesKamajiPluralCIDRFields(t *testing.T) {
 	}
 }
 
-func readyTenantFixture(t *testing.T) (TenantReadinessExpected, TenantReadinessObserved) {
-	expected := TenantReadinessExpected{
+// Each caller owns fresh mutable selector maps.
+func readyTenantExpectedFixture() TenantReadinessExpected {
+	return TenantReadinessExpected{
 		Name: "hbn-tenant", Namespace: "hbn-tenant",
 		Labels: map[string]string{"l8k.example/tenant": "hbn"}, MaxNodes: 2,
 		KubernetesVersion: "v1.35.6", VIP: "192.0.2.20", Interface: "eth0",
 		PodCIDR: "10.244.0.0/14", ServiceCIDR: "10.96.0.0/16", VirtualRouterID: 126,
 		NodeSelector: map[string]string{"node-role.kubernetes.io/control-plane": ""},
 	}
+}
+
+func readyTenantFixture(t *testing.T) (TenantReadinessExpected, TenantReadinessObserved) {
+	expected := readyTenantExpectedFixture()
 	dc := tenantObject("provisioning.dpu.nvidia.com/v1alpha1", "DPUCluster", "hbn-tenant", "hbn-tenant", map[string]any{
 		"uid": "dc-uid", "labels": map[string]any{"l8k.example/tenant": "hbn"},
 	}, map[string]any{

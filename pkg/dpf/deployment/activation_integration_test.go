@@ -527,6 +527,7 @@ func TestRunActivationStageRetryCannotReplayUncertainHostReboot(t *testing.T) {
 }
 
 func TestRunActivationStageRejectsDPUIdentityOrSourcePhaseChangeBeforeRebootClaim(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	tests := []struct {
 		mutation string
 		reason   string
@@ -542,7 +543,7 @@ func TestRunActivationStageRejectsDPUIdentityOrSourcePhaseChangeBeforeRebootClai
 	}
 	for _, tc := range tests {
 		t.Run(tc.mutation, func(t *testing.T) {
-			fixture := newActivationIntegrationFixture(t)
+			fixture := newActivationIntegrationFixtureFromExecution(t, execution, false)
 			fixture.client.mutateBoundaryDPU = tc.mutation
 			var callbacks int
 			rebooter := RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
@@ -589,7 +590,12 @@ func newActivationIntegrationFixtureForSerials(t *testing.T, serials []string) a
 // preparing an unrelated host/plan and overwriting its retained identities.
 func newActivationIntegrationCohortFixture(t *testing.T, serials []string, sameHost bool) activationIntegrationFixture {
 	t.Helper()
-	execution, receipts, selected, _, stage, _ := softwareStageFixtureForSerials(t, serials)
+	return newActivationIntegrationFixtureFromExecution(t, prepareSoftwareStageExecution(t, serials), sameHost)
+}
+
+func newActivationIntegrationFixtureFromExecution(t *testing.T, execution *managementExecution, sameHost bool) activationIntegrationFixture {
+	t.Helper()
+	receipts, selected, _, stage, _ := softwareStageFixtureFromExecution(t, execution)
 	client := &activationIntegrationFake{softwarePreparationFake: &softwarePreparationFake{softwareStageFake: stage}}
 	if err := operatorBindingForExecution(stage.operator, execution); err != nil {
 		t.Fatal(err)

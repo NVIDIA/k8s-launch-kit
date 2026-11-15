@@ -461,6 +461,11 @@ func TestRunManagementRechecksSingletonBeforeConfigCreateAndVerifiesVersion(t *t
 		t.Fatalf("late singleton collision error=%v, config creates=%d", err, client.createConfig)
 	}
 
+	execution, err := prepareManagementExecution(generated, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for _, tc := range []struct {
 		name string
 		set  func(*managementFake)
@@ -473,13 +478,13 @@ func TestRunManagementRechecksSingletonBeforeConfigCreateAndVerifiesVersion(t *t
 		{name: "identity changed", set: func(fake *managementFake) { fake.failIdentityAfterConfig = true }, code: "MANAGEMENT_IDENTITY_CHANGED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := newManagementFake(t, generated)
+			client := managementFakeWithReadiness(t, execution.plan.Digest(), execution.manager, execution.crds)
 			tc.set(client)
 			file := &managementMemoryFile{}
 			journal := &executionJournal{file: file, digest: generated.Index().BundleDigest}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			_, err := runManagement(ctx, client, generated, journal, time.Millisecond)
+			_, err := runPreparedManagement(ctx, client, execution, journal, time.Millisecond)
 			if err == nil || !strings.Contains(err.Error(), tc.code) || client.createConfig != 1 {
 				t.Fatalf("config stage was not reached and safely gated: error=%v creates=%d", err, client.createConfig)
 			}
