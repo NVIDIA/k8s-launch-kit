@@ -565,9 +565,12 @@ func ProbeChecks(inv *inventory.Inventory, targets []config.Target) []inventory.
 		return checks
 	}
 	destinations := []string{"management-api"}
+	unverifiedAllowed := map[string]bool{}
 	for _, t := range targets {
 		if t.Role == "dpus" {
-			destinations = append(destinations, inventory.Digest("probe-destination-v1", t.Endpoint))
+			id := inventory.Digest("probe-destination-v1", t.Endpoint)
+			destinations = append(destinations, id)
+			unverifiedAllowed[id] = t.Access.InsecureSkipVerify()
 		}
 	}
 	rows := map[string][]inventory.ProbeResult{}
@@ -594,7 +597,7 @@ func ProbeChecks(inv *inventory.Inventory, targets []config.Target) []inventory.
 						state = "unknown"
 					}
 					for _, a := range v.Addresses {
-						if a.TCP != "reachable" || a.TLS != "verified" {
+						if a.TCP != "reachable" || a.TLS != "verified" && !(a.TLS == "unverified" && unverifiedAllowed[destination]) {
 							state = "failed"
 						}
 					}

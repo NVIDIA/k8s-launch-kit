@@ -1,10 +1,6 @@
 # Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 # SPDX-License-Identifier: Apache-2.0
-# Synthetic site. Replace endpoints, kubeconfig and account references locally.
-management:
-  kubeconfigRef:
-    file: ./credentials/management.kubeconfig
-  context: management
+# Synthetic site. Replace endpoints and account references locally.
 credentials:
   dpu-reader:
     username: bmc-reader
@@ -21,5 +17,3 @@ discovery:
   hosts:
     - bmcEndpoint: https://192.0.2.21
       credentialRef: host-reader
-  probes:
-    mode: inventory

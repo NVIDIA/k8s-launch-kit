@@ -28,6 +28,7 @@ while IFS= read -r destination; do
     authority=$(jq -r '.authority' <<<"$destination")
     url=$(jq -r '.url' <<<"$destination")
     ca=$(jq -r '.caFile' <<<"$destination")
+    insecure=$(jq -r '.insecureSkipVerify // false' <<<"$destination")
     dns=resolved
     if [[ $(jq -r '.literal' <<<"$destination") == true ]]; then
         dns=not-applicable
@@ -55,6 +56,8 @@ while IFS= read -r destination; do
         if [[ "$name" == *:* ]]; then name="[$name]"; fi
         ca_args=()
         if [[ -n "$ca" ]]; then ca_args=(--cacert "$ca"); fi
+        tls_args=()
+        if [[ "$insecure" == true ]]; then tls_args=(--insecure); fi
         # Disable curlrc, proxies, redirects and all non-HTTPS protocols. Each IP
         # is pinned while retaining the original HTTP authority and TLS identity.
         status=0
@@ -63,7 +66,7 @@ while IFS= read -r destination; do
             --connect-timeout "$per_timeout" --max-time "$per_timeout" \
             --max-filesize 65536 --retry 0 --output /scratch/body \
             --write-out '%{json}' --resolve "$name:$port:$resolved" \
-            --header "Host: $authority" "${ca_args[@]}" --url "$url" \
+            --header "Host: $authority" "${ca_args[@]}" "${tls_args[@]}" --url "$url" \
             > /scratch/curl.json 2>/scratch/curl.stderr || status=$?
         # A tool/configuration failure must not masquerade as a failed network path.
         case "$status" in 0|5|6|7|18|28|35|52|55|56|60|63|80|92) ;; *) exit 1 ;; esac
@@ -72,9 +75,13 @@ while IFS= read -r destination; do
         tls=unavailable
         http=http-unavailable
         if jq -e '.time_connect > 0' /scratch/curl.json >/dev/null; then tcp=reachable; fi
-        if jq -e '.time_appconnect > 0 and .ssl_verify_result == 0' /scratch/curl.json >/dev/null; then tls=verified; fi
+        if [[ "$insecure" == true ]]; then
+            if jq -e '.time_appconnect > 0' /scratch/curl.json >/dev/null; then tls=unverified; fi
+        elif jq -e '.time_appconnect > 0 and .ssl_verify_result == 0' /scratch/curl.json >/dev/null; then
+            tls=verified
+        fi
         code=$(jq '.response_code' /scratch/curl.json)
-        if [[ "$tls" == verified ]]; then
+        if [[ "$tls" == verified || "$tls" == unverified ]]; then
             if ((code == 401 || code == 403)); then http=authentication-required
             elif ((code >= 300 && code < 400)); then http=redirect-refused
             elif ((code == 404)); then http=resource-unavailable

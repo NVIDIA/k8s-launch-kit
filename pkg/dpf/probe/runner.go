@@ -85,7 +85,7 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 	request.Destinations = append(request.Destinations, Destination{ID: "management-api", Endpoint: api.Scheme + "://" + api.Host, Path: path.Join("/", api.Path, "version"), ServerName: mg.REST.ServerName, CA: mg.REST.CAData})
 	for _, t := range r.Targets {
 		if t.Role == "dpus" {
-			request.Destinations = append(request.Destinations, Destination{ID: inventory.Digest("probe-destination-v1", t.Endpoint), Endpoint: t.Endpoint, Path: "/redfish/v1/", CA: t.Access.PublicCA()})
+			request.Destinations = append(request.Destinations, Destination{ID: inventory.Digest("probe-destination-v1", t.Endpoint), Endpoint: t.Endpoint, Path: "/redfish/v1/", CA: t.Access.PublicCA(), InsecureSkipVerify: t.Access.InsecureSkipVerify()})
 		}
 	}
 	if deadline, ok := ctx.Deadline(); ok {
@@ -316,7 +316,11 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 					return rows, cleanup, fmt.Errorf("required probe DNS coverage unavailable")
 				}
 				for _, a := range row.Addresses {
-					if a.TCP != "reachable" || a.TLS != "verified" {
+					expectedTLS := "verified"
+					if destinationAllowsUnverified(request, row.Destination) {
+						expectedTLS = "unverified"
+					}
+					if a.TCP != "reachable" || a.TLS != expectedTLS {
 						return rows, cleanup, fmt.Errorf("required probe TCP/TLS path failed")
 					}
 				}
@@ -422,20 +426,35 @@ func ValidateResponse(out Response, req Request, node, pod, mode string) error {
 	if out.StartedAt.IsZero() || out.FinishedAt.Before(out.StartedAt) || out.FinishedAt.After(req.Deadline.Add(time.Minute)) {
 		return fmt.Errorf("invalid probe time bounds")
 	}
-	expected := map[string]bool{}
+	expected := map[string]Destination{}
 	for _, d := range req.Destinations {
-		expected[d.ID] = true
+		expected[d.ID] = d
 	}
 	for _, r := range out.Results {
-		if !expected[r.Destination] || r.NodeUID != node || r.NetworkMode != mode {
+		destination, present := expected[r.Destination]
+		if !present || r.NodeUID != node || r.NetworkMode != mode {
 			return fmt.Errorf("unexpected or duplicate row")
 		}
 		if err := validateRow(r); err != nil {
 			return err
 		}
+		for _, address := range r.Addresses {
+			if address.TLS == "unverified" && (!destination.InsecureSkipVerify || destination.ID == "management-api") || address.TLS == "verified" && destination.InsecureSkipVerify {
+				return fmt.Errorf("probe TLS result contradicts requested verification policy")
+			}
+		}
 		delete(expected, r.Destination)
 	}
 	return nil
+}
+
+func destinationAllowsUnverified(request Request, id string) bool {
+	for _, destination := range request.Destinations {
+		if destination.ID == id {
+			return id != "management-api" && destination.InsecureSkipVerify
+		}
+	}
+	return false
 }
 
 // FileJournal contains no auth material and records intended creates before dispatch.
@@ -473,7 +492,7 @@ func validateRow(r inventory.ProbeResult) error {
 			return fmt.Errorf("invalid/duplicate IP address")
 		}
 		seen[a.Address] = true
-		if a.TCP != "reachable" && a.TCP != "unavailable" || a.TLS != "verified" && a.TLS != "unavailable" || a.TLS == "verified" && a.TCP != "reachable" {
+		if a.TCP != "reachable" && a.TCP != "unavailable" || a.TLS != "verified" && a.TLS != "unverified" && a.TLS != "unavailable" || (a.TLS == "verified" || a.TLS == "unverified") && a.TCP != "reachable" {
 			return fmt.Errorf("invalid TCP/TLS state")
 		}
 		switch a.HTTP {
