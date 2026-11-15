@@ -6,6 +6,7 @@ package deployment
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -24,10 +25,12 @@ import (
 	"helm.sh/helm/v3/pkg/storage/driver"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/cli-runtime/pkg/resource"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -665,4 +668,231 @@ type trackingResponseBody struct {
 func (b *trackingResponseBody) Close() error {
 	close(b.closed)
 	return nil
+}
+
+// Use Helm's real Secret storage codec, including its JSON omitempty behavior.
+func storedOperatorRelease(t *testing.T, installed *release.Release) *release.Release {
+	t.Helper()
+	client := kubefake.NewClientset()
+	storage := driver.NewSecrets(client.CoreV1().Secrets(installed.Namespace))
+	const key = "sh.helm.release.v1.local.v1"
+	if err := storage.Create(key, installed); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := storage.Get(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoded
+}
+
+func TestEnsureOperatorAcceptsStoredEmptyTopLevelValues(t *testing.T) {
+	request := operatorTestRequest(t)
+	request.Inputs.Values = map[string]any{}
+	plan, err := prepareOperator(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed := releaseForPlan(t, plan)
+	installed.Version = 1
+	if installed.Config == nil || len(installed.Config) != 0 {
+		t.Fatal("fixture must model actual nonnil empty pre-storage values")
+	}
+	decoded := storedOperatorRelease(t, installed)
+	if decoded.Config != nil {
+		t.Fatal("Helm storage did not reproduce omitted empty values")
+	}
+	actions := &fakeOperatorActions{installed: decoded}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := ensureOperator(ctx, plan, actions); err != nil {
+		t.Fatalf("exact Helm-stored release was rejected: %v", err)
+	}
+	if len(actions.installs) != 0 || actions.resourceChecks != 0 {
+		t.Fatal("matching stored release caused install or adoption inspection")
+	}
+	if installed.Config == nil || decoded.Config != nil {
+		t.Fatal("verification mutated supplied values")
+	}
+}
+
+func TestCanonicalOperatorManifestIncludesCompleteIdentityAndContent(t *testing.T) {
+	const baseline = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: operator\n  namespace: dpf\n  labels:\n    purpose: selected\nspec:\n  replicas: 1\n  exact: 9007199254740992\n"
+	expected, err := canonicalManifest([]byte(baseline))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, from, to string }{
+		{name: "spec", from: "replicas: 1", to: "replicas: 2"},
+		{name: "name", from: "name: operator", to: "name: foreign"},
+		{name: "namespace", from: "namespace: dpf", to: "namespace: other"},
+		{name: "kind", from: "kind: Deployment", to: "kind: StatefulSet"},
+		{name: "api version", from: "apiVersion: apps/v1", to: "apiVersion: apps/v2"},
+		{name: "metadata label", from: "purpose: selected", to: "purpose: foreign"},
+		{name: "large integer precision", from: "9007199254740992", to: "9007199254740993"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed, err := canonicalManifest([]byte(strings.Replace(baseline, tc.from, tc.to, 1)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Equal(expected, changed) {
+				t.Fatal("same-count changed object collided with retained manifest")
+			}
+		})
+	}
+	const other = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: config\n  namespace: dpf\ndata:\n  mode: selected\n"
+	ordered, err := canonicalManifest([]byte(baseline + "---\n" + other))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reordered, err := canonicalManifest([]byte("# formatting comment\n" + other + "---\n" + baseline))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(ordered, reordered) {
+		t.Fatal("document ordering or comments changed manifest semantics")
+	}
+}
+
+func TestEnsureOperatorPreservesNestedExplicitHelmValues(t *testing.T) {
+	plan, err := prepareOperator(operatorTestRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]any{"nested": map[string]any{"null": nil, "flag": false, "zero": int64(0), "map": map[string]any{}, "list": []any{}}}
+	expectedBefore, err := json.Marshal(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valuesJSON, err := canonicalHelmValues(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := *plan
+	selected.expectedValuesJSON = valuesJSON
+	for _, tc := range []struct {
+		name     string
+		edit     func(map[string]any)
+		accepted bool
+	}{
+		{name: "exact nested values", edit: func(map[string]any) {}, accepted: true},
+		{name: "missing explicit false", edit: func(m map[string]any) { delete(m, "flag") }, accepted: false},
+		{name: "false to true", edit: func(m map[string]any) { m["flag"] = true }, accepted: false},
+		{name: "missing explicit zero", edit: func(m map[string]any) { delete(m, "zero") }, accepted: false},
+		{name: "zero to one", edit: func(m map[string]any) { m["zero"] = 1 }, accepted: false},
+		{name: "null to empty map", edit: func(m map[string]any) { m["null"] = map[string]any{} }, accepted: false},
+		{name: "empty map to null", edit: func(m map[string]any) { m["map"] = nil }, accepted: false},
+		{name: "empty list to null", edit: func(m map[string]any) { m["list"] = nil }, accepted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			installed := releaseForPlan(t, plan)
+			var values map[string]any
+			if err := json.Unmarshal(expectedBefore, &values); err != nil {
+				t.Fatal(err)
+			}
+			nested, ok := values["nested"].(map[string]any)
+			if !ok {
+				t.Fatal("nested fixture missing")
+			}
+			tc.edit(nested)
+			installed.Config = values
+			before, err := json.Marshal(values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actions := &fakeOperatorActions{installed: installed}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err = ensureOperator(ctx, &selected, actions)
+			if (err == nil) != tc.accepted || len(actions.installs) != 0 || actions.resourceChecks != 0 {
+				t.Fatalf("nested value acceptance=%v want=%v error=%v", err == nil, tc.accepted, err)
+			}
+			after, err := json.Marshal(values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("comparison mutated supplied nested values")
+			}
+		})
+	}
+	after, err := json.Marshal(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(expectedBefore, after) {
+		t.Fatal("comparison mutated expected values")
+	}
+}
+
+func TestEnsureOperatorRejectsSameCountManifestDriftWithoutEffects(t *testing.T) {
+	plan, err := prepareOperator(operatorTestRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := decodeOperatorManifest(plan.renderedManifest)
+	if err != nil || len(objects) == 0 {
+		t.Fatalf("decode real retained projection: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*unstructured.Unstructured)
+	}{
+		{name: "metadata", edit: func(o *unstructured.Unstructured) {
+			labels := o.GetLabels()
+			if labels == nil {
+				labels = map[string]string{}
+			}
+			labels["foreign.example/canary"] = "untrusted-sentinel"
+			o.SetLabels(labels)
+		}},
+		{name: "identity", edit: func(o *unstructured.Unstructured) { o.SetName("foreign-resource") }},
+		{name: "body", edit: func(o *unstructured.Unstructured) { o.Object["foreignCanary"] = "untrusted-sentinel" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			installed := releaseForPlan(t, plan)
+			var manifest bytes.Buffer
+			for i, object := range objects {
+				copy := object.DeepCopy()
+				if i == 0 {
+					tc.edit(copy)
+				}
+				raw, err := sigsyaml.Marshal(copy.Object)
+				if err != nil {
+					t.Fatal(err)
+				}
+				manifest.WriteString("---\n")
+				manifest.Write(raw)
+			}
+			installed.Manifest = manifest.String()
+			actions := &fakeOperatorActions{installed: installed}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err := ensureOperator(ctx, plan, actions)
+			var conflict *existingOperatorReleaseConflict
+			if !errors.As(err, &conflict) || conflict == nil {
+				t.Fatalf("changed existing manifest lacked typed no-effect conflict: %v", err)
+			}
+			code, _ := conflict.diagnostic()
+			if code != "HELM_MANIFEST_DIFFER" || strings.Contains(err.Error(), "untrusted-sentinel") || actions.resourceChecks != 0 || len(actions.installs) != 0 {
+				t.Fatal("manifest drift leaked content or reached install/adoption")
+			}
+		})
+	}
+	// Reordering and YAML formatting do not change complete manifest content.
+	installed := releaseForPlan(t, plan)
+	var reordered bytes.Buffer
+	for i := len(objects) - 1; i >= 0; i-- {
+		raw, err := sigsyaml.Marshal(objects[i].Object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reordered.WriteString("---\n# reordered\n")
+		reordered.Write(raw)
+	}
+	installed.Manifest = reordered.String()
+	if err := verifyOperatorRelease(installed, plan); err != nil {
+		t.Fatalf("reordered complete manifest rejected: %v", err)
+	}
 }

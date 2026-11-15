@@ -245,6 +245,11 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 		return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, false, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed before the Helm operation.", err)
 	}
 	if err := client.ensureOperatorPlan(ctx, operatorPlan); err != nil {
+		var conflict *existingOperatorReleaseConflict
+		if errors.As(err, &conflict) && conflict != nil {
+			category, message := conflict.diagnostic()
+			return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, false, "DPF_OPERATOR_RELEASE_CONFLICT", "Existing release verification failed ("+category+"): "+message+"; no Helm install or adoption was attempted.", nil)
+		}
 		return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, true, "DPF_OPERATOR_INSTALL_UNCERTAIN", "Helm installation may have changed release or chart resources; inspect the management cluster before retrying.", err)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {

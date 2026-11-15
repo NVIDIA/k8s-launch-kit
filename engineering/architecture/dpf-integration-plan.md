@@ -690,7 +690,14 @@ Helm install and disables Helm's update path during that install. This prevents
 adoption even if an object with matching Helm annotations appears after the
 absence check. The pinned chart must not introduce hooks, separately installed
 CRDs, or namespace ownership. Installation is not transactional: earlier creates
-and a failed Helm release record can remain after an error. Exact release-record
+and a failed Helm release record can remain after an error. Existing-release
+verification compares complete chart content, override values, and canonically
+ordered resource identities and full document bodies. Helm storage omits an empty
+top-level override map, so only absent and empty top-level release values compare
+equally; nested null, false, zero and empty collections remain distinct. A local
+verification conflict after a successful existing-release read is a failed check
+with a finite mismatch category and no Helm install or adoption attempt. Actual
+install or transport ambiguity remains uncertain. Exact release-record
 verification and current controller/resource health are separate checks.
 
 The management bootstrap composition validates the retained plan before API

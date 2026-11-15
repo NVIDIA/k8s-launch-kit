@@ -142,7 +142,7 @@ func prepareOperator(request OperatorRequest) (*operatorPlan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode rendered DPF Helm values: %w", err)
 	}
-	valuesJSON, err := canonicalJSON(values)
+	valuesJSON, err := canonicalHelmValues(values)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize rendered DPF Helm values: %w", err)
 	}
@@ -174,8 +174,8 @@ func ensureOperator(ctx context.Context, plan *operatorPlan, actions operatorAct
 	}
 	installed, err := actions.Get(ctx, plan.releaseName)
 	if err == nil {
-		if err := verifyOperatorRelease(installed, plan); err != nil {
-			return fmt.Errorf("existing DPF Helm release conflicts with selected chart: %w", err)
+		if reason := operatorReleaseMismatchReason(installed, plan); reason != "" {
+			return &existingOperatorReleaseConflict{reason: reason}
 		}
 		return nil
 	}
@@ -219,32 +219,83 @@ func ensureOperator(ctx context.Context, plan *operatorPlan, actions operatorAct
 	return nil
 }
 
+// Only the successful existing-release GET branch can return this conflict:
+// no install, adoption or resource-absence inspection has been attempted.
+type existingOperatorReleaseConflict struct{ reason operatorReleaseMismatch }
+type operatorReleaseMismatch string
+
+func (e *existingOperatorReleaseConflict) Error() string {
+	_, message := e.diagnostic()
+	return "existing DPF Helm release conflicts with selected chart: " + message
+}
+
+func (e *existingOperatorReleaseConflict) diagnostic() (string, string) {
+	if e == nil {
+		return "HELM_RELEASE_UNVERIFIED", "release verification is unavailable"
+	}
+	return e.reason.diagnostic()
+}
+
+// Finite local categories prevent raw chart/values/manifest or API errors from
+// being copied into the durable management journal.
+func (r operatorReleaseMismatch) diagnostic() (string, string) {
+	switch r {
+	case "HELM_RELEASE_MISSING":
+		return string(r), "helm returned no release"
+	case "HELM_IDENTITY_DIFFER":
+		return string(r), "release identity does not match the requested name and namespace"
+	case "HELM_NOT_DEPLOYED":
+		return string(r), "release is not in deployed status"
+	case "HELM_CHART_UNVERIFIED":
+		return string(r), "installed chart content could not be verified"
+	case "HELM_CHART_DIFFER":
+		return string(r), "installed chart content differs"
+	case "HELM_VALUES_DIFFER":
+		return string(r), "installed Helm values differ"
+	case "HELM_MANIFEST_DIFFER":
+		return string(r), "installed rendered manifest differs"
+	default:
+		return "HELM_RELEASE_UNVERIFIED", "release verification is unavailable"
+	}
+}
+
 func verifyOperatorRelease(installed *release.Release, plan *operatorPlan) error {
+	if reason := operatorReleaseMismatchReason(installed, plan); reason != "" {
+		_, message := reason.diagnostic()
+		return errors.New(message)
+	}
+	return nil
+}
+
+func operatorReleaseMismatchReason(installed *release.Release, plan *operatorPlan) operatorReleaseMismatch {
+	if plan == nil {
+		return "HELM_RELEASE_UNVERIFIED"
+	}
 	if installed == nil {
-		return fmt.Errorf("helm returned no release")
+		return "HELM_RELEASE_MISSING"
 	}
 	if installed.Name != plan.releaseName || installed.Namespace != plan.namespace {
-		return fmt.Errorf("release identity does not match the requested name and namespace")
+		return "HELM_IDENTITY_DIFFER"
 	}
 	if installed.Info == nil || installed.Info.Status != release.StatusDeployed {
-		return fmt.Errorf("release is not in deployed status")
+		return "HELM_NOT_DEPLOYED"
 	}
 	fingerprint, err := chartFingerprint(installed.Chart)
 	if err != nil {
-		return fmt.Errorf("read installed chart content: %w", err)
+		return "HELM_CHART_UNVERIFIED"
 	}
 	if fingerprint != plan.chartFingerprint {
-		return fmt.Errorf("installed chart content differs")
+		return "HELM_CHART_DIFFER"
 	}
-	valuesJSON, err := canonicalJSON(installed.Config)
+	valuesJSON, err := canonicalHelmValues(installed.Config)
 	if err != nil || !bytes.Equal(valuesJSON, plan.expectedValuesJSON) {
-		return fmt.Errorf("installed Helm values differ")
+		return "HELM_VALUES_DIFFER"
 	}
 	manifest, err := canonicalManifest([]byte(installed.Manifest))
 	if err != nil || !bytes.Equal(manifest, plan.expectedManifest) {
-		return fmt.Errorf("installed rendered manifest differs")
+		return "HELM_MANIFEST_DIFFER"
 	}
-	return nil
+	return ""
 }
 
 type helmActionClient struct {
@@ -515,11 +566,21 @@ func canonicalJSON(value any) ([]byte, error) {
 	return json.Marshal(value)
 }
 
+// Helm omits an empty top-level Config map from its stored release JSON.
+// Only that top-level absence is equivalent to an empty map; nested values,
+// including explicit null, false, zero and empty collections, remain intact.
+func canonicalHelmValues(values map[string]interface{}) ([]byte, error) {
+	if values == nil {
+		return []byte("{}"), nil
+	}
+	return canonicalJSON(values)
+}
+
 func canonicalManifest(manifest []byte) ([]byte, error) {
 	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(manifest)))
 	type document struct {
-		identity string
-		content  []byte
+		Identity string          `json:"identity"`
+		Content  json.RawMessage `json:"content"`
 	}
 	var documents []document
 	seen := map[string]struct{}{}
@@ -535,7 +596,7 @@ func canonicalManifest(manifest []byte) ([]byte, error) {
 			continue
 		}
 		var object unstructured.Unstructured
-		if err := sigsyaml.Unmarshal(raw, &object.Object); err != nil {
+		if err := sigsyaml.Unmarshal(raw, &object.Object, func(decoder *json.Decoder) *json.Decoder { decoder.UseNumber(); return decoder }); err != nil {
 			return nil, fmt.Errorf("decode manifest document %d: %w", ordinal, err)
 		}
 		if object.GetKind() == "Namespace" {
@@ -553,9 +614,9 @@ func canonicalManifest(manifest []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("canonicalize manifest document %d: %w", ordinal, err)
 		}
-		documents = append(documents, document{identity: key, content: content})
+		documents = append(documents, document{Identity: key, Content: content})
 	}
-	sort.Slice(documents, func(i, j int) bool { return documents[i].identity < documents[j].identity })
+	sort.Slice(documents, func(i, j int) bool { return documents[i].Identity < documents[j].Identity })
 	return json.Marshal(documents)
 }
 

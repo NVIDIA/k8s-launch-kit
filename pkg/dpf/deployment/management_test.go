@@ -16,6 +16,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"helm.sh/helm/v3/pkg/storage/driver"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -855,6 +856,99 @@ func TestOperatorConfigFinalizerDoesNotRelaxReadinessOwnershipOrIntent(t *testin
 			}
 			if client.createConfig != 0 || tenantClient.createCount != 0 {
 				t.Fatal("failure allowed dependent effects")
+			}
+		})
+	}
+}
+
+func TestManagementReportsExistingReleaseConflictWithoutInstallUncertainty(t *testing.T) {
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := prepareManagementExecution(generated, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "untrusted-sentinel"
+	for _, tc := range []struct {
+		name      string
+		branch    string
+		category  string
+		uncertain bool
+	}{
+		{name: "actual existing values conflict", branch: "existing-values", category: "HELM_VALUES_DIFFER", uncertain: false},
+		{name: "actual existing manifest conflict", branch: "existing-manifest", category: "HELM_MANIFEST_DIFFER", uncertain: false},
+		{name: "actual install transport error", branch: "install-error", category: "DPF_OPERATOR_INSTALL_UNCERTAIN", uncertain: true},
+		{name: "actual postinstall verification error", branch: "postinstall", category: "DPF_OPERATOR_INSTALL_UNCERTAIN", uncertain: true},
+		{name: "unknown typed category", branch: "unknown", category: "HELM_RELEASE_UNVERIFIED", uncertain: false},
+		{name: "wrapped typed category", branch: "wrapped", category: "HELM_VALUES_DIFFER", uncertain: false},
+		{name: "untyped remote error", branch: "remote", category: "DPF_OPERATOR_INSTALL_UNCERTAIN", uncertain: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			installed := releaseForPlan(t, execution.operator)
+			actions := &fakeOperatorActions{installed: installed}
+			switch tc.branch {
+			case "existing-values", "wrapped":
+				installed.Config[sentinel] = true
+			case "existing-manifest":
+				installed.Manifest = strings.Replace(installed.Manifest, "name:", "name: "+sentinel+"-", 1)
+			case "install-error":
+				actions.getErr = driver.ErrReleaseNotFound
+				actions.installErr = errors.New(sentinel)
+			case "postinstall":
+				actions.getErr = driver.ErrReleaseNotFound
+				installed.Name = "foreign"
+				actions.installRelease = installed
+			}
+			var operationErr error
+			switch tc.branch {
+			case "unknown":
+				operationErr = &existingOperatorReleaseConflict{reason: operatorReleaseMismatch(sentinel)}
+			case "remote":
+				operationErr = errors.New(sentinel)
+			default:
+				operationErr = ensureOperator(ctx, execution.operator, actions)
+			}
+			if tc.branch == "wrapped" {
+				operationErr = fmt.Errorf("%s: %w", sentinel, operationErr)
+			}
+			if operationErr == nil {
+				t.Fatal("real operator branch did not produce its expected conflict/failure")
+			}
+			if !tc.uncertain && tc.branch != "unknown" && (len(actions.installs) != 0 || actions.resourceChecks != 0) {
+				t.Fatal("existing release verification reached install/adoption")
+			}
+			if (tc.branch == "install-error" || tc.branch == "postinstall") && len(actions.installs) != 1 {
+				t.Fatal("uncertain case did not dispatch install")
+			}
+			client := managementFakeWithReadiness(t, execution.plan.Digest(), execution.manager, execution.crds)
+			client.operatorErr = operationErr
+			file := &managementMemoryFile{}
+			journal := &executionJournal{file: file, digest: execution.plan.Digest()}
+			_, err := runPreparedManagement(ctx, client, execution, journal, time.Millisecond)
+			if err == nil || strings.Contains(err.Error(), sentinel) || strings.Contains(file.String(), sentinel) || client.createConfig != 0 {
+				t.Fatal("operator failure leaked private content or allowed Config creation")
+			}
+			lines := strings.Split(strings.TrimSpace(file.String()), "\n")
+			if len(lines) == 0 {
+				t.Fatal("missing durable journal")
+			}
+			var event executionEvent
+			if err := json.Unmarshal([]byte(lines[len(lines)-1]), &event); err != nil {
+				t.Fatal(err)
+			}
+			wantState, wantCode := "failed", "DPF_OPERATOR_RELEASE_CONFLICT"
+			if tc.uncertain {
+				wantState, wantCode = "uncertain", "DPF_OPERATOR_INSTALL_UNCERTAIN"
+			}
+			if event.State != wantState || event.ReasonCode != wantCode || !strings.Contains(event.Message, tc.category) && !tc.uncertain {
+				t.Fatalf("incorrect operator failure provenance: %#v", event)
+			}
+			if !tc.uncertain && !strings.Contains(event.Message, "no Helm install or adoption was attempted") {
+				t.Fatal("Get-only conflict omitted its effect boundary")
 			}
 		})
 	}
