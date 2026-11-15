@@ -22,7 +22,10 @@ func enrollmentAccessRequest(username, secondPassword string) (config.Request, *
 	GinkgoHelper()
 	GinkgoT().Setenv("HBN_ENROLLMENT_FIRST", "hbn-credential-canary-one")
 	GinkgoT().Setenv("HBN_ENROLLMENT_SECOND", secondPassword)
-	input, err := config.Decode([]byte(fmt.Sprintf(`credentials:
+	input, err := config.Decode([]byte(fmt.Sprintf(`dpf:
+  useCase: hbn-bgp
+  release: 26.8.0
+credentials:
   first: {username: %s, passwordRef: {env: HBN_ENROLLMENT_FIRST}}
   second: {username: admin, passwordRef: {env: HBN_ENROLLMENT_SECOND}}
 discovery:
@@ -40,6 +43,7 @@ discovery:
 	selected.Site.Discovery.DPUs = append(selected.Site.Discovery.DPUs, config.Endpoint{BMCEndpoint: "https://192.0.2.31", CredentialRef: "second"})
 	selected.Site.Discovery.Hosts = append(selected.Site.Discovery.Hosts, config.Endpoint{SSH: &config.SSH{Address: "192.0.2.41"}, CredentialRef: "host"})
 	current := selected.Site.Inventory
+	Expect(request.Software.Version).To(Equal(current.Software.Version))
 	Expect(current.DPUs).To(HaveLen(1))
 	Expect(current.Hosts).To(HaveLen(1))
 	second := current.DPUs[0]
