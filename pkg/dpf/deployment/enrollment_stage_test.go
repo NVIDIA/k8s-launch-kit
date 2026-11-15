@@ -6,6 +6,7 @@ package deployment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -33,6 +34,7 @@ type enrollmentStageFake struct {
 	bmcCalls          int
 	bmcHook           func(int) error
 	getHook           func(*unstructured.Unstructured)
+	afterGetHook      func(*unstructured.Unstructured)
 	scanHook          func(*unstructured.Unstructured)
 	selectorPatches   int
 	selectorPatchHook func(*unstructured.Unstructured) error
@@ -84,7 +86,11 @@ func (f *enrollmentStageFake) Get(ctx context.Context, wanted *unstructured.Unst
 	if f.getHook != nil {
 		f.getHook(wanted)
 	}
-	return f.base.Get(ctx, wanted)
+	current, err := f.base.Get(ctx, wanted)
+	if err == nil && f.afterGetHook != nil {
+		f.afterGetHook(current)
+	}
+	return current, err
 }
 func (f *enrollmentStageFake) Create(ctx context.Context, desired *unstructured.Unstructured, dry bool) (*unstructured.Unstructured, error) {
 	created, err := f.base.Create(ctx, desired, dry)
@@ -389,15 +395,22 @@ func TestEnrollmentCohortNeverCachesReadyDevice(t *testing.T) {
 
 func TestEnrollmentStageRejectsFinalDeviceReplacement(t *testing.T) {
 	execution, fake, br, tr, password := enrollmentStageFixture(t)
-	fake.bmcHook = func(n int) error {
-		if n == 3 {
+	journal := testJournal(execution)
+	file := journal.file.(*managementMemoryFile)
+	replacements := 0
+	fake.bmcHook = func(_ int) error {
+		// Selector binding adds its own BMC/device observations. Replace only at
+		// the final boundary, after this fixture's existing selectors are verified.
+		if replacements == 0 && strings.Contains(file.String(), `"reasonCode":"ENROLLMENT_SELECTOR_MATCHED"`) {
 			fake.base.resources["DPUDevice/"+execution.operatorNamespace+"/serial-a"].SetUID("replacement")
+			replacements++
 		}
 		return nil
 	}
-	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, br, tr, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
-	if err == nil || !strings.Contains(err.Error(), "ENROLLED_IDENTITY_CHANGED") || receipt.Secret.UID == "" {
-		t.Fatalf("final drift result=%+v err=%v", receipt, err)
+	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "ENROLLED_IDENTITY_CHANGED") || receipt.Secret.UID == "" || replacements != 1 ||
+		len(receipt.Devices) != 1 || receipt.Devices[0].DeviceUID != "device-serial-a" || fake.selectorPatches != 0 || fake.base.createCount != 2 {
+		t.Fatalf("final drift result=%+v replacements=%d patches=%d creates=%d err=%v", receipt, replacements, fake.selectorPatches, fake.base.createCount, err)
 	}
 }
 
@@ -527,28 +540,46 @@ func TestEnrollmentStageChecksTenantAfterFinalDeviceReads(t *testing.T) {
 			execution, fake, br, tr, password := enrollmentStageFixture(t)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			nodeReads := 0
-			fake.getHook = func(wanted *unstructured.Unstructured) {
-				if wanted.GetKind() == "DPUNode" {
-					nodeReads++
-					if nodeReads == 2 {
-						if change == "replace-tenant" {
-							fake.sources.sources.secret.UID = "replacement"
-						} else {
-							cancel()
-						}
-					}
+			journal := testJournal(execution)
+			file := journal.file.(*managementMemoryFile)
+			finalNodeReads, injections := 0, 0
+			fake.afterGetHook = func(current *unstructured.Unstructured) {
+				if !strings.Contains(file.String(), `"reasonCode":"ENROLLMENT_SELECTOR_MATCHED"`) {
+					return
+				}
+				if current.GetKind() == "DPUNode" {
+					finalNodeReads++
+					return
+				}
+				if current.GetKind() != "DPUDevice" || finalNodeReads == 0 || injections != 0 {
+					return
+				}
+				// The final cohort observation has recorded Node readiness. This Device
+				// snapshot is the subsequent selector-receipt readback, so cancellation
+				// occurs after the last device API read, not before an ignored fake ctx.
+				lines := strings.Split(strings.TrimSpace(file.String()), "\n")
+				var last executionEvent
+				if len(lines) == 0 || json.Unmarshal([]byte(lines[len(lines)-1]), &last) != nil ||
+					last.Operation != "device-readiness" || last.State != "ready" || last.Subject != "DPUNode/"+execution.operatorNamespace+"/dpu-node-serial-a" {
+					t.Fatalf("injection did not follow the final ready Node observation: %+v", last)
+				}
+				injections++
+				if change == "replace-tenant" {
+					fake.sources.sources.secret.UID = "replacement"
+				} else {
+					cancel()
 				}
 			}
-			receipt, err := runEnrollmentStage(ctx, fake, execution, br, tr, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
-			if err == nil || nodeReads != 2 || receipt.Secret.UID == "" {
-				t.Fatalf("final read drift accepted: nodeReads=%d result=%+v err=%v", nodeReads, receipt, err)
+			receipt, err := runEnrollmentStage(ctx, fake, execution, br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
+			if err == nil || finalNodeReads != 1 || injections != 1 || receipt.Secret.UID == "" ||
+				len(receipt.Devices) != 1 || receipt.Devices[0].DeviceUID != "device-serial-a" || fake.selectorPatches != 0 || fake.base.createCount != 2 {
+				t.Fatalf("final read drift accepted: nodeReads=%d injections=%d result=%+v patches=%d creates=%d err=%v", finalNodeReads, injections, receipt, fake.selectorPatches, fake.base.createCount, err)
 			}
 			if change == "replace-tenant" && !strings.Contains(err.Error(), "TENANT_API_IDENTITY_CHANGED") {
 				t.Fatalf("tenant replacement reason missing: %v", err)
 			}
-			if change == "cancel" && !strings.Contains(err.Error(), "ENROLLMENT_READINESS_CANCELED") {
-				t.Fatalf("cancellation reason missing: %v", err)
+			if change == "cancel" && (!strings.Contains(err.Error(), "ENROLLMENT_READINESS_CANCELED") || !errors.Is(err, context.Canceled)) {
+				t.Fatalf("cancellation reason/cause missing: %v", err)
 			}
 		})
 	}
