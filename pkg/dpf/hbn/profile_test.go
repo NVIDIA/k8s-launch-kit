@@ -201,6 +201,29 @@ func TestResolveGenerationFromSelectedReleaseCoordinates(t *testing.T) {
 	}
 }
 
+func TestResolveGenerationAcceptsExplicitOCIRegistryPaths(t *testing.T) {
+	for _, repository := range []string{
+		"registry.example/team/hbn",
+		"registry.example:5000/team/hbn",
+		"registry.example:65535/team/hbn",
+		"docker.io/team/hbn",
+		"localhost/team/hbn",
+		"localhost:5000/team/hbn",
+		"127.0.0.1:5000/team/hbn",
+		"[2001:db8::1]:5000/team/hbn",
+	} {
+		t.Run(repository, func(t *testing.T) {
+			generation, err := ResolveGeneration(GenerationOptions{ImageRepository: &repository})
+			if err != nil {
+				t.Fatalf("ResolveGeneration(%q): %v", repository, err)
+			}
+			if generation.ImageRepository != repository {
+				t.Fatalf("imageRepository=%q, want unchanged %q", generation.ImageRepository, repository)
+			}
+		})
+	}
+}
+
 func TestResolveGenerationRejectsExplicitEmptyZeroAndMalformedValues(t *testing.T) {
 	empty, zero := "", 0
 	badDigest := "sha256:ABC"
@@ -217,10 +240,22 @@ func TestResolveGenerationRejectsExplicitEmptyZeroAndMalformedValues(t *testing.
 		{name: "invalid image digest", options: GenerationOptions{ImageDigest: &badDigest}},
 		{name: "image reference includes tag syntax", options: GenerationOptions{ImageRepository: stringPointer("nvcr.io/nvidia/doca/doca_hbn:latest")}},
 		{name: "image repository includes digest syntax", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team/hbn@sha256:" + strings.Repeat("a", 64))}},
+		{name: "image repository is a bare name", options: GenerationOptions{ImageRepository: stringPointer("hbn")}},
+		{name: "image repository is a familiar Docker Hub name", options: GenerationOptions{ImageRepository: stringPointer("team/hbn")}},
 		{name: "image repository includes scheme", options: GenerationOptions{ImageRepository: stringPointer("https://registry.example:5000/team/hbn")}},
 		{name: "image repository includes credentials", options: GenerationOptions{ImageRepository: stringPointer("user@registry.example:5000/team/hbn")}},
 		{name: "image repository has malformed port", options: GenerationOptions{ImageRepository: stringPointer("registry.example:abc/team/hbn")}},
+		{name: "image repository port is empty", options: GenerationOptions{ImageRepository: stringPointer("registry.example:/team/hbn")}},
+		{name: "image repository port is zero", options: GenerationOptions{ImageRepository: stringPointer("registry.example:0/team/hbn")}},
+		{name: "image repository port is out of range", options: GenerationOptions{ImageRepository: stringPointer("registry.example:999999/team/hbn")}},
+		{name: "image repository has invalid IPv6 address", options: GenerationOptions{ImageRepository: stringPointer("[:::]:5000/team/hbn")}},
+		{name: "image repository has empty path component", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team//hbn")}},
+		{name: "image repository has dot path component", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team/../hbn")}},
 		{name: "image repository path is uppercase", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team/HBN")}},
+		{name: "image repository has URL query", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team/hbn?source=mirror")}},
+		{name: "image repository has URL fragment", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team/hbn#latest")}},
+		{name: "image repository has leading whitespace", options: GenerationOptions{ImageRepository: stringPointer(" registry.example:5000/team/hbn")}},
+		{name: "image repository has trailing whitespace", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team/hbn ")}},
 		{name: "zero gateway index", options: GenerationOptions{WorkloadGatewayIndex: &zero}},
 		{name: "zero host address index", options: GenerationOptions{HostAddressIndex: &zero}},
 		{name: "empty loopback pool", options: GenerationOptions{LoopbackCIDR: &empty}},

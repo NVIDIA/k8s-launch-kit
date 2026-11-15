@@ -137,11 +137,14 @@ and rejected before credential resolution or artifact retrieval; these values
 are never silently replaced by defaults. The DPF service identity remains
 `doca-hbn`; the upstream Helm chart name is a separate release coordinate.
 Chart repository/version/digest, image repository/tag/digest and startup version
-overrides remain available. `imageRepository` is a lowercase OCI repository
-name without a tag or digest; registry ports are supported (for example,
-`registry.example:5000/team/hbn`). Keep the image tag and digest in their
-separate fields. Overrides are preserved, and matching artifact bytes are
-verified; custom coordinates are not thereby certified compatible.
+overrides remain available. `imageRepository` must include an explicit registry
+host and lowercase repository path, without a tag or digest; do not use a
+Docker Hub familiar name such as `team/hbn`. Registry ports from 1 through
+65535 are supported (for example, `registry.example:5000/team/hbn`). Use
+`docker.io/team/hbn` to name a Docker Hub repository explicitly. Keep the image
+tag and digest in their separate fields. Overrides are preserved, and matching
+artifact bytes are verified; custom coordinates are not thereby certified
+compatible.
 Shared resolution also rejects enabling the VXLAN startup probe.
 `hold` pauses provisioning at the node-effect boundary until the selected
 maintenance request is released; it does not mean provisioning has completed.

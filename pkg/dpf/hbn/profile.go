@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/distribution/reference"
@@ -455,10 +456,8 @@ func validateGenerationCoordinates(coordinates GenerationCoordinates) error {
 	if !sha256DigestPattern.MatchString(coordinates.ChartDigest) {
 		return fmt.Errorf("chartDigest must be sha256 followed by 64 lowercase hexadecimal characters")
 	}
-	imageReference, err := reference.Parse(coordinates.ImageRepository)
-	imageName, isNamed := imageReference.(reference.Named)
-	if err != nil || !isNamed || imageName.Name() != coordinates.ImageRepository {
-		return fmt.Errorf("imageRepository must be a lowercase OCI repository path without tag or digest")
+	if err := validateImageRepository(coordinates.ImageRepository); err != nil {
+		return err
 	}
 	if !imageTagPattern.MatchString(coordinates.ImageTag) {
 		return fmt.Errorf("imageTag must be a valid OCI tag without a digest")
@@ -468,6 +467,38 @@ func validateGenerationCoordinates(coordinates GenerationCoordinates) error {
 	}
 	if !startupVersionPattern.MatchString(coordinates.StartupVersion) {
 		return fmt.Errorf("startupVersion must use the form HBN major.minor.patch")
+	}
+	return nil
+}
+
+func validateImageRepository(repository string) error {
+	named, err := reference.ParseNormalizedNamed(repository)
+	// This also rejects familiar Docker Hub names that would otherwise be
+	// normalized to docker.io and change the registry used by runtime checks.
+	if err != nil || named.Name() != repository {
+		return fmt.Errorf("imageRepository must be an explicit lowercase OCI registry/path without tag or digest")
+	}
+
+	// Runtime metadata requests use the repository's registry as an HTTPS URL
+	// authority, so validate its numeric port and IPv6 literal here as well.
+	domain := reference.Domain(named)
+	authority, err := url.Parse("//" + domain)
+	if err != nil || authority.Host != domain || authority.User != nil || authority.Path != "" {
+		return fmt.Errorf("imageRepository must have a valid OCI registry authority")
+	}
+	if strings.HasPrefix(domain, "[") {
+		address, err := netip.ParseAddr(authority.Hostname())
+		if err != nil || !address.Is6() {
+			return fmt.Errorf("imageRepository must have a valid IPv6 registry address")
+		}
+	} else if domain != strings.ToLower(domain) {
+		return fmt.Errorf("imageRepository registry host must be lowercase")
+	}
+	if port := authority.Port(); port != "" {
+		portNumber, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || portNumber == 0 {
+			return fmt.Errorf("imageRepository registry port must be between 1 and 65535")
+		}
 	}
 	return nil
 }
