@@ -698,7 +698,20 @@ derives the finite additional set from fresh, complete observations bound to
 the retained deployment, child ownership, logical references and current version
 selectors, then checks the policy copied into each selected DPUSet and DPU.
 Requestors are unordered sets; duplicate or foreign participants are rejected.
+The native initial-deployment path rejects `applyOnLabelChange: true` on either
+selected resource; matching flags do not authorize an older upgrade's effects.
 This coordination check does not replace later interface and HBN readiness.
+
+Verified enrollment assigns each selected DPUDevice to the exact deployment
+group retained in its generated selector. Native execution may add only the
+reserved `launch-kit.nvidia.com/dpu` label when absent; other selector labels
+must already match, and a conflicting value is refused. The write tests the
+fresh device UID and resource version, preserves unrelated metadata and spec,
+and rechecks the entire selected enrollment boundary before every write. A
+confirmed API response is followed by a complete stored-label readback before
+workload activation. Ambiguous writes stop without automatic replay. Activation
+rechecks the selected labels before creating the deployment or releasing holds.
+The caller's permission to patch these exact DPUDevice names is checked early.
 
 The private activation receipt carries completion history for each selected
 node and its maintenance UID. A confirmed hold-release patch records that

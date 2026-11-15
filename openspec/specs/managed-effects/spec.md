@@ -219,7 +219,9 @@ Activation SHALL derive additional service and chain participants from fresh,
 complete observations bound to the retained deployment's ownership, logical
 references and current versions, and cross-check the copied selected DPUSet and
 DPU policies. Requestors SHALL be treated as sets, rejecting duplicate or foreign
-participants. Missing maintenance or an initially false hold annotation SHALL NOT
+participants. Native HBN-BGP activation SHALL refuse `applyOnLabelChange: true`
+on either selected resource rather than infer authorization for an older upgrade.
+Missing maintenance or an initially false hold annotation SHALL NOT
 authorize an effect or establish completion history. Completion after controller
 removal SHALL require same-run coordination history bound to the original
 maintenance UID, plus fresh identity and consumed references for every selected
@@ -247,6 +249,34 @@ completion interpretation without requiring every intermediate polling state.
 
 - **WHEN** maintenance contains a foreign participant or its UID changes
 - **THEN** activation refuses dependent effects and completion; an earlier coordination receipt does not authorize the replacement.
+
+#### Scenario: Matching label-triggered upgrade policy
+
+- **WHEN** a selected DPUSet and DPU both enable label-triggered node effects
+- **THEN** native activation refuses before a hold patch, reset claim or reboot; equality between live policies does not authorize that upgrade.
+
+### Requirement: Verified DPU deployment group binding
+
+After enrollment identity and BMC administrator verification, native deployment
+SHALL bind each selected DPUDevice to the exact selector retained in the plan.
+It MAY add only an absent reserved Launch Kit deployment-group label. Conflicting
+values, malformed labels or missing unowned selector labels SHALL stop execution.
+Every write SHALL recheck the complete selected enrollment boundary, test the
+fresh device UID and resource version, preserve unrelated metadata and spec, and
+have a durable attempt record. An ambiguous write SHALL stop without automatic
+replay. Completion SHALL require a fresh stored-label readback for the entire
+cohort; later activation boundaries SHALL continue checking those labels. Caller
+permissions SHALL include patch access to each exact selected DPUDevice name.
+
+#### Scenario: Existing unrelated device labels
+
+- **WHEN** a verified selected device lacks its reserved deployment-group label and has unrelated labels
+- **THEN** Launch Kit adds only the retained label with identity preconditions, preserves other fields, and verifies the stored labels before activation.
+
+#### Scenario: Conflicting deployment group
+
+- **WHEN** a selected device already has a different value for a retained selector
+- **THEN** deployment fails without replacing that label or creating a DPUDeployment.
 
 ### Requirement: DPF Kubernetes API error classification
 
