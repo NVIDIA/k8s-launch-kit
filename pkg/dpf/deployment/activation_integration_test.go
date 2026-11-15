@@ -65,6 +65,12 @@ func (f *activationIntegrationFake) verifyEnrollmentBMCs(_ context.Context, _ []
 	if f.deployment == nil || f.boundaryDPUChanged || f.mutateBoundaryDPU == "" || len(f.dpus) == 0 {
 		return nil
 	}
+	// UID/source-phase drift must occur during reboot verification, after
+	// the node-effect holds are released and the request snapshot is read.
+	// Earlier BMC reads also run before each hold release.
+	if (f.mutateBoundaryDPU == "uid" || f.mutateBoundaryDPU == "phase") && !allActivationFixtureHoldsReleased(f.maint) {
+		return nil
+	}
 	current := f.dpus[0].DeepCopy()
 	switch f.mutateBoundaryDPU {
 	case "uid":
@@ -737,4 +743,67 @@ func activationRequestForTest(host inventory.Device, selected []activationSelect
 		request.DPUNodes = append(request.DPUNodes, *node)
 	}
 	return request
+}
+
+// This is a semantic lifecycle condition, not a Get/List or BMC call count.
+func allActivationFixtureHoldsReleased(maint []unstructured.Unstructured) bool {
+	if len(maint) == 0 {
+		return false
+	}
+	for _, m := range maint {
+		if m.GetAnnotations()[activationHoldKey] != "false" {
+			return false
+		}
+	}
+	return true
+}
+
+type activationObservationOnlyDriftClient struct {
+	*activationIntegrationFake
+	mutation string
+	changed  bool
+}
+
+func (c *activationObservationOnlyDriftClient) List(ctx context.Context, wanted *unstructured.Unstructured, selector string) ([]unstructured.Unstructured, error) {
+	objects, err := c.activationIntegrationFake.List(ctx, wanted, selector)
+	if err != nil || wanted.GetKind() != "DPU" || wanted.GetNamespace() == "" || c.changed || !allActivationFixtureHoldsReleased(c.maint) {
+		return objects, err
+	}
+	if len(objects) != 1 {
+		return nil, fmt.Errorf("observation-only fixture needs one selected DPU")
+	}
+	c.changed = true
+	if c.mutation == "uid" {
+		objects[0].SetUID("observation-only-uid")
+	} else if err := unstructured.SetNestedField(objects[0].Object, "DPU Config", "status", "previousPhase"); err != nil {
+		return nil, err
+	}
+	return objects, nil
+}
+
+func TestActivationRejectsObservationOnlyRebootSnapshotDrift(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
+	for _, mutation := range []string{"uid", "phase"} {
+		t.Run(mutation, func(t *testing.T) {
+			f := newActivationIntegrationFixtureFromExecution(t, execution, false)
+			c := &activationObservationOnlyDriftClient{activationIntegrationFake: f.client, mutation: mutation}
+			f.controlPlane.tenant.Client.source = c
+			callbacks := 0
+			_, err := runActivationStage(f.ctx, c, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second,
+				RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
+					callbacks++
+					return ActivationObservation{}, nil
+				}))
+			if !c.changed || err == nil || !strings.Contains(err.Error(), "ACTIVATION_REBOOT_SCOPE_CHANGED") || c.guardCalls != 0 || c.resetSafetyCalls != 0 || callbacks != 0 {
+				t.Fatalf("changed=%v err=%v claims=%d resetchecks=%d callbacks=%d", c.changed, err, c.guardCalls, c.resetSafetyCalls, callbacks)
+			}
+			if len(c.dpus) != 1 || c.dpus[0].GetUID() != activationIntegrationDPUUID {
+				t.Fatal("observation-only injection mutated authoritative DPU identity")
+			}
+			phase, _, readErr := unstructured.NestedString(c.dpus[0].Object, "status", "previousPhase")
+			if readErr != nil || phase != "Update Firmware" {
+				t.Fatalf("observation-only injection mutated authoritative phase: %q %v", phase, readErr)
+			}
+		})
+	}
 }
