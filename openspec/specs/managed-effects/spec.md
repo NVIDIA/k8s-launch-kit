@@ -213,6 +213,41 @@ transaction.
 - **WHEN** the refreshed maintenance is missing, replaced, deleting or has changed action, requestors or invalid hold state
 - **THEN** activation refuses the pending effect; an already released hold requires no new patch.
 
+### Requirement: DPF maintenance participants and completion
+
+Activation SHALL derive additional service and chain participants from fresh,
+complete observations bound to the retained deployment's ownership, logical
+references and current versions, and cross-check the copied selected DPUSet and
+DPU policies. Requestors SHALL be treated as sets, rejecting duplicate or foreign
+participants. Missing maintenance or an initially false hold annotation SHALL NOT
+authorize an effect or establish completion history. Completion after controller
+removal SHALL require same-run coordination history bound to the original
+maintenance UID, plus fresh identity and consumed references for every selected
+DPU and NodeEffectRemoved/Ready conditions observing that DPU's current
+generation. A requested reset SHALL retain its durable one-time claim and
+exact-round acknowledgement requirements. Later observers SHALL use the same
+completion interpretation without requiring every intermediate polling state.
+
+#### Scenario: Controller-coordinated service participants
+
+- **WHEN** the selected maintenance includes current service and chain version requestors
+- **THEN** activation verifies their finite deployment-bound graph and copied policy rather than rejecting every non-DPU requestor or allowing arbitrary name prefixes.
+
+#### Scenario: Initial false hold with no coordination history
+
+- **WHEN** the first observed maintenance annotation is false and this run has neither released that hold nor completed a qualified current-round reset and acknowledgement
+- **THEN** the annotation alone cannot qualify later absence as completed coordination; no effect or reset replay is inferred from it.
+
+#### Scenario: Polling misses maintenance removal transitions
+
+- **WHEN** this run has qualified coordination history and the same selected DPU identities and consumed references report current completion after maintenance disappears
+- **THEN** activation and later host-network observers may recognize completion without an observed intermediate Applied state; absence does not authorize a new effect.
+
+#### Scenario: Foreign or replaced maintenance participant
+
+- **WHEN** maintenance contains a foreign participant or its UID changes
+- **THEN** activation refuses dependent effects and completion; an earlier coordination receipt does not authorize the replacement.
+
 ### Requirement: DPF Kubernetes API error classification
 
 The DPF API boundary SHALL publish only fixed operation prose and recognized

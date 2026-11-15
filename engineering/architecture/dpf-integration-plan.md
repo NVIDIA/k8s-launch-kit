@@ -692,6 +692,25 @@ causes no new patch; a changed dependency stops subsequent releases and resets.
 These sequential checks narrow the observation window without claiming an
 atomic transaction across resources.
 
+Maintenance participants include the selected host's DPUs and the current
+service and chain versions coordinated by their DPUDeployment. Activation
+derives the finite additional set from fresh, complete observations bound to
+the retained deployment, child ownership, logical references and current version
+selectors, then checks the policy copied into each selected DPUSet and DPU.
+Requestors are unordered sets; duplicate or foreign participants are rejected.
+This coordination check does not replace later interface and HBN readiness.
+
+The private activation receipt carries completion history for each selected
+node and its maintenance UID. A confirmed hold-release patch records that
+history. An initially false annotation alone records none; a subsequently
+completed, once-claimed reset and exact-round acknowledgement can establish
+the corresponding coordination history. Completion also requires fresh identity
+and consumed references for every selected DPU, with NodeEffectRemoved/Ready
+conditions observing that DPU's current generation. Those per-DPU facts can prove
+completion after the controller removes maintenance, even if polling missed an
+intermediate Applied state. Absence never authorizes a hold release or reset.
+The same receipt-backed interpretation applies during later host-network checks.
+
 The object execution boundary records and synchronizes an attempt before
 reconciliation, then persists the result before dependent work. A report-write
 failure stops execution. Readiness polling rechecks UID, ownership and desired
