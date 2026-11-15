@@ -28,6 +28,15 @@ type enrollmentBMC struct {
 	target config.Target
 }
 
+// ValidateEnrollmentBMCs checks whether already-resolved runtime access can enroll
+// the selected BlueField-4 devices through the supported shared-password crawler.
+// It performs no I/O and returns no credentials, bindings or credential digests.
+// General Redfish inventory authorization is deliberately a separate contract.
+func ValidateEnrollmentBMCs(devices []generation.ResolvedDevice, targets []config.Target) error {
+	_, _, err := bindEnrollmentBMCs(devices, targets)
+	return err
+}
+
 // The HBN BlueField-4 cohort uses admin; DPF 26.8's crawler consumes one shared
 // password per namespace (its account fallback is root then admin).
 // Reject incompatible runtime inputs before any management or BMC operation.

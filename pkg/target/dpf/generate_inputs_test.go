@@ -48,6 +48,36 @@ func generationSite() config.Input {
 }
 
 var _ = Describe("DPF generation input boundary", func() {
+	It("shares complete selected identities and ASNs with enrollment without aliasing inventory", func() {
+		input := generationSite()
+		intent, err := config.ResolveIntent(input.Site)
+		Expect(err).NotTo(HaveOccurred())
+		selected, err := generationDevices(input.Site, input.Site.Inventory, *intent.Networking)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(selected).To(HaveLen(1))
+		Expect(selected[0].Serial).To(Equal("SERIAL-A"))
+		Expect(selected[0].PSID).To(Equal("MT_0000001774"))
+		Expect(selected[0].BMCIP).To(Equal("192.0.2.30"))
+		Expect(selected[0].BMCPort).To(Equal(443))
+		asns, err := intent.Networking.AllocateASNs([]string{"SERIAL-A"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(selected[0].ASN).To(Equal(asns["SERIAL-A"]))
+		Expect(selected[0].SelectorLabels).NotTo(BeEmpty())
+		plan, err := generationInputs(input)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(plan.Workload.Devices).To(HaveLen(1))
+		Expect(plan.Operator.Bootstrap.Devices).To(HaveLen(1))
+		Expect(plan.Workload.Devices[0].Serial).To(Equal(selected[0].Serial))
+		Expect(plan.Workload.Devices[0].PSID).To(Equal(selected[0].PSID))
+		Expect(plan.Workload.Devices[0].ASN).To(Equal(selected[0].ASN))
+		Expect(plan.Workload.Devices[0].SelectorLabels).To(Equal(selected[0].SelectorLabels))
+		Expect(plan.Operator.Bootstrap.Devices[0].BMCIP).To(Equal(selected[0].BMCIP))
+		Expect(plan.Operator.Bootstrap.Devices[0].BMCPort).To(Equal(selected[0].BMCPort))
+		selected[0].SelectorLabels["only-local"] = "changed"
+		Expect(plan.Workload.Devices[0].SelectorLabels).NotTo(HaveKey("only-local"))
+		Expect(input.Site.Inventory.DPUs[0].SerialNumber).To(Equal("SERIAL-A"))
+	})
+
 	It("resolves defaults and planned selectors without opening credentials or changing inputs", func() {
 		input := generationSite()
 		plan, err := generationInputs(input)

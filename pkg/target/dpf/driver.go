@@ -122,6 +122,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 						}
 						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{Qualifications: catalog.Hardware(), IncludeNetworkFunctionMACs: resolved.HBN != nil, ProvisioningRelease: provisioningRelease}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
 						deps.HBNPermissions = newHBNPermissionObserver().observe
+						deps.HBNEnrollment = hbnEnrollmentAccessCheck
 						deps.Artifacts = artifactcheck.Verifier{}
 						deps.HostLLDP = sshprobe.Collector{}
 						deps.HostNetworking = sshprobe.ObserveHostWorkloadNetwork

@@ -41,6 +41,7 @@ type Dependencies struct {
 	BMC            Collector
 	Probes         ProbeRunner
 	HBNPermissions HBNPermissionObserver
+	HBNEnrollment  HBNEnrollmentAccessValidator
 	Artifacts      ArtifactVerifier
 	HostLLDP       HostLLDPCapturer
 	HostNetworking HostNetworkObserver

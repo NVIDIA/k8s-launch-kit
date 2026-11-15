@@ -25,7 +25,11 @@ connectivity to those endpoints. The management nodes also need the network path
 reported by discovery; reachability from the CLI alone is insufficient.
 
 Every selected DPU BMC must grant Administrator privileges. A successful login
-with a restricted account is insufficient. Use protected password/key references;
+with a restricted account is insufficient. The current BF4 HBN crawler also
+requires the `admin` username and the same nonempty password value on every
+selected DPU. Separate credential aliases may reference the same value. HBN
+discovery checks this compatibility separately from general Administrator
+authorization. Use protected password/key references;
 do not put passwords in manifests or command arguments. Keep SSH host-key pins
 and the selected Redfish certificate policy with the site configuration.
 

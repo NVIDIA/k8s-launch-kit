@@ -43,6 +43,11 @@ even when physical inventory is saved. This preview keeps unverified provisionin
 prerequisites blocked. It never applies switch changes or treats LLDP names as
 authenticated DPU identity. See the HBN-BGP section of the discovery reference.
 
+For the current BF4 HBN crawler, select the `admin` username and one common
+nonempty BMC password value through protected references for all selected DPUs.
+Distinct aliases with equal resolved values are valid. HBN readiness checks this
+compatibility separately from general inventory Administrator privileges.
+
 With complete provisioning inputs and current identities, HBN discovery retrieves
 and verifies the selected operator/HBN charts and derives an in-memory deployment
 plan for scoped management API authorization reviews. Read the caller permission

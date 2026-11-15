@@ -254,3 +254,27 @@ func TestEnrollmentBMCChecksDoNotProbeWithoutDeadlineOrDurableJournal(t *testing
 		t.Fatal("unusable journal accepted")
 	}
 }
+
+func TestValidateEnrollmentBMCsUsesPrivateBindingPolicyWithoutCredentialOutput(t *testing.T) {
+	devices, targets := enrollmentBMCInputs(t)
+	before := devices[0]
+	before.SelectorLabels = map[string]string{"selected": "unchanged"}
+	devices[0] = before
+	t.Setenv("ENROLLMENT_TEST_PASSWORD", "") // Resolved access must not be reopened.
+	if err := ValidateEnrollmentBMCs(devices, targets); err != nil {
+		t.Fatalf("valid resolved scope rejected: %v", err)
+	}
+	if devices[0].SelectorLabels["selected"] != "unchanged" || targets[0].Endpoint != "https://192.0.2.1" {
+		t.Fatal("validation changed caller-owned inputs")
+	}
+	targets[0].Access = config.Access{}
+	err := ValidateEnrollmentBMCs(devices, targets)
+	if err == nil || !strings.Contains(err.Error(), "admin account") {
+		t.Fatalf("missing runtime access bypassed binder policy: %v", err)
+	}
+	for _, secret := range []string{"credential-canary", "other-canary"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatal("validation error exposed a credential")
+		}
+	}
+}

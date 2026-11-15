@@ -52,7 +52,8 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 	readiness := evaluateHBN(inv, report.Discovery.Checks, hostNetworking)
 	managementChecks, managementFacts := managementHBNChecks(provisioning, inv, r.DPFNamespace)
 	inv.HBN.Management = managementFacts
-	additionalChecks := append(managementChecks, hbnSoftwareChecks(r.Input.Site.Provisioning, inv)...)
+	additionalChecks := append(managementChecks, hbnEnrollmentAccessCheck(ctx, r, inv, deps.HBNEnrollment))
+	additionalChecks = append(additionalChecks, hbnSoftwareChecks(r.Input.Site.Provisioning, inv)...)
 	additionalChecks = append(additionalChecks, hbnProvisioningAPIChecks(inv)...)
 	additionalChecks = append(additionalChecks, hbnArtifactSourceChecks(ctx, r.Input.Site.Provisioning, inv, deps.Artifacts)...)
 	additionalChecks = append(additionalChecks, hbnGenerationInputChecks(r.Input.Site.Provisioning)...)

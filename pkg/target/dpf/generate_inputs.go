@@ -16,6 +16,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnrender"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 )
@@ -56,9 +57,17 @@ func generationInputs(input config.Input) (generationPlan, error) {
 	if err != nil {
 		return generationPlan{}, err
 	}
-	devices, selected, psids, err := generationDevices(input.Site, inv)
+	resolved, err := generationDevices(input.Site, inv, *intent.Networking)
 	if err != nil {
 		return generationPlan{}, err
+	}
+	devices := make([]hbnrender.Device, 0, len(resolved))
+	selected := make([]bootstrap.Device, 0, len(resolved))
+	psids := make([]string, 0, len(resolved))
+	for _, device := range resolved {
+		devices = append(devices, hbnrender.Device{Serial: device.Serial, PSID: device.PSID, ASN: device.ASN, SelectorLabels: maps.Clone(device.SelectorLabels)})
+		selected = append(selected, bootstrap.Device{Serial: device.Serial, BMCIP: device.BMCIP, BMCPort: device.BMCPort})
+		psids = append(psids, device.PSID)
 	}
 	software, issues, err := config.ValidateProvisioningSoftware(provisioning, psids)
 	if err != nil {
@@ -74,17 +83,6 @@ func generationInputs(input config.Input) (generationPlan, error) {
 	if len(issues) > 0 {
 		return generationPlan{}, fmt.Errorf("required bootstrap input missing: %s", issues[0].Field)
 	}
-	serials := make([]string, len(devices))
-	for i := range devices {
-		serials[i] = devices[i].Serial
-	}
-	asns, err := intent.Networking.AllocateASNs(serials)
-	if err != nil {
-		return generationPlan{}, err
-	}
-	for i := range devices {
-		devices[i].ASN = asns[devices[i].Serial]
-	}
 	return generationPlan{Inputs: generation.Inputs{
 		Operator: bootstrap.OperatorRenderInputs{ReleaseVersion: intent.Release.Version, ReleaseName: intent.Release.Operator.Chart,
 			KubernetesVersion: inv.Management.KubernetesVersion, Bootstrap: bootstrapInputs},
@@ -96,43 +94,56 @@ func generationInputs(input config.Input) (generationPlan, error) {
 }
 
 // generationDevices checks the complete selected source set, then reuses the
-// discovery association/PSID contract. Labels are desired enrollment bindings;
+// discovery association/PSID contract and the resolved profile's ASN allocation.
+// Labels are desired enrollment bindings;
 // deployment must verify identity before attaching them to any DPUDevice.
-func generationDevices(site config.Site, inv *inventory.Inventory) ([]hbnrender.Device, []bootstrap.Device, []string, error) {
+func generationDevices(site config.Site, inv *inventory.Inventory, profile hbn.Profile) ([]generation.ResolvedDevice, error) {
+	if inv == nil || len(inv.DPUs) == 0 {
+		return nil, fmt.Errorf("current selected DPU inventory is required")
+	}
 	if err := validateGenerationSources("hosts", site.Discovery.Hosts, inv.Hosts); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	if err := validateGenerationSources("dpus", site.Discovery.DPUs, inv.DPUs); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	devices, selected, psids := []hbnrender.Device{}, []bootstrap.Device{}, []string{}
+	devices := make([]generation.ResolvedDevice, 0, len(inv.DPUs))
 	for _, dpu := range inv.DPUs {
 		admin := dpu.Observations["bmc-administrator"]
 		if admin.State != "observed" || admin.ReasonCode != "BMC_ADMIN_VERIFIED" || dpu.BMCEndpoint == "" || dpu.SSHEndpoint != "" {
-			return nil, nil, nil, fmt.Errorf("DPU %q does not have verified BMC Administrator access", dpu.SerialNumber)
+			return nil, fmt.Errorf("DPU %q does not have verified BMC Administrator access", dpu.SerialNumber)
 		}
 		psid, err := discovery.ObservedDevicePSID(inv, dpu)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("DPU %q: %w", dpu.SerialNumber, err)
+			return nil, fmt.Errorf("DPU %q: %w", dpu.SerialNumber, err)
 		}
 		endpoint, err := config.Origin(dpu.BMCEndpoint)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("DPU %q requires a canonical BMC endpoint", dpu.SerialNumber)
+			return nil, fmt.Errorf("DPU %q requires a canonical BMC endpoint", dpu.SerialNumber)
 		}
 		bmc, _ := url.Parse(endpoint)
 		port := 443
 		if bmc.Port() != "" {
 			port, err = strconv.Atoi(bmc.Port())
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("DPU BMC port is invalid")
+				return nil, fmt.Errorf("DPU BMC port is invalid")
 			}
 		}
 		label := sha256.Sum256([]byte(intentDeviceLabelDomain + dpu.SerialNumber))
-		devices = append(devices, hbnrender.Device{Serial: dpu.SerialNumber, PSID: psid, SelectorLabels: map[string]string{"launch-kit.nvidia.com/dpu": fmt.Sprintf("%x", label[:16])}})
-		selected = append(selected, bootstrap.Device{Serial: dpu.SerialNumber, BMCIP: bmc.Hostname(), BMCPort: port})
-		psids = append(psids, psid)
+		devices = append(devices, generation.ResolvedDevice{Serial: dpu.SerialNumber, PSID: psid, BMCIP: bmc.Hostname(), BMCPort: port, SelectorLabels: map[string]string{"launch-kit.nvidia.com/dpu": fmt.Sprintf("%x", label[:16])}})
 	}
-	return devices, selected, psids, nil
+	serials := make([]string, len(devices))
+	for i := range devices {
+		serials[i] = devices[i].Serial
+	}
+	asns, err := profile.AllocateASNs(serials)
+	if err != nil {
+		return nil, err
+	}
+	for i := range devices {
+		devices[i].ASN = asns[devices[i].Serial]
+	}
+	return devices, nil
 }
 
 // Source matching covers all recorded hosts as well as DPUs. A changed host
