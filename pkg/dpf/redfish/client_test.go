@@ -181,6 +181,25 @@ var _ = Describe("GET/session-only transport", func() {
 		Expect(e).NotTo(HaveOccurred())
 		Expect(members).To(HaveLen(2))
 	})
+	It("rejects malformed pagination links before reading collection members", func() {
+		for _, nextLink := range []any{nil, false, float64(1), Document{"path": "/redfish/v1/Systems?$skip=1"}, []any{"/redfish/v1/Systems?$skip=1"}} {
+			requests := 0
+			s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				json.NewEncoder(w).Encode(Document{
+					"Members@odata.count":    1,
+					"Members":                []any{Document{"@odata.id": "/redfish/v1/Systems/host"}},
+					"Members@odata.nextLink": nextLink,
+				})
+			}))
+
+			c := &Client{origin: s.URL, http: s.Client()}
+			_, err := c.Collection(context.Background(), "/redfish/v1/Systems")
+			s.Close()
+			Expect(Code(err)).To(Equal("INVALID_RESPONSE"))
+			Expect(requests).To(Equal(1))
+		}
+	})
 	It("never retries authorization failures or prints response secrets", func() {
 		calls := 0
 		s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

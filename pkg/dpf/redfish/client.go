@@ -400,6 +400,14 @@ func (c *Client) collection(ctx context.Context, ref, memberBase string) ([]Reso
 		if err != nil {
 			return members, err
 		}
+		next := ""
+		if raw, present := d["Members@odata.nextLink"]; present {
+			var valid bool
+			next, valid = raw.(string)
+			if !valid {
+				return members, &Error{Code: "INVALID_RESPONSE"}
+			}
+		}
 		if n, ok := d["Members@odata.count"].(float64); ok {
 			if n < 0 || n != float64(int(n)) || count >= 0 && count != int(n) {
 				return members, &Error{Code: "COLLECTION_CHANGED"}
@@ -432,7 +440,7 @@ func (c *Client) collection(ctx context.Context, ref, memberBase string) ([]Reso
 			}
 			members = append(members, Resource{URI: link, Document: value})
 		}
-		ref = Text(d, "Members@odata.nextLink")
+		ref = next
 	}
 	if count < 0 || count != len(members) {
 		return members, &Error{Code: "INCOMPLETE_COLLECTION"}
