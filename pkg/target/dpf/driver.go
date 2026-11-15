@@ -34,7 +34,7 @@ func Descriptor() target.Descriptor {
 	for _, p := range append(target.PublicPhases(), target.Pipeline) {
 		phases[p] = target.Capability{Available: false, Reason: "DPF provisioning is not implemented in this build"}
 	}
-	phases[target.Discover] = target.Capability{Available: true, Reason: "experimental inventory discovery; management probes require qualified release assets; hardware catalog qualification pending"}
+	phases[target.Discover] = target.Capability{Available: true, Reason: "inventory discovery and management-network diagnostics; deployment eligibility is evaluated by the selected use case"}
 	return target.Descriptor{Name: target.DPF, Description: "Independent DPF inventory discovery preview", Phases: phases}
 }
 
@@ -109,7 +109,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 								}
 							}
 						}
-						deps := discovery.Dependencies{SSH: sshprobe.Collector{}, BMC: redfish.Collector{Qualifications: catalog.Hardware()}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
+						deps := discovery.Dependencies{SSH: sshprobe.Collector{}, BMC: redfish.Collector{}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
 						if resolved.Input.Site.Inventory == nil {
 							resolved.Input.Site.Inventory = store.PriorInventory
 						}

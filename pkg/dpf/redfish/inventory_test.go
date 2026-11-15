@@ -83,7 +83,6 @@ var _ = Describe("physical card identity", func() {
 				Expect(e).NotTo(HaveOccurred())
 				Expect(device.SerialNumber).To(Equal("CARD-A"))
 				Expect(device.ObservationState).To(Equal("observed"))
-				Expect(device.Qualification).To(Equal("unqualified"))
 				Expect(device.Observations["psid"].ReasonCode).To(Equal("PSID_READER_UNSUPPORTED"))
 			}
 			Expect(writes).To(Equal([]string{"POST /redfish/v1/SessionService/Sessions", "DELETE /redfish/v1/SessionService/Sessions/owned"}))

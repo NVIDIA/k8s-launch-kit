@@ -26,7 +26,6 @@ func outputDeviceFixture() Device {
 var _ = ginkgo.Describe("typed DeviceOutput", func() {
 	ginkgo.It("publishes named component versions and required authorization without bookkeeping", func() {
 		d := outputDeviceFixture()
-		d.Qualification, d.InventoryCompleteness = "unqualified", "partial"
 		d.Time = TimeObservation{State: "known", DateTime: "2026-11-13"}
 		d.Firmware = []Firmware{
 			{Component: "bmc", RawVersion: "26.1", State: "known", Activation: "running", RawID: "private-id", RawName: "private-name", ResourceURI: "/private/resource", EvidenceRefs: []string{"private-evidence"}},

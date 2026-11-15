@@ -16,15 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// Qualification is supplied by the installed, reviewed hardware catalog, never site YAML.
-// An empty catalog collects candidate facts while keeping completeness unqualified.
-type Qualification struct {
-	VerifyCompleteness func(context.Context, Reader, Resource) error
-	Adapter            string
-	Model              string
-	BMCFirmware        string
-}
-type Collector struct{ Qualifications []Qualification }
+// Collector reads inventory without claiming hardware or use-case qualification.
+type Collector struct{}
 
 func ValidSerial(raw string) bool {
 	s := strings.TrimSpace(raw)
@@ -52,7 +45,7 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		output.Info("[PASS] %s: %s — %s", label, stage, detail)
 		stage = ""
 	}
-	device = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{target.Role, target.Endpoint, target.SystemURI}), InputRef: target.InputRef, BMCEndpoint: target.Endpoint, ObservationState: "unavailable", Qualification: "unqualified", InventoryCompleteness: "unknown", Authentication: inventory.Authentication{PasswordRead: "unknown", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"}}
+	device = inventory.Device{RecordKey: inventory.Digest("dpf-access-v1", []string{target.Role, target.Endpoint, target.SystemURI}), InputRef: target.InputRef, BMCEndpoint: target.Endpoint, ObservationState: "unavailable", Authentication: inventory.Authentication{PasswordRead: "unknown", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"}}
 	if target.Role == "dpus" {
 		device.Time = inventory.TimeObservation{State: "unknown", ReasonCode: "PROPERTY_NOT_EXPOSED"}
 	}
@@ -215,14 +208,12 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		if err != nil {
 			return device, evidence, err
 		}
-		device.InventoryCompleteness = "unqualified"
 	}
 	output.Info("[RUNNING] %s: Physical inventory read completed; identity recheck pending", label)
 	stage = ""
-	bmcFirmware := ""
 	if target.Role == "dpus" {
 		begin("Optional BMC firmware/time/settings observations")
-		bmcFirmware = collectSoftware(ctx, c, root, system, &device)
+		collectSoftware(ctx, c, root, system, &device)
 		observed, unavailableCount := 0, 0
 		for _, key := range []string{"managers", "firmware-inventory", "bmc-time", "bmc-ntp"} {
 			if device.Observations[key].State == "observed" {
@@ -245,14 +236,6 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 			pass("reads completed; compatibility not evaluated")
 		}
 		logger.V(1).Info("Optional Redfish observations completed", "observedSections", observed, "unavailableObservations", unavailableCount)
-	} else {
-		bmcFirmware = co.hostQualificationFirmware(ctx, c, root, adapter, device.Model)
-	}
-	for _, q := range co.Qualifications {
-		if q.Adapter == adapter && q.Model == device.Model && q.BMCFirmware == bmcFirmware && bmcFirmware != "" && q.VerifyCompleteness != nil && q.VerifyCompleteness(ctx, c, system) == nil {
-			device.Qualification = "qualified"
-			device.InventoryCompleteness = "complete"
-		}
 	}
 	begin("Physical identity recheck")
 	for uri, identity := range bf4Identities {
@@ -293,22 +276,6 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	device.ObservationState = "observed"
 	pass("verified; session cleanup pending")
 	return device, evidence, nil
-}
-
-// hostQualificationFirmware reads only manager metadata when an applicable catalog
-// entry needs it. Host firmware inventory and clock settings are outside discovery.
-func (co Collector) hostQualificationFirmware(ctx context.Context, reader Reader, root Document, adapter, model string) string {
-	for _, q := range co.Qualifications {
-		if q.Adapter != adapter || q.Model != model || q.BMCFirmware == "" || q.VerifyCompleteness == nil {
-			continue
-		}
-		manager, state := softwareManager(ctx, reader, root)
-		if state.State == "observed" {
-			return Text(manager.Document, "FirmwareVersion")
-		}
-		return ""
-	}
-	return ""
 }
 
 func sameMembers(a, b []Resource) bool {

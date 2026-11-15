@@ -76,9 +76,9 @@ func emptyDevice(target config.Target) inventory.Device {
 	return inventory.Device{
 		RecordKey: inventory.Digest("dpf-access-v1", []string{target.Role, target.Endpoint, target.SystemURI}),
 		InputRef:  target.InputRef, SSHEndpoint: target.Endpoint, ObservationState: "unavailable",
-		Qualification: "unqualified", InventoryCompleteness: "unknown", BMCAddressState: "not-evaluated",
-		Authentication: inventory.Authentication{Method: "ssh", PasswordRead: "not-evaluated", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"},
-		Firmware:       []inventory.Firmware{}, EvidenceRefs: []string{},
+		BMCAddressState: "not-evaluated",
+		Authentication:  inventory.Authentication{Method: "ssh", PasswordRead: "not-evaluated", ClientCertificateSupport: "unknown", DPFClientAuthentication: "not-evaluated"},
+		Firmware:        []inventory.Firmware{}, EvidenceRefs: []string{},
 		Time:    inventory.TimeObservation{State: "unknown", ReasonCode: "NOT_EVALUATED", Message: "BMC clock and NTP are not queried through OS SSH."},
 		Runtime: &inventory.RuntimeObservation{Observations: map[string]inventory.Observation{}},
 	}
@@ -297,12 +297,6 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 	}
 	device.ObservationState = "observed"
 	output.Info("[PASS] %s: Physical identity recheck verified; connection cleanup pending", label)
-	device.InventoryCompleteness = "observed"
-	for _, a := range device.Adapters {
-		if a.IdentityState != "known" {
-			device.InventoryCompleteness = "partial"
-		}
-	}
 	return device, evidence, nil
 }
 
