@@ -24,14 +24,16 @@ import (
 )
 
 const (
-	activationExternalRebootKey = "provisioning.dpu.nvidia.com/dpunode-external-reboot-required"
-	activationHoldKey           = "provisioning.dpu.nvidia.com/wait-for-external-nodeeffect"
-	activationDPUNodeLabel      = "provisioning.dpu.nvidia.com/dpunode-name"
-	activationDPUSetNameLabel   = "provisioning.dpu.nvidia.com/dpuset-name"
-	activationDPUSetNSLabel     = "provisioning.dpu.nvidia.com/dpuset-namespace"
-	activationDPUDeviceLabel    = "provisioning.dpu.nvidia.com/dpudevice-name"
-	activationParentLabel       = "svc.dpu.nvidia.com/owned-by-dpudeployment"
-	activationManualWaitReason  = "WaitingForManualPowerCycleOrReboot"
+	activationExternalRebootKey     = "provisioning.dpu.nvidia.com/dpunode-external-reboot-required"
+	activationHoldKey               = "provisioning.dpu.nvidia.com/wait-for-external-nodeeffect"
+	activationDPUNodeLabel          = "provisioning.dpu.nvidia.com/dpunode-name"
+	activationDPUNodeNamespaceLabel = "provisioning.dpu.nvidia.com/dpunode-namespace"
+	activationDPFVersionLabel       = "operator.dpu.nvidia.com/dpf-version"
+	activationDPUSetNameLabel       = "provisioning.dpu.nvidia.com/dpuset-name"
+	activationDPUSetNSLabel         = "provisioning.dpu.nvidia.com/dpuset-namespace"
+	activationDPUDeviceLabel        = "provisioning.dpu.nvidia.com/dpudevice-name"
+	activationParentLabel           = "svc.dpu.nvidia.com/owned-by-dpudeployment"
+	activationManualWaitReason      = "WaitingForManualPowerCycleOrReboot"
 )
 
 type activationStageClient interface {
@@ -719,9 +721,12 @@ func observeActivationScope(ctx context.Context, client activationStageClient, e
 		if policyErr := activationNativeNodeEffectPolicy(dpu, "spec", "nodeEffect"); policyErr != nil {
 			return observation, policyErr
 		}
-		setLabels, _, setLabelsErr := unstructured.NestedStringMap(set.Object, "spec", "dpuTemplate", "spec", "cluster", "nodeLabels")
-		dpuLabels, _, dpuLabelsErr := unstructured.NestedStringMap(dpu.Object, "spec", "cluster", "nodeLabels")
-		if setLabelsErr != nil || dpuLabelsErr != nil || !reflect.DeepEqual(setLabels, dpuLabels) || !activationNodeEffectMatches(dpu, set) {
+		setLabels, setLabelsFound, setLabelsErr := unstructured.NestedStringMap(set.Object, "spec", "dpuTemplate", "spec", "cluster", "nodeLabels")
+		dpuLabels, dpuLabelsFound, dpuLabelsErr := unstructured.NestedStringMap(dpu.Object, "spec", "cluster", "nodeLabels")
+		if setLabelsErr != nil || dpuLabelsErr != nil || !setLabelsFound || !dpuLabelsFound || !activationDPUClusterLabelsMatch(setLabels, dpuLabels, want.nodeName, want.dpuSet.GetNamespace(), execution.operatorVersion) {
+			return observation, activationCoordinationError(activationParticipantClusterLabels)
+		}
+		if !activationNodeEffectMatches(dpu, set) {
 			return observation, activationCoordinationError(activationParticipantPolicy)
 		}
 		if !activationAdditionalRequestorsMatch(dpu, versionRequestors, "spec", "nodeEffect") {

@@ -454,7 +454,20 @@ func (f *activationIntegrationFake) seedActivationChildren(deployment *unstructu
 		}
 	}
 	for i := range f.dpus {
-		if err := unstructured.SetNestedStringMap(f.dpus[i].Object, versionLabels, "spec", "cluster", "nodeLabels"); err != nil {
+		// Pinned createDPU merges user labels and then stamps its system trio.
+		// Keep this fixture independent of the production expected-label helper.
+		dpuLabels := map[string]string{}
+		for key, value := range versionLabels {
+			dpuLabels[key] = value
+		}
+		nodeName, found, nodeErr := unstructured.NestedString(f.dpus[i].Object, "spec", "dpuNodeName")
+		if nodeErr != nil || !found || nodeName == "" {
+			return fmt.Errorf("fixture DPU node binding is missing")
+		}
+		dpuLabels["provisioning.dpu.nvidia.com/dpunode-name"] = nodeName
+		dpuLabels["provisioning.dpu.nvidia.com/dpunode-namespace"] = f.dpus[i].GetNamespace()
+		dpuLabels["operator.dpu.nvidia.com/dpf-version"] = f.execution.operatorVersion
+		if err := unstructured.SetNestedStringMap(f.dpus[i].Object, dpuLabels, "spec", "cluster", "nodeLabels"); err != nil {
 			return err
 		}
 		if err := unstructured.SetNestedMap(f.dpus[i].Object, map[string]any{"hold": true, "nodeMaintenanceAdditionalRequestors": []any{additional[0], additional[1]}}, "spec", "nodeEffect"); err != nil {

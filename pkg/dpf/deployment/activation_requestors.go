@@ -22,6 +22,7 @@ type activationVersionGraph struct {
 
 const (
 	activationParticipantList              = "ACTIVATION_PARTICIPANT_LIST_UNAVAILABLE"
+	activationParticipantClusterLabels     = "ACTIVATION_DPU_CLUSTER_LABELS_CHANGED"
 	activationParticipantGraph             = "ACTIVATION_PARTICIPANT_GRAPH_INVALID"
 	activationParticipantOwner             = "ACTIVATION_PARTICIPANT_OWNER_CHANGED"
 	activationParticipantSelector          = "ACTIVATION_PARTICIPANT_SELECTOR_CHANGED"
@@ -37,6 +38,8 @@ const (
 // wrapped text, unknown codes and remote field values never enter the journal.
 func activationCoordinationText(code string) string {
 	switch code {
+	case activationParticipantClusterLabels:
+		return "Selected DPU cluster labels must equal the retained controller labels plus the exact selected node, namespace and pinned DPF release."
 	case activationParticipantList:
 		return "A required complete controller Service or Chain list could not be read; verify management API access and list permissions."
 	case activationParticipantGraph:
@@ -331,4 +334,22 @@ func activationNativeNodeEffectPolicy(object *unstructured.Unstructured, path ..
 		return activationCoordinationError(activationParticipantUnsupportedPolicy)
 	}
 	return nil
+}
+
+// DPF createDPU/buildDPUClusterNodeLabels adds these three system values after
+// merging user metadata; later UpdateDPUs preserves them. The native graph
+// admits only its retained three controller labels as user metadata. This is
+// exact expected enrichment, not a subset or arbitrary Device-label adoption.
+func activationDPUClusterLabelsMatch(setLabels, dpuLabels map[string]string, nodeName, namespace, version string) bool {
+	if len(setLabels) == 0 || dpuLabels == nil || nodeName == "" || namespace == "" || version == "" {
+		return false
+	}
+	expected := make(map[string]string, len(setLabels)+3)
+	for key, value := range setLabels {
+		expected[key] = value
+	}
+	expected[activationDPUNodeLabel] = nodeName
+	expected[activationDPUNodeNamespaceLabel] = namespace
+	expected[activationDPFVersionLabel] = version
+	return reflect.DeepEqual(expected, dpuLabels)
 }

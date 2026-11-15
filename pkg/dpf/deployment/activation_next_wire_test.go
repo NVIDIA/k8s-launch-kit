@@ -744,7 +744,7 @@ func TestActivationCoordinationDiagnosticsAreFiniteAndPrivate(t *testing.T) {
 		{"cancel", fmt.Errorf("%s: %w", canary, context.Canceled), ""}, {"deadline", fmt.Errorf("%s: %w", canary, context.DeadlineExceeded), ""},
 		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Group: "svc.dpu.nvidia.com", Resource: "dpuservices"}, canary, errors.New(canary)), ""},
 	}
-	for _, code := range []string{activationParticipantUnsupportedPolicy, activationParticipantGraph, activationParticipantList, activationParticipantOwner, activationParticipantSelector, activationParticipantServiceSpec, activationParticipantChainSpec, activationParticipantPolicy, activationParticipantRequestors, activationParticipantMaintenance, "ACTIVATION_REBOOT_SCOPE_CHANGED"} {
+	for _, code := range []string{activationParticipantClusterLabels, activationParticipantUnsupportedPolicy, activationParticipantGraph, activationParticipantList, activationParticipantOwner, activationParticipantSelector, activationParticipantServiceSpec, activationParticipantChainSpec, activationParticipantPolicy, activationParticipantRequestors, activationParticipantMaintenance, "ACTIVATION_REBOOT_SCOPE_CHANGED"} {
 		causes = append(causes, struct {
 			name   string
 			cause  error
@@ -905,6 +905,99 @@ func TestActivationRejectsUnsupportedLabelChangePolicyBeforeEffects(t *testing.T
 			_, err := runActivationStage(f.ctx, c, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, activationSuccessfulReboot(f.client, &calls))
 			if err == nil || len(c.patches) != 0 || c.guardCalls != 0 || c.resetSafetyCalls != 0 || calls != 0 {
 				t.Fatalf("unsupported/malformed policy authorized effects: err=%v patches=%v claims=%d callbacks=%d", err, c.patches, c.guardCalls, calls)
+			}
+		})
+	}
+}
+
+func TestActivationDPUClusterLabelsRequireExactProducerEnrichment(t *testing.T) {
+	set := map[string]string{"svc.dpu.nvidia.com/owned-by-dpudeployment": "operator_selected", "svc.dpu.nvidia.com/dpuservice-doca-hbn-version": "doca-hbn-current", "svc.dpu.nvidia.com/dpuservicechain-version": "selected-current"}
+	current := map[string]string{"svc.dpu.nvidia.com/owned-by-dpudeployment": "operator_selected", "svc.dpu.nvidia.com/dpuservice-doca-hbn-version": "doca-hbn-current", "svc.dpu.nvidia.com/dpuservicechain-version": "selected-current", "provisioning.dpu.nvidia.com/dpunode-name": "selected-node", "provisioning.dpu.nvidia.com/dpunode-namespace": "operator", "operator.dpu.nvidia.com/dpf-version": "v26.8.0"}
+	for _, test := range []struct {
+		name    string
+		mutate  func(map[string]string)
+		allowed bool
+	}{
+		{name: "pinned-six", allowed: true}, {name: "missing-node", mutate: func(labels map[string]string) { delete(labels, "provisioning.dpu.nvidia.com/dpunode-name") }},
+		{name: "missing-namespace", mutate: func(labels map[string]string) { delete(labels, "provisioning.dpu.nvidia.com/dpunode-namespace") }},
+		{name: "missing-release", mutate: func(labels map[string]string) { delete(labels, "operator.dpu.nvidia.com/dpf-version") }},
+		{name: "wrong-node", mutate: func(labels map[string]string) { labels["provisioning.dpu.nvidia.com/dpunode-name"] = "foreign" }},
+		{name: "wrong-namespace", mutate: func(labels map[string]string) { labels["provisioning.dpu.nvidia.com/dpunode-namespace"] = "foreign" }},
+		{name: "wrong-release", mutate: func(labels map[string]string) { labels["operator.dpu.nvidia.com/dpf-version"] = "v26.8.0-arbitrary" }},
+		{name: "extra-unretained", mutate: func(labels map[string]string) { labels["unretained"] = "value" }},
+		{name: "missing-controller-version", mutate: func(labels map[string]string) { delete(labels, "svc.dpu.nvidia.com/dpuservice-doca-hbn-version") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			labels := map[string]string{}
+			for key, value := range current {
+				labels[key] = value
+			}
+			if test.mutate != nil {
+				test.mutate(labels)
+			}
+			beforeSet := map[string]string{}
+			for key, value := range set {
+				beforeSet[key] = value
+			}
+			beforeCurrent := map[string]string{}
+			for key, value := range labels {
+				beforeCurrent[key] = value
+			}
+			if got := activationDPUClusterLabelsMatch(set, labels, "selected-node", "operator", "v26.8.0"); got != test.allowed {
+				t.Fatalf("expected exact enrichment allowed=%v got=%v", test.allowed, got)
+			}
+			if !reflect.DeepEqual(set, beforeSet) || !reflect.DeepEqual(labels, beforeCurrent) {
+				t.Fatal("label projection mutated input")
+			}
+		})
+	}
+	if activationDPUClusterLabelsMatch(set, set, "selected-node", "operator", "v26.8.0") || activationDPUClusterLabelsMatch(nil, current, "selected-node", "operator", "v26.8.0") || activationDPUClusterLabelsMatch(set, nil, "selected-node", "operator", "v26.8.0") {
+		t.Fatal("legacy three or missing map accepted")
+	}
+}
+
+func TestActivationControllerLabelWireRejectsTypedOrIdentityDriftBeforeHold(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
+	for _, mode := range []string{"pinned-wire", "old-three", "wrong-release", "wrong-node", "wrong-namespace", "extra", "malformed"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newActivationIntegrationFixtureFromExecution(t, execution, false)
+			c := &activationLifecycleClient{activationIntegrationFake: f.client, afterCreate: func(base *activationIntegrationFake) {
+				labels, found, err := unstructured.NestedStringMap(base.dpus[0].Object, "spec", "cluster", "nodeLabels")
+				if err != nil || !found || len(labels) != 6 {
+					t.Fatal("fake did not model pinned six-label producer")
+				}
+				switch mode {
+				case "old-three":
+					delete(labels, "provisioning.dpu.nvidia.com/dpunode-name")
+					delete(labels, "provisioning.dpu.nvidia.com/dpunode-namespace")
+					delete(labels, "operator.dpu.nvidia.com/dpf-version")
+				case "wrong-release":
+					labels["operator.dpu.nvidia.com/dpf-version"] = "v26.8.0-foreign"
+				case "wrong-node":
+					labels["provisioning.dpu.nvidia.com/dpunode-name"] = "foreign"
+				case "wrong-namespace":
+					labels["provisioning.dpu.nvidia.com/dpunode-namespace"] = "foreign"
+				case "extra":
+					labels["unretained"] = "value"
+				case "malformed":
+					_ = unstructured.SetNestedField(base.dpus[0].Object, map[string]any{"invalid": int64(1)}, "spec", "cluster", "nodeLabels")
+					return
+				}
+				if err := unstructured.SetNestedStringMap(base.dpus[0].Object, labels, "spec", "cluster", "nodeLabels"); err != nil {
+					t.Fatal(err)
+				}
+			}}
+			bindActivationLifecycleClient(&f, c)
+			calls := 0
+			_, err := runActivationStage(f.ctx, c, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, activationSuccessfulReboot(f.client, &calls))
+			if mode == "pinned-wire" {
+				if err != nil || calls != 1 || c.guardCalls != 1 {
+					t.Fatalf("pinned source wire rejected: err=%v calls=%d claims=%d", err, calls, c.guardCalls)
+				}
+				return
+			}
+			if err == nil || len(c.patches) != 0 || calls != 0 || c.guardCalls != 0 || !strings.Contains(err.Error(), activationParticipantClusterLabels) {
+				t.Fatalf("changed cluster label scope authorized effects: err=%v calls=%d claims=%d patches=%v", err, calls, c.guardCalls, c.patches)
 			}
 		})
 	}
