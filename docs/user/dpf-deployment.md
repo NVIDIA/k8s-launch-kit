@@ -81,7 +81,7 @@ not use the Host `--kubeconfig` flag; management access comes from the site file
 | --- | --- |
 | Fresh checks | The CLI rereads selected host, BMC, switch and management-cluster facts, checks required permissions and compares them with the reviewed bundle. A changed identity or desired configuration stops deployment. |
 | DPF management | The CLI installs the retained DPF operator chart through the management Kubernetes API and waits for the operator and its configuration. Conflicting resources are reported rather than silently adopted. |
-| DPU control plane | DPF creates the tenant Kubernetes control plane on the selected management nodes. Launch Kit verifies its API and backing prerequisites before continuing. |
+| DPU control plane | DPF creates the tenant Kubernetes control plane on the selected management nodes. Launch Kit verifies its API and backing prerequisites and rechecks operator readiness before enrolling DPUs. |
 | Enrollment and software | The CLI supplies the required BMC credential Secret and exact discovery targets. DPF contacts the DPU BMCs, enrolls the selected cards and caches the selected software. Launch Kit checks the downloaded bytes against the supplied checksums. |
 | Service declarations | The CLI creates the HBN service configuration, service chains and DPUDeployment through the management API. These declarations can exist before any DPU has joined; their existence is not service readiness. |
 | DPU installation | DPF transfers the OS installer through the BMC, boots it and configures the installed DPU agent. Installing the OS can take many minutes; BMC `OSRunning` can describe the installer rather than the final agent. |

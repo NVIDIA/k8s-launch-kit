@@ -403,7 +403,7 @@ func listOperatorConfigs(ctx context.Context, client managementRunnerClient) ([]
 	}}, "")
 }
 
-func waitOperatorConfigReady(ctx context.Context, client managementRunnerClient, reconciler *Reconciler, desired, initial *unstructured.Unstructured,
+func waitOperatorConfigReady(ctx context.Context, client ResourceClient, reconciler *Reconciler, desired, initial *unstructured.Unstructured,
 	expectedVersion string, journal *executionJournal, interval time.Duration,
 ) (*unstructured.Unstructured, error) {
 	event := executionEvent{Stage: generation.StageOperatorConfig, Operation: "readiness", Subject: desired.GetNamespace() + "/" + desired.GetName(), State: "attempted",

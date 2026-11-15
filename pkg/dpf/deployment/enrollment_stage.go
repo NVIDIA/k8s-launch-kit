@@ -272,7 +272,7 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 	if err := validateEnrollmentStageInputs(ctx, management, execution, managementReceipt, tenantReceipt, selected, password, journal, interval, requestTimeout); err != nil {
 		return enrollmentStageReceipt{}, err
 	}
-	if err := verifyManagementBootstrap(ctx, management, execution, managementReceipt); err != nil {
+	if err := waitEnrollmentBootstrap(ctx, management, execution, managementReceipt, journal, interval); err != nil {
 		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, "ENROLLMENT_BOOTSTRAP_CHANGED", "Management bootstrap no longer matches its receipt; enrollment is stopped.", err)
 	}
 	if err := tenantReceipt.Client.VerifyIdentity(ctx); err != nil {
@@ -335,6 +335,31 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 	// This is a verified observation across independent APIs, not a lease or
 	// transaction that prevents external changes after these checks return.
 	return receipt, nil
+}
+
+// Creating a tenant adds management-side services to DPF's aggregate readiness.
+// Its API can become ready before those services finish starting. The readiness
+// wait preserves the same configuration UID and intent, then rechecks the full
+// bootstrap before enrollment effects.
+func waitEnrollmentBootstrap(ctx context.Context, management tenantStageManagementClient, execution *managementExecution,
+	receipt managementBootstrapReceipt, journal *executionJournal, interval time.Duration,
+) error {
+	err := verifyManagementBootstrap(ctx, management, execution, receipt)
+	if !errors.Is(err, errBootstrapConfigNotReady) {
+		return err
+	}
+	initial, err := management.Get(ctx, execution.configObject.DeepCopy())
+	event := executionEvent{Stage: generation.StageEnrollment, Operation: "bootstrap-recheck", Subject: execution.configObject.GetNamespace() + "/" + execution.configObject.GetName()}
+	if err != nil {
+		return journalFailure(journal, event, false, "ENROLLMENT_CONFIG_READ_FAILED", "The operator configuration could not be reread before its readiness wait; enrollment remains stopped.", err)
+	}
+	if initial == nil || initial.GetUID() == "" || initial.GetUID() != types.UID(receipt.OperatorConfigUID) {
+		return journalFailure(journal, event, false, "ENROLLMENT_CONFIG_IDENTITY_CHANGED", "The operator configuration no longer has the bootstrap receipt's UID; enrollment remains stopped.", nil)
+	}
+	if _, err := waitOperatorConfigReady(ctx, management, execution.reconciler, execution.configObject, initial, execution.operatorVersion, journal, interval); err != nil {
+		return err
+	}
+	return verifyManagementBootstrap(ctx, management, execution, receipt)
 }
 
 func verifyEnrollmentBoundary(ctx context.Context, management enrollmentManagementClient, execution *managementExecution,

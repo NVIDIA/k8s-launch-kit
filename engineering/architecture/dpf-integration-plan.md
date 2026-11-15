@@ -799,8 +799,13 @@ not evaluated as an unused address.
 
 The tenant executor repeats storage and collision checks before create-or-verify,
 then waits for controller convergence and authenticates to the independent
-tenant API. A tenant API result does not establish enrollment, HBN services or
-traffic readiness. This composition remains private while the full deployment
+tenant API. Enrollment entry also waits for the same retained operator
+configuration to regain current Ready status when per-tenant management services
+are still starting. The existing deadline, exact configuration UID/specification,
+release-version and terminal-state checks bound this wait. The complete bootstrap
+and tenant identities are rechecked before BMC, credential or discovery effects;
+later enrollment and activation fences remain immediate checks. A tenant API
+result does not establish enrollment, HBN services or traffic readiness. This composition remains private while the full deployment
 entry point is being completed. The retained tenant allocation fields require
 explicit site declarations for reserved VIP, DHCP exclusion and VRRP ID
 availability on selected nodes. Both control-plane and tenant execution reject

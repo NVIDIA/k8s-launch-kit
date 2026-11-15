@@ -111,6 +111,13 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** failed probe cleanup or a changed selected node set stops creation; persisted discovery results cannot replace these observations.
 - **AND** an existing exact owned target follows ownership-aware verification rather than an unused-VIP check, and successful tenant API access does not claim enrollment or HBN traffic readiness.
 
+#### Scenario: New tenant management services are still starting
+
+- **WHEN** the tenant API is verified but the same retained operator configuration is not Ready while the new tenant's management services start
+- **THEN** enrollment waits within the existing deployment deadline and retains the current readiness reason, without accepting replacement, ownership/specification drift, a different release version or terminal failure.
+- **AND** it rechecks the complete bootstrap and tenant identities before BMC, shared-credential or discovery effects.
+- **AND** later enrollment and activation fences remain immediate checks rather than implicit recovery loops.
+
 #### Scenario: DPF selected-device enrollment
 
 - **WHEN** the executor advances from the verified tenant API to selected-device enrollment

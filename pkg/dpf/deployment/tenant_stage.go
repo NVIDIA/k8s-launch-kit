@@ -162,6 +162,8 @@ func validateTenantStageInputs(ctx context.Context, management tenantStageManage
 	return nil
 }
 
+var errBootstrapConfigNotReady = errors.New("DPFOperatorConfig is no longer ready for the retained operator release")
+
 func verifyManagementBootstrap(ctx context.Context, client tenantStageManagementClient, execution *managementExecution, receipt managementBootstrapReceipt) error {
 	if err := client.VerifyIdentity(ctx); err != nil {
 		return err
@@ -193,8 +195,11 @@ func verifyManagementBootstrap(ctx context.Context, client tenantStageManagement
 	if err != nil || config == nil || config.GetUID() != types.UID(receipt.OperatorConfigUID) || execution.reconciler.Verify(desiredConfig, config) != nil {
 		return fmt.Errorf("DPFOperatorConfig no longer matches the bootstrap receipt and retained intent")
 	}
-	if readiness := EvaluateReadiness(config); !readiness.Ready || !operatorConfigVersionMatches(config, execution.operatorVersion) {
-		return fmt.Errorf("DPFOperatorConfig is no longer ready for the retained operator release")
+	if !operatorConfigVersionMatches(config, execution.operatorVersion) {
+		return fmt.Errorf("DPFOperatorConfig no longer reports the retained operator version")
+	}
+	if readiness := EvaluateReadiness(config); !readiness.Ready {
+		return errBootstrapConfigNotReady
 	}
 	currentManager, err := client.Get(ctx, execution.manager.DeepCopy())
 	if err != nil || currentManager == nil || currentManager.GetUID() != types.UID(receipt.ManagerDeploymentUID) || !managerDeploymentIntentMatches(execution.manager, currentManager) {
