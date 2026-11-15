@@ -10,8 +10,8 @@ address-candidate lookup and refresh. This page provides the access and output r
 
 `l8k discover --target dpf` collects hardware inventory from explicitly selected
 host/DPU Redfish or SSH endpoints. The DPF estate is independent of Host networking.
-Inventory mode can run before Kubernetes exists; an explicitly supplied management
-kubeconfig adds management observations and must work if supplied.
+Inventory mode is the default and can run before Kubernetes exists. An explicitly
+supplied management kubeconfig adds management observations and must work if supplied.
 
 This build exposes an **experimental inventory preview**. Inventory success means
 that selected sources were read, physical identities and unique host/card mappings
@@ -21,11 +21,12 @@ metadata remains visible, including cards without serials. Hardware support and
 deployment readiness checks do not block inventory collection. Overall deployment `acceptance` remains
 `not-evaluated`, even when `discovery.outcome` is `complete` and the command exits zero.
 
-Explicitly select `discovery.probes.mode: inventory`. The default `management`
-mode is unavailable in this preview; selecting it stops the command before
-remote access. Inventory reports management topology when a kubeconfig is supplied,
-but does not test management-network connectivity. DPF generate/deploy/validate
-and the DPF pipeline are unavailable.
+Set `discovery.probes.mode: management` only when you want per-node pod-network and
+node-network probes. Management mode requires an explicit kubeconfig and a supported
+three-control-plane Linux/amd64 cluster; it creates temporary, restricted probe Pods and cleans
+them up. The default inventory mode performs no probes, though a supplied kubeconfig
+still adds management topology observations. DPF generate/deploy/validate and the
+DPF pipeline are unavailable in this discovery-only change.
 
 ## Inputs and invocation
 
@@ -39,10 +40,6 @@ succeed and its card identity must match exactly one host adapter. Sources are n
 silently substituted after access failures. The CLI does not scan subnets.
 
 ```yaml
-management:
-  kubeconfigRef:
-    file: ./credentials/management.kubeconfig
-  context: management
 credentials:
   dpu-reader:
     username: bmc-maintainer
@@ -59,8 +56,6 @@ discovery:
   hosts:
     - bmcEndpoint: https://192.0.2.21
       credentialRef: host-reader
-  probes:
-    mode: inventory
 ```
 
 ```bash

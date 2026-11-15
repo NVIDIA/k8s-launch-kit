@@ -27,11 +27,12 @@ const ProtocolVersion = "v1alpha1"
 var collectorScript string
 
 type Destination struct {
-	ID         string `json:"id"`
-	Endpoint   string `json:"endpoint"`
-	Path       string `json:"path"`
-	ServerName string `json:"serverName,omitempty"`
-	CA         []byte `json:"ca,omitempty"`
+	ID                 string `json:"id"`
+	Endpoint           string `json:"endpoint"`
+	Path               string `json:"path"`
+	ServerName         string `json:"serverName,omitempty"`
+	CA                 []byte `json:"ca,omitempty"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
 }
 type Request struct {
 	RequestTimeout time.Duration `json:"requestTimeout"`
@@ -54,14 +55,15 @@ type Response struct {
 }
 
 type toolDestination struct {
-	ID         string `json:"id"`
-	Hostname   string `json:"hostname"`
-	Port       string `json:"port"`
-	Literal    bool   `json:"literal"`
-	URL        string `json:"url"`
-	Authority  string `json:"authority"`
-	VerifyName string `json:"verifyName"`
-	CAFile     string `json:"caFile"`
+	ID                 string `json:"id"`
+	Hostname           string `json:"hostname"`
+	Port               string `json:"port"`
+	Literal            bool   `json:"literal"`
+	URL                string `json:"url"`
+	Authority          string `json:"authority"`
+	VerifyName         string `json:"verifyName"`
+	CAFile             string `json:"caFile"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
 }
 
 // requestFiles resolves URL/trust coordinates in Go. The script consumes JSON
@@ -74,6 +76,12 @@ func requestFiles(request Request) (map[string]string, error) {
 	destinations := []toolDestination{}
 	seen := map[string]bool{}
 	for i, destination := range request.Destinations {
+		if destination.InsecureSkipVerify && destination.ID == "management-api" {
+			return nil, fmt.Errorf("TLS verification bypass is not allowed for the management API")
+		}
+		if destination.InsecureSkipVerify && len(destination.CA) > 0 {
+			return nil, fmt.Errorf("TLS verification bypass cannot be combined with a CA bundle")
+		}
 		u, err := url.Parse(destination.Endpoint)
 		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || strings.ContainsAny(u.Host, "\r\n") || !strings.HasPrefix(destination.Path, "/") || destination.ID == "" || seen[destination.ID] {
 			return nil, fmt.Errorf("invalid or duplicate probe destination")
@@ -103,7 +111,7 @@ func requestFiles(request Request) (map[string]string, error) {
 		}
 		probeURL := url.URL{Scheme: "https", Host: host + ":" + port, Path: destination.Path}
 		_, literalErr := netip.ParseAddr(u.Hostname())
-		d := toolDestination{ID: destination.ID, Hostname: u.Hostname(), Port: port, Literal: literalErr == nil, URL: probeURL.String(), Authority: u.Host, VerifyName: name}
+		d := toolDestination{ID: destination.ID, Hostname: u.Hostname(), Port: port, Literal: literalErr == nil, URL: probeURL.String(), Authority: u.Host, VerifyName: name, InsecureSkipVerify: destination.InsecureSkipVerify}
 		if len(destination.CA) > 0 {
 			if !x509.NewCertPool().AppendCertsFromPEM(destination.CA) {
 				return nil, fmt.Errorf("invalid public probe CA")

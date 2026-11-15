@@ -65,6 +65,35 @@ var _ = Describe("DPF input", func() {
 		Expect(string(b)).To(ContainSubstring("../site/credentials/mgmt"))
 		Expect(string(b)).NotTo(ContainSubstring("canary"))
 	})
+	It("defaults to inventory without requiring management Kubernetes", func() {
+		input := `credentials:
+  reader: {username: reader, passwordRef: {env: DPF_TEST_PASSWORD}}
+discovery:
+  dpus: [{bmcEndpoint: 'https://192.0.2.1', credentialRef: reader}]
+  hosts: [{bmcEndpoint: 'https://192.0.2.2', credentialRef: reader}]
+`
+		in, err := Decode([]byte(input), "/site/input.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		resolved, err := Resolve(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Mode).To(Equal("inventory"))
+		Expect(resolved.Kubeconfig).To(BeEmpty())
+	})
+	It("preserves explicit management mode and requires its kubeconfig", func() {
+		input := strings.Replace(seed, "management:\n  kubeconfigRef: {file: credentials/mgmt}\n", "", 1)
+		input = strings.Replace(input, "  dpus:", "  probes: {mode: management}\n  dpus:", 1)
+		in, err := Decode([]byte(input), "/site/input.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = Resolve(in)
+		Expect(err).To(MatchError(ContainSubstring("/management/kubeconfigRef/file is required in management mode")))
+
+		in, err = Decode([]byte(strings.Replace(seed, "  dpus:", "  probes: {mode: management}\n  dpus:", 1)), "/site/input.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		resolved, err := Resolve(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Mode).To(Equal("management"))
+		Expect(resolved.Kubeconfig).To(Equal("/site/credentials/mgmt"))
+	})
 	It("rejects duplicate, unknown, cyclic and multiple documents", func() {
 		for _, input := range []string{seed + "management: {}\n", strings.Replace(seed, "discovery:", "typo:", 1), "a: &x {b: *x}", seed + "---\nfoo: bar\n"} {
 			_, e := Decode([]byte(input), "input.yaml")

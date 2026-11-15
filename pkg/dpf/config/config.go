@@ -282,7 +282,7 @@ func validateKeys(n *yaml.Node, active, visited map[*yaml.Node]bool, depth int) 
 	return nil
 }
 func Resolve(in Input) (Request, error) {
-	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "management"}
+	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "inventory"}
 	s := in.Site
 	base := filepath.Dir(in.Path)
 	release := ""

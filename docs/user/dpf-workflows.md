@@ -8,7 +8,7 @@ openspec/workflows/dpf-discovery.json. Edit the source, then regenerate.
 
 # DPF discovery workflows
 
-Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Start with **inventory mode**; management probe mode is unavailable in this preview. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.
+Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Inventory is the default; explicitly select management mode to request pod/network probes from an existing management cluster. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.
 
 For complete field and error details, see [DPF discovery reference](dpf-discovery.md). Each diagram follows the same steps as its procedure. Commands are examples to run deliberately from a machine with direct access to your selected endpoints.
 
@@ -48,7 +48,7 @@ Choose each source explicitly: a host operating system over SSH or its BMC over 
 | Required for SSH | A verified `knownHostsFile`; direct connectivity from the CLI machine. SSH port defaults to `22`; ambient SSH config, agents and ProxyJump are not used. |
 | Conditional | DPU ARM SSH for partial OS measurements; a private CA for Redfish when system trust is insufficient; `systemURI` if a BMC exposes several Systems. |
 | Optional | A management kubeconfig for additional observations. Inventory needs none, but an explicitly supplied kubeconfig must work. |
-| Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Choose `discovery.probes.mode: inventory` explicitly because the default management mode is unavailable in this preview. |
+| Defaultable | `dpf.release` defaults to `26.4.0`; Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. `discovery.probes.mode` defaults to `inventory`; select `management` explicitly to request management network probes. |
 | Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |
 
 Use an account whose own session proves its effective administrator role. If session Roles is absent, local authentication must be established by an explicit trusted local session `UserAuthenticationSource`. A current `LocalAccountAuth: Enabled` policy alone cannot prove how an existing session authenticated. Disabled local authentication and explicitly external session sources are unsupported; Fallback/LocalFirst require the explicit local session source. Missing origin plus missing Roles cannot inherit privileges from a same-named local administrator. Discovery reports unverifiable proof as partial without replacing a complete handoff.
@@ -107,8 +107,6 @@ discovery:
   dpus:
     - bmcEndpoint: https://192.0.2.11
       credentialRef: dpu-maintainer
-  probes:
-    mode: inventory
 ```
 
 For DPU ARM observations, use the SSH shape instead; ARM-only DPU input produces partial inventory with a nonzero exit because it cannot prove BMC administrator privileges. For Redfish, use `bmcEndpoint` and a password credential reference instead of `ssh`; see the [complete access examples](dpf-discovery.md#inputs-and-invocation). Each endpoint has exactly one access source. Plain YAML is the CLI input, not a Kubernetes object. Do not copy previously observed `inventory` facts into a new seed as user assertions.
@@ -178,7 +176,7 @@ The CLI creates a temporary session and reads system and card inventory. Host BM
 
 **At the management Kubernetes API, if configured**
 
-The CLI reads the cluster identity from `kube-system`, the Kubernetes version and the node list, including control-plane membership and reported readiness. These reads are required when you supply a management kubeconfig. StorageClasses and advertised DPF API groups are additional optional reads. Inventory mode creates no Pods and performs no management-network connectivity tests. It does not install DPF or run commands inside Kubernetes nodes.
+The CLI reads the cluster identity from `kube-system`, the Kubernetes version and the node list, including control-plane membership and reported readiness. These reads are required when you supply a management kubeconfig. StorageClasses and advertised DPF API groups are additional optional reads. Default inventory mode creates no Pods and performs no management-network connectivity tests. Explicit management mode additionally creates temporary probes from selected control-plane nodes to the management API and selected DPU BMCs over pod and node network paths; it does not install DPF or run commands inside Kubernetes nodes.
 
 Next: [Return facts and read failures to CLI](#initial-inventory-match).
 
