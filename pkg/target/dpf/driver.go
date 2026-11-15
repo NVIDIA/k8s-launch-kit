@@ -58,7 +58,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 		return nil, &target.PhaseUnavailableError{Name: target.DPF, Phase: inv.Phase, Reason: Descriptor().Capability(inv.Phase).Reason}
 	}
 	if inv.Execution.DryRun {
-		return nil, fmt.Errorf("DPF discovery uses discovery.probes.mode: inventory to omit probes")
+		return nil, fmt.Errorf("DPF discovery does not support --dry-run; inventory mode is the default, and management network probes require explicit management mode and runtime-qualified diagnostic assets")
 	}
 	r := d.request
 	if r.Stdout == nil {
@@ -101,7 +101,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 				// Unqualified image assets reject management mode before any remote operation.
 				assets := catalog.ProbeAssets()
 				if resolved.Mode == "management" && assets.Validate() != nil {
-					fail(2, "management probes unavailable until the pinned diagnostic image passes Kubernetes runtime qualification; explicitly select inventory mode for the read-only preview")
+					fail(2, "management network probes require diagnostic image assets that have passed Kubernetes runtime qualification; inventory mode remains available without those probes")
 				} else {
 					store, err = artifacts.New(input, r.OutputPath, r.ExplicitOutput)
 					if err != nil {

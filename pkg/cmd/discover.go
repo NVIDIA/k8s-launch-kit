@@ -45,9 +45,12 @@ Discovery groups nodes by hardware, detects east-west vs north-south
 NICs, and probes OFED-dependent modules. With --user-config, it replaces
 clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.
 
-With --target dpf, inspect the independent management/BMC estate using ordinary
-YAML. Inventory-only discovery requires discovery.probes.mode: inventory;
-management probes and hardware support require qualified release assets.`,
+With --target dpf, collect inventory from explicitly selected host, DPU and BMC
+endpoints using ordinary YAML. Inventory is the default and needs no kubeconfig.
+A supplied kubeconfig adds management-cluster observations. Explicit
+discovery.probes.mode: management requests per-node network probes using the
+pinned Linux/amd64 diagnostic assets. Use --use-case hbn-bgp to check the selected
+use case before generating and deploying its DPF bundle.`,
 		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
