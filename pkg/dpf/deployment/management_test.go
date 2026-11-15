@@ -517,6 +517,167 @@ func TestCRDSpecMustMatchRetainedSchema(t *testing.T) {
 	}
 }
 
+func TestOperatorCRDReadinessAcceptsAPIDefaultedRetainedChart(t *testing.T) {
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := prepareManagementExecution(generated, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := managementFakeWithAPIDefaultedCRDs(t, execution)
+	if len(execution.crds) != 29 {
+		t.Fatal("retained 26.8 chart does not contain the expected complete CRD set")
+	}
+	expectedBefore := make(map[string]any, len(execution.crds))
+	currentBefore := make(map[string]*unstructured.Unstructured, len(client.crds))
+	for _, expected := range execution.crds {
+		expectedBefore[expected.name] = runtime.DeepCopyJSONValue(expected.spec)
+		currentBefore[expected.name] = client.crds[expected.name].DeepCopy()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	file := &managementMemoryFile{}
+	journal := &executionJournal{file: file, digest: execution.plan.Digest()}
+	if err := waitOperatorCRDs(ctx, client, execution.crds, journal, time.Millisecond); err != nil {
+		t.Fatalf("published CRDs with normal API defaults did not become ready: %v", err)
+	}
+	for _, expected := range execution.crds {
+		if !crdIdentityMatches(expected, client.crds[expected.name]) {
+			t.Fatalf("enrollment's shared full-spec guard rejects API-defaulted %s", expected.name)
+		}
+		if !reflect.DeepEqual(expected.spec, expectedBefore[expected.name]) ||
+			!reflect.DeepEqual(client.crds[expected.name].Object, currentBefore[expected.name].Object) {
+			t.Fatal("CRD comparison mutated retained or observed schema")
+		}
+	}
+	if !strings.Contains(file.String(), "DPF_CRDS_ESTABLISHED") || client.createConfig != 0 {
+		t.Fatal("CRD readiness omitted its receipt or performed a dependent config effect")
+	}
+}
+
+func TestOperatorCRDReadinessRejectsSchemaConversionAndIdentityDrift(t *testing.T) {
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := prepareManagementExecution(generated, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := managementFakeWithAPIDefaultedCRDs(t, execution)
+	const name = "dpus.provisioning.dpu.nvidia.com"
+	var expected operatorCRDExpectation
+	for _, candidate := range execution.crds {
+		if candidate.name == name {
+			expected = candidate
+		}
+	}
+	baseline := client.crds[name]
+	if expected.name == "" || baseline == nil {
+		t.Fatal("retained chart has no DPU webhook schema")
+	}
+	set := func(value any, path ...string) func(*unstructured.Unstructured) {
+		return func(object *unstructured.Unstructured) {
+			if err := unstructured.SetNestedField(object.Object, value, path...); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	version := func(value any, path ...string) func(*unstructured.Unstructured) {
+		return func(object *unstructured.Unstructured) {
+			versions, found, err := unstructured.NestedSlice(object.Object, "spec", "versions")
+			if err != nil || !found || len(versions) == 0 {
+				t.Fatal("retained DPU schema has no version")
+			}
+			first, ok := versions[0].(map[string]any)
+			if !ok {
+				t.Fatal("retained DPU version is malformed")
+			}
+			if err := unstructured.SetNestedField(first, value, path...); err != nil {
+				t.Fatal(err)
+			}
+			if err := unstructured.SetNestedSlice(object.Object, versions, "spec", "versions"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*unstructured.Unstructured)
+		reason string
+	}{
+		{name: "schema pattern", mutate: version("changed", "schema", "openAPIV3Schema", "properties", "spec", "properties", "serialNumber", "pattern"), reason: "retained spec"},
+		{name: "schema CEL", mutate: version([]any{map[string]any{"rule": "false"}}, "schema", "openAPIV3Schema", "x-kubernetes-validations"), reason: "retained spec"},
+		{name: "version", mutate: version("v99", "name"), reason: "retained spec"},
+		{name: "served", mutate: version(false, "served"), reason: "retained spec"},
+		{name: "storage", mutate: version(false, "storage"), reason: "retained spec"},
+		{name: "conversion strategy", mutate: set("None", "spec", "conversion", "strategy"), reason: "retained spec"},
+		{name: "webhook name", mutate: set("untrusted-sentinel", "spec", "conversion", "webhook", "clientConfig", "service", "name"), reason: "retained spec"},
+		{name: "webhook namespace", mutate: set("untrusted-sentinel", "spec", "conversion", "webhook", "clientConfig", "service", "namespace"), reason: "retained spec"},
+		{name: "webhook path", mutate: set("/untrusted-sentinel", "spec", "conversion", "webhook", "clientConfig", "service", "path"), reason: "retained spec"},
+		{name: "webhook CA", mutate: set("Y2hhbmdlZA==", "spec", "conversion", "webhook", "clientConfig", "caBundle"), reason: "retained spec"},
+		{name: "webhook port", mutate: set(int64(8443), "spec", "conversion", "webhook", "clientConfig", "service", "port"), reason: "retained spec"},
+		{name: "webhook explicit zero port", mutate: set(int64(0), "spec", "conversion", "webhook", "clientConfig", "service", "port"), reason: "retained spec"},
+		{name: "scope", mutate: set("Cluster", "spec", "scope"), reason: "scope"},
+		{name: "missing UID", mutate: func(object *unstructured.Unstructured) { object.SetUID("") }, reason: "server metadata"},
+		{name: "missing resource version", mutate: func(object *unstructured.Unstructured) { object.SetResourceVersion("") }, reason: "server metadata"},
+		{name: "wrong identity", mutate: func(object *unstructured.Unstructured) { object.SetName("untrusted-sentinel") }, reason: "identity"},
+		{name: "deleting", mutate: func(object *unstructured.Unstructured) { now := metav1.Now(); object.SetDeletionTimestamp(&now) }, reason: "identity"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := baseline.DeepCopy()
+			test.mutate(current)
+			client.crds[name] = current
+			if crdIdentityMatches(expected, current) {
+				t.Fatal("enrollment's shared full-spec guard accepted drift")
+			}
+			file := &managementMemoryFile{}
+			journal := &executionJournal{file: file, digest: execution.plan.Digest()}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err := waitOperatorCRDs(ctx, client, []operatorCRDExpectation{expected}, journal, time.Millisecond)
+			if err == nil || !strings.Contains(err.Error(), "DPF_CRD_READINESS_FAILED") || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), test.reason) {
+				t.Fatalf("CRD drift did not identify its retained definition and safe reason: %v", err)
+			}
+			lines := strings.Split(strings.TrimSpace(file.String()), "\n")
+			var event executionEvent
+			if len(lines) != 2 || json.Unmarshal([]byte(lines[1]), &event) != nil || event.Subject != name ||
+				event.ReasonCode != "DPF_CRD_READINESS_FAILED" || strings.Contains(file.String(), "untrusted-sentinel") || client.createConfig != 0 {
+				t.Fatal("CRD failure journal lost identity, exposed remote values or allowed a dependent effect")
+			}
+		})
+	}
+	// Explicit nondefault intent stays authoritative rather than being rewritten to443.
+	wanted := baseline.DeepCopy()
+	set(int64(8443), "spec", "conversion", "webhook", "clientConfig", "service", "port")(wanted)
+	wantedSpec, found, err := unstructured.NestedMap(wanted.Object, "spec")
+	if err != nil || !found || !crdSpecMatches(wantedSpec, wanted) || crdSpecMatches(wantedSpec, baseline) {
+		t.Fatal("covering defaults replaced or ignored an explicitly retained nondefault webhook port")
+	}
+}
+
+func managementFakeWithAPIDefaultedCRDs(t *testing.T, execution *managementExecution) *managementFake {
+	t.Helper()
+	client := managementFakeWithReadiness(t, execution.plan.Digest(), execution.manager, execution.crds)
+	for name, crd := range client.crds {
+		// Model the API response independently of the comparator: these are the
+		// exact standard defaults observed on the published 26.8 definitions.
+		if name == "dpus.provisioning.dpu.nvidia.com" {
+			if _, found, err := unstructured.NestedFieldNoCopy(crd.Object, "spec", "conversion", "webhook", "clientConfig", "service", "port"); err != nil || found {
+				t.Fatal("published DPU CRD no longer omits its webhook service port")
+			}
+			if err := unstructured.SetNestedField(crd.Object, int64(443), "spec", "conversion", "webhook", "clientConfig", "service", "port"); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := unstructured.SetNestedMap(crd.Object, map[string]any{"strategy": "None"}, "spec", "conversion"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return client
+}
+
 func TestManagementJournalIsJSONLines(t *testing.T) {
 	file := &managementMemoryFile{}
 	journal := &executionJournal{file: file, digest: "sha256:test"}

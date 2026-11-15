@@ -683,6 +683,11 @@ The management bootstrap composition validates the retained plan before API
 access, checks external dependencies and scoped permissions, creates or verifies
 namespaces, installs or verifies the retained Helm release, waits for matching
 CRDs and manager configuration, then creates or verifies DPFOperatorConfig.
+CRD readiness compares identities and typed specifications with the retained
+chart after applying the pinned Kubernetes covering defaults to independent
+copies, including defaults within conversion-webhook service references.
+Diagnostics identify the failing CRD and distinguish identity from specification
+conflicts.
 It checks cluster-wide configuration ownership before effects and again after
 the manager becomes ready. These observations do not provide an atomic
 cluster-wide lock; concurrent provisioning must be excluded by the caller.

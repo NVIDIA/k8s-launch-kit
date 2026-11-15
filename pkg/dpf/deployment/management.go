@@ -604,6 +604,7 @@ func waitOperatorCRDs(ctx context.Context, client managementRunnerClient, expect
 		}
 		pending, failure := false, ""
 		for _, crd := range expected {
+			event.Subject = crd.name
 			desired := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition", "metadata": map[string]any{"name": crd.name}}}
 			current, err := client.Get(ctx, desired)
 			if err != nil {
@@ -611,11 +612,11 @@ func waitOperatorCRDs(ctx context.Context, client managementRunnerClient, expect
 					pending = true
 					break
 				}
-				failure = "a required DPF API definition could not be read"
+				failure = fmt.Sprintf("DPF API definition %s could not be read", crd.name)
 				break
 			}
-			if !crdIdentityMatches(crd, current) {
-				failure = "a required DPF API definition has a conflicting identity or scope"
+			if mismatch := crdMismatchReason(crd, current); mismatch != "" {
+				failure = fmt.Sprintf("DPF API definition %s %s", crd.name, mismatch)
 				break
 			}
 			for _, version := range crd.versions {
@@ -645,6 +646,7 @@ func waitOperatorCRDs(ctx context.Context, client managementRunnerClient, expect
 			return journalFailure(journal, event, false, "DPF_CRD_READINESS_FAILED", failure, nil)
 		}
 		if !pending {
+			event.Subject = ""
 			event.State, event.ReasonCode = "ready", "DPF_CRDS_ESTABLISHED"
 			event.Message = "Retained DPF CRDs report Established and NamesAccepted, and each served resource is discoverable."
 			return journal.record(event)
@@ -661,8 +663,12 @@ func waitOperatorCRDs(ctx context.Context, client managementRunnerClient, expect
 }
 
 func crdIdentityMatches(expected operatorCRDExpectation, current *unstructured.Unstructured) bool {
+	return crdMismatchReason(expected, current) == ""
+}
+
+func crdMismatchReason(expected operatorCRDExpectation, current *unstructured.Unstructured) string {
 	if current == nil || current.GetAPIVersion() != "apiextensions.k8s.io/v1" || current.GetKind() != "CustomResourceDefinition" || current.GetName() != expected.name || current.GetUID() == "" || current.GetResourceVersion() == "" || current.GetDeletionTimestamp() != nil {
-		return false
+		return "has a conflicting identity or unavailable server metadata"
 	}
 	group, _, _ := unstructured.NestedString(current.Object, "spec", "group")
 	plural, _, _ := unstructured.NestedString(current.Object, "spec", "names", "plural")
@@ -672,7 +678,13 @@ func crdIdentityMatches(expected operatorCRDExpectation, current *unstructured.U
 	if expected.namespaced {
 		wantScope = "Namespaced"
 	}
-	return group == expected.group && plural == expected.plural && kind == expected.kind && scope == wantScope && crdSpecMatches(expected.spec, current)
+	if group != expected.group || plural != expected.plural || kind != expected.kind || scope != wantScope {
+		return "has a conflicting group, resource name, kind or scope"
+	}
+	if !crdSpecMatches(expected.spec, current) {
+		return "has a conflicting retained spec, schema or conversion configuration"
+	}
+	return ""
 }
 
 func crdSpecMatches(expected map[string]any, current *unstructured.Unstructured) bool {
@@ -687,7 +699,8 @@ func crdSpecMatches(expected map[string]any, current *unstructured.Unstructured)
 	if err := json.Unmarshal(data, &expectedCRD); err != nil {
 		return false
 	}
-	apiextensionsv1.SetDefaults_CustomResourceDefinition(&expectedCRD)
+	// The covering defaulter includes nested conversion webhook service ports.
+	apiextensionsv1.SetObjectDefaults_CustomResourceDefinition(&expectedCRD)
 	currentData, err := json.Marshal(current.Object)
 	if err != nil {
 		return false
@@ -696,7 +709,7 @@ func crdSpecMatches(expected map[string]any, current *unstructured.Unstructured)
 	if err := json.Unmarshal(currentData, &currentCRD); err != nil {
 		return false
 	}
-	apiextensionsv1.SetDefaults_CustomResourceDefinition(&currentCRD)
+	apiextensionsv1.SetObjectDefaults_CustomResourceDefinition(&currentCRD)
 	want, wantErr := json.Marshal(expectedCRD.Spec)
 	got, gotErr := json.Marshal(currentCRD.Spec)
 	return wantErr == nil && gotErr == nil && bytes.Equal(want, got)
