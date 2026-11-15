@@ -146,18 +146,13 @@ func (c Collector) readTenantStorage(ctx context.Context, namespace string) (sto
 // resolveEtcdReferences follows a DataStore endpoint to a live member Pod and
 // its controlling StatefulSet, then follows that set's service reference.
 func (c Collector) resolveEtcdReferences(ctx context.Context, namespace string, datastore *unstructured.Unstructured) (*appsv1.StatefulSet, *corev1.Service, TenantStorageResult) {
-	endpoints, _, _ := unstructured.NestedStringSlice(datastore.Object, "spec", "endpoints")
+	endpoints, err := dataStoreMemberEndpoints(datastore, namespace)
+	if err != nil {
+		return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore endpoints must identify members in the selected Kamaji namespace with one consistent service DNS domain.")
+	}
 	var setName, serviceName string
 	for _, endpoint := range endpoints {
-		host, port, err := net.SplitHostPort(endpoint)
-		if err != nil || port != strconv.Itoa(tenantEtcdPort) {
-			return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore endpoint set does not match the current etcd service.")
-		}
-		parts := strings.Split(host, ".")
-		if len(parts) != 6 || parts[3] != "svc" || parts[4] != "cluster" || parts[5] != "local" || parts[2] != namespace || len(validation.IsDNS1123Subdomain(host)) != 0 {
-			return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore endpoint does not identify a member in the selected Kamaji namespace.")
-		}
-		pod, err := c.Kubernetes.CoreV1().Pods(namespace).Get(ctx, parts[0], metav1.GetOptions{})
+		pod, err := c.Kubernetes.CoreV1().Pods(namespace).Get(ctx, endpoint.pod, metav1.GetOptions{})
 		if err != nil {
 			return nil, nil, storageAPIError("etcd member pod", err)
 		}
@@ -174,10 +169,10 @@ func (c Collector) resolveEtcdReferences(ctx context.Context, namespace string, 
 		if owner == nil || owner.APIVersion != "apps/v1" || owner.Kind != "StatefulSet" || owner.UID == "" {
 			return nil, nil, storageFailed("TENANT_ETCD_OWNER_INVALID", "A DataStore endpoint does not resolve to a StatefulSet-owned etcd member.")
 		}
-		if setName != "" && (setName != owner.Name || serviceName != parts[1]) {
+		if setName != "" && (setName != owner.Name || serviceName != endpoint.service) {
 			return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "DataStore endpoints resolve to multiple etcd workloads.")
 		}
-		setName, serviceName = owner.Name, parts[1]
+		setName, serviceName = owner.Name, endpoint.service
 	}
 	if setName == "" {
 		return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_INVALID", "The shared Kamaji DataStore has no valid endpoint set.")
@@ -294,29 +289,58 @@ func validateEtcdStatefulSet(set *appsv1.StatefulSet) TenantStorageResult {
 	return storagePassed()
 }
 
-func validateDataStoreEndpoints(obj *unstructured.Unstructured, set *appsv1.StatefulSet, namespace string) TenantStorageResult {
+type etcdMemberEndpoint struct {
+	pod, service string
+}
+
+// dataStoreMemberEndpoints accepts the canonical member form emitted by Kamaji's
+// chart. The chart's clusterDomain is configurable; require one observed suffix
+// while retaining exact Pod/Service/namespace references and the etcd client port.
+func dataStoreMemberEndpoints(obj *unstructured.Unstructured, namespace string) ([]etcdMemberEndpoint, error) {
 	endpoints, found, err := unstructured.NestedStringSlice(obj.Object, "spec", "endpoints")
-	if err != nil || !found || int32(len(endpoints)) != *set.Spec.Replicas {
+	if err != nil || !found || len(endpoints) == 0 || len(endpoints) > int(maxEtcdReplicas) {
+		return nil, fmt.Errorf("missing or unsupported member endpoint set")
+	}
+	members := make([]etcdMemberEndpoint, 0, len(endpoints))
+	var domain string
+	for _, endpoint := range endpoints {
+		host, port, err := net.SplitHostPort(endpoint)
+		if err != nil || port != strconv.Itoa(tenantEtcdPort) || len(validation.IsDNS1123Subdomain(host)) != 0 {
+			return nil, fmt.Errorf("malformed member service endpoint")
+		}
+		parts := strings.Split(host, ".")
+		if len(parts) < 5 || parts[2] != namespace || parts[3] != "svc" {
+			return nil, fmt.Errorf("member service endpoint outside selected namespace")
+		}
+		for _, part := range parts {
+			if len(validation.IsDNS1123Label(part)) != 0 {
+				return nil, fmt.Errorf("malformed member service DNS label")
+			}
+		}
+		suffix := strings.Join(parts[4:], ".")
+		if domain != "" && suffix != domain {
+			return nil, fmt.Errorf("member service DNS domains differ")
+		}
+		domain = suffix
+		members = append(members, etcdMemberEndpoint{pod: parts[0], service: parts[1]})
+	}
+	return members, nil
+}
+
+func validateDataStoreEndpoints(obj *unstructured.Unstructured, set *appsv1.StatefulSet, namespace string) TenantStorageResult {
+	endpoints, err := dataStoreMemberEndpoints(obj, namespace)
+	if err != nil || int32(len(endpoints)) != *set.Spec.Replicas {
 		return storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore endpoint set does not match the current etcd members.")
 	}
-	const expectedSuffix = ".svc.cluster.local"
 	seen := make(map[string]struct{}, len(endpoints))
 	for _, endpoint := range endpoints {
-		host, port, splitErr := net.SplitHostPort(endpoint)
-		if splitErr != nil || port != strconv.Itoa(tenantEtcdPort) {
-			return storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore endpoint set does not match the current etcd service.")
-		}
 		matched := false
 		for ordinal := int32(0); ordinal < *set.Spec.Replicas; ordinal++ {
-			wantHost := fmt.Sprintf("%s-%d.%s.%s%s", set.Name, ordinal, set.Spec.ServiceName, namespace, expectedSuffix)
-			if host == wantHost {
-				if len(validation.IsDNS1123Subdomain(host)) != 0 {
-					return storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore contains a malformed etcd service endpoint.")
-				}
-				if _, duplicate := seen[host]; duplicate {
+			if endpoint.pod == fmt.Sprintf("%s-%d", set.Name, ordinal) && endpoint.service == set.Spec.ServiceName {
+				if _, duplicate := seen[endpoint.pod]; duplicate {
 					return storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore contains duplicate etcd member endpoints.")
 				}
-				seen[host] = struct{}{}
+				seen[endpoint.pod] = struct{}{}
 				matched = true
 				break
 			}

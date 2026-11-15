@@ -74,8 +74,8 @@ func TestCollectTenantStorageFollowsReferencedResourceNames(t *testing.T) {
 	f.class.Name = newClass
 	f.provisioner.Name, f.provisioner.Namespace = "path-agent", "storage-system"
 	f.dataStore.Object["spec"].(map[string]interface{})["endpoints"] = []interface{}{
-		"tenant-data-0.tenant-data.dpf-operator-system.svc.cluster.local:2379",
-		"tenant-data-1.tenant-data.dpf-operator-system.svc.cluster.local:2379",
+		"tenant-data-0.tenant-data.dpf-operator-system.svc.corp.example:2379",
+		"tenant-data-1.tenant-data.dpf-operator-system.svc.corp.example:2379",
 	}
 	collector, _, _ := tenantStorageCollectorFromFixture(f)
 	if result := collector.CollectTenantStorage(context.Background(), "dpf-operator-system"); result.State != "passed" {
@@ -115,8 +115,8 @@ func TestCollectTenantStorageRejectsUnreadyAndMismatchedEvidence(t *testing.T) {
 		{name: "external datastore endpoint", mutate: func(t *testing.T, f *tenantStorageFixture) {
 			f.dataStore.Object["spec"].(map[string]interface{})["endpoints"] = []interface{}{"etcd.attacker.test:2379"}
 		}, state: "failed", reason: "TENANT_DATASTORE_ENDPOINTS_MISMATCH"},
-		{name: "member endpoint with unsupported cluster domain", mutate: func(t *testing.T, f *tenantStorageFixture) {
-			f.dataStore.Object["spec"].(map[string]interface{})["endpoints"] = []interface{}{"kamaji-etcd-0.kamaji-etcd.dpf-operator-system.svc.attacker.test:2379", "kamaji-etcd-1.kamaji-etcd.dpf-operator-system.svc.attacker.test:2379"}
+		{name: "member endpoints with inconsistent cluster domains", mutate: func(t *testing.T, f *tenantStorageFixture) {
+			f.dataStore.Object["spec"].(map[string]interface{})["endpoints"] = []interface{}{"kamaji-etcd-0.kamaji-etcd.dpf-operator-system.svc.corp.example:2379", "kamaji-etcd-1.kamaji-etcd.dpf-operator-system.svc.cluster.local:2379"}
 		}, state: "failed", reason: "TENANT_DATASTORE_ENDPOINTS_MISMATCH"},
 		{name: "wrong service target port", mutate: func(t *testing.T, f *tenantStorageFixture) { f.service.Spec.Ports[0].TargetPort = intstrFromInt(1234) }, state: "failed", reason: "TENANT_ETCD_SERVICE_PORT_MISMATCH"},
 		{name: "wrong pod owner uid", mutate: func(t *testing.T, f *tenantStorageFixture) { f.pods[0].OwnerReferences[0].UID = types.UID("other") }, state: "unknown", reason: "TENANT_ETCD_POD_NOT_READY"},

@@ -587,7 +587,11 @@ namespace. Resource names are resolved from these live references. The current
 supported storage backend is local-path: its StorageClass must use the
 `cluster.local/local-path-provisioner` provisioner with wait-for-first-consumer
 binding, and exactly one ready provisioner Deployment must be discoverable.
-DataStore endpoints must use the default `cluster.local` service DNS domain.
+DataStore member endpoints may use the default `cluster.local` or a custom service
+DNS domain configured in Kamaji. Every endpoint must use the same canonical DNS
+suffix and match the exact referenced pod, headless service, selected namespace
+and etcd client port. The StorageClass provisioner identity above is independent
+of the service DNS domain.
 Missing permissions, stale status, mismatched bindings, ambiguous references
 and unsupported storage backends block readiness. These checks are read-only;
 existing tenants may share the datastore.

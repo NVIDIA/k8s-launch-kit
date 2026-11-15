@@ -314,6 +314,9 @@ not observations or authorization to modify switches.
   Kamaji datastore, its endpoint-correlated etcd StatefulSet, service, replicas
   and pods, matching bound claims and volumes, and the supported local-path
   backend; class presence alone cannot pass the check.
+- **AND** member endpoints may use a custom service DNS domain, but must use one
+  consistent canonical suffix and match the referenced member pods, headless
+  service, selected namespace and etcd client port.
 - **AND** the supported storage class uses the reviewed local-path provisioner
   identity, and exactly one ready provisioner workload is resolved by its
   component label and image; an unsupported provisioner is rejected.
