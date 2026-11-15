@@ -53,7 +53,7 @@ var _ = Describe("probe TLS policy", func() {
 		_, err := requestFiles(tlsPolicyRequest(Destination{
 			ID: "dpu-target", Endpoint: "https://192.0.2.20", Path: "/redfish/v1/", CA: []byte("not a CA"), InsecureSkipVerify: true,
 		}))
-		Expect(err).To(MatchError(ContainSubstring("or with a CA")))
+		Expect(err).To(MatchError(ContainSubstring("combined with a CA")))
 	})
 })
 

@@ -411,7 +411,7 @@ func sameOperationRequest(a, b sshprobe.HostNetworkRequest) bool {
 // prepareResume binds access without the fresh-only enrollment policy. The
 // caller must run the complete resume activation scope before any next effect.
 func prepareResume(execution *managementExecution, request config.Request, operation *deploymentOperation) (*preparedControlPlaneRun, error) {
-	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Devices, request.Targets)
+	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Release, execution.plan.Intent().Devices, request.Targets)
 	if err != nil {
 		return nil, err
 	}
