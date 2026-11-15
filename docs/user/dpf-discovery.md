@@ -738,6 +738,15 @@ reads and changing identities also block readiness. A pass covers these reads;
 DPF controller authentication, firmware updates and other provisioning actions
 remain later checks. Discovery does not update BMC firmware.
 
+Host reset support is a separate prerequisite. On each selected DPU BMC,
+discovery reads and rechecks the firmware build required by the selected release's
+reviewed reset backend. An unsupported model/build or an unavailable read blocks
+HBN-BGP readiness even when physical inventory completes. Resolve the reported
+firmware/backend mismatch and rediscover. Deployment repeats this check before
+provisioning changes. Passing it does not authorize a reboot: the current reset
+request, safe shutdown, idle tasks and firmware-copy state are checked at reset time.
+
+
 On each configured switch, Launch Kit reads both the NVUE interface list and
 the individual selected ports. The per-port reads supply VRF and parent
 relationships that the list may omit. Conflicting observations block readiness;

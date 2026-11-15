@@ -37,7 +37,9 @@ Host `--kubeconfig` and `--overwrite-existing` are rejected; DPF does not suppor
 selected DPUs, reboot selected hosts and configure their workload PFs, so retain
 the user's existing maintenance authorization and exclude competing device
 provisioning or firmware operations. The native HBN path requires BMC reset
-policy `Never`.
+policy `Never`. The selected release's reset backend must support the freshly
+observed DPU model/BMC build before any provisioning effects; discovery support
+does not replace the later current-round shutdown/task/copy-state checks.
 
 The adapter refreshes prerequisites, then runs management, tenant, enrollment,
 software, service declarations, activation, host networking and runtime stages.

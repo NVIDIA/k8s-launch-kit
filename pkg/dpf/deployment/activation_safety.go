@@ -98,7 +98,7 @@ func (c *APIClient) verifyActivationRebootBMCs(ctx context.Context, selected []a
 			return time.Time{}, err
 		}
 		observed, err := (redfish.Collector{}).ObserveResetSafety(ctx, item.selected.target, timeout, redfish.ResetSafetyRequest{
-			SerialNumber: item.selected.device.Serial, PSID: item.selected.device.PSID, NotBefore: item.startup,
+			Release: item.selected.release, SerialNumber: item.selected.device.Serial, PSID: item.selected.device.PSID, NotBefore: item.startup,
 		})
 		if err != nil {
 			var cause error

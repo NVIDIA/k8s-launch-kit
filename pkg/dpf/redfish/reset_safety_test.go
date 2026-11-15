@@ -149,7 +149,7 @@ var _ = Describe("fresh modern BF4 reset safety", func() {
 		defer cancel()
 		target := resetFixtureTarget(server.URL)
 		before := time.Now()
-		observed, err := (Collector{}).ObserveResetSafety(ctx, target, time.Second, ResetSafetyRequest{
+		observed, err := (Collector{}).ObserveResetSafety(ctx, target, time.Second, ResetSafetyRequest{Release: "26.8.0",
 			SerialNumber: "SERIAL-A", PSID: "MT_0000001774", NotBefore: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC),
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -162,7 +162,7 @@ var _ = Describe("fresh modern BF4 reset safety", func() {
 		defer server.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		observed, err := (Collector{}).ObserveResetSafety(ctx, resetFixtureTarget(server.URL), time.Second, ResetSafetyRequest{
+		observed, err := (Collector{}).ObserveResetSafety(ctx, resetFixtureTarget(server.URL), time.Second, ResetSafetyRequest{Release: "26.8.0",
 			SerialNumber: "SERIAL-A", PSID: "MT_0000001774", NotBefore: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC),
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -182,7 +182,7 @@ var _ = Describe("fresh modern BF4 reset safety", func() {
 		defer server.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		observed, err := (Collector{}).ObserveResetSafety(ctx, resetFixtureTarget(server.URL), time.Second, ResetSafetyRequest{
+		observed, err := (Collector{}).ObserveResetSafety(ctx, resetFixtureTarget(server.URL), time.Second, ResetSafetyRequest{Release: "26.8.0",
 			SerialNumber: "SERIAL-A", PSID: "MT_0000001774", NotBefore: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC),
 		})
 		Expect(err).To(HaveOccurred())
@@ -344,7 +344,7 @@ var _ = Describe("reset safety cancellation", func() {
 		defer server.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
-		observed, err := (Collector{}).ObserveResetSafety(ctx, resetFixtureTarget(server.URL), time.Second, ResetSafetyRequest{SerialNumber: "SERIAL-A", PSID: "MT_0000001774", NotBefore: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)})
+		observed, err := (Collector{}).ObserveResetSafety(ctx, resetFixtureTarget(server.URL), time.Second, ResetSafetyRequest{Release: "26.8.0", SerialNumber: "SERIAL-A", PSID: "MT_0000001774", NotBefore: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)})
 		Expect(err).To(HaveOccurred())
 		Expect(observed).To(BeZero())
 		Expect(fixture.writes).To(Equal([]string{"POST /redfish/v1/SessionService/Sessions", "DELETE /redfish/v1/SessionService/Sessions/owned"}))

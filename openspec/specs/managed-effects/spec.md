@@ -324,6 +324,12 @@ preflight remediation effects are retained if this check fails.
 - **WHEN** an RA2.4 bundle targets a served schema without platformType or the CRD cannot be read
 - **THEN** deploy fails before applying the doSPCX ConfigMap and NIC templates; dry-run also requires the installed API.
 
+#### Scenario: Known reset-backend incompatibility
+
+- **WHEN** the selected DPF release does not support the observed DPU model/BMC firmware build, or that support cannot be measured
+- **THEN** HBN-BGP discovery reports a specific blocking prerequisite and deployment rejects it before provisioning effects. Release-owned compatibility does not waive fresh current-round shutdown/task/copy-state checks at reset time.
+
+
 ## Baseline and limits
 
 The DPF native execution primitives implement create-or-verify for retained

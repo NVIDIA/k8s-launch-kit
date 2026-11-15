@@ -48,6 +48,11 @@ password value. Separate protected credential aliases may reference that value.
 Use protected password/key references and pinned SSH host keys; do not put
 secrets in command arguments or generated manifests.
 
+The selected release must support each observed DPU model and BMC firmware build
+for host reset. Discovery reports this prerequisite; deployment verifies it
+again before provisioning changes. An unsupported or unmeasured build blocks
+the run. Live shutdown, task and firmware-copy checks still precede every reset.
+
 Confirm these site decisions before generating the bundle:
 
 | Decision | What to establish |

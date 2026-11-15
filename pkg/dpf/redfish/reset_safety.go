@@ -7,16 +7,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 )
 
 // ResetSafetyRequest binds a transient shutdown read to the current DPU round.
 // NotBefore is the current agent startup; unmeasured pre-OS resets are unsupported.
 type ResetSafetyRequest struct {
+	Release      string
 	SerialNumber string
 	PSID         string
 	NotBefore    time.Time
@@ -38,7 +41,7 @@ type ResetSafetyObservation struct {
 }
 
 // ObserveResetSafety performs only bounded reads and owned session operations.
-// It qualifies modern BF4 26.10 only. External hardware writers must be excluded:
+// It supports only the selected release's reviewed BF4 reset contract. External hardware writers must be excluded:
 // Redfish does not expose independent NIC programming-idle state on this model.
 func (co Collector) ObserveResetSafety(ctx context.Context, target config.Target, timeout time.Duration, request ResetSafetyRequest) (ResetSafetyObservation, error) {
 	if ctx == nil || target.Role != "dpus" || !ValidSerial(request.SerialNumber) || request.PSID == "" || request.NotBefore.IsZero() ||
@@ -51,7 +54,11 @@ func (co Collector) ObserveResetSafety(ctx context.Context, target config.Target
 	startedAt := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	read := &resetSafetyRead{request: request}
+	contract, err := resetContract(request.Release)
+	if err != nil {
+		return ResetSafetyObservation{}, err
+	}
+	read := &resetSafetyRead{request: request, contract: contract}
 	device, _, err := co.collect(ctx, target, timeout, read)
 	if err != nil {
 		return ResetSafetyObservation{}, err
@@ -75,6 +82,7 @@ func (co Collector) ObserveResetSafety(ctx context.Context, target config.Target
 
 type resetSafetyRead struct {
 	request  ResetSafetyRequest
+	contract releases.ResetSafetyContract
 	observed ResetSafetyObservation
 	fence    [32]byte
 	reads    int
@@ -88,7 +96,7 @@ func (r *resetSafetyRead) capture(ctx context.Context, c *Client, root Document,
 	if admin.State != "observed" || admin.ReasonCode != "BMC_ADMIN_VERIFIED" {
 		return &Error{Code: "RESET_BMC_ADMIN_UNVERIFIED"}
 	}
-	if !b4240Service(root, system.Document) || Text(system.Document, "Model") != "BlueField-4" {
+	if !b4240Service(root, system.Document) || Text(system.Document, "Model") != "BlueField-4" || !slices.Contains(r.contract.Models, device.Model) {
 		return &Error{Code: "RESET_PLATFORM_UNQUALIFIED"}
 	}
 	// This is the management card chassis, not the Arm power domain. It
@@ -113,7 +121,7 @@ func (r *resetSafetyRead) capture(ctx context.Context, c *Client, root Document,
 	if err != nil {
 		return err
 	}
-	firmware, err := resetFirmware(ctx, c, root)
+	firmware, err := resetFirmware(ctx, c, root, r.contract)
 	if err != nil {
 		return err
 	}
@@ -216,7 +224,7 @@ func resetMember(base string, member Resource) bool {
 		strings.TrimSuffix(Text(member.Document, "@odata.id"), "/") == strings.TrimSuffix(member.URI, "/")
 }
 
-func resetFirmware(ctx context.Context, c *Client, root Document) (map[string]any, error) {
+func resetFirmware(ctx context.Context, c *Client, root Document, contract releases.ResetSafetyContract) (map[string]any, error) {
 	updateURI := Link(root, "UpdateService")
 	update, err := c.Get(ctx, updateURI)
 	if err != nil {
@@ -277,10 +285,10 @@ func resetFirmware(ctx context.Context, c *Client, root Document) (map[string]an
 			Text(active, "Version") != Text(d, "Version") || Text(active, "BuildType") != "Release" || Text(inactive, "BuildType") != "Release" {
 			return nil, &Error{Code: "RESET_FIRMWARE_NOT_IDLE"}
 		}
-		if id == "BlueField_FW_BMC_0" && Text(d, "Version") != "BF4-26.10-0001" {
+		if id == "BlueField_FW_BMC_0" && Text(d, "Version") != contract.BMCFirmware {
 			return nil, &Error{Code: "RESET_PLATFORM_UNQUALIFIED"}
 		}
-		cpuOffline := resetQualifiedCPUOff(id, d)
+		cpuOffline := resetQualifiedCPUOff(id, d, contract.CPUFirmware)
 		if !cpuOffline {
 			if id == "BlueField_FW_CPU_0" && Text(Object(d, "Status"), "State") == "StandbyOffline" {
 				return nil, &Error{Code: "RESET_CPU_OFF_STATE_UNQUALIFIED", Method: "GET", URI: member.URI}
@@ -307,8 +315,8 @@ func resetFirmware(ctx context.Context, c *Client, root Document) (map[string]an
 // resetFirmware is called only after System Off/Disabled/BootProgress None is
 // proven, and independently requires the matching qualified BMC version. The
 // CPU slots must remain the exact activated/inactive release pair without copy.
-func resetQualifiedCPUOff(id string, d Document) bool {
-	if id != "BlueField_FW_CPU_0" || Text(d, "Version") != "26.10-0001" {
+func resetQualifiedCPUOff(id string, d Document, version string) bool {
+	if id != "BlueField_FW_CPU_0" || Text(d, "Version") != version || version == "" {
 		return false
 	}
 	status := Object(d, "Status")
@@ -319,7 +327,7 @@ func resetQualifiedCPUOff(id string, d Document) bool {
 	nvidia := Object(Object(d, "Oem"), "Nvidia")
 	for key, state := range map[string]string{"ActiveFirmwareSlot": "Activated", "InactiveFirmwareSlot": "Inactive"} {
 		slot := Object(nvidia, key)
-		if Text(slot, "Version") != "26.10-0001" || Text(slot, "BuildType") != "Release" || Text(slot, "FirmwareState") != state {
+		if Text(slot, "Version") != version || Text(slot, "BuildType") != "Release" || Text(slot, "FirmwareState") != state {
 			return false
 		}
 	}

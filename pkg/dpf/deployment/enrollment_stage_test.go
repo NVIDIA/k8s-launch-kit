@@ -222,7 +222,7 @@ func enrollmentStageFixtureFromExecution(t *testing.T, execution *managementExec
 			}
 		}
 	}
-	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Devices, request.Targets)
+	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Release, execution.plan.Intent().Devices, request.Targets)
 	if err != nil {
 		t.Fatal(err)
 	}

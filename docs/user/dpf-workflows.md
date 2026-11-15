@@ -419,6 +419,14 @@ Next: [Collection and report finished](#hbn-bgp-preflight-review); [Access, inpu
 
 Inspect `discovery.outcome`, `readiness.state`, each failed readiness check, and the command exit status. Complete physical inventory may be saved even when HBN-BGP readiness is blocked. Missing required facts, mismatched VRF/ASN/MTU, absent unnumbered neighbors and unknown uplink mapping cannot count as passes. Discovery retains unverified provisioning prerequisites as deploy-phase blockers. BGP establishment and traffic validation are post-deployment checks.
 
+Host reset support is a separate prerequisite. On each selected DPU BMC,
+discovery reads and rechecks the firmware build required by the selected release's
+reviewed reset backend. An unsupported model/build or an unavailable read blocks
+HBN-BGP readiness even when physical inventory completes. Resolve the reported
+firmware/backend mismatch and rediscover. Deployment repeats this check before
+provisioning changes. Passing it does not authorize a reboot: the current reset
+request, safe shutdown, idle tasks and firmware-copy state are checked at reset time.
+
 Next: [Required check blocked or unknown](#hbn-bgp-preflight-correct); [Required checks verified](#hbn-bgp-preflight-finish).
 
 ### 4. Infrastructure owner: resolve the reported cause {#hbn-bgp-preflight-correct}
@@ -578,6 +586,8 @@ Next: [Handoff saved](#hbn-bgp-deployment-readiness); [A required observation is
 Continue only when the fresh report is complete and HBN-BGP `readiness.state` is `ready`. Check selected device/host identities, BMC access, management paths, host network prerequisites, switch port and fabric observations, selected artifacts and tenant allocation declarations. Confirm the tenant endpoint and selected management nodes still match the authorized site plan.
 
 Discovery checks are point-in-time observations. They do not prove that DPF can consume artifacts, that HBN will establish BGP, or that workload traffic will pass. An unknown required check is a stop.
+
+The selected release must support each observed DPU model/BMC firmware build for the host reset backend. Unsupported or unavailable observations block provisioning; this check is repeated before changes. Live safe-shutdown, task and firmware-copy checks still run before each actual reset.
 
 Next: [Required gates are ready](#hbn-bgp-deployment-generate); [A required gate remains unresolved](#hbn-bgp-deployment-blocked).
 

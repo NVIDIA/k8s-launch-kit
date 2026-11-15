@@ -177,7 +177,7 @@ func softwareStageFixtureFromExecution(t *testing.T, execution *managementExecut
 		target.Endpoint = "https://" + devices[i].BMCIP
 		request.Targets = append(request.Targets, target)
 	}
-	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Devices, request.Targets)
+	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Release, execution.plan.Intent().Devices, request.Targets)
 	if err != nil {
 		t.Fatal(err)
 	}

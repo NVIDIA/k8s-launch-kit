@@ -14,14 +14,14 @@ import (
 func hbnEnrollmentAccessCheck(request config.Request, current *inventory.Inventory) inventory.Check {
 	check := inventory.Check{ID: "dpf.hbn.enrollment-credentials", Vantage: "executor", RequiredPhase: "deploy",
 		State: "unknown", ReasonCode: "ENROLLMENT_IDENTITY_UNAVAILABLE"}
-	if request.HBN == nil {
+	if request.HBN == nil || request.Software == nil {
 		return check
 	}
 	selected, err := generationDevices(request.Input.Site, current, *request.HBN)
 	if err != nil {
 		return check
 	}
-	if err := deployment.ValidateEnrollmentBMCs(selected, request.Targets); err != nil {
+	if err := deployment.ValidateEnrollmentBMCs(request.Software.Version, selected, request.Targets); err != nil {
 		check.State, check.ReasonCode = "failed", "ENROLLMENT_CREDENTIALS_INCOMPATIBLE"
 		return check
 	}

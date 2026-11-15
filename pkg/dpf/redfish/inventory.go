@@ -215,6 +215,7 @@ func (co Collector) collect(ctx context.Context, target config.Target, timeout t
 			begin("DPF release provisioning API reads")
 			state := provisioningAPIReads(ctx, c, co.ProvisioningRelease, bf4, device.SerialNumber, system)
 			device.Observations["dpf-provisioning-api"] = state
+			device.Observations["host-reset-support"] = resetSupportReads(ctx, c, co.ProvisioningRelease, device.Model)
 			if state.State == "observed" {
 				pass("release-specific enrollment reads verified; provisioning actions remain untested")
 			} else {

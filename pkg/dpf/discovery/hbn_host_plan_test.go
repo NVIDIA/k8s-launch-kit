@@ -15,7 +15,11 @@ func TestHBNHostAddressPlanSeparatesReservationFromRuntimeConfiguration(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, generation := definition.Defaults.Networking, definition.Defaults.Generation
+	profile := definition.Defaults.Networking
+	generation, err := hbn.ResolveGeneration(hbn.GenerationOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	check := hbnHostAddressPlanCheck(&profile, &generation)
 	if check.State != "passed" || check.RequiredPhase != "generate" || !strings.Contains(check.Message, "128 possible DPU subnets") || !strings.Contains(check.Message, "require deployment-time checks") {
 		t.Fatalf("incorrect host plan result: %#v", check)

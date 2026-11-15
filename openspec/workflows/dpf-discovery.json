@@ -355,7 +355,7 @@
         {
           "id": "review",
           "title": "CLI operator: review inventory and readiness separately",
-          "body": "Inspect `discovery.outcome`, `readiness.state`, each failed readiness check, and the command exit status. Complete physical inventory may be saved even when HBN-BGP readiness is blocked. Missing required facts, mismatched VRF/ASN/MTU, absent unnumbered neighbors and unknown uplink mapping cannot count as passes. Discovery retains unverified provisioning prerequisites as deploy-phase blockers. BGP establishment and traffic validation are post-deployment checks.",
+          "body": "Inspect `discovery.outcome`, `readiness.state`, each failed readiness check, and the command exit status. Complete physical inventory may be saved even when HBN-BGP readiness is blocked. Missing required facts, mismatched VRF/ASN/MTU, absent unnumbered neighbors and unknown uplink mapping cannot count as passes. Discovery retains unverified provisioning prerequisites as deploy-phase blockers. BGP establishment and traffic validation are post-deployment checks.\n\nHost reset support is a separate prerequisite. On each selected DPU BMC,\ndiscovery reads and rechecks the firmware build required by the selected release's\nreviewed reset backend. An unsupported model/build or an unavailable read blocks\nHBN-BGP readiness even when physical inventory completes. Resolve the reported\nfirmware/backend mismatch and rediscover. Deployment repeats this check before\nprovisioning changes. Passing it does not authorize a reboot: the current reset\nrequest, safe shutdown, idle tasks and firmware-copy state are checked at reset time.",
           "transitions": [
             {
               "to": "correct",
@@ -496,7 +496,7 @@
         {
           "id": "readiness",
           "title": "CLI operator: confirm required deployment gates",
-          "body": "Continue only when the fresh report is complete and HBN-BGP `readiness.state` is `ready`. Check selected device/host identities, BMC access, management paths, host network prerequisites, switch port and fabric observations, selected artifacts and tenant allocation declarations. Confirm the tenant endpoint and selected management nodes still match the authorized site plan.\n\nDiscovery checks are point-in-time observations. They do not prove that DPF can consume artifacts, that HBN will establish BGP, or that workload traffic will pass. An unknown required check is a stop.",
+          "body": "Continue only when the fresh report is complete and HBN-BGP `readiness.state` is `ready`. Check selected device/host identities, BMC access, management paths, host network prerequisites, switch port and fabric observations, selected artifacts and tenant allocation declarations. Confirm the tenant endpoint and selected management nodes still match the authorized site plan.\n\nDiscovery checks are point-in-time observations. They do not prove that DPF can consume artifacts, that HBN will establish BGP, or that workload traffic will pass. An unknown required check is a stop.\n\nThe selected release must support each observed DPU model/BMC firmware build for the host reset backend. Unsupported or unavailable observations block provisioning; this check is repeated before changes. Live safe-shutdown, task and firmware-copy checks still run before each actual reset.",
           "transitions": [
             {
               "to": "generate",

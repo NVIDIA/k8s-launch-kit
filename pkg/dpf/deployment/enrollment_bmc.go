@@ -18,29 +18,38 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // enrollmentBMC is private runtime state. Access credentials never become part
 // of retained generation, inventory, ownership digests or execution reports.
 type enrollmentBMC struct {
-	device generation.ResolvedDevice
-	target config.Target
+	release string
+	device  generation.ResolvedDevice
+	target  config.Target
 }
 
 // ValidateEnrollmentBMCs checks whether already-resolved runtime access can enroll
 // the selected BlueField-4 devices through the supported shared-password crawler.
 // It performs no I/O and returns no credentials, bindings or credential digests.
 // General Redfish inventory authorization is deliberately a separate contract.
-func ValidateEnrollmentBMCs(devices []generation.ResolvedDevice, targets []config.Target) error {
-	_, _, err := bindEnrollmentBMCs(devices, targets)
+func ValidateEnrollmentBMCs(release string, devices []generation.ResolvedDevice, targets []config.Target) error {
+	_, _, err := bindEnrollmentBMCs(release, devices, targets)
 	return err
 }
 
 // The HBN BlueField-4 cohort uses admin; DPF 26.8's crawler consumes one shared
 // password per namespace (its account fallback is root then admin).
 // Reject incompatible runtime inputs before any management or BMC operation.
-func bindEnrollmentBMCs(devices []generation.ResolvedDevice, targets []config.Target) ([]enrollmentBMC, string, error) {
+func bindEnrollmentBMCs(release string, devices []generation.ResolvedDevice, targets []config.Target) ([]enrollmentBMC, string, error) {
+	if release == "" {
+		return nil, "", fmt.Errorf("enrollment requires an explicit DPF release")
+	}
+	selectedRelease, err := releases.Resolve(release)
+	if err != nil || selectedRelease.HBNWorkload == nil || selectedRelease.HBNWorkload.ResetSafety == nil {
+		return nil, "", fmt.Errorf("enrollment requires an explicit release with a supported host reset contract")
+	}
 	if len(devices) == 0 {
 		return nil, "", fmt.Errorf("enrollment requires selected DPU identities")
 	}
@@ -87,7 +96,7 @@ func bindEnrollmentBMCs(devices []generation.ResolvedDevice, targets []config.Ta
 		// Do not retain caller-owned maps or unrelated SSH access in this boundary.
 		device.SelectorLabels = maps.Clone(device.SelectorLabels)
 		target.SSH = nil
-		selected = append(selected, enrollmentBMC{device: device, target: target})
+		selected = append(selected, enrollmentBMC{release: release, device: device, target: target})
 	}
 	return selected, password, nil
 }
@@ -116,7 +125,10 @@ type enrollmentBMCCollector interface {
 }
 
 func verifyEnrollmentBMCs(ctx context.Context, selected []enrollmentBMC, requestTimeout time.Duration, journal *executionJournal) error {
-	return collectEnrollmentBMCs(ctx, selected, requestTimeout, journal, redfish.Collector{})
+	if len(selected) == 0 {
+		return fmt.Errorf("enrollment requires selected BMCs")
+	}
+	return collectEnrollmentBMCs(ctx, selected, requestTimeout, journal, redfish.Collector{ProvisioningRelease: selected[0].release})
 }
 
 func collectEnrollmentBMCs(ctx context.Context, selected []enrollmentBMC, requestTimeout time.Duration, journal *executionJournal, collector enrollmentBMCCollector) error {
@@ -149,6 +161,8 @@ func collectEnrollmentBMCs(ctx context.Context, selected []enrollmentBMC, reques
 			event.ReasonCode, event.Message = "ENROLLMENT_BMC_ADMIN_REQUIRED", "The selected BMC account lacks verified Administrator privileges; enrollment is stopped."
 		case !enrollmentPSIDMatches(observed, selected.device.PSID):
 			event.ReasonCode, event.Message = "ENROLLMENT_BMC_PSID_CHANGED", "The fresh DPU PSID conflicts with the selected hardware or its source is inconsistent; repeat discovery and generation."
+		case !redfish.ResetSupportVerified(observed, selected.release):
+			event.ReasonCode, event.Message = "ENROLLMENT_RESET_SUPPORT_UNVERIFIED", "The observed DPU model/BMC firmware is not verified against the selected release's supported host reset backend; repeat discovery after resolving this prerequisite."
 		default:
 			event.State, event.ReasonCode = "confirmed", "ENROLLMENT_BMC_IDENTITY_VERIFIED"
 			event.Message = "The selected physical serial and BMC Administrator session were verified and the session was closed."

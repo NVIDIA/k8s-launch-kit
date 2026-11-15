@@ -90,7 +90,7 @@ func prepareControlPlaneWithExecution(ctx context.Context, client enrollmentMana
 	if !client.matchesBinding(intent.Management, intent.KubernetesVersion) {
 		return nil, fmt.Errorf("management client binding differs from the retained plan")
 	}
-	selected, password, err := bindEnrollmentBMCs(intent.Devices, request.Targets)
+	selected, password, err := bindEnrollmentBMCs(intent.Release, intent.Devices, request.Targets)
 	if err != nil {
 		return nil, err
 	}

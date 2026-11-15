@@ -47,7 +47,7 @@ discovery:
 
 func TestBindEnrollmentBMCsSelectsExactRetainedScope(t *testing.T) {
 	devices, targets := enrollmentBMCInputs(t)
-	selected, password, err := bindEnrollmentBMCs(devices, targets)
+	selected, password, err := bindEnrollmentBMCs("26.8.0", devices, targets)
 	if err != nil || password != "credential-canary" || len(selected) != 2 {
 		t.Fatalf("selected binding failed: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestBindEnrollmentBMCsSelectsExactRetainedScope(t *testing.T) {
 	}
 	// Explicit default ports and an empty root path have the same origin.
 	targets[0].Endpoint = "https://192.0.2.1:443/"
-	if _, _, err := bindEnrollmentBMCs(devices, targets); err != nil {
+	if _, _, err := bindEnrollmentBMCs("26.8.0", devices, targets); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -67,7 +67,7 @@ func TestBindEnrollmentBMCsPreservesIsolatedActivationSelectors(t *testing.T) {
 	devices, targets := enrollmentBMCInputs(t)
 	devices[0].SelectorLabels = map[string]string{"inventory.example/serial": "card-a"}
 	devices[1].SelectorLabels = map[string]string{"inventory.example/serial": "card-b"}
-	selected, _, err := bindEnrollmentBMCs(devices, targets)
+	selected, _, err := bindEnrollmentBMCs("26.8.0", devices, targets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestBindEnrollmentBMCsRejectsIncompatibleInputs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ds, ts := enrollmentBMCInputs(t)
 			ds, ts = tc.edit(ds, ts)
-			selected, password, err := bindEnrollmentBMCs(ds, ts)
+			selected, password, err := bindEnrollmentBMCs("26.8.0", ds, ts)
 			if err == nil || selected != nil || password != "" {
 				t.Fatal("invalid binding returned usable enrollment credentials")
 			}
@@ -183,6 +183,11 @@ func TestEnrollmentBMCChecksFreshIdentityAndAdministrator(t *testing.T) {
 			return nil
 		}, "ENROLLMENT_BMC_PSID_CHANGED"},
 		{"PSID mismatch", func(d *inventory.Device) error { d.PSID = "MT_OTHER"; return nil }, "ENROLLMENT_BMC_PSID_CHANGED"},
+		{"reset support missing", func(d *inventory.Device) error { delete(d.Observations, "host-reset-support"); return nil }, "ENROLLMENT_RESET_SUPPORT_UNVERIFIED"},
+		{"reset support mismatch", func(d *inventory.Device) error {
+			d.Observations["host-reset-support"] = inventory.Observation{State: "observed", Tool: "redfish", ReasonCode: "RESET_SUPPORT_VERIFIED", Values: []string{"26.8.0", "bf4-reset-safety-v1", "B4240", "BF4-other"}}
+			return nil
+		}, "ENROLLMENT_RESET_SUPPORT_UNVERIFIED"},
 		{"serial mismatch", func(d *inventory.Device) error { d.SerialNumber = "CARD-X"; return nil }, "ENROLLMENT_BMC_IDENTITY_CHANGED"},
 		{"identity incomplete", func(d *inventory.Device) error { d.ID = ""; return nil }, "ENROLLMENT_BMC_IDENTITY_CHANGED"},
 		{"admin absent", func(d *inventory.Device) error { d.Observations = nil; return nil }, "ENROLLMENT_BMC_ADMIN_REQUIRED"},
@@ -195,7 +200,7 @@ func TestEnrollmentBMCChecksFreshIdentityAndAdministrator(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			devices, targets := enrollmentBMCInputs(t)
-			selected, _, err := bindEnrollmentBMCs(devices, targets)
+			selected, _, err := bindEnrollmentBMCs("26.8.0", devices, targets)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,10 +213,11 @@ func TestEnrollmentBMCChecksFreshIdentityAndAdministrator(t *testing.T) {
 				if target.Endpoint != targets[calls].Endpoint || timeout != time.Second {
 					t.Fatal("probe changed selected endpoint scope or timeout")
 				}
-				d := inventory.Device{ObservationState: "observed", ID: "physical", SerialNumber: devices[calls].Serial, PSID: devices[calls].PSID,
+				d := inventory.Device{Model: "B4240", ObservationState: "observed", ID: "physical", SerialNumber: devices[calls].Serial, PSID: devices[calls].PSID,
 					Observations: map[string]inventory.Observation{
-						"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"},
-						"psid":              {State: "observed", ReasonCode: "PSID_OBSERVED", Values: []string{devices[calls].PSID}},
+						"bmc-administrator":  {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"},
+						"host-reset-support": {State: "observed", Tool: "redfish", ReasonCode: "RESET_SUPPORT_VERIFIED", Values: []string{"26.8.0", "bf4-reset-safety-v1", "B4240", "BF4-26.10-0001"}},
+						"psid":               {State: "observed", ReasonCode: "PSID_OBSERVED", Values: []string{devices[calls].PSID}},
 					}}
 				calls++
 				err := tc.edit(&d)
@@ -237,7 +243,7 @@ func TestEnrollmentBMCChecksFreshIdentityAndAdministrator(t *testing.T) {
 
 func TestEnrollmentBMCChecksDoNotProbeWithoutDeadlineOrDurableJournal(t *testing.T) {
 	devices, targets := enrollmentBMCInputs(t)
-	selected, _, err := bindEnrollmentBMCs(devices, targets)
+	selected, _, err := bindEnrollmentBMCs("26.8.0", devices, targets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,14 +267,14 @@ func TestValidateEnrollmentBMCsUsesPrivateBindingPolicyWithoutCredentialOutput(t
 	before.SelectorLabels = map[string]string{"selected": "unchanged"}
 	devices[0] = before
 	t.Setenv("ENROLLMENT_TEST_PASSWORD", "") // Resolved access must not be reopened.
-	if err := ValidateEnrollmentBMCs(devices, targets); err != nil {
+	if err := ValidateEnrollmentBMCs("26.8.0", devices, targets); err != nil {
 		t.Fatalf("valid resolved scope rejected: %v", err)
 	}
 	if devices[0].SelectorLabels["selected"] != "unchanged" || targets[0].Endpoint != "https://192.0.2.1" {
 		t.Fatal("validation changed caller-owned inputs")
 	}
 	targets[0].Access = config.Access{}
-	err := ValidateEnrollmentBMCs(devices, targets)
+	err := ValidateEnrollmentBMCs("26.8.0", devices, targets)
 	if err == nil || !strings.Contains(err.Error(), "admin account") {
 		t.Fatalf("missing runtime access bypassed binder policy: %v", err)
 	}
