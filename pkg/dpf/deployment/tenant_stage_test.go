@@ -139,20 +139,36 @@ func TestRunTenantStageStopsBeforeCreateOnPrerequisiteFailure(t *testing.T) {
 		}, wantListCount: 1},
 		{name: "receipt manager changed", configure: func(_ *tenantStageFake, _ *managementExecution) {}, wantListCount: 0},
 	}
+	// Five cases use the same accepted generation intent. Build its release
+	// fixture once; each case still gets new mutable API objects, receipts,
+	// journal and tenant client below. The two allocation cases retain separate
+	// generated executions because they deliberately change that intent.
+	sharedInput := preflightGenerationInputs(t)
+	setSiteAllocation(&sharedInput.Operator.Bootstrap.Tenant)
+	sharedBundle, err := generateFixtureBundle(sharedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedExecution, err := prepareManagementExecution(sharedBundle, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedDigest := sharedExecution.plan.Digest()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			input := preflightGenerationInputs(t)
-			setSiteAllocation(&input.Operator.Bootstrap.Tenant)
+			execution := sharedExecution
 			if test.allocation != nil {
+				input := preflightGenerationInputs(t)
+				setSiteAllocation(&input.Operator.Bootstrap.Tenant)
 				test.allocation(&input)
-			}
-			generated, err := generateFixtureBundle(input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			execution, err := prepareManagementExecution(generated, time.Minute)
-			if err != nil {
-				t.Fatal(err)
+				generated, err := generateFixtureBundle(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				execution, err = prepareManagementExecution(generated, time.Minute)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			fake := newTenantStageFake(t, execution)
 			if test.configure != nil {
@@ -176,6 +192,9 @@ func TestRunTenantStageStopsBeforeCreateOnPrerequisiteFailure(t *testing.T) {
 			}
 			if (networkCalls > 0) != test.wantNetwork {
 				t.Fatalf("network calls=%d wantNetwork=%v", networkCalls, test.wantNetwork)
+			}
+			if test.allocation == nil && execution.plan.Digest() != sharedDigest {
+				t.Fatal("prerequisite scenario mutated the retained shared intent")
 			}
 		})
 	}
