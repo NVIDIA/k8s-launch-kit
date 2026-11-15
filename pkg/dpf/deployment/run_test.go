@@ -4,9 +4,16 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +27,8 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func TestRunRejectsIncompleteBoundaryAndUnboundedControls(t *testing.T) {
@@ -153,6 +162,222 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementAccess(t *testing.T) {
 	if err != nil || !strings.Contains(string(probeReport), `"receipts":[]`) {
 		t.Fatalf("probe journal was not initialized before prerequisites: %q, %v", probeReport, err)
 	}
+}
+
+func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing.T) {
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, authentication := range []string{"password", "private-key"} {
+		t.Run(authentication, func(t *testing.T) {
+			access, knownHosts, privateKey := resolvedPrerequisiteAccess(t, authentication)
+			requirePrerequisiteAccessShape(t, access)
+			root := t.TempDir()
+			called := false
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			_, runErr := Run(ctx, RunRequest{
+				Bundle: generated, Access: access,
+				ReportPath: filepath.Join(root, "run.jsonl"), ProbeJournalPath: filepath.Join(root, "probe.jsonl"),
+				VerifyPrerequisites: func(_ context.Context, observed config.Request, _ *generation.Plan) (PrerequisiteVerification, error) {
+					called = true
+					requirePrerequisiteAccessShape(t, observed)
+					for _, candidate := range []config.Request{access, observed} {
+						encoded, err := json.Marshal(candidate)
+						if err != nil {
+							t.Fatal("serialize prerequisite request for privacy check")
+						}
+						requireNoPrerequisiteSecrets(t, encoded, privateKey)
+					}
+					sw := &observed.Switches[0]
+					if sw.Access == nil || sw.Access == access.Switches[0].Access ||
+						!bytes.Equal(sw.Access.KnownHosts(), knownHosts) || !bytes.Equal(sw.Access.PrivateKey(), privateKey) {
+						t.Fatal("prerequisite observer lost resolved switch trust/key or shares mutable access")
+					}
+					user, password := sw.Access.Credentials()
+					wantPassword := ""
+					if authentication == "password" {
+						wantPassword = "clone-secret-canary"
+					}
+					if user != "reader" || password != wantPassword || sw.Access.Sudo != access.Switches[0].Access.Sudo {
+						t.Fatal("prerequisite observer lost switch authentication or explicit sudo")
+					}
+					// Getter results are copies even though immutable access snapshots can share storage.
+					trustCopy := sw.Access.KnownHosts()
+					trustCopy[0] ^= 1
+					if keyCopy := sw.Access.PrivateKey(); len(keyCopy) > 0 {
+						keyCopy[0] ^= 1
+					}
+					for i := range observed.Targets {
+						target := &observed.Targets[i]
+						if target.SSH != nil {
+							u, p := target.SSH.Credentials()
+							if u != user || p != password || !bytes.Equal(target.SSH.KnownHosts(), knownHosts) ||
+								!bytes.Equal(target.SSH.PrivateKey(), privateKey) {
+								t.Fatal("prerequisite observer lost original host SSH snapshot")
+							}
+							target.SSH.Sudo = !target.SSH.Sudo
+						} else if u, p := target.Access.Credentials(); u != "admin" || p != "clone-secret-canary" || !target.Access.InsecureSkipVerify() {
+							t.Fatal("prerequisite observer lost original BMC access snapshot")
+						}
+						target.Endpoint = "observer-only"
+					}
+					sw.Access.Sudo = !sw.Access.Sudo
+					sw.Ports[0].Name = "swp999"
+					sw.Endpoint = "observer-only"
+					observed.Input.Site.Discovery.Switches[0].Ports[0].Name = "swp998"
+					observed.Input.Source[0] = 'X'
+					observed.Input.Document.Content[0].Content[0].Value = "observer-only"
+					observed.HBN.FabricVRF = "observer-only"
+					return PrerequisiteVerification{}, errors.New("stop before management access")
+				},
+				VerifyChartSource: func(context.Context, *generation.Plan) (PreflightCheck, error) {
+					t.Fatal("chart access ran after failed prerequisites")
+					return PreflightCheck{}, nil
+				},
+				Rebooter: RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
+					t.Fatal("reboot ran after failed prerequisites")
+					return ActivationObservation{}, nil
+				}),
+			})
+			if !called || runErr == nil || !strings.Contains(runErr.Error(), "prerequisite observation failed") {
+				t.Fatal("run did not stop at the prerequisite observer")
+			}
+			for _, name := range []string{"run.jsonl", "probe.jsonl"} {
+				data, err := os.ReadFile(filepath.Join(root, name))
+				if err != nil {
+					t.Fatal("read retained prerequisite journal for privacy check")
+				}
+				requireNoPrerequisiteSecrets(t, data, privateKey)
+			}
+			if access.Switches[0].Access.Sudo != (authentication == "private-key") ||
+				access.Switches[0].Endpoint != "ssh://leaf.example:22" || access.Switches[0].Ports[0].Name != "swp1" ||
+				!bytes.Equal(access.Switches[0].Access.KnownHosts(), knownHosts) || !bytes.Equal(access.Switches[0].Access.PrivateKey(), privateKey) ||
+				access.Input.Site.Discovery.Switches[0].Ports[0].Name != "swp1" || access.Input.Source[0] != 'd' ||
+				access.Input.Document.Content[0].Content[0].Value != "dpf" || access.HBN.FabricVRF != "default" {
+				t.Fatal("observer mutated retained caller switch access, port bindings or request intent")
+			}
+			for _, target := range access.Targets {
+				if target.Endpoint == "observer-only" || target.SSH != nil && target.SSH.Sudo != (authentication == "private-key") {
+					t.Fatal("observer mutated retained caller target")
+				}
+			}
+		})
+	}
+}
+
+func requireNoPrerequisiteSecrets(t *testing.T, data, privateKey []byte) {
+	t.Helper()
+	if bytes.Contains(data, []byte("clone-secret-canary")) || len(privateKey) > 0 &&
+		(bytes.Contains(data, privateKey) || bytes.Contains(data, []byte(base64.StdEncoding.EncodeToString(privateKey)))) {
+		t.Fatal("prerequisite request or journal exposed resolved authentication")
+	}
+}
+
+func TestCloneRequestForPrerequisitesPreservesOptionalRuntimeAccess(t *testing.T) {
+	empty, err := cloneRequestForPrerequisites(config.Request{})
+	if err != nil || empty.Targets != nil || empty.Switches != nil {
+		t.Fatal("empty request lost nil runtime collections")
+	}
+	original := config.Request{
+		Targets: []config.Target{{Endpoint: "https://bmc.example"}},
+		Switches: []config.SwitchTarget{
+			{Name: "nil-ports"},
+			{Name: "empty-ports", Ports: []config.SwitchPort{}},
+		},
+	}
+	cloned, err := cloneRequestForPrerequisites(original)
+	if err != nil || len(cloned.Targets) != 1 || len(cloned.Switches) != 2 {
+		t.Fatal("request without optional runtime access could not be cloned")
+	}
+	if cloned.Targets[0].SSH != nil || cloned.Switches[0].Access != nil || cloned.Switches[1].Access != nil ||
+		cloned.Switches[0].Ports != nil || cloned.Switches[1].Ports == nil {
+		t.Fatal("clone changed absent access or nil versus explicitly empty port bindings")
+	}
+	cloned.Targets[0].Endpoint = "observer-only"
+	cloned.Switches[0].Name = "observer-only"
+	if original.Targets[0].Endpoint != "https://bmc.example" || original.Switches[0].Name != "nil-ports" {
+		t.Fatal("optional-access clone shares runtime collection storage")
+	}
+}
+
+func requirePrerequisiteAccessShape(t *testing.T, request config.Request) {
+	t.Helper()
+	if len(request.Switches) != 1 || request.Switches[0].Access == nil || len(request.Switches[0].Ports) != 1 ||
+		len(request.Targets) != 2 || request.HBN == nil || len(request.Input.Source) == 0 ||
+		len(request.Input.Site.Discovery.Switches) != 1 || len(request.Input.Site.Discovery.Switches[0].Ports) != 1 ||
+		request.Input.Document == nil || len(request.Input.Document.Content) != 1 || request.Input.Document.Content[0] == nil ||
+		len(request.Input.Document.Content[0].Content) == 0 || request.Input.Document.Content[0].Content[0] == nil {
+		t.Fatal("prerequisite access request has an incomplete resolved shape")
+	}
+}
+
+func resolvedPrerequisiteAccess(t *testing.T, authentication string) (config.Request, []byte, []byte) {
+	t.Helper()
+	root := t.TempDir()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	knownHosts := []byte(knownhosts.Line([]string{"leaf.example", "host.example"}, key) + "\n")
+	if err := os.WriteFile(filepath.Join(root, "known_hosts"), knownHosts, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DPF_CLONE_TEST_PASSWORD", "clone-secret-canary")
+	auth := "passwordRef: {env: DPF_CLONE_TEST_PASSWORD}"
+	var privateKey []byte
+	if authentication == "private-key" {
+		der, err := x509.MarshalPKCS8PrivateKey(private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		privateKey = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+		if err := os.WriteFile(filepath.Join(root, "identity"), privateKey, 0600); err != nil {
+			t.Fatal(err)
+		}
+		auth = "privateKeyRef: {file: identity}"
+	}
+	document := fmt.Sprintf(`dpf: {useCase: hbn-bgp}
+credentials:
+  ssh: {username: reader, %s}
+  bmc: {username: admin, passwordRef: {env: DPF_CLONE_TEST_PASSWORD}}
+discovery:
+  hosts:
+    - credentialRef: ssh
+      ssh: {address: host.example, knownHostsFile: known_hosts, sudo: %t}
+  dpus:
+    - credentialRef: bmc
+      bmcEndpoint: https://bmc.example
+      tls: {insecureSkipVerify: true}
+  switches:
+    - name: leaf-a
+      credentialRef: ssh
+      ssh: {address: leaf.example, knownHostsFile: known_hosts, sudo: %t}
+      ports: [{name: swp1, dpuSerial: DPU-A, dpuInterface: p0}]
+`, auth, authentication == "private-key", authentication == "private-key")
+	in, err := config.Decode([]byte(document), filepath.Join(root, "site.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := config.Resolve(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Prerequisites must use the resolved snapshots, never reopen/re-resolve files.
+	if err := os.Remove(filepath.Join(root, "known_hosts")); err != nil {
+		t.Fatal(err)
+	}
+	if privateKey != nil {
+		if err := os.Remove(filepath.Join(root, "identity")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return access, knownHosts, privateKey
 }
 
 func TestValidatePrerequisiteVerificationRequiresCompleteDeployChecks(t *testing.T) {

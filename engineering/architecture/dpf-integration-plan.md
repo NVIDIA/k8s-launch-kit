@@ -943,6 +943,17 @@ activation, host PF configuration and the complete directed traffic matrix.
 emits one result on failure as well as success; a failed operation retains a
 nonzero process exit and the safe reason for its last stage.
 
+Fresh prerequisite checks receive independent copies of the serializable
+request intent, selected targets and switches.
+Preserve the already-resolved private access snapshots for selected host SSH
+targets, switches and BMCs across this handoff: password or private-key SSH
+credentials, pinned known-hosts bytes, BMC credentials and resolved TLS trust
+policy. Keep these opaque values in memory; do not serialize or reconstruct
+them through JSON, bundle data, journals or
+reports. Clone mutable observer inputs so prerequisite checks cannot mutate the
+caller-owned request or its access snapshots. This is an internal request-copy
+invariant; it does not change the documented fresh-check or pinned-SSH behavior.
+
 The HBN profile supplies the physical uplink MTU to DPF high-speed networking
 and physical service-chain ports. Its workload MTU supplies PF0 and the selected
 host PF. The renderer and retained-plan loader derive these from the same

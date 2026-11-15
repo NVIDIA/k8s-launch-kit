@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -429,14 +430,11 @@ func cloneInventory(in *inventory.Inventory) (*inventory.Inventory, error) {
 }
 
 func cloneRequestForPrerequisites(request config.Request) (config.Request, error) {
-	targets := append([]config.Target(nil), request.Targets...)
-	for i := range targets {
-		if targets[i].SSH != nil {
-			ssh := *targets[i].SSH
-			targets[i].SSH = &ssh
-		}
-	}
-	encoded, err := json.Marshal(request)
+	// Resolved endpoint access contains immutable private snapshots that JSON
+	// cannot preserve. Copy those explicitly below, separately from site intent.
+	serializable := request
+	serializable.Targets, serializable.Switches = nil, nil
+	encoded, err := json.Marshal(serializable)
 	if err != nil {
 		return config.Request{}, err
 	}
@@ -444,9 +442,21 @@ func cloneRequestForPrerequisites(request config.Request) (config.Request, error
 	if err := json.Unmarshal(encoded, &cloned); err != nil {
 		return config.Request{}, err
 	}
-	// Access deliberately contains private resolved credentials. Preserve its
-	// immutable value snapshots without serializing or reconstructing them.
-	cloned.Targets = targets
+	cloned.Targets = slices.Clone(request.Targets)
+	for i := range cloned.Targets {
+		if cloned.Targets[i].SSH != nil {
+			access := *cloned.Targets[i].SSH
+			cloned.Targets[i].SSH = &access
+		}
+	}
+	cloned.Switches = slices.Clone(request.Switches)
+	for i := range cloned.Switches {
+		cloned.Switches[i].Ports = slices.Clone(request.Switches[i].Ports)
+		if cloned.Switches[i].Access != nil {
+			access := *cloned.Switches[i].Access
+			cloned.Switches[i].Access = &access
+		}
+	}
 	return cloned, nil
 }
 
