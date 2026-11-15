@@ -187,6 +187,45 @@ routability or an unchanged global predicate.
 - **WHEN** a selected contribution is removed, duplicated or changed after preview or before an early success path
 - **THEN** raw freshness or owned-contribution verification prevents a successful receipt and follows the existing refusal or compensation policy.
 
+### Requirement: Fresh DPF boundary before each provisioning hold release
+
+DPF activation SHALL revalidate the full retained bootstrap, tenant, enrollment,
+software, flavor and registry boundary before each pending selected maintenance
+hold release, including after waiting for controller-created children. It SHALL
+then observe the complete selected cohort and require the same maintenance UID,
+a fresh resource version, no deletion and the expected action and requestors.
+The hold patch SHALL retain its UID, resource-version and previous-annotation
+preconditions. These checks SHALL NOT be described as an atomic cross-resource
+transaction.
+
+#### Scenario: A dependency changes while waiting for selected children
+
+- **WHEN** retained software, flavor, registry, enrollment, tenant or bootstrap identity changes before a pending hold release
+- **THEN** activation refuses that release before any new hold patch, one-time reset claim or reboot.
+
+#### Scenario: A dependency changes between selected hosts
+
+- **WHEN** one selected hold has been released and a dependency changes before another release
+- **THEN** activation preserves the first effect's receipt and refuses subsequent releases and resets; the earlier observation does not authorize the remaining cohort.
+
+#### Scenario: Maintenance changes during the refresh
+
+- **WHEN** the refreshed maintenance is missing, replaced, deleting or has changed action, requestors or invalid hold state
+- **THEN** activation refuses the pending effect; an already released hold requires no new patch.
+
+### Requirement: DPF Kubernetes API error classification
+
+The DPF API boundary SHALL publish only fixed operation prose and recognized
+standard Kubernetes status reasons. A missing or unrecognized reason SHALL
+become InternalError with HTTP 500, without retaining remote reason text,
+message or details. Known standard classifications and context cancellation or
+deadline identities SHALL remain available to callers.
+
+#### Scenario: A nonstandard reason accompanies a conclusive HTTP code
+
+- **WHEN** an API read returns an unrecognized reason with HTTP 404, 403, 409 or 503
+- **THEN** reconciliation stops without treating that response as confirmed absence, authorization failure, conflict or retry permission; it creates no resource from that ambiguous read and does not expose the remote reason text.
+
 ### Requirement: Teardown and partial failure
 
 An effect extension MUST specify cleanup after partial setup, cancellation and rerun, including dependency ordering, finalizers, retained resources and failure evidence. Cleanup SHALL honor the documented operation scope and retention policy without promising transactions or success during API outage.

@@ -23,10 +23,97 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/tools/clientcmd"
 	clientapi "k8s.io/client-go/tools/clientcmd/api"
 )
+
+func TestSafeAPIErrorPreservesOnlyStandardReasonsAndCancellation(t *testing.T) {
+	reasons := []metav1.StatusReason{
+		metav1.StatusReasonUnauthorized, metav1.StatusReasonForbidden, metav1.StatusReasonNotFound,
+		metav1.StatusReasonAlreadyExists, metav1.StatusReasonConflict, metav1.StatusReasonGone,
+		metav1.StatusReasonInvalid, metav1.StatusReasonServerTimeout, metav1.StatusReasonStoreReadError,
+		metav1.StatusReasonTimeout, metav1.StatusReasonTooManyRequests, metav1.StatusReasonBadRequest,
+		metav1.StatusReasonMethodNotAllowed, metav1.StatusReasonNotAcceptable, metav1.StatusReasonRequestEntityTooLarge,
+		metav1.StatusReasonUnsupportedMediaType, metav1.StatusReasonInternalError, metav1.StatusReasonExpired,
+		metav1.StatusReasonServiceUnavailable,
+	}
+	for _, reason := range reasons {
+		t.Run(string(reason), func(t *testing.T) {
+			// A recognized reason must not start falling back to a conflicting
+			// HTTP code when its server text is removed.
+			original := &apierrors.StatusError{ErrStatus: metav1.Status{Code: http.StatusNotFound, Reason: reason, Message: "private-message-canary"}}
+			got := safeAPIError("read resource", fmt.Errorf("private-wrapper-canary: %w", original))
+			var status apierrors.APIStatus
+			if !errors.As(got, &status) || status.Status().Reason != reason || status.Status().Code != original.Status().Code || strings.Contains(got.Error(), "private-") {
+				t.Fatalf("standard classification changed or leaked text: %v", got)
+			}
+			for _, classify := range []func(error) bool{apierrors.IsNotFound, apierrors.IsAlreadyExists, apierrors.IsConflict, apierrors.IsForbidden, apierrors.IsUnauthorized, retryableRead} {
+				if classify(original) != classify(got) {
+					t.Fatal("sanitization changed a standard API decision")
+				}
+			}
+		})
+	}
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		got := safeAPIError("read resource", fmt.Errorf("private-wrapper-canary: %w", cause))
+		if !errors.Is(got, cause) || strings.Contains(got.Error(), "private-") {
+			t.Fatalf("cancellation classification lost or wrapper exposed: %v", got)
+		}
+	}
+}
+
+func TestSafeAPIErrorUnknownReasonsFailClosedWithoutPrivateText(t *testing.T) {
+	for _, reason := range []metav1.StatusReason{"private-reason-canary", ""} {
+		for _, code := range []int32{http.StatusNotFound, http.StatusForbidden, http.StatusConflict, http.StatusServiceUnavailable} {
+			original := &apierrors.StatusError{ErrStatus: metav1.Status{Code: code, Reason: reason, Message: "private-message-canary", Details: &metav1.StatusDetails{Name: "private-details-canary"}}}
+			got := safeAPIError("read resource", original)
+			var status *apierrors.StatusError
+			if !errors.As(got, &status) || status.ErrStatus.Reason != metav1.StatusReasonInternalError || status.ErrStatus.Code != http.StatusInternalServerError || status.ErrStatus.Details != nil {
+				t.Fatalf("unsupported status became a definitive API response: %v", got)
+			}
+			format, args := status.DebugError()
+			data, err := json.Marshal(status)
+			if err != nil || strings.Contains(got.Error()+fmt.Sprintf(format, args...)+string(data), "private-") {
+				t.Fatal("server reason/message/details escaped sanitized output")
+			}
+			if apierrors.IsNotFound(got) || apierrors.IsAlreadyExists(got) || apierrors.IsConflict(got) || apierrors.IsForbidden(got) || apierrors.IsUnauthorized(got) || retryableRead(got) {
+				t.Fatal("unsupported reason authorized absence/auth/conflict/retry inference")
+			}
+		}
+	}
+}
+
+func TestNativeClientUnknownStatusCannotAuthorizeReconcilerCreate(t *testing.T) {
+	reconciler, desired := newReconcileFixture(t)
+	for _, code := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusConflict, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			var resourceReads atomic.Int32
+			fixture := newAPIFixture(t, func(w http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/prefix/apis/provisioning.dpu.nvidia.com/v1alpha1" {
+					fmt.Fprint(w, `{"kind":"APIResourceList","groupVersion":"provisioning.dpu.nvidia.com/v1alpha1","resources":[{"name":"dpuclusters","kind":"DPUCluster","namespaced":true,"verbs":["get","create"]}]}`)
+					return
+				}
+				resourceReads.Add(1)
+				w.WriteHeader(code)
+				_ = json.NewEncoder(w).Encode(metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: metav1.StatusFailure, Code: int32(code), Reason: "private-reason-canary", Message: "private-message-canary"})
+			})
+			client, err := NewAPIClient(context.Background(), fixture.request, fixture.expected, "v1.35.6")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, readErr := client.Get(context.Background(), desired.DeepCopy())
+			if readErr == nil || apierrors.IsNotFound(readErr) || apierrors.IsForbidden(readErr) || apierrors.IsConflict(readErr) || retryableRead(readErr) || strings.Contains(readErr.Error(), "private-") {
+				t.Errorf("ambiguous API response became a definitive decision: %v", readErr)
+			}
+			_, disposition, ensureErr := reconciler.Ensure(context.Background(), client, desired.DeepCopy())
+			if ensureErr == nil || disposition != "" || fixture.writes.Load() != 0 || resourceReads.Load() != 2 || strings.Contains(ensureErr.Error(), "private-") {
+				t.Fatalf("ambiguous read caused create/replay/private output: disposition=%s writes=%d reads=%d err=%v", disposition, fixture.writes.Load(), resourceReads.Load(), ensureErr)
+			}
+		})
+	}
+}
 
 type apiFixture struct {
 	request       config.Request

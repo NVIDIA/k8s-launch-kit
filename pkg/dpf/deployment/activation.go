@@ -166,6 +166,16 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		return receipt, err
 	}
 	receipt.DeploymentUID = created.GetUID()
+	refreshHoldScope := func(ctx context.Context) (activationObservation, error) {
+		if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
+			return activationObservation{}, err
+		}
+		current, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected)
+		if err != nil || !current.complete {
+			return activationObservation{}, activationFailure(journal, "ACTIVATION_HOLD_SCOPE_CHANGED", "The complete selected activation scope changed before hold release.", err)
+		}
+		return current, nil
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return receipt, activationFailure(journal, "ACTIVATION_CANCELED", "Selected DPU activation stopped; inspect durable receipts before retrying.", err)
@@ -181,7 +191,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			continue
 		}
 		receipt.DPUSets, receipt.DPUs, receipt.Nodes, receipt.Maintenance = activationReceipts(observed)
-		if err := releaseSelectedHolds(ctx, client, selected, observed, journal); err != nil {
+		if err := releaseSelectedHolds(ctx, client, selected, observed, journal, refreshHoldScope); err != nil {
 			return receipt, err
 		}
 		readyForReboot, err := selectedNodeEffectsReady(observed)
@@ -702,28 +712,52 @@ func validateActivationMaintenance(object *unstructured.Unstructured, selected a
 }
 
 func releaseSelectedHolds(ctx context.Context, client activationStageClient, selected []activationSelectedDevice,
-	observed activationObservation, journal *executionJournal,
+	observed activationObservation, journal *executionJournal, refresh func(context.Context) (activationObservation, error),
 ) error {
+	if refresh == nil {
+		return activationFailure(journal, "ACTIVATION_HOLD_FENCE_REQUIRED", "A complete fresh activation boundary is required before releasing a selected hold.", nil)
+	}
 	byName := make(map[string]activationSelectedDevice, len(selected))
 	for _, item := range selected {
 		byName[item.nodeName] = item
 	}
-	for name, maintenance := range observed.maintenance {
+	names := make([]string, 0, len(observed.maintenance))
+	for name := range observed.maintenance {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		maintenance := observed.maintenance[name]
 		item, exists := byName[strings.TrimSuffix(name, "-hold")]
-		if !exists {
+		if !exists || maintenance == nil {
 			return activationFailure(journal, "ACTIVATION_MAINTENANCE_SCOPE_INVALID", "An observed DPUNodeMaintenance is outside the selected cohort.", nil)
 		}
-		applied := activationCondition(maintenance, "NodeEffectApplied")
 		hold, hasHold := maintenance.GetAnnotations()[activationHoldKey]
 		if hasHold && hold == "false" {
-			if applied == "True" {
-				continue
-			}
 			continue
 		}
 		if !hasHold || hold != "true" {
 			continue
 		}
+		// Child creation can take time, and each earlier release authorizes
+		// controller progress. Refresh every dependency before each new effect,
+		// then use the same maintenance UID with its freshly validated version.
+		current, err := refresh(ctx)
+		if err != nil {
+			return err
+		}
+		fresh := current.maintenance[name]
+		if !current.complete || fresh == nil || maintenance.GetUID() == "" || fresh.GetUID() != maintenance.GetUID() || fresh.GetResourceVersion() == "" || fresh.GetDeletionTimestamp() != nil || validateActivationMaintenance(fresh, item, selected) != nil {
+			return activationFailure(journal, "ACTIVATION_HOLD_SCOPE_CHANGED", "The selected maintenance identity, action or requestors changed before hold release.", nil)
+		}
+		hold, hasHold = fresh.GetAnnotations()[activationHoldKey]
+		if hasHold && hold == "false" {
+			continue
+		}
+		if !hasHold || hold != "true" {
+			return activationFailure(journal, "ACTIVATION_HOLD_STATE_CHANGED", "The selected maintenance no longer has its observed pending hold.", nil)
+		}
+		maintenance = fresh
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "release-node-effect", Subject: item.nodeName,
 			State: "attempted", ReasonCode: "SELECTED_NODE_EFFECT_RELEASE_STARTED", Message: "Release the exact selected DPUNodeMaintenance hold after verifying its UID, resourceVersion, action and requestors."}); err != nil {
 			return err

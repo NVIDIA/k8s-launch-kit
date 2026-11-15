@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -223,6 +224,21 @@ func safeAPIError(operation string, err error) error {
 	var source apierrors.APIStatus
 	if errors.As(err, &source) {
 		status.Code = source.Status().Code
+	}
+	// Status.reason is an open server-provided string, not a validated enum.
+	// Unknown plus a retained HTTP code would still permit apimachinery's
+	// absence/auth/conflict/retry fallbacks. Unsupported responses must stop
+	// conservatively instead of publishing that text or authorizing an action.
+	switch status.Reason {
+	case metav1.StatusReasonUnauthorized, metav1.StatusReasonForbidden, metav1.StatusReasonNotFound,
+		metav1.StatusReasonAlreadyExists, metav1.StatusReasonConflict, metav1.StatusReasonGone,
+		metav1.StatusReasonInvalid, metav1.StatusReasonServerTimeout, metav1.StatusReasonStoreReadError,
+		metav1.StatusReasonTimeout, metav1.StatusReasonTooManyRequests, metav1.StatusReasonBadRequest,
+		metav1.StatusReasonMethodNotAllowed, metav1.StatusReasonNotAcceptable, metav1.StatusReasonRequestEntityTooLarge,
+		metav1.StatusReasonUnsupportedMediaType, metav1.StatusReasonInternalError, metav1.StatusReasonExpired,
+		metav1.StatusReasonServiceUnavailable:
+	default:
+		status.Reason, status.Code = metav1.StatusReasonInternalError, http.StatusInternalServerError
 	}
 	status.Message = fmt.Sprintf("%s failed (%s)", operation, status.Reason)
 	return &apierrors.StatusError{ErrStatus: status}

@@ -681,6 +681,17 @@ also compares the consumed software and flavor references on both DPUSet
 templates and DPUs with the retained deployment, alongside the existing UID,
 owner, selector and physical-identity checks.
 
+Each pending selected maintenance hold is a separate provisioning effect. After
+waiting for controller-created children, and again before each individual hold
+release, activation rechecks the full bootstrap, tenant, enrollment, software,
+flavor and retained registry boundary. It then rereads the complete selected
+cohort and requires the same maintenance UID, a fresh resource version, no
+deletion and the expected action and requestors. The conditional patch retains
+its UID, resource-version and prior-annotation tests. A hold already released
+causes no new patch; a changed dependency stops subsequent releases and resets.
+These sequential checks narrow the observation window without claiming an
+atomic transaction across resources.
+
 The object execution boundary records and synchronizes an attempt before
 reconciliation, then persists the result before dependent work. A report-write
 failure stops execution. Readiness polling rechecks UID, ownership and desired
@@ -688,8 +699,14 @@ content before evaluating current status; it never recreates a disappeared
 object. Reports record safe reasons instead of arbitrary API response bodies.
 Post-create conflicts retain their uncertain outcome and include only a fixed
 verification category, never remote values or an arbitrary error chain.
-These primitives do not complete the remaining tenant, enrollment, consumed
-artifact or HBN data-plane stages and do not enable the deploy CLI.
+Kubernetes API errors retain only the nineteen recognized status reasons from
+the pinned client dependency. Missing or unrecognized reasons become a fixed
+InternalError with HTTP 500, preventing remote text disclosure and HTTP-code
+fallback from treating an ambiguous read as absence, authorization failure or
+retry permission. Known standard classifications and context cancellation or
+deadline identities remain intact. These primitives alone do not establish
+tenant, enrollment, consumed-artifact or HBN data-plane readiness; standalone
+deploy must complete the corresponding stages.
 
 Namespace execution treats namespaces as shared infrastructure: it creates only
 an absent namespace and otherwise verifies an active, non-deleting identity
