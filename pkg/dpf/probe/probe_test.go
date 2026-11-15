@@ -52,6 +52,15 @@ var _ = Describe("probe integrity", func() {
 		live.OwnerReferences = []metav1.OwnerReference{{UID: "foreign"}}
 		Expect(samePod(p, live)).To(BeFalse())
 	})
+	It("names admission differences without exposing injected field values", func() {
+		p := Pod("p", "default", nil, inventory.Node{Name: "n", UID: "u"}, "pod-network", "repo@sha256:d", "request", nil, 60)
+		live := p.DeepCopy()
+		live.Annotations = map[string]string{"injected": "secret-annotation-canary"}
+		live.Spec.Containers[0].Env = append(live.Spec.Containers[0].Env, corev1.EnvVar{Name: "INJECTED_SECRET", Value: "secret-value-canary"})
+		Expect(podDifferences(p, live)).To(Equal([]string{"metadata.annotations", "spec.containers"}))
+		Expect(samePod(p, live)).To(BeFalse())
+	})
+
 	It("rejects duplicate rows and invalid address/state combinations", func() {
 		req := Request{Version: ProtocolVersion, RunID: "run", Deadline: time.Now().Add(time.Minute), Destinations: []Destination{{ID: "a"}}}
 		response := Response{Version: ProtocolVersion, RunID: "run", NodeUID: "node", PodUID: "pod", NetworkMode: "pod-network", StartedAt: time.Now(), FinishedAt: time.Now(), Results: []inventory.ProbeResult{{NodeUID: "node", NetworkMode: "pod-network", Destination: "a", DNS: "resolved", Addresses: []inventory.ProbeAddress{{Address: "192.0.2.1", TCP: "reachable", TLS: "verified", HTTP: "authentication-required"}}}}}

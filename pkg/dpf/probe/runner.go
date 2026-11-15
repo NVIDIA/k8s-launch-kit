@@ -251,8 +251,8 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 			if err = runner.Journal(receipts); err != nil {
 				return rows, cleanup, err
 			}
-			if !samePod(desiredPod, created) {
-				return rows, cleanup, fmt.Errorf("probe admission changed required invariants")
+			if fields := podDifferences(desiredPod, created); len(fields) != 0 {
+				return rows, cleanup, fmt.Errorf("probe admission changed required invariants: %s", strings.Join(fields, ", "))
 			}
 			var live *corev1.Pod
 			for {
@@ -376,8 +376,13 @@ func Pod(name, namespace string, labels map[string]string, node inventory.Node, 
 	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels}, Spec: spec}
 }
 func samePod(expected, actual *corev1.Pod) bool {
+	return len(podDifferences(expected, actual)) == 0
+}
+
+// podDifferences names changed fields without exposing injected values or payloads.
+func podDifferences(expected, actual *corev1.Pod) []string {
 	if expected == nil || actual == nil {
-		return false
+		return []string{"pod"}
 	}
 	a, b := expected.Spec.DeepCopy(), actual.Spec.DeepCopy()
 	// Only known harmless server/scheduler defaults are excluded from comparison.
@@ -417,7 +422,26 @@ func samePod(expected, actual *corev1.Pod) bool {
 	}
 	normalize(a)
 	normalize(b)
-	return reflect.DeepEqual(a, b) && reflect.DeepEqual(expected.Labels, actual.Labels) && reflect.DeepEqual(expected.OwnerReferences, actual.OwnerReferences) && reflect.DeepEqual(expected.Annotations, actual.Annotations)
+	fields := []string{}
+	for _, field := range []struct {
+		name             string
+		expected, actual any
+	}{
+		{"metadata.labels", expected.Labels, actual.Labels},
+		{"metadata.ownerReferences", expected.OwnerReferences, actual.OwnerReferences},
+		{"metadata.annotations", expected.Annotations, actual.Annotations},
+	} {
+		if !reflect.DeepEqual(field.expected, field.actual) {
+			fields = append(fields, field.name)
+		}
+	}
+	av, bv, typ := reflect.ValueOf(*a), reflect.ValueOf(*b), reflect.TypeOf(*a)
+	for i := 0; i < typ.NumField(); i++ {
+		if !reflect.DeepEqual(av.Field(i).Interface(), bv.Field(i).Interface()) {
+			fields = append(fields, "spec."+strings.Split(typ.Field(i).Tag.Get("json"), ",")[0])
+		}
+	}
+	return fields
 }
 func ValidateResponse(out Response, req Request, node, pod, mode string) error {
 	if out.Version != ProtocolVersion || out.RunID != req.RunID || out.NodeUID != node || out.PodUID != pod || out.NetworkMode != mode || len(out.Results) != len(req.Destinations) {
