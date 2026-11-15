@@ -56,7 +56,7 @@ func TestManagementPreflightPlanRequiresPinnedBundleAndDependencies(t *testing.T
 	for _, workload := range workloads {
 		selectorByID[workload.id] = workload.selector
 	}
-	if _, found := selectorByID["nfd.worker"]; found || selectorByID["nfd.master"] == "" || selectorByID["cert-manager.cainjector"] != "app.kubernetes.io/name=cainjector,app.kubernetes.io/instance=cert-manager" {
+	if _, found := selectorByID["nfd.worker"]; found || selectorByID["nfd.master"] == "" || selectorByID["cert-manager.cainjector"] != "app.kubernetes.io/name=cainjector" || selectorByID["cert-manager.webhook"] != "app.kubernetes.io/name=webhook" {
 		t.Fatalf("pinned workload selectors drifted: %#v", selectorByID)
 	}
 	_, err = managementPreflightPlan(ManagementPreflightRequest{Bundle: generated, Namespaces: ExternalNamespaceOverrides{CertManager: "bad/name"}})
@@ -532,6 +532,35 @@ func TestCertManagerWebhookCARejectsDeletingConfigurations(t *testing.T) {
 	mutating := &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: &metav1.Time{}}, Webhooks: []admissionregistrationv1.MutatingWebhook{{ClientConfig: admissionregistrationv1.WebhookClientConfig{CABundle: []byte("ca")}}}}
 	if webhookCABundlesPresentValidating(validating) || webhookCABundlesPresentMutating(mutating) {
 		t.Fatal("deleting cert-manager webhook configuration was accepted")
+	}
+}
+
+func TestCertManagerWebhookConfigResolutionUsesServiceReference(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "certs-webhook", Namespace: "platform-certificates"}}
+	validating := &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "release-webhook-validating"}, Webhooks: []admissionregistrationv1.ValidatingWebhook{{ClientConfig: admissionregistrationv1.WebhookClientConfig{CABundle: []byte("ca"), Service: &admissionregistrationv1.ServiceReference{Name: service.Name, Namespace: service.Namespace}}}}}
+	mutating := &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "release-webhook-mutating"}, Webhooks: []admissionregistrationv1.MutatingWebhook{{ClientConfig: admissionregistrationv1.WebhookClientConfig{CABundle: []byte("ca"), Service: &admissionregistrationv1.ServiceReference{Name: service.Name, Namespace: service.Namespace}}}}}
+	if !validatingConfigurationTargets(validating, service) || !mutatingConfigurationTargets(mutating, service) {
+		t.Fatal("alternate config names targeting the selected Service were not resolved")
+	}
+	validating.Webhooks[0].ClientConfig.Service.Name = "other-webhook"
+	if validatingConfigurationTargets(validating, service) {
+		t.Fatal("configuration targeting another Service was accepted")
+	}
+}
+
+func TestCertManagerWebhookCAResolvesAlternateNamespaceAndNames(t *testing.T) {
+	namespace := "platform-certificates"
+	selector := map[string]string{"app.kubernetes.io/name": "webhook", "app.kubernetes.io/instance": "certs"}
+	replicas := int32(1)
+	workload := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "certs-webhook-controller", Namespace: namespace, Labels: selector, UID: "webhook-uid", Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: selector}}, Status: appsv1.DeploymentStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "certs-webhook", Namespace: namespace, UID: "service-uid", Labels: map[string]string{"app.kubernetes.io/name": "webhook"}}, Spec: corev1.ServiceSpec{Selector: selector}}
+	validating := &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "certs-webhook-validating"}, Webhooks: []admissionregistrationv1.ValidatingWebhook{{ClientConfig: admissionregistrationv1.WebhookClientConfig{CABundle: []byte("ca"), Service: &admissionregistrationv1.ServiceReference{Name: service.Name, Namespace: namespace}}}}}
+	mutating := &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "certs-webhook-mutating"}, Webhooks: []admissionregistrationv1.MutatingWebhook{{ClientConfig: admissionregistrationv1.WebhookClientConfig{CABundle: []byte("ca"), Service: &admissionregistrationv1.ServiceReference{Name: service.Name, Namespace: namespace}}}}}
+	client := fake.NewSimpleClientset(workload, service, validating, mutating)
+	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	check := api.checkCertManagerWebhookCA(context.Background(), namespace)
+	if check.State != "passed" {
+		t.Fatalf("alternate cert-manager installation was rejected: %+v", check)
 	}
 }
 

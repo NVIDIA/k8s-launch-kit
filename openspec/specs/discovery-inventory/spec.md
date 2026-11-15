@@ -310,9 +310,13 @@ not observations or authorization to modify switches.
 #### Scenario: HBN tenant storage prerequisites
 
 - **WHEN** HBN discovery inspects the management cluster
-- **THEN** tenant storage readiness requires the current selected Kamaji datastore,
-  its correlated etcd replicas and pods, matching bound claims and volumes, and
-  the supported storage provisioner; class presence alone cannot pass the check.
+- **THEN** tenant storage readiness requires the current DPF-selected `default`
+  Kamaji datastore, its endpoint-correlated etcd StatefulSet, service, replicas
+  and pods, matching bound claims and volumes, and the supported local-path
+  backend; class presence alone cannot pass the check.
+- **AND** the supported storage class uses the reviewed local-path provisioner
+  identity, and exactly one ready provisioner workload is resolved by its
+  component label and image; an unsupported provisioner is rejected.
 - **AND** denied, missing, stale, unsupported or inconsistent observations retain
   a blocking reason. Shared use by another tenant is not itself a conflict.
 - **AND** deployment recollects the same prerequisites; current bound allocations

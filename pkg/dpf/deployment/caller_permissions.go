@@ -269,21 +269,22 @@ func managementObservationAccessRequirements(plan preflightPlan) []accessRequire
 		add(accessRequirement{verb: "list", group: "apps", version: "v1", resource: resource, namespace: workload.namespace})
 	}
 	add(accessRequirement{verb: "list", group: "apps", version: "v1", resource: "statefulsets", namespace: plan.operatorNamespace})
-	add(accessRequirement{verb: "get", group: "admissionregistration.k8s.io", version: "v1", resource: "validatingwebhookconfigurations", resourceName: "cert-manager-webhook"})
-	add(accessRequirement{verb: "get", group: "admissionregistration.k8s.io", version: "v1", resource: "mutatingwebhookconfigurations", resourceName: "cert-manager-webhook"})
+	add(accessRequirement{verb: "list", group: "admissionregistration.k8s.io", version: "v1", resource: "validatingwebhookconfigurations"})
+	add(accessRequirement{verb: "list", group: "admissionregistration.k8s.io", version: "v1", resource: "mutatingwebhookconfigurations"})
+	add(accessRequirement{verb: "list", version: "v1", resource: "services", namespace: plan.overrides.CertManager})
 
-	// This is exactly the current collector read surface. Some names are
-	// discovered from the StatefulSet, bound PVCs or Pod volume; authorization
-	// is therefore checked at namespace scope for those dynamic objects.
+	// Resource identities are followed from the DataStore and owner/reference
+	// graph. Authorize namespaced reads at namespace scope, and bounded component
+	// discovery with list permission where Kubernetes has no direct owner link.
 	kamaji := plan.overrides.Kamaji
 	add(accessRequirement{verb: "get", group: "kamaji.clastix.io", version: "v1alpha1", resource: "datastores", resourceName: "default"})
-	add(accessRequirement{verb: "get", group: "apps", version: "v1", resource: "statefulsets", namespace: kamaji, resourceName: "kamaji-etcd"})
+	add(accessRequirement{verb: "get", group: "apps", version: "v1", resource: "statefulsets", namespace: kamaji})
 	add(accessRequirement{verb: "get", version: "v1", resource: "services", namespace: kamaji})
 	add(accessRequirement{verb: "get", version: "v1", resource: "persistentvolumeclaims", namespace: kamaji})
 	add(accessRequirement{verb: "get", version: "v1", resource: "persistentvolumes"})
 	add(accessRequirement{verb: "get", version: "v1", resource: "pods", namespace: kamaji})
-	add(accessRequirement{verb: "get", group: "storage.k8s.io", version: "v1", resource: "storageclasses", resourceName: "local-path"})
-	add(accessRequirement{verb: "get", group: "apps", version: "v1", resource: "deployments", namespace: "local-path-provisioner", resourceName: "local-path-provisioner"})
+	add(accessRequirement{verb: "get", group: "storage.k8s.io", version: "v1", resource: "storageclasses"})
+	add(accessRequirement{verb: "list", group: "apps", version: "v1", resource: "deployments"})
 
 	operatorNamespace, tenant := plan.operatorNamespace, plan.intent.Bootstrap.Tenant
 	add(accessRequirement{verb: "get", version: "v1", resource: "namespaces", resourceName: "kube-system"})

@@ -156,7 +156,7 @@ func (c *APIClient) checkManagementPreflight(ctx context.Context, plan preflight
 		result.Checks = append(result.Checks, c.checkPreflightWorkload(ctx, workload))
 	}
 	result.Checks = append(result.Checks, c.checkTenantStorage(ctx, plan.overrides.Kamaji))
-	result.Checks = append(result.Checks, c.checkCertManagerWebhookCA(ctx))
+	result.Checks = append(result.Checks, c.checkCertManagerWebhookCA(ctx, plan.overrides.CertManager))
 	result.Checks = append(result.Checks, c.checkArgoApplicationScope(ctx, plan.operatorNamespace, plan.overrides.ArgoCD))
 
 	result.Checks = append(result.Checks, c.checkBootstrapCallerPermissions(ctx, plan)...)
@@ -349,8 +349,8 @@ func pinnedHBNAPIs() []preflightAPIRequirement {
 func pinnedHBNWorkloads(namespaces ExternalNamespaceOverrides, requireNFDWorker bool) []preflightWorkload {
 	workloads := []preflightWorkload{
 		{id: "cert-manager.controller", namespace: namespaces.CertManager, kind: "Deployment", selector: "app.kubernetes.io/name=cert-manager,app.kubernetes.io/component=controller"},
-		{id: "cert-manager.cainjector", namespace: namespaces.CertManager, kind: "Deployment", selector: "app.kubernetes.io/name=cainjector,app.kubernetes.io/instance=cert-manager"},
-		{id: "cert-manager.webhook", namespace: namespaces.CertManager, kind: "Deployment", selector: "app.kubernetes.io/name=webhook,app.kubernetes.io/instance=cert-manager"},
+		{id: "cert-manager.cainjector", namespace: namespaces.CertManager, kind: "Deployment", selector: "app.kubernetes.io/name=cainjector"},
+		{id: "cert-manager.webhook", namespace: namespaces.CertManager, kind: "Deployment", selector: "app.kubernetes.io/name=webhook"},
 		{id: "argo.server", namespace: namespaces.ArgoCD, kind: "Deployment", selector: "app.kubernetes.io/name=argocd-server"},
 		{id: "nfd.master", namespace: namespaces.NodeFeature, kind: "Deployment", selector: "app.kubernetes.io/name=node-feature-discovery,role=master"},
 		{id: "maintenance.controller", namespace: namespaces.Maintenance, kind: "Deployment", selector: "app.kubernetes.io/name=maintenance-operator"},
@@ -614,27 +614,106 @@ func argoControllerUsesInClusterNamespace(set appsv1.StatefulSet, expectedNamesp
 	return true
 }
 
-func (c *APIClient) checkCertManagerWebhookCA(ctx context.Context) PreflightCheck {
+func (c *APIClient) checkCertManagerWebhookCA(ctx context.Context, namespace string) PreflightCheck {
 	if c == nil || c.access.Client == nil || ctx == nil {
 		return blockedPreflight("external.controller.cert-manager.webhook-ca", "MANAGEMENT_CLIENT_UNAVAILABLE", "The bound management API client is unavailable.")
 	}
-	validating, err := c.access.Client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(ctx, "cert-manager-webhook", metav1.GetOptions{})
-	if err != nil || !webhookCABundlesPresentValidating(validating) {
-		returnCode := "CERT_MANAGER_WEBHOOK_CA_NOT_READY"
-		if err != nil {
-			returnCode = apiFailureCode(err)
-		}
-		return blockedPreflight("external.controller.cert-manager.webhook-ca", returnCode, "cert-manager's validating webhook CA bundle is not ready.")
+	if namespace == "" {
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", "CERT_MANAGER_NAMESPACE_MISSING", "The selected cert-manager namespace is unavailable.")
 	}
-	mutating, err := c.access.Client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(ctx, "cert-manager-webhook", metav1.GetOptions{})
-	if err != nil || !webhookCABundlesPresentMutating(mutating) {
+	services, err := c.access.Client.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=webhook", Limit: 2})
+	if err != nil || len(services.Items) != 1 || len(services.GetContinue()) != 0 {
+		code := "CERT_MANAGER_WEBHOOK_SERVICE_AMBIGUOUS"
+		if err != nil {
+			code = apiFailureCode(err)
+		}
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", code, "The cert-manager webhook Service could not be resolved uniquely in the selected namespace.")
+	}
+	service := &services.Items[0]
+	if service.UID == "" || service.DeletionTimestamp != nil || len(service.Spec.Selector) == 0 {
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", "CERT_MANAGER_WEBHOOK_SERVICE_INVALID", "The selected cert-manager webhook Service is changing or has no workload selector.")
+	}
+	webhooks, err := c.access.Client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=webhook", Limit: 2})
+	if err != nil || len(webhooks.Items) != 1 || len(webhooks.GetContinue()) != 0 {
+		code := "CERT_MANAGER_WEBHOOK_WORKLOAD_AMBIGUOUS"
+		if err != nil {
+			code = apiFailureCode(err)
+		}
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", code, "The cert-manager webhook workload could not be resolved uniquely in the selected namespace.")
+	}
+	if !deploymentAvailable(webhooks.Items[0]) {
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", "EXTERNAL_CONTROLLER_NOT_READY", "The resolved cert-manager webhook workload is not fully ready.")
+	}
+	workloadSelector := webhooks.Items[0].Spec.Selector
+	if workloadSelector == nil || len(workloadSelector.MatchLabels) == 0 {
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", "CERT_MANAGER_WEBHOOK_WORKLOAD_INVALID", "The cert-manager webhook workload has no stable selector.")
+	}
+	for key, value := range service.Spec.Selector {
+		if workloadSelector.MatchLabels[key] != value {
+			return blockedPreflight("external.controller.cert-manager.webhook-ca", "CERT_MANAGER_WEBHOOK_SERVICE_MISMATCH", "The cert-manager webhook Service does not select the resolved webhook workload.")
+		}
+	}
+	validatingList, err := c.access.Client.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, metav1.ListOptions{Limit: 256})
+	if err != nil || len(validatingList.GetContinue()) != 0 {
 		returnCode := "CERT_MANAGER_WEBHOOK_CA_NOT_READY"
 		if err != nil {
 			returnCode = apiFailureCode(err)
 		}
-		return blockedPreflight("external.controller.cert-manager.webhook-ca", returnCode, "cert-manager's mutating webhook CA bundle is not ready.")
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", returnCode, "The cert-manager validating webhook configurations could not be completely inspected.")
+	}
+	var validatingMatches []*admissionregistrationv1.ValidatingWebhookConfiguration
+	for i := range validatingList.Items {
+		if validatingConfigurationTargets(&validatingList.Items[i], service) {
+			validatingMatches = append(validatingMatches, &validatingList.Items[i])
+		}
+	}
+	if len(validatingMatches) != 1 || !webhookCABundlesPresentValidating(validatingMatches[0]) {
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", "CERT_MANAGER_WEBHOOK_CA_NOT_READY", "The cert-manager validating webhook CA configuration is missing, ambiguous, or not ready.")
+	}
+	mutatingList, err := c.access.Client.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, metav1.ListOptions{Limit: 256})
+	if err != nil || len(mutatingList.GetContinue()) != 0 {
+		returnCode := "CERT_MANAGER_WEBHOOK_CA_NOT_READY"
+		if err != nil {
+			returnCode = apiFailureCode(err)
+		}
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", returnCode, "The cert-manager mutating webhook configurations could not be completely inspected.")
+	}
+	var mutatingMatches []*admissionregistrationv1.MutatingWebhookConfiguration
+	for i := range mutatingList.Items {
+		if mutatingConfigurationTargets(&mutatingList.Items[i], service) {
+			mutatingMatches = append(mutatingMatches, &mutatingList.Items[i])
+		}
+	}
+	if len(mutatingMatches) != 1 || !webhookCABundlesPresentMutating(mutatingMatches[0]) {
+		return blockedPreflight("external.controller.cert-manager.webhook-ca", "CERT_MANAGER_WEBHOOK_CA_NOT_READY", "The cert-manager mutating webhook CA configuration is missing, ambiguous, or not ready.")
 	}
 	return passedPreflight("external.controller.cert-manager.webhook-ca", "cert-manager webhook CA bundles are populated.")
+}
+
+func validatingConfigurationTargets(configuration *admissionregistrationv1.ValidatingWebhookConfiguration, service *corev1.Service) bool {
+	if configuration == nil || configuration.DeletionTimestamp != nil || service == nil || len(configuration.Webhooks) == 0 {
+		return false
+	}
+	for _, hook := range configuration.Webhooks {
+		ref := hook.ClientConfig.Service
+		if ref == nil || ref.Name != service.Name || ref.Namespace != service.Namespace {
+			return false
+		}
+	}
+	return true
+}
+
+func mutatingConfigurationTargets(configuration *admissionregistrationv1.MutatingWebhookConfiguration, service *corev1.Service) bool {
+	if configuration == nil || configuration.DeletionTimestamp != nil || service == nil || len(configuration.Webhooks) == 0 {
+		return false
+	}
+	for _, hook := range configuration.Webhooks {
+		ref := hook.ClientConfig.Service
+		if ref == nil || ref.Name != service.Name || ref.Namespace != service.Namespace {
+			return false
+		}
+	}
+	return true
 }
 
 func webhookCABundlesPresentValidating(configuration *admissionregistrationv1.ValidatingWebhookConfiguration) bool {

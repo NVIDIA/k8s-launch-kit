@@ -26,6 +26,15 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+const (
+	tenantEtcdName      = "kamaji-etcd"
+	tenantEtcdLabelName = "kamaji-etcd"
+	tenantEtcdLabelInst = "kamaji"
+	tenantStorageClass  = "local-path"
+	tenantProvisionerNS = "local-path-provisioner"
+	tenantProvisionerID = "local-path-provisioner"
+)
+
 func TestCollectTenantStorageHealthyAndReadOnly(t *testing.T) {
 	collector, kube, dynamic := tenantStorageCollector()
 	result := collector.CollectTenantStorage(context.Background(), "dpf-operator-system")
@@ -34,6 +43,55 @@ func TestCollectTenantStorageHealthyAndReadOnly(t *testing.T) {
 	}
 	assertTenantStorageReadOnly(t, kube.Actions())
 	assertTenantStorageReadOnly(t, dynamic.Actions())
+}
+
+func TestCollectTenantStorageFollowsReferencedResourceNames(t *testing.T) {
+	f := newTenantStorageFixture()
+	const newSet = "tenant-data"
+	const newService = "tenant-data"
+	const newClaimTemplate = "etcd-volume"
+	const newClass = "tenant-local"
+	f.statefulSet.Name = newSet
+	f.statefulSet.Spec.ServiceName = newService
+	f.statefulSet.Spec.VolumeClaimTemplates[0].Name = newClaimTemplate
+	f.statefulSet.Spec.VolumeClaimTemplates[0].Spec.StorageClassName = ptr(newClass)
+	f.statefulSet.Spec.Template.Spec.Containers[0].VolumeMounts[0].Name = newClaimTemplate
+	f.service.Name = newService
+	for i := range f.pods {
+		newName := fmt.Sprintf("%s-%d", newSet, i)
+		f.pods[i].Name, f.pods[i].Spec.Hostname, f.pods[i].Spec.Subdomain = newName, newName, newService
+		f.pods[i].OwnerReferences[0].Name = newSet
+		f.pods[i].Spec.Containers[0].VolumeMounts[0].Name = newClaimTemplate
+		f.pods[i].Spec.Volumes[0].Name = newClaimTemplate
+		f.pods[i].Spec.Volumes[0].PersistentVolumeClaim.ClaimName = fmt.Sprintf("%s-%s-%d", newClaimTemplate, newSet, i)
+		f.claims[i].Name = fmt.Sprintf("%s-%s-%d", newClaimTemplate, newSet, i)
+		f.claims[i].Spec.StorageClassName = ptr(newClass)
+		f.claims[i].Spec.VolumeName = fmt.Sprintf("tenant-pv-%d", i)
+		f.volumes[i].Name = f.claims[i].Spec.VolumeName
+		f.volumes[i].Spec.StorageClassName = newClass
+		f.volumes[i].Spec.ClaimRef.Name = f.claims[i].Name
+	}
+	f.class.Name = newClass
+	f.provisioner.Name, f.provisioner.Namespace = "path-agent", "storage-system"
+	f.dataStore.Object["spec"].(map[string]interface{})["endpoints"] = []interface{}{
+		"tenant-data-0.tenant-data.dpf-operator-system.svc.cluster.local:2379",
+		"tenant-data-1.tenant-data.dpf-operator-system.svc.cluster.local:2379",
+	}
+	collector, _, _ := tenantStorageCollectorFromFixture(f)
+	if result := collector.CollectTenantStorage(context.Background(), "dpf-operator-system"); result.State != "passed" {
+		t.Fatalf("referenced resource names should pass: %+v", result)
+	}
+}
+
+func TestCollectTenantStorageRejectsAmbiguousProvisionerIdentity(t *testing.T) {
+	collector, kube, _ := tenantStorageCollector()
+	_, err := kube.AppsV1().Deployments("alternate-storage").Create(context.Background(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "second-path-agent", Namespace: "alternate-storage", Labels: map[string]string{"app.kubernetes.io/name": tenantProvisionerID}, UID: types.UID("second-provisioner"), Generation: 1}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": tenantProvisionerID}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": tenantProvisionerID}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: tenantProvisionerID, Image: "rancher/local-path-provisioner:test"}}}}}}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := collector.CollectTenantStorage(context.Background(), "dpf-operator-system"); result.State != "failed" || result.ReasonCode != "TENANT_PROVISIONER_AMBIGUOUS" {
+		t.Fatalf("ambiguous provisioner identity result = %+v", result)
+	}
 }
 
 func TestCollectTenantStorageRejectsUnreadyAndMismatchedEvidence(t *testing.T) {
@@ -94,6 +152,7 @@ func TestCollectTenantStorageRejectsUnreadyAndMismatchedEvidence(t *testing.T) {
 		}, state: "unknown", reason: "TENANT_ETCD_POD_NOT_READY"},
 		{name: "claimref uid mismatch", mutate: func(t *testing.T, f *tenantStorageFixture) { f.volumes[0].Spec.ClaimRef.UID = types.UID("other") }, state: "failed", reason: "TENANT_ETCD_VOLUME_BINDING_MISMATCH"},
 		{name: "provisioner stale generation", mutate: func(t *testing.T, f *tenantStorageFixture) { f.provisioner.Status.ObservedGeneration = 0 }, state: "unknown", reason: "TENANT_PROVISIONER_NOT_READY"},
+		{name: "unsupported storage backend", mutate: func(t *testing.T, f *tenantStorageFixture) { f.class.Provisioner = "example.invalid/csi" }, state: "failed", reason: "TENANT_STORAGE_CLASS_MISMATCH"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,7 +313,7 @@ func newTenantStorageFixture() *tenantStorageFixture {
 	binding := storagev1.VolumeBindingWaitForFirstConsumer
 	class := &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: tenantStorageClass, UID: types.UID("storage-class-uid")}, Provisioner: tenantProvisioner, VolumeBindingMode: &binding}
 	provisionerReplicas := int32(1)
-	provisioner := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: tenantProvisionerID, Namespace: tenantProvisionerNS, UID: types.UID("provisioner-uid"), Generation: 3}, Spec: appsv1.DeploymentSpec{Replicas: &provisionerReplicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": tenantProvisionerID, "app.kubernetes.io/instance": tenantProvisionerID}}}, Status: appsv1.DeploymentStatus{ObservedGeneration: 3, Replicas: 1, ReadyReplicas: 1, AvailableReplicas: 1, UpdatedReplicas: 1}}
+	provisioner := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: tenantProvisionerID, Namespace: tenantProvisionerNS, Labels: map[string]string{"app.kubernetes.io/name": tenantProvisionerID}, UID: types.UID("provisioner-uid"), Generation: 3}, Spec: appsv1.DeploymentSpec{Replicas: &provisionerReplicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": tenantProvisionerID}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": tenantProvisionerID}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: tenantProvisionerID, Image: "docker.io/rancher/local-path-provisioner:v0.0.34"}}}}}, Status: appsv1.DeploymentStatus{ObservedGeneration: 3, Replicas: 1, ReadyReplicas: 1, AvailableReplicas: 1, UpdatedReplicas: 1}}
 	return &tenantStorageFixture{dataStore: dataStore, statefulSet: statefulSet, service: service, claims: claims, volumes: volumes, pods: pods, class: class, provisioner: provisioner}
 }
 

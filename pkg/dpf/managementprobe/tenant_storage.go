@@ -25,17 +25,12 @@ import (
 )
 
 const (
-	tenantDataStoreName = "default"
-	tenantEtcdName      = "kamaji-etcd"
-	tenantEtcdPort      = 2379
-	tenantEtcdLabelName = "kamaji-etcd"
-	tenantEtcdLabelInst = "kamaji"
-	tenantStorageClass  = "local-path"
-	tenantProvisioner   = "cluster.local/local-path-provisioner"
-	tenantProvisionerNS = "local-path-provisioner"
-	tenantProvisionerID = "local-path-provisioner"
-	maxEtcdReplicas     = int32(16)
-	maxEtcdClaims       = 16
+	tenantDataStoreName    = "default"
+	tenantEtcdPort         = 2379
+	tenantProvisioner      = "cluster.local/local-path-provisioner"
+	tenantProvisionerLabel = "local-path-provisioner"
+	maxEtcdReplicas        = int32(16)
+	maxEtcdClaims          = 16
 )
 
 var tenantDataStoreGVR = schema.GroupVersionResource{Group: "kamaji.clastix.io", Version: "v1alpha1", Resource: "datastores"}
@@ -93,11 +88,12 @@ func (c Collector) readTenantStorage(ctx context.Context, namespace string) (sto
 	}
 	appendStorageSignature(&result, datastoreSafeProjection(datastore))
 
-	statefulSet, err := c.Kubernetes.AppsV1().StatefulSets(namespace).Get(ctx, tenantEtcdName, metav1.GetOptions{})
-	if err != nil {
-		return result, storageAPIError("etcd stateful set", err)
+	statefulSet, service, check := c.resolveEtcdReferences(ctx, namespace, datastore)
+	if check.State != "passed" {
+		return result, check
 	}
 	appendStorageSignature(&result, statefulSetProjection(statefulSet))
+	appendStorageSignature(&result, serviceProjection(service))
 	if statefulSet.Namespace != namespace {
 		return result, storageFailed("TENANT_ETCD_IDENTITY_INVALID", "The Kamaji etcd StatefulSet is outside the selected namespace.")
 	}
@@ -105,15 +101,6 @@ func (c Collector) readTenantStorage(ctx context.Context, namespace string) (sto
 		return result, check
 	}
 	if check := validateDataStoreEndpoints(datastore, statefulSet, namespace); check.State != "passed" {
-		return result, check
-	}
-
-	service, err := c.Kubernetes.CoreV1().Services(namespace).Get(ctx, statefulSet.Spec.ServiceName, metav1.GetOptions{})
-	if err != nil {
-		return result, storageAPIError("etcd service", err)
-	}
-	appendStorageSignature(&result, serviceProjection(service))
-	if check := validateEtcdService(service, statefulSet); check.State != "passed" {
 		return result, check
 	}
 
@@ -131,7 +118,8 @@ func (c Collector) readTenantStorage(ctx context.Context, namespace string) (sto
 		appendStorageSignature(&result, podProjection(pod))
 	}
 
-	class, err := c.Kubernetes.StorageV1().StorageClasses().Get(ctx, tenantStorageClass, metav1.GetOptions{})
+	className := *statefulSet.Spec.VolumeClaimTemplates[0].Spec.StorageClassName
+	class, err := c.Kubernetes.StorageV1().StorageClasses().Get(ctx, className, metav1.GetOptions{})
 	if err != nil {
 		return result, storageAPIError("storage class", err)
 	}
@@ -140,15 +128,75 @@ func (c Collector) readTenantStorage(ctx context.Context, namespace string) (sto
 		return result, check
 	}
 
-	provisioner, err := c.Kubernetes.AppsV1().Deployments(tenantProvisionerNS).Get(ctx, tenantProvisionerID, metav1.GetOptions{})
+	provisioners, err := c.Kubernetes.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + tenantProvisionerLabel, Limit: 2})
 	if err != nil {
 		return result, storageAPIError("local path provisioner", err)
 	}
+	if len(provisioners.Items) != 1 || len(provisioners.GetContinue()) != 0 {
+		return result, storageFailed("TENANT_PROVISIONER_AMBIGUOUS", "The supported local-path provisioner must resolve to exactly one Deployment.")
+	}
+	provisioner := &provisioners.Items[0]
 	appendStorageSignature(&result, deploymentProjection(provisioner))
 	if check := validateProvisionerDeployment(provisioner); check.State != "passed" {
 		return result, check
 	}
 	return result, storagePassed()
+}
+
+// resolveEtcdReferences follows a DataStore endpoint to a live member Pod and
+// its controlling StatefulSet, then follows that set's service reference.
+func (c Collector) resolveEtcdReferences(ctx context.Context, namespace string, datastore *unstructured.Unstructured) (*appsv1.StatefulSet, *corev1.Service, TenantStorageResult) {
+	endpoints, _, _ := unstructured.NestedStringSlice(datastore.Object, "spec", "endpoints")
+	var setName, serviceName string
+	for _, endpoint := range endpoints {
+		host, port, err := net.SplitHostPort(endpoint)
+		if err != nil || port != strconv.Itoa(tenantEtcdPort) {
+			return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore endpoint set does not match the current etcd service.")
+		}
+		parts := strings.Split(host, ".")
+		if len(parts) != 6 || parts[3] != "svc" || parts[4] != "cluster" || parts[5] != "local" || parts[2] != namespace || len(validation.IsDNS1123Subdomain(host)) != 0 {
+			return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore endpoint does not identify a member in the selected Kamaji namespace.")
+		}
+		pod, err := c.Kubernetes.CoreV1().Pods(namespace).Get(ctx, parts[0], metav1.GetOptions{})
+		if err != nil {
+			return nil, nil, storageAPIError("etcd member pod", err)
+		}
+		var owner *metav1.OwnerReference
+		for i := range pod.OwnerReferences {
+			ref := &pod.OwnerReferences[i]
+			if ref.Controller != nil && *ref.Controller {
+				if owner != nil {
+					return nil, nil, storageFailed("TENANT_ETCD_OWNER_AMBIGUOUS", "An etcd member has multiple controlling owners.")
+				}
+				owner = ref
+			}
+		}
+		if owner == nil || owner.APIVersion != "apps/v1" || owner.Kind != "StatefulSet" || owner.UID == "" {
+			return nil, nil, storageFailed("TENANT_ETCD_OWNER_INVALID", "A DataStore endpoint does not resolve to a StatefulSet-owned etcd member.")
+		}
+		if setName != "" && (setName != owner.Name || serviceName != parts[1]) {
+			return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "DataStore endpoints resolve to multiple etcd workloads.")
+		}
+		setName, serviceName = owner.Name, parts[1]
+	}
+	if setName == "" {
+		return nil, nil, storageFailed("TENANT_DATASTORE_ENDPOINTS_INVALID", "The shared Kamaji DataStore has no valid endpoint set.")
+	}
+	set, err := c.Kubernetes.AppsV1().StatefulSets(namespace).Get(ctx, setName, metav1.GetOptions{})
+	if err != nil {
+		return nil, nil, storageAPIError("etcd stateful set", err)
+	}
+	service, err := c.Kubernetes.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return nil, nil, storageAPIError("etcd service", err)
+	}
+	if set.Spec.ServiceName != service.Name {
+		return nil, nil, storageFailed("TENANT_ETCD_SERVICE_SELECTOR_MISMATCH", "The endpoint service does not match the StatefulSet service reference.")
+	}
+	if check := validateEtcdService(service, set); check.State != "passed" {
+		return nil, nil, check
+	}
+	return set, service, storagePassed()
 }
 
 func validateDataStore(obj *unstructured.Unstructured) TenantStorageResult {
@@ -202,11 +250,11 @@ func validateDataStore(obj *unstructured.Unstructured) TenantStorageResult {
 }
 
 func validateEtcdStatefulSet(set *appsv1.StatefulSet) TenantStorageResult {
-	if set == nil || set.Name != tenantEtcdName || set.Namespace == "" || set.UID == "" || set.Generation < 1 || set.DeletionTimestamp != nil {
+	if set == nil || set.Name == "" || set.Namespace == "" || set.UID == "" || set.Generation < 1 || set.DeletionTimestamp != nil {
 		return storageFailed("TENANT_ETCD_IDENTITY_INVALID", "The Kamaji etcd StatefulSet identity is missing, changing, or deleting.")
 	}
-	if set.Spec.ServiceName != tenantEtcdName || set.Spec.Selector == nil || set.Spec.Selector.MatchLabels["app.kubernetes.io/name"] != tenantEtcdLabelName || set.Spec.Selector.MatchLabels["app.kubernetes.io/instance"] != tenantEtcdLabelInst {
-		return storageFailed("TENANT_ETCD_SELECTOR_INVALID", "The Kamaji etcd StatefulSet does not match the expected service and workload labels.")
+	if set.Spec.ServiceName == "" || set.Spec.Selector == nil || len(set.Spec.Selector.MatchLabels) == 0 {
+		return storageFailed("TENANT_ETCD_SELECTOR_INVALID", "The Kamaji etcd StatefulSet does not define its service and workload selector.")
 	}
 	if set.Spec.Ordinals != nil && set.Spec.Ordinals.Start != 0 {
 		return storageFailed("TENANT_ETCD_ORDINALS_UNSUPPORTED", "The Kamaji etcd StatefulSet uses an unsupported member ordinal range.")
@@ -221,13 +269,27 @@ func validateEtcdStatefulSet(set *appsv1.StatefulSet) TenantStorageResult {
 	if len(set.Spec.VolumeClaimTemplates) == 0 || len(set.Spec.VolumeClaimTemplates)*int(desired) > maxEtcdClaims {
 		return storageFailed("TENANT_ETCD_CLAIMS_INVALID", "The Kamaji etcd StatefulSet claim templates are missing or exceed the bounded observation limit.")
 	}
+	dataVolume, ok := etcdDataVolumeName(set.Spec.Template.Spec.Containers)
+	if !ok || !etcdDataContainer(set.Spec.Template.Spec.Containers, dataVolume) {
+		return storageFailed("TENANT_ETCD_DATA_PATH_INVALID", "The Kamaji etcd data directory is not backed by a claim volume.")
+	}
+	dataTemplateFound := false
+	storageClass := ""
 	for _, template := range set.Spec.VolumeClaimTemplates {
-		if template.Name != "data" || template.Spec.StorageClassName == nil || *template.Spec.StorageClassName != tenantStorageClass || template.Spec.Resources.Requests.Storage().Sign() <= 0 {
+		if template.Name == dataVolume {
+			dataTemplateFound = true
+		}
+		if template.Name == "" || template.Spec.StorageClassName == nil || *template.Spec.StorageClassName == "" || template.Spec.Resources.Requests.Storage().Sign() <= 0 {
 			return storageFailed("TENANT_ETCD_CLAIM_TEMPLATE_INVALID", "The Kamaji etcd StatefulSet has an invalid or unsupported persistent volume claim template.")
 		}
+		if storageClass == "" {
+			storageClass = *template.Spec.StorageClassName
+		} else if storageClass != *template.Spec.StorageClassName {
+			return storageFailed("TENANT_ETCD_CLAIM_TEMPLATE_INVALID", "The Kamaji etcd claim templates do not use one supported storage backend.")
+		}
 	}
-	if !etcdDataContainer(set.Spec.Template.Spec.Containers, "data") {
-		return storageFailed("TENANT_ETCD_DATA_PATH_INVALID", "The Kamaji etcd StatefulSet template does not persist its configured data directory to the expected claim.")
+	if !dataTemplateFound {
+		return storageFailed("TENANT_ETCD_DATA_PATH_INVALID", "The Kamaji etcd data directory is not backed by a StatefulSet claim template.")
 	}
 	return storagePassed()
 }
@@ -246,7 +308,7 @@ func validateDataStoreEndpoints(obj *unstructured.Unstructured, set *appsv1.Stat
 		}
 		matched := false
 		for ordinal := int32(0); ordinal < *set.Spec.Replicas; ordinal++ {
-			wantHost := fmt.Sprintf("%s-%d.%s.%s%s", tenantEtcdName, ordinal, set.Spec.ServiceName, namespace, expectedSuffix)
+			wantHost := fmt.Sprintf("%s-%d.%s.%s%s", set.Name, ordinal, set.Spec.ServiceName, namespace, expectedSuffix)
 			if host == wantHost {
 				if len(validation.IsDNS1123Subdomain(host)) != 0 {
 					return storageFailed("TENANT_DATASTORE_ENDPOINTS_MISMATCH", "The DataStore contains a malformed etcd service endpoint.")
@@ -267,7 +329,7 @@ func validateDataStoreEndpoints(obj *unstructured.Unstructured, set *appsv1.Stat
 }
 
 func validateEtcdService(service *corev1.Service, set *appsv1.StatefulSet) TenantStorageResult {
-	if service == nil || service.Name != set.Spec.ServiceName || service.Namespace != set.Namespace || service.UID == "" || service.DeletionTimestamp != nil || service.Spec.ClusterIP != corev1.ClusterIPNone {
+	if service == nil || set == nil || set.Spec.Selector == nil || len(service.Spec.Selector) == 0 || service.Name != set.Spec.ServiceName || service.Namespace != set.Namespace || service.UID == "" || service.DeletionTimestamp != nil || service.Spec.ClusterIP != corev1.ClusterIPNone {
 		return storageFailed("TENANT_ETCD_SERVICE_INVALID", "The Kamaji etcd member service is missing, changing, or not headless.")
 	}
 	for key, value := range set.Spec.Selector.MatchLabels {
@@ -295,7 +357,7 @@ func (c Collector) readEtcdResources(ctx context.Context, namespace string, set 
 			if err != nil {
 				return nil, nil, nil, storageAPIError("etcd persistent volume claim "+name, err)
 			}
-			if claim.UID == "" || claim.DeletionTimestamp != nil || claim.Status.Phase != corev1.ClaimBound || claim.Spec.StorageClassName == nil || *claim.Spec.StorageClassName != tenantStorageClass || claim.Spec.VolumeName == "" {
+			if claim.UID == "" || claim.DeletionTimestamp != nil || claim.Status.Phase != corev1.ClaimBound || claim.Spec.StorageClassName == nil || *claim.Spec.StorageClassName != *template.Spec.StorageClassName || claim.Spec.VolumeName == "" {
 				return nil, nil, nil, storageUnknown("TENANT_ETCD_CLAIM_NOT_BOUND", "Kamaji etcd claim "+name+" is missing, changing, or not bound.")
 			}
 			templateRequest := template.Spec.Resources.Requests.Storage()
@@ -311,7 +373,7 @@ func (c Collector) readEtcdResources(ctx context.Context, namespace string, set 
 			if err != nil {
 				return nil, nil, nil, storageAPIError("etcd persistent volume "+claim.Spec.VolumeName, err)
 			}
-			if volume.UID == "" || volume.DeletionTimestamp != nil || volume.Status.Phase != corev1.VolumeBound || volume.Spec.StorageClassName != tenantStorageClass || volume.Spec.ClaimRef == nil || volume.Spec.ClaimRef.UID != claim.UID || volume.Spec.ClaimRef.Name != claim.Name || volume.Spec.ClaimRef.Namespace != namespace {
+			if volume.UID == "" || volume.DeletionTimestamp != nil || volume.Status.Phase != corev1.VolumeBound || volume.Spec.StorageClassName != *template.Spec.StorageClassName || volume.Spec.ClaimRef == nil || volume.Spec.ClaimRef.UID != claim.UID || volume.Spec.ClaimRef.Name != claim.Name || volume.Spec.ClaimRef.Namespace != namespace {
 				return nil, nil, nil, storageFailed("TENANT_ETCD_VOLUME_BINDING_MISMATCH", "Kamaji etcd volume "+volume.Name+" is not bound to expected claim "+name+".")
 			}
 			volumeCapacity, hasVolumeCapacity := volume.Spec.Capacity[corev1.ResourceStorage]
@@ -394,7 +456,27 @@ func podReadyForEtcd(pod *corev1.Pod, set *appsv1.StatefulSet, service *corev1.S
 			return false
 		}
 	}
-	return etcdDataContainer(pod.Spec.Containers, "data")
+	volumeName, ok := etcdDataVolumeName(pod.Spec.Containers)
+	return ok && etcdDataContainer(pod.Spec.Containers, volumeName)
+}
+
+func etcdDataVolumeName(containers []corev1.Container) (string, bool) {
+	for _, container := range containers {
+		if container.Name != "etcd" {
+			continue
+		}
+		name := ""
+		for _, mount := range container.VolumeMounts {
+			if path.Clean(mount.MountPath) == "/var/run/etcd" {
+				if name != "" || mount.ReadOnly || mount.Name == "" {
+					return "", false
+				}
+				name = mount.Name
+			}
+		}
+		return name, name != ""
+	}
+	return "", false
 }
 
 func etcdDataContainer(containers []corev1.Container, volumeName string) bool {
@@ -578,18 +660,35 @@ func valueOrEmpty(value *string) string {
 }
 
 func validateTenantStorageClass(class *storagev1.StorageClass) TenantStorageResult {
-	if class == nil || class.Name != tenantStorageClass || class.UID == "" || class.DeletionTimestamp != nil || class.Provisioner != tenantProvisioner || class.VolumeBindingMode == nil || *class.VolumeBindingMode != storagev1.VolumeBindingWaitForFirstConsumer {
+	if class == nil || class.Name == "" || class.UID == "" || class.DeletionTimestamp != nil || class.Provisioner != tenantProvisioner || class.VolumeBindingMode == nil || *class.VolumeBindingMode != storagev1.VolumeBindingWaitForFirstConsumer {
 		return storageFailed("TENANT_STORAGE_CLASS_MISMATCH", "The local-path StorageClass is missing or does not match the selected DPF storage contract.")
 	}
 	return storagePassed()
 }
 
 func validateProvisionerDeployment(deployment *appsv1.Deployment) TenantStorageResult {
-	if deployment == nil || deployment.Name != tenantProvisionerID || deployment.Namespace != tenantProvisionerNS || deployment.UID == "" || deployment.Generation < 1 || deployment.DeletionTimestamp != nil {
+	if deployment == nil || deployment.Name == "" || deployment.Namespace == "" || deployment.UID == "" || deployment.Generation < 1 || deployment.DeletionTimestamp != nil {
 		return storageFailed("TENANT_PROVISIONER_IDENTITY_INVALID", "The local-path provisioner Deployment identity is missing, changing, or deleting.")
 	}
-	if deployment.Spec.Selector == nil || deployment.Spec.Selector.MatchLabels["app.kubernetes.io/name"] != tenantProvisionerID || deployment.Spec.Selector.MatchLabels["app.kubernetes.io/instance"] != tenantProvisionerID {
-		return storageFailed("TENANT_PROVISIONER_SELECTOR_INVALID", "The local-path provisioner Deployment does not match the expected release labels.")
+	if deployment.Spec.Selector == nil || deployment.Spec.Selector.MatchLabels["app.kubernetes.io/name"] != tenantProvisionerLabel {
+		return storageFailed("TENANT_PROVISIONER_SELECTOR_INVALID", "The local-path provisioner Deployment does not match the supported backend identity.")
+	}
+	if !labels.Set(deployment.Spec.Template.Labels).AsSelectorPreValidated().Matches(labels.Set(deployment.Spec.Selector.MatchLabels)) {
+		return storageFailed("TENANT_PROVISIONER_SELECTOR_INVALID", "The local-path provisioner pod template does not match its controller selector.")
+	}
+	imageFound := false
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		image := strings.TrimSpace(container.Image)
+		lastSlash := strings.LastIndex(image, "/")
+		imageName := image[lastSlash+1:]
+		imageName = strings.SplitN(imageName, ":", 2)[0]
+		imageName = strings.SplitN(imageName, "@", 2)[0]
+		if imageName == tenantProvisionerLabel {
+			imageFound = true
+		}
+	}
+	if !imageFound {
+		return storageFailed("TENANT_PROVISIONER_IDENTITY_INVALID", "The selected Deployment does not run the supported local-path provisioner image.")
 	}
 	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas < 1 || *deployment.Spec.Replicas > maxEtcdReplicas {
 		return storageFailed("TENANT_PROVISIONER_REPLICAS_INVALID", "The local-path provisioner replica count is missing or outside the supported observation bound.")

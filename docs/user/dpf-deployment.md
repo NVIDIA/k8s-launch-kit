@@ -25,7 +25,9 @@ interrupt access temporarily.
 Before starting, install versions compatible with the selected DPF release of
 cert-manager, Argo CD, the Node Feature Discovery (NFD) API and master, NVIDIA
 Maintenance Operator, and Kamaji. Kamaji needs a healthy shared etcd DataStore
-and the supported local-path storage configuration. See the
+and the supported local-path storage backend. Storage resource names may vary
+when the DataStore endpoints and Kubernetes owner references consistently
+identify the same etcd workload. See the
 [management and storage prerequisites](dpf-discovery.md#check-hbn-bgp-prerequisites).
 Launch Kit checks these components and their access; this deployment command
 does not install them.

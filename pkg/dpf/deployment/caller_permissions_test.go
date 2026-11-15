@@ -66,6 +66,20 @@ func TestCheckCallerPermissionsCoversRetainedManagementPlan(t *testing.T) {
 	assertCallerReview(t, harness.reviews, func(review callerReview) bool {
 		return review.Spec.ResourceAttributes != nil && review.Spec.ResourceAttributes.Verb == "create" && review.Spec.ResourceAttributes.Resource == "pods" && review.Spec.ResourceAttributes.Subresource == "portforward" && review.Spec.ResourceAttributes.Namespace == "dpf-operator-system"
 	})
+	for _, resource := range []string{"validatingwebhookconfigurations", "mutatingwebhookconfigurations"} {
+		assertCallerReview(t, harness.reviews, func(review callerReview) bool {
+			a := review.Spec.ResourceAttributes
+			return a != nil && a.Verb == "list" && a.Group == "admissionregistration.k8s.io" && a.Resource == resource && a.Namespace == ""
+		})
+	}
+	assertCallerReview(t, harness.reviews, func(review callerReview) bool {
+		a := review.Spec.ResourceAttributes
+		return a != nil && a.Verb == "list" && a.Resource == "services" && a.Namespace == "cert-manager"
+	})
+	assertCallerReview(t, harness.reviews, func(review callerReview) bool {
+		a := review.Spec.ResourceAttributes
+		return a != nil && a.Verb == "list" && a.Group == "apps" && a.Resource == "deployments" && a.Namespace == ""
+	})
 	for _, verb := range []string{"get", "create"} {
 		assertCallerReview(t, harness.reviews, func(review callerReview) bool {
 			attributes := review.Spec.ResourceAttributes
