@@ -653,10 +653,19 @@ inputs. Older bundles missing those inputs require regeneration.
 
 Native custom-resource reconciliation uses create-or-verify. Existing resources
 require matching bundle and desired-object ownership markers and complete spec
-equality after applying the retained CRD schemas' defaults. Status is checked
-separately. The pinned DPUCluster controller's deterministic admin-kubeconfig
+equality after applying the retained CRD schemas' defaults and the explicit
+admission normalization below. Status is checked separately. The pinned DPUCluster controller's deterministic admin-kubeconfig
 name is the narrowly permitted spec addition. Other conflicts stop execution;
 there is no implicit adoption, patch, deletion or rollback.
+
+The selected DPF API's typed DPUFlavor admission roundtrip can emit empty
+`grub`, `sysctl`, `ovs` and `containerdConfig` objects when omitted by a caller.
+After retained-schema validation and defaulting, reconciliation represents an
+absent one of these four fields as `{}` on both independent comparison copies,
+only for `provisioning.dpu.nvidia.com/v1alpha1` DPUFlavor. It preserves nonempty
+values and compares every other field; it does not recursively drop empty values
+or mutate the desired bundle or API response. The same rule applies to existing
+objects and create responses, preserving their ownership and identity checks.
 
 Known controller finalizers use a finite policy for each resource kind, including
 `dpu.nvidia.com/dpfoperatorconfig` on DPFOperatorConfig. Accepting controller
@@ -677,6 +686,8 @@ reconciliation, then persists the result before dependent work. A report-write
 failure stops execution. Readiness polling rechecks UID, ownership and desired
 content before evaluating current status; it never recreates a disappeared
 object. Reports record safe reasons instead of arbitrary API response bodies.
+Post-create conflicts retain their uncertain outcome and include only a fixed
+verification category, never remote values or an arbitrary error chain.
 These primitives do not complete the remaining tenant, enrollment, consumed
 artifact or HBN data-plane stages and do not enable the deploy CLI.
 

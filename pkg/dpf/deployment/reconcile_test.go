@@ -5,7 +5,9 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -333,6 +335,325 @@ func TestReconcilerRecognizesOnlyPinnedStaticControllerFinalizers(t *testing.T) 
 			}
 			if !reflect.DeepEqual(before.Object, object.Object) {
 				t.Fatal("controller metadata validation mutated its input")
+			}
+		})
+	}
+}
+
+// flavorAdmissionResponse models only the four value-struct JSON fields in the
+// pinned DPUFlavor admission type. It is a serialization oracle, not production
+// normalization; test inputs contain no other fields that it could discard.
+func flavorAdmissionResponse(t *testing.T, marked *unstructured.Unstructured) *unstructured.Unstructured {
+	t.Helper()
+	var spec struct {
+		Grub struct {
+			KernelParameters []string `json:"kernelParameters,omitempty"`
+		} `json:"grub,omitempty"`
+		Sysctl struct {
+			Parameters []string `json:"parameters,omitempty"`
+		} `json:"sysctl,omitempty"`
+		OVS struct {
+			RawConfigScript string `json:"rawConfigScript,omitempty"`
+		} `json:"ovs,omitempty"`
+		ContainerdConfig struct {
+			RegistryEndpoint string `json:"registryEndpoint,omitempty"`
+		} `json:"containerdConfig,omitempty"`
+	}
+	data, err := json.Marshal(marked.Object["spec"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var admitted map[string]any
+	if err := json.Unmarshal(data, &admitted); err != nil {
+		t.Fatal(err)
+	}
+	response := marked.DeepCopy()
+	response.Object["spec"] = admitted
+	response.SetUID("flavor-created-uid")
+	response.SetResourceVersion("1")
+	response.SetGeneration(1)
+	return response
+}
+
+func flavorReconcileDesired(spec map[string]any) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1", "kind": "DPUFlavor",
+		"metadata": map[string]any{"name": "hbn-flavor", "namespace": "dpf-system"}, "spec": spec,
+	}}
+}
+
+func TestReconcilerDPUFlavorAdmissionCreateAndReadback(t *testing.T) {
+	r, _ := newReconcileFixture(t)
+	// These nonempty sections model the retained HBN shape. The other two
+	// sections are omitted, while typed admission serializes them as {}.
+	desired := flavorReconcileDesired(map[string]any{
+		"grub": map[string]any{"kernelParameters": []any{"console=ttyAMA0"}},
+		"ovs":  map[string]any{"rawConfigScript": "echo hbn-test"},
+	})
+	before := desired.DeepCopy()
+	client := &reconcileFixture{objects: map[string]*unstructured.Unstructured{}}
+	client.create = func(marked *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+		response := flavorAdmissionResponse(t, marked)
+		client.objects[reconcileKey(marked)] = response.DeepCopy()
+		return response, nil
+	}
+	created, disposition, err := r.Ensure(context.Background(), client, desired)
+	if err != nil || disposition != DispositionCreated || created == nil {
+		t.Fatalf("typed admission create rejected: disposition=%s err=%v", disposition, err)
+	}
+	for _, field := range []string{"sysctl", "containerdConfig"} {
+		value, found, err := unstructured.NestedMap(created.Object, "spec", field)
+		if err != nil || !found || len(value) != 0 {
+			t.Fatalf("serialization oracle omitted empty struct %s", field)
+		}
+	}
+	serverBefore := client.objects[reconcileKey(desired)].DeepCopy()
+	if err := r.Verify(desired, created); err != nil {
+		t.Fatalf("admitted readback rejected: %v", err)
+	}
+	existing, disposition, err := r.Ensure(context.Background(), client, desired)
+	if err != nil || disposition != DispositionExisting || existing == nil || client.creates != 1 {
+		t.Fatalf("existing admitted object rejected or recreated: disposition=%s creates=%d err=%v", disposition, client.creates, err)
+	}
+	if !reflect.DeepEqual(before.Object, desired.Object) || !reflect.DeepEqual(serverBefore.Object, client.objects[reconcileKey(desired)].Object) {
+		t.Fatal("verification changed caller or observed objects")
+	}
+}
+
+func fullFlavorSpec() map[string]any {
+	return map[string]any{
+		"grub":             map[string]any{"kernelParameters": []any{"console=ttyAMA0"}},
+		"sysctl":           map[string]any{"parameters": []any{"net.ipv4.ip_forward=1"}},
+		"ovs":              map[string]any{"rawConfigScript": "echo hbn-test"},
+		"containerdConfig": map[string]any{"registryEndpoint": "https://registry.example.test"},
+	}
+}
+
+func TestReconcilerDPUFlavorAdmissionFourSectionMatrix(t *testing.T) {
+	r, _ := newReconcileFixture(t) // Immutable schema compilation shared by rows.
+	for _, field := range []string{"grub", "sysctl", "ovs", "containerdConfig", "all-omitted"} {
+		t.Run(field, func(t *testing.T) {
+			spec := fullFlavorSpec()
+			if field == "all-omitted" {
+				spec = map[string]any{}
+			} else {
+				delete(spec, field)
+			}
+			desired := flavorReconcileDesired(spec)
+			marked, err := r.markedDesired(desired)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current := flavorAdmissionResponse(t, marked)
+			beforeDesired, beforeCurrent := desired.DeepCopy(), current.DeepCopy()
+			client := &reconcileFixture{objects: map[string]*unstructured.Unstructured{reconcileKey(desired): current.DeepCopy()}}
+			if _, disposition, err := r.Ensure(context.Background(), client, desired); err != nil || disposition != DispositionExisting || client.creates != 0 {
+				t.Fatalf("existing admission object rejected: disposition=%s err=%v", disposition, err)
+			}
+			if err := r.Verify(desired, current); err != nil {
+				t.Fatalf("schema-valid admitted field %s rejected: %v", field, err)
+			}
+			if !reflect.DeepEqual(beforeDesired.Object, desired.Object) || !reflect.DeepEqual(beforeCurrent.Object, current.Object) || !reflect.DeepEqual(beforeCurrent.Object, client.objects[reconcileKey(desired)].Object) {
+				t.Fatal("admission comparison changed input maps")
+			}
+		})
+	}
+}
+
+func TestReconcilerDPUFlavorAdmissionPreservesSemanticAndOwnershipConflicts(t *testing.T) {
+	r, _ := newReconcileFixture(t)
+	for _, tc := range []struct {
+		name    string
+		prepare func(*unstructured.Unstructured)
+		change  func(*unstructured.Unstructured)
+	}{
+		{name: "grub content", change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedStringSlice(o.Object, []string{"console=foreign"}, "spec", "grub", "kernelParameters")
+		}},
+		{name: "sysctl content", change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedStringSlice(o.Object, []string{"net.ipv4.ip_forward=0"}, "spec", "sysctl", "parameters")
+		}},
+		{name: "ovs content", change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, "echo foreign", "spec", "ovs", "rawConfigScript")
+		}},
+		{name: "containerd content", change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, "https://foreign.example.test", "spec", "containerdConfig", "registryEndpoint")
+		}},
+		{name: "nonempty to empty", change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedMap(o.Object, map[string]any{}, "spec", "sysctl")
+		}},
+		{name: "nonempty to missing", change: func(o *unstructured.Unstructured) { unstructured.RemoveNestedField(o.Object, "spec", "grub") }},
+		{name: "null follows retained schema", change: func(o *unstructured.Unstructured) { _ = unstructured.SetNestedField(o.Object, nil, "spec", "sysctl") }},
+		{name: "wrong section type", change: func(o *unstructured.Unstructured) { _ = unstructured.SetNestedField(o.Object, false, "spec", "sysctl") }},
+		{name: "wrong section list", change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedSlice(o.Object, []any{}, "spec", "containerdConfig")
+		}},
+		{name: "unknown empty field", change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedMap(o.Object, map[string]any{}, "spec", "unrecognizedEmpty")
+		}},
+		{name: "unqualified known empty object", change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedMap(o.Object, map[string]any{}, "spec", "serviceReadiness")
+		}},
+		{name: "explicit false", prepare: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"portNumber": int64(0), "dhcp": false}}, "spec", "hostNetworkInterfaceConfigs")
+		}, change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"portNumber": int64(0)}}, "spec", "hostNetworkInterfaceConfigs")
+		}},
+		{name: "explicit zero", prepare: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"portNumber": int64(0)}}, "spec", "hostNetworkInterfaceConfigs")
+		}, change: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"portNumber": int64(1)}}, "spec", "hostNetworkInterfaceConfigs")
+		}},
+		{name: "explicit empty list", prepare: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedSlice(o.Object, []any{}, "spec", "bfcfgParameters")
+		}, change: func(o *unstructured.Unstructured) {
+			unstructured.RemoveNestedField(o.Object, "spec", "bfcfgParameters")
+		}},
+		{name: "namespace", change: func(o *unstructured.Unstructured) { o.SetNamespace("foreign") }},
+		{name: "api version", change: func(o *unstructured.Unstructured) { o.SetAPIVersion("provisioning.dpu.nvidia.com/v1alpha2") }},
+		{name: "kind", change: func(o *unstructured.Unstructured) { o.SetKind("DPUFlavorTemplate") }},
+		{name: "ownership marker", change: func(o *unstructured.Unstructured) {
+			a := o.GetAnnotations()
+			a[IntentDigestAnnotation] = "sha256:" + strings.Repeat("f", 64)
+			o.SetAnnotations(a)
+		}},
+		{name: "owner", change: func(o *unstructured.Unstructured) {
+			o.Object["metadata"].(map[string]any)["ownerReferences"] = []any{map[string]any{"apiVersion": "v1", "kind": "Namespace", "name": "foreign", "uid": "foreign"}}
+		}},
+		{name: "unknown finalizer", change: func(o *unstructured.Unstructured) { o.SetFinalizers([]string{"untrusted.example/finalizer"}) }},
+		{name: "duplicate finalizer", change: func(o *unstructured.Unstructured) {
+			o.SetFinalizers([]string{"dpu.nvidia.com/dpudeployment", "dpu.nvidia.com/dpudeployment"})
+		}},
+		{name: "cross kind finalizer", change: func(o *unstructured.Unstructured) { o.SetFinalizers([]string{"dpu.nvidia.com/dpfoperatorconfig"}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			desired := flavorReconcileDesired(fullFlavorSpec())
+			if tc.prepare != nil {
+				tc.prepare(desired)
+			}
+			current, err := r.markedDesired(desired)
+			if err != nil {
+				t.Fatalf("invalid negative fixture: %v", err)
+			}
+			current.SetUID("existing-flavor")
+			current.SetResourceVersion("4")
+			tc.change(current)
+			beforeDesired, beforeCurrent := desired.DeepCopy(), current.DeepCopy()
+			client := &reconcileFixture{objects: map[string]*unstructured.Unstructured{reconcileKey(desired): current.DeepCopy()}}
+			_, disposition, err := r.Ensure(context.Background(), client, desired)
+			if err == nil || disposition != DispositionExisting || client.creates != 0 {
+				t.Fatalf("conflict accepted/adopted: disposition=%s creates=%d err=%v", disposition, client.creates, err)
+			}
+			if !reflect.DeepEqual(beforeDesired.Object, desired.Object) || !reflect.DeepEqual(beforeCurrent.Object, current.Object) || !reflect.DeepEqual(beforeCurrent.Object, client.objects[reconcileKey(desired)].Object) {
+				t.Fatal("failed comparison changed input")
+			}
+		})
+	}
+}
+
+func TestDPUFlavorAdmissionDefaultsAreMissingOnlyAndExactScope(t *testing.T) {
+	for _, value := range []any{nil, false, int64(0), []any{}, map[string]any{"present": false}} {
+		spec := map[string]any{}
+		for _, field := range []string{"grub", "sysctl", "ovs", "containerdConfig"} {
+			spec[field] = value
+		}
+		object := flavorReconcileDesired(spec)
+		before := object.DeepCopy()
+		defaultDPUFlavorAdmissionObjects(object)
+		if !reflect.DeepEqual(before.Object, object.Object) {
+			t.Fatal("canonicalizer overwrote an explicitly present value")
+		}
+	}
+	for _, change := range []func(*unstructured.Unstructured){
+		func(o *unstructured.Unstructured) { o.SetKind("DPUFlavorTemplate") },
+		func(o *unstructured.Unstructured) { o.SetAPIVersion("provisioning.dpu.nvidia.com/v1alpha2") },
+		func(o *unstructured.Unstructured) { delete(o.Object, "spec") },
+		func(o *unstructured.Unstructured) { o.Object["spec"] = map[string]any(nil) },
+	} {
+		object := flavorReconcileDesired(map[string]any{})
+		change(object)
+		before := object.DeepCopy()
+		defaultDPUFlavorAdmissionObjects(object)
+		if !reflect.DeepEqual(before.Object, object.Object) {
+			t.Fatal("canonicalizer expanded beyond present exact flavor spec")
+		}
+	}
+	defaultDPUFlavorAdmissionObjects(nil)
+}
+
+func TestPostCreateConflictMessageKeepsOnlyFiniteVerificationCategory(t *testing.T) {
+	var typedNil *ReconciliationError
+	for _, tc := range []struct {
+		name     string
+		err      error
+		category string
+	}{
+		{"known content", &ReconciliationError{ReasonCode: "RESOURCE_CONTENT_CONFLICT", Message: "private-message-canary", cause: errors.New("private-cause-canary")}, "RESOURCE_CONTENT_CONFLICT"},
+		{"wrapped metadata", fmt.Errorf("private-wrapper-canary: %w", &ReconciliationError{ReasonCode: "RESOURCE_METADATA_CONFLICT", Message: "private-message-canary"}), "RESOURCE_METADATA_CONFLICT"},
+		{"unknown code", &ReconciliationError{ReasonCode: "private-code-canary", Message: "private-message-canary"}, ""},
+		{"code suffix", &ReconciliationError{ReasonCode: "RESOURCE_CONTENT_CONFLICT_private-code-canary"}, ""},
+		{"non verification category", &ReconciliationError{ReasonCode: "RESOURCE_CREATE_UNCERTAIN"}, ""},
+		{"arbitrary error", errors.New("private-error-canary"), ""},
+		{"typed nil", typedNil, ""}, {"nil", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			message := postCreateConflictMessage(tc.err)
+			if strings.Contains(message, "private-") || !strings.Contains(message, "re-read before retry") {
+				t.Fatal("unsafe or incomplete post-create message")
+			}
+			if tc.category != "" && !strings.Contains(message, "("+tc.category+")") {
+				t.Fatal("known verifier category omitted")
+			}
+			if tc.category == "" && strings.Contains(message, "(") {
+				t.Fatal("unknown verifier category exposed")
+			}
+		})
+	}
+}
+
+func TestReconcilerPostCreateConflictReportsSafeCategoryAndKeepsAmbiguity(t *testing.T) {
+	r, _ := newReconcileFixture(t)
+	for _, tc := range []struct {
+		name, category string
+		change         func(*unstructured.Unstructured)
+	}{
+		{"content", "RESOURCE_CONTENT_CONFLICT", func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, "private-content-canary", "spec", "ovs", "rawConfigScript")
+		}},
+		{"metadata", "RESOURCE_METADATA_CONFLICT", func(o *unstructured.Unstructured) {
+			a := o.GetAnnotations()
+			a["untrusted.example/extra"] = "private-annotation-canary"
+			o.SetAnnotations(a)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &reconcileFixture{objects: map[string]*unstructured.Unstructured{}}
+			client.create = func(marked *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+				marked.SetUID("created-flavor")
+				marked.SetResourceVersion("1")
+				tc.change(marked)
+				return marked, nil
+			}
+			desired := flavorReconcileDesired(fullFlavorSpec())
+			created, disposition, err := r.Ensure(context.Background(), client, desired)
+			if err == nil || created == nil || disposition != DispositionCreated || client.creates != 1 {
+				t.Fatalf("post-create ambiguity changed: disposition=%s err=%v", disposition, err)
+			}
+			var outer *ReconciliationError
+			if !errors.As(err, &outer) || outer.ReasonCode != "RESOURCE_POST_CREATE_CONFLICT" || !strings.Contains(outer.Message, "("+tc.category+")") || strings.Contains(err.Error(), "private-") {
+				t.Fatal("post-create category missing or private data exposed")
+			}
+			cause := errors.Unwrap(err)
+			var verification *ReconciliationError
+			if cause == nil || !errors.As(cause, &verification) || verification.ReasonCode != tc.category || !errors.Is(err, cause) {
+				t.Fatal("post-create verification cause lost")
 			}
 		})
 	}

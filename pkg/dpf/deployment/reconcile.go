@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -145,7 +146,7 @@ func (r *Reconciler) Ensure(ctx context.Context, client ResourceClient, desired 
 		return nil, DispositionUncertain, reconcileError("RESOURCE_CREATE_RESPONSE_MISSING", "create succeeded without an object response; re-read before retry", nil)
 	}
 	if err := r.Verify(desired, created); err != nil {
-		return created, DispositionCreated, reconcileError("RESOURCE_POST_CREATE_CONFLICT", "resource was created but response verification failed; re-read before retry", err)
+		return created, DispositionCreated, reconcileError("RESOURCE_POST_CREATE_CONFLICT", postCreateConflictMessage(err), err)
 	}
 	return created, DispositionCreated, nil
 }
@@ -196,6 +197,7 @@ func (r *Reconciler) Verify(desired, current *unstructured.Unstructured) error {
 		return reconcileError("RESOURCE_CONTENT_CONFLICT", "current DPUCluster controller field differs from the expected value", err)
 	}
 	for _, object := range []*unstructured.Unstructured{want, got} {
+		defaultDPUFlavorAdmissionObjects(object)
 		delete(object.Object, "metadata")
 		delete(object.Object, "status")
 	}
@@ -203,6 +205,41 @@ func (r *Reconciler) Verify(desired, current *unstructured.Unstructured) error {
 		return reconcileError("RESOURCE_CONTENT_CONFLICT", "current resource content differs from desired", nil)
 	}
 	return nil
+}
+
+// DPF 26.8's no-op DPUFlavor webhook still serializes these nonpointer
+// value-struct sections as {}. Compare that wire representation only after
+// schema validation/pruning checks; never overwrite a present value, including
+// null. This is intentionally not general webhook or empty-object normalization.
+func defaultDPUFlavorAdmissionObjects(object *unstructured.Unstructured) {
+	if object == nil || object.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || object.GetKind() != "DPUFlavor" {
+		return
+	}
+	spec, ok := object.Object["spec"].(map[string]any)
+	if !ok || spec == nil {
+		return
+	}
+	for _, field := range []string{"grub", "sysctl", "ovs", "containerdConfig"} {
+		if _, present := spec[field]; !present {
+			spec[field] = map[string]any{}
+		}
+	}
+}
+
+// Keep post-create ambiguity while naming only a verifier-owned finite category.
+// Messages, causes and arbitrary error strings may contain private API content.
+func postCreateConflictMessage(err error) string {
+	const prefix = "resource was created but response verification failed"
+	const suffix = "; re-read before retry"
+	var verification *ReconciliationError
+	if errors.As(err, &verification) && verification != nil {
+		switch verification.ReasonCode {
+		case "RECONCILER_INVALID", "DESIRED_OBJECT_INVALID", "RESOURCE_IDENTITY_MISMATCH", "RESOURCE_UNAVAILABLE",
+			"RESOURCE_OWNERSHIP_CONFLICT", "RESOURCE_METADATA_CONFLICT", "RESOURCE_SCHEMA_INVALID", "RESOURCE_CONTENT_CONFLICT":
+			return prefix + " (" + verification.ReasonCode + ")" + suffix
+		}
+	}
+	return prefix + suffix
 }
 
 func (r *Reconciler) markedDesired(desired *unstructured.Unstructured) (*unstructured.Unstructured, error) {

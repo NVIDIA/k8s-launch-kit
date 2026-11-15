@@ -226,7 +226,12 @@ The DPF native execution primitives implement create-or-verify for retained
 custom resources. Existing objects require the same bundle and intent markers,
 fixed identity, and complete defaulted spec equality against the retained
 release schemas. The selected release's deterministic DPUCluster kubeconfig
-addition is allowed; unrelated differences are conflicts. Namespace and Helm
+addition is allowed. After schema validation and defaulting, comparison also
+represents an omitted `grub`, `sysctl`, `ovs` or `containerdConfig` as an empty
+object on both independent copies of a
+`provisioning.dpu.nvidia.com/v1alpha1` DPUFlavor, matching its typed admission
+roundtrip. Nonempty values and all other content remain compared; recursive
+empty-value pruning is not allowed. Unrelated differences are conflicts. Namespace and Helm
 ownership remain separate operations. Standalone DPF deploy composes these
 operations with tenant, selected-device, activation, host-network and runtime
 checks. Resource creation alone does not prove those later stages succeeded.
