@@ -29,10 +29,10 @@ func verifyActivationBoundary(ctx context.Context, client activationStageClient,
 	return verifyActivationEnrollmentResources(ctx, client, prepared, controlPlane, selected, deploymentUID, journal)
 }
 
-// verifyActivationResourceBoundary is the read-only runtime policy. It retains
-// every control/resource check, including shared credentials and complete
-// selected ownership, without collecting physical BMC identity per measurement.
-// Mutation callers must use verifyActivationBoundary instead.
+// verifyActivationResourceBoundary refreshes every control/resource check,
+// including shared credentials and complete selected ownership. Runtime uses
+// it between observations; reset preparation also uses it after its dedicated
+// physical safety read. It does not establish physical readiness by itself.
 func verifyActivationResourceBoundary(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, selected []activationSelectedDevice, deploymentUID types.UID, objects []*unstructured.Unstructured, journal *executionJournal) error {
 	if err := verifyActivationControlResources(ctx, client, prepared, controlPlane, workload, objects, journal); err != nil {
 		return err

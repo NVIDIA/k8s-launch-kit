@@ -1297,6 +1297,12 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 				return verified, err
 			}
 			request.ResetSafetyExpiresAt = expires
+			// Reset-specific BMC reads refresh the physical proof, but can outlast
+			// the earlier tenant/workload/credential snapshot. Refresh that policy
+			// before claiming the action without repeating slow physical reads.
+			if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
+				return verified, err
+			}
 			// The BMC read can take time. A different request or restarted Arm
 			// invalidates its shutdown proof before the one-time claim is created.
 			current, err = observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
@@ -1372,6 +1378,12 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			}
 			if !foundItem {
 				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_SCOPE_INVALID", "A selected DPUNode could not be mapped to the authenticated host request.", nil)
+			}
+			// Reconnection and current-Arm observation can take minutes, including
+			// on resume. ACK authorizes controller progress, so recheck the complete
+			// policy before reading the exact node/round for the conditional patch.
+			if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal, requestTimeout); err != nil {
+				return verified, err
 			}
 			node, err := client.Get(ctx, dpuNodeIdentity(deployment.GetNamespace(), nodeName))
 			if err != nil || node == nil || node.GetUID() != item.receipt.DPUNodeUID || validateEnrolledNode(node, item.item, deployment.GetNamespace()) != nil {
