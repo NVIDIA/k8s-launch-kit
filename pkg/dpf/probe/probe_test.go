@@ -103,7 +103,7 @@ var _ = Describe("probe integrity", func() {
 		})
 		assets := Assets{Qualified: true, Repository: "repo/probe", ManifestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PlatformDigests: map[string]string{"amd64": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
 		runner := Runner{Assets: assets, Journal: func([]Receipt) error { return nil }}
-		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "run"}, Management: &inventory.Management{Nodes: []inventory.Node{}}, Evidence: map[string]inventory.Evidence{}}
+		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "run"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "control-plane", UID: "node-uid", Ready: true, OS: "linux", Architecture: "amd64"}}}, Evidence: map[string]inventory.Evidence{}}
 		_, _, e := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 		Expect(e).To(MatchError(ContainSubstring("admission changed")))
 		for _, a := range client.Actions() {

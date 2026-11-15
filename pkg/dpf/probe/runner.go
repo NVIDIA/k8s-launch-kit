@@ -77,12 +77,23 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 	if runner.Journal == nil {
 		return nil, cleanup, fmt.Errorf("probe resource journal required")
 	}
+	if ctx == nil || mg.Client == nil || mg.REST == nil || inv == nil || inv.Management == nil || len(inv.Management.Nodes) == 0 {
+		return nil, cleanup, fmt.Errorf("probe requires management access, identity and node inventory")
+	}
+	for _, node := range inv.Management.Nodes {
+		if !node.Ready || node.Unschedulable || node.OS != "linux" || runner.Assets.PlatformDigests[node.Architecture] == "" {
+			return nil, cleanup, fmt.Errorf("management node cannot run the qualified probe")
+		}
+	}
+	api, err := url.Parse(mg.REST.Host)
+	if err != nil || api.Scheme != "https" || api.Host == "" || api.User != nil || api.RawQuery != "" || api.Fragment != "" {
+		return nil, cleanup, fmt.Errorf("probe requires a valid HTTPS management API endpoint")
+	}
 	ns, err := mg.Client.CoreV1().Namespaces().Get(ctx, mg.Namespace, metav1.GetOptions{})
 	if err != nil || ns.DeletionTimestamp != nil {
 		return nil, cleanup, fmt.Errorf("probe namespace unavailable")
 	}
 	request := Request{RequestTimeout: r.RequestTimeout, Version: ProtocolVersion, RunID: inv.Collection.RunID, Deadline: time.Now().Add(r.Timeout), Destinations: []Destination{}}
-	api, _ := url.Parse(mg.REST.Host)
 	request.Destinations = append(request.Destinations, Destination{ID: "management-api", Endpoint: api.Scheme + "://" + api.Host, Path: path.Join("/", api.Path, "version"), ServerName: mg.REST.ServerName, CA: mg.REST.CAData})
 	for _, t := range r.Targets {
 		if t.Role == "dpus" {
@@ -225,9 +236,6 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 		return nil, cleanup, err
 	}
 	for _, node := range inv.Management.Nodes {
-		if !node.Ready || node.Unschedulable || node.OS != "linux" || runner.Assets.PlatformDigests[node.Architecture] == "" {
-			return rows, cleanup, fmt.Errorf("management node cannot run the qualified probe")
-		}
 		for _, mode := range []string{"pod-network", "node-network"} {
 			podName := name + "-" + strings.TrimPrefix(inventory.Digest("node", node.UID+mode), "sha256:")[:12]
 			image := runner.Assets.Repository
