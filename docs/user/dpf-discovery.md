@@ -13,11 +13,13 @@ host/DPU Redfish or SSH endpoints. The DPF estate is independent of Host network
 Inventory mode is the default and can run before Kubernetes exists. An explicitly
 supplied management kubeconfig adds management observations and must work if supplied.
 
-DPF discovery remains an **experimental** capability. Inventory success means
-selected sources were read and the requested inventory was saved; it does not
-mean DPF provisioning readiness or hardware qualification. Missing optional card
-metadata remains visible. Hardware support and deployment readiness checks do
-not block inventory collection.
+The standalone DPF workflow supports inventory discovery, HBN-BGP readiness,
+artifact generation and deployment. The current BF4/HBN-BGP cohort remains beta;
+command availability does not qualify every hardware and release combination.
+Inventory success means selected sources were read and the requested inventory
+was saved; it does not mean provisioning readiness or hardware qualification.
+Missing optional card metadata remains visible. Hardware support and deployment
+readiness checks do not block inventory collection.
 
 Discovery defaults to `inventory` mode, including with HBN-BGP. Supply a
 kubeconfig to add management topology observations. Explicitly select
@@ -83,8 +85,8 @@ A matching registered tenant confirms its identity and configured endpoint only.
 It does not prove that its control plane, virtual IP or API is currently healthy;
 those require separate live checks before reuse.
 
-Use the build that produced an experimental inventory, or a newer compatible
-build, for subsequent commands. Older builds can reject newly added fields.
+Use the build that produced the inventory, or a newer compatible build, for
+subsequent commands. Older builds can reject newly added fields.
 
 ## Inputs and invocation
 
@@ -837,9 +839,9 @@ nonzero status. A complete physical inventory can still be saved for diagnosis.
 The report names each failed check and its reason; the inventory stores the
 resolved profile and selected switch observations under `inventory.hbn`.
 
-The current preview also keeps unverified provisioning, artifact, host and
-routing-policy prerequisites blocked. It does not authorize deployment from a
-successful fabric read. Live BGP adjacency, advertised routes and workload
+The HBN-BGP readiness assessment keeps unverified provisioning, artifact, host
+and routing-policy prerequisites blocked. It does not authorize deployment from
+a successful fabric read. Live BGP adjacency, advertised routes and workload
 traffic must be checked after deployment; discovery cannot prove those outcomes
 before the DPU services exist.
 

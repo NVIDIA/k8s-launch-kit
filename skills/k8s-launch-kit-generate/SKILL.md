@@ -41,8 +41,11 @@ Generation reads the saved inventory and downloads the pinned operator/HBN chart
 on the CLI machine. It does not open endpoint credentials or access Kubernetes,
 hosts, DPUs or switches. It preserves source YAML and atomically publishes a complete
 local bundle; an identical existing bundle is unchanged and a different one is rejected.
-DPF `--deploy` and deployment dry-run remain unavailable; generation does not prove
-live readiness. Host profile flags are rejected for this target.
+DPF does not support combining generation and deployment with `generate --deploy`;
+use the separate `l8k deploy --target dpf` command after reviewing the bundle.
+The DPF target also does not support deployment dry-run. Generation does not prove
+live readiness. The current BF4/HBN-BGP cohort remains beta, and Host profile flags
+are rejected for this target.
 
 ## Usage
 

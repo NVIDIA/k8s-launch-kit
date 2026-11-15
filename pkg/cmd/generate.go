@@ -47,9 +47,11 @@ from a cluster configuration file.
 
 Supports SR-IOV, host-device, RDMA-shared, IPoIB, MacVLAN, and Spectrum-X profiles.
 With --target dpf, generates HBN-BGP artifacts from a DPF site file and saved inventory.
-DPF requires explicit --user-config and --save-deployment-files; --deploy is not yet available.
+DPF requires explicit --user-config and --save-deployment-files. Generate and
+review the bundle, then use 'l8k deploy --target dpf' as a separate command.
+DPF does not support --deploy or --dry-run during generation.
 File-backed configs remain unchanged; the resolved config is saved with the deployment bundle.
-Optionally deploy the generated manifests with --deploy.`,
+For the Host target, optionally deploy the generated manifests with --deploy.`,
 	Example: `  # Independent DPF HBN-BGP bundle
   l8k generate --target dpf --use-case hbn-bgp \
     --user-config dpf-site.yaml --save-deployment-files ./hbn-bgp
@@ -188,8 +190,8 @@ func init() {
 	setFlagGroup(generateCmd, "enable-doca-driver", GroupGeneration)
 	setFlagGroup(generateCmd, "workload-manifest", GroupGeneration)
 
-	setFlagGroup(generateCmd, "deploy", GroupExecution)
-	setFlagGroup(generateCmd, "dry-run", GroupExecution)
+	setFlagGroup(generateCmd, "deploy", GroupDeploy)
+	setFlagGroup(generateCmd, "dry-run", GroupDeploy)
 	setFlagGroup(generateCmd, "overwrite-existing", GroupDeploy)
 	markGenerateTargetScopes()
 }

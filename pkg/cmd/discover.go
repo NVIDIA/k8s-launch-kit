@@ -46,8 +46,8 @@ NICs, and probes OFED-dependent modules. With --user-config, it replaces
 clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.
 
 With --target dpf, inspect the independent management/BMC estate using ordinary
-YAML. The inventory preview requires discovery.probes.mode: inventory; management
-probes and hardware support require qualified release assets.`,
+YAML. Inventory-only discovery requires discovery.probes.mode: inventory;
+management probes and hardware support require qualified release assets.`,
 		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml

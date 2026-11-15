@@ -268,7 +268,8 @@ func targetErrorSuggestion(err error) string {
 
 func markRootTargetScopes() {
 	setFlagTargetScope(rootCmd, []target.Name{target.Host, target.DPF},
-		"target", "output", "log-level", "log-file", "yes", "quiet", "dry-run", "deploy", "deploy-timeout")
+		"target", "output", "log-level", "log-file", "yes", "quiet", "dry-run", "deploy-timeout")
+	setFlagTargetScope(rootCmd, []target.Name{target.Host}, "deploy")
 	setFlagTargetScope(rootCmd, []target.Name{target.Host},
 		"flavor", "enabled-plugins", "discover-cluster-config", "save-cluster-config", "user-config",
 		"network-operator-namespace", "network-operator-release", "skip-network-operator-helm", "fabric", "deployment-type",
@@ -294,7 +295,7 @@ func markDiscoverTargetScopes() {
 }
 
 func markGenerateTargetScopes() {
-	setFlagTargetScope(generateCmd, []target.Name{target.Host, target.DPF}, "deploy", "dry-run")
+	setFlagTargetScope(generateCmd, []target.Name{target.Host}, "deploy", "dry-run")
 	setFlagTargetScope(generateCmd, []target.Name{target.Host},
 		"flavor", "user-config", "fabric", "deployment-type", "multirail", "routing", "ignore-arp",
 		"spectrum-x", "multiplane-mode", "number-of-planes", "topology-scheme", "ip-version",

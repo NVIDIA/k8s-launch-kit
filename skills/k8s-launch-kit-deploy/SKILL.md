@@ -16,6 +16,10 @@ equivalent. For the independent DPU cluster, use the DPF procedure below.
 
 ## DPF HBN-BGP
 
+The standalone DPF command path is available; the current BF4/HBN-BGP cohort
+remains beta. A successful run checks the selected provisioning, BGP, route and
+traffic conditions and does not qualify other hardware or release combinations.
+
 Read [DPF deployment](../../docs/user/dpf-deployment.md) and its
 [workflow diagram](../../docs/user/dpf-workflows.md#hbn-bgp-deployment).
 Run the explicitly selected DPF target with a reviewed generated bundle:

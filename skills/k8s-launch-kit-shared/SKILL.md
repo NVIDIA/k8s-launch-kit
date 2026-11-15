@@ -67,15 +67,18 @@ The root command `l8k --discover-cluster-config ...` still works for backward-co
 the `host` target. Existing invocations must omit `--target` unless the user
 explicitly requests it; `--target host` is an equivalent explicit form.
 
-The `dpf` target exposes experimental inventory discovery through explicit
+The `dpf` target supports standalone inventory discovery through explicit
 SSH/Redfish sources, optional Linux/amd64 management-network probes, HBN-BGP
-prerequisite checks, and HBN-BGP artifact generation.
-Generation needs explicit `--user-config` and `--save-deployment-files`; it does
-not deploy or establish runtime readiness. Standalone DPF deploy applies a retained
-HBN-BGP bundle and checks provisioning, BGP, routes and cross-host traffic. It requires
-explicit site and bundle paths; use the deploy skill and DPF deployment guide.
-DPF standalone validate and pipeline remain unavailable. Use `l8k schema` and inspect
-`targets[].phases` before selecting any non-host target. Host-only flags such as
+prerequisite checks, artifact generation, and deployment. The current BF4/HBN-BGP
+cohort remains beta; command availability does not qualify every hardware and
+release combination.
+Generation needs explicit `--user-config` and `--save-deployment-files`; review
+its bundle before running the separate deploy command. Standalone DPF deploy
+applies that retained HBN-BGP bundle and checks provisioning, BGP, routes and
+cross-host traffic. It requires explicit site and bundle paths; use the deploy
+skill and DPF deployment guide. DPF standalone validate and the root pipeline
+remain unavailable. Use `l8k schema` to inspect phase availability before selecting
+any non-host target. Host-only flags such as
 `--fabric`, `--kubeconfig`, and the Network Operator/Spectrum-X flags are
 rejected when explicitly combined with another target.
 
@@ -98,7 +101,7 @@ root-only, `--deploy-timeout` belongs to root/standalone deploy, and
 
 | Flag | Description |
 |------|-------------|
-| `--target <NAME>` | Lifecycle target: `host` (default); `dpf` offers experimental discovery and HBN-BGP generation |
+| `--target <NAME>` | Lifecycle target: `host` (default); `dpf` supports standalone discovery, HBN-BGP generation and deployment |
 | `--kubeconfig <PATH>` | Path to kubeconfig file (optional — falls back to `$KUBECONFIG` env var) |
 | `--user-config <PATH>` | Path to user-supplied l8k-config.yaml |
 | `--output <FORMAT>` | Output format: `text` (default), `json` |

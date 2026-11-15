@@ -4,12 +4,13 @@ Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on K
 Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
-The current lifecycle uses the `host` target by default. The `dpf` target provides [experimental discovery](docs/user/dpf-discovery.md), [HBN-BGP artifact generation](docs/user/dpf-generation.md) and [standalone deployment](docs/user/dpf-deployment.md) for a separate DPU estate. DPF standalone validation and the root pipeline remain unavailable. DPF deploy can resume its recorded initial operation with `--resume`; see [recovery](docs/user/dpf-deployment.md#read-the-result-and-recover-from-a-stop).
+The current lifecycle uses the `host` target by default. For a separate DPU estate, the `dpf` target supports standalone discovery, HBN-BGP artifact generation, and deployment with provisioning and runtime checks. The current BF4/HBN-BGP cohort remains beta; command availability does not qualify every hardware and release combination. DPF standalone validation and the root pipeline remain unavailable. DPF deploy can resume its recorded initial operation with `--resume`; see [recovery](docs/user/dpf-deployment.md#read-the-result-and-recover-from-a-stop).
 DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
 management cluster. Inventory success is separate from provisioning readiness.
-DPF BMC discovery verifies TLS by default; lab endpoints can explicitly opt in to
-`tls.insecureSkipVerify: true`, recorded in discovery reports. See the preview guide
-for its scope and security implications.
+DPF BMC discovery verifies TLS by default. A site can explicitly set
+`tls.insecureSkipVerify: true`; discovery reports when a connection was not
+verified. See the [DPF discovery guide](docs/user/dpf-discovery.md) for scope
+and security implications.
 
 Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued releases;
 RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform

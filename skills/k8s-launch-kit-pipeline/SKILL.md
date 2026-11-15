@@ -14,8 +14,10 @@ metadata:
 Run discovery + generation + deployment as a single command.
 
 The pipeline operates on the default `host` target. Omitting `--target` keeps
-the established behavior; `--target host` is equivalent. Do not select `dpf`
-until `l8k schema` reports all required DPF phases as available.
+the established behavior; `--target host` is equivalent. The DPF target does
+not support this composite pipeline. For DPF, run the supported standalone
+discover, generate, and deploy commands with separate review between stages;
+see the [DPF workflow](../../docs/user/dpf-workflows.md).
 The root command snapshots its arguments and runs the complete concrete Host
 pipeline as one bound target operation.
 

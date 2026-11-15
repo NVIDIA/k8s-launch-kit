@@ -20,6 +20,10 @@ firmware writers and host maintenance. Keep the CLI machine online and able to
 reach the management cluster and selected hosts during the run; host reboots can
 interrupt access temporarily.
 
+The current BF4/HBN-BGP cohort remains beta. A successful deployment reports the
+selected provisioning, BGP, route and traffic checks; it does not qualify other
+hardware or release combinations.
+
 ## Management-cluster prerequisites
 
 Before starting, install versions compatible with the selected DPF release of
@@ -113,7 +117,7 @@ adoption path.
 | Create the DPU control plane | DPF and its controllers create the selected tenant cluster on the management nodes; the CLI checks through management and tenant APIs. | The tenant API and backing prerequisites are available and match the plan. This does not mean selected DPUs are installed. |
 | Enroll selected cards | The CLI supplies the required credential and discovery targets; DPF contacts the selected BMCs. | Each selected DPU is enrolled with the intended device/host identity. The reviewed deployment selectors target those devices later; no manual label operation is required. |
 | Stage software and declare HBN | DPF caches the selected OS and PSID firmware; the CLI verifies artifact checksums and creates the selected flavor, IPAM, interface, service and DPUDeployment declarations through the management API. | Artifact bytes match the reviewed bundle and the declarations target only the selected devices and are accepted. Downloads and accepted objects do not prove installed software or a running service. |
-| Install and activate DPUs | DPF controllers install the OS and DPU agent. When DPF requests host maintenance, the CLI performs only a supported system reboot over the selected host access after checking the request and safe shutdown state. | The host and selected DPU return with the expected boot observations within the configured deployment timeout, and DPF reports them ready. |
+| Install and activate DPUs | DPF controllers install the OS and DPU agent. Before a requested host reboot, the CLI checks the request, safe shutdown state and current device, host and deployment prerequisites. After the host and DPU reconnect, it checks current prerequisites again before acknowledging the request. | The host and selected DPU return with the expected boot observations within the configured deployment timeout, and DPF reports them ready. |
 | Configure host workload networking | The CLI reads each actual DPU IPAM allocation through the tenant/management APIs and configures the matching host PF over host access. | The allocated address, selected interface, MTU and workload route are applied and verified while preserving management connectivity and the default route. |
 | Check HBN routing and traffic | The CLI reads the intended HBN containers and routing state through the tenant API, then probes selected hosts over host access. | Required BGP peers, remote workload routes and every directed ordinary and do-not-fragment (DF) traffic check pass. A one-host result cannot establish cross-host traffic. |
 

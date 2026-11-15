@@ -25,6 +25,9 @@ then run `l8k deploy --target dpf` with explicit `--user-config` and the generat
 
 ## Prepare the inputs
 
+The current BF4/HBN-BGP cohort remains beta. Generation success confirms the
+local bundle and its schemas; it does not qualify hardware or runtime behavior.
+
 Keep the inventory produced by discovery in `dpf-site.yaml`. It must identify each
 selected DPU, its exact host adapter, verified BMC administrator access and PSID,
 plus the management cluster identity and Kubernetes version. If the selection has

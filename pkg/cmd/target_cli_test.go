@@ -141,9 +141,11 @@ func TestImportantFlagScopes(t *testing.T) {
 	}{
 		{command: rootCmd, flag: "target", expected: []target.Name{target.Host, target.DPF}},
 		{command: rootCmd, flag: "output", expected: []target.Name{target.Host, target.DPF}},
+		{command: rootCmd, flag: "deploy", expected: []target.Name{target.Host}},
 		{command: rootCmd, flag: "fabric", expected: []target.Name{target.Host}},
 		{command: discoverCmd, flag: "kubeconfig", expected: []target.Name{target.Host}},
-		{command: generateCmd, flag: "deploy", expected: []target.Name{target.Host, target.DPF}},
+		{command: generateCmd, flag: "deploy", expected: []target.Name{target.Host}},
+		{command: generateCmd, flag: "dry-run", expected: []target.Name{target.Host}},
 		{command: deployCmd, flag: "dry-run", expected: []target.Name{target.Host, target.DPF}},
 		{command: deployCmd, flag: "user-config", expected: []target.Name{target.Host, target.DPF}},
 		{command: deployCmd, flag: "deployment-files", expected: []target.Name{target.Host, target.DPF}},

@@ -11,7 +11,7 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
-For the independent DPF preview, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md). Inventory is the default and uses explicit SSH/Redfish YAML without requiring Kubernetes. A supplied kubeconfig adds management observations; `discovery.probes.mode: management` explicitly requests pod/node network probes and requires the documented management-cluster prerequisites. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while selected-use-case eligibility and DPF authentication remain separate assessments. Do not infer hardware qualification from inventory success; do not run Host discovery against the DPF estate.
+For the standalone DPF workflow, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md). Inventory is the default and uses explicit SSH/Redfish YAML without requiring Kubernetes. A supplied kubeconfig adds management observations; `discovery.probes.mode: management` explicitly requests pod/node network probes and requires the documented management-cluster prerequisites. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while selected-use-case eligibility and DPF authentication remain separate assessments. The current BF4/HBN-BGP cohort remains beta; do not infer hardware qualification from command availability or inventory success, and do not run Host discovery against the DPF estate.
 
 `--use-case hbn-bgp` adds read-only Cumulus NVUE/LLDP/FRR switch inspection and
 defaults to inventory mode. Supply explicit switch credentials, pinned SSH
@@ -39,7 +39,7 @@ Keepalived endpoint does not reserve a VRRP ID through that resource.
 The explicit flag overrides and persists `dpf.useCase`; `dpf.hbn` overrides
 desired profile defaults. Read `readiness.state` separately from physical
 `discovery.outcome`: required unknown or mismatched prerequisites return nonzero
-even when physical inventory is saved. This preview keeps unverified provisioning
+even when physical inventory is saved. The readiness assessment keeps unverified provisioning
 prerequisites blocked. It never applies switch changes or treats LLDP names as
 authenticated DPU identity. See the HBN-BGP section of the discovery reference.
 

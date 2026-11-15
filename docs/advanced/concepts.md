@@ -12,8 +12,12 @@ deployment. An `l8k` binary version, a Network Operator release line, a
 Spectrum-X RA version, a Kubernetes/OpenShift flavor, a deployment profile,
 and a topology preset describe different choices. Pinning one does not pin the
 others. The `host` target provides the networking lifecycle described here.
-The separate `dpf` target provides [experimental inventory discovery](../user/dpf-workflows.md);
-[HBN-BGP generation](../user/dpf-generation.md) produces deployment artifacts. DPF deployment and validation remain unavailable.
+The separate `dpf` target supports standalone inventory discovery,
+[HBN-BGP generation](../user/dpf-generation.md), and
+[deployment](../user/dpf-deployment.md) with provisioning and runtime checks.
+The current BF4/HBN-BGP cohort remains beta. DPF standalone validation and the
+root pipeline remain unavailable; command availability does not qualify every
+hardware and release combination. See the [DPF workflow](../user/dpf-workflows.md).
 
 ## Hardware
 
