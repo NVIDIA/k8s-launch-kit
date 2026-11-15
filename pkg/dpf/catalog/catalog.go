@@ -8,8 +8,9 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 )
 
-// ProbeAssets pins the existing netshoot v0.16 image. This candidate exposes only
-// its Linux/amd64 platform; other architectures remain unavailable.
+// ProbeAssets pins the existing netshoot v0.16 image. The installed protocol is
+// supported on Linux/amd64 in pod and host networking; other architectures
+// remain unavailable.
 // No discovery image is built or published by Launch Kit.
 func ProbeAssets() probe.Assets {
 	return probe.Assets{
