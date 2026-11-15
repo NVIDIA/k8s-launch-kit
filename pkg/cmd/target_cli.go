@@ -68,7 +68,7 @@ func addTargetFlag(cmd *cobra.Command) {
 		&targetName,
 		"target",
 		string(target.Host),
-		"Deployment target: host (default) or dpf (experimental inventory discovery)",
+		"Deployment target: host (default) or dpf (inventory discovery only)",
 	)
 	setFlagGroup(cmd, "target", GroupTarget)
 	setFlagTargetScope(cmd, []target.Name{target.Host, target.DPF}, "target")

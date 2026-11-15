@@ -67,8 +67,12 @@ The root command `l8k --discover-cluster-config ...` still works for backward-co
 the `host` target. Existing invocations must omit `--target` unless the user
 explicitly requests it; `--target host` is an equivalent explicit form.
 
-The `dpf` target exposes experimental inventory discovery through explicit
-SSH/Redfish sources. Its provisioning phases remain unavailable. Do not attempt DPF provisioning. Use `l8k schema` and inspect
+The `dpf` target supports inventory discovery only in this version, using
+explicit SSH/Redfish sources. Inventory is the default and needs no kubeconfig;
+a supplied kubeconfig adds management-cluster observations. Explicit management
+network probes require diagnostic image assets that have passed Kubernetes runtime
+qualification. DPF generate, deploy, validate and the composite pipeline are
+unavailable; do not attempt DPF provisioning. Use `l8k schema` and inspect
 `targets[].phases` before selecting any non-host target. Host-only flags such as
 `--fabric`, `--kubeconfig`, and the Network Operator/Spectrum-X flags are
 rejected when explicitly combined with another target.
@@ -92,7 +96,7 @@ root-only, `--deploy-timeout` belongs to root/standalone deploy, and
 
 | Flag | Description |
 |------|-------------|
-| `--target <NAME>` | Lifecycle target: `host` (default); `dpf` offers experimental inventory discovery |
+| `--target <NAME>` | Lifecycle target: `host` (default); `dpf` supports inventory discovery only in this version |
 | `--kubeconfig <PATH>` | Path to kubeconfig file (optional — falls back to `$KUBECONFIG` env var) |
 | `--user-config <PATH>` | Path to user-supplied l8k-config.yaml |
 | `--output <FORMAT>` | Output format: `text` (default), `json` |

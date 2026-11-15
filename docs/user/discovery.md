@@ -460,5 +460,5 @@ presence.
 ## Independent DPF inventory
 
 For management-cluster and BMC discovery of the separate DPU estate, use the
-[DPF discovery preview](dpf-discovery.md). Its configuration, artifacts and
+[DPF discovery](dpf-discovery.md). Its configuration, artifacts and
 qualification gates are independent of the Host workflow above.

@@ -4,12 +4,12 @@ Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on K
 Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
-The current lifecycle uses the `host` target by default. The `dpf` target provides an [experimental inventory discovery preview](docs/user/dpf-discovery.md); its provisioning phases remain unavailable.
+The current lifecycle uses the `host` target by default. The `dpf` target supports inventory discovery only; its generate, deploy, validate and composite pipeline phases are unavailable in this version. Inventory is the default and needs no kubeconfig; a supplied kubeconfig adds management-cluster observations. Explicit management network probes use the pinned diagnostic assets on supported Linux/amd64 Kubernetes nodes; cluster compatibility is checked at runtime. See the [DPF discovery guide](docs/user/dpf-discovery.md).
 DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
 management cluster. Inventory success is separate from provisioning readiness.
-DPF BMC discovery verifies TLS by default; lab endpoints can explicitly opt in to
-`tls.insecureSkipVerify: true`, recorded in discovery reports. See the preview guide
-for its scope and security implications.
+DPF BMC discovery verifies TLS by default. A site can explicitly set
+`tls.insecureSkipVerify: true`; discovery reports when a connection was not
+verified. See the guide for scope and security implications.
 
 Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued releases;
 RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
@@ -171,7 +171,7 @@ Available Commands:
   version     Print the version number
 
 Target Selection Flags:
-      --target string   Deployment target: host (default) or dpf (experimental inventory discovery) (default "host")
+      --target string   Deployment target: host (default) or dpf (inventory discovery only) (default "host")
 
 Host Target Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides

@@ -8,7 +8,7 @@ openspec/workflows/dpf-discovery.json. Edit the source, then regenerate.
 
 # DPF discovery workflows
 
-Use these procedures with the experimental `l8k discover --target dpf` CLI. The DPU estate is separate from Host Network Operator deployment. Inventory is the default; explicitly select management mode to request pod/network probes from an existing management cluster. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.
+Use these procedures with `l8k discover --target dpf`. This version supports DPF inventory discovery only; generate, deploy, validate and the composite pipeline are unavailable. Inventory is the default and requires no kubeconfig. A supplied kubeconfig adds management-cluster observations. Explicitly set `discovery.probes.mode: management` to enable per-node pod/network probes from an existing management cluster. Management mode requires a supported three-control-plane Linux/amd64 cluster and uses the pinned, runtime-qualified diagnostic image assets; incompatible node architectures are rejected before probes are created. Discovery collects facts and writes a handoff. It does not create VMs, install Kubernetes or DPF, configure DPUServices, change firmware, enroll trust, or start a DPF deployment.
 
 For complete field and error details, see [DPF discovery reference](dpf-discovery.md). Each diagram follows the same steps as its procedure. Commands are examples to run deliberately from a machine with direct access to your selected endpoints.
 
@@ -176,7 +176,7 @@ The CLI creates a temporary session and reads system and card inventory. Host BM
 
 **At the management Kubernetes API, if configured**
 
-The CLI reads the cluster identity from `kube-system`, the Kubernetes version and the node list, including control-plane membership and reported readiness. These reads are required when you supply a management kubeconfig. StorageClasses and advertised DPF API groups are additional optional reads. Default inventory mode creates no Pods and performs no management-network connectivity tests. Explicit management mode additionally creates temporary probes from selected control-plane nodes to the management API and selected DPU BMCs over pod and node network paths; it does not install DPF or run commands inside Kubernetes nodes.
+The CLI reads the cluster identity from `kube-system`, the Kubernetes version and the node list, including control-plane membership and reported readiness. These reads are required when you supply a management kubeconfig. StorageClasses and advertised DPF API groups are additional optional reads. Default inventory mode creates no Pods and performs no management-network connectivity tests. Explicit management mode creates temporary probes from selected control-plane nodes to the management API and selected DPU BMCs over pod and node network paths; it does not install DPF or run commands inside Kubernetes nodes. Launch Kit validates the cluster and pinned image assets before creating probes, requires supported Linux/amd64 nodes, and cleans up the resources it creates. A supplied kubeconfig also provides the management-cluster observations described above.
 
 Next: [Return facts and read failures to CLI](#initial-inventory-match).
 
@@ -218,7 +218,7 @@ A missing `mlxfwmanager` is an unavailable prerequisite, not proof of incompatib
 
 The resolved software BOM is saved under `inventory.software`: operator/component coordinates, exact hardware models and BFB version/URL/known digest, with documented minima in named fields such as `minimumNICFirmware` and `minimumHostMFT`. Missing minima remain unknown; catalog sources/revisions and generic requirement lists are omitted. A missing artifact digest is not fabricated. Release `26.4.0` has exact BlueField-3 model entries `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 are not sufficient for BOM applicability. The documented NIC/MFT minima can be evaluated when current measurements associated with the correct device exist. BMC, CEC, ATF, UEFI, OS/BSP and golden-image minima remain unknown where the catalog has no supported requirement. A BFB target is a desired artifact, not an observed OS/BSP version. An unknown requirement must remain unresolved; supplying a guessed minimum does not establish compatibility.
 
-Exit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; DPF generate/deploy/validate are unavailable in this preview.
+Exit zero and `discovery.outcome: complete` mean inventory collection, identity/mapping, cleanup and publication succeeded. `acceptance: not-evaluated` remains explicit. Hardware support, DPF authentication, service connectivity and deployment still need separate assessment; generate, deploy, validate and the composite pipeline are unavailable in this version.
 
 Next: [Complete inventory reviewed](#initial-inventory-finish); [Required failure or conflict](#initial-inventory-resolve).
 
