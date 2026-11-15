@@ -125,8 +125,13 @@ networking values under `dpf.hbn`. The profile selects chart `3.5.0`, image
 pool `10.0.124.0/24`, workload gateway index `1`, host address index `2`,
 `OnDelete` strategy, and
 `nodeEffect: hold`. The flat profile disables the VXLAN startup probe.
-Shared resolution rejects enabling that probe and rejects chart names longer
-than 28 characters, matching the DPF deployment service name limit.
+Shared resolution requires `nodeEffect: hold` and `chartName: doca-hbn` for
+this native workflow. Explicit `noEffect` or another chart name is unsupported
+and rejected before credential resolution or artifact retrieval; these values
+are never silently replaced by defaults. The runtime service binding uses the
+`doca-hbn` chart identity. Chart repository, version and digest overrides remain
+available, with matching artifact bytes and separately validated compatibility.
+Shared resolution also rejects enabling the VXLAN startup probe.
 `hold` pauses provisioning at the node-effect boundary until the selected
 maintenance request is released; it does not mean provisioning has completed.
 Host and gateway indexes must be different usable addresses in each per-DPU

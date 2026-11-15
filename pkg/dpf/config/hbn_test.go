@@ -32,12 +32,12 @@ var _ = Describe("HBN use-case inputs", func() {
 		Expect(r.Switches).To(BeEmpty()) // Readiness reports missing access.
 	})
 	It("resolves generation overrides without coercing scalars or modifying omitted inputs", func() {
-		document := "dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {nodeEffect: noEffect, workloadGatewayIndex: 2, hostAddressIndex: 3, vxlanStartupProbeEnabled: false}}\n" + seed
+		document := "dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {nodeEffect: hold, workloadGatewayIndex: 2, hostAddressIndex: 3, vxlanStartupProbeEnabled: false}}\n" + seed
 		in, err := Decode([]byte(document), "/site/input.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		r, err := Resolve(in)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(r.HBNGeneration.NodeEffect)).To(Equal("noEffect"))
+		Expect(string(r.HBNGeneration.NodeEffect)).To(Equal("hold"))
 		Expect(r.HBNGeneration.WorkloadGatewayIndex).To(Equal(2))
 		Expect(r.HBNGeneration.HostAddressIndex).To(Equal(3))
 		Expect(r.HBNGeneration.VXLANStartupProbeEnabled).To(BeFalse())
@@ -67,6 +67,20 @@ var _ = Describe("HBN use-case inputs", func() {
 			Expect(err).To(HaveOccurred(), document)
 		}
 	})
+	It("rejects unsupported native generation policies before reading credential files", func() {
+		for _, test := range []struct{ input, want string }{
+			{input: "nodeEffect: noEffect", want: "nodeEffect must be hold"},
+			{input: "chartName: doca-hbn-custom", want: "chartName must be doca-hbn"},
+		} {
+			missing := strings.Replace(seed, "passwordRef: {env: DPF_TEST_PASSWORD}", "passwordRef: {file: credentials/does-not-exist}", 1)
+			in, err := Decode([]byte("dpf: {useCase: hbn-bgp}\nprovisioning: {hbn: {"+test.input+"}}\n"+missing), "/site/input.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = Resolve(in)
+			Expect(err).To(MatchError(ContainSubstring(test.want)))
+			Expect(err.Error()).NotTo(ContainSubstring("does-not-exist"))
+		}
+	})
+
 	It("uses the HBN profile release while preserving supported namespace overrides", func() {
 		for _, doc := range []string{
 			"dpf: {useCase: hbn-bgp, release: null, namespace: null}\n",

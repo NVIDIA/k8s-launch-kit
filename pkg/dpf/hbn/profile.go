@@ -380,6 +380,11 @@ func validateGeneration(generation Generation) error {
 	if len(generation.ChartName) > 28 {
 		return fmt.Errorf("chartName must be at most 28 characters for the DPF deploymentServiceName API")
 	}
+	// Native runtime service binding is qualified for this chart identity. Keep
+	// source/version/digest overrides separate from that fixed service ABI.
+	if generation.ChartName != "doca-hbn" {
+		return fmt.Errorf("chartName must be doca-hbn for the supported native HBN workflow")
+	}
 	if !chartVersionPattern.MatchString(generation.ChartVersion) {
 		return fmt.Errorf("chartVersion must be an exact numeric major.minor.patch version")
 	}
@@ -411,8 +416,8 @@ func validateGeneration(generation Generation) error {
 	if generation.DPUSetStrategy != DPUSetStrategyOnDelete && generation.DPUSetStrategy != DPUSetStrategyRollingUpdate {
 		return fmt.Errorf("dpuSetStrategy must be OnDelete or RollingUpdate")
 	}
-	if generation.NodeEffect != NodeEffectHold && generation.NodeEffect != NodeEffectNoEffect {
-		return fmt.Errorf("nodeEffect must be hold or noEffect")
+	if generation.NodeEffect != NodeEffectHold {
+		return fmt.Errorf("nodeEffect must be hold for the supported native HBN workflow")
 	}
 	if generation.VXLANStartupProbeEnabled {
 		return fmt.Errorf("vxlanStartupProbeEnabled must be false for the flat HBN-BGP profile")

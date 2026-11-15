@@ -518,6 +518,24 @@ func TestRenderRejectsUnsafeResolvedGeneration(t *testing.T) {
 	}
 }
 
+func TestRenderRejectsUnsupportedNativePolicies(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+		mutate     func(*Inputs)
+	}{
+		{name: "node effect", want: "nodeEffect must be hold", mutate: func(in *Inputs) { in.Generation.NodeEffect = hbn.NodeEffectNoEffect }},
+		{name: "chart service identity", want: "chartName must be doca-hbn", mutate: func(in *Inputs) { in.Generation.ChartName = "doca-hbn-custom" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := testInputs(t)
+			test.mutate(&input)
+			if files, err := Render(input); err == nil || !strings.Contains(err.Error(), test.want) || files != nil {
+				t.Fatalf("Render() returned %d files, error %v; want %q and no files", len(files), err, test.want)
+			}
+		})
+	}
+}
+
 func TestRenderUsesResolvedSiteNetworkDefaultsAndOverrides(t *testing.T) {
 	for _, tc := range []struct {
 		name, overrides, vrf, cidr string

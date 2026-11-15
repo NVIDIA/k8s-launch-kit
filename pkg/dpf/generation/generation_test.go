@@ -20,6 +20,8 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnrender"
 	"gopkg.in/yaml.v3"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -292,6 +294,78 @@ func TestGenerateRejectsInconsistentBindingsAndCharts(t *testing.T) {
 			generated, err := Generate(input)
 			if err == nil || !strings.Contains(err.Error(), test.want) || generated != nil {
 				t.Fatalf("Generate() = %v, %v; want error containing %q and no bundle", generated, err, test.want)
+			}
+		})
+	}
+}
+
+func TestGenerateAndLoadPlanRejectUnsupportedNativePolicies(t *testing.T) {
+	base, err := Generate(generationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, key, value, want string
+		mutate                 func(*hbn.Generation)
+	}{
+		{name: "node effect", key: "nodeEffect", value: "noEffect", want: "nodeEffect must be hold", mutate: func(g *hbn.Generation) { g.NodeEffect = hbn.NodeEffectNoEffect }},
+		{name: "chart service identity", key: "chartName", value: "doca-hbn-custom", want: "chartName must be doca-hbn", mutate: func(g *hbn.Generation) { g.ChartName = "doca-hbn-custom" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := generationInputs(t)
+			test.mutate(&input.Workload.Generation)
+			if test.key == "chartName" {
+				chart, err := loader.LoadArchive(bytes.NewReader(input.HBNChartArchive))
+				if err != nil {
+					t.Fatal(err)
+				}
+				chart.Metadata.Name = test.value
+				filename, err := chartutil.Save(chart, t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				input.HBNChartArchive, err = os.ReadFile(filename)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input.Workload.Generation.ChartDigest = digest(input.HBNChartArchive)
+			}
+			if result, err := Generate(input); err == nil || !strings.Contains(err.Error(), test.want) || result != nil {
+				t.Fatalf("Generate() returned bundle=%t, error %v; want %q and no bundle", result != nil, err, test.want)
+			}
+			retained := rehashBundle(t, base, func(_ *bundle.Index, files *[]bundle.File) {
+				mutateFile(t, files, bundle.ResolvedConfigPath, func(data []byte) []byte {
+					var root map[string]any
+					if err := yaml.Unmarshal(data, &root); err != nil {
+						t.Fatal(err)
+					}
+					config, ok := root["config"].(map[string]any)
+					if !ok {
+						t.Fatal("resolved config missing")
+					}
+					generation, ok := config["generation"].(map[string]any)
+					if !ok {
+						t.Fatal("resolved generation missing")
+					}
+					generation[test.key] = test.value
+					if test.key == "chartName" {
+						generation["chartDigest"] = input.Workload.Generation.ChartDigest
+						artifact, ok := config["hbnChart"].(map[string]any)
+						if !ok {
+							t.Fatal("retained chart reference missing")
+						}
+						artifact["sha256"] = input.Workload.Generation.ChartDigest
+						path, ok := artifact["path"].(string)
+						if !ok {
+							t.Fatal("retained chart path missing")
+						}
+						mutateFile(t, files, path, func([]byte) []byte { return input.HBNChartArchive })
+					}
+					return marshalYAML(t, root)
+				})
+			})
+			if result, err := LoadPlan(retained); err == nil || !strings.Contains(err.Error(), test.want) || result != nil {
+				t.Fatalf("LoadPlan() returned plan=%t, error %v; want %q and no plan", result != nil, err, test.want)
 			}
 		})
 	}

@@ -137,8 +137,8 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 		t.Fatalf("ValidateGeneration(defaults) error = %v", err)
 	}
 
-	noEffect, rolling, disabledProbe, gateway, hostIndex := NodeEffectNoEffect, DPUSetStrategyRollingUpdate, false, 2, 3
-	chartRepository, chartName, chartVersion := "https://mirror.example.net/charts", "doca-hbn-custom", "3.6.0"
+	hold, rolling, disabledProbe, gateway, hostIndex := NodeEffectHold, DPUSetStrategyRollingUpdate, false, 2, 3
+	chartRepository, chartName, chartVersion := "https://mirror.example.net/charts", "doca-hbn", "3.6.0"
 	chartDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	imageRepository, imageTag := "registry.example.net/team/hbn", "custom-build.1"
 	imageDigest, startupVersion, loopbackCIDR := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "HBN 2.5.0", "192.168.0.0/24"
@@ -155,13 +155,13 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 		WorkloadGatewayIndex:     &gateway,
 		HostAddressIndex:         &hostIndex,
 		DPUSetStrategy:           &rolling,
-		NodeEffect:               &noEffect,
+		NodeEffect:               &hold,
 		VXLANStartupProbeEnabled: &disabledProbe,
 	})
 	if err != nil {
 		t.Fatalf("ResolveGeneration(overrides) error = %v", err)
 	}
-	if overridden.ChartRepository != chartRepository || overridden.ChartName != chartName || overridden.ChartVersion != chartVersion || overridden.ChartDigest != chartDigest || overridden.ImageRepository != imageRepository || overridden.ImageTag != imageTag || overridden.ImageDigest != imageDigest || overridden.StartupVersion != startupVersion || overridden.LoopbackCIDR != loopbackCIDR || overridden.WorkloadGatewayIndex != gateway || overridden.HostAddressIndex != hostIndex || overridden.DPUSetStrategy != rolling || overridden.NodeEffect != noEffect || overridden.VXLANStartupProbeEnabled {
+	if overridden.ChartRepository != chartRepository || overridden.ChartName != chartName || overridden.ChartVersion != chartVersion || overridden.ChartDigest != chartDigest || overridden.ImageRepository != imageRepository || overridden.ImageTag != imageTag || overridden.ImageDigest != imageDigest || overridden.StartupVersion != startupVersion || overridden.LoopbackCIDR != loopbackCIDR || overridden.WorkloadGatewayIndex != gateway || overridden.HostAddressIndex != hostIndex || overridden.DPUSetStrategy != rolling || overridden.NodeEffect != hold || overridden.VXLANStartupProbeEnabled {
 		t.Fatalf("generation overrides lost explicit values: %#v", overridden)
 	}
 	if err := ValidateGeneration(profile, overridden); err != nil {
@@ -539,3 +539,39 @@ func boolPointer(value bool) *bool       { return &value }
 func uint32Pointer(value uint32) *uint32 { return &value }
 
 func intPointer(value int) *int { return &value }
+
+func TestGenerationRejectsUnsupportedNativePolicies(t *testing.T) {
+	profile, err := Resolve(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := ResolveGeneration(GenerationOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, want string
+		options    GenerationOptions
+		mutate     func(*Generation)
+	}{
+		{name: "node effect", want: "nodeEffect must be hold", options: GenerationOptions{NodeEffect: nodeEffectPointer(NodeEffectNoEffect)}, mutate: func(g *Generation) { g.NodeEffect = NodeEffectNoEffect }},
+		{name: "chart service identity", want: "chartName must be doca-hbn", options: GenerationOptions{ChartName: stringPointer("doca-hbn-custom")}, mutate: func(g *Generation) { g.ChartName = "doca-hbn-custom" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ResolveGeneration(test.options); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ResolveGeneration() = %v, want %q", err, test.want)
+			}
+			value := defaults
+			test.mutate(&value)
+			before := value
+			if err := ValidateGeneration(profile, value); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateGeneration() = %v, want %q", err, test.want)
+			}
+			if value != before {
+				t.Fatal("validation changed explicit unsupported generation input")
+			}
+		})
+	}
+}
+
+func nodeEffectPointer(value NodeEffect) *NodeEffect { return &value }

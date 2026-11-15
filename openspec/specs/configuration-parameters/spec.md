@@ -118,6 +118,9 @@ DPF HBN configuration keeps networking intent (`dpf.hbn`), release/profile gener
 - GIVEN selected BMC endpoints WHEN rendering enrollment resources THEN use one singleton DPUDiscovery scan per endpoint; never scan the range between targets or create synthetic DPUDevices/DPUNodes.
 - GIVEN custom operator configuration name/namespace WHEN installing the DPF operator THEN the Helm-rendered operator arguments must select that exact configuration; schema-valid ignored resources are not acceptable.
 - GIVEN nodeEffect hold WHEN deploying THEN release only the identity-verified selected maintenance requests and wait for provisioning; rendering or applying a held deployment is not completion.
+- GIVEN an explicit current HBN nodeEffect other than `hold` or chartName other than `doca-hbn` WHEN resolving inputs THEN reject the unsupported native-workflow policy before credential access or artifact retrieval; never coerce it to a default.
+- GIVEN an unsupported native-workflow policy in a retained generation WHEN loading its deployment plan THEN reject it before Kubernetes API access or deployment effects; resolving credentials from current supported site inputs may already have occurred.
+- GIVEN supported HBN chart repository/version/digest overrides WHEN resolving inputs THEN preserve them while retaining the fixed `doca-hbn` service identity and validating the selected artifact bytes; coordinate overrides do not prove compatibility.
 
 - GIVEN omitted HBN BMC reset policy WHEN resolving bootstrap THEN select the profile default `Never` and emit it explicitly in the DPF operator configuration; do not inherit an upstream factory-reset default.
 - GIVEN an explicit `OnInitialization` policy WHEN rendering THEN preserve it, while leaving stable DHCP address recovery and BMC reauthentication as required live enrollment checks; generation does not establish those conditions.
