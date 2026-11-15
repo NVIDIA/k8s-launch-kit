@@ -51,6 +51,18 @@ type hostLeaseManagementState struct {
 	poolMutation string
 }
 
+func (s *hostLeaseManagementState) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ipam = nil
+	s.pool = nil
+	s.sources = tenantSources{}
+	s.ipamReads = 0
+	s.poolReads = 0
+	s.ipamMutation = ""
+	s.poolMutation = ""
+}
+
 type hostLeaseTenantState struct {
 	mu              sync.Mutex
 	nodes           []corev1.Node
@@ -69,6 +81,14 @@ func newHostLeaseObservationHarness(t *testing.T) *hostLeaseObservationHarness {
 	t.Helper()
 	state := &hostLeaseManagementState{}
 	apiFixture := newAPIFixture(t, state.serveManagement)
+	return newHostLeaseObservationHarnessWithAPIFixture(t, state, apiFixture)
+}
+
+// newHostLeaseObservationHarnessWithAPIFixture lets sequential failure cases
+// reuse the generated plan's management identity. The mutable API source state
+// is still provided separately and is rebuilt for each harness.
+func newHostLeaseObservationHarnessWithAPIFixture(t *testing.T, state *hostLeaseManagementState, apiFixture *apiFixture) *hostLeaseObservationHarness {
+	t.Helper()
 	generationInputs := preflightGenerationInputs(t)
 	generationInputs.Management = apiFixture.expected
 	generationInputs.Operator.KubernetesVersion = "v1.35.6"
@@ -628,9 +648,19 @@ func TestObserveHostWorkloadLeaseSnapshotRejectsIncompleteOrUnstableSources(t *t
 		{name: "management IPAM spec drift", configure: func(h *hostLeaseObservationHarness) { h.managementState.ipamMutation = "spec" }, serviceUnavailable: true, wantError: "retained DPUServiceIPAM is missing, replaced, stale or changed"},
 		{name: "finite page bound", configure: func(h *hostLeaseObservationHarness) { h.tenantState.listMode = "long-chain" }, wantError: "complete page bound", wantListCalls: hostLeaseNodeMaxPages},
 	}
+	// These scenarios vary only mock source state. Keep the TLS endpoint (and
+	// therefore the management identity serialized into the generated plan)
+	// stable so fixtureBundles can reuse the expensive, immutable chart-validated
+	// bundle. Each subtest still rebuilds its own clients, plan, reconciler,
+	// tenant server, and journals; the shared management handler state and UID
+	// are reset before the next scenario.
+	state := &hostLeaseManagementState{}
+	apiFixture := newAPIFixture(t, state.serveManagement)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			h := newHostLeaseObservationHarness(t)
+			state.reset()
+			apiFixture.uid.Store("cluster-one")
+			h := newHostLeaseObservationHarnessWithAPIFixture(t, state, apiFixture)
 			test.configure(h)
 			_, err := h.observe(t)
 			if err == nil {
