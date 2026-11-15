@@ -78,7 +78,9 @@ is used as the manifest directory.
 With --target dpf, deploy a reviewed HBN-BGP bundle using explicit
 --user-config and --deployment-files. DPF runs fresh prerequisite checks,
 installs DPF, provisions the selected DPUs, configures host workload networking,
-and verifies BGP, installed routes and traffic between the selected hosts.
+and verifies BGP and installed routes. With two or more selected hosts, it also
+checks the full ordinary/DF traffic matrix for every directed host pair. A
+one-host run can finish as provisioned, with cross-host traffic unmeasured.
 DPF may reboot selected hosts. It defaults to a two-hour timeout and supports
 neither --dry-run nor --overwrite-existing. Use --resume with the reported
 namespace/name/UID operation reference to continue the same retained plan;
