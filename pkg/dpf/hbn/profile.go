@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/distribution/reference"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	dpfassets "github.com/nvidia/k8s-launch-kit/profiles"
 	"gopkg.in/yaml.v3"
@@ -37,7 +38,6 @@ var sha256DigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var chartVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 var imageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 var startupVersionPattern = regexp.MustCompile(`^HBN [0-9]+\.[0-9]+\.[0-9]+$`)
-var imageRepositoryPattern = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
 var chartNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
 type DPUSetStrategy string
@@ -455,7 +455,9 @@ func validateGenerationCoordinates(coordinates GenerationCoordinates) error {
 	if !sha256DigestPattern.MatchString(coordinates.ChartDigest) {
 		return fmt.Errorf("chartDigest must be sha256 followed by 64 lowercase hexadecimal characters")
 	}
-	if !imageRepositoryPattern.MatchString(coordinates.ImageRepository) {
+	imageReference, err := reference.Parse(coordinates.ImageRepository)
+	imageName, isNamed := imageReference.(reference.Named)
+	if err != nil || !isNamed || imageName.Name() != coordinates.ImageRepository {
 		return fmt.Errorf("imageRepository must be a lowercase OCI repository path without tag or digest")
 	}
 	if !imageTagPattern.MatchString(coordinates.ImageTag) {

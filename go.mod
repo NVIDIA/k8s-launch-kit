@@ -6,6 +6,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/Mellanox/network-operator v1.4.1-0.20260415085747-fd00b67fe97a
 	github.com/Mellanox/nic-configuration-operator v1.3.2-0.20261027094742-6806232e532b
+	github.com/distribution/reference v0.6.0
 	github.com/go-logr/logr v1.4.4
 	github.com/go-logr/zapr v1.3.0
 	github.com/gofrs/flock v0.13.0

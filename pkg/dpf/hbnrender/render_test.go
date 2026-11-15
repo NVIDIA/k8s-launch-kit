@@ -70,6 +70,12 @@ func TestWorkloadPoolCapacityCoversEverySelectedDPU(t *testing.T) {
 
 func TestRenderProducesPinnedFlatWorkloadGraph(t *testing.T) {
 	input := testInputs(t)
+	imageRepository := "registry.example:5000/team/hbn"
+	var err error
+	input.Generation, err = hbn.ResolveGeneration(hbn.GenerationOptions{ImageRepository: &imageRepository})
+	if err != nil {
+		t.Fatalf("resolve generation with registry port: %v", err)
+	}
 	files, err := Render(input)
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +112,9 @@ func TestRenderProducesPinnedFlatWorkloadGraph(t *testing.T) {
 	}
 	if got := nestedString(t, objects[7], "spec", "helmChart", "values", "image", "tag"); got != input.Generation.ImageTag+"@"+input.Generation.ImageDigest {
 		t.Fatalf("image tag=%q", got)
+	}
+	if got := nestedString(t, objects[7], "spec", "helmChart", "values", "image", "repository"); got != imageRepository {
+		t.Fatalf("image repository=%q, want unchanged override %q", got, imageRepository)
 	}
 	if got := nestedBool(t, objects[7], "spec", "helmChart", "values", "hbnSidecar", "vxlanStartupProbe", "enabled"); got {
 		t.Fatal("vxlan startup probe must be disabled for flat profile")

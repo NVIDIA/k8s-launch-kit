@@ -26,6 +26,7 @@ func imageMetadataJSON(value any) []byte     { data, _ := json.Marshal(value); r
 
 func TestHBNRuntimeImageMetadataVerifiedWithoutAmbientCredentials(t *testing.T) {
 	const quotedServiceAudience = `registry,region;tenant:/?&=+"quoted"`
+	const registryOrigin = "registry.example:5000"
 	for _, scenario := range []string{"platform-manifest", "image-index", "same-origin-anonymous-bearer", "opaque-service-audience", "quoted-opaque-service-audience", "empty-service-audience", "whitespace-service-audience", "nonascii-service-audience", "oversized-service-audience", "malformed-challenge", "blob-path-token-redirect", "anonymous-config-redirect", "foreign-realm", "foreign-redirect", "wrong-manifest-digest", "wrong-config-digest", "wrong-platform", "ambiguous-platform", "duplicate-json", "oversized"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -52,7 +53,7 @@ func TestHBNRuntimeImageMetadataVerifiedWithoutAmbientCredentials(t *testing.T) 
 				root = imageMetadataJSON(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": descriptors})
 				digest = imageMetadataDigest(root)
 			}
-			reference := "registry.example/qualified/hbn:retained@" + digest
+			reference := registryOrigin + "/qualified/hbn:retained@" + digest
 			requests, tokenRequests, foreignRequests := 0, 0, 0
 			serviceAudience := "registry"
 			if scenario == "quoted-opaque-service-audience" {
@@ -78,7 +79,7 @@ func TestHBNRuntimeImageMetadataVerifiedWithoutAmbientCredentials(t *testing.T) 
 					}
 					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, ContentLength: int64(len(data)), Body: io.NopCloser(strings.NewReader(string(data))), Request: request}, nil
 				}
-				if request.URL.Scheme != "https" || request.URL.Host != "registry.example" || request.Header.Get("Cookie") != "" || request.Header.Get("Proxy-Authorization") != "" {
+				if request.URL.Scheme != "https" || request.URL.Host != registryOrigin || request.Header.Get("Cookie") != "" || request.Header.Get("Proxy-Authorization") != "" {
 					t.Fatal("metadata escaped explicit anonymous origin")
 				}
 				header := http.Header{}
@@ -87,7 +88,7 @@ func TestHBNRuntimeImageMetadataVerifiedWithoutAmbientCredentials(t *testing.T) 
 				switch {
 				case request.URL.Path == "/token" || scenario == "blob-path-token-redirect" && strings.Contains(request.URL.Path, "/blobs/sha256:"):
 					tokenRequests++
-					if request.URL.Host != "registry.example" || request.URL.Query().Get("scope") != "repository:qualified/hbn:pull" || request.Header.Get("Authorization") != "" {
+					if request.URL.Host != registryOrigin || request.URL.Query().Get("scope") != "repository:qualified/hbn:pull" || request.Header.Get("Authorization") != "" {
 						t.Fatal("token scope/credentials broadened")
 					}
 					if (scenario == "opaque-service-audience" || scenario == "quoted-opaque-service-audience") && request.URL.Query().Get("service") != serviceAudience {
@@ -100,7 +101,7 @@ func TestHBNRuntimeImageMetadataVerifiedWithoutAmbientCredentials(t *testing.T) 
 					}
 				case scenario == "malformed-challenge":
 					code = http.StatusUnauthorized
-					header.Set("WWW-Authenticate", `Basic realm="https://registry.example/token"`)
+					header.Set("WWW-Authenticate", `Basic realm="https://`+registryOrigin+`/token"`)
 				case scenario == "foreign-realm":
 					code = http.StatusUnauthorized
 					header.Set("WWW-Authenticate", `Bearer realm="https://foreign.example/token",service="registry.example"`)
@@ -124,9 +125,9 @@ func TestHBNRuntimeImageMetadataVerifiedWithoutAmbientCredentials(t *testing.T) 
 					case "oversized-service-audience":
 						service = strings.Repeat("r", hbnTokenServiceLimit+1)
 					}
-					realm := "https://registry.example/token"
+					realm := "https://" + registryOrigin + "/token"
 					if scenario == "blob-path-token-redirect" {
-						realm = "https://registry.example/v2/qualified/hbn/blobs/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+						realm = "https://" + registryOrigin + "/v2/qualified/hbn/blobs/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 					}
 					header.Set("WWW-Authenticate", `Bearer realm=`+strconv.Quote(realm)+`,service=`+strconv.Quote(service)+`,scope="repository:foreign:pull"`)
 				case strings.Contains(request.URL.Path, "/blobs/"):

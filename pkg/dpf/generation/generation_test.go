@@ -149,6 +149,46 @@ func TestGenerateRetainsSourcesAndComposesOrderedStages(t *testing.T) {
 	}
 }
 
+func TestGenerateRetainsImageRepositoryRegistryPort(t *testing.T) {
+	input := generationInputs(t)
+	repository := "registry.example:5000/team/hbn"
+	generation, err := hbn.ResolveGeneration(hbn.GenerationOptions{ImageRepository: &repository})
+	if err != nil {
+		t.Fatalf("resolve image repository override: %v", err)
+	}
+	input.Workload.Generation = generation
+	generated, err := Generate(input)
+	if err != nil {
+		t.Fatalf("Generate() with registry port: %v", err)
+	}
+	plan, err := LoadPlan(generated)
+	if err != nil {
+		t.Fatalf("LoadPlan() with registry port: %v", err)
+	}
+	if got := plan.Intent().Generation.ImageRepository; got != repository {
+		t.Fatalf("retained image repository=%q, want unchanged override %q", got, repository)
+	}
+
+	for _, file := range generated.Files() {
+		if !strings.HasSuffix(file.Path, ".yaml") {
+			continue
+		}
+		var object map[string]any
+		if err := sigsyaml.Unmarshal(file.Data, &object); err != nil {
+			t.Fatalf("decode %s: %v", file.Path, err)
+		}
+		if object["kind"] != "DPUServiceTemplate" {
+			continue
+		}
+		got, found, err := unstructured.NestedString(object, "spec", "helmChart", "values", "image", "repository")
+		if err != nil || !found || got != repository {
+			t.Fatalf("generated HBN image repository=%q found=%t err=%v, want %q", got, found, err, repository)
+		}
+		return
+	}
+	t.Fatal("generated bundle has no DPUServiceTemplate")
+}
+
 func TestGeneratedMTUsFollowProfileThroughRetainedPlan(t *testing.T) {
 	input := generationInputs(t)
 	input.Workload.Profile.UplinkMTU = 9000

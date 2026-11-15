@@ -141,7 +141,7 @@ func TestResolveGenerationDefaultsOverridesAndNull(t *testing.T) {
 	hold, rolling, disabledProbe, gateway, hostIndex := NodeEffectHold, DPUSetStrategyRollingUpdate, false, 2, 3
 	chartRepository, chartName, chartVersion := "https://mirror.example.net/charts", "doca-hbn", "3.6.0"
 	chartDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	imageRepository, imageTag := "registry.example.net/team/hbn", "custom-build.1"
+	imageRepository, imageTag := "registry.example:5000/team/hbn", "custom-build.1"
 	imageDigest, startupVersion, loopbackCIDR := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "HBN 2.5.0", "192.168.0.0/24"
 	overridden, err := ResolveGeneration(GenerationOptions{
 		ChartRepository:          &chartRepository,
@@ -216,6 +216,11 @@ func TestResolveGenerationRejectsExplicitEmptyZeroAndMalformedValues(t *testing.
 		{name: "invalid chart digest", options: GenerationOptions{ChartDigest: &badDigest}},
 		{name: "invalid image digest", options: GenerationOptions{ImageDigest: &badDigest}},
 		{name: "image reference includes tag syntax", options: GenerationOptions{ImageRepository: stringPointer("nvcr.io/nvidia/doca/doca_hbn:latest")}},
+		{name: "image repository includes digest syntax", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team/hbn@sha256:" + strings.Repeat("a", 64))}},
+		{name: "image repository includes scheme", options: GenerationOptions{ImageRepository: stringPointer("https://registry.example:5000/team/hbn")}},
+		{name: "image repository includes credentials", options: GenerationOptions{ImageRepository: stringPointer("user@registry.example:5000/team/hbn")}},
+		{name: "image repository has malformed port", options: GenerationOptions{ImageRepository: stringPointer("registry.example:abc/team/hbn")}},
+		{name: "image repository path is uppercase", options: GenerationOptions{ImageRepository: stringPointer("registry.example:5000/team/HBN")}},
 		{name: "zero gateway index", options: GenerationOptions{WorkloadGatewayIndex: &zero}},
 		{name: "zero host address index", options: GenerationOptions{HostAddressIndex: &zero}},
 		{name: "empty loopback pool", options: GenerationOptions{LoopbackCIDR: &empty}},
