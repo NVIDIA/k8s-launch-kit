@@ -66,6 +66,11 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **WHEN** optional API installer inspection is unavailable or ambiguous
 - **THEN** fresh and refreshed discovery save hardware inventory and separate networking observations without changing desired component ownership; automatic generation rejects unresolved ownership evidence.
 
+#### Scenario: Inventory and use-case eligibility
+
+- **WHEN** independent DPF inventory establishes identities, associations and required access
+- **THEN** inventory success does not assert hardware qualification, and an absent generic qualification catalog does not emit a failed required-generation check. A selected use case must report and enforce its own specific deployment prerequisites.
+
 ### Requirement: Aggregation and provenance
 
 A group property MUST declare its aggregation policy for disagreement and incomplete membership. Live/preset precedence and deviation handling SHALL preserve the information required by consumers. Host-specific observations MUST NOT be persisted as universal group facts without a justified aggregation rule.

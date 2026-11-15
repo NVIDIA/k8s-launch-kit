@@ -6,7 +6,6 @@ package catalog
 
 import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 )
 
 // ProbeAssets pins the existing netshoot v0.16 image. This candidate exposes only
@@ -22,7 +21,3 @@ func ProbeAssets() probe.Assets {
 		Qualified: true,
 	}
 }
-
-// Hardware is empty until real resource graphs and adapter completeness predicates
-// have been qualified for specific models/firmware. Candidate reads remain useful.
-func Hardware() []redfish.Qualification { return nil }

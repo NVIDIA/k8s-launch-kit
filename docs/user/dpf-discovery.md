@@ -28,6 +28,11 @@ them up. The default inventory mode performs no probes, though a supplied kubeco
 still adds management topology observations. DPF generate/deploy/validate and the
 DPF pipeline are unavailable in this discovery-only change.
 
+Inventory establishes physical identities, host associations and BMC access. It
+does not certify hardware support for every deployment. A selected use case
+checks its own required hardware, firmware and controller capabilities; failures
+include the specific unsupported or unmeasured prerequisite.
+
 ## Inputs and invocation
 
 Supply explicit host endpoints and DPU BMC endpoints for a complete inventory.
@@ -338,10 +343,9 @@ The final text report uses configured endpoint names, falling back to addresses,
 and shows DPU model/serial, host association and BMC administrator status. It
 separates problems that prevent discovery from prerequisites for provisioning
 and checks not requested in this run. Identical later-stage findings are grouped
-with their affected sources. An unqualified hardware combination means this
-build has not established qualification; it is not a detected hardware fault.
-An unsupported BOM model means software compatibility is unknown. Neither is
-silently marked passed, and the JSON check states and exit rules are unchanged.
+with their affected sources. An unsupported BOM model means software
+compatibility is unknown; it does not mean a hardware failure was detected.
+Inventory does not claim release or hardware qualification.
 
 For operation timing and source/check diagnostics, add `--log-level debug`.
 Use `--log-level trace` for Redfish request categories/statuses and SSH

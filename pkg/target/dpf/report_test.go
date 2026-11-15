@@ -32,8 +32,8 @@ func displayFixture() (inventory.Report, config.Input) {
 	report.Discovery.Checks = []inventory.Check{
 		{ID: "dpf.management.bmc-administrator", Subject: "sha256:dpu-record", RequiredPhase: "discover", State: "passed", ReasonCode: "BMC_ADMIN_VERIFIED"},
 		{ID: "dpf.inventory.association", Subject: "sha256:dpu-record", RequiredPhase: "discover", State: "passed"},
-		{ID: "dpf.device.qualification", Subject: "sha256:host-record", RequiredPhase: "generate", State: "failed", ReasonCode: "QUALIFIED_ADAPTER_REQUIRED"},
-		{ID: "dpf.device.qualification", Subject: "sha256:dpu-record", RequiredPhase: "generate", State: "failed", ReasonCode: "QUALIFIED_ADAPTER_REQUIRED"},
+		{ID: "dpf.software.nic", Subject: "sha256:host-record", RequiredPhase: "generate", State: "failed", ReasonCode: "SOFTWARE_VERSION_UNAVAILABLE", Message: "The running NIC firmware version was not measured."},
+		{ID: "dpf.software.nic", Subject: "sha256:dpu-record", RequiredPhase: "generate", State: "failed", ReasonCode: "SOFTWARE_VERSION_UNAVAILABLE", Message: "The running NIC firmware version was not measured."},
 		{ID: "dpf.software.applicability", Subject: "sha256:dpu-record", RequiredPhase: "generate", State: "unknown", ReasonCode: "BOM_MODEL_UNSUPPORTED"},
 		{ID: "dpf.management.path", Subject: "management", RequiredPhase: "generate", State: "not-requested", ReasonCode: "INVENTORY_MODE"},
 		{ID: "dpf.management.dpf-authentication", Subject: "sha256:dpu-record", RequiredPhase: "deploy", State: "not-evaluated", ReasonCode: "DPF_AUTHENTICATION_NOT_EVALUATED"},
@@ -58,7 +58,7 @@ var _ = Describe("human DPF discovery report", func() {
 		Expect(text).To(ContainSubstring("B4240"))
 		Expect(text).To(ContainSubstring("verified"))
 		Expect(text).To(ContainSubstring("Before provisioning (these do not fail inventory discovery):"))
-		Expect(strings.Count(text, "Hardware/firmware qualification")).To(Equal(1))
+		Expect(strings.Count(text, "The running NIC firmware version was not measured.")).To(Equal(1))
 		Expect(text).To(ContainSubstring("worker-a, worker-a-dpu:"))
 		Expect(text).To(ContainSubstring("Not checked in this run:"))
 		Expect(text).To(ContainSubstring("Software compatibility is unknown"))

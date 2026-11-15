@@ -133,8 +133,6 @@ type Device struct {
 	Manufacturer              string                 `json:"manufacturer,omitempty" yaml:"manufacturer,omitempty"`
 	Model                     string                 `json:"model,omitempty" yaml:"model,omitempty"`
 	ReaderAdapter             string                 `json:"readerAdapter,omitempty" yaml:"readerAdapter,omitempty"`
-	InventoryCompleteness     string                 `json:"inventoryCompleteness,omitempty" yaml:"inventoryCompleteness,omitempty"`
-	Qualification             string                 `json:"qualification" yaml:"qualification"`
 	Firmware                  []Firmware             `json:"firmware,omitempty" yaml:"firmware,omitempty"`
 	Authentication            Authentication         `json:"authentication" yaml:"authentication"`
 	Time                      TimeObservation        `json:"time,omitzero" yaml:"time,omitempty"`

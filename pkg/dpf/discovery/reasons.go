@@ -13,7 +13,6 @@ func ExplainCheck(c *inventory.Check) {
 	messages := map[string]string{
 		"EXACTLY_THREE_CONTROL_PLANES":        "The management topology does not contain exactly three control-plane nodes.",
 		"PHYSICAL_IDENTITY_REQUIRED":          "The selected source did not establish a usable physical identity; inspect its observation and error reasons.",
-		"QUALIFIED_ADAPTER_REQUIRED":          "This hardware/firmware and reader combination has not passed release qualification; inventory success does not establish provisioning support.",
 		"DPU_IDENTITY_REQUIRED":               "No DPU identity was established from the selected sources.",
 		"UNIQUE_PHYSICAL_MATCH_REQUIRED":      "The DPU serial must match exactly one observed host adapter; missing, duplicate or conflicting identity prevents association.",
 		"HOST_ADAPTER_VENDOR_CONFLICT":        "A host adapter with the DPU serial reports a non-NVIDIA PCI vendor. Verify the selected endpoints and the adapter serial/PCI inventory, then rerun discovery; a matching serial cannot override contradictory vendor identity.",

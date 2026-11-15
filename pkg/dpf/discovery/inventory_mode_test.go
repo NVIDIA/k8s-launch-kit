@@ -25,7 +25,7 @@ type fixtureCollector struct {
 }
 
 func (f fixtureCollector) Collect(_ context.Context, t config.Target, _ time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
-	d := inventory.Device{ID: "host-one", RecordKey: t.InputRef, InputRef: t.InputRef, ObservationState: "observed", Qualification: "unqualified", InventoryCompleteness: "partial", EvidenceRefs: []string{"source"}}
+	d := inventory.Device{ID: "host-one", RecordKey: t.InputRef, InputRef: t.InputRef, ObservationState: "observed", EvidenceRefs: []string{"source"}}
 	if t.SSH != nil {
 		d.SSHEndpoint = t.Endpoint
 	} else {
@@ -60,7 +60,7 @@ func inventoryRequest() config.Request {
 }
 
 var _ = Describe("independent inventory acceptance", func() {
-	It("completes without Kubernetes when DPU BMC administrator privileges are verified, retaining qualification and readiness gaps", func() {
+	It("completes without Kubernetes when DPU BMC administrator privileges are verified, without inventing a generic hardware qualification gate", func() {
 		req := inventoryRequest()
 		req.Targets[1].SSH = nil
 		req.Targets[1].Endpoint = "https://dpu.invalid"
@@ -70,7 +70,7 @@ var _ = Describe("independent inventory acceptance", func() {
 		Expect(r.Inventory.Associations).To(HaveLen(1))
 		Expect(r.Acceptance).To(Equal("not-evaluated"))
 		Expect(r.Inventory.ScopeDigest).NotTo(BeEmpty())
-		Expect(r.Discovery.Checks).To(ContainElement(And(HaveField("ID", "dpf.device.qualification"), HaveField("State", "failed"), HaveField("RequiredPhase", "generate"))))
+		Expect(r.Discovery.Checks).NotTo(ContainElement(HaveField("ID", "dpf.device.qualification")))
 		Expect(r.Discovery.Checks).To(ContainElement(And(HaveField("ID", "dpf.management.dpf-authentication"), HaveField("State", "not-evaluated"), HaveField("RequiredPhase", "deploy"))))
 	})
 	It("derives only host-reported card identity without inventing a BMC or ARM binding", func() {

@@ -233,7 +233,6 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	report.Discovery.Checks = append(report.Discovery.Checks, ProbeChecks(inv, r.Targets)...)
 	for _, d := range append(slices.Clone(inv.DPUs), inv.Hosts...) {
 		addCheck("dpf.device.identity", d.RecordKey, d.ID != "" && d.ObservationState == "observed", "PHYSICAL_IDENTITY_REQUIRED", d.EvidenceRefs, "discover")
-		addCheck("dpf.device.qualification", d.RecordKey, d.Qualification == "qualified" && d.InventoryCompleteness == "complete", "QUALIFIED_ADAPTER_REQUIRED", d.EvidenceRefs, "generate")
 	}
 	addCheck("dpf.inventory.dpus", "inventory", len(inv.DPUs) > 0, "DPU_IDENTITY_REQUIRED", nil, "discover")
 	for i := range inv.DPUs {
@@ -597,7 +596,8 @@ func ProbeChecks(inv *inventory.Inventory, targets []config.Target) []inventory.
 						state = "unknown"
 					}
 					for _, a := range v.Addresses {
-						if a.TCP != "reachable" || a.TLS != "verified" && !(a.TLS == "unverified" && unverifiedAllowed[destination]) {
+						tlsAccepted := a.TLS == "verified" || a.TLS == "unverified" && unverifiedAllowed[destination]
+						if a.TCP != "reachable" || !tlsAccepted {
 							state = "failed"
 						}
 					}
