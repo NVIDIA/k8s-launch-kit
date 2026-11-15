@@ -267,7 +267,7 @@ func validateDeviceOutput(w DeviceOutput, role string) error {
 	default:
 		return fmt.Errorf("device %s has unsupported method %q", w.RecordKey, w.Method)
 	}
-	if w.PSID != "" && (role != "dpus" || w.ID == "" || w.Method != "redfish" || w.Model != "B4240" || !validPSID(w.PSID) || hasIssue(w.Issues, "psid")) {
+	if w.PSID != "" && (role != "dpus" || w.ID == "" || w.Method != "redfish" || w.Model != "B4240" || !ValidRedfishPSID(w.PSID) || hasIssue(w.Issues, "psid")) {
 		return fmt.Errorf("device %s has inconsistent verified Redfish PSID", w.RecordKey)
 	}
 	if w.BMCAdministratorVerified && (role != "dpus" || w.ID == "" || w.Method != "redfish" || hasIssue(w.Issues, "bmcAdministratorVerified")) {
@@ -353,7 +353,10 @@ func safeFact(value string) bool {
 	return value != "" && len(value) <= 1024 && strings.TrimSpace(value) == value && !strings.ContainsAny(value, "\x00\r\n")
 }
 
-func validPSID(value string) bool {
+// ValidRedfishPSID reports whether value satisfies the supported Redfish PSID
+// syntax: an uppercase MT_ prefix, at most 32 ASCII identifier characters.
+// It does not establish physical identity or hardware/release applicability.
+func ValidRedfishPSID(value string) bool {
 	return len(value) <= 32 && strings.HasPrefix(value, "MT_") && strings.IndexFunc(value, func(r rune) bool {
 		allowed := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-'
 		return !allowed

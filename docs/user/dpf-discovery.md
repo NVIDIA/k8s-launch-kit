@@ -289,8 +289,9 @@ not qualify hardware or enable DPF deployment profiles.
 On the supported BF4/B4240 Redfish reader, `inventory.dpus[].psid`
 records a successfully verified PSID from the selected System's `AssetTag`, falling back to the
 identity-selected chassis's `AssetTag`. Missing, null, empty and `N/A` values
-remain unknown. Both values, when supplied, must be bounded ASCII identifiers
-and agree exactly; the selected value keeps its original spelling. The
+remain unknown. Supplied identifiers must start with uppercase `MT_`, contain
+at most 32 ASCII letters, digits, underscores, dots or hyphens, and agree
+exactly. The selected value keeps its original spelling. The
 same identity-bound source fields are reread before the PSID becomes observed.
 This is a Redfish fact obtained from authenticated `AssetTag` reads;
 it does not create an SSH/runtime observation or infer a PSID from a model.
@@ -298,8 +299,9 @@ it does not create an SSH/runtime observation or infer a PSID from a model.
 Failures and missing PSIDs are recorded in `issues` with `field: psid`.
 `PSID_NOT_EXPOSED` and `PSID_READER_UNSUPPORTED` mean this source supplies no PSID.
 `PSID_INVALID`, `PSID_CONFLICT`, `PSID_CHANGED` and `PSID_RECHECK_FAILED` leave
-no eligible `psid` value. These optional gaps preserve
-physical inventory and discovery's existing acceptance policy. A downstream
+no eligible `psid` value. An invalid optional AssetTag is retained as an issue
+and does not prevent saving the inventory or its JSON report. These optional
+gaps preserve physical inventory and discovery's existing acceptance policy. A downstream
 consumer requiring PSID must require a single observed value associated with the
 selected device and reject contradictory or invalid readings across its sources;
 an absent or unsupported Redfish PSID may be supplied by an independently verified

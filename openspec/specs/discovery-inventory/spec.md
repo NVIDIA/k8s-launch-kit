@@ -205,6 +205,7 @@ New and changed discovery checks SHALL retain a stable reason code and safe huma
 - **WHEN** the supported BF4 reader establishes physical identity and reads System/chassis AssetTags
 - **THEN** it persists a typed `psid` Redfish fact on success, or an `issues` entry for `field: psid` on failure, preferring System and falling back to the identity-selected chassis, with authenticated reads and no fabricated SSH/runtime data.
 - **AND** absent/null/empty/N/A stays unknown; malformed or contradictory values remain unavailable, and any source-field change or failed required recheck prevents an observed value. Optional PSID gaps do not erase physical identity or independently fail discovery.
+- **AND** collection and typed publication share the uppercase `MT_`, maximum-32-character ASCII identifier syntax; rejected optional values remain issues and do not abort complete/partial YAML publication or the JSON report.
 - **AND** the PSID fact and eligibility affect inventory fingerprint/diff; consumers requiring PSID must reject invalid/conflicting selected-source evidence and require one observed identifier.
 
 ### Requirement: DPF locator candidates are not identity
