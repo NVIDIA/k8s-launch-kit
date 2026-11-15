@@ -16,6 +16,12 @@ equivalent. For the independent DPU cluster, use the DPF procedure below.
 
 ## DPF HBN-BGP
 
+Native HBN eligibility rejects a complete directed ordinary/DF matrix whose
+packet-spacing lower bound cannot fit the two-hour maximum. Fewer hosts are not
+a completion guarantee. Fresh and resume deployment recheck the actual remaining
+deadline before image metadata or discovery probes, and before first deployment
+creation after preparation. See [the budget rule](../../docs/user/dpf-deployment.md#run-deployment).
+
 The CLI must read the retained HBN image's manifest/config metadata over
 anonymous HTTPS, with only same-origin anonymous Bearer token exchange. Docker
 and kubelet pull credentials are not used by this verifier. Basic authentication

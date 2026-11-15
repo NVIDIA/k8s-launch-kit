@@ -112,6 +112,11 @@ func Generate(input Inputs) (*bundle.Bundle, error) {
 	if err := validateInputs(input); err != nil {
 		return nil, err
 	}
+	// Native plans require one selected DPU per physical host. Reject an
+	// intrinsically impossible acceptance matrix without claiming live readiness.
+	if err := hbn.ValidateRuntimeTrafficBudget(len(input.Workload.Devices), hbn.MaxNativeDeploymentDuration); err != nil {
+		return nil, fmt.Errorf("native HBN runtime budget: %w", err)
+	}
 	if err := hbn.ValidateGeneration(input.Workload.Profile, input.Workload.Generation); err != nil {
 		return nil, fmt.Errorf("validate resolved HBN generation: %w", err)
 	}

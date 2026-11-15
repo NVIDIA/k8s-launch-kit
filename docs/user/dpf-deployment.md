@@ -110,6 +110,18 @@ l8k deploy --target dpf \
   --deploy-timeout 2h
 ```
 
+The native workflow checks every directed host pair sequentially, with three ordinary
+and three DF packets at one-second intervals. Packet spacing alone requires `4 × N × (N
+− 1)` seconds for `N` selected physical hosts. Discovery and generation reject a matrix
+whose lower bound cannot fit the two-hour native maximum. This rejects 43 or more
+selected hosts under the current protocol; fewer hosts are not guaranteed to finish
+because provisioning, SSH and API checks take additional time. Before image metadata
+access or discovery probes, both fresh and resume runs reject a remaining deadline that
+cannot cover the selected matrix. The CLI checks the budget again before creating a
+first DPUDeployment, after preparation. A shorter timeout can therefore reject a smaller
+cohort. Each resume still measures the entire matrix; earlier traffic passes do not
+accumulate.
+
 Both file arguments are required explicitly. The default and maximum DPF timeout
 is two hours; a shorter positive timeout is supported. For automation, add
 `--output json`, capture stdout separately from stderr and check the process exit

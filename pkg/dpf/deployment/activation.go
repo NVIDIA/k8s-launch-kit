@@ -15,6 +15,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -276,6 +277,9 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, "", objects, journal, requestTimeout); err != nil {
 				return receipt, err
 			}
+		}
+		if err := hbn.ValidateRuntimeTrafficBudget(len(selected), time.Until(deadline(ctx))); err != nil {
+			return receipt, activationFailure(journal, "HBN_RUNTIME_BUDGET_INSUFFICIENT", "Preparation consumed the time required for the complete selected traffic matrix; no DPUDeployment will be created.", err)
 		}
 		created, err = executeNativeObject(ctx, client, execution.reconciler, deployment, generation.StageDeployment, journal, false, interval)
 		if err != nil {

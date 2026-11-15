@@ -603,6 +603,16 @@ It does not measure remaining filesystem space or guarantee capacity for future
 growth. Deployment repeats the storage check instead of trusting a saved
 inventory. Discovery does not reserve a tenant API address.
 
+The native workflow checks every directed host pair sequentially, with three ordinary
+and three DF packets at one-second intervals. Packet spacing alone requires `4 × N × (N
+− 1)` seconds for `N` selected physical hosts. Discovery and generation reject a matrix
+whose lower bound cannot fit the two-hour native maximum. This rejects 43 or more
+selected hosts under the current protocol; fewer hosts are not guaranteed to finish
+because provisioning, SSH and API checks take additional time. The check counts only
+uniquely associated selected hosts. Missing associations or several selected cards on
+one host block the native path. A discovery pass does not reserve execution time;
+deployment checks its actual remaining deadline.
+
 Once the provisioning inputs and current device identities are complete, the
 CLI downloads the selected operator and HBN charts over HTTPS and verifies
 their digests and generated resource schemas. It uses that plan to ask the

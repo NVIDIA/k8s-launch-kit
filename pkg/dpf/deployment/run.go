@@ -22,6 +22,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
@@ -33,7 +34,7 @@ const (
 	defaultRunPollInterval   = 5 * time.Second
 	defaultRunRequestTimeout = 30 * time.Second
 	maxRunSoftwareBytes      = int64(16 << 30)
-	maxRunDuration           = 2 * time.Hour
+	maxRunDuration           = hbn.MaxNativeDeploymentDuration
 )
 
 // RunStateFailed means one or more deployment stages did not complete.
@@ -259,6 +260,17 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 	access := request.Access
 	access.RequestTimeout = requestTimeout
 	intent := plan.Intent()
+	// The retained native plan requires one selected card per physical host.
+	// Read the current deadline after plan preparation, for fresh and resume alike.
+	if err := hbn.ValidateRuntimeTrafficBudget(len(intent.Devices), time.Until(deadline)); err != nil {
+		check := inventory.Check{ID: "dpf.hbn.deployment.runtime-budget", Subject: "selected physical hosts", Vantage: "cli",
+			RequiredPhase: "deploy", State: "failed", ReasonCode: "HBN_RUNTIME_BUDGET_INSUFFICIENT", Message: err.Error()}
+		result.Checks = append(result.Checks, check)
+		if journalErr := journalPrerequisiteChecks(journal, []inventory.Check{check}); journalErr != nil {
+			return result, journalErr
+		}
+		return result, reconcileError(check.ReasonCode, check.Message, nil)
+	}
 	// Run before even discovery probes: a known unsupported metadata transport
 	// must not first be discovered after provisioning/reset/host-network effects.
 	progress.Update("Verifying retained HBN image metadata access")

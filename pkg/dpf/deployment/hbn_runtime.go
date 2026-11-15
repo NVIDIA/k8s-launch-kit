@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnruntime"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -422,7 +423,7 @@ func validHBNRuntimeTraffic(result sshprobe.HostTrafficResult, request sshprobe.
 		return false
 	}
 	for _, probe := range []sshprobe.HostTrafficProbe{result.Ordinary, result.MTUProbe} {
-		if probe.State != sshprobe.TrafficProbePassed || probe.Counters == nil || probe.Counters.Sent != 3 || probe.Counters.Received != 3 || probe.Counters.LostPct != 0 {
+		if probe.State != sshprobe.TrafficProbePassed || probe.Counters == nil || probe.Counters.Sent != hbn.RuntimePacketCount || probe.Counters.Received != hbn.RuntimePacketCount || probe.Counters.LostPct != 0 {
 			return false
 		}
 	}

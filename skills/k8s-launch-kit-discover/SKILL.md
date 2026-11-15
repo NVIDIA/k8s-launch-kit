@@ -48,6 +48,11 @@ nonempty BMC password value through protected references for all selected DPUs.
 Distinct aliases with equal resolved values are valid. HBN readiness checks this
 compatibility separately from general inventory Administrator privileges.
 
+HBN deployment readiness counts distinct uniquely associated selected physical
+hosts and rejects a serial complete ordinary/DF matrix whose packet-spacing
+lower bound cannot fit the native two-hour maximum. This bound is not a forecast;
+see [the budget rule](../../docs/user/dpf-deployment.md#run-deployment).
+
 With complete provisioning inputs and current identities, HBN discovery retrieves
 and verifies the selected operator/HBN charts and derives an in-memory deployment
 plan for scoped management API authorization reviews. Read the caller permission

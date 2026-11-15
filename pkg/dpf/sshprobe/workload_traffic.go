@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 )
 
 // HostTrafficRequest binds one directed test to the host PF and current lease.
@@ -318,7 +319,8 @@ func (s *hostNetworkSession) pingHost(ctx context.Context, request HostTrafficRe
 	if df {
 		mode = " -M do"
 	}
-	command := "/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /usr/bin/ping -4 -n -q -B -I " + source.String() + mode + " -s " + strconv.Itoa(size) + " -c 3 -W 2 " + request.Destination.String()
+	command := "/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /usr/bin/ping -4 -n -q -B -I " + source.String() + mode + " -s " + strconv.Itoa(size) +
+		" -i " + strconv.FormatFloat(hbn.RuntimePingInterval.Seconds(), 'f', -1, 64) + " -c " + strconv.Itoa(hbn.RuntimePacketCount) + " -W 2 " + request.Destination.String()
 	execCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	output, err := s.remote.Run(execCtx, "host-traffic-ping", command)
@@ -346,12 +348,12 @@ func (s *hostNetworkSession) pingHost(ctx context.Context, request HostTrafficRe
 	}
 	if runErr != nil {
 		var sshErr *Error
-		if errors.As(runErr, &sshErr) && sshErr.Code == "SSH_COMMAND_FAILED" && sshErr.ExitStatus != nil && *sshErr.ExitStatus == 1 && counters.Sent == 3 && (counters.Received != 3 || counters.LostPct != 0) {
+		if errors.As(runErr, &sshErr) && sshErr.Code == "SSH_COMMAND_FAILED" && sshErr.ExitStatus != nil && *sshErr.ExitStatus == 1 && counters.Sent == hbn.RuntimePacketCount && (counters.Received != hbn.RuntimePacketCount || counters.LostPct != 0) {
 			return counters, networkError("HOST_NETWORK_TRAFFIC_PING_INCOMPLETE", false)
 		}
 		return counters, safeTrafficRemoteError(runErr, "HOST_NETWORK_TRAFFIC_PING_FAILED")
 	}
-	if counters.Received != 3 || counters.LostPct != 0 {
+	if counters.Received != hbn.RuntimePacketCount || counters.LostPct != 0 {
 		return counters, networkError("HOST_NETWORK_TRAFFIC_PING_INCOMPLETE", false)
 	}
 	return counters, nil
@@ -375,7 +377,7 @@ func parsePingCounters(data []byte) (*PingCounters, error) {
 	if err != nil || math.IsNaN(lost) || math.IsInf(lost, 0) {
 		return nil, networkError("HOST_NETWORK_TRAFFIC_RESPONSE_INVALID", false)
 	}
-	if sent != 3 || received < 0 || received > sent || lost < 0 || lost > 100 {
+	if sent != hbn.RuntimePacketCount || received < 0 || received > sent || lost < 0 || lost > 100 {
 		return nil, networkError("HOST_NETWORK_TRAFFIC_RESPONSE_INVALID", false)
 	}
 	expected := 100 * float64(sent-received) / float64(sent)

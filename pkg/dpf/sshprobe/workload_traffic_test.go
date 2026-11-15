@@ -325,7 +325,7 @@ func assertTrafficCommands(t *testing.T, calls []string, minimumRoutes int) {
 		}
 		if strings.Contains(call, "host-traffic-ping") {
 			pings++
-			if strings.Contains(call, "sudo") || !strings.Contains(call, "-B -I 172.25.0.2") || !strings.Contains(call, " -c 3 -W 2 172.25.1.2") {
+			if strings.Contains(call, "sudo") || !strings.Contains(call, "-B -I 172.25.0.2") || !strings.Contains(call, " -i 1 -c 3 -W 2 172.25.1.2") {
 				t.Fatalf("unexpected ping argv: %s", call)
 			}
 		}

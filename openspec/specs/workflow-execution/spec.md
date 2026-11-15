@@ -66,6 +66,20 @@ Equivalent entry points SHALL reuse common semantics for equivalent modes. Inten
 
 New and changed workflow checks SHALL persist a stable reason code and safe explanation for every failed, unavailable, unknown, skipped or deferred result. The result SHALL distinguish missing prerequisites from an attempted operation failure and identify the subject and source where known. Diagnostic persistence MUST NOT disclose credentials or treat optional unknowns as passes. Existing unrelated baseline paths are not retroactively migrated by this requirement.
 
+#### Scenario: Native DPF HBN matrix cannot fit the execution budget
+
+- **WHEN** the serial complete directed ordinary/DF matrix requires packet spacing
+  alone greater than or equal to the native maximum deployment duration
+- **THEN** HBN discovery blocks deployment readiness and native generation rejects
+  the plan; one selected DPU per uniquely associated physical host is required.
+- **AND** fresh and resumed deployment compare the same protocol-derived lower
+  bound against the actual remaining deadline before metadata or prerequisite
+  transports and before management, physical or host-network effects.
+- **AND** the budget is checked again before creating a first DPUDeployment after
+  preparation; previously measured traffic never reduces a resumed matrix.
+- **AND** passing this bound does not estimate completion time or qualify a cohort;
+  provisioning, SSH, API fences and other work still consume the deadline.
+
 #### Scenario: DPF HBN image metadata prerequisite
 
 - **WHEN** native DPF deployment starts or resumes the retained plan

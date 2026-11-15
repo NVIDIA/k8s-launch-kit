@@ -23,6 +23,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
@@ -59,7 +60,7 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 	if d.request.UserConfig == "" || d.request.DeploymentFiles == "" {
 		return nil, fmt.Errorf("DPF deploy requires --user-config and --deployment-files")
 	}
-	if inv.Execution.Timeout < 0 || inv.Execution.Timeout > 2*time.Hour {
+	if inv.Execution.Timeout < 0 || inv.Execution.Timeout > hbn.MaxNativeDeploymentDuration {
 		return nil, fmt.Errorf("DPF deployment timeout must be between zero (the two-hour default) and two hours")
 	}
 	var resume *deployment.OperationRef
@@ -82,7 +83,7 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		defer stop()
 		timeout := inv.Execution.Timeout
 		if timeout == 0 {
-			timeout = 2 * time.Hour
+			timeout = hbn.MaxNativeDeploymentDuration
 		}
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()

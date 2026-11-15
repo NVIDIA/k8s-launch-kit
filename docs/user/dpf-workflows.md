@@ -427,6 +427,8 @@ firmware/backend mismatch and rediscover. Deployment repeats this check before
 provisioning changes. Passing it does not authorize a reboot: the current reset
 request, safe shutdown, idle tasks and firmware-copy state are checked at reset time.
 
+The native workflow checks every directed host pair sequentially, with three ordinary and three DF packets at one-second intervals. Packet spacing alone requires `4 × N × (N − 1)` seconds for `N` selected physical hosts. Discovery and generation reject a matrix whose lower bound cannot fit the two-hour native maximum. This rejects 43 or more selected hosts under the current protocol; fewer hosts are not guaranteed to finish because provisioning, SSH and API checks take additional time. The deployment readiness check counts distinct selected physical hosts only after unique host/card association; missing or conflicting associations remain blocked.
+
 Next: [Required check blocked or unknown](#hbn-bgp-preflight-correct); [Required checks verified](#hbn-bgp-preflight-finish).
 
 ### 4. Infrastructure owner: resolve the reported cause {#hbn-bgp-preflight-correct}
@@ -449,7 +451,7 @@ Run generation on the CLI machine after collecting the selected estate. A blocke
 flowchart TD
   n1["CLI operator: complete the saved site configuration"]
   n2["CLI machine: resolve and check selected identities"]
-  n3["CLI machine: retrieve charts and validate resources"]
+  n3["CLI machine: retrieve charts and validate the native plan"]
   n4["CLI machine: save a complete bundle"]
   n5["CLI operator: correct the reported problem"]
   n6["CLI operator: review artifacts and remaining readiness checks"]
@@ -474,9 +476,11 @@ Run `l8k generate --target dpf --use-case hbn-bgp --user-config dpf-site.yaml --
 
 Next: [Inputs valid](#hbn-bgp-generation-charts); [Missing or conflicting input](#hbn-bgp-generation-repair).
 
-### 3. CLI machine: retrieve charts and validate resources {#hbn-bgp-generation-charts}
+### 3. CLI machine: retrieve charts and validate the native plan {#hbn-bgp-generation-charts}
 
 The CLI downloads the selected DPF operator and HBN chart archives over HTTPS and verifies their recorded SHA-256 digests and metadata. It renders management bootstrap and HBN manifests locally, checks custom-resource structure against the selected operator schemas, and validates the complete artifact bundle. It does not connect to or modify the management cluster, hosts, DPUs or switches. A render or validation failure leaves the destination untouched. The interface manifests carry selectors derived from the selected DPU cluster and DPU node names. Generation does not check whether live labels uniquely identify those targets. HBN resource requests are included in both the container configuration and DPF service capacity accounting. The workload IPAM manifest excludes the selected host address from ordinary dynamic allocation in every possible DPU subnet. It does not assign subnets to specific DPUs or configure host addresses and routes.
+
+The native workflow checks every directed host pair sequentially, with three ordinary and three DF packets at one-second intervals. Packet spacing alone requires `4 × N × (N − 1)` seconds for `N` selected physical hosts. Discovery and generation reject a matrix whose lower bound cannot fit the two-hour native maximum. This rejects 43 or more selected hosts under the current protocol; fewer hosts are not guaranteed to finish because provisioning, SSH and API checks take additional time. This is a deterministic native-plan limit, separate from live readiness.
 
 Next: [Bundle validates](#hbn-bgp-generation-publish); [Download, digest or validation failure](#hbn-bgp-generation-repair).
 
@@ -507,7 +511,7 @@ flowchart TD
   n3["CLI operator: confirm required deployment gates"]
   n4["CLI machine: create the reviewed deployment bundle"]
   n5["CLI operator: inspect the desired effects"]
-  n6["CLI machine: recheck prerequisites against the plan"]
+  n6["CLI machine: check the remaining budget and fresh prerequisites"]
   n7["Management cluster: install and configure DPF"]
   n8["Management cluster and DPF controllers: create the tenant control plane"]
   n9["Management cluster and DPU BMCs: enroll and place selected cards"]
@@ -613,7 +617,7 @@ The `dpf` target requires explicit `--user-config` and `--deployment-files`. It 
 
 Next: [Bundle and effects reviewed](#hbn-bgp-deployment-fresh-checks); [A bundle input or prerequisite needs correction](#hbn-bgp-deployment-blocked).
 
-### 6. CLI machine: recheck prerequisites against the plan {#hbn-bgp-deployment-fresh-checks}
+### 6. CLI machine: check the remaining budget and fresh prerequisites {#hbn-bgp-deployment-fresh-checks}
 
 Run the separate deployment command:
 
@@ -626,6 +630,8 @@ l8k deploy --target dpf \
 Both paths are required explicitly. The default and maximum deployment timeout is two hours; a shorter positive timeout may be selected. The CLI rereads current management, host, BMC and switch prerequisites and checks that identities and desired settings still match the reviewed bundle. Missing, denied, unknown or changed required facts stop dependent changes before deployment continues.
 
 Before discovery probes or cluster changes, the CLI verifies anonymous HTTPS manifest/config metadata, digests and Linux/arm64 identity for the exact retained HBN image. Only anonymous access or same-origin anonymous Bearer token exchange is supported; Docker and kubelet pull credentials are separate. Basic authentication, foreign token realms and unavailable or mismatched metadata stop dependent work. Each resume repeats this check, and runtime reads metadata again. An early pass does not establish future pulls or traffic.
+
+Before image metadata access or discovery probes, fresh and resume runs check that the actual remaining deadline exceeds the selected matrix packet-spacing lower bound. The native workflow checks every directed host pair sequentially, with three ordinary and three DF packets at one-second intervals. Packet spacing alone requires `4 × N × (N − 1)` seconds for `N` selected physical hosts. Discovery and generation reject a matrix whose lower bound cannot fit the two-hour native maximum. This rejects 43 or more selected hosts under the current protocol; fewer hosts are not guaranteed to finish because provisioning, SSH and API checks take additional time. A shorter selected timeout can reject a smaller cohort. The budget is checked again before creating a first DPUDeployment after preparation.
 
 Next: [Fresh checks still match](#hbn-bgp-deployment-management); [A required check fails or is unavailable](#hbn-bgp-deployment-blocked).
 
