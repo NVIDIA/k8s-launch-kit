@@ -3,63 +3,77 @@
 
 # Deploy HBN-BGP on DPUs
 
-Use this workflow after [discovery](dpf-discovery.md) and
-[generation](dpf-generation.md). It provisions the independent DPU cluster and
-connects the selected hosts through HBN and your BGP fabric. The
-[deployment flow diagram](dpf-workflows.md#hbn-bgp-deployment) includes the
-blocking conditions and recovery path.
+Use this procedure after [DPF discovery](dpf-discovery.md) and review of the
+[generated HBN-BGP bundle](dpf-generation.md). Launch Kit uses an existing
+management Kubernetes cluster and its required DPF foundations to provision the
+selected DPUs, create their independent tenant control plane, configure each
+selected host's workload interface and check HBN routing and traffic. The
+[deployment workflow](dpf-workflows.md#hbn-bgp-deployment) gives the step-by-step
+operations and decision paths.
 
-Deployment can replace the selected DPUs' operating systems, change their device
-settings, reboot their hosts and configure the selected host workload interfaces.
-Use a maintenance window that excludes other provisioning and firmware writers
-for the entire run, including external MFT commands. Launch Kit checks switch
-configuration; this command does not
-configure switches or create the management Kubernetes cluster or its VMs.
+The management Kubernetes cluster, required foundations and aligned switch
+fabric must already exist. Launch Kit does not create the management VM or
+configure switches. Deployment can replace selected DPU operating systems,
+change DPU settings, reboot selected hosts and configure their workload-facing
+interfaces. Use a maintenance window that excludes other device provisioning,
+firmware writers and host maintenance. Keep the CLI machine online and able to
+reach the management cluster and selected hosts during the run; host reboots can
+interrupt access temporarily.
+
+## Management-cluster prerequisites
+
+Before starting, install versions compatible with the selected DPF release of
+cert-manager, Argo CD, the Node Feature Discovery (NFD) API and master, NVIDIA
+Maintenance Operator, and Kamaji. Kamaji needs a healthy shared etcd DataStore
+and the supported local-path storage configuration. See the
+[management and storage prerequisites](dpf-discovery.md#check-hbn-bgp-prerequisites).
+Launch Kit checks these components and their access; this deployment command
+does not install them.
 
 ## Prepare the site and review the bundle
 
 Keep the discovered site file, generated directory and its metadata together.
-Provide working management-cluster access and explicit access references for the
-selected hosts, DPU BMCs and switches. The machine running the CLI needs direct
-connectivity to those endpoints. The management nodes also need the network paths
-reported by discovery; reachability from the CLI alone is insufficient.
+Provide management-cluster access and explicit, trusted access to the selected
+hosts, DPU BMCs and switches. The CLI machine needs direct connectivity to these
+endpoints. The management nodes also need the paths reported by discovery; CLI
+reachability alone is insufficient. Each selected host must be able to boot its
+existing local operating system after a system reboot. Host firmware setup is
+outside this procedure.
 
-Every selected DPU BMC must grant Administrator privileges. A successful login
-with a restricted account is insufficient. The current BF4 HBN crawler also
-requires the `admin` username and the same nonempty password value on every
-selected DPU. Separate credential aliases may reference the same value. HBN
-discovery checks this compatibility separately from general Administrator
-authorization. Use protected password/key references;
-do not put passwords in manifests or command arguments. Keep SSH host-key pins
-and the selected Redfish certificate policy with the site configuration.
+For the current BF4 enrollment path, each selected DPU BMC must grant
+Administrator access, use the `admin` username and resolve to the same nonempty
+password value. Separate protected credential aliases may reference that value.
+Use protected password/key references and pinned SSH host keys; do not put
+secrets in command arguments or generated manifests.
 
-Review these site decisions before deployment:
+Confirm these site decisions before generating the bundle:
 
-| Decision | What must be established |
+| Decision | What to establish |
 | --- | --- |
-| Selected devices | Each DPU maps to the intended physical host and PCI adapter. |
-| Tenant API | The VIP is reserved, excluded from DHCP allocation, reachable on the selected control-plane interface, and its VRRP router ID is available on the selected nodes. |
-| Software | The OS ISO and each PSID-specific firmware bundle belong to the selected release and hardware cohort; their supplied checksums match the intended bytes. |
-| Firmware prerequisites | Required firmware is already active and the BMC provides the observations needed for safe reset coordination. Vendor recovery operations are a separate prerequisite. |
-| Fabric | Selected uplinks have the intended VRF, BGP neighbors, ASN, policy and MTU. Correct configuration alone does not prove hardware forwarding. |
-| Host workload network | The selected PF can be managed without taking over the management interface, default route or an existing workload. |
+| Selected devices | Each DPU maps to the intended physical host and adapter. |
+| Tenant API | Reserve the VIP, exclude it from DHCP and confirm its VRID is available on the selected control-plane nodes. Declare these facts under `provisioning.bootstrap.tenant.allocation` only with the responsible owner's confirmation. |
+| Software | The OS ISO and each selected PSID firmware bundle match the intended DPU cohort; provide credential-free HTTPS URLs and checksums. |
+| Fabric | Switch uplinks already have the intended port bindings, fabric VRF, BGP neighbors/policy, ASN and MTU. Deployment observes this configuration; it does not apply it. |
+| Host workload network | The selected PF can be configured without taking over the host management interface, another port or its default route. |
+| Host recovery | The selected host can return to its existing local operating system after a requested system reboot. |
 
-The tenant allocation declarations live under
-`provisioning.bootstrap.tenant.allocation`: `vipReserved`,
-`vipExcludedFromDHCP` and `routerIDUniqueOnSelectedNodes`. Set them only after
-confirming the corresponding site allocation. A successful ARP probe does not
-establish DHCP exclusion. Missing or false declarations block tenant creation.
+The native HBN deployment path requires
+`provisioning.bootstrap.bmcFactoryResetPolicy: Never`, preserving existing BMC
+network settings. A setting accepted by the general configuration schema does
+not imply that the native deployment path supports it; see
+[configuration reference](../reference/configuration.md#bootstrap-and-hbn-defaults).
 
-The profile supplies release coordinates, ASNs, address pools, MTUs and other
-defaultable settings. Override the site file when your environment differs, then
-rediscover and regenerate. Edit the source configuration rather than files inside
-an existing generated bundle.
+`dpf.hbn.fabricVRF` describes the VRF expected on the selected switch uplinks;
+the profile default is `default`. DPU FRR uses its default VRF. These are separate
+routing roles, so review the switch fabric and DPU routing settings independently
+in the resolved bundle. The profile provides defaultable release, ASN,
+address-pool and MTU values. Override the site file only when needed, then
+regenerate and review a new bundle. Do not edit files in an existing generated
+directory.
 
-Automatic reset coordination requires a supported BMC observation format. The
-current BlueField-4 reset checks cover the 26.10 BMC format; other formats stop
-with a reason when safe shutdown or idle firmware state cannot be established.
-This support does not qualify every hardware and firmware combination for the
-selected DPF release.
+For complete field names and profile values, see
+[HBN-BGP generation](dpf-generation.md) and the
+[bootstrap and HBN configuration reference](../reference/configuration.md#bootstrap-and-hbn-defaults).
 
 ## Run deployment
 
@@ -70,61 +84,53 @@ l8k deploy --target dpf \
   --deploy-timeout 2h
 ```
 
-Both file arguments must be explicit. The default DPF timeout is two hours;
-a shorter positive timeout is supported. Use `--log-level debug` for additional
-operation diagnostics. Normal live progress is written to stderr. For automation,
-add `--output json`, retain stderr separately and check the process exit status.
+Both file arguments are required explicitly. The default and maximum DPF timeout
+is two hours; a shorter positive timeout is supported. For automation, add
+`--output json`, capture stdout separately from stderr and check the process exit
+status. Keep the report path and partial effects from a failed run for inspection.
 
-DPF deployment supports neither `--dry-run` nor Host `--overwrite-existing`
-semantics. Review the generated bundle before applying it. The DPF target does
-not use the Host `--kubeconfig` flag; management access comes from the site file.
+The DPF target does not support `--dry-run` or Host `--overwrite-existing`
+semantics. It does not use Host `--kubeconfig`; management access comes from the
+site file. This is an initial deployment procedure, not a general upgrade or
+adoption path.
 
 ## What runs where
 
-| Stage | Operations and location |
-| --- | --- |
-| Fresh checks | The CLI rereads selected host, BMC, switch and management-cluster facts, checks required permissions and compares them with the reviewed bundle. A changed identity or desired configuration stops deployment. |
-| DPF management | The CLI installs the retained DPF operator chart through the management Kubernetes API and waits for the operator and its configuration. Conflicting resources are reported rather than silently adopted. |
-| DPU control plane | DPF creates the tenant Kubernetes control plane on the selected management nodes. Launch Kit verifies its API and backing prerequisites and rechecks operator readiness before enrolling DPUs. |
-| Enrollment and software | The CLI supplies the required BMC credential Secret and exact discovery targets. DPF contacts the DPU BMCs, enrolls the selected cards and caches the selected software. Launch Kit checks the downloaded bytes against the supplied checksums. |
-| Service declarations | The CLI creates the HBN service configuration, service chains and DPUDeployment through the management API. These declarations can exist before any DPU has joined; their existence is not service readiness. |
-| DPU installation | DPF transfers the OS installer through the BMC, boots it and configures the installed DPU agent. Installing the OS can take many minutes; BMC `OSRunning` can describe the installer rather than the final agent. |
-| Activation | When DPF requests a supported external reset, Launch Kit checks the exact device/request and shutdown state before rebooting the selected host. It confirms the new host boot and DPU agent/kernel boot before acknowledging that reset. Unsupported or unmeasurable reset paths stop with a reason. |
-| Service readiness | Once the DPUs join, DPF starts HBN and the service chains on those tenant nodes. Launch Kit waits for the intended devices, current service resources and actual HBN containers. |
-| Host networking | The CLI reads each DPU's actual allocated workload subnet, then configures its associated host PF and workload-pool route over host SSH. It preserves the management network and default route. |
-| Runtime checks | The CLI reads BGP and installed routes from each HBN container, then tests every directed pair of selected hosts through the workload network, including DF packets at the configured workload MTU. |
+| Operation | Where it runs | What must be observed before continuing |
+| --- | --- | --- |
+| Refresh deployment prerequisites | The CLI reads selected hosts, BMCs, switches and the management API. | Required identities, access and desired settings still match the reviewed bundle; required unknown or failed facts stop deployment. |
+| Install DPF management | The CLI uses the management Kubernetes API and retained chart; DPF controllers run on the management cluster. | Operator and configuration are ready with intended ownership. Conflicts are reported rather than silently adopted. |
+| Create the DPU control plane | DPF and its controllers create the selected tenant cluster on the management nodes; the CLI checks through management and tenant APIs. | The tenant API and backing prerequisites are available and match the plan. This does not mean selected DPUs are installed. |
+| Enroll selected cards | The CLI supplies the required credential and discovery targets; DPF contacts the selected BMCs. | Each selected DPU is enrolled with the intended device/host identity. The reviewed deployment selectors target those devices later; no manual label operation is required. |
+| Stage software and declare HBN | DPF caches the selected OS and PSID firmware; the CLI verifies artifact checksums and creates the selected flavor, IPAM, interface, service and DPUDeployment declarations through the management API. | Artifact bytes match the reviewed bundle and the declarations target only the selected devices and are accepted. Downloads and accepted objects do not prove installed software or a running service. |
+| Install and activate DPUs | DPF controllers install the OS and DPU agent. When DPF requests host maintenance, the CLI performs only a supported system reboot over the selected host access after checking the request and safe shutdown state. | The host and selected DPU return with the expected boot observations within the configured deployment timeout, and DPF reports them ready. |
+| Configure host workload networking | The CLI reads each actual DPU IPAM allocation through the tenant/management APIs and configures the matching host PF over host access. | The allocated address, selected interface, MTU and workload route are applied and verified while preserving management connectivity and the default route. |
+| Check HBN routing and traffic | The CLI reads the intended HBN containers and routing state through the tenant API, then probes selected hosts over host access. | Required BGP peers, remote workload routes and every directed ordinary and do-not-fragment (DF) traffic check pass. A one-host result cannot establish cross-host traffic. |
 
-The uplink MTU applies to the DPF high-speed network and physical service-chain
-ports. The workload MTU applies to the host-facing service-chain port and host PF.
-The independent control-plane network retains its own MTU.
-
-At boot, network readiness follows the selected port's existing Netplan
-optionality. A required port's static workload address joins Netplan's
-"any routable interface" wait. That wait can then succeed through the workload
-port; Launch Kit checks management reachability separately.
+The table shows operation dependencies and Launch Kit checkpoints; DPF
+controllers reconcile resources asynchronously, so HBN startup can begin after
+DPU agents join while deployment is still progressing. Launch Kit waits for the
+selected service and interface resources and performs final HBN acceptance only
+after host workload networking. Do not treat a declared service, ready artifact
+cache or DPU provisioning result as proof of BGP or traffic.
 
 ## Read the result and recover from a stop
 
-`validated` means the complete selected multi-host BGP, route and traffic matrix
-passed at the time of the checks. A one-host run can be `provisioned`, but cannot
-establish cross-host traffic. Neither result is a general hardware qualification,
-a performance benchmark or proof that every failover path was exercised.
+`validated` means the selected multi-host BGP, installed-route and directed
+traffic checks passed at the time of observation. A one-host run can be
+`provisioned`, but cross-host routing and traffic remain unmeasured. Neither
+state is a general hardware qualification, performance result or proof that
+every failover path was exercised.
 
-If deployment stops, retain the reported operation records, stdout and stderr.
-The result identifies the last completed stage; the records retain individual
-failure and unavailable-check reasons. Earlier successful effects can remain.
-Inspect current resources and device state before another attempt, especially
-after a timeout or disconnected reboot request. Do not remove DPF reset annotations
-or edit resource status to bypass a pending operation.
+If deployment stops, retain the discovery handoff, reported operation records,
+stdout and stderr. A stop can leave earlier management, tenant, enrollment,
+software or host-network effects in place. Inspect current resources and device
+state before another attempt, especially after timeout or interrupted host
+reboot. Do not retry a host reset when the report does not establish whether it occurred.
 
-An existing matching tenant also blocks fresh network readiness in this workflow.
-Inspect its ownership, active workloads and network state; a matching object is
-insufficient to resume deployment. For a clean deployment, plan any
-required cleanup of the selected tenant with its workload owner. Preserve unrelated
-resources, complete that cleanup, and rerun discovery to obtain a new ready result.
-
-Correct an input by editing the site file and generating a new reviewed bundle.
-An existing conflicting deployment may need deliberate removal before a clean
-run; deployment does not automatically delete it. Host `l8k clean` is not a DPF
-cleanup command. Leave unrelated clusters, workloads and externally managed
-components in place.
+A matching tenant or resource name does not prove it is safe to reuse. Inspect
+ownership, active workloads and network state. Coordinate any selected-tenant
+cleanup with its owner and preserve unrelated resources. If desired input or
+selection changes, update the site file, repeat discovery when observations
+changed and generate a newly reviewed bundle. Host `l8k clean` is not DPF
+teardown.

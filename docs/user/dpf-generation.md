@@ -55,12 +55,11 @@ provisioning:
     memory: 8Gi
 ```
 
-The profile sets `provisioning.bootstrap.bmcFactoryResetPolicy: Never`, so the
-generated enrollment configuration preserves existing BMC network settings.
-An explicit `OnInitialization` instead makes DPF reset each newly enrolled BMC;
-that clears its network configuration and needs DHCP to restore the same address.
-Verify that behavior before applying enrollment resources. Generation does not
-perform the reset or verify DHCP recovery.
+The profile sets `provisioning.bootstrap.bmcFactoryResetPolicy: Never`, which
+preserves existing BMC network settings. The current native HBN deployment path
+requires `Never`. Although the general configuration schema and generation can
+accept and render `OnInitialization`, native deployment rejects that policy
+before enrollment. Do not rely on DHCP recovery for this path.
 
 Review [bootstrap and HBN defaults](../reference/configuration.md). Tenant pod and
 service ranges belong to the independent DPU cluster. The default ASN allocation

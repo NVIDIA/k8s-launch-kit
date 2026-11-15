@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# DPF discovery preview
+# DPF discovery reference
 
 Start with the [step-by-step CLI workflows](dpf-workflows.md) for first inventory,
 address-candidate lookup and refresh. This page provides the access and output reference.
@@ -13,20 +13,18 @@ host/DPU Redfish or SSH endpoints. The DPF estate is independent of Host network
 Inventory mode can run before Kubernetes exists; an explicitly supplied management
 kubeconfig adds management observations and must work if supplied.
 
-This build exposes an **experimental inventory preview**. Inventory success means
-that selected sources were read, physical identities and unique host/card mappings
-were established, each DPU BMC account had verified administrator privileges, and cleanup/publication succeeded. It does **not** mean DPF
-provisioning readiness or production hardware support. Missing optional card
-metadata remains visible, including cards without serials. Hardware support and
-deployment readiness checks do not block inventory collection. Overall deployment `acceptance` remains
-`not-evaluated`, even when `discovery.outcome` is `complete` and the command exits zero.
+DPF discovery remains an **experimental** capability. Inventory success means
+selected sources were read and the requested inventory was saved; it does not
+mean DPF provisioning readiness or hardware qualification. Missing optional card
+metadata remains visible. Hardware support and deployment readiness checks do
+not block inventory collection.
 
 Without a selected use case, discovery defaults to `management` mode. Set
 `discovery.probes.mode: inventory` to collect inventory without temporary Pods.
 HBN-BGP defaults to inventory mode; explicitly select management mode to test
-network paths. Management probes currently support Linux/amd64 nodes. HBN-BGP
+network paths. Management probes currently support Linux/amd64 nodes. DPF HBN-BGP
 artifact generation and standalone [deployment](dpf-deployment.md) are available.
-DPF standalone validation and the DPF pipeline remain unavailable.
+DPF standalone validation and the composite DPF pipeline are not available.
 
 ## Management-network probes
 
@@ -68,9 +66,9 @@ A failed DNS, TCP or TLS check remains a blocker while other independent paths
 are collected. Admission, identity, image or malformed-response failures stop
 probe execution. Live progress names each node and network namespace.
 
-The CLI records each created resource's UID and removes its own Pods and ConfigMap
-on completion or failure. Inspect cleanup failures and the saved resource journal
-before retrying; do not delete resources belonging to another run.
+The CLI removes only the temporary Pods and ConfigMap it created. Inspect cleanup
+failures and the saved resource report before retrying; do not delete resources
+belonging to another run.
 
 For a new HBN tenant, interface/route checks require every node selected by the
 tenant selector to have the configured interface up, a suitable IPv4 prefix,
@@ -248,13 +246,11 @@ restores system-trust verification for that endpoint. Omitted/null values use th
 policy's default. `caFile` and `insecureSkipVerify: true` cannot be combined in the
 effective policy. TLS policies are independent even when endpoints share credentials.
 
-The CLI warns on stderr unless quiet output is requested. Your `discovery` input
-retains the selected TLS policy; `inventory.scopeDigest` protects refresh against
-a changed scope or trust policy. The inventory does not repeat the configured
-endpoint/trust list as `requestedScope`. A selected policy does not establish
-successful TLS or hardware verification. Use a fresh input without
-saved `inventory` and a new output when changing the verification policy or custom
-CA contents. This BMC option does not relax management kubeconfig TLS verification.
+The CLI reports warnings on stderr. The saved input records the selected TLS
+policy so a refresh can identify changed scope or trust settings. A selected
+policy does not establish successful TLS or hardware verification. Use a fresh
+input and new output when changing the verification policy or custom CA contents.
+This BMC option does not relax management kubeconfig TLS verification.
 
 ## Optional SSH inventory in Zero Trust
 
@@ -369,8 +365,8 @@ consumer requiring PSID must require a single observed value associated with the
 selected device and reject contradictory or invalid readings across its sources;
 an absent or unsupported Redfish PSID may be supplied by an independently verified
 SSH measurement, but a rejected or conflicting Redfish PSID must not be bypassed.
-The PSID fact and eligibility contribute to the inventory fingerprint and refresh
-diff. Release qualification and administrator authorization remain separate checks.
+Refresh results also compare the observed PSID and eligibility. Release
+qualification and administrator authorization remain separate checks.
 
 SSH can report NIC firmware/PSID, MFT version, NVConfig and privilege observations
 when the existing tools and permissions permit the read. On hosts, if MFT cannot
@@ -470,25 +466,13 @@ New saved inventories use format `v1alpha3`. This CLI also reads legacy
 become successful identity or administrator proof. Keep previous outputs as
 history and refresh through discovery rather than editing version tags or facts.
 
-### Internal identifiers in saved inventory
+### Review the saved handoff
 
-The detailed YAML/JSON retains identifiers for automation and traceability:
-
-| Field | Meaning |
-| --- | --- |
-| Device `recordKey` | Deterministic key for a selected observation source; used to connect checks to that device record. Normal text shows its name/address instead. |
-| `scopeDigest` | Digest of the selected scope and recorded trust policy, used to detect incompatible refresh inputs. |
-| `fingerprint` | Digest of selected material facts, used to compare inventories. |
-
-These `sha256:` values are internal identifiers/comparison digests, not secrets,
-signatures or independent proof that hardware is correct.
-
-The discovered YAML omits all `evidence`, `evidenceRef` and `evidenceRefs`
-bookkeeping, including management, SSH, address-lookup and connectivity-probe
-records. Named facts, measurements and field-specific issues remain available.
-The separate JSON diagnostic report retains source details where applicable.
-A refresh preserves source backups; removing bookkeeping alone does not report
-a physical change.
+Use the saved inventory and report to review selected identities, readiness checks
+and field-specific reasons. Internal comparison fields in detailed output are for
+the CLI's refresh behavior; operators do not need to interpret them or change
+saved observations. The report keeps named facts and issues needed to resolve a
+failed or unavailable check.
 
 ### Review and refresh the handoff
 
@@ -765,15 +749,10 @@ identity or changing application blocks readiness. Historical saved revisions
 and unrelated staged changes can remain present. This check reads NVUE's reported
 state; it does not inspect the startup file or test persistence through a reboot.
 
-The current ASIC probe supports the reviewed Cumulus 5.15.1 / SDK 4.8.2052
-build and its unchanged vendor diagnostics. It compares each selected port's
-actual ASIC routing interface and router mapping with its Linux VRF and the
-requested profile. This catches programming mismatches that a correct-looking
-NVUE configuration can miss. Missing tools, denied reads, unsupported formats,
-incomplete port coverage or changing mappings block readiness with a reason.
-The vendor SDK diagnostic briefly adjusts diagnostic log verbosity; it does not
-change VLAN, VRF, BGP or forwarding configuration. An interrupted diagnostic
-remains unverified and is not automatically retried or repaired.
+Switch readiness uses the available switch configuration and routing
+observations for the selected uplinks. Missing or conflicting observations stay
+unknown or failed with a reason. A configuration observation does not prove
+hardware forwarding, and discovery does not change switch configuration.
 
 Through the same switch SSH connection, Launch Kit reads FRR's running BGP
 configuration to check effective eBGP policy mode and filter attachments for the

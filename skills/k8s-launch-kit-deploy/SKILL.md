@@ -25,12 +25,19 @@ l8k deploy --target dpf --user-config dpf-discovered.yaml \
   --deployment-files ./hbn-bgp --deploy-timeout 2h --output json
 ```
 
-Both paths must be explicit. Management kubeconfig and host/BMC/switch access
-come from the site file. Host `--kubeconfig` and `--overwrite-existing` are
-rejected; DPF does not support `--dry-run`. The DPF default and maximum timeout
-are two hours. It can reimage selected DPUs, reboot selected hosts and configure
-their workload PFs, so retain the user's existing maintenance authorization and
-exclude competing device provisioning or firmware operations.
+Both paths must be explicit. The management Kubernetes cluster, required DPF
+foundations and aligned switch fabric are prerequisites. The site file supplies
+management kubeconfig and host/BMC/switch access. Launch Kit does not create the
+management VM or configure switches. Keep the CLI machine online and able to
+reach the management API and selected hosts throughout the operation; selected
+host reboots can interrupt access temporarily.
+
+Host `--kubeconfig` and `--overwrite-existing` are rejected; DPF does not support
+`--dry-run`. The DPF default and maximum timeout are two hours. It can reimage
+selected DPUs, reboot selected hosts and configure their workload PFs, so retain
+the user's existing maintenance authorization and exclude competing device
+provisioning or firmware operations. The native HBN path requires BMC reset
+policy `Never`.
 
 The adapter refreshes prerequisites, then runs management, tenant, enrollment,
 software, service declarations, activation, host networking and runtime stages.

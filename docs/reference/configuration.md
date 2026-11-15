@@ -80,6 +80,8 @@ have no public profile defaults. Missing inputs do not stop inventory collection
 but HBN readiness reports them as blockers. Supplying URLs and digests does not
 prove that DPF can download the artifacts or that their bytes are compatible.
 
+### Bootstrap and HBN defaults
+
 `provisioning.bootstrap` supplies the management-plane installation inputs.
 Discovery reports missing inputs while continuing to collect hardware information:
 
@@ -98,7 +100,7 @@ Discovery reports missing inputs while continuing to collect hardware informatio
 | `podCIDR` | `10.244.0.0/14` | Pod network for the DPU tenant cluster; verify separation from networks sharing its forwarding paths |
 | `artifactPVC` | Omitted: DPF uses host storage | Optionally select an existing PVC in the operator namespace; storage health is checked separately |
 | `operatorConfigName` | `dpfoperatorconfig` | Identifies the configuration watched by the operator |
-| `bmcFactoryResetPolicy` | `Never` | Preserve BMC network settings. Use `OnInitialization` only when DHCP will restore the same BMC addresses after a reset |
+| `bmcFactoryResetPolicy` | `Never` | The native HBN-BGP deployment path requires `Never` to preserve BMC network settings. The general schema may accept `OnInitialization`, but native deployment stops before enrollment when it is selected. |
 
 The tenant VIP and interface are site allocations, not discoverable unused
 resources. A complete input check does not establish address reservation,
