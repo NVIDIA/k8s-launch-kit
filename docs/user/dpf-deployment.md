@@ -117,6 +117,12 @@ Inspect current resources and device state before another attempt, especially
 after a timeout or disconnected reboot request. Do not remove DPF reset annotations
 or edit resource status to bypass a pending operation.
 
+An existing matching tenant also blocks fresh network readiness in this workflow.
+Inspect its ownership, active workloads and network state; a matching object is
+insufficient to resume deployment. For a clean deployment, plan any
+required cleanup of the selected tenant with its workload owner. Preserve unrelated
+resources, complete that cleanup, and rerun discovery to obtain a new ready result.
+
 Correct an input by editing the site file and generating a new reviewed bundle.
 An existing conflicting deployment may need deliberate removal before a clean
 run; deployment does not automatically delete it. Host `l8k clean` is not a DPF
