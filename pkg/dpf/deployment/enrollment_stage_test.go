@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -148,7 +149,13 @@ func enrollmentStageFixture(t *testing.T) (*managementExecution, *enrollmentStag
 
 func enrollmentStageFixtureWithSelectors(t *testing.T, selectors map[string]string, additional ...map[string]string) (*managementExecution, *enrollmentStageFake, managementBootstrapReceipt, tenantStageReceipt, string) {
 	t.Helper()
-	expected, sources := tenantSourceFixture(t)
+	execution := prepareEnrollmentStageExecution(t, selectors, additional...)
+	return enrollmentStageFixtureFromExecution(t, execution)
+}
+
+func prepareEnrollmentStageExecution(t *testing.T, selectors map[string]string, additional ...map[string]string) *managementExecution {
+	t.Helper()
+	expected := readyTenantExpectedFixture()
 	input := preflightGenerationInputs(t)
 	if selectors != nil {
 		input.Workload.Devices[0].SelectorLabels = selectors
@@ -186,7 +193,18 @@ func enrollmentStageFixtureWithSelectors(t *testing.T, selectors map[string]stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	return execution
+}
+
+func enrollmentStageFixtureFromExecution(t *testing.T, execution *managementExecution) (*managementExecution, *enrollmentStageFake, managementBootstrapReceipt, tenantStageReceipt, string) {
+	t.Helper()
+	expected, sources := tenantSourceFixture(t)
+	retainedExpected, _, err := tenantPlanInputs(execution.plan)
+	if err != nil || !reflect.DeepEqual(expected, retainedExpected) {
+		t.Fatalf("fresh tenant expectation differs from retained plan: %v", err)
+	}
 	request := controlPlaneTestRequest(t)
+	additional := len(execution.plan.Intent().Devices) - 1
 	for i := range request.Targets {
 		if request.Targets[i].Endpoint == "https://192.0.2.20" {
 			request.Targets[i].Endpoint = "https://192.0.2.30"
@@ -208,6 +226,26 @@ func enrollmentStageFixtureWithSelectors(t *testing.T, selectors map[string]stri
 	fake := &enrollmentStageFake{base: base, operator: managementFakeWithReadiness(t, execution.plan.Digest(), execution.manager, execution.crds), sources: source, selected: selected}
 	tenant.source = fake
 	return execution, fake, tenantStageBootstrapReceipt(execution, base), tenantStageReceipt{ClusterUID: "dc-uid", Client: tenant}, password
+}
+
+func assertEnrollmentFixtureIsolation(t *testing.T, execution *managementExecution) {
+	t.Helper()
+	_, first, _, firstReceipt, _ := enrollmentStageFixtureFromExecution(t, execution)
+	_, second, _, secondReceipt, _ := enrollmentStageFixtureFromExecution(t, execution)
+	if first == second || first.base == second.base || first.base.resources == nil || second.base.resources == nil || firstReceipt.Client == secondReceipt.Client || first.sources == second.sources {
+		t.Fatal("enrollment fixture reused mutable state")
+	}
+	intent := execution.plan.Intent()
+	selectorValue := intent.Devices[0].SelectorLabels[enrollmentSelectorKey]
+	retainedLabels := maps.Clone(intent.Devices[0].SelectorLabels)
+	first.base.resources["isolation-canary"] = &unstructured.Unstructured{}
+	first.sources.sources.secret.SetUID("changed")
+	first.selected[0].device.SelectorLabels[enrollmentSelectorKey] = "changed"
+	if second.base.resources["isolation-canary"] != nil || second.sources.sources.secret.GetUID() == "changed" ||
+		second.selected[0].device.SelectorLabels[enrollmentSelectorKey] != selectorValue ||
+		!maps.Equal(retainedLabels, execution.plan.Intent().Devices[0].SelectorLabels) {
+		t.Fatal("enrollment fixture mutation escaped its instance")
+	}
 }
 
 func readyEnrollmentObjects(item enrollmentBMC, namespace string) []*unstructured.Unstructured {
@@ -254,6 +292,7 @@ func TestEnrollmentStageCreatesOnlySelectedScanAndCredential(t *testing.T) {
 }
 
 func TestEnrollmentStageStopsAtChangedBoundaries(t *testing.T) {
+	prepared := prepareEnrollmentStageExecution(t, nil)
 	for _, tc := range []struct {
 		name    string
 		edit    func(*enrollmentStageFake, *tenantStageReceipt)
@@ -294,7 +333,7 @@ func TestEnrollmentStageStopsAtChangedBoundaries(t *testing.T) {
 		}, want: "DPU_DISCOVERY_INTENT_CHANGED", creates: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			execution, fake, br, tr, password := enrollmentStageFixture(t)
+			execution, fake, br, tr, password := enrollmentStageFixtureFromExecution(t, prepared)
 			tc.edit(fake, &tr)
 			receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, br, tr, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || fake.base.createCount != tc.creates {
@@ -308,9 +347,10 @@ func TestEnrollmentStageStopsAtChangedBoundaries(t *testing.T) {
 }
 
 func TestEnrollmentCohortNeverCachesReadyDevice(t *testing.T) {
+	prepared := prepareEnrollmentStageExecution(t, nil)
 	for _, change := range []string{"replace", "lose-readiness", "missing-node", "status-mismatch"} {
 		t.Run(change, func(t *testing.T) {
-			execution, fake, _, _, _ := enrollmentStageFixture(t)
+			execution, fake, _, _, _ := enrollmentStageFixtureFromExecution(t, prepared)
 			second := fake.selected[0]
 			second.device.Serial = "SERIAL-B"
 			second.device.BMCIP = "192.0.2.31"

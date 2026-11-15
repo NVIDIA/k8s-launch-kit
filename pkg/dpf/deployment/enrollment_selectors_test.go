@@ -149,6 +149,8 @@ func TestNativeEnrollmentPublishesSelectorsAndNoopsMatchingValues(t *testing.T) 
 }
 
 func TestNativeEnrollmentSelectorFailuresRefuseOrRemainUncertain(t *testing.T) {
+	prepared := prepareEnrollmentStageExecution(t, map[string]string{enrollmentSelectorKey: "selected-card-a"})
+	assertEnrollmentFixtureIsolation(t, prepared)
 	for _, tc := range []struct {
 		name    string
 		edit    func(*enrollmentStageFake)
@@ -208,7 +210,7 @@ func TestNativeEnrollmentSelectorFailuresRefuseOrRemainUncertain(t *testing.T) {
 		}, code: "ENROLLMENT_SELECTOR_READBACK_FAILED", patches: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			execution, fake, bootstrap, tenant, password := enrollmentStageFixtureWithSelectors(t, map[string]string{enrollmentSelectorKey: "selected-card-a"})
+			execution, fake, bootstrap, tenant, password := enrollmentStageFixtureFromExecution(t, prepared)
 			tc.edit(fake)
 			journal := testJournal(execution)
 			_, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
@@ -331,12 +333,13 @@ func (f *selectorFailingJournal) Sync() error {
 }
 
 func TestEnrollmentSelectorJournalFailuresBracketPatch(t *testing.T) {
+	prepared := prepareEnrollmentStageExecution(t, map[string]string{enrollmentSelectorKey: "selected-card-a"})
 	for _, tc := range []struct {
 		marker  string
 		patches int
 	}{{marker: "ENROLLMENT_SELECTOR_BIND_STARTED", patches: 0}, {marker: "ENROLLMENT_SELECTOR_BOUND", patches: 1}} {
 		t.Run(tc.marker, func(t *testing.T) {
-			execution, fake, bootstrap, tenant, password := enrollmentStageFixtureWithSelectors(t, map[string]string{enrollmentSelectorKey: "selected-card-a"})
+			execution, fake, bootstrap, tenant, password := enrollmentStageFixtureFromExecution(t, prepared)
 			file := &selectorFailingJournal{marker: tc.marker}
 			journal := &executionJournal{file: file, digest: execution.plan.Digest()}
 			_, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
@@ -348,10 +351,11 @@ func TestEnrollmentSelectorJournalFailuresBracketPatch(t *testing.T) {
 }
 
 func TestNativeEnrollmentSelectorCohortProgressAndDrift(t *testing.T) {
+	prepared := prepareEnrollmentStageExecution(t,
+		map[string]string{enrollmentSelectorKey: "card-a"}, map[string]string{enrollmentSelectorKey: "card-b"})
 	for _, mode := range []string{"complete", "earlier label removed", "second UID replaced"} {
 		t.Run(mode, func(t *testing.T) {
-			execution, fake, bootstrap, tenant, password := enrollmentStageFixtureWithSelectors(t,
-				map[string]string{enrollmentSelectorKey: "card-a"}, map[string]string{enrollmentSelectorKey: "card-b"})
+			execution, fake, bootstrap, tenant, password := enrollmentStageFixtureFromExecution(t, prepared)
 			fake.bmcHook = func(int) error {
 				if fake.selectorPatches != 1 {
 					return nil
