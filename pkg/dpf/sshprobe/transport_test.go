@@ -3,6 +3,7 @@
 package sshprobe
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
@@ -459,30 +460,74 @@ var _ = Describe("bounded SSH transport", func() {
 		Expect(Code(err)).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
 		Expect(time.Since(start)).To(BeNumerically("<", time.Second))
 	})
-	It("bounds an unresponsive handshake", func() {
+	It("bounds cancellation of an unresponsive handshake", func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		Expect(err).NotTo(HaveOccurred())
-		defer listener.Close()
-		done := make(chan struct{})
+		accepted := make(chan struct{})
+		handshakeStarted := make(chan struct{})
+		peerClosed := make(chan struct{})
+		acceptErr := make(chan error, 1)
+		serverDone := make(chan struct{})
 		go func() {
-			conn, e := listener.Accept()
-			if e == nil {
-				defer conn.Close()
-				buf := make([]byte, 1024)
-				for {
-					if _, e = conn.Read(buf); e != nil {
-						break
-					}
+			defer close(serverDone)
+			conn, err := listener.Accept()
+			if err != nil {
+				select {
+				case acceptErr <- err:
+				default:
 				}
+				return
 			}
-			close(done)
+			close(accepted)
+			defer conn.Close()
+			reader := bufio.NewReader(conn)
+			if _, readErr := reader.ReadString('\n'); readErr != nil {
+				close(peerClosed)
+				return
+			}
+			close(handshakeStarted)
+			_, _ = io.Copy(io.Discard, reader)
+			close(peerClosed)
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer func() {
+			_ = listener.Close()
+			select {
+			case <-serverDone:
+			case <-time.After(2 * time.Second):
+				GinkgoWriter.Println("handshake fixture server did not stop during cleanup")
+			}
+		}()
+
+		// Build trust inputs before starting the cancellation window. In particular,
+		// server.auth formats known_hosts data and must not consume the handshake bound.
+		auth := server.auth()
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		start := time.Now()
-		_, err = connect(ctx, "ssh://"+listener.Addr().String(), server.auth(), time.Second)
-		Expect(err).To(HaveOccurred())
-		Expect(time.Since(start)).To(BeNumerically("<", time.Second))
-		Eventually(done).Should(BeClosed())
+		result := make(chan error, 1)
+		go func() {
+			_, connectErr := connect(ctx, "ssh://"+listener.Addr().String(), auth, time.Second)
+			result <- connectErr
+		}()
+
+		select {
+		case <-accepted:
+		case acceptErr := <-acceptErr:
+			Fail(fmt.Sprintf("accept handshake connection: %v", acceptErr))
+		case <-time.After(time.Second):
+			Fail("SSH connection was not accepted within the connection timeout")
+		}
+		Eventually(handshakeStarted).WithTimeout(time.Second).Should(BeClosed())
+		cancelAt := time.Now()
+		cancel()
+		select {
+		case err = <-result:
+			Expect(err).To(HaveOccurred())
+			Expect(Code(err)).To(Equal("SSH_AUTHENTICATION_OR_HANDSHAKE_FAILED"))
+			Expect(time.Since(cancelAt)).To(BeNumerically("<", time.Second))
+		case <-time.After(time.Second):
+			Fail("cancelled SSH handshake did not return within the connection timeout")
+		}
+		Eventually(peerClosed).WithTimeout(time.Second).Should(BeClosed())
+		Eventually(serverDone).WithTimeout(time.Second).Should(BeClosed())
 	})
 })
