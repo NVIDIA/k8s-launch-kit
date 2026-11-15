@@ -15,6 +15,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -181,9 +182,30 @@ var _ = Describe("DPF generation input boundary", func() {
 		} {
 			_, err := NewGenerateAdapter(GenerateRequest{UserConfig: "/missing", OutputPath: "/missing"}).Bind(inv)
 			Expect(err).To(HaveOccurred())
+			if inv.Phase == target.Deploy {
+				_, phaseUnavailable := err.(*target.PhaseUnavailableError)
+				Expect(phaseUnavailable).To(BeTrue())
+			}
 		}
-		_, err := NewGenerateAdapter(GenerateRequest{UserConfig: "/missing", OutputPath: "/missing", Deploy: true}).Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
-		Expect(err).To(HaveOccurred())
+		output := filepath.Join(GinkgoT().TempDir(), "bundle")
+		op, err := NewGenerateAdapter(GenerateRequest{UserConfig: "/missing", OutputPath: output, Deploy: true}).Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
+		Expect(op).To(BeNil())
+		structured, ok := err.(*apperrors.StructuredError)
+		Expect(ok).To(BeTrue())
+		Expect(structured.Code).To(Equal("VALIDATION_ERROR"))
+		Expect(structured.Category).To(Equal("validation"))
+		Expect(structured.Transient).To(BeFalse())
+		Expect(structured.ExitCode).To(Equal(apperrors.ExitValidation))
+		Expect(structured.Message).To(Equal("DPF generate --deploy is unsupported"))
+		Expect(structured.Suggestion).To(Equal("Generate and review the bundle first, then use 'l8k deploy --target dpf' with explicit --user-config and --deployment-files"))
+		serialized, marshalErr := json.Marshal(structured)
+		Expect(marshalErr).NotTo(HaveOccurred())
+		var fields map[string]any
+		Expect(json.Unmarshal(serialized, &fields)).To(Succeed())
+		Expect(fields["message"]).To(Equal("DPF generate --deploy is unsupported"))
+		Expect(fields["suggestion"]).To(Equal("Generate and review the bundle first, then use 'l8k deploy --target dpf' with explicit --user-config and --deployment-files"))
+		_, statErr := os.Stat(output)
+		Expect(os.IsNotExist(statErr)).To(BeTrue())
 	})
 	It("honors cancellation before file reads or archive downloads", func() {
 		ctx, cancel := context.WithCancel(context.Background())

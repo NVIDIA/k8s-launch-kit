@@ -53,7 +53,11 @@ func (d generateDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		return nil, &target.PhaseUnavailableError{Name: target.DPF, Phase: inv.Phase, Reason: Descriptor().Capability(inv.Phase).Reason}
 	}
 	if d.request.Deploy {
-		return nil, &target.PhaseUnavailableError{Name: target.DPF, Phase: target.Deploy, Reason: Descriptor().Capability(target.Deploy).Reason}
+		return nil, apperrors.NewValidationError(
+			"DPF generate --deploy is unsupported",
+			nil,
+			"Generate and review the bundle first, then use 'l8k deploy --target dpf' with explicit --user-config and --deployment-files",
+		)
 	}
 	if inv.Execution.DryRun {
 		return nil, fmt.Errorf("DPF generate writes a local bundle; --dry-run belongs to the deployment workflow")

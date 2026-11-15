@@ -19,6 +19,10 @@ references, or access Kubernetes. Use the separate
 The [workflow diagram](dpf-workflows.md#hbn-bgp-generation) shows every step and
 failure path.
 
+Do not combine generation with `--deploy`: generate and review the bundle first,
+then run `l8k deploy --target dpf` with explicit `--user-config` and the generated
+`--deployment-files` path.
+
 ## Prepare the inputs
 
 Keep the inventory produced by discovery in `dpf-site.yaml`. It must identify each
