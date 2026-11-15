@@ -13,7 +13,7 @@ Spectrum-X RA version, a Kubernetes/OpenShift flavor, a deployment profile,
 and a topology preset describe different choices. Pinning one does not pin the
 others. The `host` target provides the networking lifecycle described here.
 The separate `dpf` target provides [experimental inventory discovery](../user/dpf-workflows.md);
-its provisioning phases are unavailable.
+[HBN-BGP generation](../user/dpf-generation.md) produces deployment artifacts. DPF deployment and validation remain unavailable.
 
 ## Hardware
 

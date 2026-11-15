@@ -128,3 +128,39 @@ Structural validation does not prove CRD schema/admission or readiness. Sidecar 
 - Implementation: [bundle](../../../pkg/bundle), [effective config](../../../pkg/config/effective.go), [Host paths](../../../pkg/target/host/paths.go).
 - Existing suites: [bundle](../../../pkg/bundle/bundle_test.go), [application bundle](../../../pkg/app/bundle_test.go), [Host bundle](../../../pkg/target/host/bundle_test.go), [effective config](../../../pkg/config/effective_test.go), [paths](../../../pkg/target/host/paths_test.go).
 - Architecture: [artifact bundle](../../../engineering/architecture/artifact-bundle.md).
+
+### Requirement: DPF generation preserves the complete selected chart and resource intent
+
+DPF HBN-BGP generation SHALL retain verified operator and HBN chart archives,
+the original source YAML and resolved desired inputs in a single validated bundle.
+It SHALL validate generated DPF custom resources against the selected operator's
+schemas and reject fields the API would prune, while preserving fields explicitly
+allowed by the schema. An operator post-render adjustment SHALL apply identically
+to the preview and later Helm installation. Generation SHALL not claim runtime
+readiness from archive or schema validation.
+
+#### Scenario: Misspelled hardware flavor field
+
+- **WHEN** a supplied DPUFlavor contains an unknown field outside a schema region permitting arbitrary values
+- **THEN** generation reports its source field and publishes no bundle, instead of allowing the API to silently remove the setting.
+
+#### Scenario: DPF address pool and PF interface
+
+- **WHEN** HBN resources are generated for the selected DPF release
+- **THEN** address pools and physical-function selectors use that release's actual field paths and survive structural pruning unchanged.
+
+#### Scenario: Operator preview includes a cluster-scoped rule
+
+- **WHEN** the selected operator chart renders a NodeFeatureRule
+- **THEN** the full preview retains the rule at cluster scope, validates its identity, and uses the same scope correction during installation.
+
+#### Scenario: Invalid or changed desired bundle
+
+- **WHEN** rendering, schema validation or digest verification fails
+- **THEN** no destination is published; an existing different or incomplete directory is retained and rejected.
+
+#### Scenario: Retained DPF intent and manifests disagree
+
+- **WHEN** a native lifecycle consumer loads an HBN bundle with an altered stage, selection, artifact, or desired resource, even with recalculated file hashes
+- **THEN** it rejects the bundle before API access unless the full retained content matches generation from its explicit resolved inputs.
+- **AND** omitted required operator identity or serial-bound BMC endpoints require regeneration; the consumer does not infer them from ambient configuration.

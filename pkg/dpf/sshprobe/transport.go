@@ -1,9 +1,10 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-// Package sshprobe observes explicitly selected Linux hosts and DPU ARM endpoints.
-// It never installs software, changes configuration, or connects to an address
-// learned from the remote system.
+// Package sshprobe provides bounded SSH observation for explicitly selected
+// Linux hosts and DPU ARM endpoints. Discovery remains read-only. The external
+// reboot API exposes only a fixed, identity-bound SystemLevelReset action; it
+// does not accept arbitrary mutating commands or connect to learned addresses.
 package sshprobe
 
 import (
@@ -18,18 +19,49 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const maxOutput = 1 << 20
+const maxInput = 1 << 20
+
+// ReadSession is an authenticated, bounded SSH connection to one explicit
+// endpoint for callers that enforce their own read-only command allowlist. It
+// has no ambient configuration or endpoint fallback.
+// Calls must be made sequentially; the transport reconnects after an individual
+// command deadline but not after caller cancellation.
+type ReadSession interface {
+	Run(context.Context, string, string) (string, error)
+	RunWithInput(context.Context, string, string, []byte) (string, error)
+	Close() error
+}
+
+// OpenReadSession establishes an SSH transport using the supplied credential
+// and known-hosts snapshot. The caller owns and must close it.
+func OpenReadSession(ctx context.Context, endpoint string, access *config.SSHAccess, timeout time.Duration) (ReadSession, error) {
+	if ctx == nil || access == nil {
+		return nil, &Error{Code: "SSH_CONFIGURATION_INVALID", Stage: "session"}
+	}
+	user, password := access.Credentials()
+	auth := credentials{user: user, password: password, key: access.PrivateKey(), knownHosts: access.KnownHosts()}
+	runner, err := newReconnectingRunner(ctx, endpoint, auth, timeout)
+	clear(auth.key)
+	clear(auth.knownHosts)
+	auth.password = ""
+	return runner, err
+}
 
 // Error carries a stable diagnostic without remote output or credential material.
 type Error struct {
 	Code  string
 	Stage string
 	Tool  string
+	// ExitStatus is present only when the SSH server reported a bounded process
+	// exit status. A command failure without it is not a known ping exit code.
+	ExitStatus *int
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Stage }
@@ -81,11 +113,29 @@ func newReconnectingRunner(ctx context.Context, endpoint string, auth credential
 }
 
 func (r *reconnectingRunner) Run(ctx context.Context, stage, command string) (string, error) {
+	return r.RunWithInput(ctx, stage, command, nil)
+}
+
+func (r *reconnectingRunner) RunWithInput(ctx context.Context, stage, command string, input []byte) (string, error) {
+	return r.RunWithInputTimeout(ctx, stage, command, input, r.timeout)
+}
+
+// RunWithInputTimeout applies a per-command deadline without changing the
+// authenticated connection's dial/reconnect deadline. It remains private to
+// this package so longer bounded capture commands do not relax identity reads.
+func (r *reconnectingRunner) RunWithInputTimeout(ctx context.Context, stage, command string, input []byte, timeout time.Duration) (string, error) {
 	if r.closed {
 		return "", &Error{Code: "SSH_COMMAND_FAILED", Stage: stage, Tool: commandTool(command)}
 	}
+	if ctx == nil || len(input) > maxInput || timeout <= 0 {
+		return "", &Error{Code: "SSH_CONFIGURATION_INVALID", Stage: stage, Tool: commandTool(command)}
+	}
 	if err := ctx.Err(); err != nil {
-		return "", &Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: stage, Tool: commandTool(command)}
+		code := "SSH_TIMEOUT_OR_CANCELLED"
+		if stage == externalRebootStage {
+			code = "SSH_REBOOT_NOT_STARTED"
+		}
+		return "", &Error{Code: code, Stage: stage, Tool: commandTool(command)}
 	}
 	if r.reconnectErr != nil {
 		return "", r.reconnectErr
@@ -102,7 +152,7 @@ func (r *reconnectingRunner) Run(ctx context.Context, stage, command string) (st
 		r.client = c
 		r.reconnect = false
 	}
-	text, err := r.client.Run(ctx, stage, command)
+	text, err := r.client.RunWithInputTimeout(ctx, stage, command, input, timeout)
 	if Code(err) == "SSH_TIMEOUT_OR_CANCELLED" && ctx.Err() == nil {
 		// Run's private command deadline expired. Its cancellation hook closed
 		// this transport to interrupt an unresponsive channel; reconnect before
@@ -312,6 +362,14 @@ func (w outputWriter) Write(p []byte) (int, error) {
 }
 
 func (c *client) Run(ctx context.Context, stage, command string) (text string, err error) {
+	return c.RunWithInput(ctx, stage, command, nil)
+}
+
+func (c *client) RunWithInput(ctx context.Context, stage, command string, input []byte) (text string, err error) {
+	return c.RunWithInputTimeout(ctx, stage, command, input, c.timeout)
+}
+
+func (c *client) RunWithInputTimeout(ctx context.Context, stage, command string, input []byte, timeout time.Duration) (text string, err error) {
 	started := time.Now()
 	// Stage suffixes contain per-device identifiers; commands and remote output
 	// are intentionally excluded, including on failure.
@@ -325,7 +383,10 @@ func (c *client) Run(ctx context.Context, stage, command string) (text string, e
 		}
 		logger.V(2).Info("SSH command stage completed", "stage", name, "tool", commandTool(command), "reasonCode", reason, "duration", time.Since(started))
 	}()
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	if ctx == nil || len(input) > maxInput || timeout <= 0 {
+		return "", &Error{Code: "SSH_CONFIGURATION_INVALID", Stage: stage, Tool: commandTool(command)}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// Closing the connection also interrupts NewSession/Start if the server stops
 	// responding. A timed-out connection is not reused for later observations.
@@ -337,12 +398,30 @@ func (c *client) Run(ctx context.Context, stage, command string) (text string, e
 		if ctx.Err() != nil {
 			code = "SSH_TIMEOUT_OR_CANCELLED"
 		}
+		if stage == externalRebootStage {
+			code = "SSH_REBOOT_NOT_STARTED"
+		}
 		return "", &Error{Code: code, Stage: stage, Tool: commandTool(command)}
 	}
 	defer session.Close()
+	if len(input) > 0 {
+		stdin := bytes.Clone(input)
+		defer clear(stdin)
+		session.Stdin = bytes.NewReader(stdin)
+	}
 	output := &commandOutput{}
 	session.Stdout = outputWriter{output: output}
 	session.Stderr = outputWriter{output: output, stderr: true}
+	// NewSession can consume the entire action budget. A cancellation hook
+	// alone is asynchronous, so check the local deadline before exec dispatch.
+	deadline, bounded := ctx.Deadline()
+	if ctx.Err() != nil || bounded && !time.Now().Before(deadline) {
+		code := "SSH_TIMEOUT_OR_CANCELLED"
+		if stage == externalRebootStage {
+			code = "SSH_REBOOT_NOT_STARTED"
+		}
+		return "", &Error{Code: code, Stage: stage, Tool: commandTool(command)}
+	}
 	err = session.Run("LC_ALL=C " + command)
 	output.mu.Lock()
 	defer output.mu.Unlock()

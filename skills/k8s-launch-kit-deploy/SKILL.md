@@ -11,7 +11,39 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
-This workflow uses the default `host` target; `--target host` is equivalent.
+The Host workflow below uses the default `host` target; `--target host` is
+equivalent. For the independent DPU cluster, use the DPF procedure below.
+
+## DPF HBN-BGP
+
+Read [DPF deployment](../../docs/user/dpf-deployment.md) and its
+[workflow diagram](../../docs/user/dpf-workflows.md#hbn-bgp-deployment).
+Run the explicitly selected DPF target with a reviewed generated bundle:
+
+```sh
+l8k deploy --target dpf --user-config dpf-discovered.yaml \
+  --deployment-files ./hbn-bgp --deploy-timeout 2h --output json
+```
+
+Both paths must be explicit. Management kubeconfig and host/BMC/switch access
+come from the site file. Host `--kubeconfig` and `--overwrite-existing` are
+rejected; DPF does not support `--dry-run`. The DPF default and maximum timeout
+are two hours. It can reimage selected DPUs, reboot selected hosts and configure
+their workload PFs, so retain the user's existing maintenance authorization and
+exclude competing device provisioning or firmware operations.
+
+The adapter refreshes prerequisites, then runs management, tenant, enrollment,
+software, service declarations, activation, host networking and runtime stages.
+Required unknowns stop dependent effects. A reset needs a measured safe shutdown
+and current request; unsupported pre-OS reset confirmation stops explicitly.
+`validated` requires the selected multi-host BGP/FIB/ordinary/DF traffic matrix;
+one-host `provisioned` is not cross-host validation. JSON is one final stdout
+document, including a safe `error` on failure; progress is on stderr. Preserve
+the report and partial effects for inspection rather than blindly repeating a
+reset. Standalone DPF validate, the root pipeline and generate `--deploy` remain
+unavailable. The following Network Operator instructions apply to Host.
+
+## Host deployment
 The CLI snapshots deployment arguments and runs the standalone Host deploy
 service through the target registry; command syntax and apply ordering are
 unchanged.

@@ -15,6 +15,17 @@ var outputToken = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._()+-]{0,127}$`)
 
 func runtimeToOutput(r *RuntimeObservation, role string, issues *[]DeviceIssue) (*RuntimeOutput, error) {
 	w := &RuntimeOutput{Hostname: r.Hostname, OS: r.OS, Interfaces: cloneInterfaces(r.Interfaces), Routes: slices.Clone(r.Routes), DNS: slices.Clone(r.DNS), Network: cloneNetwork(r.Network)}
+	if w.Network != nil && w.Network.HostLLDP != nil {
+		// Successful probe bookkeeping is not public inventory evidence. Keep
+		// parsed physical-port and neighbor facts, while preserving actionable
+		// failure/unknown reasons for an incomplete capture.
+		for i := range w.Network.HostLLDP.Ports {
+			port := &w.Network.HostLLDP.Ports[i]
+			if port.State == "observed" {
+				port.State, port.ReasonCode, port.Message = "", "", ""
+			}
+		}
+	}
 	for _, key := range sortedObservationKeys(r.Observations) {
 		o := r.Observations[key]
 		switch key {
@@ -351,6 +362,10 @@ func cloneInterfaces(in []Interface) []Interface {
 	out := slices.Clone(in)
 	for i := range out {
 		out[i].Addresses = slices.Clone(out[i].Addresses)
+		if out[i].AdminUp != nil {
+			up := *out[i].AdminUp
+			out[i].AdminUp = &up
+		}
 	}
 	return out
 }
@@ -363,6 +378,14 @@ func cloneNetwork(in *NetworkObservation) *NetworkObservation {
 	out.Links = slices.Clone(in.Links)
 	out.LLDP = slices.Clone(in.LLDP)
 	out.Neighbors = slices.Clone(in.Neighbors)
+	if in.HostLLDP != nil {
+		hostLLDP := *in.HostLLDP
+		hostLLDP.Ports = slices.Clone(in.HostLLDP.Ports)
+		for i := range hostLLDP.Ports {
+			hostLLDP.Ports[i].Neighbors = slices.Clone(in.HostLLDP.Ports[i].Neighbors)
+		}
+		out.HostLLDP = &hostLLDP
+	}
 	for i := range out.Neighbors {
 		out.Neighbors[i].State = slices.Clone(out.Neighbors[i].State)
 	}

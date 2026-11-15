@@ -196,8 +196,8 @@ var _ = Describe("GET/session-only transport", func() {
 			c := &Client{origin: s.URL, http: s.Client()}
 			_, err := c.Collection(context.Background(), "/redfish/v1/Systems")
 			s.Close()
-			Expect(Code(err)).To(Equal("INVALID_RESPONSE"))
 			Expect(requests).To(Equal(1))
+			Expect(Code(err)).To(Equal("INVALID_RESPONSE"))
 		}
 	})
 	It("never retries authorization failures or prints response secrets", func() {

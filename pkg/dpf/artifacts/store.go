@@ -21,6 +21,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -75,6 +76,9 @@ func New(in config.Input, destination string, explicit bool) (*Store, error) {
 		return nil, fmt.Errorf("output aliases input")
 	}
 	protected := []string{in.Site.Management.KubeconfigRef.File}
+	for _, sw := range in.Site.Discovery.Switches {
+		protected = append(protected, sw.SSH.KnownHostsFile)
+	}
 	if in.Site.Discovery.AddressLookup != nil {
 		for _, source := range in.Site.Discovery.AddressLookup.Sources {
 			protected = append(protected, source.File)
@@ -163,6 +167,56 @@ func New(in config.Input, destination string, explicit bool) (*Store, error) {
 func (s *Store) RunID() string      { return filepath.Base(s.RunDir) }
 func trimExtension(s string) string { return s[:len(s)-len(filepath.Ext(s))] }
 func sameRequested(a, b config.Site) bool {
+	useCaseKey := func(s config.Site) string {
+		if s.DPF.UseCase == nil {
+			return ""
+		}
+		options := hbn.Options{}
+		if s.DPF.HBN != nil {
+			options = *s.DPF.HBN
+		}
+		profile, err := hbn.Resolve(options)
+		if err != nil {
+			return "invalid"
+		}
+		type switchScope struct {
+			Name, Endpoint, Platform string
+			Sudo                     bool
+			Ports                    []config.SwitchPort
+		}
+		switches := []switchScope{}
+		for _, sw := range s.Discovery.Switches {
+			endpoint, err := config.SSHOrigin(sw.SSH.Address)
+			if err != nil {
+				return "invalid"
+			}
+			platform := "cumulus-nvue"
+			if sw.Platform != nil {
+				platform = *sw.Platform
+			}
+			ports := slices.Clone(sw.Ports)
+			slices.SortFunc(ports, func(a, b config.SwitchPort) int { return strings.Compare(a.Name, b.Name) })
+			switches = append(switches, switchScope{sw.Name, endpoint, platform, sw.SSH.Sudo != nil && *sw.SSH.Sudo, ports})
+		}
+		slices.SortFunc(switches, func(a, b switchScope) int { return strings.Compare(a.Name, b.Name) })
+		definition, err := hbn.LoadDefinition()
+		if err != nil {
+			return "invalid"
+		}
+		namespace := definition.Defaults.Namespace
+		if s.DPF.Namespace != nil {
+			namespace = *s.DPF.Namespace
+		}
+		return inventory.Digest("hbn-request-v1", struct {
+			Namespace string
+			UseCase   string
+			Profile   hbn.Profile
+			Switches  []switchScope
+		}{namespace, *s.DPF.UseCase, profile, switches})
+	}
+	if useCaseKey(a) != useCaseKey(b) {
+		return false
+	}
 	key := func(s config.Site) string {
 		targets := []inventory.ScopeEndpoint{}
 		for _, group := range []struct {

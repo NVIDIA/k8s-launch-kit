@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"golang.org/x/crypto/ssh"
@@ -66,6 +67,7 @@ func armRunner() *fakeRunner {
 		"hostname": "arm.example\n", "os": "PRETTY_NAME=\"Example Linux\"\n",
 		"interfaces": `[{"ifindex":2,"ifname":"oob_net0","mtu":1500,"addr_info":[{"local":"192.0.2.41","prefixlen":24}]}]`,
 		"routes":     `[{"dst":"default","gateway":"192.0.2.1","dev":"oob_net0"}]`,
+		"routes-v6":  `[]`,
 		"dns":        "nameserver 192.0.2.53\n",
 	}, errors: map[string]error{}, calls: []string{}}
 }
@@ -313,6 +315,129 @@ var _ = Describe("SSH inventory observations", func() {
 		Expect(d.Adapters[0].PCIFunctions[0].Driver).To(Equal("mlx5_core"))
 		Expect(d.Adapters[0].PCIFunctions[0].NUMANode).To(Equal("0"))
 		Expect(d.Runtime.Observations["host-pf:0000:41:00.0:driver"].State).To(Equal("unavailable"))
+	})
+	It("preserves IOMMU group zero and retains absent, denied and malformed results per PCI function", func() {
+		const presentStage = "host-pf:0000:21:00.0:iommu-group"
+		const absentStage = "host-pf:0000:21:00.1:iommu-group"
+		const malformedStage = "host-pf:0000:41:00.0:iommu-group"
+		r := hostRunner()
+		r.values[presentStage] = "/sys/kernel/iommu_groups/0\n"
+		r.values[absentStage] = "absent\n"
+		r.values[malformedStage] = "/sys/kernel/iommu_groups/not-a-number\n"
+		d, _, err := collect(context.Background(), config.Target{Role: "hosts", Endpoint: "ssh://192.0.2.11:22"}, r)
+		Expect(err).NotTo(HaveOccurred())
+		first := d.Adapters[0].PCIFunctions[0]
+		Expect(first.IOMMUGroup).NotTo(BeNil())
+		Expect(*first.IOMMUGroup).To(Equal(0))
+		Expect(d.Runtime.Observations[presentStage].State).To(Equal("observed"))
+		Expect(d.Runtime.Observations[presentStage].Values).To(Equal([]string{"group=0"}))
+		Expect(d.Adapters[0].PCIFunctions[1].IOMMUGroup).To(BeNil())
+		Expect(d.Runtime.Observations[absentStage].State).To(Equal("unknown"))
+		Expect(d.Runtime.Observations[absentStage].ReasonCode).To(Equal("IOMMU_GROUP_ABSENT"))
+		Expect(d.Adapters[1].PCIFunctions[0].IOMMUGroup).To(BeNil())
+		Expect(d.Runtime.Observations[malformedStage].State).To(Equal("unavailable"))
+		Expect(d.Runtime.Observations[malformedStage].ReasonCode).To(Equal("SSH_RUNTIME_INVALID"))
+
+		denied := hostRunner()
+		denied.errors[malformedStage] = &Error{Code: "PERMISSION_DENIED", Stage: malformedStage, Tool: "readlink"}
+		device, _, err := collect(context.Background(), config.Target{Role: "hosts", Endpoint: "ssh://192.0.2.11:22"}, denied)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(device.Adapters[1].PCIFunctions[0].IOMMUGroup).To(BeNil())
+		Expect(device.Runtime.Observations[malformedStage].ReasonCode).To(Equal("PERMISSION_DENIED"))
+	})
+	It("does not interpolate an unvalidated BDF into sysfs reads", func() {
+		r := hostRunner()
+		runtime := &inventory.RuntimeObservation{Observations: map[string]inventory.Observation{}}
+		pf := collectPF(context.Background(), r, "0000:21:00.0;touch /tmp/nope", runtime, func(string, string) string { return "evidence" })
+		Expect(pf.IOMMUGroup).To(BeNil())
+		Expect(r.calls).To(BeEmpty())
+		Expect(runtime.Observations["host-pf:0000:21:00.0;touch /tmp/nope:iommu-group"].ReasonCode).To(Equal("SSH_PCI_INVENTORY_INVALID"))
+	})
+	It("combines validated IPv4 and IPv6 route tables with the same interface indexes", func() {
+		r := &fakeRunner{values: map[string]string{
+			"hostname": "host.example\n", "os": "PRETTY_NAME=\"Ubuntu\"\n",
+			"interfaces": `[{"ifindex":7,"ifname":"eno1","mtu":1500,"addr_info":[]}]`,
+			"routes":     `[{"dst":"default","gateway":"192.0.2.1","dev":"eno1"}]`,
+			"routes-v6":  `[{"dst":"default","gateway":"fe80::1","dev":"eno1"}]`,
+			"dns":        "nameserver 192.0.2.53\n",
+		}, errors: map[string]error{}, calls: []string{}}
+		runtime := &inventory.RuntimeObservation{Observations: map[string]inventory.Observation{}}
+		collectRuntime(context.Background(), r, runtime, func(string, string) string { return "evidence" })
+		Expect(runtime.Routes).To(HaveLen(2))
+		Expect(runtime.Routes[0].Destination).To(Equal("0.0.0.0/0"))
+		Expect(runtime.Routes[1].Destination).To(Equal("::/0"))
+		Expect(runtime.Routes[0].InterfaceIndex).To(Equal(7))
+		Expect(runtime.Routes[1].InterfaceIndex).To(Equal(7))
+		Expect(runtime.Observations["routes"].State).To(Equal("observed"))
+	})
+	It("marks the combined routes unavailable when either family fails or contains the wrong IP family", func() {
+		for _, test := range []struct {
+			name     string
+			v6       string
+			v6Error  error
+			wantCode string
+		}{
+			{name: "IPv6 permission denied", v6Error: &Error{Code: "PERMISSION_DENIED", Stage: "routes-v6", Tool: "ip"}, wantCode: "PERMISSION_DENIED"},
+			{name: "malformed IPv6 table", v6: `[{"dst":"192.0.2.0/24","dev":"eno1"}]`, wantCode: "SSH_RUNTIME_INVALID"},
+		} {
+			By(test.name)
+			r := &fakeRunner{values: map[string]string{
+				"hostname": "host.example\n", "os": "PRETTY_NAME=\"Ubuntu\"\n",
+				"interfaces": `[{"ifindex":7,"ifname":"eno1","mtu":1500,"addr_info":[]}]`,
+				"routes":     `[{"dst":"default","gateway":"192.0.2.1","dev":"eno1"}]`,
+				"routes-v6":  test.v6,
+				"dns":        "nameserver 192.0.2.53\n",
+			}, errors: map[string]error{}, calls: []string{}}
+			if test.v6Error != nil {
+				r.errors["routes-v6"] = test.v6Error
+			}
+			runtime := &inventory.RuntimeObservation{Observations: map[string]inventory.Observation{}}
+			collectRuntime(context.Background(), r, runtime, func(string, string) string { return "evidence" })
+			Expect(runtime.Routes).To(BeNil())
+			Expect(runtime.Observations["routes"].State).To(Equal("unavailable"))
+			Expect(runtime.Observations["routes"].ReasonCode).To(Equal(test.wantCode))
+			Expect(r.calls).To(ContainElement(ContainSubstring("routes ip -j -4 route show table all")))
+			Expect(r.calls).To(ContainElement(ContainSubstring("routes-v6 ip -j -6 route show table all")))
+		}
+	})
+	It("parses all-table local, named, numeric and multipath routes without losing egress interfaces", func() {
+		ifaces := []inventory.Interface{
+			{Name: "eno1", Index: 7},
+			{Name: "eno2", Index: 8},
+			{Name: "lo", Index: 1},
+		}
+		got, err := routes(`[
+			{"type":"local","dst":"192.0.2.7","dev":"eno1","table":"local","protocol":2},
+			{"dst":"default","gateway":"192.0.2.1","dev":"eno1","table":1001},
+			{"type":"unreachable","dst":"default","table":"main"},
+			{"dst":"198.51.100.0/24","table":"main","nexthops":[{"gateway":"192.0.2.2","dev":"eno1"},{"gateway":"192.0.2.3","dev":"eno2"}]}
+		]`, ifaces, 4)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(HaveLen(5))
+		Expect(got[0].Destination).To(Equal("192.0.2.7/32"))
+		Expect(got[0].Table).To(Equal(255))
+		Expect(got[0].InterfaceIndex).To(Equal(7))
+		Expect(got[1].Table).To(Equal(1001))
+		Expect(got[2].Table).To(Equal(254))
+		Expect(got[2].InterfaceIndex).To(BeZero())
+		Expect(got[3].InterfaceIndex).To(Equal(7))
+		Expect(got[4].InterfaceIndex).To(Equal(8))
+		v6, err := routes(`[{"dst":"default","gateway":"fe80::1","dev":"eno2","table":"default"}]`, ifaces, 6)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v6).To(HaveLen(1))
+		Expect(v6[0].Table).To(Equal(253))
+		Expect(v6[0].InterfaceIndex).To(Equal(8))
+	})
+	It("invalidates complete route coverage for unsupported tables and malformed multipath", func() {
+		ifaces := []inventory.Interface{{Name: "eno1", Index: 7}}
+		for _, text := range []string{
+			`[{"dst":"default","dev":"eno1","table":"mgmt"}]`,
+			`[{"dst":"203.0.113.0/24","nexthops":[{"gateway":"192.0.2.1"}]}]`,
+			`[{"dst":"203.0.113.0/24","nexthops":[{"gateway":"2001:db8::1","dev":"eno1"}]}]`,
+		} {
+			_, err := routes(text, ifaces, 4)
+			Expect(err).To(HaveOccurred(), text)
+		}
 	})
 	It("rejects host identity or topology changes", func() {
 		for _, field := range []string{"host-dmi-recheck", "host-pci-recheck", "host-vpd-recheck:0000:21:00.0"} {

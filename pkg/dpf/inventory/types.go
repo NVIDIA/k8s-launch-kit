@@ -77,10 +77,11 @@ type TimeObservation struct {
 	ReasonCode string   `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
 }
 type PCIFunction struct {
-	Address  string   `json:"address" yaml:"address"`
-	Driver   string   `json:"driver,omitempty" yaml:"driver,omitempty"`
-	NUMANode string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
-	Netdevs  []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
+	Address    string   `json:"address" yaml:"address"`
+	Driver     string   `json:"driver,omitempty" yaml:"driver,omitempty"`
+	NUMANode   string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
+	IOMMUGroup *int     `json:"iommuGroup,omitempty" yaml:"iommuGroup,omitempty"`
+	Netdevs    []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
 }
 type Adapter struct {
 	PCIFunctions    []PCIFunction `json:"pciFunctions,omitempty" yaml:"pciFunctions,omitempty"`
@@ -112,6 +113,7 @@ type RuntimeObservation struct {
 
 // Device represents every requested endpoint, including failed observations.
 type Device struct {
+	NetworkFunctionMACs       []string               `json:"networkFunctionMACs,omitempty" yaml:"networkFunctionMACs,omitempty"`
 	PSID                      string                 `json:"psid,omitempty" yaml:"psid,omitempty"`
 	FirmwareInventoryComplete bool                   `json:"firmwareInventoryComplete,omitempty" yaml:"firmwareInventoryComplete,omitempty"`
 	Message                   string                 `json:"message,omitempty" yaml:"message,omitempty"`
@@ -143,16 +145,18 @@ type Device struct {
 	EvidenceRefs              []string               `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Node struct {
-	Interfaces    []Interface `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
-	Routes        []Route     `json:"routes,omitempty" yaml:"routes,omitempty"`
-	Name          string      `json:"name" yaml:"name"`
-	UID           string      `json:"uid" yaml:"uid"`
-	ControlPlane  bool        `json:"controlPlane" yaml:"controlPlane"`
-	Ready         bool        `json:"ready" yaml:"ready"`
-	Unschedulable bool        `json:"unschedulable" yaml:"unschedulable"`
-	Architecture  string      `json:"architecture" yaml:"architecture"`
-	OS            string      `json:"os" yaml:"os"`
-	Addresses     []string    `json:"addresses" yaml:"addresses"`
+	TenantVIPRoute *RouteLookup      `json:"tenantVIPRoute,omitempty" yaml:"tenantVIPRoute,omitempty"`
+	Interfaces     []Interface       `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
+	Routes         []Route           `json:"routes,omitempty" yaml:"routes,omitempty"`
+	Labels         map[string]string `json:"-" yaml:"-"` // Transient labels for current API selector evaluation; never persisted.
+	Name           string            `json:"name" yaml:"name"`
+	UID            string            `json:"uid" yaml:"uid"`
+	ControlPlane   bool              `json:"controlPlane" yaml:"controlPlane"`
+	Ready          bool              `json:"ready" yaml:"ready"`
+	Unschedulable  bool              `json:"unschedulable" yaml:"unschedulable"`
+	Architecture   string            `json:"architecture" yaml:"architecture"`
+	OS             string            `json:"os" yaml:"os"`
+	Addresses      []string          `json:"addresses" yaml:"addresses"`
 }
 type Observation struct {
 	Message    string   `json:"message,omitempty" yaml:"message,omitempty"`
@@ -179,6 +183,7 @@ type Association struct {
 	EvidenceRefs   []string `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Inventory struct {
+	HBN            *HBNInventory       `json:"hbn,omitempty" yaml:"hbn,omitempty"`
 	Software       *releases.Release   `json:"software,omitempty" yaml:"software,omitempty"`
 	AddressLookup  *AddressLookup      `json:"addressLookup,omitempty" yaml:"addressLookup,omitempty"`
 	FormatVersion  string              `json:"formatVersion" yaml:"formatVersion"`
@@ -236,6 +241,7 @@ type Discovery struct {
 	Cleanup Cleanup `json:"cleanup"`
 }
 type Report struct {
+	Readiness     *Readiness `json:"readiness,omitempty"`
 	SchemaVersion string     `json:"schemaVersion"`
 	Target        string     `json:"target"`
 	Phase         string     `json:"phase"`

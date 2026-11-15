@@ -49,7 +49,7 @@ flowchart TB
                 validatesvc["Standalone validate + report service"]
                 hostpaths["Host config, kubeconfig, preset, artifact resolution"]
             end
-            dpf["DPF inventory — pkg/target/dpf + pkg/dpf\nexplicit Redfish / host SSH / ARM OOB SSH sources\nprovisioning phases unavailable"]
+            dpf["DPF — pkg/target/dpf + pkg/dpf\nexplicit Redfish / SSH inventory + profiles\nretained HBN generation + standalone deployment"]
         end
 
         subgraph application["Host application orchestration"]
@@ -103,7 +103,7 @@ flowchart TB
     end
 
     external["External image, firmware, and preset sources"]
-    dpfoperator["Future DPF driver / DPF Operator / DPU plane"]
+    dpfoperator["DPF Operator / tenant Kubernetes / DPU agents + HBN"]
 
     actor --> main --> cobra
     cobra --> lifecycle
@@ -112,7 +112,7 @@ flowchart TB
     runner --> registry
     runner --> invocation
     registry --> hostadapters
-    registry -. capability rejection .-> dpf
+    registry -->|typed DPF standalone phases| dpf
     hostadapters --> operation
     invocation --> operation
     operation --> launchersvc
@@ -191,7 +191,7 @@ flowchart TB
     runner --> errors
     process --> logging
 
-    dpf -. future typed adapter .-> dpfoperator
+    dpf -->|retained plan + native API clients| dpfoperator
 ```
 
 The diagram distinguishes three boundaries that should remain stable:
@@ -284,8 +284,12 @@ sequenceDiagram
     Cobra-->>User: output finalized once, process exits once
 ```
 
-Selecting `dpf` stops at registry capability resolution in the current build.
-It does not construct a Kubernetes client or enter any Host lifecycle service.
+Selecting `dpf` binds its independent discovery, generation or standalone deploy
+adapter. The deploy adapter validates a retained bundle and explicit site access,
+refreshes prerequisites, then runs management, tenant, enrollment, software,
+workload declarations, activation, host networking and native HBN runtime checks.
+It never enters a Host lifecycle service. DPF standalone validation and the root
+pipeline remain capability rejections before client construction.
 
 ## Deployment and validation internals
 

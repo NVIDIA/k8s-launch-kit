@@ -68,7 +68,7 @@ func addTargetFlag(cmd *cobra.Command) {
 		&targetName,
 		"target",
 		string(target.Host),
-		"Deployment target: host (default) or dpf (experimental inventory discovery)",
+		"Deployment target: host (default) or dpf (HBN-BGP discovery, generation and deployment)",
 	)
 	setFlagGroup(cmd, "target", GroupTarget)
 	setFlagTargetScope(cmd, []target.Name{target.Host, target.DPF}, "target")
@@ -281,6 +281,7 @@ func markRootTargetScopes() {
 }
 
 func markDiscoverTargetScopes() {
+	setFlagTargetScope(discoverCmd, []target.Name{target.DPF}, "use-case")
 	setFlagTargetScope(discoverCmd, []target.Name{target.Host},
 		"flavor", "kubeconfig", "user-config", "save-cluster-config", "network-operator-namespace",
 		"network-operator-release", "node-selector", "image-pull-secrets", "enabled-plugins",
@@ -302,6 +303,8 @@ func markGenerateTargetScopes() {
 		"workload-manifest", "network-operator-namespace", "network-operator-release", "skip-network-operator-helm",
 		"image-pull-secrets", "enabled-plugins", "kubeconfig", "overwrite-existing")
 	markConfigFlagTargetScopes(generateCmd, configflags.ScopeGenerate)
+	setFlagTargetScope(generateCmd, []target.Name{target.DPF}, "use-case")
+	setFlagTargetScope(generateCmd, []target.Name{target.Host, target.DPF}, "user-config", "save-deployment-files")
 }
 
 func markConfigFlagTargetScopes(cmd *cobra.Command, scope configflags.Scope) {
@@ -316,9 +319,9 @@ func markConfigFlagTargetScopes(cmd *cobra.Command, scope configflags.Scope) {
 }
 
 func markDeployTargetScopes() {
-	setFlagTargetScope(deployCmd, []target.Name{target.Host, target.DPF}, "dry-run", "deploy-timeout")
+	setFlagTargetScope(deployCmd, []target.Name{target.Host, target.DPF}, "dry-run", "deploy-timeout", "user-config", "deployment-files")
 	setFlagTargetScope(deployCmd, []target.Name{target.Host},
-		"flavor", "kubeconfig", "deployment-files", "network-operator-namespace", "user-config", "overwrite-existing", "skip-network-operator-helm")
+		"flavor", "kubeconfig", "network-operator-namespace", "overwrite-existing", "skip-network-operator-helm")
 }
 
 func markValidateTargetScopes() {

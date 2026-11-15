@@ -203,8 +203,8 @@ New and changed discovery checks SHALL retain a stable reason code and safe huma
 #### Scenario: Supported BF4 Redfish PSID sources
 
 - **WHEN** the supported BF4 reader establishes physical identity and reads System/chassis AssetTags
-- **THEN** it persists a typed `psid` Redfish fact on success, or an `issues` entry for `field: psid` on failure, preferring System and falling back to the identity-selected chassis, with authenticated reads and no fabricated SSH/runtime data.
-- **AND** absent/null/empty/N/A stays unknown; malformed or contradictory values remain unavailable, and any source-field change or failed required recheck prevents an observed value. Optional PSID gaps do not erase physical identity or independently fail discovery.
+- **THEN** it persists a typed `psid` Redfish fact on success, or an `issues` entry for `field: psid` on failure, selecting a non-null System field first and otherwise the identity-selected chassis, with authenticated reads and no fabricated SSH/runtime data.
+- **AND** no selected value stays unknown; empty/N/A/malformed selected values remain unavailable rather than falling back, and any selected-source/value change or failed required recheck prevents an observed value. Unselected chassis metadata does not override that selection. Optional PSID gaps do not erase physical identity or independently fail discovery.
 - **AND** collection and typed publication share the uppercase `MT_`, maximum-32-character ASCII identifier syntax; rejected optional values remain issues and do not abort complete/partial YAML publication or the JSON report.
 - **AND** the PSID fact and eligibility affect inventory fingerprint/diff; consumers requiring PSID must reject invalid/conflicting selected-source evidence and require one observed identifier.
 
@@ -261,7 +261,161 @@ MUST NOT substitute. Host-only and ARM-only observations SHALL remain partial.
 - **THEN** discovery accepts an NVIDIA B4240 physical Card with a matching System serial, or a serial-bearing B4240 BMC Component reciprocally contained by a physical Card and linked by that System.
 - **AND** missing System properties remain absent; conflicting properties, unsafe links, multiple matching candidates or a changed identity graph prevent complete inventory. Free-text descriptions and fuzzy model names do not supply identity.
 
+### Requirement: HBN-BGP prerequisite discovery
+
+DPF discovery with the HBN-BGP use case SHALL distinguish physical inventory
+completion from use-case readiness. Switch inspection SHALL use explicit access,
+pinned SSH trust and read-only commands. Applied configuration and operational
+state SHALL remain separate; unknown required facts and contradictions SHALL
+block readiness with specific reasons. LLDP names alone SHALL NOT establish
+authenticated physical cabling. Profile defaults SHALL express desired values,
+not observations or authorization to modify switches.
+
+#### Scenario: Complete inventory with missing fabric prerequisites
+
+- **WHEN** physical host/DPU inventory succeeds but required VRF, BGP, port, authorization or other use-case prerequisites cannot be verified
+- **THEN** the complete physical inventory may be saved, but HBN-BGP readiness is blocked and the command exits nonzero.
+- **AND** failed switch reads are retained with their reasons; prior switch observations are not substituted.
+
+#### Scenario: Applied and operational port state disagree
+
+- **WHEN** an applied setting appears suitable but operational MTU, VRF or bridge membership contradicts the intended routed uplink
+- **THEN** the corresponding prerequisite remains blocked rather than selecting whichever observation passes.
+
+#### Scenario: Future BGP adjacency does not yet exist
+
+- **WHEN** the selected DPU service has not been deployed
+- **THEN** discovery checks configured peer prerequisites without requiring an established adjacency to that future service.
+- **AND** adjacency, routes and traffic remain explicit post-deployment checks; prerequisite success does not imply those outcomes.
+
+#### Scenario: Corroborating a DPU uplink
+
+- **WHEN** a selected physical card exposes permanent Ethernet network-function MACs through Redfish
+- **THEN** the collector rechecks the identity-bound graph and invalidates the facts on identity change or cleanup failure.
+- **AND** a cabling check passes only with a unique switch LLDP port MAC owned by that card and a matching p0/p1 claim; it does not establish cryptographic peer authentication or packet delivery.
+
+#### Scenario: Host policy routing and saved empty sources
+
+- **WHEN** HBN checks management separation on the associated host adapter
+- **THEN** it includes IPv4 and IPv6 routes from all tables, including non-main defaults and multipath egresses.
+- **AND** incomplete required route observations block the check with their reason.
+- **WHEN** complete switch address or route observations contain no entries
+- **THEN** JSON and YAML handoff preserve known-empty separately from unavailable sources.
+
+#### Scenario: HBN tenant storage prerequisites
+
+- **WHEN** HBN discovery inspects the management cluster
+- **THEN** tenant storage readiness requires the current selected Kamaji datastore,
+  its correlated etcd replicas and pods, matching bound claims and volumes, and
+  the supported storage provisioner; class presence alone cannot pass the check.
+- **AND** denied, missing, stale, unsupported or inconsistent observations retain
+  a blocking reason. Shared use by another tenant is not itself a conflict.
+- **AND** deployment recollects the same prerequisites; current bound allocations
+  do not establish remaining physical capacity or future write headroom.
+
+#### Scenario: HBN management caller permissions
+
+- **WHEN** HBN discovery has complete provisioning inputs and current selected-device and management-cluster identities
+- **THEN** the target derives scoped caller authorization checks from the verified deployment bundle and checks them against that same management cluster.
+- **AND** saved inventory cannot replace current identities; missing inputs, failed chart validation, denied permissions, cancellation and incomplete or contradictory results block readiness with reasons.
+- **AND** caller authorization does not establish controller service-account privileges, tenant access, host or switch access, or runtime readiness. Discovery installs no generated resources while checking permissions.
+- **AND** the console summarizes successful caller checks while retaining individual blocking details; structured readiness retains every required authorization result.
+
+#### Scenario: Explicit management-network coverage
+
+- **WHEN** DPF discovery explicitly selects management mode on supported Linux/amd64 nodes
+- **THEN** the complete node scope is validated before temporary Pod/ConfigMap creation; each node runs both Pod-network and node-network probes to the management API and every selected DPU BMC.
+- **AND** failed DNS/TCP/TLS paths remain blocking, with specific reasons, while independent paths continue; structural, identity, image or malformed-response failures stop execution and preserve partial results and cleanup status.
+- **AND** inventory mode creates no probe resources; host SSH may accompany management probes, but DPU probes require explicit BMC endpoints. BMC probes reuse the explicit endpoint trust policy; successful bypassed handshakes remain `unverified` and cannot establish server identity. Management API probes always require verified TLS.
+
+#### Scenario: New HBN tenant interface and route prerequisites
+
+- **WHEN** HBN discovery has a tenant VIP, interface and node selector
+- **THEN** it selects current control-plane nodes using that selector and requires complete link-state, address-prefix and kernel VIP-route facts for every selected node.
+- **AND** unavailable facts remain unknown; a down interface, assigned VIP, wrong source/interface or gateway route blocks new-tenant network readiness.
+- **AND** node labels remain transient and label/scheduling changes during collection invalidate the snapshot. VIP/VRID reservation and network-wide uniqueness remain separate blocking requirements; route observations do not establish them.
+
+#### Scenario: Host backend inspection precedes dynamic IPAM allocation
+
+- **WHEN** a selected HBN host interface is inspected before DPF allocates its workload prefix
+- **THEN** backend inspection uses its observed permanent MAC and interface name to validate the existing Netplan definition without constructing a synthetic lease or host address.
+- **AND** the same interface support rules apply to the later fragment planner; unsupported selectors, renderers, DHCP, virtual-device membership or policy rules fail with a reason.
+- **AND** backend support alone does not establish address or route compatibility, application, persistence or traffic readiness. The deployment stage must bind a fresh allocation and perform its exact address, route and MTU checks before effects.
+
+#### Scenario: Backend MTU support differs from kernel capability
+
+- **WHEN** the HBN profile accepts an explicit IPv4 MTU below the selected host backend's supported minimum
+- **THEN** discovery compares that unchanged desired value with both the observed kernel range and the backend's separately reported minimum, and fails readiness with the relevant limits.
+- **AND** missing or inconsistent backend capability facts remain unknown. A lower kernel minimum is not substituted for backend support.
+- **AND** the qualified Ubuntu backend refuses current or desired workload MTUs below 1280 before any host effect, because crossing that boundary can remove or create unrelated IPv6 state. The generic IPv4 profile value is not silently rewritten.
+
 ## Baseline and limits
+
+#### Scenario: HBN expected configuration comes from one resolved profile
+
+- **WHEN** HBN discovery validates a site with omitted settings or explicit overrides
+- **THEN** the selected release/profile supplies defaults and present user values override them before observation; explicit false, zero and empty values undergo validation.
+- **AND** checks, generated resources and suggested infrastructure changes use the same resolved intent; conflicting observed settings do not silently change that intent.
+- **AND** required environment inputs and physical identities are supplied or discovered independently rather than invented from profile defaults.
+
+#### Scenario: Unsupported profile overrides fail before discovery
+
+- **WHEN** HBN-BGP selects a DPF release outside its embedded profile, enables the flat profile's unsupported VXLAN startup probe or supplies a chart name beyond the DPF deployment-service API limit
+- **THEN** shared intent validation rejects the configuration before credentials or remote observations are opened.
+- **AND** generation and rendering use the same profile constraints; valid explicit false and supported environment overrides remain valid.
+- **AND** the per-DPU workload prefix must be more specific than the workload pool. A single allocation equal to the entire pool is rejected by common intent validation, before host access, because the planned pool route would conflict with its connected subnet.
+
+
+#### Scenario: Manual qualification does not bypass discovery
+
+- **WHEN** qualification requires manual switch, LLDP, routing, allocation or host-reset investigation
+- **THEN** each prerequisite is mapped to a reusable collector/check or recorded as an implementation gap with an explicit readiness consequence.
+- **AND** a manual result or intended switch-port binding does not replace a current CLI observation; missing tools, denied access, ambiguity and mismatches retain actionable reasons.
+- **AND** discovery reports required configuration changes without applying them; explicit configuration/deployment owns mutation and recovery. Runtime BGP and traffic checks remain separate from pre-deployment readiness.
+
+#### Scenario: Physical inventory support is not DPF enrollment API support
+
+- **WHEN** a selected BMC exposes enough identity for inventory but lacks an initial enrollment resource required by the selected DPF release
+- **THEN** the physical inventory may complete, but use-case readiness fails with the missing resource and an actionable compatibility reason.
+- **AND** successful release-specific reads require the same selected card identity, PSID and PF0 through rereads; denied, malformed or changing sources cannot pass.
+- **AND** checking those reads does not exercise controller authentication, authorize firmware writes, or establish complete provisioning compatibility.
+
+#### Scenario: Sparse switch lists require selected-port observations
+
+- **WHEN** an HBN switch interface list omits VRF or parent information
+- **THEN** discovery reads the individually selected ports through the same authenticated SSH session and retains only typed facts.
+- **AND** contradictory list/detail fields, missing selected interfaces and failed or malformed reads block readiness with source-specific reasons.
+- **AND** an absent bridge field is not proof of routed membership; a direct observed VRF parent can establish it only without conflicting configured or operational bridge membership.
+- **AND** local LLDP chassis identity comes from the authenticated switch endpoint rather than the site file's display name.
+
+#### Scenario: Inbound host LLDP corroborates only unresolved selected bindings
+
+- **WHEN** card-owned Redfish MACs and switch LLDP cannot resolve a selected DPU uplink
+- **THEN** discovery may receive bounded LLDP on its UUID/serial/PCI/physical-port-bound host interface, with identity rereads around capture and the current authenticated switch chassis, name and port as the expected peer.
+- **AND** missing tools, denied reads, malformed or expired advertisements, ambiguous peers and changed identity retain specific blocking reasons; captures cannot overwrite a known cabling mismatch.
+- **AND** raw frames remain transient and the saved handoff contains only selected typed facts.
+
+#### Scenario: Stable applied and saved switch configuration
+
+- **WHEN** HBN discovery reads NVUE switch facts
+- **THEN** it observes the explicit active application identity and its unique matching saved-history record on the same authenticated SSH session before and after the fact reads; historical revision numbers do not select the active application.
+- **AND** missing, malformed, ambiguous, unsupported or changing revision observations block readiness; an active application different from a singular saved application fails its required check.
+- **AND** a revision awaiting confirmation fails even when the applied alias still matches an older saved record. Reading this table does not establish startup-file contents or reboot persistence.
+- **AND** unrelated staged revisions alone do not block a stable active/saved observation. Discovery never applies, saves or confirms a revision.
+
+#### Scenario: Host interface permanent address for workload configuration
+
+- **WHEN** host SSH observes a permanent hardware address for a PCI-associated interface
+- **THEN** the interface must map to one observed PCI function, and its sysfs PCI binding is checked before and after the read-only `ethtool -P` query.
+- **AND** the parsed unicast EUI-48 address is saved as the link's `permanentMAC`, separately from its current link-layer address.
+- **AND** ambiguous or changed bindings, missing tools, denied reads, malformed responses and observation bounds leave the permanent address unavailable with a specific reason. A stale or current address is never substituted.
+
+#### Scenario: Effective policy is scoped to selected HBN peers
+
+- **WHEN** discovery has a complete FRR running BGP configuration
+- **THEN** it resolves the selected VRF, interface peers, inherited peer groups and effective eBGP policy mode before evaluating the supported unfiltered flat baseline.
+- **AND** unsupported filter attachments or incomplete sources remain explained unknowns; requiring absent import/export policies fails. Neither configured peers nor this policy check establishes accepted routes or traffic readiness.
+- **AND** the saved view excludes unrelated peers and VRFs and raw configuration, including route-map text and credentials.
 
 There is no universal probe registry or typed provenance/unknown framework. Existing trust queries intentionally fall back to unknown. Discovery mutates its supplied config and cluster labels; setup/teardown belongs to [managed effects](../managed-effects/spec.md). Rendering consumes these observations under [profile planning](../profile-planning/spec.md).
 
@@ -270,3 +424,10 @@ There is no universal probe registry or typed provenance/unknown framework. Exis
 - Implementation: [discovery](../../../pkg/networkoperatorplugin/discovery/discover.go), [GPU topology](../../../pkg/networkoperatorplugin/discovery/gputopology.go), [presets](../../../pkg/presets), [application integration](../../../pkg/app/discover.go).
 - Existing suites: [discovery](../../../pkg/networkoperatorplugin/discovery/discover_test.go), [topology](../../../pkg/networkoperatorplugin/discovery/gputopology_test.go), [library](../../../pkg/networkoperatorplugin/discovery/library_test.go).
 - User documentation: [discovery](../../../docs/user/discovery.md), [presets](../../../docs/user/presets.md).
+
+#### Scenario: Existing HBN tenant registry match is not runtime readiness
+
+- **WHEN** a complete cross-namespace DPUCluster observation matches the selected tenant identity and keepalived endpoint without a VIP collision
+- **THEN** the registry binding check can pass without requiring a generation-freshness field that the selected DPF release does not expose.
+- **AND** missing, stale-looking or non-Ready DPUCluster status cannot become proof of runtime readiness; the existing-tenant network/API prerequisite remains separately required and unknown until live verification succeeds.
+- **AND** conflicting identity, incomplete enumeration or another tenant using the VIP remains blocking.

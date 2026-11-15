@@ -55,6 +55,14 @@ Output extensions SHALL preserve command-specific framing, existing public field
 - **WHEN** a new family is emitted
 - **THEN** existing result/report consumers retain existing families and can identify the added family without redefining older field meanings.
 
+#### Scenario: DPF HBN-BGP deployment result
+
+- **WHEN** standalone DPF deploy finishes or stops after starting its execution service
+- **THEN** JSON stdout contains one final result, including the last completed stage, available report path and a safe error on failure; the CLI preserves the nonzero exit code without adding a second JSON object.
+- **AND** missing reports remain explicitly unavailable, final output-write failures remain failures, and detailed operation reasons are retained when a report was created.
+- **AND** validated requires current BGP, installed remote-prefix routes and every directed ordinary/MTU-sized DF host traffic pair for the complete selected multi-host cohort; one-host provisioned does not imply cross-host validation.
+- **AND** Pod binding covers ordinary, completed-init and restartable-init container identities and role-appropriate states; a changed selected container or incomplete final cohort invalidates aggregate success while retaining earlier measurements.
+
 #### Scenario: DPF operator-facing progress and results
 
 - **WHEN** DPF discovery runs with normal CLI output

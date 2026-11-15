@@ -29,7 +29,7 @@ Passing `--target host` is an explicit synonym:
 l8k generate --target host ...
 ```
 
-The `dpf` target implements an [experimental inventory discovery preview](../../docs/user/dpf-discovery.md). Its software collects explicit Redfish or host/ARM SSH inventory, optionally with management Kubernetes observations. Inventory acceptance is independent of DPF provisioning readiness; hardware qualification and management probe-image release gates remain explicit. Other DPF phases remain unavailable and cannot fall through to Host execution.
+The `dpf` target implements an [experimental inventory discovery preview](../../docs/user/dpf-discovery.md). Its software collects explicit Redfish or host/ARM SSH inventory, optionally with management Kubernetes observations. Inventory acceptance is independent of DPF provisioning readiness; hardware qualification and management probe-image release gates remain explicit. DPF HBN-BGP generation uses its own typed adapter, resolved desired inputs and validated staged bundle. Deployment, validation and pipeline remain unavailable and cannot fall through to Host execution.
 
 Use `l8k schema` to inspect target and phase availability programmatically.
 

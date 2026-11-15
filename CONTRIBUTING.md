@@ -19,6 +19,12 @@ Go and golangci-lint versions are selected centrally. CI retains documentation
 contract checks and cross-platform builds, and combines race detection and
 coverage in one test run. `make lint` installs a versioned local binary;
 `GOLANGCILINT_VERSION` can select the same version used by CI.
+The full race-and-coverage run uses a 25-minute per-package timeout because the
+DPF lifecycle suite renders and verifies the retained operator schemas across
+many failure paths. To reproduce that gate, use
+`go test -v -race -timeout=25m -count=1 -coverprofile=coverage.out ./...`.
+The CI job allows 40 minutes including dependency setup and compilation; these
+limits do not alter the individual workflow deadlines tested by the suite.
 
 ### Recreate the latest release
 

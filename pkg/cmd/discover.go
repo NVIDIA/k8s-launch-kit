@@ -29,6 +29,7 @@ import (
 
 var (
 	discoverConfigOptions options.Options
+	discoverUseCase       string
 	discoverCmd           = &cobra.Command{
 		Use:   "discover",
 		Short: "Discover cluster network hardware capabilities",
@@ -77,7 +78,11 @@ probes and hardware support require qualified release assets.`,
 				exitWithError(apperrors.NewValidationError("discover takes no positional arguments", nil, "Use --user-config"), outputFormat)
 			}
 			if targetName == string(target.DPF) {
-				runTargetCommand(cmd, target.Discover, dpftarget.NewDiscoverAdapter(dpftarget.Request{UserConfig: userConfig, OutputPath: saveClusterConfig, ExplicitOutput: cmd.Flags().Changed("save-cluster-config")}))
+				var useCase *string
+				if cmd.Flags().Changed("use-case") {
+					useCase = &discoverUseCase
+				}
+				runTargetCommand(cmd, target.Discover, dpftarget.NewDiscoverAdapter(dpftarget.Request{UserConfig: userConfig, UseCase: useCase, OutputPath: saveClusterConfig, ExplicitOutput: cmd.Flags().Changed("save-cluster-config")}))
 				return
 			}
 			opts := mustCollectConfigFlags(cmd, discoverConfigOptions)
@@ -106,6 +111,8 @@ probes and hardware support require qualified release assets.`,
 func init() {
 	rootCmd.AddCommand(discoverCmd)
 	addTargetFlag(discoverCmd)
+	discoverCmd.Flags().StringVar(&discoverUseCase, "use-case", "", "DPF use case to check: hbn-bgp (overrides dpf.useCase)")
+	setFlagGroup(discoverCmd, "use-case", GroupProfile)
 	discoverCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress discovery progress (final result and errors still shown)")
 	setFlagGroup(discoverCmd, "quiet", GroupOutputLogging)
 

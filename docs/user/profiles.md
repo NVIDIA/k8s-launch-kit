@@ -40,7 +40,7 @@ decides which checks and coverage constitute acceptance for the workload.
 | Other OpenShift standard profiles | Select an OpenShift-specific profile and review its generated resources with the operator owners. | Treat these profiles as preview workflows until runtime support for your hardware and release is confirmed. |
 | OpenShift Spectrum-X | No OpenShift variant is available. | Use a supported Kubernetes Spectrum-X environment. |
 | Kubernetes Spectrum-X RA2.1, RA2.2, RA2.3, RA2.4, RA3.1 | Choose a compatible release using the [version matrix](spectrum-x.md#version-matrix) and supply the site profile/topology. | Hardware, fabric and operator versions must match the selected RA requirements. |
-| DPF inventory | Use the separate [DPF discovery workflow](dpf-workflows.md) to inventory host and DPU endpoints. | Experimental inventory only; DPF provisioning phases are unavailable. |
+| DPF inventory | Use the separate [DPF discovery workflow](dpf-workflows.md) to inventory host and DPU endpoints. | Experimental discovery and [HBN-BGP generation](dpf-generation.md); DPF deployment and validation remain unavailable. |
 
 Choose a release and hardware combination supported by your platform and
 operator vendors. Successful generation or API dry-run alone does not establish

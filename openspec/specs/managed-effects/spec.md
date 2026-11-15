@@ -88,6 +88,105 @@ cleanup; generation alone SHALL NOT modify it.
 - **WHEN** a generated patch targets another resource or lacks an allowlist
 - **THEN** deployment rejects it before cluster mutations; runtime validation compares required entries while allowing extra site entries.
 
+### Requirement: DPF external reset proof lifetime
+
+A supported DPF external host reset SHALL bind the complete selected device
+cohort and current request to fresh Administrator, identity, shutdown and
+firmware-state observations. Its local proof lifetime SHALL start before the
+first contributing BMC read and remain bounded through API verification,
+durable claim/journal writes, SSH preflight and command submission. Completing
+collection SHALL NOT renew earlier observations. The maintenance window SHALL
+exclude competing firmware/provisioning writers, including external MFT.
+
+#### Scenario: Reset proof expires before submission
+
+- **WHEN** prerequisite collection, API work or SSH preflight consumes the proof lifetime
+- **THEN** no physical command or reset acknowledgement is submitted, the specific reason is retained, and any already-created one-time claim remains blocking.
+
+#### Scenario: Connection fails after reset submission
+
+- **WHEN** command dispatch occurred but its acknowledgement is uncertain
+- **THEN** the result remains uncertain, the action is not automatically replayed, and separate fresh boot observations are required before acknowledgement.
+- **AND** the bounded submission check does not claim atomic remote scheduling or hardware execution time.
+
+### Requirement: DPF host-network shadow fidelity
+
+Host-network preflight SHALL provide the qualified Netplan generator with the
+complete bounded interface matching context it consumes, including current
+interface names, MAC addresses and driver identities or verified absence.
+The context SHALL remain private and participate in freshness checks through
+generation and the host transaction. A failed or changed observation SHALL stop
+dependent effects and report the phase's read/refusal reason or blocking
+compensation uncertainty. Shadow validation SHALL NOT waive unrelated
+generated-output checks to compensate for missing context.
+
+#### Scenario: Management interface is matched by MAC or driver
+
+- **WHEN** an unchanged management definition requires live interface matching data
+- **THEN** isolated generation preserves its output while validating only the selected workload change.
+- **AND** complete enumeration includes valid dot-prefixed names and preserves non-Ethernet address forms consumed by the qualified generator.
+
+#### Scenario: Interface matching context changes
+
+- **WHEN** an interface, current address or driver changes or cannot be read during preflight or the transaction
+- **THEN** the operation follows the existing refusal or compensation policy without publishing a successful receipt.
+- **AND** it retains the read/refusal reason before effects; after possible effects, blocking compensation uncertainty may supersede that reason when freshness or ownership cannot be reestablished safely.
+
+### Requirement: DPF Netplan observation consistency
+
+The host-network observer SHALL fingerprint the source set before reading the
+merged Netplan configuration, compare it after that read, and recheck it before
+publishing the observation. A changed source set SHALL prevent publication of a
+successful snapshot. Source read failures SHALL retain their operation and exit
+status rather than accepting a digest printed by a failed producer. These
+freshness checks do not provide an atomic filesystem snapshot or protect against
+arbitrary privileged ABA edits. The managed fragment retains its separate exact
+content and ownership checks and is excluded from the surrounding source fence.
+Within the transaction fence, that guard SHALL verify the expected exact fragment
+or its expected absence before and after capture. Normal, complete-repeat and
+verified-external success paths SHALL repeat the fence after
+generated-configuration verification, before publishing a successful receipt.
+
+#### Scenario: Sources change while the merged configuration is observed
+
+- **WHEN** a source changes after the merged configuration is read, including during later matching-context collection
+- **THEN** the observer returns a source-changed reason before publishing a usable snapshot or authorizing effects.
+
+#### Scenario: A source fingerprint producer prints a digest and fails
+
+- **WHEN** any bracket read prints a digest but exits unsuccessfully
+- **THEN** the read fails with its operation and exit status; the printed digest cannot establish consistency.
+
+#### Scenario: The managed fragment changes during a verification read
+
+- **WHEN** the managed fragment changes during capture, appears while absence is expected, or changes during generated-configuration verification
+- **THEN** the fragment guard or final fence prevents a successful receipt; matching selected runtime fields do not authorize the changed source.
+
+### Requirement: DPF selected wait-online contribution
+
+Host workload configuration MAY reconcile the selected interface's contribution
+to the qualified Netplan any-routable wait. Removing its sole member MAY omit
+that now-empty routable command line in the comparison view. It SHALL preserve
+every nonselected member, other line and file metadata. Participation SHALL follow existing
+selected-source optionality and qualified current-interface matching facts.
+The contribution SHALL be checked on first configuration, complete repeat and
+verification of an existing external declaration. Raw complete artifact fences
+SHALL continue to detect changes after preview, including selected-only edits.
+Adding a required static workload interface broadens the vendor's global OR
+readiness predicate; this SHALL NOT be described as proof of management
+routability or an unchanged global predicate.
+
+#### Scenario: First static workload address on a required port
+
+- **WHEN** a matching nonoptional selected port gains its first static workload address
+- **THEN** only its any-routable membership may change in the shared wait-online artifact; unrelated policy and metadata remain significant.
+- **AND** omitted optionality and explicit false retain the same required-port meaning, while explicit true remains optional.
+
+#### Scenario: Owned contribution changes after preview or before repeat
+
+- **WHEN** a selected contribution is removed, duplicated or changed after preview or before an early success path
+- **THEN** raw freshness or owned-contribution verification prevents a successful receipt and follows the existing refusal or compensation policy.
+
 ### Requirement: Teardown and partial failure
 
 An effect extension MUST specify cleanup after partial setup, cancellation and rerun, including dependency ordering, finalizers, retained resources and failure evidence. Cleanup SHALL honor the documented operation scope and retention policy without promising transactions or success during API outage.
@@ -122,6 +221,21 @@ preflight remediation effects are retained if this check fails.
 - **THEN** deploy fails before applying the doSPCX ConfigMap and NIC templates; dry-run also requires the installed API.
 
 ## Baseline and limits
+
+The DPF native execution primitives implement create-or-verify for retained
+custom resources. Existing objects require the same bundle and intent markers,
+fixed identity, and complete defaulted spec equality against the retained
+release schemas. The selected release's deterministic DPUCluster kubeconfig
+addition is allowed; unrelated differences are conflicts. Namespace and Helm
+ownership remain separate operations. Standalone DPF deploy composes these
+operations with tenant, selected-device, activation, host-network and runtime
+checks. Resource creation alone does not prove those later stages succeeded.
+
+DPF namespace bootstrap preserves existing namespace metadata and policy and
+requires a stable active identity. A new DPF Helm installation requires absent
+rendered resources and cannot use Helm's update/adoption path, including when a
+matching-owner resource appears concurrently. Partial creates or a failed release
+record remain for inspection; failure does not authorize automatic deletion.
 
 `clean` intentionally deletes all relevant namespaced CRs in the selected namespace plus a known cluster-kind set; it is not limited to this run. Preflight remediation and temporary-resource cleanup have different scopes. Current stray-resource preflight skips List errors and can report no conflict; some OCP Get errors are classified as missing. The stronger inspection requirement applies to new/changed paths and is not proof those legacy gaps are fixed. Discovery cleanup is registered only after successful setup. See [workflow modes](../workflow-execution/spec.md) and [platform policy](../platform-support/spec.md).
 
