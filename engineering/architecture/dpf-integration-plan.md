@@ -1035,6 +1035,17 @@ present; its absence does not substitute for or invalidate independently
 verified workload readiness. API defaulting of template metadata is represented
 explicitly in desired resources to avoid comparing different serializations.
 
+Controller-created ServiceInterfaceSet children retain the complete selected
+interface template specification. Empty outer metadata maps compare equally
+whether omitted or serialized as empty objects. For supported physical and PF
+interfaces without a virtual network, the pinned controller may add exactly
+`svc.dpu.nvidia.com/interface-mode: nsi`; that contribution is optional while
+the controllers reconcile. Other metadata remains exact, and malformed maps,
+conflicting modes, changed selectors and changed specifications are rejected.
+Parent ownership, selected tenant identity and child UID fences still apply.
+Interface-child verification failures retain a finite diagnostic category
+without including arbitrary API response values.
+
 Automatic reset coordination requires an exclusive maintenance window excluding
 external MFT, firmware and provisioning writers. Fresh Administrator, selected
 physical identity, actual ARM shutdown, completed tasks and idle board-firmware
