@@ -60,6 +60,7 @@ type activationStageReceipt struct {
 	// Public summaries deliberately omit these credential-bearing bindings.
 	selected []activationSelectedDevice
 	groups   map[string][]int
+	progress map[string]activationNodeProgress
 }
 
 type activationObjectReceipt struct {
@@ -73,6 +74,89 @@ type activationRebootReceipt struct {
 	NodeNames    []string
 	PreviousBoot string
 	CurrentBoot  string
+
+	// Completion evidence is private and is emitted only after this exact
+	// native reset round has been acknowledged successfully.
+	completion []activationNodeProgress
+}
+
+// activationNodeProgress is owned by this execution's receipt. It records
+// evidence produced by an effect, never inferred from a false/missing hold.
+// Current snapshots may skip transient controller phases; no snapshot history
+// or ordering of requestors is used as an authorization source.
+type activationNodeProgress struct {
+	nodeName          string
+	maintenanceUID    types.UID
+	releasedVersion   string
+	resetAcknowledged bool
+	sets              map[string]types.UID
+	dpus              map[string]types.UID
+	versions          map[string]types.UID
+}
+
+func activationProgressForNode(observed activationObservation, selected []activationSelectedDevice, nodeName, releasedVersion string, resetAcknowledged bool) (activationNodeProgress, error) {
+	maintenance := observed.maintenance[nodeName+"-hold"]
+	if maintenance == nil || maintenance.GetUID() == "" || maintenance.GetResourceVersion() == "" {
+		return activationNodeProgress{}, fmt.Errorf("qualified maintenance identity is missing")
+	}
+	progress := activationNodeProgress{nodeName: nodeName, maintenanceUID: maintenance.GetUID(), releasedVersion: releasedVersion,
+		resetAcknowledged: resetAcknowledged, versions: map[string]types.UID{}, sets: map[string]types.UID{}, dpus: map[string]types.UID{}}
+	for name, uid := range observed.versions {
+		progress.versions[name] = uid
+	}
+	for _, item := range selected {
+		if item.nodeName != nodeName {
+			continue
+		}
+		set, dpu := observed.sets[item.dpuSet.GetName()], observed.dpus[item.dpuName]
+		if set == nil || dpu == nil || set.GetUID() == "" || dpu.GetUID() == "" {
+			return activationNodeProgress{}, fmt.Errorf("qualified selected child identities are missing")
+		}
+		progress.sets[set.GetName()] = set.GetUID()
+		progress.dpus[dpu.GetName()] = dpu.GetUID()
+	}
+	if len(progress.dpus) == 0 {
+		return activationNodeProgress{}, fmt.Errorf("qualified selected node has no DPUs")
+	}
+	return progress, nil
+}
+
+func activationCompletionReady(observed activationObservation, progress map[string]activationNodeProgress, selected []activationSelectedDevice) bool {
+	if !activationDPUsReady(observed, selected) {
+		return false
+	}
+	for _, item := range selected {
+		if !activationRemovalComplete(observed, progress[item.nodeName]) {
+			return false
+		}
+		maintenance := observed.maintenance[item.nodeName+"-hold"]
+		if maintenance != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func activationRemovalComplete(observed activationObservation, progress activationNodeProgress) bool {
+	if progress.maintenanceUID == "" || progress.releasedVersion == "" && !progress.resetAcknowledged || len(progress.dpus) == 0 {
+		return false
+	}
+	for name, uid := range progress.sets {
+		if set := observed.sets[name]; set == nil || set.GetUID() != uid {
+			return false
+		}
+	}
+	for name, uid := range progress.dpus {
+		dpu := observed.dpus[name]
+		if dpu == nil || dpu.GetUID() != uid || !EvaluateReadiness(dpu).Ready || !conditionReadiness(dpu, "NodeEffectRemoved", "DPU_STATUS_STALE", true).Ready {
+			return false
+		}
+		phase, found, err := unstructured.NestedString(dpu.Object, "status", "phase")
+		if err != nil || !found || phase != "Ready" {
+			return false
+		}
+	}
+	return true
 }
 
 type activationSelectedDevice struct {
@@ -93,6 +177,9 @@ type activationObservation struct {
 	dpus        map[string]*unstructured.Unstructured
 	nodes       map[string]*unstructured.Unstructured
 	maintenance map[string]*unstructured.Unstructured
+	requestors  map[string][]string
+	removed     map[string]bool
+	versions    map[string]types.UID
 	complete    bool
 }
 
@@ -104,7 +191,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, inv *inventory.Inventory, request config.Request,
 	journal *executionJournal, interval, requestTimeout time.Duration, reboot ExternalRebooter,
 ) (activationStageReceipt, error) {
-	receipt := activationStageReceipt{}
+	receipt := activationStageReceipt{progress: map[string]activationNodeProgress{}}
 	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil || prepared.execution.reconciler == nil ||
 		journal == nil || reboot == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute || len(prepared.selected) == 0 {
 		return receipt, activationFailure(journal, "ACTIVATION_INPUT_INVALID", "Activation requires one retained execution, selected identities, a reboot executor and bounded controls.", nil)
@@ -170,7 +257,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
 			return activationObservation{}, err
 		}
-		current, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected)
+		current, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected, receipt.progress)
 		if err != nil || !current.complete {
 			return activationObservation{}, activationFailure(journal, "ACTIVATION_HOLD_SCOPE_CHANGED", "The complete selected activation scope changed before hold release.", err)
 		}
@@ -180,9 +267,22 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		if err := ctx.Err(); err != nil {
 			return receipt, activationFailure(journal, "ACTIVATION_CANCELED", "Selected DPU activation stopped; inspect durable receipts before retrying.", err)
 		}
-		observed, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected)
+		observed, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected, receipt.progress)
 		if err != nil {
-			return receipt, activationFailure(journal, "ACTIVATION_SCOPE_CHANGED", "The selected DPUDeployment child scope is invalid or changed.", err)
+			code := "ACTIVATION_SCOPE_CHANGED"
+			var diagnostic *ReconciliationError
+			if errors.As(err, &diagnostic) && diagnostic != nil && diagnostic.ReasonCode == "ACTIVATION_REBOOT_SCOPE_CHANGED" {
+				code = diagnostic.ReasonCode
+			}
+			return receipt, activationFailure(journal, code, "The selected DPUDeployment child scope is invalid or changed.", err)
+		}
+		if activationDPUsReady(observed, selected) && len(observed.dpus) == len(selected) {
+			for _, item := range selected {
+				proof, known := receipt.progress[item.nodeName]
+				if !known || proof.releasedVersion == "" && !proof.resetAcknowledged {
+					return receipt, activationFailure(journal, "ACTIVATION_COMPLETION_HISTORY_UNKNOWN", "Current selected DPU readiness does not establish this run's hold release or acknowledged reset history; inspect prior effects before retrying.", nil)
+				}
+			}
 		}
 		if !observed.complete {
 			if err := activationWait(ctx, interval); err != nil {
@@ -191,8 +291,16 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			continue
 		}
 		receipt.DPUSets, receipt.DPUs, receipt.Nodes, receipt.Maintenance = activationReceipts(observed)
-		if err := releaseSelectedHolds(ctx, client, selected, observed, journal, refreshHoldScope); err != nil {
-			return receipt, err
+		released, releaseErr := releaseNextSelectedHold(ctx, client, selected, observed, journal, refreshHoldScope)
+		if released != nil {
+			receipt.progress[released.nodeName] = *released
+		}
+		if releaseErr != nil {
+			return receipt, releaseErr
+		}
+		// Persist this effect's proof before another node may progress or vanish.
+		if released != nil {
+			continue
 		}
 		readyForReboot, err := selectedNodeEffectsReady(observed)
 		if err != nil {
@@ -213,15 +321,20 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			if pending {
 				anyRebootPending = true
 				if actionable {
-					reboots, err := invokeSelectedHostReboots(ctx, client, prepared, controlPlane, workload, selected, map[string][]int{hostID: indexes}, objects, deployment, created.GetUID(), observed, reboot, journal, interval, requestTimeout)
+					reboots, err := invokeSelectedHostReboots(ctx, client, prepared, controlPlane, workload, selected, map[string][]int{hostID: indexes}, objects, deployment, created.GetUID(), observed, receipt.progress, reboot, journal, interval, requestTimeout)
 					receipt.Reboots = append(receipt.Reboots, reboots...)
+					for _, reset := range reboots {
+						for _, progress := range reset.completion {
+							receipt.progress[progress.nodeName] = progress
+						}
+					}
 					if err != nil {
 						return receipt, err
 					}
 				}
 			}
 		}
-		if !anyRebootPending && activationDPUsReady(observed, selected) {
+		if !anyRebootPending && activationCompletionReady(observed, receipt.progress, selected) {
 			break
 		}
 		if err := activationWait(ctx, interval); err != nil {
@@ -257,6 +370,17 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		!EvaluateReadiness(currentDeployment).Ready || readyDeployment == nil || readyDeployment.GetUID() != created.GetUID() {
 		return receipt, activationFailure(journal, "ACTIVATION_DEPLOYMENT_CHANGED", "DPUDeployment readiness or retained identity changed before final receipt.", nil)
 	}
+	final, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected, receipt.progress)
+	if err != nil || !final.complete || final.deployment == nil || !EvaluateReadiness(final.deployment).Ready || !activationCompletionReady(final, receipt.progress, selected) {
+		return receipt, activationFailure(journal, "ACTIVATION_SCOPE_CHANGED", "The complete selected activation scope changed while waiting for deployment readiness.", err)
+	}
+	for _, indexes := range groups {
+		pending, _, err := selectedHostRebootPending(final, selected, indexes)
+		if err != nil || pending {
+			return receipt, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "A selected host request changed before the final activation receipt.", err)
+		}
+	}
+	receipt.DPUSets, receipt.DPUs, receipt.Nodes, receipt.Maintenance = activationReceipts(final)
 	if err := ctx.Err(); err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_CANCELED", "Activation was canceled before its final receipt.", err)
 	}
@@ -507,16 +631,18 @@ func generatedDPUEName(nodeName, deviceName string) string {
 	return nodeName + "-" + deviceName
 }
 
+// observeActivationScope is pure: only the stage's confirmed effects may
+// add to progress. Missing maintenance never authorizes a new operation.
 func observeActivationScope(ctx context.Context, client activationStageClient, execution *managementExecution, deployment *unstructured.Unstructured,
-	deploymentUID types.UID, selected []activationSelectedDevice,
+	deploymentUID types.UID, selected []activationSelectedDevice, progress map[string]activationNodeProgress,
 ) (activationObservation, error) {
-	observation := activationObservation{sets: map[string]*unstructured.Unstructured{}, dpus: map[string]*unstructured.Unstructured{}, nodes: map[string]*unstructured.Unstructured{}, maintenance: map[string]*unstructured.Unstructured{}}
+	observation := activationObservation{requestors: map[string][]string{}, removed: map[string]bool{}, sets: map[string]*unstructured.Unstructured{}, dpus: map[string]*unstructured.Unstructured{}, nodes: map[string]*unstructured.Unstructured{}, maintenance: map[string]*unstructured.Unstructured{}}
 	if err := client.VerifyIdentity(ctx); err != nil {
 		return observation, err
 	}
 	currentDeployment, err := client.Get(ctx, deployment.DeepCopy())
 	if err != nil || currentDeployment == nil || currentDeployment.GetUID() != deploymentUID || execution.reconciler.Verify(deployment, currentDeployment) != nil {
-		return observation, fmt.Errorf("retained DPUDeployment identity or intent changed")
+		return observation, activationCoordinationError(activationParticipantOwner)
 	}
 	observation.deployment = currentDeployment.DeepCopy()
 	sets, err := client.List(ctx, &unstructured.Unstructured{Object: map[string]any{"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1", "kind": "DPUSet", "metadata": map[string]any{"namespace": deployment.GetNamespace()}}}, "")
@@ -531,8 +657,42 @@ func observeActivationScope(ctx context.Context, client activationStageClient, e
 	if err != nil {
 		return observation, err
 	}
-	if sets == nil || dpus == nil || maintenances == nil {
-		return observation, fmt.Errorf("selected DPU child lists are incomplete")
+	// APIClient.List returns nil for a successful empty list. Its error,
+	// pagination and identity checks establish completeness; nil is not failure.
+	for _, want := range selected {
+		set := uniqueObjectByName(sets, want.dpuSet.GetName())
+		if set == nil {
+			return observation, nil
+		}
+		if set.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || set.GetKind() != "DPUSet" || set.GetNamespace() != deployment.GetNamespace() || set.GetResourceVersion() == "" || set.GetGeneration() < 1 || set.GetDeletionTimestamp() != nil || set.GetUID() == "" || !activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deploymentUID) || !activationDPUSetMatches(set, want) {
+			return observation, activationCoordinationError(activationParticipantOwner)
+		}
+		observation.sets[set.GetName()] = set
+	}
+	versionGraph, graphComplete, err := activationVersionRequestors(ctx, client, execution, currentDeployment, observation.sets)
+	if err != nil || !graphComplete {
+		return observation, err
+	}
+	observation.versions = versionGraph.identities
+	versionRequestors := versionGraph.requestors
+	for _, prior := range progress {
+		if !reflect.DeepEqual(prior.versions, observation.versions) {
+			return observation, activationCoordinationError(activationParticipantOwner)
+		}
+	}
+	for _, want := range selected {
+		requestors := append([]string(nil), versionRequestors...)
+		for _, item := range selected {
+			if item.nodeName == want.nodeName {
+				requestors = append(requestors, item.dpuName)
+			}
+		}
+		sort.Strings(requestors)
+		observation.requestors[want.nodeName] = requestors
+		set := observation.sets[want.dpuSet.GetName()]
+		if !activationAdditionalRequestorsMatch(set, versionRequestors, "spec", "dpuTemplate", "spec", "nodeEffect") {
+			return observation, activationCoordinationError(activationParticipantPolicy)
+		}
 	}
 	// Physical actions may target one host at a time, but every boundary read
 	// must still verify the complete selected activation cohort.
@@ -542,44 +702,77 @@ func observeActivationScope(ctx context.Context, client activationStageClient, e
 			return observation, nil
 		}
 		if err != nil || node == nil || node.GetUID() != want.receipt.DPUNodeUID {
-			return observation, fmt.Errorf("selected DPUNode identity or retained enrollment changed")
+			return observation, activationCoordinationError(activationParticipantOwner)
 		}
 		if err := validateActivationDPUNode(node, want, selected); err != nil {
-			return observation, err
+			return observation, activationCoordinationError(activationParticipantOwner)
 		}
 		observation.nodes[want.nodeName] = node
-		setName := want.dpuSet.GetName()
-		set := uniqueObjectByName(sets, setName)
-		if set == nil {
-			return observation, nil
-		}
-		if set.GetDeletionTimestamp() != nil || set.GetUID() == "" || !activationOwnerMatches(set, "svc.dpu.nvidia.com/v1alpha1", "DPUDeployment", deployment.GetName(), deploymentUID) || !activationDPUSetMatches(set, want) {
-			return observation, fmt.Errorf("selected DPUSet is replaced or differs from retained device and hold intent")
-		}
-		observation.sets[setName] = set
+		set := observation.sets[want.dpuSet.GetName()]
 		dpu := uniqueObjectByName(dpus, want.dpuName)
 		if dpu == nil {
 			continue
 		}
-		if dpu.GetDeletionTimestamp() != nil || dpu.GetUID() == "" || !activationOwnerMatches(dpu, "provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", set.GetName(), set.GetUID()) || !activationDPUMatches(dpu, want) {
-			return observation, fmt.Errorf("selected DPU identity, owner or immutable device binding changed")
+		if dpu.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || dpu.GetKind() != "DPU" || dpu.GetNamespace() != deployment.GetNamespace() || dpu.GetResourceVersion() == "" || dpu.GetGeneration() < 1 || dpu.GetDeletionTimestamp() != nil || dpu.GetUID() == "" || !activationOwnerMatches(dpu, "provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", set.GetName(), set.GetUID()) || !activationDPUMatches(dpu, want) {
+			return observation, activationCoordinationError(activationParticipantOwner)
+		}
+		if policyErr := activationNativeNodeEffectPolicy(dpu, "spec", "nodeEffect"); policyErr != nil {
+			return observation, policyErr
+		}
+		setLabels, _, setLabelsErr := unstructured.NestedStringMap(set.Object, "spec", "dpuTemplate", "spec", "cluster", "nodeLabels")
+		dpuLabels, _, dpuLabelsErr := unstructured.NestedStringMap(dpu.Object, "spec", "cluster", "nodeLabels")
+		if setLabelsErr != nil || dpuLabelsErr != nil || !reflect.DeepEqual(setLabels, dpuLabels) || !activationNodeEffectMatches(dpu, set) {
+			return observation, activationCoordinationError(activationParticipantPolicy)
+		}
+		if !activationAdditionalRequestorsMatch(dpu, versionRequestors, "spec", "nodeEffect") {
+			return observation, activationCoordinationError(activationParticipantPolicy)
 		}
 		observation.dpus[want.dpuName] = dpu
+		if prior, exists := progress[want.nodeName]; exists {
+			if prior.sets[set.GetName()] != set.GetUID() || prior.dpus[dpu.GetName()] != dpu.GetUID() {
+				return observation, activationCoordinationError("ACTIVATION_REBOOT_SCOPE_CHANGED")
+			}
+		}
 		maintenanceName := want.nodeName + "-hold"
 		maintenance := uniqueObjectByName(maintenances, maintenanceName)
 		if maintenance == nil {
 			continue
 		}
-		if maintenance.GetDeletionTimestamp() != nil || maintenance.GetUID() == "" || validateActivationMaintenance(maintenance, want, selected) != nil {
-			return observation, fmt.Errorf("selected DPUNodeMaintenance identity or requestor set changed")
+		prior, anchored := progress[want.nodeName]
+		released := anchored && (prior.releasedVersion != "" || prior.resetAcknowledged)
+		if anchored && (prior.maintenanceUID != maintenance.GetUID() || maintenance.GetAnnotations()[activationHoldKey] != "false") {
+			return observation, activationCoordinationError(activationParticipantMaintenance)
 		}
+		if maintenance.GetUID() == "" || validateActivationMaintenanceRequestors(maintenance, want, observation.requestors[want.nodeName], released || maintenance.GetAnnotations()[activationHoldKey] == "false") != nil {
+			return observation, activationCoordinationError(activationParticipantRequestors)
+		}
+
 		observation.maintenance[maintenanceName] = maintenance
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
 		return observation, err
 	}
 	observation.complete = len(observation.sets) == len(selected) && len(observation.dpus) == len(selected) &&
-		len(observation.nodes) == uniqueNodeCount(selected) && len(observation.maintenance) == uniqueNodeCount(selected)
+		len(observation.nodes) == uniqueNodeCount(selected)
+	if observation.complete {
+		for _, want := range selected {
+			maintenance := observation.maintenance[want.nodeName+"-hold"]
+			removed := activationRemovalComplete(observation, progress[want.nodeName])
+			if maintenance != nil && maintenance.GetDeletionTimestamp() != nil && !removed {
+				proof := progress[want.nodeName]
+				if proof.releasedVersion == "" && !proof.resetAcknowledged {
+					return observation, activationCoordinationError(activationParticipantMaintenance)
+				}
+				observation.complete = false
+			}
+			if maintenance == nil && !removed {
+				observation.complete = false
+			}
+			if removed {
+				observation.removed[want.nodeName] = true
+			}
+		}
+	}
 	return observation, nil
 }
 
@@ -673,9 +866,12 @@ func activationDPUMatches(dpu *unstructured.Unstructured, selected activationSel
 		labels[activationDPUSetNameLabel] == selected.dpuSet.GetName() && labels[activationDPUSetNSLabel] == selected.dpuSet.GetNamespace() && labels[activationDPUDeviceLabel] == selected.deviceName()
 }
 
-func validateActivationMaintenance(object *unstructured.Unstructured, selected activationSelectedDevice, cohort []activationSelectedDevice) error {
-	if object.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || object.GetKind() != "DPUNodeMaintenance" || object.GetName() != selected.nodeName+"-hold" || object.GetNamespace() != selected.dpuSet.GetNamespace() {
-		return fmt.Errorf("DPUNodeMaintenance identity differs")
+// A pending true hold needs the complete initial set. Observing an already
+// false hold may show a bounded subset as controllers remove their requestors;
+// that observation alone never creates this run's release/completion evidence.
+func validateActivationMaintenanceRequestors(object *unstructured.Unstructured, selected activationSelectedDevice, allowed []string, allowSubset bool) error {
+	if object == nil || object.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || object.GetKind() != "DPUNodeMaintenance" || object.GetNamespace() != selected.dpuSet.GetNamespace() || object.GetName() != selected.nodeName+"-hold" {
+		return fmt.Errorf("maintenance identity differs")
 	}
 	nodeName, found, err := unstructured.NestedString(object.Object, "spec", "dpuNodeName")
 	if err != nil || !found || nodeName != selected.nodeName || object.GetLabels()[activationDPUNodeLabel] != selected.nodeName {
@@ -690,20 +886,22 @@ func validateActivationMaintenance(object *unstructured.Unstructured, selected a
 		return fmt.Errorf("DPUNodeMaintenance force flag is not allowed")
 	}
 	requestors, found, err := unstructured.NestedStringSlice(object.Object, "spec", "requestor")
-	if err != nil || !found {
+	if err != nil || !found && !allowSubset {
 		return fmt.Errorf("DPUNodeMaintenance requestor set is incomplete")
 	}
-	want := []string{}
-	for _, item := range cohort {
-		if item.nodeName == selected.nodeName {
-			want = append(want, item.dpuName)
-		}
+	seen := map[string]bool{}
+	participants := map[string]bool{}
+	for _, name := range allowed {
+		participants[name] = true
 	}
-	sort.Strings(want)
-	requestors = append([]string(nil), requestors...)
-	sort.Strings(requestors)
-	if !reflect.DeepEqual(requestors, want) {
-		return fmt.Errorf("DPUNodeMaintenance requestors do not equal the selected host DPU set")
+	for _, name := range requestors {
+		if name == "" || seen[name] || !participants[name] {
+			return fmt.Errorf("maintenance has duplicate or foreign participants")
+		}
+		seen[name] = true
+	}
+	if !allowSubset && len(seen) != len(participants) {
+		return fmt.Errorf("initial maintenance participant set is incomplete")
 	}
 	if holdAnnotation, found := object.GetAnnotations()[activationHoldKey]; found && holdAnnotation != "true" && holdAnnotation != "false" {
 		return fmt.Errorf("DPUNodeMaintenance hold annotation is malformed")
@@ -711,11 +909,12 @@ func validateActivationMaintenance(object *unstructured.Unstructured, selected a
 	return nil
 }
 
-func releaseSelectedHolds(ctx context.Context, client activationStageClient, selected []activationSelectedDevice,
+func releaseNextSelectedHold(ctx context.Context, client activationStageClient, selected []activationSelectedDevice,
 	observed activationObservation, journal *executionJournal, refresh func(context.Context) (activationObservation, error),
-) error {
+) (*activationNodeProgress, error) {
+	var released *activationNodeProgress
 	if refresh == nil {
-		return activationFailure(journal, "ACTIVATION_HOLD_FENCE_REQUIRED", "A complete fresh activation boundary is required before releasing a selected hold.", nil)
+		return released, activationFailure(journal, "ACTIVATION_HOLD_FENCE_REQUIRED", "A complete fresh activation boundary is required before releasing a selected hold.", nil)
 	}
 	byName := make(map[string]activationSelectedDevice, len(selected))
 	for _, item := range selected {
@@ -730,7 +929,7 @@ func releaseSelectedHolds(ctx context.Context, client activationStageClient, sel
 		maintenance := observed.maintenance[name]
 		item, exists := byName[strings.TrimSuffix(name, "-hold")]
 		if !exists || maintenance == nil {
-			return activationFailure(journal, "ACTIVATION_MAINTENANCE_SCOPE_INVALID", "An observed DPUNodeMaintenance is outside the selected cohort.", nil)
+			return released, activationFailure(journal, "ACTIVATION_MAINTENANCE_SCOPE_INVALID", "An observed DPUNodeMaintenance is outside the selected cohort.", nil)
 		}
 		hold, hasHold := maintenance.GetAnnotations()[activationHoldKey]
 		if hasHold && hold == "false" {
@@ -744,40 +943,46 @@ func releaseSelectedHolds(ctx context.Context, client activationStageClient, sel
 		// then use the same maintenance UID with its freshly validated version.
 		current, err := refresh(ctx)
 		if err != nil {
-			return err
+			return released, err
 		}
 		fresh := current.maintenance[name]
-		if !current.complete || fresh == nil || maintenance.GetUID() == "" || fresh.GetUID() != maintenance.GetUID() || fresh.GetResourceVersion() == "" || fresh.GetDeletionTimestamp() != nil || validateActivationMaintenance(fresh, item, selected) != nil {
-			return activationFailure(journal, "ACTIVATION_HOLD_SCOPE_CHANGED", "The selected maintenance identity, action or requestors changed before hold release.", nil)
+		if !current.complete || fresh == nil || maintenance.GetUID() == "" || fresh.GetUID() != maintenance.GetUID() || fresh.GetResourceVersion() == "" || fresh.GetDeletionTimestamp() != nil || validateActivationMaintenanceRequestors(fresh, item, current.requestors[item.nodeName], false) != nil {
+			return released, activationFailure(journal, "ACTIVATION_HOLD_SCOPE_CHANGED", "The selected maintenance identity, action or requestors changed before hold release.", nil)
 		}
 		hold, hasHold = fresh.GetAnnotations()[activationHoldKey]
 		if hasHold && hold == "false" {
 			continue
 		}
 		if !hasHold || hold != "true" {
-			return activationFailure(journal, "ACTIVATION_HOLD_STATE_CHANGED", "The selected maintenance no longer has its observed pending hold.", nil)
+			return released, activationFailure(journal, "ACTIVATION_HOLD_STATE_CHANGED", "The selected maintenance no longer has its observed pending hold.", nil)
 		}
 		maintenance = fresh
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "release-node-effect", Subject: item.nodeName,
 			State: "attempted", ReasonCode: "SELECTED_NODE_EFFECT_RELEASE_STARTED", Message: "Release the exact selected DPUNodeMaintenance hold after verifying its UID, resourceVersion, action and requestors."}); err != nil {
-			return err
+			return released, err
 		}
 		updated, err := client.patchActivationAnnotation(ctx, maintenance, maintenance.GetUID(), maintenance.GetResourceVersion(), activationHoldKey, stringPointer("false"))
 		if err != nil {
-			return activationFailure(journal, "SELECTED_NODE_EFFECT_RELEASE_FAILED", "The selected DPUNodeMaintenance hold could not be released with its observed identity preconditions.", err)
+			return released, activationFailure(journal, "SELECTED_NODE_EFFECT_RELEASE_FAILED", "The selected DPUNodeMaintenance hold could not be released with its observed identity preconditions.", err)
 		}
 		if updated == nil || updated.GetUID() != maintenance.GetUID() || updated.GetResourceVersion() == "" || updated.GetAnnotations()[activationHoldKey] != "false" {
-			return activationFailure(journal, "SELECTED_NODE_EFFECT_RELEASE_UNCERTAIN", "The selected hold patch returned no verified same-object false annotation.", nil)
+			return released, activationFailure(journal, "SELECTED_NODE_EFFECT_RELEASE_UNCERTAIN", "The selected hold patch returned no verified same-object false annotation.", nil)
 		}
+		proof, err := activationProgressForNode(current, selected, item.nodeName, updated.GetResourceVersion(), false)
+		if err != nil {
+			return released, activationFailure(journal, "SELECTED_NODE_EFFECT_RELEASE_UNCERTAIN", "Released selected child identities could not be retained.", err)
+		}
+		released = &proof
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "release-node-effect", Subject: item.nodeName,
 			State: "confirmed", ReasonCode: "SELECTED_NODE_EFFECT_RELEASED", Message: "The exact selected DPUNodeMaintenance hold is false; DPF must still report NodeEffectApplied and DPU NodeEffectReady."}); err != nil {
-			return err
+			return released, err
 		}
+		return released, nil
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return activationFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed during selected hold release.", err)
+		return released, activationFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed during selected hold release.", err)
 	}
-	return nil
+	return released, nil
 }
 
 func selectedNodeEffectsReady(observed activationObservation) (bool, error) {
@@ -786,7 +991,10 @@ func selectedNodeEffectsReady(observed activationObservation) (bool, error) {
 			return false, fmt.Errorf("selected DPUNode is deleting")
 		}
 	}
-	for _, maintenance := range observed.maintenance {
+	for name, maintenance := range observed.maintenance {
+		if observed.removed[strings.TrimSuffix(name, "-hold")] {
+			continue
+		}
 		hold, found := maintenance.GetAnnotations()[activationHoldKey]
 		if !found || hold != "false" || activationCondition(maintenance, "NodeEffectApplied") != "True" {
 			return false, nil
@@ -877,9 +1085,27 @@ func selectedHostRebootPending(observed activationObservation, selected []activa
 func invokeSelectedHostReboots(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun,
 	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, selected []activationSelectedDevice, groups map[string][]int,
 	objects []*unstructured.Unstructured, deployment *unstructured.Unstructured, deploymentUID types.UID,
-	observed activationObservation, reboot ExternalRebooter, journal *executionJournal, interval, requestTimeout time.Duration,
+	observed activationObservation, progress map[string]activationNodeProgress, reboot ExternalRebooter, journal *executionJournal, interval, requestTimeout time.Duration,
 ) ([]activationRebootReceipt, error) {
 	var verified []activationRebootReceipt
+	// First-observed false is not release evidence. These local anchors only
+	// bind the already-qualified current maintenance/children through this reset.
+	resetProgress := make(map[string]activationNodeProgress, len(progress)+len(groups))
+	for name, proof := range progress {
+		resetProgress[name] = proof
+	}
+	for _, indexes := range groups {
+		for _, index := range indexes {
+			nodeName := selected[index].nodeName
+			if _, exists := resetProgress[nodeName]; !exists {
+				anchor, err := activationProgressForNode(observed, selected, nodeName, "", false)
+				if err != nil {
+					return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The current selected maintenance identity is unavailable before reset.", err)
+				}
+				resetProgress[nodeName] = anchor
+			}
+		}
+	}
 	for _, indexes := range groups {
 		if err := ctx.Err(); err != nil {
 			return verified, activationFailure(journal, "ACTIVATION_CANCELED", "Host reboot was canceled before a selected operation.", err)
@@ -958,7 +1184,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 		if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal, requestTimeout); err != nil {
 			return verified, err
 		}
-		current, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected)
+		current, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
 		if err != nil || !current.complete {
 			return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The selected DPU child scope changed during host verification; no host reboot was requested.", err)
 		}
@@ -974,6 +1200,9 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 					return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "A selected DPU identity or reboot source phase changed during final verification; no host reboot was requested.", phaseErr)
 				}
 			}
+		}
+		if !activationResetParticipantsPresent(current, selected, indexes) {
+			return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The current reset cohort no longer participates in its selected maintenance objects.", activationCoordinationError(activationParticipantRequestors))
 		}
 		observed = current
 		rounds := map[types.UID]activationRebootRound{}
@@ -999,13 +1228,16 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 		request.ResetSafetyExpiresAt = expires
 		// The BMC read can take time. A different request or restarted Arm
 		// invalidates its shutdown proof before the one-time claim is created.
-		current, err = observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected)
+		current, err = observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
 		if err != nil || !current.complete {
 			return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected cohort changed during the physical reset-safety read.", nil)
 		}
 		_, actionable, err = selectedHostRebootPending(current, selected, indexes)
 		if err != nil || !actionable {
 			return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected external request changed during the physical reset-safety read.", nil)
+		}
+		if !activationResetParticipantsPresent(current, selected, indexes) {
+			return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The current reset cohort changed during the reset-safety read.", activationCoordinationError(activationParticipantRequestors))
 		}
 		for _, index := range indexes {
 			round, err := readActivationRebootRound(current.dpus[selected[index].dpuName])
@@ -1034,7 +1266,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 		if err := client.VerifyIdentity(ctx); err != nil {
 			return verified, activationFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management API identity could not be verified after host reboot.", err)
 		}
-		returned, err := waitActivationAgentReboots(ctx, client, prepared.execution, deployment, deploymentUID, selected, indexes, rounds, interval)
+		returned, err := waitActivationAgentReboots(ctx, client, prepared.execution, deployment, deploymentUID, selected, indexes, rounds, resetProgress, interval)
 		if err != nil {
 			return verified, activationFailure(journal, "EXTERNAL_REBOOT_AGENT_UNVERIFIED", "The same pending DPU round did not return a new agent startup and current Arm kernel boot; leave the request in place and do not repeat the host reset.", err)
 		}
@@ -1072,9 +1304,18 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			if !found || annotation != "true" {
 				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_STATE_CHANGED", "The selected DPUNode external reboot annotation changed after the host reboot; inspect before retrying.", nil)
 			}
-			fresh, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected)
+			fresh, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
 			if err != nil || !fresh.complete {
 				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_SCOPE_CHANGED", "The selected cohort could not be refreshed immediately before acknowledgement.", err)
+			}
+			nodeIndexes := []int{}
+			for _, index := range indexes {
+				if selected[index].nodeName == nodeName {
+					nodeIndexes = append(nodeIndexes, index)
+				}
+			}
+			if !activationResetParticipantsPresent(fresh, selected, nodeIndexes) {
+				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_SCOPE_CHANGED", "The current reset cohort no longer participates immediately before acknowledgement.", activationCoordinationError(activationParticipantRequestors))
 			}
 			for _, index := range indexes {
 				selectedDPU := selected[index]
@@ -1091,10 +1332,22 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 				State: "attempted", ReasonCode: "EXTERNAL_REBOOT_ACK_STARTED", Message: "A changed host boot ID and returned authenticated session were verified before acknowledging DPF's external reboot request."}); err != nil {
 				return verified, err
 			}
-			_, err = client.patchActivationAnnotation(ctx, node, node.GetUID(), node.GetResourceVersion(), activationExternalRebootKey, nil)
+			acknowledged, err := client.patchActivationAnnotation(ctx, node, node.GetUID(), node.GetResourceVersion(), activationExternalRebootKey, nil)
 			if err != nil {
 				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_FAILED", "The exact selected DPUNode reboot request could not be removed with UID and resourceVersion preconditions.", err)
 			}
+			if acknowledged == nil || acknowledged.GetUID() != node.GetUID() || acknowledged.GetResourceVersion() == "" {
+				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_FAILED", "Acknowledgement returned no verified same-node identity.", nil)
+			}
+			if _, pending := acknowledged.GetAnnotations()[activationExternalRebootKey]; pending {
+				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_FAILED", "Acknowledgement did not remove the exact selected request.", nil)
+			}
+			completion, err := activationProgressForNode(fresh, selected, nodeName, "", true)
+			if err != nil {
+				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_SCOPE_CHANGED", "Acknowledged reset did not retain its maintenance identity.", err)
+			}
+			resetProgress[nodeName] = completion
+			verified[len(verified)-1].completion = append(verified[len(verified)-1].completion, completion)
 		}
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "acknowledge-external-reboot", Subject: host.InputRef,
 			State: "confirmed", ReasonCode: "EXTERNAL_REBOOT_ACKNOWLEDGED", Message: "The selected external reboot requests were acknowledged after a durable same-host, changed-boot-ID receipt; DPF still must report selected DPUs Ready."}); err != nil {
@@ -1257,15 +1510,18 @@ func activationWait(ctx context.Context, interval time.Duration) error {
 	}
 }
 
+// Return only locally bounded prose while retaining original causes for
+// errors.Is/As. In particular, unknown API/error text never becomes public text.
 func activationFailure(journal *executionJournal, code, message string, cause error) error {
-	err := fmt.Errorf("%s: %s", code, message)
-	if cause != nil {
-		err = errors.Join(err, cause)
-	}
+	message += activationCoordinationDiagnostic(cause)
 	if journal == nil {
-		return err
+		return reconcileError(code, message, cause)
 	}
-	return errors.Join(err, journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "activation", State: "failed", ReasonCode: code, Message: message}))
+	recordErr := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "activation", State: "failed", ReasonCode: code, Message: message})
+	if recordErr != nil {
+		message += " The execution report could not persist this failure."
+	}
+	return reconcileError(code, message, errors.Join(cause, recordErr))
 }
 
 func activationAnnotationPatch(old, replacement *string) ([]byte, error) {
@@ -1293,6 +1549,8 @@ func (c *APIClient) checkActivationPermissions(ctx context.Context, execution *m
 	}
 	namespace := execution.operatorNamespace
 	return c.checkAccessRequirements(ctx, map[accessRequirement]struct{}{
+		accessRequirement{verb: "list", group: "svc.dpu.nvidia.com", version: "v1alpha1", resource: "dpuservices", namespace: namespace}:                   {},
+		accessRequirement{verb: "list", group: "svc.dpu.nvidia.com", version: "v1alpha1", resource: "dpuservicechains", namespace: namespace}:              {},
 		accessRequirement{verb: "get", group: "svc.dpu.nvidia.com", version: "v1alpha1", resource: "dpudeployments", namespace: namespace}:                 {},
 		accessRequirement{verb: "create", group: "svc.dpu.nvidia.com", version: "v1alpha1", resource: "dpudeployments", namespace: namespace}:              {},
 		accessRequirement{verb: "get", group: "provisioning.dpu.nvidia.com", version: "v1alpha1", resource: "dpunodes", namespace: namespace}:              {},

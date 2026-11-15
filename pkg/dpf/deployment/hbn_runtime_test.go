@@ -98,7 +98,7 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed, err := observeActivationScope(base.ctx, base.client, base.prepared.execution, deployment, activation.DeploymentUID, activation.selected)
+	observed, err := observeActivationScope(base.ctx, base.client, base.prepared.execution, deployment, activation.DeploymentUID, activation.selected, activation.progress)
 	if err != nil {
 		t.Fatal(err)
 	}

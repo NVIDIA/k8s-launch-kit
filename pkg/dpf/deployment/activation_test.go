@@ -143,7 +143,7 @@ func TestActivationMaintenanceAllowsControllerAnnotationPropagation(t *testing.T
 		"metadata": map[string]any{"name": selected.nodeName + "-hold", "namespace": "dpf", "labels": map[string]any{activationDPUNodeLabel: selected.nodeName}},
 		"spec":     map[string]any{"dpuNodeName": selected.nodeName, "nodeEffect": map[string]any{"hold": true}, "requestor": []any{selected.dpuName}},
 	}}
-	if err := validateActivationMaintenance(maintenance, selected, []activationSelectedDevice{selected}); err != nil {
+	if err := validateActivationMaintenanceRequestors(maintenance, selected, []string{selected.dpuName}, false); err != nil {
 		t.Fatalf("maintenance object before its controller hold annotation was accepted as malformed: %v", err)
 	}
 }

@@ -35,11 +35,14 @@ const (
 
 type activationIntegrationFake struct {
 	*softwarePreparationFake
+	execution                    *managementExecution
+	versions                     []unstructured.Unstructured
 	deployment                   *unstructured.Unstructured
 	activationSelected           []activationSelectedDevice
 	sets                         []unstructured.Unstructured
 	dpus                         []unstructured.Unstructured
 	maint                        []unstructured.Unstructured
+	removedMaintenance           []unstructured.Unstructured
 	guard                        *unstructured.Unstructured
 	guards                       map[string]*unstructured.Unstructured
 	guardCalls                   int
@@ -210,6 +213,14 @@ func (f *activationIntegrationFake) List(ctx context.Context, wanted *unstructur
 		return f.listWithExtra(f.dpus, wanted.GetKind()), nil
 	case "DPUNodeMaintenance":
 		return deepCopyUnstructuredList(f.maint), nil
+	case "DPUService", "DPUServiceChain":
+		result := []unstructured.Unstructured{}
+		for _, object := range f.versions {
+			if object.GetKind() == wanted.GetKind() {
+				result = append(result, *object.DeepCopy())
+			}
+		}
+		return result, nil
 	default:
 		return f.softwarePreparationFake.List(ctx, wanted, selector)
 	}
@@ -266,6 +277,15 @@ func (f *activationIntegrationFake) patchActivationAnnotation(_ context.Context,
 				}
 			}
 		}
+		remaining := f.maint[:0]
+		for _, maintenance := range f.maint {
+			if maintenance.GetLabels()[activationDPUNodeLabel] != current.GetName() {
+				remaining = append(remaining, maintenance)
+			} else {
+				f.removedMaintenance = append(f.removedMaintenance, *maintenance.DeepCopy())
+			}
+		}
+		f.maint = remaining
 		if f.deployment != nil {
 			setActivationReady(f.deployment)
 			f.base.resources[tenantStageKey(f.deployment)] = f.deployment.DeepCopy()
@@ -363,6 +383,9 @@ func (f *activationIntegrationFake) replaceActivationObject(objects []unstructur
 }
 
 func (f *activationIntegrationFake) seedActivationChildren(deployment *unstructured.Unstructured) error {
+	if err := f.seedActivationVersions(deployment); err != nil {
+		return err
+	}
 	software, softwareFound, softwareErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "blueFieldSoftware")
 	flavor, flavorFound, flavorErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "flavor")
 	if softwareErr != nil || !softwareFound || software == "" || flavorErr != nil || !flavorFound || flavor == "" {
@@ -419,6 +442,35 @@ func (f *activationIntegrationFake) seedActivationChildren(deployment *unstructu
 		}}
 		f.maint = append(f.maint, *maintenance)
 	}
+	parent := deployment.GetNamespace() + "_" + deployment.GetName()
+	versionLabels := map[string]string{activationParentLabel: parent, "svc.dpu.nvidia.com/dpuservice-doca-hbn-version": "doca-hbn-random", "svc.dpu.nvidia.com/dpuservicechain-version": deployment.GetName() + "-current"}
+	additional := []string{parent + "_doca-hbn-random", parent + "_" + deployment.GetName() + "-current"}
+	for i := range f.sets {
+		if err := unstructured.SetNestedStringMap(f.sets[i].Object, versionLabels, "spec", "dpuTemplate", "spec", "cluster", "nodeLabels"); err != nil {
+			return err
+		}
+		if err := unstructured.SetNestedStringSlice(f.sets[i].Object, additional, "spec", "dpuTemplate", "spec", "nodeEffect", "nodeMaintenanceAdditionalRequestors"); err != nil {
+			return err
+		}
+	}
+	for i := range f.dpus {
+		if err := unstructured.SetNestedStringMap(f.dpus[i].Object, versionLabels, "spec", "cluster", "nodeLabels"); err != nil {
+			return err
+		}
+		if err := unstructured.SetNestedMap(f.dpus[i].Object, map[string]any{"hold": true, "nodeMaintenanceAdditionalRequestors": []any{additional[0], additional[1]}}, "spec", "nodeEffect"); err != nil {
+			return err
+		}
+	}
+	for i := range f.maint {
+		requestors, _, err := unstructured.NestedStringSlice(f.maint[i].Object, "spec", "requestor")
+		if err != nil {
+			return err
+		}
+		requestors = append(requestors, additional...)
+		if err := unstructured.SetNestedStringSlice(f.maint[i].Object, requestors, "spec", "requestor"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -438,7 +490,7 @@ func setActivationDPUReady(dpu *unstructured.Unstructured) {
 	_ = unstructured.SetNestedField(dpu.Object, "Ready", "status", "phase")
 	_ = unstructured.SetNestedField(dpu.Object, int64(1), "status", "observedGeneration")
 	_ = unstructured.SetNestedSlice(dpu.Object, []any{
-		conditionMap("NodeEffectReady", "True", "Success", 1), conditionMap("Ready", "True", "Success", 1),
+		conditionMap("NodeEffectReady", "True", "Success", 1), conditionMap("NodeEffectRemoved", "True", "Success", 1), conditionMap("Ready", "True", "Success", 1),
 	}, "status", "conditions")
 }
 
@@ -602,7 +654,7 @@ func newActivationIntegrationCohortFixture(t *testing.T, serials []string, sameH
 func newActivationIntegrationFixtureFromExecution(t *testing.T, execution *managementExecution, sameHost bool) activationIntegrationFixture {
 	t.Helper()
 	receipts, selected, _, stage, _ := softwareStageFixtureFromExecution(t, execution)
-	client := &activationIntegrationFake{softwarePreparationFake: &softwarePreparationFake{softwareStageFake: stage}}
+	client := &activationIntegrationFake{execution: execution, softwarePreparationFake: &softwarePreparationFake{softwareStageFake: stage}}
 	if err := operatorBindingForExecution(stage.operator, execution); err != nil {
 		t.Fatal(err)
 	}

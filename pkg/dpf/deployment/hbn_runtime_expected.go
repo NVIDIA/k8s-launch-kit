@@ -16,7 +16,7 @@ import (
 )
 
 // compileHBNRuntimeBinding is the one owner of expected Service and App values.
-// It implements the HBN subset of DPF fc4974ed's generateDPUService,
+// It implements the HBN subset of pinned DPF 26.8's generateDPUService,
 // generateDPUServiceInterface, addNetworkAnnotationToServiceDaemonSet and
 // argoCDValuesFromDPUService. Observed random names are accepted only after
 // owner, cohort selector and complete retained-spec checks; configuration is
@@ -95,78 +95,15 @@ func compileHBNRuntimeBinding(execution *managementExecution, activation activat
 		clusterExpressions = append(clusterExpressions, map[string]any{"key": key, "operator": "In", "values": []any{desired.Bootstrap.Tenant.Labels[key]}})
 	}
 	clusterSelector := map[string]any{"matchExpressions": clusterExpressions}
-	source, _, err := unstructured.NestedMap(template.Object, "spec", "helmChart", "source")
-	if err != nil || source == nil {
-		return bad()
-	}
-	if _, ok := source["path"]; !ok {
-		source["path"] = ""
-	} // typed ApplicationSource.Path has no omitempty
-	templateValues, _, err := unstructured.NestedMap(template.Object, "spec", "helmChart", "values")
-	if err != nil {
-		return bad()
-	}
-	configValues, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration", "helmChart", "values")
-	if err != nil {
-		return bad()
-	}
-	values := mergeHBNValues(configValues, templateValues)
-	sds, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration", "serviceDaemonSet")
-	if err != nil {
-		return bad()
-	}
-	if sds == nil {
-		sds = map[string]any{}
-	}
-	labels, _, err := unstructured.NestedMap(sds, "labels")
-	if err != nil {
-		return bad()
-	}
-	if labels == nil {
-		labels = map[string]any{}
-	}
-	labels[hbnServiceReferenceLabel] = reference
-	sds["labels"] = labels
-	sds["nodeSelector"] = nodeSelector
-	// HBN uses only predefined mybrhbn networks, so DPF's dynamic resource
-	// injection and ConfigPorts branches cannot add unretained values here.
-	config, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration")
-	if err != nil {
-		return bad()
-	}
-	for key := range config {
-		if key != "helmChart" && key != "serviceDaemonSet" && key != "deployInCluster" {
-			return bad()
-		}
-	}
-	if value, ok := config["deployInCluster"]; ok && value != false {
-		return bad()
-	}
 	names, networks, err := compileHBNServiceInterfaces(execution, service, interfaces, configuration, selector, clusterSelector, id, version)
 	if err != nil {
 		return bad()
 	}
-	spec := map[string]any{"helmChart": map[string]any{"source": source, "values": values}, "serviceID": id, "serviceDaemonSet": sds, "interfaces": names, "dpuClusterSelector": clusterSelector, "security": map[string]any{"privileged": true}}
-	if value, ok := config["deployInCluster"]; ok {
-		spec["deployInCluster"] = value
-	}
-	if security, found, e := unstructured.NestedMap(template.Object, "spec", "security"); e != nil {
-		return bad()
-	} else if found {
-		spec["security"] = security
-	}
-	expected := runtimeObject("DPUService", service.GetName(), desired.Namespace, spec)
-	expected, err = execution.reconciler.schemas.DefaultedCopy(expected)
-	if err != nil {
+	projection, err := compileHBNServiceSpec(execution, template, configuration, service.GetName(), desired.Namespace, reference, id, nodeSelector, clusterSelector, names)
+	if err != nil || !jsonEqual(service.Object["spec"], projection.spec) {
 		return bad()
 	}
-	expectedSpec, _, err := unstructured.NestedMap(expected.Object, "spec")
-	if err != nil {
-		return bad()
-	}
-	if !jsonEqual(service.Object["spec"], expectedSpec) {
-		return bad()
-	}
+	expectedSpec, sds, values, source := projection.spec, projection.daemonSet, projection.values, projection.source
 	effectiveSDS := runtime.DeepCopyJSON(sds)
 	effectiveLabels := effectiveSDS["labels"].(map[string]any)
 	effectiveLabels[hbnServiceIDLabel] = id
@@ -189,6 +126,90 @@ func compileHBNRuntimeBinding(execution *managementExecution, activation activat
 		ExpectedServiceSpec: expectedSpec, ApplicationValues: effective, ArgoNamespace: execution.operatorNamespace, DPUServiceName: service.GetName(), DPUServiceNamespace: desired.Namespace,
 		DPUServiceCreatedAt: service.GetCreationTimestamp().Time, DPUClusterName: desired.Bootstrap.Tenant.Name, DPUClusterNamespace: desired.Bootstrap.Tenant.Namespace, TargetNamespace: desired.Namespace,
 		ChartRepoURL: strings.TrimPrefix(stringValue(source, "repoURL"), "oci://"), ChartName: reference, ChartPath: stringValue(source, "path"), ChartVersion: stringValue(source, "version"), ChartReleaseName: stringValue(source, "releaseName"), ServiceID: id, Image: image}, nil
+}
+
+type hbnServiceProjection struct {
+	spec map[string]any
+	// App values use the pinned producer's pre-defaulting maps, not values
+	// introduced only by structural defaults on the Service API object.
+	source    map[string]any
+	values    map[string]any
+	daemonSet map[string]any
+}
+
+// compileHBNServiceSpec projects retained template/configuration values with
+// explicit controller identity references. It performs no reads and accepts no
+// observed configuration values; late runtime validation also qualifies the
+// referenced interface objects before calling it.
+func compileHBNServiceSpec(execution *managementExecution, template, configuration *unstructured.Unstructured,
+	name, namespace, reference, id string, nodeSelector, clusterSelector map[string]any, names []any,
+) (hbnServiceProjection, error) {
+	source, _, err := unstructured.NestedMap(template.Object, "spec", "helmChart", "source")
+	if err != nil || source == nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	if _, ok := source["path"]; !ok {
+		source["path"] = ""
+	} // typed ApplicationSource.Path has no omitempty
+	templateValues, _, err := unstructured.NestedMap(template.Object, "spec", "helmChart", "values")
+	if err != nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	configValues, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration", "helmChart", "values")
+	if err != nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	values := mergeHBNValues(configValues, templateValues)
+	sds, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration", "serviceDaemonSet")
+	if err != nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	if sds == nil {
+		sds = map[string]any{}
+	}
+	labels, _, err := unstructured.NestedMap(sds, "labels")
+	if err != nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	if labels == nil {
+		labels = map[string]any{}
+	}
+	labels[hbnServiceReferenceLabel] = reference
+	sds["labels"] = labels
+	sds["nodeSelector"] = nodeSelector
+	// HBN uses only predefined mybrhbn networks, so DPF's dynamic resource
+	// injection and ConfigPorts branches cannot add unretained values here.
+	config, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration")
+	if err != nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	for key := range config {
+		if key != "helmChart" && key != "serviceDaemonSet" && key != "deployInCluster" {
+			return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+		}
+	}
+	if value, ok := config["deployInCluster"]; ok && value != false {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	spec := map[string]any{"helmChart": map[string]any{"source": source, "values": values}, "serviceID": id, "serviceDaemonSet": sds, "interfaces": names, "dpuClusterSelector": clusterSelector, "security": map[string]any{"privileged": true}}
+	if value, ok := config["deployInCluster"]; ok {
+		spec["deployInCluster"] = value
+	}
+	if security, found, e := unstructured.NestedMap(template.Object, "spec", "security"); e != nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	} else if found {
+		spec["security"] = security
+	}
+	expected := runtimeObject("DPUService", name, namespace, spec)
+	expected, err = execution.reconciler.schemas.DefaultedCopy(expected)
+	if err != nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	expectedSpec, _, err := unstructured.NestedMap(expected.Object, "spec")
+	if err != nil {
+		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
+	}
+	return hbnServiceProjection{spec: expectedSpec, source: source, values: values, daemonSet: sds}, nil
 }
 
 func runtimeObject(kind, name, namespace string, spec map[string]any) *unstructured.Unstructured {

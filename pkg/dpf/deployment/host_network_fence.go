@@ -51,7 +51,7 @@ func newHostNetworkFenceObserver(ctx context.Context, client activationStageClie
 		}
 		// Check settled controller state after the lease reads. Metadata holds
 		// and reboot requests can change without changing object generation.
-		observed, err := observeActivationScope(ctx, client, execution, deployment, activation.DeploymentUID, activation.selected)
+		observed, err := observeActivationScope(ctx, client, execution, deployment, activation.DeploymentUID, activation.selected, activation.progress)
 		if err != nil || !observed.complete {
 			return failActivationFence(prefix+"_ACTIVATION_SCOPE_UNAVAILABLE", "The complete selected activation scope could not be verified.", err)
 		}

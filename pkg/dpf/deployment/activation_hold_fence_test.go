@@ -184,7 +184,7 @@ func TestActivationHoldReleaseAcceptsFreshVersionAndReleasedCohorts(t *testing.T
 	for _, tc := range []struct {
 		name                      string
 		sameHost, alreadyReleased bool
-	}{{"two hosts fresh version", false, false}, {"same host two DPUs", true, false}, {"already released", false, true}} {
+	}{{"two hosts fresh version", false, false}, {"same host two DPUs", true, false}, {"already released", false, true}, {"same host already released", true, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newActivationIntegrationFixtureFromExecution(t, execution, tc.sameHost)
 			c := &activationHoldFenceClient{activationIntegrationFake: f.client}
@@ -214,7 +214,7 @@ func TestActivationHoldReleaseAcceptsFreshVersionAndReleasedCohorts(t *testing.T
 					}
 					return ActivationObservation{HostSystemUUID: r.HostSystemUUID, HostAdapterSerial: r.HostAdapterSerial, PreviousBootID: "before", CurrentBootID: "after", Reconnected: true}, nil
 				}))
-			wantReleases := len(c.maint)
+			wantReleases := uniqueNodeCount(f.client.activationSelected)
 			if tc.alreadyReleased {
 				wantReleases = 0
 			}
@@ -226,7 +226,7 @@ func TestActivationHoldReleaseAcceptsFreshVersionAndReleasedCohorts(t *testing.T
 }
 
 func TestActivationHoldReleaseRequiresFreshBoundary(t *testing.T) {
-	if err := releaseSelectedHolds(context.Background(), nil, nil, activationObservation{}, nil, nil); err == nil {
+	if _, err := releaseNextSelectedHold(context.Background(), nil, nil, activationObservation{}, nil, nil); err == nil {
 		t.Fatal("missing mandatory boundary accepted")
 	}
 }

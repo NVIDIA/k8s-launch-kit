@@ -128,10 +128,10 @@ func (c *APIClient) verifyActivationRebootBMCs(ctx context.Context, selected []a
 // request must remain pending while both agent startup and current kernel boot
 // identity advance. initialBootID deliberately is not a current-boot signal.
 func waitActivationAgentReboots(ctx context.Context, client activationStageClient, execution *managementExecution, deployment *unstructured.Unstructured,
-	deploymentUID types.UID, selected []activationSelectedDevice, indexes []int, rounds map[types.UID]activationRebootRound, interval time.Duration,
+	deploymentUID types.UID, selected []activationSelectedDevice, indexes []int, rounds map[types.UID]activationRebootRound, progress map[string]activationNodeProgress, interval time.Duration,
 ) (activationObservation, error) {
 	for {
-		current, err := observeActivationScope(ctx, client, execution, deployment, deploymentUID, selected)
+		current, err := observeActivationScope(ctx, client, execution, deployment, deploymentUID, selected, progress)
 		if err != nil || !current.complete {
 			if ctx.Err() != nil {
 				return activationObservation{}, ctx.Err()
@@ -141,6 +141,9 @@ func waitActivationAgentReboots(ctx context.Context, client activationStageClien
 		_, actionable, err := selectedHostRebootPending(current, selected, indexes)
 		if err != nil || !actionable {
 			return activationObservation{}, fmt.Errorf("selected external request changed after host reset")
+		}
+		if !activationResetParticipantsPresent(current, selected, indexes) {
+			return activationObservation{}, activationCoordinationError(activationParticipantRequestors)
 		}
 		ready := true
 		for _, index := range indexes {
@@ -161,4 +164,37 @@ func waitActivationAgentReboots(ctx context.Context, client activationStageClien
 			return activationObservation{}, err
 		}
 	}
+}
+
+// The controller removes a DPU's own requestor only at NodeEffectRemoval,
+// after its reset phases. This check authorizes only the current reset/ACK;
+// terminal observation deliberately permits those same requestors to vanish.
+func activationResetParticipantsPresent(observed activationObservation, selected []activationSelectedDevice, indexes []int) bool {
+	if len(indexes) == 0 {
+		return false
+	}
+	for _, index := range indexes {
+		if index < 0 || index >= len(selected) {
+			return false
+		}
+		item := selected[index]
+		maintenance := observed.maintenance[item.nodeName+"-hold"]
+		if maintenance == nil || maintenance.GetDeletionTimestamp() != nil || maintenance.GetAnnotations()[activationHoldKey] != "false" || activationCondition(maintenance, "NodeEffectApplied") != "True" {
+			return false
+		}
+		requestors, found, err := unstructured.NestedStringSlice(maintenance.Object, "spec", "requestor")
+		if err != nil || !found {
+			return false
+		}
+		own := false
+		for _, requestor := range requestors {
+			if requestor == item.dpuName {
+				own = true
+			}
+		}
+		if !own {
+			return false
+		}
+	}
+	return true
 }

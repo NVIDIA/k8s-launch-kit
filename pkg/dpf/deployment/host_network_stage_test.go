@@ -201,23 +201,15 @@ func TestRunHostWorkloadNetworkStageRechecksHostBActivationMetadataAfterLeaseRea
 		{
 			name: "maintenance hold is reasserted",
 			mutate: func(fixture *activationIntegrationFixture, selected activationSelectedDevice) {
-				matches := 0
-				for i := range fixture.client.maint {
-					maintenance := &fixture.client.maint[i]
-					if maintenance.GetLabels()[activationDPUNodeLabel] != selected.nodeName || maintenance.GetNamespace() != selected.dpuSet.GetNamespace() {
-						continue
-					}
-					annotations := maintenance.GetAnnotations()
-					annotations[activationHoldKey] = "true"
-					maintenance.SetAnnotations(annotations)
-					maintenance.SetResourceVersion("99")
-					matches++
-				}
-				if matches != 1 {
-					t.Fatalf("found %d maintenance objects for selected node %q, want exactly one", matches, selected.nodeName)
-				}
+				maintenance := returnedActivationMaintenance(t, fixture.client, selected.nodeName)
+				annotations := maintenance.GetAnnotations()
+				annotations[activationHoldKey] = "true"
+				maintenance.SetAnnotations(annotations)
+				maintenance.SetResourceVersion("99")
+				fixture.client.maint = append(fixture.client.maint, *maintenance)
+
 			},
-			wantReason: "HOST_NETWORK_NODE_EFFECTS_NOT_SETTLED",
+			wantReason: "HOST_NETWORK_ACTIVATION_SCOPE_UNAVAILABLE",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -234,8 +226,8 @@ func TestRunHostWorkloadNetworkStageRechecksHostBActivationMetadataAfterLeaseRea
 			nodeKey := "DPUNode/" + selectedB.dpuSet.GetNamespace() + "/" + selectedB.nodeName
 			nodeBefore := fixture.client.base.resources[nodeKey].DeepCopy()
 			var maintenanceBefore *unstructured.Unstructured
-			for i := range fixture.client.maint {
-				maintenance := &fixture.client.maint[i]
+			for i := range fixture.client.removedMaintenance {
+				maintenance := &fixture.client.removedMaintenance[i]
 				if maintenance.GetNamespace() == selectedB.dpuSet.GetNamespace() && maintenance.GetLabels()[activationDPUNodeLabel] == selectedB.nodeName {
 					maintenanceBefore = maintenance.DeepCopy()
 					break
@@ -305,8 +297,8 @@ func TestRunHostWorkloadNetworkStageRechecksHostBActivationMetadataAfterLeaseRea
 					break
 				}
 			}
-			if !maintenanceFound {
-				t.Fatal("selected host B maintenance object disappeared")
+			if test.name == "maintenance hold is reasserted" && !maintenanceFound {
+				t.Fatal("injected selected host B maintenance object disappeared")
 			}
 
 			var matchingReason int
@@ -386,7 +378,7 @@ func TestHostNetworkAllocationBindingSeparatesSemanticIdentityFromReadFences(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed, err := observeActivationScope(fixture.ctx, fixture.client, fixture.prepared.execution, deployment, activation.DeploymentUID, activation.selected)
+	observed, err := observeActivationScope(fixture.ctx, fixture.client, fixture.prepared.execution, deployment, activation.DeploymentUID, activation.selected, activation.progress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,10 +436,12 @@ func TestRunHostWorkloadNetworkStageRequiresSettledActivationAroundEffects(t *te
 					case "parent-not-ready":
 						_ = unstructured.SetNestedSlice(fixture.client.deployment.Object, []any{conditionMap("Ready", "False", "Progressing", 1)}, "status", "conditions")
 					case "maintenance-reheld":
+						fixture.client.maint = []unstructured.Unstructured{*returnedActivationMaintenance(t, fixture.client, selected.nodeName)}
 						annotations := fixture.client.maint[0].GetAnnotations()
 						annotations[activationHoldKey] = "true"
 						fixture.client.maint[0].SetAnnotations(annotations)
 					case "maintenance-not-applied":
+						fixture.client.maint = []unstructured.Unstructured{*returnedActivationMaintenance(t, fixture.client, selected.nodeName)}
 						_ = unstructured.SetNestedSlice(fixture.client.maint[0].Object, []any{conditionMap("NodeEffectApplied", "False", "Progressing", 1)}, "status", "conditions")
 					case "node-effect-not-ready":
 						_ = unstructured.SetNestedSlice(fixture.client.dpus[0].Object, []any{conditionMap("Ready", "True", "Success", 1), conditionMap("NodeEffectReady", "False", "Progressing", 1)}, "status", "conditions")
@@ -569,4 +563,17 @@ func hostNetworkStageFixtureFromExecution(t *testing.T, execution *managementExe
 
 func cloneHostNetworkStageSnapshot(source hostWorkloadLeaseSnapshot) hostWorkloadLeaseSnapshot {
 	return hostWorkloadLeaseSnapshot{DPUServiceIPAM: source.DPUServiceIPAM.DeepCopy(), CIDRPool: source.CIDRPool.DeepCopy(), TenantNodes: deepCopyUnstructuredList(source.TenantNodes)}
+}
+
+// Reintroduce archived metadata only to model an unexpected post-completion
+// maintenance object. It is never used to create activation progress evidence.
+func returnedActivationMaintenance(t *testing.T, client *activationIntegrationFake, nodeName string) *unstructured.Unstructured {
+	t.Helper()
+	for _, object := range client.removedMaintenance {
+		if object.GetLabels()[activationDPUNodeLabel] == nodeName {
+			return object.DeepCopy()
+		}
+	}
+	t.Fatalf("no removed maintenance fixture for %s", nodeName)
+	return nil
 }

@@ -317,6 +317,9 @@ func enrollmentAccessRequirements(plan preflightPlan) []accessRequirement {
 		}
 		requirements = append(requirements, accessRequirement{verb: "list", group: group, version: "v1alpha1", resource: resource})
 	}
+	for _, resource := range []string{"dpuservices", "dpuservicechains"} {
+		requirements = append(requirements, accessRequirement{verb: "list", group: "svc.dpu.nvidia.com", version: "v1alpha1", resource: resource, namespace: operatorNamespace})
+	}
 	for _, device := range plan.intent.Devices {
 		name := strings.ToLower(device.Serial)
 		requirements = append(requirements,
