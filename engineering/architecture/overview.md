@@ -310,6 +310,12 @@ the physical exit read. Every measurement retains fresh complete resource,
 lease, pod/container/image and host/PF/route checks; no successful observation is
 cached across measurements.
 
+Each prepared DPF execution owns its retained CRD expectations and their immutable
+default-normalized spec JSON. Desired normalization runs once at construction;
+every fresh live CRD still undergoes full typed/default normalization and complete
+spec comparison, alongside identity, metadata, readiness and scope checks. Live
+observations are never cached by UID or generation.
+
 ## Deployment and validation internals
 
 ```mermaid

@@ -553,14 +553,18 @@ func TestManagerIntentRequiresExactRuntimeEntrypointAndContainerSet(t *testing.T
 }
 
 func TestCRDSpecMustMatchRetainedSchema(t *testing.T) {
-	expected := map[string]any{"group": "example.test", "scope": "Namespaced", "names": map[string]any{"plural": "things", "kind": "Thing"}, "versions": []any{map[string]any{"name": "v1", "served": true, "storage": true}}}
-	current := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition", "metadata": map[string]any{"name": "things.example.test"}, "spec": expected}}
-	if !crdSpecMatches(expected, current) {
+	spec := map[string]any{"group": "example.test", "scope": "Namespaced", "names": map[string]any{"plural": "things", "kind": "Thing"}, "versions": []any{map[string]any{"name": "v1", "served": true, "storage": true}}}
+	current := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition", "metadata": map[string]any{"name": "things.example.test"}, "spec": spec}}
+	expected, err := operatorCRDFromObject(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !crdSpecMatches(expected.normalizedSpecJSON, current) {
 		t.Fatal("same retained CRD spec did not match")
 	}
 	current = current.DeepCopy()
 	_ = unstructured.SetNestedField(current.Object, "different.test", "spec", "group")
-	if crdSpecMatches(expected, current) {
+	if crdSpecMatches(expected.normalizedSpecJSON, current) {
 		t.Fatal("changed CRD spec was accepted")
 	}
 }
@@ -700,8 +704,11 @@ func TestOperatorCRDReadinessRejectsSchemaConversionAndIdentityDrift(t *testing.
 	// Explicit nondefault intent stays authoritative rather than being rewritten to443.
 	wanted := baseline.DeepCopy()
 	set(int64(8443), "spec", "conversion", "webhook", "clientConfig", "service", "port")(wanted)
-	wantedSpec, found, err := unstructured.NestedMap(wanted.Object, "spec")
-	if err != nil || !found || !crdSpecMatches(wantedSpec, wanted) || crdSpecMatches(wantedSpec, baseline) {
+	wantedExpectation, err := operatorCRDFromObject(wanted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !crdSpecMatches(wantedExpectation.normalizedSpecJSON, wanted) || crdSpecMatches(wantedExpectation.normalizedSpecJSON, baseline) {
 		t.Fatal("covering defaults replaced or ignored an explicitly retained nondefault webhook port")
 	}
 }

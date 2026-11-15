@@ -56,7 +56,10 @@ type operatorCRDExpectation struct {
 	kind       string
 	namespaced bool
 	versions   []string
-	spec       map[string]any
+	// Retained raw projection; neither representation is mutated after construction.
+	spec map[string]any
+	// Immutable default-normalized desired spec, owned by the prepared execution.
+	normalizedSpecJSON string
 }
 
 // runManagement validates the complete retained bundle before any management
@@ -582,6 +585,9 @@ func decodeOperatorManifest(manifest []byte) ([]*unstructured.Unstructured, erro
 }
 
 func operatorCRDFromObject(object *unstructured.Unstructured) (operatorCRDExpectation, error) {
+	if object == nil {
+		return operatorCRDExpectation{}, fmt.Errorf("CRD object is required")
+	}
 	group, groupFound, groupErr := unstructured.NestedString(object.Object, "spec", "group")
 	plural, pluralFound, pluralErr := unstructured.NestedString(object.Object, "spec", "names", "plural")
 	kind, kindFound, kindErr := unstructured.NestedString(object.Object, "spec", "names", "kind")
@@ -617,6 +623,11 @@ func operatorCRDFromObject(object *unstructured.Unstructured) (operatorCRDExpect
 	if len(expectation.versions) == 0 {
 		return operatorCRDExpectation{}, fmt.Errorf("CRD has no served versions")
 	}
+	normalized, err := normalizeCRDSpecJSON(map[string]any{"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition", "spec": spec})
+	if err != nil {
+		return operatorCRDExpectation{}, fmt.Errorf("CRD spec has malformed typed fields")
+	}
+	expectation.normalizedSpecJSON = string(normalized)
 	return expectation, nil
 }
 
@@ -708,38 +719,35 @@ func crdMismatchReason(expected operatorCRDExpectation, current *unstructured.Un
 	if group != expected.group || plural != expected.plural || kind != expected.kind || scope != wantScope {
 		return "has a conflicting group, resource name, kind or scope"
 	}
-	if !crdSpecMatches(expected.spec, current) {
+	if !crdSpecMatches(expected.normalizedSpecJSON, current) {
 		return "has a conflicting retained spec, schema or conversion configuration"
 	}
 	return ""
 }
 
-func crdSpecMatches(expected map[string]any, current *unstructured.Unstructured) bool {
-	if len(expected) == 0 || current == nil {
+// crdSpecMatches always normalizes the complete fresh live object, including
+// typed metadata/status decoding. Only immutable desired work is precomputed;
+// unchanged UID/generation never permits skipping a current spec comparison.
+func crdSpecMatches(expectedJSON string, current *unstructured.Unstructured) bool {
+	if expectedJSON == "" || current == nil {
 		return false
 	}
-	data, err := json.Marshal(map[string]any{"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition", "spec": expected})
+	currentJSON, err := normalizeCRDSpecJSON(current.Object)
+	return err == nil && expectedJSON == string(currentJSON)
+}
+
+func normalizeCRDSpecJSON(object map[string]any) ([]byte, error) {
+	data, err := json.Marshal(object)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	var expectedCRD apiextensionsv1.CustomResourceDefinition
-	if err := json.Unmarshal(data, &expectedCRD); err != nil {
-		return false
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := json.Unmarshal(data, &crd); err != nil {
+		return nil, err
 	}
 	// The covering defaulter includes nested conversion webhook service ports.
-	apiextensionsv1.SetObjectDefaults_CustomResourceDefinition(&expectedCRD)
-	currentData, err := json.Marshal(current.Object)
-	if err != nil {
-		return false
-	}
-	var currentCRD apiextensionsv1.CustomResourceDefinition
-	if err := json.Unmarshal(currentData, &currentCRD); err != nil {
-		return false
-	}
-	apiextensionsv1.SetObjectDefaults_CustomResourceDefinition(&currentCRD)
-	want, wantErr := json.Marshal(expectedCRD.Spec)
-	got, gotErr := json.Marshal(currentCRD.Spec)
-	return wantErr == nil && gotErr == nil && bytes.Equal(want, got)
+	apiextensionsv1.SetObjectDefaults_CustomResourceDefinition(&crd)
+	return json.Marshal(crd.Spec)
 }
 
 func discoveredResourceMatches(resources *metav1.APIResourceList, requirement preflightAPIRequirement) bool {
