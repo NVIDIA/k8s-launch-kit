@@ -724,6 +724,16 @@ completion after the controller removes maintenance, even if polling missed an
 intermediate Applied state. Absence never authorizes a hold release or reset.
 The same receipt-backed interpretation applies during later host-network checks.
 
+Native SSH host recovery uses the caller's remaining deployment deadline, bounded
+by the existing two-hour deployment limit. The callback's maximum wait does not
+extend a shorter caller deadline. It does not start a new two-hour
+stage budget or impose an independent fifteen-minute reconnect limit. The
+separate fresh reset-safety deadline still bounds identity checks and the single
+command submission; its expiry after dispatch does not prevent read-only
+recovery. Cancellation or recovery expiry leaves the action uncertain, without
+replaying it or acknowledging an unverified DPU reset. Same-host and adapter
+identity, a changed host boot and the current-round Arm proof remain required.
+
 The object execution boundary records and synchronizes an attempt before
 reconciliation, then persists the result before dependent work. A report-write
 failure stops execution. Readiness polling rechecks UID, ownership and desired

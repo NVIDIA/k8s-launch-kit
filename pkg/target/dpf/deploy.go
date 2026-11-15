@@ -96,7 +96,7 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		if err := validateManagement(access); err != nil {
 			return err
 		}
-		rebooter, err := NewExternalRebooter(access, access.RequestTimeout, 15*time.Minute, 5*time.Second)
+		rebooter, err := NewExternalRebooter(access, access.RequestTimeout, maxExternalRebootWait, 5*time.Second)
 		if err != nil {
 			return err
 		}

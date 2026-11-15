@@ -299,3 +299,154 @@ func TestExternalRebooterDispatchedTimeoutRemainsUnknownAndDoesNotReplay(t *test
 		t.Fatalf("err=%v submitted=%d opens=%d", err, action.rebootCount, opens)
 	}
 }
+
+func TestExternalRebooterUsesRemainingDeploymentBudgetForRecovery(t *testing.T) {
+	request := rebootConfig(t)
+	callback, err := NewExternalRebooter(request, time.Second, 2*time.Hour, time.Millisecond)
+	if err != nil {
+		t.Fatalf("construct recovery within deployment budget: %v", err)
+	}
+	rebooter, ok := callback.(*externalRebooter)
+	if !ok {
+		t.Fatal("constructor returned an unexpected rebooter")
+	}
+	parentDeadline := time.Now().Add(25 * time.Minute)
+	ctx, cancel := context.WithDeadline(context.Background(), parentDeadline)
+	defer cancel()
+	activation := activationRequest("SystemLevelReset")
+	var opens, actions int
+	rebooter.openSession = func(observeCtx context.Context, _ string, _ *config.SSHAccess, _ time.Duration) (sshprobe.ExternalRebootSession, error) {
+		opens++
+		deadline, bounded := observeCtx.Deadline()
+		if !bounded {
+			t.Fatal("SSH operation has no deadline")
+		}
+		if opens == 1 {
+			if !deadline.Equal(activation.ResetSafetyExpiresAt) {
+				t.Fatal("action did not retain its independent safety deadline")
+			}
+			return &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: rebootOldID},
+				onReboot: func() { actions++ }, rebootErr: errors.New("disconnected after submission")}, nil
+		}
+		if !deadline.Equal(parentDeadline) {
+			t.Fatal("recovery renewed or shortened the remaining deployment deadline")
+		}
+		// A host whose SSH listener returns after many minutes must fit inside
+		// the supplied budget, without waiting those real minutes in this test.
+		if time.Until(deadline) <= 20*time.Minute {
+			t.Fatal("recovery cannot accommodate the delayed SSH listener")
+		}
+		if opens == 2 {
+			return nil, errors.New("host is still returning")
+		}
+		return &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: rebootNewID}}, nil
+	}
+	got, err := rebooter.RebootExternal(ctx, activation)
+	if err != nil || !got.Reconnected || got.CurrentBootID != rebootNewID || actions != 1 || opens != 3 {
+		t.Fatalf("recovery=%+v err=%v actions=%d opens=%d", got, err, actions, opens)
+	}
+}
+
+func TestExternalRebooterConstructorPreservesExplicitBounds(t *testing.T) {
+	for _, wait := range []time.Duration{time.Second, 20 * time.Minute, 2 * time.Hour} {
+		if _, err := NewExternalRebooter(config.Request{}, time.Second, wait, time.Millisecond); err != nil {
+			t.Errorf("valid explicit wait %s rejected: %v", wait, err)
+		}
+	}
+	for _, wait := range []time.Duration{0, -time.Second, time.Second - time.Nanosecond, 2*time.Hour + time.Nanosecond} {
+		if _, err := NewExternalRebooter(config.Request{}, time.Second, wait, time.Millisecond); err == nil {
+			t.Errorf("invalid explicit wait %s accepted", wait)
+		}
+	}
+	for _, command := range []time.Duration{0, time.Second - time.Nanosecond, 2*time.Minute + time.Nanosecond} {
+		if _, err := NewExternalRebooter(config.Request{}, command, time.Hour, time.Millisecond); err == nil {
+			t.Errorf("invalid command budget %s accepted", command)
+		}
+	}
+}
+
+func TestExternalRebooterRecoveryHonorsShorterParentAfterDispatch(t *testing.T) {
+	for _, mode := range []string{"deadline", "cancellation"} {
+		t.Run(mode, func(t *testing.T) {
+			request := rebootConfig(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			callback, err := NewExternalRebooter(request, time.Second, time.Hour, time.Millisecond)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rebooter, ok := callback.(*externalRebooter)
+			if !ok {
+				t.Fatal("constructor returned an unexpected rebooter")
+			}
+			opens, actions := 0, 0
+			rebooter.openSession = func(readCtx context.Context, _ string, _ *config.SSHAccess, _ time.Duration) (sshprobe.ExternalRebootSession, error) {
+				opens++
+				if opens == 1 {
+					return &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: rebootOldID},
+						onReboot: func() { actions++ }, rebootErr: errors.New("action acknowledgement unknown")}, nil
+				}
+				if mode == "cancellation" {
+					cancel()
+				}
+				<-readCtx.Done()
+				return nil, readCtx.Err()
+			}
+			_, err = rebooter.RebootExternal(ctx, activationRequest("SystemLevelReset"))
+			expected := context.DeadlineExceeded
+			if mode == "cancellation" {
+				expected = context.Canceled
+			}
+			if !errors.Is(err, expected) || actions != 1 || opens != 2 {
+				t.Fatalf("err=%v actions=%d opens=%d; want parent stop after one uncertain action", err, actions, opens)
+			}
+		})
+	}
+}
+
+func TestExternalRebooterCanConfirmRecoveryAfterActionProofExpires(t *testing.T) {
+	request := rebootConfig(t)
+	activation := activationRequest("SystemLevelReset")
+	activation.ResetSafetyExpiresAt = time.Now().Add(100 * time.Millisecond)
+	var actions, opens int
+	rebooter := newTestRebooter(t, request, time.Second, time.Millisecond, func(readCtx context.Context, _ string, _ *config.SSHAccess, _ time.Duration) (sshprobe.ExternalRebootSession, error) {
+		opens++
+		if opens == 1 {
+			return &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: rebootOldID},
+				rebootErr: &sshprobe.Error{Code: "SSH_TIMEOUT_OR_CANCELLED", Stage: "external-reboot-system-level"},
+				onReboot:  func() { actions++; <-readCtx.Done() }}, nil
+		}
+		if readCtx.Err() != nil || time.Now().Before(activation.ResetSafetyExpiresAt) {
+			t.Fatal("recovery did not retain its independent live context after action expiry")
+		}
+		return &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: rebootNewID}}, nil
+	})
+	got, err := rebooter.RebootExternal(context.Background(), activation)
+	if err != nil || !got.Reconnected || actions != 1 || opens != 2 {
+		t.Fatalf("got=%+v err=%v actions=%d opens=%d", got, err, actions, opens)
+	}
+}
+
+func TestExternalRebooterShortParentCanExpireBeforeDefaultPoll(t *testing.T) {
+	request := rebootConfig(t)
+	callback, err := NewExternalRebooter(request, time.Second, maxExternalRebootWait, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebooter, ok := callback.(*externalRebooter)
+	if !ok {
+		t.Fatal("constructor returned an unexpected rebooter")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	var opens, actions int
+	rebooter.openSession = func(context.Context, string, *config.SSHAccess, time.Duration) (sshprobe.ExternalRebootSession, error) {
+		opens++
+		return &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: rebootOldID},
+			onReboot: func() { actions++ }, rebootErr: errors.New("command result unknown")}, nil
+	}
+	_, err = rebooter.RebootExternal(ctx, activationRequest("SystemLevelReset"))
+	if !errors.Is(err, context.DeadlineExceeded) || actions != 1 || opens != 1 {
+		t.Fatalf("err=%v actions=%d opens=%d; want parent expiry without waiting for default poll or replay", err, actions, opens)
+	}
+}

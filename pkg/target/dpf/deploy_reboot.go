@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultRebootPollInterval = 5 * time.Second
-	maxExternalRebootWait     = 15 * time.Minute
+	maxExternalRebootWait     = 2 * time.Hour
 	maxExternalSSHCommand     = 2 * time.Minute
 )
 
@@ -31,7 +31,7 @@ func NewExternalRebooter(request config.Request, commandTimeout, rebootWait, pol
 		return nil, fmt.Errorf("external SSH command timeout must be between one second and two minutes")
 	}
 	if rebootWait < time.Second || rebootWait > maxExternalRebootWait {
-		return nil, fmt.Errorf("external host reboot wait must be between one second and fifteen minutes")
+		return nil, fmt.Errorf("external host reboot wait must be between one second and two hours")
 	}
 	if pollInterval == 0 {
 		pollInterval = defaultRebootPollInterval
