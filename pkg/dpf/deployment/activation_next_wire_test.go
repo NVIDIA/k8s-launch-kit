@@ -556,7 +556,7 @@ func TestActivationCompleteListResultsAreRequiredBeforeEffects(t *testing.T) {
 
 func TestActivationVersionPermissionsCoverBothEarlyBoundaries(t *testing.T) {
 	harness := newCallerPermissionHarness(t, nil)
-	input := callerGenerationInputs(t, harness.server.URL)
+	input := callerGenerationInputs(t, harness.server)
 	bundle, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
@@ -566,7 +566,7 @@ func TestActivationVersionPermissionsCoverBothEarlyBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	harness.projection = plan.projection
-	client := callerPermissionClient(t, harness.server.URL)
+	client := callerPermissionClient(t, harness.server)
 	result := client.CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: bundle})
 	if !result.Ready {
 		t.Fatal("complete permission fixture unexpectedly denied")

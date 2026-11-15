@@ -5,9 +5,14 @@ package deployment
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -24,9 +29,11 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
+const callerManagementAPIEndpoint = "https://example.com"
+
 func TestCheckCallerPermissionsCoversRetainedManagementPlan(t *testing.T) {
 	harness := newCallerPermissionHarness(t, nil)
-	input := callerGenerationInputs(t, harness.server.URL)
+	input := callerGenerationInputs(t, harness.server)
 	bundle, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatalf("generate caller-permission bundle: %v", err)
@@ -36,7 +43,10 @@ func TestCheckCallerPermissionsCoversRetainedManagementPlan(t *testing.T) {
 		t.Fatalf("prepare exact retained plan: %v", err)
 	}
 	harness.projection = plan.projection
-	client := callerPermissionClient(t, harness.server.URL)
+	client := callerPermissionClient(t, harness.server)
+	if err := client.VerifyIdentity(context.Background()); err != nil {
+		t.Fatalf("secure fixture identity verification failed: %v", err)
+	}
 	result := client.CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: bundle})
 	if !result.Ready {
 		t.Fatalf("complete caller authorization unexpectedly blocked: %#v", failedCallerChecks(result))
@@ -109,7 +119,7 @@ func TestCheckCallerPermissionsReportsActionableDenial(t *testing.T) {
 		}
 		return !denied
 	})
-	input := callerGenerationInputs(t, harness.server.URL)
+	input := callerGenerationInputs(t, harness.server)
 	bundle, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatalf("generate caller-permission bundle: %v", err)
@@ -119,7 +129,7 @@ func TestCheckCallerPermissionsReportsActionableDenial(t *testing.T) {
 		t.Fatal(err)
 	}
 	harness.projection = plan.projection
-	client := callerPermissionClient(t, harness.server.URL)
+	client := callerPermissionClient(t, harness.server)
 	result := client.CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: bundle})
 	if result.Ready || deniedReview.Spec.ResourceAttributes == nil {
 		t.Fatalf("port-forward denial did not block the retained workflow: ready=%v review=%#v", result.Ready, deniedReview)
@@ -140,7 +150,7 @@ func TestCheckCallerPermissionsRejectsSelectedDeviceSelectorPatchDenial(t *testi
 		a := review.Spec.ResourceAttributes
 		return a == nil || a.Verb != "patch" || a.Group != "provisioning.dpu.nvidia.com" || a.Resource != "dpudevices"
 	})
-	generated, err := generateFixtureBundle(callerGenerationInputs(t, harness.server.URL))
+	generated, err := generateFixtureBundle(callerGenerationInputs(t, harness.server))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +159,7 @@ func TestCheckCallerPermissionsRejectsSelectedDeviceSelectorPatchDenial(t *testi
 		t.Fatal(err)
 	}
 	harness.projection = plan.projection
-	result := callerPermissionClient(t, harness.server.URL).CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: generated})
+	result := callerPermissionClient(t, harness.server).CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: generated})
 	if result.Ready || !containsCallerReason(result, "CALLER_PERMISSION_MISSING") {
 		t.Fatal("missing selected-device patch permission did not block readiness")
 	}
@@ -163,7 +173,7 @@ func TestCheckCallerPermissionsRejectsSelectedDeviceSelectorPatchDenial(t *testi
 
 func TestCheckCallerPermissionsStopsOnBindingMismatchOrCancellation(t *testing.T) {
 	harness := newCallerPermissionHarness(t, nil)
-	input := callerGenerationInputs(t, harness.server.URL)
+	input := callerGenerationInputs(t, harness.server)
 	bundle, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatalf("generate caller-permission bundle: %v", err)
@@ -173,7 +183,7 @@ func TestCheckCallerPermissionsStopsOnBindingMismatchOrCancellation(t *testing.T
 		t.Fatal(err)
 	}
 	harness.projection = plan.projection
-	client := callerPermissionClient(t, harness.server.URL)
+	client := callerPermissionClient(t, harness.server)
 	client.expected.APIEndpoint = "https://different.example.test"
 	result := client.CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: bundle})
 	if result.Ready || len(result.Checks) != 1 || result.Checks[0].ReasonCode != "MANAGEMENT_BUNDLE_BINDING_MISMATCH" {
@@ -182,7 +192,7 @@ func TestCheckCallerPermissionsStopsOnBindingMismatchOrCancellation(t *testing.T
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result = callerPermissionClient(t, harness.server.URL).CheckCallerPermissions(ctx, ManagementPreflightRequest{Bundle: bundle})
+	result = callerPermissionClient(t, harness.server).CheckCallerPermissions(ctx, ManagementPreflightRequest{Bundle: bundle})
 	if result.Ready || len(result.Checks) != 1 || result.Checks[0].ReasonCode != "PREFLIGHT_CANCELLED" {
 		t.Fatalf("pre-canceled permission request was not stopped: %#v", failedCallerChecks(result))
 	}
@@ -190,7 +200,7 @@ func TestCheckCallerPermissionsStopsOnBindingMismatchOrCancellation(t *testing.T
 
 func TestCheckCallerPermissionsRejectsFinalIdentityDrift(t *testing.T) {
 	harness := newCallerPermissionHarness(t, nil)
-	input := callerGenerationInputs(t, harness.server.URL)
+	input := callerGenerationInputs(t, harness.server)
 	bundle, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatalf("generate caller-permission bundle: %v", err)
@@ -201,7 +211,7 @@ func TestCheckCallerPermissionsRejectsFinalIdentityDrift(t *testing.T) {
 	}
 	harness.projection = plan.projection
 	harness.identityUIDChangeAtGet = 2
-	result := callerPermissionClient(t, harness.server.URL).CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: bundle})
+	result := callerPermissionClient(t, harness.server).CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: bundle})
 	if result.Ready || !containsCallerReason(result, "MANAGEMENT_IDENTITY_CHANGED") {
 		t.Fatalf("final identity drift was not reported: %#v", failedCallerChecks(result))
 	}
@@ -259,9 +269,26 @@ type callerNonResourceAttributes struct {
 	Path string `json:"path"`
 }
 
-func callerPermissionClient(t *testing.T, endpoint string) *APIClient {
+func callerPermissionClient(t *testing.T, server *httptest.Server) *APIClient {
 	t.Helper()
-	config := &rest.Config{Host: endpoint, ContentConfig: rest.ContentConfig{ContentType: "application/json", AcceptContentTypes: "application/json"}, QPS: 1000, Burst: 1000, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
+	listener := server.Listener.Addr().String()
+	dialer := &net.Dialer{}
+	config := &rest.Config{
+		Host:          callerManagementAPIEndpoint,
+		ContentConfig: rest.ContentConfig{ContentType: "application/json", AcceptContentTypes: "application/json"},
+		QPS:           1000, Burst: 1000,
+		TLSClientConfig: rest.TLSClientConfig{CAData: callerManagementCAData(t, server)},
+		// Keep every test on its own handler/listener while preserving the
+		// canonical management identity used to cache the immutable plan. A
+		// mismatched address fails locally instead of falling through to DNS.
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if network != "tcp" || address != "example.com:443" {
+				return nil, fmt.Errorf("caller permission fixture refuses dial to %s/%s", network, address)
+			}
+			return dialer.DialContext(ctx, network, listener)
+		},
+		Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
+	}
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		t.Fatal(err)
@@ -270,13 +297,45 @@ func callerPermissionClient(t *testing.T, endpoint string) *APIClient {
 	return &APIClient{
 		access:   discovery.ManagementClient{Client: client, REST: config, Namespace: "dpf-operator-system"},
 		dynamic:  dynamicClient,
-		expected: generation.ManagementIdentity{APIEndpoint: endpoint, SystemNamespaceUID: "system-uid-1", TrustDigest: "system-roots"},
+		expected: generation.ManagementIdentity{APIEndpoint: callerManagementAPIEndpoint, SystemNamespaceUID: "system-uid-1", TrustDigest: callerManagementTrustDigest(t, server)},
 		version:  "v1.35.4",
+	}
+}
+
+func callerManagementCAData(t *testing.T, server *httptest.Server) []byte {
+	t.Helper()
+	certificate := server.Certificate()
+	if err := certificate.VerifyHostname("example.com"); err != nil {
+		t.Fatalf("httptest certificate does not cover the retained fixture identity: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})
+}
+
+func callerManagementTrustDigest(t *testing.T, server *httptest.Server) string {
+	t.Helper()
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(callerManagementCAData(t, server)))
+}
+
+func TestCallerPermissionFixtureTransportRejectsNonFixtureEndpoint(t *testing.T) {
+	harness := newCallerPermissionHarness(t, nil)
+	client := callerPermissionClient(t, harness.server)
+	config := rest.CopyConfig(client.access.REST)
+	config.Host = "https://elsewhere.invalid/prefix"
+	foreign, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := foreign.Discovery().ServerVersion(); err == nil || !strings.Contains(err.Error(), "refuses dial") {
+		t.Fatalf("fixture transport did not fail closed for a different host: %v", err)
+	}
+	if harness.requests != 0 {
+		t.Fatalf("non-fixture endpoint reached handler %d times", harness.requests)
 	}
 }
 
 type callerPermissionHarness struct {
 	server                 *httptest.Server
+	requests               int
 	projection             []*unstructured.Unstructured
 	reviews                []callerReview
 	discoveryGets          []string
@@ -285,11 +344,11 @@ type callerPermissionHarness struct {
 	identityUIDGets        int
 }
 
-func callerGenerationInputs(t *testing.T, endpoint string) generation.Inputs {
+func callerGenerationInputs(t *testing.T, server *httptest.Server) generation.Inputs {
 	t.Helper()
 	input := preflightGenerationInputs(t)
 	input.Operator.KubernetesVersion = "v1.35.4"
-	input.Management = generation.ManagementIdentity{APIEndpoint: endpoint, SystemNamespaceUID: "system-uid-1", TrustDigest: "system-roots"}
+	input.Management = generation.ManagementIdentity{APIEndpoint: callerManagementAPIEndpoint, SystemNamespaceUID: "system-uid-1", TrustDigest: callerManagementTrustDigest(t, server)}
 	return input
 }
 
@@ -297,6 +356,7 @@ func newCallerPermissionHarness(t *testing.T, allowed func(callerReview) bool) *
 	t.Helper()
 	harness := &callerPermissionHarness{allowed: allowed}
 	harness.server = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		harness.requests++
 		writer.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/version":
