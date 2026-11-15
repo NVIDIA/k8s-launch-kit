@@ -28,14 +28,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// Descriptor exposes the inventory preview, keeping provisioning unavailable.
+// Descriptor exposes inventory discovery while keeping provisioning unavailable.
 func Descriptor() target.Descriptor {
 	phases := map[target.Phase]target.Capability{}
 	for _, p := range append(target.PublicPhases(), target.Pipeline) {
-		phases[p] = target.Capability{Available: false, Reason: "DPF provisioning is not implemented in this build"}
+		phases[p] = target.Capability{Available: false, Reason: "this build supports DPF discovery only; generate, deploy, validate and the composite pipeline are unavailable"}
 	}
-	phases[target.Discover] = target.Capability{Available: true, Reason: "inventory discovery and management-network diagnostics; deployment eligibility is evaluated by the selected use case"}
-	return target.Descriptor{Name: target.DPF, Description: "Independent DPF inventory discovery preview", Phases: phases}
+	phases[target.Discover] = target.Capability{Available: true, Reason: "inventory discovery is the default and needs no kubeconfig; a supplied kubeconfig adds management observations; explicit management network probes require runtime-qualified diagnostic assets"}
+	return target.Descriptor{Name: target.DPF, Description: "Independent DPF inventory discovery", Phases: phases}
 }
 
 type Request struct {
@@ -54,7 +54,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 		return nil, &target.PhaseUnavailableError{Name: target.DPF, Phase: inv.Phase, Reason: Descriptor().Capability(inv.Phase).Reason}
 	}
 	if inv.Execution.DryRun {
-		return nil, fmt.Errorf("DPF discovery uses discovery.probes.mode: inventory to omit probes")
+		return nil, fmt.Errorf("DPF discovery does not support --dry-run; inventory mode is the default, and management network probes require explicit management mode and runtime-qualified diagnostic assets")
 	}
 	r := d.request
 	if r.Stdout == nil {
@@ -94,7 +94,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 				// Unqualified image assets reject management mode before any remote operation.
 				assets := catalog.ProbeAssets()
 				if resolved.Mode == "management" && assets.Validate() != nil {
-					fail(2, "management probes unavailable until the pinned diagnostic image passes Kubernetes runtime qualification; explicitly select inventory mode for the read-only preview")
+					fail(2, "management network probes require diagnostic image assets that have passed Kubernetes runtime qualification; inventory mode remains available without those probes")
 				} else {
 					store, err = artifacts.New(input, r.OutputPath, r.ExplicitOutput)
 					if err != nil {

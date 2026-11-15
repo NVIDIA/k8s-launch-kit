@@ -32,9 +32,11 @@ with a source filename and document number where applicable.
 
 ## Target selection and flag ownership
 
-Omitting `--target` selects `host`. `dpf` provides an
-[experimental discovery preview](../user/dpf-discovery.md). Its other phases
-are unavailable and return exit `2`; they do not run against the host cluster.
+Omitting `--target` selects `host`. `dpf` supports
+[inventory discovery only](../user/dpf-discovery.md) in this version; generate,
+deploy, validate and the composite pipeline are unavailable and return exit `2`.
+Inventory needs no kubeconfig; a supplied kubeconfig adds management observations.
+Explicit management network probes require a supported three-control-plane Linux/amd64 cluster and use the pinned, runtime-qualified diagnostic assets.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags

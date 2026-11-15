@@ -3,30 +3,36 @@ SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# DPF discovery preview
+# DPF discovery
 
 Start with the [step-by-step CLI workflows](dpf-workflows.md) for first inventory,
 address-candidate lookup and refresh. This page provides the access and output reference.
 
 `l8k discover --target dpf` collects hardware inventory from explicitly selected
 host/DPU Redfish or SSH endpoints. The DPF estate is independent of Host networking.
-Inventory mode is the default and can run before Kubernetes exists. An explicitly
-supplied management kubeconfig adds management observations and must work if supplied.
+Inventory mode is the default and can run before Kubernetes exists without a
+kubeconfig. A supplied management kubeconfig adds management-cluster observations
+and must work if supplied.
 
-This build exposes an **experimental inventory preview**. Inventory success means
-that selected sources were read, physical identities and unique host/card mappings
-were established, each DPU BMC account had verified administrator privileges, and cleanup/publication succeeded. It does **not** mean DPF
+This DPF target currently supports inventory discovery only; `generate`, `deploy`,
+`validate` and the composite pipeline are unavailable in this build. Inventory
+success means that selected sources were read, physical identities and unique
+host/card mappings were established, each DPU BMC account had verified
+administrator privileges, and cleanup/publication succeeded. It does **not** mean
 provisioning readiness or production hardware support. Missing optional card
 metadata remains visible, including cards without serials. Hardware support and
-deployment readiness checks do not block inventory collection. Overall deployment `acceptance` remains
-`not-evaluated`, even when `discovery.outcome` is `complete` and the command exits zero.
+deployment readiness checks do not block inventory collection. Overall deployment
+`acceptance` remains `not-evaluated`, even when `discovery.outcome` is `complete`
+and the command exits zero.
 
-Set `discovery.probes.mode: management` only when you want per-node pod-network and
+Set `discovery.probes.mode: management` to enable per-node pod-network and
 node-network probes. Management mode requires an explicit kubeconfig and a supported
-three-control-plane Linux/amd64 cluster; it creates temporary, restricted probe Pods and cleans
-them up. The default inventory mode performs no probes, though a supplied kubeconfig
-still adds management topology observations. DPF generate/deploy/validate and the
-DPF pipeline are unavailable in this discovery-only change.
+three-control-plane Linux/amd64 cluster. The pinned diagnostic image assets are
+runtime-qualified for Linux/amd64; incompatible node architectures are rejected before
+probe resources are created. On a compatible cluster, Launch Kit creates temporary,
+restricted probe Pods and cleans them up. Default inventory mode creates no Pods and
+performs no network probes, though a supplied kubeconfig still adds management-cluster
+observations.
 
 Inventory establishes physical identities, host associations and BMC access. It
 does not certify hardware support for every deployment. A selected use case
