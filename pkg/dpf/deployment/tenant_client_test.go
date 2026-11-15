@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 type tenantSourceStub struct {
@@ -118,7 +119,7 @@ func tenantIdentityClientFixture(t *testing.T, expected TenantReadinessExpected,
 		}
 	}))
 	t.Cleanup(server.Close)
-	api, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL, Timeout: time.Second})
+	api, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL, Timeout: time.Second, RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter()})
 	if err != nil {
 		t.Fatal(err)
 	}

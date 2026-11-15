@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 type runtimeStageFake struct {
@@ -244,7 +245,7 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 		}
 	}))
 	t.Cleanup(server.Close)
-	tenant.api, err = kubernetes.NewForConfig(&rest.Config{Host: server.URL, Timeout: time.Second})
+	tenant.api, err = kubernetes.NewForConfig(&rest.Config{Host: server.URL, Timeout: time.Second, RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter()})
 	if err != nil {
 		t.Fatal(err)
 	}
