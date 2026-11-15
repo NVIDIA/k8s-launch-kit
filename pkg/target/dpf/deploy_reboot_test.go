@@ -450,3 +450,64 @@ func TestExternalRebooterShortParentCanExpireBeforeDefaultPoll(t *testing.T) {
 		t.Fatalf("err=%v actions=%d opens=%d; want parent expiry without waiting for default poll or replay", err, actions, opens)
 	}
 }
+
+func TestExternalRebooterDurableBaselineFailurePreventsSubmission(t *testing.T) {
+	access := rebootConfig(t)
+	session := &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: rebootOldID}}
+	reboot := newTestRebooter(t, access, time.Second, time.Millisecond, func(context.Context, string, *config.SSHAccess, time.Duration) (sshprobe.ExternalRebootSession, error) {
+		return session, nil
+	})
+	request := activationRequest("SystemLevelReset")
+	writes := 0
+	request.BeforeSubmit = func(observation deployment.ActivationObservation) error {
+		writes++
+		if observation.PreviousBootID != rebootOldID || observation.HostSystemUUID != rebootHostUUID || observation.HostAdapterSerial != rebootCardSN {
+			t.Fatal("baseline was not authenticated host observation")
+		}
+		return errors.New("durable checkpoint CAS failed")
+	}
+	if _, err := reboot.RebootExternal(context.Background(), request); err == nil {
+		t.Fatal("failed checkpoint permitted submission")
+	}
+	if writes != 1 || session.rebootCount != 0 || !session.closed {
+		t.Fatalf("checkpoint writes=%d reboot=%d closed=%v", writes, session.rebootCount, session.closed)
+	}
+}
+
+func TestExternalRebooterObserveOnlyCannotSubmit(t *testing.T) {
+	access := rebootConfig(t)
+	for _, boot := range []string{rebootOldID, rebootNewID} {
+		t.Run(boot, func(t *testing.T) {
+			session := &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: boot}}
+			reboot := newTestRebooter(t, access, time.Second, time.Millisecond, func(context.Context, string, *config.SSHAccess, time.Duration) (sshprobe.ExternalRebootSession, error) {
+				return session, nil
+			})
+			request := activationRequest("SystemLevelReset")
+			// Expired safety never authorizes a new action; it is irrelevant to reads.
+			request.ResetSafetyExpiresAt = time.Now().Add(-time.Hour)
+			result, err := reboot.ObserveExternal(context.Background(), request, rebootOldID)
+			if boot == rebootOldID && err == nil || boot == rebootNewID && (err != nil || result.CurrentBootID != boot) {
+				t.Fatalf("observe boot=%s result=%+v err=%v", boot, result, err)
+			}
+			if session.rebootCount != 0 || !session.closed {
+				t.Fatal("observation path submitted reset or leaked session")
+			}
+		})
+	}
+}
+
+func TestExternalRebooterRechecksBootAfterDurableBaselineWrite(t *testing.T) {
+	access := rebootConfig(t)
+	session := &fakeExternalSession{identity: sshprobe.HostIdentity{SystemUUID: rebootHostUUID, AdapterSerial: rebootCardSN, BootID: rebootOldID}}
+	reboot := newTestRebooter(t, access, time.Second, time.Millisecond, func(context.Context, string, *config.SSHAccess, time.Duration) (sshprobe.ExternalRebootSession, error) {
+		return session, nil
+	})
+	request := activationRequest("SystemLevelReset")
+	request.BeforeSubmit = func(deployment.ActivationObservation) error { session.identity.BootID = rebootNewID; return nil }
+	if _, err := reboot.RebootExternal(context.Background(), request); err == nil || !strings.Contains(err.Error(), "RESET_BASELINE_CHANGED") {
+		t.Fatalf("baseline drift=%v", err)
+	}
+	if session.rebootCount != 0 || session.observed != 2 {
+		t.Fatalf("reboots=%d observations=%d", session.rebootCount, session.observed)
+	}
+}

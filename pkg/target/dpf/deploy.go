@@ -35,6 +35,9 @@ import (
 // DeployRequest selects an already generated DPF bundle and explicit site
 // access. It has no Host-target kubeconfig or overwrite fallback.
 type DeployRequest struct {
+	Resume    string
+	ResumeSet bool
+
 	UserConfig      string
 	DeploymentFiles string
 	Stdout          io.Writer
@@ -58,6 +61,14 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 	}
 	if inv.Execution.Timeout < 0 || inv.Execution.Timeout > 2*time.Hour {
 		return nil, fmt.Errorf("DPF deployment timeout must be between zero (the two-hour default) and two hours")
+	}
+	var resume *deployment.OperationRef
+	if d.request.ResumeSet || d.request.Resume != "" {
+		var err error
+		resume, err = deployment.ParseOperationRef(d.request.Resume)
+		if err != nil {
+			return nil, err
+		}
 	}
 	r := d.request
 	if r.Stdout == nil {
@@ -110,7 +121,7 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		}
 		progress.Info("[RUNNING] Deployment records: %s", runDir)
 		result, runErr := deployment.Run(ctx, deployment.RunRequest{
-			Bundle: retained, Access: access,
+			Bundle: retained, Access: access, Resume: resume,
 			ReportPath: filepath.Join(runDir, "deployment.jsonl"), ProbeJournalPath: filepath.Join(runDir, "probe-resources.json"),
 			VerifyPrerequisites: freshDeploymentPrerequisites(retained, runDir), VerifyChartSource: verifyDeploymentChart,
 			Rebooter:     rebooter,
@@ -155,6 +166,11 @@ func writeDeploymentResult(request DeployRequest, format string, result deployme
 	}
 	if _, err := fmt.Fprintf(request.Stdout, "DPF deployment: %s\nLast completed stage: %s\nReport: %s\n", result.State, stage, report); err != nil {
 		return fmt.Errorf("write DPF deployment result: %w", err)
+	}
+	if result.Operation != nil {
+		if _, err := fmt.Fprintf(request.Stdout, "Operation: %s\n", result.Operation.String()); err != nil {
+			return err
+		}
 	}
 	if failure != nil {
 		return failure

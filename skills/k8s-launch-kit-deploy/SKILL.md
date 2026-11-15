@@ -49,7 +49,14 @@ and current request; unsupported pre-OS reset confirmation stops explicitly.
 one-host `provisioned` is not cross-host validation. JSON is one final stdout
 document, including a safe `error` on failure; progress is on stderr. Preserve
 the report and partial effects for inspection rather than blindly repeating a
-reset. Standalone DPF validate, the root pipeline and generate `--deploy` remain
+reset. Preserve the reported `namespace/name/UID` operation reference and use
+`deploy --target dpf --user-config SITE --deployment-files BUNDLE --resume REF`
+for the same initial deployment. Resume verifies prior identities, observes
+existing reset claims and inspects completed host transactions; uncertain effects
+remain action-required. A late runtime failure repeats the complete fresh matrix
+without reimaging or replaying completed host configuration. Do not edit claims
+or checkpoints, change the bundle, or infer completion from Ready alone.
+Standalone DPF validate, the root pipeline and generate `--deploy` remain
 unavailable. The following Network Operator instructions apply to Host.
 
 ## Host deployment

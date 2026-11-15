@@ -136,6 +136,40 @@ software or host-network effects in place. Inspect current resources and device
 state before another attempt, especially after timeout or interrupted host
 reboot. Do not retry a host reset when the report does not establish whether it occurred.
 
+Before creating the DPUDeployment, the CLI reserves a durable operation in the
+existing operator namespace and reports its `namespace/name/UID` reference. The
+caller needs ConfigMap create permission and get/update access to that operation
+record. Keep the reference with the unchanged bundle and site file. Resume the
+same initial deployment explicitly:
+
+```bash
+l8k deploy --target dpf --user-config dpf-discovered.yaml \
+  --deployment-files ./hbn-bgp --resume NAMESPACE/NAME/UID
+```
+
+Use the exact reference printed by the failed run; JSON results expose it as
+`operation.namespace`, `operation.name` and `operation.uid`. Each attempt writes
+new reports. Before a first DPUDeployment is created, resume also rechecks the current chart
+and cached ISO/PLDM bytes. An already-created exact DPUDeployment does not
+refetch those bytes merely to retry runtime checks. Resume verifies the retained
+management, tenant, selected-device,
+software and workload identities instead of reinstalling them. It continues
+supported activation work and inspects completed host transactions. After a
+late runtime-check failure, it repeats the complete current BGP, route and traffic
+matrix without reimaging devices or reconfiguring completed hosts. It does not
+reuse an earlier traffic pass.
+
+An existing reset claim permits observation only. Recovery needs the saved
+host baseline, a changed boot on that same host/PF, and a new current Arm boot
+for the exact pending DPU request before conditional acknowledgment. Missing
+proof, an uncertain hold result, a partial host transaction, replaced resources,
+or changed inputs stop with an action-required/conflict reason. A claim is never
+expired, deleted or replaced to permit another reset. Coordinate ambiguous
+physical outcomes with the responsible operator; do not bypass the claim or
+edit the checkpoint. Earlier releases' diagnostic-only reports cannot authorize
+resume. Before the operation reservation exists, a normal fresh invocation still
+uses the existing create-or-verify checks and may reject unresolved partial work.
+
 A matching tenant or resource name does not prove it is safe to reuse. Inspect
 ownership, active workloads and network state. Coordinate any selected-tenant
 cleanup with its owner and preserve unrelated resources. If desired input or

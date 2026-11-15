@@ -291,6 +291,15 @@ workload declarations, activation, host networking and native HBN runtime checks
 It never enters a Host lifecycle service. DPF standalone validation and the root
 pipeline remain capability rejections before client construction.
 
+DPF deploy reserves one typed, nonsecret ConfigMap checkpoint in the existing
+operator namespace before DPUDeployment creation. `--resume` binds its exact
+namespace/name/UID and retained plan, reconstructs verified prerequisite receipts,
+and restores activation history. Conditional patches, immutable reset claims and
+host-local transaction journals retain ownership of their individual effects;
+the checkpoint does not provide physical fencing or automatic adoption. Existing
+claims select observation-only recovery, and completed host work is inspected
+without configuration fallback. Each attempt produces fresh runtime evidence.
+
 ## Deployment and validation internals
 
 ```mermaid

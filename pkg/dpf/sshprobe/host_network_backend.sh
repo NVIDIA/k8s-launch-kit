@@ -539,7 +539,7 @@ if [[ "$action" == snapshot ]]; then
     if capture snapshot; then printf '%s\n' "$snapshot"; else die "$capture_failure_code"; fi
     exit 0
 fi
-[[ "$action" == configure ]] || die HOST_NETWORK_ACTION_INVALID
+[[ "$action" == configure || "$action" == inspect ]] || die HOST_NETWORK_ACTION_INVALID
 [[ "$request_id" =~ ^[0-9a-f]{64}$ ]] || die HOST_NETWORK_INPUT_INVALID
 jq -e 'has("waitOnlineOptional") and (.waitOnlineOptional|type=="boolean")' <<<"$request" >/dev/null || die HOST_NETWORK_INPUT_INVALID
 wait_online_optional=$(jq -r '.waitOnlineOptional' <<<"$request") || die HOST_NETWORK_INPUT_INVALID
@@ -556,7 +556,10 @@ expected_mac=$(jq -er '.request.identity.permanentMAC|ascii_downcase' <<<"$reque
 payload=$(jq -er '.fragment' <<<"$request" | base64 -d)
 [[ -d /etc/netplan && ! -L /etc/netplan ]] || die HOST_NETWORK_SOURCE_INVALID
 if [[ ! -d /var/lib || -L /var/lib ]] || ! protected_source /var/lib; then die HOST_NETWORK_OWNERSHIP_CONFLICT; fi
-if [[ ! -e "$directory" ]]; then mkdir -m700 "$directory"; sync -- /var/lib; fi
+if [[ ! -e "$directory" ]]; then
+    [[ "$action" != inspect ]] || die HOST_NETWORK_PRIOR_INTENT_BLOCKS
+    mkdir -m700 "$directory"; sync -- /var/lib
+fi
 if [[ ! -d "$directory" || -L "$directory" ]] || ! value_is 0:700 stat -c '%u:%a' "$directory"; then die HOST_NETWORK_OWNERSHIP_CONFLICT; fi
 exec 9<"$directory"
 flock -x -w 5 9 || die HOST_NETWORK_LOCK_BUSY
@@ -717,6 +720,7 @@ if [[ -z "$payload" && "$observed_mtu" == "$desired_mtu" && "$observed_address_c
     receipt verified-external '' 0 | jq '. + {runtimeVerified:true,fileVerified:true,externalVerified:true,journalPath:"",fragmentPath:""}'
     exit 0
 fi
+[[ "$action" != inspect ]] || die HOST_NETWORK_PRIOR_INTENT_BLOCKS
 [[ "$observed_mtu" == "$old_mtu" && "$observed_address_count" == "$prior_address_count" && "$observed_route_count" == "$prior_route_count" ]] || die HOST_NETWORK_RUNTIME_CHANGED
 
 write_journal() {

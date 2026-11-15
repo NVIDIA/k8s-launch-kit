@@ -695,4 +695,6 @@ Keep the failed report, discovery handoff, stdout and stderr. Unknown is not a p
 
 If selection or site inputs changed, update the source file, rediscover where the observed facts changed and generate a new reviewed bundle. If live state changed, collect fresh discovery before continuing. A matching tenant or existing resource name does not prove safe reuse. Coordinate any selected-tenant cleanup with its owner and preserve unrelated resources.
 
+For an unchanged initial deployment, retain its reported operation reference and use `l8k deploy --target dpf --user-config dpf-discovered.yaml --deployment-files ./hbn-bgp --resume NAMESPACE/NAME/UID`. Resume verifies prior identities and observes existing reset claims; missing proof and partial host transactions remain action-required. It never replaces a claim or reimages completed devices merely to repeat a late runtime check. Each retry measures the complete current traffic matrix. Earlier diagnostic-only reports cannot authorize recovery.
+
 Next: [Site inputs or authorization must change](#hbn-bgp-deployment-inputs); [Live observations need refreshing](#hbn-bgp-deployment-discover); [An unchanged, valid bundle is ready for owner re-review](#hbn-bgp-deployment-review-bundle).

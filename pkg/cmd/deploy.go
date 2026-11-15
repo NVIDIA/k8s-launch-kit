@@ -28,6 +28,7 @@ import (
 
 var (
 	deploymentFiles string
+	deployResume    string
 	// deployTimeout caps the entire `l8k deploy` invocation. Zero (the
 	// default) means no deadline — the apply state machine polls
 	// until every manifest reaches a terminal state or the user
@@ -79,7 +80,9 @@ With --target dpf, deploy a reviewed HBN-BGP bundle using explicit
 installs DPF, provisions the selected DPUs, configures host workload networking,
 and verifies BGP, installed routes and traffic between the selected hosts.
 DPF may reboot selected hosts. It defaults to a two-hour timeout and supports
-neither --dry-run nor --overwrite-existing.`,
+neither --dry-run nor --overwrite-existing. Use --resume with the reported
+namespace/name/UID operation reference to continue the same retained plan;
+uncertain reset claims permit observation only.`,
 	Example: `  # Apply manifests from ./deployment to the cluster reachable via $KUBECONFIG
   l8k deploy
 
@@ -94,7 +97,7 @@ neither --dry-run nor --overwrite-existing.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if targetName == string(target.DPF) {
 			request := dpftarget.DeployRequest{
-				UserConfig: userConfig, DeploymentFiles: deploymentFiles,
+				UserConfig: userConfig, DeploymentFiles: deploymentFiles, Resume: deployResume, ResumeSet: cmd.Flags().Changed("resume"),
 				Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(),
 			}
 			if !cmd.Flags().Changed("deployment-files") {
@@ -131,6 +134,7 @@ func init() {
 	addTargetFlag(deployCmd)
 
 	deployCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
+	deployCmd.Flags().StringVar(&deployResume, "resume", "", "DPF: resume the reported namespace/name/UID operation with the same bundle and site inputs")
 	deployCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to apply; DPF requires an explicit path")
 	// --network-operator-namespace overrides cfg.NetworkOperator.Namespace in
 	// the Host deploy service. It drives the Phase 0 Helm target, Phase 0.5
@@ -148,6 +152,7 @@ func init() {
 	setFlagGroup(deployCmd, "flavor", GroupCommon)
 	setFlagGroup(deployCmd, "deployment-files", GroupGeneration)
 	setFlagGroup(deployCmd, "network-operator-namespace", GroupCommon)
+	setFlagGroup(deployCmd, "resume", GroupExecution)
 	setFlagGroup(deployCmd, "deploy-timeout", GroupExecution)
 	setFlagGroup(deployCmd, "dry-run", GroupExecution)
 	setFlagGroup(deployCmd, "overwrite-existing", GroupDeploy)

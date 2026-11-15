@@ -226,7 +226,7 @@ func TestActivationHoldReleaseAcceptsFreshVersionAndReleasedCohorts(t *testing.T
 }
 
 func TestActivationHoldReleaseRequiresFreshBoundary(t *testing.T) {
-	if _, err := releaseNextSelectedHold(context.Background(), nil, nil, activationObservation{}, nil, nil); err == nil {
+	if _, err := releaseNextSelectedHold(context.Background(), nil, nil, activationObservation{}, nil, nil, nil); err == nil {
 		t.Fatal("missing mandatory boundary accepted")
 	}
 }

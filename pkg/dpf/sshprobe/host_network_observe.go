@@ -223,6 +223,13 @@ func standardHostNetworkRules(data []byte) bool {
 }
 
 func (s *hostNetworkSession) configure(ctx context.Context, request HostNetworkRequest) (HostNetworkReceipt, error) {
+	return s.configureAction(ctx, request, "configure")
+}
+
+func (s *hostNetworkSession) configureAction(ctx context.Context, request HostNetworkRequest, action string) (HostNetworkReceipt, error) {
+	if action != "configure" && action != "inspect" {
+		return HostNetworkReceipt{}, networkError("HOST_NETWORK_ACTION_INVALID", false)
+	}
 	if !hostNetworkLeaseBinding.MatchString(request.LeaseBinding) {
 		return HostNetworkReceipt{}, networkError("HOST_NETWORK_LEASE_BINDING_INVALID", false)
 	}
@@ -255,7 +262,7 @@ func (s *hostNetworkSession) configure(ctx context.Context, request HostNetworkR
 	}
 	payload := hostNetworkBackendRequest{Request: request, RequestID: id, Key: hostNetworkKey(request.Identity), Connection: observation.connection,
 		Fence: observation.raw.Fence, RuntimeDigest: observation.raw.RuntimeDigest, LogicalID: plan.LogicalID, Fragment: base64.StdEncoding.EncodeToString(plan.DesiredFragment), OldMTU: observation.MTU, AddressExists: addressExists, RouteExists: routeExists, ProbeAddress: probe.String(), WaitOnlineOptional: plan.WaitOnlineOptional}
-	data, err := s.run(ctx, "configure", payload)
+	data, err := s.run(ctx, action, payload)
 	if err != nil {
 		return unknownHostNetworkReceipt(id, payload.Key, "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN"), networkError("HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN", true)
 	}

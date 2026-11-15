@@ -201,6 +201,8 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	if _, bounded := ctx.Deadline(); !bounded {
 		return receipt, activationFailure(journal, "ACTIVATION_DEADLINE_MISSING", "Activation requires an execution deadline.", nil)
 	}
+	receipt.progress = prepared.operation.restoreProgress()
+	receipt.Reboots = prepared.operation.rebootHistory()
 	execution := prepared.execution
 	receipt.BundleDigest = execution.plan.Digest()
 	if journal.digest != receipt.BundleDigest || prepared.execution.reconciler.BundleDigest() != receipt.BundleDigest ||
@@ -247,14 +249,46 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			return receipt, activationFailure(journal, "ACTIVATION_PERMISSION_DENIED", "The caller lacks a required selected-scope DPU activation permission.", nil)
 		}
 	}
-	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, "", objects, journal, requestTimeout); err != nil {
+	var created *unstructured.Unstructured
+	var established types.UID
+	if prepared.operation != nil {
+		established = prepared.operation.state.DeploymentUID
+		current, readErr := client.Get(ctx, deployment.DeepCopy())
+		if readErr == nil {
+			if current == nil || execution.reconciler.Verify(deployment, current) != nil || established != "" && current.GetUID() != established {
+				return receipt, fmt.Errorf("OPERATION_PARENT_CHANGED: retained parent identity changed")
+			}
+			established = current.GetUID()
+			created = current
+		} else if !apierrors.IsNotFound(readErr) || established != "" {
+			return receipt, fmt.Errorf("OPERATION_PARENT_CHANGED: established parent missing/unavailable")
+		}
+	}
+	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, established, objects, journal, requestTimeout); err != nil {
 		return receipt, err
 	}
-	created, err := executeNativeObject(ctx, client, execution.reconciler, deployment, generation.StageDeployment, journal, false, interval)
-	if err != nil {
-		return receipt, err
+	if created == nil {
+		if prepared.beforeDeploymentCreate != nil {
+			if err := prepared.beforeDeploymentCreate(ctx); err != nil {
+				return receipt, err
+			}
+			// Source reads may block; refresh physical/selected safety before creation.
+			if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, "", objects, journal, requestTimeout); err != nil {
+				return receipt, err
+			}
+		}
+		created, err = executeNativeObject(ctx, client, execution.reconciler, deployment, generation.StageDeployment, journal, false, interval)
+		if err != nil {
+			return receipt, err
+		}
 	}
 	receipt.DeploymentUID = created.GetUID()
+	if prepared.operation != nil && prepared.operation.state.DeploymentUID == "" {
+		prepared.operation.state.DeploymentUID = created.GetUID()
+		if err := prepared.operation.save(ctx); err != nil {
+			return receipt, err
+		}
+	}
 	refreshHoldScope := func(ctx context.Context) (activationObservation, error) {
 		if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
 			return activationObservation{}, err
@@ -278,6 +312,17 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			}
 			return receipt, activationFailure(journal, code, "The selected DPUDeployment child scope is invalid or changed.", err)
 		}
+		if err := prepared.operation.bindChildren(ctx, observed); err != nil {
+			return receipt, err
+		}
+		if observed.complete {
+			if err := prepared.operation.verifyHoldHistory(observed); err != nil {
+				return receipt, err
+			}
+			if err := prepared.operation.resolveCompletedResets(ctx, observed, reboot); err != nil {
+				return receipt, err
+			}
+		}
 		if activationDPUsReady(observed, selected) && len(observed.dpus) == len(selected) {
 			for _, item := range selected {
 				proof, known := receipt.progress[item.nodeName]
@@ -293,9 +338,12 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			continue
 		}
 		receipt.DPUSets, receipt.DPUs, receipt.Nodes, receipt.Maintenance = activationReceipts(observed)
-		released, releaseErr := releaseNextSelectedHold(ctx, client, selected, observed, journal, refreshHoldScope)
+		released, releaseErr := releaseNextSelectedHold(ctx, client, selected, observed, journal, refreshHoldScope, prepared.operation)
 		if released != nil {
 			receipt.progress[released.nodeName] = *released
+			if err := prepared.operation.saveProgress(ctx, receipt.progress); err != nil {
+				return receipt, err
+			}
 		}
 		if releaseErr != nil {
 			return receipt, releaseErr
@@ -914,9 +962,7 @@ func validateActivationMaintenanceRequestors(object *unstructured.Unstructured, 
 	return nil
 }
 
-func releaseNextSelectedHold(ctx context.Context, client activationStageClient, selected []activationSelectedDevice,
-	observed activationObservation, journal *executionJournal, refresh func(context.Context) (activationObservation, error),
-) (*activationNodeProgress, error) {
+func releaseNextSelectedHold(ctx context.Context, client activationStageClient, selected []activationSelectedDevice, observed activationObservation, journal *executionJournal, refresh func(context.Context) (activationObservation, error), operation *deploymentOperation) (*activationNodeProgress, error) {
 	var released *activationNodeProgress
 	if refresh == nil {
 		return released, activationFailure(journal, "ACTIVATION_HOLD_FENCE_REQUIRED", "A complete fresh activation boundary is required before releasing a selected hold.", nil)
@@ -965,6 +1011,16 @@ func releaseNextSelectedHold(ctx context.Context, client activationStageClient, 
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "release-node-effect", Subject: item.nodeName,
 			State: "attempted", ReasonCode: "SELECTED_NODE_EFFECT_RELEASE_STARTED", Message: "Release the exact selected DPUNodeMaintenance hold after verifying its UID, resourceVersion, action and requestors."}); err != nil {
 			return released, err
+		}
+		if operation != nil {
+			intent, intentErr := activationProgressForNode(current, selected, item.nodeName, maintenance.GetResourceVersion(), false)
+			if intentErr != nil {
+				return released, intentErr
+			}
+			operation.state.HoldIntents[item.nodeName] = operationProgress{NodeName: intent.nodeName, MaintenanceUID: intent.maintenanceUID, ReleasedVersion: intent.releasedVersion, Sets: intent.sets, DPUs: intent.dpus, Versions: intent.versions}
+			if err := operation.save(ctx); err != nil {
+				return released, err
+			}
 		}
 		updated, err := client.patchActivationAnnotation(ctx, maintenance, maintenance.GetUID(), maintenance.GetResourceVersion(), activationHoldKey, stringPointer("false"))
 		if err != nil {
@@ -1226,39 +1282,52 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			rounds[round.uid] = round
 			bmcs = append(bmcs, activationRebootBMC{selected: item.item, startup: round.startup})
 		}
-		expires, err := client.verifyActivationRebootBMCs(ctx, bmcs, requestTimeout, journal)
-		if err != nil {
-			return verified, err
-		}
-		request.ResetSafetyExpiresAt = expires
-		// The BMC read can take time. A different request or restarted Arm
-		// invalidates its shutdown proof before the one-time claim is created.
-		current, err = observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
-		if err != nil || !current.complete {
-			return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected cohort changed during the physical reset-safety read.", nil)
-		}
-		_, actionable, err = selectedHostRebootPending(current, selected, indexes)
-		if err != nil || !actionable {
-			return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected external request changed during the physical reset-safety read.", nil)
-		}
-		if !activationResetParticipantsPresent(current, selected, indexes) {
-			return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The current reset cohort changed during the reset-safety read.", activationCoordinationError(activationParticipantRequestors))
-		}
-		for _, index := range indexes {
-			round, err := readActivationRebootRound(current.dpus[selected[index].dpuName])
-			before, found := rounds[round.uid]
-			if err != nil || !found || !before.sameRequest(round) || !before.startup.Equal(round.startup) || before.kernelBoot != round.kernelBoot {
-				return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected DPU round or Arm boot changed during the physical reset-safety read.", nil)
-			}
-		}
 		boundDeployment := deployment.DeepCopy()
 		boundDeployment.SetUID(deploymentUID)
-		observation, err := claimAndRebootExternal(ctx, client, boundDeployment, prepared.execution.plan.Digest(), request, sourcePhases, journal, reboot)
+		rounds, recovered, err := prepareOperationReset(ctx, prepared.operation, client, boundDeployment, prepared.execution.plan.Digest(), &request, sourcePhases, rounds, reboot)
 		if err != nil {
 			return verified, err
+		}
+		var observation ActivationObservation
+		if recovered != nil {
+			observation = *recovered
+		} else {
+			expires, err := client.verifyActivationRebootBMCs(ctx, bmcs, requestTimeout, journal)
+			if err != nil {
+				return verified, err
+			}
+			request.ResetSafetyExpiresAt = expires
+			// The BMC read can take time. A different request or restarted Arm
+			// invalidates its shutdown proof before the one-time claim is created.
+			current, err = observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
+			if err != nil || !current.complete {
+				return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected cohort changed during the physical reset-safety read.", nil)
+			}
+			_, actionable, err = selectedHostRebootPending(current, selected, indexes)
+			if err != nil || !actionable {
+				return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected external request changed during the physical reset-safety read.", nil)
+			}
+			if !activationResetParticipantsPresent(current, selected, indexes) {
+				return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The current reset cohort changed during the reset-safety read.", activationCoordinationError(activationParticipantRequestors))
+			}
+			for _, index := range indexes {
+				round, err := readActivationRebootRound(current.dpus[selected[index].dpuName])
+				before, found := rounds[round.uid]
+				if err != nil || !found || !before.sameRequest(round) || !before.startup.Equal(round.startup) || before.kernelBoot != round.kernelBoot {
+					return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected DPU round or Arm boot changed during the physical reset-safety read.", nil)
+				}
+			}
+			observation, err = claimAndRebootExternal(ctx, client, boundDeployment, prepared.execution.plan.Digest(), request, sourcePhases, journal, reboot)
+			if err != nil {
+				return verified, err
+			}
 		}
 		if observation.HostSystemUUID != host.SystemUUID || observation.HostAdapterSerial != request.HostAdapterSerial || observation.PreviousBootID == "" || observation.CurrentBootID == "" || observation.PreviousBootID == observation.CurrentBootID || !observation.Reconnected {
 			return verified, activationFailure(journal, "EXTERNAL_HOST_REBOOT_UNVERIFIED", "The reboot callback did not verify the same host and adapter with a changed boot ID and a returned connection.", nil)
+		}
+		resetKey := resetOperationKey(request, sourcePhases)
+		if err := prepared.operation.saveResetObservation(ctx, resetKey, observation); err != nil {
+			return verified, err
 		}
 		// Retain the confirmed physical action even if later API readiness or
 		// acknowledgement fails. An empty summary must not imply no reboot.
@@ -1287,6 +1356,9 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 				State: "confirmed", ReasonCode: "EXTERNAL_REBOOT_AGENT_VERIFIED", Message: fmt.Sprintf("Same DPU UID %s and pending request returned agent startup %s and current Arm kernel boot %s (previous %s); initialBootID is not used.", proof.uid, proof.startup.UTC().Format(time.RFC3339Nano), proof.kernelBoot, rounds[proof.uid].kernelBoot)}); err != nil {
 				return verified, err
 			}
+		}
+		if err := prepared.operation.saveResetProofs(ctx, resetKey, proofs); err != nil {
+			return verified, err
 		}
 		for _, nodeName := range nodeNames {
 			var item activationSelectedDevice
@@ -1353,6 +1425,9 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			}
 			resetProgress[nodeName] = completion
 			verified[len(verified)-1].completion = append(verified[len(verified)-1].completion, completion)
+		}
+		if err := prepared.operation.finishReset(ctx, resetKey, resetProgress); err != nil {
+			return verified, err
 		}
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "acknowledge-external-reboot", Subject: host.InputRef,
 			State: "confirmed", ReasonCode: "EXTERNAL_REBOOT_ACKNOWLEDGED", Message: "The selected external reboot requests were acknowledged after a durable same-host, changed-boot-ID receipt; DPF still must report selected DPUs Ready."}); err != nil {

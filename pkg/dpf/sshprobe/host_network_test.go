@@ -54,7 +54,7 @@ func (f *hostNetworkFakeRemote) Run(_ context.Context, stage, command string) (s
 		data, _ := json.Marshal(f.snapshot)
 		return string(data), nil
 	}
-	if !strings.Contains(command, hostNetworkTestRequest().LeaseBinding) && stage != "host-network-configure" {
+	if !strings.Contains(command, hostNetworkTestRequest().LeaseBinding) && stage != "host-network-configure" && stage != "host-network-inspect" {
 		return "", errors.New("unexpected command")
 	}
 	if f.configureError {
@@ -398,3 +398,26 @@ func TestHostNetworkReadOnlyWaitOnlineMatchingAndPrivacy(t *testing.T) {
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+func TestHostNetworkInspectUsesSeparateReadOnlyAction(t *testing.T) {
+	remote := &hostNetworkFakeRemote{snapshot: hostNetworkTestSnapshot()}
+	session := &hostNetworkSession{remote: remote}
+	_, err := session.configureAction(context.Background(), hostNetworkTestRequest(), "inspect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(remote.lastConfigureCommand, " -- inspect ") {
+		t.Fatal("inspection used configuration action")
+	}
+	for _, call := range remote.calls {
+		if call == "host-network-configure" {
+			t.Fatal("inspection called configure transport")
+		}
+	}
+	// The backend must refuse inspect before any mutation/journal intent path.
+	stop := strings.Index(hostNetworkBackend, `[[ "$action" != inspect ]] || die HOST_NETWORK_PRIOR_INTENT_BLOCKS`)
+	mutation := strings.Index(hostNetworkBackend, "if ! write_journal intent ''")
+	if stop < 0 || mutation < stop {
+		t.Fatal("inspect may fall through into mutation")
+	}
+}

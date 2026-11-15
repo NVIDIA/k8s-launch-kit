@@ -82,6 +82,12 @@ type ActivationNode struct {
 // the exact selected DPUNode cohort. The callback resolves private SSH access
 // from its own explicit request using HostInputRef and HostEndpoint.
 type ActivationRequest struct {
+	// BeforeSubmit durably records the authenticated baseline before submission.
+	// Adapters must stop if it fails; recovery never invokes a submission callback.
+	BeforeSubmit func(ActivationObservation) error `json:"-"`
+	// recordClaim is owned by deployment, before the adapter can submit.
+	recordClaim func(types.UID) error
+
 	HostInputRef      string
 	HostEndpoint      string
 	HostSystemUUID    string
@@ -106,10 +112,17 @@ type ActivationObservation struct {
 // ExternalRebooter performs the configured, explicitly selected external
 // reboot operation. It receives no credentials; the adapter owns access
 // resolution and must validate host and adapter identity before the reboot.
-// It must enforce ResetSafetyExpiresAt at command submission. After dispatch,
+// It must call BeforeSubmit when present and stop on its error, recheck the
+// same baseline afterward, and enforce ResetSafetyExpiresAt at command submission. After dispatch,
 // timeout is an unknown outcome; the physical command must never be retried.
 type ExternalRebooter interface {
 	RebootExternal(context.Context, ActivationRequest) (ActivationObservation, error)
+}
+
+// ExternalRebootObserver only observes a previously claimed action. It must
+// never submit a reboot, clear a claim, or treat an unchanged boot as success.
+type ExternalRebootObserver interface {
+	ObserveExternal(context.Context, ActivationRequest, string) (ActivationObservation, error)
 }
 
 // RebooterFunc adapts a function to ExternalRebooter.
@@ -122,6 +135,8 @@ func (f RebooterFunc) RebootExternal(ctx context.Context, request ActivationRequ
 // RunRequest contains one retained bundle and explicit, already-resolved site
 // access. Run never loads ambient kubeconfig or resolves credentials itself.
 type RunRequest struct {
+	Resume *OperationRef
+
 	Bundle              *bundle.Bundle
 	Access              config.Request
 	ReportPath          string
@@ -137,6 +152,8 @@ type RunRequest struct {
 // RunResult reports only safe identifiers and typed checks. Detailed stage
 // events are retained in the append-only report at ReportPath.
 type RunResult struct {
+	Operation *OperationRef `json:"operation,omitempty"`
+
 	BundleDigest       string                      `json:"bundleDigest"`
 	State              string                      `json:"state"`
 	LastCompletedStage string                      `json:"lastCompletedStage,omitempty"`
@@ -183,6 +200,10 @@ func Run(ctx context.Context, request RunRequest) (result RunResult, runErr erro
 	remaining := time.Until(deadline)
 	if remaining <= 0 || remaining > maxRunDuration {
 		return RunResult{}, fmt.Errorf("deployment deadline must be in the next two hours")
+	}
+	if request.Resume != nil {
+		ref := *request.Resume
+		request.Resume = &ref
 	}
 	if err := validateRunRequest(request); err != nil {
 		return RunResult{}, err
@@ -281,26 +302,59 @@ func Run(ctx context.Context, request RunRequest) (result RunResult, runErr erro
 		return result, fmt.Errorf("bind management client to retained identity: %w", err)
 	}
 	probes := probe.Runner{Assets: catalog.ProbeAssets(), Journal: probeLog.record}
-	prepared, err := prepareControlPlaneWithExecution(ctx, client, execution, journal, probes, access, interval, requestTimeout)
-	if err != nil {
+	if err := client.checkOperationPermissions(ctx, execution); err != nil {
 		return result, err
 	}
-	progress.Update("Checking retained workload permissions and chart source")
-	objects, err := checkWorkloadPreparationInputs(ctx, client, prepared, journal, workloadChartSourceVerifier(request.VerifyChartSource))
-	if err != nil {
+	var prepared *preparedControlPlaneRun
+	var controlPlane controlPlaneReceipts
+	var workload workloadPreparationReceipt
+	if request.Resume != nil {
+		operation, loadErr := loadDeploymentOperation(ctx, client, execution, request.Resume)
+		if loadErr != nil {
+			return result, loadErr
+		}
+		result.Operation = operation.ref()
+		prepared, err = prepareResume(execution, access, operation)
+		if err != nil {
+			return result, err
+		}
+		controlPlane, workload, err = restoreOperationReceipts(ctx, client, prepared, journal, interval, requestTimeout)
+		if err != nil {
+			return result, err
+		}
+		prepared.beforeDeploymentCreate = func(observeCtx context.Context) error {
+			return verifyFirstDeploymentSources(observeCtx, client, execution, workload.Software, workloadChartSourceVerifier(request.VerifyChartSource), journal, maxBytes)
+		}
+	} else {
+		prepared, err = prepareControlPlaneWithExecution(ctx, client, execution, journal, probes, access, interval, requestTimeout)
+		if err != nil {
+			return result, err
+		}
+		progress.Update("Checking retained workload permissions and chart source")
+		objects, checkErr := checkWorkloadPreparationInputs(ctx, client, prepared, journal, workloadChartSourceVerifier(request.VerifyChartSource))
+		if checkErr != nil {
+			return result, checkErr
+		}
+		controlPlane, err = runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
+		if err != nil {
+			return result, err
+		}
+		result.LastCompletedStage = generation.StageEnrollment
+		progress.Update("Staging software and HBN workload resources")
+		workload, err = runPreparedWorkload(ctx, client, prepared, controlPlane, probes, journal, interval, requestTimeout, maxBytes, workloadChartSourceVerifier(request.VerifyChartSource), objects)
+		if err != nil {
+			return result, err
+		}
+		prepared.operation, err = reserveDeploymentOperation(ctx, client, prepared, workload)
+		if err != nil {
+			return result, err
+		}
+		result.Operation = prepared.operation.ref()
+	}
+	if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "operation", State: "confirmed", ReasonCode: "DEPLOYMENT_OPERATION_BOUND", Message: "Resume reference: " + result.Operation.String()}); err != nil {
 		return result, err
 	}
-	controlPlane, err := runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
-	if err != nil {
-		return result, err
-	}
-	result.LastCompletedStage = generation.StageEnrollment
-	progress.Update("Staging software and HBN workload resources")
-	workload, err := runPreparedWorkload(ctx, client, prepared, controlPlane, probes, journal, interval, requestTimeout, maxBytes,
-		workloadChartSourceVerifier(request.VerifyChartSource), objects)
-	if err != nil {
-		return result, err
-	}
+	ui.FromContext(ctx).Info("[RUNNING] Deployment operation: %s", result.Operation.String())
 	result.LastCompletedStage = generation.StageWorkload
 	progress.Update("Activating selected DPU nodes and waiting for DPF readiness")
 	activation, err := runActivationStage(ctx, client, prepared, controlPlane, workload, currentInventory, access, journal, interval, requestTimeout, request.Rebooter)
@@ -313,7 +367,7 @@ func Run(ctx context.Context, request RunRequest) (result RunResult, runErr erro
 	result.HostNetworking, err = runHostWorkloadNetworkStage(ctx, client, prepared, controlPlane, workload, activation, journal, requestTimeout,
 		func(observeCtx context.Context) (hostWorkloadLeaseSnapshot, error) {
 			return observeHostWorkloadLeaseSnapshot(observeCtx, client, controlPlane.tenant.Client, execution.plan, execution.reconciler, workload, requestTimeout)
-		}, sshprobe.ConfigureHostWorkloadNetwork)
+		}, sshprobe.ConfigureHostWorkloadNetwork, sshprobe.InspectHostWorkloadNetwork)
 	if err != nil {
 		return result, err
 	}
@@ -350,8 +404,12 @@ func activationSummary(receipt activationStageReceipt) *ActivationSummary {
 	for _, object := range receipt.DPUs {
 		summary.DPUs = append(summary.DPUs, ActivationObjectID{Name: object.Name, UID: object.UID})
 	}
+	seenHosts := map[string]bool{}
 	for _, reboot := range receipt.Reboots {
-		summary.RebootedHosts = append(summary.RebootedHosts, reboot.HostInputRef)
+		if !seenHosts[reboot.HostInputRef] {
+			summary.RebootedHosts = append(summary.RebootedHosts, reboot.HostInputRef)
+			seenHosts[reboot.HostInputRef] = true
+		}
 	}
 	return summary
 }
@@ -359,6 +417,9 @@ func activationSummary(receipt activationStageReceipt) *ActivationSummary {
 func validateRunRequest(request RunRequest) error {
 	if request.Bundle == nil || request.VerifyPrerequisites == nil || request.VerifyChartSource == nil || request.Rebooter == nil {
 		return fmt.Errorf("deployment run requires a retained bundle and prerequisite, chart-source and external-reboot callbacks")
+	}
+	if _, ok := request.Rebooter.(ExternalRebootObserver); !ok {
+		return fmt.Errorf("deployment run requires a reboot backend with separate observation-only recovery")
 	}
 	if request.ReportPath == "" || request.ProbeJournalPath == "" {
 		return fmt.Errorf("deployment run requires separate durable report paths")

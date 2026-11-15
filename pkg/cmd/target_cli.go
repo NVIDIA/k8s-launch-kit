@@ -319,6 +319,7 @@ func markConfigFlagTargetScopes(cmd *cobra.Command, scope configflags.Scope) {
 }
 
 func markDeployTargetScopes() {
+	setFlagTargetScope(deployCmd, []target.Name{target.DPF}, "resume")
 	setFlagTargetScope(deployCmd, []target.Name{target.Host, target.DPF}, "dry-run", "deploy-timeout", "user-config", "deployment-files")
 	setFlagTargetScope(deployCmd, []target.Name{target.Host},
 		"flavor", "kubeconfig", "network-operator-namespace", "overwrite-existing", "skip-network-operator-helm")

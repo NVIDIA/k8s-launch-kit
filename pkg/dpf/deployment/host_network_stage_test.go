@@ -85,7 +85,7 @@ func TestRunHostWorkloadNetworkStageUsesActualActivationAndLeaseChecks(t *testin
 				}
 				return receipt, nil
 			}
-			results, err := runHostWorkloadNetworkStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload, activation, journal, time.Second, reader, configurer)
+			results, err := runHostWorkloadNetworkStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload, activation, journal, time.Second, reader, configurer, nil)
 			if test.wantReason == "" && err != nil || test.wantReason != "" && (err == nil || !strings.Contains(err.Error(), test.wantReason)) {
 				t.Fatalf("result error=%v, want reason %q", err, test.wantReason)
 			}
@@ -130,7 +130,7 @@ func TestRunHostWorkloadNetworkStagePreservesPartialTwoHostResults(t *testing.T)
 	}
 
 	results, err := runHostWorkloadNetworkStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload, activation,
-		journal, time.Second, reader, configure)
+		journal, time.Second, reader, configure, nil)
 	if err == nil || !strings.Contains(err.Error(), "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN") || effects != 2 || reads != 3 || len(results) != 2 {
 		t.Fatalf("partial two-host stage: effects=%d reads=%d results=%#v err=%v", effects, reads, results, err)
 	}
@@ -174,7 +174,7 @@ func TestRunHostWorkloadNetworkStageStopsOnChangedCohortBeforeSecondHost(t *test
 		return sshprobe.HostNetworkReceipt{RequestID: "first-host", State: "complete", RuntimeVerified: true, FileVerified: true}, nil
 	}
 	results, err := runHostWorkloadNetworkStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload, activation,
-		journal, time.Second, reader, configure)
+		journal, time.Second, reader, configure, nil)
 	if err == nil || !strings.Contains(err.Error(), "HOST_NETWORK_COHORT_ALLOCATION_CHANGED") || effects != 1 || reads != 3 || len(results) != 1 ||
 		!results[0].LeaseReverified || results[0].DPUSerial != "SERIAL-A" {
 		t.Fatalf("changed cohort did not stop before host B: effects=%d reads=%d results=%#v err=%v", effects, reads, results, err)
@@ -263,7 +263,7 @@ func TestRunHostWorkloadNetworkStageRechecksHostBActivationMetadataAfterLeaseRea
 			}
 
 			results, err := runHostWorkloadNetworkStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload,
-				activation, journal, time.Second, reader, configure)
+				activation, journal, time.Second, reader, configure, nil)
 			if err == nil || !strings.Contains(err.Error(), "HOST_NETWORK_LEASE_UNAVAILABLE") || effects != 1 || reads != 3 || len(results) != 1 {
 				t.Fatalf("metadata drift should stop before host B: effects=%d reads=%d results=%#v err=%v", effects, reads, results, err)
 			}
@@ -346,7 +346,7 @@ func TestRunHostWorkloadNetworkStageJournalSyncFailuresBracketEffects(t *testing
 				return sshprobe.HostNetworkReceipt{RequestID: "host", State: "complete", RuntimeVerified: true, FileVerified: true}, nil
 			}
 			results, err := runHostWorkloadNetworkStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload,
-				activation, journal, time.Second, reader, configure)
+				activation, journal, time.Second, reader, configure, nil)
 			if err == nil || effects != test.wantEffects || reads != test.wantReads || len(results) != test.wantReceipts ||
 				(len(results) > 0 && results[0].LeaseReverified != test.wantReverified) {
 				t.Fatalf("journal failure effects=%d reads=%d results=%#v err=%v", effects, reads, results, err)
@@ -467,7 +467,7 @@ func TestRunHostWorkloadNetworkStageRequiresSettledActivationAroundEffects(t *te
 						effects++
 						mutate()
 						return sshprobe.HostNetworkReceipt{State: "complete", RuntimeVerified: true, FileVerified: true, Blocking: false}, nil
-					})
+					}, nil)
 				wantEffects := 0
 				wantReason := "HOST_NETWORK_LEASE_UNAVAILABLE"
 				if afterEffect {

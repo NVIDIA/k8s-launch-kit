@@ -91,6 +91,17 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **THEN** no dependent effect begins; an attempt without a confirmed result remains uncertain and a later run must inspect actual cluster state.
 - **AND** readiness polling cannot accept a replacement UID, ownership drift, or desired-spec mismatch even when the controller reports Ready.
 
+#### Scenario: Resume the same initial DPF deployment
+
+- **WHEN** the caller supplies the reported operation reference with the original site and bundle
+- **THEN** deployment verifies the live operation UID, management/namespace/tenant/source identities, selected physical cohort and retained prerequisite receipts before continuing post-DPUDeployment work.
+- **AND** a resumed first DD creation requires fresh read-only chart/cache-byte verification; an already-created exact DD, including a lost create response, avoids that large-byte dependency.
+- **AND** prior prerequisite resources are verified without install, recreate or adoption; replacement, missing known identity or checkpoint CAS failure stops dependent effects.
+- **AND** confirmed activation progress survives an interruption; current Ready or an absent/false hold alone cannot manufacture effect history.
+- **AND** an existing reset claim selects observation only, requiring the saved authenticated host baseline and new current Arm proof for the same pending request before an exact conditional ACK; uncertainty never permits another reset.
+- **AND** completed host transactions are inspected with their original request and fresh allocation fences; partial/changed transactions remain blocking.
+- **AND** a late runtime failure can rerun the complete fresh BGP/FIB/traffic matrix without reimage or replay of completed host configuration; old measurement passes never fill new result rows.
+
 #### Scenario: DPF management bootstrap completes
 
 - **WHEN** the retained operator release, API schemas, manager and DPFOperatorConfig become ready

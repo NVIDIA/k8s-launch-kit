@@ -35,6 +35,9 @@ type preparedControlPlaneRun struct {
 	execution *managementExecution
 	selected  []enrollmentBMC
 	password  string
+	operation *deploymentOperation
+	// Resume refreshes source bytes only if no DD has ever been established.
+	beforeDeploymentCreate func(context.Context) error
 }
 
 type controlPlaneReceipts struct {

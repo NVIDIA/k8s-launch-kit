@@ -116,7 +116,7 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementAccess(t *testing.T) {
 			t.Fatal("chart-source callback ran before prerequisites")
 			return PreflightCheck{}, nil
 		},
-		Rebooter: RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
+		Rebooter: runRebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
 			t.Fatal("reboot callback ran before prerequisites")
 			return ActivationObservation{}, nil
 		}),
@@ -236,7 +236,7 @@ func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing
 					t.Fatal("chart access ran after failed prerequisites")
 					return PreflightCheck{}, nil
 				},
-				Rebooter: RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
+				Rebooter: runRebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
 					t.Fatal("reboot ran after failed prerequisites")
 					return ActivationObservation{}, nil
 				}),
@@ -519,4 +519,15 @@ func TestRunRuntimeFinalDurabilityGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The Run boundary requires a distinct observation-only recovery method even
+// when this test stops before any physical action.
+type runRebooterFunc RebooterFunc
+
+func (f runRebooterFunc) RebootExternal(ctx context.Context, request ActivationRequest) (ActivationObservation, error) {
+	return RebooterFunc(f).RebootExternal(ctx, request)
+}
+func (runRebooterFunc) ObserveExternal(context.Context, ActivationRequest, string) (ActivationObservation, error) {
+	return ActivationObservation{}, errors.New("observation not reached")
 }

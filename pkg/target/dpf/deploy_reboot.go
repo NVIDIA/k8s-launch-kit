@@ -111,6 +111,19 @@ func (r *externalRebooter) RebootExternal(ctx context.Context, request deploymen
 		_ = actionSession.Close()
 		return deployment.ActivationObservation{}, fmt.Errorf("SSH host or selected adapter identity differs from the activation request")
 	}
+	if request.BeforeSubmit != nil {
+		if err := request.BeforeSubmit(deployment.ActivationObservation{HostSystemUUID: request.HostSystemUUID, HostAdapterSerial: before.AdapterSerial, PreviousBootID: before.BootID}); err != nil {
+			_ = actionSession.Close()
+			return deployment.ActivationObservation{}, err
+		}
+		// Durable persistence may block. Recheck the same baseline on the action
+		// session immediately before submission; never submit after another boot.
+		current, observeErr := actionSession.ObserveHost(actionCtx, binding.pci)
+		if observeErr != nil || !sameUUID(current.SystemUUID, request.HostSystemUUID) || current.AdapterSerial != before.AdapterSerial || current.BootID != before.BootID {
+			_ = actionSession.Close()
+			return deployment.ActivationObservation{}, fmt.Errorf("RESET_BASELINE_CHANGED: host changed while persisting the submission baseline")
+		}
+	}
 	if ctx.Err() != nil {
 		_ = actionSession.Close()
 		return deployment.ActivationObservation{}, ctx.Err()
@@ -413,4 +426,24 @@ func resetTimer(timer *time.Timer, interval time.Duration) {
 		}
 	}
 	timer.Reset(interval)
+}
+
+// ObserveExternal reconnects for an already claimed action. This path has no
+// reference to RebootSystemLevel and cannot resubmit an uncertain command.
+func (r *externalRebooter) ObserveExternal(ctx context.Context, request deployment.ActivationRequest, baseline string) (deployment.ActivationObservation, error) {
+	if ctx == nil || r == nil || r.openSession == nil || r.commandTimeout <= 0 || !validSystemUUID(baseline) {
+		return deployment.ActivationObservation{}, fmt.Errorf("RESET_ACTION_REQUIRED: durable host baseline unavailable")
+	}
+	binding, err := resolveRebootBinding(r.request, request)
+	if err != nil {
+		return deployment.ActivationObservation{}, err
+	}
+	observed, err := r.observe(ctx, binding)
+	if err != nil {
+		return deployment.ActivationObservation{}, err
+	}
+	if !sameUUID(observed.SystemUUID, request.HostSystemUUID) || observed.AdapterSerial != request.HostAdapterSerial || !validSystemUUID(observed.BootID) || observed.BootID == baseline {
+		return deployment.ActivationObservation{}, fmt.Errorf("RESET_ACTION_REQUIRED: same host/adapter changed boot is not established; no reboot submitted")
+	}
+	return deployment.ActivationObservation{HostSystemUUID: request.HostSystemUUID, HostAdapterSerial: observed.AdapterSerial, PreviousBootID: baseline, CurrentBootID: observed.BootID, Reconnected: true}, nil
 }

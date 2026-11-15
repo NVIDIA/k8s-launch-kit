@@ -204,7 +204,7 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 			return cloneHostNetworkStageSnapshot(f.snapshot), nil
 		}, func(_ context.Context, _ config.Target, request sshprobe.HostNetworkRequest, _ time.Duration) (sshprobe.HostNetworkReceipt, error) {
 			return sshprobe.HostNetworkReceipt{RequestID: hbnBindingDigest(request), State: "complete", RuntimeVerified: true, FileVerified: true}, nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

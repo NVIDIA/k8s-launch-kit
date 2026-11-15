@@ -50,7 +50,7 @@ type hostNetworkLeaseFence struct {
 // those reads nor the host-local journal make the two systems atomic.
 func runHostWorkloadNetworkStage(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun,
 	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt,
-	journal *executionJournal, requestTimeout time.Duration, readLeases hostLeaseSnapshotReader, configure hostNetworkConfigurer,
+	journal *executionJournal, requestTimeout time.Duration, readLeases hostLeaseSnapshotReader, configure, inspect hostNetworkConfigurer,
 ) ([]HostWorkloadNetworkResult, error) {
 	var results []HostWorkloadNetworkResult
 	fail := func(code, message string, cause error) ([]HostWorkloadNetworkResult, error) {
@@ -128,12 +128,31 @@ func runHostWorkloadNetworkStage(ctx context.Context, client activationStageClie
 			return fail("HOST_NETWORK_LEASE_REQUEST_INVALID", "The selected allocation cannot produce one exact reserved host request.", err)
 		}
 		subject := item.item.device.Serial + " @ " + item.host.InputRef
-		if err := journal.record(executionEvent{Stage: hostWorkloadNetworkStage, Operation: "configure", Subject: subject, State: "attempted",
-			ReasonCode: "HOST_NETWORK_CONFIGURATION_STARTED", Message: "Configure only the selected p0 MTU, reserved workload address and workload-pool route; preserve management and other ports."}); err != nil {
+		apply := configure
+		action, reason, message := "configure", "HOST_NETWORK_CONFIGURATION_STARTED", "Configure only the selected p0 MTU, reserved workload address and workload-pool route; preserve management and other ports."
+		if prepared.operation != nil {
+			prior, known := prepared.operation.state.Hosts[item.item.device.Serial]
+			if known {
+				if !sameOperationRequest(prior.Request, request) {
+					return fail("HOST_NETWORK_OPERATION_CHANGED", "Saved host request differs from fresh cohort; no host write permitted.", nil)
+				}
+				if inspect == nil {
+					return fail("HOST_NETWORK_INSPECTION_REQUIRED", "Recovery requires inspect-only host transport.", nil)
+				}
+				apply = inspect
+				action, reason, message = "inspect", "HOST_NETWORK_INSPECTION_STARTED", "Inspect the original host transaction without configuration fallback; reverify current persistent/runtime state and allocation."
+			} else {
+				prepared.operation.state.Hosts[item.item.device.Serial] = operationHost{Request: request}
+				if err := prepared.operation.save(ctx); err != nil {
+					return results, err
+				}
+			}
+		}
+		if err := journal.record(executionEvent{Stage: hostWorkloadNetworkStage, Operation: action, Subject: subject, State: "attempted", ReasonCode: reason, Message: message}); err != nil {
 			return results, err
 		}
-		ui.FromContext(ctx).Info("[RUNNING] Host %s: configure %s address %s and workload route with MTU %d", item.host.InputRef, request.Identity.InterfaceName, request.HostAddressPrefix, request.MTU)
-		receipt, err := configure(ctx, item.hostTarget, request, requestTimeout)
+		ui.FromContext(ctx).Info("[RUNNING] Host %s: %s %s address %s and workload route with MTU %d", item.host.InputRef, action, request.Identity.InterfaceName, request.HostAddressPrefix, request.MTU)
+		receipt, err := apply(ctx, item.hostTarget, request, requestTimeout)
 		results = append(results, HostWorkloadNetworkResult{DPUSerial: item.item.device.Serial, HostInputRef: item.host.InputRef, Interface: request.Identity.InterfaceName,
 			HostAddressPrefix: request.HostAddressPrefix, Gateway: request.Gateway, MTU: request.MTU, Configuration: receipt})
 		localResult := results[len(results)-1]
@@ -158,7 +177,15 @@ func runHostWorkloadNetworkStage(ctx context.Context, client activationStageClie
 		}
 		results[len(results)-1].LeaseReverified = true
 		confirmedResult := results[len(results)-1]
-		if err := journal.record(executionEvent{Stage: hostWorkloadNetworkStage, Operation: "configure", Subject: subject, State: "confirmed",
+		if prepared.operation != nil && prepared.operation.state.Hosts[item.item.device.Serial].Result == nil {
+			value := prepared.operation.state.Hosts[item.item.device.Serial]
+			value.Result = &confirmedResult
+			prepared.operation.state.Hosts[item.item.device.Serial] = value
+			if err := prepared.operation.save(ctx); err != nil {
+				return results, err
+			}
+		}
+		if err := journal.record(executionEvent{Stage: hostWorkloadNetworkStage, Operation: action, Subject: subject, State: "confirmed",
 			ReasonCode: "HOST_NETWORK_CONFIGURATION_VERIFIED", Message: "Host runtime and persistent file checks passed and the selected allocation cohort was reverified; BGP and traffic remain untested.", HostNetwork: &confirmedResult}); err != nil {
 			return results, err
 		}

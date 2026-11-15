@@ -89,6 +89,11 @@ func claimAndRebootExternal(ctx context.Context, client ResourceClient, deployme
 	}); err != nil {
 		return ActivationObservation{}, err
 	}
+	if request.recordClaim != nil {
+		if err := request.recordClaim(created.GetUID()); err != nil {
+			return ActivationObservation{}, err
+		}
+	}
 	if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "external-host-reboot", Subject: request.HostInputRef,
 		State: "attempted", ReasonCode: "EXTERNAL_HOST_REBOOT_STARTED", Message: "DPF requested a SystemLevelReset for the exact selected DPUNode cohort on this authenticated host."}); err != nil {
 		return ActivationObservation{}, err

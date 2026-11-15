@@ -451,3 +451,21 @@ func runCLIHelper(t *testing.T, args ...string) (string, int) {
 	}
 	return string(output), exitErr.ExitCode()
 }
+
+func TestDeployResumeFlagIsDPFOnlyAndExplicit(t *testing.T) {
+	for _, args := range [][]string{
+		{"deploy", "--target", "host", "--resume", "ns/dpf-op-name/123e4567-e89b-12d3-a456-426614174000", "--output", "json"},
+		{"deploy", "--target", "dpf", "--user-config", "/missing/site.yaml", "--deployment-files", "/missing/bundle", "--resume=", "--output", "json"},
+	} {
+		output, code := runCLIHelper(t, args...)
+		if code == 0 {
+			t.Fatalf("invalid resume accepted: %s", output)
+		}
+		if args[2] == "host" && !strings.Contains(output, "--resume (targets: dpf)") {
+			t.Fatalf("host resume was not rejected at dispatch: %s", output)
+		}
+		if args[2] == "dpf" && !strings.Contains(output, "resume requires") {
+			t.Fatalf("empty resume reached bundle or client loading: %s", output)
+		}
+	}
+}

@@ -4,7 +4,7 @@ Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on K
 Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
-The current lifecycle uses the `host` target by default. The `dpf` target provides [experimental discovery](docs/user/dpf-discovery.md), [HBN-BGP artifact generation](docs/user/dpf-generation.md) and [standalone deployment](docs/user/dpf-deployment.md) for a separate DPU estate. DPF standalone validation and the root pipeline remain unavailable.
+The current lifecycle uses the `host` target by default. The `dpf` target provides [experimental discovery](docs/user/dpf-discovery.md), [HBN-BGP artifact generation](docs/user/dpf-generation.md) and [standalone deployment](docs/user/dpf-deployment.md) for a separate DPU estate. DPF standalone validation and the root pipeline remain unavailable. DPF deploy can resume its recorded initial operation with `--resume`; see [recovery](docs/user/dpf-deployment.md#read-the-result-and-recover-from-a-stop).
 DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
 management cluster. Inventory success is separate from provisioning readiness.
 DPF BMC discovery verifies TLS by default; lab endpoints can explicitly opt in to

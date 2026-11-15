@@ -124,6 +124,16 @@ func ObserveHostWorkloadNetwork(ctx context.Context, target config.Target, ident
 // caller owns fresh lease/cohort fences before and after this operation. A
 // returned error never authorizes automatic replay or arbitrary cleanup.
 func ConfigureHostWorkloadNetwork(ctx context.Context, target config.Target, request HostNetworkRequest, timeout time.Duration) (receipt HostNetworkReceipt, err error) {
+	return hostWorkloadNetwork(ctx, target, request, timeout, "configure")
+}
+
+// InspectHostWorkloadNetwork verifies an exact prior transaction without any
+// configuration fallback. A missing/partial transaction cannot trigger writes.
+func InspectHostWorkloadNetwork(ctx context.Context, target config.Target, request HostNetworkRequest, timeout time.Duration) (HostNetworkReceipt, error) {
+	return hostWorkloadNetwork(ctx, target, request, timeout, "inspect")
+}
+
+func hostWorkloadNetwork(ctx context.Context, target config.Target, request HostNetworkRequest, timeout time.Duration, action string) (receipt HostNetworkReceipt, err error) {
 	if err := validateHostNetworkAccess(ctx, target, request.Identity, timeout); err != nil {
 		return HostNetworkReceipt{}, err
 	}
@@ -146,7 +156,7 @@ func ConfigureHostWorkloadNetwork(ctx context.Context, target config.Target, req
 			err = networkError(receipt.ReasonCode, true)
 		}
 	}()
-	return session.configure(ctx, request)
+	return session.configureAction(ctx, request, action)
 }
 
 func validateHostNetworkAccess(ctx context.Context, target config.Target, identity HostNetworkIdentity, timeout time.Duration) error {
