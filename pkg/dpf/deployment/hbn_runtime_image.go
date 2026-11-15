@@ -18,6 +18,7 @@ import (
 )
 
 const hbnImageMetadataLimit = 2 << 20
+const hbnTokenServiceLimit = 256
 const hbnManifestMediaType = "application/vnd.oci.image.manifest.v1+json"
 const hbnDockerManifestMediaType = "application/vnd.docker.distribution.manifest.v2+json"
 
@@ -102,7 +103,7 @@ func resolveHBNRuntimeImage(ctx context.Context, reference string, timeout time.
 				if !strings.HasPrefix(challenge, "Bearer ") {
 					return nil, fmt.Errorf("unsupported registry authorization")
 				}
-				_, params, err := mime.ParseMediaType("application/bearer;" + strings.ReplaceAll(strings.TrimPrefix(challenge, "Bearer "), ",", ";"))
+				_, params, err := mime.ParseMediaType("application/bearer;" + bearerChallengeParameters(strings.TrimPrefix(challenge, "Bearer ")))
 				if err != nil {
 					return nil, err
 				}
@@ -111,10 +112,12 @@ func resolveHBNRuntimeImage(ctx context.Context, reference string, timeout time.
 					return nil, fmt.Errorf("foreign registry authorization")
 				}
 				query := url.Values{"scope": {"repository:" + path + ":pull"}}
-				if service := params["service"]; service != "" {
-					if service != host {
-						return nil, fmt.Errorf("foreign token service")
+				if service, found := params["service"]; found {
+					if !validHBNTokenService(service) {
+						return nil, fmt.Errorf("invalid registry token service")
 					}
+					// The service parameter is an opaque token audience, not a host
+					// to contact. Keep token exchange on the already-validated origin.
 					query.Set("service", service)
 				}
 				realm.RawQuery = query.Encode()
@@ -122,7 +125,11 @@ func resolveHBNRuntimeImage(ctx context.Context, reference string, timeout time.
 				if err != nil {
 					return nil, err
 				}
-				authResponse, err := client.Do(authRequest)
+				authClient := *client
+				authClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+					return http.ErrUseLastResponse
+				}
+				authResponse, err := authClient.Do(authRequest)
 				if err != nil {
 					if authResponse != nil && authResponse.Body != nil {
 						_ = authResponse.Body.Close()
@@ -223,6 +230,43 @@ func resolveHBNRuntimeImage(ctx context.Context, reference string, timeout time.
 func validHBNImageDescriptor(descriptor hbnImageDescriptor) bool {
 	return validSHA256Digest(descriptor.Digest) && descriptor.Size > 0 && descriptor.Size <= hbnImageMetadataLimit
 }
+
+func validHBNTokenService(service string) bool {
+	if len(service) == 0 || len(service) > hbnTokenServiceLimit {
+		return false
+	}
+	for _, r := range service {
+		if r < '!' || r > '~' {
+			return false
+		}
+	}
+	return true
+}
+
+func bearerChallengeParameters(challenge string) string {
+	var parameters strings.Builder
+	parameters.Grow(len(challenge))
+	quoted, escaped := false, false
+	for i := 0; i < len(challenge); i++ {
+		current := challenge[i]
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if current == '\\' {
+				escaped = true
+			} else if current == '"' {
+				quoted = false
+			}
+		} else if current == '"' {
+			quoted = true
+		} else if current == ',' {
+			current = ';'
+		}
+		parameters.WriteByte(current)
+	}
+	return parameters.String()
+}
+
 func readHBNImageResponse(response *http.Response) ([]byte, error) {
 	if response == nil || response.Body == nil {
 		return nil, fmt.Errorf("missing metadata response")

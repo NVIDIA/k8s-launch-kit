@@ -1035,6 +1035,18 @@ recovery across process restarts is not implemented.
 
 ### Native HBN deployment and observation contracts
 
+The final HBN runtime check resolves the retained image digest from the OCI
+registry and verifies the Linux/arm64 platform manifest and config before
+accepting runtime container identities. For an HTTP Bearer challenge, `realm`
+must remain same-origin HTTPS; the optional `service` value is an opaque token
+audience sent only to that same-origin token endpoint. Token exchange does not
+follow redirects, even if the realm path resembles a blob endpoint. The
+requested token scope is always the exact retained repository's `pull` scope;
+challenge-provided scopes are not followed. The opaque audience is not a
+registry host or redirect destination. This allows registries whose token
+audience differs from their API host without expanding origin, redirect,
+credential or repository access.
+
 Standalone `deploy --target dpf` binds the DPF adapter with explicit site and
 bundle paths. It never constructs the Host deploy operation. The DPF operation
 owns fresh prerequisite observations, retained management/tenant resources,
