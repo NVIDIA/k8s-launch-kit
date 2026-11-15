@@ -436,6 +436,9 @@ Complete discovery writes the requested YAML. Partial collection preserves an
 existing handoff and writes `partial.yaml` plus `report.json` beneath
 `<output-stem>.discovery/<run-id>/`. JSON stdout is one final DPF result, with
 progress on stderr. Invalid command-line arguments are reported on stderr.
+Configuration failures identify the field path and original YAML line/column
+when available. Correct that location and retry; diagnostics omit field values
+and source snippets so credential values are not repeated in errors.
 The report contains facts, checks, factual diffs, later-phase gaps, errors and
 successfully written artifacts. Redfish errors retain sanitized method/resource,
 HTTP status and observation/cleanup stage. Cleanup failures retain the exact
