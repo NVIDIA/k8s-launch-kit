@@ -20,6 +20,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -435,9 +436,11 @@ func podDifferences(expected, actual *corev1.Pod) []string {
 			fields = append(fields, field.name)
 		}
 	}
+	// Kubernetes quantities may have different cached representations after
+	// protobuf decoding while carrying exactly the same value.
 	av, bv, typ := reflect.ValueOf(*a), reflect.ValueOf(*b), reflect.TypeOf(*a)
 	for i := 0; i < typ.NumField(); i++ {
-		if !reflect.DeepEqual(av.Field(i).Interface(), bv.Field(i).Interface()) {
+		if !equality.Semantic.DeepEqual(av.Field(i).Interface(), bv.Field(i).Interface()) {
 			fields = append(fields, "spec."+strings.Split(typ.Field(i).Tag.Get("json"), ",")[0])
 		}
 	}

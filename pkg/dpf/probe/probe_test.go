@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -52,6 +53,19 @@ var _ = Describe("probe integrity", func() {
 		live.OwnerReferences = []metav1.OwnerReference{{UID: "foreign"}}
 		Expect(samePod(p, live)).To(BeFalse())
 	})
+	It("accepts protobuf quantity representations and rejects changed scratch limits", func() {
+		p := Pod("p", "default", nil, inventory.Node{Name: "n", UID: "u"}, "pod-network", "repo@sha256:d", "request", nil, 60)
+		data, err := p.Marshal()
+		Expect(err).NotTo(HaveOccurred())
+		var live corev1.Pod
+		Expect(live.Unmarshal(data)).To(Succeed())
+		Expect(samePod(p, &live)).To(BeTrue())
+		limit := resource.MustParse("8Mi")
+		live.Spec.Volumes[1].EmptyDir.SizeLimit = &limit
+		Expect(podDifferences(p, &live)).To(Equal([]string{"spec.volumes"}))
+		Expect(samePod(p, &live)).To(BeFalse())
+	})
+
 	It("names admission differences without exposing injected field values", func() {
 		p := Pod("p", "default", nil, inventory.Node{Name: "n", UID: "u"}, "pod-network", "repo@sha256:d", "request", nil, 60)
 		live := p.DeepCopy()
