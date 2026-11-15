@@ -57,6 +57,12 @@ func TestCheckCallerPermissionsCoversRetainedManagementPlan(t *testing.T) {
 	assertCallerReview(t, harness.reviews, func(review callerReview) bool {
 		return review.Spec.ResourceAttributes != nil && review.Spec.ResourceAttributes.Verb == "create" && review.Spec.ResourceAttributes.Group == "svc.dpu.nvidia.com" && review.Spec.ResourceAttributes.Resource == "dpudeployments"
 	})
+	for _, device := range plan.intent.Devices {
+		assertCallerReview(t, harness.reviews, func(review callerReview) bool {
+			attributes := review.Spec.ResourceAttributes
+			return attributes != nil && attributes.Verb == "patch" && attributes.Group == "provisioning.dpu.nvidia.com" && attributes.Resource == "dpudevices" && attributes.Namespace == plan.operatorNamespace && attributes.Name == strings.ToLower(device.Serial)
+		})
+	}
 	assertCallerReview(t, harness.reviews, func(review callerReview) bool {
 		return review.Spec.ResourceAttributes != nil && review.Spec.ResourceAttributes.Verb == "create" && review.Spec.ResourceAttributes.Resource == "pods" && review.Spec.ResourceAttributes.Subresource == "portforward" && review.Spec.ResourceAttributes.Namespace == "dpf-operator-system"
 	})
@@ -112,6 +118,32 @@ func TestCheckCallerPermissionsReportsActionableDenial(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("denial did not name the missing operation and namespace: %#v", failedCallerChecks(result))
+	}
+}
+
+func TestCheckCallerPermissionsRejectsSelectedDeviceSelectorPatchDenial(t *testing.T) {
+	harness := newCallerPermissionHarness(t, func(review callerReview) bool {
+		a := review.Spec.ResourceAttributes
+		return a == nil || a.Verb != "patch" || a.Group != "provisioning.dpu.nvidia.com" || a.Resource != "dpudevices"
+	})
+	generated, err := generateFixtureBundle(callerGenerationInputs(t, harness.server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := managementPreflightPlan(ManagementPreflightRequest{Bundle: generated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness.projection = plan.projection
+	result := callerPermissionClient(t, harness.server.URL).CheckCallerPermissions(context.Background(), ManagementPreflightRequest{Bundle: generated})
+	if result.Ready || !containsCallerReason(result, "CALLER_PERMISSION_MISSING") {
+		t.Fatal("missing selected-device patch permission did not block readiness")
+	}
+	for _, device := range plan.intent.Devices {
+		assertCallerReview(t, harness.reviews, func(review callerReview) bool {
+			a := review.Spec.ResourceAttributes
+			return a != nil && a.Verb == "patch" && a.Resource == "dpudevices" && a.Namespace == plan.operatorNamespace && a.Name == strings.ToLower(device.Serial)
+		})
 	}
 }
 

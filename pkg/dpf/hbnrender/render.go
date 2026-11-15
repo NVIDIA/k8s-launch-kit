@@ -26,8 +26,9 @@ const (
 )
 
 // Device is an identity-bound DPU selected by discovery. SelectorLabels must
-// be labels already present and verified on that DPUDevice; DPF selectors do
-// not match spec.serialNumber.
+// be present and verified on that DPUDevice before DPUDeployment creation;
+// native enrollment can bind its own missing selector key after discovery.
+// Other keys must already exist. DPF selectors do not match spec.serialNumber.
 type Device struct {
 	Serial         string            `json:"serial"`
 	PSID           string            `json:"psid"`

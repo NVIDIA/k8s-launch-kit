@@ -32,6 +32,10 @@ type enrollmentScopeClient struct {
 	failIdentityAt int
 }
 
+func (*enrollmentScopeClient) patchEnrollmentSelectors(context.Context, *unstructured.Unstructured, map[string]string) (*unstructured.Unstructured, error) {
+	return nil, errors.New("selector effects are forbidden in a scope-only fixture")
+}
+
 func (c *enrollmentScopeClient) VerifyIdentity(context.Context) error {
 	c.identityCalls++
 	c.events = append(c.events, "verify-enrollment-scope")

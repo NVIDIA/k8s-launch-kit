@@ -61,6 +61,13 @@ func TestActivationScopeAllowsOnlyItsRetainedParentAndSelectedChildren(t *testin
 		{"parent UID", func(s enrollmentScopeSnapshot) { s.objects("DPUDeployment")[0].SetUID(types.UID("replaced")) }},
 		{"parent namespace", func(s enrollmentScopeSnapshot) { s.objects("DPUDeployment")[0].SetNamespace("other") }},
 		{"device UID", func(s enrollmentScopeSnapshot) { s.objects("DPUDevice")[0].SetUID(types.UID("replaced")) }},
+		{"device selector removed", func(s enrollmentScopeSnapshot) { s.objects("DPUDevice")[0].SetLabels(nil) }},
+		{"device selector changed", func(s enrollmentScopeSnapshot) {
+			s.objects("DPUDevice")[0].SetLabels(map[string]string{"inventory.example/serial-hash": "foreign"})
+		}},
+		{"device selector malformed", func(s enrollmentScopeSnapshot) {
+			_ = unstructured.SetNestedField(s.objects("DPUDevice")[0].Object, map[string]any{"malformed": int64(9)}, "metadata", "labels")
+		}},
 		{"node UID", func(s enrollmentScopeSnapshot) { s.objects("DPUNode")[0].SetUID(types.UID("replaced")) }},
 		{"device readiness", func(s enrollmentScopeSnapshot) {
 			setConditionStatus(&s.objects("DPUDevice")[0], "BMCCredentialsReady", "False", "CredentialsChanged", 1)

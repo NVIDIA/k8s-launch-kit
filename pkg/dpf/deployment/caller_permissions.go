@@ -324,6 +324,7 @@ func enrollmentAccessRequirements(plan preflightPlan) []accessRequirement {
 		name := strings.ToLower(device.Serial)
 		requirements = append(requirements,
 			accessRequirement{verb: "get", group: "provisioning.dpu.nvidia.com", version: "v1alpha1", resource: "dpudevices", namespace: operatorNamespace, resourceName: name},
+			accessRequirement{verb: "patch", group: "provisioning.dpu.nvidia.com", version: "v1alpha1", resource: "dpudevices", namespace: operatorNamespace, resourceName: name},
 			accessRequirement{verb: "get", group: "provisioning.dpu.nvidia.com", version: "v1alpha1", resource: "dpunodes", namespace: operatorNamespace, resourceName: "dpu-node-" + name},
 			accessRequirement{verb: "get", version: "v1", resource: "secrets", namespace: tenant.Namespace, resourceName: tenant.Name + "-admin-kubeconfig"},
 		)

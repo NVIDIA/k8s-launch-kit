@@ -148,6 +148,9 @@ func validateActivationScope(snapshot enrollmentScopeSnapshot, execution *manage
 		if err := validateEnrolledDevice(device, item.item, execution.operatorNamespace, true); err != nil {
 			return err
 		}
+		if err := verifyEnrollmentSelectors(device, item.item.device.SelectorLabels); err != nil {
+			return err
+		}
 		if check := enrolledDeviceReadiness(device); !check.Ready {
 			return fmt.Errorf("selected DPUDevice lost current credential, certificate or hardware readiness: %s", check.ReasonCode)
 		}

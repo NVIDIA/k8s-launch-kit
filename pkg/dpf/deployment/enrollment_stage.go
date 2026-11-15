@@ -44,6 +44,7 @@ type enrollmentManagementClient interface {
 	verifyEnrollmentBMCs(context.Context, []enrollmentBMC, time.Duration, *executionJournal) error
 	executeEnrollmentSecret(context.Context, ResourceClient, string, string, *executionJournal) (enrollmentSecretReceipt, error)
 	getOperatorCRD(context.Context, string) (*unstructured.Unstructured, error)
+	patchEnrollmentSelectors(context.Context, *unstructured.Unstructured, map[string]string) (*unstructured.Unstructured, error)
 }
 
 func (c *APIClient) verifyEnrollmentBMCs(ctx context.Context, selected []enrollmentBMC, timeout time.Duration, journal *executionJournal) error {
@@ -313,6 +314,9 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 	if err != nil {
 		return receipt, err
 	}
+	if err := bindEnrollmentSelectors(ctx, management, execution, managementReceipt, tenantReceipt, selected, receipt, password, journal, requestTimeout); err != nil {
+		return receipt, err
+	}
 	if err := verifyEnrollmentBoundary(ctx, management, execution, managementReceipt, tenantReceipt, selected, requestTimeout, secret, password, journal); err != nil {
 		return receipt, err
 	}
@@ -324,6 +328,9 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 	}
 	if !ready {
 		return receipt, enrollmentStageFailure(journal, "ENROLLMENT_READINESS_CHANGED", "Selected devices lost readiness before the enrollment receipt.", nil)
+	}
+	if err := verifyEnrollmentSelectorReceipts(ctx, management, execution.operatorNamespace, selected, devices); err != nil {
+		return receipt, enrollmentStageFailure(journal, "ENROLLMENT_SELECTOR_READBACK_FAILED", "The selected ready-device identity or retained selector changed before the completed enrollment receipt.", err)
 	}
 	tenantErr := tenantReceipt.Client.VerifyIdentity(ctx)
 	if err := ctx.Err(); err != nil {

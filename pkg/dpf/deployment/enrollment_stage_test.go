@@ -5,10 +5,14 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
+
+	jsonpatch "github.com/evanphx/json-patch/v5"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
@@ -21,14 +25,52 @@ import (
 
 type enrollmentStageFake struct {
 	*APIClient
-	base     *tenantStageFake
-	operator *managementFake
-	sources  *tenantSourceStub
-	selected []enrollmentBMC
-	bmcCalls int
-	bmcHook  func(int) error
-	getHook  func(*unstructured.Unstructured)
-	scanHook func(*unstructured.Unstructured)
+	base              *tenantStageFake
+	operator          *managementFake
+	sources           *tenantSourceStub
+	selected          []enrollmentBMC
+	bmcCalls          int
+	bmcHook           func(int) error
+	getHook           func(*unstructured.Unstructured)
+	scanHook          func(*unstructured.Unstructured)
+	selectorPatches   int
+	selectorPatchHook func(*unstructured.Unstructured) error
+}
+
+func (f *enrollmentStageFake) patchEnrollmentSelectors(ctx context.Context, observed *unstructured.Unstructured, wanted map[string]string) (*unstructured.Unstructured, error) {
+	f.selectorPatches++
+	if f.selectorPatchHook != nil {
+		if err := f.selectorPatchHook(observed); err != nil {
+			return nil, err
+		}
+	}
+	data, err := enrollmentSelectorPatch(observed, wanted)
+	if err != nil {
+		return nil, err
+	}
+	patch, err := jsonpatch.DecodePatch(data)
+	if err != nil {
+		return nil, err
+	}
+	current, err := f.base.Get(ctx, observed)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(current.Object)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err = patch.Apply(encoded)
+	if err != nil {
+		return nil, err
+	}
+	updated := &unstructured.Unstructured{}
+	if err := updated.UnmarshalJSON(encoded); err != nil {
+		return nil, err
+	}
+	updated.SetResourceVersion(current.GetResourceVersion() + "-selector")
+	f.base.resources[tenantStageKey(updated)] = updated
+	return updated.DeepCopy(), nil
 }
 
 func (f *enrollmentStageFake) VerifyIdentity(ctx context.Context) error {
@@ -101,8 +143,36 @@ func (f *enrollmentStageFake) executeEnrollmentSecret(ctx context.Context, c Res
 
 func enrollmentStageFixture(t *testing.T) (*managementExecution, *enrollmentStageFake, managementBootstrapReceipt, tenantStageReceipt, string) {
 	t.Helper()
+	return enrollmentStageFixtureWithSelectors(t, nil)
+}
+
+func enrollmentStageFixtureWithSelectors(t *testing.T, selectors map[string]string, additional ...map[string]string) (*managementExecution, *enrollmentStageFake, managementBootstrapReceipt, tenantStageReceipt, string) {
+	t.Helper()
 	expected, sources := tenantSourceFixture(t)
 	input := preflightGenerationInputs(t)
+	if selectors != nil {
+		input.Workload.Devices[0].SelectorLabels = selectors
+	}
+	for i, labels := range additional {
+		device := input.Workload.Devices[0]
+		device.Serial = fmt.Sprintf("SERIAL-%c", 'B'+i)
+		device.SelectorLabels = maps.Clone(labels)
+		input.Workload.Devices = append(input.Workload.Devices, device)
+		input.Operator.Bootstrap.Devices = append(input.Operator.Bootstrap.Devices, bootstrap.Device{Serial: device.Serial, BMCIP: fmt.Sprintf("192.0.2.%d", 31+i), BMCPort: 443})
+	}
+	if len(additional) != 0 {
+		serials := make([]string, len(input.Workload.Devices))
+		for i, device := range input.Workload.Devices {
+			serials[i] = device.Serial
+		}
+		assignments, err := input.Workload.Profile.AllocateASNs(serials)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range input.Workload.Devices {
+			input.Workload.Devices[i].ASN = assignments[input.Workload.Devices[i].Serial]
+		}
+	}
 	input.Operator.Bootstrap.Tenant = bootstrap.Tenant{Name: expected.Name, Namespace: expected.Namespace, Labels: expected.Labels, MaxNodes: int(expected.MaxNodes), VIP: expected.VIP, Interface: expected.Interface, RouterID: int(expected.VirtualRouterID), NodeSelector: expected.NodeSelector, ServiceCIDR: expected.ServiceCIDR}
 	input.Operator.Bootstrap.PodCIDR = expected.PodCIDR
 	input.Operator.Bootstrap.Devices[0].BMCIP = "192.0.2.30"
@@ -120,6 +190,12 @@ func enrollmentStageFixture(t *testing.T) (*managementExecution, *enrollmentStag
 	for i := range request.Targets {
 		if request.Targets[i].Endpoint == "https://192.0.2.20" {
 			request.Targets[i].Endpoint = "https://192.0.2.30"
+			for j := range additional {
+				target := request.Targets[i]
+				target.InputRef = fmt.Sprintf("dpu-input-%d", j+1)
+				target.Endpoint = fmt.Sprintf("https://192.0.2.%d", 31+j)
+				request.Targets = append(request.Targets, target)
+			}
 		}
 	}
 	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Devices, request.Targets)
@@ -137,6 +213,17 @@ func enrollmentStageFixture(t *testing.T) (*managementExecution, *enrollmentStag
 func readyEnrollmentObjects(item enrollmentBMC, namespace string) []*unstructured.Unstructured {
 	name := strings.ToLower(item.device.Serial)
 	device := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1", "kind": "DPUDevice", "metadata": map[string]any{"name": name, "namespace": namespace, "uid": "device-" + name, "resourceVersion": "1", "generation": int64(1)}, "spec": map[string]any{"serialNumber": item.device.Serial, "bmcIp": item.device.BMCIP, "bmcPort": int64(item.device.BMCPort), "bmcFactoryResetPolicy": "Never"}, "status": map[string]any{"serialNumber": item.device.Serial, "bmcIp": item.device.BMCIP, "bmcPort": int64(item.device.BMCPort), "psid": item.device.PSID, "dpuType": "BlueField4"}}}
+	// Generic library fixtures promise preexisting custom selector labels. The
+	// native key deliberately remains absent so enrollment must publish it.
+	customLabels := map[string]string{}
+	for key, value := range item.device.SelectorLabels {
+		if key != enrollmentSelectorKey {
+			customLabels[key] = value
+		}
+	}
+	if len(customLabels) != 0 {
+		device.SetLabels(customLabels)
+	}
 	conditions := []any{}
 	for _, typ := range []string{"Initialized", "Discovered", "Ready", "BMCCredentialsReady", "BMCServerCertificateReady", "CATrustBundleReady", "BMCFactoryResetReady"} {
 		reason := "Success"
