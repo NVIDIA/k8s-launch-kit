@@ -5,10 +5,10 @@ package deployment
 
 import (
 	"encoding/json"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"reflect"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"k8s.io/apimachinery/pkg/types"
 )
 
