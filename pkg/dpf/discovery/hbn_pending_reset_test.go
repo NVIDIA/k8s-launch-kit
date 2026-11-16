@@ -6,6 +6,7 @@ package discovery
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 	"strings"
@@ -93,7 +94,7 @@ func TestPendingResetHostChecksNeedMeasuredAbsenceAndCompleteSeparatePaths(t *te
 						t.Fatalf("bad activation-only evidence: %+v", c)
 					}
 				}
-				if hostHBNCheck(t, hostHBNChecks(&inv, nil), "host-management-separation", "SERIAL-1 @ worker-01").State == "passed" {
+				if hostHBNCheck(t, HostHBNChecks(&inv, nil), "host-management-separation", "SERIAL-1 @ worker-01").State == "passed" {
 					t.Fatal("ordinary initial policy was weakened")
 				}
 			}
@@ -112,5 +113,79 @@ func TestPendingResetCollectionPresentationDoesNotChangeUnknownFacts(t *testing.
 	}, true)
 	if checks[inv.DPUs[0].SerialNumber].ReasonCode != "HOST_NETWORK_IDENTITY_UNAVAILABLE" || strings.Contains(progress.String(), "[BLOCKED]") || !strings.Contains(progress.String(), "[UNAVAILABLE]") {
 		t.Fatalf("checks=%+v progress=%s", checks, progress.String())
+	}
+}
+
+func TestPendingResetCanonicalTypedFactsRoundTripWithoutSuccessBag(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(*inventory.Inventory)
+		pass bool
+	}{
+		{"canonical measured transition", func(*inventory.Inventory) {}, true},
+		{"missing typed absence", func(i *inventory.Inventory) { i.Hosts[0].Adapters[0].PCIFunctions[0].NetdevsAbsent = false }, false},
+		{"missing typed driver", func(i *inventory.Inventory) { i.Hosts[0].Adapters[0].PCIFunctions[0].Driver = "" }, false},
+		{"driver reason without success", func(i *inventory.Inventory) {
+			i.Hosts[0].Runtime.Observations["host-pf:0000:21:00.0:driver"] = inventory.Observation{ReasonCode: "SSH_COMMAND_FAILED"}
+		}, false},
+		{"driver read failure", func(i *inventory.Inventory) {
+			i.Hosts[0].Runtime.Observations["host-pf:0000:21:00.0:driver"] = inventory.Observation{State: "unavailable", ReasonCode: "SSH_COMMAND_FAILED"}
+		}, false},
+		{"route read failure", func(i *inventory.Inventory) {
+			i.Hosts[0].Runtime.Observations["routes"] = inventory.Observation{State: "unavailable", ReasonCode: "SSH_COMMAND_FAILED"}
+		}, false},
+		{"absence contradicts read issue", func(i *inventory.Inventory) {
+			i.Hosts[0].Runtime.Observations["host-pf:0000:21:00.0:netdevs"] = inventory.Observation{State: "unavailable", ReasonCode: "SSH_COMMAND_FAILED"}
+		}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inv := pendingResetInventory(t)
+			test.edit(&inv)
+			before := rawHostHBNTestInventory(t, inv)
+			_, rawErr := ResumePendingResetHostChecks(&inv, inv.DPUs[0].SerialNumber)
+			if (rawErr == nil) != test.pass {
+				t.Fatalf("raw eligibility=%v", rawErr)
+			}
+			wire, err := inventory.DeviceToOutput(inv.Hosts[0], "hosts")
+			if err != nil {
+				if test.pass {
+					t.Fatal(err)
+				}
+				return
+			}
+			restored, err := inventory.DeviceFromOutput(wire, "hosts")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, obs := range restored.Runtime.Observations {
+				if obs.State == "observed" && len(obs.Values) > 0 {
+					t.Fatal("generic successful values restored")
+				}
+			}
+			inv.Hosts[0] = restored
+			_, err = ResumePendingResetHostChecks(&inv, inv.DPUs[0].SerialNumber)
+			if (err == nil) != test.pass {
+				t.Fatalf("canonical eligibility=%v", err)
+			}
+			encoded, err := json.Marshal(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cloned inventory.DeviceOutput
+			if err = json.Unmarshal(encoded, &cloned); err != nil {
+				t.Fatal(err)
+			}
+			inv.Hosts[0], err = inventory.DeviceFromOutput(cloned, "hosts")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = ResumePendingResetHostChecks(&inv, inv.DPUs[0].SerialNumber)
+			if (err == nil) != test.pass {
+				t.Fatalf("cloned canonical eligibility=%v", err)
+			}
+			if test.pass && bytes.Equal(before, rawHostHBNTestInventory(t, inv)) {
+				t.Fatal("fixture did not exercise stripped bookkeeping")
+			}
+		})
 	}
 }

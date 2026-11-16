@@ -44,7 +44,7 @@ func ResumePendingResetHostChecks(inv *inventory.Inventory, serial string) ([]in
 	for _, pf := range adapter.PCIFunctions {
 		driver := runtimeObservation(*host, "host-pf:"+pf.Address+":driver")
 		netdev := runtimeObservation(*host, "host-pf:"+pf.Address+":netdevs")
-		if pf.Address == "" || selectedPCI[strings.ToLower(pf.Address)] || driver.State != "observed" || pf.Driver != "mlx5_core" || netdev.State != "observed" || !pf.NetdevsAbsent || len(pf.Netdevs) != 0 {
+		if pf.Address == "" || selectedPCI[strings.ToLower(pf.Address)] || pendingReadFailed(driver) || pf.Driver != "mlx5_core" || pendingReadFailed(netdev) || !pf.NetdevsAbsent || len(pf.Netdevs) != 0 {
 			return nil, fmt.Errorf("pending reset needs present exact PCI functions and positively measured netdev absence")
 		}
 		selectedPCI[strings.ToLower(pf.Address)] = true
@@ -64,7 +64,7 @@ func pendingResetManagementSeparate(host inventory.Device, selectedPCI map[strin
 		return fmt.Errorf("pending reset host network facts are incomplete")
 	}
 	for _, key := range []string{"interfaces", "network-links", "network-link-details", "routes"} {
-		if runtimeObservation(host, key).State != "observed" {
+		if pendingReadFailed(runtimeObservation(host, key)) {
 			return fmt.Errorf("pending reset needs complete current host network observations")
 		}
 	}
@@ -117,4 +117,9 @@ func pendingResetManagementSeparate(host inventory.Device, selectedPCI map[strin
 		}
 	}
 	return nil
+}
+
+// Typed facts survive the public codec; only unsuccessful bookkeeping is needed.
+func pendingReadFailed(o inventory.Observation) bool {
+	return o.State != "observed" && (o.State != "" || o.ReasonCode != "")
 }

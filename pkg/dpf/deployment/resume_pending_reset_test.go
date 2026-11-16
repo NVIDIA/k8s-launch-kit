@@ -22,7 +22,7 @@ func pendingResetStageFixture(t *testing.T, execution *managementExecution) (act
 	f := newActivationIntegrationFixtureFromExecution(t, execution, false)
 	host := &f.inventory.Hosts[0]
 	host.ObservationState = "observed"
-	host.Runtime = &inventory.RuntimeObservation{BootID: operationOldBoot, SSHServerAddress: "192.0.2.10", Hostname: "worker-a"}
+	host.Runtime = &inventory.RuntimeObservation{VirtualMachine: new(bool), BootID: operationOldBoot, SSHServerAddress: "192.0.2.10", Hostname: "worker-a"}
 	host.Adapters[0].PCIAddress = "0000:21:00.0"
 	host.Adapters[0].PCIFunctions = []inventory.PCIFunction{{Address: "0000:21:00.0", Driver: "mlx5_core", Netdevs: []string{"pf0"}}, {Address: "0000:21:00.1", Driver: "mlx5_core", Netdevs: []string{"pf1"}}}
 	f.inventory.DPUs[0].ObservationState = "observed"
@@ -58,7 +58,7 @@ func pendingResetStageFixture(t *testing.T, execution *managementExecution) (act
 		t.Fatal(err)
 	}
 	host = &f.inventory.Hosts[0]
-	host.Runtime = &inventory.RuntimeObservation{BootID: operationOldBoot, SSHServerAddress: "192.0.2.10", Hostname: "worker-a", Interfaces: []inventory.Interface{{Name: "mgmt0", Index: 2, Addresses: []string{"192.0.2.10/24"}}}, Routes: []inventory.Route{{Destination: "0.0.0.0/0", InterfaceIndex: 2}, {Destination: "::/0", InterfaceIndex: 2}}, Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "mgmt0", PCIAddress: "0000:35:00.0", PhysicalPFRoots: []string{"0000:35:00.0"}}}}, Observations: map[string]inventory.Observation{"interfaces": {State: "observed"}, "network-links": {State: "observed"}, "network-link-details": {State: "observed"}, "routes": {State: "observed"}, "host-management-roots": {State: "observed"}}}
+	host.Runtime = &inventory.RuntimeObservation{VirtualMachine: new(bool), BootID: operationOldBoot, SSHServerAddress: "192.0.2.10", Hostname: "worker-a", Interfaces: []inventory.Interface{{Name: "mgmt0", Index: 2, Addresses: []string{"192.0.2.10/24"}}}, Routes: []inventory.Route{{Destination: "0.0.0.0/0", InterfaceIndex: 2}, {Destination: "::/0", InterfaceIndex: 2}}, Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "mgmt0", PCIAddress: "0000:35:00.0", PhysicalPFRoots: []string{"0000:35:00.0"}}}}, Observations: map[string]inventory.Observation{"interfaces": {State: "observed"}, "network-links": {State: "observed"}, "network-link-details": {State: "observed"}, "routes": {State: "observed"}, "host-management-roots": {State: "observed"}}}
 	for i := range host.Adapters[0].PCIFunctions {
 		pf := &host.Adapters[0].PCIFunctions[i]
 		pf.Netdevs = []string{}

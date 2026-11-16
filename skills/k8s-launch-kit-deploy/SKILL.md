@@ -78,6 +78,9 @@ identity and every next hop on that allocation's own LLDP-corroborated DPU uplin
 unknown, foreign, mixed and overbroad paths block. Physical, switch, storage,
 access and compatible operator checks remain required. Raw initial-deployment
 checks stay in the discovery report; execution records `OWNED_RESUME_*` proof.
+Selected HBN hosts require current OS-reported no-VM classification from the
+supported systemd detector and direct PCI/physfn management ancestry; missing or
+unknown classification stops before effects.
 A pending owned reset can temporarily remove selected host PF interfaces. Resume
 must still prove current device/host identity and separate measured management
 paths. It collects strict current host, backend and cabling facts again after

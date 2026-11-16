@@ -521,42 +521,45 @@ flowchart TD
   n11["Management cluster: declare the HBN workload"]
   n12["DPF controllers and selected hosts: install DPUs and handle requested resets"]
   n13["Management and tenant clusters: wait for DPF readiness"]
-  n14["Selected hosts: configure the workload-facing PF"]
-  n15["Tenant cluster and selected hosts: verify HBN and directed traffic"]
-  n16["CLI operator: retain the terminal result"]
-  n17["CLI operator: inspect the reason before another attempt"]
+  n14["CLI operator: recheck current hosts and network before workload configuration"]
+  n15["Selected hosts: configure the workload-facing PF"]
+  n16["Tenant cluster and selected hosts: verify HBN and directed traffic"]
+  n17["CLI operator: retain the terminal result"]
+  n18["CLI operator: inspect the reason before another attempt"]
   n1 -->|"Site inputs prepared"| n2
   n2 -->|"Handoff saved"| n3
-  n2 -->|"A required observation is unresolved"| n17
+  n2 -->|"A required observation is unresolved"| n18
   n3 -->|"Required gates are ready"| n4
-  n3 -->|"A required gate remains unresolved"| n17
+  n3 -->|"A required gate remains unresolved"| n18
   n4 -->|"Bundle generated"| n5
-  n4 -->|"Generation failed"| n17
+  n4 -->|"Generation failed"| n18
   n5 -->|"Bundle and effects reviewed"| n6
-  n5 -->|"A bundle input or prerequisite needs correction"| n17
+  n5 -->|"A bundle input or prerequisite needs correction"| n18
   n6 -->|"Fresh checks still match"| n7
-  n6 -->|"A required check fails or is unavailable"| n17
+  n6 -->|"A required check fails or is unavailable"| n18
   n7 -->|"DPF operator and configuration are ready"| n8
-  n7 -->|"Ownership, permissions or readiness block progress"| n17
+  n7 -->|"Ownership, permissions or readiness block progress"| n18
   n8 -->|"Tenant API is available and matches the plan"| n9
-  n8 -->|"Tenant prerequisites or identity do not match"| n17
+  n8 -->|"Tenant prerequisites or identity do not match"| n18
   n9 -->|"Selected DPUs are enrolled and assigned"| n10
-  n9 -->|"A selected card or assignment conflicts"| n17
+  n9 -->|"A selected card or assignment conflicts"| n18
   n10 -->|"Selected software bytes match the plan"| n11
-  n10 -->|"Download, availability or checksum verification fails"| n17
+  n10 -->|"Download, availability or checksum verification fails"| n18
   n11 -->|"Selected workload declarations are accepted"| n12
-  n11 -->|"A declaration conflicts or fails admission"| n17
+  n11 -->|"A declaration conflicts or fails admission"| n18
   n12 -->|"Requested activation and reset work is verified"| n13
-  n12 -->|"Installation, safe reset or readiness cannot be verified"| n17
+  n12 -->|"Installation, safe reset or readiness cannot be verified"| n18
   n13 -->|"Selected DPUs are provisioned and ready"| n14
-  n13 -->|"Provisioning remains failed, unknown or pending"| n17
-  n14 -->|"Host workload networking is applied and verified"| n15
-  n14 -->|"Allocation, interface binding or host network verification fails"| n17
-  n15 -->|"A required HBN, route or traffic check fails, is unknown or unavailable"| n17
-  n15 -->|"The selected required checks pass"| n16
-  n17 -->|"Site inputs or authorization must change"| n1
-  n17 -->|"Live observations need refreshing"| n2
-  n17 -->|"An unchanged, valid bundle is ready for owner re-review"| n5
+  n13 -->|"Provisioning remains failed, unknown or pending"| n18
+  n14 -->|"Current post-activation prerequisites pass"| n15
+  n14 -->|"A required current identity or network check is unavailable or fails"| n18
+  n15 -->|"Host workload networking is applied and verified"| n16
+  n15 -->|"Allocation, interface binding or host network verification fails"| n18
+  n16 -->|"A required HBN, route or traffic check fails, is unknown or unavailable"| n18
+  n16 -->|"The selected required checks pass"| n17
+  n18 -->|"Site inputs or authorization must change"| n1
+  n18 -->|"Live observations need refreshing"| n2
+  n18 -->|"An unchanged, valid bundle is ready for owner re-review"| n5
 ```
 
 ### 1. CLI operator: prepare the site and selected estate {#hbn-bgp-deployment-inputs}
@@ -679,15 +682,21 @@ Next: [Requested activation and reset work is verified](#hbn-bgp-deployment-prov
 
 Launch Kit waits for every selected DPU to report current DPF readiness and for any requested host reset to be complete. DPF may start HBN asynchronously after devices join; final service and traffic checks still follow host workload networking.
 
-Next: [Selected DPUs are provisioned and ready](#hbn-bgp-deployment-host-network); [Provisioning remains failed, unknown or pending](#hbn-bgp-deployment-blocked).
+Next: [Selected DPUs are provisioned and ready](#hbn-bgp-deployment-after-activation); [Provisioning remains failed, unknown or pending](#hbn-bgp-deployment-blocked).
 
-### 14. Selected hosts: configure the workload-facing PF {#hbn-bgp-deployment-host-network}
+### 14. CLI operator: recheck current hosts and network before workload configuration {#hbn-bgp-deployment-after-activation}
+
+After all selected DPUs are ready, the CLI collects current host, BMC, switch, management, storage and access facts again. Every selected host PF, backend and cabling check must now pass; temporary pending-reset allowances no longer apply. The observed devices must still match the same saved operation and reviewed bundle. Changed or unavailable required facts stop before host workload configuration and traffic. Current owned software receipts are checked without downloading the large origin artifacts again.
+
+Next: [Current post-activation prerequisites pass](#hbn-bgp-deployment-host-network); [A required current identity or network check is unavailable or fails](#hbn-bgp-deployment-blocked).
+
+### 15. Selected hosts: configure the workload-facing PF {#hbn-bgp-deployment-host-network}
 
 After DPF allocates each selected DPU's actual workload subnet and gateway, the CLI binds that allocation to the exact associated host PF and configures its workload address, MTU and route through host access. It preserves the management network, other ports and host default route. It does not reuse an address from a prior run or infer an allocation from device ordering. Each host's apply and verification result is retained; an uncertain or mismatched result stops final acceptance.
 
 Next: [Host workload networking is applied and verified](#hbn-bgp-deployment-runtime); [Allocation, interface binding or host network verification fails](#hbn-bgp-deployment-blocked).
 
-### 15. Tenant cluster and selected hosts: verify HBN and directed traffic {#hbn-bgp-deployment-runtime}
+### 16. Tenant cluster and selected hosts: verify HBN and directed traffic {#hbn-bgp-deployment-runtime}
 
 After host networking, Launch Kit verifies the intended HBN service, container and interface bindings. It checks the expected BGP peers for each selected DPU. With at least two selected hosts, it also verifies remote workload prefixes in the installed forwarding table and tests every directed host pair with ordinary traffic and do-not-fragment (DF) traffic at the configured workload MTU.
 
@@ -695,11 +704,11 @@ A complete multi-host run is reported as `validated` only when every required BG
 
 Next: [A required HBN, route or traffic check fails, is unknown or unavailable](#hbn-bgp-deployment-blocked); [The selected required checks pass](#hbn-bgp-deployment-finish).
 
-### 16. CLI operator: retain the terminal result {#hbn-bgp-deployment-finish}
+### 17. CLI operator: retain the terminal result {#hbn-bgp-deployment-finish}
 
 Read the final state, last completed stage, report location and any failed or unavailable reasons. For automation, keep structured stdout, stderr and process exit status separate. Retain the reported run records. A completed command is not a general qualification beyond the selected checks and devices.
 
-### 17. CLI operator: inspect the reason before another attempt {#hbn-bgp-deployment-blocked}
+### 18. CLI operator: inspect the reason before another attempt {#hbn-bgp-deployment-blocked}
 
 Keep the failed report, discovery handoff, stdout and stderr. Unknown is not a pass. Earlier management, tenant, enrollment, software, host networking or DPF effects can remain after a stop. Inspect current resources and device state before retrying; do not retry an operation whose effect is uncertain.
 

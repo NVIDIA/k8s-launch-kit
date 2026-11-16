@@ -103,6 +103,8 @@ type Adapter struct {
 
 // RuntimeObservation contains OS-visible facts, separate from BMC management readiness.
 type RuntimeObservation struct {
+	// VirtualMachine is nil until the supported OS detector reports a current result.
+	VirtualMachine   *bool                  `json:"virtualMachine,omitempty" yaml:"virtualMachine,omitempty"`
 	BootID           string                 `json:"bootID,omitempty" yaml:"bootID,omitempty"`
 	SSHServerAddress string                 `json:"sshServerAddress,omitempty" yaml:"sshServerAddress,omitempty"`
 	Hardware         *HardwareObservation   `json:"hardware,omitempty" yaml:"hardware,omitempty"`

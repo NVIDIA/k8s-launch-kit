@@ -13,9 +13,12 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 )
 
-// hostHBNChecks evaluates host-side facts for each inventory-selected DPU. It
+// HostHBNChecks evaluates host-side facts for each inventory-selected DPU. It
 // only follows the exact correlated host adapter and never changes the input.
-func hostHBNChecks(inv *inventory.Inventory, hostNetworking map[string]inventory.Check) []inventory.Check {
+// With no current backend results, the backend check remains unknown. Consumers
+// may use these same identities to enforce provider completeness; that identity
+// projection does not independently prove physical geometry or backend readiness.
+func HostHBNChecks(inv *inventory.Inventory, hostNetworking map[string]inventory.Check) []inventory.Check {
 	if inv == nil || len(inv.DPUs) == 0 {
 		return []inventory.Check{hostCheck("host-inventory", "selected DPUs", "unknown", "HOST_DPU_SCOPE_UNAVAILABLE", "No selected DPU inventory is available to evaluate host prerequisites.")}
 	}
@@ -83,10 +86,10 @@ func HostManagementPhysicalCheck(inv *inventory.Inventory, serial string) invent
 	}
 	if err := sshprobe.VerifyHostManagementPhysicalSeparation(*host, *adapter); err != nil {
 		state = "unknown"
-		if sshprobe.Code(err) == "HOST_MANAGEMENT_ON_SELECTED_CARD" {
+		if sshprobe.Code(err) == "HOST_MANAGEMENT_ON_SELECTED_CARD" || sshprobe.Code(err) == "HOST_VIRTUAL_MACHINE_UNSUPPORTED" {
 			state = "failed"
 		}
-		return hostCheck("host-management-physical", subject, state, sshprobe.Code(err), "Authenticated SSH/default-route physical roots are unmeasured or use the selected card; preserve management connectivity before provisioning or recovery.")
+		return hostCheck("host-management-physical", subject, state, sshprobe.Code(err), "HBN requires a current OS no-VM result and measured SSH/default-route PCI roots separate from the selected card; inspect host VM classification and management-path observations before provisioning or recovery.")
 	}
 	return hostCheck("host-management-physical", subject, "passed", "HOST_MANAGEMENT_PHYSICAL_SEPARATION_VERIFIED", "Authenticated SSH and IPv4/IPv6 default paths have measured physical ancestry outside the selected card, including VF parents; unrelated virtual interfaces are not used as management proof.")
 }

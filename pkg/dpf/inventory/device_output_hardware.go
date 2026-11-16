@@ -14,7 +14,7 @@ import (
 var outputToken = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._()+-]{0,127}$`)
 
 func runtimeToOutput(r *RuntimeObservation, role string, issues *[]DeviceIssue) (*RuntimeOutput, error) {
-	w := &RuntimeOutput{BootID: r.BootID, SSHServerAddress: r.SSHServerAddress, Hostname: r.Hostname, OS: r.OS, Interfaces: cloneInterfaces(r.Interfaces), Routes: slices.Clone(r.Routes), DNS: slices.Clone(r.DNS), Network: cloneNetwork(r.Network)}
+	w := &RuntimeOutput{VirtualMachine: cloneOptionalBool(r.VirtualMachine), BootID: r.BootID, SSHServerAddress: r.SSHServerAddress, Hostname: r.Hostname, OS: r.OS, Interfaces: cloneInterfaces(r.Interfaces), Routes: slices.Clone(r.Routes), DNS: slices.Clone(r.DNS), Network: cloneNetwork(r.Network)}
 	if w.Network != nil && w.Network.HostLLDP != nil {
 		// Successful probe bookkeeping is not public inventory evidence. Keep
 		// parsed physical-port and neighbor facts, while preserving actionable
@@ -131,7 +131,7 @@ func runtimeToOutput(r *RuntimeObservation, role string, issues *[]DeviceIssue) 
 }
 
 func runtimeFromOutput(w *RuntimeOutput, role string, issues []DeviceIssue) (*RuntimeObservation, error) {
-	r := &RuntimeObservation{BootID: w.BootID, SSHServerAddress: w.SSHServerAddress, Hostname: w.Hostname, OS: w.OS, Interfaces: cloneInterfaces(w.Interfaces), Routes: slices.Clone(w.Routes), DNS: slices.Clone(w.DNS),
+	r := &RuntimeObservation{VirtualMachine: cloneOptionalBool(w.VirtualMachine), BootID: w.BootID, SSHServerAddress: w.SSHServerAddress, Hostname: w.Hostname, OS: w.OS, Interfaces: cloneInterfaces(w.Interfaces), Routes: slices.Clone(w.Routes), DNS: slices.Clone(w.DNS),
 		Network: cloneNetwork(w.Network), Observations: map[string]Observation{}}
 	for _, value := range []struct{ name, key, value, tool string }{
 		{"boardProduct", "board-product", w.BoardProduct, "ipmitool"}, {"mftVersion", "mft-version", w.MFTVersion, "mlxfwmanager"},
@@ -410,5 +410,13 @@ func cloneNetwork(in *NetworkObservation) *NetworkObservation {
 	}
 	out.Resolver.PerLink = clone(in.Resolver.PerLink)
 	out.Resolver.Domains = clone(in.Resolver.Domains)
+	return &out
+}
+
+func cloneOptionalBool(in *bool) *bool {
+	if in == nil {
+		return nil
+	}
+	out := *in
 	return &out
 }

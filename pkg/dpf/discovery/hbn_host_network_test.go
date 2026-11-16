@@ -47,7 +47,7 @@ func TestHostBackendDiscoveryUsesDesiredProfileAndExactSSHAuthority(t *testing.T
 		if request.HBN.WorkloadMTU != mtu || string(before) != string(rawHostHBNTestInventory(t, inv)) {
 			t.Fatal("observed MTU replaced desired intent or discovery mutated host inventory")
 		}
-		final := hostHBNChecks(&inv, checks)
+		final := HostHBNChecks(&inv, checks)
 		if got := hostHBNCheck(t, final, "host-network-backend", "SERIAL-1 @ worker-01"); got.State != "passed" {
 			t.Fatalf("pure readiness did not consume the current backend result: %+v", got)
 		}
@@ -263,7 +263,7 @@ func TestHostBackendDiscoveryNeverGuessesMissingAccessOrPermanentMAC(t *testing.
 				inv.Hosts[0].Runtime.Network.Links[0].PermanentMAC = ""
 			}
 			checks := collectHostHBNNetworking(context.Background(), request, &inv, observer, false)
-			got := hostHBNCheck(t, hostHBNChecks(&inv, checks), "host-network-backend", "SERIAL-1 @ worker-01")
+			got := hostHBNCheck(t, HostHBNChecks(&inv, checks), "host-network-backend", "SERIAL-1 @ worker-01")
 			if calls != 0 || got.State != "unknown" || got.ReasonCode == "" || got.Message == "" {
 				t.Fatalf("missing prerequisite became a readiness pass: %+v", got)
 			}

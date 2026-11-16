@@ -87,6 +87,7 @@ func HostManagementInterfaces(runtime *inventory.RuntimeObservation) ([]string, 
 
 func collectManagementRoots(ctx context.Context, remote runner, runtime *inventory.RuntimeObservation, add func(string, string) string) {
 	const stage = "host-management-roots"
+	collectHostVirtualMachine(ctx, remote, runtime, add)
 	runtime.SSHServerAddress = ""
 	if runtime.Network != nil {
 		for i := range runtime.Network.Links {
@@ -180,7 +181,7 @@ limit=$1; shift
 [[ "$limit" =~ ^[1-9][0-9]*$ && $# -le "$limit" ]] || exit 1
 calls=0; rows=0
 walk_interface() {
- local name=$1 ancestry=$2 path before device pci initial entry lower lowers root
+ local name=$1 ancestry=$2 path before device pci initial entry lower lowers root class
  ((calls+=1)); ((calls<=limit)) || return 1
  [[ "$name" =~ ^[a-zA-Z0-9_.:-]{1,15}$ && "$name" != . && "$name" != .. && "$name" != -* && "$ancestry" != *"|$name|"* ]] || return 1
  path="/sys/class/net/$name"; [[ -d "$path" ]] || return 1
@@ -192,10 +193,13 @@ walk_interface() {
   initial=$pci; root=''
   while [[ -z "$root" ]]; do
    ((calls+=1)); ((calls<=limit)) || return 1
-   [[ -d "$pci" ]] || return 1
+   [[ -d "$pci" && ${pci##*/} =~ ^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$ ]] || return 1
+   [[ -L "$pci/subsystem" && $(readlink -f -- "$pci/subsystem") == /sys/bus/pci ]] || return 1
    entry=$(find "$pci/" -mindepth 1 -maxdepth 1 -name physfn -print) || return 1
    if [[ -z "$entry" ]]; then
-    root=${pci##*/}; [[ "$root" =~ ^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$ ]] || return 1
+    class=$(cat "$pci/class") || return 1
+    [[ "$class" =~ ^0x02[0-9a-fA-F]{4}$ ]] || return 1
+    root=${pci##*/}
    else
     [[ -L "$pci/physfn" ]] || return 1
     pci=$(readlink -f -- "$pci/physfn") || return 1
@@ -235,7 +239,16 @@ func managementRootsCommand(names []string) string {
 // It is shared by initial and owned pending-reset eligibility.
 func VerifyHostManagementPhysicalSeparation(host inventory.Device, adapter inventory.Adapter) error {
 	names, err := HostManagementInterfaces(host.Runtime)
-	if err != nil || host.Runtime.Network == nil || (host.Runtime.Observations["host-management-roots"].State != "" && host.Runtime.Observations["host-management-roots"].State != "observed") {
+	if err != nil {
+		return &Error{Code: "HOST_MANAGEMENT_ROOTS_UNMEASURED", Stage: "host-management-roots"}
+	}
+	if host.Runtime.VirtualMachine == nil || host.Runtime.Observations["host-virtual-machine"].State != "" {
+		return &Error{Code: "HOST_VM_CLASSIFICATION_UNMEASURED", Stage: "host-virtual-machine"}
+	}
+	if *host.Runtime.VirtualMachine {
+		return &Error{Code: "HOST_VIRTUAL_MACHINE_UNSUPPORTED", Stage: "host-virtual-machine"}
+	}
+	if host.Runtime.Network == nil || (host.Runtime.Observations["host-management-roots"].State != "" && host.Runtime.Observations["host-management-roots"].State != "observed") {
 		return &Error{Code: "HOST_MANAGEMENT_ROOTS_UNMEASURED", Stage: "host-management-roots"}
 	}
 	if !externalPCIAddress.MatchString(adapter.PCIAddress) || len(adapter.PCIFunctions) == 0 {

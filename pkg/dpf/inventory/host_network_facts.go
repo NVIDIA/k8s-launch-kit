@@ -19,12 +19,15 @@ var hostBootID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 func validateHostNetworkFacts(w DeviceOutput, role string) error {
 	if w.Runtime != nil {
 		r := w.Runtime
-		if r.BootID != "" && (role != "hosts" || w.Method != "ssh" || !hostBootID.MatchString(r.BootID) || hasIssue(w.Issues, "runtime.host-boot-id")) {
+		if r.VirtualMachine != nil && (role != "hosts" || w.Method != "ssh" || (hasIssue(w.Issues, "runtime.host-virtual-machine") || hasIssue(w.Issues, "runtime.virtualMachine"))) {
+			return fmt.Errorf("device %s has invalid or conflicting host VM classification", w.RecordKey)
+		}
+		if r.BootID != "" && (role != "hosts" || w.Method != "ssh" || !hostBootID.MatchString(r.BootID) || (hasIssue(w.Issues, "runtime.host-boot-id") || hasIssue(w.Issues, "runtime.bootID"))) {
 			return fmt.Errorf("device %s has invalid or conflicting host boot ID", w.RecordKey)
 		}
 		if r.SSHServerAddress != "" {
 			ip, err := netip.ParseAddr(r.SSHServerAddress)
-			if role != "hosts" || w.Method != "ssh" || err != nil || ip.Zone() != "" || ip.IsUnspecified() || hasIssue(w.Issues, "runtime.ssh-server-address") {
+			if role != "hosts" || w.Method != "ssh" || err != nil || ip.Zone() != "" || ip.IsUnspecified() || (hasIssue(w.Issues, "runtime.ssh-server-address") || hasIssue(w.Issues, "runtime.sshServerAddress")) {
 				return fmt.Errorf("device %s has invalid or conflicting SSH server address", w.RecordKey)
 			}
 		}

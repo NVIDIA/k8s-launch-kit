@@ -17,9 +17,12 @@ import (
 )
 
 func TestManagementRootReaderMeasuresPhysicalVFAndVirtualParents(t *testing.T) {
-	for _, name := range []string{"physical", "VF", "VLAN", "bridge", "unrelated virtual", "missing lower", "lower cycle", "physfn cycle", "missing device"} {
+	for _, name := range []string{"physical", "VF", "VLAN", "bridge", "unrelated virtual", "missing lower", "lower cycle", "physfn cycle", "missing device", "nested virtio device", "non-PCI subsystem", "non-network PCI class"} {
 		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			netdir := filepath.Join(root, "net")
 			devices := filepath.Join(root, "devices")
 			mkdir := func(path string) {
@@ -36,8 +39,17 @@ func TestManagementRootReaderMeasuresPhysicalVFAndVirtualParents(t *testing.T) {
 			}
 			mkdir(netdir)
 			mkdir(devices)
+			pciBus := filepath.Join(root, "bus", "pci")
+			mkdir(pciBus)
+			physicalNIC := func(dir string) {
+				mkdir(dir)
+				link(pciBus, filepath.Join(dir, "subsystem"))
+				if err := os.WriteFile(filepath.Join(dir, "class"), []byte("0x020000\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			physical := filepath.Join(devices, "0000:35:00.0")
-			mkdir(physical)
+			physicalNIC(physical)
 			iface := filepath.Join(netdir, "mgmt0")
 			mkdir(iface)
 			link(physical, filepath.Join(iface, "device"))
@@ -47,13 +59,13 @@ func TestManagementRootReaderMeasuresPhysicalVFAndVirtualParents(t *testing.T) {
 			switch name {
 			case "VF", "physfn cycle":
 				vf := filepath.Join(devices, "0000:43:00.0")
-				mkdir(vf)
+				physicalNIC(vf)
 				if err := os.Remove(filepath.Join(iface, "device")); err != nil {
 					t.Fatal(err)
 				}
 				link(vf, filepath.Join(iface, "device"))
 				parent := filepath.Join(devices, "0000:21:00.0")
-				mkdir(parent)
+				physicalNIC(parent)
 				link(parent, filepath.Join(vf, "physfn"))
 				expectedRoot = "0000:21:00.0"
 				if name == "physfn cycle" {
@@ -82,13 +94,34 @@ func TestManagementRootReaderMeasuresPhysicalVFAndVirtualParents(t *testing.T) {
 				link(b, filepath.Join(a, "lower_other0"))
 				link(a, filepath.Join(b, "lower_upper0"))
 				pass = false
+			case "nested virtio device":
+				virtual := filepath.Join(physical, "virtio0")
+				mkdir(virtual)
+				if err := os.Remove(filepath.Join(iface, "device")); err != nil {
+					t.Fatal(err)
+				}
+				link(virtual, filepath.Join(iface, "device"))
+				pass = false
+			case "non-PCI subsystem":
+				if err := os.Remove(filepath.Join(physical, "subsystem")); err != nil {
+					t.Fatal(err)
+				}
+				other := filepath.Join(root, "bus", "virtual")
+				mkdir(other)
+				link(other, filepath.Join(physical, "subsystem"))
+				pass = false
+			case "non-network PCI class":
+				if err := os.WriteFile(filepath.Join(physical, "class"), []byte("0x010802\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				pass = false
 			case "missing device":
 				if err := os.RemoveAll(physical); err != nil {
 					t.Fatal(err)
 				}
 				pass = false
 			}
-			program := strings.ReplaceAll(managementRootReader, "/sys/class/net", netdir)
+			program := strings.ReplaceAll(strings.ReplaceAll(managementRootReader, "/sys/class/net", netdir), "/sys/bus/pci", pciBus)
 			output, err := exec.Command("bash", "-c", program, "--", "64", wanted).CombinedOutput()
 			t.Logf("root reader output: %s", output)
 			if (err == nil) != pass {
@@ -113,7 +146,7 @@ func TestManagementRootReaderMeasuresPhysicalVFAndVirtualParents(t *testing.T) {
 }
 
 func managementRootHost() inventory.Device {
-	return inventory.Device{Runtime: &inventory.RuntimeObservation{SSHServerAddress: "192.0.2.10", Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "mgmt0", PhysicalPFRoots: []string{"0000:35:00.0"}}}}, Interfaces: []inventory.Interface{{Name: "mgmt0", Index: 2, Addresses: []string{"192.0.2.10/24"}}}, Routes: []inventory.Route{{Destination: "0.0.0.0/0", InterfaceIndex: 2}, {Destination: "::/0", InterfaceIndex: 2}}, Observations: map[string]inventory.Observation{"interfaces": {State: "observed"}, "routes": {State: "observed"}, "host-management-roots": {State: "observed"}}}}
+	return inventory.Device{Runtime: &inventory.RuntimeObservation{VirtualMachine: new(bool), SSHServerAddress: "192.0.2.10", Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "mgmt0", PhysicalPFRoots: []string{"0000:35:00.0"}}}}, Interfaces: []inventory.Interface{{Name: "mgmt0", Index: 2, Addresses: []string{"192.0.2.10/24"}}}, Routes: []inventory.Route{{Destination: "0.0.0.0/0", InterfaceIndex: 2}, {Destination: "::/0", InterfaceIndex: 2}}, Observations: map[string]inventory.Observation{"interfaces": {State: "observed"}, "routes": {State: "observed"}, "host-management-roots": {State: "observed"}}}}
 }
 
 func TestManagementRootPolicyRejectsSameCardAndUnmeasuredPaths(t *testing.T) {
@@ -146,7 +179,7 @@ func TestManagementRootCollectionDoesNotManufacturePartialOrFailedRoots(t *testi
 			host := managementRootHost()
 			delete(host.Runtime.Observations, "host-management-roots")
 			host.Runtime.Network.Links[0].PhysicalPFRoots = nil
-			r := &fakeRunner{values: map[string]string{"host-ssh-connection": "198.51.100.1 12345 192.0.2.10 22", "host-management-roots": test.output}, errors: map[string]error{}}
+			r := &fakeRunner{values: map[string]string{"host-virtual-machine": "none", "host-ssh-connection": "198.51.100.1 12345 192.0.2.10 22", "host-management-roots": test.output}, errors: map[string]error{}}
 			if test.failure {
 				r.errors["host-management-roots"] = &Error{Code: "PERMISSION_DENIED", Tool: "find"}
 			}

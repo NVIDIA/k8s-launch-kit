@@ -649,12 +649,27 @@
           "body": "Launch Kit waits for every selected DPU to report current DPF readiness and for any requested host reset to be complete. DPF may start HBN asynchronously after devices join; final service and traffic checks still follow host workload networking.",
           "transitions": [
             {
-              "to": "host-network",
+              "to": "after-activation",
               "label": "Selected DPUs are provisioned and ready"
             },
             {
               "to": "blocked",
               "label": "Provisioning remains failed, unknown or pending"
+            }
+          ]
+        },
+        {
+          "id": "after-activation",
+          "title": "CLI operator: recheck current hosts and network before workload configuration",
+          "body": "After all selected DPUs are ready, the CLI collects current host, BMC, switch, management, storage and access facts again. Every selected host PF, backend and cabling check must now pass; temporary pending-reset allowances no longer apply. The observed devices must still match the same saved operation and reviewed bundle. Changed or unavailable required facts stop before host workload configuration and traffic. Current owned software receipts are checked without downloading the large origin artifacts again.",
+          "transitions": [
+            {
+              "to": "host-network",
+              "label": "Current post-activation prerequisites pass"
+            },
+            {
+              "to": "blocked",
+              "label": "A required current identity or network check is unavailable or fails"
             }
           ]
         },

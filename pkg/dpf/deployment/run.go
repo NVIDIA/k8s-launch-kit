@@ -737,6 +737,14 @@ func validatePrerequisiteVerification(plan *generation.Plan, verification Prereq
 	if failed {
 		return fmt.Errorf("fresh deploy prerequisites are not ready")
 	}
+	// The discovery owner defines the host set; do not maintain a second list
+	// of PF/host check names here. Outcomes remain the fresh provider's contract.
+	for _, required := range discovery.HostHBNChecks(verification.Inventory, nil) {
+		key := required.ID + "\x00" + required.Subject + "\x00" + required.Vantage
+		if reported, present := seen[key]; !present || reported.RequiredPhase != "deploy" || reported.State != "passed" {
+			return fmt.Errorf("fresh selected host prerequisite %s/%s is missing or unverified", required.ID, required.Subject)
+		}
+	}
 	for _, device := range intent.Devices {
 		physical := discovery.HostManagementPhysicalCheck(verification.Inventory, device.Serial)
 		key := physical.ID + "\x00" + physical.Subject + "\x00" + physical.Vantage

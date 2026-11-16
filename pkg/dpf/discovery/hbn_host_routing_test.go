@@ -14,7 +14,7 @@ func TestHostManagementProtectionIncludesNonMainRouteTables(t *testing.T) {
 	inv.Hosts[0].Runtime.Routes = []inventory.Route{{
 		Destination: "0.0.0.0/0", Gateway: "192.0.2.1", InterfaceIndex: 10, Table: 1001,
 	}}
-	checks := hostHBNChecks(&inv, nil)
+	checks := HostHBNChecks(&inv, nil)
 	if got := hostHBNCheck(t, checks, "host-management-separation", "SERIAL-1 @ worker-01"); got.State != "failed" || got.ReasonCode != "HOST_IPV4_DEFAULT_ROUTE_ON_SELECTED_PATH" {
 		t.Fatalf("default route in non-main table was ignored: %#v", got)
 	}

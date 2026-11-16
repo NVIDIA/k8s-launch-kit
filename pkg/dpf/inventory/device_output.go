@@ -61,6 +61,8 @@ type FirmwareVersionOutput struct {
 }
 
 type RuntimeOutput struct {
+	// VirtualMachine is nil until the supported OS detector reports a current result.
+	VirtualMachine   *bool               `json:"virtualMachine,omitempty" yaml:"virtualMachine,omitempty"`
 	BootID           string              `json:"bootID,omitempty" yaml:"bootID,omitempty"`
 	SSHServerAddress string              `json:"sshServerAddress,omitempty" yaml:"sshServerAddress,omitempty"`
 	Hostname         string              `json:"hostname,omitempty" yaml:"hostname,omitempty"`

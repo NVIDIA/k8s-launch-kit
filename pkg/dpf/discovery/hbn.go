@@ -291,7 +291,7 @@ func evaluateHBN(inv *inventory.Inventory, discoveryChecks []inventory.Check, ho
 			result.State = "blocked"
 		}
 	}
-	for _, check := range hostHBNChecks(inv, hostNetworking) {
+	for _, check := range HostHBNChecks(inv, hostNetworking) {
 		result.Checks = append(result.Checks, check)
 		if check.State != "passed" {
 			result.State = "blocked"
