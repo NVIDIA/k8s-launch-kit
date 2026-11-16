@@ -307,7 +307,11 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 			if err != nil || string(currentNode.UID) != node.UID || live.Spec.NodeName != node.Name {
 				return rows, cleanup, fmt.Errorf("probe node identity changed")
 			}
-			if len(live.Status.ContainerStatuses) != 1 || live.Status.ContainerStatuses[0].ImageID != image {
+			if len(live.Status.ContainerStatuses) != 1 {
+				return rows, cleanup, fmt.Errorf("probe pulled image digest differs from qualified asset")
+			}
+			imageID := strings.TrimPrefix(live.Status.ContainerStatuses[0].ImageID, "docker-pullable://")
+			if imageID != image {
 				return rows, cleanup, fmt.Errorf("probe pulled image digest differs from qualified asset")
 			}
 			stream, err := mg.Client.CoreV1().Pods(mg.Namespace).GetLogs(podName, &corev1.PodLogOptions{Container: "probe", LimitBytes: ptr(int64(4 << 20))}).Stream(ctx)

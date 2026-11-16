@@ -153,7 +153,22 @@ var _ = Describe("probe integrity", func() {
 				if architecture == "amd64" {
 					otherArchitecture = "arm64"
 				}
-				for _, imageID := range []string{want, repo + "@" + assets.PlatformDigests[otherArchitecture], repo + "@" + assets.ManifestDigest, "other.example/probe@" + assets.PlatformDigests[architecture], "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "invalid-prefix" + want} {
+				for _, observation := range []struct {
+					imageID           string
+					containerStatuses int
+					accepted          bool
+				}{
+					{imageID: want, containerStatuses: 1, accepted: true},
+					{imageID: "docker-pullable://" + want, containerStatuses: 1, accepted: true},
+					{imageID: repo + "@" + assets.PlatformDigests[otherArchitecture], containerStatuses: 1, accepted: false},
+					{imageID: repo + "@" + assets.ManifestDigest, containerStatuses: 1, accepted: false},
+					{imageID: "other.example/probe@" + assets.PlatformDigests[architecture], containerStatuses: 1, accepted: false},
+					{imageID: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", containerStatuses: 1, accepted: false},
+					{imageID: "containerd-pullable://" + want, containerStatuses: 1, accepted: false},
+					{imageID: "invalid-prefix" + want, containerStatuses: 1, accepted: false},
+					{imageID: "docker-pullable://docker-pullable://" + want, containerStatuses: 1, accepted: false},
+					{imageID: want, containerStatuses: 2, accepted: false},
+				} {
 					client := fake.NewClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "cp", UID: "node-uid"}})
 					client.PrependReactor("create", "configmaps", func(a k8stest.Action) (bool, runtime.Object, error) {
 						cm := a.(k8stest.CreateAction).GetObject().(*corev1.ConfigMap).DeepCopy()
@@ -167,7 +182,10 @@ var _ = Describe("probe integrity", func() {
 						Expect(p.Spec.Containers[0].Image).To(Equal(want))
 						p.UID, p.Spec.NodeName = "pod-uid", "cp"
 						p.Status.Phase = corev1.PodSucceeded
-						p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "probe", ImageID: imageID}}
+						p.Status.ContainerStatuses = make([]corev1.ContainerStatus, observation.containerStatuses)
+						for i := range p.Status.ContainerStatuses {
+							p.Status.ContainerStatuses[i] = corev1.ContainerStatus{Name: "probe", ImageID: observation.imageID}
+						}
 						Expect(client.Tracker().Create(corev1.SchemeGroupVersion.WithResource("pods"), p, "default")).To(Succeed())
 						created = true
 						return true, p, nil
@@ -176,9 +194,10 @@ var _ = Describe("probe integrity", func() {
 					_, cleanup, err := (Runner{Assets: assets, Journal: func([]Receipt) error { return nil }}).Run(context.Background(), config.Request{ImageRepository: repository, Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 					Expect(created).To(BeTrue())
 					Expect(cleanup.State).To(Equal("complete"))
+					Expect(cleanup.Leftovers).To(BeEmpty())
 					// The fake log transport does not emit a probe response. The expected
 					// image must reach that later protocol gate; all other IDs stop earlier.
-					if imageID == want {
+					if observation.accepted {
 						Expect(err).To(MatchError(ContainSubstring("probe result binding/coverage invalid")))
 					} else {
 						Expect(err).To(MatchError(ContainSubstring("probe pulled image digest differs")))
