@@ -168,3 +168,43 @@ func (c bootstrapRegistrationAfterACKClient) patchActivationAnnotation(ctx conte
 	}
 	return updated, err
 }
+
+func TestBootstrapBeforeSubmitUnrelatedSignerUpdateDoesNotBurnClaim(t *testing.T) {
+	f := newActivationIntegrationFixture(t)
+	operation, _ := checkpointFixture(t, f)
+	f.prepared.operation = operation
+	item := f.client.activationSelected[0]
+	dpu := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1", "kind": "DPU"}}
+	dpu.SetName(item.dpuName)
+	dpu.SetNamespace(f.prepared.execution.operatorNamespace)
+	dpu.SetUID(activationIntegrationUID(activationIntegrationDPUUID, item.item.device.Serial))
+	materials, state := bootstrapCredentialMaterials(t, dpu, f.client.sources.sources.secret.Data["super-admin.conf"])
+	f.client.base.resources[tenantStageKey(materials.join)] = materials.join
+	f.client.bootstrapTenantHandler = state.serve
+	state.beforeRead = func(path string, n int) {
+		if strings.Contains(path, "/configmaps/") && n == 4 {
+			state.info.ResourceVersion = "other-token-updated"
+			state.info.Data["jws-kubeconfig-other1"] = "other-token-signature"
+		}
+	}
+	client := bootstrapRegistrationAfterACKClient{recoveryActivationClient: recoveryActivationClient{f.client}, state: state}
+	f.controlPlane.tenant.Client.source = client
+	reboot := &recoveryRebooter{fixture: &f}
+	_, err := runActivationStage(f.ctx, client, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, reboot)
+	if err != nil || reboot.submissions != 1 || len(f.client.guards) != 1 || len(f.client.patches) != 2 {
+		t.Fatalf("unrelated signer update burned claim: err=%v submissions=%d guards=%d patches=%v", err, reboot.submissions, len(f.client.guards), f.client.patches)
+	}
+	if len(f.prepared.operation.state.Resets) != 1 {
+		t.Fatal("missing exact reset receipt")
+	}
+	for _, reset := range f.prepared.operation.state.Resets {
+		if reset.Baseline != operationOldBoot || !reset.Acknowledged {
+			t.Fatal("durable baseline or completed ACK lost")
+		}
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.info.Data["jws-kubeconfig-other1"] != "other-token-signature" || state.reads["/api/v1/namespaces/kube-public/configmaps/cluster-info"] < 6 {
+		t.Fatal("BeforeSubmit churn or complete real reader not exercised")
+	}
+}

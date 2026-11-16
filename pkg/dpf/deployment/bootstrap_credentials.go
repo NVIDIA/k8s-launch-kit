@@ -4,6 +4,7 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -59,7 +60,7 @@ func bootstrapCredentialReason(code string) string {
 }
 
 func bootstrapCredentialFailure(journal *executionJournal, code string) error {
-	return activationFailure(journal, code, bootstrapCredentialReason(code)+" Preserve the operation and reboot requests; resolve enrollment credentials through the supported recovery procedure before continuing.", nil)
+	return activationFailure(journal, code, bootstrapCredentialReason(code)+" Preserve the operation and reboot requests. Follow https://nvidia.github.io/k8s-launch-kit/user/dpf-deployment/#recover-from-unavailable-bootstrap-credentials before continuing.", nil)
 }
 
 func bootstrapCredentialDiagnostic(err error) string {
@@ -144,22 +145,35 @@ func verifyAbsentRegistrationCredentials(ctx context.Context, management Resourc
 	if err != nil || !bootstrapClusterInfoValid(info, endpoint, cluster.CertificateAuthorityData, id, secret) {
 		return fail("BOOTSTRAP_JWS_UNVERIFIED")
 	}
-	// Referenced credentials and public signature must remain the same through
-	// the read. Routine unrelated resources are not part of this closure.
-	joinAgain, err := management.Get(ctx, joinIdentity.DeepCopy())
-	if err != nil || !reflect.DeepEqual(joinAgain, joinObject) {
+	// Revalidate the same referenced identities and consumed values. The
+	// bootstrap signer may update other tokens' signatures in this ConfigMap;
+	// unrelated data and routine metadata/RV changes grant no credential authority.
+	joinAgainObject, err := management.Get(ctx, joinIdentity.DeepCopy())
+	if err != nil {
+		return fail("BOOTSTRAP_CREDENTIALS_CHANGED")
+	}
+	joinAgain, valid := bootstrapJoinSecret(joinAgainObject, dpu)
+	if !valid || joinAgain.UID != join.UID || !bytes.Equal(joinAgain.Data["join"], join.Data["join"]) {
 		return fail("BOOTSTRAP_CREDENTIALS_CHANGED")
 	}
 	tokenAgain, err := tenant.api.CoreV1().Secrets("kube-system").Get(ctx, token.Name, metav1.GetOptions{})
-	if err != nil || !reflect.DeepEqual(tokenAgain, token) {
+	if err != nil || tokenAgain == nil || tokenAgain.UID != token.UID {
+		return fail("BOOTSTRAP_CREDENTIALS_CHANGED")
+	}
+	// Identity/value/usage/groups/required labels are all fixed by validation;
+	// expiration is also required to remain the exact value read initially.
+	if code := validateBootstrapToken(tokenAgain, dpu, id, secret, time.Now()); code != "" {
+		return fail(code)
+	}
+	if !bytes.Equal(tokenAgain.Data["expiration"], token.Data["expiration"]) {
 		return fail("BOOTSTRAP_CREDENTIALS_CHANGED")
 	}
 	infoAgain, err := tenant.api.CoreV1().ConfigMaps("kube-public").Get(ctx, "cluster-info", metav1.GetOptions{})
-	if err != nil || !reflect.DeepEqual(infoAgain, info) {
+	if err != nil || !bootstrapClusterInfoValid(infoAgain, endpoint, cluster.CertificateAuthorityData, id, secret) {
 		return fail("BOOTSTRAP_CREDENTIALS_CHANGED")
 	}
-	if code := validateBootstrapToken(tokenAgain, dpu, id, secret, time.Now()); code != "" {
-		return fail(code)
+	if infoAgain.UID != info.UID || infoAgain.Data["kubeconfig"] != info.Data["kubeconfig"] || infoAgain.Data["jws-kubeconfig-"+id] != info.Data["jws-kubeconfig-"+id] {
+		return fail("BOOTSTRAP_CREDENTIALS_CHANGED")
 	}
 	_, err = tenant.api.CoreV1().Nodes().Get(ctx, dpu.GetName(), metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {

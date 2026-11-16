@@ -217,13 +217,13 @@ After activation it collects current host and network facts again; workload
 configuration and traffic wait for those checks to pass. Do not reset a host
 manually to make discovery pass. Resume repeats the complete traffic checks.
 
-Before a requested reset or its acknowledgment, an unregistered DPU must still have
-current bootstrap credentials. The CLI also checks these credentials while waiting for
-initial tenant registration. A stop for missing, expired or unverifiable credentials
-requires recovery with the deployment owner; preserve the operation and reset requests.
-Resume does not renew tokens, extend their lifetime or repair enrollment credentials. A
-registered Node can be NotReady for another reason; its separate readiness checks still
-apply.
+The CLI checks bootstrap credentials when the expected tenant Node is absent, before a
+requested reset or its acknowledgment and while waiting for initial registration.
+Expected-name presence excuses only this credential inspection; it does not establish
+Node ownership or Ready state. A NotReady Node still has independent readiness checks.
+For missing, expired or unverifiable credentials, follow [bootstrap credential
+recovery](dpf-deployment.md#recover-from-unavailable-bootstrap-credentials). Resume
+never renews tokens or extends their lifetime.
 
 During a requested reboot, temporary SSH connection or negotiation failures stay
 within the remaining deployment wait. A changed host identity or SSH trust stops
@@ -247,3 +247,21 @@ cleanup with its owner and preserve unrelated resources. If desired input or
 selection changes, update the site file, repeat discovery when observations
 changed and generate a newly reviewed bundle. Host `l8k clean` is not DPF
 teardown.
+
+
+### Recover from unavailable bootstrap credentials
+
+1. Preserve the saved operation reference, site configuration, generated bundle
+   and current deployment state, including existing reset claims and requests.
+2. Have the deployment owner inspect the reported reason and current DPF and
+   tenant Node state. Keep credentials and join commands out of reports and
+   shared logs.
+3. Resume with the same saved inputs only after a restoration procedure supported
+   by that DPF release has restored the required credentials in place and the
+   original selected identities remain intact. Launch Kit does not provide a
+   credential rotation command or extend token lifetimes.
+4. If that release has no supported in-place restoration, have the owner perform
+   scoped DPF teardown and restore any configured workload networking on the
+   selected hosts. Preserve management connectivity, unrelated resources and
+   shared foundations. Then start a **new** discover → generate → initial deploy
+   workflow with newly reviewed inputs; do not reuse the old operation.

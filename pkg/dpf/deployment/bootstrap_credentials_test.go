@@ -68,6 +68,7 @@ type bootstrapTenantFixture struct {
 	forbidden, mutatePath string
 	reads                 map[string]int
 	writes                int
+	beforeRead            func(string, int)
 }
 
 func (f *bootstrapTenantFixture) serve(w http.ResponseWriter, r *http.Request) bool {
@@ -77,6 +78,9 @@ func (f *bootstrapTenantFixture) serve(w http.ResponseWriter, r *http.Request) b
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads[r.URL.Path]++
+	if f.beforeRead != nil {
+		f.beforeRead(r.URL.Path, f.reads[r.URL.Path])
+	}
 	if r.Method != "GET" {
 		f.writes++
 		http.Error(w, "unexpected mutation", 500)
@@ -106,10 +110,10 @@ func (f *bootstrapTenantFixture) serve(w http.ResponseWriter, r *http.Request) b
 	}
 	if f.mutatePath == r.URL.Path && f.reads[r.URL.Path] == 2 {
 		if f.token != nil && strings.Contains(r.URL.Path, "/secrets/") {
-			f.token.ResourceVersion = "changed"
+			f.token.Data["expiration"] = []byte(time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339))
 		}
 		if f.info != nil && strings.Contains(r.URL.Path, "/configmaps/") {
-			f.info.ResourceVersion = "changed"
+			f.info.Data["jws-kubeconfig-"+bootstrapTestID] = "changed-selected-signature"
 		}
 	}
 	w.WriteHeader(status)
