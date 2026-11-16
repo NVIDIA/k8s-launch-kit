@@ -676,6 +676,8 @@ After checking the current device-to-host bindings and deployment plan, Launch K
 
 If DPF requests an external host reset, DPF coordinates the selected host maintenance effect. Launch Kit waits for the exact request, device binding and safe shutdown state before using the selected host access to perform the supported system reboot. Immediately before the reboot, it rechecks the selected device, host and deployment prerequisites. It then waits for the same host and selected DPU to return with the expected boot observations, rechecks the current prerequisites, and acknowledges the request only when those checks still pass. This wait stays within the configured deployment timeout, which defaults to and is capped at two hours. If the request or current prerequisites cannot be verified within that deadline, the operation stops. Do not repeat a reboot blindly. Unsupported reset methods or unknown safety state stop the operation.
 
+Before a requested reset or its acknowledgment, an unregistered DPU must still have current bootstrap credentials. The CLI also checks these credentials while waiting for initial tenant registration. A stop for missing, expired or unverifiable credentials requires recovery with the deployment owner; preserve the operation and reset requests. Resume does not renew tokens, extend their lifetime or repair enrollment credentials. A registered Node can be NotReady for another reason; its separate readiness checks still apply.
+
 Next: [Requested activation and reset work is verified](#hbn-bgp-deployment-provisioned); [Installation, safe reset or readiness cannot be verified](#hbn-bgp-deployment-blocked).
 
 ### 13. Management and tenant clusters: wait for DPF readiness {#hbn-bgp-deployment-provisioned}

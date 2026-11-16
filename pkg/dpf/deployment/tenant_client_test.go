@@ -104,10 +104,18 @@ func TestTenantSourcesRejectDriftAndMalformedCredentials(t *testing.T) {
 
 func tenantIdentityClientFixture(t *testing.T, expected TenantReadinessExpected, source *tenantSourceStub) (*tenantClient, *int) {
 	t.Helper()
+	return tenantIdentityClientFixtureWithHandler(t, expected, source, nil)
+}
+
+func tenantIdentityClientFixtureWithHandler(t *testing.T, expected TenantReadinessExpected, source *tenantSourceStub, handle func(http.ResponseWriter, *http.Request) bool) (*tenantClient, *int) {
+	t.Helper()
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
+		if handle != nil && handle(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/namespaces/kube-system":
 			_ = json.NewEncoder(w).Encode(&corev1.Namespace{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"}, ObjectMeta: metav1.ObjectMeta{Name: "kube-system", UID: "tenant-system"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})

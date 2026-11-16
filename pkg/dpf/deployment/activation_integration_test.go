@@ -5,8 +5,10 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -57,6 +60,8 @@ type activationIntegrationFake struct {
 	resetSafetyCalls             int
 	resetSafetyExpiry            time.Time
 	resetSafetySerials           []string
+	bootstrapRegistrationAbsent  bool
+	bootstrapTenantHandler       func(http.ResponseWriter, *http.Request) bool
 	omitAgentBaseline            bool
 	changeRoundDuringResetSafety bool
 }
@@ -195,6 +200,13 @@ func (f *activationIntegrationFake) Get(ctx context.Context, wanted *unstructure
 			return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "dpudeployments"}, wanted.GetName())
 		}
 		return f.deployment.DeepCopy(), nil
+	}
+	if wanted.GetKind() == "DPU" {
+		for i := range f.dpus {
+			if f.dpus[i].GetName() == wanted.GetName() && f.dpus[i].GetNamespace() == wanted.GetNamespace() {
+				return f.dpus[i].DeepCopy(), nil
+			}
+		}
 	}
 	if wanted.GetKind() == "DPUNode" {
 		key := tenantStageKey(wanted)
@@ -686,7 +698,23 @@ func newActivationIntegrationFixtureFromExecution(t *testing.T, execution *manag
 	currentCluster.Object["status"] = runtime.DeepCopyJSONValue(stage.sources.sources.observed.DPUCluster.Object["status"])
 	client.base.resources[tenantStageKey(currentCluster)] = currentCluster.DeepCopy()
 	client.base.clusters = []unstructured.Unstructured{*currentCluster.DeepCopy()}
-	tenant, _ := tenantIdentityClientFixture(t, expected, stage.sources)
+	// These activation fence fixtures model an existing registration. It grants
+	// no readiness: tests explicitly advance the independent DPU/host state.
+	tenant, _ := tenantIdentityClientFixtureWithHandler(t, expected, stage.sources, func(w http.ResponseWriter, r *http.Request) bool {
+		if client.bootstrapTenantHandler != nil && client.bootstrapTenantHandler(w, r) {
+			return true
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/nodes/") {
+			if client.bootstrapRegistrationAbsent {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(&metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: "Failure", Reason: metav1.StatusReasonNotFound, Code: 404})
+				return true
+			}
+			_ = json.NewEncoder(w).Encode(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: strings.TrimPrefix(r.URL.Path, "/api/v1/nodes/"), UID: "registered-node", ResourceVersion: "1"}})
+			return true
+		}
+		return false
+	})
 	tenant.source = client
 	client.tenant = tenant
 	client.base.tenant = tenant

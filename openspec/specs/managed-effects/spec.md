@@ -359,3 +359,11 @@ record remain for inspection; failure does not authorize automatic deletion.
 - Implementation: [preflight](../../../pkg/networkoperatorplugin/preflight), [clean](../../../pkg/networkoperatorplugin/clean.go), [OCP config](../../../pkg/networkoperatorplugin/ocp_config.go), [discovery](../../../pkg/networkoperatorplugin/discovery/discover.go).
 - Existing suites: [strays](../../../pkg/networkoperatorplugin/preflight/strays_test.go), [cleanup](../../../pkg/networkoperatorplugin/clean_test.go), [OCP namespace](../../../pkg/networkoperatorplugin/connectivity/ocp_namespace_test.go).
 - User documentation: [cleanup scope](../../../docs/user/cleanup.md), [deployment](../../../docs/advanced/deployment.md).
+
+### DPF bootstrap credentials at initial registration boundaries
+
+Before an immutable selected-host reset claim, immediately before physical submission, and at the common fresh/observe-only ACK boundary, an absent expected tenant Node requires current selected-DPU-owned join material, matching unexpired tenant token and verified current cluster-info detached JWS. The guard uses the already-bound tenant endpoint/trust and never executes join commands or follows discovered URLs. It rechecks referenced identities/data and reports finite safe causes without secret identifiers or values.
+
+Expected-name registration presence exempts only this absent-registration credential predicate regardless of Node Ready; it is not Node ownership, identity, lease, cohort, activation or runtime authority. Those existing proofs remain mandatory. AgentStatus success alone cannot exempt credentials. Node read errors and tenant/DPU drift remain blocking. Earlier pre-token phases are unchanged; current DPU Cluster Config waits diagnose unusable credentials instead of only timing out.
+
+These are point-in-time checks without a minimum remaining TTL or future join guarantee. Failure after a claim preserves it and never authorizes replay, token rotation, TTL extension, status edits or forced readiness. Unsupported recovery is action-required with the deployment owner.

@@ -341,6 +341,16 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			}
 			continue
 		}
+		// Once the controller is waiting for tenant registration, a known absent
+		// or unusable bootstrap credential is actionable, not a readiness timeout.
+		for i, item := range selected {
+			phase, _, _ := unstructured.NestedString(observed.dpus[item.dpuName].Object, "status", "phase")
+			if phase == "DPU Cluster Config" {
+				if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, []int{i}, observed, journal); err != nil {
+					return receipt, err
+				}
+			}
+		}
 		receipt.DPUSets, receipt.DPUs, receipt.Nodes, receipt.Maintenance = activationReceipts(observed)
 		released, releaseErr := releaseNextSelectedHold(ctx, client, selected, observed, journal, refreshHoldScope, prepared.operation)
 		if released != nil {
@@ -1307,6 +1317,9 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
 				return verified, err
 			}
+			if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, current, journal); err != nil {
+				return verified, err
+			}
 			// The BMC read can take time. A different request or restarted Arm
 			// invalidates its shutdown proof before the one-time claim is created.
 			current, err = observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
@@ -1326,6 +1339,19 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 				if err != nil || !found || !before.sameRequest(round) || !before.startup.Equal(round.startup) || before.kernelBoot != round.kernelBoot {
 					return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected DPU round or Arm boot changed during the physical reset-safety read.", nil)
 				}
+			}
+			// The native adapter invokes this after authenticating the host and
+			// immediately before dispatch. Keep the existing durable baseline/CAS
+			// callback intact; a failed guard never clears or renews the claim.
+			beforeSubmit := request.BeforeSubmit
+			request.BeforeSubmit = func(observation ActivationObservation) error {
+				if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, current, journal); err != nil {
+					return err
+				}
+				if beforeSubmit != nil {
+					return beforeSubmit(observation)
+				}
+				return nil
 			}
 			observation, err = claimAndRebootExternal(ctx, client, boundDeployment, prepared.execution.plan.Digest(), request, sourcePhases, journal, reboot)
 			if err != nil {
@@ -1387,6 +1413,11 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			// on resume. ACK authorizes controller progress, so recheck the complete
 			// policy before reading the exact node/round for the conditional patch.
 			if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal, requestTimeout); err != nil {
+				return verified, err
+			}
+			// Fresh and observe-only recovery share this ACK boundary. Observing
+			// a completed physical reset never waives registration prerequisites.
+			if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, returned, journal); err != nil {
 				return verified, err
 			}
 			node, err := client.Get(ctx, dpuNodeIdentity(deployment.GetNamespace(), nodeName))
@@ -1612,6 +1643,7 @@ func activationFailure(journal *executionJournal, code, message string, cause er
 	message += activationCoordinationDiagnostic(cause)
 	if code == "EXTERNAL_HOST_REBOOT_UNCERTAIN" {
 		message += externalRebootSSHDiagnostic(cause)
+		message += bootstrapCredentialDiagnostic(cause)
 	}
 	if journal == nil {
 		return reconcileError(code, message, cause)

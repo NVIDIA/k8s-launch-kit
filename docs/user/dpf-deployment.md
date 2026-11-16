@@ -217,6 +217,14 @@ After activation it collects current host and network facts again; workload
 configuration and traffic wait for those checks to pass. Do not reset a host
 manually to make discovery pass. Resume repeats the complete traffic checks.
 
+Before a requested reset or its acknowledgment, an unregistered DPU must still have
+current bootstrap credentials. The CLI also checks these credentials while waiting for
+initial tenant registration. A stop for missing, expired or unverifiable credentials
+requires recovery with the deployment owner; preserve the operation and reset requests.
+Resume does not renew tokens, extend their lifetime or repair enrollment credentials. A
+registered Node can be NotReady for another reason; its separate readiness checks still
+apply.
+
 During a requested reboot, temporary SSH connection or negotiation failures stay
 within the remaining deployment wait. A changed host identity or SSH trust stops
 recovery. If completion remains uncertain, read the recorded SSH reason before
