@@ -13,7 +13,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 )
 
-func hbnArtifactSourceChecks(ctx context.Context, input *config.Provisioning, inv *inventory.Inventory, verifier ArtifactVerifier) []inventory.Check {
+func hbnArtifactSourceChecks(ctx context.Context, input *config.Provisioning, inv *inventory.Inventory, verifier ArtifactVerifier, mode ArtifactSourceMode) []inventory.Check {
 	const checkID = "dpf.hbn.artifact-source"
 	checks := []inventory.Check{}
 	add := func(subject, state, code, message string) {
@@ -82,6 +82,12 @@ func hbnArtifactSourceChecks(ctx context.Context, input *config.Provisioning, in
 		requestSubjects = append(requestSubjects, subject)
 	}
 	if len(requests) == 0 {
+		return checks
+	}
+	if mode == ArtifactInputsOnly {
+		for _, subject := range requestSubjects {
+			add(subject, "unknown", "ARTIFACT_SOURCE_NOT_RECHECKED", "Origin bytes were not downloaded again after activation. Input URLs, locks and selected PSIDs were checked; current deployment-owned software receipts are verified separately.")
+		}
 		return checks
 	}
 	if verifier == nil {

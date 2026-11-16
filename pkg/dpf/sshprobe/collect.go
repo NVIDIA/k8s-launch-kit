@@ -179,6 +179,15 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		device.IdentityKey = []string{"system-uuid", strings.ToLower(uuid)}
 		device.ID = inventory.PhysicalID("host", device.IdentityKey)
 		add("host-dmi", "UUID")
+		boot, bootErr := read("host-boot-id", "cat /proc/sys/kernel/random/boot_id")
+		if bootErr == nil {
+			if validUUID(strings.TrimSpace(boot)) {
+				device.Runtime.BootID = strings.ToLower(strings.TrimSpace(boot))
+				add("host-boot-id", "BootID")
+			} else {
+				device.Runtime.Observations["host-boot-id"] = unavailable(&Error{Code: "SSH_IDENTITY_INVALID", Stage: "host-boot-id"}, "procfs")
+			}
+		}
 		pci, e := read("host-pci", "lspci -Dnn -d 15b3:")
 		if e != nil {
 			return device, evidence, e
@@ -220,6 +229,7 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 	collectHardware(ctx, remote, &device, privilege, target.Role, add)
 	if target.Role == "hosts" {
 		collectHostPermanentMACs(ctx, remote, &device, label)
+		collectManagementRoots(ctx, remote, device.Runtime, add)
 	}
 	observed, unavailableCount := optionalCounts(device.Runtime)
 	if unavailableCount > 0 {
@@ -254,6 +264,15 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		}
 		if strings.TrimSpace(uuid) != device.SystemUUID {
 			return device, evidence, &Error{Code: "INVENTORY_CHANGED", Stage: "host-identity-recheck"}
+		}
+		if boot := device.Runtime.BootID; boot != "" {
+			current, bootErr := read("host-boot-id-recheck", "cat /proc/sys/kernel/random/boot_id")
+			if bootErr != nil {
+				device.Runtime.BootID = ""
+				device.Runtime.Observations["host-boot-id"] = unavailable(bootErr, "procfs")
+			} else if strings.ToLower(strings.TrimSpace(current)) != boot {
+				return device, evidence, &Error{Code: "INVENTORY_CHANGED", Stage: "host-boot-id-recheck"}
+			}
 		}
 		pci, e := read("host-pci-recheck", "lspci -Dnn -d 15b3:")
 		if e != nil {
@@ -314,6 +333,15 @@ func collectPF(ctx context.Context, remote runner, bdf string, runtime *inventor
 	for _, p := range []struct{ field, command string }{{"driver", "readlink " + base + "/driver"}, {"numa", "cat " + base + "/numa_node"}, {"netdevs", "ls -1 " + base + "/net"}} {
 		stage := "host-pf:" + bdf + ":" + p.field
 		text, err := remote.Run(ctx, stage, p.command)
+		if p.field == "netdevs" && err != nil {
+			// A failed ls is never absence proof. Independently measure only
+			// ENOENT/empty on a still-present PCI directory; permission and
+			// transport failures leave the original observation unavailable.
+			absence, absenceErr := remote.Run(ctx, stage+":absence", pfNetdevAbsenceCommand(base))
+			if absenceErr == nil && strings.TrimSpace(absence) == "absent" {
+				text, err = "", nil
+			}
+		}
 		if err == nil {
 			text = strings.TrimSpace(text)
 			switch p.field {
@@ -340,6 +368,10 @@ func collectPF(ctx context.Context, remote runner, bdf string, runtime *inventor
 			runtime.Observations[stage] = unavailable(err, commandTool(p.command))
 		} else {
 			runtime.Observations[stage] = inventory.Observation{State: "observed"}
+			if p.field == "netdevs" && len(pf.Netdevs) == 0 {
+				pf.NetdevsAbsent = true
+				runtime.Observations[stage] = inventory.Observation{State: "observed", ReasonCode: "HOST_PF_NETDEV_ABSENT", Message: "The PCI function is present and its network-interface directory is absent or empty.", Tool: "sysfs"}
+			}
 			add(stage, p.field)
 		}
 	}
@@ -365,6 +397,20 @@ func collectPF(ctx context.Context, remote runner, bdf string, runtime *inventor
 	runtime.Observations[stage] = observed("sysfs", "group="+strconv.Itoa(*pf.IOMMUGroup))
 	add(stage, "IOMMUGroup")
 	return pf
+}
+
+func pfNetdevAbsenceCommand(base string) string {
+	return `bash -c 'set -euo pipefail
+p="` + base + `"
+[[ -d "$p" ]]
+entry=$(find "$p/" -mindepth 1 -maxdepth 1 -name net -print)
+if [[ -z "$entry" ]]; then [[ -d "$p" ]]; printf "absent\n"
+elif [[ -d "$p/net" && ! -L "$p/net" ]]; then
+ entries=$(find "$p/net/" -mindepth 1 -maxdepth 1 -print)
+ [[ -d "$p" ]]
+ if [[ -z "$entries" ]]; then printf "absent\n"; fi
+else exit 1
+fi'`
 }
 
 func collectRuntime(ctx context.Context, remote runner, runtime *inventory.RuntimeObservation, add func(string, string) string) {

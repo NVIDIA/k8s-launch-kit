@@ -77,11 +77,13 @@ type TimeObservation struct {
 	ReasonCode string   `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
 }
 type PCIFunction struct {
-	Address    string   `json:"address" yaml:"address"`
-	Driver     string   `json:"driver,omitempty" yaml:"driver,omitempty"`
-	NUMANode   string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
-	IOMMUGroup *int     `json:"iommuGroup,omitempty" yaml:"iommuGroup,omitempty"`
-	Netdevs    []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
+	// NetdevsAbsent is set only after a successful measurement of a present PCI function.
+	NetdevsAbsent bool     `json:"netdevsAbsent,omitempty" yaml:"netdevsAbsent,omitempty"`
+	Address       string   `json:"address" yaml:"address"`
+	Driver        string   `json:"driver,omitempty" yaml:"driver,omitempty"`
+	NUMANode      string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
+	IOMMUGroup    *int     `json:"iommuGroup,omitempty" yaml:"iommuGroup,omitempty"`
+	Netdevs       []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
 }
 type Adapter struct {
 	PCIFunctions    []PCIFunction `json:"pciFunctions,omitempty" yaml:"pciFunctions,omitempty"`
@@ -101,14 +103,16 @@ type Adapter struct {
 
 // RuntimeObservation contains OS-visible facts, separate from BMC management readiness.
 type RuntimeObservation struct {
-	Hardware     *HardwareObservation   `json:"hardware,omitempty" yaml:"hardware,omitempty"`
-	Network      *NetworkObservation    `json:"network,omitempty" yaml:"network,omitempty"`
-	Hostname     string                 `json:"hostname,omitempty" yaml:"hostname,omitempty"`
-	OS           string                 `json:"os,omitempty" yaml:"os,omitempty"`
-	Interfaces   []Interface            `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
-	Routes       []Route                `json:"routes,omitempty" yaml:"routes,omitempty"`
-	DNS          []string               `json:"dns,omitempty" yaml:"dns,omitempty"`
-	Observations map[string]Observation `json:"observations,omitempty" yaml:"observations,omitempty"`
+	BootID           string                 `json:"bootID,omitempty" yaml:"bootID,omitempty"`
+	SSHServerAddress string                 `json:"sshServerAddress,omitempty" yaml:"sshServerAddress,omitempty"`
+	Hardware         *HardwareObservation   `json:"hardware,omitempty" yaml:"hardware,omitempty"`
+	Network          *NetworkObservation    `json:"network,omitempty" yaml:"network,omitempty"`
+	Hostname         string                 `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	OS               string                 `json:"os,omitempty" yaml:"os,omitempty"`
+	Interfaces       []Interface            `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
+	Routes           []Route                `json:"routes,omitempty" yaml:"routes,omitempty"`
+	DNS              []string               `json:"dns,omitempty" yaml:"dns,omitempty"`
+	Observations     map[string]Observation `json:"observations,omitempty" yaml:"observations,omitempty"`
 }
 
 // Device represents every requested endpoint, including failed observations.

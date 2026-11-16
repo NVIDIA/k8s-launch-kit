@@ -61,15 +61,17 @@ type FirmwareVersionOutput struct {
 }
 
 type RuntimeOutput struct {
-	Hostname     string              `json:"hostname,omitempty" yaml:"hostname,omitempty"`
-	OS           string              `json:"os,omitempty" yaml:"os,omitempty"`
-	BoardProduct string              `json:"boardProduct,omitempty" yaml:"boardProduct,omitempty"`
-	MFTVersion   string              `json:"mftVersion,omitempty" yaml:"mftVersion,omitempty"`
-	Interfaces   []Interface         `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
-	Routes       []Route             `json:"routes,omitempty" yaml:"routes,omitempty"`
-	DNS          []string            `json:"dns,omitempty" yaml:"dns,omitempty"`
-	Network      *NetworkObservation `json:"network,omitempty" yaml:"network,omitempty"`
-	Hardware     *HardwareOutput     `json:"hardware,omitempty" yaml:"hardware,omitempty"`
+	BootID           string              `json:"bootID,omitempty" yaml:"bootID,omitempty"`
+	SSHServerAddress string              `json:"sshServerAddress,omitempty" yaml:"sshServerAddress,omitempty"`
+	Hostname         string              `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	OS               string              `json:"os,omitempty" yaml:"os,omitempty"`
+	BoardProduct     string              `json:"boardProduct,omitempty" yaml:"boardProduct,omitempty"`
+	MFTVersion       string              `json:"mftVersion,omitempty" yaml:"mftVersion,omitempty"`
+	Interfaces       []Interface         `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
+	Routes           []Route             `json:"routes,omitempty" yaml:"routes,omitempty"`
+	DNS              []string            `json:"dns,omitempty" yaml:"dns,omitempty"`
+	Network          *NetworkObservation `json:"network,omitempty" yaml:"network,omitempty"`
+	Hardware         *HardwareOutput     `json:"hardware,omitempty" yaml:"hardware,omitempty"`
 }
 
 type AdapterOutput struct {

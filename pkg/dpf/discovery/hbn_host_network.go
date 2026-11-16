@@ -18,7 +18,7 @@ import (
 // backend without allocating an address, generating files or configuring links.
 type HostNetworkObserver func(context.Context, config.Target, sshprobe.HostNetworkIdentity, time.Duration) (sshprobe.HostNetworkObservation, error)
 
-func collectHostHBNNetworking(ctx context.Context, request config.Request, inv *inventory.Inventory, observer HostNetworkObserver) map[string]inventory.Check {
+func collectHostHBNNetworking(ctx context.Context, request config.Request, inv *inventory.Inventory, observer HostNetworkObserver, deferEligibility bool) map[string]inventory.Check {
 	if ctx == nil || request.HBN == nil || inv == nil || observer == nil {
 		return nil
 	}
@@ -44,6 +44,9 @@ func collectHostHBNNetworking(ctx context.Context, request config.Request, inv *
 			status := "BLOCKED"
 			if state == "passed" {
 				status = "PASS"
+			}
+			if deferEligibility && state != "passed" {
+				status = "UNAVAILABLE"
 			}
 			ui.FromContext(ctx).Info("[%s] Host %q: %s", status, hostDisplayName(*item.host), message)
 		}

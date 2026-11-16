@@ -48,7 +48,7 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 		inv.HBN.Switches = append(inv.HBN.Switches, inventory.FabricSwitch{Name: sw.Name, Endpoint: sw.Endpoint, Platform: sw.Platform, Ports: slices.Clone(sw.Ports), Snapshot: observation})
 	}
 	collectHostHBNCabling(ctx, r, inv, deps.HostLLDP)
-	hostNetworking := collectHostHBNNetworking(ctx, r, inv, deps.HostNetworking)
+	hostNetworking := collectHostHBNNetworking(ctx, r, inv, deps.HostNetworking, deps.DeferHBNReadiness)
 	readiness := evaluateHBN(inv, report.Discovery.Checks, hostNetworking)
 	managementChecks, managementFacts := managementHBNChecks(provisioning, inv, r.DPFNamespace)
 	inv.HBN.Management = managementFacts
@@ -56,7 +56,7 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 	additionalChecks = append(additionalChecks, hbnSoftwareChecks(r.Input.Site.Provisioning, inv)...)
 	additionalChecks = append(additionalChecks, hbnProvisioningAPIChecks(inv)...)
 	additionalChecks = append(additionalChecks, hbnResetSupportChecks(inv)...)
-	additionalChecks = append(additionalChecks, hbnArtifactSourceChecks(ctx, r.Input.Site.Provisioning, inv, deps.Artifacts)...)
+	additionalChecks = append(additionalChecks, hbnArtifactSourceChecks(ctx, r.Input.Site.Provisioning, inv, deps.Artifacts, deps.ArtifactSourceMode)...)
 	additionalChecks = append(additionalChecks, hbnGenerationInputChecks(r.Input.Site.Provisioning)...)
 	additionalChecks = append(additionalChecks, hbnHostAddressPlanCheck(r.HBN, r.HBNGeneration))
 	additionalChecks = append(additionalChecks, hbnRuntimeBudgetCheck(inv))
@@ -78,7 +78,7 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 	}
 	report.Readiness = &readiness
 	if deps.DeferHBNReadiness {
-		ui.FromContext(ctx).Info("[RUNNING] HBN observations collected; owned-operation resume eligibility will be assessed from current operation proofs.")
+		ui.FromContext(ctx).Info("[RUNNING] HBN observations collected; owned deployment-phase eligibility will be assessed from current operation proofs.")
 	} else {
 		logHBNReadiness(ctx, readiness.Checks)
 	}

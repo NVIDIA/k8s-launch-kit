@@ -38,7 +38,7 @@ func TestHostBackendDiscoveryUsesDesiredProfileAndExactSSHAuthority(t *testing.T
 			}
 			return sshprobe.HostNetworkObservation{Identity: identity, MTU: 1500, MinMTU: 68, MaxMTU: maximum, MinimumWorkloadMTU: 1280, BackendVersion: "1.1.2-8ubuntu1", ManagementInterface: "mgmt0"}, nil
 		}
-		checks := collectHostHBNNetworking(context.Background(), request, &inv, observer)
+		checks := collectHostHBNNetworking(context.Background(), request, &inv, observer, false)
 		check := checks["SERIAL-1"]
 		if calls != 1 || check.State != "passed" || check.ReasonCode != "HOST_NETWORK_BACKEND_SUPPORTED" || !strings.Contains(check.Message, fmt.Sprintf("desired MTU %d", mtu)) || !strings.Contains(check.Message, "current 1500") ||
 			!strings.Contains(check.Message, "Exact host address and route checks follow the real DPF allocation") {
@@ -66,7 +66,7 @@ func TestHBNProgressQuotesObservedHostAndBackendValues(t *testing.T) {
 			BackendVersion: backendVersion, ManagementInterface: "mgmt0"}, nil
 	}
 
-	checks := collectHostHBNNetworking(ctx, request, &inv, observer)
+	checks := collectHostHBNNetworking(ctx, request, &inv, observer, false)
 	output := progress.String()
 	for _, raw := range []string{"\x1b", "\u202e"} {
 		if strings.Contains(output, raw) {
@@ -138,7 +138,7 @@ func TestHostBackendDiscoveryRejectsMultipleSelectedDPUsPerHostBeforeReads(t *te
 	checks := collectHostHBNNetworking(context.Background(), request, &inv, func(context.Context, config.Target, sshprobe.HostNetworkIdentity, time.Duration) (sshprobe.HostNetworkObservation, error) {
 		t.Fatal("unsupported host routing cohort must be rejected before SSH reads")
 		return sshprobe.HostNetworkObservation{}, nil
-	})
+	}, false)
 	for _, serial := range []string{"SERIAL-1", "SERIAL-2"} {
 		if got := checks[serial]; got.State != "failed" || got.ReasonCode != "HOST_NETWORK_MULTIPLE_DPUS_UNSUPPORTED" {
 			t.Fatalf("host cohort %s was not rejected before effects: %+v", serial, got)
@@ -193,7 +193,7 @@ func TestHostBackendDiscoveryRetainsRequiredUnknownAndMismatchReasons(t *testing
 				o := sshprobe.HostNetworkObservation{Identity: identity, MTU: 1500, MinMTU: 68, MaxMTU: 9216, MinimumWorkloadMTU: 1280, BackendVersion: "1.1.2", ManagementInterface: "mgmt0"}
 				err := test.change(&o)
 				return o, err
-			})
+			}, false)
 			check := checks["SERIAL-1"]
 			if check.State != test.state || check.ReasonCode != test.reason || check.Message == "" {
 				t.Fatalf("required backend issue lost its reason: %+v", check)
@@ -232,7 +232,7 @@ func TestHostBackendDiscoverySeparatesKernelAndBackendMTUMinimum(t *testing.T) {
 			checks := collectHostHBNNetworking(context.Background(), request, &inv, func(_ context.Context, _ config.Target, identity sshprobe.HostNetworkIdentity, _ time.Duration) (sshprobe.HostNetworkObservation, error) {
 				return sshprobe.HostNetworkObservation{Identity: identity, MTU: current, MinMTU: 68, MaxMTU: 9216,
 					MinimumWorkloadMTU: test.backendMinimum, BackendVersion: "1.1.2", ManagementInterface: "mgmt0"}, nil
-			})
+			}, false)
 			check := checks["SERIAL-1"]
 			if check.State != test.want || request.HBN.WorkloadMTU != test.desired {
 				t.Fatalf("backend limit must block unsupported intent without replacing it: %+v desired=%d", check, request.HBN.WorkloadMTU)
@@ -262,7 +262,7 @@ func TestHostBackendDiscoveryNeverGuessesMissingAccessOrPermanentMAC(t *testing.
 			case "permanentMAC":
 				inv.Hosts[0].Runtime.Network.Links[0].PermanentMAC = ""
 			}
-			checks := collectHostHBNNetworking(context.Background(), request, &inv, observer)
+			checks := collectHostHBNNetworking(context.Background(), request, &inv, observer, false)
 			got := hostHBNCheck(t, hostHBNChecks(&inv, checks), "host-network-backend", "SERIAL-1 @ worker-01")
 			if calls != 0 || got.State != "unknown" || got.ReasonCode == "" || got.Message == "" {
 				t.Fatalf("missing prerequisite became a readiness pass: %+v", got)
@@ -280,6 +280,7 @@ func hostBackendDiscoveryFixture(t *testing.T, mtu int) (inventory.Inventory, co
 	inv.Hosts[0].Runtime.Network.Links = []inventory.NetworkLink{
 		{Name: "hostpf0", PCIAddress: "0000:21:00.0", PhysicalPortName: "p0", MAC: "02:00:00:00:00:01", PermanentMAC: "20:4d:52:3e:9a:b8"},
 		{Name: "hostpf1", PCIAddress: "0000:21:00.1", PhysicalPortName: "p1", MAC: "02:00:00:00:00:02", PermanentMAC: "20:4d:52:3e:9a:b9"},
+		{Name: "mgmt0", PCIAddress: "0000:35:00.0", PhysicalPFRoots: []string{"0000:35:00.0"}},
 	}
 	profile, err := hbn.Resolve(hbn.Options{WorkloadMTU: &mtu})
 	if err != nil {

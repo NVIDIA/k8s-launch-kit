@@ -80,7 +80,7 @@ Confirm these site decisions before generating the bundle:
 | Software | The OS ISO and each selected PSID firmware bundle match the intended DPU cohort; provide credential-free HTTPS URLs and checksums. |
 | Fabric | Switch uplinks already have the intended port bindings, fabric VRF, BGP neighbors/policy, ASN and MTU. Deployment observes this configuration; it does not apply it. |
 | Host workload network | The selected PF can be configured without taking over the host management interface, another port or its default route. |
-| Host recovery | The selected host can return to its existing local operating system after a requested system reboot. |
+| Host recovery | The selected host can return to its existing local operating system after a requested system reboot. Its SSH and default-route paths have measurable PCI ancestry on a separate card from the selected DPU. |
 
 The native HBN deployment path requires
 `provisioning.bootstrap.bmcFactoryResetPolicy: Never`, preserving existing BMC
@@ -203,7 +203,12 @@ and recognizes only resources, addresses and routes proven to belong to that
 operation. Standalone discovery checks readiness for a new deployment; do not
 delete an operation's enrollment, tenant, host addresses or routes just to make
 those checks pass. Changed or unverifiable ownership stops recovery and
-preserves the existing state. Resume repeats the complete traffic checks.
+preserves the existing state. During an operation-owned pending reset, a selected
+DPU's host interfaces can temporarily disappear. Resume proceeds only when it
+can still verify that device, its host and separate management connectivity.
+After activation it collects current host and network facts again; workload
+configuration and traffic wait for those checks to pass. Do not reset a host
+manually to make discovery pass. Resume repeats the complete traffic checks.
 
 An existing reset claim permits observation only. Recovery needs the saved
 host baseline, a changed boot on that same host/PF, and a new current Arm boot

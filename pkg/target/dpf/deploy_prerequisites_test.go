@@ -16,8 +16,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
@@ -33,6 +35,17 @@ func (c prerequisitePhysicalCollector) Collect(_ context.Context, target config.
 	var device inventory.Device
 	err := json.Unmarshal(data, &device)
 	return device, map[string]inventory.Evidence{}, err
+}
+
+type prerequisiteArtifactVerifier struct{ calls *int }
+
+func (v prerequisiteArtifactVerifier) Verify(_ context.Context, inputs []artifactcheck.Artifact) []artifactcheck.Result {
+	*v.calls++
+	results := make([]artifactcheck.Result, len(inputs))
+	for i, input := range inputs {
+		results[i] = artifactcheck.Result{Subject: input.Subject, State: "passed", ReasonCode: "ARTIFACT_SOURCE_VERIFIED"}
+	}
+	return results
 }
 
 var _ = Describe("native deployment prerequisite provider", func() {
@@ -78,7 +91,8 @@ var _ = Describe("native deployment prerequisite provider", func() {
 			"dpus":  {ID: "dpu-a", RecordKey: "dpu-a", InputRef: "/discovery/dpus/0", BMCEndpoint: "https://192.0.2.30", SerialNumber: "SERIAL-A", PSID: "MT_0000001774", Model: "B4240", ReaderAdapter: "bluefield-card-v1", ObservationState: "observed", Observations: map[string]inventory.Observation{"bmc-administrator": {State: "observed", ReasonCode: "BMC_ADMIN_VERIFIED"}}},
 		}}
 		request := config.Request{Input: input, Kubeconfig: kubeconfig, Context: "selected", Mode: "inventory", Timeout: time.Minute, RequestTimeout: time.Second, MaxConcurrentBMCs: 2, DPFNamespace: intent.Namespace, Software: &intent.Release, HBN: intent.Networking, HBNGeneration: intent.Generation, Targets: []config.Target{{Role: "hosts", InputRef: "/discovery/hosts/0", Endpoint: "ssh://192.0.2.40:22", SSH: &config.SSHAccess{}}, {Role: "dpus", InputRef: "/discovery/dpus/0", Endpoint: "https://192.0.2.30"}}}
-		deps := discovery.Dependencies{SSH: physical, BMC: physical, DeferHBNReadiness: true}
+		originReads := 0
+		deps := discovery.Dependencies{SSH: physical, BMC: physical, DeferHBNReadiness: true, Artifacts: prerequisiteArtifactVerifier{calls: &originReads}}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		DeferCleanup(cancel)
 		before := discovery.Collect(ctx, request, "before", deps)
@@ -102,29 +116,48 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		plan, err := generation.LoadPlan(retained)
 		Expect(err).NotTo(HaveOccurred())
 		collectors := func(*artifacts.Store, *generation.Plan) discovery.Dependencies { return deps }
-		for _, resume := range []bool{false, true} {
-			verify := deploymentPrerequisitesWithCollectors(retained, filepath.Join(root, fmt.Sprint(resume)), resume, collectors)
-			observed, err := verify(ctx, request, plan)
-			if resume {
-				Expect(err).NotTo(HaveOccurred())
-			} else {
-				Expect(err).To(MatchError(ContainSubstring("prerequisites are blocked")))
-			}
-			Expect(observed.Inventory).NotTo(BeNil())
-			Expect(observed.Checks).NotTo(BeEmpty())
-			found := false
-			for _, check := range observed.Checks {
-				if check.ReasonCode == "DPU_ALREADY_ENROLLED" {
-					found = true
-					Expect(check.State).To(Equal("failed"))
-					Expect(check.Subject).To(Equal("selected DPUs"))
-					Expect(check.Vantage).To(Equal("executor"))
+		for _, phase := range []deployment.PrerequisitePhase{deployment.BeforeActivation, deployment.AfterActivation} {
+			for _, resume := range []bool{false, true} {
+				verify := deploymentPrerequisitesWithCollectors(retained, filepath.Join(root, fmt.Sprint(resume)), resume, collectors)
+				previousReads := originReads
+				observed, err := verify(ctx, request, plan, phase)
+				if phase == deployment.BeforeActivation {
+					Expect(originReads).To(Equal(previousReads+1), "fresh and resumed Before must read source bytes")
+				} else {
+					Expect(originReads).To(Equal(previousReads), "After must not read large origin artifacts again")
 				}
-			}
-			Expect(found).To(BeTrue(), "native provider must preserve the actual initial-state conflict instead of forcing ready")
-			if resume {
+				if resume || phase == deployment.AfterActivation {
+					Expect(err).NotTo(HaveOccurred())
+				} else {
+					Expect(err).To(MatchError(ContainSubstring("prerequisites are blocked")))
+				}
+				Expect(observed.Inventory).NotTo(BeNil())
+				Expect(observed.Checks).NotTo(BeEmpty())
+				found := false
 				for _, check := range observed.Checks {
-					Expect(strings.HasPrefix(check.ReasonCode, "OWNED_RESUME_")).To(BeFalse(), "only bound Run operation assessment may produce ownership proof")
+					if check.ReasonCode == "DPU_ALREADY_ENROLLED" {
+						found = true
+						Expect(check.State).To(Equal("failed"))
+						Expect(check.Subject).To(Equal("selected DPUs"))
+						Expect(check.Vantage).To(Equal("executor"))
+					}
+				}
+				Expect(found).To(BeTrue(), "native provider must preserve the actual initial-state conflict instead of forcing ready")
+				if phase == deployment.AfterActivation {
+					notRead := 0
+					for _, check := range observed.Checks {
+						if check.ID == "dpf.hbn.artifact-source" && check.ReasonCode == "ARTIFACT_SOURCE_NOT_RECHECKED" {
+							notRead++
+							Expect(check.State).To(Equal("unknown"))
+							Expect(check.RequiredPhase).To(Equal("generate"))
+						}
+					}
+					Expect(notRead).To(BeNumerically(">", 0), "After must record origin bytes were not read without claiming a pass")
+				}
+				if resume {
+					for _, check := range observed.Checks {
+						Expect(strings.HasPrefix(check.ReasonCode, "OWNED_RESUME_")).To(BeFalse(), "only bound Run operation assessment may produce ownership proof")
+					}
 				}
 			}
 		}

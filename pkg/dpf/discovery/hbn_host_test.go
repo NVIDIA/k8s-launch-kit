@@ -113,7 +113,11 @@ func TestHostHBNChecksFollowBridgeAndBondAncestors(t *testing.T) {
 	t.Run("bridge ancestor address", func(t *testing.T) {
 		inv := hostHBNTestInventory()
 		setHostMaster(inv.Hosts[0].Runtime, "hostpf0", "br-mgmt", "bridge", 20)
-		inv.Hosts[0].Runtime.Interfaces[2].Addresses = []string{"2001:db8:1::4/64"}
+		for i := range inv.Hosts[0].Runtime.Interfaces {
+			if inv.Hosts[0].Runtime.Interfaces[i].Name == "br-mgmt" {
+				inv.Hosts[0].Runtime.Interfaces[i].Addresses = []string{"2001:db8:1::4/64"}
+			}
+		}
 		checks := hostHBNChecks(&inv, nil)
 		if got := hostHBNCheck(t, checks, "host-management-separation", "SERIAL-1 @ worker-01"); got.State != "failed" || got.ReasonCode != "HOST_ADDRESS_ON_SELECTED_PATH" {
 			t.Fatalf("bridge ancestor address was not protected: %#v", got)
@@ -162,15 +166,17 @@ func hostHBNTestInventory() inventory.Inventory {
 				{Address: "0000:21:00.1", Driver: "mlx5_core", IOMMUGroup: &group1, Netdevs: []string{"hostpf1"}},
 			},
 		}},
-		Runtime: &inventory.RuntimeObservation{
+		Runtime: &inventory.RuntimeObservation{SSHServerAddress: "192.0.2.20",
 			Hostname: "worker-01",
 			Interfaces: []inventory.Interface{
 				{Name: "hostpf0", Index: 10, MTU: 9000, Addresses: []string{}},
 				{Name: "hostpf1", Index: 11, MTU: 9000, Addresses: []string{}},
+				{Name: "mgmt0", Index: 2, Addresses: []string{"192.0.2.20/24"}},
 			},
 			Routes:  []inventory.Route{},
-			Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "hostpf0"}, {Name: "hostpf1"}}},
+			Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "hostpf0"}, {Name: "hostpf1"}, {Name: "mgmt0", PCIAddress: "0000:35:00.0", PhysicalPFRoots: []string{"0000:35:00.0"}}}},
 			Observations: map[string]inventory.Observation{
+				"host-management-roots":            {State: "observed"},
 				"interfaces":                       {State: "observed"},
 				"network-links":                    {State: "observed"},
 				"network-link-details":             {State: "observed"},

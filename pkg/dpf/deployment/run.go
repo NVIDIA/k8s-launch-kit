@@ -21,6 +21,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
@@ -54,9 +55,18 @@ type PrerequisiteVerification struct {
 	Checks    []inventory.Check
 }
 
+// PrerequisitePhase identifies the next execution boundary. Only the owned
+// before-activation assessment can admit measured pending-reset transitions.
+type PrerequisitePhase string
+
+const (
+	BeforeActivation PrerequisitePhase = "before-activation"
+	AfterActivation  PrerequisitePhase = "after-activation"
+)
+
 // PrerequisiteVerifier must freshly bind the current site to the retained plan
 // and report every deploy-phase prerequisite. It must not mutate its inputs.
-type PrerequisiteVerifier func(context.Context, config.Request, *generation.Plan) (PrerequisiteVerification, error)
+type PrerequisiteVerifier func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error)
 
 // ChartSourceVerifier compares the currently selected chart source with the
 // exact archive retained in the bundle. It is repeated at stage boundaries.
@@ -332,9 +342,9 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 	if err != nil {
 		return result, fmt.Errorf("copy prerequisite request")
 	}
-	verification, err := request.VerifyPrerequisites(ctx, observerRequest, execution.plan)
+	verification, err := request.VerifyPrerequisites(ctx, observerRequest, execution.plan, BeforeActivation)
 	if err == nil && request.Resume != nil {
-		verification, err = assessOwnedResumePrerequisites(ctx, client, prepared, controlPlane, workload, verification, access, journal, requestTimeout)
+		verification, err = assessOwnedResumePrerequisites(ctx, client, prepared, controlPlane, workload, verification, access, journal, requestTimeout, BeforeActivation)
 	}
 	result.Checks = appendRunChecks(result.Checks, verification.Checks)
 	if len(verification.Checks) > 0 {
@@ -427,6 +437,15 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		return result, err
 	}
 	result.LastCompletedStage = generation.StageDeployment
+	progress.Update("Rechecking current host and network prerequisites after activation")
+	verification, activation, err = verifyActivatedHostPrerequisites(ctx, client, prepared, controlPlane, workload, activation, access, journal, requestTimeout, request.VerifyPrerequisites)
+	result.Checks = appendRunChecks(result.Checks, verification.Checks)
+	if journalErr := journalPhasePrerequisiteChecks(journal, verification.Checks, AfterActivation); journalErr != nil {
+		return result, journalErr
+	}
+	if err != nil {
+		return result, err
+	}
 	progress.Update("Configuring selected host workload interfaces from fresh DPF allocations")
 	result.HostNetworking, err = runHostWorkloadNetworkStage(ctx, client, prepared, controlPlane, workload, activation, journal, requestTimeout,
 		func(observeCtx context.Context) (hostWorkloadLeaseSnapshot, error) {
@@ -687,7 +706,7 @@ func validatePrerequisiteVerification(plan *generation.Plan, verification Prereq
 	if len(verification.Checks) == 0 {
 		return fmt.Errorf("fresh deploy prerequisites were not reported")
 	}
-	seen := make(map[string]struct{}, len(verification.Checks))
+	seen := make(map[string]inventory.Check, len(verification.Checks))
 	deployChecks, failed := 0, false
 	for _, check := range verification.Checks {
 		if check.ID == "" || check.Subject == "" || check.Vantage == "" || check.RequiredPhase == "" {
@@ -703,7 +722,7 @@ func validatePrerequisiteVerification(plan *generation.Plan, verification Prereq
 		if _, ok := seen[key]; ok {
 			return fmt.Errorf("fresh deploy prerequisites contain duplicate check identities")
 		}
-		seen[key] = struct{}{}
+		seen[key] = check
 		if check.State != "passed" && (check.ReasonCode == "" || check.Message == "") {
 			return fmt.Errorf("non-passing prerequisite lacks an actionable reason")
 		}
@@ -718,10 +737,25 @@ func validatePrerequisiteVerification(plan *generation.Plan, verification Prereq
 	if failed {
 		return fmt.Errorf("fresh deploy prerequisites are not ready")
 	}
+	for _, device := range intent.Devices {
+		physical := discovery.HostManagementPhysicalCheck(verification.Inventory, device.Serial)
+		key := physical.ID + "\x00" + physical.Subject + "\x00" + physical.Vantage
+		if reported, present := seen[key]; !present || reported.RequiredPhase != "deploy" || reported.State != "passed" || physical.State != "passed" {
+			return fmt.Errorf("fresh selected host management physical-root proof is missing or unverified")
+		}
+	}
 	return nil
 }
 
 func journalPrerequisiteChecks(journal *executionJournal, checks []inventory.Check) error {
+	return journalPhasePrerequisiteChecks(journal, checks, BeforeActivation)
+}
+
+func journalPhasePrerequisiteChecks(journal *executionJournal, checks []inventory.Check, phase PrerequisitePhase) error {
+	stage := "fresh-prerequisites"
+	if phase == AfterActivation {
+		stage = "after-activation-prerequisites"
+	}
 	for _, check := range checks {
 		state := "confirmed"
 		if check.State == "unknown" {
@@ -730,7 +764,7 @@ func journalPrerequisiteChecks(journal *executionJournal, checks []inventory.Che
 			state = "failed"
 		}
 		if err := journal.record(executionEvent{
-			Stage: "fresh-prerequisites", Operation: "check", Subject: check.ID + "/" + check.Subject,
+			Stage: stage, Operation: "check", Subject: check.ID + "/" + check.Subject,
 			State: state, ReasonCode: check.ReasonCode, Message: check.Message,
 		}); err != nil {
 			return err

@@ -29,24 +29,32 @@ type ownedResumePrerequisites struct {
 	parentUID types.UID
 }
 
-func assessOwnedResumePrerequisites(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, verification PrerequisiteVerification, access config.Request, journal *executionJournal, timeout time.Duration) (PrerequisiteVerification, error) {
+func assessOwnedResumePrerequisites(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, verification PrerequisiteVerification, access config.Request, journal *executionJournal, timeout time.Duration, phase PrerequisitePhase) (PrerequisiteVerification, error) {
+	if phase != BeforeActivation && phase != AfterActivation {
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_PREREQUISITE_PHASE_INVALID", "A supported deployment prerequisite phase is required.", nil)
+	}
 	if prepared == nil || prepared.operation == nil || client == nil {
-		return resumePrerequisiteFailure(ctx, verification, "OWNED_RESUME_PROOF_MISSING", "A bound recorded operation is required before resume prerequisites can be assessed.", nil)
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_RESUME_PROOF_MISSING", "A bound recorded operation is required before resume prerequisites can be assessed.", nil)
 	}
 	if err := validateSelectedInventory(prepared.execution.plan, verification.Inventory); err != nil {
-		return resumePrerequisiteFailure(ctx, verification, "OWNED_RESUME_PHYSICAL_SCOPE_UNVERIFIED", "The fresh selected physical inventory does not prove the recorded cohort; preserve the operation and inspect its current identity.", err)
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_RESUME_PHYSICAL_SCOPE_UNVERIFIED", "The fresh selected physical inventory does not prove the recorded cohort; preserve the operation and inspect its current identity.", err)
 	}
 	proof, err := verifyOwnedResumeResources(ctx, client, prepared, control, workload, verification.Inventory, access, journal)
 	if err != nil {
-		return resumePrerequisiteFailure(ctx, verification, "OWNED_RESUME_RESOURCES_UNVERIFIED", "Current management, tenant, credential and selected resource ownership could not be proven against the operation; preserve its resources and inspect the report.", err)
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_RESUME_RESOURCES_UNVERIFIED", "Current management, tenant, credential and selected resource ownership could not be proven against the operation; preserve its resources and inspect the report.", err)
 	}
 	// Preserve the raw discovery checks in its report. The execution assessment
 	// records the lifecycle-specific positive proof instead of claiming vacancy.
 	verification.Checks = proof.assessInitialChecks(verification.Checks, control.tenant.Client.expected.Name)
+	pendingChecks, pendingErr := assessPendingResetHosts(ctx, client, prepared, proof, access.Input.Site.Inventory, verification.Inventory, verification.Checks, phase)
+	if pendingErr != nil {
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_PENDING_RESET_HOST_UNVERIFIED", "Pending-reset host identity, measured interface absence or separate management paths could not be proven; preserve the operation and do not reset manually.", pendingErr)
+	}
+	verification.Checks = pendingChecks
 
 	hostChecks, err := inspectOwnedResumeHosts(ctx, prepared, proof, verification.Inventory, timeout, sshprobe.InspectHostWorkloadNetwork)
 	if err != nil {
-		return resumePrerequisiteFailure(ctx, verification, "OWNED_RESUME_HOST_TRANSACTION_UNVERIFIED", "An original host transaction failed inspect-only runtime/file proof; do not replay configuration or remove its journal.", err)
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_RESUME_HOST_TRANSACTION_UNVERIFIED", "An original host transaction failed inspect-only runtime/file proof; do not replay configuration or remove its journal.", err)
 	}
 	for _, check := range hostChecks {
 		for i, old := range verification.Checks {
@@ -58,7 +66,7 @@ func assessOwnedResumePrerequisites(ctx context.Context, client *APIClient, prep
 
 	allocations, err := observeOwnedResumeAllocations(ctx, client, prepared, control, workload, proof, timeout)
 	if err != nil {
-		return resumePrerequisiteFailure(ctx, verification, "OWNED_RESUME_ALLOCATIONS_UNVERIFIED", "Current selected allocation identities or their original host request bindings could not be proven; preserve owned host and network state.", err)
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_RESUME_ALLOCATIONS_UNVERIFIED", "Current selected allocation identities or their original host request bindings could not be proven; preserve owned host and network state.", err)
 	}
 	if verification.Inventory != nil && verification.Inventory.HBN != nil {
 		for _, sw := range verification.Inventory.HBN.Switches {
@@ -75,18 +83,21 @@ func assessOwnedResumePrerequisites(ctx context.Context, client *APIClient, prep
 	// Slow physical/host reads must not hide a replaced checkpoint or changed
 	// tenant, workload, enrollment or shared credential before another effect.
 	if _, err = verifyOwnedResumeResources(ctx, client, prepared, control, workload, verification.Inventory, access, journal); err != nil {
-		return resumePrerequisiteFailure(ctx, verification, "OWNED_RESUME_RESOURCES_CHANGED", "Recorded resource ownership changed or became unobservable during prerequisite collection; stop before another effect.", err)
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_RESUME_RESOURCES_CHANGED", "Recorded resource ownership changed or became unobservable during prerequisite collection; stop before another effect.", err)
 	}
 	current, err := client.getOperation(ctx, prepared.operation.object.Namespace, prepared.operation.object.Name)
 	if err != nil || !operationObjectMatches(current, prepared.operation.object.Namespace, prepared.operation.object.Name) || current.UID != prepared.operation.object.UID || current.ResourceVersion != prepared.operation.object.ResourceVersion || !reflect.DeepEqual(current.Data, prepared.operation.object.Data) {
-		return resumePrerequisiteFailure(ctx, verification, "OWNED_RESUME_CHECKPOINT_CHANGED", "The recorded operation checkpoint changed or became unobservable; reread current evidence before another attempt.", err)
+		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_RESUME_CHECKPOINT_CHANGED", "The recorded operation checkpoint changed or became unobservable; reread current evidence before another attempt.", err)
 	}
 	for _, check := range verification.Checks {
 		status := "PASS"
 		if check.State != "passed" {
 			status = "BLOCKED"
+			if check.RequiredPhase == "generate" {
+				status = "UNAVAILABLE"
+			}
 		}
-		ui.FromContext(ctx).Info("[%s] HBN resume %q (%s): %s", status, check.Subject, check.ReasonCode, check.Message)
+		ui.FromContext(ctx).Info("[%s] HBN %s %q (%s): %s", status, phase, check.Subject, check.ReasonCode, check.Message)
 	}
 	return verification, nil
 }
@@ -184,9 +195,9 @@ func inspectOwnedResumeHosts(ctx context.Context, prepared *preparedControlPlane
 	return checks, nil
 }
 
-func resumePrerequisiteFailure(ctx context.Context, verification PrerequisiteVerification, code, message string, cause error) (PrerequisiteVerification, error) {
+func ownedPrerequisiteFailure(ctx context.Context, verification PrerequisiteVerification, phase PrerequisitePhase, code, message string, cause error) (PrerequisiteVerification, error) {
 	check := inventory.Check{ID: "dpf.hbn.deployment.owned-resume", Subject: "recorded deployment operation", Vantage: "cli", RequiredPhase: "deploy", State: "unknown", ReasonCode: code, Message: message}
 	verification.Checks = append(slices.Clone(verification.Checks), check)
-	ui.FromContext(ctx).Info("[BLOCKED] HBN resume (%s): %s", code, message)
+	ui.FromContext(ctx).Info("[BLOCKED] HBN %s (%s): %s", phase, code, message)
 	return verification, reconcileError(code, message, cause)
 }

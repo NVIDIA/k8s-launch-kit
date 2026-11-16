@@ -137,7 +137,7 @@ func TestResumePresentationDefersOnlyEligibilityMessages(t *testing.T) {
 	if report.Readiness == nil || report.Readiness.State != "blocked" || len(report.Readiness.Checks) == 0 {
 		t.Fatal("presentation option changed eligibility")
 	}
-	if strings.Contains(progress.String(), "[BLOCKED] HBN-BGP") || !strings.Contains(progress.String(), "resume eligibility will be assessed") {
+	if strings.Contains(progress.String(), "[BLOCKED] HBN-BGP") || !strings.Contains(progress.String(), "owned deployment-phase eligibility will be assessed") {
 		t.Fatalf("raw initial eligibility leaked into resume progress: %s", progress.String())
 	}
 }
