@@ -65,7 +65,8 @@ func runTenantStage(ctx context.Context, management tenantStageManagementClient,
 		return tenantStageReceipt{}, tenantStageFailure(journal, "TENANT_BOOTSTRAP_RECEIPT_INVALID", "The management bootstrap receipt no longer matches live retained resources; tenant effects are stopped.", err)
 	}
 	if err := management.VerifyIdentity(ctx); err != nil {
-		return tenantStageReceipt{}, tenantStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "The bound management identity changed before tenant-stage checks.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return tenantStageReceipt{}, tenantStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" Tenant-stage checks remain stopped.", diagnostic)
 	}
 
 	if err := checkTenantStorageForStage(ctx, management, journal, execution.kamajiNamespace); err != nil {
@@ -107,7 +108,8 @@ func runTenantStage(ctx context.Context, management tenantStageManagementClient,
 	}
 
 	if err := management.VerifyIdentity(ctx); err != nil {
-		return tenantStageReceipt{}, tenantStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "The bound management identity changed before the DPUCluster create-or-verify boundary.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return tenantStageReceipt{}, tenantStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No DPUCluster reconciliation may begin.", diagnostic)
 	}
 	resourceClient := ResourceClient(management)
 	if target != nil {
@@ -121,7 +123,8 @@ func runTenantStage(ctx context.Context, management tenantStageManagementClient,
 		return tenantStageReceipt{}, tenantStageFailure(journal, "TENANT_IDENTITY_CHANGED", "The selected DPUCluster changed after the collision observation.", nil)
 	}
 	if err := management.VerifyIdentity(ctx); err != nil {
-		return tenantStageReceipt{}, tenantStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "The bound management identity changed after DPUCluster reconciliation.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return tenantStageReceipt{}, tenantStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" Inspect the reconciled DPUCluster before retrying.", diagnostic)
 	}
 	tenant, err := management.connectTenant(ctx, plan, cluster.GetUID(), reconciler, journal, interval, requestTimeout)
 	if err != nil {

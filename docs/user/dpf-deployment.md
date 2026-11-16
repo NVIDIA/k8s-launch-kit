@@ -221,8 +221,10 @@ work still requires the complete retained management bootstrap to match. If
 restoration stops because of read/access failures, changed identity, intent or
 reported version, terminal failure, cancellation or deadline expiry, its specific
 preparation reason appears in result checks, the execution report and progress
-output. Identity checks distinguish cancellation, an unavailable verification and
-a confirmed difference from the saved identity. Preserve the operation
+output. The tenant-access and activation execution reports distinguish cancellation,
+unavailable identity verification and a confirmed difference from saved identity.
+Resume restoration can report an enclosing unverified prerequisite in its final
+checks. Preserve the operation
 and current state before deciding on another explicit resume. It continues
 supported activation work and inspects completed host transactions. After a
 late runtime-check failure, it repeats the complete current BGP, route and traffic

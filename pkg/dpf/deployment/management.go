@@ -190,8 +190,9 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 		return managementBootstrapReceipt{}, err
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
+		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageNamespaces, Operation: "identity-recheck"}, false,
-			"MANAGEMENT_IDENTITY_CHANGED", "Management identity changed after preflight; no namespace or Helm effect may begin.", err)
+			diagnostic.ReasonCode, diagnostic.Message+" No namespace or Helm effect may begin.", diagnostic)
 	}
 
 	namespaceUIDs := make(map[string]string, len(namespaces))
@@ -208,8 +209,9 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 			"MANAGEMENT_NAMESPACE_UNAVAILABLE", "Operator namespace identity was not established; no Helm effect may begin.", nil)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
+		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageOperator, Operation: "identity-recheck"}, true,
-			"MANAGEMENT_IDENTITY_CHANGED", "Management identity changed after namespace setup; inspect partial bootstrap state.", err)
+			diagnostic.ReasonCode, diagnostic.Message+" Inspect partial bootstrap state.", diagnostic)
 	}
 	if err := requireNamespaceUID(ctx, client, operatorNamespace, namespaceUID); err != nil {
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageNamespaces, Operation: "namespace-recheck", Subject: operatorNamespace}, true,
@@ -222,7 +224,8 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 		return managementBootstrapReceipt{}, err
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, false, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed before the Helm operation.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, false, diagnostic.ReasonCode, diagnostic.Message+" The Helm operation has not begun.", diagnostic)
 	}
 	if err := client.ensureOperatorPlan(ctx, operatorPlan); err != nil {
 		var conflict *existingOperatorReleaseConflict
@@ -233,7 +236,8 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 		return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, true, "DPF_OPERATOR_INSTALL_UNCERTAIN", "Helm installation may have changed release or chart resources; inspect the management cluster before retrying.", err)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, true, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed during Helm installation; inspect the release before retrying.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, true, diagnostic.ReasonCode, diagnostic.Message+" Inspect the release before retrying.", diagnostic)
 	}
 	if err := requireNamespaceUID(ctx, client, operatorNamespace, namespaceUID); err != nil {
 		return managementBootstrapReceipt{}, journalFailure(journal, helmEvent, true, "OPERATOR_NAMESPACE_CHANGED", "The operator namespace identity changed during installation.", err)
@@ -252,8 +256,9 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 		return managementBootstrapReceipt{}, err
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
+		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageOperatorConfig, Operation: "identity-recheck"}, true,
-			"MANAGEMENT_IDENTITY_CHANGED", "Management identity changed after operator readiness; no configuration may be created.", err)
+			diagnostic.ReasonCode, diagnostic.Message+" No configuration may be created.", diagnostic)
 	}
 
 	// Recheck the cluster-wide singleton immediately before its create-or-verify
@@ -283,8 +288,9 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 			"MANAGEMENT_NAMESPACE_CHANGED", "The operator namespace identity is no longer valid; inspect partial bootstrap state before retrying.", err)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
+		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageOperatorConfig, Operation: "identity-recheck"}, true,
-			"MANAGEMENT_IDENTITY_CHANGED", "Management identity changed after configuration readiness; discard the bootstrap receipt.", err)
+			diagnostic.ReasonCode, diagnostic.Message+" Discard the bootstrap receipt.", diagnostic)
 	}
 	for _, namespace := range namespaces {
 		if err := requireNamespaceUID(ctx, client, namespace.GetName(), namespaceUIDs[namespace.GetName()]); err != nil {
@@ -302,8 +308,9 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 			readiness.ReasonCode, readiness.Message, nil)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
+		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageOperator, Operation: "identity-recheck"}, false,
-			"MANAGEMENT_IDENTITY_CHANGED", "Management identity changed before the management bootstrap receipt.", err)
+			diagnostic.ReasonCode, diagnostic.Message+" No management bootstrap receipt was issued.", diagnostic)
 	}
 	return managementBootstrapReceipt{
 		BundleDigest: plan.Digest(), OperatorNamespace: operatorNamespace, NamespaceUIDs: namespaceUIDs,

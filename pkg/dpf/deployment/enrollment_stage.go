@@ -118,13 +118,27 @@ func inspectEnrollmentScope(ctx context.Context, client enrollmentManagementClie
 	return nil
 }
 
+// Only identity diagnostics from this scope reader receive a projected reason.
+// Other scope failures keep their existing handling and do not expose a cause.
+func enrollmentScopeDiagnostic(ctx context.Context, cause error, fallbackCode string) (string, string, error) {
+	var failure *ReconciliationError
+	if errors.As(cause, &failure) && failure != nil {
+		switch failure.ReasonCode {
+		case "MANAGEMENT_IDENTITY_CHANGED", "MANAGEMENT_IDENTITY_UNVERIFIED", "MANAGEMENT_IDENTITY_CANCELED":
+			diagnostic := managementIdentityDiagnostic(ctx, cause)
+			return diagnostic.ReasonCode, diagnostic.Message, diagnostic
+		}
+	}
+	return fallbackCode, cause.Error(), nil
+}
+
 func collectEnrollmentScope(ctx context.Context, client enrollmentManagementClient, execution *managementExecution, selected []enrollmentBMC, requireInstalled bool) (enrollmentScopeSnapshot, error) {
 	snapshot := enrollmentScopeSnapshot{}
 	if ctx == nil || client == nil || execution == nil || execution.plan == nil || len(selected) == 0 {
 		return snapshot, fmt.Errorf("selected enrollment scope is incomplete")
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return snapshot, fmt.Errorf("management identity changed before enrollment scope inspection")
+		return snapshot, managementIdentityDiagnostic(ctx, err)
 	}
 	resources := []enrollmentResource{
 		{group: "provisioning.dpu.nvidia.com", version: "v1alpha1", plural: "dpudiscoveries", kind: "DPUDiscovery", namespaced: true},
@@ -180,7 +194,7 @@ func collectEnrollmentScope(ctx context.Context, client enrollmentManagementClie
 		snapshot.resources = append(snapshot.resources, enrollmentScopeResource{resource: required, objects: objects})
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return snapshot, fmt.Errorf("management identity changed during enrollment scope inspection")
+		return snapshot, managementIdentityDiagnostic(ctx, err)
 	}
 	return snapshot, nil
 }
@@ -281,13 +295,15 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	if err := management.VerifyIdentity(ctx); err != nil {
-		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed before enrollment.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" Selected-device enrollment remains stopped.", diagnostic)
 	}
 	if err := management.verifyEnrollmentBMCs(ctx, selected, requestTimeout, journal); err != nil {
 		return enrollmentStageReceipt{}, err
 	}
 	if err := inspectEnrollmentScope(ctx, management, execution, selected, true); err != nil {
-		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, "ENROLLMENT_SCOPE_CHANGED", err.Error(), nil)
+		code, message, cause := enrollmentScopeDiagnostic(ctx, err, "ENROLLMENT_SCOPE_CHANGED")
+		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, code, message, cause)
 	}
 	discoveries, err := selectedEnrollmentDiscoveries(execution, selected)
 	if err != nil {
@@ -361,7 +377,8 @@ func verifyEnrollmentBoundary(ctx context.Context, management enrollmentManageme
 		return err
 	}
 	if err := inspectEnrollmentScope(ctx, management, execution, selected, true); err != nil {
-		return enrollmentStageFailure(journal, "ENROLLMENT_SCOPE_CHANGED", err.Error(), nil)
+		code, message, cause := enrollmentScopeDiagnostic(ctx, err, "ENROLLMENT_SCOPE_CHANGED")
+		return enrollmentStageFailure(journal, code, message, cause)
 	}
 	current, err := management.Get(ctx, secretIdentity(secret.Namespace))
 	if err != nil {
@@ -417,7 +434,8 @@ func waitSelectedEnrollment(ctx context.Context, client enrollmentManagementClie
 		// Recheck the complete scope, including every DPUNode association, on
 		// each poll. Reading only the deterministic node name misses duplicates.
 		if err := inspectEnrollmentScope(ctx, client, execution, selected, true); err != nil {
-			return observed, enrollmentStageFailure(journal, "ENROLLMENT_SCOPE_CHANGED", err.Error(), nil)
+			code, message, cause := enrollmentScopeDiagnostic(ctx, err, "ENROLLMENT_SCOPE_CHANGED")
+			return observed, enrollmentStageFailure(journal, code, message, cause)
 		}
 		current, allReady, err := observeSelectedEnrollment(ctx, client, execution, selected, observed, journal)
 		observed = current
@@ -532,7 +550,8 @@ func waitEnrollmentDiscovery(ctx context.Context, client enrollmentManagementCli
 		scopeErr := inspectEnrollmentScope(ctx, client, execution, selected, true)
 		partial = errors.Is(scopeErr, errEnrollmentNodeMissing)
 		if scopeErr != nil && !partial {
-			return journalFailure(journal, event, false, "ENROLLMENT_SCOPE_CHANGED", scopeErr.Error(), nil)
+			code, message, cause := enrollmentScopeDiagnostic(ctx, scopeErr, "ENROLLMENT_SCOPE_CHANGED")
+			return journalFailure(journal, event, false, code, message, cause)
 		}
 		if partial {
 			if readiness.Ready || readiness.ReasonCode == "DISCOVERY_NO_DPUS_FOUND" {
