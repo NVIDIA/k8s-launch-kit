@@ -302,7 +302,8 @@ func runWorkloadStage(ctx context.Context, client workloadStageClient, execution
 		return receipts, workloadStageFailure(journal, "WORKLOAD_TARGET_SCOPE_CHANGED", "The selected DPUCluster target scope changed during workload preparation.", err)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return receipts, workloadStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management cluster identity changed before the workload-preparation receipt.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return receipts, workloadStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No workload-preparation receipt was issued.", diagnostic)
 	}
 	if err := ctx.Err(); err != nil {
 		return receipts, workloadStageFailure(journal, "WORKLOAD_CANCELED", "Workload preparation was canceled before its receipt could be issued.", err)

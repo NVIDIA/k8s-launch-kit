@@ -90,7 +90,8 @@ func runSoftwareStage(ctx context.Context, client softwareStageManagementClient,
 		return softwareVerificationReceipt{}, softwareStageFailure(journal, "SOFTWARE_MANAGER_RELEASE_MISMATCH", "The active provisioning manager does not match the retained DPF release and namespace.", nil)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return softwareVerificationReceipt{}, softwareStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed before BlueFieldSoftware creation.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return softwareVerificationReceipt{}, softwareStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No BlueFieldSoftware creation may begin.", diagnostic)
 	}
 	current, err := executeNativeObject(ctx, client, execution.reconciler, desired, generation.StageWorkload, journal, true, interval)
 	if err != nil {
@@ -109,7 +110,8 @@ func runSoftwareStage(ctx context.Context, client softwareStageManagementClient,
 		return softwareVerificationReceipt{}, err
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return softwareVerificationReceipt{}, softwareStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed before the software receipt.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return softwareVerificationReceipt{}, softwareStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No software receipt was issued.", diagnostic)
 	}
 	for _, component := range verified.Components {
 		subject := component.Component

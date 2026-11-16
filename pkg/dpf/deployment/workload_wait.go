@@ -82,11 +82,13 @@ func waitWorkloadResource(ctx context.Context, client workloadStageClient, recon
 				}
 				if last.Ready {
 					if err := client.VerifyIdentity(ctx); err != nil {
-						return childUID, workloadStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management cluster identity changed while waiting for workload reconciliation.", err)
+						diagnostic := managementIdentityDiagnostic(ctx, err)
+						return childUID, workloadStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No workload-readiness receipt was issued.", diagnostic)
 					}
 					if spec.mode != workloadTemplateReadiness {
 						if err := tenant.VerifyIdentity(ctx); err != nil {
-							return childUID, workloadStageFailure(journal, "TENANT_IDENTITY_CHANGED", "Selected tenant API identity changed while verifying its controller child.", err)
+							diagnostic := tenantIdentityDiagnostic(ctx, err)
+							return childUID, workloadStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No workload-readiness receipt was issued.", diagnostic)
 						}
 					}
 					if err := ctx.Err(); err != nil {

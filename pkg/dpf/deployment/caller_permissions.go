@@ -81,12 +81,13 @@ func (c *APIClient) checkCallerPermissions(ctx context.Context, plan preflightPl
 	if err := ctx.Err(); err != nil {
 		result.Checks = append(result.Checks, blockedPreflight("management.identity-final", "PREFLIGHT_CANCELLED", "Management permission checks were canceled before final identity revalidation."))
 	} else if err := c.VerifyIdentity(ctx); err != nil {
+		diagnostic := managementIdentityDiagnostic(ctx, err)
 		for index := range result.Checks {
 			if result.Checks[index].State == "passed" {
-				result.Checks[index] = blockedPreflight(result.Checks[index].ID, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed during permission checks; discard this observation and retry.")
+				result.Checks[index] = blockedPreflight(result.Checks[index].ID, diagnostic.ReasonCode, diagnostic.Message+" Discard this observation and inspect current state before retrying.")
 			}
 		}
-		result.Checks = append(result.Checks, blockedPreflight("management.identity-final", "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed during permission checks; discard this observation and retry."))
+		result.Checks = append(result.Checks, blockedPreflight("management.identity-final", diagnostic.ReasonCode, diagnostic.Message+" Discard this observation and inspect current state before retrying."))
 	}
 	result.Ready = len(result.Checks) > 0
 	for _, check := range result.Checks {
