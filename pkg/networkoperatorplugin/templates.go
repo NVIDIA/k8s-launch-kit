@@ -1056,6 +1056,7 @@ func (p *NetworkOperatorPlugin) GenerateProfileDeploymentFiles(profile *profiles
 	}
 	cfg = resolved
 	config.ApplyNvIpamDefaults(cfg)
+	EnsureOCPOperatorInstallDefaults(cfg)
 	config.PopulateSpectrumXPlatforms(cfg.ClusterConfig)
 	config.PopulateSpectrumXInterfaceNames(cfg)
 	cfg.CurrentNetworkNamespace = cfg.NetworkNamespaces[0]

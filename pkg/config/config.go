@@ -512,6 +512,21 @@ type OCPOperatorInstallConfig struct {
 	Operators []OCPOperatorSubscription `yaml:"operators,omitempty"`
 }
 
+// UniqueNamespaces lists each operator namespace once; OpenShift allows only one
+// OperatorGroup per namespace.
+func (c *OCPOperatorInstallConfig) UniqueNamespaces() []string {
+	seen := make(map[string]bool, len(c.Operators))
+	var namespaces []string
+	for _, op := range c.Operators {
+		if op.Namespace == "" || seen[op.Namespace] {
+			continue
+		}
+		seen[op.Namespace] = true
+		namespaces = append(namespaces, op.Namespace)
+	}
+	return namespaces
+}
+
 // OCPOperatorSubscription is one operator's OLM install descriptor — enough to
 // render its Namespace, OwnNamespace OperatorGroup, and Subscription offline.
 type OCPOperatorSubscription struct {

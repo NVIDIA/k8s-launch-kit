@@ -35,6 +35,22 @@ func isHelmValuesTemplate(name string) bool {
 	return name == helmValuesTemplateName
 }
 
+// olmInstallTemplateNames are the opt-in OLM install templates, emitted only
+// when the ocpOperatorInstall block requests management.
+var olmInstallTemplateNames = map[string]bool{
+	"00-operator-namespaces.yaml": true,
+	"00-operatorgroups.yaml":      true,
+	"00-subscriptions.yaml":       true,
+}
+
+func isOLMInstallTemplate(name string) bool {
+	return olmInstallTemplateNames[name]
+}
+
+func manageOCPOperators(cfg *config.LaunchKitConfig) bool {
+	return cfg != nil && cfg.OCPOperatorInstall != nil && cfg.OCPOperatorInstall.Manage
+}
+
 // RenderBucket is the unit of work the rendering pipeline iterates over.
 // One bucket per (gpuType, railCount) tuple that survived `--groups` /
 // `--gpu-type` filtering.
@@ -419,6 +435,12 @@ func (p *NetworkOperatorPlugin) renderForScope(
 			out[helmValuesOutputName] = content
 		}
 		return out, nil
+	}
+
+	// Opt-in OLM install templates render only when management is on; otherwise
+	// emit nothing so default output is unchanged.
+	if isOLMInstallTemplate(filepath.Base(templatePath)) && !manageOCPOperators(cfg) {
+		return map[string]string{}, nil
 	}
 
 	body, err := os.ReadFile(templatePath)

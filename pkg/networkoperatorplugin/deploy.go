@@ -190,6 +190,19 @@ func ApplyBundle(ctx context.Context, kubeClient client.Client, artifacts *bundl
 	return applyBundleWithInstaller(ctx, kubeClient, artifacts, opts, installOrUpgradeValues)
 }
 
+// operatorReadinessError augments a failed operator readiness check, when
+// --manage-operators generated install artifacts, with how to apply them; deploy
+// does not install operators itself.
+func operatorReadinessError(err error, cfg *config.LaunchKitConfig) error {
+	if err == nil || !manageOCPOperators(cfg) {
+		return err
+	}
+	return pkgerrors.NewValidationError(
+		"required OpenShift operators are not installed and ready",
+		err,
+		"Apply the generated operator-install artifacts (00-operator-namespaces.yaml, 00-operatorgroups.yaml, 00-subscriptions.yaml) and wait for the operators to be Ready, then re-run deploy.")
+}
+
 func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, install helmValuesInstaller) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -211,7 +224,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		if _, present := artifacts.ValuesContent(); present {
 			return pkgerrors.NewValidationError("OpenShift deployment contains values.yaml; regenerate with --flavor ocp and remove stale Helm values", nil, "Remove stale values.yaml")
 		}
-		if err := CheckOCPOperators(ctx, kubeClient, opts.Config, true); err != nil {
+		if err := operatorReadinessError(CheckOCPOperators(ctx, kubeClient, opts.Config, true), opts.Config); err != nil {
 			return err
 		}
 		opts.SkipHelmChart = true

@@ -99,6 +99,12 @@ var crScopeByKind = map[string]CRScope{
 	"NodeFeatureDiscovery":       ScopeClusterWide,
 	"SecurityContextConstraints": ScopePerNetworkNamespace,
 
+	// Opt-in OpenShift OLM install artifacts (ScopeClusterWide: rendered once
+	// from the ocpOperatorInstall block, not per source group).
+	"Namespace":     ScopeClusterWide,
+	"OperatorGroup": ScopeClusterWide,
+	"Subscription":  ScopeClusterWide,
+
 	// Aggregate (extended selector — `In: [machine-labels]` under Mode B)
 	"IPPool":    ScopeAggregate,
 	"DaemonSet": ScopeAggregate,
