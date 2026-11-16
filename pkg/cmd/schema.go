@@ -223,6 +223,11 @@ var schemaCmd = &cobra.Command{
 					Default:     "false",
 					Description: "Skip Network Operator Helm values generation, chart installation, and Helm-specific validation while retaining Network Operator manifest handling.",
 				},
+				"--manage-operators": {
+					Type:        "bool",
+					Default:     "false",
+					Description: "Also generate the OpenShift OLM install artifacts (Namespace, OperatorGroup, Subscription) for the operators l8k configures. Opt-in; default off emits only operator configuration CRs.",
+				},
 				"--dry-run": {
 					Type:        "bool",
 					Default:     "false",

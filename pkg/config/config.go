@@ -255,6 +255,10 @@ type LaunchKitConfig struct {
 	Macvlan                  *MacvlanConfig                  `yaml:"macvlan,omitempty"`
 	SpectrumX                *SpectrumXConfig                `yaml:"spectrumX,omitempty"`
 	NicConfigurationOperator *NicConfigurationOperatorConfig `yaml:"nicConfigurationOperator,omitempty"`
+	// OCPOperatorInstall is the opt-in OLM install block (--manage-operators):
+	// when enabled, generate also emits the operators' Namespace, OperatorGroup,
+	// and Subscription instead of assuming they are already installed.
+	OCPOperatorInstall *OCPOperatorInstallConfig `yaml:"ocpOperatorInstall,omitempty"`
 	// NetworkNamespaces is the set of namespaces the secondary-network CRs
 	// (SriovNetwork, SriovIBNetwork, HostDeviceNetwork, MacvlanNetwork,
 	// IPoIBNetwork) and their example test DaemonSets are rendered into —
@@ -497,6 +501,29 @@ type NicConfigurationOperatorConfig struct {
 	// firmware images before flashing). When false (default), the storage
 	// block is omitted so no PVC / StorageClass dependency is introduced.
 	UpdateFW bool `yaml:"updateFW,omitempty"`
+}
+
+const DefaultOCPInstallPlanApproval = "Automatic"
+
+// OCPOperatorInstallConfig is the opt-in OLM install block. Manage=false (or a
+// nil parent) keeps generate's output byte-for-byte identical to today.
+type OCPOperatorInstallConfig struct {
+	Manage    bool                      `yaml:"manage"`
+	Operators []OCPOperatorSubscription `yaml:"operators,omitempty"`
+}
+
+// OCPOperatorSubscription is one operator's OLM install descriptor — enough to
+// render its Namespace, OwnNamespace OperatorGroup, and Subscription offline.
+type OCPOperatorSubscription struct {
+	// Package is the OLM package: each artifact's metadata.name and the
+	// Subscription's spec.name.
+	Package         string `yaml:"package"`
+	Namespace       string `yaml:"namespace"`
+	Channel         string `yaml:"channel"`
+	Source          string `yaml:"source"`
+	SourceNamespace string `yaml:"sourceNamespace"`
+	// InstallPlanApproval defaults to DefaultOCPInstallPlanApproval when empty.
+	InstallPlanApproval string `yaml:"installPlanApproval,omitempty"`
 }
 
 type HostdevConfig struct {

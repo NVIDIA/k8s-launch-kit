@@ -162,6 +162,7 @@ func init() {
 	setFlagGroup(generateCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(generateCmd, "network-operator-release", GroupCommon)
 	setFlagGroup(generateCmd, "skip-network-operator-helm", GroupCommon)
+	setFlagGroup(generateCmd, "manage-operators", GroupCommon)
 	setFlagGroup(generateCmd, "image-pull-secrets", GroupCommon)
 	setFlagGroup(generateCmd, "enabled-plugins", GroupCommon)
 

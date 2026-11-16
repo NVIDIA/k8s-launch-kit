@@ -65,6 +65,10 @@ type Options struct {
 	SkipNetworkOperatorHelm    bool `flag:"skip-network-operator-helm" config:"networkOperator.skipHelmChart" scopes:"root,generate" usage:"Skip Network Operator Helm values generation, chart installation, and Helm-specific validation"`
 	SkipNetworkOperatorHelmSet bool
 
+	// ManageOperators opts into OLM install-artifact generation; discover
+	// resolves the install block from PackageManifests, generate renders it.
+	ManageOperators bool `flag:"manage-operators" config:"ocpOperatorInstall.manage" scopes:"root,generate,discover" usage:"Also generate the OpenShift OLM install artifacts (Namespace, OperatorGroup, Subscription) for the operators l8k configures"`
+
 	// Phase 2: Deployment Generation
 	Fabric         string `flag:"fabric" config:"profile.fabric" scopes:"root,generate,discover" usage:"Fabric type: ethernet or infiniband"`
 	DeploymentType string `flag:"deployment-type" config:"profile.deployment" scopes:"root,generate,discover" usage:"Deployment type: sriov, rdma_shared, or host_device"`
