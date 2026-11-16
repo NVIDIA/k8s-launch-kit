@@ -195,7 +195,7 @@ func prepareEnrollmentStageExecution(t *testing.T, selectors map[string]string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := prepareStageFixtureExecution(generated)
 	if err != nil {
 		t.Fatal(err)
 	}
