@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,6 +29,11 @@ import (
 
 const stagedOSBytes = "selected operating system image"
 const stagedPLDMBytes = "selected firmware bundle"
+
+var softwareStageExecutions = struct {
+	sync.Mutex
+	values map[string]*managementExecution
+}{values: make(map[string]*managementExecution)}
 
 type softwareStageFake struct {
 	*enrollmentStageFake
@@ -110,8 +116,9 @@ func softwareStageFixtureForSerials(t *testing.T, serials []string) (*management
 	return execution, receipts, selected, password, fake, journal
 }
 
-// The validated desired snapshot is read-only across cases in one table.
-// Live API objects, transports and credentials are created separately below.
+// Cache only immutable desired snapshots for this fixture's exact bundle.
+// No testing.T, cleanup, context, transport or observed API state is retained.
+// Each harness still creates its own live objects, credentials and journals.
 func prepareSoftwareStageExecution(t *testing.T, serials []string) *managementExecution {
 	t.Helper()
 	if len(serials) == 0 {
@@ -143,10 +150,17 @@ func prepareSoftwareStageExecution(t *testing.T, serials []string) *managementEx
 	if err != nil {
 		t.Fatal(err)
 	}
+	key := generated.Index().BundleDigest
+	softwareStageExecutions.Lock()
+	defer softwareStageExecutions.Unlock()
+	if cached := softwareStageExecutions.values[key]; cached != nil {
+		return cached
+	}
 	execution, err := prepareManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
+	softwareStageExecutions.values[key] = execution
 	return execution
 }
 

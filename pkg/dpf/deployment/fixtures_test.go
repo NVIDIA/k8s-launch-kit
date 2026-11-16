@@ -19,8 +19,9 @@ var fixtureBundles = struct {
 
 // generateFixtureBundle avoids repeatedly rendering identical, valid test
 // fixture inputs across lifecycle failure cases. Bundle is immutable: its
-// accessors return copies. Each test still constructs fresh clients, executions
-// and journals, and production LoadPlan validation remains fully exercised.
+// accessors return copies. Tests construct fresh clients and journals; only the
+// software stage helper also reuses its immutable prepared desired execution.
+// Public lifecycle entrypoints still perform production LoadPlan validation.
 // Tests of generation or invalid input types must call generation.Generate
 // directly; this cache identifies fixture inputs by their serialized values.
 func generateFixtureBundle(input generation.Inputs) (*bundle.Bundle, error) {
