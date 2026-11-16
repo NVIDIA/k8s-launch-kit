@@ -36,7 +36,7 @@ Omitting `--target` selects `host`. `dpf` supports
 [inventory discovery only](../user/dpf-discovery.md) in this version; generate,
 deploy, validate and the composite pipeline are unavailable and return exit `2`.
 Inventory needs no kubeconfig; a supplied kubeconfig adds management observations.
-Explicit management network probes require a supported three-control-plane Linux/amd64 cluster and use the pinned, runtime-qualified diagnostic assets.
+Explicit management network probes target each observed node that meets the existing readiness and platform checks, using pinned, runtime-qualified diagnostic assets. Node count alone does not establish control-plane HA or qualify a production topology.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags

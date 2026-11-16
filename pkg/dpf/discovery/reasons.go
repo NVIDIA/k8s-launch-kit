@@ -11,7 +11,6 @@ func ExplainCheck(c *inventory.Check) {
 		return
 	}
 	messages := map[string]string{
-		"EXACTLY_THREE_CONTROL_PLANES":        "The management topology does not contain exactly three control-plane nodes.",
 		"PHYSICAL_IDENTITY_REQUIRED":          "The selected source did not establish a usable physical identity; inspect its observation and error reasons.",
 		"DPU_IDENTITY_REQUIRED":               "No DPU identity was established from the selected sources.",
 		"UNIQUE_PHYSICAL_MATCH_REQUIRED":      "The DPU serial must match exactly one observed host adapter; missing, duplicate or conflicting identity prevents association.",

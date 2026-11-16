@@ -121,7 +121,7 @@ var _ = Describe("Software BOM readiness", func() {
 		Expect(ok).To(BeFalse())
 	})
 	It("explains every nonpassing acceptance predicate", func() {
-		for _, code := range []string{"EXACTLY_THREE_CONTROL_PLANES", "PHYSICAL_IDENTITY_REQUIRED", "DPU_IDENTITY_REQUIRED", "UNIQUE_PHYSICAL_MATCH_REQUIRED", "REDFISH_AUTHORIZATION_NOT_EVALUATED", "DPF_AUTHENTICATION_NOT_EVALUATED", "INVENTORY_MODE", "EXACT_NETWORK_COVERAGE_REQUIRED"} {
+		for _, code := range []string{"PHYSICAL_IDENTITY_REQUIRED", "DPU_IDENTITY_REQUIRED", "UNIQUE_PHYSICAL_MATCH_REQUIRED", "REDFISH_AUTHORIZATION_NOT_EVALUATED", "DPF_AUTHENTICATION_NOT_EVALUATED", "INVENTORY_MODE", "EXACT_NETWORK_COVERAGE_REQUIRED"} {
 			c := inventory.Check{State: "unknown", ReasonCode: code}
 			ExplainCheck(&c)
 			Expect(c.Message).NotTo(BeEmpty())

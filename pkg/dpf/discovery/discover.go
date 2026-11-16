@@ -196,18 +196,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		report.Discovery.Checks = append(report.Discovery.Checks, inventory.Check{ID: id, Subject: subject, Vantage: "executor", RequiredPhase: phase, State: state, ReasonCode: reason, EvidenceRefs: refs})
 	}
 	if inv.Management != nil {
-		cp := 0
-		for _, n := range inv.Management.Nodes {
-			if n.ControlPlane {
-				cp++
-			}
-		}
-		phase := "generate"
 		if r.Mode == "management" {
-			phase = "discover"
-		}
-		addCheck("dpf.management.control-plane-count", "management", cp == 3, "EXACTLY_THREE_CONTROL_PLANES", inv.Management.EvidenceRefs, phase)
-		if r.Mode == "management" && cp == 3 {
 			if deps.Probes == nil {
 				report.Errors = append(report.Errors, inventory.Problem{Code: "PROBE_ASSETS_UNAVAILABLE", Message: "management probes require qualified installed probe assets", ExitCode: 2})
 			} else {
