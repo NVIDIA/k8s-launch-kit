@@ -182,6 +182,7 @@ func TestRunHostWorkloadNetworkStageStopsOnChangedCohortBeforeSecondHost(t *test
 }
 
 func TestRunHostWorkloadNetworkStageRechecksHostBActivationMetadataAfterLeaseRead(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
 	for _, test := range []struct {
 		name       string
 		mutate     func(*activationIntegrationFixture, activationSelectedDevice)
@@ -213,7 +214,7 @@ func TestRunHostWorkloadNetworkStageRechecksHostBActivationMetadataAfterLeaseRea
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture, activation, snapshot := hostNetworkStageFixtureForSerials(t, []string{"SERIAL-A", "SERIAL-B"})
+			fixture, activation, snapshot := hostNetworkStageFixtureFromExecution(t, execution)
 			var selectedB *activationSelectedDevice
 			for i := range activation.selected {
 				if activation.selected[i].host.InputRef == "host-input-b" {
@@ -319,6 +320,7 @@ func TestRunHostWorkloadNetworkStageRechecksHostBActivationMetadataAfterLeaseRea
 }
 
 func TestRunHostWorkloadNetworkStageJournalSyncFailuresBracketEffects(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, test := range []struct {
 		name           string
 		failSyncAt     int
@@ -331,7 +333,7 @@ func TestRunHostWorkloadNetworkStageJournalSyncFailuresBracketEffects(t *testing
 		{name: "local result is not durable", failSyncAt: 2, wantEffects: 1, wantReads: 1, wantReceipts: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture, activation, snapshot := hostNetworkStageFixture(t)
+			fixture, activation, snapshot := hostNetworkStageFixtureFromExecution(t, execution)
 			journal := testJournal(fixture.prepared.execution)
 			memory := journal.file.(*managementMemoryFile)
 			file := &hostNetworkStageFailingJournalFile{managementMemoryFile: memory, failSyncAt: test.failSyncAt}

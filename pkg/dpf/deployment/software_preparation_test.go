@@ -328,6 +328,7 @@ func TestRunWorkloadPreparationStopsBeforeDPUDeployment(t *testing.T) {
 }
 
 func TestRunWorkloadPreparationSourceOrPermissionFailurePreventsEffects(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, test := range []struct {
 		name       string
 		deny       bool
@@ -337,7 +338,7 @@ func TestRunWorkloadPreparationSourceOrPermissionFailurePreventsEffects(t *testi
 		{name: "caller permission denied", deny: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			execution, _, prepared, request, journal, probeRunner := workloadPreparationFixture(t)
+			_, prepared, request, journal, probeRunner := workloadPreparationFixtureFromExecution(t, execution)
 			if test.deny {
 				prepared.callerState = "failed"
 			}
@@ -413,7 +414,14 @@ func TestRunWorkloadPreparationRechecksEarlierResourcesBeforeReceipt(t *testing.
 
 func workloadPreparationFixture(t *testing.T) (*managementExecution, []enrollmentBMC, *softwarePreparationFake, config.Request, *executionJournal, probe.Runner) {
 	t.Helper()
-	execution, _, selected, _, stageFake, _ := softwareStageFixture(t)
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
+	selected, prepared, request, journal, probes := workloadPreparationFixtureFromExecution(t, execution)
+	return execution, selected, prepared, request, journal, probes
+}
+
+func workloadPreparationFixtureFromExecution(t *testing.T, execution *managementExecution) ([]enrollmentBMC, *softwarePreparationFake, config.Request, *executionJournal, probe.Runner) {
+	t.Helper()
+	_, selected, _, stageFake, _ := softwareStageFixtureFromExecution(t, execution)
 	prepared := &softwarePreparationFake{softwareStageFake: stageFake}
 	expected, desired, err := tenantPlanInputs(execution.plan)
 	if err != nil {
@@ -444,7 +452,7 @@ func workloadPreparationFixture(t *testing.T) (*managementExecution, []enrollmen
 	}
 	journal := testJournal(execution)
 	probes := probe.Runner{Assets: catalog.ProbeAssets(), Journal: func([]probe.Receipt) error { return nil }}
-	return execution, selected, prepared, request, journal, probes
+	return selected, prepared, request, journal, probes
 }
 
 func operatorBindingForExecution(fake *managementFake, execution *managementExecution) error {
