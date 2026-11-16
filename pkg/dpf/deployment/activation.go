@@ -1610,6 +1610,9 @@ func activationWait(ctx context.Context, interval time.Duration) error {
 // errors.Is/As. In particular, unknown API/error text never becomes public text.
 func activationFailure(journal *executionJournal, code, message string, cause error) error {
 	message += activationCoordinationDiagnostic(cause)
+	if code == "EXTERNAL_HOST_REBOOT_UNCERTAIN" {
+		message += externalRebootSSHDiagnostic(cause)
+	}
 	if journal == nil {
 		return reconcileError(code, message, cause)
 	}

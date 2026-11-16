@@ -150,6 +150,13 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** a missing required host check identity/host/PF subject/vantage or deploy-phase result is rejected using the discovery owner’s host check set before the handoff; provider outcome and owned-assessment contracts remain in force.
 - **AND** optional typed VM classification, boot ID, SSH server address, link physical PF roots, measured netdev absence and nonforwarding route type preserve old encodings when omitted; empty legacy arrays never become positive absence proof. Physical reset/claim/ACK fences remain unchanged.
 
+#### Scenario: SSH negotiation is interrupted after the one-time host reboot submission
+
+- **WHEN** a requested host reboot has been submitted once and a recovery read reports the combined authentication/handshake failure category
+- **THEN** that ambiguous category is observed within the existing remaining wait rather than treated as proof of credential rejection; the command is never resubmitted.
+- **AND** explicit trust/configuration/identity failures remain fatal, pre-submission authentication failure does not start another action attempt, and cancellation/deadline remain bounded.
+- **AND** an uncertain failure persists only finite allowlisted typed SSH code/stage and static reason text; arbitrary callback/library/remote text remains private, while the error cause chain is retained for classification.
+
 #### Scenario: DPF management bootstrap completes
 
 - **WHEN** the retained operator release, API schemas, manager and DPFOperatorConfig become ready

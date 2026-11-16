@@ -88,6 +88,9 @@ activation before host networking or traffic. Do not manually reset a host to
 clear discovery failures. Before-activation artifact-origin checks remain;
 after activation, source inputs and current owned software receipts are checked
 without downloading the same large origin artifacts again.
+Transient SSH negotiation during an already-requested reboot stays within the
+remaining wait and never retries the action. Inspect the recorded safe SSH cause
+when completion remains uncertain.
 Do not clean up recorded operation resources to satisfy standalone discovery's
 vacancy checks. Resume observes existing reset claims and inspects completed
 host transactions; uncertain effects remain action-required. A late runtime failure repeats the complete fresh matrix

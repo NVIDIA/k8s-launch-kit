@@ -215,6 +215,11 @@ After activation it collects current host and network facts again; workload
 configuration and traffic wait for those checks to pass. Do not reset a host
 manually to make discovery pass. Resume repeats the complete traffic checks.
 
+During a requested reboot, temporary SSH connection or negotiation failures stay
+within the remaining deployment wait. A changed host identity or SSH trust stops
+recovery. If completion remains uncertain, read the recorded SSH reason before
+continuing; an uncertain result never permits another reset.
+
 An existing reset claim permits observation only. Recovery needs the saved
 host baseline, a changed boot on that same host/PF, and a new current Arm boot
 for the exact pending DPU request before conditional acknowledgment. Missing

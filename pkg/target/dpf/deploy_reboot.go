@@ -152,14 +152,21 @@ func (r *externalRebooter) RebootExternal(ctx context.Context, request deploymen
 
 	timer := time.NewTimer(r.pollInterval)
 	defer timer.Stop()
+	var lastObservationErr error
 	for {
 		select {
 		case <-operationCtx.Done():
 			if ctx.Err() != nil {
 				return deployment.ActivationObservation{}, ctx.Err()
 			}
-			if actionErr != nil {
-				return deployment.ActivationObservation{}, fmt.Errorf("host reboot was not confirmed before wait expired (action result %s)", sshprobe.Code(actionErr))
+			// Keep the latest safe typed read cause for the durable failure
+			// diagnostic. No observation failure authorizes another submission.
+			cause := lastObservationErr
+			if cause == nil {
+				cause = actionErr
+			}
+			if cause != nil {
+				return deployment.ActivationObservation{}, &externalRebootWaitError{cause: cause}
 			}
 			return deployment.ActivationObservation{}, fmt.Errorf("host reboot was not confirmed before wait expired")
 		case <-timer.C:
@@ -167,12 +174,14 @@ func (r *externalRebooter) RebootExternal(ctx context.Context, request deploymen
 
 		after, observeErr := r.observe(operationCtx, binding)
 		if observeErr != nil {
+			lastObservationErr = observeErr
 			if fatalRebootObservation(observeErr) {
 				return deployment.ActivationObservation{}, fmt.Errorf("reconnect to the selected host with its configured SSH trust: %w", observeErr)
 			}
 			resetTimer(timer, r.pollInterval)
 			continue
 		}
+		lastObservationErr = nil
 		if !sameUUID(after.SystemUUID, request.HostSystemUUID) || after.AdapterSerial != request.HostAdapterSerial {
 			return deployment.ActivationObservation{}, fmt.Errorf("reconnected SSH endpoint reports a different host or selected adapter identity")
 		}
@@ -191,6 +200,15 @@ func (r *externalRebooter) RebootExternal(ctx context.Context, request deploymen
 		resetTimer(timer, r.pollInterval)
 	}
 }
+
+// Preserve typed causes for safe classification without exposing arbitrary
+// session-adapter error text through Error().
+type externalRebootWaitError struct{ cause error }
+
+func (e *externalRebootWaitError) Error() string {
+	return "host reboot was not confirmed before wait expired"
+}
+func (e *externalRebootWaitError) Unwrap() error { return e.cause }
 
 type rebootBinding struct {
 	target config.Target
@@ -379,9 +397,13 @@ func (r *externalRebooter) observe(ctx context.Context, binding rebootBinding) (
 	return identity, nil
 }
 
+// After the single submission, an interrupted handshake is expected during
+// shutdown/startup. Its combined authentication/handshake code cannot establish
+// rejected credentials. Explicit trust, configuration and identity failures
+// remain fatal; all other observations stay inside the original bounded wait.
 func fatalRebootObservation(err error) bool {
 	switch sshprobe.Code(err) {
-	case "SSH_HOST_KEY_REJECTED", "SSH_TRUST_INVALID", "SSH_AUTHENTICATION_OR_HANDSHAKE_FAILED", "SSH_CONFIGURATION_INVALID", "SSH_IDENTITY_INVALID":
+	case "SSH_HOST_KEY_REJECTED", "SSH_TRUST_INVALID", "SSH_CONFIGURATION_INVALID", "SSH_IDENTITY_INVALID":
 		return true
 	default:
 		return false
