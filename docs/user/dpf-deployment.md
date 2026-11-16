@@ -221,8 +221,9 @@ work still requires the complete retained management bootstrap to match. If
 restoration stops because of read/access failures, changed identity, intent or
 reported version, terminal failure, cancellation or deadline expiry, its specific
 preparation reason appears in result checks, the execution report and progress
-output. The tenant-access and activation execution reports distinguish cancellation,
-unavailable identity verification and a confirmed difference from saved identity.
+output. Tenant API access and direct management/tenant identity rechecks during
+activation distinguish cancellation, unavailable verification and confirmed
+identity drift.
 Resume restoration can report an enclosing unverified prerequisite in its final
 checks. Preserve the operation
 and current state before deciding on another explicit resume. It continues

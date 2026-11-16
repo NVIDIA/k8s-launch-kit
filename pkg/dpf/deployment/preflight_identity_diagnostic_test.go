@@ -80,3 +80,52 @@ func TestFinalPreflightIdentityReadFailureRevokesPassedChecksTruthfully(t *testi
 		}
 	}
 }
+
+func TestInitialPreflightIdentityReadFailureReportsUncertaintyBeforeFurtherChecks(t *testing.T) {
+	for _, scenario := range []string{"unavailable", "forbidden", "canceled"} {
+		t.Run(scenario, func(t *testing.T) {
+			harness := newCallerPermissionHarness(t, nil)
+			generated, err := generateFixtureBundle(callerGenerationInputs(t, harness.server))
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := managementPreflightPlan(ManagementPreflightRequest{Bundle: generated})
+			if err != nil {
+				t.Fatal(err)
+			}
+			harness.projection = plan.projection
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			hit := false
+			harness.identityReadHook = func(w http.ResponseWriter, read int) bool {
+				if read != 1 {
+					return false
+				}
+				hit = true
+				if scenario == "canceled" {
+					cancel()
+					return true
+				}
+				status, reason := http.StatusServiceUnavailable, "ServiceUnavailable"
+				if scenario == "forbidden" {
+					status, reason = http.StatusForbidden, "Forbidden"
+				}
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]any{"apiVersion": "v1", "kind": "Status", "status": "Failure", "reason": reason, "code": status, "message": "private-initial-identity-canary"})
+				return true
+			}
+			got := callerPermissionClient(t, harness.server).checkManagementPreflight(ctx, plan)
+			if !hit || got.Ready || len(got.Checks) != 1 || len(harness.reviews) != 0 {
+				t.Fatalf("failure continued prerequisite checks: %+v", got)
+			}
+			check := got.Checks[0]
+			if check.ID != "management.identity" || check.State != "blocked" || check.ReasonCode != "MANAGEMENT_IDENTITY_UNVERIFIED" || check.Message != "The authenticated management identity could not be verified against the generated bundle." {
+				t.Fatalf("incorrect finite diagnostic: %+v", check)
+			}
+			encoded, err := json.Marshal(got)
+			if err != nil || strings.Contains(string(encoded), "private-initial-identity-canary") {
+				t.Fatalf("unsafe structured check: %s", encoded)
+			}
+		})
+	}
+}
