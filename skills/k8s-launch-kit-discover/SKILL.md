@@ -50,6 +50,11 @@ desired profile defaults. Read `readiness.state` separately from physical
 even when physical inventory is saved. The readiness assessment keeps unverified provisioning
 prerequisites blocked. It never applies switch changes or treats LLDP names as
 authenticated DPU identity. See the HBN-BGP section of the discovery reference.
+Standalone discovery assesses initial deployment. After a recorded deployment has
+created enrollment, tenant, host addresses or advertised routes, use the unchanged
+bundle and its operation reference with deploy `--resume`; do not clean up owned
+state solely to satisfy initial vacancy checks. Resume performs its own fresh
+collection and UID-bound lifecycle assessment.
 
 For the current BF4 HBN crawler, select the `admin` username and one common
 nonempty BMC password value through protected references for all selected DPUs.

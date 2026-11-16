@@ -129,6 +129,16 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** completed host transactions are inspected with their original request and fresh allocation fences; partial/changed transactions remain blocking.
 - **AND** a late runtime failure can rerun the complete fresh BGP/FIB/traffic matrix without reimage or replay of completed host configuration; old measurement passes never fill new result rows.
 
+#### Scenario: Owned DPF progress changes initial prerequisite observations
+
+- **WHEN** an exact recorded operation resumes with enrolled devices, an existing tenant, configured host addresses or advertised workload/loopback routes
+- **THEN** it loads the UID/plan/management/namespace/cohort-bound checkpoint and restores receipts read-only before assessing complete fresh discovery checks.
+- **AND** the inventory and published discovery checks remain unchanged; only the execution assessment can replace initial enrollment/tenant vacancy predicates after full current resource, credential and tenant-source ownership verification.
+- **AND** a host-address exception requires inspection of the original saved transaction and an unchanged complete current allocation binding; other addresses, management/default-route conflicts and partial transactions remain blocking.
+- **AND** a route exception requires an exact current IPAM/CIDRPool allocation bound to the selected owned Ready Node/DPU, the selected VRF and BGP unicast protocol, and every explicit next hop on that DPU's freshly LLDP-corroborated uplinks. Missing, foreign, mixed and broader-prefix observations remain blocking.
+- **AND** resource ownership and checkpoint UID/resourceVersion/data are reread before acceptance; ordinary fresh discovery, deployment eligibility and existing physical/effect fences remain strict.
+- **AND** optional next-hop fields do not change older inventories' or bundles' canonical identities when those fields were absent.
+
 #### Scenario: DPF management bootstrap completes
 
 - **WHEN** the retained operator release, API schemas, manager and DPFOperatorConfig become ready

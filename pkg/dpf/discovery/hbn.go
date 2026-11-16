@@ -77,7 +77,11 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 		}
 	}
 	report.Readiness = &readiness
-	logHBNReadiness(ctx, readiness.Checks)
+	if deps.DeferHBNReadiness {
+		ui.FromContext(ctx).Info("[RUNNING] HBN observations collected; owned-operation resume eligibility will be assessed from current operation proofs.")
+	} else {
+		logHBNReadiness(ctx, readiness.Checks)
+	}
 	// Keep unrelated switch inventory out of the handoff. The readiness pass
 	// above sees the complete snapshot to detect collisions and ambiguity.
 	for i := range inv.HBN.Switches {

@@ -36,15 +36,18 @@ type Collector interface {
 	Collect(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error)
 }
 type Dependencies struct {
-	Switches       SwitchCollector
-	SSH            Collector
-	BMC            Collector
-	Probes         ProbeRunner
-	HBNPermissions HBNPermissionObserver
-	HBNEnrollment  HBNEnrollmentAccessValidator
-	Artifacts      ArtifactVerifier
-	HostLLDP       HostLLDPCapturer
-	HostNetworking HostNetworkObserver
+	// DeferHBNReadiness defers eligibility messages to a deployment lifecycle
+	// assessment. It does not change collection, checks, readiness or acceptance.
+	DeferHBNReadiness bool
+	Switches          SwitchCollector
+	SSH               Collector
+	BMC               Collector
+	Probes            ProbeRunner
+	HBNPermissions    HBNPermissionObserver
+	HBNEnrollment     HBNEnrollmentAccessValidator
+	Artifacts         ArtifactVerifier
+	HostLLDP          HostLLDPCapturer
+	HostNetworking    HostNetworkObserver
 }
 
 func NewReport() inventory.Report {

@@ -168,15 +168,23 @@ type InterfaceAddress struct {
 	Prefix    string `json:"prefix" yaml:"prefix"`
 }
 
+// RouteNextHop retains source interfaces for exact owned-allocation checks.
+// Absence is unmeasured; a prefix and BGP protocol alone do not establish ownership.
+type RouteNextHop struct {
+	Interface string `json:"interface" yaml:"interface"`
+	Gateway   string `json:"gateway" yaml:"gateway"`
+}
+
 // Route is an operational route from one address-family-specific all-table
 // route query. The family-specific slices keep an unavailable source distinct
 // from a known-empty routing table.
 type Route struct {
-	Family   string `json:"family" yaml:"family"`
-	Prefix   string `json:"prefix" yaml:"prefix"`
-	Table    string `json:"table" yaml:"table"`
-	Protocol string `json:"protocol,omitempty" yaml:"protocol,omitempty"`
-	Type     string `json:"type,omitempty" yaml:"type,omitempty"`
+	Family   string         `json:"family" yaml:"family"`
+	Prefix   string         `json:"prefix" yaml:"prefix"`
+	Table    string         `json:"table" yaml:"table"`
+	Protocol string         `json:"protocol,omitempty" yaml:"protocol,omitempty"`
+	Type     string         `json:"type,omitempty" yaml:"type,omitempty"`
+	NextHops []RouteNextHop `json:"nextHops,omitempty" yaml:"nextHops,omitempty"`
 }
 
 type BridgeState struct {
@@ -1019,7 +1027,10 @@ func sortSnapshot(out *Snapshot) {
 			if a.Type != b.Type {
 				return a.Type < b.Type
 			}
-			return a.Protocol < b.Protocol
+			if a.Protocol != b.Protocol {
+				return a.Protocol < b.Protocol
+			}
+			return routeNextHopKey(a.NextHops) < routeNextHopKey(b.NextHops)
 		})
 	}
 	sortRoutes(out.Operational.IPv4Routes)

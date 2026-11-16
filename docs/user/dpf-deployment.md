@@ -197,6 +197,14 @@ late runtime-check failure, it repeats the complete current BGP, route and traff
 matrix without reimaging devices or reconfiguring completed hosts. It does not
 reuse an earlier traffic pass.
 
+Use the same saved operation, configuration and bundle for resume. The CLI
+rechecks current host, BMC, switch, operator, storage and access prerequisites,
+and recognizes only resources, addresses and routes proven to belong to that
+operation. Standalone discovery checks readiness for a new deployment; do not
+delete an operation's enrollment, tenant, host addresses or routes just to make
+those checks pass. Changed or unverifiable ownership stops recovery and
+preserves the existing state. Resume repeats the complete traffic checks.
+
 An existing reset claim permits observation only. Recovery needs the saved
 host baseline, a changed boot on that same host/PF, and a new current Arm boot
 for the exact pending DPU request before conditional acknowledgment. Missing

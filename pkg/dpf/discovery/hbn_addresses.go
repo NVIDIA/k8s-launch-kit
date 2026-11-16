@@ -18,6 +18,40 @@ func hbnFabricAddressCheck(sw inventory.FabricSwitch, profile hbn.Profile) inven
 }
 
 func hbnFabricPoolCheck(sw inventory.FabricSwitch, vrfName, poolCIDR, poolName string) inventory.Check {
+	return fabricPoolCheck(sw, vrfName, poolCIDR, poolName, nil)
+}
+
+// ResumeRouteAllocation is a current allocation bound by deployment to its
+// original IPAM/tenant/DPU ownership. It never authorizes an entire pool.
+type ResumeRouteAllocation struct{ DPUSerial, Pool, Prefix string }
+
+// ResumeFabricPoolCheck retains ordinary address/VRF/vacancy validation and
+// permits only exact owned prefixes whose every current next hop is a freshly
+// corroborated physical uplink to that allocation's particular DPU.
+func ResumeFabricPoolCheck(inv *inventory.Inventory, sw inventory.FabricSwitch, vrfName, poolCIDR, poolName string, allocations []ResumeRouteAllocation) inventory.Check {
+	if inv == nil || inv.HBN == nil {
+		return hbnFabricPoolCheck(sw, vrfName, poolCIDR, poolName)
+	}
+	allowed := map[string]map[string]bool{}
+	for _, a := range allocations {
+		if a.Pool != poolName {
+			continue
+		}
+		if _, found := allowed[a.Prefix]; found {
+			return inventory.Check{ID: "dpf.hbn.fabric-address-conflicts", Subject: sw.Name + "/" + poolName, State: "failed", ReasonCode: "OWNED_RESUME_ALLOCATION_AMBIGUOUS", Message: "A route prefix has multiple selected allocation owners.", Vantage: "executor", RequiredPhase: "deploy"}
+		}
+		ports := map[string]bool{}
+		for _, port := range sw.Ports {
+			if port.DPUSerial == a.DPUSerial && hbnCablingCheck(inv, sw, port).State == "passed" {
+				ports[port.Name] = true
+			}
+		}
+		allowed[a.Prefix] = ports
+	}
+	return fabricPoolCheck(sw, vrfName, poolCIDR, poolName, allowed)
+}
+
+func fabricPoolCheck(sw inventory.FabricSwitch, vrfName, poolCIDR, poolName string, owned map[string]map[string]bool) inventory.Check {
 	check := inventory.Check{ID: "dpf.hbn.fabric-address-conflicts", Subject: sw.Name + "/" + poolName, State: "unknown", ReasonCode: "FABRIC_ADDRESSES_UNAVAILABLE", Message: "Complete switch address and IPv4/IPv6 all-table route observations are required to check the proposed " + poolName + " pool.", Vantage: "executor", RequiredPhase: "deploy"}
 	facts := sw.Snapshot.Operational
 	for _, issue := range sw.Snapshot.Issues {
@@ -81,6 +115,10 @@ func hbnFabricPoolCheck(sw inventory.FabricSwitch, vrfName, poolCIDR, poolName s
 			if !wanted && knownOther {
 				continue
 			}
+
+			if wanted && ownedResumeRoute(route, owned[route.Prefix]) {
+				continue
+			}
 			check.Message = fmt.Sprintf("%s pool %s overlaps route %s in switch table %s; verify ownership and VRF before assigning this pool.", poolName, pool, route.Prefix, route.Table)
 			check.ReasonCode = "FABRIC_ROUTE_VRF_UNVERIFIED"
 			if wanted {
@@ -92,6 +130,9 @@ func hbnFabricPoolCheck(sw inventory.FabricSwitch, vrfName, poolCIDR, poolName s
 	}
 	check.State = "passed"
 	check.ReasonCode = "OBSERVED_FABRIC_POOL_NONCONFLICTING"
+	if owned != nil {
+		check.ReasonCode = "OWNED_RESUME_FABRIC_ALLOCATIONS_VERIFIED"
+	}
 	check.Message = "No conflicting allocation was found in the observed switch addresses and route tables for the " + poolName + " pool; site and cluster IPAM allocation are separate checks."
 	return check
 }
@@ -112,4 +153,17 @@ func addressVRF(snapshot fabric.Snapshot, name string) (string, bool) {
 		}
 	}
 	return result, result != ""
+}
+
+func ownedResumeRoute(route fabric.Route, ports map[string]bool) bool {
+	if len(ports) == 0 || len(route.NextHops) == 0 || route.Protocol != "bgp" && route.Protocol != "186" || route.Type != "" && route.Type != "unicast" {
+		return false
+	}
+	for _, hop := range route.NextHops {
+		gateway, err := netip.ParseAddr(hop.Gateway)
+		if !ports[hop.Interface] || err != nil || gateway.IsUnspecified() || gateway.IsMulticast() || gateway.IsLoopback() {
+			return false
+		}
+	}
+	return true
 }
