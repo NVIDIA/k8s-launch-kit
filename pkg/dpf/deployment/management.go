@@ -62,29 +62,6 @@ type operatorCRDExpectation struct {
 	normalizedSpecJSON string
 }
 
-// runManagement validates the complete retained bundle before any management
-// API call, then executes only the management bootstrap portion of its fixed
-// workflow. Later tenant, enrollment, workload and DPUDeployment stages remain
-// unexecuted and are not reported as ready.
-func runManagement(ctx context.Context, client managementRunnerClient, retained *bundle.Bundle,
-	journal *executionJournal, pollInterval time.Duration,
-) (managementBootstrapReceipt, error) {
-	if ctx == nil || client == nil || journal == nil || pollInterval <= 0 {
-		return managementBootstrapReceipt{}, fmt.Errorf("management runner requires context, client, report and positive polling interval")
-	}
-	if _, bounded := ctx.Deadline(); !bounded {
-		return managementBootstrapReceipt{}, fmt.Errorf("management runner requires an execution deadline")
-	}
-	if err := ctx.Err(); err != nil {
-		return managementBootstrapReceipt{}, err
-	}
-	execution, err := prepareManagementExecution(retained, time.Until(deadline(ctx)))
-	if err != nil {
-		return managementBootstrapReceipt{}, err
-	}
-	return runPreparedManagement(ctx, client, execution, journal, pollInterval)
-}
-
 // managementExecution owns one validated desired snapshot for the management
 // and tenant stages. Resource clients receive copies; refreshes read live state
 // without reconstructing or replacing the retained desired objects.

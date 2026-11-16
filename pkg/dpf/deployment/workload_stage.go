@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,37 +55,6 @@ type workloadResourceReceipt struct {
 	UID        types.UID
 	Generation int64
 	ChildUID   types.UID
-}
-
-// runWorkloadPreparation validates one retained execution, checks the chart
-// source and all required workload permissions before effects, then carries the
-// same execution through management, tenant, enrollment, cached-software and
-// workload-prerequisite stages. It deliberately stops before DPUDeployment.
-func runWorkloadPreparation(ctx context.Context, client workloadStageClient, retained *bundle.Bundle,
-	journal *executionJournal, probes probe.Runner, request config.Request, interval, requestTimeout time.Duration,
-	maxBytes int64, verifyChartSource workloadChartSourceVerifier,
-) (workloadPreparationReceipt, error) {
-	if ctx == nil || client == nil || journal == nil || verifyChartSource == nil || interval <= 0 ||
-		requestTimeout < time.Second || requestTimeout > 2*time.Minute || maxBytes <= 0 || maxBytes == math.MaxInt64 {
-		return workloadPreparationReceipt{}, fmt.Errorf("workload preparation requires a bound client, retained plan, chart verifier, durable report and bounded controls")
-	}
-	if _, bounded := ctx.Deadline(); !bounded {
-		return workloadPreparationReceipt{}, fmt.Errorf("workload preparation requires an execution deadline")
-	}
-	prepared, err := prepareControlPlaneRun(ctx, client, retained, journal, probes, request, interval, requestTimeout)
-	if err != nil {
-		return workloadPreparationReceipt{}, err
-	}
-	objects, err := checkWorkloadPreparationInputs(ctx, client, prepared, journal, verifyChartSource)
-	if err != nil {
-		return workloadPreparationReceipt{}, err
-	}
-	execution := prepared.execution
-	controlPlane, err := runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
-	if err != nil {
-		return workloadPreparationReceipt{BundleDigest: execution.plan.Digest(), ControlPlane: controlPlane}, err
-	}
-	return runPreparedWorkload(ctx, client, prepared, controlPlane, probes, journal, interval, requestTimeout, maxBytes, verifyChartSource, objects)
 }
 
 // checkWorkloadPreparationInputs performs all workload checks that must happen

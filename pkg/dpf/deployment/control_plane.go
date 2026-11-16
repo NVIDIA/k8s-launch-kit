@@ -10,26 +10,11 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementnetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 )
-
-// runControlPlane executes the retained management, tenant and selected-device
-// enrollment stages using one prepared plan. Its receipt does not establish
-// workload or DPUDeployment readiness.
-func runControlPlane(ctx context.Context, client enrollmentManagementClient, retained *bundle.Bundle, journal *executionJournal,
-	probes probe.Runner, request config.Request, interval, requestTimeout time.Duration,
-) (enrollmentStageReceipt, error) {
-	prepared, err := prepareControlPlaneRun(ctx, client, retained, journal, probes, request, interval, requestTimeout)
-	if err != nil {
-		return enrollmentStageReceipt{}, err
-	}
-	receipts, err := runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
-	return receipts.enrollment, err
-}
 
 type preparedControlPlaneRun struct {
 	execution *managementExecution
@@ -44,31 +29,6 @@ type controlPlaneReceipts struct {
 	management managementBootstrapReceipt
 	tenant     tenantStageReceipt
 	enrollment enrollmentStageReceipt
-}
-
-func prepareControlPlaneRun(ctx context.Context, client enrollmentManagementClient, retained *bundle.Bundle, journal *executionJournal,
-	probes probe.Runner, request config.Request, interval, requestTimeout time.Duration,
-) (*preparedControlPlaneRun, error) {
-	if ctx == nil || client == nil || journal == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
-		return nil, fmt.Errorf("control-plane execution requires a client, report and bounded polling/request controls")
-	}
-	if _, bounded := ctx.Deadline(); !bounded {
-		return nil, fmt.Errorf("control-plane execution requires a deadline")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if err := probes.Assets.Validate(); err != nil {
-		return nil, err
-	}
-	if probes.Journal == nil {
-		return nil, fmt.Errorf("control-plane execution requires a durable probe resource journal")
-	}
-	execution, err := prepareManagementExecution(retained, time.Until(deadline(ctx)))
-	if err != nil {
-		return nil, err
-	}
-	return prepareControlPlaneWithExecution(ctx, client, execution, journal, probes, request, interval, requestTimeout)
 }
 
 // prepareControlPlaneWithExecution binds enrollment credentials and checks

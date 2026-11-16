@@ -10,9 +10,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -24,39 +22,6 @@ type softwareStageManagementClient interface {
 }
 
 var _ softwareStageManagementClient = (*APIClient)(nil)
-
-// softwarePreparationReceipt reports only staged cache verification. It does
-// not report workload or DPUDeployment readiness.
-type softwarePreparationReceipt struct {
-	BundleDigest string
-	ControlPlane controlPlaneReceipts
-	Software     softwareVerificationReceipt
-}
-
-// runSoftwarePreparation owns the retained execution across control-plane and
-// software staging. It stops after verifying selected software bytes; it does
-// not create the remaining workload resources or DPUDeployment.
-func runSoftwarePreparation(ctx context.Context, client softwareStageManagementClient, retained *bundle.Bundle,
-	journal *executionJournal, probes probe.Runner, request config.Request, interval, requestTimeout time.Duration, maxBytes int64,
-) (softwarePreparationReceipt, error) {
-	if ctx == nil || client == nil || journal == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute || maxBytes <= 0 || maxBytes == math.MaxInt64 {
-		return softwarePreparationReceipt{}, fmt.Errorf("software preparation requires a bounded context, management client and durable report")
-	}
-	if _, bounded := ctx.Deadline(); !bounded {
-		return softwarePreparationReceipt{}, fmt.Errorf("software preparation requires an execution deadline")
-	}
-	prepared, err := prepareControlPlaneRun(ctx, client, retained, journal, probes, request, interval, requestTimeout)
-	if err != nil {
-		return softwarePreparationReceipt{}, err
-	}
-	receipts, err := runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
-	if err != nil {
-		return softwarePreparationReceipt{BundleDigest: prepared.execution.plan.Digest(), ControlPlane: receipts}, err
-	}
-	software, err := runSoftwareStage(ctx, client, prepared.execution, receipts, prepared.selected, prepared.password, journal,
-		interval, requestTimeout, maxBytes)
-	return softwarePreparationReceipt{BundleDigest: prepared.execution.plan.Digest(), ControlPlane: receipts, Software: software}, err
-}
 
 // runSoftwareStage creates or verifies only the retained BlueFieldSoftware
 // object and validates the bytes currently served from the DPF cache. The
