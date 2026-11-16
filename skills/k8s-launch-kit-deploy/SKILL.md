@@ -103,6 +103,10 @@ Inspect the report and current resource/device state before recovery; when safe,
 resume explicitly with the recorded operation reference and unchanged inputs.
 Never automatically replay a stopped deployment, even when its cause looks
 temporary.
+Controller transitions can briefly leave the selected activation view incomplete.
+The CLI waits within its deadline for a complete current cohort before claiming
+or requesting another host reset; an incomplete observation never grants effect
+permission. Read errors and identity/ownership conflicts still stop execution.
 Do not clean up recorded operation resources to satisfy standalone discovery's
 vacancy checks. Resume observes existing reset claims and inspects completed
 host transactions; uncertain effects remain action-required. A late runtime failure repeats the complete fresh matrix

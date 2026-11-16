@@ -155,7 +155,10 @@ adoption path.
 
 The table shows operation dependencies and Launch Kit checkpoints; DPF
 controllers reconcile resources asynchronously, so HBN startup can begin after
-DPU agents join while deployment is still progressing. Launch Kit waits for the
+DPU agents join while deployment is still progressing. Controller transitions
+can briefly make the selected-device view incomplete; the CLI waits within the
+deployment deadline for a complete current view before requesting another host
+reset. Launch Kit waits for the
 selected service and interface resources and performs final HBN acceptance only
 after host workload networking. Do not treat a declared service, ready artifact
 cache or DPU provisioning result as proof of BGP or traffic.

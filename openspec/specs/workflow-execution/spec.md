@@ -118,6 +118,13 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **THEN** no dependent effect begins; an attempt without a confirmed result remains uncertain and a later run must inspect actual cluster state.
 - **AND** readiness polling cannot accept a replacement UID, ownership drift, or desired-spec mismatch even when the controller reports Ready.
 
+#### Scenario: Selected activation changes between controller reads
+
+- **WHEN** a preclaim activation observation succeeds but cannot yet establish the complete selected cohort, including normal maintenance removal concurrent with separate DPU reads
+- **THEN** no host reset claim or submission begins from that observation; the executor records a finite waiting reason and returns to the existing bounded outer observation loop.
+- **AND** confirmed peer progress and any saved request-only checkpoint remain intact; a subsequent complete observation must satisfy every existing current request, identity, ownership, resource and physical safety check before effects.
+- **AND** nonnil observation errors, observed conflicts, cancellation and deadline expiry remain stops; postclaim submission and acknowledgment fences are not converted into waits.
+
 #### Scenario: Resume the same initial DPF deployment
 
 - **WHEN** the caller supplies the reported operation reference with the original site and bundle

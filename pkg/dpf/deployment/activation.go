@@ -17,6 +17,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -1260,8 +1261,11 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			return verified, err
 		}
 		current, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
-		if err != nil || !current.complete {
+		if err != nil {
 			return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The selected DPU child scope changed during host verification; no host reboot was requested.", err)
+		}
+		if !current.complete {
+			return verified, recordPendingRebootScope(ctx, journal, host.InputRef)
 		}
 		pending, actionable, err := selectedHostRebootPending(current, selected, indexes)
 		if err != nil || !pending || !actionable {
@@ -1323,8 +1327,11 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			// The BMC read can take time. A different request or restarted Arm
 			// invalidates its shutdown proof before the one-time claim is created.
 			current, err = observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
-			if err != nil || !current.complete {
-				return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected cohort changed during the physical reset-safety read.", nil)
+			if err != nil {
+				return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected cohort changed during the physical reset-safety read.", err)
+			}
+			if !current.complete {
+				return verified, recordPendingRebootScope(ctx, journal, host.InputRef)
 			}
 			if err := verifyPendingActivationReset(current, selected, indexes, rounds, journal); err != nil {
 				return verified, err
@@ -1486,6 +1493,23 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 		}
 	}
 	return verified, nil
+}
+
+// Separate controller reads can cross normal child/maintenance transitions.
+// Defer to the existing outer observation loop before this host's claim/action;
+// an incomplete snapshot never supplies permission for an effect.
+func recordPendingRebootScope(ctx context.Context, journal *executionJournal, subject string) error {
+	if err := ctx.Err(); err != nil {
+		return activationFailure(journal, "ACTIVATION_CANCELED", "Host reboot stopped while waiting for the complete selected activation cohort.", err)
+	}
+	const code = "ACTIVATION_REBOOT_SCOPE_PENDING"
+	const message = "The complete selected activation cohort is not yet observable. No host reset was requested at this boundary; waiting for a fresh observation."
+	if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "external-host-reboot", Subject: subject,
+		State: "waiting", ReasonCode: code, Message: message}); err != nil {
+		return err
+	}
+	ui.FromContext(ctx).Info("[WAITING] Host %s: %s (%s)", subject, message, code)
+	return nil
 }
 
 func activationRebootSourcePhase(dpu *unstructured.Unstructured) (string, error) {
