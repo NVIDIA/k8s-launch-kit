@@ -82,8 +82,9 @@ func TestRunDefaultSoftwareLimitAdmitsLargeReleaseWhilePreservingExplicitBound(t
 	}
 }
 
-func TestRunPersistsPrerequisiteFailureBeforeManagementAccess(t *testing.T) {
-	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+func TestRunPersistsPrerequisiteFailureBeforeManagementEffects(t *testing.T) {
+	api := vacantOperationAPIFixture(t)
+	generated, err := generateFixtureBundle(operationRunInputs(t, api))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +97,7 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementAccess(t *testing.T) {
 	var request RunRequest
 	request = RunRequest{
 		Bundle:     generated,
-		Access:     config.Request{Targets: []config.Target{target}, Kubeconfig: filepath.Join(root, "missing-kubeconfig")},
+		Access:     config.Request{Targets: []config.Target{target}, Kubeconfig: api.request.Kubeconfig, Context: api.request.Context},
 		ReportPath: reportPath, ProbeJournalPath: probePath,
 		VerifyPrerequisites: func(ctx context.Context, observed config.Request, plan *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
 			called = true
@@ -137,11 +138,11 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementAccess(t *testing.T) {
 	if request.Access.Targets[0].Endpoint != target.Endpoint {
 		t.Fatalf("observer mutated caller-owned request: %q", request.Access.Targets[0].Endpoint)
 	}
-	if result.State != "failed" || result.BundleDigest != generated.Index().BundleDigest || len(result.Checks) < 2 ||
-		result.Checks[1].State != "unknown" || result.Checks[1].ReasonCode != "PERMISSION_OBSERVATION_INCOMPLETE" {
+	if result.State != "failed" || result.BundleDigest != generated.Index().BundleDigest || len(result.Checks) < 3 ||
+		result.Checks[2].State != "unknown" || result.Checks[2].ReasonCode != "PERMISSION_OBSERVATION_INCOMPLETE" {
 		t.Fatalf("failure result did not preserve its safe prerequisite state: %#v", result)
 	}
-	if len(result.Checks[1].EvidenceRefs) != 0 {
+	if len(result.Checks[2].EvidenceRefs) != 0 {
 		t.Fatal("run result exposed prerequisite evidence references")
 	}
 	if result.TrafficValidated {
@@ -172,13 +173,15 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementAccess(t *testing.T) {
 }
 
 func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing.T) {
-	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+	api := vacantOperationAPIFixture(t)
+	generated, err := generateFixtureBundle(operationRunInputs(t, api))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, authentication := range []string{"password", "private-key"} {
 		t.Run(authentication, func(t *testing.T) {
 			access, knownHosts, privateKey := resolvedPrerequisiteAccess(t, authentication)
+			access.Kubeconfig, access.Context = api.request.Kubeconfig, api.request.Context
 			requirePrerequisiteAccessShape(t, access)
 			root := t.TempDir()
 			called := false

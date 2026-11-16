@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -248,15 +249,22 @@ func tenantOperationSources(ctx context.Context, tenant *tenantClient) (map[stri
 func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, workload workloadPreparationReceipt) (*deploymentOperation, error) {
 	deployment, err := retainedDeploymentObject(prepared.execution)
 	if err != nil {
-		return nil, err
+		return nil, operationReservationFailure(ctx, "OPERATION_PLAN_INVALID", err)
 	}
 	// A preexisting parent without this operation's reservation is never adopted.
-	if _, err := client.Get(ctx, deployment); !apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("OPERATION_PARENT_EXISTS: initial deployment requires no existing parent; use its recorded resume reference")
+	parent, err := client.Get(ctx, deployment)
+	if ctx.Err() != nil {
+		return nil, operationReservationFailure(ctx, "OPERATION_CANCELED", err)
+	}
+	if err == nil && parent != nil {
+		return nil, operationReservationFailure(ctx, "OPERATION_PARENT_EXISTS", nil)
+	}
+	if !apierrors.IsNotFound(err) {
+		return nil, operationReservationFailure(ctx, "OPERATION_PARENT_UNMEASURED", err)
 	}
 	sources, err := tenantOperationSources(ctx, workload.ControlPlane.tenant.Client)
 	if err != nil {
-		return nil, err
+		return nil, operationReservationFailure(ctx, "OPERATION_TENANT_SOURCES_UNMEASURED", err)
 	}
 	namespace := deployment.GetNamespace()
 	state := operationState{
@@ -268,25 +276,25 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 	}
 	data, err := encodeOperation(state)
 	if err != nil {
-		return nil, err
+		return nil, operationReservationFailure(ctx, "OPERATION_CHECKPOINT_INVALID", err)
 	}
 	if _, err := decodeOperation(data); err != nil {
-		return nil, err
+		return nil, operationReservationFailure(ctx, "OPERATION_CHECKPOINT_INVALID", err)
 	}
 	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: operationName(deployment), Labels: map[string]string{operationLabel: "v1"}}, Data: map[string]string{"checkpoint.json": data}}
 	created, err := client.createOperation(ctx, desired)
 	if err != nil {
 		existing, readErr := client.getOperation(ctx, namespace, desired.Name)
 		if readErr == nil && operationObjectMatches(existing, namespace, desired.Name) {
-			return nil, fmt.Errorf("OPERATION_RESERVATION_EXISTS: use --resume %s with its original bundle; do not create another deployment", (OperationRef{Namespace: namespace, Name: desired.Name, UID: existing.UID}).String())
+			return nil, operationReservationFailure(ctx, "OPERATION_RESERVATION_EXISTS", err)
 		}
-		return nil, fmt.Errorf("OPERATION_RESERVATION_UNCERTAIN: inspect the existing operation; do not create another deployment")
+		return nil, operationReservationFailure(ctx, "OPERATION_RESERVATION_UNCERTAIN", errors.Join(err, readErr))
 	}
 	if !operationObjectMatches(created, namespace, desired.Name) || created.Data["checkpoint.json"] != data {
-		return nil, fmt.Errorf("OPERATION_RESERVATION_UNCERTAIN: server identity not established")
+		return nil, operationReservationFailure(ctx, "OPERATION_RESERVATION_UNCERTAIN", nil)
 	}
 	if _, err := decodeOperation(data); err != nil {
-		return nil, err
+		return nil, operationReservationFailure(ctx, "OPERATION_CHECKPOINT_INVALID", err)
 	}
 	return &deploymentOperation{store: client, object: created.DeepCopy(), state: state}, nil
 }

@@ -160,6 +160,16 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** explicit trust/configuration/identity failures remain fatal, pre-submission authentication failure does not start another action attempt, and cancellation/deadline remain bounded.
 - **AND** an uncertain failure persists only finite allowlisted typed SSH code/stage and static reason text; arbitrary callback/library/remote text remains private, while the error cause chain is retained for classification.
 
+#### Scenario: An initial deployment record is already occupied
+
+- **WHEN** a new initial DPF deployment begins after its bounded image metadata check
+- **THEN** it binds one management client and inspects only the core ConfigMap reservation before fresh prerequisite probes or management/provisioning effects; an absent operator namespace does not require DPF installation first.
+- **AND** any object at the reserved name blocks initial deployment, even with matching bundle bytes or previously completed progress; unreadable identity or an unknown/denied API response cannot establish vacancy.
+- **AND** the client is reused and current management identity is reverified after collection. The final parent-absence/create-only reservation fence remains mandatory because the early read is not an atomic lock.
+- **AND** every reservation failure retains a finite safe reason and action in the journal and structured result, distinguishing a present parent from unmeasured absence and preserving cancellation without raw API or credential text.
+- **AND** no record is overwritten, adopted or automatically deleted. Recovery uses the original reference and inputs; owner-approved retirement requires exact archival, quiescence and a retired parent/claim scope, never deletion to replay an uncertain physical action.
+- **AND** a failed pre-reservation attempt does not acquire an invented resume reference or permission to reuse its partial preparation through a fresh invocation.
+
 #### Scenario: DPF management bootstrap completes
 
 - **WHEN** the retained operator release, API schemas, manager and DPFOperatorConfig become ready

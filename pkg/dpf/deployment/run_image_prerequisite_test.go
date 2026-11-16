@@ -116,7 +116,8 @@ func TestRunImageMetadataAcceptsRetainedAnonymousRepositoryBeforeDiscovery(t *te
 	defaults := preflightGenerationInputs(t).Workload.Generation
 	for _, repository := range []string{defaults.ImageRepository, "registry.example:5000/team/hbn"} {
 		t.Run(repository, func(t *testing.T) {
-			input := preflightGenerationInputs(t)
+			api := vacantOperationAPIFixture(t)
+			input := operationRunInputs(t, api)
 			configData := imageMetadataJSON(map[string]any{"os": "linux", "architecture": "arm64"})
 			configDigest := imageMetadataDigest(configData)
 			manifest := imageMetadataJSON(map[string]any{"schemaVersion": 2, "mediaType": hbnManifestMediaType, "config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json", "digest": configDigest, "size": len(configData)}, "layers": []any{}})
@@ -162,6 +163,7 @@ func TestRunImageMetadataAcceptsRetainedAnonymousRepositoryBeforeDiscovery(t *te
 				}
 				return PrerequisiteVerification{}, errors.New("stop after proven early metadata")
 			})
+			request.Access = api.request
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			_, err = runWithImageResolver(ctx, request, func(ctx context.Context, ref string, timeout time.Duration, _ http.RoundTripper) (hbnPodImageIdentity, error) {
@@ -198,7 +200,9 @@ func TestEarlyImageMetadataSuccessDoesNotReplaceRuntimeRead(t *testing.T) {
 		return PrerequisiteVerification{}, errors.New("stop after early metadata")
 	})
 	_, err := runWithImageResolver(fixture.ctx, request, resolver)
-	if err == nil || !strings.Contains(err.Error(), "prerequisite observation failed") || calls != 1 {
+	// This request deliberately has no management access. The early image read
+	// must complete before the new core operation inspection can reject it.
+	if err == nil || !strings.Contains(err.Error(), "OPERATION_MANAGEMENT_UNMEASURED") || calls != 1 {
 		t.Fatalf("early read not established: calls=%d err=%v", calls, err)
 	}
 	fixture.transports.resolveImage = resolver

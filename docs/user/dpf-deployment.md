@@ -141,6 +141,7 @@ adoption path.
 | Operation | Where it runs | What must be observed before continuing |
 | --- | --- | --- |
 | Verify HBN image metadata | The CLI reads bounded anonymous HTTPS registry metadata for the exact retained image. | Manifest/config digests and Linux/arm64 identity are verified before discovery probes or cluster changes; this is repeated on resume and again at runtime. |
+| Check the initial deployment record | Before fresh discovery probes, the CLI checks the management cluster for an existing operation record at the selected deployment name. | An occupied or unreadable record stops a new initial deployment; it is never reused or deleted automatically. |
 | Refresh deployment prerequisites | The CLI reads selected hosts, BMCs, switches and the management API. | Required identities, access and desired settings still match the reviewed bundle; required unknown or failed facts stop deployment. |
 | Install DPF management | The CLI uses the management Kubernetes API and retained chart; DPF controllers run on the management cluster. | Operator and configuration are ready with intended ownership. Conflicts are reported rather than silently adopted. |
 | Create the DPU control plane | DPF and its controllers create the selected tenant cluster on the management nodes; the CLI checks through management and tenant APIs. | The tenant API and backing prerequisites are available and match the plan. This does not mean selected DPUs are installed. |
@@ -185,6 +186,12 @@ Standalone DPF deployment JSON reports every stopped run with
 recovery, including when the underlying cause appears temporary. Preserve the
 report and operation reference, and choose an explicit resume only after
 checking the current effects.
+
+A new initial deployment checks for an existing operation record before fresh
+discovery probes or management changes. An existing record blocks this path even
+when its bundle matches or its previous deployment was removed. Follow
+[record retirement](#retire-a-previous-deployment-record) to distinguish recovery
+from a new deployment. An unavailable inspection also stops the run.
 
 Before creating the DPUDeployment, the CLI reserves a durable operation in the
 existing operator namespace and reports its `namespace/name/UID` reference. The
@@ -254,6 +261,30 @@ changed and generate a newly reviewed bundle. Host `l8k clean` is not DPF
 teardown.
 
 
+### Retire a previous deployment record
+
+An occupied record is preserved. Inspect the reported reservation subject and
+retain its exact record, bundle, site configuration, reports and physical-action
+history. For an active or uncertain deployment, consider only its original
+operation and inputs for recovery; an old reference does not authorize a new
+bundle or deployment.
+
+For a fully retired installation, the deployment owner must confirm that no
+process or controller can continue that operation, its DPF resources have been
+retired through scoped teardown, its DPUDeployment and reset claims are gone,
+and any selected host workload
+networking has been restored as required. Preserve management connectivity and
+unrelated resources. Archive the exact record and evidence before the owner
+approves retirement of that specific record. The CLI does not perform this
+retirement automatically. Never remove a record or reset claim to repeat an
+uncertain physical action.
+
+A stop before an operation reference is issued can still leave prepared
+management, tenant, enrollment or workload resources. Do not invent a resume
+reference or rerun initial deployment to reuse those resources. Have the owner
+inspect and retire the partial installation through scoped cleanup, preserve its
+evidence, and then begin a new discover → generate → initial deploy workflow.
+
 ### Recover from unavailable bootstrap credentials
 
 1. Preserve the saved operation reference, site configuration, generated bundle
@@ -271,4 +302,5 @@ teardown.
    scoped DPF teardown and restore any configured workload networking on the
    selected hosts. Preserve management connectivity, unrelated resources and
    shared foundations. Then start a **new** discover → generate → initial deploy
-   workflow with newly reviewed inputs; do not reuse the old operation.
+   workflow with newly reviewed inputs; do not reuse the old operation. Follow
+   [record retirement](#retire-a-previous-deployment-record) for its retained record.

@@ -307,15 +307,26 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 
 	// Resume identity and receipts are read-only authority for lifecycle-specific
 	// prerequisite assessment. Fresh deployment still requires unclaimed scope.
-	var client *APIClient
+	client, err := NewAPIClient(ctx, access, intent.Management, intent.KubernetesVersion)
+	if request.Resume == nil {
+		if err != nil {
+			err = operationReservationFailure(ctx, "OPERATION_MANAGEMENT_UNMEASURED", err)
+		} else {
+			err = checkInitialOperationVacancy(ctx, client, execution)
+		}
+		check := operationReservationCheck(execution, err)
+		result.Checks = append(result.Checks, check)
+		reportErr := reportOperationReservation(ctx, journal, check)
+		if err != nil || reportErr != nil {
+			return result, errors.Join(err, reportErr)
+		}
+	} else if err != nil {
+		return result, fmt.Errorf("bind resume management client: %w", err)
+	}
 	var prepared *preparedControlPlaneRun
 	var controlPlane controlPlaneReceipts
 	var workload workloadPreparationReceipt
 	if request.Resume != nil {
-		client, err = NewAPIClient(ctx, access, intent.Management, intent.KubernetesVersion)
-		if err != nil {
-			return result, fmt.Errorf("bind resume management client: %w", err)
-		}
 		if err = client.checkOperationPermissions(ctx, execution); err != nil {
 			return result, err
 		}
@@ -383,11 +394,7 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		ReasonCode: "FRESH_PREREQUISITES_PASSED", Message: "Fresh management identity and deploy-phase prerequisites match the retained plan."}); err != nil {
 		return result, err
 	}
-	if client == nil {
-		client, err = NewAPIClient(ctx, access, intent.Management, intent.KubernetesVersion)
-	} else {
-		err = client.VerifyIdentity(ctx)
-	}
+	err = client.VerifyIdentity(ctx)
 	if err != nil {
 		return result, fmt.Errorf("bind management client to retained identity: %w", err)
 	}
@@ -421,7 +428,9 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		}
 		prepared.operation, err = reserveDeploymentOperation(ctx, client, prepared, workload)
 		if err != nil {
-			return result, err
+			check := operationReservationCheck(execution, err)
+			result.Checks = append(result.Checks, check)
+			return result, errors.Join(err, reportOperationReservation(ctx, journal, check))
 		}
 		result.Operation = prepared.operation.ref()
 	}

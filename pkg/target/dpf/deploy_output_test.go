@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	. "github.com/onsi/ginkgo/v2"
@@ -19,6 +20,28 @@ import (
 )
 
 var _ = Describe("DPF deployment CLI results", func() {
+	It("retains a safe reservation reason in JSON checks without exposing its private cause", func() {
+		var stdout, stderr bytes.Buffer
+		check := inventory.Check{ID: "dpf.hbn.deployment.operation-reservation", Subject: "operator-system/dpf-op-example", Vantage: "management-cluster", RequiredPhase: "deploy",
+			State: "failed", ReasonCode: "OPERATION_RESERVATION_EXISTS", Message: "Preserve the existing record and inspect its original deployment before recovery or retirement."}
+		result := deployment.RunResult{State: deployment.RunStateFailed, ReportPath: "/reports/deployment.jsonl", Checks: []inventory.Check{check}}
+		cause := errors.New("private-kubeconfig-token-canary")
+		err := writeDeploymentResult(DeployRequest{Stdout: &stdout, Stderr: &stderr}, "json", result, cause)
+		Expect(apperrors.IsReported(err)).To(BeTrue())
+		Expect(errors.Is(err, cause)).To(BeTrue())
+		Expect(stdout.String()).NotTo(ContainSubstring(cause.Error()))
+		decoder := json.NewDecoder(&stdout)
+		var outcome struct {
+			Checks []inventory.Check `json:"checks"`
+			Error  map[string]any    `json:"error"`
+		}
+		Expect(decoder.Decode(&outcome)).To(Succeed())
+		Expect(outcome.Checks).To(Equal([]inventory.Check{check}))
+		Expect(outcome.Error).To(HaveKeyWithValue("transient", false))
+		Expect(decoder.Decode(&outcome)).To(MatchError(io.EOF))
+		Expect(stderr.String()).To(BeEmpty())
+	})
+
 	It("emits one JSON result on failure and leaves exit handling to the command", func() {
 		var stdout, stderr bytes.Buffer
 		result := deployment.RunResult{
