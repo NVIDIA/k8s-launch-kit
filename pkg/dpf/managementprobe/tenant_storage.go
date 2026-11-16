@@ -697,7 +697,8 @@ func validateProvisionerDeployment(deployment *appsv1.Deployment) TenantStorageR
 	if deployment.Spec.Selector == nil || deployment.Spec.Selector.MatchLabels["app.kubernetes.io/name"] != tenantProvisionerLabel {
 		return storageFailed("TENANT_PROVISIONER_SELECTOR_INVALID", "The local-path provisioner Deployment does not match the supported backend identity.")
 	}
-	if !labels.Set(deployment.Spec.Template.Labels).AsSelectorPreValidated().Matches(labels.Set(deployment.Spec.Selector.MatchLabels)) {
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil || !selector.Matches(labels.Set(deployment.Spec.Template.Labels)) {
 		return storageFailed("TENANT_PROVISIONER_SELECTOR_INVALID", "The local-path provisioner pod template does not match its controller selector.")
 	}
 	imageFound := false
