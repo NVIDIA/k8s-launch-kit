@@ -251,6 +251,9 @@ func verifyAbsentRegistrationCredentials(ctx context.Context, management Resourc
 		return materialFailure("BOOTSTRAP_CREDENTIALS_CHANGED")
 	}
 	_, err = tenant.api.CoreV1().Nodes().Get(ctx, dpu.GetName(), metav1.GetOptions{})
+	if ctx.Err() != nil {
+		return bootstrapInspectionCanceled(journal, ctx.Err())
+	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fail("BOOTSTRAP_REGISTRATION_UNMEASURED")
 	}

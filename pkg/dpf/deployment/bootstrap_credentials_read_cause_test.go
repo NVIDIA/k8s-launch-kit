@@ -84,3 +84,26 @@ func TestBootstrapRealMaterialReadReportsMissingDeniedAndTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestBootstrapFinalValidMaterialRegistrationReadCancellation(t *testing.T) {
+	m, c, s, dpu := newBootstrapCredentialFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.beforeRead = func(path string, n int) {
+		if path == "/api/v1/nodes/"+dpu.GetName() && n == 2 {
+			cancel()
+		}
+	}
+	file := &managementMemoryFile{}
+	journal := &executionJournal{file: file, digest: "test"}
+	err := verifyAbsentRegistrationCredentials(ctx, m, c, dpu, journal)
+	if err == nil || !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "ACTIVATION_CANCELED") {
+		t.Fatalf("final valid-material read lost cancellation: %v", err)
+	}
+	if strings.Contains(err.Error()+file.String(), "BOOTSTRAP_REGISTRATION_UNMEASURED") || strings.Contains(err.Error()+file.String(), "#recover-from-unavailable-bootstrap-credentials") {
+		t.Fatal("cancellation was mislabeled as credential recovery")
+	}
+	if !strings.Contains(file.String(), "ACTIVATION_CANCELED") || m.writes != 0 || s.writes != 0 {
+		t.Fatal("cancellation not safely persisted or caused a mutation")
+	}
+}
