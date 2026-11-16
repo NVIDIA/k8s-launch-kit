@@ -277,7 +277,8 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, "ENROLLMENT_BOOTSTRAP_CHANGED", "Management bootstrap no longer matches its receipt; enrollment is stopped.", err)
 	}
 	if err := tenantReceipt.Client.VerifyIdentity(ctx); err != nil {
-		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, "TENANT_API_IDENTITY_CHANGED", "Tenant API identity changed before selected-device enrollment.", err)
+		diagnostic := tenantIdentityDiagnostic(ctx, err)
+		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	if err := management.VerifyIdentity(ctx); err != nil {
 		return enrollmentStageReceipt{}, enrollmentStageFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed before enrollment.", err)
@@ -337,7 +338,8 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 		return receipt, enrollmentStageFailure(journal, "ENROLLMENT_READINESS_CANCELED", "Enrollment was canceled before its completed receipt could be issued.", err)
 	}
 	if tenantErr != nil {
-		return receipt, enrollmentStageFailure(journal, "TENANT_API_IDENTITY_CHANGED", "Tenant API or source identity changed during the final selected-device observation.", tenantErr)
+		diagnostic := tenantIdentityDiagnostic(ctx, tenantErr)
+		return receipt, enrollmentStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	// This is a verified observation across independent APIs, not a lease or
 	// transaction that prevents external changes after these checks return.
@@ -352,7 +354,8 @@ func verifyEnrollmentBoundary(ctx context.Context, management enrollmentManageme
 		return enrollmentStageFailure(journal, "ENROLLMENT_BOOTSTRAP_CHANGED", "Management bootstrap changed before selected-device discovery.", err)
 	}
 	if err := tenantReceipt.Client.VerifyIdentity(ctx); err != nil {
-		return enrollmentStageFailure(journal, "TENANT_API_IDENTITY_CHANGED", "Tenant API identity changed before selected-device discovery.", err)
+		diagnostic := tenantIdentityDiagnostic(ctx, err)
+		return enrollmentStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	if err := management.verifyEnrollmentBMCs(ctx, selected, requestTimeout, journal); err != nil {
 		return err
