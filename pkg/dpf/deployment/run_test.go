@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"golang.org/x/crypto/ssh"
@@ -97,7 +98,7 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementAccess(t *testing.T) {
 		Bundle:     generated,
 		Access:     config.Request{Targets: []config.Target{target}, Kubeconfig: filepath.Join(root, "missing-kubeconfig")},
 		ReportPath: reportPath, ProbeJournalPath: probePath,
-		VerifyPrerequisites: func(ctx context.Context, observed config.Request, plan *generation.Plan) (PrerequisiteVerification, error) {
+		VerifyPrerequisites: func(ctx context.Context, observed config.Request, plan *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
 			called = true
 			if ctx == nil || plan == nil || plan.Digest() != generated.Index().BundleDigest {
 				t.Fatal("observer did not receive the bounded context and validated retained plan")
@@ -186,7 +187,7 @@ func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing
 			_, runErr := runWithImageResolver(ctx, RunRequest{
 				Bundle: generated, Access: access,
 				ReportPath: filepath.Join(root, "run.jsonl"), ProbeJournalPath: filepath.Join(root, "probe.jsonl"),
-				VerifyPrerequisites: func(_ context.Context, observed config.Request, _ *generation.Plan) (PrerequisiteVerification, error) {
+				VerifyPrerequisites: func(_ context.Context, observed config.Request, _ *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
 					called = true
 					requirePrerequisiteAccessShape(t, observed)
 					for _, candidate := range []config.Request{access, observed} {
@@ -403,9 +404,34 @@ func TestValidatePrerequisiteVerificationRequiresCompleteDeployChecks(t *testing
 			TrustDigest: intent.Management.TrustDigest, KubernetesVersion: intent.KubernetesVersion,
 		},
 	}
+	current.DPUs = []inventory.Device{{ID: "dpu-a", RecordKey: "dpu-a", InputRef: "/discovery/dpus/0", ReaderAdapter: "bluefield-card-v1", BMCEndpoint: "https://192.0.2.30", SerialNumber: intent.Devices[0].Serial, ObservationState: "observed"}}
+	current.Hosts = []inventory.Device{{ID: "host-a", RecordKey: "host-a", InputRef: "/discovery/hosts/0", ReaderAdapter: "linux-host-ssh-v1", SystemUUID: "12345678-1234-1234-1234-123456789abc", SSHEndpoint: "ssh://192.0.2.20:22", ObservationState: "observed", Adapters: []inventory.Adapter{{Key: "card-a", IdentityState: "known", SerialNumber: intent.Devices[0].Serial, PCIAddress: "0000:21:00.0", PCIFunctions: []inventory.PCIFunction{{Address: "0000:21:00.0"}, {Address: "0000:21:00.1"}}}}, Runtime: &inventory.RuntimeObservation{VirtualMachine: new(bool), SSHServerAddress: "192.0.2.20", Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "mgmt0", PhysicalPFRoots: []string{"0000:35:00.0"}}}}, Interfaces: []inventory.Interface{{Name: "mgmt0", Index: 2, Addresses: []string{"192.0.2.20/24"}}}, Routes: []inventory.Route{{Destination: "192.0.2.0/24", InterfaceIndex: 2, Table: 254}}, Observations: map[string]inventory.Observation{"interfaces": {State: "observed"}, "routes": {State: "observed"}, "host-management-roots": {State: "observed"}}}}}
+	current.Associations = []inventory.Association{{DPUID: "dpu-a", HostID: "host-a", HostAdapterKey: "card-a", SerialNumber: intent.Devices[0].Serial}}
 	verification := PrerequisiteVerification{Inventory: current, Checks: []inventory.Check{{
 		ID: "caller.permission", Subject: "dpf-operator-system", Vantage: "management-cluster", RequiredPhase: "deploy", State: "passed",
 	}}}
+	required := discovery.HostHBNChecks(current, nil)
+	for _, check := range required {
+		check.State = "passed"
+		check.ReasonCode = "PROVIDER_FIXTURE"
+		check.Message = "Complete provider row for the validator unit test."
+		verification.Checks = append(verification.Checks, check)
+	}
+	for _, missing := range required {
+		candidate := verification
+		candidate.Checks = nil
+		for _, check := range verification.Checks {
+			if check.ID != missing.ID || check.Subject != missing.Subject || check.Vantage != missing.Vantage {
+				candidate.Checks = append(candidate.Checks, check)
+			}
+		}
+		if err := validatePrerequisiteVerification(plan, candidate); err == nil {
+			t.Fatalf("omitted required host row accepted: %s/%s", missing.ID, missing.Subject)
+		}
+	}
+	if err := validatePrerequisiteVerification(plan, PrerequisiteVerification{Inventory: current, Checks: verification.Checks[:1]}); err == nil {
+		t.Fatal("omitted required physical-root check accepted")
+	}
 	if err := validatePrerequisiteVerification(plan, verification); err != nil {
 		t.Fatalf("valid complete prerequisite observation: %v", err)
 	}
@@ -413,7 +439,14 @@ func TestValidatePrerequisiteVerificationRequiresCompleteDeployChecks(t *testing
 		name string
 		fn   func(*PrerequisiteVerification)
 	}{
-		{name: "no deploy check", fn: func(v *PrerequisiteVerification) { v.Checks[0].RequiredPhase = "generate" }},
+		{name: "no deploy check", fn: func(v *PrerequisiteVerification) {
+			for i := range v.Checks {
+				v.Checks[i].RequiredPhase = "generate"
+			}
+		}},
+		{name: "host row cannot change subject", fn: func(v *PrerequisiteVerification) { v.Checks[1].Subject = "foreign host" }},
+		{name: "host row cannot change vantage", fn: func(v *PrerequisiteVerification) { v.Checks[1].Vantage = "foreign" }},
+		{name: "physical proof cannot be generate only", fn: func(v *PrerequisiteVerification) { v.Checks[1].RequiredPhase = "generate" }},
 		{name: "unknown without reason", fn: func(v *PrerequisiteVerification) { v.Checks[0].State = "unknown" }},
 		{name: "duplicate identity", fn: func(v *PrerequisiteVerification) { v.Checks = append(v.Checks, v.Checks[0]) }},
 		{name: "inventory mismatch", fn: func(v *PrerequisiteVerification) { v.Inventory.Management.TrustDigest = "other" }},
@@ -424,6 +457,9 @@ func TestValidatePrerequisiteVerificationRequiresCompleteDeployChecks(t *testing
 				t.Fatal(err)
 			}
 			candidate := PrerequisiteVerification{Inventory: candidateInventory, Checks: append([]inventory.Check(nil), verification.Checks...)}
+			if err := validatePrerequisiteVerification(plan, candidate); err != nil {
+				t.Fatalf("cloned baseline invalid: %v", err)
+			}
 			mutate.fn(&candidate)
 			if err := validatePrerequisiteVerification(plan, candidate); err == nil {
 				t.Fatal("invalid prerequisite observation was accepted")

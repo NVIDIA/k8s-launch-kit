@@ -19,7 +19,7 @@ import (
 func TestRunShortTrafficBudgetStopsFreshAndResumeBeforeAnyTransport(t *testing.T) {
 	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
 	for _, resume := range []bool{false, true} {
-		request := imagePrerequisiteRunRequest(t, execution.retained, func(context.Context, config.Request, *generation.Plan) (PrerequisiteVerification, error) {
+		request := imagePrerequisiteRunRequest(t, execution.retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 			t.Fatal("prerequisites/probes/effects ran despite impossible budget")
 			return PrerequisiteVerification{}, nil
 		})

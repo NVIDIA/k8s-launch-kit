@@ -193,13 +193,19 @@ func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string, resume
 // The private collector seam retains the real native collection/plan-verification
 // path in integration tests without opening real endpoint transports.
 func deploymentPrerequisitesWithCollectors(retained *bundle.Bundle, runDir string, resume bool, collectors func(*artifacts.Store, *generation.Plan) discovery.Dependencies) deployment.PrerequisiteVerifier {
-	return func(ctx context.Context, request config.Request, plan *generation.Plan) (deployment.PrerequisiteVerification, error) {
-		store, err := artifacts.New(request.Input, filepath.Join(runDir, "discovered.yaml"), true)
+	return func(ctx context.Context, request config.Request, plan *generation.Plan, phase deployment.PrerequisitePhase) (deployment.PrerequisiteVerification, error) {
+		if phase != deployment.BeforeActivation && phase != deployment.AfterActivation {
+			return deployment.PrerequisiteVerification{}, fmt.Errorf("unsupported prerequisite phase")
+		}
+		store, err := artifacts.New(request.Input, filepath.Join(runDir, string(phase)+"-discovered.yaml"), true)
 		if err != nil {
 			return deployment.PrerequisiteVerification{}, err
 		}
 		deps := collectors(store, plan)
-		deps.DeferHBNReadiness = resume
+		deps.DeferHBNReadiness = resume || phase == deployment.AfterActivation
+		if phase == deployment.AfterActivation {
+			deps.ArtifactSourceMode = discovery.ArtifactInputsOnly
+		}
 		report := discovery.Collect(ctx, request, store.RunID(), deps)
 		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		err = store.Publish(publishCtx, &report)
@@ -214,7 +220,7 @@ func deploymentPrerequisitesWithCollectors(retained *bundle.Bundle, runDir strin
 			return deployment.PrerequisiteVerification{}, fmt.Errorf("fresh deployment discovery is incomplete; inspect %s", store.RunDir)
 		}
 
-		if !resume && report.Readiness.State != "ready" {
+		if !resume && phase == deployment.BeforeActivation && report.Readiness.State != "ready" {
 			return deployment.PrerequisiteVerification{Inventory: report.Inventory, Checks: report.Readiness.Checks}, fmt.Errorf("fresh HBN-BGP prerequisites are blocked; inspect %s", store.RunDir)
 		}
 		current := request.Input

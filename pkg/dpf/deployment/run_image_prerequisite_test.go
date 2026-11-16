@@ -54,7 +54,7 @@ func TestRunImageMetadataFailureStopsFreshAndResumeBeforeEffects(t *testing.T) {
 	for _, resume := range []bool{false, true} {
 		for _, scenario := range []string{"private-basic", "foreign-bearer", "unavailable", "wrong-digest"} {
 			t.Run(fmt.Sprintf("resume-%t/%s", resume, scenario), func(t *testing.T) {
-				request := imagePrerequisiteRunRequest(t, retained, func(context.Context, config.Request, *generation.Plan) (PrerequisiteVerification, error) {
+				request := imagePrerequisiteRunRequest(t, retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 					t.Fatal("discovery/probes/selector work ran after failed metadata")
 					return PrerequisiteVerification{}, nil
 				})
@@ -155,7 +155,7 @@ func TestRunImageMetadataAcceptsRetainedAnonymousRepositoryBeforeDiscovery(t *te
 				}
 				return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(string(data))), ContentLength: int64(len(data)), Request: r}, nil
 			})
-			request := imagePrerequisiteRunRequest(t, retained, func(_ context.Context, _ config.Request, plan *generation.Plan) (PrerequisiteVerification, error) {
+			request := imagePrerequisiteRunRequest(t, retained, func(_ context.Context, _ config.Request, plan *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
 				prerequisites++
 				if metadataReads != 2 || tokens != 1 || hbnImageReference(plan.Intent().Generation) != expected {
 					t.Fatal("discovery preceded exact retained metadata identity")
@@ -194,7 +194,7 @@ func TestEarlyImageMetadataSuccessDoesNotReplaceRuntimeRead(t *testing.T) {
 		}
 		return hbnPodImageIdentity{}, errors.New("metadata became unavailable")
 	}
-	request := imagePrerequisiteRunRequest(t, fixture.prepared.execution.retained, func(context.Context, config.Request, *generation.Plan) (PrerequisiteVerification, error) {
+	request := imagePrerequisiteRunRequest(t, fixture.prepared.execution.retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 		return PrerequisiteVerification{}, errors.New("stop after early metadata")
 	})
 	_, err := runWithImageResolver(fixture.ctx, request, resolver)

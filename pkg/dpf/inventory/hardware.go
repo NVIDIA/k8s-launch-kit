@@ -31,13 +31,15 @@ type NetworkObservation struct {
 }
 
 type NetworkLink struct {
-	PCIAddress       string `json:"pciAddress,omitempty" yaml:"pciAddress,omitempty"`
-	PhysicalPortName string `json:"physicalPortName,omitempty" yaml:"physicalPortName,omitempty"`
-	Name             string `json:"name" yaml:"name"`
-	MAC              string `json:"mac,omitempty" yaml:"mac,omitempty"`
-	PermanentMAC     string `json:"permanentMAC,omitempty" yaml:"permanentMAC,omitempty"`
-	Master           string `json:"master,omitempty" yaml:"master,omitempty"`
-	Kind             string `json:"kind,omitempty" yaml:"kind,omitempty"`
+	// PhysicalPFRoots are measured through lower links and PCI physfn ancestry.
+	PhysicalPFRoots  []string `json:"physicalPFRoots,omitempty" yaml:"physicalPFRoots,omitempty"`
+	PCIAddress       string   `json:"pciAddress,omitempty" yaml:"pciAddress,omitempty"`
+	PhysicalPortName string   `json:"physicalPortName,omitempty" yaml:"physicalPortName,omitempty"`
+	Name             string   `json:"name" yaml:"name"`
+	MAC              string   `json:"mac,omitempty" yaml:"mac,omitempty"`
+	PermanentMAC     string   `json:"permanentMAC,omitempty" yaml:"permanentMAC,omitempty"`
+	Master           string   `json:"master,omitempty" yaml:"master,omitempty"`
+	Kind             string   `json:"kind,omitempty" yaml:"kind,omitempty"`
 	// Zero means iproute did not report a usable MTU bound.
 	MinMTU uint32 `json:"minMTU,omitempty" yaml:"minMTU,omitempty"`
 	MaxMTU uint32 `json:"maxMTU,omitempty" yaml:"maxMTU,omitempty"`

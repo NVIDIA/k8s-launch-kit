@@ -649,12 +649,27 @@
           "body": "Launch Kit waits for every selected DPU to report current DPF readiness and for any requested host reset to be complete. DPF may start HBN asynchronously after devices join; final service and traffic checks still follow host workload networking.",
           "transitions": [
             {
-              "to": "host-network",
+              "to": "after-activation",
               "label": "Selected DPUs are provisioned and ready"
             },
             {
               "to": "blocked",
               "label": "Provisioning remains failed, unknown or pending"
+            }
+          ]
+        },
+        {
+          "id": "after-activation",
+          "title": "CLI operator: recheck current hosts and network before workload configuration",
+          "body": "After all selected DPUs are ready, the CLI collects current host, BMC, switch, management, storage and access facts again. Every selected host PF, backend and cabling check must now pass; temporary pending-reset allowances no longer apply. The observed devices must still match the same saved operation and reviewed bundle. Changed or unavailable required facts stop before host workload configuration and traffic. Current owned software receipts are checked without downloading the large origin artifacts again.",
+          "transitions": [
+            {
+              "to": "host-network",
+              "label": "Current post-activation prerequisites pass"
+            },
+            {
+              "to": "blocked",
+              "label": "A required current identity or network check is unavailable or fails"
             }
           ]
         },
@@ -697,7 +712,7 @@
         {
           "id": "blocked",
           "title": "CLI operator: inspect the reason before another attempt",
-          "body": "Keep the failed report, discovery handoff, stdout and stderr. Unknown is not a pass. Earlier management, tenant, enrollment, software, host networking or DPF effects can remain after a stop. Inspect current resources and device state before retrying; do not retry an operation whose effect is uncertain.\n\nIf selection or site inputs changed, update the source file, rediscover where the observed facts changed and generate a new reviewed bundle. If unrelated live state changed, stop and inspect the change before continuing. Expected progress from the recorded operation is assessed by resume using its unchanged bundle. A matching tenant or existing resource name does not prove safe reuse. Coordinate any selected-tenant cleanup with its owner and preserve unrelated resources.\n\nFor an unchanged initial deployment, retain its reported operation reference and use `l8k deploy --target dpf --user-config dpf-discovered.yaml --deployment-files ./hbn-bgp --resume NAMESPACE/NAME/UID`. Resume verifies prior identities and observes existing reset claims; missing proof and partial host transactions remain action-required. It never replaces a claim or reimages completed devices merely to repeat a late runtime check. Each retry measures the complete current traffic matrix. Earlier diagnostic-only reports cannot authorize recovery.\n\nUse the same saved operation, configuration and bundle for resume. The CLI rechecks current host, BMC, switch, operator, storage and access prerequisites, and recognizes only resources, addresses and routes proven to belong to that operation. Do not delete operation-owned resources just to make standalone discovery pass. Changed or unverifiable ownership stops recovery and preserves existing state. Each resume repeats the complete current traffic checks.",
+          "body": "Keep the failed report, discovery handoff, stdout and stderr. Unknown is not a pass. Earlier management, tenant, enrollment, software, host networking or DPF effects can remain after a stop. Inspect current resources and device state before retrying; do not retry an operation whose effect is uncertain.\n\nIf selection or site inputs changed, update the source file, rediscover where the observed facts changed and generate a new reviewed bundle. If unrelated live state changed, stop and inspect the change before continuing. Expected progress from the recorded operation is assessed by resume using its unchanged bundle. A matching tenant or existing resource name does not prove safe reuse. Coordinate any selected-tenant cleanup with its owner and preserve unrelated resources.\n\nFor an unchanged initial deployment, retain its reported operation reference and use `l8k deploy --target dpf --user-config dpf-discovered.yaml --deployment-files ./hbn-bgp --resume NAMESPACE/NAME/UID`. Resume verifies prior identities and observes existing reset claims; missing proof and partial host transactions remain action-required. It never replaces a claim or reimages completed devices merely to repeat a late runtime check. Each retry measures the complete current traffic matrix. Earlier diagnostic-only reports cannot authorize recovery.\n\nUse the same saved operation, configuration and bundle for resume. The CLI rechecks current host, BMC, switch, operator, storage and access prerequisites, and recognizes only resources, addresses and routes proven to belong to that operation. Do not delete operation-owned resources just to make standalone discovery pass. Changed or unverifiable ownership stops recovery and preserves existing state. Each resume repeats the complete current traffic checks. During an operation-owned pending reset, selected host interfaces can temporarily disappear. Resume must still verify the selected device, host and separate management connectivity. It collects strict current host and network facts after activation before workload configuration or traffic. Do not reset a host manually to make discovery pass.",
           "transitions": [
             {
               "to": "inputs",

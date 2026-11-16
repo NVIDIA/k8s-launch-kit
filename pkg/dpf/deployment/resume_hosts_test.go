@@ -108,7 +108,7 @@ func TestResumePrerequisiteFailureRetainsSafeExplicitReason(t *testing.T) {
 	var progress strings.Builder
 	ctx := ui.WithOutput(context.Background(), ui.NewWithWriter(&progress))
 	before := []inventory.Check{{ID: "raw", State: "failed", ReasonCode: "DPU_ALREADY_ENROLLED"}}
-	result, err := resumePrerequisiteFailure(ctx, PrerequisiteVerification{Checks: before}, "OWNED_RESUME_HOST_TRANSACTION_UNVERIFIED", "Inspect the original host transaction; preserve owned state.", errors.New("private-password-canary"))
+	result, err := ownedPrerequisiteFailure(ctx, PrerequisiteVerification{Checks: before}, BeforeActivation, "OWNED_RESUME_HOST_TRANSACTION_UNVERIFIED", "Inspect the original host transaction; preserve owned state.", errors.New("private-password-canary"))
 	encoded, _ := json.Marshal(result.Checks)
 	if err == nil || len(result.Checks) != 2 || len(before) != 1 || result.Checks[1].ReasonCode != "OWNED_RESUME_HOST_TRANSACTION_UNVERIFIED" || strings.Contains(string(encoded)+progress.String()+err.Error(), "private-password-canary") {
 		t.Fatalf("failure lost explicit safe provenance: checks=%s err=%v", encoded, err)

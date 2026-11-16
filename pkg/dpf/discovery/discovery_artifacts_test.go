@@ -41,7 +41,7 @@ func TestHBNArtifactSourceChecksVerifyOnlySelectedLockedSources(t *testing.T) {
 			results[i] = artifactcheck.Result{Subject: artifact.Subject, State: "passed", ReasonCode: "ARTIFACT_SOURCE_VERIFIED"}
 		}
 		return results
-	}))
+	}), VerifyArtifactOrigins)
 	if len(got) != 2 || got[0].Subject != "osISO" || got[1].Subject != "pldm/MT_0000001774" {
 		t.Fatalf("verified sources = %#v", got)
 	}
@@ -63,7 +63,7 @@ func TestHBNArtifactSourceChecksKeepUnknownPSIDScopedAndStillCheckISO(t *testing
 			t.Fatalf("unknown PSID caused unsafe PLDM selection: %#v", artifacts)
 		}
 		return []artifactcheck.Result{{Subject: "osISO", State: "passed", ReasonCode: "ARTIFACT_SOURCE_VERIFIED"}}
-	}))
+	}), VerifyArtifactOrigins)
 	if calls != 1 || len(checks) != 2 || checkByCode(checks, "ARTIFACT_SOURCE_VERIFIED").State != "passed" || checkByCode(checks, "SELECTED_PSID_SCOPE_UNAVAILABLE").State != "unknown" {
 		t.Fatalf("checks=%#v calls=%d", checks, calls)
 	}
@@ -78,13 +78,13 @@ func TestHBNArtifactSourceChecksMissingVerifierAndInvalidResultFailClosed(t *tes
 		PSID:         inventory.Observation{State: "observed", Values: []string{"MT_0000001774"}},
 	}}}
 	input := &config.Provisioning{Software: config.Software{OSISO: config.Artifact{URL: "https://artifacts.example/os.iso", SHA256: strings.Repeat("a", 64)}}}
-	checks := hbnArtifactSourceChecks(context.Background(), input, &inv, nil)
+	checks := hbnArtifactSourceChecks(context.Background(), input, &inv, nil, VerifyArtifactOrigins)
 	if len(checks) != 2 || checkByCode(checks, "ARTIFACT_VERIFIER_UNAVAILABLE").State != "unknown" || checkByCode(checks, "PLDM_ARTIFACT_MISSING").State != "unknown" {
 		t.Fatalf("missing verifier checks = %#v", checks)
 	}
 	checks = hbnArtifactSourceChecks(context.Background(), input, &inv, artifactVerifierFunc(func(context.Context, []artifactcheck.Artifact) []artifactcheck.Result {
 		return []artifactcheck.Result{{Subject: "wrong", State: "passed", ReasonCode: "ARTIFACT_SOURCE_VERIFIED"}}
-	}))
+	}), VerifyArtifactOrigins)
 	if checkByCode(checks, "ARTIFACT_RESULT_INVALID").State != "unknown" {
 		t.Fatalf("invalid verifier result passed: %#v", checks)
 	}
@@ -94,7 +94,7 @@ func TestHBNArtifactSourceChecksMissingVerifierAndInvalidResultFailClosed(t *tes
 			results[i] = artifactcheck.Result{Subject: artifact.Subject, State: "failed", ReasonCode: "https://user:secret@artifact.invalid/?token=private"}
 		}
 		return results
-	}))
+	}), VerifyArtifactOrigins)
 	if check := checkByCode(checks, "ARTIFACT_RESULT_INVALID"); check.State != "unknown" || strings.Contains(check.ReasonCode+check.Message, "secret") || strings.Contains(check.ReasonCode+check.Message, "private") {
 		t.Fatalf("unsafe verifier result escaped into inventory: %#v", check)
 	}
@@ -107,4 +107,30 @@ func checkByCode(checks []inventory.Check, code string) inventory.Check {
 		}
 	}
 	return inventory.Check{}
+}
+
+func TestHBNAfterArtifactInputsNeverDownloadsButRetainsInvalidInputFailures(t *testing.T) {
+	inv := hostHBNTestInventory()
+	inv.Hosts[0].Runtime.Hardware = &inventory.HardwareObservation{Cards: []inventory.CardHardware{{SerialNumber: inv.DPUs[0].SerialNumber, PCIAddress: inv.Hosts[0].Adapters[0].PCIAddress, Domain: "host-pci", PSID: inventory.Observation{State: "observed", Values: []string{"MT_0000001774"}}}}}
+	input := &config.Provisioning{Software: config.Software{OSISO: config.Artifact{URL: "https://artifacts.example/os.iso", SHA256: strings.Repeat("a", 64)}, PLDM: map[string]config.Artifact{"MT_0000001774": {URL: "https://artifacts.example/fw.pkg", SHA256: strings.Repeat("b", 64)}}}}
+	calls := 0
+	verifier := artifactVerifierFunc(func(context.Context, []artifactcheck.Artifact) []artifactcheck.Result {
+		calls++
+		t.Fatal("After downloaded origin bytes")
+		return nil
+	})
+	checks := hbnArtifactSourceChecks(context.Background(), input, &inv, verifier, ArtifactInputsOnly)
+	if calls != 0 || len(checks) != 2 {
+		t.Fatalf("checks=%+v calls=%d", checks, calls)
+	}
+	for _, check := range checks {
+		if check.RequiredPhase != "generate" || check.State != "unknown" || check.ReasonCode != "ARTIFACT_SOURCE_NOT_RECHECKED" {
+			t.Fatalf("misleading After source result: %+v", check)
+		}
+	}
+	input.Software.OSISO.URL = "http://artifacts.example/os.iso"
+	checks = hbnArtifactSourceChecks(context.Background(), input, &inv, verifier, ArtifactInputsOnly)
+	if len(checks) != 1 || checks[0].State != "failed" || checks[0].ReasonCode != "ARTIFACT_INPUT_INVALID" {
+		t.Fatalf("invalid After input accepted: %+v", checks)
+	}
 }

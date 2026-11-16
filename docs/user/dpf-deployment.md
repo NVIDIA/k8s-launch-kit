@@ -80,7 +80,11 @@ Confirm these site decisions before generating the bundle:
 | Software | The OS ISO and each selected PSID firmware bundle match the intended DPU cohort; provide credential-free HTTPS URLs and checksums. |
 | Fabric | Switch uplinks already have the intended port bindings, fabric VRF, BGP neighbors/policy, ASN and MTU. Deployment observes this configuration; it does not apply it. |
 | Host workload network | The selected PF can be configured without taking over the host management interface, another port or its default route. |
-| Host recovery | The selected host can return to its existing local operating system after a requested system reboot. |
+| Host recovery | The selected host can return to its existing local operating system after a requested system reboot. The host OS reports no virtual machine, and its SSH and default-route paths have measurable PCI ancestry on a separate card from the selected DPU. |
+
+Selected HBN hosts must be bare-metal Linux systems with the supported systemd
+VM detector available. Discovery requires the OS to report no VM; missing tools,
+unknown results and detected VMs stop before provisioning.
 
 The native HBN deployment path requires
 `provisioning.bootstrap.bmcFactoryResetPolicy: Never`, preserving existing BMC
@@ -143,6 +147,7 @@ adoption path.
 | Enroll selected cards | The CLI supplies the required credential and discovery targets; DPF contacts the selected BMCs. | Each selected DPU is enrolled with the intended device/host identity. The reviewed deployment selectors target those devices later; no manual label operation is required. |
 | Stage software and declare HBN | DPF caches the selected OS and PSID firmware; the CLI verifies artifact checksums and creates the selected flavor, IPAM, interface, service and DPUDeployment declarations through the management API. | Artifact bytes match the reviewed bundle and the declarations target only the selected devices and are accepted. Downloads and accepted objects do not prove installed software or a running service. |
 | Install and activate DPUs | DPF controllers install the OS and DPU agent. Before a requested host reboot, the CLI checks the request, safe shutdown state and current device, host and deployment prerequisites. After the host and DPU reconnect, it checks current prerequisites again before acknowledging the request. | The host and selected DPU return with the expected boot observations within the configured deployment timeout, and DPF reports them ready. |
+| Recheck after activation | The CLI collects current host, BMC, switch, management, storage and access facts again. | All current host PF, backend and cabling checks pass for the same operation and devices before workload changes or traffic; pending-reset allowances no longer apply. |
 | Configure host workload networking | The CLI reads each actual DPU IPAM allocation through the tenant/management APIs and configures the matching host PF over host access. | The allocated address, selected interface, MTU and workload route are applied and verified while preserving management connectivity and the default route. |
 | Check HBN routing and traffic | The CLI reads the intended HBN containers and routing state through the tenant API, then probes selected hosts over host access. | Required BGP peers, remote workload routes and every directed ordinary and do-not-fragment (DF) traffic check pass. A one-host result cannot establish cross-host traffic. |
 
@@ -203,7 +208,12 @@ and recognizes only resources, addresses and routes proven to belong to that
 operation. Standalone discovery checks readiness for a new deployment; do not
 delete an operation's enrollment, tenant, host addresses or routes just to make
 those checks pass. Changed or unverifiable ownership stops recovery and
-preserves the existing state. Resume repeats the complete traffic checks.
+preserves the existing state. During an operation-owned pending reset, a selected
+DPU's host interfaces can temporarily disappear. Resume proceeds only when it
+can still verify that device, its host and separate management connectivity.
+After activation it collects current host and network facts again; workload
+configuration and traffic wait for those checks to pass. Do not reset a host
+manually to make discovery pass. Resume repeats the complete traffic checks.
 
 An existing reset claim permits observation only. Recovery needs the saved
 host baseline, a changed boot on that same host/PF, and a new current Arm boot

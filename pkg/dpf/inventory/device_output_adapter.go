@@ -255,6 +255,9 @@ func DeviceFromOutput(w DeviceOutput, role string) (Device, error) {
 }
 
 func validateDeviceOutput(w DeviceOutput, role string) error {
+	if err := validateHostNetworkFacts(w, role); err != nil {
+		return err
+	}
 	if err := validateHardwareIssueFields(w); err != nil {
 		return err
 	}

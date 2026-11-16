@@ -35,7 +35,19 @@ type ArtifactVerifier interface {
 type Collector interface {
 	Collect(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error)
 }
+
+// ArtifactSourceMode controls observation transport, never deployment authority.
+// The default verifies origin bytes. InputsOnly records that bytes were not read;
+// a deployment lifecycle must separately verify its owned software receipt.
+type ArtifactSourceMode uint8
+
+const (
+	VerifyArtifactOrigins ArtifactSourceMode = iota
+	ArtifactInputsOnly
+)
+
 type Dependencies struct {
+	ArtifactSourceMode ArtifactSourceMode
 	// DeferHBNReadiness defers eligibility messages to a deployment lifecycle
 	// assessment. It does not change collection, checks, readiness or acceptance.
 	DeferHBNReadiness bool

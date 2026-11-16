@@ -13,9 +13,12 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 )
 
-// hostHBNChecks evaluates host-side facts for each inventory-selected DPU. It
+// HostHBNChecks evaluates host-side facts for each inventory-selected DPU. It
 // only follows the exact correlated host adapter and never changes the input.
-func hostHBNChecks(inv *inventory.Inventory, hostNetworking map[string]inventory.Check) []inventory.Check {
+// With no current backend results, the backend check remains unknown. Consumers
+// may use these same identities to enforce provider completeness; that identity
+// projection does not independently prove physical geometry or backend readiness.
+func HostHBNChecks(inv *inventory.Inventory, hostNetworking map[string]inventory.Check) []inventory.Check {
 	if inv == nil || len(inv.DPUs) == 0 {
 		return []inventory.Check{hostCheck("host-inventory", "selected DPUs", "unknown", "HOST_DPU_SCOPE_UNAVAILABLE", "No selected DPU inventory is available to evaluate host prerequisites.")}
 	}
@@ -46,6 +49,7 @@ func hostHBNChecks(inv *inventory.Inventory, hostNetworking map[string]inventory
 		checks = append(checks, iommuChecks...)
 		separation := managementPathCheck(*host, netdevs, subject)
 		checks = append(checks, separation)
+		checks = append(checks, HostManagementPhysicalCheck(inv, dpu.SerialNumber))
 		if backend, available := hostNetworking[dpu.SerialNumber]; available {
 			checks = append(checks, backend)
 		} else {
@@ -53,6 +57,41 @@ func hostHBNChecks(inv *inventory.Inventory, hostNetworking map[string]inventory
 		}
 	}
 	return checks
+}
+
+// HostManagementPhysicalCheck binds authenticated SSH and default-route paths
+// to measured physical roots before initial effects and during owned recovery.
+func HostManagementPhysicalCheck(inv *inventory.Inventory, serial string) inventory.Check {
+	subject := serial
+	var selected *inventory.Device
+	if inv != nil {
+		for i := range inv.DPUs {
+			if inv.DPUs[i].SerialNumber == serial {
+				if selected != nil {
+					return hostCheck("host-management-physical", subject, "unknown", "HOST_ASSOCIATION_CONFLICT", "Selected DPU identity is ambiguous.")
+				}
+				selected = &inv.DPUs[i]
+			}
+		}
+	}
+	if selected == nil {
+		return hostCheck("host-management-physical", subject, "unknown", "HOST_DPU_SCOPE_UNAVAILABLE", "Selected DPU identity is unavailable for management physical separation.")
+	}
+	_, host, adapter, state, _, _ := resolveHostHBNAssociation(inv, *selected)
+	if host != nil {
+		subject += " @ " + hostDisplayName(*host)
+	}
+	if state != "passed" || host == nil || adapter == nil {
+		return hostCheck("host-management-physical", subject, "unknown", "HOST_ASSOCIATION_CONFLICT", "Exact host/adapter binding is required for management physical separation.")
+	}
+	if err := sshprobe.VerifyHostManagementPhysicalSeparation(*host, *adapter); err != nil {
+		state = "unknown"
+		if sshprobe.Code(err) == "HOST_MANAGEMENT_ON_SELECTED_CARD" || sshprobe.Code(err) == "HOST_VIRTUAL_MACHINE_UNSUPPORTED" {
+			state = "failed"
+		}
+		return hostCheck("host-management-physical", subject, state, sshprobe.Code(err), "HBN requires a current OS no-VM result and measured SSH/default-route PCI roots separate from the selected card; inspect host VM classification and management-path observations before provisioning or recovery.")
+	}
+	return hostCheck("host-management-physical", subject, "passed", "HOST_MANAGEMENT_PHYSICAL_SEPARATION_VERIFIED", "Authenticated SSH and IPv4/IPv6 default paths have measured physical ancestry outside the selected card, including VF parents; unrelated virtual interfaces are not used as management proof.")
 }
 
 func hostCheck(suffix, subject, state, reason, message string) inventory.Check {
@@ -157,7 +196,7 @@ func selectedHostFunctionChecks(host inventory.Device, adapter inventory.Adapter
 		case netdevObs.State != "observed":
 			pfChecks = append(pfChecks, hostCheck("host-pf", pfSubject, "unknown", firstReason(netdevObs.ReasonCode, "HOST_PF_NETDEV_UNOBSERVED"), "The selected host PCI function network-interface read did not complete."))
 		case len(pf.Netdevs) == 0:
-			pfChecks = append(pfChecks, hostCheck("host-pf", pfSubject, "unknown", "HOST_PF_NETDEV_UNOBSERVED", "The selected host PCI function has no observed network interface."))
+			pfChecks = append(pfChecks, hostCheck("host-pf", pfSubject, "unknown", firstReason(netdevObs.ReasonCode, "HOST_PF_NETDEV_UNOBSERVED"), "The selected host PCI function has no observed network interface."))
 		default:
 			pfChecks = append(pfChecks, hostCheck("host-pf", pfSubject, "passed", "HOST_PF_DRIVER_READY", "The selected host PCI function is present, bound to mlx5_core, and has an observed network interface."))
 		}

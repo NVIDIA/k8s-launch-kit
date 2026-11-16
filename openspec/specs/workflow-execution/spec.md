@@ -139,6 +139,17 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** resource ownership and checkpoint UID/resourceVersion/data are reread before acceptance; ordinary fresh discovery, deployment eligibility and existing physical/effect fences remain strict.
 - **AND** optional next-hop fields do not change older inventories' or bundles' canonical identities when those fields were absent.
 
+#### Scenario: An owned pending reset temporarily removes host PF interfaces
+
+- **WHEN** the exact recorded pending DPU reboot request is current and its present selected host PCI functions have positively measured absent netdevs
+- **THEN** BeforeActivation may substitute only that host's unavailable PF, management-separation, backend and selected-uplink host-LLDP predicates after fresh operation, maintenance-release history, DPU/DPUNode UID, host UUID, boot ID and PCI/VPD proofs.
+- **AND** current SSH/default-route interfaces must have measured direct PCI-network/lower-link/physfn roots on a different card slot and a current supported OS detector result reporting no VM; this same required check is presence-enforced before an initial deployment. Unrelated virtual interfaces do not expand its scope. Missing/unknown/VM classification, nested virtual buses, unknown roots, same-card VFs/functions, generic command failures, mismatched rounds and already-configured hosts remain blocking.
+- **AND** after activation, fresh and resumed runs perform explicit AfterActivation collection and owned assessment with no pending-reset allowance, require strict current PF/backend/cabling checks, and rebind activation hosts/groups to the newly observed same physical cohort before host networking or runtime effects.
+- **AND** BeforeActivation continues artifact-origin byte verification unchanged. AfterActivation validates source inputs and records generate-phase ARTIFACT_SOURCE_NOT_RECHECKED without another origin download; current saved software, registry and owned resource proofs remain mandatory, as does the existing before-first-DD byte rehash.
+- **AND** raw discovery facts/checks are retained, collection reports unavailable observations without premature eligibility claims, and generate-only unknowns are not displayed as current-phase blockers.
+- **AND** a missing required host check identity/host/PF subject/vantage or deploy-phase result is rejected using the discovery owner’s host check set before the handoff; provider outcome and owned-assessment contracts remain in force.
+- **AND** optional typed VM classification, boot ID, SSH server address, link physical PF roots, measured netdev absence and nonforwarding route type preserve old encodings when omitted; empty legacy arrays never become positive absence proof. Physical reset/claim/ACK fences remain unchanged.
+
 #### Scenario: DPF management bootstrap completes
 
 - **WHEN** the retained operator release, API schemas, manager and DPFOperatorConfig become ready

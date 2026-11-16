@@ -282,7 +282,11 @@ func routes(text string, ifaces []inventory.Interface, family int) ([]inventory.
 		if !validRouteGateway(r.Gateway, family) {
 			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
 		}
-		out = append(out, inventory.Route{Destination: dst, Gateway: r.Gateway, InterfaceIndex: index, Table: table})
+		kind := ""
+		if nonForwardingRoute(r.Type) {
+			kind = r.Type
+		}
+		out = append(out, inventory.Route{Type: kind, Destination: dst, Gateway: r.Gateway, InterfaceIndex: index, Table: table})
 		if len(out) > 8192 {
 			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "routes"}
 		}

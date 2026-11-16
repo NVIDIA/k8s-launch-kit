@@ -21,6 +21,8 @@ type RouteLookup struct {
 	InterfaceIndex int    `json:"interfaceIndex,omitempty" yaml:"interfaceIndex,omitempty"`
 }
 type Route struct {
+	// Type is retained for explicit nonforwarding routes; omitted for ordinary forwarding.
+	Type           string `json:"type,omitempty" yaml:"type,omitempty"`
 	Destination    string `json:"destination" yaml:"destination"`
 	Gateway        string `json:"gateway,omitempty" yaml:"gateway,omitempty"`
 	InterfaceIndex int    `json:"interfaceIndex" yaml:"interfaceIndex"`
