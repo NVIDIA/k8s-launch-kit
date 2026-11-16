@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -17,7 +19,7 @@ var _ = Describe("release BOM resolution", func() {
 	It("defaults to a pinned full release and retains separately sourced coordinates", func() {
 		r, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(r.Version).To(Equal(DefaultRelease))
+		Expect(r.Version).To(Equal("26.4.0"))
 		Expect(r.Operator.Version).To(Equal("v26.4.0"))
 		Expect(r.Operator.Image).To(Equal("nvcr.io/nvidia/doca/dpf-system:v26.4.0"))
 		Expect(r.Operator.ChartDigest).To(Equal("sha256:0f9a18a0d64958e2f1769bdb468a46ad65e0ea485dadb86cad9e6457b3cec69a"))
@@ -29,8 +31,24 @@ var _ = Describe("release BOM resolution", func() {
 			Expect(err).To(MatchError(ContainSubstring("unknown DPF release")))
 		}
 	})
+	It("selects the declared catalog default independently of version ordering", func() {
+		c, err := load(catalogYAML)
+		Expect(err).NotTo(HaveOccurred())
+		next := c.Releases[c.DefaultRelease]
+		next.Version, next.Operator.Version = "26.9.0", "v26.9.0"
+		c.Releases[next.Version] = next
+		c.DefaultRelease = next.Version
+		data, err := yaml.Marshal(c)
+		Expect(err).NotTo(HaveOccurred())
+		selected, err := resolve(data, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(selected.Version).To(Equal("26.9.0"))
+		explicit, err := resolve(data, "26.4.0")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(explicit.Version).To(Equal("26.4.0"))
+	})
 	It("keeps unknown BMC requirements distinct from a documented NIC minimum", func() {
-		r, err := Resolve(DefaultRelease)
+		r, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
 		h, ok := r.RequirementsFor("b3240")
 		Expect(ok).To(BeTrue())
@@ -41,7 +59,7 @@ var _ = Describe("release BOM resolution", func() {
 		Expect(h.BFB.ReasonCode).To(Equal("ARTIFACT_DIGEST_NOT_RECORDED"))
 	})
 	It("does not apply BF3 requirements to BF4, family names, or partial model matches", func() {
-		r, err := Resolve(DefaultRelease)
+		r, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
 		for _, model := range []string{"", "BlueField-3", "BlueField-4", "B4240", "B3240 extra", "XXB3240"} {
 			_, ok := r.RequirementsFor(model)
@@ -52,7 +70,7 @@ var _ = Describe("release BOM resolution", func() {
 		Expect(ok).To(BeFalse())
 	})
 	It("isolates returned nested values from the catalog and hardware lookup", func() {
-		r, err := Resolve(DefaultRelease)
+		r, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
 		h, ok := r.RequirementsFor("B3240")
 		Expect(ok).To(BeTrue())
@@ -65,7 +83,7 @@ var _ = Describe("release BOM resolution", func() {
 		r.Components[0].Version = "changed"
 		r.Sources[0].URL = "changed"
 		r.Limitations[0] = "changed"
-		next, err := Resolve(DefaultRelease)
+		next, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(next.Hardware[0].Models[0]).To(Equal("B3210"))
 		Expect(next.Hardware[0].Requirements[0].Minimum).To(Equal("32.38.1002"))
@@ -80,7 +98,7 @@ var _ = Describe("release BOM resolution", func() {
 			go func() {
 				defer GinkgoRecover()
 				defer wg.Done()
-				r, err := Resolve(DefaultRelease)
+				r, err := Resolve("")
 				Expect(err).NotTo(HaveOccurred())
 				r.Hardware[0].Models[0] = "independent"
 			}()
@@ -90,6 +108,9 @@ var _ = Describe("release BOM resolution", func() {
 	It("rejects malformed catalogs rather than hiding missing provenance", func() {
 		for _, data := range []string{
 			"releases: {}",
+			strings.Replace(string(catalogYAML), "defaultRelease: \"26.4.0\"", "defaultRelease: \"\"", 1),
+			strings.Replace(string(catalogYAML), "defaultRelease: \"26.4.0\"", "defaultRelease: absent", 1),
+			strings.Replace(string(catalogYAML), "defaultRelease: \"26.4.0\"\n", "", 1),
 			string(catalogYAML) + "\n---\nreleases: {}\n",
 			strings.Replace(string(catalogYAML), "sourceRef: published-chart", "sourceRef: absent", 1),
 			strings.Replace(string(catalogYAML), "state: unknown", "state: known", 1),
