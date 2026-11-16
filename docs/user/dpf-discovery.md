@@ -821,7 +821,10 @@ fails. This check does not prove which routes a future DPU will advertise or
 accept. Saved output keeps selected policy facts rather than raw configuration.
 
 The switch address check reads interface addresses and IPv4/IPv6 routes from
-all routing tables. Specific routes or addresses overlapping the workload or
+all routing tables, including referenced kernel nexthops. Switch SSH must permit
+these read-only observations even before any DPU advertises a route. Missing,
+unsupported or changing path observations block ownership verification on resume.
+Specific routes or addresses overlapping the workload or
 loopback pool block readiness when they belong to the selected VRF; unresolved VRF ownership
 remains unknown. A default route is not an address allocation. The saved switch
 view retains selected peers and interfaces plus prefixes relevant to both pools.

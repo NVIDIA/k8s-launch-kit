@@ -153,6 +153,7 @@ func validOutputs() map[string]string {
 		"nv show bridge --rev applied -o json":         `{"domain":{}}`,
 		"nv show interface -o json":                    `{"swp1":{"type":"swp","link":{"admin-status":"up","oper-status":"up","mtu":9216}}}`,
 		"nv show bridge -o json":                       `{"domain":{}}`,
+		"ip -j nexthop show":                           `[]`,
 		"ip -j address show":                           `[]`,
 		"ip -j -4 route show table all":                `[]`,
 		"ip -j -6 route show table all":                `[]`,
@@ -202,7 +203,7 @@ var _ = Describe("read-only switch collector", func() {
 		snapshot := collector.Collect(ctx, target, 3*time.Second)
 		Expect(opened).To(Equal(1))
 		Expect(session.closeSeen).To(BeTrue())
-		Expect(legacyFactCalls(session)).To(HaveLen(17))
+		Expect(legacyFactCalls(session)).To(HaveLen(19))
 		Expect(snapshot.Configured.Interfaces).To(HaveLen(1))
 		Expect(snapshot.Configured.Interfaces[0].Name).To(Equal("swp1"))
 		Expect(snapshot.Configured.Interfaces[0].VRF).To(HaveValue(Equal("default")))
@@ -220,8 +221,10 @@ var _ = Describe("read-only switch collector", func() {
 			"nv show interface -o json",
 			"nv show bridge -o json",
 			"ip -j address show",
+			"ip -j nexthop show",
 			"ip -j -4 route show table all",
 			"ip -j -6 route show table all",
+			"ip -j nexthop show",
 			"sudo -S -p '' -- /usr/sbin/lldpctl -f json",
 			"sudo -S -p '' -- vtysh -c 'show bgp vrf all summary json'",
 			"sudo -S -p '' -- vtysh -c 'show running-config bgpd'",
@@ -233,7 +236,7 @@ var _ = Describe("read-only switch collector", func() {
 		for i, call := range legacyFactCalls(session) {
 			Expect(call.command).To(Equal(wantCommands[i]))
 			Expect(call.command).NotTo(ContainSubstring("sudo-secret"))
-			if i <= 9 || i == 13 || i == 14 || i == 16 {
+			if i <= 11 || i == 15 || i == 16 || i == 18 {
 				Expect(call.stdin).To(BeFalse())
 				Expect(call.input).To(BeEmpty())
 			} else {
@@ -244,6 +247,59 @@ var _ = Describe("read-only switch collector", func() {
 		Expect(progress.String()).NotTo(ContainSubstring("sudo-secret"))
 	})
 
+	It("reads kernel nexthops around routes and retains missing initial capability", func() {
+		target := testSwitchTarget("", true)
+		session := &fakeSession{outputs: validOutputs(), failures: map[string]error{"ip -j nexthop show": &sshprobe.Error{Code: "SSH_COMMAND_FAILED", Stage: "switch"}}}
+		collector := Collector{openSession: func(context.Context, string, *config.SSHAccess, time.Duration) (sshprobe.ReadSession, error) {
+			return session, nil
+		}}
+		snapshot := collector.Collect(context.Background(), target, time.Second)
+		for _, input := range []string{"operationalNextHopsBefore", "operationalNextHopsAfter"} {
+			issue, found := issueFor(snapshot, input)
+			Expect(found).To(BeTrue())
+			Expect(issue.Code).To(Equal("SSH_COMMAND_FAILED"))
+		}
+		Expect(snapshot.Operational.IPv4Routes).NotTo(BeNil())
+		Expect(*snapshot.Operational.IPv4Routes).To(BeEmpty())
+		var order []string
+		for _, call := range session.calls {
+			if strings.HasPrefix(call.command, "ip -j ") && call.command != "ip -j address show" {
+				order = append(order, call.command)
+			}
+		}
+		Expect(order).To(Equal([]string{"ip -j nexthop show", "ip -j -4 route show table all", "ip -j -6 route show table all", "ip -j nexthop show"}))
+	})
+
+	It("resolves every stable kernel group member and rejects a changed referenced leaf", func() {
+		for _, changed := range []bool{false, true} {
+			target := testSwitchTarget("", true)
+			outputs := validOutputs()
+			outputs["ip -j -4 route show table all"] = `[{"dst":"198.51.100.0/29","nhid":100,"protocol":"bgp","flags":[]}]`
+			outputs["ip -j nexthop show"] = `[{"id":100,"group":[{"id":101},{"id":102}]},{"id":101,"dev":"swp1","gateway":"fe80::1"},{"id":102,"dev":"swp2","gateway":"fe80::2"}]`
+			session := &fakeSession{outputs: outputs, failures: map[string]error{}}
+			reads := 0
+			session.onRun = func(_ context.Context, command string) {
+				if command == "ip -j nexthop show" {
+					reads++
+					if changed && reads == 2 {
+						outputs[command] = strings.Replace(outputs[command], "fe80::2", "fe80::3", 1)
+					}
+				}
+			}
+			collector := Collector{openSession: func(context.Context, string, *config.SSHAccess, time.Duration) (sshprobe.ReadSession, error) {
+				return session, nil
+			}}
+			snapshot := collector.Collect(context.Background(), target, time.Second)
+			Expect(reads).To(Equal(2))
+			Expect(snapshot.Operational.IPv4Routes).NotTo(BeNil())
+			if changed {
+				Expect((*snapshot.Operational.IPv4Routes)[0].NextHops).To(BeEmpty())
+			} else {
+				Expect((*snapshot.Operational.IPv4Routes)[0].NextHops).To(Equal([]fabric.RouteNextHop{{Interface: "swp1", Gateway: "fe80::1"}, {Interface: "swp2", Gateway: "fe80::2"}}))
+			}
+		}
+	})
+
 	It("uses noninteractive sudo with key authentication", func() {
 		target := testSwitchTarget("", true)
 		session := &fakeSession{outputs: validOutputs(), failures: map[string]error{}}
@@ -251,12 +307,12 @@ var _ = Describe("read-only switch collector", func() {
 			return session, nil
 		}}
 		collector.Collect(context.Background(), target, time.Second)
-		Expect(legacyFactCalls(session)).To(HaveLen(17))
-		for i := 0; i < 10; i++ {
+		Expect(legacyFactCalls(session)).To(HaveLen(19))
+		for i := 0; i < 12; i++ {
 			Expect(legacyFactCalls(session)[i].command).NotTo(HavePrefix("sudo "))
 			Expect(legacyFactCalls(session)[i].stdin).To(BeFalse())
 		}
-		for _, i := range []int{10, 11, 12, 15} {
+		for _, i := range []int{12, 13, 14, 17} {
 			Expect(legacyFactCalls(session)[i].command).To(HavePrefix("sudo -n -- "))
 			Expect(legacyFactCalls(session)[i].stdin).To(BeFalse())
 		}
@@ -270,7 +326,7 @@ var _ = Describe("read-only switch collector", func() {
 			return session, nil
 		}}
 		collector.Collect(context.Background(), target, time.Second)
-		Expect(legacyFactCalls(session)).To(HaveLen(17))
+		Expect(legacyFactCalls(session)).To(HaveLen(19))
 		for _, call := range legacyFactCalls(session) {
 			Expect(call.command).NotTo(HavePrefix("sudo "))
 			Expect(call.stdin).To(BeFalse())
@@ -291,7 +347,7 @@ var _ = Describe("read-only switch collector", func() {
 			return session, nil
 		}}
 		snapshot := collector.Collect(context.Background(), target, time.Second)
-		Expect(legacyFactCalls(session)).To(HaveLen(17))
+		Expect(legacyFactCalls(session)).To(HaveLen(19))
 		Expect(snapshot.Configured.Interfaces).To(HaveLen(1))
 		Expect(snapshot.Operational.Interfaces).To(BeEmpty())
 		issue, found := issueFor(snapshot, "operationalInterfaces")
@@ -434,7 +490,7 @@ var _ = Describe("read-only switch collector", func() {
 			return session, nil
 		}}
 		snapshot := collector.Collect(context.Background(), target, time.Second)
-		Expect(legacyFactCalls(session)).To(HaveLen(13))
+		Expect(legacyFactCalls(session)).To(HaveLen(15))
 		issue, found := issueFor(snapshot, "lldp")
 		Expect(found).To(BeTrue())
 		Expect(issue.Code).To(Equal("SSH_CONFIGURATION_INVALID"))

@@ -96,7 +96,7 @@ func parseOperationalAddresses(raw []byte, out *Snapshot) {
 	out.Operational.Addresses = &addresses
 }
 
-func parseOperationalRoutes(raw []byte, input, family string, destination **[]Route, out *Snapshot) {
+func parseOperationalRoutes(raw []byte, input, family string, destination **[]Route, nextHops *nextHopObservation, out *Snapshot) {
 	rows, ok := parseL3Array(raw, input, &out.Issues)
 	if !ok {
 		return
@@ -159,7 +159,7 @@ func parseOperationalRoutes(raw []byte, input, family string, destination **[]Ro
 		if !ok {
 			return
 		}
-		routes = append(routes, Route{Family: family, Prefix: prefix, Table: table, Protocol: protocol, Type: routeType, NextHops: routeNextHops(obj)})
+		routes = append(routes, Route{Family: family, Prefix: prefix, Table: table, Protocol: protocol, Type: routeType, NextHops: observedRouteNextHops(obj, nextHops)})
 	}
 	*destination = &routes
 }
@@ -302,6 +302,10 @@ func routeNextHops(obj map[string]json.RawMessage) []RouteNextHop {
 			return nil
 		}
 	}
+	return routeNextHopRows(rows)
+}
+
+func routeNextHopRows(rows []map[string]json.RawMessage) []RouteNextHop {
 	result := make([]RouteNextHop, 0, len(rows))
 	seen := map[string]bool{}
 	for _, row := range rows {

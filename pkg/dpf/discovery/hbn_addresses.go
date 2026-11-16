@@ -56,7 +56,7 @@ func fabricPoolCheck(sw inventory.FabricSwitch, vrfName, poolCIDR, poolName stri
 	facts := sw.Snapshot.Operational
 	for _, issue := range sw.Snapshot.Issues {
 		switch issue.Input {
-		case "operationalAddresses", "operationalRoutesIPv4", "operationalRoutesIPv6":
+		case "operationalAddresses", "operationalRoutesIPv4", "operationalRoutesIPv6", "operationalNextHopsBefore", "operationalNextHopsAfter":
 			check.ReasonCode = issue.Code
 			check.Message = issue.Message
 			return check
@@ -116,8 +116,15 @@ func fabricPoolCheck(sw inventory.FabricSwitch, vrfName, poolCIDR, poolName stri
 				continue
 			}
 
-			if wanted && ownedResumeRoute(route, owned[route.Prefix]) {
-				continue
+			if wanted && owned != nil {
+				reason, message := ownedResumeRouteFailure(route, owned[route.Prefix])
+				if reason == "" {
+					continue
+				}
+				check.State = "failed"
+				check.ReasonCode = reason
+				check.Message = fmt.Sprintf("Route %s in switch table %s overlaps the %s pool. %s", route.Prefix, route.Table, poolName, message)
+				return check
 			}
 			check.Message = fmt.Sprintf("%s pool %s overlaps route %s in switch table %s; verify ownership and VRF before assigning this pool.", poolName, pool, route.Prefix, route.Table)
 			check.ReasonCode = "FABRIC_ROUTE_VRF_UNVERIFIED"
@@ -155,15 +162,29 @@ func addressVRF(snapshot fabric.Snapshot, name string) (string, bool) {
 	return result, result != ""
 }
 
-func ownedResumeRoute(route fabric.Route, ports map[string]bool) bool {
-	if len(ports) == 0 || len(route.NextHops) == 0 || route.Protocol != "bgp" && route.Protocol != "186" || route.Type != "" && route.Type != "unicast" {
-		return false
+// Reasons distinguish an unavailable ownership proof from a measured foreign
+// path. Both stop deployment; none authorizes changing or deleting the route.
+func ownedResumeRouteFailure(route fabric.Route, ports map[string]bool) (string, string) {
+	if ports == nil {
+		return "OWNED_RESUME_ROUTE_ALLOCATION_UNVERIFIED", "No exact current Ready tenant/DPU allocation was proved for this prefix; verify allocation and Node readiness."
+	}
+	if len(ports) == 0 {
+		return "OWNED_RESUME_ROUTE_UPLINKS_UNVERIFIED", "The allocation's own physical uplinks were not corroborated by current LLDP; verify cabling observations."
+	}
+	if route.Protocol != "bgp" && route.Protocol != "186" || route.Type != "" && route.Type != "unicast" {
+		return "OWNED_RESUME_ROUTE_KIND_UNSUPPORTED", "The route is not an observed unicast BGP route; preserve it and verify its ownership."
+	}
+	if len(route.NextHops) == 0 {
+		return "OWNED_RESUME_ROUTE_NEXTHOPS_UNVERIFIED", "Complete stable nexthops were not measured (missing, changed or unsupported kernel nexthop data); verify switch read access and rerun."
 	}
 	for _, hop := range route.NextHops {
 		gateway, err := netip.ParseAddr(hop.Gateway)
-		if !ports[hop.Interface] || err != nil || gateway.IsUnspecified() || gateway.IsMulticast() || gateway.IsLoopback() {
-			return false
+		if err != nil || gateway.IsUnspecified() || gateway.IsMulticast() || gateway.IsLoopback() {
+			return "OWNED_RESUME_ROUTE_NEXTHOPS_UNVERIFIED", "A route gateway is not a complete usable address; verify the current kernel route observation."
+		}
+		if !ports[hop.Interface] {
+			return "OWNED_RESUME_ROUTE_FOREIGN_UPLINK", "At least one nexthop uses an interface outside this allocation's own corroborated DPU uplinks; preserve the route and verify its source."
 		}
 	}
-	return true
+	return "", ""
 }

@@ -10,6 +10,7 @@ management cluster. Inventory success is separate from provisioning readiness.
 HBN-BGP ASIC readiness requires the [qualified Cumulus reader](docs/user/dpf-discovery.md#check-hbn-bgp-prerequisites);
 other switch software builds remain unsupported for that check. The stock diagnostic
 briefly adjusts SDK log verbosity; the guide describes interruption limits.
+Switch access must also permit the read-only kernel route and nexthop checks.
 DPF BMC discovery verifies TLS by default. A site can explicitly set
 `tls.insecureSkipVerify: true`; discovery reports when a connection was not
 verified. See the [DPF discovery guide](docs/user/dpf-discovery.md) for scope

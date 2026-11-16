@@ -411,7 +411,7 @@ l8k discover --target dpf --use-case hbn-bgp \
   --save-cluster-config dpf-discovered.yaml
 ```
 
-The CLI reads selected host and DPU identity and authorization, required management observations, host-network prerequisites and switch facts. It does not change forwarding configuration. The stock ASIC diagnostic briefly adjusts router SDK log verbosity; failure or interruption leaves restoration unconfirmed and stops without automatic retry or network repair. Arrange exclusive diagnostic use and resolve uncertain log state with the switch administrator before another run. Configured management-network probes may create temporary probe resources as described in the discovery reference.
+The CLI reads selected host and DPU identity and authorization, required management observations, host-network prerequisites and switch facts. Switch access must permit read-only kernel route and nexthop observations, including when route tables are empty. It does not change forwarding configuration. The stock ASIC diagnostic briefly adjusts router SDK log verbosity; failure or interruption leaves restoration unconfirmed and stops without automatic retry or network repair. Arrange exclusive diagnostic use and resolve uncertain log state with the switch administrator before another run. Configured management-network probes may create temporary probe resources as described in the discovery reference.
 
 Review the command result, `discovery.outcome`, `readiness.state` and each required check's state and reason. Missing, changing, unsupported or conflicting facts remain blockers. A readiness pass records observations; it does not establish live BGP adjacency or traffic.
 

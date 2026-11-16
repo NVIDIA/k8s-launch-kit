@@ -33,6 +33,9 @@ type NVUEInputs struct {
 	OperationalAddresses          []byte
 	OperationalRoutesIPv4         []byte
 	OperationalRoutesIPv6         []byte
+	NextHopCollectionRequested    bool
+	OperationalNextHopsBefore     []byte
+	OperationalNextHopsAfter      []byte
 	LLDP                          []byte
 	LocalLLDP                     []byte
 	FRRBGPSummary                 []byte
@@ -248,8 +251,9 @@ func ParseNVUE(in NVUEInputs) Snapshot {
 	parseSelectedInterfaces(in, &out)
 	parseOperationalBridges(in.OperationalBridge, &out)
 	parseOperationalAddresses(in.OperationalAddresses, &out)
-	parseOperationalRoutes(in.OperationalRoutesIPv4, "operationalRoutesIPv4", "ipv4", &out.Operational.IPv4Routes, &out)
-	parseOperationalRoutes(in.OperationalRoutesIPv6, "operationalRoutesIPv6", "ipv6", &out.Operational.IPv6Routes, &out)
+	nextHops := parseNextHopObservation(in, &out)
+	parseOperationalRoutes(in.OperationalRoutesIPv4, "operationalRoutesIPv4", "ipv4", &out.Operational.IPv4Routes, nextHops, &out)
+	parseOperationalRoutes(in.OperationalRoutesIPv6, "operationalRoutesIPv6", "ipv6", &out.Operational.IPv6Routes, nextHops, &out)
 	parseLLDP(in.LLDP, &out)
 	if in.LocalLLDP != nil {
 		parseLocalLLDP(in.LocalLLDP, &out)

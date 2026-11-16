@@ -306,6 +306,7 @@ not observations or authorization to modify switches.
 - **AND** incomplete required route observations block the check with their reason.
 - **WHEN** complete switch address or route observations contain no entries
 - **THEN** JSON and YAML handoff preserve known-empty separately from unavailable sources.
+- **AND** live HBN switch collection reads kernel nexthop objects around both route-table dumps even when routes are empty; missing, failed or malformed capability observations block initial readiness before deployment effects. Retained legacy inventories do not manufacture this measurement.
 
 #### Scenario: HBN tenant storage prerequisites
 

@@ -18,6 +18,8 @@ and defaults to inventory mode. ASIC readiness requires the catalog-qualified
 Cumulus 5.15.1/CD28, SDK 4.8.2052 reader and both exact stock-script hashes listed
 in the [discovery reference](../../docs/user/dpf-discovery.md#check-hbn-bgp-prerequisites).
 Other builds remain unknown and block readiness; site inputs cannot waive this.
+Switch SSH must also allow read-only kernel nexthop observations; this capability
+is checked even with empty route tables, before deployment effects.
 No VLAN, VRF, BGP or forwarding configuration is written. The stock diagnostic
 briefly adjusts router SDK log verbosity; interruption or failure leaves
 restoration unconfirmed and stops without automatic retry or network repair.

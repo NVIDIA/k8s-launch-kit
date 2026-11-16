@@ -49,8 +49,10 @@ func commands(ports []config.SwitchPort) []commandSpec {
 		{input: "operationalInterfaces", command: "nv show interface -o json", set: func(in *fabric.NVUEInputs, out []byte) { in.OperationalInterfaces = out }},
 		{input: "operationalBridge", command: "nv show bridge -o json", set: func(in *fabric.NVUEInputs, out []byte) { in.OperationalBridge = out }},
 		{input: "operationalAddresses", command: "ip -j address show", set: func(in *fabric.NVUEInputs, out []byte) { in.OperationalAddresses = out }},
+		{input: "operationalNextHopsBefore", command: "ip -j nexthop show", set: func(in *fabric.NVUEInputs, out []byte) { in.OperationalNextHopsBefore = out }},
 		{input: "operationalRoutesIPv4", command: "ip -j -4 route show table all", set: func(in *fabric.NVUEInputs, out []byte) { in.OperationalRoutesIPv4 = out }},
 		{input: "operationalRoutesIPv6", command: "ip -j -6 route show table all", set: func(in *fabric.NVUEInputs, out []byte) { in.OperationalRoutesIPv6 = out }},
+		{input: "operationalNextHopsAfter", command: "ip -j nexthop show", set: func(in *fabric.NVUEInputs, out []byte) { in.OperationalNextHopsAfter = out }},
 		{input: "lldp", command: "/usr/sbin/lldpctl -f json", privileged: true, set: func(in *fabric.NVUEInputs, out []byte) { in.LLDP = out }},
 		{input: "frrBGPSummary", command: "vtysh -c 'show bgp vrf all summary json'", privileged: true, set: func(in *fabric.NVUEInputs, out []byte) { in.FRRBGPSummary = out }},
 		{input: "frrRunningBGP", command: "vtysh -c 'show running-config bgpd'", privileged: true, set: func(in *fabric.NVUEInputs, out []byte) { in.FRRRunningBGP = out }},
@@ -120,7 +122,7 @@ func (c Collector) Collect(ctx context.Context, target config.SwitchTarget, time
 
 	output.Info("[RUNNING] Switch %s: qualified ASIC source identities", label)
 	asic, asicFailure := beginASIC(ctx, session, target.Access)
-	inputs := fabric.NVUEInputs{RevisionCollectionRequested: true, SelectedAppliedInterfaces: map[string][]byte{}, SelectedOperationalInterfaces: map[string][]byte{}}
+	inputs := fabric.NVUEInputs{RevisionCollectionRequested: true, NextHopCollectionRequested: true, SelectedAppliedInterfaces: map[string][]byte{}, SelectedOperationalInterfaces: map[string][]byte{}}
 	for _, port := range target.Ports {
 		inputs.SelectedAppliedInterfaces[port.Name] = nil
 		inputs.SelectedOperationalInterfaces[port.Name] = nil

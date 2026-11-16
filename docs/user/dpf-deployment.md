@@ -167,6 +167,8 @@ changes retain their immediate full physical safety checks.
 
 ## Read the result and recover from a stop
 
+On a fabric ownership stop, inspect the recorded allocation, cabling or route-path reason. Preserve existing routes and resources; correct access or resolve conflicting ownership with the infrastructure owner before rerunning.
+
 `validated` means the selected multi-host BGP, installed-route and directed
 traffic checks passed at the time of observation. A one-host run can be
 `provisioned`, but cross-host routing and traffic remain unmeasured. Neither

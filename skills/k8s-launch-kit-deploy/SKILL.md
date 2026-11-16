@@ -75,7 +75,9 @@ own enrolled devices or tenant to be absent. Owned host addresses require the
 original inspect-only transaction and current allocation; extra addresses and
 default routes still block. Owned route prefixes require exact current allocation
 identity and every next hop on that allocation's own LLDP-corroborated DPU uplinks;
-unknown, foreign, mixed and overbroad paths block. Physical, switch, storage,
+unknown, foreign, mixed and overbroad paths block. Kernel nexthop references
+require stable complete path observations; inspect the recorded allocation,
+uplink or path reason and preserve existing routes on a stop. Physical, switch, storage,
 access and compatible operator checks remain required. Raw initial-deployment
 checks stay in the discovery report; execution records `OWNED_RESUME_*` proof.
 Selected HBN hosts require current OS-reported no-VM classification from the
