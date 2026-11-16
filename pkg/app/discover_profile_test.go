@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/assets"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
@@ -670,22 +671,39 @@ func TestDiscoverDoesNotPersistComputedReserveExclusions(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		userConfig bool
+		configDir  bool
 	}{
 		{name: "fresh discovery from reference config"},
+		{name: "fresh discovery from --config-dir", configDir: true},
 		{name: "user-config refresh", userConfig: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			t.Chdir(tmpDir)
-			inputPath := filepath.Join(tmpDir, "l8k-config.yaml")
+			inputDir := tmpDir
+			if tc.configDir {
+				// Only the explicit --config-dir override supplies the
+				// reference config; the working directory has none.
+				inputDir = t.TempDir()
+			}
+			inputPath := filepath.Join(inputDir, "l8k-config.yaml")
 			require.NoError(t, os.WriteFile(inputPath, []byte(reserveDiscoveryConfig), 0o600))
 			outputPath := filepath.Join(tmpDir, "cluster-config.yaml")
 			opts := options.Options{SaveClusterConfig: outputPath}
 			if tc.userConfig {
 				opts.UserConfig = inputPath
 			}
+			if tc.configDir {
+				opts.ConfigDir = inputDir
+			}
 
 			launcher := newProfileDiscoveryLauncher(opts, groups)
+			if tc.configDir {
+				// RunContext resolves --config-dir before discovery runs.
+				configAssets, err := assets.ResolveConfigDir(inputDir)
+				require.NoError(t, err)
+				launcher.configAssets = configAssets
+			}
 			require.NoError(t, launcher.discoverClusterConfig())
 
 			saved, err := config.LoadInput(outputPath, launcher.logger)
