@@ -20,10 +20,6 @@ import (
 	k8sversion "k8s.io/apimachinery/pkg/util/version"
 )
 
-// DefaultRelease is the generic-inventory default. HBN-BGP uses the separately
-// reviewed default declared under defaultUseCases in the embedded catalog.
-const DefaultRelease = "26.4.0"
-
 //go:embed releases.yaml
 var catalogYAML []byte
 
@@ -150,6 +146,7 @@ type Release struct {
 }
 
 type catalog struct {
+	DefaultRelease  string             `yaml:"defaultRelease"`
 	DefaultUseCases map[string]string  `yaml:"defaultUseCases"`
 	Releases        map[string]Release `yaml:"releases"`
 }
@@ -167,12 +164,16 @@ var (
 // network access. Empty means the pinned default; callers with presence-aware
 // configuration must reject a supplied empty value before calling Resolve.
 func Resolve(version string) (Release, error) {
-	if version == "" {
-		version = DefaultRelease
-	}
-	c, err := load(catalogYAML)
+	return resolve(catalogYAML, version)
+}
+
+func resolve(data []byte, version string) (Release, error) {
+	c, err := load(data)
 	if err != nil {
 		return Release{}, err
+	}
+	if version == "" {
+		version = c.DefaultRelease
 	}
 	r, ok := c.Releases[version]
 	if !ok {
@@ -182,7 +183,7 @@ func Resolve(version string) (Release, error) {
 }
 
 // DefaultForUseCase resolves the reviewed default release for a use case.
-// It is deliberately separate from DefaultRelease, which serves generic
+// It is deliberately separate from the catalog default, which serves generic
 // inventory without a selected workflow.
 func DefaultForUseCase(useCase string) (Release, error) {
 	c, err := load(catalogYAML)
@@ -274,6 +275,9 @@ func load(data []byte) (catalog, error) {
 	}
 	if len(c.Releases) == 0 {
 		return catalog{}, fmt.Errorf("DPF release catalog has no entries")
+	}
+	if _, ok := c.Releases[c.DefaultRelease]; !ok {
+		return catalog{}, fmt.Errorf("DPF release catalog default must name an existing release")
 	}
 	for key, r := range c.Releases {
 		if err := validate(key, r); err != nil {

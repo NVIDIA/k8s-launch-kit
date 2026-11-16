@@ -1,6 +1,7 @@
 # Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 # SPDX-License-Identifier: Apache-2.0
 # Curated software coordinates, not a Launch Kit hardware qualification catalog.
+defaultRelease: "26.4.0"
 defaultUseCases:
   hbn-bgp: "26.8.0"
 releases:

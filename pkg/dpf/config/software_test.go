@@ -4,7 +4,6 @@ package config
 
 import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"os"
@@ -22,7 +21,7 @@ var _ = Describe("DPF release and address source configuration", func() {
 			Expect(e).NotTo(HaveOccurred())
 			r, e := Resolve(in)
 			Expect(e).NotTo(HaveOccurred())
-			Expect(r.Software.Version).To(Equal(releases.DefaultRelease))
+			Expect(r.Software.Version).To(Equal("26.4.0"))
 		}
 		for _, value := range []string{"''", "'latest'", "'26.99.0'"} {
 			in, e := Decode([]byte("dpf: {release: "+value+"}\n"+seed), "/site/in.yaml")
