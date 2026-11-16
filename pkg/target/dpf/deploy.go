@@ -101,6 +101,10 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		if err != nil {
 			return apperrors.NewValidationError("invalid DPF deployment configuration", err, "Supply the discovered site configuration")
 		}
+		input, err = withRetainedUseCase(input, retained)
+		if err != nil {
+			return apperrors.NewValidationError("DPF deployment selection conflicts with the bundle", err, "Use the generated selection or regenerate and review the bundle")
+		}
 		access, err := config.Resolve(input)
 		if err != nil {
 			return apperrors.NewValidationError("invalid DPF deployment access", err, "Correct the site configuration and access references")

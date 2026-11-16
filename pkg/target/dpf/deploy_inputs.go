@@ -12,6 +12,40 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 )
 
+// withRetainedUseCase restores the generation selection before resolving access
+// or collecting fresh inventory. Bundle loading has checked structural integrity;
+// Run still verifies the complete retained generation before external effects.
+func withRetainedUseCase(input config.Input, retained *bundle.Bundle) (config.Input, error) {
+	if retained == nil {
+		return config.Input{}, fmt.Errorf("deployment requires a retained HBN-BGP bundle selection")
+	}
+	selection := retained.Index().Profile
+	if selection != "hbn-bgp" {
+		return config.Input{}, fmt.Errorf("retained bundle does not select the supported HBN-BGP use case")
+	}
+	if current := input.Site.DPF.UseCase; current != nil {
+		if *current == selection {
+			return input, nil
+		}
+		// An unchanged source value can have been overridden by generation's
+		// explicit CLI selection. A new conflicting value must not be hidden.
+		var source []byte
+		for _, file := range retained.Files() {
+			if file.Path == ".l8k/source-config.yaml" {
+				source = file.Data
+				break
+			}
+		}
+		before, err := config.Decode(source, input.Path)
+		if err != nil || before.Site.DPF.UseCase == nil || *before.Site.DPF.UseCase != *current {
+			return config.Input{}, fmt.Errorf("current dpf.useCase differs from the generated selection and retained source; regenerate and review the bundle")
+		}
+	}
+	// Preserve Input.Source as the original file guard. The effective document
+	// and typed site carry this selection through every fresh prerequisite pass.
+	return config.WithUseCase(input, &selection)
+}
+
 // verifyDeploymentPlan binds current site intent and physical observations to
 // the retained desired bundle. Access references may change, but neither the
 // generated resources nor the selected physical host bindings may change.
