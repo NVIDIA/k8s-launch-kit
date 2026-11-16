@@ -17,10 +17,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DefaultRelease is deliberately pinned. Adding a catalog entry never selects it
-// automatically; promoting the default is a separate reviewed change.
-const DefaultRelease = "26.4.0"
-
 //go:embed releases.yaml
 var catalogYAML []byte
 
@@ -91,19 +87,24 @@ type Release struct {
 }
 
 type catalog struct {
-	Releases map[string]Release `yaml:"releases"`
+	DefaultRelease string             `yaml:"defaultRelease"`
+	Releases       map[string]Release `yaml:"releases"`
 }
 
 // Resolve returns a fresh BOM with no shared mutable values. It performs no
 // network access. Empty means the pinned default; callers with presence-aware
 // configuration must reject a supplied empty value before calling Resolve.
 func Resolve(version string) (Release, error) {
-	if version == "" {
-		version = DefaultRelease
-	}
-	c, err := load(catalogYAML)
+	return resolve(catalogYAML, version)
+}
+
+func resolve(data []byte, version string) (Release, error) {
+	c, err := load(data)
 	if err != nil {
 		return Release{}, err
+	}
+	if version == "" {
+		version = c.DefaultRelease
 	}
 	r, ok := c.Releases[version]
 	if !ok {
@@ -164,6 +165,9 @@ func load(data []byte) (catalog, error) {
 	}
 	if len(c.Releases) == 0 {
 		return catalog{}, fmt.Errorf("DPF release catalog has no entries")
+	}
+	if _, ok := c.Releases[c.DefaultRelease]; !ok {
+		return catalog{}, fmt.Errorf("DPF release catalog default must name an existing release")
 	}
 	for key, r := range c.Releases {
 		if err := validate(key, r); err != nil {

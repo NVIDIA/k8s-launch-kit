@@ -31,7 +31,7 @@ var _ = Describe("persisted software BOM", func() {
 	})
 
 	It("preserves known and unknown requirement meanings across a serialized round trip", func() {
-		original, err := Resolve(DefaultRelease)
+		original, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
 		encoded, err := yaml.Marshal(Summarize(original))
 		Expect(err).NotTo(HaveOccurred())
@@ -86,7 +86,7 @@ var _ = Describe("persisted software BOM", func() {
 	})
 
 	It("isolates mutable values from both the catalog and decoded summary", func() {
-		r, err := Resolve(DefaultRelease)
+		r, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
 		s := Summarize(r)
 		s.Components[0].Version = "changed"
@@ -137,7 +137,7 @@ var _ = Describe("persisted software BOM", func() {
 })
 
 func summaryFixture() Summary {
-	r, err := Resolve(DefaultRelease)
+	r, err := Resolve("")
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return Summarize(r)
 }
