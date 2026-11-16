@@ -75,6 +75,7 @@ Confirm these site decisions before generating the bundle:
 
 | Decision | What to establish |
 | --- | --- |
+| Management cluster | Multiple control-plane nodes are observed and all are Ready. The site owner must establish etcd and API load-balancer HA; node count alone does not prove it. |
 | Selected devices | Each DPU maps to the intended physical host and adapter. |
 | Tenant API | Reserve the VIP, exclude it from DHCP and confirm its VRID is available on the selected control-plane nodes. Declare these facts under `provisioning.bootstrap.tenant.allocation` only with the responsible owner's confirmation. |
 | Software | The OS ISO and each selected PSID firmware bundle match the intended DPU cohort; provide credential-free HTTPS URLs and checksums. |

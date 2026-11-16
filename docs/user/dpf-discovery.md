@@ -44,7 +44,8 @@ must allow host-network Pods. Launch Kit does not change admission policy.
 All nodes reported by the management cluster must be Ready, schedulable Linux/amd64 nodes and
 able to pull the published, digest-pinned `nicolaka/netshoot` image. An optional
 `discovery.probes.imageRepository` mirror must contain the same pinned manifests.
-Unsupported node scope is rejected before probe resources are created.
+Unsupported node scope is rejected before probe resources are created. Node count
+alone does not establish control-plane HA or qualify a production topology.
 
 From the CLI, Launch Kit creates one immutable ConfigMap with public request
 and CA data. It then runs two temporary non-root Pods on each management node:
@@ -601,6 +602,9 @@ across namespaces so an existing tenant VIP or physical serial claim cannot be
 missed. Saved inventory includes the selected objects and concise conflict or
 missing-identity details; unrelated tenant and enrollment records are omitted.
 Denied or incomplete reads block readiness.
+Production HBN deployment requires multiple management control-plane nodes, all
+Ready. This is a necessary prerequisite, not proof of control-plane HA; the site
+owner must establish the etcd and API load-balancer design.
 An existing operator must match the selected release, and its configuration
 must use zero-trust mode. A release candidate does not match a selected GA
 release. A clean cluster can be planned for operator installation; leftover or

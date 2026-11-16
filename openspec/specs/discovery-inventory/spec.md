@@ -71,6 +71,13 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **WHEN** independent DPF inventory establishes identities, associations and required access
 - **THEN** inventory success does not assert hardware qualification, and an absent generic qualification catalog does not emit a failed required-generation check. A selected use case must report and enforce its own specific deployment prerequisites.
 
+#### Scenario: HBN management multi-master prerequisite
+
+- **WHEN** HBN-BGP readiness evaluates the observed management cluster
+- **THEN** it requires multiple observed control-plane nodes and requires each to be Ready; missing control-plane observations remain unknown and one observed control-plane node fails.
+- **AND** two, three or more Ready control-plane nodes satisfy only this necessary predicate, not an HA certification for etcd or the API load balancer; all other required predicates remain enforced.
+- **AND** generic inventory and management-probe collection impose no control-plane count policy; explicit probes still cover all observed nodes within their existing readiness and platform constraints.
+
 ### Requirement: Aggregation and provenance
 
 A group property MUST declare its aggregation policy for disagreement and incomplete membership. Live/preset precedence and deviation handling SHALL preserve the information required by consumers. Host-specific observations MUST NOT be persisted as universal group facts without a justified aggregation rule.

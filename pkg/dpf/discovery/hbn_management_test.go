@@ -346,7 +346,7 @@ func freshAbsentHBNManagementSnapshot() managementprobe.Snapshot {
 func hbnManagementTestInventory() inventory.Inventory {
 	return inventory.Inventory{
 		Software:   &releases.Release{SupportedKubernetes: &releases.VersionRange{Minimum: "1.33", Maximum: "1.36"}, Operator: releases.Operator{Chart: "dpf-operator", ChartDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Version: "v26.8.0", Image: "nvcr.io/nvidia/doca/dpf-system:v26.8.0"}},
-		Management: &inventory.Management{KubernetesVersion: "v1.34.2", Nodes: []inventory.Node{{Name: "cp-a", ControlPlane: true, Ready: true}}},
+		Management: &inventory.Management{KubernetesVersion: "v1.34.2", Nodes: []inventory.Node{{Name: "cp-a", ControlPlane: true, Ready: true}, {Name: "cp-b", ControlPlane: true, Ready: true}}},
 		DPUs:       []inventory.Device{{SerialNumber: "SELECTED-SERIAL"}},
 	}
 }

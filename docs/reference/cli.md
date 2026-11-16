@@ -39,7 +39,8 @@ The current BF4/HBN-BGP cohort remains beta; command availability does not
 qualify every hardware and release combination. DPF standalone validation and
 the root pipeline remain unavailable and return exit `2`.
 Management probes cover every observed node that meets the existing readiness and
-platform checks; node count alone does not establish control-plane HA or production qualification.
+platform checks; node count alone does not establish control-plane HA or production
+qualification.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags

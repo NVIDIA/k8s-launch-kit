@@ -235,7 +235,11 @@ func controlPlaneCheck(inv *inventory.Inventory) managementCheck {
 	if count == 0 {
 		return check
 	}
-	check.state, check.reason, check.message = "passed", "CONTROL_PLANE_NODES_READY", "All observed control-plane nodes are Ready."
+	if count < 2 {
+		check.state, check.reason, check.message = "failed", "CONTROL_PLANE_MULTIMASTER_REQUIRED", "Production HBN deployment requires multiple management control-plane nodes; only one was observed."
+		return check
+	}
+	check.state, check.reason, check.message = "passed", "CONTROL_PLANE_NODES_READY", "Multiple management control-plane nodes were observed and all are Ready. This necessary condition does not establish control-plane HA."
 	return check
 }
 

@@ -397,7 +397,7 @@ Retain explicit host and DPU BMC targets. Add each switch SSH address, credentia
 
 The selected HBN-BGP profile supplies the expected network configuration and policy defaults; the selected release row supplies default HBN artifact coordinates and the controller's fixed tenant service range. Omit `dpf.hbn` to use its defaults, or override individual VRF, ASN, MTU and address-pool fields for your environment. Discovery compares the live fabric with these resolved values; it does not adopt conflicting switch settings as new defaults. Generation uses the same effective configuration. Keep credentials, access endpoints and physical port bindings in their separate site inputs.
 
-ASIC readiness requires the exact catalog-qualified Cumulus reader documented in [HBN-BGP prerequisites](dpf-discovery.md#check-hbn-bgp-prerequisites). Other builds remain unknown and block readiness; selecting `cumulus-nvue` does not waive this qualification.
+ASIC readiness requires the exact catalog-qualified Cumulus reader documented in [HBN-BGP prerequisites](dpf-discovery.md#check-hbn-bgp-prerequisites). Other builds remain unknown and block readiness; selecting `cumulus-nvue` does not waive this qualification. Production HBN deployment requires multiple management control-plane nodes, all Ready. The site owner must establish etcd and API load-balancer HA; node count alone does not prove it.
 
 Next: [Inputs prepared](#hbn-bgp-preflight-run).
 
@@ -596,7 +596,7 @@ Continue only when the fresh report is complete and HBN-BGP `readiness.state` is
 
 Discovery checks are point-in-time observations. They do not prove that DPF can consume artifacts, that HBN will establish BGP, or that workload traffic will pass. An unknown required check is a stop.
 
-The selected release must support each observed DPU model/BMC firmware build for the host reset backend. Unsupported or unavailable observations block provisioning; this check is repeated before changes. Live safe-shutdown, task and firmware-copy checks still run before each actual reset.
+The selected release must support each observed DPU model/BMC firmware build for the host reset backend. Unsupported or unavailable observations block provisioning; this check is repeated before changes. Live safe-shutdown, task and firmware-copy checks still run before each actual reset. Multiple management control-plane nodes must be observed and all must be Ready. This necessary prerequisite does not establish etcd or API load-balancer HA.
 
 Next: [Required gates are ready](#hbn-bgp-deployment-generate); [A required gate remains unresolved](#hbn-bgp-deployment-blocked).
 

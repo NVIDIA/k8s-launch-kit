@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/tools/clientcmd"
@@ -40,18 +42,22 @@ func (p *topologyProbe) Run(_ context.Context, _ config.Request, _ ManagementCli
 	return nil, p.cleanup, p.err
 }
 
-func managementTopologyKubeconfig(nodeCount, controlPlanes int) (string, func()) {
+func managementTopologyKubeconfig(nodeCount, controlPlanes, notReadyIndex int) (string, func()) {
 	items := make([]map[string]any, 0, nodeCount)
 	for i := 0; i < nodeCount; i++ {
 		labels := map[string]string{}
 		if i < controlPlanes {
 			labels["node-role.kubernetes.io/control-plane"] = ""
 		}
+		ready := "True"
+		if i == notReadyIndex {
+			ready = "False"
+		}
 		items = append(items, map[string]any{
 			"metadata": map[string]any{"name": "node-" + string(rune('a'+i)), "uid": "uid-" + string(rune('a'+i)), "labels": labels},
 			"status": map[string]any{
 				"nodeInfo":   map[string]string{"architecture": "amd64", "operatingSystem": "linux"},
-				"conditions": []map[string]string{{"type": "Ready", "status": "True"}},
+				"conditions": []map[string]string{{"type": "Ready", "status": ready}},
 			},
 		})
 	}
@@ -99,7 +105,7 @@ var _ = Describe("management topology fanout", func() {
 			nodes, masters int
 		}{{"one control plane", "management", 1, 1}, {"three control planes", "management", 3, 3}, {"five control planes", "management", 5, 5}, {"three control planes and workers", "management", 5, 3}, {"inventory one control plane", "inventory", 1, 1}, {"inventory five control planes", "inventory", 5, 5}} {
 			By(scenario.name)
-			kubeconfig, cleanup := managementTopologyKubeconfig(scenario.nodes, scenario.masters)
+			kubeconfig, cleanup := managementTopologyKubeconfig(scenario.nodes, scenario.masters, -1)
 			req := inventoryRequest()
 			req.Targets[1].SSH = nil
 			req.Targets[1].Endpoint = "https://dpu.invalid"
@@ -127,8 +133,59 @@ var _ = Describe("management topology fanout", func() {
 		}
 	})
 
+	It("enforces the HBN multi-master prerequisite without treating cardinality as HA proof", func() {
+		profile, err := hbn.Resolve(hbn.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		release, err := releases.DefaultForUseCase(releases.UseCaseHBNBGP)
+		Expect(err).NotTo(HaveOccurred())
+		for _, scenario := range []struct {
+			name                          string
+			nodes, masters, notReadyIndex int
+			state, reason                 string
+		}{
+			{"none", 0, 0, -1, "unknown", "CONTROL_PLANE_READINESS_UNKNOWN"},
+			{"worker only", 1, 0, -1, "unknown", "CONTROL_PLANE_READINESS_UNKNOWN"},
+			{"one", 1, 1, -1, "failed", "CONTROL_PLANE_MULTIMASTER_REQUIRED"},
+			{"one plus workers", 3, 1, -1, "failed", "CONTROL_PLANE_MULTIMASTER_REQUIRED"},
+			{"two", 2, 2, -1, "passed", "CONTROL_PLANE_NODES_READY"},
+			{"three", 3, 3, -1, "passed", "CONTROL_PLANE_NODES_READY"},
+			{"five", 5, 5, -1, "passed", "CONTROL_PLANE_NODES_READY"},
+			{"degraded", 3, 3, 2, "failed", "CONTROL_PLANE_NODE_NOT_READY"},
+		} {
+			By(scenario.name)
+			kubeconfig, cleanup := managementTopologyKubeconfig(scenario.nodes, scenario.masters, scenario.notReadyIndex)
+			req := config.Request{HBN: &profile, Software: &release, Mode: "inventory", Kubeconfig: kubeconfig, Timeout: 5 * time.Second, RequestTimeout: time.Second}
+			report := Collect(context.Background(), req, "offline-hbn-topology", Dependencies{DeferHBNReadiness: true})
+			cleanup()
+			Expect(report.Inventory.Management.Nodes).To(HaveLen(scenario.nodes))
+			Expect(report.Discovery.Checks).NotTo(ContainElement(HaveField("ID", "dpf.management.control-plane-count")))
+			var found *inventory.Check
+			for i := range report.Readiness.Checks {
+				if report.Readiness.Checks[i].ID == "dpf.hbn.management.control-plane" {
+					found = &report.Readiness.Checks[i]
+				}
+			}
+			Expect(found).NotTo(BeNil())
+			Expect(found.State).To(Equal(scenario.state))
+			Expect(found.ReasonCode).To(Equal(scenario.reason))
+			Expect(found.RequiredPhase).To(Equal("deploy"))
+			if found.State == "passed" {
+				Expect(found.Message).To(ContainSubstring("does not establish control-plane HA"))
+			}
+			// Other required observations are absent: this one predicate cannot
+			// grant overall deployment readiness, even with multiple Ready masters.
+			Expect(report.Readiness.State).To(Equal("blocked"))
+			before, err := json.Marshal(report.Inventory)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(controlPlaneCheck(report.Inventory).state).To(Equal(scenario.state))
+			after, err := json.Marshal(report.Inventory)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after).To(Equal(before))
+		}
+	})
+
 	It("retains probe failure and incomplete cleanup for any observed node count", func() {
-		kubeconfig, cleanup := managementTopologyKubeconfig(5, 5)
+		kubeconfig, cleanup := managementTopologyKubeconfig(5, 5, -1)
 		defer cleanup()
 		req := inventoryRequest()
 		req.Targets[1].SSH = nil
