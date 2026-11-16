@@ -64,6 +64,20 @@ var _ = Describe("release BOM resolution", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(explicit.Version).To(Equal("26.4.0"))
 	})
+	It("rejects an empty or omitted default even when an empty catalog key exists", func() {
+		c, err := load(catalogYAML)
+		Expect(err).NotTo(HaveOccurred())
+		empty := c.Releases[c.DefaultRelease]
+		empty.Version, empty.Operator.Version = "", "v"
+		c.Releases[""] = empty
+		c.DefaultRelease = ""
+		data, err := yaml.Marshal(c)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = resolve(data, "")
+		Expect(err).To(MatchError(ContainSubstring("default must name an existing release")))
+		_, err = resolve([]byte(strings.Replace(string(data), "defaultRelease: \"\"\n", "", 1)), "")
+		Expect(err).To(MatchError(ContainSubstring("default must name an existing release")))
+	})
 	It("keeps unknown BMC requirements distinct from a documented NIC minimum", func() {
 		r, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
