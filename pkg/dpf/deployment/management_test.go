@@ -475,7 +475,7 @@ func TestRunManagementRechecksSingletonBeforeConfigCreateAndVerifiesVersion(t *t
 		{name: "wrong version", set: func(fake *managementFake) { fake.targetVersion = "v26.4.0" }, code: "DPF_CONFIG_VERSION_MISMATCH"},
 		{name: "namespace replaced", set: func(fake *managementFake) { fake.replaceNamespaceOnConfig = true }, code: "MANAGEMENT_NAMESPACE_CHANGED"},
 		{name: "manager command drift", set: func(fake *managementFake) { fake.alterManagerOnConfig = true }, code: "DPF_MANAGER_CHANGED"},
-		{name: "identity changed", set: func(fake *managementFake) { fake.failIdentityAfterConfig = true }, code: "MANAGEMENT_IDENTITY_CHANGED"},
+		{name: "identity unavailable", set: func(fake *managementFake) { fake.failIdentityAfterConfig = true }, code: "MANAGEMENT_IDENTITY_UNVERIFIED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := managementFakeWithReadiness(t, execution.plan.Digest(), execution.manager, execution.crds)

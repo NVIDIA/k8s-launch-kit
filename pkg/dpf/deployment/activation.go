@@ -219,7 +219,8 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		return receipt, activationFailure(journal, "ACTIVATION_ENROLLMENT_RECEIPT_CHANGED", "The workload receipt does not contain the selected DPU identities from the current enrollment stage.", nil)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return receipt, activationFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "The bound management cluster changed before DPUDeployment activation.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return receipt, activationFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" DPUDeployment activation remains stopped.", diagnostic)
 	}
 	objects, err := retainedWorkloadObjects(execution)
 	if err != nil {
@@ -1056,7 +1057,8 @@ func releaseNextSelectedHold(ctx context.Context, client activationStageClient, 
 		return released, nil
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return released, activationFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed during selected hold release.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return released, activationFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" Inspect selected hold state before retrying.", diagnostic)
 	}
 	return released, nil
 }
@@ -1382,7 +1384,8 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			return verified, err
 		}
 		if err := client.VerifyIdentity(ctx); err != nil {
-			return verified, activationFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management API identity could not be verified after host reboot.", err)
+			diagnostic := managementIdentityDiagnostic(ctx, err)
+			return verified, activationFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" Preserve the host reboot receipt and pending request.", diagnostic)
 		}
 		returned, err := waitActivationAgentReboots(ctx, client, prepared.execution, deployment, deploymentUID, selected, indexes, rounds, resetProgress, interval)
 		if err != nil {

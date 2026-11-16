@@ -72,7 +72,7 @@ func verifyStagedSoftware(ctx context.Context, client softwareVerificationClient
 		return softwareVerificationReceipt{}, err
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return softwareVerificationReceipt{}, fmt.Errorf("management identity changed before software verification")
+		return softwareVerificationReceipt{}, managementIdentityDiagnostic(ctx, err)
 	}
 	// Retain the UID/generation from the completed create/wait boundary. Never
 	// accept a replacement simply because the new object is independently Ready.
@@ -129,7 +129,7 @@ func verifyStagedSoftware(ctx context.Context, client softwareVerificationClient
 		return softwareVerificationReceipt{}, fmt.Errorf("software component paths or retained locks changed during verification")
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return softwareVerificationReceipt{}, fmt.Errorf("management identity changed during software verification")
+		return softwareVerificationReceipt{}, managementIdentityDiagnostic(ctx, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return softwareVerificationReceipt{}, err

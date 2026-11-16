@@ -70,7 +70,8 @@ func prepareControlPlaneWithExecution(ctx context.Context, client enrollmentMana
 		return nil, err
 	}
 	if err := guardEnrollmentScope(ctx, client, execution, selected); err != nil {
-		return nil, enrollmentStageFailure(journal, "ENROLLMENT_SCOPE_UNSAFE", err.Error(), nil)
+		code, message, cause := enrollmentScopeDiagnostic(ctx, err, "ENROLLMENT_SCOPE_UNSAFE")
+		return nil, enrollmentStageFailure(journal, code, message, cause)
 	}
 	return &preparedControlPlaneRun{execution: execution, selected: selected, password: password}, nil
 }

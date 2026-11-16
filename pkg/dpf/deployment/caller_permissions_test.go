@@ -342,6 +342,7 @@ type callerPermissionHarness struct {
 	allowed                func(callerReview) bool
 	identityUIDChangeAtGet int
 	identityUIDGets        int
+	identityReadHook       func(http.ResponseWriter, int) bool
 }
 
 func callerGenerationInputs(t *testing.T, server *httptest.Server) generation.Inputs {
@@ -363,6 +364,9 @@ func newCallerPermissionHarness(t *testing.T, allowed func(callerReview) bool) *
 			writeCallerJSON(t, writer, map[string]string{"gitVersion": "v1.35.4"})
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v1/namespaces/kube-system":
 			harness.identityUIDGets++
+			if harness.identityReadHook != nil && harness.identityReadHook(writer, harness.identityUIDGets) {
+				return
+			}
 			uid := "system-uid-1"
 			if harness.identityUIDChangeAtGet > 0 && harness.identityUIDGets >= harness.identityUIDChangeAtGet {
 				uid = "system-uid-2"

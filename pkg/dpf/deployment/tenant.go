@@ -43,7 +43,8 @@ func connectRetainedTenant(ctx context.Context, management *APIClient, plan *gen
 	}
 	client, err := newTenantClient(ctx, management, expected, string(establishedUID), requestTimeout)
 	if err != nil {
-		return nil, journalFailure(journal, event, false, "TENANT_API_NOT_VERIFIED", "Tenant API access or its bound source identity could not be verified; dependent stages remain stopped.", err)
+		diagnostic := tenantIdentityDiagnostic(ctx, err)
+		return nil, journalFailure(journal, event, false, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
 		diagnostic := tenantIdentityDiagnostic(ctx, err)
