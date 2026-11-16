@@ -168,11 +168,20 @@ func (i *Inventory) UnmarshalJSON(data []byte) error {
 		*i = result
 		return nil
 	}
-	var wire inventoryWire
-	if err := decoder.Decode(&wire); err != nil {
-		return err
+	var result Inventory
+	if header.FormatVersion == "v1alpha1" || header.FormatVersion == "v1alpha2" {
+		var wire legacyInventoryInput
+		if err := decoder.Decode(&wire); err != nil {
+			return err
+		}
+		result = wire.inventory()
+	} else {
+		var wire inventoryWire
+		if err := decoder.Decode(&wire); err != nil {
+			return err
+		}
+		result = Inventory(wire)
 	}
-	result := Inventory(wire)
 	if err := NormalizeInventory(&result); err != nil {
 		return err
 	}
@@ -210,11 +219,20 @@ func (i *Inventory) UnmarshalYAML(node *yaml.Node) error {
 		*i = result
 		return nil
 	}
-	var wire inventoryWire
-	if err := decoder.Decode(&wire); err != nil {
-		return err
+	var result Inventory
+	if header.FormatVersion == "v1alpha1" || header.FormatVersion == "v1alpha2" {
+		var wire legacyInventoryInput
+		if err := decoder.Decode(&wire); err != nil {
+			return err
+		}
+		result = wire.inventory()
+	} else {
+		var wire inventoryWire
+		if err := decoder.Decode(&wire); err != nil {
+			return err
+		}
+		result = Inventory(wire)
 	}
-	result := Inventory(wire)
 	if err := NormalizeInventory(&result); err != nil {
 		return err
 	}

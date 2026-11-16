@@ -461,7 +461,8 @@ authentication/time placeholders, raw command strings and collection bookkeeping
 
 New saved inventories use format `v1alpha3`. This CLI also reads legacy
 `v1alpha1` and `v1alpha2` conservatively: absent state or verification does not
-become successful identity or administrator proof. Keep previous outputs as
+become successful identity or administrator proof. Retired `qualification` and
+`inventoryCompleteness` device metadata is read and discarded. Keep previous outputs as
 history and refresh through discovery rather than editing version tags or facts.
 
 ### Review the saved handoff
