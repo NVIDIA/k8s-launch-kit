@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,11 +28,6 @@ import (
 
 const stagedOSBytes = "selected operating system image"
 const stagedPLDMBytes = "selected firmware bundle"
-
-var softwareStageExecutions = struct {
-	sync.Mutex
-	values map[string]*managementExecution
-}{values: make(map[string]*managementExecution)}
 
 type softwareStageFake struct {
 	*enrollmentStageFake
@@ -150,17 +144,10 @@ func prepareSoftwareStageExecution(t *testing.T, serials []string) *managementEx
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := generated.Index().BundleDigest
-	softwareStageExecutions.Lock()
-	defer softwareStageExecutions.Unlock()
-	if cached := softwareStageExecutions.values[key]; cached != nil {
-		return cached
-	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := prepareStageFixtureExecution(generated)
 	if err != nil {
 		t.Fatal(err)
 	}
-	softwareStageExecutions.values[key] = execution
 	return execution
 }
 
