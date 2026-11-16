@@ -7,6 +7,9 @@ Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by defau
 The current lifecycle uses the `host` target by default. For a separate DPU estate, the `dpf` target supports standalone discovery, HBN-BGP artifact generation, and deployment with provisioning and runtime checks. The current BF4/HBN-BGP cohort remains beta; command availability does not qualify every hardware and release combination. DPF standalone validation and the root pipeline remain unavailable. DPF deploy can resume its recorded initial operation with `--resume`; see [recovery](docs/user/dpf-deployment.md#read-the-result-and-recover-from-a-stop).
 DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
 management cluster. Inventory success is separate from provisioning readiness.
+HBN-BGP ASIC readiness requires the [qualified Cumulus reader](docs/user/dpf-discovery.md#check-hbn-bgp-prerequisites);
+other switch software builds remain unsupported for that check. The stock diagnostic
+briefly adjusts SDK log verbosity; the guide describes interruption limits.
 DPF BMC discovery verifies TLS by default. A site can explicitly set
 `tls.insecureSkipVerify: true`; discovery reports when a connection was not
 verified. See the [DPF discovery guide](docs/user/dpf-discovery.md) for scope

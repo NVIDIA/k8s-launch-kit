@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/fabric"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
@@ -23,8 +24,9 @@ func qualifiedASICOutputs() map[string]string {
 		ExpectWithOffset(1, err).NotTo(HaveOccurred())
 		return string(raw)
 	}
-	out[asicOSCommand] = "ID=cumulus-linux\nVERSION_ID=5.15.1\nCODE_DROP=\"" + qualifiedCodeDrop + "\"\n"
-	out[asicHashCommand] = qualifiedRIFHash + "  /usr/bin/sx_api_router_interface_dump_all.py\n" + qualifiedHelperHash + "  /usr/bin/flex_acl_common.py\n"
+	profile := catalog.CumulusASICReader()
+	out[asicOSCommand] = "ID=" + profile.OSID + "\nVERSION_ID=" + profile.Version + "\nCODE_DROP=\"" + profile.CodeDrop + "\"\n"
+	out[asicHashCommand] = profile.RIFSHA256 + "  /usr/bin/sx_api_router_interface_dump_all.py\n" + profile.HelperSHA256 + "  /usr/bin/flex_acl_common.py\n"
 	out[asicConfigCommand] = read("config.json")
 	out[asicPendingCommand] = "" // Actual qualified empty diff: successful exit, zero stdout bytes.
 	out[asicLinuxCommand] = read("linux.json")
@@ -135,6 +137,31 @@ var _ = Describe("qualified stock SDK diagnostic collection", func() {
 			}
 		}
 	})
+	It("rejects each unqualified identity even after a caller changes its catalog copy", func() {
+		profile := catalog.CumulusASICReader()
+		profile.CodeDrop = "unreviewed code drop"
+		for _, test := range []struct{ command, old, replacement, code string }{
+			{asicOSCommand, "ID=cumulus-linux", "ID=other-linux", "ASIC_BUILD_UNSUPPORTED"},
+			{asicOSCommand, "VERSION_ID=5.15.1", "VERSION_ID=5.16.0", "ASIC_BUILD_UNSUPPORTED"},
+			{asicOSCommand, catalog.CumulusASICReader().CodeDrop, profile.CodeDrop, "ASIC_BUILD_UNSUPPORTED"},
+			{asicHashCommand, catalog.CumulusASICReader().RIFSHA256, strings.Repeat("0", 64), "ASIC_TOOL_UNSUPPORTED"},
+			{asicHashCommand, catalog.CumulusASICReader().HelperSHA256, strings.Repeat("0", 64), "ASIC_TOOL_UNSUPPORTED"},
+		} {
+			session := &fakeSession{outputs: qualifiedASICOutputs(), failures: map[string]error{}}
+			Expect(session.outputs[test.command]).To(ContainSubstring(test.old))
+			session.outputs[test.command] = strings.Replace(session.outputs[test.command], test.old, test.replacement, 1)
+			got := collectASICFixture(context.Background(), session)
+			Expect(got.ASIC).To(BeNil())
+			Expect(stockCalls(session)).To(BeZero())
+			issue, found := issueFor(got, "asic")
+			Expect(found).To(BeTrue())
+			Expect(issue.Code).To(Equal(test.code))
+		}
+		session := &fakeSession{outputs: qualifiedASICOutputs(), failures: map[string]error{}}
+		Expect(collectASICFixture(context.Background(), session).ASIC).NotTo(BeNil())
+		Expect(stockCalls(session)).To(Equal(1))
+	})
+
 	It("rechecks executable identity immediately before the diagnostic", func() {
 		session := &fakeSession{outputs: qualifiedASICOutputs(), failures: map[string]error{}}
 		session.onRun = func(_ context.Context, command string) {

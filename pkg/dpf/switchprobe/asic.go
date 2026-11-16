@@ -8,22 +8,20 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/fabric"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 )
 
 const (
-	asicOSCommand       = "cat /etc/os-release"
-	asicHashCommand     = "sha256sum -- /usr/bin/sx_api_router_interface_dump_all.py /usr/bin/flex_acl_common.py"
-	asicRIFCommand      = "/usr/bin/sx_api_router_interface_dump_all.py"
-	asicRootCommand     = "cat /cumulus/switchd/run/software-tables/root"
-	asicLinuxCommand    = "ip -j -d link show"
-	asicConfigCommand   = "nv config show --rev applied -o json"
-	asicPendingCommand  = "nv config diff --expand -o json"
-	qualifiedCodeDrop   = "CD28 Base 5.deb12.dev.1481 - SDK 4.8.2052 - Nvue Core Tag 1.11.0.79 - Nvue OM Tag 1.3.33.61"
-	qualifiedRIFHash    = "e58025b5dba285a4041099bf4bad6a3b6c81b9c34cb8aa42d43b5cc08456f608"
-	qualifiedHelperHash = "2f0424de6dfc867056f2852e9af937334b2cd256cf11a9dcaa007d940030e9cf"
+	asicOSCommand      = "cat /etc/os-release"
+	asicHashCommand    = "sha256sum -- /usr/bin/sx_api_router_interface_dump_all.py /usr/bin/flex_acl_common.py"
+	asicRIFCommand     = "/usr/bin/sx_api_router_interface_dump_all.py"
+	asicRootCommand    = "cat /cumulus/switchd/run/software-tables/root"
+	asicLinuxCommand   = "ip -j -d link show"
+	asicConfigCommand  = "nv config show --rev applied -o json"
+	asicPendingCommand = "nv config diff --expand -o json"
 )
 
 type asicCollection struct {
@@ -74,14 +72,15 @@ func (c *asicCollection) qualify(ctx context.Context) *fabric.Issue {
 		}
 		fields[key] = strings.Trim(value, "\"")
 	}
-	if fields["ID"] != "cumulus-linux" || fields["VERSION_ID"] != "5.15.1" || fields["CODE_DROP"] != qualifiedCodeDrop {
-		return asicIssue("ASIC_BUILD_UNSUPPORTED", "ASIC collection is qualified only for Cumulus 5.15.1, SDK 4.8.2052 and the reviewed code drop.")
+	profile := catalog.CumulusASICReader()
+	if fields["ID"] != profile.OSID || fields["VERSION_ID"] != profile.Version || fields["CODE_DROP"] != profile.CodeDrop {
+		return asicIssue("ASIC_BUILD_UNSUPPORTED", fmt.Sprintf("ASIC collection requires catalog-qualified Cumulus %s (%s).", profile.Version, profile.CodeDrop))
 	}
 	hashes, err := c.run(ctx, asicHashCommand, false)
 	if err != nil {
 		return asicIssue(sshprobe.Code(err), "ASIC tool identity could not be read.")
 	}
-	want := qualifiedRIFHash + "  /usr/bin/sx_api_router_interface_dump_all.py\n" + qualifiedHelperHash + "  /usr/bin/flex_acl_common.py"
+	want := profile.RIFSHA256 + "  /usr/bin/sx_api_router_interface_dump_all.py\n" + profile.HelperSHA256 + "  /usr/bin/flex_acl_common.py"
 	if strings.TrimSpace(string(hashes)) != want {
 		return asicIssue("ASIC_TOOL_UNSUPPORTED", "Installed SDK RIF diagnostic or verbosity helper differs from the reviewed version.")
 	}

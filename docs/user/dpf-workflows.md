@@ -133,7 +133,7 @@ Next: [Collect from selected endpoints](#initial-inventory-collect).
 
 ### 5. Selected host, DPU and BMC: read identity and facts {#initial-inventory-collect}
 
-Launch Kit reads each configured endpoint using the connection you selected. Host and DPU operating-system observations use SSH on those systems; BMC observations use HTTPS Redfish; management observations use the explicit management Kubernetes API when configured. HBN-BGP discovery also reads the selected switches over SSH but does not change them. The CLI does not install tools or repair device settings.
+Launch Kit reads each configured endpoint using the connection you selected. Host and DPU operating-system observations use SSH on those systems; BMC observations use HTTPS Redfish; management observations use the explicit management Kubernetes API when configured. HBN-BGP discovery also inspects the selected switches over SSH. It does not change forwarding configuration; its qualified stock ASIC diagnostic briefly adjusts router SDK log verbosity. See the discovery reference for the exact supported reader and interruption limits. The CLI does not install tools or repair device settings.
 
 Required host/card identity and DPU BMC authorization must be established for a complete inventory. Optional observations add facts when available; unavailable or unsupported reads remain visible with a reason. See the [DPF discovery reference](dpf-discovery.md) for access requirements and the specific facts each source can provide.
 
@@ -397,6 +397,8 @@ Retain explicit host and DPU BMC targets. Add each switch SSH address, credentia
 
 The selected HBN-BGP profile supplies the expected network configuration and policy defaults; the selected release row supplies default HBN artifact coordinates. Omit `dpf.hbn` to use its defaults, or override individual VRF, ASN, MTU and address-pool fields for your environment. Discovery compares the live fabric with these resolved values; it does not adopt conflicting switch settings as new defaults. Generation uses the same effective configuration. Keep credentials, access endpoints and physical port bindings in their separate site inputs.
 
+ASIC readiness requires the exact catalog-qualified Cumulus reader documented in [HBN-BGP prerequisites](dpf-discovery.md#check-hbn-bgp-prerequisites). Other builds remain unknown and block readiness; selecting `cumulus-nvue` does not waive this qualification.
+
 Next: [Inputs prepared](#hbn-bgp-preflight-run).
 
 ### 2. CLI machine: run HBN-BGP discovery {#hbn-bgp-preflight-run}
@@ -409,7 +411,7 @@ l8k discover --target dpf --use-case hbn-bgp \
   --save-cluster-config dpf-discovered.yaml
 ```
 
-The CLI reads selected host and DPU identity and authorization, required management observations, host-network prerequisites and read-only switch facts. It does not configure switches. Configured management-network probes may create temporary probe resources as described in the discovery reference.
+The CLI reads selected host and DPU identity and authorization, required management observations, host-network prerequisites and switch facts. It does not change forwarding configuration. The stock ASIC diagnostic briefly adjusts router SDK log verbosity; failure or interruption leaves restoration unconfirmed and stops without automatic retry or network repair. Arrange exclusive diagnostic use and resolve uncertain log state with the switch administrator before another run. Configured management-network probes may create temporary probe resources as described in the discovery reference.
 
 Review the command result, `discovery.outcome`, `readiness.state` and each required check's state and reason. Missing, changing, unsupported or conflicting facts remain blockers. A readiness pass records observations; it does not establish live BGP adjacency or traffic.
 

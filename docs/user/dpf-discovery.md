@@ -514,8 +514,32 @@ Use `--use-case hbn-bgp` to add fabric inspection to DPF inventory collection.
 The CLI reads your selected switches over SSH from the machine running Launch
 Kit. It runs NVUE commands for applied interfaces, VRFs, BGP and bridges, then
 reads operational interfaces, bridges, LLDP and FRR BGP summaries. It does not
-change switch configuration. Currently, switch inspection supports Cumulus
-Linux with NVUE.
+change VLAN, VRF, BGP or forwarding configuration. The required direct ASIC
+RIF/VRF check supports only the catalog-qualified Cumulus Linux/NVUE reader
+below. Other builds can still supply software facts, but their ASIC check remains
+unknown and blocks HBN-BGP readiness; `cumulus-nvue` alone does not establish
+support. There is no site override to waive reader qualification.
+
+| Reader identity | Supported value |
+| --- | --- |
+| OS | Cumulus Linux `5.15.1` (`cumulus-linux`) |
+| Code drop | `CD28 Base 5.deb12.dev.1481 - SDK 4.8.2052 - Nvue Core Tag 1.11.0.79 - Nvue OM Tag 1.3.33.61` |
+| `/usr/bin/sx_api_router_interface_dump_all.py` SHA-256 | `e58025b5dba285a4041099bf4bad6a3b6c81b9c34cb8aa42d43b5cc08456f608` |
+| `/usr/bin/flex_acl_common.py` SHA-256 | `2f0424de6dfc867056f2852e9af937334b2cd256cf11a9dcaa007d940030e9cf` |
+
+This reader qualification is independent of the DPF release and does not qualify
+every switch model or topology. The collector joins observed physical ports,
+SDK RIF/Router IDs, switchd table mappings and Linux VRFs; missing, ambiguous,
+unsupported or changing sources cannot pass. Port bindings, VRF names, table IDs,
+MACs and MTU expectations come from site intent and observed identities.
+
+The stock SDK diagnostic briefly changes router SDK log verbosity and restores
+it on its normal path. It does not change forwarding configuration. Failure,
+timeout or interruption leaves log restoration unconfirmed: collection stops
+without automatic diagnostic retry or network repair. Closing SSH does not prove
+that the remote command stopped or restored logging. Arrange exclusive use of
+router SDK diagnostics during collection and resolve uncertain log state with
+the switch administrator before another run.
 
 Add switch access and intended DPU uplink connections to your existing site
 file. Use the DPU serial numbers from physical inventory. A port binding is
@@ -548,7 +572,8 @@ Keep the host and DPU endpoints and their credentials alongside these additions.
 Each DPU needs one binding for `p0` and one for `p1`. If the mapping is unknown,
 retain the DPU in inventory and resolve the missing mapping before deployment.
 SSH requires a pinned known-hosts file; Redfish's TLS bypass does not apply.
-With `sudo: true`, only LLDP and FRR reads use sudo. Password authentication
+With `sudo: true`, LLDP, FRR, switchd table reads and the SDK diagnostic use sudo.
+Password authentication
 passes the sudo password through stdin; key authentication requires
 noninteractive sudo authorization.
 

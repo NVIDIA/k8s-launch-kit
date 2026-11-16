@@ -13,8 +13,16 @@ metadata:
 
 For the standalone DPF workflow, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md). Inventory is the default and uses explicit SSH/Redfish YAML without requiring Kubernetes. A supplied kubeconfig adds management observations; `discovery.probes.mode: management` explicitly requests pod/node network probes and requires the documented management-cluster prerequisites. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while selected-use-case eligibility and DPF authentication remain separate assessments. The current BF4/HBN-BGP cohort remains beta; do not infer hardware qualification from command availability or inventory success, and do not run Host discovery against the DPF estate.
 
-`--use-case hbn-bgp` adds read-only Cumulus NVUE/LLDP/FRR switch inspection and
-defaults to inventory mode. Supply explicit switch credentials, pinned SSH
+`--use-case hbn-bgp` adds Cumulus NVUE/LLDP/FRR and direct ASIC switch inspection
+and defaults to inventory mode. ASIC readiness requires the catalog-qualified
+Cumulus 5.15.1/CD28, SDK 4.8.2052 reader and both exact stock-script hashes listed
+in the [discovery reference](../../docs/user/dpf-discovery.md#check-hbn-bgp-prerequisites).
+Other builds remain unknown and block readiness; site inputs cannot waive this.
+No VLAN, VRF, BGP or forwarding configuration is written. The stock diagnostic
+briefly adjusts router SDK log verbosity; interruption or failure leaves
+restoration unconfirmed and stops without automatic retry or network repair.
+Closing SSH does not prove restoration. Arrange exclusive diagnostic use and
+resolve uncertain log state with the switch administrator before another run. Supply explicit switch credentials, pinned SSH
 known-hosts trust and intended p0/p1 bindings under `discovery.switches`.
 Explicit `discovery.probes.mode: management` adds the existing two-vantage
 network probes on Linux/amd64 management nodes. It creates temporary non-root
