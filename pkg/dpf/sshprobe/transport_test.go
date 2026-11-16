@@ -326,6 +326,7 @@ var _ = Describe("bounded SSH transport", func() {
 	It("bounds cancellation of an unresponsive handshake", func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		Expect(err).NotTo(HaveOccurred())
+		fixtureContext, stopFixture := context.WithCancel(context.Background())
 		accepted := make(chan struct{})
 		handshakeStarted := make(chan struct{})
 		peerClosed := make(chan struct{})
@@ -343,6 +344,8 @@ var _ = Describe("bounded SSH transport", func() {
 			}
 			close(accepted)
 			defer conn.Close()
+			stopClose := context.AfterFunc(fixtureContext, func() { _ = conn.Close() })
+			defer stopClose()
 			reader := bufio.NewReader(conn)
 			if _, readErr := reader.ReadString('\n'); readErr != nil {
 				close(peerClosed)
@@ -353,6 +356,7 @@ var _ = Describe("bounded SSH transport", func() {
 			close(peerClosed)
 		}()
 		defer func() {
+			stopFixture()
 			_ = listener.Close()
 			select {
 			case <-serverDone:
@@ -368,7 +372,9 @@ var _ = Describe("bounded SSH transport", func() {
 		defer cancel()
 		result := make(chan error, 1)
 		go func() {
-			_, connectErr := connect(ctx, "ssh://"+listener.Addr().String(), auth, time.Second)
+			// The socket deadline must outlast the cancellation assertion, so a
+			// normal handshake timeout cannot masquerade as canceled transport.
+			_, connectErr := connect(ctx, "ssh://"+listener.Addr().String(), auth, 5*time.Second)
 			result <- connectErr
 		}()
 
@@ -376,10 +382,17 @@ var _ = Describe("bounded SSH transport", func() {
 		case <-accepted:
 		case acceptErr := <-acceptErr:
 			Fail(fmt.Sprintf("accept handshake connection: %v", acceptErr))
-		case <-time.After(time.Second):
-			Fail("SSH connection was not accepted within the connection timeout")
+		case connectErr := <-result:
+			Fail("SSH connection ended before the fixture accepted it: " + Code(connectErr))
+		case <-time.After(5 * time.Second):
+			Fail("SSH handshake fixture did not accept the connection")
 		}
-		Eventually(handshakeStarted).WithTimeout(time.Second).Should(BeClosed())
+		Eventually(handshakeStarted).WithTimeout(5 * time.Second).Should(BeClosed())
+		select {
+		case connectErr := <-result:
+			Fail("SSH handshake ended before cancellation: " + Code(connectErr))
+		default:
+		}
 		cancelAt := time.Now()
 		cancel()
 		select {
