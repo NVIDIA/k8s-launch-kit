@@ -5,6 +5,7 @@ package deployment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -13,6 +14,16 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 )
+
+// activationBoundaryFailure keeps cancellation distinct from drift at every
+// control/resource fence. It changes only diagnostics, never the stop decision.
+func activationBoundaryFailure(ctx context.Context, journal *executionJournal, code, message string, cause error) error {
+	cause = identityInspectionCause(ctx, cause)
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		code, message = "ACTIVATION_CANCELED", "Activation boundary inspection was canceled or its deadline expired; preserve the operation and current state."
+	}
+	return activationFailure(journal, code, message, cause)
+}
 
 // verifyActivationBoundary is the full physical policy for mutation boundaries
 // and runtime phase acceptance. Keep BMC reads between the control checks and
@@ -24,7 +35,7 @@ func verifyActivationBoundary(ctx context.Context, client activationStageClient,
 		return err
 	}
 	if err := client.verifyEnrollmentBMCs(ctx, prepared.selected, requestTimeout, journal); err != nil {
-		return activationFailure(journal, "ACTIVATION_BMC_IDENTITY_CHANGED", "Selected BMC identities could not be reverified at the activation boundary.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_BMC_IDENTITY_CHANGED", "Selected BMC identities could not be reverified at the activation boundary.", err)
 	}
 	return verifyActivationEnrollmentResources(ctx, client, prepared, controlPlane, selected, deploymentUID, journal)
 }
@@ -42,22 +53,24 @@ func verifyActivationResourceBoundary(ctx context.Context, client activationStag
 
 func verifyActivationControlResources(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, objects []*unstructured.Unstructured, journal *executionJournal) error {
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return activationFailure(journal, "MANAGEMENT_IDENTITY_CHANGED", "Management identity changed at the activation boundary.", err)
+		diagnostic := managementIdentityDiagnostic(ctx, err)
+		return activationBoundaryFailure(ctx, journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	if err := controlPlane.tenant.Client.VerifyIdentity(ctx); err != nil {
-		return activationFailure(journal, "TENANT_API_IDENTITY_CHANGED", "Tenant API identity changed at the activation boundary.", err)
+		diagnostic := tenantIdentityDiagnostic(ctx, err)
+		return activationBoundaryFailure(ctx, journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	if err := verifyManagementBootstrap(ctx, client, prepared.execution, controlPlane.management); err != nil {
-		return activationFailure(journal, "ACTIVATION_BOOTSTRAP_CHANGED", "Management bootstrap changed at the activation boundary.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_BOOTSTRAP_CHANGED", "Management bootstrap changed at the activation boundary.", err)
 	}
 	if err := validateWorkloadTargeting(ctx, client, prepared.execution, controlPlane.tenant, prepared.selected, objects); err != nil {
-		return activationFailure(journal, "ACTIVATION_WORKLOAD_TARGET_CHANGED", "The retained workload resources no longer resolve only to the selected tenant and device cohort.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_WORKLOAD_TARGET_CHANGED", "The retained workload resources no longer resolve only to the selected tenant and device cohort.", err)
 	}
 	if err := verifyWorkloadReceiptSet(ctx, client, prepared.execution, controlPlane.tenant.Client, objects, workload.Resources); err != nil {
-		return activationFailure(journal, "ACTIVATION_WORKLOAD_RECEIPT_CHANGED", "A retained workload prerequisite changed at the activation boundary.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_WORKLOAD_RECEIPT_CHANGED", "A retained workload prerequisite changed at the activation boundary.", err)
 	}
 	if err := verifyActivationSoftware(ctx, client, prepared.execution, workload.Software); err != nil {
-		return activationFailure(journal, "ACTIVATION_SOFTWARE_RECEIPT_CHANGED", "The retained software resource, component receipt or release-bound registry identity changed at the activation boundary.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_SOFTWARE_RECEIPT_CHANGED", "The retained software resource, component receipt or release-bound registry identity changed at the activation boundary.", err)
 	}
 	return nil
 }
@@ -65,28 +78,28 @@ func verifyActivationControlResources(ctx context.Context, client activationStag
 func verifyActivationEnrollmentResources(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, selected []activationSelectedDevice, deploymentUID types.UID, journal *executionJournal) error {
 	secret := controlPlane.enrollment.Secret
 	if controlPlane.enrollment.BundleDigest != prepared.execution.plan.Digest() || controlPlane.enrollment.TenantUID != controlPlane.tenant.ClusterUID || secret.Namespace != prepared.execution.operatorNamespace || secret.UID == "" {
-		return activationFailure(journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "The enrollment receipt differs from the retained plan, tenant or credential identity.", nil)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "The enrollment receipt differs from the retained plan, tenant or credential identity.", nil)
 	}
 	current, err := client.Get(ctx, secretIdentity(secret.Namespace))
 	if err != nil {
-		return activationFailure(journal, "ACTIVATION_ENROLLMENT_SECRET_CHANGED", "The shared BMC credential could not be reverified at the activation boundary.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SECRET_CHANGED", "The shared BMC credential could not be reverified at the activation boundary.", err)
 	}
 	verified, err := verifyEnrollmentSecret(current, secret.Namespace, prepared.password)
 	if err != nil || verified.UID != secret.UID {
-		return activationFailure(journal, "ACTIVATION_ENROLLMENT_SECRET_CHANGED", "The shared BMC credential changed at the activation boundary.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SECRET_CHANGED", "The shared BMC credential changed at the activation boundary.", err)
 	}
 	if !softwareEnrollmentReceiptMatches(controlPlane.enrollment.Devices, prepared.selected) || len(selected) != len(prepared.selected) {
-		return activationFailure(journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "The selected enrollment receipt differs from the retained cohort.", nil)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "The selected enrollment receipt differs from the retained cohort.", nil)
 	}
 	snapshot, err := collectEnrollmentScope(ctx, client, prepared.execution, prepared.selected, true)
 	if err == nil {
 		err = validateActivationScope(snapshot, prepared.execution, selected, deploymentUID)
 	}
 	if err != nil {
-		return activationFailure(journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "Selected DPU enrollment or activation ownership changed.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "Selected DPU enrollment or activation ownership changed.", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return activationFailure(journal, "ACTIVATION_CANCELED", "Activation boundary verification was canceled.", err)
+		return activationBoundaryFailure(ctx, journal, "ACTIVATION_CANCELED", "Activation boundary verification was canceled.", err)
 	}
 	return nil
 }

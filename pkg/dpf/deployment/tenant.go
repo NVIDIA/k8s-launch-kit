@@ -46,7 +46,8 @@ func connectRetainedTenant(ctx context.Context, management *APIClient, plan *gen
 		return nil, journalFailure(journal, event, false, "TENANT_API_NOT_VERIFIED", "Tenant API access or its bound source identity could not be verified; dependent stages remain stopped.", err)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return nil, journalFailure(journal, event, false, "TENANT_API_IDENTITY_CHANGED", "Tenant API or source identity did not remain valid through the access check.", err)
+		diagnostic := tenantIdentityDiagnostic(ctx, err)
+		return nil, journalFailure(journal, event, false, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	event.State, event.ReasonCode = "confirmed", "TENANT_API_VERIFIED"
 	event.Message = "Tenant API authentication, source binding, Kubernetes version and cluster identity are verified; enrollment and workload readiness require later stages."

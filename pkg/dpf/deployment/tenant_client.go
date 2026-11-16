@@ -96,8 +96,11 @@ func validateTenantSources(expected TenantReadinessExpected, dcUID string, sourc
 		return empty, "", nil, fmt.Errorf("tenant source resources are not ready: %s", result.ReasonCode)
 	}
 	dc, tcp, svc := sources.observed.DPUCluster, sources.observed.TenantControlPlane, sources.observed.Service
-	if dcUID == "" || string(dc.GetUID()) != dcUID {
-		return empty, "", nil, fmt.Errorf("selected DPUCluster was replaced")
+	if dcUID == "" || dc.GetUID() == "" {
+		return empty, "", nil, fmt.Errorf("selected DPUCluster identity is unavailable")
+	}
+	if string(dc.GetUID()) != dcUID {
+		return empty, "", nil, fmt.Errorf("selected DPUCluster was replaced: %w", errTenantIdentityChanged)
 	}
 	version, _, err := unstructured.NestedString(dc.Object, "status", "version")
 	if err != nil || strings.TrimPrefix(version, "v") != strings.TrimPrefix(expected.KubernetesVersion, "v") {
@@ -157,7 +160,10 @@ func (c *tenantClient) verifySources(ctx context.Context) error {
 		return err
 	}
 	if digest != c.sourceDigest {
-		return fmt.Errorf("tenant source resources or credentials changed; reopen tenant access")
+		if c.sourceDigest == ([32]byte{}) {
+			return fmt.Errorf("retained tenant source identity is unavailable")
+		}
+		return fmt.Errorf("tenant source resources or credentials changed; reopen tenant access: %w", errTenantIdentityChanged)
 	}
 	return nil
 }
@@ -194,8 +200,11 @@ func (c *tenantClient) VerifyIdentity(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if c.systemUID == "" || uid != c.systemUID {
-		return fmt.Errorf("tenant API identity changed")
+	if c.systemUID == "" {
+		return fmt.Errorf("retained tenant API identity is unavailable")
+	}
+	if uid != c.systemUID {
+		return errTenantIdentityChanged
 	}
 	return c.verifySources(ctx)
 }
