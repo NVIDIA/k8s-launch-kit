@@ -87,8 +87,8 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 		want string
 	}{
 		{"bound operation still requires its recorded access", func(*RunRequest) {}, ""},
-		{"missing operation", func(*RunRequest) { object = nil }, "operation missing/replaced"},
-		{"replaced operation", func(*RunRequest) { object.UID = "123e4567-e89b-12d3-a456-426614174099" }, "operation missing/replaced"},
+		{"missing operation", func(*RunRequest) { object = nil }, "OPERATION_RESUME_RECORD_UNAVAILABLE"},
+		{"replaced operation", func(*RunRequest) { object.UID = "123e4567-e89b-12d3-a456-426614174099" }, "OPERATION_RESUME_RECORD_UNAVAILABLE"},
 		{"foreign bundle", func(*RunRequest) {
 			state := op.state
 			state.Binding.BundleDigest = "sha256:" + strings.Repeat("a", 64)
@@ -99,9 +99,9 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 				t.Fatal(e)
 			}
 			object.Data["checkpoint.json"] = data
-		}, "cluster, bundle or cohort changed"},
-		{"replaced namespace", func(*RunRequest) { namespaceUID = "replacement" }, "namespace replaced"},
-		{"wrong reference", func(r *RunRequest) { r.Resume.Name = "dpf-op-foreign" }, "resume reference differs"},
+		}, "OPERATION_RESUME_BINDING_CHANGED"},
+		{"replaced namespace", func(*RunRequest) { namespaceUID = "replacement" }, "OPERATION_RESUME_NAMESPACE_CHANGED"},
+		{"wrong reference", func(r *RunRequest) { r.Resume.Name = "dpf-op-foreign" }, "OPERATION_RESUME_REFERENCE_INVALID"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			mu.Lock()

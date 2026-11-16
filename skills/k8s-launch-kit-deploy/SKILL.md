@@ -69,7 +69,12 @@ the report and partial effects for inspection rather than blindly repeating a
 reset. Preserve the reported `namespace/name/UID` operation reference and use
 `deploy --target dpf --user-config SITE --deployment-files BUNDLE --resume REF`
 for the same initial deployment. Resume loads the exact UID/bundle/management/
-namespace/cohort-bound operation before assessing fresh prerequisites. It verifies
+namespace/cohort-bound operation before assessing fresh prerequisites. If its
+unchanged operator configuration is temporarily not Ready, restoration waits
+within the remaining deployment deadline and rechecks the complete management
+bootstrap before dependent work. A stop reports its finite preparation reason in
+result checks, the execution report and progress output; preserve current state
+before deciding on another explicit resume. It verifies
 current resources, credentials and tenant API ownership instead of requiring its
 own enrolled devices or tenant to be absent. Owned host addresses require the
 original inspect-only transaction and current allocation; extra addresses and

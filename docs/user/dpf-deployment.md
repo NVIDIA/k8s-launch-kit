@@ -211,7 +211,15 @@ new reports. Before a first DPUDeployment is created, resume also rechecks the c
 and cached ISO/PLDM bytes. An already-created exact DPUDeployment does not
 refetch those bytes merely to retry runtime checks. Resume verifies the retained
 management, tenant, selected-device,
-software and workload identities instead of reinstalling them. It continues
+software and workload identities instead of reinstalling them. While restoring
+an operation, it waits within the remaining deployment deadline for the same
+operator configuration to become Ready. The wait changes no resources; dependent
+work still requires the complete retained management bootstrap to match. If
+restoration stops because of read/access failures, changed identity, intent or
+reported version, terminal failure, cancellation or deadline expiry, its specific
+preparation reason appears in result checks, the execution report and progress
+output. Preserve the operation
+and current state before deciding on another explicit resume. It continues
 supported activation work and inspects completed host transactions. After a
 late runtime-check failure, it repeats the complete current BGP, route and traffic
 matrix without reimaging devices or reconfiguring completed hosts. It does not

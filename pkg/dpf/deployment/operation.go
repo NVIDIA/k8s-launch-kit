@@ -302,26 +302,29 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 func loadDeploymentOperation(ctx context.Context, client *APIClient, execution *managementExecution, ref *OperationRef) (*deploymentOperation, error) {
 	deployment, err := retainedDeploymentObject(execution)
 	if err != nil {
-		return nil, err
+		return nil, reconcileError("OPERATION_RESUME_PLAN_INVALID", operationResumeMessage("OPERATION_RESUME_PLAN_INVALID"), err)
 	}
 	if ref == nil || ref.Namespace != deployment.GetNamespace() || ref.Name != operationName(deployment) || !validUUID(string(ref.UID)) {
-		return nil, fmt.Errorf("OPERATION_BINDING_CONFLICT: resume reference differs from retained parent")
+		return nil, reconcileError("OPERATION_RESUME_REFERENCE_INVALID", operationResumeMessage("OPERATION_RESUME_REFERENCE_INVALID"), nil)
 	}
 	object, err := client.getOperation(ctx, ref.Namespace, ref.Name)
 	if err != nil || !operationObjectMatches(object, ref.Namespace, ref.Name) || object.UID != ref.UID {
-		return nil, fmt.Errorf("OPERATION_BINDING_CONFLICT: operation missing/replaced")
+		return nil, reconcileError("OPERATION_RESUME_RECORD_UNAVAILABLE", operationResumeMessage("OPERATION_RESUME_RECORD_UNAVAILABLE"), err)
 	}
 	state, err := decodeOperation(object.Data["checkpoint.json"])
 	if err != nil {
-		return nil, err
+		return nil, reconcileError("OPERATION_RESUME_CHECKPOINT_INVALID", operationResumeMessage("OPERATION_RESUME_CHECKPOINT_INVALID"), err)
 	}
 	intent := execution.plan.Intent()
 	if state.Binding.BundleDigest != execution.plan.Digest() || state.Binding.Management != intent.Management || state.Binding.DeploymentName != deployment.GetName() || state.Binding.CohortDigest != inventory.Digest("dpf-operation-cohort-v1", intent.Devices) {
-		return nil, fmt.Errorf("OPERATION_BINDING_CONFLICT: cluster, bundle or cohort changed")
+		return nil, reconcileError("OPERATION_RESUME_BINDING_CHANGED", operationResumeMessage("OPERATION_RESUME_BINDING_CHANGED"), nil)
 	}
 	ns, err := client.access.Client.CoreV1().Namespaces().Get(ctx, ref.Namespace, metav1.GetOptions{})
-	if err != nil || string(ns.UID) != state.Binding.NamespaceUID || ns.DeletionTimestamp != nil {
-		return nil, fmt.Errorf("OPERATION_BINDING_CONFLICT: namespace replaced")
+	if err != nil {
+		return nil, reconcileError("OPERATION_RESUME_NAMESPACE_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_NAMESPACE_UNVERIFIED"), err)
+	}
+	if ns == nil || string(ns.UID) != state.Binding.NamespaceUID || ns.DeletionTimestamp != nil {
+		return nil, reconcileError("OPERATION_RESUME_NAMESPACE_CHANGED", operationResumeMessage("OPERATION_RESUME_NAMESPACE_CHANGED"), err)
 	}
 	return &deploymentOperation{store: client, object: object.DeepCopy(), state: state}, nil
 }
@@ -329,28 +332,28 @@ func loadDeploymentOperation(ctx context.Context, client *APIClient, execution *
 func restoreOperationReceipts(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, journal *executionJournal, interval, timeout time.Duration) (controlPlaneReceipts, workloadPreparationReceipt, error) {
 	state := prepared.operation.state
 	control := controlPlaneReceipts{management: state.Management, enrollment: state.Enrollment}
-	if err := verifyManagementBootstrap(ctx, client, prepared.execution, state.Management); err != nil {
-		return control, workloadPreparationReceipt{}, err
+	if err := waitManagementBootstrap(ctx, client, prepared.execution, state.Management, journal, interval); err != nil {
+		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_BOOTSTRAP_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_BOOTSTRAP_UNVERIFIED"), err)
 	}
 	tenant, err := connectRetainedTenant(ctx, client, prepared.execution.plan, state.TenantUID, prepared.execution.reconciler, journal, interval, timeout)
 	if err != nil {
-		return control, workloadPreparationReceipt{}, err
+		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_TENANT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_TENANT_UNVERIFIED"), err)
 	}
 	sources, err := tenantOperationSources(ctx, tenant)
 	if err != nil || tenant.systemUID != state.TenantSystemUID || !reflect.DeepEqual(sources, state.TenantSources) {
-		return control, workloadPreparationReceipt{}, fmt.Errorf("OPERATION_TENANT_CHANGED: tenant or credential source replaced")
+		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_TENANT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_TENANT_UNVERIFIED"), err)
 	}
 	control.tenant = tenantStageReceipt{ClusterUID: state.TenantUID, Client: tenant}
 	workload := workloadPreparationReceipt{BundleDigest: state.Binding.BundleDigest, ControlPlane: control, Software: state.Software, Resources: state.Workload}
 	objects, err := retainedWorkloadObjects(prepared.execution)
 	if err != nil {
-		return control, workload, err
+		return control, workload, reconcileError("OPERATION_RESUME_PLAN_INVALID", operationResumeMessage("OPERATION_RESUME_PLAN_INVALID"), err)
 	}
 	if err := verifyActivationSoftware(ctx, client, prepared.execution, workload.Software); err != nil {
-		return control, workload, err
+		return control, workload, reconcileError("OPERATION_RESUME_SOFTWARE_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_SOFTWARE_UNVERIFIED"), err)
 	}
 	if err := verifyWorkloadReceiptSet(ctx, client, prepared.execution, tenant, objects, workload.Resources); err != nil {
-		return control, workload, err
+		return control, workload, reconcileError("OPERATION_RESUME_WORKLOAD_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_WORKLOAD_UNVERIFIED"), err)
 	}
 	return control, workload, nil
 }
@@ -407,7 +410,11 @@ func (c *APIClient) checkOperationPermissions(ctx context.Context, execution *ma
 		}
 		check := c.checkAccess(ctx, accessRequirement{verb: verb, version: "v1", resource: "configmaps", namespace: namespace, resourceName: resourceName})
 		if check.State != "passed" {
-			return fmt.Errorf("OPERATION_PERMISSION_DENIED: durable deployment requires ConfigMap %s permission in its operator namespace", verb)
+			code := "OPERATION_PERMISSION_UNVERIFIED"
+			if check.ReasonCode == "CALLER_PERMISSION_MISSING" {
+				code = "OPERATION_PERMISSION_DENIED"
+			}
+			return reconcileError(code, fmt.Sprintf("Durable deployment requires verified ConfigMap %s permission in its operator namespace.", verb), nil)
 		}
 	}
 	return nil
@@ -425,10 +432,10 @@ func sameOperationRequest(a, b sshprobe.HostNetworkRequest) bool {
 func prepareResume(execution *managementExecution, request config.Request, operation *deploymentOperation) (*preparedControlPlaneRun, error) {
 	selected, password, err := bindEnrollmentBMCs(execution.plan.Intent().Release, execution.plan.Intent().Devices, request.Targets)
 	if err != nil {
-		return nil, err
+		return nil, reconcileError("OPERATION_RESUME_ENROLLMENT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_ENROLLMENT_UNVERIFIED"), err)
 	}
 	if !softwareEnrollmentReceiptMatches(operation.state.Enrollment.Devices, selected) {
-		return nil, fmt.Errorf("OPERATION_ENROLLMENT_CHANGED: selected enrollment differs")
+		return nil, reconcileError("OPERATION_RESUME_ENROLLMENT_CHANGED", operationResumeMessage("OPERATION_RESUME_ENROLLMENT_CHANGED"), nil)
 	}
 	return &preparedControlPlaneRun{execution: execution, selected: selected, password: password, operation: operation}, nil
 }

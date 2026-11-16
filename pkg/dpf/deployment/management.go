@@ -394,9 +394,20 @@ func waitOperatorConfigReady(ctx context.Context, client ResourceClient, reconci
 	uid := initial.GetUID()
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, journalFailure(journal, event, false, "DPF_CONFIG_READINESS_CANCELED", "DPFOperatorConfig readiness was not established before cancellation.", err)
+			code := "DPF_CONFIG_READINESS_CANCELED"
+			if errors.Is(err, context.DeadlineExceeded) {
+				code = "DPF_CONFIG_READINESS_TIMEOUT"
+			}
+			return nil, journalFailure(journal, event, false, code, "DPFOperatorConfig readiness was not established before cancellation or deadline.", err)
 		}
 		current, err := client.Get(ctx, desired.DeepCopy())
+		if stop := ctx.Err(); stop != nil {
+			code := "DPF_CONFIG_READINESS_CANCELED"
+			if errors.Is(stop, context.DeadlineExceeded) {
+				code = "DPF_CONFIG_READINESS_TIMEOUT"
+			}
+			return nil, journalFailure(journal, event, false, code, "DPFOperatorConfig readiness was not established before cancellation or deadline.", stop)
+		}
 		if err != nil {
 			if apierrors.IsNotFound(err) || retryableRead(err) {
 				event.State, event.ReasonCode, event.Message = "waiting", "DPF_CONFIG_NOT_OBSERVED", "The retained DPFOperatorConfig is not yet observable."
@@ -409,6 +420,14 @@ func waitOperatorConfigReady(ctx context.Context, client ResourceClient, reconci
 			}
 			if err := reconciler.Verify(desired, current); err != nil {
 				return nil, journalFailure(journal, event, false, "DPF_CONFIG_INTENT_CHANGED", operatorConfigIntentMismatchMessage(err), nil)
+			}
+			// A fresh installation may not report a version yet. Once a value is
+			// observed, a different version is a conflict even while still pending.
+			for _, field := range []string{"version", "targetVersion"} {
+				observed, _, versionErr := unstructured.NestedString(current.Object, "status", field)
+				if versionErr != nil || observed != "" && observed != expectedVersion {
+					return nil, journalFailure(journal, event, false, "DPF_CONFIG_VERSION_MISMATCH", "DPFOperatorConfig reports a different or invalid operator version while waiting.", nil)
+				}
 			}
 			readiness := EvaluateReadiness(current)
 			if readiness.Ready {
@@ -431,7 +450,11 @@ func waitOperatorConfigReady(ctx context.Context, client ResourceClient, reconci
 			return nil, err
 		}
 		if err := waitInterval(ctx, interval); err != nil {
-			return nil, journalFailure(journal, event, false, "DPF_CONFIG_READINESS_TIMEOUT", "DPFOperatorConfig did not become Ready before the execution deadline.", err)
+			code := "DPF_CONFIG_READINESS_TIMEOUT"
+			if errors.Is(err, context.Canceled) {
+				code = "DPF_CONFIG_READINESS_CANCELED"
+			}
+			return nil, journalFailure(journal, event, false, code, "DPFOperatorConfig did not become Ready before cancellation or the execution deadline.", err)
 		}
 	}
 }
@@ -851,10 +874,11 @@ func journalFailure(journal *executionJournal, event executionEvent, uncertain b
 	}
 	event.ReasonCode, event.Message = code, message
 	recordErr := journal.record(event)
-	if cause == nil {
-		return errors.Join(recordErr, fmt.Errorf("%s: %s", code, message))
+	var safeCause error
+	if cause != nil {
+		safeCause = safeAPIError("management stage", cause)
 	}
-	return errors.Join(recordErr, reconcileError(code, message, safeAPIError("management stage", cause)))
+	return errors.Join(recordErr, reconcileError(code, message, safeCause))
 }
 
 func deadline(ctx context.Context) time.Time {

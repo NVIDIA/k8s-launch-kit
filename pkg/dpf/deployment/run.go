@@ -307,6 +307,9 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 
 	// Resume identity and receipts are read-only authority for lifecycle-specific
 	// prerequisite assessment. Fresh deployment still requires unclaimed scope.
+	var prepared *preparedControlPlaneRun
+	var controlPlane controlPlaneReceipts
+	var workload workloadPreparationReceipt
 	client, err := NewAPIClient(ctx, access, intent.Management, intent.KubernetesVersion)
 	if request.Resume == nil {
 		if err != nil {
@@ -320,28 +323,30 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		if err != nil || reportErr != nil {
 			return result, errors.Join(err, reportErr)
 		}
-	} else if err != nil {
-		return result, fmt.Errorf("bind resume management client: %w", err)
-	}
-	var prepared *preparedControlPlaneRun
-	var controlPlane controlPlaneReceipts
-	var workload workloadPreparationReceipt
-	if request.Resume != nil {
+	} else {
+		failResume := func(code string, cause error) (RunResult, error) {
+			check, failure := operationResumeCheck(ctx, execution, code, cause)
+			result.Checks = append(result.Checks, check)
+			return result, errors.Join(failure, reportOperationResume(ctx, journal, check))
+		}
+		if err != nil {
+			return failResume("OPERATION_RESUME_MANAGEMENT_UNVERIFIED", err)
+		}
 		if err = client.checkOperationPermissions(ctx, execution); err != nil {
-			return result, err
+			return failResume("OPERATION_RESUME_PERMISSION_UNVERIFIED", err)
 		}
 		operation, loadErr := loadDeploymentOperation(ctx, client, execution, request.Resume)
 		if loadErr != nil {
-			return result, loadErr
+			return failResume("OPERATION_RESUME_RECORD_UNVERIFIED", loadErr)
 		}
 		result.Operation = operation.ref()
 		prepared, err = prepareResume(execution, access, operation)
 		if err != nil {
-			return result, err
+			return failResume("OPERATION_RESUME_ENROLLMENT_UNVERIFIED", err)
 		}
 		controlPlane, workload, err = restoreOperationReceipts(ctx, client, prepared, journal, interval, requestTimeout)
 		if err != nil {
-			return result, err
+			return failResume("OPERATION_RESUME_RESTORE_UNVERIFIED", err)
 		}
 	}
 	if err := journal.record(executionEvent{Stage: "fresh-prerequisites", Operation: "observe", State: "attempted",

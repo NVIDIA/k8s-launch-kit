@@ -166,49 +166,61 @@ var errBootstrapConfigNotReady = errors.New("DPFOperatorConfig is no longer read
 
 func verifyManagementBootstrap(ctx context.Context, client tenantStageManagementClient, execution *managementExecution, receipt managementBootstrapReceipt) error {
 	if err := client.VerifyIdentity(ctx); err != nil {
-		return err
+		return bootstrapVerificationFailure("BOOTSTRAP_MANAGEMENT_UNVERIFIED", err)
 	}
 	if execution == nil || execution.operator == nil || execution.manager == nil || execution.configObject == nil || execution.reconciler == nil {
-		return fmt.Errorf("prepared management execution is incomplete")
+		return bootstrapVerificationFailure("BOOTSTRAP_PLAN_INVALID", nil)
 	}
 	if receipt.OperatorRelease != execution.operator.releaseName || receipt.ManagerDeploymentName != execution.manager.GetName() || receipt.OperatorNamespace != execution.operator.namespace {
-		return fmt.Errorf("bootstrap receipt manager identity differs from the retained operator plan")
+		return bootstrapVerificationFailure("BOOTSTRAP_RECEIPT_CHANGED", nil)
 	}
 	if len(execution.namespaces) == 0 || len(receipt.NamespaceUIDs) != len(execution.namespaces) {
-		return fmt.Errorf("bootstrap receipt namespace set differs from the retained plan")
+		return bootstrapVerificationFailure("BOOTSTRAP_NAMESPACE_CHANGED", nil)
 	}
 	for _, wanted := range execution.namespaces {
 		uid := receipt.NamespaceUIDs[wanted.GetName()]
 		if uid == "" {
-			return fmt.Errorf("bootstrap receipt omits a retained namespace identity")
+			return bootstrapVerificationFailure("BOOTSTRAP_NAMESPACE_CHANGED", nil)
 		}
 		current, err := client.Get(ctx, wanted.DeepCopy())
-		if err != nil || current == nil || current.GetUID() != types.UID(uid) || verifyNamespace(wanted.GetName(), current) != nil {
-			return fmt.Errorf("a management namespace no longer matches the bootstrap receipt")
+		if err != nil {
+			return bootstrapVerificationFailure("BOOTSTRAP_NAMESPACE_READ_FAILED", err)
+		}
+		if current == nil || current.GetUID() != types.UID(uid) || verifyNamespace(wanted.GetName(), current) != nil {
+			return bootstrapVerificationFailure("BOOTSTRAP_NAMESPACE_CHANGED", err)
 		}
 	}
 	desiredConfig := execution.configObject
 	if desiredConfig == nil || desiredConfig.GetNamespace() != receipt.OperatorNamespace || desiredConfig.GetName() != receipt.OperatorConfigName {
-		return fmt.Errorf("retained DPFOperatorConfig identity differs from bootstrap receipt")
+		return bootstrapVerificationFailure("BOOTSTRAP_CONFIG_CHANGED", nil)
 	}
 	config, err := client.Get(ctx, desiredConfig.DeepCopy())
-	if err != nil || config == nil || config.GetUID() != types.UID(receipt.OperatorConfigUID) || execution.reconciler.Verify(desiredConfig, config) != nil {
-		return fmt.Errorf("DPFOperatorConfig no longer matches the bootstrap receipt and retained intent")
+	if err != nil {
+		return bootstrapVerificationFailure("BOOTSTRAP_CONFIG_READ_FAILED", err)
+	}
+	if config == nil || config.GetUID() != types.UID(receipt.OperatorConfigUID) || execution.reconciler.Verify(desiredConfig, config) != nil {
+		return bootstrapVerificationFailure("BOOTSTRAP_CONFIG_CHANGED", err)
 	}
 	if !operatorConfigVersionMatches(config, execution.operatorVersion) {
-		return fmt.Errorf("DPFOperatorConfig no longer reports the retained operator version")
+		return bootstrapVerificationFailure("BOOTSTRAP_CONFIG_VERSION_CHANGED", nil)
 	}
 	if readiness := EvaluateReadiness(config); !readiness.Ready {
 		return errBootstrapConfigNotReady
 	}
 	currentManager, err := client.Get(ctx, execution.manager.DeepCopy())
-	if err != nil || currentManager == nil || currentManager.GetUID() != types.UID(receipt.ManagerDeploymentUID) || !managerDeploymentIntentMatches(execution.manager, currentManager) {
-		return fmt.Errorf("DPF manager Deployment no longer matches the bootstrap receipt")
+	if err != nil {
+		return bootstrapVerificationFailure("BOOTSTRAP_MANAGER_READ_FAILED", err)
+	}
+	if currentManager == nil || currentManager.GetUID() != types.UID(receipt.ManagerDeploymentUID) || !managerDeploymentIntentMatches(execution.manager, currentManager) {
+		return bootstrapVerificationFailure("BOOTSTRAP_MANAGER_CHANGED", err)
 	}
 	if readiness := EvaluateReadiness(currentManager); !readiness.Ready {
-		return fmt.Errorf("DPF manager Deployment is no longer ready: %s", readiness.ReasonCode)
+		return bootstrapVerificationFailure("BOOTSTRAP_MANAGER_NOT_READY", nil)
 	}
-	return client.VerifyIdentity(ctx)
+	if err := client.VerifyIdentity(ctx); err != nil {
+		return bootstrapVerificationFailure("BOOTSTRAP_MANAGEMENT_UNVERIFIED", err)
+	}
+	return nil
 }
 
 func checkTenantStorageForStage(ctx context.Context, client tenantStageManagementClient, journal *executionJournal, namespace string) error {

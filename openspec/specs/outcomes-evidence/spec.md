@@ -87,6 +87,12 @@ An advertised report path SHALL identify an artifact that was successfully writt
 - **WHEN** validation fails before all reporters or endpoints exist
 - **THEN** error reporting remains safe and preserves the available evidence.
 
+#### Scenario: Resume preparation stops before fresh prerequisite collection
+
+- **WHEN** management access, operation permissions/loading, selected-access binding or saved-receipt restoration stops resume before fresh prerequisite collection
+- **THEN** result checks, the durable execution report and progress output retain the failing owner's finite reason, subject and safe action, including specific pending timeout/cancellation versus read/access/identity/intent failure categories.
+- **AND** private error causes and arbitrary API/error messages remain absent from serialized results and progress; context cancellation/deadline identity remains available to callers.
+
 ## Baseline and limits
 
 Current acceptance is intentionally not uniform:

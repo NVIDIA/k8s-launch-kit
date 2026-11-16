@@ -95,8 +95,8 @@ func TestEnrollmentBootstrapWaitPreservesHardBoundaries(t *testing.T) {
 		name, want string
 		waited     bool
 	}{
-		{name: "config replaced before wait", want: "ENROLLMENT_CONFIG_IDENTITY_CHANGED", waited: false},
-		{name: "config read denied before wait", want: "ENROLLMENT_CONFIG_READ_FAILED", waited: false},
+		{name: "config replaced before wait", want: "BOOTSTRAP_CONFIG_IDENTITY_CHANGED", waited: false},
+		{name: "config read denied before wait", want: "BOOTSTRAP_CONFIG_READ_FAILED", waited: false},
 		{name: "config replaced during wait", want: "DPF_CONFIG_INTENT_CHANGED", waited: true},
 		{name: "config deleted during wait", want: "DPF_CONFIG_INTENT_CHANGED", waited: true},
 		{name: "config spec changed", want: "DPF_CONFIG_INTENT_CHANGED", waited: true},
@@ -174,13 +174,19 @@ func TestEnrollmentBootstrapWaitPreservesHardBoundaries(t *testing.T) {
 				return nil
 			}
 			journal := testJournal(execution)
-			err := waitEnrollmentBootstrap(ctx, client, execution, receipt, journal, time.Millisecond)
+			err := waitManagementBootstrap(ctx, client, execution, receipt, journal, time.Millisecond)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || base.createCount != 0 {
 				t.Fatalf("invalid bootstrap reached effects or lost its failure: creates=%d err=%v", base.createCount, err)
 			}
 			report := journal.file.(*managementMemoryFile).String()
 			if strings.Contains(report, "bootstrap-private-canary") || strings.Contains(err.Error(), "bootstrap-private-canary") {
 				t.Fatal("the bootstrap read failure exposed raw API error text")
+			}
+			if tc.name == "deadline while pending" {
+				check, projected := operationResumeCheck(ctx, execution, "OPERATION_RESUME_BOOTSTRAP_UNVERIFIED", err)
+				if check.ReasonCode != "DPF_CONFIG_READINESS_TIMEOUT" || !errors.Is(projected, context.DeadlineExceeded) {
+					t.Fatalf("pending deadline was relabeled: %+v %v", check, projected)
+				}
 			}
 			if strings.Contains(report, "DPF_CONFIG_READINESS_STARTED") != tc.waited {
 				t.Fatalf("readiness wait branch differs from expected classification: %s", report)

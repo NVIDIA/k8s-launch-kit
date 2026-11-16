@@ -209,6 +209,13 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** the full selected cohort is reobserved before success; replacing an observed device/node or changing the tenant or shared credential invalidates the result.
 - **AND** an existing DPUDevice without its required DPUNode is reported as partial enrollment that the upstream scan cannot repair; the executor does not hide it behind retries or automatically adopt another reboot mechanism.
 
+#### Scenario: Resume restores a temporarily pending management bootstrap
+
+- **WHEN** a UID/plan-bound deployment operation is resumed and its retained management configuration is temporarily not Ready
+- **THEN** the existing bounded read-only configuration readiness wait preserves current UID/spec/version checks and re-verifies the complete bootstrap before dependent work.
+- **AND** only the known pending configuration state can enter this wait; replacement, conflicting intent, denied/unmeasured reads, incompatible reported versions, terminal failures and cancellation do not authorize work.
+- **AND** restoration never resubmits a claimed physical action or replaces the original operation.
+
 ## Baseline and limits
 
 Standalone DPF HBN-BGP deploy composes the retained management, tenant, enrollment,

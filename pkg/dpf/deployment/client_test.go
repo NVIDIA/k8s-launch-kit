@@ -144,7 +144,7 @@ func newAPIFixture(t *testing.T, handle http.HandlerFunc) *apiFixture {
 		case "/prefix/version":
 			fmt.Fprint(w, `{"gitVersion":"v1.35.6"}`)
 		case "/prefix/api/v1":
-			fmt.Fprint(w, `{"kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"configmaps","kind":"ConfigMap","namespaced":true,"verbs":["get","list","create"]}]}`)
+			fmt.Fprint(w, `{"kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"configmaps","kind":"ConfigMap","namespaced":true,"verbs":["get","list","create"]},{"name":"namespaces","kind":"Namespace","namespaced":false,"verbs":["get"]}]}`)
 		default:
 			handle(w, r)
 		}
