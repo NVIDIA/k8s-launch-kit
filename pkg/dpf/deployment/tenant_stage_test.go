@@ -149,7 +149,7 @@ func TestRunTenantStageStopsBeforeCreateOnPrerequisiteFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sharedExecution, err := prepareManagementExecution(sharedBundle, time.Minute)
+	sharedExecution, err := prepareStageFixtureExecution(sharedBundle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func newTenantStageFixture(t *testing.T) (*managementExecution, *tenantStageFake
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := prepareStageFixtureExecution(generated)
 	if err != nil {
 		t.Fatal(err)
 	}

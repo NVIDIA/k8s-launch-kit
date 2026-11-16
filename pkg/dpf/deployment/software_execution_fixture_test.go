@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func softwareExecutionSnapshot(t *testing.T, execution *managementExecution) string {
+func fixtureExecutionSnapshot(t *testing.T, execution *managementExecution) string {
 	t.Helper()
 	chart, err := chartFingerprint(execution.operator.chart)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestSoftwareExecutionFixtureOutlivesFirstHarnessWithoutSharingMutableState(
 	var before string
 	if !t.Run("first owner exits", func(t *testing.T) {
 		execution = prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
-		before = softwareExecutionSnapshot(t, execution)
+		before = fixtureExecutionSnapshot(t, execution)
 		first = newRuntimeStageFixtureFromExecution(t, execution)
 		first.client.base.resources[tenantStageKey(execution.manager)].SetUID("first-only")
 		first.snapshot.CIDRPool.SetUID("first-only")
@@ -65,7 +65,7 @@ func TestSoftwareExecutionFixtureOutlivesFirstHarnessWithoutSharingMutableState(
 		t.Fatal("first harness cleanup did not release its own context")
 	}
 	current := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
-	if current != execution || softwareExecutionSnapshot(t, current) != before {
+	if current != execution || fixtureExecutionSnapshot(t, current) != before {
 		t.Fatal("same bundle did not retain the unchanged desired snapshot after first owner cleanup")
 	}
 	second := newRuntimeStageFixtureFromExecution(t, current)
@@ -74,7 +74,7 @@ func TestSoftwareExecutionFixtureOutlivesFirstHarnessWithoutSharingMutableState(
 		second.controlPlane.enrollment.Devices[0].DeviceUID == "first-only" || second.commandReads != 0 || second.denyTenant {
 		t.Fatal("later retrieval reused a closed or mutated harness")
 	}
-	if softwareExecutionSnapshot(t, current) != before {
+	if fixtureExecutionSnapshot(t, current) != before {
 		t.Fatal("fresh harness construction mutated the shared desired snapshot")
 	}
 }
@@ -103,7 +103,7 @@ func TestSoftwareExecutionFixtureCacheBindsDifferentBundlesAndConcurrentLookups(
 			t.Fatalf("concurrent fixture preparation or desired-schema verification failed: %v", verificationErrors[i])
 		}
 	}
-	before := softwareExecutionSnapshot(t, results[0])
+	before := fixtureExecutionSnapshot(t, results[0])
 	for _, execution := range results {
 		if execution != results[0] || execution == one || execution == two || len(execution.plan.Intent().Devices) != 2 || execution.plan.Intent().Devices[1].Serial != "SERIAL-C" {
 			t.Fatal("concurrent exact-bundle lookups disagreed or reused another input")
@@ -112,7 +112,7 @@ func TestSoftwareExecutionFixtureCacheBindsDifferentBundlesAndConcurrentLookups(
 		_ = unstructured.SetNestedField(copy.Object, "changed", "spec", "template", "metadata", "labels", "fixture-canary")
 		intent := execution.plan.Intent()
 		intent.Devices[0].Serial = "changed"
-		if softwareExecutionSnapshot(t, execution) != before {
+		if fixtureExecutionSnapshot(t, execution) != before {
 			t.Fatal("caller-owned copies mutated the cached desired snapshot")
 		}
 	}
