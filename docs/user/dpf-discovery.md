@@ -794,7 +794,9 @@ relationships that the list may omit. Conflicting observations block readiness;
 an absent bridge field alone does not prove that a port is routed. The switch's
 own LLDP chassis MAC and system name are read through the authenticated SSH
 connection. Your switch's display name in the site file is not its physical
-identity. These operations read configuration and state; they do not change it.
+identity. These switch reads do not change forwarding configuration. The
+qualified ASIC diagnostic separately adjusts router SDK log verbosity briefly;
+see [its restoration limits](#check-hbn-bgp-prerequisites) before running it.
 Launch Kit reads the NVUE revision table before and after these switch reads.
 The explicit active application ID must remain stable and match exactly one
 saved-history record. An unconfirmed change, unsupported revision state, missing
@@ -805,7 +807,9 @@ state; it does not inspect the startup file or test persistence through a reboot
 Switch readiness uses the available switch configuration and routing
 observations for the selected uplinks. Missing or conflicting observations stay
 unknown or failed with a reason. A configuration observation does not prove
-hardware forwarding, and discovery does not change switch configuration.
+hardware forwarding, and discovery does not change switch forwarding
+configuration. The qualified ASIC diagnostic may briefly adjust router SDK log
+verbosity; see [its restoration limits](#check-hbn-bgp-prerequisites).
 
 Through the same switch SSH connection, Launch Kit reads FRR's running BGP
 configuration to check effective eBGP policy mode and filter attachments for the
