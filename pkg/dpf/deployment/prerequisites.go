@@ -144,7 +144,7 @@ func (c *APIClient) checkManagementPreflight(ctx context.Context, plan preflight
 		return result
 	}
 	if err := c.VerifyIdentity(ctx); err != nil {
-		result.Checks = append(result.Checks, blockedPreflight("management.identity", "MANAGEMENT_IDENTITY_UNVERIFIED", "The authenticated management identity does not match the generated bundle."))
+		result.Checks = append(result.Checks, blockedPreflight("management.identity", "MANAGEMENT_IDENTITY_UNVERIFIED", "The authenticated management identity could not be verified against the generated bundle."))
 		return result
 	}
 	result.Checks = append(result.Checks, passedPreflight("management.identity", "The authenticated management identity matches the generated bundle."))
