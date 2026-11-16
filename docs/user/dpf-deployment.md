@@ -255,7 +255,8 @@ teardown.
    and current deployment state, including existing reset claims and requests.
 2. Have the deployment owner inspect the reported reason and current DPF and
    tenant Node state. Keep credentials and join commands out of reports and
-   shared logs.
+   shared logs. The safe read reason distinguishes missing material, denied access,
+   a timeout or cancellation, and other API failures.
 3. Resume with the same saved inputs only after a restoration procedure supported
    by that DPF release has restored the required credentials in place and the
    original selected identities remain intact. Launch Kit does not provide a

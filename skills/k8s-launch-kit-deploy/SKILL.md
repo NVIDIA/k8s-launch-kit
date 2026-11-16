@@ -361,4 +361,3 @@ external Helm, overwrite and dry-run. Dry-run cannot install dependent CRDs.
 Read access to the cluster-scoped NCT CRD is required. Existing Helm, preflight
 remediation and policy-bootstrap effects are retained if the check fails.
 See `docs/user/spectrum-x.md#ra24-dospcx-profile` for compatible-build requirements.
-
