@@ -83,7 +83,7 @@ func TestPinnedDPUClusterStatusWithoutObservedGenerationClassifiesTargetOnly(t *
 	if got := tenantClusterCheck(&snapshot, &target); got.State != "passed" || got.ReasonCode != "TENANT_TARGET_MATCHES" || !strings.Contains(got.Message, "deployment must verify") {
 		t.Fatalf("matching target classification=%#v", got)
 	}
-	checks, _ := hbnBootstrapChecks(input, target.OperatorNamespace, inv, &snapshot)
+	checks, _ := hbnBootstrapChecks(input, target.OperatorNamespace, inv, &snapshot, "10.96.0.0/16")
 	if got := findCheck(checks, "dpf.hbn.management.tenant-network"); got.State != "unknown" || got.ReasonCode != "TENANT_EXISTING_NETWORK_UNVERIFIED" {
 		t.Fatalf("identity classification incorrectly proved endpoint readiness: %#v", got)
 	}
@@ -346,7 +346,7 @@ func TestTenantClusterTargetClassificationDoesNotClaimReadiness(t *testing.T) {
 			if got := tenantClusterCheck(&snapshot, &target); got.State != "passed" || got.ReasonCode != "TENANT_TARGET_MATCHES" || !strings.Contains(got.Message, "This is registry binding only") {
 				t.Fatalf("target classification was conflated with controller readiness: %#v", got)
 			}
-			checks, _ := hbnBootstrapChecks(input, target.OperatorNamespace, inv, &snapshot)
+			checks, _ := hbnBootstrapChecks(input, target.OperatorNamespace, inv, &snapshot, "10.96.0.0/16")
 			if got := findCheck(checks, "dpf.hbn.management.tenant-network"); got.State != "unknown" || got.ReasonCode != "TENANT_EXISTING_NETWORK_UNVERIFIED" {
 				t.Fatalf("existing tenant received an endpoint readiness pass: %#v", got)
 			}
@@ -405,7 +405,7 @@ func TestHBNBootstrapChecksDoesNotMutateConfigInventoryOrSnapshot(t *testing.T) 
 	target := resolvedTenantTarget(t, "tenant-a", "tenant-ns", vip)
 	snapshot := tenantSnapshot(target, managementprobe.CollectionComplete)
 	beforeNamespace, beforeState := snapshot.Namespace, snapshot.DPUClusters.State
-	checks, projected := hbnBootstrapChecks(options, "dpf-operator-system", inv, &snapshot)
+	checks, projected := hbnBootstrapChecks(options, "dpf-operator-system", inv, &snapshot, "10.96.0.0/16")
 	if len(checks) == 0 {
 		t.Fatal("bootstrap checks were empty")
 	}
@@ -502,7 +502,7 @@ func resolvedTenantTarget(t *testing.T, name, namespace, vip string) bootstrap.I
 	if vip == "" {
 		options.Tenant.VIP = nil
 	}
-	resolved, issues, err := config.ResolveBootstrap(options, "dpf-operator-system", "https://192.0.2.10:6443", selected)
+	resolved, issues, err := config.ResolveBootstrap(options, "dpf-operator-system", "https://192.0.2.10:6443", selected, "10.96.0.0/16")
 	if err != nil || vip != "" && len(issues) != 0 || vip == "" && len(issues) != 1 {
 		t.Fatalf("ResolveBootstrap() error=%v issues=%#v", err, issues)
 	}

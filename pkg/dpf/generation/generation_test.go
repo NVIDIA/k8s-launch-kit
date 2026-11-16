@@ -56,7 +56,7 @@ func generationInputs(t *testing.T) Inputs {
 	bootstrapInputs, issues, err := config.ResolveBootstrap(&config.BootstrapOptions{
 		ManagementAPIIP: &apiIP, ManagementAPIPort: &apiPort,
 		Tenant: config.TenantOptions{VIP: &vip, Interface: &tenantInterface},
-	}, "dpf-operator-system", "https://api.example.test/prefix", selected)
+	}, "dpf-operator-system", "https://api.example.test/prefix", selected, "10.96.0.0/16")
 	if err != nil || len(issues) != 0 {
 		t.Fatalf("ResolveBootstrap() = %#v, %v", issues, err)
 	}

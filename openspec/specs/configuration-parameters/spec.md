@@ -128,3 +128,11 @@ DPF HBN configuration keeps networking intent (`dpf.hbn`), profile policy and re
 - GIVEN omitted HBN BMC reset policy WHEN resolving bootstrap THEN select the profile default `Never` and emit it explicitly in the DPF operator configuration; do not inherit an upstream factory-reset default.
 - GIVEN an explicit `OnInitialization` policy WHEN rendering THEN preserve it, while leaving stable DHCP address recovery and BMC reauthentication as required live enrollment checks; generation does not establish those conditions.
 - GIVEN an empty or unknown reset policy WHEN resolving THEN reject it with a field-specific error before artifact publication.
+
+#### Scenario: Release-owned fixed tenant service range
+
+- **WHEN** HBN-BGP resolves bootstrap inputs
+- **THEN** its fixed tenant service CIDR comes explicitly from the selected release catalog, not a profile default or user override.
+- **AND** HBN catalog rows require a canonical IPv4 unicast service range. Bootstrap checks retain generic address separation; Generate additionally requires exact equality with that selected controller contract, including direct callers and LoadPlan regeneration.
+- **AND** optional persisted BOM summaries roundtrip a present value but leave legacy omission unknown without catalog hydration. Saved BOM facts do not authorize a different controller range.
+- **AND** unchanged effective inputs retain the same resolved intent, source bytes and generated bundle identity without a new intent/index field or format version.

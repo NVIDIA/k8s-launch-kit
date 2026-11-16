@@ -21,6 +21,7 @@ type Summary struct {
 	HBNWorkload             *HBNWorkloadSummary `json:"hbnWorkload,omitempty" yaml:"hbnWorkload,omitempty"`
 	Capabilities            Capabilities        `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
 	SupportedKubernetes     *VersionRange       `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
+	TenantServiceCIDR       string              `json:"tenantServiceCIDR,omitempty" yaml:"tenantServiceCIDR,omitempty"`
 	TenantKubernetesVersion string              `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
 	Operator                OperatorSummary     `json:"operator" yaml:"operator"`
 	Components              []ComponentSummary  `json:"components" yaml:"components"`
@@ -116,6 +117,7 @@ func Summarize(r Release) Summary {
 		Capabilities:            r.Capabilities,
 		SupportedKubernetes:     cloneVersionRange(r.SupportedKubernetes),
 		TenantKubernetesVersion: r.TenantKubernetesVersion,
+		TenantServiceCIDR:       r.TenantServiceCIDR,
 		Operator: OperatorSummary{Chart: r.Operator.Chart, ChartRepository: r.Operator.ChartRepository,
 			Version: r.Operator.Version, ChartDigest: r.Operator.ChartDigest, Image: r.Operator.Image},
 		Components: make([]ComponentSummary, 0, len(r.Components)),
@@ -165,6 +167,9 @@ var (
 // current catalog. Unknown minima stay unknown; BFB targets are never minima.
 // The caller must use strict YAML/JSON decoding to reject unknown fields.
 func (s Summary) Release() (Release, error) {
+	if s.TenantServiceCIDR != "" && !validTenantServiceCIDR(s.TenantServiceCIDR) {
+		return Release{}, fmt.Errorf("invalid saved tenant serviceCIDR")
+	}
 	if !summaryReleaseVersion.MatchString(s.Version) || s.Operator.Version != "v"+s.Version ||
 		!summaryToken(s.Operator.Chart) || !summaryHTTPS(s.Operator.ChartRepository) ||
 		!summaryDigest(s.Operator.ChartDigest) || !summaryToken(s.Operator.Image) ||
@@ -175,7 +180,7 @@ func (s Summary) Release() (Release, error) {
 	if len(s.Components) == 0 || len(s.Hardware) == 0 {
 		return Release{}, fmt.Errorf("saved DPF software BOM requires components and hardware applicability")
 	}
-	r := Release{Version: s.Version, SupportedKubernetes: cloneVersionRange(s.SupportedKubernetes), TenantKubernetesVersion: s.TenantKubernetesVersion,
+	r := Release{Version: s.Version, SupportedKubernetes: cloneVersionRange(s.SupportedKubernetes), TenantKubernetesVersion: s.TenantKubernetesVersion, TenantServiceCIDR: s.TenantServiceCIDR,
 		UseCases:     slices.Clone(s.UseCases),
 		Capabilities: s.Capabilities,
 		Operator: Operator{Chart: s.Operator.Chart, ChartRepository: s.Operator.ChartRepository,

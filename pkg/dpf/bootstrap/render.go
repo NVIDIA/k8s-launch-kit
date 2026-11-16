@@ -213,11 +213,6 @@ func Validate(in Inputs) error {
 	if err != nil || !serviceCIDR.Addr().Is4() || !serviceCIDR.Addr().IsGlobalUnicast() || serviceCIDR != serviceCIDR.Masked() {
 		return fmt.Errorf("the selected controller's tenant serviceCIDR must be a canonical IPv4 unicast CIDR")
 	}
-	// The supported 26.8 Kamaji controller hardcodes this range. This is an
-	// upstream API limitation, not an override this renderer can implement.
-	if in.Tenant.ServiceCIDR != "10.96.0.0/16" {
-		return fmt.Errorf("DPF 26.8 Kamaji serviceCIDR is fixed at 10.96.0.0/16")
-	}
 	if podCIDR.Overlaps(serviceCIDR) {
 		return fmt.Errorf("tenant podCIDR overlaps the selected controller's serviceCIDR")
 	}

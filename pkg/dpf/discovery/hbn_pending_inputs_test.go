@@ -10,6 +10,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -22,7 +23,9 @@ var _ = Describe("discovery pending inputs", func() {
 
 		profile, err := hbn.Resolve(hbn.Options{})
 		Expect(err).NotTo(HaveOccurred())
-		hbnReport := Collect(context.Background(), config.Request{HBN: &profile, Timeout: time.Second}, "hbn", Dependencies{})
+		release, err := releases.DefaultForUseCase(releases.UseCaseHBNBGP)
+		Expect(err).NotTo(HaveOccurred())
+		hbnReport := Collect(context.Background(), config.Request{HBN: &profile, Software: &release, Timeout: time.Second}, "hbn", Dependencies{})
 		Expect(hbnReport.PendingInputs).To(BeEmpty())
 
 		for _, field := range []string{"vip-reserved", "vip-excluded-from-dhcp", "router-id-unique"} {

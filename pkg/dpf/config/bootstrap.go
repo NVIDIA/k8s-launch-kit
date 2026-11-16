@@ -44,7 +44,13 @@ type TenantOptions struct {
 // management inventory. Only its literal IP and port are eligible for defaulting;
 // a hostname is not resolved speculatively. Missing site allocations remain
 // explicit issues, allowing discovery to continue collecting other facts.
-func ResolveBootstrap(options *BootstrapOptions, namespace, observedAPI string, selected []bootstrap.Device) (bootstrap.Inputs, []ProvisioningIssue, error) {
+// controllerServiceCIDR must come from the explicitly selected release; it has
+// no profile default or user override.
+func ResolveBootstrap(options *BootstrapOptions, namespace, observedAPI string, selected []bootstrap.Device, controllerServiceCIDR string) (bootstrap.Inputs, []ProvisioningIssue, error) {
+	serviceCIDR, err := netip.ParsePrefix(controllerServiceCIDR)
+	if err != nil || !serviceCIDR.Addr().Is4() || !serviceCIDR.Addr().IsGlobalUnicast() || serviceCIDR != serviceCIDR.Masked() {
+		return bootstrap.Inputs{}, nil, fmt.Errorf("selected controller tenant serviceCIDR must be a canonical IPv4 unicast CIDR")
+	}
 	definition, err := hbn.LoadDefinition()
 	if err != nil {
 		return bootstrap.Inputs{}, nil, err
@@ -56,7 +62,7 @@ func ResolveBootstrap(options *BootstrapOptions, namespace, observedAPI string, 
 		Tenant:  bootstrap.Tenant{Name: d.TenantName, Namespace: d.TenantNamespace, RouterID: d.TenantRouterID, MaxNodes: d.TenantMaxNodes, NodeSelector: maps.Clone(d.TenantNodeSelector)},
 		Devices: slices.Clone(selected),
 	}
-	in.Tenant.ServiceCIDR = d.TenantServiceCIDR
+	in.Tenant.ServiceCIDR = controllerServiceCIDR
 	if endpoint, err := url.Parse(observedAPI); err == nil && endpoint.Scheme == "https" && endpoint.User == nil && endpoint.RawQuery == "" && endpoint.Fragment == "" && (endpoint.Path == "" || endpoint.Path == "/") {
 		if ip, err := netip.ParseAddr(endpoint.Hostname()); err == nil && ip.IsGlobalUnicast() && !ip.Is4In6() {
 			in.ManagementAPIIP = ip.String()

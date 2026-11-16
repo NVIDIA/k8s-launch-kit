@@ -15,7 +15,7 @@ import (
 )
 
 // hbnBootstrapChecks reports input completeness, not live allocation or health.
-func hbnBootstrapChecks(input *config.Provisioning, namespace string, inv *inventory.Inventory, snapshot *managementprobe.Snapshot) ([]inventory.Check, []inventory.HBNManagementCluster) {
+func hbnBootstrapChecks(input *config.Provisioning, namespace string, inv *inventory.Inventory, snapshot *managementprobe.Snapshot, controllerServiceCIDR string) ([]inventory.Check, []inventory.HBNManagementCluster) {
 	checks := []inventory.Check{}
 	add := func(subject, state, code, message string) {
 		checks = append(checks, inventory.Check{ID: "dpf.hbn.bootstrap-inputs", Subject: subject, Vantage: "executor", RequiredPhase: "generate", State: state, ReasonCode: code, Message: message})
@@ -43,7 +43,7 @@ func hbnBootstrapChecks(input *config.Provisioning, namespace string, inv *inven
 			selected = append(selected, bootstrap.Device{Serial: device.SerialNumber, BMCIP: bmc.Hostname(), BMCPort: port})
 		}
 	}
-	resolved, issues, err := config.ResolveBootstrap(options, namespace, endpoint, selected)
+	resolved, issues, err := config.ResolveBootstrap(options, namespace, endpoint, selected, controllerServiceCIDR)
 	if err != nil {
 		add("provisioning.bootstrap", "failed", "BOOTSTRAP_INPUT_INVALID", err.Error())
 		return append(checks, tenantClusterCheck(snapshot, nil)), []inventory.HBNManagementCluster{}

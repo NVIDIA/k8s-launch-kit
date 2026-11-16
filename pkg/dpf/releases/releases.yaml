@@ -131,6 +131,8 @@ releases:
       nativeOperatorProjection: true
       bf4ProvisioningAPI: true
     tenantKubernetesVersion: v1.35.6
+    # Fixed TCP service range assigned by this release's Kamaji controller.
+    tenantServiceCIDR: 10.96.0.0/16
     supportedKubernetes:
       minimum: "1.33"
       maximum: "1.36"
@@ -242,6 +244,9 @@ releases:
       - id: published-chart
         url: https://helm.ngc.nvidia.com/nvidia/doca/charts/dpf-operator-v26.8.0.tgz
         revision: 1751dc679f702fdf91c2641d925e69908ae4921f
+      - id: kamaji-controller
+        url: https://github.com/NVIDIA/doca-platform/blob/fc4974ed3bc026ae27634673c2fdf818a2972235/internal/clustermanager/kamaji/handler.go
+        revision: fc4974ed3bc026ae27634673c2fdf818a2972235
       - id: hbn-guide
         url: https://github.com/NVIDIA/doca-platform/blob/v26.8.0/docs/public/user-guides/zero-trust/use-cases/hbn/README.md
         revision: fc4974ed3bc026ae27634673c2fdf818a2972235

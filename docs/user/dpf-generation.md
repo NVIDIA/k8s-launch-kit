@@ -65,7 +65,9 @@ accept and render `OnInitialization`, native deployment rejects that policy
 before enrollment. Do not rely on DHCP recovery for this path.
 
 Review [bootstrap and HBN defaults](../reference/configuration.md). Tenant pod and
-service ranges belong to the independent DPU cluster. The default ASN allocation
+service ranges belong to the independent DPU cluster. The selected release
+fixes the tenant service range; choose a nonoverlapping pod range in your site
+configuration. The default ASN allocation
 fits five DPUs; a larger estate requires an appropriate base/stride override.
 
 The native workflow checks every directed host pair sequentially, with three ordinary

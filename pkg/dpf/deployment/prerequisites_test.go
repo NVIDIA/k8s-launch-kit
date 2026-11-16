@@ -599,7 +599,7 @@ func preflightGenerationInputs(t *testing.T) generation.Inputs {
 	bootstrapInputs, issues, err := config.ResolveBootstrap(&config.BootstrapOptions{
 		ManagementAPIIP: &apiIP, ManagementAPIPort: &apiPort,
 		Tenant: config.TenantOptions{VIP: &vip, Interface: &tenantInterface},
-	}, "dpf-operator-system", "https://api.example.test/prefix", devices)
+	}, "dpf-operator-system", "https://api.example.test/prefix", devices, "10.96.0.0/16")
 	if err != nil || len(issues) != 0 {
 		t.Fatalf("resolve test bootstrap inputs = %#v, %v", issues, err)
 	}

@@ -11,6 +11,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strconv"
@@ -131,6 +132,9 @@ type Capabilities struct {
 type Release struct {
 	Version             string        `json:"version" yaml:"version"`
 	SupportedKubernetes *VersionRange `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
+	// TenantServiceCIDR is the fixed service range assigned by this release's
+	// Kamaji controller, not a user-selectable network allocation.
+	TenantServiceCIDR string `json:"tenantServiceCIDR,omitempty" yaml:"tenantServiceCIDR,omitempty"`
 	// TenantKubernetesVersion is the release-owned Kamaji tenant control-plane
 	// version. It is separate from SupportedKubernetes, which describes the
 	// management cluster running the DPF operator.
@@ -315,8 +319,8 @@ func validate(key string, r Release) error {
 		seenUseCases[useCase] = true
 	}
 	if seenUseCases[UseCaseHBNBGP] {
-		if r.HBNWorkload == nil || !r.Capabilities.NativeOperatorProjection {
-			return fmt.Errorf("HBN-BGP support requires workload coordinates and the native operator projection contract")
+		if r.HBNWorkload == nil || !r.Capabilities.NativeOperatorProjection || !validTenantServiceCIDR(r.TenantServiceCIDR) {
+			return fmt.Errorf("HBN-BGP support requires workload coordinates, a canonical tenant serviceCIDR and the native operator projection contract")
 		}
 		if err := validateHBNWorkload(*r.HBNWorkload, sources); err != nil {
 			return err
@@ -326,6 +330,9 @@ func validate(key string, r Release) error {
 	}
 	if r.SupportedKubernetes != nil && !validVersionRange(*r.SupportedKubernetes) {
 		return fmt.Errorf("invalid supported Kubernetes version range")
+	}
+	if r.TenantServiceCIDR != "" && !validTenantServiceCIDR(r.TenantServiceCIDR) {
+		return fmt.Errorf("invalid controller tenant serviceCIDR")
 	}
 	if r.TenantKubernetesVersion != "" && !validTenantKubernetesVersion(r.TenantKubernetesVersion) {
 		return fmt.Errorf("invalid tenant Kubernetes version")
@@ -459,4 +466,10 @@ func validArtifact(a Artifact, sources map[string]bool) bool {
 		return a.ReasonCode != "" && a.Message != ""
 	}
 	return a.Version != "" && strings.HasPrefix(a.URL, "https://") && (a.Digest != "" || a.ReasonCode != "" && a.Message != "")
+}
+
+// A missing saved-summary value remains unknown; catalog HBN rows require it.
+func validTenantServiceCIDR(value string) bool {
+	prefix, err := netip.ParsePrefix(value)
+	return err == nil && prefix.Addr().Is4() && prefix.Addr().IsGlobalUnicast() && prefix == prefix.Masked()
 }

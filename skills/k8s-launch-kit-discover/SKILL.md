@@ -89,7 +89,9 @@ SSH card readings use `runtime.hardware.cards`, including `firmwareVersion`,
 running mode. DPU firmware uses named component version lists with activation
 when known. Host BMC reads retain identity, adapters and reset types.
 `inventory.software` retains artifact coordinates and named documented minima,
-without source/revision lists or generic requirements. Missing minima remain
+without source/revision lists or generic requirements. The selected release also
+owns its fixed tenant serviceCIDR; older saved BOMs may omit that fact and must
+not acquire it from a newer catalog during decoding. Missing minima remain
 unknown. `scopeDigest` guards the configured refresh scope/trust policy; the
 inventory does not repeat `requestedScope`. Management/probe source metadata and
 report check outcomes remain intact. New format is `v1alpha3`; legacy `v1alpha1`

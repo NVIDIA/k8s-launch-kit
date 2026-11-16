@@ -27,8 +27,6 @@ defaults:
     nvidia.com/bf_sf: "4"
   bootstrap:
     bmcFactoryResetPolicy: Never
-    # Fixed by the selected DPF Kamaji controller, not a user-configurable range.
-    tenantServiceCIDR: 10.96.0.0/16
     operatorConfigName: dpfoperatorconfig
     tenantName: dpu-cplane-tenant1
     tenantNamespace: dpu-cplane-tenant1

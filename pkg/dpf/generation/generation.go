@@ -109,6 +109,9 @@ func Generate(input Inputs) (*bundle.Bundle, error) {
 	if release.TenantKubernetesVersion == "" {
 		return nil, fmt.Errorf("selected DPF release %s has no sourced tenant Kubernetes version for HBN generation", release.Version)
 	}
+	if input.Operator.Bootstrap.Tenant.ServiceCIDR != release.TenantServiceCIDR {
+		return nil, fmt.Errorf("tenant serviceCIDR differs from the selected DPF %s controller contract", release.Version)
+	}
 	if err := validateInputs(input); err != nil {
 		return nil, err
 	}

@@ -109,8 +109,9 @@ The tenant VIP and interface are site allocations, not discoverable unused
 resources. A complete input check does not establish address reservation,
 reachable interfaces, healthy storage or installed controllers.
 
-The selected Kamaji controller uses `10.96.0.0/16` for the tenant service
-network; this release does not expose a service-CIDR override. Generation rejects
+The selected release catalog records the fixed tenant service range used by
+its Kamaji controller (`10.96.0.0/16` for the current HBN-BGP release). This is
+not a profile default or a service-CIDR override. Generation rejects
 an overlap between tenant pod and service ranges or their control-plane/BMC
 addresses. Matching ranges in independent clusters are not automatically a conflict;
 verify which ranges share a forwarding path.

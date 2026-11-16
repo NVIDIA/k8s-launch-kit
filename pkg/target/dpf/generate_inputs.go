@@ -76,7 +76,7 @@ func generationInputs(input config.Input) (generationPlan, error) {
 	if len(issues) > 0 {
 		return generationPlan{}, fmt.Errorf("required provisioning input missing: %s", issues[0].Field)
 	}
-	bootstrapInputs, issues, err := config.ResolveBootstrap(provisioning.Bootstrap, intent.Namespace, inv.Management.APIEndpoint, selected)
+	bootstrapInputs, issues, err := config.ResolveBootstrap(provisioning.Bootstrap, intent.Namespace, inv.Management.APIEndpoint, selected, intent.Release.TenantServiceCIDR)
 	if err != nil {
 		return generationPlan{}, err
 	}

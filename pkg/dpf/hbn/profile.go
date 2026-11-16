@@ -162,7 +162,6 @@ type BootstrapDefaults struct {
 	TenantRouterID        int               `yaml:"tenantRouterID" json:"tenantRouterID"`
 	TenantNodeSelector    map[string]string `yaml:"tenantNodeSelector" json:"tenantNodeSelector"`
 	PodCIDR               string            `yaml:"podCIDR" json:"podCIDR"`
-	TenantServiceCIDR     string            `yaml:"tenantServiceCIDR" json:"tenantServiceCIDR"`
 }
 
 // Definition describes the embedded DPF HBN profile and its standalone
@@ -308,10 +307,6 @@ func validateBootstrapDefaults(defaults BootstrapDefaults) error {
 	podCIDR, err := netip.ParsePrefix(defaults.PodCIDR)
 	if err != nil || !podCIDR.Addr().Is4() || podCIDR != podCIDR.Masked() || !podCIDR.Addr().IsGlobalUnicast() {
 		return fmt.Errorf("podCIDR must be a canonical IPv4 unicast CIDR")
-	}
-	serviceCIDR, err := netip.ParsePrefix(defaults.TenantServiceCIDR)
-	if err != nil || !serviceCIDR.Addr().Is4() || serviceCIDR != serviceCIDR.Masked() || !serviceCIDR.Addr().IsGlobalUnicast() || serviceCIDR.Overlaps(podCIDR) {
-		return fmt.Errorf("tenantServiceCIDR must be a canonical IPv4 unicast CIDR disjoint from the tenant podCIDR")
 	}
 	return nil
 }
