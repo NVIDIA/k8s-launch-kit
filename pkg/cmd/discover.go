@@ -48,9 +48,10 @@ With --target dpf, collect inventory from explicitly selected host, DPU and BMC
 endpoints using ordinary YAML. Inventory mode is the default and needs no
 kubeconfig. A supplied kubeconfig adds management-cluster observations.
 Explicit discovery.probes.mode: management enables per-node network probes.
-It requires a supported three-control-plane Linux/amd64 cluster and uses the pinned,
-runtime-qualified diagnostic image assets. This build supports DPF discovery only; generate, deploy, validate
-and the composite pipeline are unavailable.`,
+It probes each observed management node that meets the existing readiness and
+platform checks, using the pinned, runtime-qualified diagnostic image assets. This
+build supports DPF discovery only; generate, deploy, validate and the composite
+pipeline are unavailable.`,
 		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml

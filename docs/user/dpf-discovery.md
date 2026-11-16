@@ -26,13 +26,14 @@ deployment readiness checks do not block inventory collection. Overall deploymen
 and the command exits zero.
 
 Set `discovery.probes.mode: management` to enable per-node pod-network and
-node-network probes. Management mode requires an explicit kubeconfig and a supported
-three-control-plane Linux/amd64 cluster. The pinned diagnostic image assets are
-runtime-qualified for Linux/amd64; incompatible node architectures are rejected before
-probe resources are created. On a compatible cluster, Launch Kit creates temporary,
-restricted probe Pods and cleans them up. Default inventory mode creates no Pods and
-performs no network probes, though a supplied kubeconfig still adds management-cluster
-observations.
+node-network probes. Management mode requires an explicit kubeconfig and probes every
+observed node that meets the existing readiness and platform checks. The pinned
+diagnostic image assets are runtime-qualified for Linux/amd64; incompatible node
+architectures are rejected before probe resources are created. Node count alone does
+not establish control-plane HA or qualify a topology for production deployment. On a
+compatible cluster, Launch Kit creates temporary, restricted probe Pods and cleans them
+up. Default inventory mode creates no Pods and performs no network probes, though a
+supplied kubeconfig still adds management-cluster observations.
 
 Inventory establishes physical identities, host associations and BMC access. It
 does not certify hardware support for every deployment. A selected use case
