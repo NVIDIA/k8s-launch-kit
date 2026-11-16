@@ -16,7 +16,9 @@ DPU estate, the `dpf` target supports standalone inventory discovery,
 [HBN-BGP artifact generation](user/dpf-generation.md), and
 [deployment](user/dpf-deployment.md) with provisioning and runtime checks. The
 current BF4/HBN-BGP cohort remains beta; command availability does not qualify
-every hardware and release combination. DPF standalone validation and the root
+every hardware and release combination.
+Management probes cover every observed node that meets the existing readiness and
+platform checks; node count alone does not establish control-plane HA or production qualification. DPF standalone validation and the root
 pipeline remain unavailable. See the [DPF workflow](user/dpf-workflows.md).
 
 ## Find Your Path

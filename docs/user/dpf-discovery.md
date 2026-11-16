@@ -41,8 +41,7 @@ be able to read Nodes and the namespace and create, inspect, read logs from,
 and delete the temporary Pods and ConfigMap there. Namespace admission policy
 must allow host-network Pods. Launch Kit does not change admission policy.
 
-The cluster must have exactly three control-plane nodes. All nodes reported by the management cluster
-must be Ready, schedulable Linux/amd64 nodes and
+All nodes reported by the management cluster must be Ready, schedulable Linux/amd64 nodes and
 able to pull the published, digest-pinned `nicolaka/netshoot` image. An optional
 `discovery.probes.imageRepository` mirror must contain the same pinned manifests.
 Unsupported node scope is rejected before probe resources are created.

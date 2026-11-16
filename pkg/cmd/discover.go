@@ -48,8 +48,8 @@ clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI override
 With --target dpf, collect inventory from explicitly selected host, DPU and BMC
 endpoints using ordinary YAML. Inventory is the default and needs no kubeconfig.
 A supplied kubeconfig adds management-cluster observations. Explicit
-discovery.probes.mode: management requests per-node network probes using the
-pinned Linux/amd64 diagnostic assets. Use --use-case hbn-bgp to check the selected
+discovery.probes.mode: management requests network probes on every observed node
+that meets the readiness and platform checks, using pinned Linux/amd64 assets. Use --use-case hbn-bgp to check the selected
 use case before generating and deploying its DPF bundle.`,
 		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
