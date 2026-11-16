@@ -60,9 +60,9 @@ var groupOrder = []string{
 
 var groupTitles = map[string]string{
 	GroupTarget:        "Target Selection Flags",
-	GroupCommon:        "Host Target Common Flags",
-	GroupDiscovery:     "Host Target Discovery Flags",
-	GroupProfile:       "Host Target Profile Selection Flags",
+	GroupCommon:        "Common Flags",
+	GroupDiscovery:     "Discovery Flags",
+	GroupProfile:       "Profile and Use Case Selection Flags",
 	GroupSpectrumX:     "Host Target Spectrum-X Flags",
 	GroupGeneration:    "Host Target Generation Output Flags",
 	GroupExecution:     "Target-Agnostic Execution Flags",
