@@ -99,13 +99,15 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		Expect(before.Errors).To(BeEmpty())
 		Expect(before.Discovery.Outcome).To(Equal("complete"))
 		input.Site.Inventory = before.Inventory
+		input.Site.DPF.UseCase = nil
 		data, err := yaml.Marshal(input.Site)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.WriteFile(input.Path, data, 0600)).To(Succeed())
 		input, err = config.Decode(data, input.Path)
 		Expect(err).NotTo(HaveOccurred())
-		request.Input = input
-		resolved, err := generationInputs(input)
+		generatedInput, err := config.WithUseCase(input, stringPtr("hbn-bgp"))
+		Expect(err).NotTo(HaveOccurred())
+		resolved, err := generationInputs(generatedInput)
 		Expect(err).NotTo(HaveOccurred())
 		resolved.OperatorArchive, err = os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
 		Expect(err).NotTo(HaveOccurred())
@@ -115,6 +117,9 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		Expect(err).NotTo(HaveOccurred())
 		plan, err := generation.LoadPlan(retained)
 		Expect(err).NotTo(HaveOccurred())
+		request.Input, err = withRetainedUseCase(input, retained)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(request.Input.Source).To(Equal(data))
 		collectors := func(*artifacts.Store, *generation.Plan) discovery.Dependencies { return deps }
 		for _, phase := range []deployment.PrerequisitePhase{deployment.BeforeActivation, deployment.AfterActivation} {
 			for _, resume := range []bool{false, true} {
@@ -132,6 +137,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 					Expect(err).To(MatchError(ContainSubstring("prerequisites are blocked")))
 				}
 				Expect(observed.Inventory).NotTo(BeNil())
+				Expect(observed.Inventory.Collection.RunID).NotTo(Equal(before.Inventory.Collection.RunID), "plan verification must retain freshly collected inventory")
 				Expect(observed.Checks).NotTo(BeEmpty())
 				found := false
 				for _, check := range observed.Checks {
@@ -161,5 +167,8 @@ var _ = Describe("native deployment prerequisite provider", func() {
 				}
 			}
 		}
+		unchanged, err := os.ReadFile(input.Path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(unchanged).To(Equal(data))
 	})
 })

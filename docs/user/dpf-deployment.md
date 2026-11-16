@@ -131,6 +131,9 @@ Both file arguments are required explicitly. The default and maximum DPF timeout
 is two hours; a shorter positive timeout is supported. For automation, add
 `--output json`, capture stdout separately from stderr and check the process exit
 status. Keep the report path and partial effects from a failed run for inspection.
+Deployment keeps the bundle's use-case selection, including a `--use-case`
+choice supplied to `generate`, and leaves your site file unchanged. A new
+conflicting selection requires regeneration.
 
 The DPF target does not support `--dry-run` or Host `--overwrite-existing`
 semantics. It does not use Host `--kubeconfig`; management access comes from the
