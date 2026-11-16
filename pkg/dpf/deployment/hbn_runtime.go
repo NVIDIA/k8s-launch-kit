@@ -5,6 +5,7 @@ package deployment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -80,7 +81,10 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	journal *executionJournal, timeout time.Duration, transports hbnRuntimeTransports,
 ) (result HBNRuntimeResult, stageErr error) {
 	result.State = "incomplete"
-	fail := func(code, message string) (HBNRuntimeResult, error) {
+	failWithCause := func(code, message string, cause error) (HBNRuntimeResult, error) {
+		if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+			code, message = "HBN_RUNTIME_CANCELED", "Runtime validation was canceled or its deadline expired."
+		}
 		if journal != nil && journal.failed != nil {
 			code = "HBN_RUNTIME_REPORT_UNCERTAIN"
 			message = "Runtime evidence could not be durably recorded; no cohort pass is retained."
@@ -88,7 +92,12 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 		result.State = "failed"
 		result.ReasonCode = code
 		result.TrafficValidated = false
-		err := fmt.Errorf("%s: %s", code, message)
+		var err error
+		if cause == nil {
+			err = fmt.Errorf("%s: %s", code, message)
+		} else {
+			err = reconcileError(code, message, cause)
+		}
 		if journal != nil {
 			if journalErr := journal.record(executionEvent{Stage: hbnRuntimeStage, Operation: "validate", State: "failed", ReasonCode: code, Message: message}); journalErr != nil {
 				return result, fmt.Errorf("%w: %w", err, journalErr)
@@ -98,6 +107,9 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 			ui.FromContext(ctx).Info("[FAIL] HBN runtime: %s", message)
 		}
 		return result, err
+	}
+	fail := func(code, message string) (HBNRuntimeResult, error) {
+		return failWithCause(code, message, nil)
 	}
 	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil || prepared.execution.reconciler == nil || journal == nil || controlPlane.tenant.Client == nil ||
 		timeout < time.Second || timeout > 2*time.Minute || transports.readLeases == nil || transports.readCommand == nil || transports.probeTraffic == nil || len(activation.selected) == 0 || len(activation.selected) != len(hosts) || activation.BundleDigest != prepared.execution.plan.Digest() || journal.digest != activation.BundleDigest || workload.BundleDigest != activation.BundleDigest {
@@ -119,7 +131,7 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 		return fail("HBN_RUNTIME_PLAN_INVALID", "The retained workload prerequisite set is invalid.")
 	}
 	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, activation.selected, activation.DeploymentUID, objects, journal, timeout); err != nil {
-		return fail("HBN_RUNTIME_PHYSICAL_ENTRY_FAILED", "The complete physical and control/resource cohort could not be verified before runtime observation.")
+		return failWithCause("HBN_RUNTIME_PHYSICAL_ENTRY_FAILED", "The complete physical and control/resource cohort could not be verified before runtime observation.", err)
 	}
 
 	selected := append([]activationSelectedDevice(nil), activation.selected...)
@@ -329,7 +341,7 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	// Rebind physical identity/admin before final acceptance. The final runtime
 	// observe follows it, catching allocation/pod/source drift during BMC reads.
 	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, activation.selected, activation.DeploymentUID, objects, journal, timeout); err != nil {
-		return fail("HBN_RUNTIME_PHYSICAL_EXIT_FAILED", "The complete physical and control/resource cohort could not be reverified after runtime measurements.")
+		return failWithCause("HBN_RUNTIME_PHYSICAL_EXIT_FAILED", "The complete physical and control/resource cohort could not be reverified after runtime measurements.", err)
 	}
 	if _, err := observe(); err != nil {
 		return fail("HBN_RUNTIME_FINAL_FENCE_FAILED", "The complete final activation, allocation or runtime identity observation failed.")

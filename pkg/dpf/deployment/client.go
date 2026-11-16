@@ -68,11 +68,15 @@ func (c *APIClient) VerifyIdentity(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if c.expected.APIEndpoint == "" || c.expected.SystemNamespaceUID == "" || c.expected.TrustDigest == "" || c.version == "" ||
+		observed.APIEndpoint == "" || observed.SystemNamespaceUID == "" || observed.TrustDigest == "" || observed.KubernetesVersion == "" {
+		return fmt.Errorf("management identity or retained binding is unavailable")
+	}
 	if observed.APIEndpoint != c.expected.APIEndpoint || observed.SystemNamespaceUID != c.expected.SystemNamespaceUID || observed.TrustDigest != c.expected.TrustDigest {
-		return fmt.Errorf("management cluster identity or TLS trust differs from the generated bundle; repeat discovery and generation")
+		return fmt.Errorf("management cluster identity or TLS trust differs from the generated bundle; repeat discovery and generation: %w", errManagementIdentityChanged)
 	}
 	if observed.KubernetesVersion != c.version {
-		return fmt.Errorf("management Kubernetes version differs from the generated bundle; repeat discovery and generation")
+		return fmt.Errorf("management Kubernetes version differs from the generated bundle; repeat discovery and generation: %w", errManagementIdentityChanged)
 	}
 	return nil
 }
