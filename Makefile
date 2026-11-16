@@ -214,6 +214,12 @@ release:
 release-snapshot:
 	goreleaser release --snapshot --clean --skip=publish,sbom
 
+## Render the five network-operator-docs quick-start bundles into OUT
+.PHONY: render-operator-doc-examples
+render-operator-doc-examples: build
+	@test -n "$(OUT)" || { echo "OUT is required (directory that receives the five profile bundles)"; exit 1; }
+	hack/render-operator-doc-examples.sh "$(OUT)"
+
 ## Display help
 help:
 	@echo "Available targets:"
