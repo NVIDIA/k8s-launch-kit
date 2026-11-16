@@ -4,6 +4,7 @@
 package networkoperatorplugin
 
 import (
+	"context"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -11,6 +12,8 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -124,19 +127,15 @@ func TestOCPOperatorInstallManagedRendersInstallArtifacts(t *testing.T) {
 	}, nsNames)
 }
 
-// TestOCPOperatorInstallDedupesSharedNamespace verifies operators sharing a
-// namespace yield one OperatorGroup and one Namespace for it (not one per
+// TestOCPOperatorInstallDedupesSharedNamespace verifies operators configured into
+// the same namespace yield one OperatorGroup and one Namespace for it (not one per
 // package), while Subscriptions stay per package.
 func TestOCPOperatorInstallDedupesSharedNamespace(t *testing.T) {
 	cfg := ocpInstallTestConfig(t)
-	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
-		Manage: true,
-		Operators: []config.OCPOperatorSubscription{
-			{Package: "nvidia-network-operator", Namespace: "shared-ns"},
-			{Package: "nvidia-maintenance-operator", Namespace: "shared-ns"},
-			{Package: "nfd", Namespace: "openshift-nfd"},
-		},
-	}
+	cfg.NetworkOperator.Namespace = "shared-ns"
+	require.NotNil(t, cfg.Maintenance)
+	cfg.Maintenance.OperatorNamespace = "shared-ns"
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{Manage: true}
 
 	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(
 		loadProfileFromDir(t, "sriov-ethernet-rdma-ocp"), cfg)
@@ -150,7 +149,7 @@ func TestOCPOperatorInstallDedupesSharedNamespace(t *testing.T) {
 		ogNamespaces = append(ogNamespaces, metaString(t, doc, "namespace"))
 	}
 	sort.Strings(ogNamespaces)
-	assert.Equal(t, []string{"openshift-nfd", "shared-ns"}, ogNamespaces)
+	assert.Equal(t, []string{"openshift-nfd", "openshift-sriov-network-operator", "shared-ns"}, ogNamespaces)
 
 	_, namespaces := fileMatching(t, rendered, "00-operator-namespaces.yaml")
 	nsDocs := parseDocs(t, "00-operator-namespaces.yaml", namespaces)
@@ -159,10 +158,10 @@ func TestOCPOperatorInstallDedupesSharedNamespace(t *testing.T) {
 		nsNames = append(nsNames, metaString(t, doc, "name"))
 	}
 	sort.Strings(nsNames)
-	assert.Equal(t, []string{"openshift-nfd", "shared-ns"}, nsNames)
+	assert.Equal(t, []string{"openshift-nfd", "openshift-sriov-network-operator", "shared-ns"}, nsNames)
 
 	_, subs := fileMatching(t, rendered, "00-subscriptions.yaml")
-	assert.Len(t, parseDocs(t, "00-subscriptions.yaml", subs), 3)
+	assert.Len(t, parseDocs(t, "00-subscriptions.yaml", subs), 4)
 }
 
 // TestOCPOperatorInstallRendersForEveryProfile guards that --manage-operators
@@ -221,4 +220,168 @@ func TestDefaultOCPOperatorSubscriptionsNonSriov(t *testing.T) {
 	}
 	sort.Strings(packages)
 	assert.Equal(t, []string{"nfd", "nvidia-maintenance-operator", "nvidia-network-operator"}, packages)
+}
+
+func networkOperatorManifest(name, catalogSource string, channels []interface{}) *unstructured.Unstructured {
+	return ocpTestObject("packages.operators.coreos.com/v1", "PackageManifest", "openshift-marketplace", name,
+		map[string]interface{}{
+			"status": map[string]interface{}{
+				"packageName":    "nvidia-network-operator",
+				"defaultChannel": "stable",
+				"catalogSource":  catalogSource,
+				"channels":       channels,
+			},
+		})
+}
+
+func operatorSub(t *testing.T, cfg *config.LaunchKitConfig, pkg string) config.OCPOperatorSubscription {
+	t.Helper()
+	for _, op := range cfg.OCPOperatorInstall.Operators {
+		if op.Package == pkg {
+			return op
+		}
+	}
+	t.Fatalf("operator %q not in resolved install set", pkg)
+	return config.OCPOperatorSubscription{}
+}
+
+var releaseChannel277 = []interface{}{
+	map[string]interface{}{"name": "stable", "currentCSVDesc": map[string]interface{}{"version": "26.10.0"}},
+	map[string]interface{}{"name": "v26.7", "currentCSVDesc": map[string]interface{}{"version": "26.7.1"}},
+}
+
+// TestDiscoverOCPOperatorInstallMatchesReleaseChannel verifies discovery pins the
+// network-operator channel to the selected release line, not the catalog default.
+func TestDiscoverOCPOperatorInstallMatchesReleaseChannel(t *testing.T) {
+	cfg := ocpInstallTestConfig(t) // selectedRelease 26.7
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	c := fake.NewClientBuilder().WithObjects(manifest).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	assert.Equal(t, "v26.7", operatorSub(t, cfg, "nvidia-network-operator").Channel)
+}
+
+// TestDiscoverOCPOperatorInstallErrsWithoutReleaseChannel verifies a hard error
+// when no channel is on the selected release line.
+func TestDiscoverOCPOperatorInstallErrsWithoutReleaseChannel(t *testing.T) {
+	cfg := ocpInstallTestConfig(t) // selectedRelease 26.7
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", []interface{}{
+		map[string]interface{}{"name": "stable", "currentCSVDesc": map[string]interface{}{"version": "26.10.0"}},
+	})
+	c := fake.NewClientBuilder().WithObjects(manifest).Build()
+
+	err := DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "matches selected release")
+}
+
+// TestDiscoverOCPOperatorInstallPrefersExpectedCatalog verifies that, when a
+// package is in several catalogs, discovery picks the expected source rather than
+// whichever the API lists first.
+func TestDiscoverOCPOperatorInstallPrefersExpectedCatalog(t *testing.T) {
+	cfg := ocpInstallTestConfig(t) // network-operator expects certified-operators
+	// Name the mirror so it sorts before the certified copy: the old first-seen
+	// logic would pick it, the fix must still choose certified-operators.
+	certified := networkOperatorManifest("nvidia-network-operator-certified", "certified-operators", releaseChannel277)
+	mirror := networkOperatorManifest("a-nvidia-network-operator-mirror", "test-catalog", []interface{}{
+		map[string]interface{}{"name": "stable", "currentCSVDesc": map[string]interface{}{"version": "26.10.0"}},
+	})
+	c := fake.NewClientBuilder().WithObjects(mirror, certified).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	op := operatorSub(t, cfg, "nvidia-network-operator")
+	assert.Equal(t, "certified-operators", op.Source)
+	assert.Equal(t, "v26.7", op.Channel)
+}
+
+// TestDiscoverOCPOperatorInstallErrsOnAmbiguousCatalog verifies a hard error when
+// a package is in multiple catalogs and none is the expected source.
+func TestDiscoverOCPOperatorInstallErrsOnAmbiguousCatalog(t *testing.T) {
+	cfg := ocpInstallTestConfig(t) // expects certified-operators
+	a := networkOperatorManifest("nvidia-network-operator-a", "mirror-a", releaseChannel277)
+	b := networkOperatorManifest("nvidia-network-operator-b", "mirror-b", releaseChannel277)
+	c := fake.NewClientBuilder().WithObjects(a, b).Build()
+
+	err := DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multiple catalogs")
+}
+
+// TestEnsureOCPOperatorInstallDefaultsReconcilesNamespace verifies the operator
+// namespace tracks the effective config while saved catalog/approval are kept.
+func TestEnsureOCPOperatorInstallDefaultsReconcilesNamespace(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
+		Manage: true,
+		Operators: []config.OCPOperatorSubscription{{
+			Package: "nvidia-network-operator", Namespace: "old-ns",
+			Channel: "v26.7", Source: "certified-operators",
+			SourceNamespace: "openshift-marketplace", InstallPlanApproval: "Manual",
+		}},
+	}
+	cfg.NetworkOperator.Namespace = "new-ns"
+
+	EnsureOCPOperatorInstallDefaults(cfg)
+
+	op := operatorSub(t, cfg, "nvidia-network-operator")
+	assert.Equal(t, "new-ns", op.Namespace, "namespace tracks the effective config")
+	assert.Equal(t, "v26.7", op.Channel, "saved channel preserved")
+	assert.Equal(t, "Manual", op.InstallPlanApproval, "saved approval preserved")
+}
+
+// TestDiscoverOCPOperatorInstallHonorsSavedChoices verifies discovery uses the
+// saved source to select the catalog and preserves the saved approval.
+func TestDiscoverOCPOperatorInstallHonorsSavedChoices(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
+		Manage: true,
+		Operators: []config.OCPOperatorSubscription{{
+			Package: "nvidia-network-operator", Source: "mirror-catalog", InstallPlanApproval: "Manual",
+		}},
+	}
+	certified := networkOperatorManifest("nwo-certified", "certified-operators", releaseChannel277)
+	mirror := networkOperatorManifest("nwo-mirror", "mirror-catalog", releaseChannel277)
+	c := fake.NewClientBuilder().WithObjects(certified, mirror).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	op := operatorSub(t, cfg, "nvidia-network-operator")
+	assert.Equal(t, "mirror-catalog", op.Source, "saved source selects the catalog")
+	assert.Equal(t, "Manual", op.InstallPlanApproval, "saved approval preserved")
+}
+
+// TestDiscoverOCPOperatorInstallSavedSourceResolvesAmbiguity verifies that an
+// explicit saved source disambiguates mirror-only catalogs instead of erroring.
+func TestDiscoverOCPOperatorInstallSavedSourceResolvesAmbiguity(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
+		Manage: true,
+		Operators: []config.OCPOperatorSubscription{{
+			Package: "nvidia-network-operator", Source: "mirror-b",
+		}},
+	}
+	a := networkOperatorManifest("nwo-a", "mirror-a", releaseChannel277)
+	b := networkOperatorManifest("nwo-b", "mirror-b", releaseChannel277)
+	c := fake.NewClientBuilder().WithObjects(a, b).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	assert.Equal(t, "mirror-b", operatorSub(t, cfg, "nvidia-network-operator").Source)
+}
+
+// TestDiscoverOCPOperatorInstallReusesExistingSubscriptionName verifies discovery
+// adopts an installed Subscription's custom name so apply updates it rather than
+// creating a duplicate; spec.name stays the package.
+func TestDiscoverOCPOperatorInstallReusesExistingSubscriptionName(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	existing := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", cfg.NetworkOperator.Namespace, "custom-nwo-subscription",
+		map[string]interface{}{"spec": map[string]interface{}{"name": "nvidia-network-operator"}})
+	c := fake.NewClientBuilder().WithObjects(manifest, existing).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	op := operatorSub(t, cfg, "nvidia-network-operator")
+	assert.Equal(t, "custom-nwo-subscription", op.Name, "reuse the existing Subscription name")
+	assert.Equal(t, "nvidia-network-operator", op.Package, "spec.name stays the package")
+
+	// An operator with no existing Subscription falls back to the package name.
+	assert.Equal(t, "nfd", operatorSub(t, cfg, "nfd").Name)
 }

@@ -530,9 +530,12 @@ func (c *OCPOperatorInstallConfig) UniqueNamespaces() []string {
 // OCPOperatorSubscription is one operator's OLM install descriptor — enough to
 // render its Namespace, OwnNamespace OperatorGroup, and Subscription offline.
 type OCPOperatorSubscription struct {
-	// Package is the OLM package: each artifact's metadata.name and the
-	// Subscription's spec.name.
-	Package         string `yaml:"package"`
+	// Package is the OLM package selected by the Subscription's spec.name.
+	Package string `yaml:"package"`
+	// Name is the Subscription's metadata.name. Discovery reuses an existing
+	// Subscription's name so apply updates it instead of creating a duplicate;
+	// it defaults to Package otherwise.
+	Name            string `yaml:"name,omitempty"`
 	Namespace       string `yaml:"namespace"`
 	Channel         string `yaml:"channel"`
 	Source          string `yaml:"source"`
