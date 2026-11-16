@@ -1311,13 +1311,13 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 				return verified, err
 			}
 			request.ResetSafetyExpiresAt = expires
-			// Reset-specific BMC reads refresh the physical proof, but can outlast
-			// the earlier tenant/workload/credential snapshot. Refresh that policy
-			// before claiming the action without repeating slow physical reads.
-			if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
+			if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, current, journal); err != nil {
 				return verified, err
 			}
-			if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, current, journal); err != nil {
+			// BMC and bootstrap reads can outlast earlier control policy. Refresh
+			// every resource/credential prerequisite after them, without another
+			// slow physical read, then read the exact request/Arm round below.
+			if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
 				return verified, err
 			}
 			// The BMC read can take time. A different request or restarted Arm
@@ -1326,19 +1326,8 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			if err != nil || !current.complete {
 				return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected cohort changed during the physical reset-safety read.", nil)
 			}
-			_, actionable, err = selectedHostRebootPending(current, selected, indexes)
-			if err != nil || !actionable {
-				return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected external request changed during the physical reset-safety read.", nil)
-			}
-			if !activationResetParticipantsPresent(current, selected, indexes) {
-				return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The current reset cohort changed during the reset-safety read.", activationCoordinationError(activationParticipantRequestors))
-			}
-			for _, index := range indexes {
-				round, err := readActivationRebootRound(current.dpus[selected[index].dpuName])
-				before, found := rounds[round.uid]
-				if err != nil || !found || !before.sameRequest(round) || !before.startup.Equal(round.startup) || before.kernelBoot != round.kernelBoot {
-					return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected DPU round or Arm boot changed during the physical reset-safety read.", nil)
-				}
+			if err := verifyPendingActivationReset(current, selected, indexes, rounds, journal); err != nil {
+				return verified, err
 			}
 			// The native adapter invokes this after authenticating the host and
 			// immediately before dispatch. Keep the existing durable baseline/CAS
@@ -1346,6 +1335,18 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			beforeSubmit := request.BeforeSubmit
 			request.BeforeSubmit = func(observation ActivationObservation) error {
 				if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, current, journal); err != nil {
+					return err
+				}
+				if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
+					return err
+				}
+				// The new credential and policy reads can outlast the observed
+				// shutdown round. Collect again before persisting the host baseline.
+				fresh, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
+				if err != nil || ctx.Err() != nil {
+					return activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected reset scope could not be refreshed before host submission.", errors.Join(err, ctx.Err()))
+				}
+				if err := verifyPendingActivationReset(fresh, selected, indexes, rounds, journal); err != nil {
 					return err
 				}
 				if beforeSubmit != nil {
@@ -1418,6 +1419,9 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			// Fresh and observe-only recovery share this ACK boundary. Observing
 			// a completed physical reset never waives registration prerequisites.
 			if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, returned, journal); err != nil {
+				return verified, err
+			}
+			if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
 				return verified, err
 			}
 			node, err := client.Get(ctx, dpuNodeIdentity(deployment.GetNamespace(), nodeName))
@@ -1644,6 +1648,7 @@ func activationFailure(journal *executionJournal, code, message string, cause er
 	if code == "EXTERNAL_HOST_REBOOT_UNCERTAIN" {
 		message += externalRebootSSHDiagnostic(cause)
 		message += bootstrapCredentialDiagnostic(cause)
+		message += externalRebootPolicyDiagnostic(cause)
 	}
 	if journal == nil {
 		return reconcileError(code, message, cause)

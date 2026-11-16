@@ -42,3 +42,22 @@ func externalRebootSSHDiagnostic(err error) string {
 	}
 	return " SSH cause " + diagnostic.Code + " at " + stage + ": " + reason
 }
+
+// externalRebootPolicyDiagnostic retains an allowlisted policy stop from the
+// pre-submission callback. Its arbitrary error/message text stays private.
+func externalRebootPolicyDiagnostic(err error) string {
+	var diagnostic *ReconciliationError
+	if !errors.As(err, &diagnostic) || diagnostic == nil {
+		return ""
+	}
+	switch diagnostic.ReasonCode {
+	case "MANAGEMENT_IDENTITY_CHANGED", "TENANT_API_IDENTITY_CHANGED",
+		"ACTIVATION_BOOTSTRAP_CHANGED", "ACTIVATION_WORKLOAD_TARGET_CHANGED",
+		"ACTIVATION_WORKLOAD_RECEIPT_CHANGED", "ACTIVATION_SOFTWARE_RECEIPT_CHANGED",
+		"ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "ACTIVATION_ENROLLMENT_SECRET_CHANGED",
+		"ACTIVATION_CANCELED", "ACTIVATION_REBOOT_REQUEST_CHANGED", "ACTIVATION_REBOOT_SCOPE_CHANGED":
+		return " Pre-submission policy stopped: " + diagnostic.ReasonCode + "; preserve the claim and inspect the recorded policy failure before continuing."
+	default:
+		return ""
+	}
+}

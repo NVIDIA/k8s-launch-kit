@@ -63,3 +63,24 @@ func TestRebootSSHDiagnosticUsesOnlySupportedStaticCategories(t *testing.T) {
 		t.Fatal("reboot-specific diagnostic changed another failure boundary")
 	}
 }
+
+func TestUncertainRebootRetainsSafePreSubmissionPolicyCode(t *testing.T) {
+	const canary = "private-policy-error-and-message-canary"
+	for _, code := range []string{"ACTIVATION_ENROLLMENT_SECRET_CHANGED", "ACTIVATION_REBOOT_REQUEST_CHANGED", "ACTIVATION_REBOOT_SCOPE_CHANGED", canary} {
+		t.Run(code, func(t *testing.T) {
+			file := &managementMemoryFile{}
+			journal := &executionJournal{file: file, digest: "test"}
+			cause := reconcileError(code, canary, errors.New(canary))
+			result := activationFailure(journal, "EXTERNAL_HOST_REBOOT_UNCERTAIN", "Completion is unverified.", cause)
+			if strings.Contains(result.Error()+file.String(), canary) {
+				t.Fatal("private policy text escaped")
+			}
+			if code != canary && (!strings.Contains(result.Error(), code) || !strings.Contains(file.String(), code)) {
+				t.Fatal("safe policy cause lost")
+			}
+			if !errors.Is(result, cause) {
+				t.Fatal("private cause chain lost")
+			}
+		})
+	}
+}

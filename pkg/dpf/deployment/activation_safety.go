@@ -81,6 +81,35 @@ func (r activationRebootRound) sameRequest(current activationRebootRound) bool {
 	return r.uid == current.uid && r.generation == current.generation && r.source == current.source && r.requested.Equal(current.requested)
 }
 
+// verifyPendingActivationReset consumes an explicitly fresh collection. Both
+// preclaim and pre-submission callers must retain the same shutdown/request/Arm
+// baseline; this validator performs no collection or physical observation.
+func verifyPendingActivationReset(current activationObservation, selected []activationSelectedDevice, indexes []int, rounds map[types.UID]activationRebootRound, journal *executionJournal) error {
+	if !current.complete || len(indexes) == 0 {
+		return activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The complete selected reset scope is unavailable before the host action.", nil)
+	}
+	for _, index := range indexes {
+		if index < 0 || index >= len(selected) {
+			return activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected reset cohort is invalid before the host action.", nil)
+		}
+	}
+	_, actionable, err := selectedHostRebootPending(current, selected, indexes)
+	if err != nil || !actionable {
+		return activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected external request changed before the host action.", nil)
+	}
+	if !activationResetParticipantsPresent(current, selected, indexes) {
+		return activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The current reset participants changed before the host action.", activationCoordinationError(activationParticipantRequestors))
+	}
+	for _, index := range indexes {
+		round, err := readActivationRebootRound(current.dpus[selected[index].dpuName])
+		before, found := rounds[round.uid]
+		if err != nil || !found || !before.sameRequest(round) || !before.startup.Equal(round.startup) || before.kernelBoot != round.kernelBoot {
+			return activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected DPU request, startup or current Arm boot changed before the host action.", nil)
+		}
+	}
+	return nil
+}
+
 type activationRebootBMC struct {
 	selected enrollmentBMC
 	startup  time.Time
