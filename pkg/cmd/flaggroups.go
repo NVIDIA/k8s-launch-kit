@@ -64,7 +64,7 @@ var groupTitles = map[string]string{
 	GroupDiscovery:     "Discovery Flags",
 	GroupProfile:       "Profile and Use Case Selection Flags",
 	GroupSpectrumX:     "Host Target Spectrum-X Flags",
-	GroupGeneration:    "Host Target Generation Output Flags",
+	GroupGeneration:    "Generation Output Flags",
 	GroupExecution:     "Target-Agnostic Execution Flags",
 	GroupDeploy:        "Host Target Deploy Flags",
 	GroupClean:         "Host Target Clean Flags",
