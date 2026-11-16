@@ -270,15 +270,32 @@ history. For an active or uncertain deployment, consider only its original
 operation and inputs for recovery; an old reference does not authorize a new
 bundle or deployment.
 
-For a fully retired installation, the deployment owner must confirm that no
-process or controller can continue that operation, its DPF resources have been
-retired through scoped teardown, its DPUDeployment and reset claims are gone,
-and any selected host workload
-networking has been restored as required. Preserve management connectivity and
-unrelated resources. Archive the exact record and evidence before the owner
-approves retirement of that specific record. The CLI does not perform this
-retirement automatically. Never remove a record or reset claim to repeat an
-uncertain physical action.
+There is no Launch Kit command to retire a DPF operation record. Host `l8k clean`
+is not DPF teardown. Record retirement is a separate action for the deployment
+owner and an authorized management-cluster administrator using `kubectl`:
+
+1. Confirm that no process or controller can continue the original operation.
+   Complete scoped teardown of its DPF resources, verify that its DPUDeployment
+   and reset claims are absent, and restore any configured selected host workload
+   networking as required. Preserve management connectivity and unrelated shared
+   foundations. An uncertain physical action must be resolved before retirement;
+   never delete a record or reset claim to replay it.
+2. Archive the exact operation ConfigMap at the reported namespace/name, including
+   its UID and resource version, along with the original inputs, reports and
+   physical-action history. Obtain the deployment owner's approval to retire
+   that specific record after all the preceding conditions are met.
+3. Immediately before deletion, recheck quiescence, teardown and parent/claim
+   absence. Verify that the current ConfigMap has the archived UID and unchanged
+   content. The authorized administrator may then delete only that reported
+   ConfigMap, with server-enforced preconditions for its exact UID and most
+   recently verified resource version. Use a `kubectl` API request that carries
+   both preconditions; a plain name-only delete does not provide this boundary.
+   If either precondition fails, stop and inspect the change. Do not delete by
+   label or namespace, remove finalizers, force deletion or include reset claims
+   in this action.
+4. Verify that the specific record is absent and retain the archive. Begin a new
+   discover → generate → initial deploy workflow only after all retirement and
+   preservation checks are complete.
 
 A stop before an operation reference is issued can still leave prepared
 management, tenant, enrollment or workload resources. Do not invent a resume

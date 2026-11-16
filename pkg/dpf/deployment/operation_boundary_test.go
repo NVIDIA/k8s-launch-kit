@@ -4,6 +4,7 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -93,6 +96,8 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
+			var progress bytes.Buffer
+			ctx = ui.WithOutput(ctx, ui.NewWithWriter(&progress))
 			mu.Lock()
 			status, reason = tc.status, tc.reason
 			object = nil
@@ -156,6 +161,32 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 			}
 			if !strings.Contains(string(report), want) || strings.Contains(string(report)+string(encoded)+runErr.Error(), canary) || strings.Contains(string(report)+string(encoded), "private-test-token") {
 				t.Fatal("missing operation reason or private diagnostics escaped")
+			}
+			if tc.want == "OPERATION_RESERVATION_EXISTS" {
+				var outcome struct {
+					Checks []inventory.Check `json:"checks"`
+				}
+				if err := json.Unmarshal(encoded, &outcome); err != nil {
+					t.Fatal(err)
+				}
+				subject := deployment.GetNamespace() + "/" + operationName(deployment)
+				var message string
+				for _, check := range outcome.Checks {
+					if check.ReasonCode == tc.want {
+						if check.Subject != subject {
+							t.Fatalf("wrong operation subject: %q", check.Subject)
+						}
+						message = check.Message
+					}
+				}
+				for _, text := range []string{"namespace/name", "preserve the current record", "original operation and inputs", "deployment owner", "no retirement command", "https://nvidia.github.io/k8s-launch-kit/user/dpf-deployment/#retire-a-previous-deployment-record"} {
+					if !strings.Contains(message, text) || !strings.Contains(progress.String(), text) {
+						t.Fatalf("JSON/UI lacks actionable retirement guidance %q", text)
+					}
+				}
+				if !strings.Contains(progress.String(), subject) || strings.Contains(progress.String(), canary) || strings.Contains(progress.String(), "private-test-token") {
+					t.Fatal("UI lacks exact subject or exposes a private cause")
+				}
 			}
 			if !tc.provider && strings.Contains(string(report), "FRESH_PREREQUISITES_STARTED") {
 				t.Fatal("initial vacancy failure reached physical discovery")

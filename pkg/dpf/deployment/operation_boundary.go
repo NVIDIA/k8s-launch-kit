@@ -54,7 +54,7 @@ func operationReservationMessage(code string) string {
 	case "OPERATION_SLOT_UNMEASURED":
 		return "The operation record could not be inspected; verify management access and inspect current state before another initial attempt."
 	case "OPERATION_RESERVATION_EXISTS":
-		return "An existing object occupies this deployment's operation record. Preserve it; resume only its original deployment, or follow docs/user/dpf-deployment.md#retire-a-previous-deployment-record before starting a new one."
+		return "An existing object occupies the operation record. Inspect the operation-reservation check's namespace/name subject and preserve the current record. Resume only the original operation and inputs, or have the deployment owner arrange controlled retirement; Launch Kit has no retirement command. Follow https://nvidia.github.io/k8s-launch-kit/user/dpf-deployment/#retire-a-previous-deployment-record."
 	case "OPERATION_PARENT_EXISTS":
 		return "A DPUDeployment already exists at the selected name; inspect its recorded operation instead of starting another initial deployment."
 	case "OPERATION_PARENT_UNMEASURED":
@@ -120,7 +120,7 @@ func reportOperationReservation(ctx context.Context, journal *executionJournal, 
 		return err
 	}
 	if check.State != "passed" {
-		ui.FromContext(ctx).Warning("[BLOCKED] Deployment operation: %s (%s)", check.Message, check.ReasonCode)
+		ui.FromContext(ctx).Warning("[BLOCKED] Deployment operation %q: %s (%s)", check.Subject, check.Message, check.ReasonCode)
 	}
 	return nil
 }
