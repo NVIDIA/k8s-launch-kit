@@ -222,3 +222,31 @@ func TestManagementRootBudgetAndUnrelatedVirtualInterfaces(t *testing.T) {
 		t.Fatal("canonical duplicate root accepted")
 	}
 }
+
+func TestManagementRootProofRequiresMeasuredRouteFacts(t *testing.T) {
+	adapter := inventory.Adapter{PCIAddress: "0000:21:00.0", PCIFunctions: []inventory.PCIFunction{{Address: "0000:21:00.0"}}}
+	for _, test := range []struct {
+		name   string
+		routes []inventory.Route
+	}{
+		{"omitted without issue", nil}, {"empty without issue", []inventory.Route{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			host := managementRootHost()
+			host.Runtime.Routes = test.routes
+			delete(host.Runtime.Observations, "routes")
+			if err := VerifyHostManagementPhysicalSeparation(host, adapter); err == nil {
+				t.Fatal("unmeasured routes became physical separation proof")
+			}
+		})
+	}
+	host := managementRootHost()
+	parsed, err := routes(`[{"dst":"192.0.2.0/24","dev":"mgmt0","protocol":"kernel","table":254}]`, host.Runtime.Interfaces, 4)
+	if err != nil || len(parsed) == 0 {
+		t.Fatalf("measured connected routes=%+v err=%v", parsed, err)
+	}
+	host.Runtime.Routes = parsed
+	if err := VerifyHostManagementPhysicalSeparation(host, adapter); err != nil {
+		t.Fatalf("measured complete current routes rejected: %v", err)
+	}
+}

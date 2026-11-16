@@ -19,8 +19,8 @@ const maxManagementRoots = inventory.MaxHostManagementRoots
 // HostManagementInterfaces selects only the authenticated SSH server address and
 // observed IPv4/IPv6 default paths. Unrelated virtual interfaces are not roots.
 func HostManagementInterfaces(runtime *inventory.RuntimeObservation) ([]string, error) {
-	if runtime == nil || runtime.Interfaces == nil {
-		return nil, fmt.Errorf("complete host interfaces/routes required")
+	if runtime == nil || len(runtime.Interfaces) == 0 || len(runtime.Routes) == 0 {
+		return nil, fmt.Errorf("nonempty complete host interfaces/routes required")
 	}
 	for _, key := range []string{"interfaces", "routes"} {
 		if runtime.Observations[key].State != "" && runtime.Observations[key].State != "observed" {

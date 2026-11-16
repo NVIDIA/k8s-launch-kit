@@ -173,7 +173,7 @@ func hostHBNTestInventory() inventory.Inventory {
 				{Name: "hostpf1", Index: 11, MTU: 9000, Addresses: []string{}},
 				{Name: "mgmt0", Index: 2, Addresses: []string{"192.0.2.20/24"}},
 			},
-			Routes:  []inventory.Route{},
+			Routes:  []inventory.Route{{Destination: "192.0.2.0/24", InterfaceIndex: 2, Table: 254}},
 			Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "hostpf0"}, {Name: "hostpf1"}, {Name: "mgmt0", PCIAddress: "0000:35:00.0", PhysicalPFRoots: []string{"0000:35:00.0"}}}},
 			Observations: map[string]inventory.Observation{
 				"host-management-roots":            {State: "observed"},
