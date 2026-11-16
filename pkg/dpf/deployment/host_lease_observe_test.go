@@ -84,10 +84,15 @@ func newHostLeaseObservationHarness(t *testing.T) *hostLeaseObservationHarness {
 	return newHostLeaseObservationHarnessWithAPIFixture(t, state, apiFixture)
 }
 
-// newHostLeaseObservationHarnessWithAPIFixture lets sequential failure cases
-// reuse the generated plan's management identity. The mutable API source state
-// is still provided separately and is rebuilt for each harness.
 func newHostLeaseObservationHarnessWithAPIFixture(t *testing.T, state *hostLeaseManagementState, apiFixture *apiFixture) *hostLeaseObservationHarness {
+	t.Helper()
+	plan, reconciler := prepareHostLeaseObservationPlan(t, apiFixture)
+	return newHostLeaseObservationHarnessFromPlan(t, state, apiFixture, plan, reconciler)
+}
+
+// The desired plan and schemas are immutable. Keep their owner local to the
+// table; each harness below still creates its own clients and live sources.
+func prepareHostLeaseObservationPlan(t *testing.T, apiFixture *apiFixture) (*generation.Plan, *Reconciler) {
 	t.Helper()
 	generationInputs := preflightGenerationInputs(t)
 	generationInputs.Management = apiFixture.expected
@@ -100,6 +105,20 @@ func newHostLeaseObservationHarnessWithAPIFixture(t *testing.T, state *hostLease
 	if err != nil {
 		t.Fatal(err)
 	}
+	operatorInputs, archive := plan.Operator()
+	operator, err := prepareOperator(OperatorRequest{Archive: archive, Inputs: operatorInputs, Timeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := NewReconciler(operator.renderedManifest, plan.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan, reconciler
+}
+
+func newHostLeaseObservationHarnessFromPlan(t *testing.T, state *hostLeaseManagementState, apiFixture *apiFixture, plan *generation.Plan, reconciler *Reconciler) *hostLeaseObservationHarness {
+	t.Helper()
 	management, err := NewAPIClient(context.Background(), apiFixture.request, apiFixture.expected, plan.Intent().KubernetesVersion)
 	if err != nil {
 		t.Fatal(err)
@@ -111,15 +130,6 @@ func newHostLeaseObservationHarnessWithAPIFixture(t *testing.T, state *hostLease
 		t.Fatal(err)
 	}
 	management.dynamic, err = dynamic.NewForConfig(fastREST)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operatorInputs, archive := plan.Operator()
-	operator, err := prepareOperator(OperatorRequest{Archive: archive, Inputs: operatorInputs, Timeout: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reconciler, err := NewReconciler(operator.renderedManifest, plan.Digest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,6 +614,28 @@ func TestObserveHostWorkloadLeaseSnapshotReadsCompleteBoundSources(t *testing.T)
 	}
 }
 
+func TestHostLeaseObservationPlanKeepsHarnessesIndependent(t *testing.T) {
+	state := &hostLeaseManagementState{}
+	apiFixture := newAPIFixture(t, state.serveManagement)
+	plan, reconciler := prepareHostLeaseObservationPlan(t, apiFixture)
+	before := plan.Intent()
+	first := newHostLeaseObservationHarnessFromPlan(t, state, apiFixture, plan, reconciler)
+	first.input.selected[0].receipt.DeviceUID = "changed-device"
+	first.input.activation.dpus[first.input.selected[0].dpuName].SetUID("changed-dpu")
+	first.workload.Resources[0].UID = "changed-ipam"
+	first.tenant.expected.Labels["test.example/changed"] = "true"
+	first.tenantState.nodes[0].Labels["test.example/changed"] = "true"
+	state.reset()
+	second := newHostLeaseObservationHarnessFromPlan(t, state, apiFixture, plan, reconciler)
+	if first.management == second.management || first.management.access.Client == second.management.access.Client || first.tenant == second.tenant || first.tenantState == second.tenantState {
+		t.Fatal("harnesses share mutable clients or tenant state")
+	}
+	if second.input.selected[0].receipt.DeviceUID == "changed-device" || second.input.activation.dpus[second.input.selected[0].dpuName].GetUID() == "changed-dpu" || second.workload.Resources[0].UID == "changed-ipam" ||
+		second.tenant.expected.Labels["test.example/changed"] != "" || second.tenantState.nodes[0].Labels["test.example/changed"] != "" || !reflect.DeepEqual(before, plan.Intent()) {
+		t.Fatal("one harness changed another harness or the retained desired plan")
+	}
+}
+
 func TestObserveHostWorkloadLeaseSnapshotFitsDefaultClientRequestBudget(t *testing.T) {
 	h := newHostLeaseObservationHarness(t)
 	h.useDefaultClientRateLimits(t)
@@ -648,19 +680,17 @@ func TestObserveHostWorkloadLeaseSnapshotRejectsIncompleteOrUnstableSources(t *t
 		{name: "management IPAM spec drift", configure: func(h *hostLeaseObservationHarness) { h.managementState.ipamMutation = "spec" }, serviceUnavailable: true, wantError: "retained DPUServiceIPAM is missing, replaced, stale or changed"},
 		{name: "finite page bound", configure: func(h *hostLeaseObservationHarness) { h.tenantState.listMode = "long-chain" }, wantError: "complete page bound", wantListCalls: hostLeaseNodeMaxPages},
 	}
-	// These scenarios vary only mock source state. Keep the TLS endpoint (and
-	// therefore the management identity serialized into the generated plan)
-	// stable so fixtureBundles can reuse the expensive, immutable chart-validated
-	// bundle. Each subtest still rebuilds its own clients, plan, reconciler,
-	// tenant server, and journals; the shared management handler state and UID
-	// are reset before the next scenario.
+	// These scenarios vary only mock source state. Reuse the immutable desired
+	// plan and schemas at one stable TLS identity. Every case rebuilds clients,
+	// tenant servers and live objects; reset the shared management source first.
 	state := &hostLeaseManagementState{}
 	apiFixture := newAPIFixture(t, state.serveManagement)
+	plan, reconciler := prepareHostLeaseObservationPlan(t, apiFixture)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			state.reset()
 			apiFixture.uid.Store("cluster-one")
-			h := newHostLeaseObservationHarnessWithAPIFixture(t, state, apiFixture)
+			h := newHostLeaseObservationHarnessFromPlan(t, state, apiFixture, plan, reconciler)
 			test.configure(h)
 			_, err := h.observe(t)
 			if err == nil {
@@ -680,15 +710,24 @@ func TestObserveHostWorkloadLeaseSnapshotRejectsIncompleteOrUnstableSources(t *t
 }
 
 func TestObserveHostWorkloadLeaseSnapshotRejectsWrongBindingAndIdentityChanges(t *testing.T) {
+	state := &hostLeaseManagementState{}
+	apiFixture := newAPIFixture(t, state.serveManagement)
+	plan, reconciler := prepareHostLeaseObservationPlan(t, apiFixture)
+	newHarness := func(t *testing.T) *hostLeaseObservationHarness {
+		t.Helper()
+		state.reset()
+		apiFixture.uid.Store("cluster-one")
+		return newHostLeaseObservationHarnessFromPlan(t, state, apiFixture, plan, reconciler)
+	}
 	t.Run("wrong tenant namespace", func(t *testing.T) {
-		h := newHostLeaseObservationHarness(t)
+		h := newHarness(t)
 		h.tenant.expected.Namespace = "other-tenant"
 		if _, err := h.observe(t); err == nil || h.tenantState.listCalls != 0 {
 			t.Fatalf("mismatched tenant namespace reached the tenant API: err=%v listCalls=%d", err, h.tenantState.listCalls)
 		}
 	})
 	t.Run("management identity changes during Node list", func(t *testing.T) {
-		h := newHostLeaseObservationHarness(t)
+		h := newHarness(t)
 		h.tenantState.listMode = "replace-management"
 		// The management identity is replaced after the second Node page.
 		if _, err := h.observe(t); err == nil || !strings.Contains(err.Error(), "read tenant CIDRPool failed") || h.tenantState.listCalls != 2 || h.managementState.poolReads != 1 {
@@ -696,7 +735,7 @@ func TestObserveHostWorkloadLeaseSnapshotRejectsWrongBindingAndIdentityChanges(t
 		}
 	})
 	t.Run("tenant identity changes during Node list", func(t *testing.T) {
-		h := newHostLeaseObservationHarness(t)
+		h := newHarness(t)
 		h.tenantState.listMode = "replace-tenant"
 		if _, err := h.observe(t); err == nil || !strings.Contains(err.Error(), "read tenant CIDRPool failed") || h.tenantState.listCalls != 2 || h.managementState.poolReads != 1 {
 			t.Fatalf("replacement tenant cluster did not produce the expected identity failure: %v", err)
@@ -705,8 +744,17 @@ func TestObserveHostWorkloadLeaseSnapshotRejectsWrongBindingAndIdentityChanges(t
 }
 
 func TestObserveHostWorkloadLeaseSnapshotHonorsCancellationAndDeadline(t *testing.T) {
+	state := &hostLeaseManagementState{}
+	apiFixture := newAPIFixture(t, state.serveManagement)
+	plan, reconciler := prepareHostLeaseObservationPlan(t, apiFixture)
+	newHarness := func(t *testing.T) *hostLeaseObservationHarness {
+		t.Helper()
+		state.reset()
+		apiFixture.uid.Store("cluster-one")
+		return newHostLeaseObservationHarnessFromPlan(t, state, apiFixture, plan, reconciler)
+	}
 	t.Run("canceled after first Node page", func(t *testing.T) {
-		h := newHostLeaseObservationHarness(t)
+		h := newHarness(t)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		h.tenantState.listMode = "cancel-after-first"
@@ -719,7 +767,7 @@ func TestObserveHostWorkloadLeaseSnapshotHonorsCancellationAndDeadline(t *testin
 		}
 	})
 	t.Run("already-expired execution deadline", func(t *testing.T) {
-		h := newHostLeaseObservationHarness(t)
+		h := newHarness(t)
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		defer cancel()
 		if _, err := h.observeContext(ctx); !errors.Is(err, context.DeadlineExceeded) {

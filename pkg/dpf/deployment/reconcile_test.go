@@ -127,6 +127,7 @@ func TestReconcilerCreateThenExactVerifyAllowsSchemaDefaultsAndStatus(t *testing
 }
 
 func TestReconcilerRejectsUnownedModifiedOrDeletingObjects(t *testing.T) {
+	r, template := newReconcileFixture(t)
 	for _, test := range []struct {
 		name   string
 		mutate func(*unstructured.Unstructured)
@@ -161,7 +162,7 @@ func TestReconcilerRejectsUnownedModifiedOrDeletingObjects(t *testing.T) {
 		{name: "missing UID", mutate: func(object *unstructured.Unstructured) { object.SetUID("") }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			r, desired := newReconcileFixture(t)
+			desired := template.DeepCopy()
 			marked, err := r.markedDesired(desired)
 			if err != nil {
 				t.Fatal(err)

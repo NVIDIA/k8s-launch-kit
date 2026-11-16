@@ -101,6 +101,7 @@ func equalActivationStringSet(left, right []string) bool {
 }
 
 func TestActivationDoesNotReportUnverifiedRebootCallbackResults(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	tests := []struct {
 		name string
 		call RebooterFunc
@@ -128,7 +129,7 @@ func TestActivationDoesNotReportUnverifiedRebootCallbackResults(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := newActivationIntegrationFixture(t)
+			fixture := newActivationIntegrationFixtureFromExecution(t, execution, false)
 			receipt, err := runActivationStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload,
 				fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, tc.call)
 			if err == nil {

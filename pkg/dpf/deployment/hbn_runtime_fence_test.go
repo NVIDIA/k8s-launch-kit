@@ -186,9 +186,10 @@ func TestHBNRuntimeResourceFenceKeepsFullCohortDriftChecks(t *testing.T) {
 }
 
 func TestHostConfigurationKeepsFullPhysicalBoundary(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, block := range []bool{false, true} {
 		t.Run(fmt.Sprintf("blocked-%v", block), func(t *testing.T) {
-			f := newRuntimeStageFixture(t, []string{"SERIAL-A"})
+			f := newRuntimeStageFixtureFromExecution(t, execution)
 			f.client.physicalChecks = 0
 			f.client.physicalCohorts = nil
 			if block {

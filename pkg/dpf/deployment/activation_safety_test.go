@@ -102,9 +102,10 @@ func TestActivationResetSafetyFailurePreventsClaimRebootAndACK(t *testing.T) {
 }
 
 func TestActivationDoesNotACKWithoutNewCurrentArmBoot(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, mode := range []string{"unchanged-agent", "same-kernel", "replacement", "new-request"} {
 		t.Run(mode, func(t *testing.T) {
-			fixture := newActivationIntegrationFixture(t)
+			fixture := newActivationIntegrationFixtureFromExecution(t, execution, false)
 			ctx, cancel := context.WithCancel(fixture.ctx)
 			defer cancel()
 			callbacks := 0
@@ -215,9 +216,10 @@ func TestActivationVerifiesEverySameHostDPUAndACKsBothAfterOneReboot(t *testing.
 }
 
 func TestActivationRefusesUnmeasuredPreOSResetAndChangedRequestBeforeClaim(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, mode := range []string{"agent-less-firmware", "request-changed-during-BMC"} {
 		t.Run(mode, func(t *testing.T) {
-			fixture := newActivationIntegrationFixture(t)
+			fixture := newActivationIntegrationFixtureFromExecution(t, execution, false)
 			fixture.client.omitAgentBaseline = mode == "agent-less-firmware"
 			fixture.client.changeRoundDuringResetSafety = mode == "request-changed-during-BMC"
 			calls := 0

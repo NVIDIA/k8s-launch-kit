@@ -360,6 +360,7 @@ func (c *activationConsumedReferenceClient) Create(ctx context.Context, desired 
 }
 
 func TestRunActivationRejectsForeignConsumedReferencesBeforeHoldOrReboot(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, tc := range []struct {
 		name, kind string
 		path       []string
@@ -370,7 +371,7 @@ func TestRunActivationRejectsForeignConsumedReferencesBeforeHoldOrReboot(t *test
 		{name: "DPU flavor", kind: "DPU", path: []string{"spec", "dpuFlavor"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := newActivationIntegrationFixture(t)
+			fixture := newActivationIntegrationFixtureFromExecution(t, execution, false)
 			ctx, cancel := context.WithTimeout(fixture.ctx, 10*time.Second)
 			defer cancel()
 			client := &activationConsumedReferenceClient{activationIntegrationFake: fixture.client, kind: tc.kind, path: tc.path}

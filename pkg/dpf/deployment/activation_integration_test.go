@@ -523,15 +523,16 @@ func deepCopyUnstructuredList(objects []unstructured.Unstructured) []unstructure
 var _ activationStageClient = (*activationIntegrationFake)(nil)
 
 func TestRunActivationStageCreatesClaimRebootsSelectedHostAndReachesReady(t *testing.T) {
+	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	for _, nodeReady := range []string{"False", "Unknown"} {
 		t.Run("node-ready-"+strings.ToLower(nodeReady), func(t *testing.T) {
-			testRunActivationStageCreatesClaimRebootsSelectedHostAndReachesReady(t, nodeReady)
+			testRunActivationStageCreatesClaimRebootsSelectedHostAndReachesReady(t, execution, nodeReady)
 		})
 	}
 }
 
-func testRunActivationStageCreatesClaimRebootsSelectedHostAndReachesReady(t *testing.T, nodeReady string) {
-	fixture := newActivationIntegrationFixture(t)
+func testRunActivationStageCreatesClaimRebootsSelectedHostAndReachesReady(t *testing.T, execution *managementExecution, nodeReady string) {
+	fixture := newActivationIntegrationFixtureFromExecution(t, execution, false)
 	fixture.client.nodeReadyOnCreate = nodeReady
 	var callbacks int
 	rebooter := RebooterFunc(func(_ context.Context, request ActivationRequest) (ActivationObservation, error) {
