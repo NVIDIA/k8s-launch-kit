@@ -98,6 +98,8 @@ vacancy checks. Resume observes existing reset claims and inspects completed
 host transactions; uncertain effects remain action-required. A late runtime failure repeats the complete fresh matrix
 without reimaging or replaying completed host configuration. Do not edit claims
 or checkpoints, change the bundle, or infer completion from Ready alone.
+When the expected tenant Node is absent, deployment verifies current bootstrap credentials before a requested reset, before acknowledgment and while waiting for initial registration. Missing, expired or unverifiable credentials require [owner-coordinated recovery](../../docs/user/dpf-deployment.md#recover-from-unavailable-bootstrap-credentials); preserve existing claims and requests. Resume never rotates credentials or extends their lifetime. Expected-name presence excuses only this credential inspection, not Node ownership or Ready checks.
+
 Standalone DPF validate, the root pipeline and generate `--deploy` remain
 unavailable. The following Network Operator instructions apply to Host.
 
@@ -360,4 +362,3 @@ Read access to the cluster-scoped NCT CRD is required. Existing Helm, preflight
 remediation and policy-bootstrap effects are retained if the check fails.
 See `docs/user/spectrum-x.md#ra24-dospcx-profile` for compatible-build requirements.
 
-When the expected tenant Node is absent, deployment verifies current bootstrap credentials before a requested reset, before acknowledgment and while waiting for initial registration. Missing, expired or unverifiable credentials require [owner-coordinated recovery](../../docs/user/dpf-deployment.md#recover-from-unavailable-bootstrap-credentials); preserve existing claims and requests. Resume never rotates credentials or extends their lifetime. Expected-name presence excuses only this credential inspection, not Node ownership or Ready checks.
