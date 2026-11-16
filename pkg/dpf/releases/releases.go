@@ -166,7 +166,7 @@ func load(data []byte) (catalog, error) {
 	if len(c.Releases) == 0 {
 		return catalog{}, fmt.Errorf("DPF release catalog has no entries")
 	}
-	if _, ok := c.Releases[c.DefaultRelease]; !ok {
+	if _, ok := c.Releases[c.DefaultRelease]; !ok || c.DefaultRelease == "" {
 		return catalog{}, fmt.Errorf("DPF release catalog default must name an existing release")
 	}
 	for key, r := range c.Releases {
