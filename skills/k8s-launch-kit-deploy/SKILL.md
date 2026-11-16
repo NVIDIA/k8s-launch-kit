@@ -93,6 +93,11 @@ without downloading the same large origin artifacts again.
 Transient SSH negotiation during an already-requested reboot stays within the
 remaining wait and never retries the action. Inspect the recorded safe SSH cause
 when completion remains uncertain.
+Every failed standalone DPF deployment result reports `error.transient: false`.
+Inspect the report and current resource/device state before recovery; when safe,
+resume explicitly with the recorded operation reference and unchanged inputs.
+Never automatically replay a stopped deployment, even when its cause looks
+temporary.
 Do not clean up recorded operation resources to satisfy standalone discovery's
 vacancy checks. Resume observes existing reset claims and inspects completed
 host transactions; uncertain effects remain action-required. A late runtime failure repeats the complete fresh matrix

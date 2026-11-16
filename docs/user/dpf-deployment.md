@@ -180,6 +180,11 @@ stdout and stderr. A stop can leave earlier management, tenant, enrollment,
 software or host-network effects in place. Inspect current resources and device
 state before another attempt, especially after timeout or interrupted host
 reboot. Do not retry a host reset when the report does not establish whether it occurred.
+Standalone DPF deployment JSON reports every stopped run with
+`error.transient: false`: this is an instruction to inspect before deciding on
+recovery, including when the underlying cause appears temporary. Preserve the
+report and operation reference, and choose an explicit resume only after
+checking the current effects.
 
 Before creating the DPUDeployment, the CLI reserves a durable operation in the
 existing operator namespace and reports its `namespace/name/UID` reference. The

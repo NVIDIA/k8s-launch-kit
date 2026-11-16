@@ -139,6 +139,9 @@ func writeDeploymentResult(request DeployRequest, format string, result deployme
 			result.State = deployment.RunStateFailed
 		}
 		failure = apperrors.NewDeploymentError("DPF deployment stopped", runErr, "Inspect the saved report and current resource state before retrying")
+		// A stopped DPF run can have partial effects that require inspection
+		// before a caller decides whether an explicit resume is safe.
+		failure.Transient = false
 		if result.ReportPath == "" {
 			failure.Message = "DPF deployment stopped before a report could be created"
 			failure.Suggestion = "Review the site, bundle and output permissions before retrying"

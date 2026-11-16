@@ -5,6 +5,7 @@ package dpf
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,10 +21,18 @@ import (
 var _ = Describe("DPF deployment CLI results", func() {
 	It("emits one JSON result on failure and leaves exit handling to the command", func() {
 		var stdout, stderr bytes.Buffer
-		result := deployment.RunResult{State: deployment.RunStateFailed, LastCompletedStage: "enrollment", ReportPath: "/reports/deployment.jsonl"}
-		err := writeDeploymentResult(DeployRequest{Stdout: &stdout, Stderr: &stderr}, "json", result, errors.New("private diagnostic detail"))
+		result := deployment.RunResult{
+			State: deployment.RunStateFailed, LastCompletedStage: "enrollment", ReportPath: "/reports/deployment.jsonl",
+			Operation: &deployment.OperationRef{Namespace: "operator-system", Name: "dpf-op-example", UID: "123e4567-e89b-12d3-a456-426614174000"},
+		}
+		cause := errors.New("private diagnostic detail")
+		err := writeDeploymentResult(DeployRequest{Stdout: &stdout, Stderr: &stderr}, "json", result, cause)
 		Expect(apperrors.IsReported(err)).To(BeTrue())
 		Expect(apperrors.ExitCodeFromError(err)).To(Equal(apperrors.ExitDeployment))
+		var structured *apperrors.StructuredError
+		Expect(errors.As(err, &structured)).To(BeTrue())
+		Expect(structured.Transient).To(BeFalse())
+		Expect(errors.Is(err, cause)).To(BeTrue())
 		Expect(stdout.String()).NotTo(ContainSubstring("private diagnostic detail"))
 		decoder := json.NewDecoder(&stdout)
 		var outcome map[string]any
@@ -32,6 +41,8 @@ var _ = Describe("DPF deployment CLI results", func() {
 		Expect(outcome["lastCompletedStage"]).To(Equal("enrollment"))
 		Expect(outcome["reportPath"]).To(Equal("/reports/deployment.jsonl"))
 		Expect(outcome["error"]).To(HaveKeyWithValue("category", "deployment"))
+		Expect(outcome["error"]).To(HaveKeyWithValue("transient", false))
+		Expect(outcome["operation"]).To(HaveKeyWithValue("name", "dpf-op-example"))
 		Expect(decoder.Decode(&outcome)).To(MatchError(io.EOF))
 		Expect(stderr.String()).To(BeEmpty())
 	})
@@ -46,15 +57,31 @@ var _ = Describe("DPF deployment CLI results", func() {
 		Expect(outcome["trafficValidated"]).To(BeTrue())
 	})
 
-	It("reports an early failure without advertising a missing report", func() {
+	It("reports an early failure without advertising a missing report or retrying automatically", func() {
 		var stdout, stderr bytes.Buffer
 		err := writeDeploymentResult(DeployRequest{Stdout: &stdout, Stderr: &stderr}, "json", deployment.RunResult{}, errors.New("cannot create journal"))
 		Expect(apperrors.IsReported(err)).To(BeTrue())
+		var structured *apperrors.StructuredError
+		Expect(errors.As(err, &structured)).To(BeTrue())
+		Expect(structured.Transient).To(BeFalse())
 		var outcome map[string]any
 		Expect(json.Unmarshal(stdout.Bytes(), &outcome)).To(Succeed())
 		Expect(outcome["state"]).To(Equal("failed"))
 		Expect(outcome["reportPath"]).To(BeEmpty())
 		Expect(outcome["error"]).To(HaveKeyWithValue("message", "DPF deployment stopped before a report could be created"))
+		Expect(outcome["error"]).To(HaveKeyWithValue("transient", false))
+	})
+
+	It("marks interrupted standalone deployment results action-required", func() {
+		var stdout, stderr bytes.Buffer
+		err := writeDeploymentResult(DeployRequest{Stdout: &stdout, Stderr: &stderr}, "json", deployment.RunResult{State: deployment.RunStateFailed, ReportPath: "/reports/deployment.jsonl"}, context.Canceled)
+		var structured *apperrors.StructuredError
+		Expect(errors.As(err, &structured)).To(BeTrue())
+		Expect(structured.Transient).To(BeFalse())
+		var outcome map[string]any
+		Expect(json.Unmarshal(stdout.Bytes(), &outcome)).To(Succeed())
+		Expect(outcome["error"]).To(HaveKeyWithValue("transient", false))
+		Expect(stdout.String()).NotTo(ContainSubstring("context canceled"))
 	})
 
 	It("fails when the final JSON result cannot be written", func() {
