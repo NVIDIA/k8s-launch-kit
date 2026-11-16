@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 )
 
 // hostHBNChecks evaluates host-side facts for each inventory-selected DPU. It
@@ -198,6 +199,46 @@ func runtimeObservation(host inventory.Device, key string) inventory.Observation
 }
 
 func managementPathCheck(host inventory.Device, selectedNetdevs []string, subject string) inventory.Check {
+	return managementPathCheckWithOwnedAddress(host, selectedNetdevs, subject, "", "")
+}
+
+// ResumeHostManagementPathCheck permits only the original inspected transaction's
+// exact physical-interface address, while retaining ancestry and default checks.
+// The caller must freshly inspect the owned transaction before calling this.
+func ResumeHostManagementPathCheck(inv *inventory.Inventory, serial string, identity sshprobe.HostNetworkIdentity, prefix string) inventory.Check {
+	dpu := inventory.Device{SerialNumber: serial}
+	if inv != nil {
+		for _, item := range inv.DPUs {
+			if item.SerialNumber == serial {
+				dpu = item
+			}
+		}
+	}
+	_, host, adapter, state, reason, message := resolveHostHBNAssociation(inv, dpu)
+	subject := serial
+	if host != nil {
+		subject += " @ " + hostDisplayName(*host)
+	}
+	if state != "passed" || host == nil || adapter == nil {
+		return hostCheck("host-management-separation", subject, state, reason, message)
+	}
+	current, err := sshprobe.SelectHostWorkloadNetworkIdentity(*host, adapter.Key, adapter.SerialNumber)
+	if err != nil {
+		return hostCheck("host-management-separation", subject, "unknown", "OWNED_RESUME_HOST_IDENTITY_UNVERIFIED", "The current physical host interface could not be established for the original operation request.")
+	}
+	if current != identity || prefix == "" {
+		return hostCheck("host-management-separation", subject, "failed", "OWNED_RESUME_HOST_IDENTITY_CHANGED", "The current physical host interface differs from its original operation request.")
+	}
+	_, _, netdevs := selectedHostFunctionChecks(*host, *adapter, subject)
+	check := managementPathCheckWithOwnedAddress(*host, netdevs, subject, identity.InterfaceName, prefix)
+	if check.State == "passed" {
+		check.ReasonCode = "OWNED_RESUME_HOST_PATH_VERIFIED"
+		check.Message = "The original inspected host workload address is the only permitted global address on selected paths; complete ancestry and default-route checks passed."
+	}
+	return check
+}
+
+func managementPathCheckWithOwnedAddress(host inventory.Device, selectedNetdevs []string, subject, allowedInterface, allowedPrefix string) inventory.Check {
 	if host.Runtime == nil {
 		return hostCheck("host-management-separation", subject, "unknown", "HOST_RUNTIME_UNAVAILABLE", "Host OS interfaces, network links, and routes are unavailable for management-path separation checks.")
 	}
@@ -262,7 +303,7 @@ func managementPathCheck(host inventory.Device, selectedNetdevs []string, subjec
 				if err != nil {
 					return hostCheck("host-management-separation", subject, "unknown", "HOST_INTERFACE_ADDRESS_INVALID", "A selected host interface address cannot be parsed safely.")
 				}
-				if ip.IsGlobalUnicast() && !ip.IsLoopback() {
+				if ip.IsGlobalUnicast() && !ip.IsLoopback() && (current != allowedInterface || address != allowedPrefix) {
 					return hostCheck("host-management-separation", subject, "failed", "HOST_ADDRESS_ON_SELECTED_PATH", fmt.Sprintf("Selected host PF %s or its bridge/bond ancestor already carries a global-unicast address; management separation is unverified.", current))
 				}
 			}

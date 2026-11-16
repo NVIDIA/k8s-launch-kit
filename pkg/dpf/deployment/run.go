@@ -294,6 +294,35 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 	if imageCheck.State != "passed" {
 		return result, reconcileError(imageCheck.ReasonCode, imageCheck.Message, nil)
 	}
+
+	// Resume identity and receipts are read-only authority for lifecycle-specific
+	// prerequisite assessment. Fresh deployment still requires unclaimed scope.
+	var client *APIClient
+	var prepared *preparedControlPlaneRun
+	var controlPlane controlPlaneReceipts
+	var workload workloadPreparationReceipt
+	if request.Resume != nil {
+		client, err = NewAPIClient(ctx, access, intent.Management, intent.KubernetesVersion)
+		if err != nil {
+			return result, fmt.Errorf("bind resume management client: %w", err)
+		}
+		if err = client.checkOperationPermissions(ctx, execution); err != nil {
+			return result, err
+		}
+		operation, loadErr := loadDeploymentOperation(ctx, client, execution, request.Resume)
+		if loadErr != nil {
+			return result, loadErr
+		}
+		result.Operation = operation.ref()
+		prepared, err = prepareResume(execution, access, operation)
+		if err != nil {
+			return result, err
+		}
+		controlPlane, workload, err = restoreOperationReceipts(ctx, client, prepared, journal, interval, requestTimeout)
+		if err != nil {
+			return result, err
+		}
+	}
 	if err := journal.record(executionEvent{Stage: "fresh-prerequisites", Operation: "observe", State: "attempted",
 		ReasonCode: "FRESH_PREREQUISITES_STARTED", Message: "Bind current management and host observations to the retained deployment plan."}); err != nil {
 		return result, err
@@ -304,6 +333,9 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		return result, fmt.Errorf("copy prerequisite request")
 	}
 	verification, err := request.VerifyPrerequisites(ctx, observerRequest, execution.plan)
+	if err == nil && request.Resume != nil {
+		verification, err = assessOwnedResumePrerequisites(ctx, client, prepared, controlPlane, workload, verification, access, journal, requestTimeout)
+	}
 	result.Checks = appendRunChecks(result.Checks, verification.Checks)
 	if len(verification.Checks) > 0 {
 		if journalErr := journalPrerequisiteChecks(journal, verification.Checks); journalErr != nil {
@@ -341,7 +373,11 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		ReasonCode: "FRESH_PREREQUISITES_PASSED", Message: "Fresh management identity and deploy-phase prerequisites match the retained plan."}); err != nil {
 		return result, err
 	}
-	client, err := NewAPIClient(ctx, access, intent.Management, intent.KubernetesVersion)
+	if client == nil {
+		client, err = NewAPIClient(ctx, access, intent.Management, intent.KubernetesVersion)
+	} else {
+		err = client.VerifyIdentity(ctx)
+	}
 	if err != nil {
 		return result, fmt.Errorf("bind management client to retained identity: %w", err)
 	}
@@ -349,23 +385,7 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 	if err := client.checkOperationPermissions(ctx, execution); err != nil {
 		return result, err
 	}
-	var prepared *preparedControlPlaneRun
-	var controlPlane controlPlaneReceipts
-	var workload workloadPreparationReceipt
 	if request.Resume != nil {
-		operation, loadErr := loadDeploymentOperation(ctx, client, execution, request.Resume)
-		if loadErr != nil {
-			return result, loadErr
-		}
-		result.Operation = operation.ref()
-		prepared, err = prepareResume(execution, access, operation)
-		if err != nil {
-			return result, err
-		}
-		controlPlane, workload, err = restoreOperationReceipts(ctx, client, prepared, journal, interval, requestTimeout)
-		if err != nil {
-			return result, err
-		}
 		prepared.beforeDeploymentCreate = func(observeCtx context.Context) error {
 			return verifyFirstDeploymentSources(observeCtx, client, execution, workload.Software, workloadChartSourceVerifier(request.VerifyChartSource), journal, maxBytes)
 		}

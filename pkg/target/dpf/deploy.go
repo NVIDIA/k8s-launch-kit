@@ -124,7 +124,7 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		result, runErr := deployment.Run(ctx, deployment.RunRequest{
 			Bundle: retained, Access: access, Resume: resume,
 			ReportPath: filepath.Join(runDir, "deployment.jsonl"), ProbeJournalPath: filepath.Join(runDir, "probe-resources.json"),
-			VerifyPrerequisites: freshDeploymentPrerequisites(retained, runDir), VerifyChartSource: verifyDeploymentChart,
+			VerifyPrerequisites: freshDeploymentPrerequisites(retained, runDir, resume != nil), VerifyChartSource: verifyDeploymentChart,
 			Rebooter:     rebooter,
 			PollInterval: 5 * time.Second, RequestTimeout: access.RequestTimeout,
 		})
@@ -179,18 +179,27 @@ func writeDeploymentResult(request DeployRequest, format string, result deployme
 	return nil
 }
 
-func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string) deployment.PrerequisiteVerifier {
-	return func(ctx context.Context, request config.Request, plan *generation.Plan) (deployment.PrerequisiteVerification, error) {
-		store, err := artifacts.New(request.Input, filepath.Join(runDir, "discovered.yaml"), true)
-		if err != nil {
-			return deployment.PrerequisiteVerification{}, err
-		}
-		deps := discovery.Dependencies{
+func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string, resume bool) deployment.PrerequisiteVerifier {
+	return deploymentPrerequisitesWithCollectors(retained, runDir, resume, func(store *artifacts.Store, plan *generation.Plan) discovery.Dependencies {
+		return discovery.Dependencies{
 			Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, HostLLDP: sshprobe.Collector{},
 			BMC:            redfish.Collector{IncludeNetworkFunctionMACs: true, ProvisioningRelease: plan.Intent().Release},
 			Probes:         probe.Runner{Assets: catalog.ProbeAssets(), Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))},
 			HBNPermissions: newHBNPermissionObserver().observe, HBNEnrollment: hbnEnrollmentAccessCheck, Artifacts: artifactcheck.Verifier{}, HostNetworking: sshprobe.ObserveHostWorkloadNetwork,
 		}
+	})
+}
+
+// The private collector seam retains the real native collection/plan-verification
+// path in integration tests without opening real endpoint transports.
+func deploymentPrerequisitesWithCollectors(retained *bundle.Bundle, runDir string, resume bool, collectors func(*artifacts.Store, *generation.Plan) discovery.Dependencies) deployment.PrerequisiteVerifier {
+	return func(ctx context.Context, request config.Request, plan *generation.Plan) (deployment.PrerequisiteVerification, error) {
+		store, err := artifacts.New(request.Input, filepath.Join(runDir, "discovered.yaml"), true)
+		if err != nil {
+			return deployment.PrerequisiteVerification{}, err
+		}
+		deps := collectors(store, plan)
+		deps.DeferHBNReadiness = resume
 		report := discovery.Collect(ctx, request, store.RunID(), deps)
 		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		err = store.Publish(publishCtx, &report)
@@ -204,7 +213,8 @@ func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string) deploy
 		if report.Execution != "completed" || report.Discovery.Outcome != "complete" || len(report.Errors) > 0 || report.Readiness == nil {
 			return deployment.PrerequisiteVerification{}, fmt.Errorf("fresh deployment discovery is incomplete; inspect %s", store.RunDir)
 		}
-		if report.Readiness.State != "ready" {
+
+		if !resume && report.Readiness.State != "ready" {
 			return deployment.PrerequisiteVerification{Inventory: report.Inventory, Checks: report.Readiness.Checks}, fmt.Errorf("fresh HBN-BGP prerequisites are blocked; inspect %s", store.RunDir)
 		}
 		current := request.Input

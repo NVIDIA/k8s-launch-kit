@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -158,7 +159,7 @@ func parseOperationalRoutes(raw []byte, input, family string, destination **[]Ro
 		if !ok {
 			return
 		}
-		routes = append(routes, Route{Family: family, Prefix: prefix, Table: table, Protocol: protocol, Type: routeType})
+		routes = append(routes, Route{Family: family, Prefix: prefix, Table: table, Protocol: protocol, Type: routeType, NextHops: routeNextHops(obj)})
 	}
 	*destination = &routes
 }
@@ -278,4 +279,93 @@ func l3Int(obj jsonObject, key, input, path string, issues *[]Issue) (int, bool)
 		return 0, false
 	}
 	return value, true
+}
+
+// routeNextHops is deliberately optional for ordinary vacancy checks. Older
+// inventories and unsupported kernel encodings remain unmeasured for owned
+// resume; no missing interface or gateway is manufactured from the prefix.
+func routeNextHops(obj map[string]json.RawMessage) []RouteNextHop {
+	if raw, exists := obj["flags"]; exists {
+		var flags []string
+		if json.Unmarshal(raw, &flags) != nil {
+			return nil
+		}
+		for _, flag := range flags {
+			if flag != "onlink" {
+				return nil
+			}
+		}
+	}
+	rows := []map[string]json.RawMessage{obj}
+	if raw, exists := obj["nexthops"]; exists {
+		if json.Unmarshal(raw, &rows) != nil || len(rows) == 0 || len(rows) > 256 {
+			return nil
+		}
+	}
+	result := make([]RouteNextHop, 0, len(rows))
+	seen := map[string]bool{}
+	for _, row := range rows {
+		var iface, gateway string
+		if json.Unmarshal(row["dev"], &iface) != nil || iface == "" || len(iface) > 255 || strings.ContainsAny(iface, " /\t\r\n") {
+			return nil
+		}
+		if raw, exists := row["flags"]; exists {
+			var flags []string
+			if json.Unmarshal(raw, &flags) != nil {
+				return nil
+			}
+			for _, flag := range flags {
+				if flag != "onlink" {
+					return nil
+				}
+			}
+		}
+		if raw, exists := row["via"]; exists {
+			var via struct {
+				Family string `json:"family"`
+				Host   string `json:"host"`
+			}
+			if json.Unmarshal(raw, &via) != nil || via.Family != "inet" && via.Family != "inet6" {
+				return nil
+			}
+			gateway = via.Host
+			address, err := netip.ParseAddr(gateway)
+			if err != nil || address.Is4() != (via.Family == "inet") {
+				return nil
+			}
+			if _, duplicate := row["gateway"]; duplicate {
+				return nil
+			}
+		} else if json.Unmarshal(row["gateway"], &gateway) != nil {
+			return nil
+		}
+		address, err := netip.ParseAddr(gateway)
+		if err != nil || address.IsUnspecified() || address.IsMulticast() || address.IsLoopback() {
+			return nil
+		}
+		key := iface + "/" + address.String()
+		if seen[key] {
+			return nil
+		}
+		seen[key] = true
+		result = append(result, RouteNextHop{Interface: iface, Gateway: address.String()})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Interface != result[j].Interface {
+			return result[i].Interface < result[j].Interface
+		}
+		return result[i].Gateway < result[j].Gateway
+	})
+	return result
+}
+
+func routeNextHopKey(hops []RouteNextHop) string {
+	var result strings.Builder
+	for _, hop := range hops {
+		result.WriteString(hop.Interface)
+		result.WriteByte(0)
+		result.WriteString(hop.Gateway)
+		result.WriteByte(0)
+	}
+	return result.String()
 }

@@ -68,9 +68,19 @@ document, including a safe `error` on failure; progress is on stderr. Preserve
 the report and partial effects for inspection rather than blindly repeating a
 reset. Preserve the reported `namespace/name/UID` operation reference and use
 `deploy --target dpf --user-config SITE --deployment-files BUNDLE --resume REF`
-for the same initial deployment. Resume verifies prior identities, observes
-existing reset claims and inspects completed host transactions; uncertain effects
-remain action-required. A late runtime failure repeats the complete fresh matrix
+for the same initial deployment. Resume loads the exact UID/bundle/management/
+namespace/cohort-bound operation before assessing fresh prerequisites. It verifies
+current resources, credentials and tenant API ownership instead of requiring its
+own enrolled devices or tenant to be absent. Owned host addresses require the
+original inspect-only transaction and current allocation; extra addresses and
+default routes still block. Owned route prefixes require exact current allocation
+identity and every next hop on that allocation's own LLDP-corroborated DPU uplinks;
+unknown, foreign, mixed and overbroad paths block. Physical, switch, storage,
+access and compatible operator checks remain required. Raw initial-deployment
+checks stay in the discovery report; execution records `OWNED_RESUME_*` proof.
+Do not clean up recorded operation resources to satisfy standalone discovery's
+vacancy checks. Resume observes existing reset claims and inspects completed
+host transactions; uncertain effects remain action-required. A late runtime failure repeats the complete fresh matrix
 without reimaging or replaying completed host configuration. Do not edit claims
 or checkpoints, change the bundle, or infer completion from Ready alone.
 Standalone DPF validate, the root pipeline and generate `--deploy` remain
