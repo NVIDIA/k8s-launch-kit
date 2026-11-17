@@ -98,9 +98,17 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		request := config.Request{Input: input, Kubeconfig: kubeconfig, Context: "selected", Mode: "inventory", Timeout: time.Minute, RequestTimeout: time.Second, MaxConcurrentBMCs: 2, DPFNamespace: intent.Namespace, Software: &intent.Release, HBN: intent.Networking, HBNGeneration: intent.Generation, Targets: []config.Target{{Role: "hosts", InputRef: "/discovery/hosts/0", Endpoint: "ssh://192.0.2.40:22", SSH: &config.SSHAccess{}}, {Role: "dpus", InputRef: "/discovery/dpus/0", Endpoint: "https://192.0.2.30"}}}
 		originReads := 0
 		deps := discovery.Dependencies{SSH: physical, BMC: physical, DeferHBNReadiness: true, Artifacts: prerequisiteArtifactVerifier{calls: &originReads}}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		DeferCleanup(cancel)
-		before := discovery.Collect(ctx, request, "before", deps)
+		collectWithinTimeout := func() inventory.Report {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			return discovery.Collect(ctx, request, "before", deps)
+		}
+		verifyWithinTimeout := func(verify deployment.PrerequisiteVerifier, current config.Request, plan *generation.Plan, phase deployment.PrerequisitePhase) (deployment.PrerequisiteVerification, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			return verify(ctx, current, plan, phase)
+		}
+		before := collectWithinTimeout()
 		Expect(before.Errors).To(BeEmpty())
 		Expect(before.Discovery.Outcome).To(Equal("complete"))
 		input.Site.Inventory = before.Inventory
@@ -135,7 +143,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 			for _, resume := range []bool{false, true} {
 				verify := deploymentPrerequisitesWithTransports(retained, filepath.Join(root, fmt.Sprint(resume)), resume, collectors)
 				previousReads := originReads
-				observed, err := verify(ctx, request, plan, phase)
+				observed, err := verifyWithinTimeout(verify, request, plan, phase)
 				if phase == deployment.BeforeActivation {
 					Expect(originReads).To(Equal(previousReads+1), "fresh and resumed Before must read source bytes")
 				} else {
@@ -196,7 +204,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 				runDir := filepath.Join(root, fmt.Sprintf("external-%t", resume))
 				verify := deploymentPrerequisitesWithTransports(retained, runDir, resume, collectors)
 				previousReads := originReads
-				observed, err := verify(ctx, request, plan, phase)
+				observed, err := verifyWithinTimeout(verify, request, plan, phase)
 				if resume || phase == deployment.AfterActivation {
 					Expect(err).NotTo(HaveOccurred(), "validated retained BF4 recipe must not fall back to the incomplete catalog")
 				} else {
@@ -233,7 +241,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		Expect(err).NotTo(HaveOccurred())
 		verify := deploymentPrerequisitesWithTransports(retained, filepath.Join(root, "external-changed-memory"), true, collectors)
 		previousReads := originReads
-		_, err = verify(ctx, changed, plan, deployment.BeforeActivation)
+		_, err = verifyWithinTimeout(verify, changed, plan, deployment.BeforeActivation)
 		Expect(err).To(MatchError(ContainSubstring("change the generated plan")), "retained recipe must not overwrite current supported memory")
 		Expect(originReads).To(Equal(previousReads+1), "changed intent is rejected after actual fresh collection")
 		unchanged, err = os.ReadFile(input.Path)
@@ -242,7 +250,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 
 		// Cancellation must retain the partial report using the bounded publication
 		// context, then return cancellation rather than a publication error.
-		cancelled, stop := context.WithCancel(ctx)
+		cancelled, stop := context.WithCancel(context.Background())
 		stop()
 		cancelDir := filepath.Join(root, "cancelled")
 		verify = deploymentPrerequisitesWithTransports(retained, cancelDir, true, collectors)
