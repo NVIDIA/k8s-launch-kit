@@ -94,7 +94,7 @@ Generated `SriovNetworkNodePolicy` and NV-IPAM `IPPool` resources carry the
 source identifiers selected for that artifact. Keep the annotation and
 `.l8k/resolved-config.yaml` together. Full merged buckets record all their
 sources; strict subsets record only their selected sources. Source identifiers
-must be unique, including for direct library rendering. The established unnamed
+must be unique. The established unnamed
 single-source configuration keeps its empty identifier and is represented by the
 explicit annotation `[""]`. It resolves only when the supplied configuration has
 exactly that one unnamed source; missing config or multiple sources fails rather
@@ -133,12 +133,10 @@ with a deployed baseline.
 ## Bundle Layout
 
 Launch Kit renders and checks the complete artifact set before replacing the
-selected plugin output directory.
+selected deployment output directory.
 
-Rendered files are structurally checked after ownership annotations and
-before the output directory is cleaned. If this check fails, the previous
-output remains in place. Successful output keeps the rendered bytes, and a
-combined generate/deploy run uses the same checked snapshot. Network Operator
+If a generated file fails validation, the previous output remains in place.
+A combined generate/deploy run applies the generated bundle. Network Operator
 files use this layout:
 
 ```text

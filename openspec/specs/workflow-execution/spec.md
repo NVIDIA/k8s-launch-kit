@@ -62,6 +62,20 @@ Equivalent entry points SHALL reuse common semantics for equivalent modes. Inten
 - **WHEN** standalone deploy runs with dry-run selected
 - **THEN** its Kubernetes deployment path uses server-side dry-run semantics; this does not describe earlier discovery effects.
 
+### Requirement: Actionable non-success outcomes
+
+New and changed workflow checks SHALL persist a stable reason code and safe explanation for every failed, unavailable, unknown, skipped or deferred result. The result SHALL distinguish missing prerequisites from an attempted operation failure and identify the subject and source where known. Diagnostic persistence MUST NOT disclose credentials or treat optional unknowns as passes. Existing unrelated baseline paths are not retroactively migrated by this requirement.
+
+#### Scenario: Prerequisite executable is missing
+
+- **WHEN** a workflow cannot execute a check because a required tool is unavailable
+- **THEN** the report and saved observations identify the executable and explain the missing prerequisite, while required versus optional policy determines whether dependent work may continue.
+
+#### Scenario: Service does not exist in the current phase
+
+- **WHEN** a check depends on an operator-created endpoint before that operator is installed
+- **THEN** it is deferred with a reason and required phase, not reported as passed or used to fail initial hardware inventory.
+
 ## Baseline and limits
 
 The root pipeline runs discover/generate/deploy, not automatic validation. Exactly-once dispatch is not a promise of global idempotency or a non-reusable operation object. Discovery may mutate supplied config and use a global logger. It performs pre-clean before some worker validation and defers cleanup only after successful setup. See [effects](../managed-effects/spec.md), [artifacts](../artifact-handoff/spec.md) and [outcomes](../outcomes-evidence/spec.md) for those independent responsibilities.
@@ -70,4 +84,4 @@ The root pipeline runs discover/generate/deploy, not automatic validation. Exact
 
 - Implementation: [target registry](../../../pkg/target), [Host adapters](../../../pkg/target/host), [CLI routing](../../../pkg/cmd/target_cli.go), [application deploy](../../../pkg/app/deploy.go).
 - Existing suites: [target](../../../pkg/target/target_test.go), [Host driver](../../../pkg/target/host/driver_test.go), [deploy](../../../pkg/target/host/deploy_test.go), [launcher](../../../pkg/target/host/launcher_test.go).
-- User documentation: [targets](../../../docs/advanced/targets.md).
+- Engineering: [target extension](../../../engineering/advanced/targets.md).

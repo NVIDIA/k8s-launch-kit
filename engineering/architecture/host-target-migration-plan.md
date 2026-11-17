@@ -357,7 +357,7 @@ the process. The Cobra boundary remains the only owner of exit codes.
 The migration must pay particular attention to JSON mode:
 
 - preserve command-specific stdout contracts (including validation's JSON
-  stream); see [Automation](../integrator/automation.md#json-mode);
+  stream); see [Automation](../../docs/integrator/automation.md#json-mode);
 - human logs remain on stderr;
 - errors are finalized once, not by both `app.Launcher` and Cobra;
 - the existing Host JSON schema does not gain target fields during this work;

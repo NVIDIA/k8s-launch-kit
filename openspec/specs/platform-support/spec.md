@@ -75,4 +75,5 @@ Support claims MUST identify the platform, profile, hardware and phases actually
 
 - Implementation: [flavor](../../../pkg/config/flavor.go), [targets](../../../pkg/target), [profiles](../../../pkg/profiles), [OCP configuration](../../../pkg/networkoperatorplugin/ocp_config.go).
 - Existing suites: [Host driver](../../../pkg/target/host/driver_test.go), [OCP config](../../../pkg/networkoperatorplugin/ocp_config_test.go), [OCP validation](../../../pkg/networkoperatorplugin/ocp_validate_test.go).
-- User documentation: [OpenShift prerequisites and qualification](../../../docs/user/openshift.md), [targets](../../../docs/advanced/targets.md).
+- User documentation: [OpenShift prerequisites and qualification](../../../docs/user/openshift.md).
+- Engineering: [target extension](../../../engineering/advanced/targets.md).

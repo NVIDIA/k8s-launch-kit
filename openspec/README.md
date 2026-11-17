@@ -87,3 +87,19 @@ promise across several boundaries. It is optional for routine conforming changes
 these contracts introduce no mandatory proposal/approval stage or per-flag ceremony.
 Keep exact flag/default/version inventories in their existing mechanical sources,
 operating procedures in docs/skills, and development rules in AGENTS.md.
+
+## Procedural workflow documentation
+
+[Repository-owned workflow definitions](workflows/README.md) under `workflows/`
+provide the single source for the DPF CLI procedures and their flow diagrams.
+`python3 scripts/generate-workflow-docs.py` renders
+[DPF workflows](../docs/user/dpf-workflows.md); `--check` detects drift without
+writing files. The Docs CI job runs the generator tests and drift check before
+building the site.
+
+This is a Launch Kit documentation extension colocated with OpenSpec contracts,
+**not a native executable OpenSpec workflow format**. The generator does not run
+commands, validate infrastructure or enforce runtime workflow transitions. OpenSpec
+structural validation remains separate; neither check proves implementation
+conformance. Procedures must be reviewed against the CLI and relevant contract
+scenarios when behavior changes.

@@ -33,7 +33,7 @@ Choose the owners before building a pipeline: who renders, who manages the Netwo
 4. Create a separate apply set for the external controller. `values.yaml` is Helm input for the Helm owner; `.l8k/` is metadata for Launch Kit; `*example*.yaml` files are validation fixtures. Apply only approved operational Kubernetes resources in dependency order. If Helm is externally owned, set `networkOperator.skipHelmChart: true` before generation. Avoid a controller prune policy that could delete other cohorts or manually owned resources; compare the complete desired/live inventory.
 5. After the external controller reports reconciliation, retrieve the **same complete artifact** and run `l8k validate --deployment-files ./deployment --wait 10m`. Omit `--user-config` so validation uses the saved effective configuration. Keep the HTML report and apply the [acceptance outcomes](../user/validation.md#acceptance-outcomes); process success alone can leave incomplete connectivity coverage.
 
-The reproduction record should contain the CLI version/build, selected operator release, source configuration, every referenced profile/topology/workload file, preset or template revision/digest, all render options, complete generated bundle and sidecar, apply owner/revision, and validation report. Mutable local paths alone cannot reproduce a render. The site follows development `main`; use the documentation at the installed release's tag or commit when operating an older binary.
+The reproduction record should contain the CLI version/build, selected operator release, source configuration, every referenced profile/topology/workload file, preset or template revision/digest, all render options, complete generated bundle and sidecar, apply owner/revision, and validation report. Mutable local paths alone cannot reproduce a render. Use documentation matching the installed CLI release.
 
 ## JSON Mode
 
@@ -52,8 +52,7 @@ Output contracts differ by command:
 | `preset list`, `preset update`, `sosreport` | Text output; these commands do not provide a JSON success contract despite accepting the inherited flag. |
 
 Lifecycle JSON mode sends human-readable progress to stderr and auto-confirms
-prompts. Structured error objects may be emitted on failures; early Cobra flag
-parse errors can instead write text to stderr. Validation can emit partial
+prompts. Structured error objects may be emitted on failures; invalid command-line arguments can instead write text to stderr. Validation can emit partial
 results before a failure. Always check the process exit status.
 
 `--yes` is root-only. Use `--output json` for non-interactive lifecycle

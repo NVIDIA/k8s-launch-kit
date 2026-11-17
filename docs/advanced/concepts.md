@@ -11,8 +11,14 @@ The [planning guide](../user/profiles.md) uses these terms to choose a
 deployment. An `l8k` binary version, a Network Operator release line, a
 Spectrum-X RA version, a Kubernetes/OpenShift flavor, a deployment profile,
 and a topology preset describe different choices. Pinning one does not pin the
-others. The `host` target covers the current lifecycle; the reserved `dpf`
-target has no available phases.
+others. The `host` target provides the networking lifecycle described here.
+The separate `dpf` target supports [inventory discovery only](../user/dpf-workflows.md)
+in this version. Inventory needs no kubeconfig; a supplied kubeconfig adds
+management-cluster observations. Explicit management network probes target each
+observed node that meets the existing readiness and platform checks, using pinned,
+runtime-qualified diagnostic assets. Node count alone does not establish control-plane
+HA or qualify a production topology. Generation, deployment, validation and the
+composite pipeline are unavailable.
 
 ## Hardware
 

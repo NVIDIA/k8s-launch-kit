@@ -57,6 +57,20 @@ Resolution SHALL leave caller inputs and shared defaults unchanged. Extensions M
 - **WHEN** one caller modifies its resolved nested configuration
 - **THEN** a subsequent resolution and the original source/defaults retain their own values.
 
+### Requirement: DPF software release defaults
+
+The DPF target SHALL resolve software coordinates from a release-owned BOM, separately from site access inputs and observed running versions. Omitted or null release selection SHALL use the catalog default; explicit empty or unknown releases SHALL fail before remote access. Resolution SHALL preserve source configuration and return isolated catalog values. Minimum requirements, desired targets, model applicability and provenance SHALL remain distinct; unknown requirements SHALL retain reasons and never imply qualification.
+
+#### Scenario: Explicit unsupported release
+
+- **WHEN** a DPF input selects a release absent from the embedded catalog
+- **THEN** configuration fails without substituting the default release or contacting infrastructure.
+
+#### Scenario: Inventory hardware is outside the BOM applicability
+
+- **WHEN** identity collection succeeds for hardware outside the selected release BOM
+- **THEN** inventory remains useful and a reasoned later-phase compatibility check is unresolved; no supported tuple is invented.
+
 ## Baseline and limits
 
 Tag-driven wiring covers root/generate/discover; standalone deploy/validate also use typed Host mappings. Nonzero inference from `Options` cannot represent every explicit zero; use the existing presence-aware inputs. This contract does not promise purity for discovery. [Artifact handoff](../artifact-handoff/spec.md) owns persisted metadata and source selection.

@@ -17,11 +17,13 @@
 package cmd
 
 import (
+	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	dpftarget "github.com/nvidia/k8s-launch-kit/pkg/target/dpf"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
@@ -40,7 +42,16 @@ NicDevice CRs, and torn down when discovery finishes.
 
 Discovery groups nodes by hardware, detects east-west vs north-south
 NICs, and probes OFED-dependent modules. With --user-config, it replaces
-clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.`,
+clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.
+
+With --target dpf, collect inventory from explicitly selected host, DPU and BMC
+endpoints using ordinary YAML. Inventory mode is the default and needs no
+kubeconfig. A supplied kubeconfig adds management-cluster observations.
+Explicit discovery.probes.mode: management enables per-node network probes.
+It probes each observed management node that meets the existing readiness and
+platform checks, using the pinned, runtime-qualified diagnostic image assets. This
+build supports DPF discovery only; generate, deploy, validate and the composite
+pipeline are unavailable.`,
 		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
@@ -67,6 +78,13 @@ clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI override
   l8k discover --save-cluster-config ./cluster-config.yaml \
     --output json 2>/dev/null`,
 		Run: func(cmd *cobra.Command, args []string) {
+			if targetName == string(target.DPF) && len(args) > 0 {
+				exitWithError(apperrors.NewValidationError("discover takes no positional arguments", nil, "Use --user-config"), outputFormat)
+			}
+			if targetName == string(target.DPF) {
+				runTargetCommand(cmd, target.Discover, dpftarget.NewDiscoverAdapter(dpftarget.Request{UserConfig: userConfig, OutputPath: saveClusterConfig, ExplicitOutput: cmd.Flags().Changed("save-cluster-config")}))
+				return
+			}
 			opts := mustCollectConfigFlags(cmd, discoverConfigOptions)
 			opts.ConfigDir = configDir
 			opts.DiscoverClusterConfig = true
@@ -93,6 +111,8 @@ clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI override
 func init() {
 	rootCmd.AddCommand(discoverCmd)
 	addTargetFlag(discoverCmd)
+	discoverCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress discovery progress (final result and errors still shown)")
+	setFlagGroup(discoverCmd, "quiet", GroupOutputLogging)
 
 	discoverCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
 	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Base config to merge with discovered hardware")

@@ -16,15 +16,11 @@ Each `clusterConfig` entry is a source group with its own:
 - East-west PF inventory, rail assignments, and capabilities.
 - Storage and third-party RDMA kernel modules.
 
-Fresh discovery derives `identifier` from the machine/GPU identity, lowercases
-it, and removes complete `NVIDIA` segments. For example,
-`DGX-B200-NVIDIA-H200` becomes `dgx-b200-h200`; the Launch Kit machine node
-label uses the same value. Common machine segments are shortened in the same
-pass (`ThinkSystem` → `ts`, `PowerEdge` → `pe`). Identifiers are bounded to 30
-bytes. Long values use balanced machine/GPU prefixes plus a 6-character
-deterministic hash, with unused prefix space reassigned to the longer component.
-The separate GPU label still retains its discovered value such as `NVIDIA-H200`.
-Use the persisted identifier shown in `cluster-config.yaml` with `--groups`.
+Discovery saves a lowercase group identifier and uses the same value for the
+Launch Kit machine label. Names may be shortened to fit the identifier limit.
+The separate GPU label retains a value such as `NVIDIA-H200`. Use the saved
+identifier from `cluster-config.yaml` with `--groups`; do not construct it from
+the machine and GPU names yourself.
 
 Inspect the available groups before filtering:
 

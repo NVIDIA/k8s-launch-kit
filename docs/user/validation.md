@@ -208,9 +208,7 @@ The root is `<testsuites name="l8k validation tests">`. Each family is a direct
 `<testsuite>` child with `tests`, `failures`, `errors`, `skipped` and `time`
 attributes. Each directional pod/rail probe is a direct `<testcase>` child,
 named `FamilyName::source→destination`; endpoint names include node, rail, pod
-and IP to distinguish probes. There is no extra aggregate testcase. Counters
-count the child cases once. This structure is readable by ai-cloud-validation's
-JUnit parser; nested `<testcase>` elements would hide the individual results.
+and IP to distinguish probes. Suite counters summarize these individual results.
 
 Suite time is measured wall-clock seconds for the family stage, including route
 checks. Individual probe times are omitted because batched RDMA execution does

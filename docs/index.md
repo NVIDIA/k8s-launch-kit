@@ -11,9 +11,14 @@ NVIDIA Kubernetes Launch Kit (`l8k`) helps platform teams configure NVIDIA netwo
 
 Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, InfiniBand, or Spectrum-X networking. Start with [Plan your deployment](user/profiles.md) to choose a platform and profile, check what is qualified, and identify the site inputs and permissions you need.
 
-The lifecycle commands operate on the `host` target by default. The reserved
-`dpf` target has no available lifecycle phases; see the
-[target extension contract](advanced/targets.md) if you are extending Launch Kit.
+The lifecycle commands operate on the `host` target by default. For a separate
+DPU estate, the `dpf` target supports inventory discovery only in this version.
+Inventory needs no kubeconfig; a supplied kubeconfig adds management-cluster
+observations. Explicit management network probes target each observed node that meets
+the existing readiness and platform checks, using pinned, runtime-qualified diagnostic
+assets. Node count alone does not establish control-plane HA or qualify a production
+topology. DPF generation, deployment, validation and the composite pipeline are
+unavailable. See the [DPF discovery workflow](user/dpf-workflows.md).
 
 ## Find Your Path
 
@@ -27,7 +32,6 @@ The lifecycle commands operate on the `host` target by default. The reserved
 | Platform engineer managing mixed hardware | [Heterogeneous Clusters](user/heterogeneous-clusters.md) |
 | Spectrum-X operator | [Spectrum-X](user/spectrum-x.md) |
 | CI/CD or GitOps integrator | [Automation](integrator/automation.md) |
-| Integrator adding an infrastructure target | [Target-aware CLI](advanced/targets.md) |
 | AI agent integrator | [AI Skills](integrator/ai-skills.md) |
 | Operator confirming a deployment is ready for use | [Validation](user/validation.md) |
 | Application owner connecting a workload | [Use the network in an application](user/workloads.md) |

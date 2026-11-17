@@ -127,4 +127,4 @@ Structural validation does not prove CRD schema/admission or readiness. Sidecar 
 
 - Implementation: [bundle](../../../pkg/bundle), [effective config](../../../pkg/config/effective.go), [Host paths](../../../pkg/target/host/paths.go).
 - Existing suites: [bundle](../../../pkg/bundle/bundle_test.go), [application bundle](../../../pkg/app/bundle_test.go), [Host bundle](../../../pkg/target/host/bundle_test.go), [effective config](../../../pkg/config/effective_test.go), [paths](../../../pkg/target/host/paths_test.go).
-- Architecture: [artifact bundle](../../../docs/architecture/artifact-bundle.md).
+- Architecture: [artifact bundle](../../../engineering/architecture/artifact-bundle.md).
