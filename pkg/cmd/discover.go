@@ -29,6 +29,7 @@ import (
 
 var (
 	discoverConfigOptions options.Options
+	discoverUseCase       string
 	discoverCmd           = &cobra.Command{
 		Use:   "discover",
 		Short: "Discover cluster network hardware capabilities",
@@ -45,13 +46,12 @@ NICs, and probes OFED-dependent modules. With --user-config, it replaces
 clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.
 
 With --target dpf, collect inventory from explicitly selected host, DPU and BMC
-endpoints using ordinary YAML. Inventory mode is the default and needs no
-kubeconfig. A supplied kubeconfig adds management-cluster observations.
-Explicit discovery.probes.mode: management enables per-node network probes.
-It probes each observed management node that meets the existing readiness and
-platform checks, using the pinned, runtime-qualified diagnostic image assets. This
-build supports DPF discovery only; generate, deploy, validate and the composite
-pipeline are unavailable.`,
+endpoints using ordinary YAML. Inventory is the default and needs no kubeconfig.
+A supplied kubeconfig adds management-cluster observations. Explicit
+discovery.probes.mode: management requests network probes on every observed node
+that meets the readiness and platform checks, using pinned Linux/amd64 assets.
+Use --use-case hbn-bgp to check the selected use case before generating and
+deploying its DPF bundle.`,
 		Example: `  # Basic discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
@@ -82,7 +82,11 @@ pipeline are unavailable.`,
 				exitWithError(apperrors.NewValidationError("discover takes no positional arguments", nil, "Use --user-config"), outputFormat)
 			}
 			if targetName == string(target.DPF) {
-				runTargetCommand(cmd, target.Discover, dpftarget.NewDiscoverAdapter(dpftarget.Request{UserConfig: userConfig, OutputPath: saveClusterConfig, ExplicitOutput: cmd.Flags().Changed("save-cluster-config")}))
+				var useCase *string
+				if cmd.Flags().Changed("use-case") {
+					useCase = &discoverUseCase
+				}
+				runTargetCommand(cmd, target.Discover, dpftarget.NewDiscoverAdapter(dpftarget.Request{UserConfig: userConfig, UseCase: useCase, OutputPath: saveClusterConfig, ExplicitOutput: cmd.Flags().Changed("save-cluster-config")}))
 				return
 			}
 			opts := mustCollectConfigFlags(cmd, discoverConfigOptions)
@@ -111,6 +115,8 @@ pipeline are unavailable.`,
 func init() {
 	rootCmd.AddCommand(discoverCmd)
 	addTargetFlag(discoverCmd)
+	discoverCmd.Flags().StringVar(&discoverUseCase, "use-case", "", "DPF use case to check: hbn-bgp (overrides dpf.useCase)")
+	setFlagGroup(discoverCmd, "use-case", GroupProfile)
 	discoverCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress discovery progress (final result and errors still shown)")
 	setFlagGroup(discoverCmd, "quiet", GroupOutputLogging)
 

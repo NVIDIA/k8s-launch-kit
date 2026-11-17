@@ -11,7 +11,113 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
-This workflow uses the default `host` target; `--target host` is equivalent.
+The Host workflow below uses the default `host` target; `--target host` is
+equivalent. For the independent DPU cluster, use the DPF procedure below.
+
+## DPF HBN-BGP
+
+Native HBN eligibility rejects a complete directed ordinary/DF matrix whose
+packet-spacing lower bound cannot fit the two-hour maximum. Fewer hosts are not
+a completion guarantee. Fresh and resume deployment recheck the actual remaining
+deadline before image metadata or discovery probes, and before first deployment
+creation after preparation. See [the budget rule](../../docs/user/dpf-deployment.md#run-deployment).
+
+The CLI must read the retained HBN image's manifest/config metadata over
+anonymous HTTPS, with only same-origin anonymous Bearer token exchange. Docker
+and kubelet pull credentials are not used by this verifier. Basic authentication
+or a foreign token realm blocks the command before discovery probes or cluster
+changes, including on resume. The early image check proves current metadata
+identity/access only; runtime repeats it before accepting traffic results.
+
+The standalone DPF command path is available; the current BF4/HBN-BGP cohort
+remains beta. A successful run checks the selected provisioning, BGP, route and
+traffic conditions and does not qualify other hardware or release combinations.
+
+Read [DPF deployment](../../docs/user/dpf-deployment.md) and its
+[workflow diagram](../../docs/user/dpf-workflows.md#hbn-bgp-deployment).
+Run the explicitly selected DPF target with a reviewed generated bundle:
+
+```sh
+l8k deploy --target dpf --user-config dpf-discovered.yaml \
+  --deployment-files ./hbn-bgp --deploy-timeout 2h --output json
+```
+
+Both paths must be explicit. The management Kubernetes cluster, required DPF
+foundations and aligned switch fabric are prerequisites. The site file supplies
+management kubeconfig and host/BMC/switch access. Launch Kit does not create the
+management VM or configure switches. Keep the CLI machine online and able to
+reach the management API and selected hosts throughout the operation; selected
+host reboots can interrupt access temporarily.
+
+Host `--kubeconfig` and `--overwrite-existing` are rejected; DPF does not support
+`--dry-run`. The DPF default and maximum timeout are two hours. It can reimage
+selected DPUs, reboot selected hosts and configure their workload PFs, so retain
+the user's existing maintenance authorization and exclude competing device
+provisioning or firmware operations. The native HBN path requires BMC reset
+policy `Never`. The selected release's reset backend must support the freshly
+observed DPU model/BMC build before any provisioning effects; discovery support
+does not replace the later current-round shutdown/task/copy-state checks.
+
+The adapter refreshes prerequisites, then runs management, tenant, enrollment,
+software, service declarations, activation, host networking and runtime stages.
+Required unknowns stop dependent effects. A reset needs a measured safe shutdown
+and current request; unsupported pre-OS reset confirmation stops explicitly.
+`validated` requires the selected multi-host BGP/FIB/ordinary/DF traffic matrix;
+one-host `provisioned` is not cross-host validation. JSON is one final stdout
+document, including a safe `error` on failure; progress is on stderr. Preserve
+the report and partial effects for inspection rather than blindly repeating a
+reset. Preserve the reported `namespace/name/UID` operation reference and use
+`deploy --target dpf --user-config SITE --deployment-files BUNDLE --resume REF`
+for the same initial deployment. Resume loads the exact UID/bundle/management/
+namespace/cohort-bound operation before assessing fresh prerequisites. If its
+unchanged operator configuration is temporarily not Ready, restoration waits
+within the remaining deployment deadline and rechecks the complete management
+bootstrap before dependent work. A stop reports its finite preparation reason in
+result checks, the execution report and progress output; preserve current state
+before deciding on another explicit resume. It verifies
+current resources, credentials and tenant API ownership instead of requiring its
+own enrolled devices or tenant to be absent. Owned host addresses require the
+original inspect-only transaction and current allocation; extra addresses and
+default routes still block. Owned route prefixes require exact current allocation
+identity and every next hop on that allocation's own LLDP-corroborated DPU uplinks;
+unknown, foreign, mixed and overbroad paths block. Kernel nexthop references
+require stable complete path observations; inspect the recorded allocation,
+uplink or path reason and preserve existing routes on a stop. Physical, switch, storage,
+access and compatible operator checks remain required. Raw initial-deployment
+checks stay in the discovery report; execution records `OWNED_RESUME_*` proof.
+Selected HBN hosts require current OS-reported no-VM classification from the
+supported systemd detector and direct PCI/physfn management ancestry; missing or
+unknown classification stops before effects.
+A pending owned reset can temporarily remove selected host PF interfaces. Resume
+must still prove current device/host identity and separate measured management
+paths. It collects strict current host, backend and cabling facts again after
+activation before host networking or traffic. Do not manually reset a host to
+clear discovery failures. Before-activation artifact-origin checks remain;
+after activation, source inputs and current owned software receipts are checked
+without downloading the same large origin artifacts again.
+Transient SSH negotiation during an already-requested reboot stays within the
+remaining wait and never retries the action. Inspect the recorded safe SSH cause
+when completion remains uncertain.
+Every failed standalone DPF deployment result reports `error.transient: false`.
+Inspect the report and current resource/device state before recovery; when safe,
+resume explicitly with the recorded operation reference and unchanged inputs.
+Never automatically replay a stopped deployment, even when its cause looks
+temporary.
+Controller transitions can briefly leave the selected activation view incomplete.
+The CLI waits within its deadline for a complete current cohort before claiming
+or requesting another host reset; an incomplete observation never grants effect
+permission. Read errors and identity/ownership conflicts still stop execution.
+Do not clean up recorded operation resources to satisfy standalone discovery's
+vacancy checks. Resume observes existing reset claims and inspects completed
+host transactions; uncertain effects remain action-required. A late runtime failure repeats the complete fresh matrix
+without reimaging or replaying completed host configuration. Do not edit claims
+or checkpoints, change the bundle, or infer completion from Ready alone.
+When the expected tenant Node is absent, deployment verifies current bootstrap credentials before a requested reset, before acknowledgment and while waiting for initial registration. Missing, expired or unverifiable credentials require [owner-coordinated recovery](../../docs/user/dpf-deployment.md#recover-from-unavailable-bootstrap-credentials); preserve existing claims and requests. Resume never rotates credentials or extends their lifetime. Expected-name presence excuses only this credential inspection, not Node ownership or Ready checks.
+
+Standalone DPF validate, the root pipeline and generate `--deploy` remain
+unavailable. The following Network Operator instructions apply to Host.
+
+## Host deployment
 The CLI snapshots deployment arguments and runs the standalone Host deploy
 service through the target registry; command syntax and apply ordering are
 unchanged.

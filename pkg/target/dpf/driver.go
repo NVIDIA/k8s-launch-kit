@@ -6,7 +6,6 @@ package dpf
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
@@ -22,24 +22,28 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/switchprobe"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// Descriptor exposes inventory discovery while keeping provisioning unavailable.
+// Descriptor advertises implemented phases; deployment remains independently gated.
 func Descriptor() target.Descriptor {
 	phases := map[target.Phase]target.Capability{}
 	for _, p := range append(target.PublicPhases(), target.Pipeline) {
-		phases[p] = target.Capability{Available: false, Reason: "this build supports DPF discovery only; generate, deploy, validate and the composite pipeline are unavailable"}
+		phases[p] = target.Capability{Available: false, Reason: "DPF validation and the composite pipeline are not implemented; use the standalone discover, generate and deploy commands"}
 	}
-	phases[target.Discover] = target.Capability{Available: true, Reason: "inventory discovery is the default and needs no kubeconfig; a supplied kubeconfig adds management observations; explicit management network probes require runtime-qualified diagnostic assets"}
-	return target.Descriptor{Name: target.DPF, Description: "Independent DPF inventory discovery", Phases: phases}
+	phases[target.Deploy] = target.Capability{Available: true, Reason: "HBN-BGP provisioning and runtime validation for the explicitly selected hosts and DPUs"}
+	phases[target.Generate] = target.Capability{Available: true, Reason: "HBN-BGP artifact generation; deployment readiness requires fresh checks"}
+	phases[target.Discover] = target.Capability{Available: true, Reason: "inventory discovery and management-network diagnostics; deployment eligibility is evaluated by the selected use case"}
+	return target.Descriptor{Name: target.DPF, Description: "Independent DPF discovery and HBN-BGP generation and deployment", Phases: phases}
 }
 
 type Request struct {
 	UserConfig     string
+	UseCase        *string
 	OutputPath     string
 	ExplicitOutput bool
 	Stdout         io.Writer
@@ -82,6 +86,9 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 		}
 		progress.Info("[RUNNING] Configuration: validating site inputs and access settings")
 		input, err := config.Load(r.UserConfig)
+		if err == nil {
+			input, err = config.WithUseCase(input, r.UseCase)
+		}
 		if err != nil {
 			fail(2, err.Error())
 		} else {
@@ -109,7 +116,16 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 								}
 							}
 						}
-						deps := discovery.Dependencies{SSH: sshprobe.Collector{}, BMC: redfish.Collector{}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
+						provisioningRelease := ""
+						if resolved.HBN != nil && resolved.Software != nil {
+							provisioningRelease = resolved.Software.Version
+						}
+						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{IncludeNetworkFunctionMACs: resolved.HBN != nil, ProvisioningRelease: provisioningRelease}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
+						deps.HBNPermissions = newHBNPermissionObserver().observe
+						deps.HBNEnrollment = hbnEnrollmentAccessCheck
+						deps.Artifacts = artifactcheck.Verifier{}
+						deps.HostLLDP = sshprobe.Collector{}
+						deps.HostNetworking = sshprobe.ObserveHostWorkloadNetwork
 						if resolved.Input.Site.Inventory == nil {
 							resolved.Input.Site.Inventory = store.PriorInventory
 						}
@@ -120,6 +136,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 						err = store.Publish(publishCtx, &report)
 						cancel()
 						if err != nil {
+							logger.Error(err, "Discovery publication failed")
 							progress.Info("[FAIL] Publication incomplete; see the result for details")
 							report.Execution = "failed"
 							report.Errors = append(report.Errors, inventory.Problem{Code: "PUBLICATION_FAILED", Message: err.Error(), ExitCode: 1})
@@ -133,9 +150,10 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 			}
 		}
 		if inv.Output.Format == "json" {
-			if err := json.NewEncoder(r.Stdout).Encode(report); err != nil {
-				fmt.Fprintln(r.Stderr, "cannot encode DPF discovery result")
-				return apperrors.MarkReported(apperrors.NewGeneralError("cannot encode DPF discovery result", nil))
+			if err := writeJSONReport(r.Stdout, report); err != nil {
+				logger.Error(err, "Discovery result output failed")
+				fmt.Fprintln(r.Stderr, "cannot write complete DPF discovery result:", err)
+				return apperrors.MarkReported(apperrors.NewGeneralError("cannot write complete DPF discovery result", nil))
 			}
 		} else {
 			if err := textReport(r.Stdout, report, input); err != nil {

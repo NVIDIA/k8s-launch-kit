@@ -20,7 +20,7 @@ import (
 )
 
 var _ = Describe("BF4 B4240 physical identity", func() {
-	It("accepts the two explicit firmware graphs and rejects unsupported or conflicting identity", func() {
+	It("accepts the two explicit firmware graphs and rejects unsupported or changed identity", func() {
 		Expect(os.Setenv("DPF_BF4_PASSWORD", "fixture-password")).To(Succeed())
 		DeferCleanup(os.Unsetenv, "DPF_BF4_PASSWORD")
 		for _, scenario := range []struct {
@@ -29,7 +29,7 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 			code   string
 		}{
 			{"physical card", false, ""},
-			{"PSID System", false, ""}, {"PSID fallback", false, ""}, {"PSID matching", false, ""}, {"PSID conflict", false, ""}, {"PSID malformed", false, ""}, {"PSID late System", false, ""}, {"PSID late chassis", false, ""}, {"PSID missing", false, ""}, {"PSID reread denied", false, "ACCESS_DENIED"}, {"legacy component", true, ""}, {"nullable legacy metadata", true, ""},
+			{"PSID System", false, ""}, {"PSID fallback", false, ""}, {"PSID matching", false, ""}, {"PSID unselected chassis differs", false, ""}, {"PSID System N/A", false, ""}, {"PSID malformed", false, ""}, {"PSID late System", false, ""}, {"PSID late chassis", false, ""}, {"PSID missing", false, ""}, {"PSID reread denied", false, "ACCESS_DENIED"}, {"legacy component", true, ""}, {"nullable legacy metadata", true, ""},
 			{"ambiguous cards", false, "CARD_IDENTITY_AMBIGUOUS"}, {"wrong serial", false, "CARD_IDENTITY_AMBIGUOUS"},
 			{"wrong model", false, "CARD_IDENTITY_AMBIGUOUS"}, {"wrong manufacturer", false, "CARD_IDENTITY_AMBIGUOUS"},
 			{"foreign system link", false, "CARD_IDENTITY_AMBIGUOUS"}, {"foreign containment", true, "CARD_IDENTITY_AMBIGUOUS"},
@@ -74,8 +74,11 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 						return
 					}
 					doc = Document{"Manufacturer": "Nvidia", "Model": "BlueField-4", "SerialNumber": "CARD-A", "UUID": "11111111-1111-4111-8111-111111111111", "Links": Document{"Chassis": []any{link("/redfish/v1/Chassis/BMC")}}}
-					if strings.HasPrefix(scenario.name, "PSID ") && scenario.name != "PSID fallback" && scenario.name != "PSID missing" {
+					if strings.HasPrefix(scenario.name, "PSID ") && scenario.name != "PSID fallback" && scenario.name != "PSID late chassis" && scenario.name != "PSID missing" {
 						doc["AssetTag"] = "MT_0000001774"
+					}
+					if scenario.name == "PSID System N/A" {
+						doc["AssetTag"] = "N/A"
 					}
 					if scenario.name == "PSID malformed" {
 						doc["AssetTag"] = false
@@ -113,10 +116,10 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 				case "/redfish/v1/Chassis/Board", "/redfish/v1/Chassis/Other":
 					cardReads++
 					doc = Document{"ChassisType": "Card", "Manufacturer": "Nvidia", "Model": "B4240", "SerialNumber": "CARD-A", "Links": Document{"ComputerSystems": []any{link("/redfish/v1/Systems/DPU")}, "Contains": []any{link("/redfish/v1/Chassis/BMC")}}}
-					if scenario.name == "PSID fallback" || scenario.name == "PSID matching" || scenario.name == "PSID late chassis" {
+					if scenario.name == "PSID fallback" || scenario.name == "PSID matching" || scenario.name == "PSID System N/A" || scenario.name == "PSID late chassis" {
 						doc["AssetTag"] = "MT_0000001774"
 					}
-					if scenario.name == "PSID conflict" || scenario.name == "PSID late chassis" && cardReads > 1 {
+					if scenario.name == "PSID unselected chassis differs" || scenario.name == "PSID late chassis" && cardReads > 1 {
 						doc["AssetTag"] = "MT_0000001775"
 					}
 					if scenario.legacy {
@@ -200,9 +203,7 @@ var _ = Describe("BF4 B4240 physical identity", func() {
 				if strings.HasPrefix(scenario.name, "PSID ") {
 					expected := "PSID_OBSERVED"
 					switch scenario.name {
-					case "PSID conflict":
-						expected = "PSID_CONFLICT"
-					case "PSID malformed":
+					case "PSID malformed", "PSID System N/A":
 						expected = "PSID_INVALID"
 					case "PSID late System", "PSID late chassis":
 						expected = "PSID_CHANGED"

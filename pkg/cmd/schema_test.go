@@ -38,7 +38,7 @@ func TestSchemaDescribesTargetsAdditively(t *testing.T) {
 
 	for _, phase := range target.PublicPhases() {
 		assert.Truef(t, host.Phases[string(phase)].Available, "host phase %s", phase)
-		assert.Equalf(t, phase == target.Discover, dpf.Phases[string(phase)].Available, "dpf phase %s", phase)
+		assert.Equalf(t, phase == target.Discover || phase == target.Generate || phase == target.Deploy, dpf.Phases[string(phase)].Available, "dpf phase %s", phase)
 		assert.NotEmptyf(t, dpf.Phases[string(phase)].Reason, "dpf phase %s reason", phase)
 	}
 
@@ -48,6 +48,7 @@ func TestSchemaFlagsDeclareTargetOwnership(t *testing.T) {
 	s := schema{Flags: map[string]flagSchema{
 		"--target":                     {},
 		"--output":                     {},
+		"--deploy":                     {},
 		"--dry-run":                    {},
 		"--fabric":                     {},
 		"--kubeconfig":                 {},
@@ -60,6 +61,7 @@ func TestSchemaFlagsDeclareTargetOwnership(t *testing.T) {
 
 	assert.Equal(t, []string{"host", "dpf"}, s.Flags["--target"].Targets)
 	assert.Equal(t, []string{"host", "dpf"}, s.Flags["--output"].Targets)
+	assert.Equal(t, []string{"host"}, s.Flags["--deploy"].Targets)
 	assert.Equal(t, []string{"host", "dpf"}, s.Flags["--dry-run"].Targets)
 	assert.Equal(t, []string{"host"}, s.Flags["--fabric"].Targets)
 	assert.Equal(t, []string{"host"}, s.Flags["--kubeconfig"].Targets)

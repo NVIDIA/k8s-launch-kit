@@ -1,0 +1,19 @@
+Nov 15 06:10:45 DEBUG   LOG: Initializing SX log with STDOUT as output file.
+DISCLAIMER
+==========
+The following code is an EXAMPLE whose sole purpose is to demonstrate various capabilities of the SDK.
+This example represents a common configuration scenario and is in no way a complete guide to the demonstrated feature.
+For complete documentation please refer to the SDK API Guide.
+There is no guarantee that this example will run successfully on all hardware and software configurations.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|   RIF| Router ID|       TYPE| L2 SWID| L2 VLAN|  LOG PORT| BRIDGE|    EGRESS_MODE|            L2 MAC| L2 MTU| L3 TTL|            QOS| ipv4 UC state| ipv6 UC state| ipv4 MC state| ipv6 MC state| LB Enabled|
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|   219|         6|      VPORT|       0|       0|0x2e8d00f1|      0|              0| 02:00:00:00:00:01|   9216|      0|  PRESERVE_PRIO|        ENABLE|        ENABLE|        UNKOWN|       DISABLE|     ENABLE|
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|   223|         6|      VPORT|       0|       0|0x2e8d00f3|      0|              0| 02:00:00:00:00:02|   9216|      0|  PRESERVE_PRIO|        ENABLE|        ENABLE|        UNKOWN|       DISABLE|     ENABLE|
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|   220|         6|      VPORT|       0|       0|0x2e8d00b9|      0|              0| 02:00:00:00:00:03|   9216|      0|  PRESERVE_PRIO|        ENABLE|        ENABLE|        UNKOWN|       DISABLE|     ENABLE|
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|   222|         6|      VPORT|       0|       0|0x2e8d00bb|      0|              0| 02:00:00:00:00:04|   9216|      0|  PRESERVE_PRIO|        ENABLE|        ENABLE|        UNKOWN|       DISABLE|     ENABLE|
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

@@ -12,13 +12,15 @@ NVIDIA Kubernetes Launch Kit (`l8k`) helps platform teams configure NVIDIA netwo
 Use this site when you are deploying SR-IOV, RDMA shared-device, host-device, InfiniBand, or Spectrum-X networking. Start with [Plan your deployment](user/profiles.md) to choose a platform and profile, check what is qualified, and identify the site inputs and permissions you need.
 
 The lifecycle commands operate on the `host` target by default. For a separate
-DPU estate, the `dpf` target supports inventory discovery only in this version.
-Inventory needs no kubeconfig; a supplied kubeconfig adds management-cluster
-observations. Explicit management network probes target each observed node that meets
-the existing readiness and platform checks, using pinned, runtime-qualified diagnostic
-assets. Node count alone does not establish control-plane HA or qualify a production
-topology. DPF generation, deployment, validation and the composite pipeline are
-unavailable. See the [DPF discovery workflow](user/dpf-workflows.md).
+DPU estate, the `dpf` target supports standalone inventory discovery,
+[HBN-BGP artifact generation](user/dpf-generation.md), and
+[deployment](user/dpf-deployment.md) with provisioning and runtime checks. The
+current BF4/HBN-BGP cohort remains beta; command availability does not qualify
+every hardware and release combination.
+Management probes cover every observed node that meets the existing readiness and
+platform checks; node count alone does not establish control-plane HA or production
+qualification. DPF standalone validation and the root
+pipeline remain unavailable. See the [DPF workflow](user/dpf-workflows.md).
 
 ## Find Your Path
 

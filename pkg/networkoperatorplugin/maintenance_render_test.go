@@ -391,6 +391,11 @@ func TestMaintenanceScalarTypesAcrossProfiles(t *testing.T) {
 	for _, profilePath := range profilesOnDisk {
 		dir := filepath.Base(filepath.Dir(profilePath))
 		profile := loadProfileFromDir(t, dir)
+		// Maintenance rendering belongs to Network Operator profiles. Other
+		// target plugins share this directory but have independent lifecycles.
+		if profile.Plugin != "network-operator" {
+			continue
+		}
 		for _, tc := range []struct {
 			name, field, input string
 			want               any

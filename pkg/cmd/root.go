@@ -100,7 +100,7 @@ The profile is defined with --fabric, --deployment-type and --multirail flags,
 or via a profile section in the user-config file.
 
 ### Deploy to Cluster
-Apply the generated deployment files to your Kubernetes cluster by using --deploy. Credentials resolve from --kubeconfig, $KUBECONFIG, or ~/.kube/config. Skip this phase by omitting --deploy.
+For the Host target, apply the generated deployment files in this command with --deploy. Credentials resolve from --kubeconfig, $KUBECONFIG, or ~/.kube/config. Skip this phase by omitting --deploy. DPF uses a separate 'l8k deploy --target dpf' command after bundle review; the combined DPF pipeline is unavailable.
 
 ### AI Agent / Automation Support
 Use --output json for a structured result from this root pipeline.
@@ -259,7 +259,7 @@ func init() {
 	setFlagGroup(rootCmd, "enable-doca-driver", GroupGeneration)
 	setFlagGroup(rootCmd, "workload-manifest", GroupGeneration)
 
-	setFlagGroup(rootCmd, "deploy", GroupExecution)
+	setFlagGroup(rootCmd, "deploy", GroupDeploy)
 	setFlagGroup(rootCmd, "deploy-timeout", GroupExecution)
 	setFlagGroup(rootCmd, "dry-run", GroupExecution)
 

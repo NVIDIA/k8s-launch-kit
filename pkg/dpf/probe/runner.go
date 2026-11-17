@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"io"
 	"net/netip"
 	"net/url"
@@ -16,11 +15,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,29 +72,38 @@ type Runner struct {
 
 func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.ManagementClient, inv *inventory.Inventory) (rows []inventory.ProbeResult, cleanup inventory.Cleanup, err error) {
 	cleanup = inventory.Cleanup{State: "complete", Leftovers: []string{}}
+	if ctx == nil || inv == nil || inv.Management == nil {
+		return nil, cleanup, fmt.Errorf("probe requires a context and management inventory")
+	}
+	if mg.Client == nil || mg.REST == nil || mg.Namespace == "" {
+		return nil, cleanup, fmt.Errorf("probe requires a management client, REST configuration, and namespace")
+	}
+	if r.Timeout < time.Second {
+		return nil, cleanup, fmt.Errorf("probe timeout must be at least one second")
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
+	defer cancel()
 	if err := runner.Assets.Validate(); err != nil {
 		return nil, cleanup, err
 	}
 	if runner.Journal == nil {
 		return nil, cleanup, fmt.Errorf("probe resource journal required")
 	}
-	if ctx == nil || mg.Client == nil || mg.REST == nil || inv == nil || inv.Management == nil || len(inv.Management.Nodes) == 0 {
-		return nil, cleanup, fmt.Errorf("probe requires management access, identity and node inventory")
-	}
-	for _, node := range inv.Management.Nodes {
-		if !node.Ready || node.Unschedulable || node.OS != "linux" || runner.Assets.PlatformDigests[node.Architecture] == "" {
-			return nil, cleanup, fmt.Errorf("management node cannot run the qualified probe")
-		}
+	if err := validateManagementNodes(inv.Management.Nodes, runner.Assets.PlatformDigests); err != nil {
+		return nil, cleanup, err
 	}
 	api, err := url.Parse(mg.REST.Host)
-	if err != nil || api.Scheme != "https" || api.Host == "" || api.User != nil || api.RawQuery != "" || api.Fragment != "" {
+	if err != nil || api.Scheme != "https" || api.Hostname() == "" || api.User != nil || api.RawQuery != "" || api.Fragment != "" {
 		return nil, cleanup, fmt.Errorf("probe requires a valid HTTPS management API endpoint")
 	}
 	ns, err := mg.Client.CoreV1().Namespaces().Get(ctx, mg.Namespace, metav1.GetOptions{})
-	if err != nil || ns.DeletionTimestamp != nil {
+	if err != nil || ns == nil || ns.DeletionTimestamp != nil {
 		return nil, cleanup, fmt.Errorf("probe namespace unavailable")
 	}
 	request := Request{RequestTimeout: r.RequestTimeout, Version: ProtocolVersion, RunID: inv.Collection.RunID, Deadline: time.Now().Add(r.Timeout), Destinations: []Destination{}}
+	if r.UseCase == "hbn-bgp" && r.Input.Site.Provisioning != nil && r.Input.Site.Provisioning.Bootstrap != nil && r.Input.Site.Provisioning.Bootstrap.Tenant.VIP != nil {
+		request.TenantVIP = *r.Input.Site.Provisioning.Bootstrap.Tenant.VIP
+	}
 	request.Destinations = append(request.Destinations, Destination{ID: "management-api", Endpoint: api.Scheme + "://" + api.Host, Path: path.Join("/", api.Path, "version"), ServerName: mg.REST.ServerName, CA: mg.REST.CAData})
 	for _, t := range r.Targets {
 		if t.Role == "dpus" {
@@ -235,14 +245,23 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 	if err = runner.Journal(receipts); err != nil {
 		return nil, cleanup, err
 	}
+	if inv.Evidence == nil {
+		inv.Evidence = make(map[string]inventory.Evidence)
+	}
+	pathFailures := false
 	for _, node := range inv.Management.Nodes {
 		for _, mode := range []string{"pod-network", "node-network"} {
+			output := ui.FromContext(ctx)
+			output.Info("[RUNNING] Management node %s: %s probe", node.Name, mode)
+			modePathFailed := false
 			podName := name + "-" + strings.TrimPrefix(inventory.Digest("node", node.UID+mode), "sha256:")[:12]
 			image := runner.Assets.Repository
 			if r.ImageRepository != "" {
 				image = r.ImageRepository
 			}
-			image += "@" + runner.Assets.ManifestDigest
+			// Pull the same architecture-specific manifest that the runtime identity
+			// check expects; CRI may report the requested index when pulling an index.
+			image += "@" + runner.Assets.PlatformDigests[node.Architecture]
 			desiredPod := Pod(podName, mg.Namespace, labels, node, mode, image, name, r.ImagePullSecrets, int64(r.Timeout/time.Second))
 			if err = journal("Pod", podName, ""); err != nil {
 				return rows, cleanup, err
@@ -288,7 +307,11 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 			if err != nil || string(currentNode.UID) != node.UID || live.Spec.NodeName != node.Name {
 				return rows, cleanup, fmt.Errorf("probe node identity changed")
 			}
-			if len(live.Status.ContainerStatuses) != 1 || !strings.HasSuffix(live.Status.ContainerStatuses[0].ImageID, runner.Assets.PlatformDigests[node.Architecture]) {
+			if len(live.Status.ContainerStatuses) != 1 {
+				return rows, cleanup, fmt.Errorf("probe pulled image digest differs from qualified asset")
+			}
+			imageID := strings.TrimPrefix(live.Status.ContainerStatuses[0].ImageID, "docker-pullable://")
+			if imageID != image {
 				return rows, cleanup, fmt.Errorf("probe pulled image digest differs from qualified asset")
 			}
 			stream, err := mg.Client.CoreV1().Pods(mg.Namespace).GetLogs(podName, &corev1.PodLogOptions{Container: "probe", LimitBytes: ptr(int64(4 << 20))}).Stream(ctx)
@@ -301,7 +324,7 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 				return rows, cleanup, fmt.Errorf("probe result too large")
 			}
 			var result Response
-			if json.Unmarshal(body, &result) != nil || ValidateResponse(result, request, node.UID, string(live.UID), mode) != nil {
+			if json.Unmarshal(body, &result) != nil || ValidateResponse(result, request, node.UID, string(live.UID), mode) != nil || ValidateNetworkResponse(result, request, mode) != nil {
 				return rows, cleanup, fmt.Errorf("probe result binding/coverage invalid")
 			}
 			frozenMap, mapErr := mg.Client.CoreV1().ConfigMaps(mg.Namespace).Get(ctx, name, metav1.GetOptions{})
@@ -313,6 +336,7 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 					if inv.Management.Nodes[i].UID == node.UID {
 						inv.Management.Nodes[i].Interfaces = result.Interfaces
 						inv.Management.Nodes[i].Routes = result.Routes
+						inv.Management.Nodes[i].TenantVIPRoute = result.TenantVIPRoute
 					}
 				}
 			}
@@ -322,21 +346,50 @@ func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.Man
 				inv.Evidence[id] = inventory.Evidence{Kind: "connectivity-probe", ObservedAt: result.FinishedAt, Vantage: node.UID + "/" + mode, ResourceURI: "pods/" + string(live.UID), Namespace: mg.Namespace, PodUID: string(live.UID), NodeUID: node.UID, ImageDigest: runner.Assets.PlatformDigests[node.Architecture], DNSPolicy: string(live.Spec.DNSPolicy), DestinationEndpoint: destinationEndpoint(request, row.Destination)}
 				rows = append(rows, row)
 				if row.DNS == "unavailable" || len(row.Addresses) == 0 {
-					return rows, cleanup, fmt.Errorf("required probe DNS coverage unavailable")
+					pathFailures = true
+					modePathFailed = true
+					continue
+				}
+				expectedTLS := "verified"
+				if destinationAllowsUnverified(request, row.Destination) {
+					expectedTLS = "unverified"
 				}
 				for _, a := range row.Addresses {
-					expectedTLS := "verified"
-					if destinationAllowsUnverified(request, row.Destination) {
-						expectedTLS = "unverified"
-					}
 					if a.TCP != "reachable" || a.TLS != expectedTLS {
-						return rows, cleanup, fmt.Errorf("required probe TCP/TLS path failed")
+						pathFailures = true
+						modePathFailed = true
+						break
 					}
 				}
 			}
+			if modePathFailed {
+				output.Info("[BLOCKED] Management node %s: %s probe has a failed required path", node.Name, mode)
+			} else {
+				output.Info("[PASS] Management node %s: %s probe paths passed", node.Name, mode)
+			}
 		}
 	}
+	if pathFailures {
+		return rows, cleanup, fmt.Errorf("one or more required probe paths failed; see per-destination checks")
+	}
 	return rows, cleanup, nil
+}
+
+func validateManagementNodes(nodes []inventory.Node, platformDigests map[string]string) error {
+	if len(nodes) == 0 {
+		return fmt.Errorf("probe requires a non-empty management node scope")
+	}
+	names, uids := map[string]bool{}, map[string]bool{}
+	for _, node := range nodes {
+		if node.Name == "" || node.UID == "" || names[node.Name] || uids[node.UID] {
+			return fmt.Errorf("management probe node scope has a missing or duplicate name/UID")
+		}
+		names[node.Name], uids[node.UID] = true, true
+		if !node.Ready || node.Unschedulable || node.OS != "linux" || platformDigests[node.Architecture] == "" {
+			return fmt.Errorf("management node cannot run the qualified probe")
+		}
+	}
+	return nil
 }
 func ptr[T any](value T) *T { return &value }
 func Pod(name, namespace string, labels map[string]string, node inventory.Node, mode, image, configMap string, secrets []string, seconds int64) *corev1.Pod {
@@ -448,7 +501,7 @@ func podDifferences(expected, actual *corev1.Pod) []string {
 	// protobuf decoding while carrying exactly the same value.
 	av, bv, typ := reflect.ValueOf(*a), reflect.ValueOf(*b), reflect.TypeOf(*a)
 	for i := 0; i < typ.NumField(); i++ {
-		if !equality.Semantic.DeepEqual(av.Field(i).Interface(), bv.Field(i).Interface()) {
+		if !apiequality.Semantic.DeepEqual(av.Field(i).Interface(), bv.Field(i).Interface()) {
 			fields = append(fields, "spec."+strings.Split(typ.Field(i).Tag.Get("json"), ",")[0])
 		}
 	}
@@ -483,15 +536,6 @@ func ValidateResponse(out Response, req Request, node, pod, mode string) error {
 	return nil
 }
 
-func destinationAllowsUnverified(request Request, id string) bool {
-	for _, destination := range request.Destinations {
-		if destination.ID == id {
-			return id != "management-api" && destination.InsecureSkipVerify
-		}
-	}
-	return false
-}
-
 // FileJournal contains no auth material and records intended creates before dispatch.
 func FileJournal(filename string) func([]Receipt) error {
 	return func(receipts []Receipt) error {
@@ -513,6 +557,14 @@ func destinationEndpoint(request Request, id string) string {
 		}
 	}
 	return ""
+}
+func destinationAllowsUnverified(request Request, id string) bool {
+	for _, destination := range request.Destinations {
+		if destination.ID == id {
+			return id != "management-api" && destination.InsecureSkipVerify
+		}
+	}
+	return false
 }
 func validateRow(r inventory.ProbeResult) error {
 	if r.DNS != "resolved" && r.DNS != "not-applicable" && r.DNS != "unavailable" {

@@ -10,6 +10,7 @@ import (
 // inventoryOutput is the public v3 handoff. Collection bookkeeping stays in the
 // collector model; required facts and failures have explicit domain fields here.
 type inventoryOutput struct {
+	HBN           *HBNInventory       `json:"hbn,omitempty" yaml:"hbn,omitempty"`
 	Software      *releases.Summary   `json:"software,omitempty" yaml:"software,omitempty"`
 	AddressLookup *AddressLookup      `json:"addressLookup,omitempty" yaml:"addressLookup,omitempty"`
 	FormatVersion string              `json:"formatVersion" yaml:"formatVersion"`
@@ -33,6 +34,7 @@ type associationOutput struct {
 
 func (i Inventory) output() (inventoryOutput, error) {
 	out := inventoryOutput{
+		HBN:           i.HBN,
 		FormatVersion: FormatVersion, Collection: i.Collection,
 		ScopeDigest: i.ScopeDigest, Fingerprint: i.Fingerprint,
 		Management: i.Management, AddressLookup: i.AddressLookup, Probes: i.Probes,
@@ -76,6 +78,7 @@ func (i Inventory) output() (inventoryOutput, error) {
 
 func (w inventoryOutput) inventory() (Inventory, error) {
 	out := Inventory{
+		HBN:           w.HBN,
 		FormatVersion: FormatVersion, Collection: w.Collection,
 		ScopeDigest: w.ScopeDigest, Fingerprint: w.Fingerprint,
 		Management: w.Management, AddressLookup: w.AddressLookup,

@@ -77,10 +77,13 @@ type TimeObservation struct {
 	ReasonCode string   `json:"reasonCode,omitempty" yaml:"reasonCode,omitempty"`
 }
 type PCIFunction struct {
-	Address  string   `json:"address" yaml:"address"`
-	Driver   string   `json:"driver,omitempty" yaml:"driver,omitempty"`
-	NUMANode string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
-	Netdevs  []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
+	// NetdevsAbsent is set only after a successful measurement of a present PCI function.
+	NetdevsAbsent bool     `json:"netdevsAbsent,omitempty" yaml:"netdevsAbsent,omitempty"`
+	Address       string   `json:"address" yaml:"address"`
+	Driver        string   `json:"driver,omitempty" yaml:"driver,omitempty"`
+	NUMANode      string   `json:"numaNode,omitempty" yaml:"numaNode,omitempty"`
+	IOMMUGroup    *int     `json:"iommuGroup,omitempty" yaml:"iommuGroup,omitempty"`
+	Netdevs       []string `json:"netdevs,omitempty" yaml:"netdevs,omitempty"`
 }
 type Adapter struct {
 	PCIFunctions    []PCIFunction `json:"pciFunctions,omitempty" yaml:"pciFunctions,omitempty"`
@@ -100,18 +103,23 @@ type Adapter struct {
 
 // RuntimeObservation contains OS-visible facts, separate from BMC management readiness.
 type RuntimeObservation struct {
-	Hardware     *HardwareObservation   `json:"hardware,omitempty" yaml:"hardware,omitempty"`
-	Network      *NetworkObservation    `json:"network,omitempty" yaml:"network,omitempty"`
-	Hostname     string                 `json:"hostname,omitempty" yaml:"hostname,omitempty"`
-	OS           string                 `json:"os,omitempty" yaml:"os,omitempty"`
-	Interfaces   []Interface            `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
-	Routes       []Route                `json:"routes,omitempty" yaml:"routes,omitempty"`
-	DNS          []string               `json:"dns,omitempty" yaml:"dns,omitempty"`
-	Observations map[string]Observation `json:"observations,omitempty" yaml:"observations,omitempty"`
+	// VirtualMachine is nil until the supported OS detector reports a current result.
+	VirtualMachine   *bool                  `json:"virtualMachine,omitempty" yaml:"virtualMachine,omitempty"`
+	BootID           string                 `json:"bootID,omitempty" yaml:"bootID,omitempty"`
+	SSHServerAddress string                 `json:"sshServerAddress,omitempty" yaml:"sshServerAddress,omitempty"`
+	Hardware         *HardwareObservation   `json:"hardware,omitempty" yaml:"hardware,omitempty"`
+	Network          *NetworkObservation    `json:"network,omitempty" yaml:"network,omitempty"`
+	Hostname         string                 `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	OS               string                 `json:"os,omitempty" yaml:"os,omitempty"`
+	Interfaces       []Interface            `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
+	Routes           []Route                `json:"routes,omitempty" yaml:"routes,omitempty"`
+	DNS              []string               `json:"dns,omitempty" yaml:"dns,omitempty"`
+	Observations     map[string]Observation `json:"observations,omitempty" yaml:"observations,omitempty"`
 }
 
 // Device represents every requested endpoint, including failed observations.
 type Device struct {
+	NetworkFunctionMACs       []string               `json:"networkFunctionMACs,omitempty" yaml:"networkFunctionMACs,omitempty"`
 	PSID                      string                 `json:"psid,omitempty" yaml:"psid,omitempty"`
 	FirmwareInventoryComplete bool                   `json:"firmwareInventoryComplete,omitempty" yaml:"firmwareInventoryComplete,omitempty"`
 	Message                   string                 `json:"message,omitempty" yaml:"message,omitempty"`
@@ -141,16 +149,18 @@ type Device struct {
 	EvidenceRefs              []string               `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Node struct {
-	Interfaces    []Interface `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
-	Routes        []Route     `json:"routes,omitempty" yaml:"routes,omitempty"`
-	Name          string      `json:"name" yaml:"name"`
-	UID           string      `json:"uid" yaml:"uid"`
-	ControlPlane  bool        `json:"controlPlane" yaml:"controlPlane"`
-	Ready         bool        `json:"ready" yaml:"ready"`
-	Unschedulable bool        `json:"unschedulable" yaml:"unschedulable"`
-	Architecture  string      `json:"architecture" yaml:"architecture"`
-	OS            string      `json:"os" yaml:"os"`
-	Addresses     []string    `json:"addresses" yaml:"addresses"`
+	TenantVIPRoute *RouteLookup      `json:"tenantVIPRoute,omitempty" yaml:"tenantVIPRoute,omitempty"`
+	Interfaces     []Interface       `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
+	Routes         []Route           `json:"routes,omitempty" yaml:"routes,omitempty"`
+	Labels         map[string]string `json:"-" yaml:"-"` // Transient labels for current API selector evaluation; never persisted.
+	Name           string            `json:"name" yaml:"name"`
+	UID            string            `json:"uid" yaml:"uid"`
+	ControlPlane   bool              `json:"controlPlane" yaml:"controlPlane"`
+	Ready          bool              `json:"ready" yaml:"ready"`
+	Unschedulable  bool              `json:"unschedulable" yaml:"unschedulable"`
+	Architecture   string            `json:"architecture" yaml:"architecture"`
+	OS             string            `json:"os" yaml:"os"`
+	Addresses      []string          `json:"addresses" yaml:"addresses"`
 }
 type Observation struct {
 	Message    string   `json:"message,omitempty" yaml:"message,omitempty"`
@@ -177,6 +187,7 @@ type Association struct {
 	EvidenceRefs   []string `json:"evidenceRefs,omitempty" yaml:"evidenceRefs,omitempty"`
 }
 type Inventory struct {
+	HBN            *HBNInventory       `json:"hbn,omitempty" yaml:"hbn,omitempty"`
 	Software       *releases.Release   `json:"software,omitempty" yaml:"software,omitempty"`
 	AddressLookup  *AddressLookup      `json:"addressLookup,omitempty" yaml:"addressLookup,omitempty"`
 	FormatVersion  string              `json:"formatVersion" yaml:"formatVersion"`
@@ -234,6 +245,7 @@ type Discovery struct {
 	Cleanup Cleanup `json:"cleanup"`
 }
 type Report struct {
+	Readiness     *Readiness `json:"readiness,omitempty"`
 	SchemaVersion string     `json:"schemaVersion"`
 	Target        string     `json:"target"`
 	Phase         string     `json:"phase"`

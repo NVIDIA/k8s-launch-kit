@@ -94,10 +94,26 @@ Host operation. Standalone deploy and validate orchestration live outside
 Cobra, process exit remains at the command boundary, and DPF is rejected
 before any Host dependency is constructed.
 
-The DPF generation dependency is also still open. Current `dpf-operator` main
-does not expose a public profile renderer or a stable `dpfctl generate`
-contract. Launch Kit must not copy documentation manifests to bypass this
-boundary.
+The current implementation stage is independent **HBN-BGP**, starting with
+discovery and followed by generation and deployment. Sentry and Host/DPF
+composition are outside this stage. The initial profile is flat IPv4 BGP with
+two unnumbered DPU uplinks, without mandatory EVPN or tenant VRFs. Desired
+profile defaults are overridable; they are never evidence of switch state.
+
+The inspected `dpfctl` implementation exposes an internal DPUFlavor template
+renderer, not a public full-profile generation library. Launch Kit will own a
+narrow native Go renderer for this profile, using release-matched DPF schemas
+and reference fixtures. A future public renderer may replace that boundary;
+its publication is not a prerequisite for this implementation. Do not copy
+static documentation manifests without typed selection, reference validation,
+and complete resource ownership and readiness handling.
+
+HBN discovery records applied switch intent separately from operational
+interfaces, LLDP hints and BGP sessions. CLI success requires both complete
+physical inventory and passing use-case prerequisites. Unknown required facts
+block readiness with specific reasons, while a complete inventory may still be
+saved. BGP establishment and data-path validation remain post-deployment gates.
+Switch inspection is read-only; desired defaults do not authorize switch writes.
 
 ## Responsibility boundaries
 
@@ -289,21 +305,23 @@ Exit criteria: omitted target and explicit `--target host` use the same
 concrete driver and are behaviorally equivalent across all four commands and
 the root pipeline.
 
-### Stage 2: Establish the DPF-owned generation contract — parallel prerequisite
+### Stage 2: Establish the release-matched generation contract
 
-DPF should provide, in preference order:
-
-1. a small separately versioned Go rendering module;
-2. a stable, release-matched `dpfctl generate` CLI contract;
-3. the external `dpf-install` process only as a temporary schedule bridge.
+Use a small separately versioned DPF rendering module if a suitable public
+contract becomes available. Until then, implement the bounded HBN-BGP renderer
+in Go inside the DPF target. Reference automation informs the resource graph;
+it is not executed as a Python runtime or imported as deployment authority.
 
 The contract must provide a typed profile schema, deterministic artifacts,
 artifact identities and ordering, release provenance, compatibility metadata,
 and golden fixtures. Launch Kit must not import the full operator dependency
 graph unnecessarily or copy DPF documentation manifests.
 
-Exit criteria: a released DPF-owned interface deterministically renders the
-selected profile and release without local Go `replace` directives.
+Exit criteria: the renderer deterministically renders the selected profile and
+release, validates against that release's DPF API schemas, and uses no local Go
+`replace` directives. BF4 uses BlueFieldSoftware with an OS ISO and PSID-specific
+PLDM artifacts; do not substitute a BF3 BFB. Experimental hardware support and
+production qualification are reported separately.
 
 ### Stage 3: DPF discovery and `dpf-install` import
 
@@ -343,7 +361,9 @@ serialization does not make a padded version eligible for minimum-version checks
 The BF4 Redfish reader and typed PSID boundary share one syntax predicate.
 An inadmissible optional AssetTag becomes a field-specific issue before it can
 block YAML publication or JSON reporting; forged or contradictory typed facts
-remain errors at the public boundary.
+remain errors at the public boundary. DPF deployment retains the vendor's
+System-first source selection, falling back only for an absent/null System
+field rather than substituting an unselected chassis value.
 
 SSH collection keeps one connection for normal reads. A command deadline closes
 that transport to bound stalled session operations; the next independent read may
@@ -363,18 +383,20 @@ BMC firmware remain distinct components.
 
 Host/DPU records do not create evidence tables or reference lists, regardless of
 transport. Mandatory live reads, identity and PSID rereads, administrator checks,
-cleanup and publication remain unchanged. Management/probe evidence retains its
-own contract. The public `scopeDigest` guards resolved refresh endpoints/trust;
+cleanup and publication remain unchanged. The YAML codec omits evidence maps
+and references throughout the entire inventory, including management, SSH,
+address lookup and probes, without mutating collector state or the separate JSON
+diagnostic report. Older evidence-bearing configs remain readable. The public `scopeDigest` guards resolved refresh endpoints/trust;
 `requestedScope` and its detailed policy bookkeeping stay internal. Material
 fingerprints compare the public fact projection so removed provenance does not
 create false changes. Refresh preserves source backups and existing stable
 physical identity/scope conflict guards.
 
-### Stage 4: DPF generation for Zero Trust passthrough
+### Stage 4: DPF generation for HBN-BGP
 
 - enable `l8k generate --target dpf`;
-- consume the DPF-owned renderer;
-- render prerequisites, operator, system, and passthrough subplans under
+- use the release-matched native Go renderer described above;
+- render prerequisites, operator, system, and HBN-BGP subplans under
   `deployment/dpf/`;
 - produce checksums, a release lock, expected resource identities, readiness
   gates, and a target operation DAG;
@@ -471,10 +493,9 @@ native path passes identical fixtures and hardware-lab parity gates.
 | P2 | Multi-DPU roles | Place network, storage, and telemetry services without PF/VF conflicts |
 | P3 | Firefly/PTP and DOCA Weave | Follow-on work after core parity and upstream maturity |
 
-Zero Trust passthrough and Host Trusted HBN plus OVNK remain the first two use
-cases, but they ship sequentially. This reduces the first DPF milestone's
-dependency on environment composition while retaining HBN plus OVNK as the
-first full cross-plane proof.
+The current delivery prioritizes independent HBN-BGP. Passthrough and Host
+Trusted HBN plus OVNK remain roadmap use cases; they do not add prerequisites
+to this independent DPU-plane milestone.
 
 ## Acceptance strategy
 
@@ -521,3 +542,618 @@ Safe defaults remain: omission means Host, DPF 26.4 is the provisional parity
 baseline, Zero Trust passthrough ships first, Kubespray is optional, BMC
 password rotation is deferred, and environment composition begins only after
 both target drivers implement all four phases independently.
+
+### HBN native bootstrap and workload handoff
+
+The HBN path resolves profile defaults, explicit site allocations, and observed
+identities separately. `provisioning.bootstrap` provides the reserved tenant
+VIP and control-plane interface; profile defaults cover names, VRID, tenant
+capacity and pod CIDR. A literal observed management API endpoint can supply its
+IP/port. Missing allocations remain required unknowns during discovery.
+
+The management renderer emits namespaces, zero-trust `DPFOperatorConfig`, a
+Kamaji `DPUCluster`, and singleton `DPUDiscovery` scans for exactly the selected
+IPv4 BMC endpoints. It emits neither credential bytes nor fabricated
+`DPUDevice`/`DPUNode` objects. Operator Helm rendering must bind the same config
+name and namespace in its process arguments: CRD schema validity alone does
+not prove that the operator watches the generated configuration.
+
+The workload renderer consumes resolved HBN coordinates/effect settings,
+selected device and tenant selectors, PSID-specific artifacts, and explicit
+flavor/resource inputs. Every standalone DPUServiceInterface carries the selected
+tenant's `dpuClusterSelector` and a node selector containing the exact selected
+DPF node hostnames. An omitted selector would fan out to all tenants or nodes
+under the pinned controller semantics. The hostname derivation is shared with
+HBN's per-DPU ASN configuration and must fit a Kubernetes label value.
+The service template's `resourceRequirements` and chart values use the same
+resource quantities: DPF computes service-to-flavor fit from the former, whereas
+Helm uses the latter for container requests and limits.
+The executor must verify those selectors against live
+identities and release only selected external node-effect holds. HBN's chart
+source API has no digest field; retaining a desired digest is not verification
+of bytes fetched by DPF. Artifact consumption verification remains an explicit
+deployment gate. Discovery checks workload and loopback pool overlap against
+observed switch prefixes; cluster/site IPAM coverage remains a separate gate.
+
+Native execution helpers now provide explicit management access, identity checks
+around API operations, retained-chart Helm install or exact release verification,
+and resource-specific reported readiness. They do not yet enable the DPF deploy
+CLI. The remaining runner must enforce the fixed stage dependencies, ownership,
+RBAC, tenant convergence, enrollment identity, consumed artifact checks and
+physical-effect boundaries before it can report a deployment result.
+
+Software preparation composes management, tenant and selected-device enrollment
+using one retained execution plan. Before a BlueFieldSoftware create it refreshes
+those prerequisites and checks permission to read/create the selected software
+resource and open the named registry Pod port-forward. An ordinary resource-create
+authorization is namespace-scoped; the port-forward authorization names the Pod
+and the portforward subresource. Actual registry reads and post-download checks
+remain required even when authorization succeeds.
+
+The generic BlueFieldSoftware readiness predicate and the staged-byte verifier
+share current-generation Downloaded/Ready condition checks in addition to the
+Ready phase. Missing or still-reconciling conditions remain pending; terminal
+conditions stop the wait. Software preparation is a management-side download and
+verification step, not a DPUDeployment, firmware installation or HBN traffic result.
+
+For BF4 software, the native verifier reads the bytes in DPF's staging cache.
+It reconstructs the ISO and selected PSID-specific PLDM cache paths from the
+retained BlueFieldSoftware specification and compares them with current
+controller status. It then streams HTTPS through a loopback-only Kubernetes
+Pod port-forward, using DPF's public CA bundle to verify the registry's service
+certificate. No verifier image, shell in the controller, or second download
+from the original artifact URL is required. Redirects, transformed responses,
+partial streams and digest mismatches block verification.
+
+The verifier binds the registry to the current provisioning leader and its
+actual shared storage. The active provisioning manager must use the retained
+release's DPF system image reference before a tunnel is opened. The pinned operator
+uses that same image coordinate for its provisioning manager; this comparison
+binds the release reference and does not attest image bytes. A hostPath must refer to the same path on the same node;
+a PVC must retain its bound claim identity. Software UID, generation, retained
+intent, controller readiness, paths, registry/storage identities and CA trust
+are checked again after streaming. Routine Lease renewal is allowed, but a
+leader transition invalidates the observation. Temporary tunnel cleanup must
+complete before a receipt is returned.
+
+The reader requires the selected release's declared nginx command, configuration
+mount and ConfigMap contents, and rejects unsupported custom mappings. This
+checks the current API configuration, not the configuration already loaded by
+the running process: a ConfigMap subPath mount does not refresh after updates.
+The cache-path interpretation assumes the operator-provided configuration was
+loaded and was not independently replaced. No process/configuration attestation
+or container exec is implied by the receipt.
+
+This establishes that the registry served bytes matching the retained locks
+at verification time. It does not prove that a later asynchronous BMC GET or
+PLDM upload consumed unchanged bytes: the pinned DPF API has no digest field
+and its cache is mutable. Nor does Pod port-forwarding establish BMC reachability
+through the registry Service or an external load balancer. Those delivery-path
+and runtime checks remain separate. These private verification helpers do not
+enable the deployment CLI or replace the remaining workload/effect stages.
+
+Bootstrap ordering follows resource ownership: external prerequisites precede
+the operator chart; the chart's manager and CRDs precede DPFOperatorConfig;
+that configuration creates DPF's system components. Waiting for those components
+before creating the configuration would prevent a clean install. DPUCluster
+does not publish generation freshness in the selected API, so its reported Ready
+state requires companion Kamaji desired/status and tenant API verification.
+
+Cancellation preserves partial effects for explicit recovery. The Helm transport
+keeps request cancellation active through response-body consumption. A failed
+identity check after Create can mean the write committed; the runner must retain
+that uncertain outcome and must not retry it against another cluster identity.
+
+The native plan loader strictly decodes the retained intent, reconstructs the
+explicit generation inputs from the bundle, and invokes the existing generator
+to compare the entire result before API access. It does not resolve site defaults
+again or reinterpret relative credential paths from the retained source file.
+Operator release identity and serial-bound BMC endpoints are explicit retained
+inputs. Older bundles missing those inputs require regeneration.
+
+Native custom-resource reconciliation uses create-or-verify. Existing resources
+require matching bundle and desired-object ownership markers and complete spec
+equality after applying the retained CRD schemas' defaults and the explicit
+admission normalization below. Status is checked separately. The pinned DPUCluster controller's deterministic admin-kubeconfig
+name is the narrowly permitted spec addition. Other conflicts stop execution;
+there is no implicit adoption, patch, deletion or rollback.
+
+The selected DPF API's typed DPUFlavor admission roundtrip can emit empty
+`grub`, `sysctl`, `ovs` and `containerdConfig` objects when omitted by a caller.
+After retained-schema validation and defaulting, reconciliation represents an
+absent one of these four fields as `{}` on both independent comparison copies,
+only for `provisioning.dpu.nvidia.com/v1alpha1` DPUFlavor. It preserves nonempty
+values and compares every other field; it does not recursively drop empty values
+or mutate the desired bundle or API response. The same rule applies to existing
+objects and create responses, preserving their ownership and identity checks.
+
+Known controller finalizers use a finite policy for each resource kind, including
+`dpu.nvidia.com/dpfoperatorconfig` on DPFOperatorConfig. Accepting controller
+metadata preserves the bundle and object ownership markers, namespace and UID
+checks, and complete default-normalized desired specification. Unknown or
+duplicate finalizers remain conflicts. Operator-configuration readiness records
+the safe verification category without copying remote field values into reports.
+Per-DPUSet software protection finalizers are matched to a finite, immutable
+policy compiled from the retained deployment's selected DPUSet names and exact
+BlueFieldSoftware namespace and name. Finalizer names do not establish object
+UID ownership. Before releasing holds or resetting a host, cohort verification
+also compares the consumed software and flavor references on both DPUSet
+templates and DPUs with the retained deployment, alongside the existing UID,
+owner, selector and physical-identity checks.
+
+Each pending selected maintenance hold is a separate provisioning effect. After
+waiting for controller-created children, and again before each individual hold
+release, activation rechecks the full bootstrap, tenant, enrollment, software,
+flavor and retained registry boundary. It then rereads the complete selected
+cohort and requires the same maintenance UID, a fresh resource version, no
+deletion and the expected action and requestors. The conditional patch retains
+its UID, resource-version and prior-annotation tests. A hold already released
+causes no new patch; a changed dependency stops subsequent releases and resets.
+These sequential checks narrow the observation window without claiming an
+atomic transaction across resources.
+
+Maintenance participants include the selected host's DPUs and the current
+service and chain versions coordinated by their DPUDeployment. Activation
+derives the finite additional set from fresh, complete observations bound to
+the retained deployment, child ownership, logical references and current version
+selectors, then checks the policy copied into each selected DPUSet and DPU.
+Requestors are unordered sets; duplicate or foreign participants are rejected.
+The native initial-deployment path rejects `applyOnLabelChange: true` on either
+selected resource; matching flags do not authorize an older upgrade's effects.
+This coordination check does not replace later interface and HBN readiness.
+
+Verified enrollment assigns each selected DPUDevice to the exact deployment
+group retained in its generated selector. Native execution may add only the
+reserved `launch-kit.nvidia.com/dpu` label when absent; other selector labels
+must already match, and a conflicting value is refused. The write tests the
+fresh device UID and resource version, preserves unrelated metadata and spec,
+and rechecks the entire selected enrollment boundary before every write. A
+confirmed API response is followed by a complete stored-label readback before
+workload activation. Ambiguous writes stop without automatic replay. Activation
+rechecks the selected labels before creating the deployment or releasing holds.
+The caller's permission to patch these exact DPUDevice names is checked early.
+
+The private activation receipt carries completion history for each selected
+node and its maintenance UID. A confirmed hold-release patch records that
+history. An initially false annotation alone records none; a subsequently
+completed, once-claimed reset and exact-round acknowledgement can establish
+the corresponding coordination history. Completion also requires fresh identity
+and consumed references for every selected DPU, with NodeEffectRemoved/Ready
+conditions observing that DPU's current generation. Those per-DPU facts can prove
+completion after the controller removes maintenance, even if polling missed an
+intermediate Applied state. Absence never authorizes a hold release or reset.
+The same receipt-backed interpretation applies during later host-network checks.
+
+Native SSH host recovery uses the caller's remaining deployment deadline, bounded
+by the existing two-hour deployment limit. The callback's maximum wait does not
+extend a shorter caller deadline. It does not start a new two-hour
+stage budget or impose an independent fifteen-minute reconnect limit. The
+separate fresh reset-safety deadline still bounds identity checks and the single
+command submission; its expiry after dispatch does not prevent read-only
+recovery. Cancellation or recovery expiry leaves the action uncertain, without
+replaying it or acknowledging an unverified DPU reset. Same-host and adapter
+identity, a changed host boot and the current-round Arm proof remain required.
+
+The object execution boundary records and synchronizes an attempt before
+reconciliation, then persists the result before dependent work. A report-write
+failure stops execution. Readiness polling rechecks UID, ownership and desired
+content before evaluating current status; it never recreates a disappeared
+object. Reports record safe reasons instead of arbitrary API response bodies.
+Post-create conflicts retain their uncertain outcome and include only a fixed
+verification category, never remote values or an arbitrary error chain.
+Kubernetes API errors retain only the nineteen recognized status reasons from
+the pinned client dependency. Missing or unrecognized reasons become a fixed
+InternalError with HTTP 500, preventing remote text disclosure and HTTP-code
+fallback from treating an ambiguous read as absence, authorization failure or
+retry permission. Known standard classifications and context cancellation or
+deadline identities remain intact. These primitives alone do not establish
+tenant, enrollment, consumed-artifact or HBN data-plane readiness; standalone
+deploy must complete the corresponding stages.
+
+Namespace execution treats namespaces as shared infrastructure: it creates only
+an absent namespace and otherwise verifies an active, non-deleting identity
+without changing existing metadata or policy. Dependent stages retain the
+namespace UID so deletion and recreation cannot silently change their boundary.
+
+The operator installer checks that every rendered object is absent before a new
+Helm install and disables Helm's update path during that install. This prevents
+adoption even if an object with matching Helm annotations appears after the
+absence check. The pinned chart must not introduce hooks, separately installed
+CRDs, or namespace ownership. Installation is not transactional: earlier creates
+and a failed Helm release record can remain after an error. Existing-release
+verification compares complete chart content, override values, and canonically
+ordered resource identities and full document bodies. Helm storage omits an empty
+top-level override map, so only absent and empty top-level release values compare
+equally; nested null, false, zero and empty collections remain distinct. A local
+verification conflict after a successful existing-release read is a failed check
+with a finite mismatch category and no Helm install or adoption attempt. Actual
+install or transport ambiguity remains uncertain. Exact release-record
+verification and current controller/resource health are separate checks.
+
+The management bootstrap composition validates the retained plan before API
+access, checks external dependencies and scoped permissions, creates or verifies
+namespaces, installs or verifies the retained Helm release, waits for matching
+CRDs and manager configuration, then creates or verifies DPFOperatorConfig.
+CRD readiness compares identities and typed specifications with the retained
+chart after applying the pinned Kubernetes covering defaults to independent
+copies, including defaults within conversion-webhook service references.
+Diagnostics identify the failing CRD and distinguish identity from specification
+conflicts.
+It checks cluster-wide configuration ownership before effects and again after
+the manager becomes ready. These observations do not provide an atomic
+cluster-wide lock; concurrent provisioning must be excluded by the caller.
+The final receipt requires the selected configuration version, namespace UIDs,
+and manager identity and full default-normalized specification to remain valid.
+Only manager-relevant Kubernetes defaults are normalized; unknown fields fail
+closed. This receipt covers management bootstrap, not a complete HBN deployment.
+
+Management permission checks use explicit, resource-scoped authorization
+reviews, including named RBAC escalation and binding rights for chart resources.
+HBN discovery injects a permission observer from the target adapter after the
+current inventory and management projection have been assembled. The adapter
+uses the existing generation resolver and verified charts to build an in-memory
+bundle, then calls the shared deployment caller-permission checker with a client
+bound to the current cluster identity. This avoids a discovery-to-deployment
+import cycle and a second permission resolver. It never substitutes saved
+inventory for current observations. Missing, empty, malformed or cancelled
+authorization observations remain explicit readiness blockers. This covers the
+caller's management API permissions; it is not a controller-service-account or
+tenant authorization proof.
+Missing explicit rights leave implicit RBAC coverage unverified; a union of rules
+from multiple authorizers is not proof that Kubernetes' RBAC escalation checks
+will accept a write. NFD worker readiness is required only when the retained
+configuration uses host-side detection. Zero-trust Redfish discovery with that
+detector disabled still requires the NFD API and master, but does not require
+management nodes to run NFD workers.
+
+HBN workload address reservation is profile-managed. Generation emits one
+singleton DPUServiceIPAM exclusion per possible per-DPU subnet, reserving the
+configured host index from ordinary dynamic IPAM allocation without excluding
+the subnet itself. The gateway and host indexes must differ and remain usable;
+reservation enumeration is bounded to 4096 subnets. Explicit static IPAM requests
+can bypass exclusions and must not target the reserved host slot.
+
+Discovery validates this address plan separately from host readiness. Actual
+host address selection joins the selected DPU identity to its tenant Node and
+CIDRPool allocation, then verifies the host PF0 interface. It must never infer
+subnet assignment or PF0 identity from list order. The later host operation adds
+only the workload-specific route; the management/default route is preserved.
+Until those runtime steps exist and pass, a valid reservation does not mark
+host configuration ready.
+
+Tenant access uses a separate client for the independent cluster. The management
+client reads the selected DPUCluster, its Kamaji TenantControlPlane, API Service,
+keepalived resources and deterministic admin Secret. Resource convergence checks
+use the selected release's tenant Kubernetes version; the management Kubernetes
+version remains a separate input. Tenant access requires embedded, verified TLS
+credentials from `super-admin.conf`, with no local-file, executable plugin,
+impersonation, proxy or server override. Requests reject redirects.
+
+The endpoint is the retained tenant VIP and Kamaji's allocated API NodePort.
+The client binds source resource identities and specs plus the Secret UID and
+credential bytes, then observes the tenant's own `kube-system` UID and API version.
+Source replacement, credential rotation or tenant identity changes stop this
+client and require reopening access after fresh inspection. Routine metadata or
+status updates alone do not invalidate unchanged identity. Resource convergence
+and authenticated API access remain separate from external VIP allocation,
+keepalived image qualification, storage behavior, enrollment and HBN traffic.
+
+
+Tenant storage discovery and management preflight share the bounded
+`managementprobe.Collector.CollectTenantStorage` reader. For the supported DPF
+Kamaji layout, it reads `DataStore/default`, correlates ordinal endpoints through
+the headless Service and StatefulSet to ready pods, and checks the pods' claims
+against their bound PV identities. Fresh datastore/controller status and the
+local-path provisioner are required. The supported layout currently requires the
+pinned default `cluster.local` DNS domain; custom cluster domains require an
+explicit retained input and collector adaptation before they can pass. Read
+failures and unsupported layouts retain
+specific reasons; neither class presence nor datastore validation alone passes.
+Raw datastore TLS/authentication fields remain transient and are not logged or
+saved. No Secrets or probe PVCs are read/created by this check. Existing tenants
+may share the store. The result establishes current backing-resource health,
+not a direct etcd transaction, remaining physical capacity or future growth.
+Deployment recollects instead of trusting the persisted discovery result;
+ordered tenant creation must repeat this prerequisite immediately before effects.
+
+The private control-plane executor composes management bootstrap with tenant
+creation and independent API verification. It validates the retained plan and
+execution controls before effects, refreshes bootstrap resource identities, and
+checks the complete DPUCluster registry before the tenant stage. A new target
+requires fresh network probes on exactly the selected management control-plane
+nodes. Probe cleanup must complete, and a second API observation must retain the
+same node identities, labels and scheduling state. Saved discovery inventory
+cannot satisfy these checks. An existing target instead requires exact retained
+ownership and specification; an active VIP is expected for that target and is
+not evaluated as an unused address.
+
+The tenant executor repeats storage and collision checks before create-or-verify,
+then waits for controller convergence and authenticates to the independent
+tenant API. Enrollment entry also waits for the same retained operator
+configuration to regain current Ready status when per-tenant management services
+are still starting. The existing deadline, exact configuration UID/specification,
+release-version and terminal-state checks bound this wait. The complete bootstrap
+and tenant identities are rechecked before BMC, credential or discovery effects;
+later enrollment and activation fences remain immediate checks. A tenant API
+result does not establish enrollment, HBN services or traffic readiness. This composition remains private while the full deployment
+entry point is being completed. The retained tenant allocation fields require
+explicit site declarations for reserved VIP, DHCP exclusion and VRRP ID
+availability on selected nodes. Both control-plane and tenant execution reject
+missing or false declarations before their effects. Discovery uses the same
+checker, with a site-config source and explicit declaration wording. These
+fields have no profile defaults and are retained in the generated intent and
+bundle digest, without being emitted as DPF CR fields. Interface and routing
+success never establishes a DHCP reservation; site allocation and observed
+conflicts remain separate requirements.
+
+Selected-device enrollment follows the verified tenant API boundary. Runtime
+credential references are resolved separately from retained generation: the
+BlueField-4 crawler path requires the `admin` account and one common password
+for the selected BMCs. The executor matches literal BMC IP/port and physical
+serial to retained devices, rechecks Administrator privileges through fresh
+Redfish sessions, and rejects changed or contradictory PSID observations.
+An absent Redfish PSID property does not invalidate an identity-associated host
+PSID retained during generation. Password bytes are used only in memory and in
+the required Kubernetes `bmc-shared-password` Secret, never in bundle files,
+ownership digests, logs or execution reports. An existing exact Secret may be
+reused without adoption; a mismatch stops execution rather than overwriting it.
+
+Enrollment is a controller-mediated BMC change, not another read-only discovery
+pass. `BMCFactoryResetPolicy: Never` prevents factory reset, but DPF can initialize
+credentials and mTLS. Complete resource-scope inspection must precede controller
+activation and shared Secret installation, since either can activate unrelated
+pending resources. Singleton DPUDiscovery scan completion is insufficient: the
+executor must bind the resulting DPUDevice serial/IP/port and exactly one DPUNode
+reference, then require current identity, credential, server-certificate and
+CA-trust conditions. Partial effects remain in place for inspection; enrollment
+does not authorize deletion, replacement, recovery resets or HBN-ready claims.
+The initial executor supports `Never` only. Generation may retain an explicit
+`OnInitialization` preview, but execution must stop before operator effects
+until BMC DHCP recovery can be verified; a valid enum is not recovery evidence.
+
+BMC credentials and TLS trust are explicit runtime site access inputs. The
+retained enrollment plan binds serial, PSID and endpoint, not an earlier factory
+certificate or CA. No TLS bypass is inferred or enabled after a certificate
+failure; any bypass must already be explicit in the resolved site target. Fresh
+identity checks use that configured transport policy and do not attest verified
+TLS when bypass is selected. Management API identity/trust remains plan-bound.
+
+A current DPUDiscovery scan with zero newly found devices can finish the scan
+step because DPF skips already-enrolled BMC IPs. It cannot finish enrollment:
+every selected device and node must still match the retained identity and report
+required readiness. Enrollment polls that entire cohort without caching a prior
+ready result.
+It retains device and node UIDs, rejects replacement, and rechecks tenant sources,
+the shared credential, bootstrap identities and complete enrollment scope before
+issuing its receipt. A selected DPUDevice without its matching DPUNode is a
+specific partial-enrollment failure: the pinned DPF crawler skips an existing
+BMC IP and cannot repair that missing association on a rescan. The executor
+reports this reason and leaves resources available for inspection. Existing node
+associations must retain the external reboot method created by that crawler;
+an alternate reboot mechanism is not silently adopted.
+
+Management-node network investigation reuses the existing explicitly selected
+management-mode probe rather than introducing another node access mechanism.
+The runner binds results to Pod and Node UIDs and uses journaled, UID-preconditioned
+cleanup. Admission checks compare normalized Pod specifications using Kubernetes
+API semantic equality, including resource quantities across JSON/protobuf
+serialization; ownership metadata and execution/security settings remain checked.
+Each Pod pulls the cataloged manifest for its observed node architecture, and its
+runtime ImageID must equal that requested repository and digest. The index digest
+is catalog metadata, not the requested runtime image. Other runtime ImageID forms
+remain unsupported until separately verified. The catalog enables Linux/amd64;
+other architectures remain unavailable until qualified. Inventory mode continues
+to omit probe Pods. Host SSH collection can accompany management probes, while
+DPU probe destinations require explicit Redfish endpoints.
+
+The runner validates the complete node scope before creating resources. Validated
+DNS/TCP/TLS failures remain blockers but do not stop independent node/vantage
+collection; identity, admission and malformed-protocol errors still abort. The
+fixed collector adds administrative/operational interface state and a bounded
+IPv4 kernel route lookup for the configured HBN tenant VIP. Node selection uses
+fresh transient Kubernetes labels and rechecks identity and scheduling facts
+before publishing. New-tenant checks require the selected interface up, an on-link
+VIP prefix and matching route/source, and reject an already assigned VIP. Existing
+tenant reuse requires separate ownership-aware endpoint verification. Interface
+and route observations do not establish VIP reservation, network-wide VRID
+uniqueness, or successful tenant deployment.
+
+BMC connectivity probes reuse resolved endpoint trust policy. Explicit certificate
+bypass is carried only as public policy, never credentials, and successful TLS
+handshakes remain `unverified`. Management API probes remain strict. Protocol
+validation rejects unrequested bypass and false verification claims. This matches
+DPF's pre-bootstrap factory-certificate transport without claiming that later
+DPF-managed mTLS enrollment has already succeeded.
+
+### Expected configuration and repeatable infrastructure discovery
+
+The HBN profile is the single source of default desired configuration. Resolve
+the selected release/profile, present user overrides and supported explicit CLI
+overrides before checking infrastructure. Discovery must not adopt a conflicting
+observed switch value as a default. Generation, suggested configuration changes
+and deployment preflight must consume the same effective VRF, ASNs, MTUs, address
+pools and peer intent. Explicit empty, zero and false values remain subject to
+validation; they are not omissions. Access endpoints, credentials, physical
+associations and site allocations remain separate from defaultable settings.
+
+The current HBN profile supports DPF `26.8.0` only. Shared intent resolution rejects
+other catalog releases for this profile before remote access; adding a release
+requires a compatible release/profile and renderer cohort. Flat-profile generation
+constraints (including disabled VXLAN startup probe and the chart-name API limit)
+belong in shared validation, so discovery cannot approve an input the renderer
+will reject. Rendering calls that validator rather than maintaining a second rule
+set. These constraints are separate from customizable VRF, ASN, MTU and address
+intent, which remain presence-aware site overrides.
+
+
+Manual infrastructure investigation must become a repeatable collector/check or
+remain an explicit implementation gap. In particular, inbound LLDP on a host PF
+needs a current serial/PCI/interface association and independently observed switch
+identity before it can corroborate a DPU uplink. Hostname similarity, a configured
+port binding or a previous manual packet capture cannot satisfy this check.
+Absent tools, denied access, conflicting identities and incomplete observations
+must retain specific reasons and block any dependent readiness claim.
+
+Host-side LLDP fallback uses bounded nonpromiscuous captures only for unresolved
+bindings. Current UUID/serial/PCI/netdev/physical-port identity is checked around
+capture; authenticated switch chassis/name/port facts corroborate nonexpired
+advertisements. Known contradictory observations cannot be overwritten. Raw
+packet captures remain transient. A complete FRR BGP running configuration
+supports selected-peer policy evaluation for the unfiltered flat baseline;
+unsupported filter attachments remain explained unknowns. Only selected VRF,
+peer and inherited group facts are retained, not raw configuration.
+
+Discovery records NVUE applied/startup revisions, pending configuration and
+confirmation state around the selected-port observations. It checks VRF, ASN,
+unnumbered peer, link, MTU and address conflicts. These software observations do
+not establish ASIC forwarding. A separately qualified hardware observation must
+compare the selected physical RIF and actual router/table mapping with the
+effective profile; absent or unsupported observations remain blocking unknowns.
+DHCP/IPAM allocation authority remains an explicit site declaration rather than
+an inference from ARP, routes or a working pre-existing tenant.
+
+Discovery is observational: it reports expected versus observed values and
+required changes. An explicit configuration step owns switch writes, selected-port
+scope, conflict detection, backup, rollback, confirmation and postchecks. BGP
+establishment, installed routes and workload traffic remain post-deployment
+measurements. Infrastructure changes performed manually during qualification do
+not upgrade a product readiness result.
+
+External host resets use a create-only, immutable claim for the retained bundle,
+selected DPUDeployment UID, physical host UUID and exact DPU/DPUNode UID cohort
+plus supported controller source phases. The same phase cannot replay after a
+claimed or uncertain attempt; a later supported phase can request its own reset.
+Recheck that cohort and phase after the final prerequisite reads, before claiming.
+Clone retained device selectors across enrollment handoff rather than discarding
+them or sharing caller-owned maps. Persist the claim and journal before invoking
+the physical backend. An existing claim or an uncertain callback blocks automatic
+retry. This protection is scoped to that deployment lifecycle; deliberate deletion
+and recreation creates a new lifecycle. A crash after a verified reset but partial
+DPF acknowledgement requires inspection of the report, claim and current host/DPF
+state. Do not delete the claim to force another reset. Automatic acknowledgement
+recovery across process restarts is not implemented.
+
+### Native HBN deployment and observation contracts
+
+The final HBN runtime check resolves the retained image digest from the OCI
+registry and verifies the Linux/arm64 platform manifest and config before
+accepting runtime container identities. For an HTTP Bearer challenge, `realm`
+must remain same-origin HTTPS; the optional `service` value is an opaque token
+audience sent only to that same-origin token endpoint. Token exchange does not
+follow redirects, even if the realm path resembles a blob endpoint. The
+requested token scope is always the exact retained repository's `pull` scope;
+challenge-provided scopes are not followed. The opaque audience is not a
+registry host or redirect destination. This allows registries whose token
+audience differs from their API host without expanding origin, redirect,
+credential or repository access.
+
+Standalone `deploy --target dpf` binds the DPF adapter with explicit site and
+bundle paths. It never constructs the Host deploy operation. The DPF operation
+owns fresh prerequisite observations, retained management/tenant resources,
+selected enrollment and software, service declarations, supported external
+activation, host PF configuration and the complete directed traffic matrix.
+`validate` and composed `pipeline` remain unavailable for this target. JSON mode
+emits one result on failure as well as success; a failed operation retains a
+nonzero process exit and the safe reason for its last stage.
+
+Fresh prerequisite checks receive independent copies of the serializable
+request intent, selected targets and switches.
+Preserve the already-resolved private access snapshots for selected host SSH
+targets, switches and BMCs across this handoff: password or private-key SSH
+credentials, pinned known-hosts bytes, BMC credentials and resolved TLS trust
+policy. Keep these opaque values in memory; do not serialize or reconstruct
+them through JSON, bundle data, journals or
+reports. Clone mutable observer inputs so prerequisite checks cannot mutate the
+caller-owned request or its access snapshots. This is an internal request-copy
+invariant; it does not change the documented fresh-check or pinned-SSH behavior.
+
+The HBN profile supplies the physical uplink MTU to DPF high-speed networking
+and physical service-chain ports. Its workload MTU supplies PF0 and the selected
+host PF. The renderer and retained-plan loader derive these from the same
+resolved intent; no separate default or override can drift silently. Generic
+bootstrap callers that omit high-speed MTU retain their previous omission
+semantics rather than receiving an HBN-specific hardcoded value.
+
+Operator discovery identifies the GA chart's operator name or component role
+before checking image/version and readiness. An image repository alone is not
+role identity: provisioning, DPUService and other controllers share dpf-system.
+Fresh-install detection still rejects unidentified existing DPF-image resources.
+Only the required component label is retained, not all Kubernetes labels.
+
+Service readiness follows each selected DPU to its current service child,
+Application, DaemonSet and Pod. A healthy synchronized Application is necessary
+but insufficient. Current DaemonSet membership and the ordered identities,
+images and role-specific readiness of ordinary, completed-init and restartable
+init containers are verified. Optional per-resource Argo health is checked when
+present; its absence does not substitute for or invalidate independently
+verified workload readiness. API defaulting of template metadata is represented
+explicitly in desired resources to avoid comparing different serializations.
+
+Controller-created ServiceInterfaceSet children retain the complete selected
+interface template specification. Empty outer metadata maps compare equally
+whether omitted or serialized as empty objects. For supported physical and PF
+interfaces without a virtual network, the pinned controller may add exactly
+`svc.dpu.nvidia.com/interface-mode: nsi`; that contribution is optional while
+the controllers reconcile. Other metadata remains exact, and malformed maps,
+conflicting modes, changed selectors and changed specifications are rejected.
+Parent ownership, selected tenant identity and child UID fences still apply.
+Interface-child verification failures retain a finite diagnostic category
+without including arbitrary API response values.
+
+Automatic reset coordination requires an exclusive maintenance window excluding
+external MFT, firmware and provisioning writers. Fresh Administrator, selected
+physical identity, actual ARM shutdown, completed tasks and idle board-firmware
+copies are required. Unexposed NIC copy state is not independent idle proof.
+The qualified BlueField-4 BMC 26.10 powered-off CPU health tuple is treated
+separately from real failure; other unexplained Critical states remain blocked.
+Pre-OS reset phases without agent proof are unsupported by this backend.
+
+The earliest locally measured safety-observation expiry is carried through
+cohort verification, durable claim/journal writes and SSH identity preflight.
+The native transport checks that deadline before command dispatch. A timeout
+after dispatch remains uncertain: it never authorizes automatic replay. This
+establishes a bounded proof age at submission, not an atomic guarantee about
+remote scheduling or hardware execution time. Reset acknowledgement still
+requires the same current request, a changed host boot and fresh DPU agent and
+kernel boot observations.
+
+Host-network shadow generation preserves the qualified generator's complete
+interface matching context, including current MAC addresses and driver names
+or verified absence. Source YAML alone is insufficient: MAC- or driver-matched
+management definitions can otherwise disappear from generated wait-online
+configuration. A bounded private catalog supplies only those matching facts
+under the isolated root and participates in freshness fences. It includes
+valid dot-prefixed interfaces and non-Ethernet address forms; selected PF
+identity still uses its separate permanent-MAC binding. Read failures and
+context drift follow the existing phase-specific refusal or compensation
+policy. When freshness or ownership cannot be reestablished after a possible
+effect, blocking compensation uncertainty supersedes the initiating reason.
+Raw context is not public inventory, and no generated output is exempted from
+ownership checks to hide a missing observation.
+
+The host transaction owns the selected port's ordinary Netplan any-routable
+wait contribution alongside its generated network/link pair. The comparison
+view can remove only that port's complete argument pair from the qualified
+routable command, omitting that command line when no members remain. All
+other bytes and metadata remain significant. Complete
+raw artifact fingerprints still fence preview and effects, including changes
+to the owned contribution. Existing source optionality is derived once in Go
+and carried as a private typed boolean; current matching facts determine
+participation. First apply, complete repeat and verified-external paths check
+that contribution. Adding the selected required static address broadens the
+vendor's global OR predicate; preserving other interface arguments does not
+establish management-only readiness. No source optionality is changed to
+avoid this branch.
+
+Host-network capture brackets the merged Netplan read with source-set
+fingerprints and compares them again before publishing the snapshot. This binds
+Go's source validation and matching-context observations to observed stable
+sources; a source edit or failed fingerprint producer refuses the observation
+with its reason. The managed fragment remains subject to its separate exact
+content and ownership checks, while the surrounding source fence excludes that
+owned fragment to allow the transaction's own publication. Within the transaction
+fence, the fragment guard checks expected exact content or expected absence on
+both sides of capture; normal, complete-repeat and verified-external paths repeat
+the fence after generated configuration verification before publishing success. The bracket is a
+freshness check, not an atomic filesystem snapshot or protection from arbitrary
+privileged ABA edits.
