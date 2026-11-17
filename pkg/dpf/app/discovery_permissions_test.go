@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
 	"context"
@@ -28,8 +28,8 @@ func (c permissionClientStub) CheckCallerPermissions(ctx context.Context, reques
 	return c.check(ctx, request)
 }
 
-var _ = Describe("HBN discovery caller permission adapter", func() {
-	var observer hbnPermissionObserver
+var _ = Describe("HBN discovery caller permission composition", func() {
+	var observer HBNPermissionObserver
 	var request config.Request
 	var current *inventory.Inventory
 	var clientCalls int
@@ -38,7 +38,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 	BeforeEach(func() {
 		input := generationSite()
 		current = input.Site.Inventory
-		// Deliberately unusable saved facts prove this adapter consumes the new
+		// Deliberately unusable saved facts prove this observer consumes the new
 		// discovery rather than authorizing a previously selected cluster.
 		input.Site.Inventory = &inventory.Inventory{Management: &inventory.Management{SystemNamespaceUID: "old-cluster"}}
 		request = config.Request{Input: input, DPFNamespace: "dpf-operator-system"}
@@ -46,13 +46,13 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 		result = deployment.PreflightResult{Ready: true, Checks: []deployment.PreflightCheck{{
 			ID: "caller.rbac.selected.create", State: "passed", Message: "The caller can create the selected resource.",
 		}}}
-		observer = hbnPermissionObserver{
+		observer = HBNPermissionObserver{
 			fetchChart: func(_ context.Context, address string) ([]byte, error) {
 				fetched = append(fetched, address)
 				if strings.HasSuffix(address, "dpf-operator-v26.8.0.tgz") {
-					return os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
+					return os.ReadFile("../bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
 				}
-				return os.ReadFile("../../dpf/generation/testdata/doca-hbn-3.5.0.tgz")
+				return os.ReadFile("../generation/testdata/doca-hbn-3.5.0.tgz")
 			},
 			newClient: func(_ context.Context, got config.Request, identity generation.ManagementIdentity, version string) (callerPermissionClient, error) {
 				clientCalls++
@@ -73,7 +73,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 	})
 
 	It("derives permissions from a verified current bundle without replacing the saved inventory", func() {
-		checks := observer.observe(context.Background(), request, current)
+		checks := observer.Observe(context.Background(), request, current)
 		Expect(checks).To(HaveLen(1))
 		Expect(checks[0].State).To(Equal("passed"))
 		Expect(checks[0].ID).To(HavePrefix("dpf.hbn.management.caller-rbac."))
@@ -89,7 +89,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 			{ID: "caller.rbac.denied", State: "blocked", ReasonCode: "CALLER_PERMISSION_MISSING", Message: "Cannot create the selected resource."},
 			{ID: "caller.rbac.unmeasured", State: "blocked", ReasonCode: "RBAC_REVIEW_INCOMPLETE", Message: "The API did not return an authorization decision."},
 		}}
-		checks := observer.observe(context.Background(), request, current)
+		checks := observer.Observe(context.Background(), request, current)
 		Expect(checks).To(HaveLen(2))
 		Expect(checks[0].State).To(Equal("failed"))
 		Expect(checks[1].State).To(Equal("unknown"))
@@ -97,12 +97,12 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 	})
 
 	It("blocks missing current identities before downloading charts or opening credentials", func() {
-		checks := observer.observe(context.Background(), request, nil)
+		checks := observer.Observe(context.Background(), request, nil)
 		Expect(checks[0].State).To(Equal("unknown"))
 		Expect(fetched).To(BeEmpty())
 		Expect(clientCalls).To(BeZero())
 		current.DPUs = nil
-		checks = observer.observe(context.Background(), request, current)
+		checks = observer.Observe(context.Background(), request, current)
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_PLAN_UNAVAILABLE"))
 		Expect(fetched).To(BeEmpty())
 		Expect(clientCalls).To(BeZero())
@@ -110,7 +110,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 
 	It("rejects altered chart bytes before any authorization claim", func() {
 		observer.fetchChart = func(context.Context, string) ([]byte, error) { return []byte("wrong archive"), nil }
-		checks := observer.observe(context.Background(), request, current)
+		checks := observer.Observe(context.Background(), request, current)
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_PLAN_INVALID"))
 		Expect(clientCalls).To(BeZero())
 	})
@@ -120,7 +120,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 		observer.fetchChart = func(context.Context, string) ([]byte, error) {
 			return nil, errors.New("https://user:secret@example.test")
 		}
-		checks := observer.observe(context.Background(), request, current)
+		checks := observer.Observe(context.Background(), request, current)
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_OPERATOR_CHART_UNAVAILABLE"))
 		Expect(checks[0].Message).To(ContainSubstring("transport details were omitted"))
 		Expect(checks[0].Message).NotTo(ContainSubstring("secret"))
@@ -129,7 +129,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 		observer.newClient = func(context.Context, config.Request, generation.ManagementIdentity, string) (callerPermissionClient, error) {
 			return nil, errors.New("token=secret")
 		}
-		checks = observer.observe(context.Background(), request, current)
+		checks = observer.Observe(context.Background(), request, current)
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_MANAGEMENT_UNAVAILABLE"))
 		Expect(checks[0].Message).NotTo(ContainSubstring("secret"))
 	})
@@ -142,7 +142,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 		observer.fetchChart = func(ctx context.Context, _ string) ([]byte, error) {
 			return downloadChart(ctx, server.URL, server.Client().Transport)
 		}
-		checks := observer.observe(context.Background(), request, current)
+		checks := observer.Observe(context.Background(), request, current)
 		Expect(checks).To(HaveLen(1))
 		Expect(checks[0].State).To(Equal("unknown"))
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_OPERATOR_CHART_HTTP_ERROR"))
@@ -150,7 +150,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 		Expect(checks[0].Message).NotTo(ContainSubstring("private-signature"))
 		Expect(clientCalls).To(BeZero())
 
-		operatorArchive, err := os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
+		operatorArchive, err := os.ReadFile("../bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
 		Expect(err).NotTo(HaveOccurred())
 		fetchCount := 0
 		observer.fetchChart = func(ctx context.Context, _ string) ([]byte, error) {
@@ -160,7 +160,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 			}
 			return downloadChart(ctx, server.URL, server.Client().Transport)
 		}
-		checks = observer.observe(context.Background(), request, current)
+		checks = observer.Observe(context.Background(), request, current)
 		Expect(checks).To(HaveLen(1))
 		Expect(checks[0].State).To(Equal("unknown"))
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_HBN_CHART_HTTP_ERROR"))
@@ -174,7 +174,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 			})
 			return downloadChart(ctx, address, transport)
 		}
-		checks = observer.observe(context.Background(), request, current)
+		checks = observer.Observe(context.Background(), request, current)
 		Expect(checks).To(HaveLen(1))
 		Expect(checks[0].State).To(Equal("unknown"))
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_OPERATOR_CHART_TIMEOUT"))
@@ -185,12 +185,12 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 
 	It("rejects empty and contradictory authorization results", func() {
 		result = deployment.PreflightResult{Ready: true}
-		checks := observer.observe(context.Background(), request, current)
+		checks := observer.Observe(context.Background(), request, current)
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_RESULT_INCOMPLETE"))
 		result = deployment.PreflightResult{Ready: true, Checks: []deployment.PreflightCheck{{
 			ID: "caller.rbac.denied", State: "blocked", ReasonCode: "CALLER_PERMISSION_MISSING", Message: "Cannot create the selected resource.",
 		}}}
-		checks = observer.observe(context.Background(), request, current)
+		checks = observer.Observe(context.Background(), request, current)
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_RESULT_INCOMPLETE"))
 	})
 
@@ -203,7 +203,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 			cancel()
 			return data, err
 		}
-		checks := observer.observe(ctx, request, current)
+		checks := observer.Observe(ctx, request, current)
 		Expect(checks[0].State).To(Equal("unknown"))
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_CANCELLED"))
 		Expect(clientCalls).To(BeZero())
@@ -218,7 +218,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 				return result
 			}}, nil
 		}
-		checks := observer.observe(ctx, request, current)
+		checks := observer.Observe(ctx, request, current)
 		Expect(checks).To(HaveLen(1))
 		Expect(checks[0].State).To(Equal("unknown"))
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_CANCELLED"))
@@ -228,7 +228,7 @@ var _ = Describe("HBN discovery caller permission adapter", func() {
 		observer.newClient = func(context.Context, config.Request, generation.ManagementIdentity, string) (callerPermissionClient, error) {
 			return nil, nil
 		}
-		checks := observer.observe(context.Background(), request, current)
+		checks := observer.Observe(context.Background(), request, current)
 		Expect(checks[0].State).To(Equal("unknown"))
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_MANAGEMENT_UNAVAILABLE"))
 	})

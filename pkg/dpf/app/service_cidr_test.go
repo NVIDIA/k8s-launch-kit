@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
 	"encoding/json"
@@ -20,7 +20,7 @@ var _ = Describe("selected controller tenant service range", func() {
 			input.Site.Inventory.Software.TenantServiceCIDR = saved
 			before, err := json.Marshal(input.Site)
 			Expect(err).NotTo(HaveOccurred())
-			got, err := generationInputs(input)
+			got, err := ResolveGeneration(input, nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got.Operator.Bootstrap.Tenant.ServiceCIDR).To(Equal(intent.Release.TenantServiceCIDR))
 			Expect(input.Site.Inventory.Software.TenantServiceCIDR).To(Equal(saved))

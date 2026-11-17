@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
 	"context"
@@ -24,7 +24,7 @@ var _ = Describe("retained deployment caller authorization", func() {
 		input, err := config.LoadInputs(loaded.Path, "")
 		Expect(err).NotTo(HaveOccurred())
 		clientCalls, downloads := 0, 0
-		observer := hbnPermissionObserver{
+		observer := HBNPermissionObserver{
 			fetchChart: func(context.Context, string) ([]byte, error) { downloads++; return nil, nil },
 			newClient: func(_ context.Context, _ config.Request, identity generation.ManagementIdentity, version string) (callerPermissionClient, error) {
 				clientCalls++
@@ -37,7 +37,7 @@ var _ = Describe("retained deployment caller authorization", func() {
 			},
 		}
 		request := config.Request{Input: input, DPFNamespace: "dpf-operator-system"}
-		observe := observer.observeRetained(retained, plan)
+		observe := observer.ObserveRetained(retained, plan)
 		checks := observe(context.Background(), request, input.Site.Inventory)
 		Expect(checks).To(HaveLen(1))
 		Expect(checks[0].State).To(Equal("passed"))

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
@@ -64,7 +65,7 @@ var _ = Describe("retained DPF deployment use case", func() {
 			loaded, retained := generatedUseCaseSite(input)
 			before, err := yaml.Marshal(loaded.Document)
 			Expect(err).NotTo(HaveOccurred())
-			effective, err := withRetainedUseCase(loaded, retained)
+			effective, err := app.WithRetainedUseCase(loaded, retained)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(*effective.Site.DPF.UseCase).To(Equal("hbn-bgp"))
 			Expect(effective.Source).To(Equal(loaded.Source))
@@ -77,7 +78,7 @@ var _ = Describe("retained DPF deployment use case", func() {
 			Expect(loaded.Site.DPF.UseCase).To(Equal(original))
 			plan, err := generation.LoadPlan(retained)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(verifyDeploymentPlan(effective, retained, plan)).To(Succeed())
+			Expect(app.VerifyDeploymentPlan(effective, retained, plan)).To(Succeed())
 			for _, file := range retained.Files() {
 				if file.Path == ".l8k/source-config.yaml" {
 					Expect(file.Data).To(Equal(loaded.Source))
@@ -120,26 +121,26 @@ var _ = Describe("retained DPF deployment use case", func() {
 		Expect(err).NotTo(HaveOccurred())
 		current, err := config.Decode(data, loaded.Path)
 		Expect(err).NotTo(HaveOccurred())
-		effective, err := withRetainedUseCase(current, retained)
+		effective, err := app.WithRetainedUseCase(current, retained)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(effective.Site.Provisioning.Flavor["dpuMode"]).To(Equal("nic"))
 		Expect(effective.Source).To(Equal(data))
 		plan, err := generation.LoadPlan(retained)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(verifyDeploymentPlan(effective, retained, plan)).NotTo(Succeed())
+		Expect(app.VerifyDeploymentPlan(effective, retained, plan)).NotTo(Succeed())
 	})
 
 	It("rejects missing or unsupported bundle selections and corrupted source provenance", func() {
 		input := deploymentSite()
 		input.Site.DPF.UseCase = stringPtr("unknown")
 		loaded, retained := generatedUseCaseSite(input)
-		_, err := withRetainedUseCase(loaded, nil)
+		_, err := app.WithRetainedUseCase(loaded, nil)
 		Expect(err).To(HaveOccurred())
 		index := retained.Index()
 		index.Profile, index.BundleDigest = "other", ""
 		unsupported, err := bundle.New(index, retained.Files())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = withRetainedUseCase(loaded, unsupported)
+		_, err = app.WithRetainedUseCase(loaded, unsupported)
 		Expect(err).To(HaveOccurred())
 		index = retained.Index()
 		index.Profile, index.BundleDigest = "", ""

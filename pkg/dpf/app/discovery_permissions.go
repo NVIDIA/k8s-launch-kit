@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
 	"context"
@@ -21,24 +21,28 @@ type callerPermissionClient interface {
 	CheckCallerPermissions(context.Context, deployment.ManagementPreflightRequest) deployment.PreflightResult
 }
 
-// hbnPermissionObserver joins the generation and authorization boundaries in
-// the target adapter. Discovery neither imports deployment nor maintains a
+// HBNPermissionObserver joins the generation and authorization boundaries in
+// the DPF application layer. Discovery neither imports deployment nor maintains a
 // second list of permissions or chart-rendering rules.
-type hbnPermissionObserver struct {
+type HBNPermissionObserver struct {
 	fetchChart func(context.Context, string) ([]byte, error)
 	newClient  func(context.Context, config.Request, generation.ManagementIdentity, string) (callerPermissionClient, error)
 }
 
-func newHBNPermissionObserver() hbnPermissionObserver {
-	return hbnPermissionObserver{
-		fetchChart: downloadGenerationChart,
+// NewHBNPermissionObserver composes bounded chart retrieval and identity-bound
+// management authorization against the generated or retained deployment bundle.
+func NewHBNPermissionObserver() HBNPermissionObserver {
+	return HBNPermissionObserver{
+		fetchChart: DownloadChart,
 		newClient: func(ctx context.Context, request config.Request, identity generation.ManagementIdentity, version string) (callerPermissionClient, error) {
 			return deployment.NewAPIClient(ctx, request, identity, version)
 		},
 	}
 }
 
-func (o hbnPermissionObserver) observe(ctx context.Context, request config.Request, current *inventory.Inventory) []inventory.Check {
+// Observe derives authorization checks from current observations and a newly
+// generated, integrity-checked bundle. Unknown or incomplete evidence stays unknown.
+func (o HBNPermissionObserver) Observe(ctx context.Context, request config.Request, current *inventory.Inventory) []inventory.Check {
 	unknown := func(code, message string) []inventory.Check {
 		return callerRBACUnknown(request, code, message)
 	}
@@ -52,7 +56,7 @@ func (o hbnPermissionObserver) observe(ctx context.Context, request config.Reque
 	// prior inventory or reinterpret it as this run's observations.
 	input := request.Input
 	input.Site.Inventory = current
-	plan, err := generationInputs(input)
+	plan, err := ResolveGeneration(input, nil)
 	if err != nil {
 		return unknown("CALLER_RBAC_PLAN_UNAVAILABLE", "Deployment permissions cannot be checked until the selected release has a supported provisioning recipe, site allocations are complete and device identities are verified.")
 	}
@@ -85,10 +89,10 @@ func (o hbnPermissionObserver) observe(ctx context.Context, request config.Reque
 	return o.checkPermissions(ctx, request, plan.Management, plan.Operator.KubernetesVersion, retained)
 }
 
-// observeRetained checks current caller authorization against the exact bundle
+// ObserveRetained checks current caller authorization against the exact bundle
 // being deployed, after binding current observations and supported desired
 // settings. It never regenerates a new recipe from the current release catalog.
-func (o hbnPermissionObserver) observeRetained(retained *bundle.Bundle, plan *generation.Plan) discovery.HBNPermissionObserver {
+func (o HBNPermissionObserver) ObserveRetained(retained *bundle.Bundle, plan *generation.Plan) discovery.HBNPermissionObserver {
 	return func(ctx context.Context, request config.Request, current *inventory.Inventory) []inventory.Check {
 		if ctx == nil || current == nil || current.Management == nil || plan == nil || retained == nil || o.newClient == nil {
 			return callerRBACUnknown(request, "CALLER_RBAC_INPUT_UNAVAILABLE", "Caller authorization requires a validated retained plan and current management discovery.")
@@ -98,7 +102,7 @@ func (o hbnPermissionObserver) observeRetained(retained *bundle.Bundle, plan *ge
 		}
 		input := request.Input
 		input.Site.Inventory = current
-		if err := verifyDeploymentPlan(input, retained, plan); err != nil {
+		if err := VerifyDeploymentPlan(input, retained, plan); err != nil {
 			return callerRBACUnknown(request, "CALLER_RBAC_PLAN_UNAVAILABLE", "Current selected identities or supported settings do not match the retained deployment plan; caller permissions remain unverified.")
 		}
 		intent := plan.Intent()
@@ -111,7 +115,7 @@ func callerRBACUnknown(request config.Request, code, message string) []inventory
 		Vantage: "executor", RequiredPhase: "deploy", State: "unknown", ReasonCode: code, Message: message}}
 }
 
-func (o hbnPermissionObserver) checkPermissions(ctx context.Context, request config.Request, identity generation.ManagementIdentity, kubernetesVersion string, retained *bundle.Bundle) []inventory.Check {
+func (o HBNPermissionObserver) checkPermissions(ctx context.Context, request config.Request, identity generation.ManagementIdentity, kubernetesVersion string, retained *bundle.Bundle) []inventory.Check {
 	unknown := func(code, message string) []inventory.Check {
 		return callerRBACUnknown(request, code, message)
 	}

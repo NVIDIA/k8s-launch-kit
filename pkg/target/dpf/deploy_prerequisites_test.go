@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
@@ -113,7 +114,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		Expect(err).NotTo(HaveOccurred())
 		generatedInput, err := config.WithUseCase(input, stringPtr("hbn-bgp"))
 		Expect(err).NotTo(HaveOccurred())
-		resolved, err := generationInputs(generatedInput)
+		resolved, err := app.ResolveGeneration(generatedInput, nil)
 		Expect(err).NotTo(HaveOccurred())
 		resolved.OperatorArchive, err = os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
 		Expect(err).NotTo(HaveOccurred())
@@ -123,7 +124,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		Expect(err).NotTo(HaveOccurred())
 		plan, err := generation.LoadPlan(retained)
 		Expect(err).NotTo(HaveOccurred())
-		request.Input, err = withRetainedUseCase(input, retained)
+		request.Input, err = app.WithRetainedUseCase(input, retained)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(request.Input.Source).To(Equal(data))
 		collectors := func(*artifacts.Store, *generation.Plan) discovery.Dependencies { return deps }

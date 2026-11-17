@@ -359,12 +359,25 @@ flowchart TB
 | `pkg/target` | Names, phases, capabilities, common invocation policy, registry, operation contract | Cobra, Host options, DPF options, Kubernetes clients |
 | `pkg/target/host` | Typed Host requests, explicit-value semantics, Host path/config resolution, phase services | DPF implementation or cross-target composition |
 | `pkg/app` | Discover/generate/root workflow state and Network Operator plugin coordination | CLI parsing or process exit |
+| `pkg/dpf/app` | Pure generation and retained-plan input resolution; explicit chart retrieval/render preparation and caller-permission composition | CLI binding, output publication, collector assembly or deployment state machine |
 | `pkg/dpf/managementaccess` | Bounded explicit management credential/TLS snapshots, client construction and fresh cluster identity reads | Discovery inventory, deployment eligibility, ambient Host kubeconfig fallback or cached identity success |
 | `pkg/dpf/discovery` | Expanded management inventory, provisioning observations and discovery checks using explicit management access | Credential loading or base management access construction |
 | `pkg/networkoperatorplugin` | Discovery, rendering, deployment state machine, validation primitives | Target selection |
 | `pkg/config`, `pkg/options` | Host configuration, YAML presence and option models | A universal union of Host and DPF configuration |
 | `pkg/configflags`, `pkg/configinput`, `pkg/resolve` | Shared option bindings, explicit CLI inputs, configuration resolution and validation | CLI process exit or cluster orchestration |
 | `pkg/ui`, `pkg/errors`, `pkg/log` | Presentation, structured failures, and logging | Domain decisions |
+
+DPF adapters call `app.ResolveGeneration` for desired inputs without opening
+credential or kubeconfig references. Fresh generation selects maintained release
+catalog defaults; retained deployment uses the validated plan's fixed recipe and
+compares current settings, source selection and physical bindings against it.
+`app.PrepareGeneration` loads public input files, and `app.Generate` retrieves
+bounded chart archives and invokes the schema-validating renderer. These are I/O
+operations, separate from the pure resolver. The adapter retains signals,
+publication, user-facing error projection and final output. The application also
+composes caller authorization from the actual generated or retained bundle and
+fresh management identity. Collector assembly and deployment orchestration
+currently remain in the DPF target adapter.
 
 DPF discovery, probes and deployment share the concrete management access client.
 Each `managementaccess.Open` snapshots the explicit bounded credential and TLS

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
@@ -126,7 +127,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 							provisioningRelease = resolved.Software.Version
 						}
 						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{IncludeNetworkFunctionMACs: resolved.HBN != nil, ProvisioningRelease: provisioningRelease}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
-						deps.HBNPermissions = newHBNPermissionObserver().observe
+						deps.HBNPermissions = app.NewHBNPermissionObserver().Observe
 						deps.HBNEnrollment = hbnEnrollmentAccessCheck
 						deps.Artifacts = artifactcheck.Verifier{}
 						deps.HostLLDP = sshprobe.Collector{}

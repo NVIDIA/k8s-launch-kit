@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
@@ -106,15 +107,15 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		if err != nil {
 			return apperrors.NewValidationError("invalid DPF deployment configuration", err, "Supply the discovery output with --inventory dpf-discovered.yaml")
 		}
-		input, err = withRetainedConfiguration(input, plan)
+		input, err = app.WithRetainedConfiguration(input, plan)
 		if err != nil {
 			return apperrors.NewValidationError("cannot restore DPF deployment settings", err, "Regenerate and review the bundle")
 		}
-		input, err = withRetainedUseCase(input, retained)
+		input, err = app.WithRetainedUseCase(input, retained)
 		if err != nil {
 			return apperrors.NewValidationError("DPF deployment selection conflicts with the bundle", err, "Use the generated selection or regenerate and review the bundle")
 		}
-		input, err = withRetainedProvisioning(input, plan)
+		input, err = app.WithRetainedProvisioning(input, plan)
 		if err != nil {
 			return apperrors.NewValidationError("cannot resolve retained DPF provisioning", err, "Use the validated bundle's supported recipe")
 		}
@@ -205,7 +206,7 @@ func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string, resume
 			Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, HostLLDP: sshprobe.Collector{},
 			BMC:            redfish.Collector{IncludeNetworkFunctionMACs: true, ProvisioningRelease: plan.Intent().Release},
 			Probes:         probe.Runner{Assets: catalog.ProbeAssets(), Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))},
-			HBNPermissions: newHBNPermissionObserver().observeRetained(retained, plan), HBNEnrollment: hbnEnrollmentAccessCheck, Artifacts: artifactcheck.Verifier{}, HostNetworking: sshprobe.ObserveHostWorkloadNetwork,
+			HBNPermissions: app.NewHBNPermissionObserver().ObserveRetained(retained, plan), HBNEnrollment: hbnEnrollmentAccessCheck, Artifacts: artifactcheck.Verifier{}, HostNetworking: sshprobe.ObserveHostWorkloadNetwork,
 		}
 	})
 }
@@ -249,7 +250,7 @@ func deploymentPrerequisitesWithCollectors(retained *bundle.Bundle, runDir strin
 		}
 		current := request.Input
 		current.Site.Inventory = report.Inventory
-		if err := verifyDeploymentPlan(current, retained, plan); err != nil {
+		if err := app.VerifyDeploymentPlan(current, retained, plan); err != nil {
 			return deployment.PrerequisiteVerification{}, err
 		}
 		return deployment.PrerequisiteVerification{Inventory: report.Inventory, Checks: report.Readiness.Checks}, nil
@@ -262,7 +263,7 @@ func verifyDeploymentChart(ctx context.Context, plan *generation.Plan) (deployme
 		return check, fmt.Errorf("retained deployment plan is required")
 	}
 	selected := plan.Intent().Generation
-	data, err := downloadGenerationChart(ctx, strings.TrimSuffix(selected.ChartRepository, "/")+"/charts/"+selected.ChartName+"-"+selected.ChartVersion+".tgz")
+	data, err := app.DownloadChart(ctx, strings.TrimSuffix(selected.ChartRepository, "/")+"/charts/"+selected.ChartName+"-"+selected.ChartVersion+".tgz")
 	if err != nil {
 		return check, err
 	}

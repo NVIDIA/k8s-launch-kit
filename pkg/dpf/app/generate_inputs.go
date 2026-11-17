@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
 	"crypto/sha256"
@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mitchellh/copystructure"
+
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
@@ -21,83 +23,91 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 )
 
-type generationPlan struct {
+// ResolvedGeneration contains desired artifact inputs and public chart coordinates.
+// Its mutable fields are independent of the source input and shared defaults.
+type ResolvedGeneration struct {
 	generation.Inputs
 	OperatorChartURL string
 }
 
-// generationInputs resolves desired artifacts from saved observations, without
-// opening any access references. Deployment must refresh identity and readiness.
-func generationInputs(input config.Input) (generationPlan, error) {
-	return generationInputsForPlan(input, nil)
-}
-
-// generationInputsForPlan uses the retained fixed recipe during deployment,
+// ResolveGeneration uses the retained fixed recipe during deployment,
 // while fresh generation resolves the maintained catalog. Current supported
 // knobs and allocations always remain inputs to the exact-plan comparison.
-func generationInputsForPlan(input config.Input, retained *generation.Plan) (generationPlan, error) {
+// It performs no file or network I/O and never opens access references.
+func ResolveGeneration(input config.Input, retained *generation.Plan) (ResolvedGeneration, error) {
 	if input.External && retained != nil {
 		var err error
-		input, err = withRetainedProvisioning(input, retained)
+		input, err = WithRetainedProvisioning(input, retained)
 		if err != nil {
-			return generationPlan{}, err
+			return ResolvedGeneration{}, err
 		}
 	}
 	intent, err := config.ResolveIntent(input.Site)
 	if err != nil {
-		return generationPlan{}, err
+		return ResolvedGeneration{}, err
 	}
 	if intent.UseCase != "hbn-bgp" || intent.Networking == nil || intent.Generation == nil {
-		return generationPlan{}, fmt.Errorf("DPF generation requires --use-case hbn-bgp or a saved HBN-BGP selection")
+		return ResolvedGeneration{}, fmt.Errorf("DPF generation requires --use-case hbn-bgp or a saved HBN-BGP selection")
 	}
 	if input.External && retained != nil {
 		previous := retained.Intent()
 		if previous.Release != intent.Release.Version {
-			return generationPlan{}, fmt.Errorf("current release differs from the retained plan; regenerate and review the bundle")
+			return ResolvedGeneration{}, fmt.Errorf("current release differs from the retained plan; regenerate and review the bundle")
 		}
 	}
 	inv := input.Site.Inventory
 	if inv == nil || inv.FormatVersion != inventory.FormatVersion || inv.Management == nil || inv.HBN == nil || len(inv.DPUs) == 0 {
-		return generationPlan{}, fmt.Errorf("DPF generation requires a current-format HBN discovery inventory with management and selected DPU identities")
+		return ResolvedGeneration{}, fmt.Errorf("DPF generation requires a current-format HBN discovery inventory with management and selected DPU identities")
 	}
 	if inv.Software == nil || inv.Software.Version != intent.Release.Version || inv.HBN.Namespace != intent.Namespace {
-		return generationPlan{}, fmt.Errorf("selected DPF release or namespace differs from discovery; run discovery with the intended configuration")
+		return ResolvedGeneration{}, fmt.Errorf("selected DPF release or namespace differs from discovery; run discovery with the intended configuration")
 	}
 	if inv.Management.SystemNamespaceUID == "" || inv.Management.TrustDigest == "" {
-		return generationPlan{}, fmt.Errorf("management identity or trust are missing; rerun discovery")
+		return ResolvedGeneration{}, fmt.Errorf("management identity or trust are missing; rerun discovery")
 	}
 	if input.External && retained == nil {
 		selected := make([]config.ProvisioningDevice, 0, len(inv.DPUs))
 		for _, device := range inv.DPUs {
 			psid, err := discovery.ObservedDevicePSID(inv, device)
 			if err != nil {
-				return generationPlan{}, fmt.Errorf("DPU %q: %w", device.SerialNumber, err)
+				return ResolvedGeneration{}, fmt.Errorf("DPU %q: %w", device.SerialNumber, err)
 			}
 			selected = append(selected, config.ProvisioningDevice{Model: device.Model, PSID: psid})
 		}
 		provisioning, issues, err := config.ResolveProvisioningDefaults(input.Site, selected)
 		if err != nil {
-			return generationPlan{}, err
+			return ResolvedGeneration{}, err
 		}
 		if len(issues) > 0 {
-			return generationPlan{}, fmt.Errorf("release catalog cannot provision the selected hardware: %s (%s): %s", issues[0].Field, issues[0].ReasonCode, issues[0].Message)
+			return ResolvedGeneration{}, fmt.Errorf("release catalog cannot provision the selected hardware: %s (%s): %s", issues[0].Field, issues[0].ReasonCode, issues[0].Message)
 		}
 		input.Site.Provisioning = provisioning
 	}
 	if input.Site.Provisioning == nil {
-		return generationPlan{}, fmt.Errorf("provisioning inputs are required")
+		return ResolvedGeneration{}, fmt.Errorf("provisioning inputs are required")
 	}
 	provisioning := input.Site.Provisioning
 	if len(provisioning.Flavor) == 0 {
-		return generationPlan{}, fmt.Errorf("maintained provisioning recipe lacks the required DPU flavor for the selected hardware")
+		return ResolvedGeneration{}, fmt.Errorf("maintained provisioning recipe lacks the required DPU flavor for the selected hardware")
+	}
+	// The internal input form can carry a caller-owned nested flavor mapping.
+	// External catalog and retained recipes already return independent values;
+	// give every resolver result the same ownership without rewriting YAML values.
+	copied, err := copystructure.Copy(provisioning.Flavor)
+	if err != nil {
+		return ResolvedGeneration{}, fmt.Errorf("copy DPF generation flavor: %w", err)
+	}
+	flavor, ok := copied.(map[string]any)
+	if !ok {
+		return ResolvedGeneration{}, fmt.Errorf("copy DPF generation flavor: expected a mapping")
 	}
 	resources, err := generationResources(provisioning.Resources)
 	if err != nil {
-		return generationPlan{}, err
+		return ResolvedGeneration{}, err
 	}
-	resolved, err := generationDevices(input.Site, inv, *intent.Networking)
+	resolved, err := ResolveDevices(input.Site, inv, *intent.Networking)
 	if err != nil {
-		return generationPlan{}, err
+		return ResolvedGeneration{}, err
 	}
 	devices := make([]hbnrender.Device, 0, len(resolved))
 	selected := make([]bootstrap.Device, 0, len(resolved))
@@ -109,40 +119,40 @@ func generationInputsForPlan(input config.Input, retained *generation.Plan) (gen
 	}
 	software, issues, err := config.ValidateProvisioningSoftware(provisioning, psids)
 	if err != nil {
-		return generationPlan{}, err
+		return ResolvedGeneration{}, err
 	}
 	if len(issues) > 0 {
-		return generationPlan{}, fmt.Errorf("required provisioning input missing: %s", issues[0].Field)
+		return ResolvedGeneration{}, fmt.Errorf("required provisioning input missing: %s", issues[0].Field)
 	}
 	bootstrapInputs, issues, err := config.ResolveBootstrap(provisioning.Bootstrap, intent.Namespace, inv.Management.APIEndpoint, selected, intent.Release.TenantServiceCIDR)
 	if err != nil {
-		return generationPlan{}, err
+		return ResolvedGeneration{}, err
 	}
 	if len(issues) > 0 {
-		return generationPlan{}, fmt.Errorf("required bootstrap input missing: %s", issues[0].Field)
+		return ResolvedGeneration{}, fmt.Errorf("required bootstrap input missing: %s", issues[0].Field)
 	}
 	source := slices.Clone(input.Source)
 	if input.External {
 		source, err = config.Saved(input, inv, input.Path)
 		if err != nil {
-			return generationPlan{}, fmt.Errorf("retain effective discovery inputs: %w", err)
+			return ResolvedGeneration{}, fmt.Errorf("retain effective discovery inputs: %w", err)
 		}
 	}
-	return generationPlan{Inputs: generation.Inputs{
+	return ResolvedGeneration{Inputs: generation.Inputs{
 		Operator: bootstrap.OperatorRenderInputs{ReleaseVersion: intent.Release.Version, ReleaseName: intent.Release.Operator.Chart,
 			KubernetesVersion: inv.Management.KubernetesVersion, Bootstrap: bootstrapInputs},
 		Workload: hbnrender.Inputs{Namespace: intent.Namespace, Generation: *intent.Generation, Profile: *intent.Networking,
-			Software: software, Devices: devices, DPUClusterSelector: maps.Clone(bootstrapInputs.Tenant.Labels), FlavorSpec: provisioning.Flavor, HBNResources: resources},
+			Software: software, Devices: devices, DPUClusterSelector: maps.Clone(bootstrapInputs.Tenant.Labels), FlavorSpec: flavor, HBNResources: resources},
 		Management:   generation.ManagementIdentity{APIEndpoint: inv.Management.APIEndpoint, SystemNamespaceUID: inv.Management.SystemNamespaceUID, TrustDigest: inv.Management.TrustDigest},
 		SourceConfig: source,
 	}, OperatorChartURL: strings.TrimSuffix(intent.Release.Operator.ChartRepository, "/") + "/charts/" + intent.Release.Operator.Chart + "-" + intent.Release.Operator.Version + ".tgz"}, nil
 }
 
-// generationDevices checks the complete selected source set, then reuses the
+// ResolveDevices checks the complete selected source set, then reuses the
 // discovery association/PSID contract and the resolved profile's ASN allocation.
 // Labels are desired enrollment bindings;
 // deployment must verify identity before attaching them to any DPUDevice.
-func generationDevices(site config.Site, inv *inventory.Inventory, profile hbn.Profile) ([]generation.ResolvedDevice, error) {
+func ResolveDevices(site config.Site, inv *inventory.Inventory, profile hbn.Profile) ([]generation.ResolvedDevice, error) {
 	if inv == nil || len(inv.DPUs) == 0 {
 		return nil, fmt.Errorf("current selected DPU inventory is required")
 	}

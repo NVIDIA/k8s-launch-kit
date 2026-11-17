@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
 	"fmt"
@@ -12,10 +12,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 )
 
-// withRetainedConfiguration supplies the bundle's desired settings only for a
+// WithRetainedConfiguration supplies the bundle's desired settings only for a
 // fresh inventory without explicit intent. A supplied override file or saved
 // discovery configuration must still match the retained plan before any apply.
-func withRetainedConfiguration(input config.Input, plan *generation.Plan) (config.Input, error) {
+func WithRetainedConfiguration(input config.Input, plan *generation.Plan) (config.Input, error) {
 	if !input.External || input.OverridesPath != "" || config.HasConfiguration(input) {
 		return input, nil
 	}
@@ -29,10 +29,10 @@ func withRetainedConfiguration(input config.Input, plan *generation.Plan) (confi
 	return config.WithConfiguration(input, settings)
 }
 
-// withRetainedProvisioning supplies fixed validated implementation while
+// WithRetainedProvisioning supplies fixed validated implementation while
 // preserving current allowed policy and environment inputs. External records
 // remain public inventories; config.Saved never publishes these internals.
-func withRetainedProvisioning(input config.Input, plan *generation.Plan) (config.Input, error) {
+func WithRetainedProvisioning(input config.Input, plan *generation.Plan) (config.Input, error) {
 	provisioning, err := plan.ResolveProvisioning(input.Site)
 	if err != nil {
 		return config.Input{}, err
@@ -41,10 +41,10 @@ func withRetainedProvisioning(input config.Input, plan *generation.Plan) (config
 	return input, nil
 }
 
-// withRetainedUseCase restores the generation selection before resolving access
+// WithRetainedUseCase restores the generation selection before resolving access
 // or collecting fresh inventory. Bundle loading has checked structural integrity;
 // Run still verifies the complete retained generation before external effects.
-func withRetainedUseCase(input config.Input, retained *bundle.Bundle) (config.Input, error) {
+func WithRetainedUseCase(input config.Input, retained *bundle.Bundle) (config.Input, error) {
 	if retained == nil {
 		return config.Input{}, fmt.Errorf("deployment requires a retained HBN-BGP bundle selection")
 	}
@@ -75,10 +75,10 @@ func withRetainedUseCase(input config.Input, retained *bundle.Bundle) (config.In
 	return config.WithUseCase(input, &selection)
 }
 
-// verifyDeploymentPlan binds current site intent and physical observations to
+// VerifyDeploymentPlan binds current site intent and physical observations to
 // the retained desired bundle. Access references may change, but neither the
 // generated resources nor the selected physical host bindings may change.
-func verifyDeploymentPlan(input config.Input, retained *bundle.Bundle, plan *generation.Plan) error {
+func VerifyDeploymentPlan(input config.Input, retained *bundle.Bundle, plan *generation.Plan) error {
 	if retained == nil || plan == nil || retained.Index().BundleDigest != plan.Digest() {
 		return fmt.Errorf("deployment requires the validated retained bundle")
 	}
@@ -96,7 +96,7 @@ func verifyDeploymentPlan(input config.Input, retained *bundle.Bundle, plan *gen
 	if err := verifyDeploymentPhysicalBindings(before.Site.Inventory, input.Site.Inventory); err != nil {
 		return err
 	}
-	resolved, err := generationInputsForPlan(input, plan)
+	resolved, err := ResolveGeneration(input, plan)
 	if err != nil {
 		return fmt.Errorf("current deployment inputs cannot resolve the retained intent: %w", err)
 	}

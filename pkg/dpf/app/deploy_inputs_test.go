@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 )
 
@@ -59,6 +60,34 @@ var _ = Describe("DPF deployment input binding", func() {
 		}
 	})
 
+	It("keeps current catalog generation separate from retained recipes without changing public inputs", func() {
+		loaded, retained := generatedUseCaseSite(deploymentSite())
+		plan, err := generation.LoadPlan(retained)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.WriteFile(loaded.Path, publicFixtureBytes(loaded), 0600)).To(Succeed())
+		input, err := config.LoadInputs(loaded.Path, "")
+		Expect(err).NotTo(HaveOccurred())
+		before, err := json.Marshal(input)
+		Expect(err).NotTo(HaveOccurred())
+		fresh, err := ResolveGeneration(input, nil)
+		Expect(err).NotTo(HaveOccurred())
+		fixed, err := ResolveGeneration(input, plan)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fresh.Workload.Software.OSISO).NotTo(Equal(fixed.Workload.Software.OSISO))
+		Expect(fixed.Workload.Software).To(Equal(plan.Intent().Software))
+		Expect(fixed.Workload.FlavorSpec).To(HaveKeyWithValue("dpuMode", "dpu"))
+		Expect(VerifyDeploymentPlan(input, retained, plan)).To(Succeed())
+		after, err := json.Marshal(input)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(Equal(before))
+
+		input.Site.Discovery.Hosts[0].SSH.Address = "192.0.2.99"
+		Expect(VerifyDeploymentPlan(input, retained, plan)).To(MatchError(ContainSubstring("SSH source changed")))
+		input.Site.Discovery.Hosts[0].SSH.Address = "192.0.2.40"
+		input.Site.Inventory.Management.SystemNamespaceUID = "replacement-cluster"
+		Expect(VerifyDeploymentPlan(input, retained, plan)).To(MatchError(ContainSubstring("generated plan")))
+	})
+
 	It("rejects changed intent without opening access", func() {
 		t := GinkgoT()
 		input := deploymentSite()
@@ -71,15 +100,15 @@ var _ = Describe("DPF deployment input binding", func() {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resolved, err := generationInputs(input)
+		resolved, err := ResolveGeneration(input, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		resolved.OperatorArchive, err = os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
+		resolved.OperatorArchive, err = os.ReadFile("../bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
 		if err != nil {
 			t.Fatal(err)
 		}
-		resolved.HBNChartArchive, err = os.ReadFile("../../dpf/generation/testdata/doca-hbn-3.5.0.tgz")
+		resolved.HBNChartArchive, err = os.ReadFile("../generation/testdata/doca-hbn-3.5.0.tgz")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,11 +120,11 @@ var _ = Describe("DPF deployment input binding", func() {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := verifyDeploymentPlan(input, retained, plan); err != nil {
+		if err := VerifyDeploymentPlan(input, retained, plan); err != nil {
 			t.Fatal(err)
 		}
 		input.Site.Provisioning.Flavor["dpuMode"] = "nic"
-		if err := verifyDeploymentPlan(input, retained, plan); err == nil {
+		if err := VerifyDeploymentPlan(input, retained, plan); err == nil {
 			t.Fatal("changed desired flavor was accepted against the retained bundle")
 		}
 	})
