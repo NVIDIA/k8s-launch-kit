@@ -16,19 +16,11 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/switchprobe"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -142,7 +134,7 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		result, runErr := deployment.Run(ctx, deployment.RunRequest{
 			Bundle: retained, Access: access, Resume: resume,
 			ReportPath: filepath.Join(runDir, "deployment.jsonl"), ProbeJournalPath: filepath.Join(runDir, "probe-resources.json"),
-			VerifyPrerequisites: freshDeploymentPrerequisites(retained, runDir, resume != nil), VerifyChartSource: verifyDeploymentChart,
+			VerifyPrerequisites: app.DeploymentPrerequisites(retained, runDir, resume != nil), VerifyChartSource: verifyDeploymentChart,
 			Rebooter:     rebooter,
 			PollInterval: 5 * time.Second, RequestTimeout: access.RequestTimeout,
 		})
@@ -198,63 +190,6 @@ func writeDeploymentResult(request DeployRequest, format string, result deployme
 		return failure
 	}
 	return nil
-}
-
-func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string, resume bool) deployment.PrerequisiteVerifier {
-	return deploymentPrerequisitesWithCollectors(retained, runDir, resume, func(store *artifacts.Store, plan *generation.Plan) discovery.Dependencies {
-		return discovery.Dependencies{
-			Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, HostLLDP: sshprobe.Collector{},
-			BMC:            redfish.Collector{IncludeNetworkFunctionMACs: true, ProvisioningRelease: plan.Intent().Release},
-			Probes:         probe.Runner{Assets: catalog.ProbeAssets(), Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))},
-			HBNPermissions: app.NewHBNPermissionObserver().ObserveRetained(retained, plan), HBNEnrollment: hbnEnrollmentAccessCheck, Artifacts: artifactcheck.Verifier{}, HostNetworking: sshprobe.ObserveHostWorkloadNetwork,
-		}
-	})
-}
-
-// The private collector seam retains the real native collection/plan-verification
-// path in integration tests without opening real endpoint transports.
-func deploymentPrerequisitesWithCollectors(retained *bundle.Bundle, runDir string, resume bool, collectors func(*artifacts.Store, *generation.Plan) discovery.Dependencies) deployment.PrerequisiteVerifier {
-	return func(ctx context.Context, request config.Request, plan *generation.Plan, phase deployment.PrerequisitePhase) (deployment.PrerequisiteVerification, error) {
-		if retained == nil || plan == nil || plan.Digest() != retained.Index().BundleDigest {
-			return deployment.PrerequisiteVerification{}, fmt.Errorf("fresh prerequisites require the validated retained plan")
-		}
-		if phase != deployment.BeforeActivation && phase != deployment.AfterActivation {
-			return deployment.PrerequisiteVerification{}, fmt.Errorf("unsupported prerequisite phase")
-		}
-		store, err := artifacts.New(request.Input, filepath.Join(runDir, string(phase)+"-discovered.yaml"), true)
-		if err != nil {
-			return deployment.PrerequisiteVerification{}, err
-		}
-		deps := collectors(store, plan)
-		deps.RetainedProvisioning = plan
-		deps.DeferHBNReadiness = resume || phase == deployment.AfterActivation
-		if phase == deployment.AfterActivation {
-			deps.ArtifactSourceMode = discovery.ArtifactInputsOnly
-		}
-		report := discovery.Collect(ctx, request, store.RunID(), deps)
-		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		err = store.Publish(publishCtx, &report)
-		cancel()
-		if err != nil {
-			return deployment.PrerequisiteVerification{}, fmt.Errorf("save fresh deployment discovery: %w", err)
-		}
-		if ctx.Err() != nil {
-			return deployment.PrerequisiteVerification{}, ctx.Err()
-		}
-		if report.Execution != "completed" || report.Discovery.Outcome != "complete" || len(report.Errors) > 0 || report.Readiness == nil {
-			return deployment.PrerequisiteVerification{}, fmt.Errorf("fresh deployment discovery is incomplete; inspect %s", store.RunDir)
-		}
-
-		if !resume && phase == deployment.BeforeActivation && report.Readiness.State != "ready" {
-			return deployment.PrerequisiteVerification{Inventory: report.Inventory, Checks: report.Readiness.Checks}, fmt.Errorf("fresh HBN-BGP prerequisites are blocked; inspect %s", store.RunDir)
-		}
-		current := request.Input
-		current.Site.Inventory = report.Inventory
-		if err := app.VerifyDeploymentPlan(current, retained, plan); err != nil {
-			return deployment.PrerequisiteVerification{}, err
-		}
-		return deployment.PrerequisiteVerification{Inventory: report.Inventory, Checks: report.Readiness.Checks}, nil
-	}
 }
 
 func verifyDeploymentChart(ctx context.Context, plan *generation.Plan) (deployment.PreflightCheck, error) {

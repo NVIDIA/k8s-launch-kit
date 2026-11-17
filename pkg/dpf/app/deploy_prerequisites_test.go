@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
 	"context"
@@ -16,9 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
@@ -112,25 +110,30 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		Expect(os.WriteFile(input.Path, data, 0600)).To(Succeed())
 		input, err = config.Decode(data, input.Path)
 		Expect(err).NotTo(HaveOccurred())
-		generatedInput, err := config.WithUseCase(input, stringPtr("hbn-bgp"))
+		useCase := "hbn-bgp"
+		generatedInput, err := config.WithUseCase(input, &useCase)
 		Expect(err).NotTo(HaveOccurred())
-		resolved, err := app.ResolveGeneration(generatedInput, nil)
+		resolved, err := ResolveGeneration(generatedInput, nil)
 		Expect(err).NotTo(HaveOccurred())
-		resolved.OperatorArchive, err = os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
+		resolved.OperatorArchive, err = os.ReadFile("../bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
 		Expect(err).NotTo(HaveOccurred())
-		resolved.HBNChartArchive, err = os.ReadFile("../../dpf/generation/testdata/doca-hbn-3.5.0.tgz")
+		resolved.HBNChartArchive, err = os.ReadFile("../generation/testdata/doca-hbn-3.5.0.tgz")
 		Expect(err).NotTo(HaveOccurred())
 		retained, err := generation.Generate(resolved.Inputs)
 		Expect(err).NotTo(HaveOccurred())
 		plan, err := generation.LoadPlan(retained)
 		Expect(err).NotTo(HaveOccurred())
-		request.Input, err = app.WithRetainedUseCase(input, retained)
+		request.Input, err = WithRetainedUseCase(input, retained)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(request.Input.Source).To(Equal(data))
-		collectors := func(*artifacts.Store, *generation.Plan) discovery.Dependencies { return deps }
+		collectors := func(current *discovery.Dependencies) {
+			current.SSH, current.BMC, current.Artifacts = physical, physical, deps.Artifacts
+			// Enrollment/permissions and host-network probes have separate transport suites.
+			current.HBNPermissions, current.HBNEnrollment, current.HostLLDP, current.HostNetworking = nil, nil, nil, nil
+		}
 		for _, phase := range []deployment.PrerequisitePhase{deployment.BeforeActivation, deployment.AfterActivation} {
 			for _, resume := range []bool{false, true} {
-				verify := deploymentPrerequisitesWithCollectors(retained, filepath.Join(root, fmt.Sprint(resume)), resume, collectors)
+				verify := deploymentPrerequisitesWithTransports(retained, filepath.Join(root, fmt.Sprint(resume)), resume, collectors)
 				previousReads := originReads
 				observed, err := verify(ctx, request, plan, phase)
 				if phase == deployment.BeforeActivation {
@@ -191,7 +194,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		for _, phase := range []deployment.PrerequisitePhase{deployment.BeforeActivation, deployment.AfterActivation} {
 			for _, resume := range []bool{false, true} {
 				runDir := filepath.Join(root, fmt.Sprintf("external-%t", resume))
-				verify := deploymentPrerequisitesWithCollectors(retained, runDir, resume, collectors)
+				verify := deploymentPrerequisitesWithTransports(retained, runDir, resume, collectors)
 				previousReads := originReads
 				observed, err := verify(ctx, request, plan, phase)
 				if resume || phase == deployment.AfterActivation {
@@ -228,7 +231,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		changed := request
 		changed.Input, err = config.WithConfiguration(request.Input, settings)
 		Expect(err).NotTo(HaveOccurred())
-		verify := deploymentPrerequisitesWithCollectors(retained, filepath.Join(root, "external-changed-memory"), true, collectors)
+		verify := deploymentPrerequisitesWithTransports(retained, filepath.Join(root, "external-changed-memory"), true, collectors)
 		previousReads := originReads
 		_, err = verify(ctx, changed, plan, deployment.BeforeActivation)
 		Expect(err).To(MatchError(ContainSubstring("change the generated plan")), "retained recipe must not overwrite current supported memory")
@@ -236,5 +239,32 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		unchanged, err = os.ReadFile(input.Path)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(unchanged).To(Equal(public))
+
+		// Cancellation must retain the partial report using the bounded publication
+		// context, then return cancellation rather than a publication error.
+		cancelled, stop := context.WithCancel(ctx)
+		stop()
+		cancelDir := filepath.Join(root, "cancelled")
+		verify = deploymentPrerequisitesWithTransports(retained, cancelDir, true, collectors)
+		_, err = verify(cancelled, request, plan, deployment.BeforeActivation)
+		Expect(err).To(MatchError(context.Canceled))
+		var reports []string
+		Expect(filepath.WalkDir(cancelDir, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Name() == "report.json" {
+				reports = append(reports, path)
+			}
+			return nil
+		})).To(Succeed())
+		Expect(reports).To(HaveLen(1))
+		published, err := os.ReadFile(reports[0])
+		Expect(err).NotTo(HaveOccurred())
+		var interrupted inventory.Report
+		Expect(json.Unmarshal(published, &interrupted)).To(Succeed())
+		Expect(interrupted.Execution).To(Or(Equal("cancelled"), Equal("failed")))
+		Expect(interrupted.Discovery.Outcome).NotTo(Equal("complete"))
+		Expect(interrupted.Errors).NotTo(BeEmpty())
 	})
 })

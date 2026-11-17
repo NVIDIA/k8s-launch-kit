@@ -359,7 +359,7 @@ flowchart TB
 | `pkg/target` | Names, phases, capabilities, common invocation policy, registry, operation contract | Cobra, Host options, DPF options, Kubernetes clients |
 | `pkg/target/host` | Typed Host requests, explicit-value semantics, Host path/config resolution, phase services | DPF implementation or cross-target composition |
 | `pkg/app` | Discover/generate/root workflow state and Network Operator plugin coordination | CLI parsing or process exit |
-| `pkg/dpf/app` | Pure generation and retained-plan input resolution; explicit chart retrieval/render preparation and caller-permission composition | CLI binding, output publication, collector assembly or deployment state machine |
+| `pkg/dpf/app` | Pure generation and retained-plan input resolution; explicit chart retrieval/render preparation, collector and caller-permission composition, fresh deployment prerequisite collection/publication and retained-plan comparison | CLI binding, final output or deployment state machine |
 | `pkg/dpf/managementaccess` | Bounded explicit management credential/TLS snapshots, client construction and fresh cluster identity reads | Discovery inventory, deployment eligibility, ambient Host kubeconfig fallback or cached identity success |
 | `pkg/dpf/discovery` | Expanded management inventory, provisioning observations and discovery checks using explicit management access | Credential loading or base management access construction |
 | `pkg/networkoperatorplugin` | Discovery, rendering, deployment state machine, validation primitives | Target selection |
@@ -376,8 +376,15 @@ bounded chart archives and invokes the schema-validating renderer. These are I/O
 operations, separate from the pure resolver. The adapter retains signals,
 publication, user-facing error projection and final output. The application also
 composes caller authorization from the actual generated or retained bundle and
-fresh management identity. Collector assembly and deployment orchestration
-currently remain in the DPF target adapter.
+fresh management identity. The application shares concrete collector assembly across standalone discovery and
+native deployment prerequisite collection. Standalone discovery selects fresh
+permission planning and release-dependent BMC observations; deployment binds
+authorization and provisioning to its retained plan. Resume defers lifecycle
+eligibility, and post-activation additionally records artifact inputs without
+re-reading origin bytes. Each collection keeps its own probe journal; prerequisite
+publication survives cancellation before returning the cancellation error.
+The target adapter retains standalone discovery validation/publication and
+deployment orchestration.
 
 DPF discovery, probes and deployment share the concrete management access client.
 Each `managementaccess.Open` snapshots the explicit bounded credential and TLS

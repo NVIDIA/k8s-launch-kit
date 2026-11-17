@@ -10,21 +10,15 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/switchprobe"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -122,16 +116,7 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 								}
 							}
 						}
-						provisioningRelease := ""
-						if resolved.HBN != nil && resolved.Software != nil {
-							provisioningRelease = resolved.Software.Version
-						}
-						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{IncludeNetworkFunctionMACs: resolved.HBN != nil, ProvisioningRelease: provisioningRelease}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
-						deps.HBNPermissions = app.NewHBNPermissionObserver().Observe
-						deps.HBNEnrollment = hbnEnrollmentAccessCheck
-						deps.Artifacts = artifactcheck.Verifier{}
-						deps.HostLLDP = sshprobe.Collector{}
-						deps.HostNetworking = sshprobe.ObserveHostWorkloadNetwork
+						deps := app.StandaloneCollectors(resolved, store.RunDir)
 						if resolved.Input.Site.Inventory == nil {
 							resolved.Input.Site.Inventory = store.PriorInventory
 						}

@@ -1,10 +1,9 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package dpf
+package app
 
 import (
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
@@ -18,7 +17,7 @@ func hbnEnrollmentAccessCheck(request config.Request, current *inventory.Invento
 	if request.HBN == nil || request.Software == nil {
 		return check
 	}
-	selected, err := app.ResolveDevices(request.Input.Site, current, *request.HBN)
+	selected, err := ResolveDevices(request.Input.Site, current, *request.HBN)
 	if err != nil {
 		return check
 	}
