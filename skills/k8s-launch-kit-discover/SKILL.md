@@ -11,7 +11,70 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and output modes.
 
-For DPF inventory discovery, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md). This version supports discovery only; DPF generation, deployment, validation and the composite pipeline are unavailable. Inventory is the default and uses explicit SSH/Redfish YAML without requiring Kubernetes or a kubeconfig. A supplied kubeconfig adds management-cluster observations. Set `discovery.probes.mode: management` to request per-node network probes; this build rejects those probes until diagnostic image assets pass Kubernetes runtime qualification. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, but it does not establish hardware qualification or deployment readiness. Do not run Host discovery against the DPF estate.
+For the standalone DPF workflow, follow [DPF CLI workflows](../../docs/user/dpf-workflows.md) and read [DPF discovery](../../docs/user/dpf-discovery.md). Inventory is the default and uses explicit SSH/Redfish YAML without requiring Kubernetes. A supplied kubeconfig adds management observations; `discovery.probes.mode: management` explicitly requests pod/node network probes and requires the documented management-cluster prerequisites. Inventory success requires selected identities, unique host/card associations and verified administrator privileges on each DPU BMC, while selected-use-case eligibility and DPF authentication remain separate assessments. The current BF4/HBN-BGP cohort remains beta; do not infer hardware qualification from command availability or inventory success, and do not run Host discovery against the DPF estate.
+
+`--use-case hbn-bgp` adds Cumulus NVUE/LLDP/FRR and direct ASIC switch inspection
+and defaults to inventory mode. ASIC readiness requires the catalog-qualified
+Cumulus 5.15.1/CD28, SDK 4.8.2052 reader and both exact stock-script hashes listed
+in the [discovery reference](../../docs/user/dpf-discovery.md#check-hbn-bgp-prerequisites).
+Other builds remain unknown and block readiness; site inputs cannot waive this.
+Switch SSH must also allow read-only kernel nexthop observations; this capability
+is checked even with empty route tables, before deployment effects.
+No VLAN, VRF, BGP or forwarding configuration is written. The stock diagnostic
+briefly adjusts router SDK log verbosity; interruption or failure leaves
+restoration unconfirmed and stops without automatic retry or network repair.
+Closing SSH does not prove restoration. Arrange exclusive diagnostic use and
+resolve uncertain log state with the switch administrator before another run. Supply explicit switch credentials, pinned SSH
+known-hosts trust and intended p0/p1 bindings under `discovery.switches`.
+Explicit `discovery.probes.mode: management` adds the existing two-vantage
+network probes on Linux/amd64 management nodes. It creates temporary non-root
+Pods and an immutable request ConfigMap in an existing namespace, checks API
+and DPU BMC DNS/TCP/TLS paths, collects node interfaces/routes and an
+HBN tenant VIP route lookup, then cleans up by UID. Failed paths remain blockers
+while independent paths continue; structural/identity errors stop execution.
+BMC probes reuse explicit endpoint TLS policy and report bypassed handshakes as
+`unverified`; management API TLS remains strict. Host SSH sources can accompany
+these probes; explicit DPU BMC endpoints are required. Interface/route
+success does not prove VIP reservation or VRID uniqueness.
+Require explicit `provisioning.bootstrap.tenant.allocation` declarations for
+`vipReserved`, `vipExcludedFromDHCP` and `routerIDUniqueOnSelectedNodes`.
+Missing/null values remain unknown and false values fail readiness. Never set
+them from profile defaults, route observations or absence from an API list.
+True values record site-owner declarations, not measured IPAM facts, and cannot
+waive known collisions or fresh deployment checks.
+For another tenant with the same VRRP ID, discovery compares observed node
+selectors: potentially overlapping placement fails, missing selector facts stay
+unknown, and disjoint selectors do not conflict. A verified absence of a
+Keepalived endpoint does not reserve a VRRP ID through that resource.
+The explicit flag overrides and persists `dpf.useCase`; `dpf.hbn` overrides
+desired profile defaults. Read `readiness.state` separately from physical
+`discovery.outcome`: required unknown or mismatched prerequisites return nonzero
+even when physical inventory is saved. The readiness assessment keeps unverified provisioning
+prerequisites blocked. It never applies switch changes or treats LLDP names as
+authenticated DPU identity. See the HBN-BGP section of the discovery reference.
+Standalone discovery assesses initial deployment. After a recorded deployment has
+created enrollment, tenant, host addresses or advertised routes, use the unchanged
+bundle and its operation reference with deploy `--resume`; do not clean up owned
+state solely to satisfy initial vacancy checks. Resume performs its own fresh
+collection and UID-bound lifecycle assessment.
+
+For the current BF4 HBN crawler, select the `admin` username and one common
+nonempty BMC password value through protected references for all selected DPUs.
+Distinct aliases with equal resolved values are valid. HBN readiness checks this
+compatibility separately from general inventory Administrator privileges.
+
+HBN deployment readiness counts distinct uniquely associated selected physical
+hosts and rejects a serial complete ordinary/DF matrix whose packet-spacing
+lower bound cannot fit the native two-hour maximum. This bound is not a forecast;
+see [the budget rule](../../docs/user/dpf-deployment.md#run-deployment).
+
+With complete provisioning inputs and current identities, HBN discovery retrieves
+and verifies the selected operator/HBN charts and derives an in-memory deployment
+plan for scoped management API authorization reviews. Read the caller permission
+checks separately from controller, tenant and host/switch access. Missing inputs,
+chart validation failures, denied rights or incomplete decisions remain blockers;
+saved inventory must not substitute for the current cluster identity. Authorization
+reviews do not install the generated resources. Deployment repeats its checks.
 
 DPF live check status goes to stderr as operations run, including with JSON output;
 quiet suppresses progress. Human summaries show configured names/addresses and
@@ -26,7 +89,9 @@ SSH card readings use `runtime.hardware.cards`, including `firmwareVersion`,
 running mode. DPU firmware uses named component version lists with activation
 when known. Host BMC reads retain identity, adapters and reset types.
 `inventory.software` retains artifact coordinates and named documented minima,
-without source/revision lists or generic requirements. Missing minima remain
+without source/revision lists or generic requirements. The selected release also
+owns its fixed tenant serviceCIDR; older saved BOMs may omit that fact and must
+not acquire it from a newer catalog during decoding. Missing minima remain
 unknown. `scopeDigest` guards the configured refresh scope/trust policy; the
 inventory does not repeat `requestedScope`. Management/probe source metadata and
 report check outcomes remain intact. New format is `v1alpha3`; legacy `v1alpha1`
@@ -93,7 +158,8 @@ bypass, set the endpoint's `tls.insecureSkipVerify: true`; the shared
 policy, including an explicit `false`. Do not combine `caFile` with `true`.
 Retain stderr warnings and the configured `discovery` TLS policy; the saved
 `inventory.scopeDigest` guards that policy during refresh. A policy change requires a fresh seed/output; it does not weaken
-management kubeconfig or network-probe TLS verification.
+management kubeconfig TLS verification. BMC network probes honor the explicit
+BMC policy and never describe a bypassed certificate as verified.
 Redfish login prefers the public root's `Links.Sessions`, including standard
 HPE trailing-slash links. A protected `SessionService` GET is not required when
 that login link is present; credentials are sent only to the same-origin standard

@@ -1,0 +1,221 @@
+// Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+// SPDX-License-Identifier: Apache-2.0
+
+package deployment
+
+import (
+	"context"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
+
+func TestControllerMetadataPolicyIsFiniteAndDoesNotMutateInputs(t *testing.T) {
+	deployment := activationDeploymentIntent(map[string]string{"tenant.example/id": "tenant-a"})
+	software := &unstructured.Unstructured{Object: map[string]any{"apiVersion": blueFieldSoftwareAPIVersion, "kind": "BlueFieldSoftware", "metadata": map[string]any{"name": "hbn-software", "namespace": "dpf"}}}
+	devices := []generation.ResolvedDevice{resolvedActivationDevice("SERIAL-A", "serial-a"), resolvedActivationDevice("SERIAL-B", "serial-b")}
+	beforeDeployment, beforeSoftware := deployment.DeepCopy(), software.DeepCopy()
+	beforeDevices := []generation.ResolvedDevice{resolvedActivationDevice("SERIAL-A", "serial-a"), resolvedActivationDevice("SERIAL-B", "serial-b")}
+	policy, err := compileControllerMetadata(deployment, software, devices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := controllerMetadataPolicy{softwareIdentity{namespace: "dpf", name: "hbn-software"}: {"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a": {}, "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-b": {}}}
+	if !reflect.DeepEqual(policy, want) || !reflect.DeepEqual(deployment.Object, beforeDeployment.Object) || !reflect.DeepEqual(software.Object, beforeSoftware.Object) || !reflect.DeepEqual(devices, beforeDevices) {
+		t.Fatal("policy differs from exact selected set names or mutated its inputs")
+	}
+	for _, tc := range []struct {
+		name, namespace, software, kind string
+		tokens                          []string
+		accepted                        bool
+	}{
+		{name: "both selected sets", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection", "dpu.nvidia.com/dpudeployment", "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a", "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-b"}, accepted: true},
+		{name: "other namespace", namespace: "other", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a"}, accepted: false},
+		{name: "other software", namespace: "dpf", software: "other", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a"}, accepted: false},
+		{name: "other set", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-other-a"}, accepted: false},
+		{name: "similar set prefix", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a-extra"}, accepted: false},
+		{name: "other token prefix", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"foreign.example/bfs-dpuset-hbn-a"}, accepted: false},
+		{name: "duplicate exact token", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a", "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a"}, accepted: false},
+		{name: "cross kind", namespace: "dpf", software: "hbn-software", kind: "DPUFlavor", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a"}, accepted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			object := software.DeepCopy()
+			object.SetNamespace(tc.namespace)
+			object.SetName(tc.software)
+			object.SetKind(tc.kind)
+			object.SetFinalizers(tc.tokens)
+			if err := validateControllerMetadata(object, policy); (err == nil) != tc.accepted {
+				t.Fatalf("metadata accepted=%v, want %v", err == nil, tc.accepted)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*unstructured.Unstructured)
+	}{
+		{name: "wrong namespace", edit: func(o *unstructured.Unstructured) { o.SetNamespace("other") }},
+		{name: "wrong software", edit: func(o *unstructured.Unstructured) { o.SetName("other") }},
+		{name: "wrong kind", edit: func(o *unstructured.Unstructured) { o.SetKind("BFB") }},
+	} {
+		t.Run("compile "+tc.name, func(t *testing.T) {
+			object := software.DeepCopy()
+			tc.edit(object)
+			if _, err := compileControllerMetadata(deployment, object, devices); err == nil {
+				t.Fatal("unbound software policy compiled")
+			}
+		})
+	}
+	if _, err := controllerMetadataForPlan(nil); err == nil {
+		t.Fatal("missing retained plan compiled")
+	}
+}
+
+func TestManagementReconcilerBindsClonedPolicyWhilePublicConstructorStaysStrict(t *testing.T) {
+	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := prepareManagementExecution(generated, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := retainedBlueFieldSoftware(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := controllerMetadataForPlan(execution.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := softwareIdentity{namespace: desired.GetNamespace(), name: desired.GetName()}
+	tokens, ok := policy[key]
+	if !ok || len(tokens) != len(execution.plan.Intent().Devices) || len(tokens) == 0 {
+		t.Fatal("plan did not bind every selected DPUSet")
+	}
+	current, err := execution.reconciler.markedDesired(desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.SetUID("software-uid")
+	current.SetResourceVersion("1")
+	finalizers := []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection", "dpu.nvidia.com/dpudeployment"}
+	for token := range tokens {
+		finalizers = append(finalizers, token)
+	}
+	current.SetFinalizers(finalizers)
+	if err := execution.reconciler.Verify(desired, current); err != nil {
+		t.Fatalf("native factory lost plan policy: %v", err)
+	}
+	strict, err := NewReconciler(execution.operator.renderedManifest, execution.plan.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := strict.Verify(desired, current); err == nil {
+		t.Fatal("public constructor allowed dynamic finalizers without a retained plan")
+	}
+	isolated, err := newReconciler(execution.operator.renderedManifest, execution.plan.Digest(), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for token := range tokens {
+		delete(tokens, token)
+	}
+	tokens["foreign.example/added-after-construction"] = struct{}{}
+	delete(policy, key)
+	if err := isolated.Verify(desired, current); err != nil {
+		t.Fatal("mutating constructor inputs altered immutable policy")
+	}
+	foreign := current.DeepCopy()
+	foreign.SetFinalizers([]string{"foreign.example/added-after-construction"})
+	if err := isolated.Verify(desired, foreign); err == nil {
+		t.Fatal("caller mutation broadened policy")
+	}
+	original := current.DeepCopy()
+	client := &reconcileFixture{objects: map[string]*unstructured.Unstructured{reconcileKey(current): current.DeepCopy()}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, disposition, err := isolated.Ensure(ctx, client, desired); err != nil || disposition != DispositionExisting || client.creates != 0 {
+		t.Fatal("exact finalized software was not verified without effects")
+	}
+	if !reflect.DeepEqual(current.Object, original.Object) {
+		t.Fatal("verification mutated observed software")
+	}
+	for _, edit := range []func(*unstructured.Unstructured){
+		func(o *unstructured.Unstructured) {
+			a := o.GetAnnotations()
+			a[BundleDigestAnnotation] = "foreign"
+			o.SetAnnotations(a)
+		},
+		func(o *unstructured.Unstructured) {
+			if err := unstructured.SetNestedField(o.Object, "foreign", "spec", "version"); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		changed := original.DeepCopy()
+		edit(changed)
+		if err := isolated.Verify(desired, changed); err == nil {
+			t.Fatal("plan metadata policy weakened markers or spec verification")
+		}
+	}
+}
+
+func TestActivationBoundaryAcceptsVendorFinalizersForCreatedSelectedSets(t *testing.T) {
+	fixture := newActivationIntegrationFixtureForSerials(t, []string{"SERIAL-A", "SERIAL-B"})
+	execution, client := fixture.prepared.execution, fixture.client
+	deployment, err := retainedDeploymentObject(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked, err := execution.reconciler.markedDesired(deployment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.Create(fixture.ctx, marked, false)
+	if err != nil || created == nil {
+		t.Fatalf("create exact parent fixture: %v", err)
+	}
+	software, err := retainedBlueFieldSoftware(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := tenantStageKey(software)
+	observed := client.base.resources[key]
+	if observed == nil {
+		t.Fatal("fixture software receipt is missing")
+	}
+	observed = observed.DeepCopy()
+	// Model the vendor controller independently from the compiled allowlist:
+	// each actually created same-namespace Set contributes its literal name.
+	finalizers := []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection", "dpu.nvidia.com/dpudeployment"}
+	if len(client.sets) != 2 {
+		t.Fatal("fixture did not create both selected Sets")
+	}
+	for _, set := range client.sets {
+		if set.GetName() == "" || set.GetNamespace() != observed.GetNamespace() || set.GetUID() == "" {
+			t.Fatal("created Set identity is incomplete")
+		}
+		finalizers = append(finalizers, "provisioning.dpu.nvidia.com/bfs-dpuset-"+set.GetName())
+	}
+	observed.SetFinalizers(finalizers)
+	client.base.resources[key] = observed
+	objects, err := retainedWorkloadObjects(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams, creates := client.streamRequests.Load(), client.base.createCount
+	ctx, cancel := context.WithTimeout(fixture.ctx, 10*time.Second)
+	defer cancel()
+	if err := verifyActivationSoftware(ctx, client, execution, fixture.workload.Software); err != nil {
+		t.Fatalf("vendor finalizers invalidated exact software receipt: %v", err)
+	}
+	if err := verifyActivationBoundary(ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, client.activationSelected, created.GetUID(), objects, fixture.journal, time.Second); err != nil {
+		t.Fatalf("post-create vendor finalizers blocked the real activation boundary: %v", err)
+	}
+	if len(client.patches) != 0 || client.guardCalls != 0 || client.resetSafetyCalls != 0 || client.base.createCount != creates || client.streamRequests.Load() != streams {
+		t.Fatal("readonly boundary verification released hold, claimed reboot, created an object or restreamed software")
+	}
+}

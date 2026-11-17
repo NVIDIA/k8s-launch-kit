@@ -77,7 +77,7 @@ discovery:
 		Expect(after.Targets[0].DisplayName()).To(Equal(`"Host A" (ssh://host.example:22)`))
 		Expect(Scope(after.Targets[0])).To(Equal(Scope(before.Targets[0])))
 	})
-	It("rejects ambiguous transports, auth, invalid presence and management-mode SSH", func() {
+	It("rejects ambiguous transports, auth, invalid presence and incomplete management scope", func() {
 		for _, text := range []string{
 			strings.Replace(document, "ssh:", "bmcEndpoint: https://host.example\n      ssh:", 1),
 			strings.Replace(document, "ssh:", "tls: {insecureSkipVerify: true}\n      ssh:", 1),
@@ -92,6 +92,26 @@ discovery:
 			}
 			Expect(err).To(HaveOccurred())
 		}
+	})
+	It("allows host SSH with explicit DPU Redfish targets in management mode", func() {
+		in, err := Decode([]byte(document), filepath.Join(dir, "site.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+		mode := "management"
+		in.Site.Discovery.Probes.Mode = &mode
+		in.Site.Management.KubeconfigRef.File = "kubeconfig"
+		in.Site.Discovery.DPUs = []Endpoint{{CredentialRef: "reader", BMCEndpoint: "https://bmc.example"}}
+		resolved, err := Resolve(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Targets).To(HaveLen(2))
+		Expect(resolved.Targets[0].Role).To(Equal("dpus"))
+		Expect(resolved.Targets[0].SSH).To(BeNil())
+		Expect(resolved.Targets[1].Role).To(Equal("hosts"))
+		Expect(resolved.Targets[1].SSH).NotTo(BeNil())
+
+		// An ARM SSH source does not supply the required BMC network endpoint.
+		in.Site.Discovery.DPUs = []Endpoint{{CredentialRef: "reader", SSH: &SSH{Address: "arm.example", KnownHostsFile: "known_hosts"}}}
+		_, err = Resolve(in)
+		Expect(err).To(MatchError(ContainSubstring("explicit DPU BMC targets")))
 	})
 	It("canonicalizes only bounded address forms", func() {
 		for input, want := range map[string]string{"HOST.EXAMPLE": "ssh://host.example:22", "host.example:2222": "ssh://host.example:2222", "[2001:db8::1]": "ssh://[2001:db8::1]:22"} {

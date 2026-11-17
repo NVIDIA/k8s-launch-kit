@@ -32,11 +32,15 @@ with a source filename and document number where applicable.
 
 ## Target selection and flag ownership
 
-Omitting `--target` selects `host`. `dpf` supports
-[inventory discovery only](../user/dpf-discovery.md) in this version; generate,
-deploy, validate and the composite pipeline are unavailable and return exit `2`.
-Inventory needs no kubeconfig; a supplied kubeconfig adds management observations.
-Explicit management network probes target each observed node that meets the existing readiness and platform checks, using pinned, runtime-qualified diagnostic assets. Node count alone does not establish control-plane HA or qualify a production topology.
+Omitting `--target` selects `host`. `dpf` supports standalone
+[discovery](../user/dpf-discovery.md), [HBN-BGP manifest generation](../user/dpf-generation.md),
+and [deployment](../user/dpf-deployment.md) with provisioning and runtime checks.
+The current BF4/HBN-BGP cohort remains beta; command availability does not
+qualify every hardware and release combination. DPF standalone validation and
+the root pipeline remain unavailable and return exit `2`.
+Management probes cover every observed node that meets the existing readiness and
+platform checks; node count alone does not establish control-plane HA or production
+qualification.
 
 Host-only flags are rejected when they are explicitly supplied for another
 target. Defaults are ignored by this check, including explicit-value flags
@@ -45,6 +49,8 @@ flag groups and `l8k schema` for each flag's `targets` list.
 
 | Flag | Applies to | Target scope | Description |
 | --- | --- | --- | --- |
+| `--resume` | deploy | dpf | Resume the reported `namespace/name/UID` initial-deployment operation with the same explicit site and retained bundle; uncertain effects are observed, never blindly replayed. |
+| `--use-case` | discover, generate | dpf | Select `hbn-bgp` readiness checks; overrides `dpf.useCase` in the input file. |
 | `--target` | discover, generate, deploy, validate, root pipeline | target-agnostic | Target name. Defaults to `host`. |
 | `--kubeconfig` | root, discover, generate with deploy, deploy, clean, validate, sosreport | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
 | `--user-config` | root, discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace and Helm-ownership resolution. |
@@ -156,9 +162,9 @@ root pipeline. The remaining profile flags also apply to discovery.
 | `--workload-manifest` | Replace the profile's example workload with a Pod or workload-controller manifest. |
 | `--enable-doca-driver` | Override `docaDriver.enable` and include the DOCA driver deployment. |
 | `--image-pull-secrets` | Secret names propagated into generated Network Operator policies and Helm values. Matching credentials already present in the operator namespace authenticate the Helm chart download. |
-| `--deploy` | Deploy immediately after generation. |
+| `--deploy` | Host only: deploy immediately after generation. For DPF, review the bundle and run the separate `l8k deploy --target dpf` command. |
 | `--kubeconfig` | Kubeconfig used with `--deploy`. |
-| `--dry-run` | Preview the deploy stage used with `--deploy`. |
+| `--dry-run` | Host only: preview the deploy stage used with `--deploy`. |
 | `--overwrite-existing` | Allow convergence when deploy preflight finds Helm or managed-resource drift. |
 | `--skip-network-operator-helm` | Omit `values.yaml`; with `--deploy`, also skip chart installation and Helm preflight checks. |
 

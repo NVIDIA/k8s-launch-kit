@@ -1,0 +1,37 @@
+# Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+plugin: dpf
+name: hbn-bgp
+target: dpf
+description: Flat IPv4 BGP HBN profile for the DPF target.
+defaults:
+  namespace: dpf-operator-system
+  networking:
+    fabricVRF: default
+    fabricASN: 65000
+    dpuASNBase: 65101
+    dpuASNStride: 100
+    uplinkMTU: 9216
+    workloadMTU: 9000
+    workloadCIDR: 10.0.120.0/22
+    workloadPrefix: 29
+  generation:
+    loopbackCIDR: 10.0.124.0/24
+    workloadGatewayIndex: 1
+    hostAddressIndex: 2
+    dpuSetStrategy: OnDelete
+    nodeEffect: hold
+    vxlanStartupProbeEnabled: false
+  resources:
+    memory: 6Gi
+    nvidia.com/bf_sf: "4"
+  bootstrap:
+    bmcFactoryResetPolicy: Never
+    operatorConfigName: dpfoperatorconfig
+    tenantName: dpu-cplane-tenant1
+    tenantNamespace: dpu-cplane-tenant1
+    tenantMaxNodes: 1000
+    tenantRouterID: 126
+    tenantNodeSelector:
+      node-role.kubernetes.io/control-plane: ""
+    podCIDR: 10.244.0.0/14

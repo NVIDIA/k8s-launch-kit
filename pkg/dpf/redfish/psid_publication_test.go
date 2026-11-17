@@ -75,10 +75,10 @@ var _ = Describe("BF4 optional PSID publication", func() {
 		Entry("unrelated canary", Document{"AssetTag": "credential-canary"}, Document{}, "", "PSID_INVALID"),
 		Entry("33-character PSID", Document{"AssetTag": "MT_" + strings.Repeat("A", 30)}, Document{}, "", "PSID_INVALID"),
 		Entry("64-character PSID", Document{"AssetTag": "MT_" + strings.Repeat("A", 61)}, Document{}, "", "PSID_INVALID"),
-		Entry("invalid chassis value", Document{"AssetTag": "MT_000001"}, Document{"AssetTag": "ABC123"}, "", "PSID_INVALID"),
+		Entry("invalid selected chassis value", Document{}, Document{"AssetTag": "ABC123"}, "", "PSID_INVALID"),
 		Entry("valid boundary", Document{"AssetTag": "MT_" + strings.Repeat("A", 29)}, Document{}, "MT_"+strings.Repeat("A", 29), "PSID_OBSERVED"),
 		Entry("valid chassis fallback", Document{}, Document{"AssetTag": "MT_000001"}, "MT_000001", "PSID_OBSERVED"),
-		Entry("valid sources still conflict", Document{"AssetTag": "MT_000001"}, Document{"AssetTag": "MT_000002"}, "", "PSID_CONFLICT"),
+		Entry("System precedence preserves the selected value", Document{"AssetTag": "MT_000001"}, Document{"AssetTag": "MT_000002"}, "MT_000001", "PSID_OBSERVED"),
 		Entry("absent value", Document{}, Document{}, "", "PSID_NOT_EXPOSED"),
 	)
 })

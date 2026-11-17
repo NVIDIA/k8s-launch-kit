@@ -8,6 +8,7 @@ import "github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 // legacyInventoryInput is the v1alpha1/v1alpha2 read contract. Retired device
 // metadata is accepted here without restoring it to observations or output.
 type legacyInventoryInput struct {
+	HBN            *HBNInventory       `json:"hbn,omitempty" yaml:"hbn,omitempty"`
 	Software       *releases.Release   `json:"software,omitempty" yaml:"software,omitempty"`
 	AddressLookup  *AddressLookup      `json:"addressLookup,omitempty" yaml:"addressLookup,omitempty"`
 	FormatVersion  string              `json:"formatVersion" yaml:"formatVersion"`
@@ -31,6 +32,7 @@ type legacyDeviceInput struct {
 
 func (wire legacyInventoryInput) inventory() Inventory {
 	return Inventory{
+		HBN:      wire.HBN,
 		Software: wire.Software, AddressLookup: wire.AddressLookup,
 		FormatVersion: wire.FormatVersion, Collection: wire.Collection,
 		RequestedScope: wire.RequestedScope, ScopeDigest: wire.ScopeDigest,

@@ -23,7 +23,24 @@ var _ = Describe("release BOM resolution", func() {
 		Expect(r.Operator.Version).To(Equal("v26.4.0"))
 		Expect(r.Operator.Image).To(Equal("nvcr.io/nvidia/doca/dpf-system:v26.4.0"))
 		Expect(r.Operator.ChartDigest).To(Equal("sha256:0f9a18a0d64958e2f1769bdb468a46ad65e0ea485dadb86cad9e6457b3cec69a"))
-		Expect(SupportedReleases()).To(Equal([]string{"26.4.0"}))
+		Expect(SupportedReleases()).To(Equal([]string{"26.4.0", "26.8.0"}))
+	})
+	It("selects HBN-BGP defaults and artifact coordinates from the release catalog", func() {
+		generic, err := Resolve("")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(generic.Version).To(Equal("26.4.0"))
+		Expect(generic.SupportsUseCase(UseCaseHBNBGP)).To(BeFalse())
+		hbnRelease, err := DefaultForUseCase(UseCaseHBNBGP)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hbnRelease.Version).To(Equal("26.8.0"))
+		Expect(hbnRelease.SupportsUseCase(UseCaseHBNBGP)).To(BeTrue())
+		Expect(hbnRelease.HBNWorkload).To(Equal(&HBNWorkload{ChartRepository: "https://helm.ngc.nvidia.com/nvidia/doca", Chart: "doca-hbn", ChartVersion: "3.5.0", ChartDigest: "sha256:85dc3b44307b92088fc3d05561e66cada4a7d8390ff6ff3e6c6fde8f9c5a42d9", ImageRepository: "nvcr.io/nvidia/doca/doca_hbn", ImageTag: "3.5.0-doca3.5.0", ImageDigest: "sha256:675ff5bf03acf5e2c777309d9dbe570754d3348be661278df094783f18962d93", StartupVersion: "HBN 2.4.0", SourceRef: "hbn-guide", ResetSafety: &ResetSafetyContract{Contract: "bf4-reset-safety-v1", BMCFirmware: "BF4-26.10-0001", CPUFirmware: "26.10-0001", Models: []string{"B4240"}}}))
+		custom, err := Resolve("26.8.0")
+		Expect(err).NotTo(HaveOccurred())
+		custom.HBNWorkload.ChartVersion = "mutated"
+		fresh, err := Resolve("26.8.0")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fresh.HBNWorkload.ChartVersion).To(Equal("3.5.0"), "resolved releases must be independent copies")
 	})
 	It("rejects unreviewed releases and does not interpret latest, prefixes or whitespace", func() {
 		for _, version := range []string{"latest", "26.4", "26.4.1", "v26.4.0", " 26.4.0", "26.4.0 "} {
@@ -83,6 +100,72 @@ var _ = Describe("release BOM resolution", func() {
 		_, ok := missing.RequirementsFor("B3240")
 		Expect(ok).To(BeFalse())
 	})
+	It("describes the v26.8 BF4 beta artifact mechanism without claiming exact-model support", func() {
+		r, err := Resolve("26.8.0")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.TenantKubernetesVersion).To(Equal("v1.35.6"))
+		Expect(r.SupportedKubernetes).To(Equal(&VersionRange{Minimum: "1.33", Maximum: "1.36"}))
+		Expect(r.Operator.Chart).To(Equal("dpf-operator"))
+		Expect(r.Operator.Version).To(Equal("v26.8.0"))
+		Expect(r.Operator.ChartDigest).To(Equal("sha256:0252d473beaf473e93a09b23a39b7b78fff931c9a801f4e60ef93bface5e28c8"))
+		Expect(r.HBNWorkload.ResetSafety).To(Equal(&ResetSafetyContract{Contract: "bf4-reset-safety-v1", BMCFirmware: "BF4-26.10-0001", CPUFirmware: "26.10-0001", Models: []string{"B4240"}}))
+		Expect(r.Operator.SourceRef).To(Equal("published-chart"))
+		var chartSource *Source
+		for i := range r.Sources {
+			if r.Sources[i].ID == r.Operator.SourceRef {
+				chartSource = &r.Sources[i]
+			}
+		}
+		Expect(chartSource).NotTo(BeNil())
+		Expect(chartSource.URL).To(Equal("https://helm.ngc.nvidia.com/nvidia/doca/charts/dpf-operator-v26.8.0.tgz"))
+		Expect(chartSource.Revision).To(Equal("1751dc679f702fdf91c2641d925e69908ae4921f"))
+		var bf4 *HardwareBOM
+		for i := range r.Hardware {
+			if r.Hardware[i].Family == "BlueField-4" {
+				bf4 = &r.Hardware[i]
+			}
+		}
+		Expect(bf4).NotTo(BeNil())
+		Expect(bf4.Models).To(BeEmpty())
+		Expect(bf4.SupportLevel).To(Equal("beta"))
+		Expect(bf4.BFB).To(BeNil())
+		Expect(bf4.BlueFieldSoftware).NotTo(BeNil())
+		Expect(bf4.BlueFieldSoftware.OSISO.URL).To(BeEmpty())
+		Expect(bf4.BlueFieldSoftware.OSISO.Version).To(BeEmpty())
+		Expect(bf4.BlueFieldSoftware.OSISO.ReasonCode).To(Equal("BF4_ARTIFACT_NOT_PUBLIC"))
+		Expect(bf4.BlueFieldSoftware.PLDMFwBundle).To(BeEmpty())
+		Expect(bf4.Requirements).To(BeEmpty())
+		Expect(r.Components).To(ContainElement(And(HaveField("Name", "openbao"), HaveField("Version", "v2.5.5"), HaveField("Applicability", "optional"))))
+		Expect(r.Components).To(ContainElement(And(HaveField("Name", "external-secrets"), HaveField("Version", "v2.7.0"), HaveField("Applicability", "optional"))))
+		for _, model := range []string{"B4240", "BlueField-4", "MT_0000001774", "unknown"} {
+			_, found := r.RequirementsFor(model)
+			Expect(found).To(BeFalse(), "family-only beta entry must not match %q", model)
+		}
+	})
+	It("keeps tenant control-plane versions separate from management Kubernetes support", func() {
+		older, err := Resolve("26.4.0")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(older.TenantKubernetesVersion).To(BeEmpty(), "do not infer an older release's compiled tenant version")
+		for _, value := range []string{"", "v1.35", "1.35.6", "v01.35.6", "v1.035.6", "v1.35.06", "v1.35.6-rc.1", " v1.35.6"} {
+			Expect(validTenantKubernetesVersion(value)).To(BeFalse(), value)
+		}
+		for _, value := range []string{"v1.0.0", "v1.35.6"} {
+			Expect(validTenantKubernetesVersion(value)).To(BeTrue(), value)
+		}
+	})
+	It("validates PSID-specific BF4 artifact coordinates without fabricating catalog defaults", func() {
+		r, err := Resolve("26.8.0")
+		Expect(err).NotTo(HaveOccurred())
+		bf4 := &r.Hardware[1]
+		bf4.BlueFieldSoftware.PLDMFwBundle = map[string]Artifact{
+			"MT_TESTPSID": {Version: "test-release", URL: "https://artifacts.example/test-pldm.bin", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SourceRef: "release-notes"},
+		}
+		Expect(validate(r.Version, r)).To(Succeed())
+		bf4.BlueFieldSoftware.PLDMFwBundle["MT_TESTPSID"] = Artifact{Version: "test-release", URL: "https://artifacts.example/test-pldm.bin", SourceRef: "release-notes"}
+		Expect(validate(r.Version, r)).To(HaveOccurred(), "a known bundle without a digest or explicit digest limitation must be rejected")
+		bf4.BlueFieldSoftware.PLDMFwBundle = map[string]Artifact{"": {Version: "test-release", URL: "https://artifacts.example/test-pldm.bin", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SourceRef: "release-notes"}}
+		Expect(validate(r.Version, r)).To(HaveOccurred(), "PSID map keys must be explicit")
+	})
 	It("isolates returned nested values from the catalog and hardware lookup", func() {
 		r, err := Resolve("")
 		Expect(err).NotTo(HaveOccurred())
@@ -131,6 +214,12 @@ var _ = Describe("release BOM resolution", func() {
 			strings.Replace(string(catalogYAML), "models: [B3210, B3220, B3240]", "models: [B3210, B3210]", 1),
 			strings.Replace(string(catalogYAML), "version: \"26.4.0\"", "version: \"26.8.0\"", 1),
 			strings.Replace(string(catalogYAML), "chart: dpf-operator", "unknown: true", 1),
+			strings.Replace(string(catalogYAML), "message: Requires an authorized release-compatible BF4 ISO override; public v26.8 release material does not publish its version or URL.", "message: ''", 1),
+			strings.Replace(string(catalogYAML), "maximum: \"1.36\"", "maximum: \"1.32\"", 1),
+			strings.Replace(string(catalogYAML), "tenantKubernetesVersion: v1.35.6", "tenantKubernetesVersion: v1.35", 1),
+			strings.Replace(string(catalogYAML), "useCases: [hbn-bgp]", "useCases: []", 1),
+			strings.Replace(string(catalogYAML), "chartVersion: 3.5.0", "chartVersion: latest", 1),
+			strings.Replace(string(catalogYAML), "contract: bf4-reset-safety-v1", "contract: unknown-reset-contract", 1),
 		} {
 			_, err := load([]byte(data))
 			Expect(err).To(HaveOccurred())

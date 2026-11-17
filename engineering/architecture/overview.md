@@ -49,7 +49,7 @@ flowchart TB
                 validatesvc["Standalone validate + report service"]
                 hostpaths["Host config, kubeconfig, preset, artifact resolution"]
             end
-            dpf["DPF inventory — pkg/target/dpf + pkg/dpf\nexplicit Redfish / host SSH / ARM OOB SSH sources\nprovisioning phases unavailable"]
+            dpf["DPF — pkg/target/dpf + pkg/dpf\nexplicit Redfish / SSH inventory + profiles\nretained HBN generation + standalone deployment"]
         end
 
         subgraph application["Host application orchestration"]
@@ -103,7 +103,7 @@ flowchart TB
     end
 
     external["External image, firmware, and preset sources"]
-    dpfoperator["Future DPF driver / DPF Operator / DPU plane"]
+    dpfoperator["DPF Operator / tenant Kubernetes / DPU agents + HBN"]
 
     actor --> main --> cobra
     cobra --> lifecycle
@@ -112,7 +112,7 @@ flowchart TB
     runner --> registry
     runner --> invocation
     registry --> hostadapters
-    registry -. capability rejection .-> dpf
+    registry -->|typed DPF standalone phases| dpf
     hostadapters --> operation
     invocation --> operation
     operation --> launchersvc
@@ -191,7 +191,7 @@ flowchart TB
     runner --> errors
     process --> logging
 
-    dpf -. future typed adapter .-> dpfoperator
+    dpf -->|retained plan + native API clients| dpfoperator
 ```
 
 The diagram distinguishes three boundaries that should remain stable:
@@ -284,8 +284,42 @@ sequenceDiagram
     Cobra-->>User: output finalized once, process exits once
 ```
 
-Selecting `dpf` stops at registry capability resolution in the current build.
-It does not construct a Kubernetes client or enter any Host lifecycle service.
+Selecting `dpf` binds its independent discovery, generation or standalone deploy
+adapter. The deploy adapter validates a retained bundle and explicit site access.
+Before discovery probes or cluster effects, it verifies bounded anonymous HTTPS
+manifest/config metadata for the exact retained HBN image, permitting only
+same-origin anonymous Bearer token exchange. Kubelet pull credentials are a
+separate authority. Each resume repeats this prerequisite, and runtime resolves
+metadata afresh; an early identity is not a future-pull or traffic receipt. It
+then refreshes prerequisites and runs management, tenant, enrollment, software,
+workload declarations, activation, host networking and native HBN runtime checks.
+It never enters a Host lifecycle service. DPF standalone validation and the root
+pipeline remain capability rejections before client construction.
+
+DPF deploy reserves one typed, nonsecret ConfigMap checkpoint in the existing
+operator namespace before DPUDeployment creation. `--resume` binds its exact
+namespace/name/UID and retained plan, reconstructs verified prerequisite receipts,
+and restores activation history. Conditional patches, immutable reset claims and
+host-local transaction journals retain ownership of their individual effects;
+the checkpoint does not provide physical fencing or automatic adoption. Existing
+claims select observation-only recovery, and completed host work is inspected
+without configuration fallback. Each attempt produces fresh runtime evidence.
+
+DPF runtime measurement uses a resource/allocation fence distinct from the full
+physical mutation fence. Both share management, tenant, workload/software,
+credential and complete selected-resource verification. The physical wrapper
+preserves its ordering around BMC identity/Administrator collection; host
+configuration and reset paths keep that wrapper. Runtime performs it at phase
+entry and before final acceptance, with a final pod/allocation observation after
+the physical exit read. Every measurement retains fresh complete resource,
+lease, pod/container/image and host/PF/route checks; no successful observation is
+cached across measurements.
+
+Each prepared DPF execution owns its retained CRD expectations and their immutable
+default-normalized spec JSON. Desired normalization runs once at construction;
+every fresh live CRD still undergoes full typed/default normalization and complete
+spec comparison, alongside identity, metadata, readiness and scope checks. Live
+observations are never cached by UID or generation.
 
 ## Deployment and validation internals
 

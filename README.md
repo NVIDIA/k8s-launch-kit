@@ -4,12 +4,17 @@ Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on K
 Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
-The current lifecycle uses the `host` target by default. The `dpf` target supports inventory discovery only; its generate, deploy, validate and composite pipeline phases are unavailable in this version. Inventory is the default and needs no kubeconfig; a supplied kubeconfig adds management-cluster observations. Explicit management network probes use the pinned diagnostic assets on supported Linux/amd64 Kubernetes nodes; cluster compatibility is checked at runtime. See the [DPF discovery guide](docs/user/dpf-discovery.md).
+The current lifecycle uses the `host` target by default. For a separate DPU estate, the `dpf` target supports standalone discovery, HBN-BGP artifact generation, and deployment with provisioning and runtime checks. The current BF4/HBN-BGP cohort remains beta; command availability does not qualify every hardware and release combination. DPF standalone validation and the root pipeline remain unavailable. DPF deployment stops for unusable bootstrap credentials when the expected tenant Node is absent; see [credential recovery](docs/user/dpf-deployment.md#recover-from-unavailable-bootstrap-credentials). DPF deploy can resume its recorded initial operation with `--resume`, binding saved ownership before assessing fresh prerequisites; see [recovery](docs/user/dpf-deployment.md#read-the-result-and-recover-from-a-stop).
 DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
 management cluster. Inventory success is separate from provisioning readiness.
+HBN-BGP ASIC readiness requires the [qualified Cumulus reader](docs/user/dpf-discovery.md#check-hbn-bgp-prerequisites);
+other switch software builds remain unsupported for that check. The stock diagnostic
+briefly adjusts SDK log verbosity; the guide describes interruption limits.
+Switch access must also permit the read-only kernel route and nexthop checks.
 DPF BMC discovery verifies TLS by default. A site can explicitly set
 `tls.insecureSkipVerify: true`; discovery reports when a connection was not
-verified. See the guide for scope and security implications.
+verified. See the [DPF discovery guide](docs/user/dpf-discovery.md) for scope
+and security implications.
 
 Spectrum-X RA2.4 and RA3.1 support Network Operator 26.10 and newer catalogued releases;
 RA2.3 is limited to 26.7. Both use a doSPCX bundle and derive per-group platform
@@ -171,7 +176,7 @@ Available Commands:
   version     Print the version number
 
 Target Selection Flags:
-      --target string   Deployment target: host (default) or dpf (inventory discovery only) (default "host")
+      --target string   Deployment target: host (default) or dpf (HBN-BGP discovery, generation and deployment) (default "host")
 
 Host Target Common Flags:
       --config-dir string                   Directory containing optional l8k-config.yaml and presets/ overrides

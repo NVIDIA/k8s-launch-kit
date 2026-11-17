@@ -51,3 +51,36 @@ var _ = Describe("persisted management fact comparison", func() {
 		}
 	})
 })
+
+var _ = Describe("persisted host permanent MAC facts", func() {
+	It("preserves the concrete permanent address and detects an actual hardware identity change", func() {
+		for _, codec := range []struct {
+			name   string
+			encode func(any) ([]byte, error)
+			decode func([]byte, any) error
+		}{{name: "YAML", encode: yaml.Marshal, decode: yaml.Unmarshal}, {name: "JSON", encode: json.Marshal, decode: json.Unmarshal}} {
+			By(codec.name)
+			source := inventory.Inventory{FormatVersion: inventory.FormatVersion, Hosts: []inventory.Device{{
+				ID: "host-one", RecordKey: "host-one", ObservationState: "observed",
+				SSHEndpoint: "ssh://192.0.2.11:22", Authentication: inventory.Authentication{Method: "ssh"},
+				Runtime: &inventory.RuntimeObservation{Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{
+					Name: "data0", PCIAddress: "0000:21:00.0", MAC: "02:00:00:00:00:99", PermanentMAC: "02:00:00:00:00:01",
+				}}}},
+			}}}
+			Canonicalize(&source)
+			encoded, err := codec.encode(source)
+			Expect(err).NotTo(HaveOccurred())
+			var restored inventory.Inventory
+			Expect(codec.decode(encoded, &restored)).To(Succeed())
+			Expect(restored.Hosts[0].Runtime.Network.Links[0].PermanentMAC).To(Equal("02:00:00:00:00:01"))
+			Expect(restored.Hosts[0].Runtime.Network.Links[0].MAC).To(Equal("02:00:00:00:00:99"))
+			Canonicalize(&restored)
+			Expect(Diff(&source, &restored)).To(BeEmpty())
+			Expect(restored.Fingerprint).To(Equal(source.Fingerprint))
+			restored.Hosts[0].Runtime.Network.Links[0].PermanentMAC = "02:00:00:00:00:02"
+			Canonicalize(&restored)
+			Expect(restored.Fingerprint).NotTo(Equal(source.Fingerprint))
+			Expect(Diff(&source, &restored)).NotTo(BeEmpty())
+		}
+	})
+})

@@ -5,6 +5,7 @@ package probe
 
 import (
 	"context"
+	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
@@ -35,7 +36,7 @@ var _ = Describe("probe prerequisites before remote effects", func() {
 			case "unschedulable":
 				nodes[1].Unschedulable = true
 			}
-			rows, cleanup, err := runner.Run(context.Background(), config.Request{}, discovery.ManagementClient{Client: client, REST: &rest.Config{}, Namespace: "default"}, &inventory.Inventory{Management: &inventory.Management{Nodes: nodes}})
+			rows, cleanup, err := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{}, Namespace: "default"}, &inventory.Inventory{Management: &inventory.Management{Nodes: nodes}})
 			Expect(err).To(MatchError(ContainSubstring("management node cannot")))
 			Expect(rows).To(BeEmpty())
 			Expect(cleanup.State).To(Equal("complete"))
@@ -65,7 +66,7 @@ var _ = Describe("probe prerequisites before remote effects", func() {
 			case "endpoint":
 				management.REST.Host = "https://%gh"
 			}
-			_, _, err := runner.Run(ctx, config.Request{}, management, inv)
+			_, _, err := runner.Run(ctx, config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, management, inv)
 			Expect(err).To(HaveOccurred(), scenario)
 			Expect(client.Actions()).To(BeEmpty(), scenario)
 		}

@@ -14,43 +14,32 @@ func psidUnavailable(code, message string) inventory.Observation {
 	return inventory.Observation{State: "unavailable", ReasonCode: code, Message: message, Tool: "redfish"}
 }
 
-// bf4PSID uses the supported BF4 reader's AssetTag semantics: System first,
-// then the identity-selected chassis. Both advertised values must agree and
-// remain unchanged through the existing identity rereads. No raw documents or
-// malformed AssetTag values are persisted, and no SSH runtime is manufactured.
+// bf4PSID follows the supported BF4 reader's AssetTag selection: a non-nil
+// System AssetTag wins, otherwise the identity-selected chassis is used. The
+// selected source and value must remain unchanged through identity rereads.
+// No raw documents or malformed values are persisted.
 func bf4PSID(system, card, currentSystem, currentCard Document) inventory.Observation {
-	for _, source := range []struct{ initial, current Document }{{system, currentSystem}, {card, currentCard}} {
-		initial, initialPresent := source.initial["AssetTag"]
-		current, currentPresent := source.current["AssetTag"]
-		if initialPresent != currentPresent || !reflect.DeepEqual(initial, current) {
-			return psidUnavailable("PSID_CHANGED", "A Redfish PSID source changed during collection; rerun discovery before using this PSID.")
-		}
+	source, raw, present := selectedBF4PSID(system, card)
+	currentSource, currentRaw, currentPresent := selectedBF4PSID(currentSystem, currentCard)
+	if source != currentSource || present != currentPresent || !reflect.DeepEqual(raw, currentRaw) {
+		return psidUnavailable("PSID_CHANGED", "The selected Redfish PSID source changed during collection; rerun discovery before using this PSID.")
 	}
-	value := ""
-	for _, source := range []Document{system, card} {
-		raw, present := source["AssetTag"]
-		if !present || raw == nil {
-			continue
-		}
-		text, ok := raw.(string)
-		if !ok {
-			return psidUnavailable("PSID_INVALID", "A supported BF4 AssetTag is not a valid PSID identifier string.")
-		}
-		if strings.TrimSpace(text) == "" || strings.EqualFold(strings.TrimSpace(text), "N/A") {
-			continue
-		}
-		if !inventory.ValidRedfishPSID(text) {
-			return psidUnavailable("PSID_INVALID", "A supported BF4 AssetTag is not a valid bounded ASCII PSID identifier.")
-		}
-		if value != "" && value != text {
-			return psidUnavailable("PSID_CONFLICT", "The supported BF4 System and chassis AssetTags report contradictory PSIDs.")
-		}
-		if value == "" {
-			value = text
-		}
-	}
-	if value == "" {
+	if !present {
 		return inventory.Observation{State: "unknown", ReasonCode: "PSID_NOT_EXPOSED", Message: "The supported BF4 System and identity-selected chassis do not expose a PSID AssetTag.", Tool: "redfish"}
 	}
-	return inventory.Observation{State: "observed", Values: []string{value}, ReasonCode: "PSID_OBSERVED", Message: "The supported BF4 AssetTag PSID was verified against unchanged identity-bound System and chassis observations.", Tool: "redfish"}
+	value, ok := raw.(string)
+	if !ok || strings.TrimSpace(value) == "" || strings.EqualFold(strings.TrimSpace(value), "N/A") || !inventory.ValidRedfishPSID(value) {
+		return psidUnavailable("PSID_INVALID", "The AssetTag selected by DPF's System-first PSID lookup is not a valid bounded ASCII PSID identifier.")
+	}
+	return inventory.Observation{State: "observed", Values: []string{value}, ReasonCode: "PSID_OBSERVED", Message: "The PSID selected by DPF's System-first AssetTag lookup was verified unchanged.", Tool: "redfish"}
+}
+
+func selectedBF4PSID(system, card Document) (source string, value any, present bool) {
+	if value, exists := system["AssetTag"]; exists && value != nil {
+		return "system", value, true
+	}
+	if value, exists := card["AssetTag"]; exists && value != nil {
+		return "chassis", value, true
+	}
+	return "", nil, false
 }

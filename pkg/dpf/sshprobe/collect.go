@@ -179,6 +179,15 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		device.IdentityKey = []string{"system-uuid", strings.ToLower(uuid)}
 		device.ID = inventory.PhysicalID("host", device.IdentityKey)
 		add("host-dmi", "UUID")
+		boot, bootErr := read("host-boot-id", "cat /proc/sys/kernel/random/boot_id")
+		if bootErr == nil {
+			if validUUID(strings.TrimSpace(boot)) {
+				device.Runtime.BootID = strings.ToLower(strings.TrimSpace(boot))
+				add("host-boot-id", "BootID")
+			} else {
+				device.Runtime.Observations["host-boot-id"] = unavailable(&Error{Code: "SSH_IDENTITY_INVALID", Stage: "host-boot-id"}, "procfs")
+			}
+		}
 		pci, e := read("host-pci", "lspci -Dnn -d 15b3:")
 		if e != nil {
 			return device, evidence, e
@@ -218,6 +227,10 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 	collectNetwork(ctx, remote, device.Runtime, add)
 	collectRuntime(ctx, remote, device.Runtime, add)
 	collectHardware(ctx, remote, &device, privilege, target.Role, add)
+	if target.Role == "hosts" {
+		collectHostPermanentMACs(ctx, remote, &device, label)
+		collectManagementRoots(ctx, remote, device.Runtime, add)
+	}
 	observed, unavailableCount := optionalCounts(device.Runtime)
 	if unavailableCount > 0 {
 		output.Info("[UNAVAILABLE] %s: Optional OS/network/firmware reads completed; %d observed, %d unavailable or unknown; inspect the detailed report for reasons, compatibility not evaluated", label, observed, unavailableCount)
@@ -251,6 +264,15 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 		}
 		if strings.TrimSpace(uuid) != device.SystemUUID {
 			return device, evidence, &Error{Code: "INVENTORY_CHANGED", Stage: "host-identity-recheck"}
+		}
+		if boot := device.Runtime.BootID; boot != "" {
+			current, bootErr := read("host-boot-id-recheck", "cat /proc/sys/kernel/random/boot_id")
+			if bootErr != nil {
+				device.Runtime.BootID = ""
+				device.Runtime.Observations["host-boot-id"] = unavailable(bootErr, "procfs")
+			} else if strings.ToLower(strings.TrimSpace(current)) != boot {
+				return device, evidence, &Error{Code: "INVENTORY_CHANGED", Stage: "host-boot-id-recheck"}
+			}
 		}
 		pci, e := read("host-pci-recheck", "lspci -Dnn -d 15b3:")
 		if e != nil {
@@ -302,10 +324,24 @@ func collect(ctx context.Context, target config.Target, remote runner) (device i
 
 func collectPF(ctx context.Context, remote runner, bdf string, runtime *inventory.RuntimeObservation, add func(string, string) string) inventory.PCIFunction {
 	pf := inventory.PCIFunction{Address: bdf, Netdevs: []string{}}
+	if !bdfToken.MatchString(bdf) {
+		stage := "host-pf:" + bdf + ":iommu-group"
+		runtime.Observations[stage] = unavailable(&Error{Code: "SSH_PCI_INVENTORY_INVALID", Stage: stage}, "sysfs")
+		return pf
+	}
 	base := "/sys/bus/pci/devices/" + bdf
 	for _, p := range []struct{ field, command string }{{"driver", "readlink " + base + "/driver"}, {"numa", "cat " + base + "/numa_node"}, {"netdevs", "ls -1 " + base + "/net"}} {
 		stage := "host-pf:" + bdf + ":" + p.field
 		text, err := remote.Run(ctx, stage, p.command)
+		if p.field == "netdevs" && err != nil {
+			// A failed ls is never absence proof. Independently measure only
+			// ENOENT/empty on a still-present PCI directory; permission and
+			// transport failures leave the original observation unavailable.
+			absence, absenceErr := remote.Run(ctx, stage+":absence", pfNetdevAbsenceCommand(base))
+			if absenceErr == nil && strings.TrimSpace(absence) == "absent" {
+				text, err = "", nil
+			}
+		}
 		if err == nil {
 			text = strings.TrimSpace(text)
 			switch p.field {
@@ -332,15 +368,54 @@ func collectPF(ctx context.Context, remote runner, bdf string, runtime *inventor
 			runtime.Observations[stage] = unavailable(err, commandTool(p.command))
 		} else {
 			runtime.Observations[stage] = inventory.Observation{State: "observed"}
+			if p.field == "netdevs" && len(pf.Netdevs) == 0 {
+				pf.NetdevsAbsent = true
+				runtime.Observations[stage] = inventory.Observation{State: "observed", ReasonCode: "HOST_PF_NETDEV_ABSENT", Message: "The PCI function is present and its network-interface directory is absent or empty.", Tool: "sysfs"}
+			}
 			add(stage, p.field)
 		}
 	}
+	stage := "host-pf:" + bdf + ":iommu-group"
+	path := base + "/iommu_group"
+	command := `sh -c 'p=` + path + `; d=` + base + `; [ -d "$d" ] || exit 1; if [ -L "$p" ]; then readlink -f "$p"; elif [ -e "$p" ]; then exit 1; else printf "absent\n"; fi'`
+	text, err := remote.Run(ctx, stage, command)
+	if err == nil {
+		var absent bool
+		pf.IOMMUGroup, absent, err = iommuGroup(text)
+		if err == nil && absent {
+			runtime.Observations[stage] = inventory.Observation{State: "unknown", ReasonCode: "IOMMU_GROUP_ABSENT", Message: "No IOMMU group is exposed for this PCI function.", Tool: "sysfs"}
+			return pf
+		}
+		if err == nil && pf.IOMMUGroup == nil {
+			err = &Error{Code: "SSH_RUNTIME_INVALID", Stage: stage}
+		}
+	}
+	if err != nil {
+		runtime.Observations[stage] = unavailable(err, "sysfs")
+		return pf
+	}
+	runtime.Observations[stage] = observed("sysfs", "group="+strconv.Itoa(*pf.IOMMUGroup))
+	add(stage, "IOMMUGroup")
 	return pf
+}
+
+func pfNetdevAbsenceCommand(base string) string {
+	return `bash -c 'set -euo pipefail
+p="` + base + `"
+[[ -d "$p" ]]
+entry=$(find "$p/" -mindepth 1 -maxdepth 1 -name net -print)
+if [[ -z "$entry" ]]; then [[ -d "$p" ]]; printf "absent\n"
+elif [[ -d "$p/net" && ! -L "$p/net" ]]; then
+ entries=$(find "$p/net/" -mindepth 1 -maxdepth 1 -print)
+ [[ -d "$p" ]]
+ if [[ -z "$entries" ]]; then printf "absent\n"; fi
+else exit 1
+fi'`
 }
 
 func collectRuntime(ctx context.Context, remote runner, runtime *inventory.RuntimeObservation, add func(string, string) string) {
 	for _, probe := range []struct{ stage, command string }{
-		{"hostname", "hostname"}, {"os", "cat /etc/os-release"}, {"interfaces", "ip -j address show"}, {"routes", "ip -j -4 route show"}, {"dns", "cat /etc/resolv.conf"},
+		{"hostname", "hostname"}, {"os", "cat /etc/os-release"}, {"interfaces", "ip -j address show"}, {"dns", "cat /etc/resolv.conf"},
 	} {
 		text, err := remote.Run(ctx, probe.stage, probe.command)
 		if err == nil {
@@ -362,8 +437,6 @@ func collectRuntime(ctx context.Context, remote runner, runtime *inventory.Runti
 				}
 			case "interfaces":
 				runtime.Interfaces, err = interfaces(text)
-			case "routes":
-				runtime.Routes, err = routes(text, runtime.Interfaces)
 			case "dns":
 				for _, line := range strings.Split(text, "\n") {
 					f := strings.Fields(line)
@@ -389,6 +462,37 @@ func collectRuntime(ctx context.Context, remote runner, runtime *inventory.Runti
 			add(probe.stage, probe.stage)
 		}
 	}
+	collectRoutes(ctx, remote, runtime, add)
+}
+
+func collectRoutes(ctx context.Context, remote runner, runtime *inventory.RuntimeObservation, add func(string, string) string) {
+	collected := []inventory.Route{}
+	var firstErr error
+	for _, probe := range []struct {
+		stage   string
+		command string
+		family  int
+	}{{"routes", "ip -j -4 route show table all", 4}, {"routes-v6", "ip -j -6 route show table all", 6}} {
+		text, err := remote.Run(ctx, probe.stage, probe.command)
+		if err == nil {
+			var routesForFamily []inventory.Route
+			routesForFamily, err = routes(text, runtime.Interfaces, probe.family)
+			if err == nil {
+				collected = append(collected, routesForFamily...)
+			}
+		}
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		runtime.Routes = nil
+		runtime.Observations["routes"] = unavailable(firstErr, "ip")
+		return
+	}
+	runtime.Routes = collected
+	runtime.Observations["routes"] = observed("ip")
+	add("routes", "IPv4 and IPv6 routes")
 }
 
 // Count the typed optional facts, including nested card measurements. Successful
