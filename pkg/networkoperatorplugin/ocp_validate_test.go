@@ -10,6 +10,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -93,8 +94,14 @@ func TestValidateOCPPlatformSecondaryNetworkIsUnverified(t *testing.T) {
 						return c.List(ctx, list, opts...)
 					},
 				}).Build()
-				cfg := &config.LaunchKitConfig{Flavor: flavor, ClusterConfig: []config.ClusterConfig{{WorkerNodes: []string{"worker-a"}}}}
-				results, err := ValidateBundleWithConfig(context.Background(), c, artifacts, cfg, flavor)
+				// The explicit selection is authoritative even when serialized flavor
+				// disagrees (including partial config retained after resolution errors).
+				serializedFlavor := config.FlavorOCP
+				if flavor == config.FlavorOCP {
+					serializedFlavor = config.FlavorK8s
+				}
+				cfg := &config.LaunchKitConfig{Flavor: serializedFlavor, ClusterConfig: []config.ClusterConfig{{WorkerNodes: []string{"worker-a"}}}}
+				results, err := ValidateBundle(context.Background(), c, artifacts, cfg, hostplatform.Selection(flavor))
 				require.NoError(t, err)
 				require.Len(t, results, 3)
 				for i, component := range []string{"multus", "cniPlugins"} {
@@ -149,7 +156,7 @@ func TestValidateOCPRetainsPolicyReadinessAndOwnershipFailures(t *testing.T) {
 				require.NoError(t, unstructured.SetNestedMap(live.Object, map[string]interface{}{}, "spec", "secondaryNetwork", tc.managed))
 			}
 			c := fake.NewClientBuilder().WithObjects(live).Build()
-			results, err := ValidateBundle(context.Background(), c, artifacts, config.FlavorOCP)
+			results, err := ValidateBundle(context.Background(), c, artifacts, nil, hostplatform.OpenShift)
 			require.NoError(t, err)
 			if tc.managed != "" {
 				require.Len(t, results, 2)

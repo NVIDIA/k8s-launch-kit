@@ -10,6 +10,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -172,7 +173,7 @@ func TestOCPDisabledPluginsPreservedAndValidated(t *testing.T) {
 	require.NoError(t, err)
 	artifacts, err := bundle.FromFiles([]bundle.File{{Name: "01-config.yaml", Content: string(desiredData)}})
 	require.NoError(t, err)
-	results, err := ValidateBundle(context.Background(), fake.NewClientBuilder().WithObjects(current.DeepCopy()).Build(), artifacts, config.FlavorOCP)
+	results, err := ValidateBundle(context.Background(), fake.NewClientBuilder().WithObjects(current.DeepCopy()).Build(), artifacts, nil, hostplatform.OpenShift)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, crstate.StateSuccess, results[0].State, string(data))

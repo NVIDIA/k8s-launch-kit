@@ -27,6 +27,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -401,13 +402,13 @@ func TestStandardNicConfigurationDeployValidateConvergence(t *testing.T) {
 				scheme := runtime.NewScheme()
 				require.NoError(t, corev1.AddToScheme(scheme))
 				client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live, device, node).Build()
-				results, err := ValidateBundle(context.Background(), client, artifacts, flavor)
+				results, err := ValidateBundle(context.Background(), client, artifacts, nil, hostplatform.Selection(flavor))
 				require.NoError(t, err)
 				require.Len(t, results, 1)
 				require.Equal(t, tc.want, results[0].State)
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 				defer cancel()
-				err = pollUntilTerminalWithRetryableErrorTimeout(ctx, client, crstate.NewDefault(), desired, "NIC configuration", "", 0, time.Millisecond)
+				err = pollUntilTerminalWithRetryableErrorTimeout(ctx, client, crstate.NewDefault(), desired, "NIC configuration", "", 0, time.Millisecond, nil, hostplatform.Kubernetes)
 				switch tc.want {
 				case crstate.StateSuccess:
 					require.NoError(t, err)

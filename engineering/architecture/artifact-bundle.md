@@ -54,8 +54,9 @@ inventory stays in the effective configuration rather than being duplicated in
 each manifest. Deploy checks desired selectors before writes and readiness checks
 live selectors against intended source metadata. Library callers supply that
 configuration through `DeployOptions.Config` or
-`ValidateBundleWithConfig(ctx, client, bundle, config, flavor...)`. The existing
-`ValidateBundle` API remains available for legacy artifact-only inputs; annotated
+`ValidateBundle(ctx, client, bundle, config, platform)`. Both APIs require an
+explicit `hostplatform.Selection`; deployment carries it in `DeployOptions.Platform`.
+Resource-only validation passes a nil config and an explicit platform; annotated
 hardware resources require their configuration. The explicit `[""]` source reference
 preserves an unnamed sole source and resolves only against exactly one unnamed
 configured source. Selector-only preset inputs retain

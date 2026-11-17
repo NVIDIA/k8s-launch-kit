@@ -107,6 +107,36 @@ launcher; standalone deploy and validate are Host-owned services outside
 Cobra. Those services return errors, while `pkg/cmd` remains the only process
 termination boundary. The DPF discovery branch binds its own typed request before collecting Host flags, and constructs only DPF dependencies.
 
+## Host platform selection
+
+Host deploy and validate select one immutable `hostplatform.Selection` after
+existing config resolution and CLI overrides. Omitted flavor retains Kubernetes.
+The selection is passed explicitly through deployment, readiness polling and
+secondary-network policy checks. These consumers do not derive their platform
+from config again. Serialized `LaunchKitConfig.Flavor` remains part of config
+handoff, but it is not another platform authority for these consumers. Lifecycle
+entry points reject an unknown or omitted selection before cluster checks or
+effects. Resource-only paths supply a nil config and an explicit selection.
+
+Standalone deploy requires successful config resolution before strict selection.
+Static validation retains its existing best-effort treatment of partially parsed
+config after a resolution error: only `flavor: ocp` selects OpenShift, otherwise
+it selects Kubernetes. This mapping occurs once at the validation boundary;
+lower consumers validate and use only the resulting explicit selection.
+
+Kubernetes Helm ownership remains independent of platform: `skipHelmChart`
+disables its Helm boundary while resource handling continues. OpenShift requires
+external operators and configures their existing resources at the existing
+points in deployment. The current phase order and check differences remain:
+OpenShift deploy runs preflight before filtering stray-CR results; standalone
+OpenShift validate skips Helm checks without a comprehensive OLM prerequisite
+check, and its stray-CR scan does not cover every operator namespace.
+
+Rendering, connectivity and cleanup retain their current owners. Cleanup still
+rejects OpenShift and checks the live ClusterVersion API before mutations.
+Pool collision checking reads the OpenShift Network API when available regardless
+of the selected flavor. Platform selection is never inferred from that API.
+
 ## Registry guarantees
 
 Registry construction rejects:

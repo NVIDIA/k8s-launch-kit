@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -129,38 +130,48 @@ var _ = Describe("known API installers", func() {
 	})
 	It("preserves unavailable evidence for discovery but never swallows cancellation", func() {
 		c := deniedReader{Reader: fixtureClient(), listErr: errors.New("denied")}
-		observation, err := DiscoverEvidence(context.Background(), c)
+		observation, err := DiscoverEvidence(context.Background(), c, hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(observation.Multus.Status).To(Equal(config.InstallerUnavailable))
 		Expect(observation.Multus.Reason).To(ContainSubstring("denied"))
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err = DiscoverEvidence(ctx, c)
+		_, err = DiscoverEvidence(ctx, c, hostplatform.Kubernetes)
 		Expect(err).To(MatchError(context.Canceled))
 	})
 })
 
 var _ = Describe("deployment ownership boundary", func() {
+	It("rejects invalid platform selection before optional evidence or mandatory policy reads", func() {
+		for _, platform := range []hostplatform.Selection{"", "unknown"} {
+			_, err := DiscoverEvidence(context.Background(), nil, platform)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("platform selection"))
+			_, err = CheckPolicy(context.Background(), nil, fixturePolicy(), nil, platform)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("platform selection"))
+		}
+	})
 	It("retains mandatory ownership checks when OpenShift installer inspection is skipped", func() {
 		ctx := context.Background()
 		for _, component := range []string{Multus, CNIPlugins} {
-			_, err := CheckPolicy(ctx, fixtureClient(), fixturePolicy(component), nil, config.FlavorOCP)
+			_, err := CheckPolicy(ctx, fixtureClient(), fixturePolicy(component), nil, hostplatform.OpenShift)
 			Expect(err).To(MatchError(component + " must be externally managed on OpenShift"))
-			_, err = CheckPolicy(ctx, fixtureClient(fixturePolicy(component)), fixturePolicy(), nil, config.FlavorOCP)
+			_, err = CheckPolicy(ctx, fixtureClient(fixturePolicy(component)), fixturePolicy(), nil, hostplatform.OpenShift)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("managed-to-external " + component + " transition"))
 		}
-		_, err := CheckPolicy(ctx, deniedReader{Reader: fixtureClient(), errorGet: errors.New("get denied")}, fixturePolicy(), nil, config.FlavorOCP)
+		_, err := CheckPolicy(ctx, deniedReader{Reader: fixtureClient(), errorGet: errors.New("get denied")}, fixturePolicy(), nil, hostplatform.OpenShift)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("get denied"))
 		policy := fixturePolicy()
 		Expect(unstructured.SetNestedField(policy.Object, "invalid", "spec", "secondaryNetwork", Multus)).To(Succeed())
-		_, err = CheckPolicy(ctx, fixtureClient(), policy, nil, config.FlavorOCP)
+		_, err = CheckPolicy(ctx, fixtureClient(), policy, nil, hostplatform.OpenShift)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("must be a mapping"))
 		ctx, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err = CheckPolicy(ctx, fixtureClient(), fixturePolicy(), nil, config.FlavorOCP)
+		_, err = CheckPolicy(ctx, fixtureClient(), fixturePolicy(), nil, hostplatform.OpenShift)
 		Expect(err).To(MatchError(context.Canceled))
 	})
 	It("records OpenShift network-operator installers during discovery and ignores foreign DaemonSets", func() {
@@ -174,17 +185,17 @@ var _ = Describe("deployment ownership boundary", func() {
 		}
 		multus, plugins := installer(Multus), installer(CNIPlugins)
 		multus.OwnerReferences = nil
-		observation, err := DiscoverEvidence(ctx, fixtureClient(multus, plugins), config.FlavorOCP)
+		observation, err := DiscoverEvidence(ctx, fixtureClient(multus, plugins), hostplatform.OpenShift)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(observation.Multus.Status).To(Equal(config.InstallerNotDetected)) // foreign owner
 		Expect(observation.CNIPlugins.Status).To(Equal(config.InstallerExternal))
 		Expect(observation.CNIPlugins.Installers).To(Equal([]config.InstallerReference{{Namespace: "openshift-multus", Name: "multus-additional-cni-plugins", UID: string(plugins.UID)}}))
-		observation, err = DiscoverEvidence(ctx, fixtureClient(plugins))
+		observation, err = DiscoverEvidence(ctx, fixtureClient(plugins), hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(observation.CNIPlugins.Status).To(Equal(config.InstallerNotDetected)) // Kubernetes flavor unchanged
 	})
 	It("does not inspect an unrelated bundle", func() {
-		checks, err := CheckPolicy(context.Background(), nil, nil, nil)
+		checks, err := CheckPolicy(context.Background(), nil, nil, nil, hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(checks).To(BeEmpty())
 	})
@@ -195,7 +206,7 @@ var _ = Describe("deployment ownership boundary", func() {
 				image = "mirror/plugins:v1"
 				command = "/entrypoint.sh"
 			}
-			_, err := CheckPolicy(context.Background(), fixtureClient(fixtureInstaller(component, image, command)), fixturePolicy(Multus, CNIPlugins), nil)
+			_, err := CheckPolicy(context.Background(), fixtureClient(fixtureInstaller(component, image, command)), fixturePolicy(Multus, CNIPlugins), nil, hostplatform.Kubernetes)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("refusing to install " + component))
 		}
@@ -203,28 +214,28 @@ var _ = Describe("deployment ownership boundary", func() {
 	It("preserves an existing operator-owned installation and refuses implicit removal even without its DaemonSet", func() {
 		ds := fixtureInstaller("multus", "mirror/multus-cni:v1", "/thin_entrypoint")
 		ds.OwnerReferences = []metav1.OwnerReference{owner("NicClusterPolicy", "policy", "policy-uid")}
-		_, err := CheckPolicy(context.Background(), fixtureClient(ds, fixturePolicy(Multus)), fixturePolicy(Multus, CNIPlugins), nil)
+		_, err := CheckPolicy(context.Background(), fixtureClient(ds, fixturePolicy(Multus)), fixturePolicy(Multus, CNIPlugins), nil, hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
-		_, err = CheckPolicy(context.Background(), fixtureClient(fixturePolicy(Multus)), fixturePolicy(), nil)
+		_, err = CheckPolicy(context.Background(), fixtureClient(fixturePolicy(Multus)), fixturePolicy(), nil, hostplatform.Kubernetes)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("managed-to-external"))
-		_, err = CheckPolicy(context.Background(), fixtureClient(fixturePolicy(Multus)), &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "mellanox.com/v1alpha1", "kind": "NicClusterPolicy", "metadata": map[string]interface{}{"name": "policy"}, "spec": map[string]interface{}{"secondaryNetwork": map[string]interface{}{"multus": nil}}}}, nil)
+		_, err = CheckPolicy(context.Background(), fixtureClient(fixturePolicy(Multus)), &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "mellanox.com/v1alpha1", "kind": "NicClusterPolicy", "metadata": map[string]interface{}{"name": "policy"}, "spec": map[string]interface{}{"secondaryNetwork": map[string]interface{}{"multus": nil}}}}, nil, hostplatform.Kubernetes)
 		Expect(err).To(HaveOccurred())
 	})
 	It("permits omission with unverified health but requires live-policy evidence", func() {
 		base := fixtureClient()
-		checks, err := CheckPolicy(context.Background(), base, fixturePolicy(), nil)
+		checks, err := CheckPolicy(context.Background(), base, fixturePolicy(), nil, hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(checks).To(HaveLen(2))
 		Expect(checks[0].Skipped).To(BeTrue())
 		Expect(checks[0].Reason).To(ContainSubstring("host/platform"))
-		checks, err = CheckPolicy(context.Background(), deniedReader{Reader: base, listErr: errors.New("list denied")}, fixturePolicy(), nil)
+		checks, err = CheckPolicy(context.Background(), deniedReader{Reader: base, listErr: errors.New("list denied")}, fixturePolicy(), nil, hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(checks[0].Skipped).To(BeTrue())
 		Expect(checks[0].Reason).To(ContainSubstring("list denied"))
-		_, err = CheckPolicy(context.Background(), deniedReader{Reader: base, errorGet: errors.New("get denied")}, fixturePolicy(), nil)
+		_, err = CheckPolicy(context.Background(), deniedReader{Reader: base, errorGet: errors.New("get denied")}, fixturePolicy(), nil, hostplatform.Kubernetes)
 		Expect(err).To(HaveOccurred())
-		_, err = CheckPolicy(context.Background(), deniedReader{Reader: base, listErr: errors.New("list denied")}, fixturePolicy(Multus), nil)
+		_, err = CheckPolicy(context.Background(), deniedReader{Reader: base, listErr: errors.New("list denied")}, fixturePolicy(Multus), nil, hostplatform.Kubernetes)
 		Expect(err).To(HaveOccurred())
 	})
 	It("handles an uninstalled policy CRD as absence, unlike denied access", func() {
@@ -236,19 +247,19 @@ var _ = Describe("deployment ownership boundary", func() {
 	It("distinguishes required-worker coverage, reconciling pods, and incompatible selectors", func() {
 		ds := fixtureInstaller("multus", "mirror/multus-cni:v1", "/thin_entrypoint")
 		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "installer", Namespace: ds.Namespace, OwnerReferences: []metav1.OwnerReference{owner("DaemonSet", ds.Name, string(ds.UID))}}, Spec: corev1.PodSpec{NodeName: "worker-a"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
-		checks, err := CheckPolicy(context.Background(), fixtureClient(ds, pod), fixturePolicy(), []string{"worker-a"})
+		checks, err := CheckPolicy(context.Background(), fixtureClient(ds, pod), fixturePolicy(), []string{"worker-a"}, hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(checks[0].Skipped).To(BeFalse())
 		Expect(checks[0].Failed).To(BeFalse())
 		Expect(checks[0].Progressing).To(BeFalse())
 		Expect(checks[0].Reason).To(ContainSubstring("Ready pods on all 1"))
-		checks, err = CheckPolicy(context.Background(), fixtureClient(ds, pod), fixturePolicy(), []string{"worker-a", "worker-b"})
+		checks, err = CheckPolicy(context.Background(), fixtureClient(ds, pod), fixturePolicy(), []string{"worker-a", "worker-b"}, hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(checks[0].Progressing).To(BeTrue())
 		Expect(checks[0].Reason).To(ContainSubstring("worker-b"))
 		ds.Spec.Template.Spec.NodeSelector = map[string]string{"platform": "supported"}
 		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-b", Labels: map[string]string{"platform": "other"}}}
-		checks, err = CheckPolicy(context.Background(), fixtureClient(ds, pod, node), fixturePolicy(), []string{"worker-b"})
+		checks, err = CheckPolicy(context.Background(), fixtureClient(ds, pod, node), fixturePolicy(), []string{"worker-b"}, hostplatform.Kubernetes)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(checks[0].Failed).To(BeTrue())
 		Expect(checks[0].Reason).To(ContainSubstring("excludes required worker"))

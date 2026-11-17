@@ -32,6 +32,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
@@ -185,7 +186,14 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		return exitWithReport(apperrors.NewValidationError("OpenShift validation requires a cluster config", nil,
 			"Pass --user-config with flavor: ocp and operator namespaces"))
 	}
-	ocp := cfg != nil && cfg.Flavor == config.FlavorOCP
+	// Static validation historically retains parsed config when resolution fails.
+	// Preserve its best-effort platform mapping for that partial input; deploy
+	// instead requires successful resolution before strict platform selection.
+	platform := hostplatform.Kubernetes
+	if cfg != nil && cfg.Flavor == config.FlavorOCP {
+		platform = hostplatform.OpenShift
+	}
+	ocp := platform == hostplatform.OpenShift
 	// Preserve successfully parsed user input in partial reports even when a
 	// release-catalog overlay fails. Operational validation still follows the
 	// existing soft-failure path below and skips config-derived version checks.
@@ -418,11 +426,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 
 		var valErr error
 		checkStarted = time.Now()
-		validationFlavor := config.FlavorK8s
-		if cfg != nil {
-			validationFlavor = cfg.Flavor
-		}
-		results, valErr = networkoperatorplugin.ValidateBundleWithConfig(ctx, k8sClient, reportBundle, cfg, validationFlavor)
+		results, valErr = networkoperatorplugin.ValidateBundle(ctx, k8sClient, reportBundle, cfg, platform)
 		log.Log.V(1).Info("validation check completed", "check", "manifest readiness",
 			"success", valErr == nil, "objects", len(results),
 			"duration", time.Since(checkStarted).Round(time.Millisecond).String())
@@ -438,7 +442,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		// loop re-runs the registry-backed validate every 10s. The
 		// final results / verdict are emitted normally below.
 		if request.Wait > 0 {
-			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), reportBundle, results, request.Wait, validationFlavor, cfg)
+			results = waitForReconcile(ctx, ctrlclient.Client(k8sClient), reportBundle, results, request.Wait, platform, cfg)
 		}
 
 		verdict = emitValidationReport(versionCheck, results, presetDeviations, request.OutputFormat)

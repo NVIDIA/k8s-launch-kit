@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -144,8 +145,8 @@ var _ = ginkgo.Describe("Spectrum-X deployment API compatibility", func() {
 	})
 
 	for _, opts := range []DeployOptions{
-		{}, {DryRun: true}, {SkipHelmChart: true}, {OverwriteExisting: true},
-		{DryRun: true, SkipHelmChart: true, OverwriteExisting: true},
+		{Platform: hostplatform.Kubernetes}, {Platform: hostplatform.Kubernetes, DryRun: true}, {Platform: hostplatform.Kubernetes, SkipHelmChart: true}, {Platform: hostplatform.Kubernetes, OverwriteExisting: true},
+		{Platform: hostplatform.Kubernetes, DryRun: true, SkipHelmChart: true, OverwriteExisting: true},
 	} {
 		ginkgo.It(fmt.Sprintf("blocks every additional apply for incompatible standalone deployment (dry-run=%t skip-helm=%t overwrite=%t)", opts.DryRun, opts.SkipHelmChart, opts.OverwriteExisting), func() {
 			applies := 0
@@ -171,7 +172,7 @@ var _ = ginkgo.Describe("Spectrum-X deployment API compatibility", func() {
 				return reachedApply
 			},
 		})
-		err := ApplyBundle(context.Background(), c, ra24DeploymentBundle(false), DeployOptions{DryRun: true})
+		err := ApplyBundle(context.Background(), c, ra24DeploymentBundle(false), DeployOptions{Platform: hostplatform.Kubernetes, DryRun: true})
 		gomega.Expect(errors.Is(err, reachedApply)).To(gomega.BeTrue())
 	})
 
@@ -213,7 +214,7 @@ var _ = ginkgo.Describe("Spectrum-X deployment API compatibility", func() {
 				return reachedAdditionalApply
 			},
 		})
-		err := ApplyBundle(context.Background(), c, ra24DeploymentBundle(true), DeployOptions{})
+		err := ApplyBundle(context.Background(), c, ra24DeploymentBundle(true), DeployOptions{Platform: hostplatform.Kubernetes})
 		gomega.Expect(errors.Is(err, reachedAdditionalApply)).To(gomega.BeTrue())
 		gomega.Expect(schemaChecked).To(gomega.BeTrue())
 	})

@@ -13,6 +13,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -186,7 +187,7 @@ var _ = ginkgo.Describe("IPPool cluster address collision checks", func() {
 				calls++
 				return nil
 			}
-			err := applyBundleWithInstaller(ctx, c, collisionBundle("10.96.0.0/16"), DeployOptions{Config: cfg, DryRun: dryRun, OverwriteExisting: true}, installer)
+			err := applyBundleWithInstaller(ctx, c, collisionBundle("10.96.0.0/16"), DeployOptions{Platform: hostplatform.Kubernetes, Config: cfg, DryRun: dryRun, OverwriteExisting: true}, installer)
 			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("overlaps")))
 			gomega.Expect(apperrors.StructuredFromError(err).Message).To(gomega.ContainSubstring("overlaps"))
 			gomega.Expect(calls).To(gomega.BeZero())

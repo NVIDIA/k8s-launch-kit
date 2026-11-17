@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -38,6 +37,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmconfig"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
@@ -174,35 +174,18 @@ type ComponentVersionResult struct {
 	Kind string
 }
 
-// ValidateManifests reads YAML manifests from manifestDir (skipping example
-// workloads) and classifies each object in the cluster via the crstate
-// registry. Returns a slice of per-object results.
-//
-// Unlike the old "Get and check NotFound" path, this routes every
-// manifest through the same per-Kind validator the deploy state machine
-// uses, so SriovNetworkNodePolicy's silent-failure cross-check, the
-// NicConfigurationTemplate's condition-Reason classification, and
-// NicClusterPolicy's appliedStates breakdown all surface here too.
-func ValidateManifests(ctx context.Context, c client.Client, manifestDir string, flavor ...string) ([]ValidationResult, error) {
-	artifacts, err := bundle.Load(os.DirFS(manifestDir))
-	if err != nil {
+// ValidateBundle checks resource readiness, external installer worker coverage,
+// and live selectors against resolved inventory using one explicit platform.
+// A nil config supports resource-only validation without inventory checks.
+func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bundle, cfg *config.LaunchKitConfig, platform hostplatform.Selection) ([]ValidationResult, error) {
+	if err := platform.Validate(); err != nil {
 		return nil, err
 	}
-	return ValidateBundle(ctx, c, artifacts, flavor...)
-}
 
-func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bundle, flavor ...string) ([]ValidationResult, error) {
-	return ValidateBundleWithConfig(ctx, c, artifacts, nil, flavor...)
-}
-
-// ValidateBundleWithConfig checks external installer worker coverage and live
-// resource selectors against intended source inventory. Legacy callers retain
-// the existing configuration-free compatibility behavior.
-func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *bundle.Bundle, cfg *config.LaunchKitConfig, flavor ...string) ([]ValidationResult, error) {
 	if artifacts == nil {
 		return nil, fmt.Errorf("validation artifact bundle is nil")
 	}
-	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
+	ocp := platform == hostplatform.OpenShift
 	var registry *crstate.Registry
 	if ocp {
 		registry = crstate.NewOpenShift()
@@ -221,7 +204,7 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 		}
 		obj := doc.ObjectCopy()
 		if isNicClusterPolicy(obj) {
-			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File, flavor...)
+			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File, platform)
 			if err != nil {
 				return nil, err
 			}

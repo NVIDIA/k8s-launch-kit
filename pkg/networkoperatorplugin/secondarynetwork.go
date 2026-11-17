@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/secondarynetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -31,12 +32,8 @@ func secondaryNetworkWorkers(cfg *config.LaunchKitConfig) []string {
 	return workers
 }
 
-func checkSecondaryNetworkDeployment(ctx context.Context, c client.Reader, ncp *unstructured.Unstructured, cfg *config.LaunchKitConfig) error {
-	var flavor string
-	if cfg != nil {
-		flavor = cfg.Flavor
-	}
-	checks, err := secondarynetwork.CheckPolicy(ctx, c, ncp, secondaryNetworkWorkers(cfg), flavor)
+func checkSecondaryNetworkDeployment(ctx context.Context, c client.Reader, ncp *unstructured.Unstructured, cfg *config.LaunchKitConfig, platform hostplatform.Selection) error {
+	checks, err := secondarynetwork.CheckPolicy(ctx, c, ncp, secondaryNetworkWorkers(cfg), platform)
 	if err != nil {
 		return fmt.Errorf("secondary-network ownership check: %w", err)
 	}
@@ -53,8 +50,8 @@ func checkSecondaryNetworkDeployment(ctx context.Context, c client.Reader, ncp *
 	return nil
 }
 
-func secondaryNetworkValidation(ctx context.Context, c client.Reader, ncp *unstructured.Unstructured, cfg *config.LaunchKitConfig, source string, flavor ...string) ([]ValidationResult, error) {
-	checks, err := secondarynetwork.CheckPolicy(ctx, c, ncp, secondaryNetworkWorkers(cfg), flavor...)
+func secondaryNetworkValidation(ctx context.Context, c client.Reader, ncp *unstructured.Unstructured, cfg *config.LaunchKitConfig, source string, platform hostplatform.Selection) ([]ValidationResult, error) {
+	checks, err := secondarynetwork.CheckPolicy(ctx, c, ncp, secondaryNetworkWorkers(cfg), platform)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

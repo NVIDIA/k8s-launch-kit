@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,9 +33,12 @@ type Check struct {
 // read to prevent removal of an existing managed section. Installation collision
 // inspection is mandatory; health inspection of omitted sections is optional.
 // An OpenShift flavor skips platform installer inspection after verifying that
-// both sections are external. With no flavor, Kubernetes inspection applies.
+// both sections are external. The caller supplies the operation platform.
 // A nil policy performs no API reads.
-func CheckPolicy(ctx context.Context, c client.Reader, desired *unstructured.Unstructured, workers []string, flavor ...string) ([]Check, error) {
+func CheckPolicy(ctx context.Context, c client.Reader, desired *unstructured.Unstructured, workers []string, platform hostplatform.Selection) ([]Check, error) {
+	if err := platform.Validate(); err != nil {
+		return nil, err
+	}
 	if desired == nil {
 		return nil, nil
 	}
@@ -45,7 +49,7 @@ func CheckPolicy(ctx context.Context, c client.Reader, desired *unstructured.Uns
 	if err != nil {
 		return nil, err
 	}
-	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
+	ocp := platform == hostplatform.OpenShift
 	managed := map[string]bool{}
 	for _, component := range []string{Multus, CNIPlugins} {
 		managed[component], err = hasManagedSection(desired, component)

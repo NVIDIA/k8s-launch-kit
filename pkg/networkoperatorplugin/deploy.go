@@ -27,6 +27,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	pkgerrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
@@ -49,7 +50,9 @@ const defaultHelmInstallTimeout = 10 * time.Minute
 // callsite readable as Phase 0 (helm install) and the existing four phases
 // grow more parameters over time.
 type DeployOptions struct {
-	Config *config.LaunchKitConfig
+	// Platform is selected once after config resolution and retained during retries.
+	Platform hostplatform.Selection
+	Config   *config.LaunchKitConfig
 	// LaunchKitVersion is applied to resources rendered by Helm.
 	LaunchKitVersion string
 
@@ -115,15 +118,32 @@ type appliedManifest struct {
 // by the launcher after ApplyOptionsToConfig has settled the config).
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
 	_ = profile
-	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, p.deployOptions())
+	opts, err := p.deployOptions()
+	if err != nil {
+		return err
+	}
+	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, opts)
 }
 
 func (p *NetworkOperatorPlugin) DeployBundle(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle) error {
-	return ApplyBundle(ctx, kubeClient, artifacts, p.deployOptions())
+	opts, err := p.deployOptions()
+	if err != nil {
+		return err
+	}
+	return ApplyBundle(ctx, kubeClient, artifacts, opts)
 }
 
-func (p *NetworkOperatorPlugin) deployOptions() DeployOptions {
+func (p *NetworkOperatorPlugin) deployOptions() (DeployOptions, error) {
+	var flavor string
+	if p.LaunchKitConfig != nil {
+		flavor = p.LaunchKitConfig.Flavor
+	}
+	platform, err := hostplatform.Select(flavor)
+	if err != nil {
+		return DeployOptions{}, err
+	}
 	return DeployOptions{
+		Platform:          platform,
 		Config:            p.LaunchKitConfig,
 		LaunchKitVersion:  p.LaunchKitVersion,
 		DryRun:            p.DryRun,
@@ -132,7 +152,7 @@ func (p *NetworkOperatorPlugin) deployOptions() DeployOptions {
 		RestConfig:        p.RESTConfig,
 		NetworkOperator:   p.NetworkOperator,
 		DOCAVersion:       p.DOCAVersion,
-	}
+	}, nil
 }
 
 // ApplyManifestsFromDir reads Kubernetes manifests from manifestsDir and
@@ -209,7 +229,13 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	}
 
 	uiOutput := ui.FromContext(ctx)
-	ocp := opts.Config != nil && opts.Config.Flavor == config.FlavorOCP
+	if err := opts.Platform.Validate(); err != nil {
+		return err
+	}
+	ocp := opts.Platform == hostplatform.OpenShift
+	if ocp && opts.Config == nil {
+		return fmt.Errorf("OpenShift deployment requires a cluster config")
+	}
 	selected, err := prepareDeploymentObjects(artifacts, ocp)
 	if err != nil {
 		return pkgerrors.NewValidationError("invalid deployment artifacts", err, "Correct the generated manifests and rerun deploy")
@@ -234,7 +260,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	}
 
 	// Inspect networking ownership before Helm or overwrite remediation.
-	if err := checkSecondaryNetworkDeployment(ctx, kubeClient, selected.ncp, opts.Config); err != nil {
+	if err := checkSecondaryNetworkDeployment(ctx, kubeClient, selected.ncp, opts.Config, opts.Platform); err != nil {
 		return err
 	}
 
@@ -295,7 +321,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	// Phase 1 — NicClusterPolicy.
 	if ncpObj != nil {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — NicClusterPolicy", phases.next(), phases.total))
-		if err := applyAndWait(ctx, kubeClient, registry, ncpObj, dryRun, manifestLabel(ncpObj, 0, 0), opts.Config); err != nil {
+		if err := applyAndWait(ctx, kubeClient, registry, ncpObj, dryRun, manifestLabel(ncpObj, 0, 0), opts.Config, opts.Platform); err != nil {
 			return err
 		}
 	}
@@ -304,7 +330,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	if len(nnpObjs) > 0 {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — NicNodePolicies (%d)", phases.next(), phases.total, len(nnpObjs)))
 		for i, obj := range nnpObjs {
-			if err := applyAndWait(ctx, kubeClient, registry, obj, dryRun, manifestLabel(obj, i+1, len(nnpObjs)), opts.Config); err != nil {
+			if err := applyAndWait(ctx, kubeClient, registry, obj, dryRun, manifestLabel(obj, i+1, len(nnpObjs)), opts.Config, opts.Platform); err != nil {
 				return err
 			}
 		}
@@ -396,7 +422,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Verifying %d manifest(s) reconcile", phases.next(), phases.total, len(appliedOthers)))
 		for i, am := range appliedOthers {
 			if err := pollUntilTerminal(ctx, kubeClient, registry, am.desired,
-				manifestLabel(am.desired, i+1, len(appliedOthers)), am.awaitObservationAfterRV, opts.Config); err != nil {
+				manifestLabel(am.desired, i+1, len(appliedOthers)), am.awaitObservationAfterRV, opts.Config, opts.Platform); err != nil {
 				return err
 			}
 		}
@@ -456,7 +482,7 @@ func retryDependentAPIWithInterval(ctx context.Context, c client.Client, desired
 // even started. Network Operator's NicClusterPolicyStatus carries no
 // `observedGeneration`, so this resourceVersion-bump heuristic is the
 // closest signal we have that the controller has reacted.
-func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, dryRun bool, label string, cfg ...*config.LaunchKitConfig) error {
+func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, dryRun bool, label string, cfg *config.LaunchKitConfig, platform hostplatform.Selection) error {
 	uiOutput := ui.FromContext(ctx)
 
 	// Pre-apply observation: capture the object's current
@@ -470,12 +496,8 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 		preApplyGen = pre.GetGeneration()
 	}
 
-	var sourceConfig *config.LaunchKitConfig
-	if len(cfg) > 0 {
-		sourceConfig = cfg[0]
-	}
 	if isNicClusterPolicy(obj) {
-		if err := checkSecondaryNetworkDeployment(ctx, c, obj, sourceConfig); err != nil {
+		if err := checkSecondaryNetworkDeployment(ctx, c, obj, cfg, platform); err != nil {
 			return err
 		}
 	}
@@ -509,7 +531,7 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 			"appliedGeneration", applied.GetGeneration(),
 			"appliedResourceVersion", awaitObservationAfterRV)
 	}
-	return pollUntilTerminal(ctx, c, registry, obj, label, awaitObservationAfterRV, cfg...)
+	return pollUntilTerminal(ctx, c, registry, obj, label, awaitObservationAfterRV, cfg, platform)
 }
 
 // pollUntilTerminal polls the registry's Validator for obj until it
@@ -536,10 +558,10 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // onto the same row. The reason is deduped against the previous tick
 // so a noisy 3-second polling loop only emits a fresh line when
 // something actually changed.
-func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string, cfg ...*config.LaunchKitConfig) error {
+func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string, cfg *config.LaunchKitConfig, platform hostplatform.Selection) error {
 	return pollUntilTerminalWithRetryableErrorTimeout(
 		ctx, c, registry, obj, label, awaitObservationAfterRV,
-		manifestRetryableErrorTimeout(obj), deployPollInterval, cfg...,
+		manifestRetryableErrorTimeout(obj), deployPollInterval, cfg, platform,
 	)
 }
 
@@ -551,12 +573,9 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 	label, awaitObservationAfterRV string,
 	retryableErrorTimeout time.Duration,
 	pollInterval time.Duration,
-	cfg ...*config.LaunchKitConfig,
+	cfg *config.LaunchKitConfig,
+	platform hostplatform.Selection,
 ) error {
-	var sourceConfig *config.LaunchKitConfig
-	if len(cfg) > 0 {
-		sourceConfig = cfg[0]
-	}
 	uiOutput := ui.FromContext(ctx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
 	log.Log.Info("Waiting for manifest to reconcile", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
@@ -675,7 +694,7 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 			}
 		}
 
-		scopeMessage, scopeErr := inspectLiveTargetScope(ctx, c, obj, sourceConfig)
+		scopeMessage, scopeErr := inspectLiveTargetScope(ctx, c, obj, cfg)
 		if scopeErr != nil {
 			if err := ctx.Err(); err != nil {
 				progress.Fail(err.Error())
@@ -725,12 +744,12 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 				uiOutput.Warning("%s went missing mid-flight; re-applying", label)
 				log.Log.Info("Manifest reported not-deployed; re-applying",
 					"kind", obj.GetKind(), "name", obj.GetName())
-				if _, err := inspectDesiredTargetScope(ctx, c, obj, sourceConfig); err != nil {
+				if _, err := inspectDesiredTargetScope(ctx, c, obj, cfg); err != nil {
 					progress.Fail(err.Error())
 					return fmt.Errorf("%s target scope: %w", label, err)
 				}
 				if isNicClusterPolicy(obj) {
-					if err := checkSecondaryNetworkDeployment(ctx, c, obj, sourceConfig); err != nil {
+					if err := checkSecondaryNetworkDeployment(ctx, c, obj, cfg, platform); err != nil {
 						progress.Fail(fmt.Sprintf("Re-apply of %s blocked: %v", label, err))
 						return err
 					}
@@ -978,7 +997,7 @@ func runPreflightPhase(ctx context.Context, kubeClient client.Client, artifacts 
 	}
 
 	results := preflight.RunAll(ctx, in)
-	if opts.Config != nil && opts.Config.Flavor == config.FlavorOCP {
+	if opts.Platform == hostplatform.OpenShift {
 		filtered := results[:0]
 		for _, result := range results {
 			if result.Code != preflight.CodeStrayCRs {

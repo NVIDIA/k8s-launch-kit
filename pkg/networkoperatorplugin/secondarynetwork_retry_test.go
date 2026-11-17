@@ -11,6 +11,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -66,7 +67,7 @@ func TestSecondaryNetworkPollingRechecksOwnershipAndRetainsManagedIntent(t *test
 	artifacts := secondaryRetryBundle(t, true)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	err := applyBundleWithInstaller(ctx, c, artifacts, DeployOptions{SkipHelmChart: true}, nil)
+	err := applyBundleWithInstaller(ctx, c, artifacts, DeployOptions{Platform: hostplatform.Kubernetes, SkipHelmChart: true}, nil)
 	require.ErrorContains(t, err, "refusing to install multus")
 	require.Equal(t, 1, applies, "platform takeover must block the polling retry")
 	_, found, err := unstructured.NestedMap(artifacts.Documents()[0].ObjectCopy().Object, "spec", "secondaryNetwork", "multus")
@@ -96,7 +97,7 @@ func TestSecondaryNetworkPollingDoesNotAdoptServerAddedManagedIntent(t *testing.
 	}})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	err := applyBundleWithInstaller(ctx, c, secondaryRetryBundle(t, false), DeployOptions{SkipHelmChart: true}, nil)
+	err := applyBundleWithInstaller(ctx, c, secondaryRetryBundle(t, false), DeployOptions{Platform: hostplatform.Kubernetes, SkipHelmChart: true}, nil)
 	require.ErrorIs(t, err, safeRetry)
 	require.Equal(t, 2, applies)
 }
@@ -118,7 +119,7 @@ func TestSecondaryNetworkPollingCarriesRequiredWorkersIntoHealthGuard(t *testing
 	cfg := &config.LaunchKitConfig{ClusterConfig: []config.ClusterConfig{{WorkerNodes: []string{"worker-a"}}}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	err := applyBundleWithInstaller(ctx, c, secondaryRetryBundle(t, false), DeployOptions{SkipHelmChart: true, Config: cfg}, nil)
+	err := applyBundleWithInstaller(ctx, c, secondaryRetryBundle(t, false), DeployOptions{Platform: hostplatform.Kubernetes, SkipHelmChart: true, Config: cfg}, nil)
 	require.ErrorContains(t, err, "excludes required worker worker-a")
 	require.Equal(t, 1, applies)
 }
@@ -154,7 +155,7 @@ func TestSecondaryNetworkPollingRetryPermissionAndCancellationSemantics(t *testi
 				}
 				return crstate.Result{State: crstate.StateNotDeployed}, nil
 			})
-			err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "policy", "", 0, time.Millisecond)
+			err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "policy", "", 0, time.Millisecond, nil, hostplatform.Kubernetes)
 			switch mode {
 			case "optional health denied":
 				require.ErrorIs(t, err, retryReached)
@@ -211,7 +212,7 @@ func TestSecondaryNetworkPollingSafeRetryPreservesDesiredAndObservationGate(t *t
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	require.NoError(t, pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "policy", "", 0, time.Millisecond))
+	require.NoError(t, pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "policy", "", 0, time.Millisecond, nil, hostplatform.Kubernetes))
 	require.Equal(t, 1, applies)
 	require.Equal(t, 2, validationCalls)
 	require.Equal(t, 2, observationReads, "restored NCP must wait past its apply response before validation")
