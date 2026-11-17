@@ -64,7 +64,7 @@ func (c *activationExpiredAPIFenceClient) List(ctx context.Context, wanted *unst
 func TestActivationDelayedFinalAPIFenceExpiresProofBeforeClaimWithoutACK(t *testing.T) {
 	fixture := newActivationIntegrationFixture(t)
 	client := &activationExpiredAPIFenceClient{activationIntegrationFake: fixture.client}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	calls := 0
 	_, err := runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
 		calls++

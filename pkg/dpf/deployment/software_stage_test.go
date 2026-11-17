@@ -20,6 +20,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnrender"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -115,6 +116,20 @@ func softwareStageFixtureForSerials(t *testing.T, serials []string) (*management
 // Each harness still creates its own live objects, credentials and journals.
 func prepareSoftwareStageExecution(t *testing.T, serials []string) *managementExecution {
 	t.Helper()
+	input := softwareStageGenerationInputs(t, serials)
+	generated, err := generateFixtureBundle(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := prepareStageFixtureExecution(generated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return execution
+}
+
+func softwareStageGenerationInputs(t *testing.T, serials []string) generation.Inputs {
+	t.Helper()
 	if len(serials) == 0 {
 		t.Fatal("software stage fixture requires at least one selected serial")
 	}
@@ -140,15 +155,7 @@ func prepareSoftwareStageExecution(t *testing.T, serials []string) *managementEx
 	pldm := input.Workload.Software.PLDM["MT_0000001774"]
 	pldm.SHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(stagedPLDMBytes)))
 	input.Workload.Software.PLDM["MT_0000001774"] = pldm
-	generated, err := generateFixtureBundle(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	execution, err := prepareStageFixtureExecution(generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return execution
+	return input
 }
 
 func softwareStageFixtureFromExecution(t *testing.T, execution *managementExecution) (controlPlaneReceipts, []enrollmentBMC, string, *softwareStageFake, *executionJournal) {
@@ -204,7 +211,7 @@ func softwareStageFixtureFromExecution(t *testing.T, execution *managementExecut
 	tenantClientValue.source = management
 	managementReceipt := tenantStageBootstrapReceipt(execution, base)
 	tenant := tenantStageReceipt{ClusterUID: "dc-uid", Client: tenantClientValue}
-	enrollment, err := runEnrollmentStage(tenantStageContext(t), management, execution, managementReceipt, tenant, selected, password, testJournal(execution), time.Millisecond, time.Second)
+	enrollment, err := runEnrollmentStage(tenantStageContext(t), management, execution.verificationInputs(), managementReceipt, tenant, selected, password, testJournal(execution), time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatalf("prepare actual enrolled fixture: %v", err)
 	}
@@ -217,7 +224,7 @@ func softwareStageFixtureFromExecution(t *testing.T, execution *managementExecut
 
 func TestRunSoftwareStageCreatesWaitsAndVerifiesRetainedCache(t *testing.T) {
 	execution, receipts, selected, password, fake, journal := softwareStageFixture(t)
-	got, err := runSoftwareStage(tenantStageContext(t), fake, execution, receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
+	got, err := runSoftwareStage(tenantStageContext(t), fake, execution.verificationInputs(), receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
 	if err != nil {
 		t.Fatalf("runSoftwareStage() error = %v", err)
 	}
@@ -233,7 +240,9 @@ func TestRunSoftwareStageStopsBeforeCreateOnReceiptPermissionOrManagerMismatch(t
 		mutate func(*controlPlaneReceipts, *softwareStageFake)
 	}{
 		{name: "receipt digest", mutate: func(r *controlPlaneReceipts, _ *softwareStageFake) { r.enrollment.BundleDigest = "different" }},
-		{name: "tenant source", mutate: func(r *controlPlaneReceipts, _ *softwareStageFake) { r.tenant.Client.source = &tenantSourceStub{} }},
+		{name: "tenant source", mutate: func(r *controlPlaneReceipts, _ *softwareStageFake) {
+			testTenant(r.tenant.Client).source = &tenantSourceStub{}
+		}},
 		{name: "device replacement", mutate: func(_ *controlPlaneReceipts, f *softwareStageFake) {
 			for _, obj := range f.base.resources {
 				if obj.GetKind() == "DPUDevice" {
@@ -247,7 +256,7 @@ func TestRunSoftwareStageStopsBeforeCreateOnReceiptPermissionOrManagerMismatch(t
 		t.Run(tc.name, func(t *testing.T) {
 			receipts, selected, password, fake, journal := softwareStageFixtureFromExecution(t, execution)
 			tc.mutate(&receipts, fake)
-			_, err := runSoftwareStage(tenantStageContext(t), fake, execution, receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
+			_, err := runSoftwareStage(tenantStageContext(t), fake, execution.verificationInputs(), receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
 			if err == nil || fake.createSoftware != 0 {
 				t.Fatalf("stage error=%v software creates=%d", err, fake.createSoftware)
 			}
@@ -284,7 +293,7 @@ func TestSoftwareStageFailuresAfterCreateCannotIssueReceipt(t *testing.T) {
 					}
 				}
 			}
-			got, err := runSoftwareStage(tenantStageContext(t), fake, execution, receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
+			got, err := runSoftwareStage(tenantStageContext(t), fake, execution.verificationInputs(), receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
 			if err == nil || got.SoftwareUID != "" || len(got.Components) != 0 || fake.createSoftware != 1 || fake.tunnelCloses != 1 {
 				t.Fatalf("receipt=%#v creates=%d close=%d err=%v", got, fake.createSoftware, fake.tunnelCloses, err)
 			}
@@ -307,7 +316,7 @@ func TestSoftwareStageCancellationDuringFinalReceiptCannotReturnSuccess(t *testi
 	defer cancel()
 	report := &cancelPendingEnrollmentFile{cancel: cancel, reason: "SOFTWARE_BYTES_VERIFIED"}
 	journal.file = report
-	got, err := runSoftwareStage(ctx, fake, execution, receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
+	got, err := runSoftwareStage(ctx, fake, execution.verificationInputs(), receipts, selected, password, journal, time.Millisecond, time.Second, 1<<20)
 	if !errors.Is(err, context.Canceled) || got.SoftwareUID != "" || len(got.Components) != 0 || fake.tunnelCloses != 1 {
 		t.Fatalf("receipt=%#v closes=%d err=%v", got, fake.tunnelCloses, err)
 	}

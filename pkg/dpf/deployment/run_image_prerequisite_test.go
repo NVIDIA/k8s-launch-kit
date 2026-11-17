@@ -84,9 +84,9 @@ func TestRunImageMetadataFailureStopsFreshAndResumeBeforeEffects(t *testing.T) {
 				})
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cancel()
-				result, err := runWithImageResolver(ctx, request, func(ctx context.Context, ref string, timeout time.Duration, _ http.RoundTripper) (hbnPodImageIdentity, error) {
+				result, err := runWithTransports(ctx, request, runTransports{resolveImage: func(ctx context.Context, ref string, timeout time.Duration, _ http.RoundTripper) (hbnPodImageIdentity, error) {
 					return resolveHBNRuntimeImage(ctx, ref, timeout, transport)
-				})
+				}})
 				if err == nil || !strings.Contains(err.Error(), "HBN_IMAGE_METADATA_UNAVAILABLE") || !strings.Contains(err.Error(), "anonymous HTTPS") || requests != 1 {
 					t.Fatalf("failure not rejected early: result=%+v err=%v reads=%d", result, err, requests)
 				}
@@ -166,12 +166,12 @@ func TestRunImageMetadataAcceptsRetainedAnonymousRepositoryBeforeDiscovery(t *te
 			request.Access = api.request
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			_, err = runWithImageResolver(ctx, request, func(ctx context.Context, ref string, timeout time.Duration, _ http.RoundTripper) (hbnPodImageIdentity, error) {
+			_, err = runWithTransports(ctx, request, runTransports{resolveImage: func(ctx context.Context, ref string, timeout time.Duration, _ http.RoundTripper) (hbnPodImageIdentity, error) {
 				if ref != expected {
 					t.Fatalf("retained override rewritten: %s", ref)
 				}
 				return resolveHBNRuntimeImage(ctx, ref, timeout, transport)
-			})
+			}})
 			if err == nil || !strings.Contains(err.Error(), "prerequisite observation failed") || prerequisites != 1 {
 				t.Fatalf("positive metadata did not reach prerequisite boundary: %v", err)
 			}
@@ -199,7 +199,7 @@ func TestEarlyImageMetadataSuccessDoesNotReplaceRuntimeRead(t *testing.T) {
 	request := imagePrerequisiteRunRequest(t, fixture.prepared.execution.retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 		return PrerequisiteVerification{}, errors.New("stop after early metadata")
 	})
-	_, err := runWithImageResolver(fixture.ctx, request, resolver)
+	_, err := runWithTransports(fixture.ctx, request, runTransports{resolveImage: resolver})
 	// This request deliberately has no management access. The early image read
 	// must complete before the new core operation inspection can reject it.
 	if err == nil || !strings.Contains(err.Error(), "OPERATION_MANAGEMENT_UNMEASURED") || calls != 1 {

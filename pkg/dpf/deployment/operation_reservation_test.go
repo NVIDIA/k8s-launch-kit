@@ -205,7 +205,7 @@ func TestReservationFailuresRetainSafeReasonWithoutAdoption(t *testing.T) {
 			if tc.name == "canceled" && !errors.Is(runErr, context.Canceled) {
 				t.Fatal("cancellation lost")
 			}
-			check := operationReservationCheck(execution, runErr)
+			check := operationReservationCheck(execution.verificationInputs(), runErr)
 			if check.ReasonCode != tc.want || !strings.Contains(check.Message, tc.observation) {
 				t.Fatalf("safe check=%+v", check)
 			}

@@ -106,6 +106,6 @@ func validateManagement(r config.Request) error {
 	if r.Kubeconfig == "" {
 		return nil
 	}
-	_, err := managementaccess.Open(r)
+	_, err := managementaccess.Open(r, nil)
 	return err
 }

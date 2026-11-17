@@ -60,7 +60,7 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	deployment, err := retainedDeploymentObject(execution)
+	deployment, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 			mu.Unlock()
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			result, err := runWithImageResolver(ctx, request, retainedTestImageResolver)
+			result, err := runWithTransports(ctx, request, runTransports{resolveImage: retainedTestImageResolver})
 			mu.Lock()
 			defer mu.Unlock()
 			if test.want == "" && (result.Operation == nil || result.Operation.UID != op.object.UID) {

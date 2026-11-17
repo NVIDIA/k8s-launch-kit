@@ -73,12 +73,12 @@ func (s *operationMemoryStore) updateOperation(_ context.Context, object *corev1
 
 func checkpointFixture(t *testing.T, fixture activationIntegrationFixture) (*deploymentOperation, *operationMemoryStore) {
 	t.Helper()
-	deployment, err := retainedDeploymentObject(fixture.prepared.execution)
+	deployment, err := retainedDeploymentObject(fixture.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := operationState{Binding: operationBinding{Version: 1, ID: "test-operation", BundleDigest: fixture.prepared.execution.plan.Digest(), Management: fixture.prepared.execution.plan.Intent().Management, NamespaceUID: "operator-namespace-uid", DeploymentName: deployment.GetName(), CohortDigest: inventory.Digest("dpf-operation-cohort-v1", fixture.prepared.execution.plan.Intent().Devices)},
-		Management: fixture.controlPlane.management, TenantUID: fixture.controlPlane.tenant.ClusterUID, TenantSystemUID: fixture.controlPlane.tenant.Client.systemUID, TenantSources: map[string]types.UID{"Secret/tenant/source": "source-uid"}, Enrollment: fixture.controlPlane.enrollment, Software: fixture.workload.Software, Workload: fixture.workload.Resources,
+		Management: fixture.controlPlane.management, TenantUID: fixture.controlPlane.tenant.ClusterUID, TenantSystemUID: testTenant(fixture.controlPlane.tenant.Client).systemUID, TenantSources: map[string]types.UID{"Secret/tenant/source": "source-uid"}, Enrollment: fixture.controlPlane.enrollment, Software: fixture.workload.Software, Workload: fixture.workload.Resources,
 		Children: map[string]activationObjectReceipt{}, HoldIntents: map[string]operationProgress{}, Progress: map[string]operationProgress{}, Resets: map[string]operationReset{}, Hosts: map[string]operationHost{}}
 	data, err := encodeOperation(state)
 	if err != nil {
@@ -158,7 +158,7 @@ func TestOperationResumeActualActivationAfterLostResetResponse(t *testing.T) {
 	operation, store := checkpointFixture(t, fixture)
 	fixture.prepared.operation = operation
 	client := recoveryActivationClient{fixture.client}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture, loseResponse: true}
 	run := func() (activationStageReceipt, error) {
 		return runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, reboot)
@@ -204,7 +204,7 @@ func TestOperationClaimWithoutBaselineCannotReplayOrAcknowledge(t *testing.T) {
 	operation, store := checkpointFixture(t, fixture)
 	fixture.prepared.operation = operation
 	client := recoveryActivationClient{fixture.client}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture, loseResponse: true, omitBaseline: true}
 	run := func() error {
 		_, err := runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, reboot)
@@ -319,7 +319,7 @@ func TestOperationPausedClaimResumerOnlyObserves(t *testing.T) {
 	operation, store := checkpointFixture(t, fixture)
 	fixture.prepared.operation = operation
 	client := recoveryActivationClient{fixture.client}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture, pauseBeforeDispatch: true, boot: operationOldBoot}
 	run := func() error {
 		_, err := runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, reboot)
@@ -342,7 +342,7 @@ func TestOperationResumeRequiresNewCurrentArmNotInitialBoot(t *testing.T) {
 	operation, store := checkpointFixture(t, fixture)
 	fixture.prepared.operation = operation
 	client := &stopAfterArmPollClient{recoveryActivationClient: recoveryActivationClient{fixture.client}}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture, loseResponse: true}
 	if _, err := runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, reboot); err == nil {
 		t.Fatal("lost response succeeded")
@@ -393,7 +393,7 @@ func TestOperationLostHoldConfirmationNeverInfersHistory(t *testing.T) {
 	operation.store = &failProgressOperationStore{operationMemoryStore: memory}
 	fixture.prepared.operation = operation
 	client := recoveryActivationClient{fixture.client}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture}
 	run := func() error {
 		_, err := runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, reboot)
@@ -462,7 +462,7 @@ func TestOperationResolvesOwnPreparedDDCreateWithoutAdoptingReplacement(t *testi
 	sourceReads := 0
 	fixture.prepared.beforeDeploymentCreate = func(context.Context) error { sourceReads++; return nil }
 	client := &lostDDCreateClient{recoveryActivationClient: recoveryActivationClient{fixture.client}, lose: true}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture}
 	run := func() error {
 		_, err := runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, reboot)
@@ -515,7 +515,7 @@ func TestOperationCannotRebindRecreatedClaimBeforeSubmission(t *testing.T) {
 	operation, _ := checkpointFixture(t, fixture)
 	fixture.prepared.operation = operation
 	client := recoveryActivationClient{fixture.client}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture}
 	reboot.beforeBaseline = func() {
 		for name, claim := range fixture.client.guards {
@@ -542,7 +542,7 @@ func TestOperationFirstDDSourceFailureBlocksCreateWithoutStageReplay(t *testing.
 	reads := 0
 	fixture.prepared.beforeDeploymentCreate = func(context.Context) error { reads++; return errors.New("fresh source byte check failed") }
 	client := recoveryActivationClient{fixture.client}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture}
 	_, err := runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, reboot)
 	if err == nil || reads != 1 || fixture.client.deployment != nil || len(fixture.client.patches) != 0 || fixture.client.guardCalls != 0 || reboot.submissions != 0 || operation.state.DeploymentUID != "" {
@@ -559,21 +559,21 @@ func TestOperationFirstDDFreshnessUsesActualReadOnlyByteAndChartHelpers(t *testi
 		return PreflightCheck{ID: workloadChartSourceCheckID, State: "passed", ReasonCode: "HBN_CHART_ARCHIVE_MATCHED", Message: "current chart matched"}, nil
 	}
 	streams, creates := client.streamRequests.Load(), client.createSoftware
-	if err := verifyFirstDeploymentSources(fixture.ctx, client, fixture.prepared.execution, fixture.workload.Software, chart, fixture.journal, 1<<20); err != nil {
+	if err := verifyFirstDeploymentSources(fixture.ctx, client, fixture.prepared.execution.verificationInputs(), fixture.workload.Software, chart, fixture.journal, 1<<20); err != nil {
 		t.Fatal(err)
 	}
 	if chartReads != 1 || client.streamRequests.Load()-streams != int32(len(fixture.workload.Software.Components)) || client.createSoftware != creates {
 		t.Fatal("freshness did not read exact cached components without creation")
 	}
 	client.streamMismatch.Store(true)
-	if err := verifyFirstDeploymentSources(fixture.ctx, client, fixture.prepared.execution, fixture.workload.Software, chart, fixture.journal, 1<<20); err == nil || !strings.Contains(err.Error(), "RESUME_SOFTWARE_BYTES_UNVERIFIED") {
+	if err := verifyFirstDeploymentSources(fixture.ctx, client, fixture.prepared.execution.verificationInputs(), fixture.workload.Software, chart, fixture.journal, 1<<20); err == nil || !strings.Contains(err.Error(), "RESUME_SOFTWARE_BYTES_UNVERIFIED") {
 		t.Fatalf("changed actual cached bytes=%v", err)
 	}
 	streams = client.streamRequests.Load()
 	blockedChart := func(context.Context, *generation.Plan) (PreflightCheck, error) {
 		return PreflightCheck{}, errors.New("source unavailable")
 	}
-	if err := verifyFirstDeploymentSources(fixture.ctx, client, fixture.prepared.execution, fixture.workload.Software, blockedChart, fixture.journal, 1<<20); err == nil {
+	if err := verifyFirstDeploymentSources(fixture.ctx, client, fixture.prepared.execution.verificationInputs(), fixture.workload.Software, blockedChart, fixture.journal, 1<<20); err == nil {
 		t.Fatal("unavailable chart passed")
 	}
 	if client.streamRequests.Load() != streams || client.createSoftware != creates {

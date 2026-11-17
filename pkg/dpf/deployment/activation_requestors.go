@@ -92,7 +92,7 @@ const activationChainVersionKey = "svc.dpu.nvidia.com/dpuservicechain-version"
 // activationVersionRequestors qualifies the finite current coordination graph.
 // Interface names in a Service are opaque identity slots here; their complete
 // objects remain independently qualified by the later HBN runtime boundary.
-func activationVersionRequestors(ctx context.Context, client activationStageClient, execution *managementExecution,
+func activationVersionRequestors(ctx context.Context, client resourceLister, execution *managementVerificationInputs,
 	deployment *unstructured.Unstructured, sets map[string]*unstructured.Unstructured,
 ) (activationVersionGraph, bool, error) {
 	services, err := client.List(ctx, runtimeObject("DPUService", "", deployment.GetNamespace(), nil), "")
@@ -108,7 +108,7 @@ func activationVersionRequestors(ctx context.Context, client activationStageClie
 
 // compileActivationVersionGraph has explicit immutable source/snapshot inputs;
 // it does not call APIs, change inputs or authorize an effect by itself.
-func compileActivationVersionGraph(execution *managementExecution, deployment *unstructured.Unstructured, sets map[string]*unstructured.Unstructured, services, chains []unstructured.Unstructured) (activationVersionGraph, bool, error) {
+func compileActivationVersionGraph(execution *managementVerificationInputs, deployment *unstructured.Unstructured, sets map[string]*unstructured.Unstructured, services, chains []unstructured.Unstructured) (activationVersionGraph, bool, error) {
 	bad := func() (activationVersionGraph, bool, error) {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantGraph)
 	}

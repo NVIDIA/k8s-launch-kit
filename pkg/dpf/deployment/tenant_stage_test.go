@@ -389,7 +389,7 @@ func (f *tenantStageFake) checkTenantStorage(_ context.Context, namespace string
 	return f.storage[i]
 }
 
-func (f *tenantStageFake) connectTenant(ctx context.Context, _ *generation.Plan, uid types.UID, _ *Reconciler, _ *executionJournal, _, _ time.Duration) (*tenantClient, error) {
+func (f *tenantStageFake) connectTenant(ctx context.Context, _ *generation.Plan, uid types.UID, _ *Reconciler, _ *executionJournal, _, _ time.Duration) (tenantStageReader, error) {
 	f.events = append(f.events, "connect")
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -21,7 +21,7 @@ const hbnRuntimePageSize = 64
 const hbnRuntimeMaxPages = 16
 
 type hbnRuntimeStageClient interface {
-	activationStageClient
+	activationBoundaryReader
 	checkHBNRuntimeAccess(context.Context, string, string, string) []PreflightCheck
 	listHBNRuntimeObjects(context.Context, string, string, string) ([]unstructured.Unstructured, error)
 	getHBNRuntimeApplication(context.Context, string, string) (*unstructured.Unstructured, error)
@@ -93,13 +93,13 @@ type hbnRuntimeBindingSnapshot struct {
 // observeHBNRuntimeBindings verifies source/tenant identity and complete lists.
 // The caller brackets this with the shared activation/allocation observer and
 // compares semantic anchors for the entire selected cohort around every read.
-func observeHBNRuntimeBindings(ctx context.Context, client hbnRuntimeStageClient, prepared *preparedControlPlaneRun, tenant *tenantClient,
+func observeHBNRuntimeBindings(ctx context.Context, client hbnRuntimeStageClient, execution *managementVerificationInputs, tenant hbnRuntimeTenantReader,
 	activation activationStageReceipt, fence hostNetworkLeaseFence, image hbnPodImageIdentity, timeout time.Duration,
 ) (hbnRuntimeBindingSnapshot, error) {
 	var empty hbnRuntimeBindingSnapshot
 	observeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if tenant == nil || tenant.api == nil {
+	if tenant == nil {
 		return empty, fmt.Errorf("HBN_RUNTIME_TENANT_UNAVAILABLE")
 	}
 	if err := client.VerifyIdentity(observeCtx); err != nil {
@@ -108,9 +108,8 @@ func observeHBNRuntimeBindings(ctx context.Context, client hbnRuntimeStageClient
 	if err := tenant.VerifyIdentity(observeCtx); err != nil {
 		return empty, err
 	}
-	execution := prepared.execution
 	namespace := execution.plan.Intent().Namespace
-	if !runtimePermissionsPassed(checkTenantRuntimeReadPermissions(observeCtx, tenant, namespace)) || !runtimePermissionsPassed(client.checkHBNRuntimeAccess(observeCtx, namespace, execution.operatorNamespace, "")) {
+	if !runtimePermissionsPassed(tenant.checkTenantRuntimeReadPermissions(observeCtx, namespace)) || !runtimePermissionsPassed(client.checkHBNRuntimeAccess(observeCtx, namespace, execution.operatorNamespace, "")) {
 		return empty, fmt.Errorf("HBN_RUNTIME_PERMISSION_DENIED")
 	}
 	selector := labels.Set{activationParentLabel: namespace + "_" + fence.activation.deployment.GetName(), hbnServiceReferenceLabel: hbnContainerName}.AsSelector().String()
@@ -147,7 +146,7 @@ func observeHBNRuntimeBindings(ctx context.Context, client hbnRuntimeStageClient
 	if err != nil {
 		return empty, err
 	}
-	daemonSets, pods, err := listHBNRuntimeTenantObjects(observeCtx, tenant, namespace, labels.Set{hbnServiceIDLabel: expected.ServiceID}.AsSelector().String())
+	daemonSets, pods, err := tenant.listRuntimeObjects(observeCtx, namespace, labels.Set{hbnServiceIDLabel: expected.ServiceID}.AsSelector().String())
 	if err != nil {
 		return empty, err
 	}
@@ -177,11 +176,11 @@ func observeHBNRuntimeBindings(ctx context.Context, client hbnRuntimeStageClient
 		if err != nil {
 			return empty, err
 		}
-		if !runtimePermissionsPassed(checkTenantPodExecPermissions(observeCtx, tenant, namespace, anchor.PodName)) {
+		if !runtimePermissionsPassed(tenant.checkTenantPodExecPermissions(observeCtx, namespace, anchor.PodName)) {
 			return empty, fmt.Errorf("HBN_RUNTIME_PERMISSION_DENIED")
 		}
 		// A named fresh read fences the actual exec target, not only a list cache.
-		pod, err := tenant.api.CoreV1().Pods(namespace).Get(observeCtx, anchor.PodName, metav1.GetOptions{})
+		pod, err := tenant.readPod(observeCtx, namespace, anchor.PodName)
 		if err != nil {
 			return empty, safeAPIError("read selected HBN Pod", err)
 		}
@@ -218,7 +217,7 @@ func runtimePermissionsPassed(checks []PreflightCheck) bool {
 	return true
 }
 
-func listHBNRuntimeTenantObjects(ctx context.Context, tenant *tenantClient, namespace, selector string) ([]appsv1.DaemonSet, []corev1.Pod, error) {
+func (tenant *tenantClient) listRuntimeObjects(ctx context.Context, namespace, selector string) ([]appsv1.DaemonSet, []corev1.Pod, error) {
 	var daemonSets []appsv1.DaemonSet
 	var pods []corev1.Pod
 	for _, kind := range []string{"daemonsets", "pods"} {

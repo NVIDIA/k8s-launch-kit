@@ -82,7 +82,7 @@ func TestManagementReconcilerBindsClonedPolicyWhilePublicConstructorStaysStrict(
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired, err := retainedBlueFieldSoftware(execution)
+	desired, err := retainedBlueFieldSoftware(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestManagementReconcilerBindsClonedPolicyWhilePublicConstructorStaysStrict(
 func TestActivationBoundaryAcceptsVendorFinalizersForCreatedSelectedSets(t *testing.T) {
 	fixture := newActivationIntegrationFixtureForSerials(t, []string{"SERIAL-A", "SERIAL-B"})
 	execution, client := fixture.prepared.execution, fixture.client
-	deployment, err := retainedDeploymentObject(execution)
+	deployment, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestActivationBoundaryAcceptsVendorFinalizersForCreatedSelectedSets(t *test
 	if err != nil || created == nil {
 		t.Fatalf("create exact parent fixture: %v", err)
 	}
-	software, err := retainedBlueFieldSoftware(execution)
+	software, err := retainedBlueFieldSoftware(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,17 +202,17 @@ func TestActivationBoundaryAcceptsVendorFinalizersForCreatedSelectedSets(t *test
 	}
 	observed.SetFinalizers(finalizers)
 	client.base.resources[key] = observed
-	objects, err := retainedWorkloadObjects(execution)
+	objects, err := retainedWorkloadObjects(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
 	streams, creates := client.streamRequests.Load(), client.base.createCount
 	ctx, cancel := context.WithTimeout(fixture.ctx, 10*time.Second)
 	defer cancel()
-	if err := verifyActivationSoftware(ctx, client, execution, fixture.workload.Software); err != nil {
+	if err := verifyActivationSoftware(ctx, client, execution.verificationInputs(), fixture.workload.Software); err != nil {
 		t.Fatalf("vendor finalizers invalidated exact software receipt: %v", err)
 	}
-	if err := verifyActivationBoundary(ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, client.activationSelected, created.GetUID(), objects, fixture.journal, time.Second); err != nil {
+	if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(fixture.prepared, fixture.controlPlane, fixture.workload), fixture.controlPlane.tenant.Client, client.activationSelected, created.GetUID(), objects, fixture.journal, time.Second); err != nil {
 		t.Fatalf("post-create vendor finalizers blocked the real activation boundary: %v", err)
 	}
 	if len(client.patches) != 0 || client.guardCalls != 0 || client.resetSafetyCalls != 0 || client.base.createCount != creates || client.streamRequests.Load() != streams {

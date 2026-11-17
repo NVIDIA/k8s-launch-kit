@@ -305,6 +305,20 @@ the checkpoint does not provide physical fencing or automatic adoption. Existing
 claims select observation-only recovery, and completed host work is inspected
 without configuration fallback. Each attempt produces fresh runtime evidence.
 
+DPF deployment stages consume their own read/check ports and the effects needed
+by that stage; they do not inherit prior stages' installers or writers. Management
+and tenant access remain separate identity domains. Tenant readers own child,
+allocation, permission and runtime Pod observations directly, without exposing
+upstream client factories. Runtime receives copied verification data and narrow
+management/tenant readers, plus explicit bounded command, traffic and image I/O.
+Its inputs and lease closure retain no operation store, first-create callback,
+installer, selector/activation patcher, resetter or host configurer. The retained
+plan, bundle and compiled schemas remain immutable data owners.
+Private I/O composition may select a typed request limiter before native client
+construction for deterministic transport tests. Ordinary application calls pass
+nil and preserve client-go pacing, credentials, TLS and request controls; the
+limiter does not replace a client, request or verification result.
+
 DPF runtime measurement uses a resource/allocation fence distinct from the full
 physical mutation fence. Both share management, tenant, workload/software,
 credential and complete selected-resource verification. The physical wrapper

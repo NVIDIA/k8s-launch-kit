@@ -28,72 +28,71 @@ func activationBoundaryFailure(ctx context.Context, journal *executionJournal, c
 // verifyActivationBoundary is the full physical policy for mutation boundaries
 // and runtime phase acceptance. Keep BMC reads between the control checks and
 // the final shared-credential/selected-scope inspection.
-func verifyActivationBoundary(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts,
-	workload workloadPreparationReceipt, selected []activationSelectedDevice, deploymentUID types.UID, objects []*unstructured.Unstructured, journal *executionJournal, requestTimeout time.Duration,
+func verifyActivationBoundary(ctx context.Context, client activationBoundaryReader, verification *controlPlaneVerificationInputs, tenant tenantVerificationReader, selected []activationSelectedDevice, deploymentUID types.UID, objects []*unstructured.Unstructured, journal *executionJournal, requestTimeout time.Duration,
 ) error {
-	if err := verifyActivationControlResources(ctx, client, prepared, controlPlane, workload, objects, journal); err != nil {
+	if err := verifyActivationControlResources(ctx, client, verification, tenant, objects, journal); err != nil {
 		return err
 	}
-	if err := client.verifyEnrollmentBMCs(ctx, prepared.selected, requestTimeout, journal); err != nil {
+	if err := client.verifyEnrollmentBMCs(ctx, verification.selected, requestTimeout, journal); err != nil {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_BMC_IDENTITY_CHANGED", "Selected BMC identities could not be reverified at the activation boundary.", err)
 	}
-	return verifyActivationEnrollmentResources(ctx, client, prepared, controlPlane, selected, deploymentUID, journal)
+	return verifyActivationEnrollmentResources(ctx, client, verification, selected, deploymentUID, journal)
 }
 
 // verifyActivationResourceBoundary refreshes every control/resource check,
 // including shared credentials and complete selected ownership. Runtime uses
 // it between observations; reset preparation also uses it after its dedicated
 // physical safety read. It does not establish physical readiness by itself.
-func verifyActivationResourceBoundary(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, selected []activationSelectedDevice, deploymentUID types.UID, objects []*unstructured.Unstructured, journal *executionJournal) error {
-	if err := verifyActivationControlResources(ctx, client, prepared, controlPlane, workload, objects, journal); err != nil {
+func verifyActivationResourceBoundary(ctx context.Context, client activationControlReader, verification *controlPlaneVerificationInputs, tenant tenantVerificationReader, selected []activationSelectedDevice, deploymentUID types.UID, objects []*unstructured.Unstructured, journal *executionJournal) error {
+	if err := verifyActivationControlResources(ctx, client, verification, tenant, objects, journal); err != nil {
 		return err
 	}
-	return verifyActivationEnrollmentResources(ctx, client, prepared, controlPlane, selected, deploymentUID, journal)
+	return verifyActivationEnrollmentResources(ctx, client, verification, selected, deploymentUID, journal)
 }
 
-func verifyActivationControlResources(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, objects []*unstructured.Unstructured, journal *executionJournal) error {
+func verifyActivationControlResources(ctx context.Context, client activationControlReader, verification *controlPlaneVerificationInputs, tenant tenantVerificationReader, objects []*unstructured.Unstructured, journal *executionJournal) error {
 	if err := client.VerifyIdentity(ctx); err != nil {
 		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return activationBoundaryFailure(ctx, journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
-	if err := controlPlane.tenant.Client.VerifyIdentity(ctx); err != nil {
+	if err := tenant.VerifyIdentity(ctx); err != nil {
 		diagnostic := tenantIdentityDiagnostic(ctx, err)
 		return activationBoundaryFailure(ctx, journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
-	if err := verifyManagementBootstrap(ctx, client, prepared.execution, controlPlane.management); err != nil {
+	if err := verifyManagementBootstrap(ctx, client, verification.execution, verification.management); err != nil {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_BOOTSTRAP_CHANGED", "Management bootstrap changed at the activation boundary.", err)
 	}
-	if err := validateWorkloadTargeting(ctx, client, prepared.execution, controlPlane.tenant, prepared.selected, objects); err != nil {
+	if err := validateWorkloadTargeting(ctx, client, verification.execution, tenant, verification.tenantUID, verification.selected, objects); err != nil {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_WORKLOAD_TARGET_CHANGED", "The retained workload resources no longer resolve only to the selected tenant and device cohort.", err)
 	}
-	if err := verifyWorkloadReceiptSet(ctx, client, prepared.execution, controlPlane.tenant.Client, objects, workload.Resources); err != nil {
+	if err := verifyWorkloadReceiptSet(ctx, client, verification.execution, tenant, objects, verification.resources); err != nil {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_WORKLOAD_RECEIPT_CHANGED", "A retained workload prerequisite changed at the activation boundary.", err)
 	}
-	if err := verifyActivationSoftware(ctx, client, prepared.execution, workload.Software); err != nil {
+	if err := verifyActivationSoftware(ctx, client, verification.execution, verification.software); err != nil {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_SOFTWARE_RECEIPT_CHANGED", "The retained software resource, component receipt or release-bound registry identity changed at the activation boundary.", err)
 	}
 	return nil
 }
 
-func verifyActivationEnrollmentResources(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, controlPlane controlPlaneReceipts, selected []activationSelectedDevice, deploymentUID types.UID, journal *executionJournal) error {
-	secret := controlPlane.enrollment.Secret
-	if controlPlane.enrollment.BundleDigest != prepared.execution.plan.Digest() || controlPlane.enrollment.TenantUID != controlPlane.tenant.ClusterUID || secret.Namespace != prepared.execution.operatorNamespace || secret.UID == "" {
+func verifyActivationEnrollmentResources(ctx context.Context, client enrollmentResourceReader, verification *controlPlaneVerificationInputs, selected []activationSelectedDevice, deploymentUID types.UID, journal *executionJournal) error {
+	secret := verification.enrollment.Secret
+	if verification.enrollment.BundleDigest != verification.execution.plan.Digest() || verification.enrollment.TenantUID != verification.tenantUID || secret.Namespace != verification.execution.operatorNamespace || secret.UID == "" {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "The enrollment receipt differs from the retained plan, tenant or credential identity.", nil)
 	}
 	current, err := client.Get(ctx, secretIdentity(secret.Namespace))
 	if err != nil {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SECRET_CHANGED", "The shared BMC credential could not be reverified at the activation boundary.", err)
 	}
-	verified, err := verifyEnrollmentSecret(current, secret.Namespace, prepared.password)
+	verified, err := verifyEnrollmentSecret(current, secret.Namespace, verification.password)
 	if err != nil || verified.UID != secret.UID {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SECRET_CHANGED", "The shared BMC credential changed at the activation boundary.", err)
 	}
-	if !softwareEnrollmentReceiptMatches(controlPlane.enrollment.Devices, prepared.selected) || len(selected) != len(prepared.selected) {
+	if !softwareEnrollmentReceiptMatches(verification.enrollment.Devices, verification.selected) || len(selected) != len(verification.selected) {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "The selected enrollment receipt differs from the retained cohort.", nil)
 	}
-	snapshot, err := collectEnrollmentScope(ctx, client, prepared.execution, prepared.selected, true)
+	snapshot, err := collectEnrollmentScope(ctx, client, verification.execution, verification.selected, true)
 	if err == nil {
-		err = validateActivationScope(snapshot, prepared.execution, selected, deploymentUID)
+		err = validateActivationScope(snapshot, verification.execution, selected, deploymentUID)
 	}
 	if err != nil {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_ENROLLMENT_SCOPE_CHANGED", "Selected DPU enrollment or activation ownership changed.", err)
@@ -106,7 +105,7 @@ func verifyActivationEnrollmentResources(ctx context.Context, client activationS
 
 // verifyActivationSoftware refreshes resource and registry identity against the
 // earlier byte-verification receipt. It does not rehash or attest later downloads.
-func verifyActivationSoftware(ctx context.Context, client workloadStageClient, execution *managementExecution, receipt softwareVerificationReceipt) error {
+func verifyActivationSoftware(ctx context.Context, client activationSoftwareReader, execution *managementVerificationInputs, receipt softwareVerificationReceipt) error {
 	if err := verifyStagedSoftwareResource(ctx, client, execution, receipt); err != nil {
 		return err
 	}
@@ -157,7 +156,7 @@ func (s enrollmentScopeSnapshot) objects(kind string) []unstructured.Unstructure
 // Before creation, the strict no-child policy still applies. Afterwards only the
 // retained parent UID and its exact selected controller children are permitted.
 // DPUNode Ready may change during node effects/reboot; identity remains pinned.
-func validateActivationScope(snapshot enrollmentScopeSnapshot, execution *managementExecution, selected []activationSelectedDevice, deploymentUID types.UID) error {
+func validateActivationScope(snapshot enrollmentScopeSnapshot, execution *managementVerificationInputs, selected []activationSelectedDevice, deploymentUID types.UID) error {
 	enrollment := make([]enrollmentBMC, len(selected))
 	for i, item := range selected {
 		enrollment[i] = item.item

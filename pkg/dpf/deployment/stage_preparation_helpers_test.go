@@ -43,18 +43,18 @@ func runManagement(ctx context.Context, client managementRunnerClient, retained 
 // runControlPlane executes the retained management, tenant and selected-device
 // enrollment stages using one prepared plan. Its receipt does not establish
 // workload or DPUDeployment readiness.
-func runControlPlane(ctx context.Context, client enrollmentManagementClient, retained *bundle.Bundle, journal *executionJournal,
+func runControlPlane(ctx context.Context, client controlPlaneTestClient, retained *bundle.Bundle, journal *executionJournal,
 	probes probe.Runner, request config.Request, interval, requestTimeout time.Duration,
 ) (enrollmentStageReceipt, error) {
 	prepared, err := prepareControlPlaneRun(ctx, client, retained, journal, probes, request, interval, requestTimeout)
 	if err != nil {
 		return enrollmentStageReceipt{}, err
 	}
-	receipts, err := runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
+	receipts, err := runPreparedControlPlane(ctx, client, client, client, client, prepared, probes, journal, interval, requestTimeout)
 	return receipts.enrollment, err
 }
 
-func prepareControlPlaneRun(ctx context.Context, client enrollmentManagementClient, retained *bundle.Bundle, journal *executionJournal,
+func prepareControlPlaneRun(ctx context.Context, client controlPlaneTestClient, retained *bundle.Bundle, journal *executionJournal,
 	probes probe.Runner, request config.Request, interval, requestTimeout time.Duration,
 ) (*preparedControlPlaneRun, error) {
 	if ctx == nil || client == nil || journal == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
@@ -76,7 +76,7 @@ func prepareControlPlaneRun(ctx context.Context, client enrollmentManagementClie
 	if err != nil {
 		return nil, err
 	}
-	return prepareControlPlaneWithExecution(ctx, client, execution, journal, probes, request, interval, requestTimeout)
+	return prepareControlPlaneWithExecution(ctx, client, execution, journal, request, interval, requestTimeout)
 }
 
 // softwarePreparationReceipt reports only staged cache verification. It does
@@ -90,7 +90,7 @@ type softwarePreparationReceipt struct {
 // runSoftwarePreparation owns the retained execution across control-plane and
 // software staging. It stops after verifying selected software bytes; it does
 // not create the remaining workload resources or DPUDeployment.
-func runSoftwarePreparation(ctx context.Context, client softwareStageManagementClient, retained *bundle.Bundle,
+func runSoftwarePreparation(ctx context.Context, client workloadTestClient, retained *bundle.Bundle,
 	journal *executionJournal, probes probe.Runner, request config.Request, interval, requestTimeout time.Duration, maxBytes int64,
 ) (softwarePreparationReceipt, error) {
 	if ctx == nil || client == nil || journal == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute || maxBytes <= 0 || maxBytes == math.MaxInt64 {
@@ -103,11 +103,11 @@ func runSoftwarePreparation(ctx context.Context, client softwareStageManagementC
 	if err != nil {
 		return softwarePreparationReceipt{}, err
 	}
-	receipts, err := runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
+	receipts, err := runPreparedControlPlane(ctx, client, client, client, client, prepared, probes, journal, interval, requestTimeout)
 	if err != nil {
 		return softwarePreparationReceipt{BundleDigest: prepared.execution.plan.Digest(), ControlPlane: receipts}, err
 	}
-	software, err := runSoftwareStage(ctx, client, prepared.execution, receipts, prepared.selected, prepared.password, journal,
+	software, err := runSoftwareStage(ctx, client, prepared.execution.verificationInputs(), receipts, prepared.selected, prepared.password, journal,
 		interval, requestTimeout, maxBytes)
 	return softwarePreparationReceipt{BundleDigest: prepared.execution.plan.Digest(), ControlPlane: receipts, Software: software}, err
 }
@@ -116,7 +116,7 @@ func runSoftwarePreparation(ctx context.Context, client softwareStageManagementC
 // source and all required workload permissions before effects, then carries the
 // same execution through management, tenant, enrollment, cached-software and
 // workload-prerequisite stages. It deliberately stops before DPUDeployment.
-func runWorkloadPreparation(ctx context.Context, client workloadStageClient, retained *bundle.Bundle,
+func runWorkloadPreparation(ctx context.Context, client workloadTestClient, retained *bundle.Bundle,
 	journal *executionJournal, probes probe.Runner, request config.Request, interval, requestTimeout time.Duration,
 	maxBytes int64, verifyChartSource workloadChartSourceVerifier,
 ) (workloadPreparationReceipt, error) {
@@ -136,9 +136,22 @@ func runWorkloadPreparation(ctx context.Context, client workloadStageClient, ret
 		return workloadPreparationReceipt{}, err
 	}
 	execution := prepared.execution
-	controlPlane, err := runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
+	controlPlane, err := runPreparedControlPlane(ctx, client, client, client, client, prepared, probes, journal, interval, requestTimeout)
 	if err != nil {
 		return workloadPreparationReceipt{BundleDigest: execution.plan.Digest(), ControlPlane: controlPlane}, err
 	}
-	return runPreparedWorkload(ctx, client, prepared, controlPlane, probes, journal, interval, requestTimeout, maxBytes, verifyChartSource, objects)
+	return runPreparedWorkload(ctx, client, client, prepared, controlPlane, journal, interval, requestTimeout, maxBytes, verifyChartSource, objects)
+}
+
+type controlPlaneTestClient interface {
+	managementRunnerClient
+	tenantStageManagementClient
+	enrollmentManagementClient
+	tenantNetworkChecker
+}
+type workloadTestClient interface {
+	controlPlaneTestClient
+	softwareStageManagementClient
+	workloadStageClient
+	workloadPermissionChecker
 }

@@ -46,7 +46,7 @@ func TestTenantPlanUsesIndependentReleaseVersionAndImmutableIntent(t *testing.T)
 }
 
 func TestConnectRetainedTenantRejectsMissingInputsBeforeAccess(t *testing.T) {
-	if _, err := connectRetainedTenant(context.Background(), nil, nil, "", nil, nil, time.Second, time.Second); err == nil {
+	if _, err := connectRetainedTenant(context.Background(), nil, nil, "", nil, nil, time.Second, time.Second, nil, nil); err == nil {
 		t.Fatal("incomplete tenant handoff accepted")
 	}
 }

@@ -14,7 +14,6 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -31,10 +30,9 @@ const workloadChartSourceCheckID = "hbn-chart-source-matches-archive"
 type workloadChartSourceVerifier func(context.Context, *generation.Plan) (PreflightCheck, error)
 
 type workloadStageClient interface {
-	softwareStageManagementClient
-	List(context.Context, *unstructured.Unstructured, string) ([]unstructured.Unstructured, error)
-	checkCallerPermissions(context.Context, preflightPlan) PreflightResult
-	getTenantWorkloadChild(context.Context, *tenantClient, *unstructured.Unstructured) (*unstructured.Unstructured, error)
+	ResourceClient
+	enrollmentBoundaryReader
+	enrollmentBindingReader
 }
 
 var _ workloadStageClient = (*APIClient)(nil)
@@ -59,7 +57,7 @@ type workloadResourceReceipt struct {
 
 // checkWorkloadPreparationInputs performs all workload checks that must happen
 // before the management bootstrap can have controller side effects.
-func checkWorkloadPreparationInputs(ctx context.Context, client workloadStageClient, prepared *preparedControlPlaneRun,
+func checkWorkloadPreparationInputs(ctx context.Context, client workloadPermissionChecker, prepared *preparedControlPlaneRun,
 	journal *executionJournal, verifyChartSource workloadChartSourceVerifier,
 ) ([]*unstructured.Unstructured, error) {
 	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil ||
@@ -72,7 +70,7 @@ func checkWorkloadPreparationInputs(ctx context.Context, client workloadStageCli
 	if journal.digest != prepared.execution.plan.Digest() {
 		return nil, workloadStageFailure(journal, "WORKLOAD_BUNDLE_MISMATCH", "The execution report does not identify the retained plan.", nil)
 	}
-	objects, err := retainedWorkloadObjects(prepared.execution)
+	objects, err := retainedWorkloadObjects(prepared.execution.verificationInputs())
 	if err != nil {
 		return nil, workloadStageFailure(journal, "WORKLOAD_PLAN_INVALID", "The retained workload prerequisite set is invalid.", err)
 	}
@@ -99,11 +97,11 @@ func checkWorkloadPreparationInputs(ctx context.Context, client workloadStageCli
 
 // runPreparedWorkload carries the already prepared control-plane execution
 // through software verification and retained workload prerequisites.
-func runPreparedWorkload(ctx context.Context, client workloadStageClient, prepared *preparedControlPlaneRun,
-	controlPlane controlPlaneReceipts, probes probe.Runner, journal *executionJournal, interval, requestTimeout time.Duration,
+func runPreparedWorkload(ctx context.Context, softwareClient softwareStageManagementClient, client workloadStageClient, prepared *preparedControlPlaneRun,
+	controlPlane controlPlaneReceipts, journal *executionJournal, interval, requestTimeout time.Duration,
 	maxBytes int64, verifyChartSource workloadChartSourceVerifier, objects []*unstructured.Unstructured,
 ) (workloadPreparationReceipt, error) {
-	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil ||
+	if ctx == nil || softwareClient == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil ||
 		journal == nil || verifyChartSource == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute ||
 		maxBytes <= 0 || maxBytes == math.MaxInt64 || len(objects) != 9 {
 		return workloadPreparationReceipt{}, workloadStageFailure(journal, "WORKLOAD_INPUT_INVALID", "Workload stage requires one retained execution, complete prerequisites and bounded controls.", nil)
@@ -119,11 +117,11 @@ func runPreparedWorkload(ctx context.Context, client workloadStageClient, prepar
 	if err := checkWorkloadChartSource(ctx, execution.plan, verifyChartSource, journal, "chart-source-before-workload"); err != nil {
 		return workloadPreparationReceipt{BundleDigest: execution.plan.Digest(), ControlPlane: controlPlane}, err
 	}
-	software, err := runSoftwareStage(ctx, client, execution, controlPlane, prepared.selected, prepared.password, journal, interval, requestTimeout, maxBytes)
+	software, err := runSoftwareStage(ctx, softwareClient, execution.verificationInputs(), controlPlane, prepared.selected, prepared.password, journal, interval, requestTimeout, maxBytes)
 	if err != nil {
 		return workloadPreparationReceipt{BundleDigest: execution.plan.Digest(), ControlPlane: controlPlane}, err
 	}
-	resources, err := runWorkloadStage(ctx, client, execution, controlPlane, software, prepared.selected, prepared.password, journal, interval, requestTimeout, objects)
+	resources, err := runWorkloadStage(ctx, client, execution.verificationInputs(), controlPlane, software, prepared.selected, prepared.password, journal, interval, requestTimeout, objects)
 	return workloadPreparationReceipt{BundleDigest: execution.plan.Digest(), ControlPlane: controlPlane, Software: software, Resources: resources}, err
 }
 
@@ -168,7 +166,7 @@ func safeWorkloadReasonCode(value string) bool {
 	return true
 }
 
-func retainedWorkloadObjects(execution *managementExecution) ([]*unstructured.Unstructured, error) {
+func retainedWorkloadObjects(execution *managementVerificationInputs) ([]*unstructured.Unstructured, error) {
 	if execution == nil || execution.plan == nil {
 		return nil, fmt.Errorf("validated retained plan is required")
 	}
@@ -205,7 +203,7 @@ func retainedWorkloadObjects(execution *managementExecution) ([]*unstructured.Un
 	return objects, nil
 }
 
-func (e *managementExecution) planStage(id string) (bundle.StageView, bool) {
+func (e *managementVerificationInputs) planStage(id string) (bundle.StageView, bool) {
 	if e == nil || e.plan == nil {
 		return bundle.StageView{}, false
 	}
@@ -233,7 +231,7 @@ type workloadResourceSpec struct {
 
 // runWorkloadStage creates or verifies only the fixed HBN prerequisites. It
 // never reads or applies StageDeployment and never reports dataplane readiness.
-func runWorkloadStage(ctx context.Context, client workloadStageClient, execution *managementExecution,
+func runWorkloadStage(ctx context.Context, client workloadStageClient, execution *managementVerificationInputs,
 	controlPlane controlPlaneReceipts, software softwareVerificationReceipt, selected []enrollmentBMC, password string,
 	journal *executionJournal, interval, requestTimeout time.Duration, objects []*unstructured.Unstructured,
 ) ([]workloadResourceReceipt, error) {
@@ -257,7 +255,7 @@ func runWorkloadStage(ctx context.Context, client workloadStageClient, execution
 	if err := verifyStagedSoftwareResource(ctx, client, execution, software); err != nil {
 		return nil, workloadStageFailure(journal, "WORKLOAD_SOFTWARE_RESOURCE_CHANGED", "The verified BlueFieldSoftware resource changed before workload preparation.", err)
 	}
-	if err := validateWorkloadTargeting(ctx, client, execution, controlPlane.tenant, selected, objects); err != nil {
+	if err := validateWorkloadTargeting(ctx, client, execution, controlPlane.tenant.Client, controlPlane.tenant.ClusterUID, selected, objects); err != nil {
 		return nil, workloadStageFailure(journal, "WORKLOAD_TARGET_SCOPE_INVALID", "Retained workload selectors do not target only the selected DPUCluster and devices.", err)
 	}
 	if err := verifyWorkloadAPIs(ctx, client, objects); err != nil {
@@ -298,7 +296,7 @@ func runWorkloadStage(ctx context.Context, client workloadStageClient, execution
 	if err := verifyWorkloadReceiptSet(ctx, client, execution, controlPlane.tenant.Client, objects, receipts); err != nil {
 		return receipts, workloadStageFailure(journal, "WORKLOAD_RESOURCE_SET_CHANGED", workloadChildVerificationMessage("A previously verified workload prerequisite or tenant child changed before the preparation receipt.", err), err)
 	}
-	if err := validateWorkloadTargeting(ctx, client, execution, controlPlane.tenant, selected, objects); err != nil {
+	if err := validateWorkloadTargeting(ctx, client, execution, controlPlane.tenant.Client, controlPlane.tenant.ClusterUID, selected, objects); err != nil {
 		return receipts, workloadStageFailure(journal, "WORKLOAD_TARGET_SCOPE_CHANGED", "The selected DPUCluster target scope changed during workload preparation.", err)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
@@ -318,7 +316,7 @@ func runWorkloadStage(ctx context.Context, client workloadStageClient, execution
 	return receipts, nil
 }
 
-func verifyStagedSoftwareResource(ctx context.Context, client workloadStageClient, execution *managementExecution, receipt softwareVerificationReceipt) error {
+func verifyStagedSoftwareResource(ctx context.Context, client identityResourceReader, execution *managementVerificationInputs, receipt softwareVerificationReceipt) error {
 	if ctx == nil || client == nil || execution == nil || execution.plan == nil || execution.reconciler == nil || receipt.SoftwareUID == "" || receipt.Generation <= 0 {
 		return fmt.Errorf("verified software identity and retained plan are required")
 	}
@@ -384,21 +382,21 @@ func orderWorkloadObjects(objects []*unstructured.Unstructured) ([]workloadResou
 	return result, nil
 }
 
-func validateWorkloadTargeting(ctx context.Context, client workloadStageClient, execution *managementExecution, tenant tenantStageReceipt,
+func validateWorkloadTargeting(ctx context.Context, client controlResourceReader, execution *managementVerificationInputs, tenant tenantVerificationReader, tenantUID types.UID,
 	selected []enrollmentBMC, objects []*unstructured.Unstructured,
 ) error {
-	if ctx == nil || client == nil || execution == nil || execution.plan == nil || tenant.Client == nil || tenant.ClusterUID == "" || len(selected) == 0 {
+	if ctx == nil || client == nil || execution == nil || execution.plan == nil || tenant == nil || tenantUID == "" || len(selected) == 0 {
 		return fmt.Errorf("selected workload target is unavailable")
 	}
 	expected, desiredCluster, err := tenantPlanInputs(execution.plan)
-	if err != nil || tenant.Client.dpuClusterUID != string(tenant.ClusterUID) || !reflect.DeepEqual(expected, tenant.Client.expected) {
+	if err != nil || !tenant.matchesTenantTarget(expected, tenantUID) {
 		return fmt.Errorf("tenant API binding differs from the selected plan")
 	}
 	current, err := client.Get(ctx, desiredCluster.DeepCopy())
-	if err != nil || current == nil || current.GetUID() != tenant.ClusterUID || execution.reconciler.Verify(desiredCluster, current) != nil {
+	if err != nil || current == nil || current.GetUID() != tenantUID || execution.reconciler.Verify(desiredCluster, current) != nil {
 		return fmt.Errorf("selected DPUCluster changed before workload creation")
 	}
-	selectorLabels := tenant.Client.expected.Labels
+	selectorLabels := expected.Labels
 	if len(selectorLabels) == 0 {
 		return fmt.Errorf("selected DPUCluster has no stable selector labels")
 	}
@@ -415,7 +413,7 @@ func validateWorkloadTargeting(ctx context.Context, client workloadStageClient, 
 	for i := range clusters {
 		if labels.Set(selectorLabels).AsSelector().Matches(labels.Set(clusters[i].GetLabels())) {
 			selectedClusters++
-			if clusters[i].GetUID() != tenant.ClusterUID || clusters[i].GetNamespace() != current.GetNamespace() || clusters[i].GetName() != current.GetName() {
+			if clusters[i].GetUID() != tenantUID || clusters[i].GetNamespace() != current.GetNamespace() || clusters[i].GetName() != current.GetName() {
 				return fmt.Errorf("retained tenant selector also matches another DPUCluster")
 			}
 		}
@@ -471,7 +469,7 @@ func validateInterfaceNodeSelector(object *unstructured.Unstructured, selectedCo
 	return nil
 }
 
-func verifyWorkloadReceiptSet(ctx context.Context, client workloadStageClient, execution *managementExecution, tenant *tenantClient,
+func verifyWorkloadReceiptSet(ctx context.Context, client identityResourceReader, execution *managementVerificationInputs, tenant tenantVerificationReader,
 	objects []*unstructured.Unstructured, receipts []workloadResourceReceipt,
 ) error {
 	if ctx == nil || client == nil || execution == nil || execution.reconciler == nil || tenant == nil || len(receipts) != 8 {
@@ -506,13 +504,13 @@ func verifyWorkloadReceiptSet(ctx context.Context, client workloadStageClient, e
 			if receipt.ChildUID == "" {
 				return fmt.Errorf("workload prerequisite %s/%s has no tenant-child receipt", desired.GetKind(), desired.GetName())
 			}
-			child, err := client.getTenantWorkloadChild(ctx, tenant, current)
+			child, err := tenant.getWorkloadChild(ctx, current)
 			if err != nil {
 				return safeAPIError("recheck tenant workload child", err)
 			}
 			var verificationErr error
 			if child != nil && child.GetUID() == receipt.ChildUID {
-				verificationErr = verifyWorkloadChild(current, child, tenant.expected)
+				verificationErr = verifyWorkloadChild(current, child, tenant.expectation())
 			}
 			if child == nil || child.GetUID() != receipt.ChildUID || verificationErr != nil {
 				message := fmt.Sprintf("tenant child for %s/%s changed before the preparation receipt", desired.GetKind(), desired.GetName())
@@ -542,7 +540,7 @@ func cloneWorkloadStringMap(in map[string]string) map[string]any {
 	return out
 }
 
-func verifyWorkloadAPIs(ctx context.Context, client workloadStageClient, objects []*unstructured.Unstructured) error {
+func verifyWorkloadAPIs(ctx context.Context, client resourceDiscoveryReader, objects []*unstructured.Unstructured) error {
 	resources := map[string]*metav1.APIResourceList{}
 	for _, object := range objects {
 		gv := object.GroupVersionKind().GroupVersion().String()

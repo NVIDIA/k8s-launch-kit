@@ -46,7 +46,7 @@ func TestBootstrapBeforeSubmitRejectsChangedResetRound(t *testing.T) {
 					_ = unstructured.SetNestedField(object, "DPU Config", "status", "previousPhase")
 				}
 			}}
-			f.controlPlane.tenant.Client.source = client
+			testTenant(f.controlPlane.tenant.Client).source = client
 			base := &recoveryRebooter{fixture: &f, beforeBaseline: func() { armed.Store(true) }}
 			_, err := runActivationStage(f.ctx, client, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, base)
 			acks, baselines := 0, 0

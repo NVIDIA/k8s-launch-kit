@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 // Tenant credentials are read from the bound management cluster, never from a
@@ -43,7 +44,9 @@ type tenantClient struct {
 	hbnExec       *tenantPodExec
 }
 
-func newTenantClient(ctx context.Context, source tenantSourceReader, expected TenantReadinessExpected, dpuClusterUID string, timeout time.Duration) (*tenantClient, error) {
+type tenantDialContext func(context.Context, string, string) (net.Conn, error)
+
+func newTenantClient(ctx context.Context, source tenantSourceReader, expected TenantReadinessExpected, dpuClusterUID string, timeout time.Duration, dial tenantDialContext, limiter flowcontrol.RateLimiter) (*tenantClient, error) {
 	if ctx == nil || source == nil || dpuClusterUID == "" || timeout <= 0 {
 		return nil, fmt.Errorf("tenant access requires a bound source, DPUCluster UID and positive timeout")
 	}
@@ -62,6 +65,13 @@ func newTenantClient(ctx context.Context, source tenantSourceReader, expected Te
 	config, err := tenantRESTConfig(data, endpoint, timeout)
 	if err != nil {
 		return nil, err
+	}
+	// Only dialing is replaceable, after source credential/origin/TLS validation.
+	// Host, embedded trust, credentials, request timeout and redirect/proxy policy
+	// still come from the validated controller-owned source.
+	config.Dial = dial
+	if limiter != nil {
+		config.RateLimiter = limiter
 	}
 	transport, err := tenantHTTPClient(config)
 	if err != nil {

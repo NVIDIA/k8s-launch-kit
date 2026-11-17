@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -116,7 +114,7 @@ func TestEnrollmentIdentityCausesCannotBecomeAbsentCRDsOrPendingNodes(t *testing
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				defer cancel()
 				journal := testJournal(execution)
-				_, err := waitSelectedEnrollment(ctx, client, execution, selected, time.Millisecond, journal)
+				_, err := waitSelectedEnrollment(ctx, client, execution.verificationInputs(), selected, time.Millisecond, journal)
 				text := journal.file.(*managementMemoryFile).String()
 				if err == nil || !identityFlowCausePreserved(err, cause) || !strings.Contains(text, `"reasonCode":"`+code+`"`) || strings.Contains(text+err.Error(), "private-identity-canary") {
 					t.Fatalf("err=%v journal=%s", err, text)
@@ -167,7 +165,7 @@ func TestWorkloadReadyFenceIdentityDiagnostics(t *testing.T) {
 		for _, scenario := range []string{"cancel", "deadline", "unavailable", "drift"} {
 			t.Run(owner+"/"+scenario, func(t *testing.T) {
 				f := newActivationIntegrationFixtureFromExecution(t, execution, false)
-				objects, err := retainedWorkloadObjects(execution)
+				objects, err := retainedWorkloadObjects(execution.verificationInputs())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -192,11 +190,11 @@ func TestWorkloadReadyFenceIdentityDiagnostics(t *testing.T) {
 					client = identityWorkloadClient{activationIntegrationFake: f.client, cause: cause}
 				} else {
 					code = strings.Replace(code, "MANAGEMENT_IDENTITY_", "TENANT_API_IDENTITY_", 1)
-					original := f.controlPlane.tenant.Client.source
-					f.controlPlane.tenant.Client.source = tenantWaitSourceFunc(func(ctx context.Context, e TenantReadinessExpected) (tenantSources, error) {
+					original := testTenant(f.controlPlane.tenant.Client).source
+					testTenant(f.controlPlane.tenant.Client).source = tenantWaitSourceFunc(func(ctx context.Context, e TenantReadinessExpected) (tenantSources, error) {
 						hit = true
 						if scenario == "drift" {
-							f.controlPlane.tenant.Client.systemUID = "previous-tenant"
+							testTenant(f.controlPlane.tenant.Client).systemUID = "previous-tenant"
 							return original.observeTenantSources(ctx, e)
 						}
 						return tenantSources{}, cause
@@ -252,7 +250,7 @@ func TestIdentityDiagnosticsStayWithinResumeAndRebootReasonContracts(t *testing.
 			}
 			// Resume deliberately does not turn arbitrary nested identity reasons or
 			// messages into its public preparation-reason namespace.
-			check, err := operationResumeCheck(context.Background(), execution, "OPERATION_RESUME_TENANT_UNVERIFIED", diagnostic)
+			check, err := operationResumeCheck(context.Background(), execution.verificationInputs(), "OPERATION_RESUME_TENANT_UNVERIFIED", diagnostic)
 			want := "OPERATION_RESUME_TENANT_UNVERIFIED"
 			if scenario == "cancel" || scenario == "deadline" {
 				want = "OPERATION_RESUME_CANCELED"
@@ -282,7 +280,7 @@ func TestControlPlanePreparationKeepsScopeIdentityStopAndNoEffects(t *testing.T)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			journal := testJournal(execution)
-			_, err := prepareControlPlaneWithExecution(ctx, client, execution, journal, probe.Runner{}, request, time.Millisecond, time.Second)
+			_, err := prepareControlPlaneWithExecution(ctx, client, execution, journal, request, time.Millisecond, time.Second)
 			text := journal.file.(*managementMemoryFile).String()
 			if err == nil || !identityFlowCausePreserved(err, cause) || !strings.Contains(text, `"reasonCode":"`+code+`"`) || strings.Contains(text+err.Error(), "private-identity-canary") {
 				t.Fatalf("err=%v journal=%s", err, text)

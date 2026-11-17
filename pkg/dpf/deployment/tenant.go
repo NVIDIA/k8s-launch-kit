@@ -11,14 +11,15 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 // connectRetainedTenant is the handoff after the tenant stage has created or
 // exactly verified its DPUCluster. It waits for controller resources, then opens
 // and verifies the independent tenant API. It cannot allocate a VIP, create a
 // DPUCluster, enroll devices, or attest complete HBN deployment readiness.
-func connectRetainedTenant(ctx context.Context, management *APIClient, plan *generation.Plan, establishedUID types.UID,
-	reconciler nativeObjectReconciler, journal *executionJournal, interval, requestTimeout time.Duration,
+func connectRetainedTenant(ctx context.Context, management tenantConnectionReader, plan *generation.Plan, establishedUID types.UID,
+	reconciler nativeObjectReconciler, journal *executionJournal, interval, requestTimeout time.Duration, dial tenantDialContext, limiter flowcontrol.RateLimiter,
 ) (*tenantClient, error) {
 	if ctx == nil || management == nil || plan == nil || journal == nil || reconciler == nil || establishedUID == "" || interval <= 0 || requestTimeout <= 0 {
 		return nil, fmt.Errorf("tenant access requires the retained plan, bound management client, established cluster UID and execution controls")
@@ -41,7 +42,7 @@ func connectRetainedTenant(ctx context.Context, management *APIClient, plan *gen
 	if err := journal.record(event); err != nil {
 		return nil, err
 	}
-	client, err := newTenantClient(ctx, management, expected, string(establishedUID), requestTimeout)
+	client, err := newTenantClient(ctx, management, expected, string(establishedUID), requestTimeout, dial, limiter)
 	if err != nil {
 		diagnostic := tenantIdentityDiagnostic(ctx, err)
 		return nil, journalFailure(journal, event, false, diagnostic.ReasonCode, diagnostic.Message, diagnostic)

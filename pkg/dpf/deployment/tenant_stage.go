@@ -28,18 +28,18 @@ type tenantStageManagementClient interface {
 	List(context.Context, *unstructured.Unstructured, string) ([]unstructured.Unstructured, error)
 	checkTenantStorage(context.Context, string) PreflightCheck
 	matchesBinding(generation.ManagementIdentity, string) bool
-	connectTenant(context.Context, *generation.Plan, types.UID, *Reconciler, *executionJournal, time.Duration, time.Duration) (*tenantClient, error)
+	connectTenant(context.Context, *generation.Plan, types.UID, *Reconciler, *executionJournal, time.Duration, time.Duration) (tenantStageReader, error)
 }
 
 func (c *APIClient) connectTenant(ctx context.Context, plan *generation.Plan, uid types.UID, reconciler *Reconciler,
 	journal *executionJournal, interval, requestTimeout time.Duration,
-) (*tenantClient, error) {
-	return connectRetainedTenant(ctx, c, plan, uid, reconciler, journal, interval, requestTimeout)
+) (tenantStageReader, error) {
+	return connectRetainedTenant(ctx, c, plan, uid, reconciler, journal, interval, requestTimeout, c.tenantDial, c.requestLimiter)
 }
 
 type tenantStageReceipt struct {
 	ClusterUID types.UID
-	Client     *tenantClient
+	Client     tenantStageReader
 }
 
 // runTenantStage advances one validated plan from the completed management
@@ -61,7 +61,7 @@ func runTenantStage(ctx context.Context, management tenantStageManagementClient,
 	if err := journalTenantChecks(journal, "allocation-check", managementnetwork.CheckTenantAllocation(expectedTenant(plan))); err != nil {
 		return tenantStageReceipt{}, err
 	}
-	if err := verifyManagementBootstrap(ctx, management, execution, bootstrapReceipt); err != nil {
+	if err := verifyManagementBootstrap(ctx, management, execution.verificationInputs(), bootstrapReceipt); err != nil {
 		return tenantStageReceipt{}, tenantStageFailure(journal, "TENANT_BOOTSTRAP_RECEIPT_INVALID", "The management bootstrap receipt no longer matches live retained resources; tenant effects are stopped.", err)
 	}
 	if err := management.VerifyIdentity(ctx); err != nil {
@@ -103,7 +103,7 @@ func runTenantStage(ctx context.Context, management tenantStageManagementClient,
 	if err := checkTenantStorageForStage(ctx, management, journal, execution.kamajiNamespace); err != nil {
 		return tenantStageReceipt{}, err
 	}
-	if err := verifyManagementBootstrap(ctx, management, execution, bootstrapReceipt); err != nil {
+	if err := verifyManagementBootstrap(ctx, management, execution.verificationInputs(), bootstrapReceipt); err != nil {
 		return tenantStageReceipt{}, tenantStageFailure(journal, "TENANT_BOOTSTRAP_RECEIPT_CHANGED", "Management bootstrap identity changed before tenant reconciliation.", err)
 	}
 
@@ -167,14 +167,14 @@ func validateTenantStageInputs(ctx context.Context, management tenantStageManage
 
 var errBootstrapConfigNotReady = errors.New("DPFOperatorConfig is no longer ready for the retained operator release")
 
-func verifyManagementBootstrap(ctx context.Context, client tenantStageManagementClient, execution *managementExecution, receipt managementBootstrapReceipt) error {
+func verifyManagementBootstrap(ctx context.Context, client identityResourceReader, execution *managementVerificationInputs, receipt managementBootstrapReceipt) error {
 	if err := client.VerifyIdentity(ctx); err != nil {
 		return bootstrapVerificationFailure("BOOTSTRAP_MANAGEMENT_UNVERIFIED", err)
 	}
-	if execution == nil || execution.operator == nil || execution.manager == nil || execution.configObject == nil || execution.reconciler == nil {
+	if execution == nil || execution.manager == nil || execution.configObject == nil || execution.reconciler == nil {
 		return bootstrapVerificationFailure("BOOTSTRAP_PLAN_INVALID", nil)
 	}
-	if receipt.OperatorRelease != execution.operator.releaseName || receipt.ManagerDeploymentName != execution.manager.GetName() || receipt.OperatorNamespace != execution.operator.namespace {
+	if receipt.OperatorRelease != execution.operatorReleaseName || receipt.ManagerDeploymentName != execution.manager.GetName() || receipt.OperatorNamespace != execution.operatorNamespace {
 		return bootstrapVerificationFailure("BOOTSTRAP_RECEIPT_CHANGED", nil)
 	}
 	if len(execution.namespaces) == 0 || len(receipt.NamespaceUIDs) != len(execution.namespaces) {
@@ -226,7 +226,9 @@ func verifyManagementBootstrap(ctx context.Context, client tenantStageManagement
 	return nil
 }
 
-func checkTenantStorageForStage(ctx context.Context, client tenantStageManagementClient, journal *executionJournal, namespace string) error {
+func checkTenantStorageForStage(ctx context.Context, client interface {
+	checkTenantStorage(context.Context, string) PreflightCheck
+}, journal *executionJournal, namespace string) error {
 	event := executionEvent{Stage: generation.StageTenant, Operation: "storage-check", Subject: namespace, State: "attempted", ReasonCode: "TENANT_STORAGE_CHECK_STARTED", Message: "Recheck current Kamaji backing resources immediately before tenant reconciliation."}
 	if err := journal.record(event); err != nil {
 		return err
@@ -242,7 +244,7 @@ func checkTenantStorageForStage(ctx context.Context, client tenantStageManagemen
 	return nil
 }
 
-func listTenantClusters(ctx context.Context, client tenantStageManagementClient) ([]unstructured.Unstructured, error) {
+func listTenantClusters(ctx context.Context, client resourceLister) ([]unstructured.Unstructured, error) {
 	template := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1", "kind": "DPUCluster"}}
 	return client.List(ctx, template, "")
 }

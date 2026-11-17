@@ -28,10 +28,10 @@ func TestRunShortTrafficBudgetStopsFreshAndResumeBeforeAnyTransport(t *testing.T
 		}
 		original := request.Resume
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		result, err := runWithImageResolver(ctx, request, func(context.Context, string, time.Duration, http.RoundTripper) (hbnPodImageIdentity, error) {
+		result, err := runWithTransports(ctx, request, runTransports{resolveImage: func(context.Context, string, time.Duration, http.RoundTripper) (hbnPodImageIdentity, error) {
 			t.Fatal("image metadata transport ran despite impossible budget")
 			return hbnPodImageIdentity{}, nil
-		})
+		}})
 		cancel()
 		if request.Resume != original {
 			t.Fatal("Run changed caller resume input")

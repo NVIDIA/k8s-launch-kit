@@ -29,14 +29,14 @@ const (
 // It is an observation only: it does not configure hosts or imply reachability.
 func observeHostWorkloadLeaseSnapshot(
 	ctx context.Context,
-	management *APIClient,
-	tenant *tenantClient,
+	management managementLeaseReader,
+	tenant tenantAllocationReader,
 	plan *generation.Plan,
 	reconciler *Reconciler,
-	workload workloadPreparationReceipt,
+	workload workloadLeaseInputs,
 	requestTimeout time.Duration,
 ) (hostWorkloadLeaseSnapshot, error) {
-	if ctx == nil || management == nil || tenant == nil || tenant.api == nil || plan == nil || reconciler == nil || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
+	if ctx == nil || management == nil || tenant == nil || plan == nil || reconciler == nil || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
 		return hostWorkloadLeaseSnapshot{}, fmt.Errorf("host lease observation requires bound clients, retained plan, reconciler and bounded request timeout")
 	}
 	if _, bounded := ctx.Deadline(); !bounded {
@@ -45,24 +45,24 @@ func observeHostWorkloadLeaseSnapshot(
 	if err := ctx.Err(); err != nil {
 		return hostWorkloadLeaseSnapshot{}, err
 	}
-	if plan.Digest() == "" || workload.BundleDigest != plan.Digest() || reconciler.BundleDigest() != plan.Digest() ||
-		workload.ControlPlane.management.BundleDigest != plan.Digest() || workload.ControlPlane.tenant.Client != tenant ||
-		workload.ControlPlane.tenant.ClusterUID == "" || tenant.dpuClusterUID != string(workload.ControlPlane.tenant.ClusterUID) {
+	if plan.Digest() == "" || workload.bundleDigest != plan.Digest() || reconciler.BundleDigest() != plan.Digest() ||
+		workload.managementDigest != plan.Digest() || workload.tenant != tenant ||
+		workload.tenantUID == "" || tenant.clusterIdentity() != workload.tenantUID {
 		return hostWorkloadLeaseSnapshot{}, fmt.Errorf("host lease observation receipts do not identify one retained execution")
 	}
 	intent := plan.Intent()
-	if !management.matchesBinding(intent.Management, intent.KubernetesVersion) || tenant.source != management {
+	if !management.matchesBinding(intent.Management, intent.KubernetesVersion) || !tenant.matchesTenantSource(management) {
 		return hostWorkloadLeaseSnapshot{}, fmt.Errorf("host lease clients are not bound to the retained management and tenant identities")
 	}
 	expectedTenant, _, err := tenantPlanInputs(plan)
-	if err != nil || !reflect.DeepEqual(expectedTenant, tenant.expected) {
+	if err != nil || !tenant.matchesTenantTarget(expectedTenant, workload.tenantUID) {
 		return hostWorkloadLeaseSnapshot{}, fmt.Errorf("tenant API binding differs from the retained tenant plan")
 	}
 	desiredIPAM, err := retainedWorkloadIPAM(plan)
 	if err != nil {
 		return hostWorkloadLeaseSnapshot{}, err
 	}
-	ipamReceipt, expectedPoolUID, err := hostLeaseWorkloadReceipt(workload, desiredIPAM)
+	ipamReceipt, expectedPoolUID, err := hostLeaseWorkloadReceipt(workload.resources, desiredIPAM)
 	if err != nil {
 		return hostWorkloadLeaseSnapshot{}, err
 	}
@@ -82,15 +82,15 @@ func observeHostWorkloadLeaseSnapshot(
 	if err != nil {
 		return hostWorkloadLeaseSnapshot{}, err
 	}
-	poolBefore, err := observeHostLeasePool(observeCtx, management, tenant, parentBefore, expectedTenant, expectedPoolUID)
+	poolBefore, err := observeHostLeasePool(observeCtx, tenant, parentBefore, expectedTenant, expectedPoolUID)
 	if err != nil {
 		return hostWorkloadLeaseSnapshot{}, err
 	}
-	nodes, err := listCompleteTenantNodes(observeCtx, tenant.api.CoreV1())
+	nodes, err := tenant.listCompleteNodes(observeCtx)
 	if err != nil {
 		return hostWorkloadLeaseSnapshot{}, err
 	}
-	poolAfter, err := observeHostLeasePool(observeCtx, management, tenant, parentBefore, expectedTenant, expectedPoolUID)
+	poolAfter, err := observeHostLeasePool(observeCtx, tenant, parentBefore, expectedTenant, expectedPoolUID)
 	if err != nil {
 		return hostWorkloadLeaseSnapshot{}, err
 	}
@@ -121,7 +121,7 @@ func observeHostWorkloadLeaseSnapshot(
 	}, nil
 }
 
-func observeHostLeaseIPAM(ctx context.Context, management *APIClient, reconciler *Reconciler, desired *unstructured.Unstructured, receipt workloadResourceReceipt) (*unstructured.Unstructured, error) {
+func observeHostLeaseIPAM(ctx context.Context, management resourceReader, reconciler *Reconciler, desired *unstructured.Unstructured, receipt workloadResourceReceipt) (*unstructured.Unstructured, error) {
 	current, err := management.Get(ctx, desired.DeepCopy())
 	if err != nil {
 		return nil, err
@@ -137,8 +137,8 @@ func observeHostLeaseIPAM(ctx context.Context, management *APIClient, reconciler
 	return current, nil
 }
 
-func observeHostLeasePool(ctx context.Context, management *APIClient, tenant *tenantClient, parent *unstructured.Unstructured, expected TenantReadinessExpected, uid types.UID) (*unstructured.Unstructured, error) {
-	pool, err := management.getTenantWorkloadChild(ctx, tenant, parent)
+func observeHostLeasePool(ctx context.Context, tenant tenantVerificationReader, parent *unstructured.Unstructured, expected TenantReadinessExpected, uid types.UID) (*unstructured.Unstructured, error) {
+	pool, err := tenant.getWorkloadChild(ctx, parent)
 	if err != nil {
 		return nil, safeAPIError("read tenant CIDRPool", err)
 	}

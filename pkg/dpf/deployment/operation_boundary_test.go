@@ -124,7 +124,7 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 				return PrerequisiteVerification{}, errors.New("stop after cold-core vacancy proof")
 			})
 			request.Access = api.request
-			result, runErr := runWithImageResolver(ctx, request, retainedTestImageResolver)
+			result, runErr := runWithTransports(ctx, request, runTransports{resolveImage: retainedTestImageResolver})
 			mu.Lock()
 			after, _ := json.Marshal(object)
 			reads := operationReads
@@ -237,7 +237,7 @@ func TestInitialReservationRechecksManagementIdentityBeforeCoreAbsence(t *testin
 	}
 	api.uid.Store("replacement-management")
 	err = checkInitialOperationVacancy(context.Background(), client, execution)
-	if err == nil || operationReservationCheck(execution, err).ReasonCode != "OPERATION_MANAGEMENT_UNMEASURED" || api.writes.Load() != 0 {
+	if err == nil || operationReservationCheck(execution.verificationInputs(), err).ReasonCode != "OPERATION_MANAGEMENT_UNMEASURED" || api.writes.Load() != 0 {
 		t.Fatalf("identity drift became vacancy: %v", err)
 	}
 }

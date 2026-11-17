@@ -29,7 +29,7 @@ type ownedResumePrerequisites struct {
 	parentUID types.UID
 }
 
-func assessOwnedResumePrerequisites(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, verification PrerequisiteVerification, access config.Request, journal *executionJournal, timeout time.Duration, phase PrerequisitePhase) (PrerequisiteVerification, error) {
+func assessOwnedResumePrerequisites(ctx context.Context, client resumePrerequisiteReader, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, verification PrerequisiteVerification, access config.Request, journal *executionJournal, timeout time.Duration, phase PrerequisitePhase, inspect hostNetworkConfigurer) (PrerequisiteVerification, error) {
 	if phase != BeforeActivation && phase != AfterActivation {
 		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_PREREQUISITE_PHASE_INVALID", "A supported deployment prerequisite phase is required.", nil)
 	}
@@ -45,14 +45,14 @@ func assessOwnedResumePrerequisites(ctx context.Context, client *APIClient, prep
 	}
 	// Preserve the raw discovery checks in its report. The execution assessment
 	// records the lifecycle-specific positive proof instead of claiming vacancy.
-	verification.Checks = proof.assessInitialChecks(verification.Checks, control.tenant.Client.expected.Name)
+	verification.Checks = proof.assessInitialChecks(verification.Checks, control.tenant.Client.expectation().Name)
 	pendingChecks, pendingErr := assessPendingResetHosts(ctx, client, prepared, proof, access.Input.Site.Inventory, verification.Inventory, verification.Checks, phase)
 	if pendingErr != nil {
 		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_PENDING_RESET_HOST_UNVERIFIED", "Pending-reset host identity, measured interface absence or separate management paths could not be proven; preserve the operation and do not reset manually.", pendingErr)
 	}
 	verification.Checks = pendingChecks
 
-	hostChecks, err := inspectOwnedResumeHosts(ctx, prepared, proof, verification.Inventory, timeout, sshprobe.InspectHostWorkloadNetwork)
+	hostChecks, err := inspectOwnedResumeHosts(ctx, prepared, proof, verification.Inventory, timeout, inspect)
 	if err != nil {
 		return ownedPrerequisiteFailure(ctx, verification, phase, "OWNED_RESUME_HOST_TRANSACTION_UNVERIFIED", "An original host transaction failed inspect-only runtime/file proof; do not replay configuration or remove its journal.", err)
 	}
@@ -107,9 +107,9 @@ func ownedResumeCheck(check inventory.Check, code, message string) inventory.Che
 	return check
 }
 
-func verifyOwnedResumeResources(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, inv *inventory.Inventory, access config.Request, journal *executionJournal) (ownedResumePrerequisites, error) {
+func verifyOwnedResumeResources(ctx context.Context, client activationControlReader, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, inv *inventory.Inventory, access config.Request, journal *executionJournal) (ownedResumePrerequisites, error) {
 	var proof ownedResumePrerequisites
-	deployment, err := retainedDeploymentObject(prepared.execution)
+	deployment, err := retainedDeploymentObject(prepared.execution.verificationInputs())
 	if err != nil {
 		return proof, err
 	}
@@ -127,22 +127,22 @@ func verifyOwnedResumeResources(ctx context.Context, client activationStageClien
 	} else if !apierrors.IsNotFound(err) || parentUID != "" {
 		return proof, fmt.Errorf("OWNED_RESUME_PARENT_CHANGED: recorded deployment missing or unavailable")
 	}
-	objects, err := retainedWorkloadObjects(prepared.execution)
+	objects, err := retainedWorkloadObjects(prepared.execution.verificationInputs())
 	if err != nil {
 		return proof, err
 	}
-	if err = verifyActivationResourceBoundary(ctx, client, prepared, control, workload, selected, parentUID, objects, journal); err != nil {
+	if err = verifyActivationResourceBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, control, workload), control.tenant.Client, selected, parentUID, objects, journal); err != nil {
 		return proof, err
 	}
-	sources, err := tenantOperationSources(ctx, control.tenant.Client)
-	if err != nil || control.tenant.Client.systemUID != prepared.operation.state.TenantSystemUID || !reflect.DeepEqual(sources, prepared.operation.state.TenantSources) {
+	sources, err := control.tenant.Client.operationSources(ctx)
+	if err != nil || control.tenant.Client.systemIdentity() != prepared.operation.state.TenantSystemUID || !reflect.DeepEqual(sources, prepared.operation.state.TenantSources) {
 		return proof, fmt.Errorf("OWNED_RESUME_TENANT_CHANGED: recorded tenant or credential sources differ")
 	}
-	scope, err := collectEnrollmentScope(ctx, client, prepared.execution, prepared.selected, true)
+	scope, err := collectEnrollmentScope(ctx, client, prepared.execution.verificationInputs(), prepared.selected, true)
 	if err != nil {
 		return proof, err
 	}
-	if err = validateActivationScope(scope, prepared.execution, selected, parentUID); err != nil {
+	if err = validateActivationScope(scope, prepared.execution.verificationInputs(), selected, parentUID); err != nil {
 		return proof, err
 	}
 	for key, prior := range prepared.operation.state.Children {

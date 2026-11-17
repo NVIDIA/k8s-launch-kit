@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 // Client holds one explicit credential and TLS snapshot for management API reads.
@@ -30,8 +31,9 @@ type Client struct {
 }
 
 // Open snapshots bounded explicit kubeconfig, credential and TLS references.
-// It neither uses ambient kubeconfig nor performs remote API requests.
-func Open(r config.Request) (Client, error) {
+// It neither uses ambient kubeconfig nor performs remote API requests. A nil
+// limiter preserves client-go pacing; an explicit limiter changes only pacing.
+func Open(r config.Request, limiter flowcontrol.RateLimiter) (Client, error) {
 	rules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: r.Kubeconfig}
 	content, err := config.ReadReference(r.Kubeconfig, 16<<20)
 	if err != nil {
@@ -114,6 +116,9 @@ func Open(r config.Request) (Client, error) {
 	}
 	rc.Timeout = r.RequestTimeout
 	rc.CAFile = ""
+	if limiter != nil {
+		rc.RateLimiter = limiter
+	}
 	client, err := kubernetes.NewForConfig(rc)
 	if err != nil {
 		return Client{}, fmt.Errorf("cannot construct management client")

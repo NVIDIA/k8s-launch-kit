@@ -156,7 +156,7 @@ func (c *APIClient) verifyActivationRebootBMCs(ctx context.Context, selected []a
 // waitActivationAgentReboots never sends another physical action. The same
 // request must remain pending while both agent startup and current kernel boot
 // identity advance. initialBootID deliberately is not a current-boot signal.
-func waitActivationAgentReboots(ctx context.Context, client activationStageClient, execution *managementExecution, deployment *unstructured.Unstructured,
+func waitActivationAgentReboots(ctx context.Context, client activationObservationReader, execution *managementVerificationInputs, deployment *unstructured.Unstructured,
 	deploymentUID types.UID, selected []activationSelectedDevice, indexes []int, rounds map[types.UID]activationRebootRound, progress map[string]activationNodeProgress, interval time.Duration,
 ) (activationObservation, error) {
 	for {

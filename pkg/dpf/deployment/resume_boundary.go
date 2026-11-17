@@ -60,7 +60,7 @@ func operationResumeMessage(code string) string {
 	}
 }
 
-func operationResumeCheck(ctx context.Context, execution *managementExecution, code string, cause error) (inventory.Check, error) {
+func operationResumeCheck(ctx context.Context, execution *managementVerificationInputs, code string, cause error) (inventory.Check, error) {
 	message := operationResumeMessage(code)
 	if message == "" {
 		code = "OPERATION_RESUME_RESTORE_UNVERIFIED"

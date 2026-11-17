@@ -124,7 +124,7 @@ type apiFixture struct {
 	stallIdentity atomic.Bool
 }
 
-func newAPIFixture(t *testing.T, handle http.HandlerFunc) *apiFixture {
+func newAPIFixture(t *testing.T, handle http.HandlerFunc, coreResources ...metav1.APIResource) *apiFixture {
 	t.Helper()
 	f := &apiFixture{}
 	f.uid.Store("cluster-one")
@@ -144,7 +144,9 @@ func newAPIFixture(t *testing.T, handle http.HandlerFunc) *apiFixture {
 		case "/prefix/version":
 			fmt.Fprint(w, `{"gitVersion":"v1.35.6"}`)
 		case "/prefix/api/v1":
-			fmt.Fprint(w, `{"kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"configmaps","kind":"ConfigMap","namespaced":true,"verbs":["get","list","create"]},{"name":"namespaces","kind":"Namespace","namespaced":false,"verbs":["get"]}]}`)
+			resources := []metav1.APIResource{{Name: "configmaps", Kind: "ConfigMap", Namespaced: true, Verbs: []string{"get", "list", "create"}}, {Name: "namespaces", Kind: "Namespace", Namespaced: false, Verbs: []string{"get"}}}
+			resources = append(resources, coreResources...)
+			_ = json.NewEncoder(w).Encode(&metav1.APIResourceList{TypeMeta: metav1.TypeMeta{Kind: "APIResourceList"}, GroupVersion: "v1", APIResources: resources})
 		default:
 			handle(w, r)
 		}

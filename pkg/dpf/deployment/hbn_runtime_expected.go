@@ -21,7 +21,7 @@ import (
 // argoCDValuesFromDPUService. Observed random names are accepted only after
 // owner, cohort selector and complete retained-spec checks; configuration is
 // never taken from the observed Service or App.
-func compileHBNRuntimeBinding(execution *managementExecution, activation activationStageReceipt, fence hostNetworkLeaseFence,
+func compileHBNRuntimeBinding(execution *managementVerificationInputs, activation activationStageReceipt, fence hostNetworkLeaseFence,
 	service *unstructured.Unstructured, interfaces []unstructured.Unstructured, image hbnPodImageIdentity,
 ) (hbnPodBindingIntent, error) {
 	bad := func() (hbnPodBindingIntent, error) {
@@ -141,7 +141,7 @@ type hbnServiceProjection struct {
 // explicit controller identity references. It performs no reads and accepts no
 // observed configuration values; late runtime validation also qualifies the
 // referenced interface objects before calling it.
-func compileHBNServiceSpec(execution *managementExecution, template, configuration *unstructured.Unstructured,
+func compileHBNServiceSpec(execution *managementVerificationInputs, template, configuration *unstructured.Unstructured,
 	name, namespace, reference, id string, nodeSelector, clusterSelector map[string]any, names []any,
 ) (hbnServiceProjection, error) {
 	source, _, err := unstructured.NestedMap(template.Object, "spec", "helmChart", "source")
@@ -235,7 +235,7 @@ func mergeHBNValues(dst, src map[string]any) map[string]any {
 	return result
 }
 
-func compileHBNServiceInterfaces(execution *managementExecution, service *unstructured.Unstructured, observed []unstructured.Unstructured, configuration *unstructured.Unstructured, selector, clusterSelector map[string]any, id, version string) ([]any, []hbnNetworkSelection, error) {
+func compileHBNServiceInterfaces(execution *managementVerificationInputs, service *unstructured.Unstructured, observed []unstructured.Unstructured, configuration *unstructured.Unstructured, selector, clusterSelector map[string]any, id, version string) ([]any, []hbnNetworkSelection, error) {
 	bad := func() ([]any, []hbnNetworkSelection, error) {
 		return nil, nil, fmt.Errorf("HBN_RUNTIME_INTERFACES_MISMATCH")
 	}

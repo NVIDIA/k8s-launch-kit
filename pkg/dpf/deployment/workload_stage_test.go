@@ -208,7 +208,7 @@ func TestGetTenantWorkloadChildRejectsMissingOrWrongObservedGVK(t *testing.T) {
 				"metadata": map[string]any{"name": "pool", "namespace": expected.Namespace},
 				"spec":     map[string]any{"ipv4Network": map[string]any{"network": "192.0.2.0/24", "prefixSize": int64(30)}},
 			}}
-			child, err := (&APIClient{}).getTenantWorkloadChild(context.Background(), tenant, parent)
+			child, err := tenant.getWorkloadChild(context.Background(), parent)
 			if err == nil || child != nil {
 				t.Fatalf("tenant child with untrusted GVK was accepted: child=%#v err=%v", child, err)
 			}
@@ -251,7 +251,7 @@ func TestGetTenantWorkloadChildDiscoveryHonorsContext(t *testing.T) {
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		_, err := (&APIClient{}).getTenantWorkloadChild(ctx, tenant, parent)
+		_, err := tenant.getWorkloadChild(ctx, parent)
 		result <- err
 	}()
 	select {
@@ -565,8 +565,8 @@ type workloadChildDiagnosticClient struct {
 	lastInterfaceSeen bool
 }
 
-func (c *workloadChildDiagnosticClient) getTenantWorkloadChild(ctx context.Context, tenant *tenantClient, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	child, err := c.softwarePreparationFake.getTenantWorkloadChild(ctx, tenant, parent)
+func (c *workloadChildDiagnosticClient) workloadChild(ctx context.Context, tenant *tenantClient, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	child, err := c.softwarePreparationFake.workloadChild(ctx, tenant, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -595,8 +595,9 @@ func TestWorkloadChildDiagnosticsReachInitialFinalAndReceiptFailures(t *testing.
 		t.Run(point, func(t *testing.T) {
 			f := newActivationIntegrationFixtureFromExecution(t, execution, false)
 			c := &workloadChildDiagnosticClient{activationIntegrationFake: f.client, point: point}
-			f.controlPlane.tenant.Client.source = c
-			objects, err := retainedWorkloadObjects(execution)
+			testTenant(f.controlPlane.tenant.Client).source = c
+			f.controlPlane.tenant.Client = &fixtureTenantReader{tenantClient: testTenant(f.controlPlane.tenant.Client), child: c.workloadChild}
+			objects, err := retainedWorkloadObjects(execution.verificationInputs())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -623,7 +624,7 @@ func TestWorkloadChildDiagnosticsReachInitialFinalAndReceiptFailures(t *testing.
 			want := "WORKLOAD_TENANT_CHILD_MISMATCH"
 			if point == "receipt" {
 				want = "WORKLOAD_RESOURCE_SET_CHANGED"
-				_, err = runWorkloadStage(ctx, c, execution, f.controlPlane, f.workload.Software, f.prepared.selected, f.prepared.password, journal, time.Millisecond, time.Second, objects)
+				_, err = runWorkloadStage(ctx, c, execution.verificationInputs(), f.controlPlane, f.workload.Software, f.prepared.selected, f.prepared.password, journal, time.Millisecond, time.Second, objects)
 			} else {
 				if point == "final" {
 					want = "WORKLOAD_TENANT_CHILD_CHANGED"

@@ -76,8 +76,8 @@ func (c *activationLifecycleClient) patchActivationAnnotation(ctx context.Contex
 }
 
 func bindActivationLifecycleClient(f *activationIntegrationFixture, c *activationLifecycleClient) {
-	f.controlPlane.tenant.Client.source = c
-	f.workload.ControlPlane.tenant.Client.source = c
+	testTenant(f.controlPlane.tenant.Client).source = c
+	testTenant(f.workload.ControlPlane.tenant.Client).source = c
 	f.client.tenant.source = c
 	f.client.base.tenant.source = c
 }
@@ -114,7 +114,7 @@ func TestActivationControllerWireLifecycle(t *testing.T) {
 // Independent pinned-controller fixture. Expected Service values are assembled
 // from retained inputs here, rather than by the production expected-spec helper.
 func (f *activationIntegrationFake) seedActivationVersions(deployment *unstructured.Unstructured) error {
-	objects, err := retainedWorkloadObjects(f.execution)
+	objects, err := retainedWorkloadObjects(f.execution.verificationInputs())
 	if err != nil {
 		return err
 	}
@@ -481,7 +481,7 @@ func TestActivationVersionGraphRejectsForeignOrChangedCoordination(t *testing.T)
 		}},
 	}
 	baseline := newActivationIntegrationFixtureFromExecution(t, execution, false)
-	desired, err := retainedDeploymentObject(execution)
+	desired, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +500,7 @@ func TestActivationVersionGraphRejectsForeignOrChangedCoordination(t *testing.T)
 				}
 				before := objects.versions[0].DeepCopy()
 				beforeChain := objects.versions[1].DeepCopy()
-				_, complete, err := compileActivationVersionGraph(execution, objects.deployment, sets, objects.versions[:1], objects.versions[1:])
+				_, complete, err := compileActivationVersionGraph(execution.verificationInputs(), objects.deployment, sets, objects.versions[:1], objects.versions[1:])
 				if err == nil || complete {
 					t.Fatalf("foreign graph projection accepted: complete=%v err=%v", complete, err)
 				}
@@ -578,7 +578,7 @@ func TestActivationVersionPermissionsCoverBothEarlyBoundaries(t *testing.T) {
 		})
 	}
 	harness.reviews = nil
-	checks := client.checkActivationPermissions(context.Background(), &managementExecution{operatorNamespace: "dpf-operator-system"})
+	checks := client.checkActivationPermissions(context.Background(), &managementVerificationInputs{operatorNamespace: "dpf-operator-system"})
 	if len(checks) == 0 {
 		t.Fatal("missing activation permission checks")
 	}
@@ -592,7 +592,7 @@ func TestActivationVersionPermissionsCoverBothEarlyBoundaries(t *testing.T) {
 
 func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 	f := newActivationIntegrationFixture(t)
-	deployment, err := retainedDeploymentObject(f.prepared.execution)
+	deployment, err := retainedDeploymentObject(f.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +601,7 @@ func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var template, configuration *unstructured.Unstructured
-	objects, err := retainedWorkloadObjects(f.prepared.execution)
+	objects, err := retainedWorkloadObjects(f.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +638,7 @@ func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 	// even when a separate Service-normalization result is subsequently changed.
 	unstructured.RemoveNestedField(configuration.Object, "spec", "serviceConfiguration", "serviceDaemonSet", "annotations")
 	configurationBefore := configuration.DeepCopy()
-	projection, err := compileHBNServiceSpec(f.prepared.execution, template, configuration, service.GetName(), created.GetNamespace(), hbnContainerName, id, selector, cluster, names)
+	projection, err := compileHBNServiceSpec(f.prepared.execution.verificationInputs(), template, configuration, service.GetName(), created.GetNamespace(), hbnContainerName, id, selector, cluster, names)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -852,7 +852,7 @@ func TestActivationFirstFalseRequiresActualResetProofAndOwnParticipant(t *testin
 func TestActivationRejectsUnsupportedLabelChangePolicyBeforeEffects(t *testing.T) {
 	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	baseline := newActivationIntegrationFixtureFromExecution(t, execution, false)
-	desired, err := retainedDeploymentObject(execution)
+	desired, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -875,7 +875,7 @@ func TestActivationRejectsUnsupportedLabelChangePolicyBeforeEffects(t *testing.T
 				t.Fatal(err)
 			}
 			before := set.DeepCopy()
-			_, complete, err := compileActivationVersionGraph(execution, created, map[string]*unstructured.Unstructured{set.GetName(): set}, baseline.client.versions[:1], baseline.client.versions[1:])
+			_, complete, err := compileActivationVersionGraph(execution.verificationInputs(), created, map[string]*unstructured.Unstructured{set.GetName(): set}, baseline.client.versions[:1], baseline.client.versions[1:])
 			if test.allowed {
 				if err != nil || !complete {
 					t.Fatalf("pinned false/default rejected: complete=%v err=%v", complete, err)

@@ -12,7 +12,7 @@ import (
 
 // selectedEnrollmentDiscoveries validates the complete scan selection before
 // starting the operator or publishing credentials. Order follows retained devices.
-func selectedEnrollmentDiscoveries(execution *managementExecution, selected []enrollmentBMC) ([]*unstructured.Unstructured, error) {
+func selectedEnrollmentDiscoveries(execution *managementVerificationInputs, selected []enrollmentBMC) ([]*unstructured.Unstructured, error) {
 	if execution == nil || execution.plan == nil || len(selected) == 0 {
 		return nil, fmt.Errorf("a retained enrollment plan and selected devices are required")
 	}

@@ -207,7 +207,7 @@ func activationDeploymentIntent(tenantSelector map[string]string) *unstructured.
 
 func TestActivationScopeRejectsChangedConsumedReferences(t *testing.T) {
 	fixture, baseline := activationBoundaryScopeFixture(t)
-	if err := validateActivationScope(baseline, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err != nil {
+	if err := validateActivationScope(baseline, fixture.prepared.execution.verificationInputs(), fixture.client.activationSelected, activationIntegrationDeploymentUID); err != nil {
 		t.Fatalf("invalid baseline: %v", err)
 	}
 	for _, tc := range []struct {
@@ -228,7 +228,7 @@ func TestActivationScopeRejectsChangedConsumedReferences(t *testing.T) {
 			if err := unstructured.SetNestedField(objects[0].Object, "foreign-reference", tc.path...); err != nil {
 				t.Fatal(err)
 			}
-			if err := validateActivationScope(snapshot, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
+			if err := validateActivationScope(snapshot, fixture.prepared.execution.verificationInputs(), fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
 				t.Fatal("foreign consumed reference passed complete activation scope")
 			}
 		})
@@ -303,7 +303,7 @@ func TestActivationScopeRejectsMissingMalformedAndAlternativeConsumedReferences(
 						t.Fatal(err)
 					}
 				}
-				if err := validateActivationScope(snapshot, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
+				if err := validateActivationScope(snapshot, fixture.prepared.execution.verificationInputs(), fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
 					t.Fatal("unsupported consumed reference passed complete scope")
 				}
 			})
@@ -326,7 +326,7 @@ func TestActivationScopeRejectsMissingMalformedAndAlternativeConsumedReferences(
 			if err := unstructured.SetNestedField(objects[0].Object, "foreign", tc.path...); err != nil {
 				t.Fatal(err)
 			}
-			if err := validateActivationScope(snapshot, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
+			if err := validateActivationScope(snapshot, fixture.prepared.execution.verificationInputs(), fixture.client.activationSelected, activationIntegrationDeploymentUID); err == nil {
 				t.Fatal("alternative consumed mode passed complete scope")
 			}
 		})
@@ -376,7 +376,7 @@ func TestRunActivationRejectsForeignConsumedReferencesBeforeHoldOrReboot(t *test
 			defer cancel()
 			client := &activationConsumedReferenceClient{activationIntegrationFake: fixture.client, kind: tc.kind, path: tc.path}
 			// Tenant binding must identify the actual wrapper used by this stage.
-			fixture.controlPlane.tenant.Client.source = client
+			testTenant(fixture.controlPlane.tenant.Client).source = client
 			callbacks := 0
 			rebooter := RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {
 				callbacks++

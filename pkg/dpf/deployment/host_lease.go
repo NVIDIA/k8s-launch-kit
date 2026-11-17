@@ -53,13 +53,13 @@ func resolveHostWorkloadLeases(
 	reconciler *Reconciler,
 	selected []activationSelectedDevice,
 	activation activationObservation,
-	workload workloadPreparationReceipt,
+	workloadDigest string, resources []workloadResourceReceipt,
 	snapshot hostWorkloadLeaseSnapshot,
 ) ([]hostWorkloadLease, error) {
 	if plan == nil || reconciler == nil || !activation.complete || len(selected) == 0 {
 		return nil, fmt.Errorf("retained plan and complete selected activation are required")
 	}
-	if workload.BundleDigest != plan.Digest() {
+	if workloadDigest != plan.Digest() {
 		return nil, fmt.Errorf("workload receipt does not identify the retained plan")
 	}
 	intent := plan.Intent()
@@ -71,7 +71,7 @@ func resolveHostWorkloadLeases(
 	if err != nil {
 		return nil, err
 	}
-	ipamReceipt, poolUID, err := hostLeaseWorkloadReceipt(workload, desiredIPAM)
+	ipamReceipt, poolUID, err := hostLeaseWorkloadReceipt(resources, desiredIPAM)
 	if err != nil {
 		return nil, err
 	}
@@ -152,9 +152,9 @@ func retainedWorkloadIPAM(plan *generation.Plan) (*unstructured.Unstructured, er
 	return desired, nil
 }
 
-func hostLeaseWorkloadReceipt(workload workloadPreparationReceipt, desired *unstructured.Unstructured) (workloadResourceReceipt, types.UID, error) {
+func hostLeaseWorkloadReceipt(resources []workloadResourceReceipt, desired *unstructured.Unstructured) (workloadResourceReceipt, types.UID, error) {
 	var receipt workloadResourceReceipt
-	for _, resource := range workload.Resources {
+	for _, resource := range resources {
 		if resource.Kind != "DPUServiceIPAM" || resource.Namespace != desired.GetNamespace() || resource.Name != desired.GetName() {
 			continue
 		}

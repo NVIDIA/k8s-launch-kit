@@ -103,7 +103,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	var provisioning *managementprobe.Snapshot
 	if r.Kubeconfig != "" {
 		var accessErr error
-		mg, accessErr = managementaccess.Open(r)
+		mg, accessErr = managementaccess.Open(r, nil)
 		if accessErr != nil {
 			report.Execution = "failed"
 			report.Errors = append(report.Errors, inventory.Problem{Code: "INVALID_MANAGEMENT_ACCESS", Message: accessErr.Error(), ExitCode: 2})

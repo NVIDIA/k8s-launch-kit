@@ -126,12 +126,12 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementEffects(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	defaults := preflightGenerationInputs(t).Workload.Generation
-	result, runErr := runWithImageResolver(ctx, request, func(ctx context.Context, reference string, timeout time.Duration, transport http.RoundTripper) (hbnPodImageIdentity, error) {
+	result, runErr := runWithTransports(ctx, request, runTransports{resolveImage: func(ctx context.Context, reference string, timeout time.Duration, transport http.RoundTripper) (hbnPodImageIdentity, error) {
 		if reference != defaults.ImageRepository+":"+defaults.ImageTag+"@"+defaults.ImageDigest {
 			t.Fatalf("early check changed the release-selected default image reference: %s", reference)
 		}
 		return retainedTestImageResolver(ctx, reference, timeout, transport)
-	})
+	}})
 	if runErr == nil || !strings.Contains(runErr.Error(), "prerequisite observation failed") || !called {
 		t.Fatalf("Run = %#v, %v; observer called=%v", result, runErr, called)
 	}
@@ -187,7 +187,7 @@ func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing
 			called := false
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			_, runErr := runWithImageResolver(ctx, RunRequest{
+			_, runErr := runWithTransports(ctx, RunRequest{
 				Bundle: generated, Access: access,
 				ReportPath: filepath.Join(root, "run.jsonl"), ProbeJournalPath: filepath.Join(root, "probe.jsonl"),
 				VerifyPrerequisites: func(_ context.Context, observed config.Request, _ *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
@@ -250,7 +250,7 @@ func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing
 					t.Fatal("reboot ran after failed prerequisites")
 					return ActivationObservation{}, nil
 				}),
-			}, retainedTestImageResolver)
+			}, runTransports{resolveImage: retainedTestImageResolver})
 			if !called || runErr == nil || !strings.Contains(runErr.Error(), "prerequisite observation failed") {
 				t.Fatal("run did not stop at the prerequisite observer")
 			}

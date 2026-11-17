@@ -144,7 +144,7 @@ func (f *activationIntegrationFake) verifyActivationRebootBMCs(_ context.Context
 	return expires, f.resetSafetyError
 }
 
-func (f *activationIntegrationFake) checkActivationPermissions(context.Context, *managementExecution) []PreflightCheck {
+func (f *activationIntegrationFake) checkActivationPermissions(context.Context, *managementVerificationInputs) []PreflightCheck {
 	return []PreflightCheck{{ID: "activation.selected", State: "passed", ReasonCode: "ACTIVATION_ACCESS_READY", Message: "selected activation permissions were checked"}}
 }
 
@@ -564,7 +564,7 @@ func testRunActivationStageCreatesClaimRebootsSelectedHostAndReachesReady(t *tes
 	receipt, err := runActivationStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload,
 		fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, rebooter)
 	if err != nil {
-		_, _, scopeErr := observeSelectedEnrollment(fixture.ctx, fixture.client, fixture.prepared.execution, fixture.prepared.selected,
+		_, _, scopeErr := observeSelectedEnrollment(fixture.ctx, fixture.client, fixture.prepared.execution.verificationInputs(), fixture.prepared.selected,
 			fixture.controlPlane.enrollment.Devices, fixture.journal)
 		t.Fatalf("runActivationStage(): %v; final enrollment observation: %v; boundary mutation applied=%v", err, scopeErr, fixture.client.boundaryDPUChanged)
 	}
@@ -718,7 +718,7 @@ func newActivationIntegrationFixtureFromExecution(t *testing.T, execution *manag
 	tenant.source = client
 	client.tenant = tenant
 	client.base.tenant = tenant
-	receipts.tenant.Client = tenant
+	receipts.tenant.Client = &fixtureTenantReader{tenantClient: tenant, child: client.workloadChild}
 
 	request := controlPlaneTestRequest(t)
 	firstDPUTarget := -1
@@ -766,7 +766,7 @@ func newActivationIntegrationFixtureFromExecution(t *testing.T, execution *manag
 	journal := testJournal(execution)
 	ctx := tenantStageContext(t)
 	probes := probe.Runner{Assets: catalog.ProbeAssets(), Journal: func([]probe.Receipt) error { return nil }}
-	prepared, err := prepareControlPlaneWithExecution(ctx, client, execution, journal, probes, request, time.Millisecond, time.Second)
+	prepared, err := prepareControlPlaneWithExecution(ctx, client, execution, journal, request, time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatalf("prepareControlPlaneWithExecution(): %v", err)
 	}
@@ -777,21 +777,21 @@ func newActivationIntegrationFixtureFromExecution(t *testing.T, execution *manag
 	if err != nil {
 		t.Fatalf("checkWorkloadPreparationInputs(): %v", err)
 	}
-	controlPlane, err := runPreparedControlPlane(ctx, client, prepared, probes, journal, time.Millisecond, time.Second)
+	controlPlane, err := runPreparedControlPlane(ctx, client, client, client, client, prepared, probes, journal, time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatalf("runPreparedControlPlane(): %v", err)
 	}
-	workload, err := runPreparedWorkload(ctx, client, prepared, controlPlane, probes, journal, time.Millisecond, time.Second, 1<<20, chartVerifier, objects)
+	workload, err := runPreparedWorkload(ctx, client, client, prepared, controlPlane, journal, time.Millisecond, time.Second, 1<<20, chartVerifier, objects)
 	if err != nil {
 		t.Fatalf("runPreparedWorkload(): %v", err)
 	}
 	if len(workload.Resources) != 8 { // BlueFieldSoftware is represented separately by workload.Software.
 		t.Fatalf("runPreparedWorkload() returned %d non-software prerequisite receipts, want 8", len(workload.Resources))
 	}
-	if _, _, err := observeSelectedEnrollment(ctx, client, prepared.execution, prepared.selected, controlPlane.enrollment.Devices, journal); err != nil {
+	if _, _, err := observeSelectedEnrollment(ctx, client, prepared.execution.verificationInputs(), prepared.selected, controlPlane.enrollment.Devices, journal); err != nil {
 		t.Fatalf("fresh selected enrollment observation after workload preparation: %v", err)
 	}
-	deployment, err := retainedDeploymentObject(execution)
+	deployment, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -881,7 +881,7 @@ func TestActivationRejectsObservationOnlyRebootSnapshotDrift(t *testing.T) {
 		t.Run(mutation, func(t *testing.T) {
 			f := newActivationIntegrationFixtureFromExecution(t, execution, false)
 			c := &activationObservationOnlyDriftClient{activationIntegrationFake: f.client, mutation: mutation}
-			f.controlPlane.tenant.Client.source = c
+			testTenant(f.controlPlane.tenant.Client).source = c
 			callbacks := 0
 			_, err := runActivationStage(f.ctx, c, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second,
 				RebooterFunc(func(context.Context, ActivationRequest) (ActivationObservation, error) {

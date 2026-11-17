@@ -183,11 +183,11 @@ func TestTenantIdentityRejectsReplacedTenantAndCancellation(t *testing.T) {
 func TestTenantClientRejectsIncompleteBindingBeforeConnecting(t *testing.T) {
 	expected, sources := tenantSourceFixture(t)
 	source := &tenantSourceStub{sources: sources}
-	if _, err := newTenantClient(context.Background(), source, expected, "", time.Second); err == nil || source.calls != 0 {
+	if _, err := newTenantClient(context.Background(), source, expected, "", time.Second, nil, nil); err == nil || source.calls != 0 {
 		t.Fatal("incomplete binding accessed management sources")
 	}
 	source.sources.secret.Data = map[string][]byte{"admin.conf": []byte("secret-canary")}
-	if _, err := newTenantClient(context.Background(), source, expected, "dc-uid", time.Second); err == nil || strings.Contains(err.Error(), "secret-canary") {
+	if _, err := newTenantClient(context.Background(), source, expected, "dc-uid", time.Second, nil, nil); err == nil || strings.Contains(err.Error(), "secret-canary") {
 		t.Fatal("invalid credential source accepted or leaked")
 	}
 }

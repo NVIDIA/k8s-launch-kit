@@ -48,7 +48,7 @@ type hostNetworkLeaseFence struct {
 // runHostWorkloadNetworkStage consumes successful activation bindings without
 // resolving a second SSH authority. Each effect gets fresh API fences; neither
 // those reads nor the host-local journal make the two systems atomic.
-func runHostWorkloadNetworkStage(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun,
+func runHostWorkloadNetworkStage(ctx context.Context, client activationBoundaryReader, prepared *preparedControlPlaneRun,
 	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt,
 	journal *executionJournal, requestTimeout time.Duration, readLeases hostLeaseSnapshotReader, configure, inspect hostNetworkConfigurer,
 ) ([]HostWorkloadNetworkResult, error) {

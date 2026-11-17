@@ -66,18 +66,33 @@ type operatorCRDExpectation struct {
 // and tenant stages. Resource clients receive copies; refreshes read live state
 // without reconstructing or replacing the retained desired objects.
 type managementExecution struct {
-	retained          *bundle.Bundle
-	plan              *generation.Plan
-	operator          *operatorPlan
-	operatorVersion   string
-	reconciler        *Reconciler
-	namespaces        []*unstructured.Unstructured
-	operatorNamespace string
-	kamajiNamespace   string
-	preflight         preflightPlan
-	configObject      *unstructured.Unstructured
-	manager           *unstructured.Unstructured
-	crds              []operatorCRDExpectation
+	managementVerificationInputs
+	operator  *operatorPlan
+	preflight preflightPlan
+}
+
+// verificationInputs preserves nil as unavailable data at read boundaries.
+func (e *managementExecution) verificationInputs() *managementVerificationInputs {
+	if e == nil {
+		return nil
+	}
+	return &e.managementVerificationInputs
+}
+
+// managementVerificationInputs is the retained read projection. It deliberately
+// excludes Helm preparation, post-render callbacks and permission-plan state.
+type managementVerificationInputs struct {
+	retained            *bundle.Bundle
+	plan                *generation.Plan
+	operatorReleaseName string
+	operatorVersion     string
+	reconciler          *Reconciler
+	namespaces          []*unstructured.Unstructured
+	operatorNamespace   string
+	kamajiNamespace     string
+	configObject        *unstructured.Unstructured
+	manager             *unstructured.Unstructured
+	crds                []operatorCRDExpectation
 }
 
 func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) (*managementExecution, error) {
@@ -110,9 +125,12 @@ func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) 
 	if err != nil {
 		return nil, err
 	}
-	return &managementExecution{retained: retained, plan: plan, operator: operator, operatorVersion: "v" + inputs.ReleaseVersion, reconciler: reconciler,
-		namespaces: namespaces, operatorNamespace: namespace, kamajiNamespace: prerequisites.overrides.Kamaji, preflight: prerequisites,
-		configObject: configObject, manager: manager, crds: crds}, nil
+	return &managementExecution{operator: operator, preflight: prerequisites,
+		managementVerificationInputs: managementVerificationInputs{
+			retained: retained, plan: plan, operatorReleaseName: operator.releaseName,
+			operatorVersion: "v" + inputs.ReleaseVersion, reconciler: reconciler,
+			namespaces: namespaces, operatorNamespace: namespace, kamajiNamespace: prerequisites.overrides.Kamaji,
+			configObject: configObject, manager: manager, crds: crds}}, nil
 }
 
 func runPreparedManagement(ctx context.Context, client managementRunnerClient, execution *managementExecution,
@@ -361,7 +379,7 @@ func (c *APIClient) matchesBinding(identity generation.ManagementIdentity, versi
 	return c != nil && c.expected == identity && c.version == version
 }
 
-func listOperatorConfigs(ctx context.Context, client managementRunnerClient) ([]unstructured.Unstructured, error) {
+func listOperatorConfigs(ctx context.Context, client operatorConfigReader) ([]unstructured.Unstructured, error) {
 	groupVersion := "operator.dpu.nvidia.com/v1alpha1"
 	resources, err := client.discoverResourceList(ctx, groupVersion)
 	if apierrors.IsNotFound(err) {
@@ -390,7 +408,7 @@ func listOperatorConfigs(ctx context.Context, client managementRunnerClient) ([]
 	}}, "")
 }
 
-func waitOperatorConfigReady(ctx context.Context, client ResourceClient, reconciler *Reconciler, desired, initial *unstructured.Unstructured,
+func waitOperatorConfigReady(ctx context.Context, client resourceReader, reconciler *Reconciler, desired, initial *unstructured.Unstructured,
 	expectedVersion string, journal *executionJournal, interval time.Duration,
 ) (*unstructured.Unstructured, error) {
 	event := executionEvent{Stage: generation.StageOperatorConfig, Operation: "readiness", Subject: desired.GetNamespace() + "/" + desired.GetName(), State: "attempted",
@@ -638,7 +656,7 @@ func operatorCRDFromObject(object *unstructured.Unstructured) (operatorCRDExpect
 	return expectation, nil
 }
 
-func waitOperatorCRDs(ctx context.Context, client managementRunnerClient, expected []operatorCRDExpectation, journal *executionJournal, interval time.Duration) error {
+func waitOperatorCRDs(ctx context.Context, client operatorCRDReader, expected []operatorCRDExpectation, journal *executionJournal, interval time.Duration) error {
 	event := executionEvent{Stage: generation.StageOperator, Operation: "crd-readiness", State: "attempted", ReasonCode: "DPF_CRD_READINESS_STARTED", Message: "Wait for retained DPF CRDs to be established and discoverable."}
 	if err := journal.record(event); err != nil {
 		return err
@@ -770,7 +788,7 @@ func discoveredResourceMatches(resources *metav1.APIResourceList, requirement pr
 	return count == 1
 }
 
-func waitManagerDeployment(ctx context.Context, client managementRunnerClient, desired *unstructured.Unstructured, journal *executionJournal, interval time.Duration) (*unstructured.Unstructured, error) {
+func waitManagerDeployment(ctx context.Context, client resourceReader, desired *unstructured.Unstructured, journal *executionJournal, interval time.Duration) (*unstructured.Unstructured, error) {
 	event := executionEvent{Stage: generation.StageOperator, Operation: "manager-readiness", Subject: desired.GetNamespace() + "/" + desired.GetName(), State: "attempted", ReasonCode: "DPF_MANAGER_READINESS_STARTED", Message: "Wait for the retained manager Deployment's current generation and replicas."}
 	if err := journal.record(event); err != nil {
 		return nil, err
@@ -851,7 +869,7 @@ func containerImages(object *unstructured.Unstructured) (map[string]string, erro
 	return images, nil
 }
 
-func requireNamespaceUID(ctx context.Context, client managementRunnerClient, name, uid string) error {
+func requireNamespaceUID(ctx context.Context, client resourceReader, name, uid string) error {
 	desired := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": name}}}
 	current, err := client.Get(ctx, desired)
 	if err != nil {

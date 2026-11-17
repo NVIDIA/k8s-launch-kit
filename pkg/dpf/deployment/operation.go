@@ -225,7 +225,7 @@ func (o *deploymentOperation) save(ctx context.Context) error {
 	return nil
 }
 
-func tenantOperationSources(ctx context.Context, tenant *tenantClient) (map[string]types.UID, error) {
+func (tenant *tenantClient) operationSources(ctx context.Context) (map[string]types.UID, error) {
 	sources, err := tenant.source.observeTenantSources(ctx, tenant.expected)
 	if err != nil {
 		return nil, err
@@ -247,7 +247,7 @@ func tenantOperationSources(ctx context.Context, tenant *tenantClient) (map[stri
 }
 
 func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, workload workloadPreparationReceipt) (*deploymentOperation, error) {
-	deployment, err := retainedDeploymentObject(prepared.execution)
+	deployment, err := retainedDeploymentObject(prepared.execution.verificationInputs())
 	if err != nil {
 		return nil, operationReservationFailure(ctx, "OPERATION_PLAN_INVALID", err)
 	}
@@ -262,7 +262,7 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 	if !apierrors.IsNotFound(err) {
 		return nil, operationReservationFailure(ctx, "OPERATION_PARENT_UNMEASURED", err)
 	}
-	sources, err := tenantOperationSources(ctx, workload.ControlPlane.tenant.Client)
+	sources, err := workload.ControlPlane.tenant.Client.operationSources(ctx)
 	if err != nil {
 		return nil, operationReservationFailure(ctx, "OPERATION_TENANT_SOURCES_UNMEASURED", err)
 	}
@@ -270,7 +270,7 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 	state := operationState{
 		Binding: operationBinding{Version: 1, ID: rand.Text(), BundleDigest: prepared.execution.plan.Digest(), Management: prepared.execution.plan.Intent().Management,
 			NamespaceUID: workload.ControlPlane.management.NamespaceUIDs[namespace], DeploymentName: deployment.GetName(), CohortDigest: inventory.Digest("dpf-operation-cohort-v1", prepared.execution.plan.Intent().Devices)},
-		Management: workload.ControlPlane.management, TenantUID: workload.ControlPlane.tenant.ClusterUID, TenantSystemUID: workload.ControlPlane.tenant.Client.systemUID,
+		Management: workload.ControlPlane.management, TenantUID: workload.ControlPlane.tenant.ClusterUID, TenantSystemUID: workload.ControlPlane.tenant.Client.systemIdentity(),
 		TenantSources: sources, Enrollment: workload.ControlPlane.enrollment, Software: workload.Software, Workload: workload.Resources,
 		Children: map[string]activationObjectReceipt{}, HoldIntents: map[string]operationProgress{}, Progress: map[string]operationProgress{}, Resets: map[string]operationReset{}, Hosts: map[string]operationHost{},
 	}
@@ -300,7 +300,7 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 }
 
 func loadDeploymentOperation(ctx context.Context, client *APIClient, execution *managementExecution, ref *OperationRef) (*deploymentOperation, error) {
-	deployment, err := retainedDeploymentObject(execution)
+	deployment, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		return nil, reconcileError("OPERATION_RESUME_PLAN_INVALID", operationResumeMessage("OPERATION_RESUME_PLAN_INVALID"), err)
 	}
@@ -329,30 +329,30 @@ func loadDeploymentOperation(ctx context.Context, client *APIClient, execution *
 	return &deploymentOperation{store: client, object: object.DeepCopy(), state: state}, nil
 }
 
-func restoreOperationReceipts(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, journal *executionJournal, interval, timeout time.Duration) (controlPlaneReceipts, workloadPreparationReceipt, error) {
+func restoreOperationReceipts(ctx context.Context, client receiptRestorationReader, prepared *preparedControlPlaneRun, journal *executionJournal, interval, timeout time.Duration) (controlPlaneReceipts, workloadPreparationReceipt, error) {
 	state := prepared.operation.state
 	control := controlPlaneReceipts{management: state.Management, enrollment: state.Enrollment}
-	if err := waitManagementBootstrap(ctx, client, prepared.execution, state.Management, journal, interval); err != nil {
+	if err := waitManagementBootstrap(ctx, client, prepared.execution.verificationInputs(), state.Management, journal, interval); err != nil {
 		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_BOOTSTRAP_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_BOOTSTRAP_UNVERIFIED"), err)
 	}
-	tenant, err := connectRetainedTenant(ctx, client, prepared.execution.plan, state.TenantUID, prepared.execution.reconciler, journal, interval, timeout)
+	tenant, err := client.connectTenant(ctx, prepared.execution.plan, state.TenantUID, prepared.execution.reconciler, journal, interval, timeout)
 	if err != nil {
 		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_TENANT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_TENANT_UNVERIFIED"), err)
 	}
-	sources, err := tenantOperationSources(ctx, tenant)
-	if err != nil || tenant.systemUID != state.TenantSystemUID || !reflect.DeepEqual(sources, state.TenantSources) {
+	sources, err := tenant.operationSources(ctx)
+	if err != nil || tenant.systemIdentity() != state.TenantSystemUID || !reflect.DeepEqual(sources, state.TenantSources) {
 		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_TENANT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_TENANT_UNVERIFIED"), err)
 	}
 	control.tenant = tenantStageReceipt{ClusterUID: state.TenantUID, Client: tenant}
 	workload := workloadPreparationReceipt{BundleDigest: state.Binding.BundleDigest, ControlPlane: control, Software: state.Software, Resources: state.Workload}
-	objects, err := retainedWorkloadObjects(prepared.execution)
+	objects, err := retainedWorkloadObjects(prepared.execution.verificationInputs())
 	if err != nil {
 		return control, workload, reconcileError("OPERATION_RESUME_PLAN_INVALID", operationResumeMessage("OPERATION_RESUME_PLAN_INVALID"), err)
 	}
-	if err := verifyActivationSoftware(ctx, client, prepared.execution, workload.Software); err != nil {
+	if err := verifyActivationSoftware(ctx, client, prepared.execution.verificationInputs(), workload.Software); err != nil {
 		return control, workload, reconcileError("OPERATION_RESUME_SOFTWARE_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_SOFTWARE_UNVERIFIED"), err)
 	}
-	if err := verifyWorkloadReceiptSet(ctx, client, prepared.execution, tenant, objects, workload.Resources); err != nil {
+	if err := verifyWorkloadReceiptSet(ctx, client, prepared.execution.verificationInputs(), tenant, objects, workload.Resources); err != nil {
 		return control, workload, reconcileError("OPERATION_RESUME_WORKLOAD_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_WORKLOAD_UNVERIFIED"), err)
 	}
 	return control, workload, nil
@@ -397,7 +397,7 @@ func (c *APIClient) updateOperation(ctx context.Context, object *corev1.ConfigMa
 	return c.access.Client.CoreV1().ConfigMaps(object.Namespace).Update(ctx, object.DeepCopy(), metav1.UpdateOptions{})
 }
 
-func (c *APIClient) checkOperationPermissions(ctx context.Context, execution *managementExecution) error {
+func (c *APIClient) checkOperationPermissions(ctx context.Context, execution *managementVerificationInputs) error {
 	deployment, err := retainedDeploymentObject(execution)
 	if err != nil {
 		return err
@@ -513,7 +513,7 @@ func (o *deploymentOperation) rebootHistory() []activationRebootReceipt {
 // verifyFirstDeploymentSources refreshes old checkpoint byte observations only
 // before a genuinely absent, unbound parent can trigger a first reimage. It has
 // read-only dependencies and never reruns software/resource creation stages.
-func verifyFirstDeploymentSources(ctx context.Context, client softwareVerificationClient, execution *managementExecution, receipt softwareVerificationReceipt, chart workloadChartSourceVerifier, journal *executionJournal, maxBytes int64) error {
+func verifyFirstDeploymentSources(ctx context.Context, client softwareVerificationClient, execution *managementVerificationInputs, receipt softwareVerificationReceipt, chart workloadChartSourceVerifier, journal *executionJournal, maxBytes int64) error {
 	if err := checkWorkloadChartSource(ctx, execution.plan, chart, journal, "chart-source-before-first-resumed-deployment"); err != nil {
 		return err
 	}

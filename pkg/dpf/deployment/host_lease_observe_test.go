@@ -585,7 +585,7 @@ func (h *hostLeaseObservationHarness) observe(t *testing.T) (hostWorkloadLeaseSn
 }
 
 func (h *hostLeaseObservationHarness) observeContext(ctx context.Context) (hostWorkloadLeaseSnapshot, error) {
-	return observeHostWorkloadLeaseSnapshot(ctx, h.management, h.tenant, h.input.plan, h.input.reconciler, h.workload, 15*time.Second)
+	return observeHostWorkloadLeaseSnapshot(ctx, h.management, h.tenant, h.input.plan, h.input.reconciler, newWorkloadLeaseInputs(h.workload), 15*time.Second)
 }
 
 func TestObserveHostWorkloadLeaseSnapshotReadsCompleteBoundSources(t *testing.T) {
@@ -605,7 +605,7 @@ func TestObserveHostWorkloadLeaseSnapshotReadsCompleteBoundSources(t *testing.T)
 			t.Fatalf("typed API omitted a required Node identity: %#v", node.Object)
 		}
 	}
-	leases, err := resolveHostWorkloadLeases(h.input.plan, h.input.reconciler, h.input.selected, h.input.activation, h.workload, snapshot)
+	leases, err := resolveHostWorkloadLeases(h.input.plan, h.input.reconciler, h.input.selected, h.input.activation, h.workload.BundleDigest, h.workload.Resources, snapshot)
 	if err != nil || len(leases) != len(h.input.selected) {
 		t.Fatalf("fresh snapshot did not feed the pure lease resolver: leases=%d err=%v", len(leases), err)
 	}
@@ -644,7 +644,7 @@ func TestObserveHostWorkloadLeaseSnapshotFitsDefaultClientRequestBudget(t *testi
 	managementRequestsBefore := h.apiFixture.calls.Load()
 	tenantRequestsBefore := h.tenantState.requestCalls
 	started := time.Now()
-	snapshot, err := observeHostWorkloadLeaseSnapshot(ctx, h.management, h.tenant, h.input.plan, h.input.reconciler, h.workload, 30*time.Second)
+	snapshot, err := observeHostWorkloadLeaseSnapshot(ctx, h.management, h.tenant, h.input.plan, h.input.reconciler, newWorkloadLeaseInputs(h.workload), 30*time.Second)
 	elapsed := time.Since(started)
 	if err != nil {
 		t.Fatalf("production-default client rate limits did not finish within the supported request budget (%s): %v", elapsed, err)

@@ -113,7 +113,7 @@ func TestNativeEnrollmentPublishesSelectorsAndNoopsMatchingValues(t *testing.T) 
 	intentBefore := execution.plan.Intent()
 	for attempt := 0; attempt < 2; attempt++ {
 		journal := testJournal(execution)
-		receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
+		receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func TestNativeEnrollmentSelectorFailuresRefuseOrRemainUncertain(t *testing.T) {
 			execution, fake, bootstrap, tenant, password := enrollmentStageFixtureFromExecution(t, prepared)
 			tc.edit(fake)
 			journal := testJournal(execution)
-			_, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
+			_, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
 			if err == nil || !strings.Contains(err.Error(), tc.code) || fake.selectorPatches != tc.patches {
 				t.Fatalf("wrong failure/effects: patches=%d err=%v", fake.selectorPatches, err)
 			}
@@ -342,7 +342,7 @@ func TestEnrollmentSelectorJournalFailuresBracketPatch(t *testing.T) {
 			execution, fake, bootstrap, tenant, password := enrollmentStageFixtureFromExecution(t, prepared)
 			file := &selectorFailingJournal{marker: tc.marker}
 			journal := &executionJournal{file: file, digest: execution.plan.Digest()}
-			_, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
+			_, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
 			if err == nil || fake.selectorPatches != tc.patches {
 				t.Fatalf("journal failure did not stop at effect boundary: patches=%d err=%v", fake.selectorPatches, err)
 			}
@@ -374,7 +374,7 @@ func TestNativeEnrollmentSelectorCohortProgressAndDrift(t *testing.T) {
 				return nil
 			}
 			journal := testJournal(execution)
-			_, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
+			_, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), bootstrap, tenant, fake.selected, password, journal, time.Millisecond, time.Second)
 			if mode == "complete" {
 				if err != nil || fake.selectorPatches != 2 {
 					t.Fatalf("two-device native binding failed: patches=%d err=%v", fake.selectorPatches, err)

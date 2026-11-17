@@ -72,7 +72,7 @@ func verifyEnrollmentSelectors(object *unstructured.Unstructured, wanted map[str
 // bindEnrollmentSelectors establishes eligibility only after full enrollment.
 // Each write has a fresh whole-cohort fence; successful earlier writes remain
 // recorded if a later device fails. Observers never publish labels implicitly.
-func bindEnrollmentSelectors(ctx context.Context, client enrollmentManagementClient, execution *managementExecution,
+func bindEnrollmentSelectors(ctx context.Context, client enrollmentManagementClient, execution *managementVerificationInputs,
 	bootstrap managementBootstrapReceipt, tenant tenantStageReceipt, selected []enrollmentBMC, receipt enrollmentStageReceipt,
 	password string, journal *executionJournal, requestTimeout time.Duration,
 ) error {
@@ -142,7 +142,7 @@ func bindEnrollmentSelectors(ctx context.Context, client enrollmentManagementCli
 	return nil
 }
 
-func verifyEnrollmentSelectorReceipts(ctx context.Context, client enrollmentManagementClient, namespace string, selected []enrollmentBMC, receipts []enrolledDeviceReceipt) error {
+func verifyEnrollmentSelectorReceipts(ctx context.Context, client resourceReader, namespace string, selected []enrollmentBMC, receipts []enrolledDeviceReceipt) error {
 	if len(selected) != len(receipts) {
 		return fmt.Errorf("selector receipt cohort differs")
 	}

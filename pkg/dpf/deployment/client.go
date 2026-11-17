@@ -21,29 +21,37 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 // APIClient binds native operations to one explicitly configured management
 // cluster. It offers no update, delete, adoption, or rollback operation. The
 // lifecycle caller owns stage prerequisites and resource ownership decisions.
 type APIClient struct {
-	access   managementaccess.Client
-	dynamic  dynamic.Interface
-	expected generation.ManagementIdentity
-	version  string
+	access              managementaccess.Client
+	dynamic             dynamic.Interface
+	expected            generation.ManagementIdentity
+	version             string
+	enrollmentCollector enrollmentBMCCollector
+	tenantDial          tenantDialContext
+	requestLimiter      flowcontrol.RateLimiter
 }
 
 // NewAPIClient snapshots explicit kubeconfig access and checks the generated
 // cluster binding. Ambient kubeconfig and executable auth plugins are rejected
 // by the same access loader used during discovery.
 func NewAPIClient(ctx context.Context, request config.Request, expected generation.ManagementIdentity, version string) (*APIClient, error) {
+	return newAPIClient(ctx, request, expected, version, nil, nil, nil)
+}
+
+func newAPIClient(ctx context.Context, request config.Request, expected generation.ManagementIdentity, version string, collector enrollmentBMCCollector, tenantDial tenantDialContext, limiter flowcontrol.RateLimiter) (*APIClient, error) {
 	if expected.APIEndpoint == "" || expected.SystemNamespaceUID == "" || expected.TrustDigest == "" || version == "" {
 		return nil, fmt.Errorf("complete generated management identity and Kubernetes version are required")
 	}
 	if request.RequestTimeout <= 0 {
 		request.RequestTimeout = 30 * time.Second
 	}
-	access, err := managementaccess.Open(request)
+	access, err := managementaccess.Open(request, limiter)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +59,7 @@ func NewAPIClient(ctx context.Context, request config.Request, expected generati
 	if err != nil {
 		return nil, fmt.Errorf("cannot construct bound management resource client")
 	}
-	c := &APIClient{access: access, dynamic: d, expected: expected, version: version}
+	c := &APIClient{access: access, dynamic: d, expected: expected, version: version, enrollmentCollector: collector, tenantDial: tenantDial, requestLimiter: limiter}
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}

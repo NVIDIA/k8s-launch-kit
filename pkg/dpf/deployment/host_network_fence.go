@@ -15,35 +15,34 @@ import (
 
 // newHostNetworkFenceObserver retains the full physical boundary around host
 // configuration. It is intentionally distinct from the runtime read policy.
-func newHostNetworkFenceObserver(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun,
+func newHostNetworkFenceObserver(ctx context.Context, client activationBoundaryReader, prepared *preparedControlPlaneRun,
 	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt,
 	journal *executionJournal, requestTimeout time.Duration, readLeases hostLeaseSnapshotReader, stage, prefix string,
 ) (func() (hostNetworkLeaseFence, error), error) {
-	return newAllocationFenceObserver(ctx, client, prepared, controlPlane, workload, activation, journal, requestTimeout, readLeases, stage, prefix, func(objects []*unstructured.Unstructured) error {
-		return verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, activation.selected, activation.DeploymentUID, objects, journal, requestTimeout)
+	verification := newControlPlaneVerificationInputs(prepared, controlPlane, workload)
+	return newAllocationFenceObserver(ctx, client, verification, controlPlane.tenant.Client, activation, journal, requestTimeout, readLeases, stage, prefix, func(objects []*unstructured.Unstructured) error {
+		return verifyActivationBoundary(ctx, client, verification, controlPlane.tenant.Client, activation.selected, activation.DeploymentUID, objects, journal, requestTimeout)
 	})
 }
 
 // newRuntimeAllocationFenceObserver brackets read-only HBN measurements with
 // complete current control/resource and allocation checks. Physical BMC checks
 // belong to the runtime phase boundaries, never to every route/ping read.
-func newRuntimeAllocationFenceObserver(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun,
-	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt,
+func newRuntimeAllocationFenceObserver(ctx context.Context, client activationControlReader, verification *controlPlaneVerificationInputs, tenant tenantVerificationReader, activation activationStageReceipt,
 	journal *executionJournal, requestTimeout time.Duration, readLeases hostLeaseSnapshotReader, stage, prefix string,
 ) (func() (hostNetworkLeaseFence, error), error) {
-	return newAllocationFenceObserver(ctx, client, prepared, controlPlane, workload, activation, journal, requestTimeout, readLeases, stage, prefix, func(objects []*unstructured.Unstructured) error {
-		return verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, activation.selected, activation.DeploymentUID, objects, journal)
+	return newAllocationFenceObserver(ctx, client, verification, tenant, activation, journal, requestTimeout, readLeases, stage, prefix, func(objects []*unstructured.Unstructured) error {
+		return verifyActivationResourceBoundary(ctx, client, verification, tenant, activation.selected, activation.DeploymentUID, objects, journal)
 	})
 }
 
 // The named factories above own boundary selection. Shared lease/readiness
 // observation never narrows the selected cohort or caches a previous success.
-func newAllocationFenceObserver(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun,
-	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt,
+func newAllocationFenceObserver(ctx context.Context, client activationObservationReader, verification *controlPlaneVerificationInputs, tenant tenantVerificationReader, activation activationStageReceipt,
 	journal *executionJournal, requestTimeout time.Duration, readLeases hostLeaseSnapshotReader, stage, prefix string,
 	verifyBoundary func([]*unstructured.Unstructured) error,
 ) (func() (hostNetworkLeaseFence, error), error) {
-	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil || prepared.execution.reconciler == nil || journal == nil || readLeases == nil || verifyBoundary == nil || controlPlane.tenant.Client == nil || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
+	if ctx == nil || client == nil || verification == nil || verification.execution == nil || verification.execution.plan == nil || verification.execution.reconciler == nil || journal == nil || readLeases == nil || verifyBoundary == nil || tenant == nil || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
 		return nil, fmt.Errorf("host network fence requires complete retained inputs")
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -52,7 +51,7 @@ func newAllocationFenceObserver(ctx context.Context, client activationStageClien
 	if err := validateHostNetworkCohort(activation); err != nil {
 		return nil, err
 	}
-	execution := prepared.execution
+	execution := verification.execution
 	objects, err := retainedWorkloadObjects(execution)
 	if err != nil {
 		return nil, err
@@ -98,7 +97,7 @@ func newAllocationFenceObserver(ctx context.Context, client activationStageClien
 			!reflect.DeepEqual(nodes, activation.Nodes) || !reflect.DeepEqual(maintenance, activation.Maintenance) {
 			return failActivationFence(prefix+"_ACTIVATION_CHANGED", "A selected activation object's identity or generation changed.", nil)
 		}
-		leases, err := resolveHostWorkloadLeases(execution.plan, execution.reconciler, activation.selected, observed, workload, snapshot)
+		leases, err := resolveHostWorkloadLeases(execution.plan, execution.reconciler, activation.selected, observed, verification.workloadDigest, verification.resources, snapshot)
 		if err != nil {
 			return hostNetworkLeaseFence{}, err
 		}

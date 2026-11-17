@@ -15,7 +15,7 @@ import (
 func activationBoundaryScopeFixture(t *testing.T) (activationIntegrationFixture, enrollmentScopeSnapshot) {
 	t.Helper()
 	fixture := newActivationIntegrationFixture(t)
-	deployment, err := retainedDeploymentObject(fixture.prepared.execution)
+	deployment, err := retainedDeploymentObject(fixture.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func activationBoundaryScopeFixture(t *testing.T) (activationIntegrationFixture,
 	if _, err := fixture.client.Create(fixture.ctx, marked, false); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := collectEnrollmentScope(fixture.ctx, fixture.client, fixture.prepared.execution, fixture.prepared.selected, true)
+	snapshot, err := collectEnrollmentScope(fixture.ctx, fixture.client, fixture.prepared.execution.verificationInputs(), fixture.prepared.selected, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +44,13 @@ func copyEnrollmentScope(snapshot enrollmentScopeSnapshot) enrollmentScopeSnapsh
 func TestActivationScopeAllowsOnlyItsRetainedParentAndSelectedChildren(t *testing.T) {
 	fixture, baseline := activationBoundaryScopeFixture(t)
 	execution, selected := fixture.prepared.execution, fixture.client.activationSelected
-	if err := validateActivationScope(baseline, execution, selected, activationIntegrationDeploymentUID); err != nil {
+	if err := validateActivationScope(baseline, execution.verificationInputs(), selected, activationIntegrationDeploymentUID); err != nil {
 		t.Fatalf("exact retained activation graph rejected: %v", err)
 	}
-	if err := inspectEnrollmentScope(fixture.ctx, fixture.client, execution, fixture.prepared.selected, true); err == nil {
+	if err := inspectEnrollmentScope(fixture.ctx, fixture.client, execution.verificationInputs(), fixture.prepared.selected, true); err == nil {
 		t.Fatal("initial enrollment policy allowed post-activation children")
 	}
-	if err := validateActivationScope(baseline, execution, selected, ""); err == nil {
+	if err := validateActivationScope(baseline, execution.verificationInputs(), selected, ""); err == nil {
 		t.Fatal("precreation activation policy adopted an existing parent")
 	}
 
@@ -102,7 +102,7 @@ func TestActivationScopeAllowsOnlyItsRetainedParentAndSelectedChildren(t *testin
 		t.Run(test.name, func(t *testing.T) {
 			snapshot := copyEnrollmentScope(baseline)
 			test.edit(snapshot)
-			if err := validateActivationScope(snapshot, execution, selected, activationIntegrationDeploymentUID); err == nil {
+			if err := validateActivationScope(snapshot, execution.verificationInputs(), selected, activationIntegrationDeploymentUID); err == nil {
 				t.Fatal("changed activation graph was accepted")
 			}
 		})
@@ -119,7 +119,7 @@ func TestActivationScopeAllowsOnlyItsRetainedParentAndSelectedChildren(t *testin
 				extra.SetUID(types.UID("unrelated"))
 				snapshot.resources[i].objects = append(snapshot.resources[i].objects, *extra)
 			}
-			if err := validateActivationScope(snapshot, execution, selected, activationIntegrationDeploymentUID); err == nil {
+			if err := validateActivationScope(snapshot, execution.verificationInputs(), selected, activationIntegrationDeploymentUID); err == nil {
 				t.Fatal("unrelated all-namespace object was accepted")
 			}
 		})
@@ -132,7 +132,7 @@ func TestActivationScopeAllowsNodeRebootTransitionsAndPartialChildren(t *testing
 		snapshot := copyEnrollmentScope(baseline)
 		setNodeCondition(&snapshot.objects("DPUNode")[0], "Ready", status)
 		appendNodeCondition(&snapshot.objects("DPUNode")[0], "DPUNodeRebootInProgress", "True")
-		if err := validateActivationScope(snapshot, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err != nil {
+		if err := validateActivationScope(snapshot, fixture.prepared.execution.verificationInputs(), fixture.client.activationSelected, activationIntegrationDeploymentUID); err != nil {
 			t.Fatalf("node transition %s blocked exact activation scope: %v", status, err)
 		}
 	}
@@ -142,7 +142,7 @@ func TestActivationScopeAllowsNodeRebootTransitionsAndPartialChildren(t *testing
 			snapshot.resources[i].objects = []unstructured.Unstructured{}
 		}
 	}
-	if err := validateActivationScope(snapshot, fixture.prepared.execution, fixture.client.activationSelected, activationIntegrationDeploymentUID); err != nil {
+	if err := validateActivationScope(snapshot, fixture.prepared.execution.verificationInputs(), fixture.client.activationSelected, activationIntegrationDeploymentUID); err != nil {
 		t.Fatalf("in-progress child creation rejected: %v", err)
 	}
 }
@@ -151,7 +151,7 @@ func TestActivationBoundaryRefreshesSoftwareIdentityAndReceiptWithoutRestreaming
 	fixture := newActivationIntegrationFixture(t)
 	client, execution := fixture.client, fixture.prepared.execution
 	requests := client.streamRequests.Load()
-	if err := verifyActivationSoftware(fixture.ctx, client, execution, fixture.workload.Software); err != nil {
+	if err := verifyActivationSoftware(fixture.ctx, client, execution.verificationInputs(), fixture.workload.Software); err != nil {
 		t.Fatalf("valid software receipt rejected: %v", err)
 	}
 	if client.streamRequests.Load() != requests {
@@ -161,7 +161,7 @@ func TestActivationBoundaryRefreshesSoftwareIdentityAndReceiptWithoutRestreaming
 		t.Run(mutation, func(t *testing.T) {
 			receipt := fixture.workload.Software
 			receipt.Components = append([]verifiedSoftwareComponent(nil), receipt.Components...)
-			desired, err := retainedBlueFieldSoftware(execution)
+			desired, err := retainedBlueFieldSoftware(execution.verificationInputs())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -183,7 +183,7 @@ func TestActivationBoundaryRefreshesSoftwareIdentityAndReceiptWithoutRestreaming
 			case "registry release":
 				client.managerImage = "unrelated"
 			}
-			if err := verifyActivationSoftware(fixture.ctx, client, execution, receipt); err == nil {
+			if err := verifyActivationSoftware(fixture.ctx, client, execution.verificationInputs(), receipt); err == nil {
 				t.Fatal("changed software binding was accepted")
 			}
 		})
@@ -194,7 +194,7 @@ func TestCollectEnrollmentScopeRejectsDuplicateChildIdentities(t *testing.T) {
 	execution, client, selected := enrollmentScopeFixture(t)
 	child := enrollmentScopeObject("provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", "duplicate", execution.operatorNamespace)
 	client.listed["DPUSet"] = []unstructured.Unstructured{*child.DeepCopy(), *child.DeepCopy()}
-	_, err := collectEnrollmentScope(tenantStageContext(t), client, execution, selected, true)
+	_, err := collectEnrollmentScope(tenantStageContext(t), client, execution.verificationInputs(), selected, true)
 	if err == nil || !strings.Contains(err.Error(), "duplicate identities") {
 		t.Fatalf("duplicate child identities accepted: %v", err)
 	}

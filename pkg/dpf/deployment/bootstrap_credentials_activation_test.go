@@ -39,7 +39,7 @@ func TestBootstrapCredentialsFencePhysicalAndACKEffects(t *testing.T) {
 			operation, store := checkpointFixture(t, f)
 			f.prepared.operation = operation
 			client := recoveryActivationClient{f.client}
-			f.controlPlane.tenant.Client.source = client
+			testTenant(f.controlPlane.tenant.Client).source = client
 			base := &recoveryRebooter{fixture: &f}
 			var reboot ExternalRebooter = base
 			run := func() error {
@@ -102,7 +102,7 @@ func TestBootstrapCredentialsDiagnoseAbsentRegistrationDuringJoinWait(t *testing
 	operation, _ := checkpointFixture(t, f)
 	f.prepared.operation = operation
 	client := bootstrapJoinWaitClient{recoveryActivationClient{f.client}}
-	f.controlPlane.tenant.Client.source = client
+	testTenant(f.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &f}
 	_, err := runActivationStage(f.ctx, client, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, reboot)
 	if err == nil || !strings.Contains(err.Error(), "BOOTSTRAP_JOIN_SECRET_UNAVAILABLE") || reboot.submissions != 0 || len(f.client.guards) != 0 || len(f.client.patches) != 0 {
@@ -141,7 +141,7 @@ func TestActivationReadsValidBootstrapCredentialsBeforeLaterRegistration(t *test
 	f.client.base.resources[tenantStageKey(materials.join)] = materials.join
 	f.client.bootstrapTenantHandler = state.serve
 	client := bootstrapRegistrationAfterACKClient{recoveryActivationClient: recoveryActivationClient{f.client}, state: state}
-	f.controlPlane.tenant.Client.source = client
+	testTenant(f.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &f}
 	_, err := runActivationStage(f.ctx, client, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, reboot)
 	if err != nil || reboot.submissions != 1 || len(f.client.guards) != 1 || len(f.client.patches) != 2 {
@@ -188,7 +188,7 @@ func TestBootstrapBeforeSubmitUnrelatedSignerUpdateDoesNotBurnClaim(t *testing.T
 		}
 	}
 	client := bootstrapRegistrationAfterACKClient{recoveryActivationClient: recoveryActivationClient{f.client}, state: state}
-	f.controlPlane.tenant.Client.source = client
+	testTenant(f.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &f}
 	_, err := runActivationStage(f.ctx, client, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, reboot)
 	if err != nil || reboot.submissions != 1 || len(f.client.guards) != 1 || len(f.client.patches) != 2 {

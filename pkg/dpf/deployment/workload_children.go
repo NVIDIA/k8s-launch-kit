@@ -18,8 +18,8 @@ import (
 	"k8s.io/client-go/discovery"
 )
 
-func (c *APIClient) getTenantWorkloadChild(ctx context.Context, tenant *tenantClient, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if c == nil || tenant == nil || parent == nil || ctx == nil {
+func (tenant *tenantClient) getWorkloadChild(ctx context.Context, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if tenant == nil || parent == nil || ctx == nil {
 		return nil, fmt.Errorf("bound management and tenant clients and workload parent are required")
 	}
 	if tenant.api == nil {

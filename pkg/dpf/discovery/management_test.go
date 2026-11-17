@@ -49,7 +49,7 @@ var _ = Describe("explicit management access", func() {
 		Expect(e).NotTo(HaveOccurred())
 		filename := filepath.Join(dir, "config")
 		Expect(os.WriteFile(filename, b, 0600)).To(Succeed())
-		mg, e := managementaccess.Open(config.Request{Kubeconfig: filename, RequestTimeout: time.Second})
+		mg, e := managementaccess.Open(config.Request{Kubeconfig: filename, RequestTimeout: time.Second}, nil)
 		Expect(e).NotTo(HaveOccurred())
 		Expect(mg.REST.CAData).To(Equal(ca))
 		Expect(mg.REST.CAFile).To(BeEmpty())
@@ -73,7 +73,7 @@ var _ = Describe("explicit management access", func() {
 			Expect(e).NotTo(HaveOccurred())
 			filename := filepath.Join(dir, "config")
 			Expect(os.WriteFile(filename, b, 0600)).To(Succeed())
-			_, e = managementaccess.Open(config.Request{Kubeconfig: filename})
+			_, e = managementaccess.Open(config.Request{Kubeconfig: filename}, nil)
 			Expect(e).To(HaveOccurred())
 			Expect(e.Error()).NotTo(ContainSubstring("private-token"))
 		}
