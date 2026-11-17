@@ -47,7 +47,6 @@ var _ = Describe("DPF public input workflow", func() {
 		// public parser, recorded-intent gate and maintained release resolver.
 		driver := generateDriver{
 			request: GenerateRequest{Inventory: path, UserConfig: "", UseCase: nil, OutputPath: filepath.Join(root, "bundle"), Deploy: false, Stdout: &stdout, Stderr: &stderr},
-			prepare: nil,
 			fetchChart: func(_ context.Context, address string) ([]byte, error) {
 				file, ok := charts[address]
 				Expect(ok).To(BeTrue(), "only the selected release's chart coordinates may be requested")
@@ -64,6 +63,7 @@ var _ = Describe("DPF public input workflow", func() {
 		))
 		var result map[string]any
 		Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+		Expect(stderr.String()).To(BeEmpty())
 		Expect(result["state"]).To(Equal("generated"))
 		Expect(result["deploymentReadiness"]).To(Equal("not-evaluated"))
 		retained, err := bundle.Load(filepath.Join(root, "bundle"))

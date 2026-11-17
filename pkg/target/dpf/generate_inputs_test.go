@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
@@ -19,7 +18,6 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"gopkg.in/yaml.v3"
 )
 
 func generationSite() config.Input {
@@ -42,33 +40,17 @@ func publicFixtureBytes(input config.Input) []byte {
 	return data
 }
 
-// prepareFixtureGeneration supplies the existing resolved internal cohort to
-// isolate publication, cancellation and retained-bundle tests from catalog
-// support. Public-input tests exercise app.PrepareGeneration without this fixture.
-func prepareFixtureGeneration(r app.GenerationRequest) (app.ResolvedGeneration, error) {
-	input, err := config.Load(r.Inventory)
-	if err != nil {
-		return app.ResolvedGeneration{}, err
-	}
-	input, err = config.WithUseCase(input, r.UseCase)
-	if err != nil {
-		return app.ResolvedGeneration{}, err
-	}
-	return app.ResolveGeneration(input, nil)
-}
-
 var _ = Describe("DPF generation input boundary", func() {
 	It("publishes a resolved test plan without reading access secrets", func() {
 		input := generationSite()
 		root, err := filepath.EvalSymlinks(GinkgoT().TempDir())
 		Expect(err).NotTo(HaveOccurred())
-		siteBytes, err := yaml.Marshal(input.Site)
-		Expect(err).NotTo(HaveOccurred())
+		siteBytes := publicFixtureBytes(input)
 		source := filepath.Join(root, "site.yaml")
 		Expect(os.WriteFile(source, siteBytes, 0600)).To(Succeed())
 		var stdout, stderr bytes.Buffer
 		fetched := []string{}
-		driver := generateDriver{request: GenerateRequest{Inventory: source, OutputPath: filepath.Join(root, "bundle"), Stdout: &stdout, Stderr: &stderr}, prepare: prepareFixtureGeneration, fetchChart: func(_ context.Context, address string) ([]byte, error) {
+		driver := generateDriver{request: GenerateRequest{Inventory: source, OutputPath: filepath.Join(root, "bundle"), Stdout: &stdout, Stderr: &stderr}, fetchChart: func(_ context.Context, address string) ([]byte, error) {
 			fetched = append(fetched, address)
 			if strings.HasSuffix(address, "dpf-operator-v26.8.0.tgz") {
 				return os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
@@ -91,7 +73,10 @@ var _ = Describe("DPF generation input boundary", func() {
 		Expect(saved).To(Equal(siteBytes))
 		retained, err := os.ReadFile(filepath.Join(root, "bundle", ".l8k", "source-config.yaml"))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(retained).To(Equal(siteBytes))
+		retainedInput, err := config.Decode(retained, filepath.Join(root, "bundle", ".l8k", "source-config.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(retainedInput.Site.Management).To(Equal(input.Site.Management))
+		Expect(retainedInput.Site.Inventory.DPUs[0].SerialNumber).To(Equal(input.Site.Inventory.DPUs[0].SerialNumber))
 		stdout.Reset()
 		Expect(operation.Run(context.Background())).To(Succeed())
 		Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
@@ -149,7 +134,11 @@ var _ = Describe("DPF generation input boundary", func() {
 		driver := generateDriver{request: GenerateRequest{Inventory: file, OutputPath: filepath.Join(root, "output"), Stdout: &stdout, Stderr: &stderr}, fetchChart: func(context.Context, string) ([]byte, error) { called = true; return nil, nil }}
 		op, err := driver.Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(op.Run(context.Background())).NotTo(Succeed())
+		failure, ok := op.Run(context.Background()).(*apperrors.StructuredError)
+		Expect(ok).To(BeTrue())
+		Expect(failure.Message).To(Equal("invalid DPF generation inputs"))
+		Expect(failure.Suggestion).To(Equal("Correct inventory or supported overrides and rerun discovery; catalog gaps require a supported Launch Kit release"))
+		Expect(failure.ExitCode).To(Equal(2))
 		Expect(called).To(BeFalse())
 		Expect(stdout.String()).To(BeEmpty())
 		_, err = os.Stat(filepath.Join(root, "output"))

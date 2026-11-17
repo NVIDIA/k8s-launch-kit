@@ -32,7 +32,6 @@ type GenerateRequest struct {
 type generateDriver struct {
 	request    GenerateRequest
 	fetchChart func(context.Context, string) ([]byte, error)
-	prepare    func(app.GenerationRequest) (app.ResolvedGeneration, error)
 }
 
 func NewGenerateAdapter(request GenerateRequest) target.Driver {
@@ -70,32 +69,17 @@ func (d generateDriver) Bind(inv target.Invocation) (target.Operation, error) {
 	return target.OperationFunc(func(parent context.Context) error {
 		ctx, stop := signal.NotifyContext(parent, terminationSignals()...)
 		defer stop()
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		progress := ui.NewSilent()
 		if !inv.Output.Quiet {
 			progress = ui.NewWithWriter(r.Stderr)
 		}
-		progress.Info("[RUNNING] Generation: resolving profile and selected discovery identities")
-		prepare := d.prepare
-		if prepare == nil {
-			prepare = app.PrepareGeneration
-		}
-		resolved, err := prepare(app.GenerationRequest{Inventory: r.Inventory, UserConfig: r.UserConfig, UseCase: r.UseCase})
+		generated, err := app.GenerateBundle(ui.WithOutput(ctx, progress), app.GenerationRequest{
+			Inventory: r.Inventory, UserConfig: r.UserConfig, UseCase: r.UseCase, OutputPath: r.OutputPath,
+		}, d.fetchChart)
 		if err != nil {
-			return apperrors.NewValidationError("invalid DPF generation inputs", err, "Correct inventory or supported overrides and rerun discovery; catalog gaps require a supported Launch Kit release")
+			return preparationError(err)
 		}
-		artifacts, err := app.Generate(ui.WithOutput(ctx, progress), resolved, d.fetchChart)
-		if err != nil {
-			return err
-		}
-		publication, err := artifacts.Publish(ctx, r.OutputPath)
-		if err != nil {
-			return err
-		}
-		index := artifacts.Index()
-		progress.Info("[PASS] Generation: %d stages saved to %s", len(index.Stages), publication.Path)
+		publication := generated.Publication
 		result := struct {
 			Target              string   `json:"target"`
 			UseCase             string   `json:"useCase"`
@@ -104,7 +88,7 @@ func (d generateDriver) Bind(inv target.Invocation) (target.Operation, error) {
 			Unchanged           bool     `json:"unchanged"`
 			DeploymentReadiness string   `json:"deploymentReadiness"`
 			RequiredChecks      []string `json:"requiredChecks"`
-		}{Target: "dpf", UseCase: "hbn-bgp", State: "generated", Path: publication.Path, Unchanged: publication.Unchanged, DeploymentReadiness: "not-evaluated", RequiredChecks: index.ExternalPrerequisites}
+		}{Target: "dpf", UseCase: "hbn-bgp", State: "generated", Path: publication.Path, Unchanged: publication.Unchanged, DeploymentReadiness: "not-evaluated", RequiredChecks: generated.RequiredChecks}
 		if inv.Output.Format == "json" {
 			return json.NewEncoder(r.Stdout).Encode(result)
 		}

@@ -20,6 +20,7 @@ type GenerationRequest struct {
 	Inventory  string
 	UserConfig string
 	UseCase    *string
+	OutputPath string
 }
 
 // PrepareGeneration loads the public inputs and resolves desired artifacts.
@@ -65,4 +66,35 @@ func Generate(ctx context.Context, resolved ResolvedGeneration, fetch ChartFetch
 	}
 	progress.Info("[RUNNING] Manifests: verifying archives and validating the complete resource bundle")
 	return generation.Generate(resolved.Inputs)
+}
+
+// GenerationResult describes the published bundle without CLI formatting.
+type GenerationResult struct {
+	Publication    bundle.Publication
+	RequiredChecks []string
+}
+
+// GenerateBundle resolves public inputs, verifies charts and publishes one bundle.
+// A pre-canceled operation does not read input files or retrieve artifacts.
+func GenerateBundle(ctx context.Context, request GenerationRequest, fetch ChartFetcher) (GenerationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return GenerationResult{}, err
+	}
+	progress := ui.FromContext(ctx)
+	progress.Info("[RUNNING] Generation: resolving profile and selected discovery identities")
+	resolved, err := PrepareGeneration(request)
+	if err != nil {
+		return GenerationResult{}, &PreparationError{Stage: GenerationInputs, Err: err}
+	}
+	artifacts, err := Generate(ctx, resolved, fetch)
+	if err != nil {
+		return GenerationResult{}, err
+	}
+	publication, err := artifacts.Publish(ctx, request.OutputPath)
+	if err != nil {
+		return GenerationResult{}, err
+	}
+	index := artifacts.Index()
+	progress.Info("[PASS] Generation: %d stages saved to %s", len(index.Stages), publication.Path)
+	return GenerationResult{Publication: publication, RequiredChecks: index.ExternalPrerequisites}, nil
 }

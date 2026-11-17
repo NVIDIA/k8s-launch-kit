@@ -4,22 +4,15 @@
 package dpf
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
@@ -86,59 +79,13 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 			progress = ui.NewWithWriter(r.Stderr)
 		}
 		ctx = ui.WithOutput(ctx, progress)
-		progress.Info("[RUNNING] Deployment: validating the retained bundle and site access")
-		retained, err := bundle.Load(r.DeploymentFiles)
-		if err != nil {
-			return apperrors.NewValidationError("invalid DPF deployment bundle", err, "Regenerate the complete bundle and retain its metadata")
-		}
-		plan, err := generation.LoadPlan(retained)
-		if err != nil {
-			return apperrors.NewValidationError("invalid retained DPF deployment plan", err, "Regenerate and review the bundle before opening access")
-		}
-		input, err := config.LoadInputs(r.Inventory, r.UserConfig)
-		if err != nil {
-			return apperrors.NewValidationError("invalid DPF deployment configuration", err, "Supply the discovery output with --inventory dpf-discovered.yaml")
-		}
-		input, err = app.WithRetainedConfiguration(input, plan)
-		if err != nil {
-			return apperrors.NewValidationError("cannot restore DPF deployment settings", err, "Regenerate and review the bundle")
-		}
-		input, err = app.WithRetainedUseCase(input, retained)
-		if err != nil {
-			return apperrors.NewValidationError("DPF deployment selection conflicts with the bundle", err, "Use the generated selection or regenerate and review the bundle")
-		}
-		input, err = app.WithRetainedProvisioning(input, plan)
-		if err != nil {
-			return apperrors.NewValidationError("cannot resolve retained DPF provisioning", err, "Use the validated bundle's supported recipe")
-		}
-		access, err := config.Resolve(input)
-		if err != nil {
-			return apperrors.NewValidationError("invalid DPF deployment access", err, "Correct the site configuration and access references")
-		}
-		if err := validateManagement(access); err != nil {
-			return err
-		}
-		rebooter, err := NewExternalRebooter(access, access.RequestTimeout, maxExternalRebootWait, 5*time.Second)
-		if err != nil {
-			return err
-		}
-		root, err := filepath.Abs(r.DeploymentFiles)
-		if err != nil {
-			return err
-		}
-		runDir, err := os.MkdirTemp(filepath.Dir(root), "l8k-dpf-deploy-")
-		if err != nil {
-			return fmt.Errorf("create DPF deployment report directory: %w", err)
-		}
-		progress.Info("[RUNNING] Deployment records: %s", runDir)
-		result, runErr := deployment.Run(ctx, deployment.RunRequest{
-			Bundle: retained, Access: access, Resume: resume,
-			ReportPath: filepath.Join(runDir, "deployment.jsonl"), ProbeJournalPath: filepath.Join(runDir, "probe-resources.json"),
-			VerifyPrerequisites: app.DeploymentPrerequisites(retained, runDir, resume != nil), VerifyChartSource: verifyDeploymentChart,
-			Rebooter:     rebooter,
-			PollInterval: 5 * time.Second, RequestTimeout: access.RequestTimeout,
+		result, err := app.Deploy(ctx, app.DeploymentRequest{
+			Inventory: r.Inventory, UserConfig: r.UserConfig, DeploymentFiles: r.DeploymentFiles, Resume: resume,
 		})
-		return writeDeploymentResult(r, inv.Output.Format, result, runErr)
+		if result == nil {
+			return preparationError(err)
+		}
+		return writeDeploymentResult(r, inv.Output.Format, *result, err)
 	}), nil
 }
 
@@ -190,21 +137,4 @@ func writeDeploymentResult(request DeployRequest, format string, result deployme
 		return failure
 	}
 	return nil
-}
-
-func verifyDeploymentChart(ctx context.Context, plan *generation.Plan) (deployment.PreflightCheck, error) {
-	check := deployment.PreflightCheck{ID: "hbn-chart-source-matches-archive", State: "blocked", ReasonCode: "HBN_CHART_SOURCE_UNVERIFIED", Message: "Current HBN chart source bytes have not been verified."}
-	if plan == nil {
-		return check, fmt.Errorf("retained deployment plan is required")
-	}
-	selected := plan.Intent().Generation
-	data, err := app.DownloadChart(ctx, strings.TrimSuffix(selected.ChartRepository, "/")+"/charts/"+selected.ChartName+"-"+selected.ChartVersion+".tgz")
-	if err != nil {
-		return check, err
-	}
-	if !bytes.Equal(data, plan.HBNChart()) {
-		return check, fmt.Errorf("current HBN chart source differs from the retained archive")
-	}
-	check.State, check.ReasonCode, check.Message = "passed", "HBN_CHART_SOURCE_VERIFIED", "Current HBN chart source bytes match the retained archive."
-	return check, nil
 }

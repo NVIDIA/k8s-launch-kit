@@ -20,7 +20,7 @@ import (
 )
 
 // StandaloneCollectors composes discovery transports without opening access
-// references or contacting endpoints. The caller validates access and diagnostic
+// references or contacting endpoints. Discover validates access and diagnostic
 // assets before collection and owns prior-inventory fallback and publication.
 func StandaloneCollectors(request config.Request, runDir string) discovery.Dependencies {
 	provisioningRelease := ""

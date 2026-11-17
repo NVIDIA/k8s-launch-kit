@@ -383,7 +383,7 @@ flowchart TB
 | `pkg/target` | Names, phases, capabilities, common invocation policy, registry, operation contract | Cobra, Host options, DPF options, Kubernetes clients |
 | `pkg/target/host` | Typed Host requests, explicit-value semantics, Host path/config resolution, phase services | DPF implementation or cross-target composition |
 | `pkg/app` | Discover/generate/root workflow state and Network Operator plugin coordination | CLI parsing or process exit |
-| `pkg/dpf/app` | Pure generation and retained-plan input resolution; explicit chart retrieval/render preparation, collector and caller-permission composition, fresh deployment prerequisite collection/publication and retained-plan comparison | CLI binding, final output or deployment state machine |
+| `pkg/dpf/app` | Discover, generate and deploy operation composition; pure generation/retained-plan resolution, explicit access and artifact I/O, collectors and permission checks, publication and external reboot composition | CLI binding, process signals, final output or deployment state machine |
 | `pkg/dpf/managementaccess` | Bounded explicit management credential/TLS snapshots, client construction and fresh cluster identity reads | Discovery inventory, deployment eligibility, ambient Host kubeconfig fallback or cached identity success |
 | `pkg/dpf/discovery` | Expanded management inventory, provisioning observations and discovery checks using explicit management access | Credential loading or base management access construction |
 | `pkg/networkoperatorplugin` | Discovery, rendering, deployment state machine, validation primitives | Target selection |
@@ -391,24 +391,28 @@ flowchart TB
 | `pkg/configflags`, `pkg/configinput`, `pkg/resolve` | Shared option bindings, explicit CLI inputs, configuration resolution and validation | CLI process exit or cluster orchestration |
 | `pkg/ui`, `pkg/errors`, `pkg/log` | Presentation, structured failures, and logging | Domain decisions |
 
-DPF adapters call `app.ResolveGeneration` for desired inputs without opening
-credential or kubeconfig references. Fresh generation selects maintained release
-catalog defaults; retained deployment uses the validated plan's fixed recipe and
-compares current settings, source selection and physical bindings against it.
-`app.PrepareGeneration` loads public input files, and `app.Generate` retrieves
-bounded chart archives and invokes the schema-validating renderer. These are I/O
-operations, separate from the pure resolver. The adapter retains signals,
-publication, user-facing error projection and final output. The application also
-composes caller authorization from the actual generated or retained bundle and
-fresh management identity. The application shares concrete collector assembly across standalone discovery and
-native deployment prerequisite collection. Standalone discovery selects fresh
+DPF adapters call `app.Discover`, `app.GenerateBundle` and `app.Deploy` with
+typed requests and context. Adapters retain signals, writers, progress policy,
+user-facing error projection and final output. Generation's public-file loading,
+chart retrieval, rendering and publication are explicit I/O, separate from pure
+`app.ResolveGeneration`. Fresh generation selects maintained release defaults;
+retained deployment uses the validated plan's fixed recipe and compares current
+settings, source selection and exact physical bindings against it. Deployment
+validates the bundle and retained plan before opening access. A preparation error
+has no execution result; once `deployment.Run` starts, its typed outcome is
+available even on failure. Deployment retains the lifecycle state machine and
+all effect fences. The application composes the bounded external SSH rebooter,
+including its one-submission and observation-only recovery behavior.
+
+The application shares concrete collector assembly across standalone discovery
+and native deployment prerequisite collection. Standalone discovery selects fresh
 permission planning and release-dependent BMC observations; deployment binds
 authorization and provisioning to its retained plan. Resume defers lifecycle
 eligibility, and post-activation additionally records artifact inputs without
-re-reading origin bytes. Each collection keeps its own probe journal; prerequisite
-publication survives cancellation before returning the cancellation error.
-The target adapter retains standalone discovery validation/publication and
-deployment orchestration.
+re-reading origin bytes. Each collection keeps its own probe journal. Both
+standalone discovery and prerequisite publication retain their existing bounded
+cancellation-independent publication budgets. Caller authorization uses the
+actual generated or retained bundle and fresh management identity.
 
 DPF discovery, probes and deployment share the concrete management access client.
 Each `managementaccess.Open` snapshots the explicit bounded credential and TLS
