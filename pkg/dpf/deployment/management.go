@@ -16,7 +16,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

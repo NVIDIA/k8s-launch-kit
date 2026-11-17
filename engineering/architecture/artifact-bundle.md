@@ -11,6 +11,15 @@ files in memory. It retains the original bytes, source filename and document
 number, parsed Kubernetes objects, and normalized Helm values. Both loading
 paths use the same filename rules and deterministic order.
 
+The lower-level `ParseResources` entrypoint validates resource YAML and
+identities while retaining each caller-supplied source name and physical
+document number. Host `FromFiles` applies its filename roles and values rules
+around that parser. DPF stage validation supplies its indexed nested paths
+directly, then applies stage membership, destination, namespace and projection
+rules in the DPF bundle package. Helm SDK setup is shared through
+`pkg/helmclient`; namespace and storage-driver choices remain explicit inputs,
+with Host defaults applied by Host callers.
+
 Files containing `example` in the basename are validation workloads. Other
 resource files are deployment inputs. Only the exact name `values.yaml` is
 Helm input. The loader rejects reserved alternatives such as `values.yml` and

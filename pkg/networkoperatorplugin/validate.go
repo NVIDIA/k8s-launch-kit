@@ -37,8 +37,9 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmconfig"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	corev1 "k8s.io/api/core/v1"
@@ -634,7 +635,7 @@ func checkHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namesp
 		return &HelmValuesCheck{Skipped: true, Reason: "no values.yaml in deployment dir — chart managed out of band"}, nil
 	}
 	if namespace == "" {
-		namespace = "nvidia-network-operator"
+		namespace = helmconfig.DefaultNamespace
 	}
 
 	actionCfg, err := helmclient.NewActionConfig(restConfig, namespace, helmclient.StorageDriver)
@@ -652,33 +653,33 @@ func checkHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namesp
 	// release-over-release) and out of scope for this check.
 	getValues := action.NewGetValues(actionCfg)
 	getValues.AllValues = false
-	deployed, err := getValues.Run(helmclient.DefaultReleaseName)
+	deployed, err := getValues.Run(helmconfig.DefaultReleaseName)
 	if err != nil {
 		if errors.Is(err, driver.ErrReleaseNotFound) {
 			return &HelmValuesCheck{
 				Skipped:     true,
-				Reason:      fmt.Sprintf("no helm release %q in namespace %s — run `l8k deploy` first", helmclient.DefaultReleaseName, namespace),
+				Reason:      fmt.Sprintf("no helm release %q in namespace %s — run `l8k deploy` first", helmconfig.DefaultReleaseName, namespace),
 				Namespace:   namespace,
-				ReleaseName: helmclient.DefaultReleaseName,
+				ReleaseName: helmconfig.DefaultReleaseName,
 			}, nil
 		}
 		return &HelmValuesCheck{
 			Skipped:     true,
 			Reason:      fmt.Sprintf("helm get values failed: %v", err),
 			Namespace:   namespace,
-			ReleaseName: helmclient.DefaultReleaseName,
+			ReleaseName: helmconfig.DefaultReleaseName,
 		}, nil
 	}
 
 	generated := parsed
 	if generated == nil {
-		generated, err = helmclient.UnmarshalValues(generatedValuesYAML)
+		generated, err = bundle.ParseValues(generatedValuesYAML)
 		if err != nil {
 			return &HelmValuesCheck{
 				Skipped:     true,
 				Reason:      fmt.Sprintf("parse generated values.yaml: %v", err),
 				Namespace:   namespace,
-				ReleaseName: helmclient.DefaultReleaseName,
+				ReleaseName: helmconfig.DefaultReleaseName,
 			}, nil
 		}
 	}
@@ -687,7 +688,7 @@ func checkHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namesp
 	mismatches := preflight.DeepEqualValues(deployed, generated)
 	out := &HelmValuesCheck{
 		Namespace:   namespace,
-		ReleaseName: helmclient.DefaultReleaseName,
+		ReleaseName: helmconfig.DefaultReleaseName,
 		AllMatch:    len(mismatches) == 0,
 	}
 	for _, m := range mismatches {
@@ -728,7 +729,7 @@ func findNetworkOperatorHelmRelease(ctx context.Context, c client.Client, namesp
 	}
 	// Prefer the release that deploy and values validation manage. Preserve
 	// legacy custom-name lookup only when it identifies a single release.
-	latest, found := latestByRelease[helmclient.DefaultReleaseName]
+	latest, found := latestByRelease[helmconfig.DefaultReleaseName]
 	if !found {
 		names := make([]string, 0, len(latestByRelease))
 		for name := range latestByRelease {

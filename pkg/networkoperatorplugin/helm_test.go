@@ -33,7 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmconfig"
 )
 
 // newTestActionConfig builds an action.Configuration backed by in-memory
@@ -77,7 +77,7 @@ data: {}
 func seedRelease(t *testing.T, cfg *action.Configuration, values map[string]interface{}) {
 	t.Helper()
 	rel := &release.Release{
-		Name:      helmclient.DefaultReleaseName,
+		Name:      helmconfig.DefaultReleaseName,
 		Namespace: "nvidia-network-operator",
 		Version:   1,
 		Info:      &release.Info{Status: release.StatusDeployed},
@@ -93,11 +93,11 @@ func TestUninstallWithActionConfig(t *testing.T) {
 		seedRelease(t, actionCfg, map[string]interface{}{"nfd": map[string]interface{}{"enabled": true}})
 
 		removed, err := uninstallWithActionConfig(
-			actionCfg, helmclient.DefaultNamespace, 30*time.Second)
+			actionCfg, helmconfig.DefaultNamespace, 30*time.Second)
 		require.NoError(t, err)
 		assert.True(t, removed)
 
-		_, err = actionCfg.Releases.Last(helmclient.DefaultReleaseName)
+		_, err = actionCfg.Releases.Last(helmconfig.DefaultReleaseName)
 		assert.ErrorIs(t, err, driver.ErrReleaseNotFound)
 	})
 
@@ -105,7 +105,7 @@ func TestUninstallWithActionConfig(t *testing.T) {
 		actionCfg := newTestActionConfig(t)
 
 		removed, err := uninstallWithActionConfig(
-			actionCfg, helmclient.DefaultNamespace, 30*time.Second)
+			actionCfg, helmconfig.DefaultNamespace, 30*time.Second)
 		require.NoError(t, err)
 		assert.False(t, removed)
 	})
@@ -130,7 +130,7 @@ func TestInstallOrUpgrade_FreshInstall(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	rel, err := actionCfg.Releases.Last(helmclient.DefaultReleaseName)
+	rel, err := actionCfg.Releases.Last(helmconfig.DefaultReleaseName)
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusDeployed, rel.Info.Status)
 	assert.Equal(t, generated, rel.Config)
@@ -167,7 +167,7 @@ func TestInstallOrUpgrade_SameValuesNoOp(t *testing.T) {
 	assert.False(t, loaderCalled, "no-op path should skip chart load")
 
 	// Only the seed release is present; no new revision was created.
-	hist, err := actionCfg.Releases.History(helmclient.DefaultReleaseName)
+	hist, err := actionCfg.Releases.History(helmconfig.DefaultReleaseName)
 	require.NoError(t, err)
 	assert.Len(t, hist, 1)
 }
@@ -232,11 +232,11 @@ func TestInstallOrUpgrade_UpgradeOnOverwrite(t *testing.T) {
 	require.NoError(t, err)
 
 	// History now has 2 revisions: the seeded v1 and the upgrade v2.
-	hist, err := actionCfg.Releases.History(helmclient.DefaultReleaseName)
+	hist, err := actionCfg.Releases.History(helmconfig.DefaultReleaseName)
 	require.NoError(t, err)
 	assert.Len(t, hist, 2)
 
-	latest, err := actionCfg.Releases.Last(helmclient.DefaultReleaseName)
+	latest, err := actionCfg.Releases.Last(helmconfig.DefaultReleaseName)
 	require.NoError(t, err)
 	assert.Equal(t, 2, latest.Version)
 	assert.Equal(t, generated, latest.Config)
@@ -249,9 +249,8 @@ func assertReleaseResourcesAnnotated(t *testing.T, rel *release.Release) {
 	assert.Equal(t, 1, countVersionAnnotations(t, []byte(rel.Manifest), testLaunchKitVersion))
 }
 
-// (UnmarshalValues + DeepEqualValues tests moved to
-// pkg/networkoperatorplugin/preflight/values_diff_test.go — they are
-// shared between deploy's Phase 0 conflict gate and the preflight checks.)
+// Shared values YAML parsing is tested in pkg/bundle. Helm value-difference
+// behavior remains covered by pkg/networkoperatorplugin/preflight/values_diff_test.go.
 
 func TestInstallOrUpgrade_ChartVersionConflictWithoutOverwrite(t *testing.T) {
 	// Seed a release whose chart Version differs from what the caller
@@ -260,7 +259,7 @@ func TestInstallOrUpgrade_ChartVersionConflictWithoutOverwrite(t *testing.T) {
 	actionCfg := newTestActionConfig(t)
 	seededValues := map[string]interface{}{"k": "v"}
 	rel := &release.Release{
-		Name:      helmclient.DefaultReleaseName,
+		Name:      helmconfig.DefaultReleaseName,
 		Namespace: "nvidia-network-operator",
 		Version:   1,
 		Info:      &release.Info{Status: release.StatusDeployed},
@@ -300,7 +299,7 @@ func TestInstallOrUpgrade_ChartVersionUpgradeOnOverwrite(t *testing.T) {
 	actionCfg := newTestActionConfig(t)
 	seededValues := map[string]interface{}{"k": "v"}
 	rel := &release.Release{
-		Name:      helmclient.DefaultReleaseName,
+		Name:      helmconfig.DefaultReleaseName,
 		Namespace: "nvidia-network-operator",
 		Version:   1,
 		Info:      &release.Info{Status: release.StatusDeployed},
@@ -330,7 +329,7 @@ func TestInstallOrUpgrade_ChartVersionUpgradeOnOverwrite(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	latest, err := actionCfg.Releases.Last(helmclient.DefaultReleaseName)
+	latest, err := actionCfg.Releases.Last(helmconfig.DefaultReleaseName)
 	require.NoError(t, err)
 	assert.Equal(t, 2, latest.Version)
 }
@@ -342,7 +341,7 @@ func TestInstallOrUpgrade_DetectsStuckPendingRelease(t *testing.T) {
 	// progress" mid-flight error.
 	actionCfg := newTestActionConfig(t)
 	rel := &release.Release{
-		Name:      helmclient.DefaultReleaseName,
+		Name:      helmconfig.DefaultReleaseName,
 		Namespace: "nvidia-network-operator",
 		Version:   1,
 		Info:      &release.Info{Status: release.StatusPendingUpgrade},

@@ -53,6 +53,26 @@ var _ = ginkgo.Describe("artifact snapshots", func() {
 		gomega.Expect(sourceError.Source).To(gomega.Equal(bundle.Source{File: "20-policy.yaml", Document: 2}))
 	})
 
+	ginkgo.It("parses nested resource sources without Host filename classification", func() {
+		raw := policy + "---\nmetadata: [broken\n"
+		docs, err := bundle.ParseResources([]bundle.File{{Name: "stage/system/nested.yaml", Content: raw}}, bundle.Deployment)
+		gomega.Expect(docs).To(gomega.BeNil())
+		gomega.Expect(err).To(gomega.HaveOccurred())
+		var sourceError *bundle.Error
+		gomega.Expect(errors.As(err, &sourceError)).To(gomega.BeTrue())
+		gomega.Expect(sourceError.Source).To(gomega.Equal(bundle.Source{File: "stage/system/nested.yaml", Document: 2}))
+	})
+
+	ginkgo.It("preserves Host sorted-file validation precedence across resource and values inputs", func() {
+		_, err := bundle.FromFiles([]bundle.File{
+			{Name: "10-resource.yaml", Content: "apiVersion: [broken\n"},
+			{Name: "values.yaml", Content: "values: [broken\n"},
+		})
+		var sourceError *bundle.Error
+		gomega.Expect(errors.As(err, &sourceError)).To(gomega.BeTrue())
+		gomega.Expect(sourceError.Source.File).To(gomega.Equal("10-resource.yaml"))
+	})
+
 	ginkgo.It("rejects reserved aliases and path traversal", func() {
 		for _, name := range []string{"values.yml", "VALUES.YAML", "../policy.yaml", "nested/policy.yaml"} {
 			_, err := bundle.FromFiles([]bundle.File{{Name: name, Content: policy}})

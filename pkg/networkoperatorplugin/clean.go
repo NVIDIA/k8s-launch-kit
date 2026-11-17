@@ -22,7 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmconfig"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -109,7 +109,7 @@ func cleanWithUninstaller(
 
 	if opts.KeepHelmChart {
 		uiOutput.Success("Kept Helm release %s in namespace %s",
-			helmclient.DefaultReleaseName, opts.Namespace)
+			helmconfig.DefaultReleaseName, opts.Namespace)
 		return result, nil
 	}
 	if opts.RestConfig == nil {
@@ -124,10 +124,10 @@ func cleanWithUninstaller(
 	result.HelmReleaseRemoved = removed
 	if removed {
 		uiOutput.Success("Uninstalled Helm release %s from namespace %s",
-			helmclient.DefaultReleaseName, opts.Namespace)
+			helmconfig.DefaultReleaseName, opts.Namespace)
 	} else {
 		uiOutput.Info("Helm release %s was not installed in namespace %s",
-			helmclient.DefaultReleaseName, opts.Namespace)
+			helmconfig.DefaultReleaseName, opts.Namespace)
 	}
 	return result, nil
 }

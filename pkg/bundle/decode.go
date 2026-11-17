@@ -111,6 +111,38 @@ func decodeResources(file File, role Role) ([]Document, error) {
 	return documents, err
 }
 
+// ParseResources validates Kubernetes resource documents without applying
+// Host filename classification. Source names are retained verbatim, including
+// nested paths used by target-specific bundles. Files are parsed in input
+// order; callers that require a canonical order should provide it explicitly.
+func ParseResources(files []File, role Role) ([]Document, error) {
+	seenFiles := make(map[string]struct{}, len(files))
+	seenObjects := make(map[ObjectRef]Source)
+	var documents []Document
+	for _, file := range files {
+		if file.Name == "" {
+			return nil, &Error{Source: Source{}, Reason: "resource source name is empty"}
+		}
+		if _, exists := seenFiles[file.Name]; exists {
+			return nil, &Error{Source: Source{File: file.Name}, Reason: "duplicate filename"}
+		}
+		seenFiles[file.Name] = struct{}{}
+		parsed, err := decodeResources(file, role)
+		if err != nil {
+			return nil, err
+		}
+		for _, doc := range parsed {
+			ref := doc.Ref()
+			if first, exists := seenObjects[ref]; exists {
+				return nil, &Error{Source: doc.Source(), Reason: fmt.Sprintf("duplicate resource %s/%s in namespace %q (first declared at %s document %d)", ref.Kind, ref.Name, ref.Namespace, first.File, first.Document)}
+			}
+			seenObjects[ref] = doc.Source()
+			documents = append(documents, doc)
+		}
+	}
+	return documents, nil
+}
+
 func ParseValues(data []byte) (map[string]any, error) {
 	return parseValues(string(data), "values.yaml")
 }

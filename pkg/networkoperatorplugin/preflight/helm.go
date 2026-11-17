@@ -12,7 +12,9 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/storage/driver"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	sharedbundle "github.com/nvidia/k8s-launch-kit/pkg/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmconfig"
 )
 
 // CheckHelmChartVersion compares the chart version reported by the live
@@ -47,11 +49,11 @@ func CheckHelmChartVersion(ctx context.Context, in Inputs) Result {
 
 	namespace := in.OperatorNamespace
 	if namespace == "" {
-		namespace = helmclient.DefaultNamespace
+		namespace = helmconfig.DefaultNamespace
 	}
 	releaseName := in.HelmReleaseName
 	if releaseName == "" {
-		releaseName = helmclient.DefaultReleaseName
+		releaseName = helmconfig.DefaultReleaseName
 	}
 
 	actionCfg, err := helmclient.NewActionConfig(in.RestConfig, namespace, helmclient.StorageDriver)
@@ -124,11 +126,11 @@ func CheckHelmValues(ctx context.Context, in Inputs) Result {
 
 	namespace := in.OperatorNamespace
 	if namespace == "" {
-		namespace = helmclient.DefaultNamespace
+		namespace = helmconfig.DefaultNamespace
 	}
 	releaseName := in.HelmReleaseName
 	if releaseName == "" {
-		releaseName = helmclient.DefaultReleaseName
+		releaseName = helmconfig.DefaultReleaseName
 	}
 
 	actionCfg, err := helmclient.NewActionConfig(in.RestConfig, namespace, helmclient.StorageDriver)
@@ -153,7 +155,7 @@ func CheckHelmValues(ctx context.Context, in Inputs) Result {
 
 	generated := in.GeneratedValues
 	if generated == nil {
-		generated, err = helmclient.UnmarshalValues(in.GeneratedValuesYAML)
+		generated, err = sharedbundle.ParseValues(in.GeneratedValuesYAML)
 		if err != nil {
 			r.Skipped = true
 			r.Reason = fmt.Sprintf("parse generated values.yaml: %v", err)
