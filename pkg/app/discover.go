@@ -240,7 +240,8 @@ func (l *Launcher) discoverClusterConfig() error {
 		}
 		data, err = config.PatchConfigYAML(srcConfigYAML, finalConfig, paths, banner)
 	} else {
-		data, err = config.MarshalConfigWithComments(finalConfig, srcConfigYAML, banner)
+		data, err = config.MarshalConfigWithComments(
+			withSourceNvIpamSubnets(finalConfig, rawInput.Config), srcConfigYAML, banner)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to marshal discovered config: %w", err)
@@ -276,4 +277,21 @@ func (l *Launcher) discoverClusterConfig() error {
 	}
 
 	return nil
+}
+
+// withSourceNvIpamSubnets returns a shallow copy of cfg for write-back whose
+// manual nvIpam subnets come from the source config. Resolution prepends the
+// reserveFirstIPs/reserveLastIPs ranges to every manual subnet's exclusions;
+// persisting those computed ranges would make the next load reserve them a
+// second time and keep them excluded after the reserve counts change.
+func withSourceNvIpamSubnets(cfg, source *config.LaunchKitConfig) *config.LaunchKitConfig {
+	if cfg == nil || cfg.NvIpam == nil || len(cfg.NvIpam.Subnets) == 0 ||
+		source == nil || source.NvIpam == nil || len(source.NvIpam.Subnets) == 0 {
+		return cfg
+	}
+	writeBack := *cfg
+	nvIpam := *cfg.NvIpam
+	nvIpam.Subnets = source.NvIpam.Subnets
+	writeBack.NvIpam = &nvIpam
+	return &writeBack
 }

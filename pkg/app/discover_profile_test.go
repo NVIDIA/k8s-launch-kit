@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/assets"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
@@ -642,6 +643,82 @@ discoveredDocaHostScope: {workerNodes: [old-worker], membershipKnown: true}
 				assert.Contains(t, string(saved), "discoveredDocaHostScope: null", "YAML patch must clear the old persisted scope")
 				assert.Contains(t, string(saved), "# retain owner setting\ncustomKey: keep")
 			}
+		})
+	}
+}
+
+const reserveDiscoveryConfig = `nvIpam:
+  poolName: nv-ipam-pool
+  reserveFirstIPs: 2
+  reserveLastIPs: 1
+  subnets:
+    - subnet: 192.168.50.0/24
+      gateway: 192.168.50.10
+      exclusions:
+        - startIP: 192.168.50.20
+          endIP: 192.168.50.21
+`
+
+func TestDiscoverDoesNotPersistComputedReserveExclusions(t *testing.T) {
+	explicit := []config.NvIpamExclusion{{StartIP: "192.168.50.20", EndIP: "192.168.50.21"}}
+	resolved := []config.NvIpamExclusion{
+		{StartIP: "192.168.50.0", EndIP: "192.168.50.1"},
+		{StartIP: "192.168.50.255", EndIP: "192.168.50.255"},
+		{StartIP: "192.168.50.20", EndIP: "192.168.50.21"},
+	}
+	groups := []config.ClusterConfig{{Identifier: "group-a", LinkType: "Ethernet"}}
+
+	for _, tc := range []struct {
+		name       string
+		userConfig bool
+		configDir  bool
+	}{
+		{name: "fresh discovery from reference config"},
+		{name: "fresh discovery from --config-dir", configDir: true},
+		{name: "user-config refresh", userConfig: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Chdir(tmpDir)
+			inputDir := tmpDir
+			if tc.configDir {
+				// Only the explicit --config-dir override supplies the
+				// reference config; the working directory has none.
+				inputDir = t.TempDir()
+			}
+			inputPath := filepath.Join(inputDir, "l8k-config.yaml")
+			require.NoError(t, os.WriteFile(inputPath, []byte(reserveDiscoveryConfig), 0o600))
+			outputPath := filepath.Join(tmpDir, "cluster-config.yaml")
+			opts := options.Options{SaveClusterConfig: outputPath}
+			if tc.userConfig {
+				opts.UserConfig = inputPath
+			}
+			if tc.configDir {
+				opts.ConfigDir = inputDir
+			}
+
+			launcher := newProfileDiscoveryLauncher(opts, groups)
+			if tc.configDir {
+				// RunContext resolves --config-dir before discovery runs.
+				configAssets, err := assets.ResolveConfigDir(inputDir)
+				require.NoError(t, err)
+				launcher.configAssets = configAssets
+			}
+			require.NoError(t, launcher.discoverClusterConfig())
+
+			saved, err := config.LoadInput(outputPath, launcher.logger)
+			require.NoError(t, err)
+			require.NotNil(t, saved.Config.NvIpam)
+			require.Len(t, saved.Config.NvIpam.Subnets, 1)
+			assert.Equal(t, explicit, saved.Config.NvIpam.Subnets[0].Exclusions,
+				"computed reserve exclusions must not be written back as explicit input")
+			assert.Equal(t, 2, saved.Config.NvIpam.ReserveFirstIPs)
+			assert.Equal(t, 1, saved.Config.NvIpam.ReserveLastIPs)
+
+			result, err := resolve.Resolve(resolve.Request{Input: saved})
+			require.NoError(t, err)
+			assert.Equal(t, resolved, result.Config.NvIpam.Subnets[0].Exclusions,
+				"reloading the saved config must reserve each range exactly once")
 		})
 	}
 }
