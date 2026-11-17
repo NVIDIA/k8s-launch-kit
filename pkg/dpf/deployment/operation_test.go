@@ -73,6 +73,10 @@ func (s *operationMemoryStore) updateOperation(_ context.Context, object *corev1
 
 func checkpointFixture(t *testing.T, fixture activationIntegrationFixture) (*deploymentOperation, *operationMemoryStore) {
 	t.Helper()
+	return checkpointFixtureWithState(t, fixture, nil)
+}
+func checkpointFixtureWithState(t *testing.T, fixture activationIntegrationFixture, initialize func(*operationState)) (*deploymentOperation, *operationMemoryStore) {
+	t.Helper()
 	deployment, err := retainedDeploymentObject(fixture.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +84,12 @@ func checkpointFixture(t *testing.T, fixture activationIntegrationFixture) (*dep
 	state := operationState{Binding: operationBinding{Version: 1, ID: "test-operation", BundleDigest: fixture.prepared.execution.plan.Digest(), Management: fixture.prepared.execution.plan.Intent().Management, NamespaceUID: "operator-namespace-uid", DeploymentName: deployment.GetName(), CohortDigest: inventory.Digest("dpf-operation-cohort-v1", fixture.prepared.execution.plan.Intent().Devices)},
 		Management: fixture.controlPlane.management, TenantUID: fixture.controlPlane.tenant.ClusterUID, TenantSystemUID: testTenant(fixture.controlPlane.tenant.Client).systemUID, TenantSources: map[string]types.UID{"Secret/tenant/source": "source-uid"}, Enrollment: fixture.controlPlane.enrollment, Software: fixture.workload.Software, Workload: fixture.workload.Resources,
 		Children: map[string]activationObjectReceipt{}, HoldIntents: map[string]operationProgress{}, Progress: map[string]operationProgress{}, Resets: map[string]operationReset{}, Hosts: map[string]operationHost{}}
+	if fixture.client.deployment != nil {
+		state.DeploymentUID = fixture.client.deployment.GetUID()
+	}
+	if initialize != nil {
+		initialize(&state)
+	}
 	data, err := encodeOperation(state)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +99,7 @@ func checkpointFixture(t *testing.T, fixture activationIntegrationFixture) (*dep
 	}
 	object := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: deployment.GetNamespace(), Name: operationName(deployment), UID: activationIntegrationGuardUID, ResourceVersion: "1", Labels: map[string]string{operationLabel: "v1"}}, Data: map[string]string{"checkpoint.json": data}}
 	store := &operationMemoryStore{object: object.DeepCopy()}
-	return &deploymentOperation{store: store, object: object, state: state}, store
+	return newDeploymentOperation(store, object, state), store
 }
 func reopenOperation(t *testing.T, store *operationMemoryStore) *deploymentOperation {
 	t.Helper()
@@ -97,7 +107,7 @@ func reopenOperation(t *testing.T, store *operationMemoryStore) *deploymentOpera
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &deploymentOperation{store: store, object: store.object.DeepCopy(), state: state}
+	return newDeploymentOperation(store, store.object, state)
 }
 
 type recoveryActivationClient struct{ *activationIntegrationFake }
@@ -306,11 +316,16 @@ func TestOperationHostLostAcknowledgementInspectsOriginalRequest(t *testing.T) {
 		value.Request.MTU++
 		fixture.prepared.operation.state.Hosts[key] = value
 	}
-	if _, err := runHostWorkloadNetworkStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload, activation, testJournal(fixture.prepared.execution), time.Second, reader, configure, inspect); err == nil || !strings.Contains(err.Error(), "HOST_NETWORK_OPERATION_CHANGED") {
+	mismatchJournal := testJournal(fixture.prepared.execution)
+	if _, err := runHostWorkloadNetworkStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload, activation, mismatchJournal, time.Second, reader, configure, inspect); err == nil || !strings.Contains(err.Error(), "HOST_NETWORK_OPERATION_CHANGED") {
 		t.Fatalf("changed host binding=%v", err)
 	}
 	if effects != 1 || inspections != 1 {
 		t.Fatal("changed host request reached transport")
+	}
+	file := mismatchJournal.file.(*managementMemoryFile)
+	if !strings.Contains(file.String(), `"reasonCode":"HOST_NETWORK_OPERATION_CHANGED"`) || !strings.Contains(file.String(), "Saved host request differs from fresh cohort; no host write permitted.") {
+		t.Fatal("changed host request lost its stage journal diagnostic")
 	}
 }
 
@@ -413,12 +428,13 @@ func TestOperationLostHoldConfirmationNeverInfersHistory(t *testing.T) {
 
 func TestOperationRuntimeRetryMeasuresEveryRowWithoutEffects(t *testing.T) {
 	f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
-	operation, store := checkpointFixture(t, f.activationIntegrationFixture)
+	operation, store := checkpointFixtureWithState(t, f.activationIntegrationFixture, func(state *operationState) {
+		state.DeploymentUID = f.activation.DeploymentUID
+		for node, p := range f.activation.progress {
+			state.Progress[node] = savedProgress(p)
+		}
+	})
 	f.prepared.operation = operation
-	operation.state.DeploymentUID = f.activation.DeploymentUID
-	if err := operation.saveProgress(f.ctx, f.activation.progress); err != nil {
-		t.Fatal(err)
-	}
 	beforePatches, beforeClaims, beforeCheckpoints := len(f.activationIntegrationFixture.client.patches), f.activationIntegrationFixture.client.guardCalls, store.updates
 	f.trafficHook = func(_ int, result *sshprobe.HostTrafficResult) {
 		result.State = sshprobe.TrafficProbeFailed

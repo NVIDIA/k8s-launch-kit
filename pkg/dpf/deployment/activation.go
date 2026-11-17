@@ -256,7 +256,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	var created *unstructured.Unstructured
 	var established types.UID
 	if prepared.operation != nil {
-		established = prepared.operation.state.DeploymentUID
+		established = prepared.operation.deploymentUID()
 		current, readErr := client.Get(ctx, deployment.DeepCopy())
 		if readErr == nil {
 			if current == nil || execution.reconciler.Verify(deployment, current) != nil || established != "" && current.GetUID() != established {
@@ -290,12 +290,10 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		}
 	}
 	receipt.DeploymentUID = created.GetUID()
-	if prepared.operation != nil && prepared.operation.state.DeploymentUID == "" {
-		prepared.operation.state.DeploymentUID = created.GetUID()
-		if err := prepared.operation.save(ctx); err != nil {
-			return receipt, err
-		}
+	if err := prepared.operation.bindDeployment(ctx, created.GetUID()); err != nil {
+		return receipt, err
 	}
+
 	refreshHoldScope := func(ctx context.Context) (activationObservation, error) {
 		if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
 			return activationObservation{}, err
@@ -326,7 +324,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			if err := prepared.operation.verifyHoldHistory(observed); err != nil {
 				return receipt, err
 			}
-			if err := prepared.operation.resolveCompletedResets(ctx, observed, reboot); err != nil {
+			if err := resolveCompletedResets(ctx, prepared.operation, client, created, execution.plan.Digest(), observed, reboot); err != nil {
 				return receipt, err
 			}
 		}
@@ -358,7 +356,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		released, releaseErr := releaseNextSelectedHold(ctx, client, selected, observed, journal, refreshHoldScope, prepared.operation)
 		if released != nil {
 			receipt.progress[released.nodeName] = *released
-			if err := prepared.operation.saveProgress(ctx, receipt.progress); err != nil {
+			if err := prepared.operation.confirmHoldReleased(ctx, *released); err != nil {
 				return receipt, err
 			}
 		}
@@ -1034,8 +1032,7 @@ func releaseNextSelectedHold(ctx context.Context, client activationStageClient, 
 			if intentErr != nil {
 				return released, intentErr
 			}
-			operation.state.HoldIntents[item.nodeName] = operationProgress{NodeName: intent.nodeName, MaintenanceUID: intent.maintenanceUID, ReleasedVersion: intent.releasedVersion, Sets: intent.sets, DPUs: intent.dpus, Versions: intent.versions}
-			if err := operation.save(ctx); err != nil {
+			if err := operation.recordHoldIntent(ctx, intent); err != nil {
 				return released, err
 			}
 		}
@@ -1373,13 +1370,16 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			return verified, activationFailure(journal, "EXTERNAL_HOST_REBOOT_UNVERIFIED", "The reboot callback did not verify the same host and adapter with a changed boot ID and a returned connection.", nil)
 		}
 		resetKey := resetOperationKey(request, sourcePhases)
-		if err := prepared.operation.saveResetObservation(ctx, resetKey, observation); err != nil {
+		matched, err := prepared.operation.recordResetObservation(ctx, resetKey, observation)
+		// Preserve matched physical history even if its CAS failed, while an
+		// observation rejected by saved history never becomes a reboot summary.
+		if matched {
+			verified = append(verified, activationRebootReceipt{HostInputRef: host.InputRef, NodeNames: append([]string(nil), nodeNames...), PreviousBoot: observation.PreviousBootID, CurrentBoot: observation.CurrentBootID})
+		}
+		if err != nil {
 			return verified, err
 		}
-		// Retain the confirmed physical action even if later API readiness or
-		// acknowledgement fails. An empty summary must not imply no reboot.
-		verified = append(verified, activationRebootReceipt{HostInputRef: host.InputRef, NodeNames: append([]string(nil), nodeNames...),
-			PreviousBoot: observation.PreviousBootID, CurrentBoot: observation.CurrentBootID})
+
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "external-host-reboot", Subject: host.InputRef,
 			State: "confirmed", ReasonCode: "EXTERNAL_HOST_REBOOT_VERIFIED", Message: fmt.Sprintf("Same host and adapter reconnected with a changed boot ID (previous %s, current %s); DPF request acknowledgement is still pending.", observation.PreviousBootID, observation.CurrentBootID)}); err != nil {
 			return verified, err
@@ -1405,7 +1405,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 				return verified, err
 			}
 		}
-		if err := prepared.operation.saveResetProofs(ctx, resetKey, proofs); err != nil {
+		if err := prepared.operation.recordResetACKIntent(ctx, resetKey, proofs); err != nil {
 			return verified, err
 		}
 		for _, nodeName := range nodeNames {
@@ -1488,7 +1488,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			resetProgress[nodeName] = completion
 			verified[len(verified)-1].completion = append(verified[len(verified)-1].completion, completion)
 		}
-		if err := prepared.operation.finishReset(ctx, resetKey, resetProgress); err != nil {
+		if err := prepared.operation.confirmResetAcknowledged(ctx, resetKey, verified[len(verified)-1].completion); err != nil {
 			return verified, err
 		}
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "acknowledge-external-reboot", Subject: host.InputRef,

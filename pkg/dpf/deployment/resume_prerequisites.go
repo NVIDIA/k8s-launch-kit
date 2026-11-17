@@ -117,7 +117,7 @@ func verifyOwnedResumeResources(ctx context.Context, client activationControlRea
 	if err != nil {
 		return proof, err
 	}
-	parentUID := prepared.operation.state.DeploymentUID
+	parentUID := prepared.operation.deploymentUID()
 	parent, err := client.Get(ctx, deployment.DeepCopy())
 	if err == nil {
 		if parent == nil || prepared.execution.reconciler.Verify(deployment, parent) != nil || parentUID != "" && parent.GetUID() != parentUID {
@@ -134,8 +134,9 @@ func verifyOwnedResumeResources(ctx context.Context, client activationControlRea
 	if err = verifyActivationResourceBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, control, workload), control.tenant.Client, selected, parentUID, objects, journal); err != nil {
 		return proof, err
 	}
+	tenantSystemUID, tenantSources := prepared.operation.tenantBinding()
 	sources, err := control.tenant.Client.operationSources(ctx)
-	if err != nil || control.tenant.Client.systemIdentity() != prepared.operation.state.TenantSystemUID || !reflect.DeepEqual(sources, prepared.operation.state.TenantSources) {
+	if err != nil || control.tenant.Client.systemIdentity() != tenantSystemUID || !reflect.DeepEqual(sources, tenantSources) {
 		return proof, fmt.Errorf("OWNED_RESUME_TENANT_CHANGED: recorded tenant or credential sources differ")
 	}
 	scope, err := collectEnrollmentScope(ctx, client, prepared.execution.verificationInputs(), prepared.selected, true)
@@ -145,7 +146,7 @@ func verifyOwnedResumeResources(ctx context.Context, client activationControlRea
 	if err = validateActivationScope(scope, prepared.execution.verificationInputs(), selected, parentUID); err != nil {
 		return proof, err
 	}
-	for key, prior := range prepared.operation.state.Children {
+	for key, prior := range prepared.operation.childBindings() {
 		kind, _, ok := strings.Cut(key, "/")
 		current := uniqueObjectByName(scope.objects(kind), prior.Name)
 		if !ok || current == nil || current.GetUID() != prior.UID || current.GetGeneration() != prior.Generation {
@@ -177,7 +178,7 @@ func inspectOwnedResumeHosts(ctx context.Context, prepared *preparedControlPlane
 	}
 	checks := []inventory.Check{}
 	for _, item := range proof.selected {
-		prior, known := prepared.operation.state.Hosts[item.item.device.Serial]
+		prior, known := prepared.operation.hostTransaction(item.item.device.Serial)
 		if !known {
 			continue
 		}

@@ -103,7 +103,11 @@ func observeOwnedResumeAllocations(ctx context.Context, client activationObserva
 			return nil, err
 		}
 		anchors = append(anchors, poolAnchor{parent: parent, pool: after})
-		if poolName == "workload" && len(prepared.operation.state.Hosts) > 0 {
+		if poolName == "workload" {
+			hostRequests := prepared.operation.hostRequests()
+			if len(hostRequests) == 0 {
+				continue
+			}
 			deployment, err := retainedDeploymentObject(prepared.execution.verificationInputs())
 			if err != nil {
 				return nil, err
@@ -117,9 +121,9 @@ func observeOwnedResumeAllocations(ctx context.Context, client activationObserva
 			if err != nil {
 				return nil, err
 			}
-			for serial, prior := range prepared.operation.state.Hosts {
-				current, err := hostNetworkRequestForLease(activationStageReceipt{BundleDigest: prepared.execution.plan.Digest(), DeploymentUID: proof.parentUID}, prior.Request.Identity, hostNetworkLeaseFence{snapshot: snapshot, leases: leases}, serial, prepared.execution.plan.Intent().Networking.WorkloadMTU, prepared.execution.plan.Intent().Networking.WorkloadCIDR)
-				if err != nil || !sameOperationRequest(prior.Request, current) {
+			for serial, prior := range hostRequests {
+				current, err := hostNetworkRequestForLease(activationStageReceipt{BundleDigest: prepared.execution.plan.Digest(), DeploymentUID: proof.parentUID}, prior.Identity, hostNetworkLeaseFence{snapshot: snapshot, leases: leases}, serial, prepared.execution.plan.Intent().Networking.WorkloadMTU, prepared.execution.plan.Intent().Networking.WorkloadCIDR)
+				if err != nil || !sameOperationRequest(prior, current) {
 					return nil, fmt.Errorf("OWNED_RESUME_HOST_ALLOCATION_CHANGED: original host request no longer matches the complete allocation cohort")
 				}
 			}

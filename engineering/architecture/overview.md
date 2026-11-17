@@ -299,10 +299,21 @@ pipeline remain capability rejections before client construction.
 DPF deploy reserves one typed, nonsecret ConfigMap checkpoint in the existing
 operator namespace before DPUDeployment creation. `--resume` binds its exact
 namespace/name/UID and retained plan, reconstructs verified prerequisite receipts,
-and restores activation history. Conditional patches, immutable reset claims and
+and restores activation history. One deployment-local owner records named parent,
+hold, reset and host-network transitions. Stages receive detached purpose-specific
+views; current API and physical verification stays with each stage. Persistence
+uncertainty stops new effects for the entire attempt, including repeated transition
+paths. Conditional patches, immutable reset claims and
 host-local transaction journals retain ownership of their individual effects;
 the checkpoint does not provide physical fencing or automatic adoption. Existing
-claims select observation-only recovery, and completed host work is inspected
+claims select observation-only recovery. A lost reset-ACK completion response
+requires the same immutable claim and fresh selected controller/Arm/host proof
+before recording controller advancement; a missing or replaced claim blocks
+recovery. An acknowledged reset permanently closes its phase-bound logical
+request; a reappeared pending annotation cannot renew reset or ACK authority.
+Physical reset observations matching saved history, and host-local results,
+remain visible through later checkpoint failures. Rejected reset observations
+never enter the reboot summary. Completed host work is inspected
 without configuration fallback. Each attempt produces fresh runtime evidence.
 
 DPF deployment stages consume their own read/check ports and the effects needed

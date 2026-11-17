@@ -354,18 +354,15 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 	tenant.sourceDigest = digest
 	client := recoveryActivationClient{base.client}
 	tenant.source = client
-	op, store := checkpointFixture(t, base)
-	op.state.Binding.NamespaceUID = base.controlPlane.management.NamespaceUIDs[execution.plan.Intent().Namespace]
-	op.state.TenantSources, err = base.controlPlane.tenant.Client.operationSources(base.ctx)
+	sourcesBinding, err := base.controlPlane.tenant.Client.operationSources(base.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := encodeOperation(op.state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	op.object.Data["checkpoint.json"] = data
-	store.object = op.object.DeepCopy()
+	op, store := checkpointFixtureWithState(t, base, func(state *operationState) {
+		state.Binding.NamespaceUID = base.controlPlane.management.NamespaceUIDs[execution.plan.Intent().Namespace]
+		state.TenantSources = sourcesBinding
+	})
+
 	base.prepared.operation = op
 	reboot := &recoveryRebooter{fixture: &base}
 	activation, err := runActivationStage(base.ctx, client, base.prepared, base.controlPlane, base.workload, base.inventory, base.request, base.journal, time.Millisecond, time.Second, reboot)
@@ -515,7 +512,7 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 			}
 			addresses := []string{}
 			if j == 0 {
-				addresses = []string{op.state.Hosts[host.Adapters[0].SerialNumber].Request.HostAddressPrefix}
+				addresses = []string{op.hostRequests()[host.Adapters[0].SerialNumber].HostAddressPrefix}
 			}
 			host.Runtime.Interfaces = append(host.Runtime.Interfaces, inventory.Interface{Name: pf.Netdevs[0], Index: 10 + j, MTU: 9000, Addresses: addresses})
 		}
@@ -674,7 +671,7 @@ func (h *nativeRuntimeHarness) run() (RunResult, []byte, string, error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			serial := request.Identity.AdapterSerial
-			saved, known := h.fixture.prepared.operation.state.Hosts[serial]
+			saved, known := h.fixture.prepared.operation.hostTransaction(serial)
 			if !known || !sameOperationRequest(saved.Request, request) {
 				return sshprobe.HostNetworkReceipt{}, fmt.Errorf("inspect changed original host transaction")
 			}

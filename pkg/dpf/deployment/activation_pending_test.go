@@ -96,7 +96,12 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 			}
 			op, store := checkpointFixture(t, f)
 			f.prepared.operation = op
-			op.state.DeploymentUID = created.GetUID()
+			if err := op.bindDeployment(f.ctx, created.GetUID()); err != nil {
+				t.Fatal(err)
+			}
+			if err := op.bindChildren(f.ctx, observed); err != nil {
+				t.Fatal(err)
+			}
 			objects, err := retainedWorkloadObjects(execution.verificationInputs())
 			if err != nil {
 				t.Fatal(err)

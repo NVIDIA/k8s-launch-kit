@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"sort"
 	"strings"
@@ -274,7 +275,10 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 		TenantSources: sources, Enrollment: workload.ControlPlane.enrollment, Software: workload.Software, Workload: workload.Resources,
 		Children: map[string]activationObjectReceipt{}, HoldIntents: map[string]operationProgress{}, Progress: map[string]operationProgress{}, Resets: map[string]operationReset{}, Hosts: map[string]operationHost{},
 	}
-	data, err := encodeOperation(state)
+	// Detach the complete setup before encoding; this same owned snapshot is
+	// retained only after the create response matches those exact bytes.
+	operation := newDeploymentOperation(client, nil, state)
+	data, err := encodeOperation(operation.state)
 	if err != nil {
 		return nil, operationReservationFailure(ctx, "OPERATION_CHECKPOINT_INVALID", err)
 	}
@@ -296,7 +300,8 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 	if _, err := decodeOperation(data); err != nil {
 		return nil, operationReservationFailure(ctx, "OPERATION_CHECKPOINT_INVALID", err)
 	}
-	return &deploymentOperation{store: client, object: created.DeepCopy(), state: state}, nil
+	operation.object = created.DeepCopy()
+	return operation, nil
 }
 
 func loadDeploymentOperation(ctx context.Context, client *APIClient, execution *managementExecution, ref *OperationRef) (*deploymentOperation, error) {
@@ -326,11 +331,11 @@ func loadDeploymentOperation(ctx context.Context, client *APIClient, execution *
 	if ns == nil || string(ns.UID) != state.Binding.NamespaceUID || ns.DeletionTimestamp != nil {
 		return nil, reconcileError("OPERATION_RESUME_NAMESPACE_CHANGED", operationResumeMessage("OPERATION_RESUME_NAMESPACE_CHANGED"), err)
 	}
-	return &deploymentOperation{store: client, object: object.DeepCopy(), state: state}, nil
+	return newDeploymentOperation(client, object, state), nil
 }
 
 func restoreOperationReceipts(ctx context.Context, client receiptRestorationReader, prepared *preparedControlPlaneRun, journal *executionJournal, interval, timeout time.Duration) (controlPlaneReceipts, workloadPreparationReceipt, error) {
-	state := prepared.operation.state
+	state := prepared.operation.preparationReceipts()
 	control := controlPlaneReceipts{management: state.Management, enrollment: state.Enrollment}
 	if err := waitManagementBootstrap(ctx, client, prepared.execution.verificationInputs(), state.Management, journal, interval); err != nil {
 		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_BOOTSTRAP_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_BOOTSTRAP_UNVERIFIED"), err)
@@ -344,7 +349,7 @@ func restoreOperationReceipts(ctx context.Context, client receiptRestorationRead
 		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_TENANT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_TENANT_UNVERIFIED"), err)
 	}
 	control.tenant = tenantStageReceipt{ClusterUID: state.TenantUID, Client: tenant}
-	workload := workloadPreparationReceipt{BundleDigest: state.Binding.BundleDigest, ControlPlane: control, Software: state.Software, Resources: state.Workload}
+	workload := workloadPreparationReceipt{BundleDigest: state.BundleDigest, ControlPlane: control, Software: state.Software, Resources: state.Workload}
 	objects, err := retainedWorkloadObjects(prepared.execution.verificationInputs())
 	if err != nil {
 		return control, workload, reconcileError("OPERATION_RESUME_PLAN_INVALID", operationResumeMessage("OPERATION_RESUME_PLAN_INVALID"), err)
@@ -362,20 +367,10 @@ func (o *deploymentOperation) restoreProgress() map[string]activationNodeProgres
 	result := map[string]activationNodeProgress{}
 	if o != nil {
 		for key, p := range o.state.Progress {
-			result[key] = activationNodeProgress{nodeName: p.NodeName, maintenanceUID: p.MaintenanceUID, releasedVersion: p.ReleasedVersion, resetAcknowledged: p.ResetAcknowledged, sets: p.Sets, dpus: p.DPUs, versions: p.Versions}
+			result[key] = activationNodeProgress{nodeName: p.NodeName, maintenanceUID: p.MaintenanceUID, releasedVersion: p.ReleasedVersion, resetAcknowledged: p.ResetAcknowledged, sets: maps.Clone(p.Sets), dpus: maps.Clone(p.DPUs), versions: maps.Clone(p.Versions)}
 		}
 	}
 	return result
-}
-
-func (o *deploymentOperation) saveProgress(ctx context.Context, progress map[string]activationNodeProgress) error {
-	if o == nil {
-		return nil
-	}
-	for key, p := range progress {
-		o.state.Progress[key] = operationProgress{NodeName: p.nodeName, MaintenanceUID: p.maintenanceUID, ReleasedVersion: p.releasedVersion, ResetAcknowledged: p.resetAcknowledged, Sets: p.sets, DPUs: p.dpus, Versions: p.versions}
-	}
-	return o.save(ctx)
 }
 
 func (c *APIClient) getOperation(ctx context.Context, namespace, name string) (*corev1.ConfigMap, error) {
@@ -434,7 +429,7 @@ func prepareResume(execution *managementExecution, request config.Request, opera
 	if err != nil {
 		return nil, reconcileError("OPERATION_RESUME_ENROLLMENT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_ENROLLMENT_UNVERIFIED"), err)
 	}
-	if !softwareEnrollmentReceiptMatches(operation.state.Enrollment.Devices, selected) {
+	if !softwareEnrollmentReceiptMatches(operation.enrolledDevices(), selected) {
 		return nil, reconcileError("OPERATION_RESUME_ENROLLMENT_CHANGED", operationResumeMessage("OPERATION_RESUME_ENROLLMENT_CHANGED"), nil)
 	}
 	return &preparedControlPlaneRun{execution: execution, selected: selected, password: password, operation: operation}, nil
@@ -444,7 +439,13 @@ func (o *deploymentOperation) bindChildren(ctx context.Context, observed activat
 	if o == nil {
 		return nil
 	}
-	changed := false
+	if err := o.writable(); err != nil {
+		return err
+	}
+	if o.state.DeploymentUID == "" {
+		return fmt.Errorf("OPERATION_PARENT_UNBOUND: children require a bound deployment")
+	}
+	children := maps.Clone(o.state.Children)
 	for _, group := range []struct {
 		kind    string
 		objects map[string]*unstructured.Unstructured
@@ -455,21 +456,21 @@ func (o *deploymentOperation) bindChildren(ctx context.Context, observed activat
 			}
 			current := group.objects[prior.Name]
 			if current == nil || current.GetUID() != prior.UID || current.GetGeneration() != prior.Generation {
-				return fmt.Errorf("OPERATION_CHILD_CHANGED: selected child missing/replaced/changed")
+				return o.bindingConflict("OPERATION_CHILD_CHANGED: selected child missing/replaced/changed")
 			}
 		}
 		for name, current := range group.objects {
-			key := group.kind + "/" + name
-			if _, known := o.state.Children[key]; !known {
-				o.state.Children[key] = activationObjectReceipt{Name: name, UID: current.GetUID(), Generation: current.GetGeneration()}
-				changed = true
+			if current == nil || name == "" || current.GetName() != name || current.GetUID() == "" || current.GetGeneration() < 1 {
+				return fmt.Errorf("OPERATION_CHILD_CHANGED: selected child identity incomplete")
 			}
+			children[group.kind+"/"+name] = activationObjectReceipt{Name: name, UID: current.GetUID(), Generation: current.GetGeneration()}
 		}
 	}
-	if changed {
-		return o.save(ctx)
+	if reflect.DeepEqual(children, o.state.Children) {
+		return nil
 	}
-	return nil
+	o.state.Children = children
+	return o.save(ctx)
 }
 
 func (o *deploymentOperation) verifyHoldHistory(observed activationObservation) error {
