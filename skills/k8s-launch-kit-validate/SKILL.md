@@ -214,8 +214,12 @@ failure; never substitute GPU 0. Pull Secrets come from
 With the default `--connectivity-timeout=0`, validate logs one total automatic
 budget after planning the matrix. The calculation reflects the enabled test
 families, per-command limits, ordered pod-pair batches, bounded workload setup,
-cleanup, and a safety margin. A positive flag value replaces that calculation
-with a user-supplied hard deadline.
+cleanup, and a safety margin. GPUDirect DMA-BUF `ib_write_bw` clients retain
+their 45-second command limit for every expectation so CUDA initialization
+has time to complete; host-memory observation-only and forbidden probes keep
+their 5-second limit. Batch and automatic budgets include those family-specific
+limits. A positive flag value replaces the automatic calculation with a
+user-supplied hard deadline that can stop a probe before its command limit.
 
 The minimum connectivity config is:
 

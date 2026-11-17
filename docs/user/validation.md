@@ -419,8 +419,15 @@ before connectivity test execution starts:
 Connectivity timeout automatically calculated from 144 planned tests: 2h10m24s total budget
 ```
 
+GPUDirect DMA-BUF `ib_write_bw` clients have a 45-second command limit for
+every expectation, including observation-only and forbidden probes, to allow
+CUDA initialization. Host-memory `ib_write_bw` observation-only and forbidden
+probes keep their 5-second limit. Batch deadlines and the automatic total
+budget include these family-specific limits.
+
 Set a positive duration to replace the automatic budget with an explicit hard
-deadline for connectivity workload setup and execution:
+deadline for connectivity workload setup and execution. This deadline can stop
+a probe before its individual command limit:
 
 ```bash
 l8k validate --connectivity-timeout 45m
