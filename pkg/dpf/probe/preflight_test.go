@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes/fake"
@@ -36,7 +36,7 @@ var _ = Describe("probe prerequisites before remote effects", func() {
 			case "unschedulable":
 				nodes[1].Unschedulable = true
 			}
-			rows, cleanup, err := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{}, Namespace: "default"}, &inventory.Inventory{Management: &inventory.Management{Nodes: nodes}})
+			rows, cleanup, err := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, managementaccess.Client{Client: client, REST: &rest.Config{}, Namespace: "default"}, &inventory.Inventory{Management: &inventory.Management{Nodes: nodes}})
 			Expect(err).To(MatchError(ContainSubstring("management node cannot")))
 			Expect(rows).To(BeEmpty())
 			Expect(cleanup.State).To(Equal("complete"))
@@ -48,7 +48,7 @@ var _ = Describe("probe prerequisites before remote effects", func() {
 			client := fake.NewClientset()
 			runner := Runner{Assets: assets(), Journal: func([]Receipt) error { return nil }}
 			ctx := context.Background()
-			management := discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://management.example"}, Namespace: "default"}
+			management := managementaccess.Client{Client: client, REST: &rest.Config{Host: "https://management.example"}, Namespace: "default"}
 			inv := &inventory.Inventory{Management: &inventory.Management{Nodes: []inventory.Node{{Name: "n", UID: "u", Ready: true, OS: "linux", Architecture: "amd64"}}}}
 			switch scenario {
 			case "context":

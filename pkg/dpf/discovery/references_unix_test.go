@@ -6,6 +6,7 @@ package discovery
 
 import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/tools/clientcmd"
@@ -24,7 +25,7 @@ var _ = Describe("bounded reference files", func() {
 		filename := filepath.Join(dir, "pipe")
 		Expect(syscall.Mkfifo(filename, 0600)).To(Succeed())
 		done := make(chan error, 1)
-		go func() { _, err := ManagementAccess(config.Request{Kubeconfig: filename}); done <- err }()
+		go func() { _, err := managementaccess.Open(config.Request{Kubeconfig: filename}); done <- err }()
 		Eventually(done, time.Second).Should(Receive(HaveOccurred()))
 	})
 })
@@ -42,7 +43,7 @@ var _ = Describe("unambiguous credential references", func() {
 		filename := filepath.Join(dir, "config")
 		Expect(os.WriteFile(filename, b, 0600)).To(Succeed())
 		done := make(chan error, 1)
-		go func() { _, err := ManagementAccess(config.Request{Kubeconfig: filename}); done <- err }()
+		go func() { _, err := managementaccess.Open(config.Request{Kubeconfig: filename}); done <- err }()
 		Eventually(done, time.Second).Should(Receive(HaveOccurred()))
 	})
 })

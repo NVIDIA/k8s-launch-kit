@@ -15,10 +15,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
-	dpfdiscovery "github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnrender"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -100,7 +100,7 @@ func TestManagementPreflightPlanAcceptsActualGeneratedReleaseAndRejectsUnretaine
 		allowed := request.Spec.ResourceAttributes != nil && (request.Spec.ResourceAttributes.Verb == "escalate" || request.Spec.ResourceAttributes.Verb == "bind")
 		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed}}, nil
 	})
-	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	api := &APIClient{access: managementaccess.Client{Client: client}}
 	rbacChecks := api.checkProjectedRBACPermissions(context.Background(), preflightPlan{projection: projection})
 	if len(rbacChecks) == 0 {
 		t.Fatal("actual rendered operator RBAC was not checked")
@@ -372,7 +372,7 @@ func TestPreflightAuthorizationReviewIsScopedAndDoesNotExposeServerText(t *testi
 		}
 		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
 	})
-	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	api := &APIClient{access: managementaccess.Client{Client: client}}
 	check := api.checkAccess(context.Background(), accessRequirement{verb: "get", version: "v1", resource: "namespaces", resourceName: "dpf-operator-system"})
 	if check.State != "passed" {
 		t.Fatalf("SSAR check = %#v", check)
@@ -398,7 +398,7 @@ func TestProjectedRBACRequiresExplicitPrivilegesAndDoesNotSendRulesReviews(t *te
 		t.Fatal("SelfSubjectRulesReview must not be used to prove RBAC escalation or bind authorization")
 		return true, nil, nil
 	})
-	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	api := &APIClient{access: managementaccess.Client{Client: client}}
 	checks := api.checkProjectedRBACPermissions(context.Background(), preflightPlan{projection: []*unstructured.Unstructured{role, binding}})
 	if len(checks) != 2 || checks[0].State != "blocked" || checks[0].ReasonCode != "RBAC_ROLE_PRIVILEGE_UNVERIFIABLE" || checks[1].State != "blocked" || checks[1].ReasonCode != "RBAC_BIND_PRIVILEGE_UNVERIFIABLE" {
 		t.Fatalf("create permission without named escalate/bind was treated as sufficient authority: %#v", checks)
@@ -426,7 +426,7 @@ func TestProjectedRBACUsesNamedEscalateAndBindReviews(t *testing.T) {
 		calls = append(calls, *request.Spec.ResourceAttributes.DeepCopy())
 		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
 	})
-	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	api := &APIClient{access: managementaccess.Client{Client: client}}
 	checks := api.checkProjectedRBACPermissions(context.Background(), preflightPlan{projection: []*unstructured.Unstructured{role, binding}})
 	if len(checks) != 2 || checks[0].State != "passed" || checks[1].State != "passed" || len(calls) != 2 {
 		t.Fatalf("explicit Role privileges not accepted: checks=%#v calls=%#v", checks, calls)
@@ -447,7 +447,7 @@ func TestProjectedRBACEmptyRoleNeedsNoEscalate(t *testing.T) {
 		t.Fatal("empty role should not require escalate")
 		return true, nil, nil
 	})
-	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	api := &APIClient{access: managementaccess.Client{Client: client}}
 	checks := api.checkProjectedRBACPermissions(context.Background(), preflightPlan{projection: []*unstructured.Unstructured{role}})
 	if len(checks) != 1 || checks[0].State != "passed" {
 		t.Fatalf("empty cluster role result = %#v", checks)
@@ -461,7 +461,7 @@ func TestArgoControlPlaneNamespaceNeedsNoAdditionalNamespaceSetting(t *testing.T
 		Status:     appsv1.StatefulSetStatus{ObservedGeneration: 1, ReadyReplicas: 1, UpdatedReplicas: 1, CurrentReplicas: 1},
 	}
 	client := fake.NewSimpleClientset(controller)
-	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	api := &APIClient{access: managementaccess.Client{Client: client}}
 	check := api.checkArgoApplicationScope(context.Background(), "dpf-operator-system", "dpf-operator-system")
 	if check.State != "passed" {
 		t.Fatalf("same-namespace Argo control plane without an additional namespace list = %#v", check)
@@ -557,7 +557,7 @@ func TestCertManagerWebhookCAResolvesAlternateNamespaceAndNames(t *testing.T) {
 	validating := &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "certs-webhook-validating"}, Webhooks: []admissionregistrationv1.ValidatingWebhook{{ClientConfig: admissionregistrationv1.WebhookClientConfig{CABundle: []byte("ca"), Service: &admissionregistrationv1.ServiceReference{Name: service.Name, Namespace: namespace}}}}}
 	mutating := &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "certs-webhook-mutating"}, Webhooks: []admissionregistrationv1.MutatingWebhook{{ClientConfig: admissionregistrationv1.WebhookClientConfig{CABundle: []byte("ca"), Service: &admissionregistrationv1.ServiceReference{Name: service.Name, Namespace: namespace}}}}}
 	client := fake.NewSimpleClientset(workload, service, validating, mutating)
-	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	api := &APIClient{access: managementaccess.Client{Client: client}}
 	check := api.checkCertManagerWebhookCA(context.Background(), namespace)
 	if check.State != "passed" {
 		t.Fatalf("alternate cert-manager installation was rejected: %+v", check)

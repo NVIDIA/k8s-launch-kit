@@ -17,8 +17,8 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -70,7 +70,7 @@ type Runner struct {
 	Journal func([]Receipt) error
 }
 
-func (runner Runner) Run(ctx context.Context, r config.Request, mg discovery.ManagementClient, inv *inventory.Inventory) (rows []inventory.ProbeResult, cleanup inventory.Cleanup, err error) {
+func (runner Runner) Run(ctx context.Context, r config.Request, mg managementaccess.Client, inv *inventory.Inventory) (rows []inventory.ProbeResult, cleanup inventory.Cleanup, err error) {
 	cleanup = inventory.Cleanup{State: "complete", Leftovers: []string{}}
 	if ctx == nil || inv == nil || inv.Management == nil {
 		return nil, cleanup, fmt.Errorf("probe requires a context and management inventory")

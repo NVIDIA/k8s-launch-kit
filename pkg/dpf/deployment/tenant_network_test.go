@@ -15,8 +15,8 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,7 +36,7 @@ type tenantNetworkTestRunner struct {
 	nodes   []inventory.Node
 }
 
-func (r *tenantNetworkTestRunner) Run(_ context.Context, request config.Request, _ discovery.ManagementClient, inv *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error) {
+func (r *tenantNetworkTestRunner) Run(_ context.Context, request config.Request, _ managementaccess.Client, inv *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error) {
 	r.calls++
 	r.request = request
 	r.nodes = append([]inventory.Node(nil), inv.Management.Nodes...)

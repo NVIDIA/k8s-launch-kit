@@ -17,6 +17,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,7 +33,7 @@ type topologyProbe struct {
 	err      error
 }
 
-func (p *topologyProbe) Run(_ context.Context, _ config.Request, _ ManagementClient, inv *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error) {
+func (p *topologyProbe) Run(_ context.Context, _ config.Request, _ managementaccess.Client, inv *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls++

@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/tools/clientcmd"
@@ -48,11 +49,11 @@ var _ = Describe("explicit management access", func() {
 		Expect(e).NotTo(HaveOccurred())
 		filename := filepath.Join(dir, "config")
 		Expect(os.WriteFile(filename, b, 0600)).To(Succeed())
-		mg, e := ManagementAccess(config.Request{Kubeconfig: filename, RequestTimeout: time.Second})
+		mg, e := managementaccess.Open(config.Request{Kubeconfig: filename, RequestTimeout: time.Second})
 		Expect(e).NotTo(HaveOccurred())
 		Expect(mg.REST.CAData).To(Equal(ca))
 		Expect(mg.REST.CAFile).To(BeEmpty())
-		observed, e := mg.Observe(context.Background())
+		observed, e := Observe(context.Background(), mg)
 		Expect(e).NotTo(HaveOccurred())
 		Expect(observed.SystemNamespaceUID).To(Equal("cluster-one"))
 		Expect(observed.TrustDigest).NotTo(Equal("system-roots"))
@@ -72,7 +73,7 @@ var _ = Describe("explicit management access", func() {
 			Expect(e).NotTo(HaveOccurred())
 			filename := filepath.Join(dir, "config")
 			Expect(os.WriteFile(filename, b, 0600)).To(Succeed())
-			_, e = ManagementAccess(config.Request{Kubeconfig: filename})
+			_, e = managementaccess.Open(config.Request{Kubeconfig: filename})
 			Expect(e).To(HaveOccurred())
 			Expect(e.Error()).NotTo(ContainSubstring("private-token"))
 		}

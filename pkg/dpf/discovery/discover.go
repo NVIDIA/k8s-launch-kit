@@ -18,6 +18,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
@@ -27,7 +28,7 @@ import (
 )
 
 type ProbeRunner interface {
-	Run(context.Context, config.Request, ManagementClient, *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error)
+	Run(context.Context, config.Request, managementaccess.Client, *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error)
 }
 type ArtifactVerifier interface {
 	Verify(context.Context, []artifactcheck.Artifact) []artifactcheck.Result
@@ -98,11 +99,11 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	problem := func(p inventory.Problem) { mu.Lock(); defer mu.Unlock(); report.Errors = append(report.Errors, p) }
-	var mg ManagementClient
+	var mg managementaccess.Client
 	var provisioning *managementprobe.Snapshot
 	if r.Kubeconfig != "" {
 		var accessErr error
-		mg, accessErr = ManagementAccess(r)
+		mg, accessErr = managementaccess.Open(r)
 		if accessErr != nil {
 			report.Execution = "failed"
 			report.Errors = append(report.Errors, inventory.Problem{Code: "INVALID_MANAGEMENT_ACCESS", Message: accessErr.Error(), ExitCode: 2})
@@ -112,14 +113,14 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 		go func() {
 			defer wg.Done()
 			var err error
-			inv.Management, err = mg.Observe(ctx)
+			inv.Management, err = Observe(ctx, mg)
 			if err != nil {
 				problem(inventory.Problem{Code: "MANAGEMENT_INSPECTION_FAILED", Message: err.Error(), InputRef: "/management", ExitCode: 3})
 				return
 			}
 			if r.HBN != nil {
 				output.Info("[CHECK] Management cluster: inspect DPF installation and provisioning APIs")
-				snapshot := mg.ObserveProvisioning(ctx, r.DPFNamespace)
+				snapshot := ObserveProvisioning(ctx, mg, r.DPFNamespace)
 				provisioning = &snapshot
 				output.Info("[DONE] Management cluster: DPF installation and provisioning API inspection")
 			}
@@ -252,7 +253,7 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 				}
 			}
 		}
-		fresh, err := mg.Observe(ctx)
+		fresh, err := Observe(ctx, mg)
 		if err != nil {
 			report.Errors = append(report.Errors, inventory.Problem{Code: "MANAGEMENT_RECHECK_FAILED", Message: "management identity recheck unavailable", InputRef: "/management", ExitCode: 3})
 		} else if fresh.SystemNamespaceUID != inv.Management.SystemNamespaceUID || !sameNodes(fresh.Nodes, inv.Management.Nodes) {

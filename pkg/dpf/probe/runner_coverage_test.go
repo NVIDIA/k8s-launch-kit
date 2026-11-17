@@ -16,6 +16,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -258,7 +259,7 @@ var _ = Describe("probe coverage", func() {
 		mg := coverageManagementClient(client)
 		_, _, err := runner.Run(context.Background(), request, mg, nil)
 		Expect(err).To(HaveOccurred())
-		_, _, err = runner.Run(context.Background(), request, discovery.ManagementClient{}, coverageInventory([]inventory.Node{coverageNode("cp-a", "node-a")}))
+		_, _, err = runner.Run(context.Background(), request, managementaccess.Client{}, coverageInventory([]inventory.Node{coverageNode("cp-a", "node-a")}))
 		Expect(err).To(HaveOccurred())
 		Expect(tracker.Actions()).To(BeEmpty())
 
@@ -300,8 +301,8 @@ func coverageRunner() Runner {
 	}
 }
 
-func coverageManagementClient(client kubernetes.Interface) discovery.ManagementClient {
-	return discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}
+func coverageManagementClient(client kubernetes.Interface) managementaccess.Client {
+	return managementaccess.Client{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}
 }
 
 func coverageRunnerClient(nodes []inventory.Node, behavior coverageBehavior) (*coverageClient, *fake.Clientset, *coverageLogState) {

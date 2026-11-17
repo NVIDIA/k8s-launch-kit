@@ -359,10 +359,18 @@ flowchart TB
 | `pkg/target` | Names, phases, capabilities, common invocation policy, registry, operation contract | Cobra, Host options, DPF options, Kubernetes clients |
 | `pkg/target/host` | Typed Host requests, explicit-value semantics, Host path/config resolution, phase services | DPF implementation or cross-target composition |
 | `pkg/app` | Discover/generate/root workflow state and Network Operator plugin coordination | CLI parsing or process exit |
+| `pkg/dpf/managementaccess` | Bounded explicit management credential/TLS snapshots, client construction and fresh cluster identity reads | Discovery inventory, deployment eligibility, ambient Host kubeconfig fallback or cached identity success |
+| `pkg/dpf/discovery` | Expanded management inventory, provisioning observations and discovery checks using explicit management access | Credential loading or base management access construction |
 | `pkg/networkoperatorplugin` | Discovery, rendering, deployment state machine, validation primitives | Target selection |
 | `pkg/config`, `pkg/options` | Host configuration, YAML presence and option models | A universal union of Host and DPF configuration |
 | `pkg/configflags`, `pkg/configinput`, `pkg/resolve` | Shared option bindings, explicit CLI inputs, configuration resolution and validation | CLI process exit or cluster orchestration |
 | `pkg/ui`, `pkg/errors`, `pkg/log` | Presentation, structured failures, and logging | Domain decisions |
+
+DPF discovery, probes and deployment share the concrete management access client.
+Each `managementaccess.Open` snapshots the explicit bounded credential and TLS
+references at its existing call boundary; identity observations make fresh remote
+reads through that snapshot. Discovery owns expanded inventory and provisioning
+observations. Generation retains access references without opening credentials.
 
 ## Build, release, and documentation supply chain
 

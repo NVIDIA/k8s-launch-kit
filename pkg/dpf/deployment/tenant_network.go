@@ -13,11 +13,12 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementnetwork"
 )
 
 type tenantNetworkRunner interface {
-	Run(context.Context, config.Request, discovery.ManagementClient, *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error)
+	Run(context.Context, config.Request, managementaccess.Client, *inventory.Inventory) ([]inventory.ProbeResult, inventory.Cleanup, error)
 }
 
 // checkTenantNetwork recollects only the control-plane nodes selected by the
@@ -37,7 +38,7 @@ func (c *APIClient) checkTenantNetwork(ctx context.Context, tenant bootstrap.Ten
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
-	management, err := c.access.Observe(ctx)
+	management, err := discovery.Observe(ctx, c.access)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +72,7 @@ func (c *APIClient) checkTenantNetwork(ctx context.Context, tenant bootstrap.Ten
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
-	current, err := c.access.Observe(ctx)
+	current, err := discovery.Observe(ctx, c.access)
 	if err != nil {
 		return nil, err
 	}

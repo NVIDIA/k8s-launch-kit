@@ -14,8 +14,8 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
-	dpfdiscovery "github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -27,7 +27,7 @@ import (
 // cluster. It offers no update, delete, adoption, or rollback operation. The
 // lifecycle caller owns stage prerequisites and resource ownership decisions.
 type APIClient struct {
-	access   dpfdiscovery.ManagementClient
+	access   managementaccess.Client
 	dynamic  dynamic.Interface
 	expected generation.ManagementIdentity
 	version  string
@@ -43,7 +43,7 @@ func NewAPIClient(ctx context.Context, request config.Request, expected generati
 	if request.RequestTimeout <= 0 {
 		request.RequestTimeout = 30 * time.Second
 	}
-	access, err := dpfdiscovery.ManagementAccess(request)
+	access, err := managementaccess.Open(request)
 	if err != nil {
 		return nil, err
 	}

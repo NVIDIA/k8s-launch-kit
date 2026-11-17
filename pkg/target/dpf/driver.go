@@ -19,6 +19,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
@@ -173,6 +174,6 @@ func validateManagement(r config.Request) error {
 	if r.Kubeconfig == "" {
 		return nil
 	}
-	_, err := discovery.ManagementAccess(r)
+	_, err := managementaccess.Open(r)
 	return err
 }
