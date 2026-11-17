@@ -323,6 +323,30 @@ observations are never cached by UID or generation.
 
 ## Deployment and validation internals
 
+
+Host deployment selects a concrete `kubernetesDeploymentPolicy` or
+`openShiftDeploymentPolicy` from the operation's explicit
+`hostplatform.Selection`. The six-method, internal `deploymentPolicy` boundary
+owns artifact classification, platform prerequisites, bootstrap, preflight,
+post-preflight configuration and dependent-API retry eligibility. Kubernetes
+bootstrap retains managed/external Helm ownership and the pre-Helm overwrite
+removal check. OpenShift requires external OLM operators and configures them only
+after preflight, with the sysctl allowlist checked before other operator writes.
+Both use the same apply, fresh observation, target-scope and reapply loops.
+
+The separate two-method `resourceReadPolicy` has concrete Kubernetes/OpenShift
+implementations. It supplies the existing `crstate` readiness registry to deploy
+and performs standalone resource checks, including OpenShift's generated NAD
+check. It exposes no deployment effects. Kind-specific operator configuration
+validation still runs on either platform. Rendering, connectivity and cleanup
+retain their existing owners.
+
+This split preserves existing policy differences: OpenShift deploy still executes
+stray-resource scans before filtering their results. Standalone OpenShift
+validation skips Helm checks and does not perform the comprehensive OLM
+prerequisite gate used by deploy. These retained differences are not new
+qualification claims; static validation also lacks deploy's apply-history gate.
+
 ```mermaid
 flowchart TB
     subgraph deployflow["Host deploy"]

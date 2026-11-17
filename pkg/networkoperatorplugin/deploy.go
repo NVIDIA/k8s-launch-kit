@@ -229,14 +229,11 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	}
 
 	uiOutput := ui.FromContext(ctx)
-	if err := opts.Platform.Validate(); err != nil {
+	policy, err := deploymentPolicyFor(opts.Platform, opts.Config)
+	if err != nil {
 		return err
 	}
-	ocp := opts.Platform == hostplatform.OpenShift
-	if ocp && opts.Config == nil {
-		return fmt.Errorf("OpenShift deployment requires a cluster config")
-	}
-	selected, err := prepareDeploymentObjects(artifacts, ocp)
+	selected, err := policy.prepare(artifacts)
 	if err != nil {
 		return pkgerrors.NewValidationError("invalid deployment artifacts", err, "Correct the generated manifests and rerun deploy")
 	}
@@ -249,14 +246,8 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	if err := checkBundleTargetScopes(ctx, kubeClient, artifacts, opts.Config); err != nil {
 		return pkgerrors.NewValidationError("invalid hardware target scope", err, "Correct selectors and worker inventory, or regenerate legacy artifacts")
 	}
-	if ocp {
-		if _, present := artifacts.ValuesContent(); present {
-			return pkgerrors.NewValidationError("OpenShift deployment contains values.yaml; regenerate with --flavor ocp and remove stale Helm values", nil, "Remove stale values.yaml")
-		}
-		if err := operatorReadinessError(CheckOCPOperators(ctx, kubeClient, opts.Config, true), opts.Config); err != nil {
-			return err
-		}
-		opts.SkipHelmChart = true
+	if err := policy.checkPrerequisites(ctx, kubeClient, artifacts, opts.Config); err != nil {
+		return err
 	}
 
 	// Inspect networking ownership before Helm or overwrite remediation.
@@ -264,21 +255,8 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		return err
 	}
 
-	if opts.OverwriteExisting && !ocp {
-		in, err := buildPreflightInputs(kubeClient, artifacts, opts)
-		if err != nil {
-			return err
-		}
-		if err := preflight.CheckSecondaryNetworkRemovals(ctx, in); err != nil {
-			return fmt.Errorf("secondary-network ownership check before overwrite: %w", err)
-		}
-	}
-
-	// Phase 0 — helm install/upgrade the network-operator chart when
-	// values.yaml is present and the caller supplied the helm-install
-	// metadata. Skipped silently otherwise so users managing the chart
-	// out of band can keep using the standalone `l8k deploy`.
-	if err := runHelmInstallPhaseWithInstaller(ctx, artifacts, opts, uiOutput, install); err != nil {
+	// Bootstrap stays after ownership checks and before common preflight.
+	if err := policy.bootstrap(ctx, kubeClient, artifacts, opts, install); err != nil {
 		return err
 	}
 
@@ -287,25 +265,21 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	// Without --overwrite-existing: fail fast with all failures listed.
 	// With it: log + remediate strays (helm + NCP drift are resolved by
 	// the Phase 0 install and the Phase 1 SSA apply respectively).
-	if err := runPreflightPhase(ctx, kubeClient, artifacts, opts, uiOutput); err != nil {
+	if err := policy.preflight(ctx, kubeClient, artifacts, opts); err != nil {
 		return err
 	}
 
 	ncpObj, nnpObjs, otherDocs := selected.ncp, selected.nnps, selected.others
-	if ocp {
-		if err := applyOCPOperatorConfiguration(ctx, kubeClient, opts.Config, selected.operatorConfigs, opts.DryRun); err != nil {
-			return err
-		}
+	if err := policy.configureAfterPreflight(ctx, kubeClient, opts.Config, selected.operatorConfigs, opts.DryRun); err != nil {
+		return err
 	}
 
 	dryRun := opts.DryRun
-
-	var registry *crstate.Registry
-	if ocp {
-		registry = crstate.NewOpenShift()
-	} else {
-		registry = crstate.NewDefault()
+	readPolicy, err := resourceReadPolicyFor(opts.Platform)
+	if err != nil {
+		return err
 	}
+	registry := readPolicy.readiness()
 
 	// Compute total phase count for the headers — skip empty phases so
 	// users don't see "Phase 2/4" when there are no NNPs.
@@ -381,7 +355,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 			// desired selectors/source metadata immutable for polling and reapply.
 			applied := obj.DeepCopy()
 			if err := applyUnstructuredWithRetry(ctx, kubeClient, applied, dryRun); err != nil {
-				if ocp && meta.IsNoMatchError(err) && obj.GetAPIVersion() == "nv-ipam.nvidia.com/v1alpha1" && obj.GetKind() == "IPPool" && ncpObj != nil {
+				if meta.IsNoMatchError(err) && policy.canRetryDependentAPI(obj, ncpObj) {
 					if dryRun {
 						deferred = append(deferred, label)
 						uiOutput.Warning("Deferred dry-run API validation for %s until NicClusterPolicy installs NV-IPAM", label)
@@ -883,7 +857,7 @@ func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.U
 	return c.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj), opts...)
 }
 
-// runHelmInstallPhase performs Phase 0: install (or upgrade) the
+// runHelmInstallPhaseWithInstaller performs Phase 0: install (or upgrade) the
 // network-operator helm chart from values.yaml in the deployment dir. The
 // phase is a no-op when:
 //   - values.yaml is absent (user manages the chart out of band),
@@ -893,10 +867,6 @@ func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.U
 //
 // A value-conflict against an existing release surfaces as a
 // DeploymentError pointing at --overwrite-existing.
-func runHelmInstallPhase(ctx context.Context, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output) error {
-	return runHelmInstallPhaseWithInstaller(ctx, artifacts, opts, uiOutput, installOrUpgradeValues)
-}
-
 func runHelmInstallPhaseWithInstaller(ctx context.Context, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output, install helmValuesInstaller) error {
 	if opts.SkipHelmChart {
 		log.Log.V(1).Info("Network Operator Helm management disabled; skipping operator install")
@@ -976,8 +946,8 @@ func runHelmInstallPhaseWithInstaller(ctx context.Context, artifacts *bundle.Bun
 	return err
 }
 
-// runPreflightPhase runs the preflight checks (chart version, values, NCP
-// component versions, stray CRs) and either fails fast or remediates strays.
+// evaluatePreflightResults reports the checks selected by the platform policy
+// and either fails fast or remediates strays.
 //
 //   - Without --overwrite-existing, any non-skipped failure aborts the deploy
 //     with a structured error listing every failed check. The user sees ALL
@@ -990,22 +960,7 @@ func runHelmInstallPhaseWithInstaller(ctx context.Context, artifacts *bundle.Bun
 // Phase 0.5 is a no-op when no preflight check is actionable — typically a
 // standalone `l8k deploy` with no l8k-config.yaml and no helm release in
 // the namespace yet.
-func runPreflightPhase(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output) error {
-	in, err := buildPreflightInputs(kubeClient, artifacts, opts)
-	if err != nil {
-		return err
-	}
-
-	results := preflight.RunAll(ctx, in)
-	if opts.Platform == hostplatform.OpenShift {
-		filtered := results[:0]
-		for _, result := range results {
-			if result.Code != preflight.CodeStrayCRs {
-				filtered = append(filtered, result)
-			}
-		}
-		results = filtered
-	}
+func evaluatePreflightResults(ctx context.Context, in preflight.Inputs, results []preflight.Result, opts DeployOptions, uiOutput ui.Output) error {
 	failedCount := 0
 	for _, r := range results {
 		switch {

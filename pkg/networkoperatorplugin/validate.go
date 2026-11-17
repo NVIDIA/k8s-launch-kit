@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -178,19 +177,12 @@ type ComponentVersionResult struct {
 // and live selectors against resolved inventory using one explicit platform.
 // A nil config supports resource-only validation without inventory checks.
 func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bundle, cfg *config.LaunchKitConfig, platform hostplatform.Selection) ([]ValidationResult, error) {
-	if err := platform.Validate(); err != nil {
+	policy, err := resourceReadPolicyFor(platform)
+	if err != nil {
 		return nil, err
 	}
-
 	if artifacts == nil {
 		return nil, fmt.Errorf("validation artifact bundle is nil")
-	}
-	ocp := platform == hostplatform.OpenShift
-	var registry *crstate.Registry
-	if ocp {
-		registry = crstate.NewOpenShift()
-	} else {
-		registry = crstate.NewDefault()
 	}
 	var results []ValidationResult
 	for _, doc := range artifacts.Documents() {
@@ -215,27 +207,13 @@ func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bund
 			Name: obj.GetName(), Namespace: obj.GetNamespace(),
 			SourceFile: doc.Source().File,
 		}
+		// These Kind-specific checks intentionally apply on both platforms.
 		if isOCPOperatorConfig(obj) {
-			live := &unstructured.Unstructured{}
-			live.SetGroupVersionKind(obj.GroupVersionKind())
-			if getErr := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, live); getErr != nil {
-				r.State = crstate.StateNotDeployed
-				r.Reason = getErr.Error()
-				results = append(results, r)
-				continue
+			r.State, r.Reason = validateOperatorConfiguration(ctx, c, obj)
+			// Preserve the existing missing-config result flags.
+			if r.State != crstate.StateNotDeployed {
+				applyLegacyFlags(&r)
 			}
-			merged := live.DeepCopy()
-			if mergeErr := mergeOCPConfiguration(merged, obj); mergeErr != nil {
-				r.State = crstate.StateError
-				r.Reason = mergeErr.Error()
-			} else if !reflect.DeepEqual(merged.Object, live.Object) {
-				r.State = crstate.StateError
-				r.Reason = "operator configuration differs from generated required fields"
-			} else {
-				r.State = crstate.StateSuccess
-				r.Reason = "required operator configuration matches"
-			}
-			applyLegacyFlags(&r)
 			results = append(results, r)
 			continue
 		}
@@ -248,7 +226,7 @@ func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bund
 			results = append(results, r)
 			continue
 		}
-		res, vErr := registry.Validate(ctx, c, obj)
+		res, vErr := policy.check(ctx, c, obj)
 		if vErr != nil {
 			// Transport error — treat as error state. Use the
 			// Reason carried by the Result (registry sets it
@@ -262,9 +240,6 @@ func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bund
 		} else {
 			r.State = res.State
 			r.Reason = res.Reason
-		}
-		if ocp && r.State == crstate.StateSuccess && isOCPSriovNetwork(obj) {
-			r.State, r.Reason = validateOCPNetworkAttachment(ctx, c, obj)
 		}
 		r.Details = res.Details
 		if scopeMessage != "" {
