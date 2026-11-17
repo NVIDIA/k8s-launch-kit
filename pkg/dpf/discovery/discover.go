@@ -48,6 +48,11 @@ const (
 
 type Dependencies struct {
 	ArtifactSourceMode ArtifactSourceMode
+	// RetainedProvisioning supplies an immutable validated bundle's fixed recipe
+	// during deployment. Fresh discovery instead selects the release catalog.
+	RetainedProvisioning interface {
+		ResolveProvisioning(config.Site) (*config.Provisioning, error)
+	}
 	// DeferHBNReadiness defers eligibility messages to a deployment lifecycle
 	// assessment. It does not change collection, checks, readiness or acceptance.
 	DeferHBNReadiness bool

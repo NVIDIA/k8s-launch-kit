@@ -55,8 +55,15 @@ var _ = Describe("HBN bootstrap input checks", func() {
 		Expect(checks).To(ContainElement(And(HaveField("ID", "dpf.hbn.management.tenant-network"), HaveField("State", "unknown"))))
 		Expect(checks[0].State).To(Equal("unknown"))
 		Expect(checks[0].ReasonCode).To(Equal("BOOTSTRAP_INPUT_MISSING"))
+		Expect(checks[0].Subject).To(Equal("tenant.vip"))
 		Expect(checks[1].State).To(Equal("unknown"))
 		Expect(checks[1].ReasonCode).To(Equal("BOOTSTRAP_INPUT_MISSING"))
+		Expect(checks[1].Subject).To(Equal("tenant.interface"))
+		noEndpoint := *inv
+		noEndpoint.Management = &inventory.Management{}
+		checks, _ = hbnBootstrapChecks(nil, "dpf-system", &noEndpoint, nil, "10.96.0.0/16")
+		Expect(checks).To(ContainElement(HaveField("Subject", "tenant.managementAPIIP")))
+		Expect(checks).To(ContainElement(HaveField("Subject", "tenant.managementAPIPort")))
 		Expect(checks).To(ContainElement(And(HaveField("ID", "dpf.hbn.management.tenant-clusters"), HaveField("State", "unknown"), HaveField("ReasonCode", "TENANT_VIP_UNRESOLVED"))))
 		input := &config.Provisioning{Bootstrap: &config.BootstrapOptions{Tenant: config.TenantOptions{VIP: str("192.0.2.20"), Interface: str("eth0")}}}
 		checks, tenantFacts = hbnBootstrapChecks(input, "dpf-system", inv, nil, "10.96.0.0/16")

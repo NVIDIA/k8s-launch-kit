@@ -77,8 +77,8 @@ Confirm these site decisions before generating the bundle:
 | --- | --- |
 | Management cluster | Multiple control-plane nodes are observed and all are Ready. The site owner must establish etcd and API load-balancer HA; node count alone does not prove it. |
 | Selected devices | Each DPU maps to the intended physical host and adapter. |
-| Tenant API | Reserve the VIP, exclude it from DHCP and confirm its VRID is available on the selected control-plane nodes. Declare these facts under `provisioning.bootstrap.tenant.allocation` only with the responsible owner's confirmation. |
-| Software | The OS ISO and each selected PSID firmware bundle match the intended DPU cohort; provide credential-free HTTPS URLs and checksums. |
+| Tenant API | Reserve the VIP, exclude it from DHCP and confirm its VRID is available on the selected control-plane nodes. Declare these facts under `tenant.allocation` only with the responsible owner's confirmation. |
+| Software | The release catalog supports the observed model/PSID and supplies a complete software recipe; no user-authored firmware tuples are accepted. |
 | Fabric | Switch uplinks already have the intended port bindings, fabric VRF, BGP neighbors/policy, ASN and MTU. Deployment observes this configuration; it does not apply it. |
 | Host workload network | The selected PF can be configured without taking over the host management interface, another port or its default route. |
 | Host recovery | The selected host can return to its existing local operating system after a requested system reboot. The host OS reports no virtual machine, and its SSH and default-route paths have measurable PCI ancestry on a separate card from the selected DPU. |
@@ -88,12 +88,12 @@ VM detector available. Discovery requires the OS to report no VM; missing tools,
 unknown results and detected VMs stop before provisioning.
 
 The native HBN deployment path requires
-`provisioning.bootstrap.bmcFactoryResetPolicy: Never`, preserving existing BMC
+the fixed BMC reset policy `Never`, preserving existing BMC
 network settings. A setting accepted by the general configuration schema does
 not imply that the native deployment path supports it; see
-[configuration reference](../reference/configuration.md#bootstrap-and-hbn-defaults).
+[configuration reference](../reference/configuration.md#dpf-discovery-configuration).
 
-`dpf.hbn.fabricVRF` describes the VRF expected on the selected switch uplinks;
+`hbn.networking.fabricVRF` in optional overrides describes the VRF expected on the selected switch uplinks;
 the profile default is `default`. DPU FRR uses its default VRF. These are separate
 routing roles, so review the switch fabric and DPU routing settings independently
 in the resolved bundle. The release catalog provides the HBN-BGP release and
@@ -104,13 +104,13 @@ directory.
 
 For complete field names and profile values, see
 [HBN-BGP generation](dpf-generation.md) and the
-[bootstrap and HBN configuration reference](../reference/configuration.md#bootstrap-and-hbn-defaults).
+[bootstrap and HBN configuration reference](../reference/configuration.md#dpf-discovery-configuration).
 
 ## Run deployment
 
 ```bash
 l8k deploy --target dpf \
-  --user-config dpf-discovered.yaml \
+  --inventory dpf-discovered.yaml \
   --deployment-files ./hbn-bgp \
   --deploy-timeout 2h
 ```
@@ -207,7 +207,7 @@ record. Keep the reference with the unchanged bundle and site file. Resume the
 same initial deployment explicitly:
 
 ```bash
-l8k deploy --target dpf --user-config dpf-discovered.yaml \
+l8k deploy --target dpf --inventory dpf-discovered.yaml \
   --deployment-files ./hbn-bgp --resume NAMESPACE/NAME/UID
 ```
 

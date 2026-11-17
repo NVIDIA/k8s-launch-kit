@@ -43,6 +43,7 @@ type Artifact struct {
 type ProvisioningIssue struct {
 	Field      string `json:"field"`
 	ReasonCode string `json:"reasonCode"`
+	Message    string `json:"message,omitempty"`
 }
 
 var provisioningPSID = regexp.MustCompile(`(?i)^MT_[A-Z0-9]{1,29}$`)

@@ -55,111 +55,106 @@ requirements are checked after the effective configuration is resolved.
 
 ## DPF discovery configuration
 
-`discover --target dpf` uses a separate site configuration described in
-[DPF discovery](../user/dpf-discovery.md). The Host configuration defaults above
-do not apply to it. Select `dpf.useCase: hbn-bgp` or explicitly supply
-`--use-case hbn-bgp` to evaluate that use case's prerequisites.
+DPF has two user inputs. `--inventory` identifies the environment to inspect and
+use. `--user-config` is optional and changes supported defaults. Host-target
+configuration is separate and retains its existing `--user-config` behavior.
 
-The release catalog declares the HBN-BGP default and supported release as
-`26.8.0`; it also supplies that release's default HBN chart and image
-coordinates. An explicit unsupported `dpf.release` is rejected during shared
-configuration resolution. The profile supplies operator namespace
-`dpf-operator-system` and networking/policy defaults. Override the namespace
-with `dpf.namespace` and networking fields under `dpf.hbn`. Explicit
-`provisioning.hbn` artifact values remain user-owned overrides and are
-validated and recorded as supplied.
-Omitted/null fields select defaults; explicit empty/zero values are validated.
-General DPF inventory without a use case retains its `26.4.0` release default.
-Switch endpoints, credentials, pinned SSH trust, and intended port bindings are
-site inputs under `discovery.switches`; they are not inferred from profile defaults.
+```bash
+l8k discover --target dpf --use-case hbn-bgp \
+  --inventory inventory.yaml --save-cluster-config dpf-discovered.yaml
+```
 
+Add `--user-config overrides.yaml` only when the default configuration does not
+fit your environment. Discovery checks the resulting desired configuration; it
+does not adopt whatever configuration happens to be installed on a switch.
 
-For BF4 provisioning, supply `provisioning.software.osISO` and
-`provisioning.software.pldm.<PSID>`. Each artifact has `url` (HTTPS without
-credentials, a query or a fragment) and `sha256` (64 lowercase hex characters).
-PLDM keys match the discovered PSIDs case-insensitively; duplicate or unused
-entries are rejected when the full selected PSID set is known. These artifacts
-have no public profile defaults. Missing inputs do not stop inventory collection,
-but HBN readiness reports them as blockers. Supplying URLs and digests does not
-prove that DPF can download the artifacts or that their bytes are compatible.
-
-### Bootstrap and HBN defaults
-
-`provisioning.bootstrap` supplies the management-plane installation inputs.
-Discovery reports missing inputs while continuing to collect hardware information:
-
-| Field | Default or source | Site responsibility |
+| Owner | Contents | What you supply |
 | --- | --- | --- |
-| `managementAPIIP`, `managementAPIPort` | Observed management API endpoint, when it contains a literal IP | Override when DPUs need a different reachable endpoint; a DNS name is not converted into an assumed IP |
-| `tenant.vip` | Required | Reserve an unused IPv4 address for the tenant API, outside DHCP allocation |
-| `tenant.interface` | Required | Identify the management interface on the selected control-plane nodes |
-| `tenant.routerID` | `126` | Verify that this VRRP ID is unused on the selected control-plane nodes; override collisions |
-| `tenant.allocation.vipReserved` | No default | Explicit site declaration that the VIP is reserved for this tenant; readiness requires `true` |
-| `tenant.allocation.vipExcludedFromDHCP` | No default | Explicit site declaration that dynamic DHCP cannot allocate the VIP; readiness requires `true` |
-| `tenant.allocation.routerIDUniqueOnSelectedNodes` | No default | Explicit site declaration that the selected VRRP ID is available on the selected control-plane nodes; readiness requires `true` |
-| `tenant.name`, `tenant.namespace` | `dpu-cplane-tenant1` | Override when another tenant uses these names |
-| `tenant.nodeSelector` | `node-role.kubernetes.io/control-plane: ""` | Select the control-plane nodes that host the VIP |
-| `tenant.maxNodes` | `1000` | Must accommodate all selected DPUs |
-| `podCIDR` | `10.244.0.0/14` | Pod network for the DPU tenant cluster; verify separation from networks sharing its forwarding paths |
-| `artifactPVC` | Omitted: DPF uses host storage | Optionally select an existing PVC in the operator namespace; storage health is checked separately |
-| `operatorConfigName` | `dpfoperatorconfig` | Identifies the configuration watched by the operator |
-| `bmcFactoryResetPolicy` | `Never` | The native HBN-BGP deployment path requires `Never` to preserve BMC network settings. The general schema may accept `OnInitialization`, but native deployment stops before enrollment when it is selected. |
+| Inventory | Management kubeconfig; selected hosts, DPUs and switches; access/trust references; tenant address allocation | Environment-specific facts and access that Launch Kit cannot safely invent |
+| Optional overrides | Supported release, namespace, networking, HBN memory and tenant settings | Only values you want to change |
+| Release SBOM | Compatible operator, HBN, OS and firmware artifacts and their immutable identities | Select a supported release; do not provide component versions or firmware tuples |
+| Use-case implementation | DPUFlavor, boot/NIC/OVS configuration, service wiring and lifecycle policies | Nothing; these are maintained by Launch Kit |
+| Discovery output | Inventory observations and the configuration used for the checks | Nothing; pass the output to generation |
 
-The tenant VIP and interface are site allocations, not discoverable unused
-resources. A complete input check does not establish address reservation,
-reachable interfaces, healthy storage or installed controllers.
+### Inventory fields
 
-The selected release catalog records the fixed tenant service range used by
-its Kamaji controller (`10.96.0.0/16` for the current HBN-BGP release). This is
-not a profile default or a service-CIDR override. Generation rejects
-an overlap between tenant pod and service ranges or their control-plane/BMC
-addresses. Matching ranges in independent clusters are not automatically a conflict;
-verify which ranges share a forwarding path.
+`management.kubeconfigRef.file` selects the management cluster; `context` is
+optional when the kubeconfig already selects one. `credentials` contains named
+usernames and secret references. `discovery.hosts`, `discovery.dpus` and
+`discovery.switches` select endpoints and refer to those credentials. SSH requires
+pinned host keys; BMC access uses system certificate trust unless explicitly
+configured otherwise. Relative file references are relative to the inventory
+file, not the working directory or the overrides file.
 
-For generation, `provisioning.flavor` contains the concrete DPUFlavor `spec`
-for the selected hardware and HBN datapath. It is required and checked against
-the selected operator's schema. It is not inferred from a generic BlueField family.
-`provisioning.resources` is a flat map of Kubernetes quantities. Defaults are
-`memory: 6Gi` and `nvidia.com/bf_sf: "4"`; the HBN chart uses these values as both
-requests and limits. Partial maps override the supplied quantities; omitted/null
-uses defaults, and an explicitly empty map is invalid. See
-[HBN-BGP generation](../user/dpf-generation.md).
+For HBN-BGP, `tenant` contains site allocations:
 
-`provisioning.hbn` overrides HBN generation settings independently of the
-networking values under `dpf.hbn`. The selected release row supplies default
-chart `3.5.0`, image `3.5.0-doca3.5.0` with a SHA-256 digest, and startup
-format `HBN 2.4.0`. The profile supplies loopback pool `10.0.124.0/24`,
-workload gateway index `1`, host address index `2`,
-`OnDelete` strategy, and
-`nodeEffect: hold`. The flat profile disables the VXLAN startup probe.
-Shared resolution requires `nodeEffect: hold` and `chartName: doca-hbn` for
-this native workflow. Explicit `noEffect` or another chart name is unsupported
-and rejected before credential resolution or artifact retrieval; these values
-are never silently replaced by defaults. The DPF service identity remains
-`doca-hbn`; the upstream Helm chart name is a separate release coordinate.
-Chart repository/version/digest, image repository/tag/digest and startup version
-overrides remain available. `imageRepository` must include an explicit registry
-host and lowercase repository path, without a tag or digest; do not use a
-familiar name such as `team/hbn`. Registry ports from 1 through 65535 are
-supported (for example, `registry.example:5000/team/hbn`). Keep the image tag
-and digest in their separate fields. Overrides are preserved, and matching
-artifact bytes are verified; custom coordinates are not thereby certified
-compatible. Repository syntax alone does not establish native deployment
-support: the CLI must read manifest/config metadata over anonymous HTTPS, with
-only same-origin anonymous Bearer token exchange. Docker/kubelet pull credentials
-do not grant this CLI access. Deployment rejects unsupported metadata access
-before discovery probes or cluster changes, and runtime reads it again; see
-[image metadata prerequisites](../user/dpf-deployment.md#prepare-the-site-and-review-the-bundle).
-Shared resolution also rejects enabling the VXLAN startup probe.
-`hold` pauses provisioning at the node-effect boundary until the selected
-maintenance request is released; it does not mean provisioning has completed.
-Host and gateway indexes must be different usable addresses in each per-DPU
-subnet. Generation reserves the host slot from ordinary dynamic IPAM allocation;
-the actual address follows the DPU subnet allocated during deployment. At most
-4096 subnets can be reserved. See [host workload addressing](../user/dpf-generation.md#plan-host-workload-addresses).
-An overridden loopback pool must not overlap the workload pool. Software
-coordinate overrides require matching digests; their compatibility needs
-separate validation.
+| Field | Required when |
+| --- | --- |
+| `tenant.vip` | Always for a new tenant; reserve an unused API address outside dynamic DHCP allocation |
+| `tenant.interface` | Always for the current workflow; the management interface carrying that VIP |
+| `tenant.allocation.vipReserved` | Must be confirmed by the responsible site owner |
+| `tenant.allocation.vipExcludedFromDHCP` | Must be confirmed by the responsible site owner |
+| `tenant.allocation.routerIDUniqueOnSelectedNodes` | Must be confirmed for the effective VRRP ID and selected nodes |
+| `tenant.managementAPIIP`, `tenant.managementAPIPort` | When the observed management API endpoint cannot provide a reachable literal IP and port |
+
+Allocation declarations are not independent IPAM verification and cannot waive
+an observed collision. Do not copy example declarations as if they were defaults.
+See [discovery](../user/dpf-discovery.md) for access and prerequisite checks.
+
+### Optional overrides
+
+A small file can contain just the changes you need:
+
+```yaml
+hbn:
+  networking:
+    fabricVRF: tenant-network
+    workloadCIDR: 10.80.0.0/22
+  loopbackCIDR: 10.80.4.0/24
+  memory: 8Gi
+```
+
+Supported groups are:
+
+- `useCase`, `release`, `namespace`: selection and operator namespace.
+- `hbn.networking`: fabric VRF/ASN, DPU ASN base/stride, uplink/workload MTU,
+  workload CIDR and per-DPU prefix.
+- `hbn.loopbackCIDR`, `hbn.memory`: loopback address pool and HBN memory allocation.
+- `cluster`: operator configuration name, tenant name/namespace, pod CIDR,
+  VRRP `routerID`, `maxNodes` and control-plane `nodeSelector`.
+
+Omitted or null values use the owning defaults. Explicit empty, zero and false
+values are validated rather than silently replaced. Unknown keys fail before
+remote access. Raw manifests, `provisioning.flavor`, arbitrary resource maps,
+component URLs/digests and lifecycle policies are not user overrides.
+
+The release SBOM selects compatible component artifacts. The use-case profile
+supplies networking defaults and fixed policies, including preservation of BMC
+network settings. Unsupported hardware or an incomplete catalog is reported as
+a product-support blocker; users are not asked to invent missing firmware or
+boot configuration.
+
+The current `26.8.0` beta catalog has a maintained provisioning recipe only for
+BlueField-4 model `B4240` with observed PSID `MT_0000001774`. Discovery checks
+the selected artifact sources over HTTPS from the CLI machine. Its OS ISO and
+PLDM coordinates refer to restricted internal distribution endpoints, not
+public download links. Other BF4 models or PSIDs remain unsupported until their
+exact release entries are maintained; this scoped recipe does not qualify the
+BF4 family or runtime behavior.
+
+### Handoff and changes
+
+The discovery output retains the effective use-case selection and allowed
+settings under `configuration`, alongside observed `inventory`. Use it with
+`--inventory` for generation and deployment; the overrides file need not be
+repeated. `configuration` is generated handoff data, not another file to author.
+
+When supplying an overrides file again, it replaces the retained default overrides.
+The use-case selection remains unless you explicitly select another use case.
+An overrides file containing `{}` resets optional settings to defaults. After changing
+settings, rerun discovery and regenerate the bundle. Deployment checks the
+retained plan and refuses conflicting intent; it does not silently apply new
+settings to an existing bundle.
 
 ## Deploy And Validate Config Lookup
 

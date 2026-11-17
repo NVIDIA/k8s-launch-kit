@@ -12,6 +12,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnrender"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
 	"gopkg.in/yaml.v3"
@@ -24,6 +25,8 @@ import (
 type Plan struct {
 	digest          string
 	intent          ResolvedIntent
+	flavor          map[string]any
+	resources       map[string]any
 	operator        bootstrap.OperatorRenderInputs
 	operatorArchive []byte
 	hbnChart        []byte
@@ -98,6 +101,8 @@ func LoadPlan(retained *bundle.Bundle) (*Plan, error) {
 	return &Plan{
 		digest:          index.BundleDigest,
 		intent:          cloneResolvedIntent(intent),
+		flavor:          cloneAnyMap(flavor),
+		resources:       cloneAnyMap(resources),
 		operator:        input.Operator,
 		operatorArchive: bytes.Clone(operatorArchive.Data),
 		hbnChart:        bytes.Clone(hbnArchive.Data),
@@ -111,6 +116,82 @@ func (p *Plan) Intent() ResolvedIntent {
 		return ResolvedIntent{}
 	}
 	return cloneResolvedIntent(p.intent)
+}
+
+// ResolveProvisioning composes a validated retained recipe with current allowed
+// knobs and allocations. It does not consult current catalog/profile defaults
+// for fixed implementation or replace a supplied memory/loopback choice.
+func (p *Plan) ResolveProvisioning(site config.Site) (*config.Provisioning, error) {
+	if p == nil {
+		return nil, fmt.Errorf("retained plan is required")
+	}
+	result := &config.Provisioning{Flavor: cloneAnyMap(p.flavor), Software: cloneSoftware(p.intent.Software), Resources: make(map[string]string)}
+	for name, value := range p.resources {
+		if name == "memory" {
+			continue
+		}
+		quantity, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("retained fixed resource %q has an unsupported quantity representation", name)
+		}
+		result.Resources[name] = quantity
+	}
+	var current *config.Provisioning
+	if site.Provisioning != nil {
+		current = site.Provisioning
+		if memory, ok := current.Resources["memory"]; ok {
+			result.Resources["memory"] = memory
+		}
+	}
+	g := p.intent.Generation
+	result.HBN = &hbn.GenerationOptions{
+		ChartRepository: &g.ChartRepository, ChartName: &g.ChartName, ChartVersion: &g.ChartVersion, ChartDigest: &g.ChartDigest,
+		ImageRepository: &g.ImageRepository, ImageTag: &g.ImageTag, ImageDigest: &g.ImageDigest, StartupVersion: &g.StartupVersion,
+		WorkloadGatewayIndex: &g.WorkloadGatewayIndex, HostAddressIndex: &g.HostAddressIndex,
+		DPUSetStrategy: &g.DPUSetStrategy, NodeEffect: &g.NodeEffect, VXLANStartupProbeEnabled: &g.VXLANStartupProbeEnabled,
+	}
+	if current != nil && current.HBN != nil && current.HBN.LoopbackCIDR != nil {
+		loopback := *current.HBN.LoopbackCIDR
+		result.HBN.LoopbackCIDR = &loopback
+	}
+	result.Bootstrap = &config.BootstrapOptions{}
+	if current != nil && current.Bootstrap != nil {
+		// Bootstrap has only non-secret scalar settings and allocation/selector
+		// maps. Clone those options so callers cannot mutate current inputs.
+		data, err := yaml.Marshal(current.Bootstrap)
+		if err != nil {
+			return nil, err
+		}
+		if err := yaml.Unmarshal(data, result.Bootstrap); err != nil {
+			return nil, err
+		}
+	}
+	artifactPVC, resetPolicy := p.intent.Bootstrap.ArtifactPVC, p.intent.Bootstrap.BMCFactoryResetPolicy
+	result.Bootstrap.ArtifactPVC, result.Bootstrap.BMCFactoryResetPolicy = &artifactPVC, &resetPolicy
+	return result, nil
+}
+
+// Configuration projects the validated plan's effective supported settings.
+// This preserves omitted historical defaults without restoring source access or
+// exposing raw software/flavor as user overrides.
+func (p *Plan) Configuration() (config.Overrides, error) {
+	if p == nil {
+		return config.Overrides{}, fmt.Errorf("retained plan is required")
+	}
+	intent := p.Intent()
+	memory, ok := p.resources["memory"].(string)
+	if !ok || memory == "" {
+		return config.Overrides{}, fmt.Errorf("retained plan has no supported HBN memory setting")
+	}
+	n, b := intent.Networking, intent.Bootstrap
+	return config.Overrides{
+		UseCase: &intent.UseCase, Release: &intent.Release, Namespace: &intent.Namespace,
+		HBN: &config.HBNOverrides{
+			Networking:   &hbn.Options{FabricVRF: &n.FabricVRF, FabricASN: &n.FabricASN, DPUASNBase: &n.DPUASNBase, DPUASNStride: &n.DPUASNStride, UplinkMTU: &n.UplinkMTU, WorkloadMTU: &n.WorkloadMTU, WorkloadCIDR: &n.WorkloadCIDR, WorkloadPrefix: &n.WorkloadPrefix},
+			LoopbackCIDR: &intent.Generation.LoopbackCIDR, Memory: &memory,
+		},
+		Cluster: &config.ClusterOverrides{OperatorConfigName: &b.OperatorConfigName, TenantName: &b.Tenant.Name, TenantNamespace: &b.Tenant.Namespace, PodCIDR: &b.PodCIDR, RouterID: &b.Tenant.RouterID, MaxNodes: &b.Tenant.MaxNodes, NodeSelector: &b.Tenant.NodeSelector},
+	}, nil
 }
 
 // Operator returns copied explicit Helm inputs and the exact retained chart.

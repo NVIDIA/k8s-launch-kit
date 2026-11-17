@@ -14,6 +14,7 @@ import (
 
 func TestDiscoverRegistersProfileFlags(t *testing.T) {
 	for _, name := range []string{
+		"inventory",
 		"fabric",
 		"deployment-type",
 		"multirail",

@@ -144,6 +144,9 @@ func TestImportantFlagScopes(t *testing.T) {
 		{command: rootCmd, flag: "deploy", expected: []target.Name{target.Host}},
 		{command: rootCmd, flag: "fabric", expected: []target.Name{target.Host}},
 		{command: discoverCmd, flag: "kubeconfig", expected: []target.Name{target.Host}},
+		{command: discoverCmd, flag: "inventory", expected: []target.Name{target.DPF}},
+		{command: generateCmd, flag: "inventory", expected: []target.Name{target.DPF}},
+		{command: deployCmd, flag: "inventory", expected: []target.Name{target.DPF}},
 		{command: generateCmd, flag: "deploy", expected: []target.Name{target.Host}},
 		{command: generateCmd, flag: "dry-run", expected: []target.Name{target.Host}},
 		{command: deployCmd, flag: "dry-run", expected: []target.Name{target.Host, target.DPF}},
@@ -281,6 +284,8 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Equal(t, []string{"host", "dpf"}, actual.Flags["--output"].Targets)
 		assert.Equal(t, []string{"host"}, actual.Flags["--fabric"].Targets)
 		assert.Equal(t, []string{"dpf"}, actual.Flags["--use-case"].Targets)
+		assert.Equal(t, []string{"dpf"}, actual.Flags["--inventory"].Targets)
+		assert.Contains(t, actual.Flags["--inventory"].Description, "required for --target dpf")
 	})
 
 	t.Run("omitted and explicit host preserve output and exit code", func(t *testing.T) {
@@ -299,10 +304,21 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Equal(t, 2, exitCode)
 		assert.Contains(t, output, "--use-case (targets: dpf)")
 	})
+	t.Run("DPF inventory input is rejected on Host commands", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"discover", "--inventory", "/tmp/inventory.yaml", "--output", "json"},
+			{"generate", "--inventory", "/tmp/inventory.yaml", "--output", "json"},
+			{"deploy", "--inventory", "/tmp/inventory.yaml", "--output", "json"},
+		} {
+			output, exitCode := runCLIHelper(t, args...)
+			assert.Equal(t, 2, exitCode, "%v", args)
+			assert.Contains(t, output, "--inventory (targets: dpf)", "%v", args)
+		}
+	})
 	t.Run("unknown DPF use-case fails before infrastructure access", func(t *testing.T) {
 		file := filepath.Join(t.TempDir(), "site.yaml")
 		require.NoError(t, os.WriteFile(file, []byte("discovery: {}\n"), 0600))
-		output, exitCode := runCLIHelper(t, "discover", "--target", "dpf", "--use-case", "unknown", "--user-config", file, "--output", "json")
+		output, exitCode := runCLIHelper(t, "discover", "--target", "dpf", "--use-case", "unknown", "--inventory", file, "--output", "json")
 		assert.Equal(t, 2, exitCode)
 		assert.Contains(t, output, "--use-case must be hbn-bgp")
 		assert.Contains(t, output, "INVALID_CONFIGURATION")
@@ -320,7 +336,7 @@ func TestTargetCLIProcess(t *testing.T) {
 		})
 	}
 
-	t.Run("DPF deploy requires explicit site and bundle inputs", func(t *testing.T) {
+	t.Run("DPF deploy requires inventory and bundle while site overrides are optional", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"deploy", "--target", "dpf", "--output", "json"},
 			{"deploy", "--target", "dpf", "--user-config", "/site.yaml", "--output", "json"},
@@ -328,12 +344,18 @@ func TestTargetCLIProcess(t *testing.T) {
 		} {
 			output, exitCode := runCLIHelper(t, args...)
 			assert.Equal(t, 2, exitCode)
-			assert.Contains(t, output, "DPF deploy requires --user-config and --deployment-files")
+			assert.Contains(t, output, "DPF deploy requires --inventory dpf-discovered.yaml and --deployment-files ./hbn-bgp; --user-config is optional")
 		}
+	})
+	t.Run("DPF discover requires inventory with an actionable invocation", func(t *testing.T) {
+		output, exitCode := runCLIHelper(t, "discover", "--target", "dpf", "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "run l8k discover --target dpf --use-case hbn-bgp --inventory inventory.yaml --save-cluster-config dpf-discovered.yaml")
+		assert.Contains(t, output, "--user-config overrides.yaml is optional")
 	})
 
 	t.Run("DPF deploy validates its retained bundle without Host fallback", func(t *testing.T) {
-		output, exitCode := runCLIHelper(t, "deploy", "--target", "dpf", "--user-config", "/missing/site.yaml", "--deployment-files", "/missing/bundle", "--output", "json")
+		output, exitCode := runCLIHelper(t, "deploy", "--target", "dpf", "--inventory", "/missing/inventory.yaml", "--deployment-files", "/missing/bundle", "--output", "json")
 		assert.Equal(t, 2, exitCode)
 		assert.Contains(t, output, "invalid DPF deployment bundle")
 		assert.NotContains(t, output, "network-operator")
@@ -346,12 +368,13 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Contains(t, output, "--overwrite-existing (targets: host)")
 	})
 
-	t.Run("DPF generation validates its own inputs without host fallback", func(t *testing.T) {
+	t.Run("DPF generation requires the inventory input without Host fallback", func(t *testing.T) {
 		file := filepath.Join(t.TempDir(), "dpf-site.yaml")
 		require.NoError(t, os.WriteFile(file, []byte("dpf: {useCase: hbn-bgp}\n"), 0600))
 		output, exitCode := runCLIHelper(t, "generate", "--target", "dpf", "--use-case", "hbn-bgp", "--user-config", file, "--save-deployment-files", filepath.Join(t.TempDir(), "bundle"), "--output", "json")
 		assert.Equal(t, 2, exitCode)
-		assert.Contains(t, output, "current-format HBN discovery inventory")
+		assert.Contains(t, output, "DPF generate requires --inventory dpf-discovered.yaml")
+		assert.Contains(t, output, "--user-config is optional")
 		assert.NotContains(t, output, "does not implement phase")
 		assert.NotContains(t, output, "network-operator namespace")
 	})
@@ -457,7 +480,7 @@ func runCLIHelper(t *testing.T, args ...string) (string, int) {
 func TestDeployResumeFlagIsDPFOnlyAndExplicit(t *testing.T) {
 	for _, args := range [][]string{
 		{"deploy", "--target", "host", "--resume", "ns/dpf-op-name/123e4567-e89b-12d3-a456-426614174000", "--output", "json"},
-		{"deploy", "--target", "dpf", "--user-config", "/missing/site.yaml", "--deployment-files", "/missing/bundle", "--resume=", "--output", "json"},
+		{"deploy", "--target", "dpf", "--inventory", "/missing/inventory.yaml", "--deployment-files", "/missing/bundle", "--resume=", "--output", "json"},
 	} {
 		output, code := runCLIHelper(t, args...)
 		if code == 0 {

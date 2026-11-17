@@ -19,9 +19,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
@@ -319,10 +321,18 @@ func annotateSchemaFlagTargets(s *schema) {
 	if s == nil {
 		return
 	}
-	// DPF's coordinated site inputs use its typed resolver rather than Host
-	// options. Read CLI metadata from the registered flag itself.
-	if flag := discoverCmd.Flags().Lookup("use-case"); flag != nil {
-		s.Flags["--"+flag.Name] = flagSchema{Type: flag.Value.Type(), Default: flag.DefValue, Description: flag.Usage}
+	// DPF-specific inputs use typed request fields rather than Host config
+	// options. Discover their schema from registered flags and target metadata.
+	for _, command := range []*cobra.Command{discoverCmd, generateCmd, deployCmd} {
+		command.LocalNonPersistentFlags().VisitAll(func(flag *pflag.Flag) {
+			if _, exists := s.Flags["--"+flag.Name]; exists {
+				return
+			}
+			if !slices.Contains(flag.Annotations[flagTargetsAnnotation], string(target.DPF)) {
+				return
+			}
+			s.Flags["--"+flag.Name] = flagSchema{Type: flag.Value.Type(), Default: flag.DefValue, Description: flag.Usage}
+		})
 	}
 	for _, definition := range configflags.Definitions() {
 		name := "--" + definition.FlagName

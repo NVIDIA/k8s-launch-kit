@@ -36,6 +36,7 @@ import (
 // DeployRequest selects an already generated DPF bundle and explicit site
 // access. It has no Host-target kubeconfig or overwrite fallback.
 type DeployRequest struct {
+	Inventory string
 	Resume    string
 	ResumeSet bool
 
@@ -57,8 +58,8 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 	if inv.Execution.DryRun {
 		return nil, fmt.Errorf("DPF deploy does not support --dry-run; inspect the generated bundle and run discovery before deployment")
 	}
-	if d.request.UserConfig == "" || d.request.DeploymentFiles == "" {
-		return nil, fmt.Errorf("DPF deploy requires --user-config and --deployment-files")
+	if d.request.Inventory == "" || d.request.DeploymentFiles == "" {
+		return nil, fmt.Errorf("DPF deploy requires --inventory dpf-discovered.yaml and --deployment-files ./hbn-bgp; --user-config is optional")
 	}
 	if inv.Execution.Timeout < 0 || inv.Execution.Timeout > hbn.MaxNativeDeploymentDuration {
 		return nil, fmt.Errorf("DPF deployment timeout must be between zero (the two-hour default) and two hours")
@@ -97,13 +98,25 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		if err != nil {
 			return apperrors.NewValidationError("invalid DPF deployment bundle", err, "Regenerate the complete bundle and retain its metadata")
 		}
-		input, err := config.Load(r.UserConfig)
+		plan, err := generation.LoadPlan(retained)
 		if err != nil {
-			return apperrors.NewValidationError("invalid DPF deployment configuration", err, "Supply the discovered site configuration")
+			return apperrors.NewValidationError("invalid retained DPF deployment plan", err, "Regenerate and review the bundle before opening access")
+		}
+		input, err := config.LoadInputs(r.Inventory, r.UserConfig)
+		if err != nil {
+			return apperrors.NewValidationError("invalid DPF deployment configuration", err, "Supply the discovery output with --inventory dpf-discovered.yaml")
+		}
+		input, err = withRetainedConfiguration(input, plan)
+		if err != nil {
+			return apperrors.NewValidationError("cannot restore DPF deployment settings", err, "Regenerate and review the bundle")
 		}
 		input, err = withRetainedUseCase(input, retained)
 		if err != nil {
 			return apperrors.NewValidationError("DPF deployment selection conflicts with the bundle", err, "Use the generated selection or regenerate and review the bundle")
+		}
+		input, err = withRetainedProvisioning(input, plan)
+		if err != nil {
+			return apperrors.NewValidationError("cannot resolve retained DPF provisioning", err, "Use the validated bundle's supported recipe")
 		}
 		access, err := config.Resolve(input)
 		if err != nil {
@@ -192,7 +205,7 @@ func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string, resume
 			Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, HostLLDP: sshprobe.Collector{},
 			BMC:            redfish.Collector{IncludeNetworkFunctionMACs: true, ProvisioningRelease: plan.Intent().Release},
 			Probes:         probe.Runner{Assets: catalog.ProbeAssets(), Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))},
-			HBNPermissions: newHBNPermissionObserver().observe, HBNEnrollment: hbnEnrollmentAccessCheck, Artifacts: artifactcheck.Verifier{}, HostNetworking: sshprobe.ObserveHostWorkloadNetwork,
+			HBNPermissions: newHBNPermissionObserver().observeRetained(retained, plan), HBNEnrollment: hbnEnrollmentAccessCheck, Artifacts: artifactcheck.Verifier{}, HostNetworking: sshprobe.ObserveHostWorkloadNetwork,
 		}
 	})
 }
@@ -201,6 +214,9 @@ func freshDeploymentPrerequisites(retained *bundle.Bundle, runDir string, resume
 // path in integration tests without opening real endpoint transports.
 func deploymentPrerequisitesWithCollectors(retained *bundle.Bundle, runDir string, resume bool, collectors func(*artifacts.Store, *generation.Plan) discovery.Dependencies) deployment.PrerequisiteVerifier {
 	return func(ctx context.Context, request config.Request, plan *generation.Plan, phase deployment.PrerequisitePhase) (deployment.PrerequisiteVerification, error) {
+		if retained == nil || plan == nil || plan.Digest() != retained.Index().BundleDigest {
+			return deployment.PrerequisiteVerification{}, fmt.Errorf("fresh prerequisites require the validated retained plan")
+		}
 		if phase != deployment.BeforeActivation && phase != deployment.AfterActivation {
 			return deployment.PrerequisiteVerification{}, fmt.Errorf("unsupported prerequisite phase")
 		}
@@ -209,6 +225,7 @@ func deploymentPrerequisitesWithCollectors(retained *bundle.Bundle, runDir strin
 			return deployment.PrerequisiteVerification{}, err
 		}
 		deps := collectors(store, plan)
+		deps.RetainedProvisioning = plan
 		deps.DeferHBNReadiness = resume || phase == deployment.AfterActivation
 		if phase == deployment.AfterActivation {
 			deps.ArtifactSourceMode = discovery.ArtifactInputsOnly

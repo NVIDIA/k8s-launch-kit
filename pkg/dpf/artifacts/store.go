@@ -75,7 +75,7 @@ func New(in config.Input, destination string, explicit bool) (*Store, error) {
 	if outputInfo != nil && os.SameFile(sourceInfo, outputInfo) && input != output {
 		return nil, fmt.Errorf("output aliases input")
 	}
-	protected := []string{in.Site.Management.KubeconfigRef.File}
+	protected := []string{in.Site.Management.KubeconfigRef.File, in.OverridesPath}
 	for _, sw := range in.Site.Discovery.Switches {
 		protected = append(protected, sw.SSH.KnownHostsFile)
 	}
@@ -296,6 +296,12 @@ func (s *Store) Publish(ctx context.Context, report *inventory.Report) error {
 	source, err := os.ReadFile(s.Input.Path)
 	if err != nil || !bytes.Equal(source, s.Input.Source) {
 		return fmt.Errorf("source changed during discovery")
+	}
+	if s.Input.OverridesPath != "" {
+		currentOverrides, err := config.ReadReference(s.Input.OverridesPath, 16<<20)
+		if err != nil || !bytes.Equal(currentOverrides, s.Input.OverridesSource) {
+			return fmt.Errorf("overrides source changed during discovery")
+		}
 	}
 	current, err := snapshot(s.Output)
 	if err != nil || current.Exists != s.Initial.Exists || !bytes.Equal(current.Data, s.Initial.Data) {

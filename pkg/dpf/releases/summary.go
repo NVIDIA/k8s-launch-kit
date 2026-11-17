@@ -73,6 +73,7 @@ type HardwareSummary struct {
 	Family              string                    `json:"family" yaml:"family"`
 	Models              []string                  `json:"models" yaml:"models"`
 	SupportLevel        string                    `json:"supportLevel,omitempty" yaml:"supportLevel,omitempty"`
+	HBNFlavorProfile    string                    `json:"hbnFlavorProfile,omitempty" yaml:"hbnFlavorProfile,omitempty"`
 	BFB                 *ArtifactSummary          `json:"bfb,omitempty" yaml:"bfb,omitempty"`
 	BlueFieldSoftware   *BlueFieldSoftwareSummary `json:"blueFieldSoftware,omitempty" yaml:"blueFieldSoftware,omitempty"`
 	MinimumNICFirmware  string                    `json:"minimumNICFirmware,omitempty" yaml:"minimumNICFirmware,omitempty"`
@@ -132,7 +133,7 @@ func Summarize(r Release) Summary {
 		s.Components = append(s.Components, ComponentSummary{Name: c.Name, Version: c.Version, Repository: c.Repository, Applicability: c.Applicability})
 	}
 	for _, h := range r.Hardware {
-		out := HardwareSummary{Family: h.Family, Models: slices.Clone(h.Models), SupportLevel: h.SupportLevel}
+		out := HardwareSummary{Family: h.Family, Models: slices.Clone(h.Models), SupportLevel: h.SupportLevel, HBNFlavorProfile: h.HBNFlavorProfile}
 		if h.BFB != nil {
 			out.BFB = &ArtifactSummary{Version: h.BFB.Version, URL: h.BFB.URL, Digest: h.BFB.Digest}
 		}
@@ -215,20 +216,8 @@ func (s Summary) Release() (Release, error) {
 	}
 	models := map[string]bool{}
 	for _, h := range s.Hardware {
-		bf4FamilyOnly := h.Family == "BlueField-4" && len(h.Models) == 0 && h.SupportLevel == "beta" && h.BlueFieldSoftware != nil && h.BFB == nil
-		if !summaryToken(h.Family) || len(h.Models) == 0 && !bf4FamilyOnly || h.SupportLevel != "" && h.SupportLevel != "ga" && h.SupportLevel != "beta" {
-			return Release{}, fmt.Errorf("invalid saved DPF hardware applicability or BFB coordinate")
-		}
-		if bf4FamilyOnly {
-			software, err := blueFieldSoftwareFromSummary(*h.BlueFieldSoftware)
-			if err != nil {
-				return Release{}, err
-			}
-			out := HardwareBOM{Family: h.Family, SupportLevel: h.SupportLevel, BlueFieldSoftware: software, Requirements: []Requirement{}}
-			r.Hardware = append(r.Hardware, out)
-			continue
-		}
-		if h.BlueFieldSoftware != nil || h.BFB == nil || !summaryToken(h.BFB.Version) || !summaryHTTPS(h.BFB.URL) || h.BFB.Digest != "" && !summaryDigest(h.BFB.Digest) {
+		bf4SoftwareRow := h.Family == "BlueField-4" && h.SupportLevel == "beta" && h.BlueFieldSoftware != nil && h.BFB == nil
+		if !summaryToken(h.Family) || len(h.Models) == 0 && !bf4SoftwareRow || h.SupportLevel != "" && h.SupportLevel != "ga" && h.SupportLevel != "beta" || h.HBNFlavorProfile != "" && (!summaryToken(h.HBNFlavorProfile) || len(h.Models) == 0) {
 			return Release{}, fmt.Errorf("invalid saved DPF hardware applicability or BFB coordinate")
 		}
 		for _, model := range h.Models {
@@ -238,9 +227,21 @@ func (s Summary) Release() (Release, error) {
 			}
 			models[key] = true
 		}
-		bfb := &Artifact{Version: h.BFB.Version, URL: h.BFB.URL, Digest: h.BFB.Digest}
-		out := HardwareBOM{Family: h.Family, Models: slices.Clone(h.Models), SupportLevel: h.SupportLevel,
-			BFB: bfb, Requirements: []Requirement{}}
+		var out HardwareBOM
+		if bf4SoftwareRow {
+			software, err := blueFieldSoftwareFromSummary(*h.BlueFieldSoftware)
+			if err != nil {
+				return Release{}, err
+			}
+			out = HardwareBOM{Family: h.Family, Models: slices.Clone(h.Models), SupportLevel: h.SupportLevel, HBNFlavorProfile: h.HBNFlavorProfile, BlueFieldSoftware: software, Requirements: []Requirement{}}
+		} else {
+			if h.BlueFieldSoftware != nil || h.BFB == nil || !summaryToken(h.BFB.Version) || !summaryHTTPS(h.BFB.URL) || h.BFB.Digest != "" && !summaryDigest(h.BFB.Digest) {
+				return Release{}, fmt.Errorf("invalid saved DPF hardware applicability or BFB coordinate")
+			}
+			bfb := &Artifact{Version: h.BFB.Version, URL: h.BFB.URL, Digest: h.BFB.Digest}
+			out = HardwareBOM{Family: h.Family, Models: slices.Clone(h.Models), SupportLevel: h.SupportLevel, HBNFlavorProfile: h.HBNFlavorProfile,
+				BFB: bfb, Requirements: []Requirement{}}
+		}
 		for _, field := range h.minimumFields() {
 			requirement := Requirement{Component: field.component, Scope: field.scope, State: "unknown",
 				ReasonCode: "RELEASE_REQUIREMENT_NOT_DOCUMENTED", Message: "The saved release BOM records no minimum for this component."}

@@ -46,6 +46,11 @@ func WithUseCase(in Input, selection *string) (Input, error) {
 	if *selection != "hbn-bgp" {
 		return Input{}, fmt.Errorf("--use-case must be hbn-bgp")
 	}
+	if in.External {
+		value := *selection
+		in.Site.DPF.UseCase = &value
+		return internalDocument(in)
+	}
 	doc, err := yamlinput.Expand(in.Document)
 	if err != nil {
 		return Input{}, err

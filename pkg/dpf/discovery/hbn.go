@@ -53,18 +53,45 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 	managementChecks, managementFacts := managementHBNChecks(provisioning, inv, r.DPFNamespace)
 	inv.HBN.Management = managementFacts
 	additionalChecks := append(managementChecks, hbnEnrollmentAccessCheck(ctx, r, inv, deps.HBNEnrollment))
-	additionalChecks = append(additionalChecks, hbnSoftwareChecks(r.Input.Site.Provisioning, inv)...)
+	provisioningInputs := r.Input.Site.Provisioning
+	provisioningReady := true
+	if deps.RetainedProvisioning != nil {
+		var err error
+		provisioningInputs, err = deps.RetainedProvisioning.ResolveProvisioning(r.Input.Site)
+		if err != nil {
+			provisioningReady = false
+			additionalChecks = append(additionalChecks, inventory.Check{ID: "dpf.hbn.retained-provisioning", Subject: "retained deployment recipe", Vantage: "executor", RequiredPhase: "deploy", State: "failed", ReasonCode: "RETAINED_PROVISIONING_INVALID", Message: err.Error()})
+		} else {
+			additionalChecks = append(additionalChecks, hbnSoftwareChecks(provisioningInputs, inv)...)
+			additionalChecks = append(additionalChecks, hbnGenerationInputChecks(provisioningInputs)...)
+		}
+	} else if r.Input.External {
+		var catalogChecks []inventory.Check
+		provisioningInputs, catalogChecks = hbnCatalogInputs(r.Input.Site, inv)
+		additionalChecks = append(additionalChecks, catalogChecks...)
+		for _, check := range catalogChecks {
+			if check.State != "passed" {
+				provisioningReady = false
+			}
+		}
+	} else {
+		additionalChecks = append(additionalChecks, hbnSoftwareChecks(provisioningInputs, inv)...)
+		additionalChecks = append(additionalChecks, hbnGenerationInputChecks(provisioningInputs)...)
+	}
 	additionalChecks = append(additionalChecks, hbnProvisioningAPIChecks(inv)...)
 	additionalChecks = append(additionalChecks, hbnResetSupportChecks(inv)...)
-	additionalChecks = append(additionalChecks, hbnArtifactSourceChecks(ctx, r.Input.Site.Provisioning, inv, deps.Artifacts, deps.ArtifactSourceMode)...)
-	additionalChecks = append(additionalChecks, hbnGenerationInputChecks(r.Input.Site.Provisioning)...)
+	if provisioningReady {
+		additionalChecks = append(additionalChecks, hbnArtifactSourceChecks(ctx, provisioningInputs, inv, deps.Artifacts, deps.ArtifactSourceMode)...)
+	} else {
+		additionalChecks = append(additionalChecks, inventory.Check{ID: "dpf.hbn.artifact-source", Subject: "release artifacts", Vantage: "executor", RequiredPhase: "generate", State: "unknown", ReasonCode: "PROVISIONING_PREREQUISITE_UNAVAILABLE", Message: "Artifact downloads were not checked because fixed provisioning inputs could not be resolved. Resolve the reported provisioning blocker first."})
+	}
 	additionalChecks = append(additionalChecks, hbnHostAddressPlanCheck(r.HBN, r.HBNGeneration))
 	additionalChecks = append(additionalChecks, hbnRuntimeBudgetCheck(inv))
 	controllerServiceCIDR := ""
 	if r.Software != nil {
 		controllerServiceCIDR = r.Software.TenantServiceCIDR
 	}
-	bootstrapChecks, tenantFacts := hbnBootstrapChecks(r.Input.Site.Provisioning, r.DPFNamespace, inv, provisioning, controllerServiceCIDR)
+	bootstrapChecks, tenantFacts := hbnBootstrapChecks(provisioningInputs, r.DPFNamespace, inv, provisioning, controllerServiceCIDR)
 	additionalChecks = append(additionalChecks, bootstrapChecks...)
 	inv.HBN.Management.TenantClusters = tenantFacts
 	inv.HBN.Management.Issues = append(inv.HBN.Management.Issues, projectTenantIssues(provisioning, tenantFacts)...)

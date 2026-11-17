@@ -48,8 +48,8 @@ func TestGenerateSignalChild(t *testing.T) {
 	}
 	fetchCount := 0
 	driver := generateDriver{
-		request: GenerateRequest{UserConfig: site, OutputPath: output, Stdout: &strings.Builder{}, Stderr: &strings.Builder{}},
-		fetchChart: func(ctx context.Context, _ string) ([]byte, error) {
+		request: GenerateRequest{Inventory: site, OutputPath: output, Stdout: &strings.Builder{}, Stderr: &strings.Builder{}},
+		prepare: prepareFixtureGeneration, fetchChart: func(ctx context.Context, _ string) ([]byte, error) {
 			fetchCount++
 			markerTemp := marker + ".tmp"
 			if err := os.WriteFile(markerTemp, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {

@@ -124,7 +124,7 @@ var _ = Describe("DPF deployment CLI results", func() {
 	})
 
 	It("rejects unsupported modes and invalid deadlines before opening access", func() {
-		adapter := NewDeployAdapter(DeployRequest{UserConfig: "/site.yaml", DeploymentFiles: "/bundle"})
+		adapter := NewDeployAdapter(DeployRequest{Inventory: "/site.yaml", DeploymentFiles: "/bundle"})
 		for _, invocation := range []target.Invocation{
 			{Target: target.DPF, Phase: target.Deploy, Execution: target.ExecutionOptions{DryRun: true}},
 			{Target: target.DPF, Phase: target.Deploy, Execution: target.ExecutionOptions{Timeout: -time.Second}},

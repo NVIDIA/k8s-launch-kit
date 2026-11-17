@@ -30,6 +30,7 @@ import (
 var (
 	discoverConfigOptions options.Options
 	discoverUseCase       string
+	dpfInventoryPath      string
 	discoverCmd           = &cobra.Command{
 		Use:   "discover",
 		Short: "Discover cluster network hardware capabilities",
@@ -46,13 +47,18 @@ NICs, and probes OFED-dependent modules. With --user-config, it replaces
 clusterConfig and discoveredSecondaryNetwork, then applies explicit CLI overrides.
 
 With --target dpf, collect inventory from explicitly selected host, DPU and BMC
-endpoints using ordinary YAML. Inventory is the default and needs no kubeconfig.
+endpoints using --inventory. --user-config optionally supplies supported policy
+overrides. Inventory mode is the default and needs no kubeconfig.
 A supplied kubeconfig adds management-cluster observations. Explicit
 discovery.probes.mode: management requests network probes on every observed node
 that meets the readiness and platform checks, using pinned Linux/amd64 assets.
 Use --use-case hbn-bgp to check the selected use case before generating and
 deploying its DPF bundle.`,
-		Example: `  # Basic discovery
+		Example: `  # DPF discovery from explicit inventory; optional --user-config supplies policy overrides
+  l8k discover --target dpf --inventory ./inventory.yaml \
+    --save-cluster-config ./dpf-discovered.yaml
+
+  # Basic Host discovery
   l8k discover --kubeconfig ~/.kube/config \
     --save-cluster-config ./cluster-config.yaml
 
@@ -79,14 +85,14 @@ deploying its DPF bundle.`,
     --output json 2>/dev/null`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if targetName == string(target.DPF) && len(args) > 0 {
-				exitWithError(apperrors.NewValidationError("discover takes no positional arguments", nil, "Use --user-config"), outputFormat)
+				exitWithError(apperrors.NewValidationError("discover takes no positional arguments", nil, "Use --inventory inventory.yaml (and optionally --user-config overrides.yaml)"), outputFormat)
 			}
 			if targetName == string(target.DPF) {
 				var useCase *string
 				if cmd.Flags().Changed("use-case") {
 					useCase = &discoverUseCase
 				}
-				runTargetCommand(cmd, target.Discover, dpftarget.NewDiscoverAdapter(dpftarget.Request{UserConfig: userConfig, UseCase: useCase, OutputPath: saveClusterConfig, ExplicitOutput: cmd.Flags().Changed("save-cluster-config")}))
+				runTargetCommand(cmd, target.Discover, dpftarget.NewDiscoverAdapter(dpftarget.Request{Inventory: dpfInventoryPath, UserConfig: userConfig, UseCase: useCase, OutputPath: saveClusterConfig, ExplicitOutput: cmd.Flags().Changed("save-cluster-config")}))
 				return
 			}
 			opts := mustCollectConfigFlags(cmd, discoverConfigOptions)
@@ -115,13 +121,15 @@ deploying its DPF bundle.`,
 func init() {
 	rootCmd.AddCommand(discoverCmd)
 	addTargetFlag(discoverCmd)
-	discoverCmd.Flags().StringVar(&discoverUseCase, "use-case", "", "DPF use case to check: hbn-bgp (overrides dpf.useCase)")
+	discoverCmd.Flags().StringVar(&discoverUseCase, "use-case", "", "DPF use case to check: hbn-bgp (overrides the useCase setting)")
 	setFlagGroup(discoverCmd, "use-case", GroupProfile)
 	discoverCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress discovery progress (final result and errors still shown)")
 	setFlagGroup(discoverCmd, "quiet", GroupOutputLogging)
 
 	discoverCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
-	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Base config to merge with discovered hardware")
+	discoverCmd.Flags().StringVar(&dpfInventoryPath, "inventory", "", "DPF inventory YAML input (required for --target dpf)")
+	setFlagGroup(discoverCmd, "inventory", GroupDiscovery)
+	discoverCmd.Flags().StringVar(&userConfig, "user-config", "", "Host: base config to merge with discovered hardware; DPF: optional supported policy overrides")
 	discoverCmd.Flags().StringVar(&saveClusterConfig, "save-cluster-config", "", "Output path for cluster-config.yaml")
 	mustBindConfigFlags(discoverCmd, &discoverConfigOptions, configflags.ScopeDiscover)
 	discoverCmd.Flags().StringVar(&nodeSelector, "node-selector", "feature.node.kubernetes.io/pci-15b3.present=true", "Node selector written into the saved cluster-config (used at deploy time). Does NOT gate discovery scheduling — the daemon runs on all nodes and discoverable NICs are detected via sysfs; restricted BlueFields are excluded")

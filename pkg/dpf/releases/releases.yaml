@@ -226,13 +226,22 @@ releases:
             message: No standalone golden-image requirement is declared by the pinned platform requirements; retain the observed version without inferring compatibility.
             sourceRef: platform-support
       - family: BlueField-4
-        models: []
+        models:
+          - B4240
         supportLevel: beta
+        hbnFlavorProfile: hbn-bf4-b4240-v26-8
         blueFieldSoftware:
           osIso:
-            reasonCode: BF4_ARTIFACT_NOT_PUBLIC
-            message: Requires an authorized release-compatible BF4 ISO override; public v26.8 release material does not publish its version or URL.
-            sourceRef: release-notes
+            version: 3.3.0-602_26.01
+            url: https://nbu-nfs.gtm.nvidia.com/auto/sw_mc_soc_release/doca_dpu/doca_3.3.0_vr_1.0/20260922.1/ISO/bf4-os-doca-bundle-3.3.0-602_26.01_ubuntu-24.04_64k.iso
+            digest: sha256:bc69d99904300e09483f9fb9cb5187562fa770308acb4f6f139717b2105b3272
+            sourceRef: bf4-b4240-os-iso
+          pldmFwBundle:
+            MT_0000001774:
+              version: 20260917.1
+              url: https://urm.nvidia.com/artifactory/sw-mlnx-bluefield-generic/bluefield4/PLDM/1.0_builds/20260917.1/Prod/MT_0000001774/nvfw_BF4-DPU_0001_260917.7474412.0_custom_prod-signed.fwpkg
+              digest: sha256:ac3be7fc6e84ad678325834e42fdc34392e7ab7dcccea2346fd58fe851c9122a
+              sourceRef: bf4-b4240-pldm
         requirements: []
     sources:
       - id: platform-support
@@ -250,9 +259,18 @@ releases:
       - id: hbn-guide
         url: https://github.com/NVIDIA/doca-platform/blob/v26.8.0/docs/public/user-guides/zero-trust/use-cases/hbn/README.md
         revision: fc4974ed3bc026ae27634673c2fdf818a2972235
+      - id: bf4-b4240-os-iso
+        url: https://nbu-nfs.gtm.nvidia.com/auto/sw_mc_soc_release/doca_dpu/doca_3.3.0_vr_1.0/20260922.1/ISO/bf4-os-doca-bundle-3.3.0-602_26.01_ubuntu-24.04_64k.iso
+        revision: sha256:bc69d99904300e09483f9fb9cb5187562fa770308acb4f6f139717b2105b3272
+      - id: bf4-b4240-pldm
+        url: https://urm.nvidia.com/artifactory/sw-mlnx-bluefield-generic/bluefield4/PLDM/1.0_builds/20260917.1/Prod/MT_0000001774/nvfw_BF4-DPU_0001_260917.7474412.0_custom_prod-signed.fwpkg
+        revision: sha256:ac3be7fc6e84ad678325834e42fdc34392e7ab7dcccea2346fd58fe851c9122a
+      - id: bf4-b4240-hbn-flavor
+        url: https://github.com/NVIDIA/doca-platform/blob/fc4974ed3bc026ae27634673c2fdf818a2972235/docs/do_not_publish/bf4/hbn/manifests/03.1-dpudeployment-installation-pf/hbn-dpuflavor.yaml
+        revision: fc4974ed3bc026ae27634673c2fdf818a2972235
     limitations:
-      - BlueField-4 DPF, Zero Trust, and DOCA HBN support are Beta in v26.8 for selected partners/customers; this catalog entry does not establish B4240 or any other exact BF4 model qualification.
-      - Public v26.8 material does not publish BF4 OS ISO or PLDM bundle coordinates; supply authorized, release-compatible artifacts per observed PSID before provisioning.
-      - Software coordinates are upstream release metadata, not proof of installed versions, active firmware, runtime compatibility, or Launch Kit hardware qualification.
+      - BlueField-4 DPF, Zero Trust, and DOCA HBN support are Beta in v26.8 for selected partners/customers; the provisioning recipe applies only to B4240 devices with PSID MT_0000001774 and does not establish broader BF4 hardware qualification.
+      - The B4240 OS ISO and PLDM coordinates are credential-free internal distribution references; generation and provisioning require an authorized execution environment with access to those origins. They are not publicly downloadable coordinates.
+      - Catalogued software coordinates are curated artifact references, not proof of installed versions, active firmware, runtime compatibility, or Launch Kit hardware qualification.
       - Component applicability mirrors the upstream component matrix; it does not select services or authorize changing the independent host cluster.
       - BFB and component image bytes are not digest-locked by this catalog; provisioning must resolve and verify immutable artifacts before use.

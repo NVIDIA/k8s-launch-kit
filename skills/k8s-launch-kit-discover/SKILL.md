@@ -36,7 +36,7 @@ BMC probes reuse explicit endpoint TLS policy and report bypassed handshakes as
 `unverified`; management API TLS remains strict. Host SSH sources can accompany
 these probes; explicit DPU BMC endpoints are required. Interface/route
 success does not prove VIP reservation or VRID uniqueness.
-Require explicit `provisioning.bootstrap.tenant.allocation` declarations for
+Require explicit `tenant.allocation` declarations for
 `vipReserved`, `vipExcludedFromDHCP` and `routerIDUniqueOnSelectedNodes`.
 Missing/null values remain unknown and false values fail readiness. Never set
 them from profile defaults, route observations or absence from an API list.
@@ -46,7 +46,7 @@ For another tenant with the same VRRP ID, discovery compares observed node
 selectors: potentially overlapping placement fails, missing selector facts stay
 unknown, and disjoint selectors do not conflict. A verified absence of a
 Keepalived endpoint does not reserve a VRRP ID through that resource.
-The explicit flag overrides and persists `dpf.useCase`; `dpf.hbn` overrides
+The explicit flag overrides and persists `useCase` in optional overrides; `hbn.networking` overrides
 desired profile defaults. Read `readiness.state` separately from physical
 `discovery.outcome`: required unknown or mismatched prerequisites return nonzero
 even when physical inventory is saved. The readiness assessment keeps unverified provisioning
@@ -136,8 +136,10 @@ PSID must reject those states rather than inventing Runtime/SSH evidence or
 copying another card's PSID. This optional fact does not change inventory acceptance.
 
 DPF inventory saves the resolved software BOM under `inventory.software`.
-`dpf.release` defaults to `26.4.0`; omit/null defaults, explicit empty/unknown
-rejects. Exact BlueField-3 catalog applicability and observed current versions
+The optional overrides field `release` defaults to `26.4.0` for general
+inventory or the catalog's HBN-BGP default (`26.8.0`) for that use case.
+Omitted/null values use that default; explicit empty/unknown values reject.
+Exact catalog applicability and observed current versions
 remain separate from hardware qualification. Never supply reference-script guessed
 minima or clear unknown observations to imply compatibility. Missing tools and
 failed checks retain specific safe reasons and tool names where applicable;
@@ -149,7 +151,7 @@ can read local dnsmasq IPv4 lease files or eligible observed SSH neighbors. Trea
 reasons and never send credentials automatically. Have the user establish endpoint
 ownership and trust before adding an explicit endpoint and rerunning inventory.
 Use a fresh seed/output for scope changes; same-scope in-place refresh explicitly
-uses the same `--user-config` and `--save-cluster-config` path. Keep reports and
+uses the same `--inventory` and `--save-cluster-config` path. Keep reports and
 stderr and do not treat a preserved old handoff after partial failure as fresh data.
 
 DPF BMC TLS verification defaults to enabled. For an explicitly requested lab

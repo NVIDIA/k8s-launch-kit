@@ -95,7 +95,7 @@ func ResolveBootstrap(options *BootstrapOptions, namespace, observedAPI string, 
 	assign(&in.Tenant.VIP, options.Tenant.VIP)
 	assign(&in.Tenant.Interface, options.Tenant.Interface)
 	if err := bootstrap.ValidateBMCFactoryResetPolicy(in.BMCFactoryResetPolicy); err != nil {
-		return bootstrap.Inputs{}, nil, fmt.Errorf("/provisioning/bootstrap/bmcFactoryResetPolicy: %w", err)
+		return bootstrap.Inputs{}, nil, fmt.Errorf("BMC factory reset policy: %w", err)
 	}
 	if options.Tenant.RouterID != nil {
 		in.Tenant.RouterID = *options.Tenant.RouterID
@@ -114,19 +114,19 @@ func ResolveBootstrap(options *BootstrapOptions, namespace, observedAPI string, 
 		field   string
 		missing bool
 	}{
-		{"managementAPIIP", options.ManagementAPIIP == nil && in.ManagementAPIIP == ""},
-		{"managementAPIPort", options.ManagementAPIPort == nil && in.ManagementAPIPort == 0},
+		{"tenant.managementAPIIP", options.ManagementAPIIP == nil && in.ManagementAPIIP == ""},
+		{"tenant.managementAPIPort", options.ManagementAPIPort == nil && in.ManagementAPIPort == 0},
 		{"tenant.vip", options.Tenant.VIP == nil}, {"tenant.interface", options.Tenant.Interface == nil},
 	} {
 		if required.missing {
-			issues = append(issues, ProvisioningIssue{Field: "/provisioning/bootstrap/" + required.field, ReasonCode: "BOOTSTRAP_INPUT_MISSING"})
+			issues = append(issues, ProvisioningIssue{Field: required.field, ReasonCode: "BOOTSTRAP_INPUT_MISSING"})
 		}
 	}
 	if len(issues) > 0 {
 		return in, issues, nil
 	}
 	if err := bootstrap.Validate(in); err != nil {
-		return bootstrap.Inputs{}, nil, fmt.Errorf("/provisioning/bootstrap: %w", err)
+		return bootstrap.Inputs{}, nil, fmt.Errorf("tenant and cluster settings: %w", err)
 	}
 	return in, issues, nil
 }

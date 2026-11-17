@@ -10,7 +10,7 @@ openspec/workflows/dpf-discovery.json. Edit the source, then regenerate.
 
 Use these procedures for the supported standalone DPF discovery, HBN-BGP readiness, generation and deployment workflow. The current BF4/HBN-BGP cohort remains beta; command availability does not qualify every hardware and release combination. DPF standalone validate and the composite pipeline are not available. The DPU estate is separate from Host networking. Inventory is the default; explicit management mode probes every observed node that meets the existing readiness and platform checks. Node count alone does not establish control-plane HA or qualify a production topology. Discovery collects facts and writes a handoff; it does not create VMs, install Kubernetes, change switch forwarding configuration, enroll devices or start deployment. The management Kubernetes cluster, required DPF foundations and aligned switch fabric must already exist. Deployment installs and configures DPF on that cluster, creates the selected tenant DPU cluster, provisions selected cards, configures their host workload interfaces and checks HBN traffic. Launch Kit does not create the management VM or change switch forwarding configuration.
 
-Start with inventory, complete the HBN-BGP site inputs and readiness checks, then generate and review the bundle before the separate deployment command. Each diagram follows the procedure below it. Commands are examples for deliberate use from the CLI machine with direct access to the configured endpoints. For automation, add `--output json`, capture stdout, stderr and the process exit status separately. See the [DPF discovery reference](dpf-discovery.md) for access and output details.
+Start from an external inventory input, add only supported policy overrides when needed, and complete HBN-BGP readiness before generating and reviewing the bundle for separate deployment. The release catalog owns artifacts and software/flavor composition. The `26.8.0` beta has one exact BF4 recipe for model `B4240` with observed PSID `MT_0000001774`; other models or PSIDs remain unsupported until their catalog entries are maintained. The OS ISO and PLDM coordinates point to restricted internal distribution endpoints; the CLI machine must reach those catalog-selected sources over HTTPS for discovery artifact checks. This scoped recipe does not qualify the BF4 family or runtime behavior; do not supply raw firmware tuples. Each diagram follows the procedure below it. Commands are examples for deliberate use from the CLI machine with direct access to the configured endpoints. For automation, add `--output json`, capture stdout, stderr and the process exit status separately. See the [DPF discovery reference](dpf-discovery.md) for access and output details.
 
 ## Collect the first inventory {#initial-inventory}
 
@@ -48,12 +48,12 @@ Choose each source explicitly: a host operating system over SSH or its BMC over 
 | Required for SSH | A verified `knownHostsFile`; direct connectivity from the CLI machine. SSH port defaults to `22`; ambient SSH config, agents and ProxyJump are not used. |
 | Conditional | DPU ARM SSH for partial OS measurements; a private CA for Redfish when system trust is insufficient; `systemURI` if a BMC exposes several Systems. |
 | Optional | A management kubeconfig for additional observations. Inventory needs none, but an explicitly supplied kubeconfig must work. |
-| Defaultable | For generic inventory, `dpf.release` defaults to `26.4.0`; HBN-BGP defaults to and requires its catalog-declared release (`26.8.0` today). Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Inventory is the default and omits temporary management-network probes. Explicit management mode requests those probes. |
+| Defaultable | The selected use case chooses its catalog-declared release (`26.8.0` for HBN-BGP). Redfish certificate verification is enabled; SSH `sudo` defaults to `false`. Inventory is the default and omits temporary management-network probes. Explicit management mode requests those probes. |
 | Discovered | Host/system and card identities, host-to-DPU associations, visible hardware/software/network observations, and optional local BMC address hints. |
 
 Use an account whose own session proves its effective administrator role. If session Roles is absent, local authentication must be established by an explicit trusted local session `UserAuthenticationSource`. A current `LocalAccountAuth: Enabled` policy alone cannot prove how an existing session authenticated. Disabled local authentication and explicitly external session sources are unsupported; Fallback/LocalFirst require the explicit local session source. Missing origin plus missing Roles cannot inherit privileges from a same-named local administrator. Discovery reports unverifiable proof as partial without replacing a complete handoff.
 
-Do not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted or null `dpf.release` uses the selected use-case or generic inventory default; an empty or unknown release is rejected. The example below pins `26.8.0` so its inventory can be reused for HBN-BGP. An existing explicit release is preserved when you select a use case; change an older release to a catalog-supported HBN-BGP release, or remove that field to use the HBN-BGP default, before the HBN-BGP readiness step.
+Do not provide product versions as measured facts. The selected release supplies the software bill of materials (BOM); discovery measures installed versions separately. Omitted release selects the catalog default for the use case. A release override must name a release supported by the catalog; unknown or empty values are rejected. When changing use case, confirm that any retained release override is compatible with that catalog entry.
 
 All network connections start from the machine where you run `l8k`. Host and DPU endpoints do not need to connect to each other for this workflow.
 
@@ -85,11 +85,9 @@ Next: [Access prepared](#initial-inventory-configure).
 
 ### 3. CLI machine: create the inventory configuration {#initial-inventory-configure}
 
-Save this example as `dpf-site.yaml`, replacing the documentation address and credential paths with your host values. It uses host SSH and DPU BMC Redfish and requires no Kubernetes cluster. Ensure the listed files exist before running.
+Save this example as `inventory.yaml`, replacing the documentation address and credential paths with your host values. It uses host SSH and DPU BMC Redfish and requires no Kubernetes cluster. Ensure the listed files exist before running.
 
 ```yaml
-dpf:
-  release: 26.8.0
 credentials:
   host-reader:
     username: inventory
@@ -109,16 +107,16 @@ discovery:
       credentialRef: dpu-maintainer
 ```
 
-For DPU ARM observations, use the SSH shape instead; ARM-only DPU input produces partial inventory with a nonzero exit because it cannot prove BMC administrator privileges. For Redfish, use `bmcEndpoint` and a password credential reference instead of `ssh`; see the [complete access examples](dpf-discovery.md#inputs-and-invocation). Each endpoint has exactly one access source. Plain YAML is the CLI input, not a Kubernetes object. Do not copy previously observed `inventory` facts into a new seed as user assertions.
+For DPU ARM observations, use the SSH shape instead; ARM-only DPU input produces partial inventory with a nonzero exit because it cannot prove BMC administrator privileges. For Redfish, use `bmcEndpoint` and a password reference instead of `ssh`. Each endpoint has exactly one access source. File references resolve relative to the file that declares them. An optional `overrides.yaml` contains only supported policy fields such as use case/release, HBN networking policy or cluster placement. Do not add `dpf` or `provisioning` trees, raw flavor/software objects, firmware URLs/digests, chart coordinates or arbitrary resources; these are tool/catalog-owned. Omit it to use catalog/profile defaults. See the [external input and override reference](dpf-discovery.md#inputs-and-invocation).
 
 Next: [Configuration ready](#initial-inventory-run).
 
 ### 4. CLI machine: start discovery {#initial-inventory-run}
 
-Choose a new output path for the first run. Run from a machine that can reach every selected endpoint and read the referenced files.
+Use this first discovery command without an override file. At the HBN-BGP readiness step, an optional supported policy override can be supplied with `--user-config overrides.yaml`. Choose a new output path for the first run. Run from a machine that can reach every selected endpoint and read the referenced files.
 
 ```bash
-l8k discover --target dpf --user-config dpf-site.yaml \
+l8k discover --target dpf --inventory inventory.yaml \
   --save-cluster-config dpf-discovered.yaml --output json \
   > discovery.json 2> discovery.log
 ```
@@ -220,10 +218,10 @@ Next: [Selectors configured](#address-candidates-run).
 
 ### 3. CLI machine: run inventory and local lookup {#address-candidates-run}
 
-Save the configured seed as `dpf-lookup.yaml` and select a new handoff path.
+Add the address-lookup source and MACs to `inventory.yaml`. Select a new handoff path.
 
 ```bash
-l8k discover --target dpf --user-config dpf-lookup.yaml \
+l8k discover --target dpf --inventory inventory.yaml \
   --save-cluster-config dpf-candidates.yaml --output json \
   > candidates.json 2> candidates.log
 ```
@@ -282,7 +280,7 @@ Next: [Same scope ready](#refresh-inventory-run); [Scope changed](#refresh-inven
 Launch Kit repeats the [same reads on the selected host, DPU, BMC and optional management API](#initial-inventory-collect), then matches the returned identities and compares them with the saved inventory. Run from the CLI machine using the same YAML path for input and output and explicitly supply `--save-cluster-config`:
 
 ```bash
-l8k discover --target dpf --user-config dpf-discovered.yaml \
+l8k discover --target dpf --inventory dpf-discovered.yaml \
   --save-cluster-config dpf-discovered.yaml --output json \
   > refresh.json 2> refresh.log
 ```
@@ -338,7 +336,7 @@ flowchart TD
 
 ### 1. CLI operator: enable management mode and select access {#management-network-prepare}
 
-Set `discovery.probes.mode: management`, an explicit management kubeconfig, and an existing probe namespace. Retain the selected DPU BMC endpoints. Provide public CA files where needed. An explicit BMC TLS bypass also applies to that BMC’s probe; its successful handshake is reported as unverified. Management API TLS verification remains required. For HBN-BGP, supply `provisioning.bootstrap.tenant.vip`, `interface`, and any node-selector override. The account needs namespace/Node reads and temporary Pod/ConfigMap create, inspect, log-read and delete permissions. Nodes must be Ready, schedulable Linux/amd64; admission must allow the requested non-root host-network Pods. Launch Kit does not change cluster policy.
+Set `discovery.probes.mode: management`, an explicit management kubeconfig, and an existing probe namespace. Retain the selected DPU BMC endpoints. Provide public CA files where needed. An explicit BMC TLS bypass also applies to that BMC’s probe; its successful handshake is reported as unverified. Management API TLS verification remains required. For HBN-BGP, declare tenant VIP/interface/allocation in the inventory file’s supported `tenant` section; put supported cluster placement policy in `overrides.yaml`. The account needs namespace/Node reads and temporary Pod/ConfigMap create, inspect, log-read and delete permissions. Nodes must be Ready, schedulable Linux/amd64; admission must allow the requested non-root host-network Pods. Launch Kit does not change cluster policy.
 
 Next: [Inputs and permissions prepared](#management-network-collect).
 
@@ -391,11 +389,11 @@ flowchart TD
 
 ### 1. CLI operator: select the desired profile and switch access {#hbn-bgp-preflight-inputs}
 
-Use DPF `26.8.0` for HBN-BGP. Keep `dpf.release: 26.8.0`, or omit that field to use the release catalog's HBN-BGP default. If the saved inventory explicitly selects an older release, update or remove it before adding `--use-case hbn-bgp`; a use-case selection does not overwrite an explicit release.
+The HBN-BGP use case selects its release through the supported release catalog (currently `26.8.0`); omission uses the catalog default. Optional `overrides.yaml` may select a catalog release and allowed HBN networking/cluster policy. It cannot author `dpf` or `provisioning` structures, DPU flavor specifications, software composition, firmware URLs/digests, chart coordinates or arbitrary resources. The release catalog/profile own those values.
 
-Retain explicit host and DPU BMC targets. Add each switch SSH address, credential reference, pinned known-hosts file and intended p0/p1-to-switch-port bindings. Omit networking fields to use defaults or override them in `dpf.hbn`. Supply the tenant VIP and control-plane management interface under `provisioning.bootstrap.tenant`; discovery can reuse a literal observed management API IP and port. Missing allocations remain blockers. HBN software and node-effect defaults can be overridden under `provisioning.hbn`. Unknown cabling must remain unresolved; do not guess a mapping from LLDP names.
+Retain explicit host and DPU BMC targets in `inventory.yaml`. Add each switch SSH address, credential reference, pinned known-hosts file and intended p0/p1-to-switch-port bindings. Put tenant VIP, interface and allocation declarations in the supported `tenant` section of `inventory.yaml`. Missing allocations remain blockers. Unknown cabling must remain unresolved; do not guess a mapping from LLDP names.
 
-The selected HBN-BGP profile supplies the expected network configuration and policy defaults; the selected release row supplies default HBN artifact coordinates and the controller's fixed tenant service range. Omit `dpf.hbn` to use its defaults, or override individual VRF, ASN, MTU and address-pool fields for your environment. Discovery compares the live fabric with these resolved values; it does not adopt conflicting switch settings as new defaults. Generation uses the same effective configuration. Keep credentials, access endpoints and physical port bindings in their separate site inputs.
+The selected profile supplies expected HBN policy defaults; the release row supplies artifact coordinates and the fixed tenant service range. Only fields in the supported override schema can change. Discovery compares live fabric with resolved values and does not adopt conflicting switch settings. The `26.8.0` beta catalog contains a maintained recipe only for exact BF4 model `B4240` with observed PSID `MT_0000001774`. The OS ISO and PLDM coordinates point to restricted internal distribution endpoints; the CLI machine must reach those catalog-selected sources over HTTPS for discovery artifact checks. Other model/PSID combinations remain product-support blockers until an exact recipe is maintained. This scoped entry is not broader BF4 or runtime qualification. Do not supply raw firmware tuples.
 
 ASIC readiness requires the exact catalog-qualified Cumulus reader documented in [HBN-BGP prerequisites](dpf-discovery.md#check-hbn-bgp-prerequisites). Other builds remain unknown and block readiness; selecting `cumulus-nvue` does not waive this qualification. Production HBN deployment requires multiple management control-plane nodes, all Ready. The site owner must establish etcd and API load-balancer HA; node count alone does not prove it.
 
@@ -406,8 +404,8 @@ Next: [Inputs prepared](#hbn-bgp-preflight-run).
 Run HBN-BGP discovery from the CLI machine:
 
 ```bash
-l8k discover --target dpf --use-case hbn-bgp \
-  --user-config dpf-site.yaml \
+l8k discover --target dpf --use-case hbn-bgp --inventory inventory.yaml \
+  --user-config overrides.yaml \
   --save-cluster-config dpf-discovered.yaml
 ```
 
@@ -468,13 +466,13 @@ flowchart TD
 
 ### 1. CLI operator: complete the saved site configuration {#hbn-bgp-generation-inputs}
 
-Keep the discovered inventory in the site file. Supply the reserved tenant API VIP/interface and explicit tenant.allocation declarations, the hardware-specific DPUFlavor spec, and the HTTPS OS ISO and PSID-specific PLDM URLs with SHA-256 digests. Review profile defaults and override only the values needed for your site. Endpoint credentials remain references; generation does not read them. The native HBN deployment path requires BMC reset policy `Never`. The general configuration schema and generation may accept `OnInitialization`, but native deployment rejects it before enrollment.
+Use the discovered `dpf-discovered.yaml` inventory handoff. Tenant VIP/interface/allocation belong in its supported `tenant` section. Optional `overrides.yaml` is limited to supported HBN networking and cluster policy fields. Do not supply raw DPUFlavor, OS ISO, PLDM artifact, firmware URL/digest, reset-policy or provisioning objects; the profile and release catalog own them. The `26.8.0` beta recipe is limited to exact model `B4240` with observed PSID `MT_0000001774`; a different model or PSID remains a product-support blocker. This exact recipe does not qualify the broader BF4 family or runtime behavior. Do not fill in firmware tuples.
 
 Next: [Inputs supplied](#hbn-bgp-generation-resolve).
 
 ### 2. CLI machine: resolve and check selected identities {#hbn-bgp-generation-resolve}
 
-Run `l8k generate --target dpf --use-case hbn-bgp --user-config dpf-site.yaml --save-deployment-files ./hbn-bgp`. Launch Kit matches the selected source endpoints to the saved DPU identities and host associations, verifies that administrator access was recorded, and resolves exact PSIDs and desired settings. Missing identities or required inputs stop generation before chart downloads. Host address index 2 and gateway index 1 default from the profile and may be overridden under provisioning.hbn. They must be different usable addresses in every per-DPU subnet; plans requiring more than 4096 subnet reservations are rejected.
+Run `l8k generate --target dpf --use-case hbn-bgp --inventory dpf-discovered.yaml --save-deployment-files ./hbn-bgp`. Launch Kit matches the selected source endpoints to the saved DPU identities and host associations, verifies that administrator access was recorded, and resolves exact PSIDs and desired settings. Missing identities or required inputs stop generation before chart downloads. Host address and gateway positions come from the maintained HBN profile and are not raw user overrides. They must be different usable addresses in every per-DPU subnet; plans requiring more than 4096 subnet reservations are rejected.
 
 Next: [Inputs valid](#hbn-bgp-generation-charts); [Missing or conflicting input](#hbn-bgp-generation-repair).
 
@@ -500,7 +498,7 @@ Next: [Corrected](#hbn-bgp-generation-inputs).
 
 ### 6. CLI operator: review artifacts and remaining readiness checks {#hbn-bgp-generation-review}
 
-Review the tenant endpoint, selected DPU serials, software URLs, flavor settings and HBN network allocation. Generation success proves that local artifacts were constructed and validated; it does not prove API admission, artifact consumption, tenant health, live BGP sessions or workload traffic. A separate `l8k deploy --target dpf` command can execute the reviewed bundle after fresh deployment checks pass; follow the [HBN-BGP deployment procedure](#hbn-bgp-deployment).
+Review the tenant endpoint, selected DPU serials, catalog-selected software artifacts, HBN network allocation and supported policy overrides. Generation success proves that local artifacts were constructed and validated; it does not prove API admission, artifact consumption, tenant health, live BGP sessions or workload traffic. A separate `l8k deploy --target dpf` command can execute the reviewed bundle after fresh deployment checks pass; follow the [HBN-BGP deployment procedure](#hbn-bgp-deployment).
 
 ## Deploy and validate HBN-BGP {#hbn-bgp-deployment}
 
@@ -566,11 +564,11 @@ flowchart TD
 
 Use an existing management Kubernetes cluster with the [required management components](dpf-deployment.md#management-cluster-prerequisites) and a fabric already configured for the selected uplinks. The management nodes must have the paths needed by DPF, and the selected hosts must be able to boot their existing local operating system after a system reboot. Host firmware setup is outside this procedure. Keep the CLI machine online and able to reach the management API and selected hosts throughout the run; host reboots can interrupt access temporarily.
 
-Use the site file from discovery. For the current BF4 enrollment path, each selected DPU BMC must grant Administrator access, use the `admin` username and resolve to the same nonempty password value. Store passwords, SSH keys and trust files in protected references; do not put secrets in command arguments or generated files. The CLI must reach selected host, BMC and switch endpoints directly using the configured trust.
+Use the `dpf-discovered.yaml` inventory handoff from discovery. Supported policy overrides supplied during discovery are retained in this handoff. For the current BF4 enrollment path, each selected DPU BMC must grant Administrator access, use the `admin` username and resolve to the same nonempty password value. Store passwords, SSH keys and trust files in protected references; do not put secrets in command arguments or generated files. The CLI must reach selected host, BMC and switch endpoints directly using the configured trust.
 
-Confirm the tenant API VIP is reserved, excluded from DHCP and its VRID is available on the selected control-plane nodes. Set the three declarations under `provisioning.bootstrap.tenant.allocation` only with confirmation from the responsible site owner. The switch configuration and port bindings must already match the plan. Launch Kit observes them; it does not configure switches.
+Confirm the tenant API VIP is reserved, excluded from DHCP and its VRID is available on the selected control-plane nodes. Set tenant allocation declarations in the inventory file’s `tenant.allocation` section only with confirmation from the responsible site owner. The switch configuration and port bindings must already match the plan. Launch Kit observes them; it does not configure switches.
 
-The native HBN deployment path requires `provisioning.bootstrap.bmcFactoryResetPolicy: Never`. The `dpf.hbn.fabricVRF` value describes the VRF expected on switch uplinks (the profile default is `default`). DPU FRR uses its default VRF; treat that as a separate routing setting and review both in the resolved bundle. Use the generation and configuration guides for field names, profile defaults and overrides.
+The native HBN deployment path uses the maintained reset policy and selected HBN profile. Review the resolved bundle for expected switch uplink VRF and HBN routing settings. These implementation fields are not raw user overrides.
 
 Next: [Site inputs prepared](#hbn-bgp-deployment-discover).
 
@@ -579,8 +577,7 @@ Next: [Site inputs prepared](#hbn-bgp-deployment-discover).
 Run discovery from the CLI machine and save the handoff:
 
 ```bash
-l8k discover --target dpf --use-case hbn-bgp \
-  --user-config dpf-site.yaml \
+l8k discover --target dpf --use-case hbn-bgp --inventory inventory.yaml \
   --save-cluster-config dpf-discovered.yaml
 ```
 
@@ -606,7 +603,7 @@ Generate from the fresh discovered handoff:
 
 ```bash
 l8k generate --target dpf --use-case hbn-bgp \
-  --user-config dpf-discovered.yaml \
+  --inventory dpf-discovered.yaml \
   --save-deployment-files ./hbn-bgp
 ```
 
@@ -616,19 +613,19 @@ Next: [Bundle generated](#hbn-bgp-deployment-review-bundle); [Generation failed]
 
 ### 5. CLI operator: inspect the desired effects {#hbn-bgp-deployment-review-bundle}
 
-Review the selected devices and generated bundle before allowing changes. Check the release and DPU flavor, OS and per-PSID firmware URLs and digests, tenant network, HBN VRF/ASNs/pools, MTUs, host-facing service chain and reserved host addresses. Confirm the switch fabric already matches the intended plan. Generation validates artifacts and schemas; it does not prove artifact compatibility or runtime behavior. Do not patch generated manifests. If desired state changes, edit the site file and create a newly reviewed bundle.
+Review the selected devices and generated bundle before allowing changes. Check the catalog-selected release and artifacts, tenant network, HBN VRF/ASNs/pools, MTUs, host-facing service chain and reserved host addresses. Confirm the switch fabric already matches the intended plan. Generation validates artifacts and schemas; it does not prove artifact compatibility or runtime behavior. Do not patch generated manifests. If desired policy changes, edit the inventory input or supported overrides file and create a newly reviewed bundle.
 
-The `dpf` target requires explicit `--user-config` and `--deployment-files`. It does not support `--dry-run`, Host `--overwrite-existing`, DPF `validate`, the composite pipeline or `generate --deploy`.
+The `dpf` target requires explicit `--inventory` and `--deployment-files`; `--user-config` is optional and limited to supported overrides. It does not support `--dry-run`, Host `--overwrite-existing`, DPF `validate`, the composite pipeline or `generate --deploy`.
 
 Next: [Bundle and effects reviewed](#hbn-bgp-deployment-fresh-checks); [A bundle input or prerequisite needs correction](#hbn-bgp-deployment-blocked).
 
 ### 6. CLI machine: check the remaining budget and fresh prerequisites {#hbn-bgp-deployment-fresh-checks}
 
-Run the separate deployment command:
+Run the separate deployment command using the discovered handoff, which retains any supported discovery overrides:
 
 ```bash
 l8k deploy --target dpf \
-  --user-config dpf-discovered.yaml \
+  --inventory dpf-discovered.yaml \
   --deployment-files ./hbn-bgp
 ```
 
@@ -716,9 +713,9 @@ Read the final state, last completed stage, report location and any failed or un
 
 Keep the failed report, discovery handoff, stdout and stderr. Unknown is not a pass. Earlier management, tenant, enrollment, software, host networking or DPF effects can remain after a stop. Inspect current resources and device state before retrying; do not retry an operation whose effect is uncertain.
 
-If selection or site inputs changed, update the source file, rediscover where the observed facts changed and generate a new reviewed bundle. If unrelated live state changed, stop and inspect the change before continuing. Expected progress from the recorded operation is assessed by resume using its unchanged bundle. A matching tenant or existing resource name does not prove safe reuse. Coordinate any selected-tenant cleanup with its owner and preserve unrelated resources.
+If source selection or site allocations changed, update the inventory input; if supported policy changed, update the overrides file. Rediscover when observations changed, then generate a new reviewed bundle. If unrelated live state changed, stop and inspect the change before continuing. Expected progress from the recorded operation is assessed by resume using its unchanged bundle. A matching tenant or existing resource name does not prove safe reuse. Coordinate any selected-tenant cleanup with its owner and preserve unrelated resources.
 
-For an unchanged initial deployment, retain its reported operation reference and use `l8k deploy --target dpf --user-config dpf-discovered.yaml --deployment-files ./hbn-bgp --resume NAMESPACE/NAME/UID`. Resume verifies prior identities and observes existing reset claims; missing proof and partial host transactions remain action-required. It never replaces a claim or reimages completed devices merely to repeat a late runtime check. Each retry measures the complete current traffic matrix. Earlier diagnostic-only reports cannot authorize recovery.
+For an unchanged initial deployment, retain its reported operation reference and use `l8k deploy --target dpf --inventory dpf-discovered.yaml --deployment-files ./hbn-bgp --resume NAMESPACE/NAME/UID`. Resume verifies prior identities and observes existing reset claims; missing proof and partial host transactions remain action-required. It never replaces a claim or reimages completed devices merely to repeat a late runtime check. Each retry measures the complete current traffic matrix. Earlier diagnostic-only reports cannot authorize recovery.
 
 Use the same saved operation, configuration and bundle for resume. During restoration, the CLI can wait within the remaining deadline for the same operator configuration to become Ready, without changing resources. Dependent work still requires the complete retained management bootstrap to match. Read/access failures, changed identities or intent, incompatible reported versions, terminal failures, cancellation and deadline expiry stop with a specific preparation reason in result checks, the execution report and progress output. Tenant API access and direct management/tenant identity rechecks during activation distinguish cancellation, unavailable verification and confirmed identity drift. Resume restoration can report an enclosing unverified prerequisite in its final checks. The CLI rechecks current host, BMC, switch, operator, storage and access prerequisites, and recognizes only resources, addresses and routes proven to belong to that operation. Do not delete operation-owned resources just to make standalone discovery pass. Changed or unverifiable ownership stops recovery and preserves existing state. Each resume repeats the complete current traffic checks. During an operation-owned pending reset, selected host interfaces can temporarily disappear. Resume must still verify the selected device, host and separate management connectivity. It collects strict current host and network facts after activation before workload configuration or traffic. Do not reset a host manually to make discovery pass.
 

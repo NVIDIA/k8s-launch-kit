@@ -27,6 +27,7 @@ import (
 // GenerateRequest contains only generation inputs; access references in the
 // site file remain unopened. Charts are downloaded and verified before publish.
 type GenerateRequest struct {
+	Inventory  string
 	UserConfig string
 	UseCase    *string
 	OutputPath string
@@ -38,6 +39,7 @@ type GenerateRequest struct {
 type generateDriver struct {
 	request    GenerateRequest
 	fetchChart func(context.Context, string) ([]byte, error)
+	prepare    func(GenerateRequest) (generationPlan, error)
 }
 
 func NewGenerateAdapter(request GenerateRequest) target.Driver {
@@ -56,14 +58,14 @@ func (d generateDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		return nil, apperrors.NewValidationError(
 			"DPF generate --deploy is unsupported",
 			nil,
-			"Generate and review the bundle first, then use 'l8k deploy --target dpf' with explicit --user-config and --deployment-files",
+			"Generate and review the bundle first, then use 'l8k deploy --target dpf' with --inventory dpf-discovered.yaml and --deployment-files ./hbn-bgp",
 		)
 	}
 	if inv.Execution.DryRun {
 		return nil, fmt.Errorf("DPF generate writes a local bundle; --dry-run belongs to the deployment workflow")
 	}
-	if d.request.UserConfig == "" || d.request.OutputPath == "" {
-		return nil, fmt.Errorf("DPF generate requires --user-config and --save-deployment-files")
+	if d.request.Inventory == "" || d.request.OutputPath == "" {
+		return nil, fmt.Errorf("DPF generate requires --inventory dpf-discovered.yaml and --save-deployment-files ./hbn-bgp; --user-config is optional")
 	}
 	r := d.request
 	if r.Stdout == nil {
@@ -83,17 +85,13 @@ func (d generateDriver) Bind(inv target.Invocation) (target.Operation, error) {
 			progress = ui.NewWithWriter(r.Stderr)
 		}
 		progress.Info("[RUNNING] Generation: resolving profile and selected discovery identities")
-		input, err := config.Load(r.UserConfig)
-		if err != nil {
-			return apperrors.NewValidationError("invalid DPF generation inputs", err, "Correct the site configuration and refresh discovery if selected identities changed")
+		prepare := d.prepare
+		if prepare == nil {
+			prepare = prepareGeneration
 		}
-		input, err = config.WithUseCase(input, r.UseCase)
+		resolved, err := prepare(r)
 		if err != nil {
-			return apperrors.NewValidationError("invalid DPF generation inputs", err, "Correct the site configuration and refresh discovery if selected identities changed")
-		}
-		resolved, err := generationInputs(input)
-		if err != nil {
-			return apperrors.NewValidationError("invalid DPF generation inputs", err, "Correct the site configuration and refresh discovery if selected identities changed")
+			return apperrors.NewValidationError("invalid DPF generation inputs", err, "Correct inventory or supported overrides and rerun discovery; catalog gaps require a supported Launch Kit release")
 		}
 		progress.Info("[RUNNING] Charts: retrieving the selected DPF operator archive")
 		resolved.OperatorArchive, err = d.fetchChart(ctx, resolved.OperatorChartURL)
@@ -132,6 +130,23 @@ func (d generateDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		_, err = fmt.Fprintf(r.Stdout, "HBN-BGP manifests: %s\nDeployment readiness: not evaluated by generation; deployment requires fresh prerequisite checks.\n", publication.Path)
 		return err
 	}), nil
+}
+
+// prepareGeneration resolves the two public inputs without opening access
+// references. A fresh discovery is required when effective settings changed.
+func prepareGeneration(r GenerateRequest) (generationPlan, error) {
+	input, err := config.LoadInputs(r.Inventory, r.UserConfig)
+	if err != nil {
+		return generationPlan{}, err
+	}
+	input, err = config.WithUseCase(input, r.UseCase)
+	if err != nil {
+		return generationPlan{}, err
+	}
+	if err := config.VerifyRecordedConfiguration(input); err != nil {
+		return generationPlan{}, err
+	}
+	return generationInputs(input)
 }
 
 const maximumGenerationChartBytes = 32 << 20

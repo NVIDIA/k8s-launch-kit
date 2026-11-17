@@ -48,6 +48,40 @@ func generationSite() config.Input {
 	return input
 }
 
+// publicFixtureBytes projects a resolved test fixture into the public schema;
+// component/flavor internals are deliberately absent.
+func publicFixtureBytes(input config.Input) []byte {
+	settings := config.Configuration(input)
+	var tenant *config.TenantInventory
+	if p := input.Site.Provisioning; p != nil && p.Bootstrap != nil {
+		b := p.Bootstrap
+		tenant = &config.TenantInventory{VIP: b.Tenant.VIP, Interface: b.Tenant.Interface, Allocation: b.Tenant.Allocation, ManagementAPIIP: b.ManagementAPIIP, ManagementAPIPort: b.ManagementAPIPort}
+	}
+	d := input.Site.Discovery
+	data, err := yaml.Marshal(config.ExternalInventory{
+		Management: input.Site.Management, Credentials: input.Site.Credentials,
+		Discovery: config.InventoryDiscoveryInput{DPUs: d.DPUs, Hosts: d.Hosts, Switches: d.Switches, TLS: d.TLS, Limits: d.Limits},
+		Tenant:    tenant, Configuration: &settings, Inventory: input.Site.Inventory,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return data
+}
+
+// prepareFixtureGeneration supplies the existing resolved internal cohort to
+// isolate publication, cancellation and retained-bundle tests from catalog
+// support. Public-input tests exercise prepareGeneration without this fixture.
+func prepareFixtureGeneration(r GenerateRequest) (generationPlan, error) {
+	input, err := config.Load(r.Inventory)
+	if err != nil {
+		return generationPlan{}, err
+	}
+	input, err = config.WithUseCase(input, r.UseCase)
+	if err != nil {
+		return generationPlan{}, err
+	}
+	return generationInputs(input)
+}
+
 var _ = Describe("DPF generation input boundary", func() {
 	It("shares complete selected identities and ASNs with enrollment without aliasing inventory", func() {
 		input := generationSite()
@@ -91,7 +125,7 @@ var _ = Describe("DPF generation input boundary", func() {
 		Expect(plan.SourceConfig).To(Equal(input.Source))
 		Expect(input.Site.Provisioning.Resources).To(BeNil())
 	})
-	It("publishes a complete bundle from saved discovery without reading access secrets", func() {
+	It("publishes a resolved test plan without reading access secrets", func() {
 		input := generationSite()
 		root, err := filepath.EvalSymlinks(GinkgoT().TempDir())
 		Expect(err).NotTo(HaveOccurred())
@@ -101,7 +135,7 @@ var _ = Describe("DPF generation input boundary", func() {
 		Expect(os.WriteFile(source, siteBytes, 0600)).To(Succeed())
 		var stdout, stderr bytes.Buffer
 		fetched := []string{}
-		driver := generateDriver{request: GenerateRequest{UserConfig: source, OutputPath: filepath.Join(root, "bundle"), Stdout: &stdout, Stderr: &stderr}, fetchChart: func(_ context.Context, address string) ([]byte, error) {
+		driver := generateDriver{request: GenerateRequest{Inventory: source, OutputPath: filepath.Join(root, "bundle"), Stdout: &stdout, Stderr: &stderr}, prepare: prepareFixtureGeneration, fetchChart: func(_ context.Context, address string) ([]byte, error) {
 			fetched = append(fetched, address)
 			if strings.HasSuffix(address, "dpf-operator-v26.8.0.tgz") {
 				return os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
@@ -180,7 +214,7 @@ var _ = Describe("DPF generation input boundary", func() {
 			{Target: target.DPF, Phase: target.Deploy},
 			{Target: target.DPF, Phase: target.Generate, Execution: target.ExecutionOptions{DryRun: true}},
 		} {
-			_, err := NewGenerateAdapter(GenerateRequest{UserConfig: "/missing", OutputPath: "/missing"}).Bind(inv)
+			_, err := NewGenerateAdapter(GenerateRequest{Inventory: "/missing", OutputPath: "/missing"}).Bind(inv)
 			Expect(err).To(HaveOccurred())
 			if inv.Phase == target.Deploy {
 				_, phaseUnavailable := err.(*target.PhaseUnavailableError)
@@ -188,7 +222,7 @@ var _ = Describe("DPF generation input boundary", func() {
 			}
 		}
 		output := filepath.Join(GinkgoT().TempDir(), "bundle")
-		op, err := NewGenerateAdapter(GenerateRequest{UserConfig: "/missing", OutputPath: output, Deploy: true}).Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
+		op, err := NewGenerateAdapter(GenerateRequest{Inventory: "/missing", OutputPath: output, Deploy: true}).Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
 		Expect(op).To(BeNil())
 		structured, ok := err.(*apperrors.StructuredError)
 		Expect(ok).To(BeTrue())
@@ -197,13 +231,13 @@ var _ = Describe("DPF generation input boundary", func() {
 		Expect(structured.Transient).To(BeFalse())
 		Expect(structured.ExitCode).To(Equal(apperrors.ExitValidation))
 		Expect(structured.Message).To(Equal("DPF generate --deploy is unsupported"))
-		Expect(structured.Suggestion).To(Equal("Generate and review the bundle first, then use 'l8k deploy --target dpf' with explicit --user-config and --deployment-files"))
+		Expect(structured.Suggestion).To(Equal("Generate and review the bundle first, then use 'l8k deploy --target dpf' with --inventory dpf-discovered.yaml and --deployment-files ./hbn-bgp"))
 		serialized, marshalErr := json.Marshal(structured)
 		Expect(marshalErr).NotTo(HaveOccurred())
 		var fields map[string]any
 		Expect(json.Unmarshal(serialized, &fields)).To(Succeed())
 		Expect(fields["message"]).To(Equal("DPF generate --deploy is unsupported"))
-		Expect(fields["suggestion"]).To(Equal("Generate and review the bundle first, then use 'l8k deploy --target dpf' with explicit --user-config and --deployment-files"))
+		Expect(fields["suggestion"]).To(Equal("Generate and review the bundle first, then use 'l8k deploy --target dpf' with --inventory dpf-discovered.yaml and --deployment-files ./hbn-bgp"))
 		_, statErr := os.Stat(output)
 		Expect(os.IsNotExist(statErr)).To(BeTrue())
 	})
@@ -211,7 +245,7 @@ var _ = Describe("DPF generation input boundary", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		called := false
-		driver := generateDriver{request: GenerateRequest{UserConfig: "/must-not-open/site", OutputPath: "/must-not-create/output"}, fetchChart: func(context.Context, string) ([]byte, error) { called = true; return nil, nil }}
+		driver := generateDriver{request: GenerateRequest{Inventory: "/must-not-open/site", OutputPath: "/must-not-create/output"}, fetchChart: func(context.Context, string) ([]byte, error) { called = true; return nil, nil }}
 		op, err := driver.Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(op.Run(ctx)).To(MatchError(context.Canceled))
@@ -223,7 +257,7 @@ var _ = Describe("DPF generation input boundary", func() {
 		Expect(os.WriteFile(file, []byte("dpf: {useCase: hbn-bgp}\n"), 0600)).To(Succeed())
 		called := false
 		var stdout, stderr bytes.Buffer
-		driver := generateDriver{request: GenerateRequest{UserConfig: file, OutputPath: filepath.Join(root, "output"), Stdout: &stdout, Stderr: &stderr}, fetchChart: func(context.Context, string) ([]byte, error) { called = true; return nil, nil }}
+		driver := generateDriver{request: GenerateRequest{Inventory: file, OutputPath: filepath.Join(root, "output"), Stdout: &stdout, Stderr: &stderr}, fetchChart: func(context.Context, string) ([]byte, error) { called = true; return nil, nil }}
 		op, err := driver.Bind(target.Invocation{Target: target.DPF, Phase: target.Generate})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(op.Run(context.Background())).NotTo(Succeed())
