@@ -100,16 +100,14 @@ func FromFiles(files []File) (*Bundle, error) {
 			b.values = &helmValues{content: file.Content, values: values}
 			continue
 		}
-		documents, parseErr := ParseResources([]File{file}, role)
+		documents, parseErr := decodeResources(file, role)
 		if parseErr != nil {
 			return nil, parseErr
 		}
 		for _, doc := range documents {
-			ref := doc.Ref()
-			if first, exists := seenObjects[ref]; exists {
-				return nil, &Error{Source: doc.Source(), Reason: fmt.Sprintf("duplicate resource %s/%s in namespace %q (first declared at %s document %d)", ref.Kind, ref.Name, ref.Namespace, first.File, first.Document)}
+			if err := rememberResource(doc, seenObjects); err != nil {
+				return nil, err
 			}
-			seenObjects[ref] = doc.Source()
 			b.documents = append(b.documents, doc)
 		}
 	}

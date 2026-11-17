@@ -132,15 +132,22 @@ func ParseResources(files []File, role Role) ([]Document, error) {
 			return nil, err
 		}
 		for _, doc := range parsed {
-			ref := doc.Ref()
-			if first, exists := seenObjects[ref]; exists {
-				return nil, &Error{Source: doc.Source(), Reason: fmt.Sprintf("duplicate resource %s/%s in namespace %q (first declared at %s document %d)", ref.Kind, ref.Name, ref.Namespace, first.File, first.Document)}
+			if err := rememberResource(doc, seenObjects); err != nil {
+				return nil, err
 			}
-			seenObjects[ref] = doc.Source()
 			documents = append(documents, doc)
 		}
 	}
 	return documents, nil
+}
+
+func rememberResource(doc Document, seen map[ObjectRef]Source) error {
+	ref := doc.Ref()
+	if first, exists := seen[ref]; exists {
+		return &Error{Source: doc.Source(), Reason: fmt.Sprintf("duplicate resource %s/%s in namespace %q (first declared at %s document %d)", ref.Kind, ref.Name, ref.Namespace, first.File, first.Document)}
+	}
+	seen[ref] = doc.Source()
+	return nil
 }
 
 func ParseValues(data []byte) (map[string]any, error) {

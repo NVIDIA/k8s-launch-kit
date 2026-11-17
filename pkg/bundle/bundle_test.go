@@ -73,6 +73,20 @@ var _ = ginkgo.Describe("artifact snapshots", func() {
 		gomega.Expect(sourceError.Source.File).To(gomega.Equal("10-resource.yaml"))
 	})
 
+	ginkgo.It("reports the earliest cross-file duplicate before later duplicates in that file", func() {
+		configMap := func(name string) string {
+			return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n  namespace: test\n"
+		}
+		_, err := bundle.FromFiles([]bundle.File{
+			{Name: "10-first.yaml", Content: configMap("a")},
+			{Name: "20-second.yaml", Content: configMap("a") + "---\n" + configMap("b") + "---\n" + configMap("b")},
+		})
+		var sourceError *bundle.Error
+		gomega.Expect(errors.As(err, &sourceError)).To(gomega.BeTrue())
+		gomega.Expect(sourceError.Source).To(gomega.Equal(bundle.Source{File: "20-second.yaml", Document: 1}))
+		gomega.Expect(sourceError.Reason).To(gomega.ContainSubstring("first declared at 10-first.yaml document 1"))
+	})
+
 	ginkgo.It("rejects reserved aliases and path traversal", func() {
 		for _, name := range []string{"values.yml", "VALUES.YAML", "../policy.yaml", "nested/policy.yaml"} {
 			_, err := bundle.FromFiles([]bundle.File{{Name: name, Content: policy}})
