@@ -65,6 +65,7 @@ func collectHardware(ctx context.Context, remote runner, device *inventory.Devic
 		device.Runtime.Observations["arm-pci"] = observed("lspci")
 		add("arm-pci", "PCIAddress")
 	}
+	mftMissing := map[string]struct{}{}
 	for _, card := range cards {
 		// Never interpolate any address other than a validated collector-owned BDF.
 		if !bdfToken.MatchString(card.address) {
@@ -105,6 +106,13 @@ func collectHardware(ctx context.Context, remote runner, device *inventory.Devic
 		} else {
 			c.EvidenceRefs = append(c.EvidenceRefs, add(stage, "firmware-psid"))
 		}
+		if role == "hosts" && (c.Firmware.State != "observed" || c.PSID.State != "observed") {
+			if err == nil {
+				err = &Error{Code: "PROPERTY_NOT_EXPOSED", Stage: stage, Tool: "mlxfwmanager"}
+			}
+			mftMissing[strings.ToLower(card.address)] = struct{}{}
+			device.Runtime.Observations[stage] = unavailable(err, "mlxfwmanager")
+		}
 		if strings.Contains(strings.ToLower(card.model), "bluefield") {
 			for _, parameter := range []string{"INTERNAL_CPU_OFFLOAD_ENGINE", "INTERNAL_CPU_RSHIM", "NUM_OF_VFS"} {
 				stage = "nvconfig:" + card.address + ":" + parameter
@@ -135,6 +143,114 @@ func collectHardware(ctx context.Context, remote runner, device *inventory.Devic
 		}
 		h.Cards = append(h.Cards, c)
 	}
+	if role == "hosts" && len(mftMissing) > 0 {
+		collectDevlinkFallback(ctx, remote, device, h, mftMissing, privilege, add)
+	}
+}
+
+func collectDevlinkFallback(ctx context.Context, remote runner, device *inventory.Device, hardware *inventory.HardwareObservation, mftMissing map[string]struct{}, privilege string, add func(string, string) string) {
+	const stage = "devlink-firmware"
+	text, err := remote.Run(ctx, stage, privilege+"devlink -j dev info")
+	if err != nil {
+		device.Runtime.Observations[stage] = unavailable(err, "devlink")
+		return
+	}
+	byAddress, err := parseDevlinkInfo(text)
+	if err != nil {
+		device.Runtime.Observations[stage] = unavailable(err, "devlink")
+		return
+	}
+	device.Runtime.Observations[stage] = observed("devlink")
+	devlinkEvidence := add(stage, "running and stored firmware plus fixed PSID by PCI address")
+	for i := range hardware.Cards {
+		card := &hardware.Cards[i]
+		address := strings.ToLower(card.PCIAddress)
+		if !bdfToken.MatchString(card.PCIAddress) {
+			continue
+		}
+		fact, found := byAddress[address]
+		if !found {
+			if _, needed := mftMissing[address]; needed {
+				device.Runtime.Observations[stage+":"+address] = missing("devlink")
+			}
+			continue
+		}
+		if fact.err != nil {
+			device.Runtime.Observations[stage+":"+address] = unavailable(fact.err, "devlink")
+			continue
+		}
+		device.Runtime.Observations[stage+":"+address] = observed("devlink")
+		card.EvidenceRefs = append(card.EvidenceRefs, devlinkEvidence)
+		if fact.runningErr == nil && fact.running != "" && !fact.runningConflict {
+			device.Runtime.Observations[stage+":"+address+":running"] = observed("devlink", "running="+fact.running)
+		}
+		if fact.storedErr == nil && fact.stored != "" && !fact.storedConflict {
+			device.Runtime.Observations[stage+":"+address+":stored"] = observed("devlink", "stored="+fact.stored)
+		}
+		if fact.psidErr == nil && fact.psid != "" {
+			device.Runtime.Observations[stage+":"+address+":psid"] = observed("devlink", fact.psid)
+		}
+		if fact.runningConflict {
+			device.Runtime.Observations[stage+":"+address+":running"] = sourceConflict("devlink", "devlink reported conflicting running firmware version fields.")
+			card.Firmware = sourceConflict("devlink", "devlink reported conflicting running firmware version fields.")
+		} else if fact.runningErr != nil {
+			device.Runtime.Observations[stage+":"+address+":running"] = unavailable(fact.runningErr, "devlink")
+		} else if _, needed := mftMissing[address]; needed && fact.running == "" {
+			device.Runtime.Observations[stage+":"+address+":running"] = missing("devlink")
+		}
+		if fact.storedConflict {
+			device.Runtime.Observations[stage+":"+address+":stored"] = sourceConflict("devlink", "devlink reported conflicting stored firmware version fields.")
+		} else if fact.storedErr != nil {
+			device.Runtime.Observations[stage+":"+address+":stored"] = unavailable(fact.storedErr, "devlink")
+		} else if _, needed := mftMissing[address]; needed && fact.stored == "" {
+			device.Runtime.Observations[stage+":"+address+":stored"] = missing("devlink")
+		}
+		if fact.psidErr != nil {
+			device.Runtime.Observations[stage+":"+address+":psid"] = unavailable(fact.psidErr, "devlink")
+		} else if _, needed := mftMissing[address]; needed && fact.psid == "" {
+			device.Runtime.Observations[stage+":"+address+":psid"] = missing("devlink")
+		}
+		if fact.runningConflict {
+			// Keep an explicit contradiction blocked even if another source also
+			// supplied a value for this exact PCI function.
+		} else if card.Firmware.State == "observed" && card.Firmware.Tool == "mlxfwmanager" {
+			// MFT reports the current running version. Compare it only with
+			// devlink's running version; stored firmware may be staged.
+			if fact.runningErr == nil && fact.running != "" && len(card.Firmware.Values) == 1 && card.Firmware.Values[0] != fact.running {
+				card.Firmware = sourceConflict("devlink", "MFT and devlink reported different running firmware versions.")
+			}
+		} else if card.Firmware.State != "observed" && fact.runningErr == nil && fact.running != "" {
+			// The canonical firmware fact feeds both the inventory contract and
+			// software minimum checks, which require one plain running version.
+			// Keep stored firmware in its separate runtime observation above.
+			card.Firmware = observed("devlink", fact.running)
+		} else if card.Firmware.State != "observed" && fact.runningErr == nil && fact.storedErr == nil && fact.stored != "" {
+			card.Firmware = inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: "PROPERTY_NOT_EXPOSED", Message: "The running firmware version is not present in devlink output.", Tool: "devlink"}
+		} else if card.Firmware.State != "observed" && fact.runningErr != nil {
+			card.Firmware = unavailable(fact.runningErr, "devlink")
+		}
+		if card.PSID.State == "observed" && card.PSID.Tool == "mlxfwmanager" {
+			if fact.psidErr == nil && fact.psid != "" && len(card.PSID.Values) == 1 && card.PSID.Values[0] != fact.psid {
+				card.PSID = sourceConflict("devlink", "MFT and devlink reported different fixed firmware PSIDs.")
+			}
+		} else if card.PSID.State != "observed" && fact.psidErr == nil && fact.psid != "" {
+			card.PSID = observed("devlink", fact.psid)
+		} else if card.PSID.State != "observed" && fact.psidErr != nil {
+			card.PSID = unavailable(fact.psidErr, "devlink")
+		}
+		if _, needed := mftMissing[address]; needed {
+			if card.Firmware.State != "observed" && card.Firmware.ReasonCode == "" {
+				card.Firmware = missing("devlink")
+			}
+			if card.PSID.State != "observed" && card.PSID.ReasonCode == "" {
+				card.PSID = missing("devlink")
+			}
+		}
+	}
+}
+
+func sourceConflict(tool, message string) inventory.Observation {
+	return inventory.Observation{State: "unknown", Values: []string{}, ReasonCode: "SOURCE_CONFLICT", Message: message, Tool: tool}
 }
 
 func parseFirmware(text, bdf string) (inventory.Observation, inventory.Observation, error) {

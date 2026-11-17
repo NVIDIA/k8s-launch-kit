@@ -408,7 +408,11 @@ func (c *Client) collection(ctx context.Context, ref, memberBase string) ([]Reso
 				return members, &Error{Code: "INVALID_RESPONSE"}
 			}
 		}
-		if n, ok := d["Members@odata.count"].(float64); ok {
+		if raw, present := d["Members@odata.count"]; present {
+			n, valid := raw.(float64)
+			if !valid {
+				return members, &Error{Code: "INCOMPLETE_COLLECTION"}
+			}
 			if n < 0 || n != float64(int(n)) || count >= 0 && count != int(n) {
 				return members, &Error{Code: "COLLECTION_CHANGED"}
 			}

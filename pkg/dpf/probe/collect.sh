@@ -100,15 +100,37 @@ while IFS= read -r destination; do
 done < <(jq -c '.destinations[]' "$request")
 printf '[]' > /scratch/interfaces.json
 printf '[]' > /scratch/routes.json
+printf 'null' > /scratch/tenant-vip-route.json
 if [[ "$mode" == node-network ]]; then
     ip -j -N address show > /scratch/links.json
     ip -j -N -4 route show table all > /scratch/routes4.json
     ip -j -N -6 route show table all > /scratch/routes6.json
-    jq '[.[] | {name:.ifname,index:.ifindex,mtu:.mtu,addresses:[.addr_info[] | "\(.local)/\(.prefixlen)"]}]' /scratch/links.json > /scratch/interfaces.json
+    jq '[.[] | {name:.ifname,index:.ifindex,mtu:.mtu,adminUp:(if (.flags|type)=="array" then ((.flags|index("UP")) != null) else error("missing link flags") end),operState:(.operstate // ""),addresses:[.addr_info[] | "\(.local)/\(.prefixlen)"]}]' /scratch/links.json > /scratch/interfaces.json
     jq -n --slurpfile links /scratch/links.json --slurpfile r4 /scratch/routes4.json --slurpfile r6 /scratch/routes6.json \
         '[($r4[0]+$r6[0])[] | . as $r | {destination:(.dst // "default"),gateway:(.gateway // ""),table:((.table // 254)|tonumber),interfaceIndex:([$links[0][] | select(.ifname == $r.dev) | .ifindex][0] // 0)}]' > /scratch/routes.json
+    vip=$(jq -r '.tenantVIP // ""' "$request")
+    if [[ -n "$vip" ]]; then
+        route_status=0
+        timeout "$per_timeout" ip -j -4 route get "$vip" > /scratch/tenant-vip-route-raw.json 2>/dev/null || route_status=$?
+        if ((route_status != 0)); then
+            if ((route_status == 124)); then
+                reason=ROUTE_LOOKUP_TIMEOUT
+                message='IPv4 host route lookup timed out'
+            else
+                reason=ROUTE_LOOKUP_FAILED
+                message='IPv4 host route lookup failed'
+            fi
+            jq -cn --arg destination "$vip" --arg reason "$reason" --arg message "$message" \
+                '{destination:$destination,reasonCode:$reason,message:$message}' > /scratch/tenant-vip-route.json
+        else
+            jq -e 'type=="array" and length==1 and (.[0]|type=="object" and (.dev|type=="string" and length>0) and ((.prefsrc // .src)|type=="string" and length>0) and ((.gateway // "")|type=="string"))' /scratch/tenant-vip-route-raw.json >/dev/null
+            jq -cn --arg destination "$vip" --slurpfile routes /scratch/tenant-vip-route-raw.json --slurpfile links /scratch/interfaces.json \
+                '$routes[0][0] as $route | [$links[0][] | select(.name == $route.dev)] as $matches | if ($matches|length)!=1 then {destination:$destination,reasonCode:"ROUTE_INTERFACE_UNAVAILABLE",message:"IPv4 route interface was not present in the host interface snapshot"} else {destination:$destination,interfaceIndex:$matches[0].index,source:($route.prefsrc // $route.src),gateway:($route.gateway // "")} end' \
+                > /scratch/tenant-vip-route.json
+        fi
+    fi
 fi
 jq -cn --arg started "$started" --arg finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg node "$node" --arg pod "$POD_UID" --arg mode "$mode" --slurpfile request "$request" \
-    --slurpfile results /scratch/results.jsonl --slurpfile interfaces /scratch/interfaces.json --slurpfile routes /scratch/routes.json \
-    '{startedAt:$started,finishedAt:$finished,version:$request[0].version,runID:$request[0].runID,nodeUID:$node,podUID:$pod,networkMode:$mode,results:$results,interfaces:$interfaces[0],routes:$routes[0]}'
+    --slurpfile results /scratch/results.jsonl --slurpfile interfaces /scratch/interfaces.json --slurpfile routes /scratch/routes.json --slurpfile tenantRoute /scratch/tenant-vip-route.json \
+    '{startedAt:$started,finishedAt:$finished,version:$request[0].version,runID:$request[0].runID,nodeUID:$node,podUID:$pod,networkMode:$mode,results:$results,interfaces:$interfaces[0],routes:$routes[0],tenantVIPRoute:$tenantRoute[0]}'

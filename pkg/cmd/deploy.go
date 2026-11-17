@@ -22,11 +22,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	dpftarget "github.com/nvidia/k8s-launch-kit/pkg/target/dpf"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
 var (
 	deploymentFiles string
+	deployResume    string
 	// deployTimeout caps the entire `l8k deploy` invocation. Zero (the
 	// default) means no deadline — the apply state machine polls
 	// until every manifest reaches a terminal state or the user
@@ -71,7 +73,18 @@ proceeds. Initial device discovery remains unbounded.
 
 If <deployment-files>/network-operator/ exists (the layout 'l8k generate'
 produces), that subdirectory is used. Otherwise <deployment-files> itself
-is used as the manifest directory.`,
+is used as the manifest directory.
+
+With --target dpf, deploy a reviewed HBN-BGP bundle using explicit
+--user-config and --deployment-files. DPF runs fresh prerequisite checks,
+installs DPF, provisions the selected DPUs, configures host workload networking,
+and verifies BGP and installed routes. With two or more selected hosts, it also
+checks the full ordinary/DF traffic matrix for every directed host pair. A
+one-host run can finish as provisioned, with cross-host traffic unmeasured.
+DPF may reboot selected hosts. It defaults to a two-hour timeout and supports
+neither --dry-run nor --overwrite-existing. Use --resume with the reported
+namespace/name/UID operation reference to continue the same retained plan;
+uncertain reset claims permit observation only.`,
 	Example: `  # Apply manifests from ./deployment to the cluster reachable via $KUBECONFIG
   l8k deploy
 
@@ -79,8 +92,25 @@ is used as the manifest directory.`,
   l8k deploy --deployment-files /tmp/my-output --kubeconfig ~/.kube/config
 
   # Server-side dry run: validate against the cluster without persisting
-  l8k deploy --dry-run`,
+  l8k deploy --dry-run
+
+  # Independent DPU cluster; can reboot the explicitly selected hosts
+  l8k deploy --target dpf --user-config dpf-discovered.yaml --deployment-files ./hbn-bgp`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if targetName == string(target.DPF) {
+			request := dpftarget.DeployRequest{
+				UserConfig: userConfig, DeploymentFiles: deploymentFiles, Resume: deployResume, ResumeSet: cmd.Flags().Changed("resume"),
+				Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(),
+			}
+			if !cmd.Flags().Changed("deployment-files") {
+				request.DeploymentFiles = ""
+			}
+			if !cmd.Flags().Changed("user-config") {
+				request.UserConfig = ""
+			}
+			runTargetCommand(cmd, target.Deploy, dpftarget.NewDeployAdapter(request))
+			return
+		}
 		runTargetCommand(cmd, target.Deploy, hosttarget.NewDeployAdapter(
 			hosttarget.DeployRequest{
 				Flavor:            flavor,
@@ -106,15 +136,16 @@ func init() {
 	addTargetFlag(deployCmd)
 
 	deployCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
-	deployCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to apply")
+	deployCmd.Flags().StringVar(&deployResume, "resume", "", "DPF: resume the reported namespace/name/UID operation with the same bundle and site inputs")
+	deployCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing the manifests to apply; DPF requires an explicit path")
 	// --network-operator-namespace overrides cfg.NetworkOperator.Namespace in
 	// the Host deploy service. It drives the Phase 0 Helm target, Phase 0.5
 	// preflight scope, and downstream options that read the namespace.
 	deployCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
-	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "Explicit config override; otherwise prefer deployment .l8k/resolved-config.yaml, then adjacent/CWD cluster-config.yaml and default config fallbacks. Resolves release and preflight settings.")
+	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "DPF requires its explicit site file. Host: config override; otherwise prefer deployment .l8k/resolved-config.yaml, then adjacent/CWD cluster-config.yaml and defaults.")
 	deployCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (overrides config)")
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
-	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end wall-clock budget for the deploy phase (e.g. 45m, 2h). 0 (the default) means no deadline; the deploy polls until every manifest reaches a terminal state. Useful for matching a maintenance window when SR-IOV reconciliation on a large cluster can take an hour or more.")
+	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end deploy budget (e.g. 45m, 2h). Host: 0 means no deadline. DPF: 0 defaults to two hours; maximum two hours.")
 	deployCmd.Flags().BoolVar(&overwriteExistingFlag, "overwrite-existing", false, "Converge the cluster to the rendered manifests when preflight detects drift: helm upgrade the chart on chart-version/values mismatch, delete stray Network Operator CRs in the operator namespace, and rewrite NicClusterPolicy component versions via SSA. Off by default — preflight fails fast and lists what would change.")
 	deployCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm chart installation and Helm-specific preflight checks")
 
@@ -123,6 +154,7 @@ func init() {
 	setFlagGroup(deployCmd, "flavor", GroupCommon)
 	setFlagGroup(deployCmd, "deployment-files", GroupGeneration)
 	setFlagGroup(deployCmd, "network-operator-namespace", GroupCommon)
+	setFlagGroup(deployCmd, "resume", GroupExecution)
 	setFlagGroup(deployCmd, "deploy-timeout", GroupExecution)
 	setFlagGroup(deployCmd, "dry-run", GroupExecution)
 	setFlagGroup(deployCmd, "overwrite-existing", GroupDeploy)

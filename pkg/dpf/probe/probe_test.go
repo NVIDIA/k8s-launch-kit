@@ -27,6 +27,36 @@ func TestProbe(t *testing.T) {
 	RunSpecs(t, "DPF probe ownership and protocol")
 }
 
+var _ = Describe("probe TLS policy binding", func() {
+	It("rejects unrequested bypass and false verification claims", func() {
+		for _, scenario := range []struct {
+			id     string
+			bypass bool
+			tls    string
+			valid  bool
+		}{
+			{"management-api", false, "verified", true},
+			{"management-api", false, "unverified", false},
+			{"management-api", true, "unverified", false},
+			{"bmc", false, "verified", true},
+			{"bmc", false, "unverified", false},
+			{"bmc", true, "unverified", true},
+			{"bmc", true, "verified", false},
+			{"bmc", true, "unavailable", true},
+		} {
+			now := time.Now()
+			req := Request{Version: ProtocolVersion, RunID: "run", Deadline: now.Add(time.Minute), Destinations: []Destination{{ID: scenario.id, InsecureSkipVerify: scenario.bypass}}}
+			out := Response{Version: ProtocolVersion, RunID: "run", NodeUID: "node", PodUID: "pod", NetworkMode: "pod-network", StartedAt: now, FinishedAt: now, Results: []inventory.ProbeResult{{NodeUID: "node", NetworkMode: "pod-network", Destination: scenario.id, DNS: "resolved", Addresses: []inventory.ProbeAddress{{Address: "192.0.2.10", TCP: "reachable", TLS: scenario.tls, HTTP: "http-unavailable"}}}}}
+			err := ValidateResponse(out, req, "node", "pod", "pod-network")
+			if scenario.valid {
+				Expect(err).NotTo(HaveOccurred())
+			} else {
+				Expect(err).To(HaveOccurred())
+			}
+		}
+	})
+})
+
 var _ = Describe("probe integrity", func() {
 	It("declares two network vantages without credentials or privileged mounts", func() {
 		node := inventory.Node{Name: "cp", UID: "node-uid"}
@@ -53,19 +83,38 @@ var _ = Describe("probe integrity", func() {
 		live.OwnerReferences = []metav1.OwnerReference{{UID: "foreign"}}
 		Expect(samePod(p, live)).To(BeFalse())
 	})
-	It("accepts protobuf quantity representations and rejects changed scratch limits", func() {
-		p := Pod("p", "default", nil, inventory.Node{Name: "n", UID: "u"}, "pod-network", "repo@sha256:d", "request", nil, 60)
-		data, err := p.Marshal()
+	It("accepts a protobuf round trip while rejecting changed resources and execution settings", func() {
+		p := Pod("p", "default", map[string]string{"run": "one"}, inventory.Node{Name: "node-one", UID: "node-uid"}, "pod-network", "repo@sha256:d", "request", nil, 60)
+		encoded, err := p.Marshal()
 		Expect(err).NotTo(HaveOccurred())
-		var live corev1.Pod
-		Expect(live.Unmarshal(data)).To(Succeed())
-		Expect(samePod(p, &live)).To(BeTrue())
-		limit := resource.MustParse("8Mi")
-		live.Spec.Volumes[1].EmptyDir.SizeLimit = &limit
-		Expect(podDifferences(p, &live)).To(Equal([]string{"spec.volumes"}))
-		Expect(samePod(p, &live)).To(BeFalse())
+		var decoded corev1.Pod
+		Expect(decoded.Unmarshal(encoded)).To(Succeed())
+		Expect(samePod(p, &decoded)).To(BeTrue())
+		for _, mutate := range []func(*corev1.Pod){
+			func(p *corev1.Pod) {
+				p.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = resource.MustParse("128Mi")
+			},
+			func(p *corev1.Pod) {
+				p.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("20m")
+			},
+			func(p *corev1.Pod) { p.Spec.Volumes[1].EmptyDir.SizeLimit = ptr(resource.MustParse("32Mi")) },
+			func(p *corev1.Pod) { p.Spec.Containers[0].SecurityContext.Privileged = ptr(true) },
+			func(p *corev1.Pod) {
+				p.Spec.Containers = append(p.Spec.Containers, corev1.Container{Name: "injected", Image: "unexpected"})
+			},
+			func(p *corev1.Pod) {
+				p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "host", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/"}}})
+			},
+			func(p *corev1.Pod) {
+				p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchFields[0].Values = []string{"other-node"}
+			},
+			func(p *corev1.Pod) { p.OwnerReferences = []metav1.OwnerReference{{UID: "foreign"}} },
+		} {
+			changed := decoded.DeepCopy()
+			mutate(changed)
+			Expect(samePod(p, changed)).To(BeFalse())
+		}
 	})
-
 	It("names admission differences without exposing injected field values", func() {
 		p := Pod("p", "default", nil, inventory.Node{Name: "n", UID: "u"}, "pod-network", "repo@sha256:d", "request", nil, 60)
 		live := p.DeepCopy()
@@ -91,6 +140,72 @@ var _ = Describe("probe integrity", func() {
 		Expect(e).To(HaveOccurred())
 		Expect(client.Actions()).To(BeEmpty())
 	})
+	It("pulls the selected platform manifest and rejects a different runtime image reference", func() {
+		assets := Assets{Qualified: true, Repository: "registry.example/probe", ManifestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PlatformDigests: map[string]string{"amd64": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "arm64": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}
+		for _, architecture := range []string{"amd64", "arm64"} {
+			for _, repository := range []string{"", "mirror.example/probe"} {
+				repo := repository
+				if repo == "" {
+					repo = assets.Repository
+				}
+				want := repo + "@" + assets.PlatformDigests[architecture]
+				otherArchitecture := "amd64"
+				if architecture == "amd64" {
+					otherArchitecture = "arm64"
+				}
+				for _, observation := range []struct {
+					imageID           string
+					containerStatuses int
+					accepted          bool
+				}{
+					{imageID: want, containerStatuses: 1, accepted: true},
+					{imageID: "docker-pullable://" + want, containerStatuses: 1, accepted: true},
+					{imageID: repo + "@" + assets.PlatformDigests[otherArchitecture], containerStatuses: 1, accepted: false},
+					{imageID: repo + "@" + assets.ManifestDigest, containerStatuses: 1, accepted: false},
+					{imageID: "other.example/probe@" + assets.PlatformDigests[architecture], containerStatuses: 1, accepted: false},
+					{imageID: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", containerStatuses: 1, accepted: false},
+					{imageID: "containerd-pullable://" + want, containerStatuses: 1, accepted: false},
+					{imageID: "invalid-prefix" + want, containerStatuses: 1, accepted: false},
+					{imageID: "docker-pullable://docker-pullable://" + want, containerStatuses: 1, accepted: false},
+					{imageID: want, containerStatuses: 2, accepted: false},
+				} {
+					client := fake.NewClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "cp", UID: "node-uid"}})
+					client.PrependReactor("create", "configmaps", func(a k8stest.Action) (bool, runtime.Object, error) {
+						cm := a.(k8stest.CreateAction).GetObject().(*corev1.ConfigMap).DeepCopy()
+						cm.UID = "cm-uid"
+						Expect(client.Tracker().Create(corev1.SchemeGroupVersion.WithResource("configmaps"), cm, "default")).To(Succeed())
+						return true, cm, nil
+					})
+					created := false
+					client.PrependReactor("create", "pods", func(a k8stest.Action) (bool, runtime.Object, error) {
+						p := a.(k8stest.CreateAction).GetObject().(*corev1.Pod).DeepCopy()
+						Expect(p.Spec.Containers[0].Image).To(Equal(want))
+						p.UID, p.Spec.NodeName = "pod-uid", "cp"
+						p.Status.Phase = corev1.PodSucceeded
+						p.Status.ContainerStatuses = make([]corev1.ContainerStatus, observation.containerStatuses)
+						for i := range p.Status.ContainerStatuses {
+							p.Status.ContainerStatuses[i] = corev1.ContainerStatus{Name: "probe", ImageID: observation.imageID}
+						}
+						Expect(client.Tracker().Create(corev1.SchemeGroupVersion.WithResource("pods"), p, "default")).To(Succeed())
+						created = true
+						return true, p, nil
+					})
+					inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "image-check"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "cp", UID: "node-uid", Ready: true, OS: "linux", Architecture: architecture}}}, Evidence: map[string]inventory.Evidence{}}
+					_, cleanup, err := (Runner{Assets: assets, Journal: func([]Receipt) error { return nil }}).Run(context.Background(), config.Request{ImageRepository: repository, Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
+					Expect(created).To(BeTrue())
+					Expect(cleanup.State).To(Equal("complete"))
+					Expect(cleanup.Leftovers).To(BeEmpty())
+					// The fake log transport does not emit a probe response. The expected
+					// image must reach that later protocol gate; all other IDs stop earlier.
+					if observation.accepted {
+						Expect(err).To(MatchError(ContainSubstring("probe result binding/coverage invalid")))
+					} else {
+						Expect(err).To(MatchError(ContainSubstring("probe pulled image digest differs")))
+					}
+				}
+			}
+		}
+	})
 	It("rejects request ConfigMap admission mutation and preserves changed data", func() {
 		client := fake.NewClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}})
 		client.PrependReactor("create", "configmaps", func(a k8stest.Action) (bool, runtime.Object, error) {
@@ -103,7 +218,7 @@ var _ = Describe("probe integrity", func() {
 		})
 		assets := Assets{Qualified: true, Repository: "repo/probe", ManifestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PlatformDigests: map[string]string{"amd64": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
 		runner := Runner{Assets: assets, Journal: func([]Receipt) error { return nil }}
-		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "run"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "control-plane", UID: "node-uid", Ready: true, OS: "linux", Architecture: "amd64"}}}, Evidence: map[string]inventory.Evidence{}}
+		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "run"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "cp", UID: "node", Ready: true, OS: "linux", Architecture: "amd64"}}}, Evidence: map[string]inventory.Evidence{}}
 		_, _, e := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 		Expect(e).To(MatchError(ContainSubstring("admission changed")))
 		for _, a := range client.Actions() {
@@ -127,8 +242,11 @@ var _ = Describe("probe failure regressions", func() {
 			Expect(client.Tracker().Delete(corev1.SchemeGroupVersion.WithResource("configmaps"), "default", name)).To(Succeed())
 			return true, nil, apierrors.NewConflict(corev1.Resource("configmaps"), name, fmt.Errorf("changed then removed"))
 		})
+		client.PrependReactor("create", "pods", func(k8stest.Action) (bool, runtime.Object, error) {
+			return true, nil, apierrors.NewForbidden(corev1.Resource("pods"), "probe", fmt.Errorf("denied"))
+		})
 		runner := Runner{Assets: Assets{Qualified: true, Repository: "repo/probe", ManifestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PlatformDigests: map[string]string{"amd64": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}, Journal: func([]Receipt) error { return nil }}
-		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "conflict"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "not-ready", UID: "node", Ready: false}}}}
+		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "conflict"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "ready", UID: "node", Ready: true, OS: "linux", Architecture: "amd64"}}}}
 		_, cleanup, err := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 		Expect(err).To(HaveOccurred())
 		Expect(cleanup.State).To(Equal("complete"))

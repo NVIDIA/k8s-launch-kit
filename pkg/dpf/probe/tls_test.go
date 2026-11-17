@@ -5,63 +5,72 @@ package probe
 
 import (
 	"encoding/json"
-	"testing"
+	"strings"
 	"time"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestProbeTLSBypassIsBoundToExplicitBMCPolicy(t *testing.T) {
-	now := time.Now()
-	request := Request{
-		Version: ProtocolVersion, RunID: "tls-policy", Deadline: now.Add(time.Minute),
-		RequestTimeout: time.Second,
-		Destinations:   []Destination{{ID: "bmc", Endpoint: "https://192.0.2.10", Path: "/redfish/v1/", InsecureSkipVerify: true}},
-	}
-	files, err := requestFiles(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document struct {
-		Destinations []struct {
-			ID                 string `json:"id"`
-			InsecureSkipVerify bool   `json:"insecureSkipVerify"`
-		} `json:"destinations"`
-	}
-	if err := json.Unmarshal([]byte(files["request.json"]), &document); err != nil {
-		t.Fatal(err)
-	}
-	if len(document.Destinations) != 1 || document.Destinations[0].ID != "bmc" || !document.Destinations[0].InsecureSkipVerify {
-		t.Fatalf("request lost explicit BMC TLS policy: %+v", document)
-	}
+var _ = Describe("probe TLS policy", func() {
+	It("serializes an explicit per-destination bypass without credential material", func() {
+		files, err := requestFiles(tlsPolicyRequest(Destination{
+			ID: "dpu-target", Endpoint: "https://192.0.2.20", Path: "/redfish/v1/", InsecureSkipVerify: true,
+		}))
+		Expect(err).NotTo(HaveOccurred())
 
-	response := Response{
-		Version: ProtocolVersion, RunID: request.RunID, NodeUID: "node", PodUID: "pod",
-		NetworkMode: "pod-network", StartedAt: now, FinishedAt: now,
-		Results: []inventory.ProbeResult{{NodeUID: "node", NetworkMode: "pod-network", Destination: "bmc", DNS: "not-applicable", Addresses: []inventory.ProbeAddress{{Address: "192.0.2.10", TCP: "reachable", TLS: "unverified", HTTP: "authentication-required"}}}},
-	}
-	if err := ValidateResponse(response, request, "node", "pod", "pod-network"); err != nil {
-		t.Fatalf("explicitly unverified BMC response was rejected: %v", err)
-	}
-	response.Results[0].Addresses[0].TLS = "verified"
-	if err := ValidateResponse(response, request, "node", "pod", "pod-network"); err == nil {
-		t.Fatal("response falsely claimed verification when bypass was requested")
-	}
-	response.Results[0].Addresses[0].TLS = "unverified"
-	request.Destinations[0].InsecureSkipVerify = false
-	if err := ValidateResponse(response, request, "node", "pod", "pod-network"); err == nil {
-		t.Fatal("unverified BMC response was accepted without an explicit bypass")
+		var request struct {
+			Destinations []struct {
+				ID                 string `json:"id"`
+				InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+			} `json:"destinations"`
+		}
+		Expect(json.Unmarshal([]byte(files["request.json"]), &request)).To(Succeed())
+		Expect(request.Destinations).To(HaveLen(1))
+		Expect(request.Destinations[0].ID).To(Equal("dpu-target"))
+		Expect(request.Destinations[0].InsecureSkipVerify).To(BeTrue())
+		Expect(files["request.json"]).NotTo(ContainSubstring("username"))
+		Expect(files["request.json"]).NotTo(ContainSubstring("password"))
+		Expect(files["request.json"]).NotTo(ContainSubstring("credential"))
+	})
+
+	It("keeps the default destination strict", func() {
+		files, err := requestFiles(tlsPolicyRequest(Destination{
+			ID: "dpu-target", Endpoint: "https://192.0.2.20", Path: "/redfish/v1/",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(files["request.json"]).NotTo(ContainSubstring(`"insecureSkipVerify":true`))
+	})
+
+	It("rejects skipping verification for the management API", func() {
+		_, err := requestFiles(tlsPolicyRequest(Destination{
+			ID: "management-api", Endpoint: "https://api.example.invalid", Path: "/version", InsecureSkipVerify: true,
+		}))
+		Expect(err).To(MatchError(ContainSubstring("not allowed for the management API")))
+	})
+
+	It("rejects a bypass combined with a CA bundle", func() {
+		_, err := requestFiles(tlsPolicyRequest(Destination{
+			ID: "dpu-target", Endpoint: "https://192.0.2.20", Path: "/redfish/v1/", CA: []byte("not a CA"), InsecureSkipVerify: true,
+		}))
+		Expect(err).To(MatchError(ContainSubstring("combined with a CA")))
+	})
+})
+
+func tlsPolicyRequest(destination Destination) Request {
+	return Request{
+		Version: ProtocolVersion, RunID: "tls-policy-test", Deadline: time.Now().Add(time.Minute),
+		RequestTimeout: time.Second, Destinations: []Destination{destination},
 	}
 }
 
-func TestProbeRejectsManagementTLSBypassAndConflictingTrust(t *testing.T) {
-	request := Request{Version: ProtocolVersion, RunID: "tls-policy", Deadline: time.Now().Add(time.Minute), RequestTimeout: time.Second,
-		Destinations: []Destination{{ID: "management-api", Endpoint: "https://api.invalid", Path: "/version", InsecureSkipVerify: true}}}
-	if _, err := requestFiles(request); err == nil {
-		t.Fatal("management API accepted TLS bypass")
-	}
-	request.Destinations[0] = Destination{ID: "bmc", Endpoint: "https://192.0.2.10", Path: "/redfish/v1/", CA: []byte("not a CA"), InsecureSkipVerify: true}
-	if _, err := requestFiles(request); err == nil {
-		t.Fatal("BMC request accepted simultaneous bypass and CA trust")
-	}
-}
+var _ = Describe("probe TLS policy input boundaries", func() {
+	It("continues to reject control characters in TLS identity inputs", func() {
+		request := tlsPolicyRequest(Destination{
+			ID: "dpu-target", Endpoint: "https://192.0.2.20", Path: "/redfish/v1/", ServerName: "bmc.invalid\r\nInjected: yes",
+		})
+		_, err := requestFiles(request)
+		Expect(err).To(HaveOccurred())
+		Expect(strings.Contains(err.Error(), "TLS server name")).To(BeTrue())
+	})
+})

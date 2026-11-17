@@ -53,6 +53,12 @@ New or changed readiness strategies MUST define evidence freshness for the curre
 - **WHEN** the API denies the observation
 - **THEN** the changed strategy returns an inspection error rather than evidence of readiness.
 
+#### Scenario: DPF controller-created interface metadata
+
+- **WHEN** a supported physical or PF DPUServiceInterface without a virtual network produces its selected tenant ServiceInterfaceSet
+- **THEN** verification compares its complete specification and treats omitted and empty outer metadata maps equally, allowing only the optional exact controller contribution `svc.dpu.nvidia.com/interface-mode: nsi` in addition to retained metadata.
+- **AND** malformed maps, conflicting or unexpected metadata, changed selectors and changed specifications fail with a finite diagnostic category; parent ownership, tenant identity and child UID checks remain required.
+
 ### Requirement: Consistent lifecycle interpretation
 
 Deploy and standalone validate SHALL share readiness meaning for equivalent evidence, with explicit adaptations for apply history and platform-specific paths. Extensions MUST test companion convergence, timeout and terminal failure as applicable.

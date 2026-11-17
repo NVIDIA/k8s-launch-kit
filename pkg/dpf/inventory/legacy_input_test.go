@@ -157,6 +157,7 @@ func legacyInventoryDocument(version, encoding string, metadata int) string {
 
 func fullLegacyInventory(version string) Inventory {
 	return Inventory{
+		HBN:            &HBNInventory{Namespace: "hbn-test"},
 		Software:       &releases.Release{Version: "release-test", Components: []releases.Component{}, Hardware: []releases.HardwareBOM{}, Sources: []releases.Source{}, Limitations: []string{}},
 		AddressLookup:  &AddressLookup{Candidates: []AddressCandidate{{Name: "candidate", Role: "dpu", Address: "192.0.2.10", Source: "test", EvidenceRef: "address-evidence"}}, Observations: map[string]Observation{"lookup": {State: "observed", ReasonCode: "LOOKUP_OK"}}},
 		FormatVersion:  version,

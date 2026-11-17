@@ -8,6 +8,7 @@ import (
 	"net"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
@@ -82,9 +83,13 @@ func collectNetwork(ctx context.Context, remote runner, runtime *inventory.Runti
 
 func parseLinks(text string) ([]inventory.NetworkLink, error) {
 	var rows []struct {
-		Name   string `json:"ifname"`
-		MAC    string `json:"address"`
-		Master string `json:"master"`
+		Name   string          `json:"ifname"`
+		MAC    string          `json:"address"`
+		Master string          `json:"master"`
+		PCI    string          `json:"parentdev"`
+		Port   string          `json:"phys_port_name"`
+		MinMTU json.RawMessage `json:"min_mtu"`
+		MaxMTU json.RawMessage `json:"max_mtu"`
 		Info   struct {
 			Kind string `json:"info_kind"`
 		} `json:"linkinfo"`
@@ -100,9 +105,32 @@ func parseLinks(text string) ([]inventory.NetworkLink, error) {
 		}
 		seen[r.Name] = true
 		// Non-Ethernet link-layer addresses (e.g. InfiniBand) are retained as facts.
-		out = append(out, inventory.NetworkLink{Name: r.Name, MAC: r.MAC, Master: r.Master, Kind: r.Info.Kind})
+		pci, port := strings.ToLower(r.PCI), r.Port
+		if pci != "" && !externalPCIAddress.MatchString(pci) || port != "" && (len(port) > 32 || strings.ContainsAny(port, "\x00\r\n \t")) {
+			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
+		}
+		minMTU, err := parseMTUBound(r.MinMTU)
+		if err != nil {
+			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
+		}
+		maxMTU, err := parseMTUBound(r.MaxMTU)
+		if err != nil || minMTU > 0 && maxMTU > 0 && minMTU > maxMTU {
+			return nil, &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
+		}
+		out = append(out, inventory.NetworkLink{Name: r.Name, MAC: r.MAC, Master: r.Master, Kind: r.Info.Kind, PCIAddress: pci, PhysicalPortName: port, MinMTU: minMTU, MaxMTU: maxMTU})
 	}
 	return out, nil
+}
+
+func parseMTUBound(raw json.RawMessage) (uint32, error) {
+	if len(raw) == 0 {
+		return 0, nil
+	}
+	value, err := strconv.ParseUint(string(raw), 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint32(value), nil
 }
 func parseNeighbors(text string) ([]inventory.Neighbor, error) {
 	var rows []struct {
@@ -230,24 +258,88 @@ func parseLLDP(text string) ([]inventory.LLDPNeighbor, error) {
 }
 
 // Detailed iproute output is optional: some releases emit invalid JSON for
-// VXLAN attributes. Base links remain useful without detailed link kinds. Verify
-// a complete unchanged name/MAC/master projection before enriching those facts.
+// VXLAN attributes. Base links remain useful without detailed link identity.
+// Verify a complete unchanged name/MAC/master projection before enrichment.
 func mergeLinkDetails(base, details []inventory.NetworkLink) error {
 	if len(base) != len(details) {
 		return &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
 	}
 	byName := map[string]inventory.NetworkLink{}
 	for _, d := range details {
+		if d.Name == "" {
+			return &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
+		}
+		if _, exists := byName[d.Name]; exists {
+			return &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
+		}
 		byName[d.Name] = d
 	}
+	baseNames := make(map[string]bool, len(base))
 	for _, b := range base {
+		if b.Name == "" || baseNames[b.Name] {
+			return &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
+		}
+		baseNames[b.Name] = true
 		d, exists := byName[b.Name]
-		if !exists || d.MAC != b.MAC || d.Master != b.Master {
+		if !exists || linkDetailsConflict(b, d) || invalidMTURange(b.MinMTU, b.MaxMTU) || effectiveMTURangeConflict(b, d) {
 			return &Error{Code: "SSH_RUNTIME_INVALID", Stage: "network-link-details"}
 		}
 	}
 	for i := range base {
-		base[i].Kind = byName[base[i].Name].Kind
+		detail := byName[base[i].Name]
+		if detail.PCIAddress != "" {
+			base[i].PCIAddress = detail.PCIAddress
+		}
+		if detail.PhysicalPortName != "" {
+			base[i].PhysicalPortName = detail.PhysicalPortName
+		}
+		if detail.Kind != "" {
+			base[i].Kind = detail.Kind
+		}
+		if detail.MinMTU > 0 {
+			base[i].MinMTU = detail.MinMTU
+		}
+		if detail.MaxMTU > 0 {
+			base[i].MaxMTU = detail.MaxMTU
+		}
 	}
 	return nil
+}
+
+func linkDetailsConflict(base, detail inventory.NetworkLink) bool {
+	return base.MAC != detail.MAC ||
+		base.Master != detail.Master ||
+		conflictingPCI(base.PCIAddress, detail.PCIAddress) ||
+		conflictingExactString(base.PhysicalPortName, detail.PhysicalPortName) ||
+		conflictingExactString(base.Kind, detail.Kind) ||
+		conflictingMTU(base.MinMTU, detail.MinMTU) ||
+		conflictingMTU(base.MaxMTU, detail.MaxMTU) ||
+		invalidMTURange(detail.MinMTU, detail.MaxMTU)
+}
+
+func conflictingPCI(base, detail string) bool {
+	return base != "" && detail != "" && !strings.EqualFold(base, detail)
+}
+
+func conflictingExactString(base, detail string) bool {
+	return base != "" && detail != "" && base != detail
+}
+
+func conflictingMTU(base, detail uint32) bool {
+	return base > 0 && detail > 0 && base != detail
+}
+
+func invalidMTURange(minimum, maximum uint32) bool {
+	return minimum > 0 && maximum > 0 && minimum > maximum
+}
+
+func effectiveMTURangeConflict(base, detail inventory.NetworkLink) bool {
+	minimum, maximum := base.MinMTU, base.MaxMTU
+	if detail.MinMTU > 0 {
+		minimum = detail.MinMTU
+	}
+	if detail.MaxMTU > 0 {
+		maximum = detail.MaxMTU
+	}
+	return invalidMTURange(minimum, maximum)
 }

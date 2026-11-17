@@ -141,10 +141,14 @@ func TestImportantFlagScopes(t *testing.T) {
 	}{
 		{command: rootCmd, flag: "target", expected: []target.Name{target.Host, target.DPF}},
 		{command: rootCmd, flag: "output", expected: []target.Name{target.Host, target.DPF}},
+		{command: rootCmd, flag: "deploy", expected: []target.Name{target.Host}},
 		{command: rootCmd, flag: "fabric", expected: []target.Name{target.Host}},
 		{command: discoverCmd, flag: "kubeconfig", expected: []target.Name{target.Host}},
-		{command: generateCmd, flag: "deploy", expected: []target.Name{target.Host, target.DPF}},
+		{command: generateCmd, flag: "deploy", expected: []target.Name{target.Host}},
+		{command: generateCmd, flag: "dry-run", expected: []target.Name{target.Host}},
 		{command: deployCmd, flag: "dry-run", expected: []target.Name{target.Host, target.DPF}},
+		{command: deployCmd, flag: "user-config", expected: []target.Name{target.Host, target.DPF}},
+		{command: deployCmd, flag: "deployment-files", expected: []target.Name{target.Host, target.DPF}},
 		{command: validateCmd, flag: "connectivity", expected: []target.Name{target.Host}},
 		{command: generateCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
 		{command: deployCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
@@ -250,7 +254,7 @@ func TestTargetDescriptors(t *testing.T) {
 	assert.Equal(t, target.DPF, descriptors[1].Name)
 	for _, phase := range target.PublicPhases() {
 		assert.True(t, descriptors[0].Capability(phase).Available)
-		assert.Equal(t, phase == target.Discover, descriptors[1].Capability(phase).Available)
+		assert.Equal(t, phase == target.Discover || phase == target.Generate || phase == target.Deploy, descriptors[1].Capability(phase).Available)
 		assert.NotEmpty(t, descriptors[1].Capability(phase).Reason)
 	}
 }
@@ -276,6 +280,7 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.False(t, actual.Targets[1].Phases["validate"].Available)
 		assert.Equal(t, []string{"host", "dpf"}, actual.Flags["--output"].Targets)
 		assert.Equal(t, []string{"host"}, actual.Flags["--fabric"].Targets)
+		assert.Equal(t, []string{"dpf"}, actual.Flags["--use-case"].Targets)
 	})
 
 	t.Run("omitted and explicit host preserve output and exit code", func(t *testing.T) {
@@ -289,9 +294,22 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Equal(t, 1, omittedExit)
 		assert.Contains(t, omittedOutput, "cluster config file does not exist")
 	})
+	t.Run("HBN selection cannot enter Host discovery", func(t *testing.T) {
+		output, exitCode := runCLIHelper(t, "discover", "--target", "host", "--use-case", "hbn-bgp", "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "--use-case (targets: dpf)")
+	})
+	t.Run("unknown DPF use-case fails before infrastructure access", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "site.yaml")
+		require.NoError(t, os.WriteFile(file, []byte("discovery: {}\n"), 0600))
+		output, exitCode := runCLIHelper(t, "discover", "--target", "dpf", "--use-case", "unknown", "--user-config", file, "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "--use-case must be hbn-bgp")
+		assert.Contains(t, output, "INVALID_CONFIGURATION")
+	})
 
 	for _, phase := range target.PublicPhases() {
-		if phase == target.Discover {
+		if phase == target.Discover || phase == target.Generate || phase == target.Deploy {
 			continue
 		}
 		t.Run("dpf "+string(phase)+" capability error", func(t *testing.T) {
@@ -301,6 +319,47 @@ func TestTargetCLIProcess(t *testing.T) {
 			assert.Contains(t, output, `target "dpf" does not implement phase "`+string(phase)+`"`)
 		})
 	}
+
+	t.Run("DPF deploy requires explicit site and bundle inputs", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"deploy", "--target", "dpf", "--output", "json"},
+			{"deploy", "--target", "dpf", "--user-config", "/site.yaml", "--output", "json"},
+			{"deploy", "--target", "dpf", "--deployment-files", "/bundle", "--output", "json"},
+		} {
+			output, exitCode := runCLIHelper(t, args...)
+			assert.Equal(t, 2, exitCode)
+			assert.Contains(t, output, "DPF deploy requires --user-config and --deployment-files")
+		}
+	})
+
+	t.Run("DPF deploy validates its retained bundle without Host fallback", func(t *testing.T) {
+		output, exitCode := runCLIHelper(t, "deploy", "--target", "dpf", "--user-config", "/missing/site.yaml", "--deployment-files", "/missing/bundle", "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "invalid DPF deployment bundle")
+		assert.NotContains(t, output, "network-operator")
+		assert.NotContains(t, output, "does not implement phase")
+	})
+
+	t.Run("DPF deploy rejects Host overwrite semantics even when explicitly false", func(t *testing.T) {
+		output, exitCode := runCLIHelper(t, "deploy", "--target", "dpf", "--overwrite-existing=false", "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "--overwrite-existing (targets: host)")
+	})
+
+	t.Run("DPF generation validates its own inputs without host fallback", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "dpf-site.yaml")
+		require.NoError(t, os.WriteFile(file, []byte("dpf: {useCase: hbn-bgp}\n"), 0600))
+		output, exitCode := runCLIHelper(t, "generate", "--target", "dpf", "--use-case", "hbn-bgp", "--user-config", file, "--save-deployment-files", filepath.Join(t.TempDir(), "bundle"), "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "current-format HBN discovery inventory")
+		assert.NotContains(t, output, "does not implement phase")
+		assert.NotContains(t, output, "network-operator namespace")
+	})
+	t.Run("DPF generation rejects explicit host options", func(t *testing.T) {
+		output, exitCode := runCLIHelper(t, "generate", "--target", "dpf", "--fabric", "ethernet", "--output", "json")
+		assert.Equal(t, 2, exitCode)
+		assert.Contains(t, output, "--fabric (targets: host)")
+	})
 
 	t.Run("root dpf pipeline cannot enter host path", func(t *testing.T) {
 		output, exitCode := runCLIHelper(t, "--target", "dpf")
@@ -393,4 +452,22 @@ func runCLIHelper(t *testing.T, args ...string) (string, int) {
 		t.Fatalf("run helper %s: %v\n%s", strings.Join(args, " "), err, output)
 	}
 	return string(output), exitErr.ExitCode()
+}
+
+func TestDeployResumeFlagIsDPFOnlyAndExplicit(t *testing.T) {
+	for _, args := range [][]string{
+		{"deploy", "--target", "host", "--resume", "ns/dpf-op-name/123e4567-e89b-12d3-a456-426614174000", "--output", "json"},
+		{"deploy", "--target", "dpf", "--user-config", "/missing/site.yaml", "--deployment-files", "/missing/bundle", "--resume=", "--output", "json"},
+	} {
+		output, code := runCLIHelper(t, args...)
+		if code == 0 {
+			t.Fatalf("invalid resume accepted: %s", output)
+		}
+		if args[2] == "host" && !strings.Contains(output, "--resume (targets: dpf)") {
+			t.Fatalf("host resume was not rejected at dispatch: %s", output)
+		}
+		if args[2] == "dpf" && !strings.Contains(output, "resume requires") {
+			t.Fatalf("empty resume reached bundle or client loading: %s", output)
+		}
+	}
 }

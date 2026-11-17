@@ -1,0 +1,39 @@
+[
+  {
+    "header": {
+      "model": "generic-switch",
+      "nvue-api-version": "1.0.0",
+      "rev-id": 1.0,
+      "version": "5.15.1"
+    }
+  },
+  {
+    "set": {
+      "bridge": {},
+      "interface": {
+        "swp1s0": {
+          "router": {
+            "vrf": "hbn"
+          }
+        }
+      },
+      "router": {
+        "bgp": {
+          "enable": "on"
+        }
+      },
+      "system": {
+        "hostname": "switch-a"
+      },
+      "vrf": {
+        "hbn": {
+          "router": {
+            "bgp": {
+              "enable": "on"
+            }
+          }
+        }
+      }
+    }
+  }
+]

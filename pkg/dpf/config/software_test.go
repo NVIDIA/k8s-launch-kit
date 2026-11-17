@@ -23,7 +23,7 @@ var _ = Describe("DPF release and address source configuration", func() {
 			Expect(e).NotTo(HaveOccurred())
 			Expect(r.Software.Version).To(Equal("26.4.0"))
 		}
-		for _, value := range []string{"''", "'latest'", "'26.8.0'"} {
+		for _, value := range []string{"''", "'latest'", "'26.99.0'"} {
 			in, e := Decode([]byte("dpf: {release: "+value+"}\n"+seed), "/site/in.yaml")
 			Expect(e).NotTo(HaveOccurred())
 			_, e = Resolve(in)

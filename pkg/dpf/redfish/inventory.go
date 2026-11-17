@@ -17,7 +17,10 @@ import (
 )
 
 // Collector reads inventory without claiming hardware or use-case qualification.
-type Collector struct{}
+type Collector struct {
+	IncludeNetworkFunctionMACs bool
+	ProvisioningRelease        string
+}
 
 func ValidSerial(raw string) bool {
 	s := strings.TrimSpace(raw)
@@ -30,6 +33,12 @@ func ValidSerial(raw string) bool {
 
 // Collect returns typed Redfish facts without evidence metadata; the shared map return stays nil.
 func (co Collector) Collect(ctx context.Context, target config.Target, timeout time.Duration) (device inventory.Device, evidence map[string]inventory.Evidence, err error) {
+	return co.collect(ctx, target, timeout, nil)
+}
+
+// reset is confined to a single explicit lifecycle read. Normal inventory never
+// collects or retains these transient power/task facts.
+func (co Collector) collect(ctx context.Context, target config.Target, timeout time.Duration, reset *resetSafetyRead) (device inventory.Device, evidence map[string]inventory.Evidence, err error) {
 	started := time.Now()
 	label := target.DisplayName()
 	logger := log.FromContext(ctx).WithName("redfish").WithValues("endpoint", label, "role", target.Role)
@@ -63,6 +72,13 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		if cleanupErr := c.Close(cleanupCtx); cleanupErr != nil {
 			err = &ObservationError{Primary: err, Cleanup: cleanupErr, SessionURI: c.session}
 			device.ReasonCode = "CLEANUP_INCOMPLETE"
+		}
+		if target.Role == "dpus" && co.IncludeNetworkFunctionMACs && len(device.NetworkFunctionMACs) > 0 && err != nil {
+			device.NetworkFunctionMACs = nil
+			device.Observations["networkFunctionMACs"] = inventory.Observation{State: "unavailable", ReasonCode: "NETWORK_FUNCTION_MAC_RECHECK_FAILED", Message: "A required identity or Redfish session cleanup check failed; collected permanent MACs are ineligible.", Tool: "redfish"}
+		}
+		if target.Role == "dpus" && co.ProvisioningRelease != "" && err != nil {
+			device.Observations["dpf-provisioning-api"] = inventory.Observation{State: "unknown", Tool: "redfish", ReasonCode: "DPF_PROVISIONING_API_RECHECK_FAILED", Message: "Required identity or session cleanup failed; release-specific enrollment API reads are ineligible."}
 		}
 		if err != nil && psidCard.URI != "" {
 			state := device.Observations["psid"]
@@ -195,6 +211,30 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 		device.Model = Text(cards[0].Document, "Model")
 		device.IdentityKey = []string{"nvidia", device.SerialNumber}
 		device.ID = inventory.PhysicalID("dpu", device.IdentityKey)
+		if co.ProvisioningRelease != "" {
+			begin("DPF release provisioning API reads")
+			state := provisioningAPIReads(ctx, c, co.ProvisioningRelease, bf4, device.SerialNumber, system)
+			device.Observations["dpf-provisioning-api"] = state
+			device.Observations["host-reset-support"] = resetSupportReads(ctx, c, co.ProvisioningRelease, device.Model)
+			if state.State == "observed" {
+				pass("release-specific enrollment reads verified; provisioning actions remain untested")
+			} else {
+				output.Info("[UNAVAILABLE] %s: %s (%s)", label, stage, state.ReasonCode)
+				stage = ""
+			}
+		}
+		if co.IncludeNetworkFunctionMACs {
+			begin("Optional NetworkDeviceFunction MAC inventory")
+			macs, state := networkFunctionMACs(ctx, c, cards[0])
+			device.Observations["networkFunctionMACs"] = state
+			if state.State == "observed" {
+				device.NetworkFunctionMACs = macs
+				pass("identity-selected permanent Ethernet MACs observed")
+			} else {
+				output.Info("[UNAVAILABLE] %s: %s (%s)", label, stage, state.ReasonCode)
+				stage = ""
+			}
+		}
 	} else {
 		if adapter != "hpe-standard-v1" && adapter != "dell-standard-v1" {
 			return device, evidence, &Error{Code: "UNSUPPORTED_HOST_ADAPTER"}
@@ -211,6 +251,11 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	}
 	output.Info("[RUNNING] %s: Physical inventory read completed; identity recheck pending", label)
 	stage = ""
+	if reset != nil {
+		if err = reset.capture(ctx, c, root, system, psidCard, device); err != nil {
+			return device, evidence, err
+		}
+	}
 	if target.Role == "dpus" {
 		begin("Optional BMC firmware/time/settings observations")
 		collectSoftware(ctx, c, root, system, &device)
@@ -268,6 +313,15 @@ func (co Collector) Collect(ctx context.Context, target config.Target, timeout t
 	}
 	if bf4 {
 		device.Observations["psid"] = bf4PSID(system.Document, psidCard.Document, refreshed, currentPSIDCard)
+	}
+	if reset != nil {
+		if err = reset.capture(ctx, c, root, Resource{URI: system.URI, Document: refreshed}, Resource{URI: psidCard.URI, Document: currentPSIDCard}, device); err != nil {
+			return device, evidence, err
+		}
+		admin := c.administrator(ctx, root)
+		if admin.State != "observed" || admin.ReasonCode != "BMC_ADMIN_VERIFIED" {
+			return device, evidence, &Error{Code: "RESET_BMC_ADMIN_UNVERIFIED"}
+		}
 	}
 	if target.Role == "dpus" && c.passwordChangeRequired {
 		device.Observations["bmc-administrator"] = inventory.Observation{State: "failed", ReasonCode: "BMC_PASSWORD_CHANGE_REQUIRED", Message: "The BMC requires a password change; discovery does not change passwords.", Tool: "redfish"}

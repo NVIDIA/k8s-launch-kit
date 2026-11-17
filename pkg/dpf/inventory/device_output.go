@@ -7,6 +7,7 @@ package inventory
 // physical identity rechecks succeed; an endpoint or retained serial is context,
 // not a successful identity assertion. Collector bookkeeping stays private.
 type DeviceOutput struct {
+	NetworkFunctionMACs       []string        `json:"networkFunctionMACs,omitempty" yaml:"networkFunctionMACs,omitempty"`
 	RecordKey                 string          `json:"recordKey" yaml:"recordKey"`
 	InputRef                  string          `json:"inputRef" yaml:"inputRef"`
 	Method                    string          `json:"method,omitempty" yaml:"method,omitempty"`
@@ -60,15 +61,19 @@ type FirmwareVersionOutput struct {
 }
 
 type RuntimeOutput struct {
-	Hostname     string              `json:"hostname,omitempty" yaml:"hostname,omitempty"`
-	OS           string              `json:"os,omitempty" yaml:"os,omitempty"`
-	BoardProduct string              `json:"boardProduct,omitempty" yaml:"boardProduct,omitempty"`
-	MFTVersion   string              `json:"mftVersion,omitempty" yaml:"mftVersion,omitempty"`
-	Interfaces   []Interface         `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
-	Routes       []Route             `json:"routes,omitempty" yaml:"routes,omitempty"`
-	DNS          []string            `json:"dns,omitempty" yaml:"dns,omitempty"`
-	Network      *NetworkObservation `json:"network,omitempty" yaml:"network,omitempty"`
-	Hardware     *HardwareOutput     `json:"hardware,omitempty" yaml:"hardware,omitempty"`
+	// VirtualMachine is nil until the supported OS detector reports a current result.
+	VirtualMachine   *bool               `json:"virtualMachine,omitempty" yaml:"virtualMachine,omitempty"`
+	BootID           string              `json:"bootID,omitempty" yaml:"bootID,omitempty"`
+	SSHServerAddress string              `json:"sshServerAddress,omitempty" yaml:"sshServerAddress,omitempty"`
+	Hostname         string              `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	OS               string              `json:"os,omitempty" yaml:"os,omitempty"`
+	BoardProduct     string              `json:"boardProduct,omitempty" yaml:"boardProduct,omitempty"`
+	MFTVersion       string              `json:"mftVersion,omitempty" yaml:"mftVersion,omitempty"`
+	Interfaces       []Interface         `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
+	Routes           []Route             `json:"routes,omitempty" yaml:"routes,omitempty"`
+	DNS              []string            `json:"dns,omitempty" yaml:"dns,omitempty"`
+	Network          *NetworkObservation `json:"network,omitempty" yaml:"network,omitempty"`
+	Hardware         *HardwareOutput     `json:"hardware,omitempty" yaml:"hardware,omitempty"`
 }
 
 type AdapterOutput struct {

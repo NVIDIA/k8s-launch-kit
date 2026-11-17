@@ -122,6 +122,14 @@ A structured failure includes a stable category and retry guidance:
 
 Use `error.transient` to decide whether retry is appropriate. Treat `suggestion` as operator guidance, not a command to execute without review. The process exit code remains authoritative even when a JSON object is emitted.
 
+Standalone `deploy --target dpf` results always set `error.transient` to
+`false` when deployment stops. A stop may follow partial changes, and even a
+read or timeout failure needs current-state inspection before deciding what to
+do. Retain the report and operation reference, inspect current resources and
+device state, then use an explicit `--resume` with the unchanged site file and
+bundle only when that inspection supports it. Do not automatically replay the
+deployment command.
+
 Cleanup returns a command-specific summary:
 
 ```json

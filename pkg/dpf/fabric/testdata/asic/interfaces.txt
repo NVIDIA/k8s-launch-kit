@@ -1,0 +1,175 @@
+==============================================================================
+TableId: 11 - Application: Backend Interface Table Count: 4
+==============================================================================
+ ifp entry port: swp1s0 (if-index:3) -
+   if-entry port: swp1s0 (if-index:3) -
+     table-id 1006
+     bridge-id 0
+     svi-parent 0
+     bond-id -1
+     vlan-proto 0x8100
+     fwd-state 3
+     mtu 9216
+     mac 02:00:00:00:00:01
+     vmacs -
+     flags 0x2006170
+     bridge-vlan info -
+       pvid 0
+     bridge-vlan info
+     ifindex 0
+     ttl 0
+   vport-entry -
+     vport-lid 0x2e8d00f1
+     lid 0x100f1
+     internal-vid 3725
+     bridge_id 0
+     programmed-vfid 65535
+     vport-vlan -
+       vlan-id 3725
+       egress-transmission : untagged
+     pending flags 0x0
+   lid 0x100f1
+   l3-vlan 3725
+   bridge-vlan 0
+   l3-interface-id 219
+   programmed -
+     internal-vid 3725
+     pvid 3725
+     vid bitmap -
+       vid 3725
+   ifp-flags 0x0
+   port-security disabled
+   adaptive-routing disabled
+   ecmp-pruned-count 0
+   if-mac-user-db-state 0x0
+
+ ifp entry port: swp1s1 (if-index:4) -
+   if-entry port: swp1s1 (if-index:4) -
+     table-id 1006
+     bridge-id 0
+     svi-parent 0
+     bond-id -1
+     vlan-proto 0x8100
+     fwd-state 3
+     mtu 9216
+     mac 02:00:00:00:00:02
+     vmacs -
+     flags 0x2006170
+     bridge-vlan info -
+       pvid 0
+     bridge-vlan info
+     ifindex 0
+     ttl 0
+   vport-entry -
+     vport-lid 0x2e8d00f3
+     lid 0x100f3
+     internal-vid 3725
+     bridge_id 0
+     programmed-vfid 65535
+     vport-vlan -
+       vlan-id 3725
+       egress-transmission : untagged
+     pending flags 0x0
+   lid 0x100f3
+   l3-vlan 3725
+   bridge-vlan 0
+   l3-interface-id 223
+   programmed -
+     internal-vid 3725
+     pvid 3725
+     vid bitmap -
+       vid 3725
+   ifp-flags 0x0
+   port-security disabled
+   adaptive-routing disabled
+   ecmp-pruned-count 0
+   if-mac-user-db-state 0x0
+
+ ifp entry port: swp19s0 (if-index:163) -
+   if-entry port: swp19s0 (if-index:163) -
+     table-id 1006
+     bridge-id 0
+     svi-parent 0
+     bond-id -1
+     vlan-proto 0x0
+     fwd-state 3
+     mtu 9216
+     mac 02:00:00:00:00:03
+     vmacs -
+     flags 0x6010
+     bridge-vlan info -
+       pvid 0
+     bridge-vlan info
+     ifindex 0
+     ttl 0
+   vport-entry -
+     vport-lid 0x2e8d00b9
+     lid 0x100b9
+     internal-vid 3725
+     bridge_id 0
+     programmed-vfid 65535
+     vport-vlan -
+       vlan-id 3725
+       egress-transmission : untagged
+     pending flags 0x0
+   lid 0x100b9
+   l3-vlan 3725
+   bridge-vlan 0
+   l3-interface-id 220
+   programmed -
+     internal-vid 3725
+     pvid 3725
+     vid bitmap -
+       vid 3725
+   ifp-flags 0x0
+   port-security disabled
+   adaptive-routing disabled
+   ecmp-pruned-count 0
+   if-mac-user-db-state 0x0
+
+ ifp entry port: swp19s1 (if-index:164) -
+   if-entry port: swp19s1 (if-index:164) -
+     table-id 1006
+     bridge-id 0
+     svi-parent 0
+     bond-id -1
+     vlan-proto 0x0
+     fwd-state 3
+     mtu 9216
+     mac 02:00:00:00:00:04
+     vmacs -
+     flags 0x6010
+     bridge-vlan info -
+       pvid 0
+     bridge-vlan info
+     ifindex 0
+     ttl 0
+   vport-entry -
+     vport-lid 0x2e8d00bb
+     lid 0x100bb
+     internal-vid 3725
+     bridge_id 0
+     programmed-vfid 65535
+     vport-vlan -
+       vlan-id 3725
+       egress-transmission : untagged
+     pending flags 0x0
+   lid 0x100bb
+   l3-vlan 3725
+   bridge-vlan 0
+   l3-interface-id 222
+   programmed -
+     internal-vid 3725
+     pvid 3725
+     vid bitmap -
+       vid 3725
+   ifp-flags 0x0
+   port-security disabled
+   adaptive-routing disabled
+   ecmp-pruned-count 0
+   if-mac-user-db-state 0x0
+
+==============================================================================
+TableSize: 1024 Bytes
+==============================================================================
+TRUE
