@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -60,7 +61,7 @@ type workloadResourceReceipt struct {
 func checkWorkloadPreparationInputs(ctx context.Context, client workloadPermissionChecker, prepared *preparedControlPlaneRun,
 	journal *executionJournal, verifyChartSource workloadChartSourceVerifier,
 ) ([]*unstructured.Unstructured, error) {
-	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil ||
+	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.rules.Validate() != nil || prepared.execution.plan == nil ||
 		journal == nil || verifyChartSource == nil {
 		return nil, workloadStageFailure(journal, "WORKLOAD_INPUT_INVALID", "Workload preparation requires one retained execution, chart verifier and durable report.", nil)
 	}
@@ -101,7 +102,7 @@ func runPreparedWorkload(ctx context.Context, softwareClient softwareStageManage
 	controlPlane controlPlaneReceipts, journal *executionJournal, interval, requestTimeout time.Duration,
 	maxBytes int64, verifyChartSource workloadChartSourceVerifier, objects []*unstructured.Unstructured,
 ) (workloadPreparationReceipt, error) {
-	if ctx == nil || softwareClient == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil ||
+	if ctx == nil || softwareClient == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.rules.Validate() != nil || prepared.execution.plan == nil ||
 		journal == nil || verifyChartSource == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute ||
 		maxBytes <= 0 || maxBytes == math.MaxInt64 || len(objects) != 9 {
 		return workloadPreparationReceipt{}, workloadStageFailure(journal, "WORKLOAD_INPUT_INVALID", "Workload stage requires one retained execution, complete prerequisites and bounded controls.", nil)
@@ -215,18 +216,9 @@ func (e *managementVerificationInputs) planStage(id string) (bundle.StageView, b
 	return bundle.StageView{}, false
 }
 
-type workloadCheckMode uint8
-
-const (
-	workloadNoReadiness workloadCheckMode = iota
-	workloadTemplateReadiness
-	workloadIPAMReadiness
-	workloadInterfaceReadiness
-)
-
 type workloadResourceSpec struct {
 	object *unstructured.Unstructured
-	mode   workloadCheckMode
+	mode   controllercontract.WorkloadMode
 }
 
 // runWorkloadStage creates or verifies only the fixed HBN prerequisites. It
@@ -270,15 +262,15 @@ func runWorkloadStage(ctx context.Context, client workloadStageClient, execution
 		if err := ctx.Err(); err != nil {
 			return receipts, workloadStageFailure(journal, "WORKLOAD_CANCELED", "Workload preparation stopped before all retained prerequisites were verified.", err)
 		}
-		current, err := executeNativeObject(ctx, client, execution.reconciler, spec.object, generation.StageWorkload, journal, false, interval)
+		current, err := executeNativeObject(execution.rules, ctx, client, execution.reconciler, spec.object, generation.StageWorkload, journal, false, interval)
 		if err != nil {
 			return receipts, err
 		}
 		if current.GetGeneration() <= 0 || current.GetResourceVersion() == "" {
 			return receipts, workloadStageFailure(journal, "WORKLOAD_RESOURCE_RECEIPT_INCOMPLETE", "A workload prerequisite has no stable generation or resource version.", nil)
 		}
-		if spec.mode != workloadNoReadiness {
-			childUID, err := waitWorkloadResource(ctx, client, execution.reconciler, controlPlane.tenant.Client, spec, current.GetUID(), journal, interval)
+		if spec.mode != controllercontract.WorkloadNone {
+			childUID, err := waitWorkloadResource(execution.rules, ctx, client, execution.reconciler, controlPlane.tenant.Client, spec, current.GetUID(), journal, interval)
 			if err != nil {
 				return receipts, err
 			}
@@ -334,7 +326,7 @@ func verifyStagedSoftwareResource(ctx context.Context, client identityResourceRe
 	if current == nil || current.GetUID() != receipt.SoftwareUID || current.GetGeneration() != receipt.Generation || execution.reconciler.Verify(desired, current) != nil {
 		return fmt.Errorf("verified BlueFieldSoftware identity or retained spec changed")
 	}
-	if readiness := EvaluateReadiness(current); !readiness.Ready {
+	if readiness := execution.rules.ResourceReadiness(current); !readiness.Ready {
 		return fmt.Errorf("verified BlueFieldSoftware is no longer ready: %s", readiness.ReasonCode)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
@@ -358,14 +350,14 @@ func orderWorkloadObjects(objects []*unstructured.Unstructured) ([]workloadResou
 		if _, ok := order[object.GetKind()]; !ok {
 			return nil, fmt.Errorf("unsupported workload resource kind")
 		}
-		mode := workloadNoReadiness
+		mode := controllercontract.WorkloadNone
 		switch object.GetKind() {
 		case "DPUServiceTemplate":
-			mode = workloadTemplateReadiness
+			mode = controllercontract.WorkloadTemplate
 		case "DPUServiceIPAM":
-			mode = workloadIPAMReadiness
+			mode = controllercontract.WorkloadIPAM
 		case "DPUServiceInterface":
-			mode = workloadInterfaceReadiness
+			mode = controllercontract.WorkloadInterface
 		}
 		result = append(result, workloadResourceSpec{object: object.DeepCopy(), mode: mode})
 	}
@@ -495,12 +487,12 @@ func verifyWorkloadReceiptSet(ctx context.Context, client identityResourceReader
 		if err := execution.reconciler.Verify(desired, current); err != nil {
 			return fmt.Errorf("workload prerequisite %s/%s no longer matches the retained plan", desired.GetKind(), desired.GetName())
 		}
-		if spec.mode != workloadNoReadiness {
-			if readiness := workloadResourceReadiness(current, spec.mode); !readiness.Ready {
+		if spec.mode != controllercontract.WorkloadNone {
+			if readiness := execution.rules.WorkloadReadiness(current, spec.mode); !readiness.Ready {
 				return fmt.Errorf("workload prerequisite %s/%s no longer has current required reconciliation", desired.GetKind(), desired.GetName())
 			}
 		}
-		if spec.mode == workloadIPAMReadiness || spec.mode == workloadInterfaceReadiness {
+		if spec.mode == controllercontract.WorkloadIPAM || spec.mode == controllercontract.WorkloadInterface {
 			if receipt.ChildUID == "" {
 				return fmt.Errorf("workload prerequisite %s/%s has no tenant-child receipt", desired.GetKind(), desired.GetName())
 			}

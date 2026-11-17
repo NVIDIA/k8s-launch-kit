@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -26,9 +27,9 @@ func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
 		{item: enrollmentBMC{device: devices[1]}, device: inventory.Device{SerialNumber: "SERIAL-B"}},
 	}
 	before := deployment.DeepCopy()
-	sets, err := activationSetIntents(deployment, devices)
+	sets, err := testRules(t).ActivationSetIntents(deployment, devices)
 	if err != nil {
-		t.Fatalf("activationSetIntents(): %v", err)
+		t.Fatalf("testRules(t).ActivationSetIntents(): %v", err)
 	}
 	if len(sets) != len(devices) {
 		t.Fatalf("got %d set intents, want %d", len(sets), len(devices))
@@ -42,7 +43,7 @@ func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
 	}
 	selected[0].dpuSet = sets["serial-a"]
 	selected[1].dpuSet = sets["serial-b"]
-	if err := validateActivationDeployment(deployment, selected, "dpf", TenantReadinessExpected{Namespace: "tenant", Labels: map[string]string{"tenant.example/id": "tenant-a"}}); err != nil {
+	if err := validateActivationDeployment(deployment, selected, "dpf", controllercontract.TenantReadinessExpected{Namespace: "tenant", Labels: map[string]string{"tenant.example/id": "tenant-a"}}); err != nil {
 		t.Fatalf("valid selected tenant selectors rejected: %v; set=%#v", err, selected[0].dpuSet.Object)
 	}
 	if !reflect.DeepEqual(before.Object, deployment.Object) {
@@ -56,7 +57,7 @@ func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
 	if err := unstructured.SetNestedSlice(bad.Object, settings, "spec", "dpus", "dpuSets"); err != nil {
 		t.Fatal(err)
 	}
-	wrongTenantSets, err := activationSetIntents(bad, devices)
+	wrongTenantSets, err := testRules(t).ActivationSetIntents(bad, devices)
 	if err != nil {
 		t.Fatalf("build drifted tenant selector fixture: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
 		{item: enrollmentBMC{device: devices[0]}, dpuSet: wrongTenantSets["serial-a"]},
 		{item: enrollmentBMC{device: devices[1]}, dpuSet: wrongTenantSets["serial-b"]},
 	}
-	if err := validateActivationDeployment(bad, wrongTenantSelected, "dpf", TenantReadinessExpected{Namespace: "tenant", Labels: map[string]string{"tenant.example/id": "tenant-a"}}); err == nil {
+	if err := validateActivationDeployment(bad, wrongTenantSelected, "dpf", controllercontract.TenantReadinessExpected{Namespace: "tenant", Labels: map[string]string{"tenant.example/id": "tenant-a"}}); err == nil {
 		got, _, _ := unstructured.NestedStringMap(wrongTenantSelected[0].dpuSet.Object, "spec", "dpuTemplate", "spec", "cluster", "selector", "matchLabels")
 		t.Fatalf("selector targeting a different tenant was accepted: %v", got)
 	}
@@ -76,7 +77,7 @@ func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
 	if err := unstructured.SetNestedSlice(bad.Object, settings, "spec", "dpus", "dpuSets"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := activationSetIntents(bad, devices); err == nil {
+	if _, err := testRules(t).ActivationSetIntents(bad, devices); err == nil {
 		t.Fatal("selector for an unselected DPU was accepted")
 	}
 
@@ -86,7 +87,7 @@ func TestActivationSetIntentsRestrictSelectedDevicesAndTenant(t *testing.T) {
 	if err := unstructured.SetNestedSlice(bad.Object, settings, "spec", "dpus", "dpuSets"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := activationSetIntents(bad, devices); err == nil {
+	if _, err := testRules(t).ActivationSetIntents(bad, devices); err == nil {
 		t.Fatal("duplicate DPUSet selector was accepted")
 	}
 }
@@ -261,15 +262,15 @@ func TestActivationSetIntentsRejectsUnsupportedReferenceModes(t *testing.T) {
 			} else if err := unstructured.SetNestedField(deployment.Object, tc.value, "spec", "dpus", tc.field); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := activationSetIntents(deployment, devices); err == nil {
+			if _, err := testRules(t).ActivationSetIntents(deployment, devices); err == nil {
 				t.Fatal("unsupported retained reference mode compiled")
 			}
 		})
 	}
-	if _, err := activationSetIntents(nil, devices); err == nil {
+	if _, err := testRules(t).ActivationSetIntents(nil, devices); err == nil {
 		t.Fatal("nil deployment compiled")
 	}
-	if _, err := activationSetIntents(baseline, nil); err == nil {
+	if _, err := testRules(t).ActivationSetIntents(baseline, nil); err == nil {
 		t.Fatal("empty selected cohort compiled")
 	}
 }

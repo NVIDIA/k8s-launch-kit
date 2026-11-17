@@ -79,7 +79,7 @@ func newAllocationFenceObserver(ctx context.Context, client activationObservatio
 		if err != nil || !observed.complete {
 			return failActivationFence(prefix+"_ACTIVATION_SCOPE_UNAVAILABLE", "The complete selected activation scope could not be verified.", err)
 		}
-		if observed.deployment == nil || !EvaluateReadiness(observed.deployment).Ready || !activationDPUsReady(observed, activation.selected) {
+		if observed.deployment == nil || !verification.execution.rules.ResourceReadiness(observed.deployment).Ready || !activationDPUsReady(verification.execution.rules, observed, activation.selected) {
 			return failActivationFence(prefix+"_ACTIVATION_NOT_READY", "The selected DPUDeployment or DPUs no longer report current readiness.", nil)
 		}
 		effectsReady, err := selectedNodeEffectsReady(observed)

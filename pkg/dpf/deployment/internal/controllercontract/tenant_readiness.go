@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package deployment
+package controllercontract
 
 import (
 	"fmt"
@@ -52,10 +52,13 @@ type TenantReadiness struct {
 	Message    string
 }
 
-// EvaluateTenantReadiness compares retained intent with fresh observations.
+// TenantReadiness compares retained intent with fresh observations.
 // It does not mutate inputs or invent generation fields absent from these APIs.
-func EvaluateTenantReadiness(expected TenantReadinessExpected, observed TenantReadinessObserved) TenantReadiness {
-	if err := validateTenantExpectation(expected); err != nil {
+func (r *Rules) TenantReadiness(expected TenantReadinessExpected, observed TenantReadinessObserved) TenantReadiness {
+	if !r.valid() {
+		return tenantResult("invalid", "CONTROLLER_RULES_UNAVAILABLE", "Selected controller rules are required.", nil)
+	}
+	if err := ValidateTenantExpectation(expected); err != nil {
 		return tenantResult("invalid", "TENANT_EXPECTATION_INVALID", "Retained tenant inputs are incomplete or invalid.", err)
 	}
 	for _, object := range []*unstructured.Unstructured{observed.DPUCluster, observed.TenantControlPlane, observed.Service} {
@@ -73,7 +76,7 @@ func EvaluateTenantReadiness(expected TenantReadinessExpected, observed TenantRe
 	if err := compareDPUClusterSpec(expected, dc); err != nil {
 		return tenantResult("conflict", "TENANT_SPEC_MISMATCH", "The observed DPUCluster spec differs from retained tenant intent.", err)
 	}
-	dcReady := EvaluateReadiness(dc)
+	dcReady := r.ResourceReadiness(dc)
 	if !dcReady.Ready {
 		state := "pending"
 		switch dcReady.ReasonCode {
@@ -134,7 +137,7 @@ func EvaluateTenantReadiness(expected TenantReadinessExpected, observed TenantRe
 	return TenantReadiness{Ready: true, State: TenantReadinessReady, ReasonCode: "TENANT_RESOURCES_CONVERGED", Message: "DPF and Kamaji tenant endpoint resources match retained network intent; tenant API access, credentials, keepalived image provenance, and VIP operation remain unverified."}
 }
 
-func validateTenantExpectation(e TenantReadinessExpected) error {
+func ValidateTenantExpectation(e TenantReadinessExpected) error {
 	if e.Name == "" || e.Namespace == "" || e.KubernetesVersion == "" || e.VIP == "" || e.Interface == "" || e.PodCIDR == "" || e.ServiceCIDR == "" || e.VirtualRouterID < 1 || e.VirtualRouterID > 255 || e.MaxNodes < 1 {
 		return fmt.Errorf("required tenant identity, network, version, or capacity is missing")
 	}

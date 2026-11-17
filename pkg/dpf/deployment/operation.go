@@ -530,7 +530,7 @@ func verifyFirstDeploymentSources(ctx context.Context, client softwareVerificati
 	if err != nil {
 		return err
 	}
-	fresh, err := verifyStagedSoftware(ctx, client, execution.reconciler, desired, current, execution.plan.Intent().Software, selectedSoftwarePSIDs(execution.plan.Intent()), execution.operatorNamespace, release.Operator.Image, maxBytes)
+	fresh, err := verifyStagedSoftware(execution.rules, ctx, client, execution.reconciler, desired, current, execution.plan.Intent().Software, selectedSoftwarePSIDs(execution.plan.Intent()), execution.operatorNamespace, release.Operator.Image, maxBytes)
 	if err != nil || !reflect.DeepEqual(fresh.Components, receipt.Components) {
 		return fmt.Errorf("RESUME_SOFTWARE_BYTES_UNVERIFIED: current cached bytes do not match the retained locks and receipt")
 	}

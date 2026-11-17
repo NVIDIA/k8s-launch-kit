@@ -95,7 +95,7 @@ func runSoftwareStage(ctx context.Context, client softwareStageManagementClient,
 		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return softwareVerificationReceipt{}, softwareStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No BlueFieldSoftware creation may begin.", diagnostic)
 	}
-	current, err := executeNativeObject(ctx, client, execution.reconciler, desired, generation.StageWorkload, journal, true, interval)
+	current, err := executeNativeObject(execution.rules, ctx, client, execution.reconciler, desired, generation.StageWorkload, journal, true, interval)
 	if err != nil {
 		return softwareVerificationReceipt{}, err
 	}
@@ -103,7 +103,7 @@ func runSoftwareStage(ctx context.Context, client softwareStageManagementClient,
 		State: "attempted", ReasonCode: "SOFTWARE_CACHE_VERIFICATION_STARTED", Message: "Read selected cached components through the current release-bound DPF registry and compare retained digests."}); err != nil {
 		return softwareVerificationReceipt{}, err
 	}
-	verified, err := verifyStagedSoftware(ctx, client, execution.reconciler, desired, current,
+	verified, err := verifyStagedSoftware(execution.rules, ctx, client, execution.reconciler, desired, current,
 		intent.Software, selectedSoftwarePSIDs(intent), registryNamespace, release.Operator.Image, maxBytes)
 	if err != nil {
 		return softwareVerificationReceipt{}, softwareStageFailure(journal, "SOFTWARE_BYTES_UNVERIFIED", "The selected cached software bytes could not be verified against retained digests.", err)

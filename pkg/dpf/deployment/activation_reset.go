@@ -6,9 +6,11 @@ package deployment
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
@@ -71,7 +73,10 @@ func prepareOperationReset(ctx context.Context, operation *deploymentOperation, 
 
 // resolveCompletedResets handles a lost ACK/checkpoint response only from saved
 // physical/current-Arm proofs and current exact ready controller advancement.
-func resolveCompletedResets(ctx context.Context, operation *deploymentOperation, client resourceReader, deployment *unstructured.Unstructured, digest string, observed activationObservation, reboot ExternalRebooter) error {
+func resolveCompletedResets(rules *controllercontract.Rules, ctx context.Context, operation *deploymentOperation, client resourceReader, deployment *unstructured.Unstructured, digest string, observed activationObservation, reboot ExternalRebooter) error {
+	if err := rules.Validate(); err != nil {
+		return err
+	}
 	if operation == nil {
 		return nil
 	}
@@ -128,7 +133,7 @@ func resolveCompletedResets(ctx context.Context, operation *deploymentOperation,
 			for _, selected := range node.SelectedDPUs {
 				dpu := observed.dpus[selected.DPUName]
 				proof, exists := reset.ArmProofs[selected.DPUUID]
-				if !exists || dpu == nil || dpu.GetUID() != selected.DPUUID || dpu.GetGeneration() != proof.Generation || !EvaluateReadiness(dpu).Ready || !conditionReadiness(dpu, "NodeEffectRemoved", "DPU_STATUS_STALE", true).Ready {
+				if !exists || dpu == nil || dpu.GetUID() != selected.DPUUID || dpu.GetGeneration() != proof.Generation || !rules.ResourceReadiness(dpu).Ready || !rules.NodeEffectRemoved(dpu).Ready {
 					return fmt.Errorf("RESET_ACTION_REQUIRED: current completed DPU proof unavailable")
 				}
 				boot, _, _ := unstructured.NestedString(dpu.Object, "status", "agentStatus", "lastObservedPendingNvconfig", "bootID")

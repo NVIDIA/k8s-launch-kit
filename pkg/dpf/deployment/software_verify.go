@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -54,11 +55,11 @@ func (c *APIClient) openSoftwareRegistry(ctx context.Context, namespace string, 
 // waits for its controller. No resource is created or adopted by this check.
 // The result expires as an observation; it cannot guarantee the contents of a
 // later asynchronous BMC download or PLDM upload.
-func verifyStagedSoftware(ctx context.Context, client softwareVerificationClient, reconciler softwareIntentVerifier,
+func verifyStagedSoftware(rules *controllercontract.Rules, ctx context.Context, client softwareVerificationClient, reconciler softwareIntentVerifier,
 	desired, current *unstructured.Unstructured, locks config.Software, selectedPSIDs []string,
 	registryNamespace, expectedManagerImage string, maxBytes int64,
 ) (softwareVerificationReceipt, error) {
-	if ctx == nil || client == nil || reconciler == nil || desired == nil || current == nil || registryNamespace == "" || expectedManagerImage == "" || maxBytes <= 0 {
+	if rules.Validate() != nil || ctx == nil || client == nil || reconciler == nil || desired == nil || current == nil || registryNamespace == "" || expectedManagerImage == "" || maxBytes <= 0 {
 		return softwareVerificationReceipt{}, fmt.Errorf("staged software verification requires a bound client, retained resource and locks, registry namespace, expected manager image and positive size limit")
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -68,7 +69,7 @@ func verifyStagedSoftware(ctx context.Context, client softwareVerificationClient
 	if err := reconciler.Verify(wanted.DeepCopy(), initial.DeepCopy()); err != nil {
 		return softwareVerificationReceipt{}, fmt.Errorf("software intent or ownership does not match the retained bundle")
 	}
-	if _, err := softwareCacheTargets(wanted, initial, locks, selectedPSIDs); err != nil {
+	if _, err := softwareCacheTargets(rules, wanted, initial, locks, selectedPSIDs); err != nil {
 		return softwareVerificationReceipt{}, err
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {
@@ -76,7 +77,7 @@ func verifyStagedSoftware(ctx context.Context, client softwareVerificationClient
 	}
 	// Retain the UID/generation from the completed create/wait boundary. Never
 	// accept a replacement simply because the new object is independently Ready.
-	before, targets, err := refreshSoftwareTargets(ctx, client, reconciler, wanted, initial, locks, selectedPSIDs)
+	before, targets, err := refreshSoftwareTargets(rules, ctx, client, reconciler, wanted, initial, locks, selectedPSIDs)
 	if err != nil {
 		return softwareVerificationReceipt{}, err
 	}
@@ -121,7 +122,7 @@ func verifyStagedSoftware(ctx context.Context, client softwareVerificationClient
 	if !registry.sameBinding(afterRegistry) {
 		return softwareVerificationReceipt{}, fmt.Errorf("software registry, active controller, storage or public CA changed while reading staged bytes")
 	}
-	_, afterTargets, err := refreshSoftwareTargets(ctx, client, reconciler, wanted, before, locks, selectedPSIDs)
+	_, afterTargets, err := refreshSoftwareTargets(rules, ctx, client, reconciler, wanted, before, locks, selectedPSIDs)
 	if err != nil {
 		return softwareVerificationReceipt{}, err
 	}
@@ -138,9 +139,12 @@ func verifyStagedSoftware(ctx context.Context, client softwareVerificationClient
 	return receipt, nil
 }
 
-func refreshSoftwareTargets(ctx context.Context, client resourceReader, reconciler softwareIntentVerifier,
+func refreshSoftwareTargets(rules *controllercontract.Rules, ctx context.Context, client resourceReader, reconciler softwareIntentVerifier,
 	desired, previous *unstructured.Unstructured, locks config.Software, selectedPSIDs []string,
 ) (*unstructured.Unstructured, []softwareCacheTarget, error) {
+	if err := rules.Validate(); err != nil {
+		return nil, nil, err
+	}
 	current, err := client.Get(ctx, desired.DeepCopy())
 	if err != nil {
 		return nil, nil, safeAPIError("read staged software identity", err)
@@ -151,6 +155,6 @@ func refreshSoftwareTargets(ctx context.Context, client resourceReader, reconcil
 	if err := reconciler.Verify(desired.DeepCopy(), current.DeepCopy()); err != nil {
 		return nil, nil, fmt.Errorf("staged software ownership or retained intent changed")
 	}
-	targets, err := softwareCacheTargets(desired, current, locks, selectedPSIDs)
+	targets, err := softwareCacheTargets(rules, desired, current, locks, selectedPSIDs)
 	return current, targets, err
 }

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -131,13 +132,13 @@ func observeHostLeaseIPAM(ctx context.Context, management resourceReader, reconc
 		reconciler.Verify(desired, current) != nil {
 		return nil, apierrors.NewServiceUnavailable("retained DPUServiceIPAM is missing, replaced, stale or changed")
 	}
-	if ready := workloadResourceReadiness(current, workloadIPAMReadiness); !ready.Ready {
+	if ready := reconciler.rules.WorkloadReadiness(current, controllercontract.WorkloadIPAM); !ready.Ready {
 		return nil, apierrors.NewServiceUnavailable("retained DPUServiceIPAM is not currently reconciled")
 	}
 	return current, nil
 }
 
-func observeHostLeasePool(ctx context.Context, tenant tenantVerificationReader, parent *unstructured.Unstructured, expected TenantReadinessExpected, uid types.UID) (*unstructured.Unstructured, error) {
+func observeHostLeasePool(ctx context.Context, tenant tenantVerificationReader, parent *unstructured.Unstructured, expected controllercontract.TenantReadinessExpected, uid types.UID) (*unstructured.Unstructured, error) {
 	pool, err := tenant.getWorkloadChild(ctx, parent)
 	if err != nil {
 		return nil, safeAPIError("read tenant CIDRPool", err)

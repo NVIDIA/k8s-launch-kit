@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -98,16 +100,16 @@ func TestVerifyCIDRPoolExclusionsRejectsDriftAndUnsupportedMappings(t *testing.T
 func TestWorkloadResourceReadinessUsesOnlyPreNodeControllerConditions(t *testing.T) {
 	for _, test := range []struct {
 		kind      string
-		mode      workloadCheckMode
+		mode      controllercontract.WorkloadMode
 		condition string
 	}{
-		{kind: "DPUServiceTemplate", mode: workloadTemplateReadiness, condition: "DPUServiceTemplateReconciled"},
-		{kind: "DPUServiceIPAM", mode: workloadIPAMReadiness, condition: "DPUIPAMObjectReconciled"},
-		{kind: "DPUServiceInterface", mode: workloadInterfaceReadiness, condition: "ServiceInterfaceSetReconciled"},
+		{kind: "DPUServiceTemplate", mode: controllercontract.WorkloadTemplate, condition: "DPUServiceTemplateReconciled"},
+		{kind: "DPUServiceIPAM", mode: controllercontract.WorkloadIPAM, condition: "DPUIPAMObjectReconciled"},
+		{kind: "DPUServiceInterface", mode: controllercontract.WorkloadInterface, condition: "ServiceInterfaceSetReconciled"},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
 			conditions := []any{conditionMap(test.condition, "True", "Success", 3)}
-			if test.mode == workloadTemplateReadiness {
+			if test.mode == controllercontract.WorkloadTemplate {
 				conditions = append(conditions, conditionMap("Ready", "True", "Success", 3))
 			}
 			object := &unstructured.Unstructured{Object: map[string]any{
@@ -115,11 +117,11 @@ func TestWorkloadResourceReadinessUsesOnlyPreNodeControllerConditions(t *testing
 				"metadata": map[string]any{"generation": int64(3)},
 				"status":   map[string]any{"observedGeneration": int64(3), "conditions": conditions},
 			}}
-			if got := workloadResourceReadiness(object, test.mode); !got.Ready {
+			if got := testRules(t).WorkloadReadiness(object, test.mode); !got.Ready {
 				t.Fatalf("current pre-node condition did not pass: %+v", got)
 			}
 			object.Object["status"].(map[string]any)["observedGeneration"] = int64(2)
-			if got := workloadResourceReadiness(object, test.mode); got.Ready || got.ReasonCode != "WORKLOAD_STATUS_STALE" {
+			if got := testRules(t).WorkloadReadiness(object, test.mode); got.Ready || got.ReasonCode != "WORKLOAD_STATUS_STALE" {
 				t.Fatalf("stale status passed: %+v", got)
 			}
 		})
@@ -340,7 +342,7 @@ func TestVerifyServiceInterfaceSetWireMetadata(t *testing.T) {
 					}
 				}
 				beforeParent, beforeChild := parent.DeepCopy(), child.DeepCopy()
-				if err := verifyWorkloadChild(parent, child, TenantReadinessExpected{}); err != nil {
+				if err := verifyWorkloadChild(parent, child, controllercontract.TenantReadinessExpected{}); err != nil {
 					t.Fatalf("pinned wire representation rejected: %v", err)
 				}
 				if !reflect.DeepEqual(beforeParent.Object, parent.Object) || !reflect.DeepEqual(beforeChild.Object, child.Object) {
@@ -354,7 +356,7 @@ func TestVerifyServiceInterfaceSetWireMetadata(t *testing.T) {
 			parent := interfaceWireParent("physical")
 			setInterfaceWireField(t, parent, map[string]any{"team": "network"}, "spec", "template", "metadata", "labels")
 			setInterfaceWireField(t, parent, map[string]any{"owner": "fixture"}, "spec", "template", "metadata", "annotations")
-			if err := verifyWorkloadChild(parent, interfaceWireChild(t, parent, mode), TenantReadinessExpected{}); err != nil {
+			if err := verifyWorkloadChild(parent, interfaceWireChild(t, parent, mode), controllercontract.TenantReadinessExpected{}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -362,7 +364,7 @@ func TestVerifyServiceInterfaceSetWireMetadata(t *testing.T) {
 	t.Run("explicit-parent-nsi", func(t *testing.T) {
 		parent := interfaceWireParent("physical")
 		setInterfaceWireField(t, parent, map[string]any{"svc.dpu.nvidia.com/interface-mode": "nsi"}, "spec", "template", "metadata", "annotations")
-		if err := verifyWorkloadChild(parent, interfaceWireChild(t, parent, "nsi"), TenantReadinessExpected{}); err != nil {
+		if err := verifyWorkloadChild(parent, interfaceWireChild(t, parent, "nsi"), controllercontract.TenantReadinessExpected{}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -371,14 +373,14 @@ func TestVerifyServiceInterfaceSetWireMetadata(t *testing.T) {
 		c := interfaceWireChild(t, p, "")
 		c.SetLabels(map[string]string{})
 		c.SetAnnotations(map[string]string{})
-		if err := verifyWorkloadChild(p, c, TenantReadinessExpected{}); err != nil {
+		if err := verifyWorkloadChild(p, c, controllercontract.TenantReadinessExpected{}); err != nil {
 			t.Fatal(err)
 		}
 	})
 	t.Run("PF empty virtual network", func(t *testing.T) {
 		p := interfaceWireParent("pf")
 		setInterfaceWireField(t, p, "", "spec", "template", "spec", "template", "spec", "pf", "virtualNetwork")
-		if err := verifyWorkloadChild(p, interfaceWireChild(t, p, "nsi"), TenantReadinessExpected{}); err != nil {
+		if err := verifyWorkloadChild(p, interfaceWireChild(t, p, "nsi"), controllercontract.TenantReadinessExpected{}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -455,7 +457,7 @@ func TestVerifyServiceInterfaceSetRejectsMetadataAndModeDrift(t *testing.T) {
 			p := interfaceWireParent("physical")
 			c := interfaceWireChild(t, p, "nsi")
 			tc.mutate(t, p, c)
-			err := verifyWorkloadChild(p, c, TenantReadinessExpected{})
+			err := verifyWorkloadChild(p, c, controllercontract.TenantReadinessExpected{})
 			if err == nil || strings.Contains(err.Error(), "private-value-canary") {
 				t.Fatalf("drift accepted or raw value exposed: %v", err)
 			}
@@ -475,7 +477,7 @@ func TestVerifyServiceInterfaceSetRejectsMetadataAndModeDrift(t *testing.T) {
 						o, path = p, []string{"spec", "template", "metadata", field}
 					}
 					setInterfaceWireField(t, o, bad.value, path...)
-					if err := verifyWorkloadChild(p, c, TenantReadinessExpected{}); err == nil {
+					if err := verifyWorkloadChild(p, c, controllercontract.TenantReadinessExpected{}); err == nil {
 						t.Fatal("malformed metadata accepted")
 					}
 				})
@@ -513,7 +515,7 @@ func TestVerifyServiceInterfaceSetRejectsSpecAndIdentityDrift(t *testing.T) {
 			p := interfaceWireParent("physical")
 			c := interfaceWireChild(t, p, "nsi")
 			tc.mutate(t, c)
-			if err := verifyWorkloadChild(p, c, TenantReadinessExpected{}); err == nil {
+			if err := verifyWorkloadChild(p, c, controllercontract.TenantReadinessExpected{}); err == nil {
 				t.Fatal("spec or identity drift accepted")
 			}
 		})
@@ -522,7 +524,7 @@ func TestVerifyServiceInterfaceSetRejectsSpecAndIdentityDrift(t *testing.T) {
 		p := interfaceWireParent("pf")
 		c := interfaceWireChild(t, p, "nsi")
 		setInterfaceWireField(t, c, int64(1), "spec", "template", "spec", "pf", "pfID")
-		if err := verifyWorkloadChild(p, c, TenantReadinessExpected{}); err == nil {
+		if err := verifyWorkloadChild(p, c, controllercontract.TenantReadinessExpected{}); err == nil {
 			t.Fatal("PF ID drift accepted")
 		}
 	})
@@ -629,7 +631,7 @@ func TestWorkloadChildDiagnosticsReachInitialFinalAndReceiptFailures(t *testing.
 				if point == "final" {
 					want = "WORKLOAD_TENANT_CHILD_CHANGED"
 				}
-				_, err = waitWorkloadResource(ctx, c, execution.reconciler, f.controlPlane.tenant.Client, target, current.GetUID(), journal, time.Millisecond)
+				_, err = waitWorkloadResource(testRules(t), ctx, c, execution.reconciler, f.controlPlane.tenant.Client, target, current.GetUID(), journal, time.Millisecond)
 			}
 			text := journal.file.(*managementMemoryFile).String()
 			if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(text, want) || !strings.Contains(text, "WORKLOAD_INTERFACE_CHILD_METADATA_MISMATCH") || strings.Contains(text+err.Error(), "private-value-canary") {

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
@@ -26,7 +28,7 @@ func TestHBNRuntimeIdentityFailureKeepsTruthfulReasonAndCause(t *testing.T) {
 				file := journal.file.(*managementMemoryFile)
 				original := testTenant(f.controlPlane.tenant.Client).source
 				injected := false
-				testTenant(f.controlPlane.tenant.Client).source = tenantWaitSourceFunc(func(ctx context.Context, expected TenantReadinessExpected) (tenantSources, error) {
+				testTenant(f.controlPlane.tenant.Client).source = tenantWaitSourceFunc(func(ctx context.Context, expected controllercontract.TenantReadinessExpected) (tenantSources, error) {
 					ready := phase == "entry"
 					if phase == "exit" {
 						ready = runtimeDiagnosticExitReady(t, file)

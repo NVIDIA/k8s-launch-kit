@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -51,7 +53,7 @@ func TestTenantRuntimePermissionsExactScopeAndFailClosed(t *testing.T) {
 			})
 			// The management-side TenantControlPlane namespace is not necessarily
 			// the workload namespace that contains HBN runtime resources.
-			tenant := &tenantClient{api: client, expected: TenantReadinessExpected{Namespace: "control-plane"}}
+			tenant := &tenantClient{api: client, expected: controllercontract.TenantReadinessExpected{Namespace: "control-plane"}}
 
 			checks := append(tenant.checkTenantRuntimeReadPermissions(ctx, "dpf-system"), tenant.checkTenantPodExecPermissions(ctx, "dpf-system", "hbn-0")...)
 			wantRequests := []authorizationv1.ResourceAttributes{
@@ -86,7 +88,7 @@ func TestTenantRuntimePermissionsExactScopeAndFailClosed(t *testing.T) {
 
 func TestTenantRuntimePermissionsInvalidInputsHaveNoAPIEffects(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	tenant := &tenantClient{api: client, expected: TenantReadinessExpected{Namespace: "tenant-a"}}
+	tenant := &tenantClient{api: client, expected: controllercontract.TenantReadinessExpected{Namespace: "tenant-a"}}
 	valid, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	canceled, cancelCanceled := context.WithCancel(valid)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -86,6 +87,7 @@ type managementVerificationInputs struct {
 	plan                *generation.Plan
 	operatorReleaseName string
 	operatorVersion     string
+	rules               *controllercontract.Rules
 	reconciler          *Reconciler
 	namespaces          []*unstructured.Unstructured
 	operatorNamespace   string
@@ -113,11 +115,20 @@ func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) 
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := controllerMetadataForPlan(plan)
+	schemas, err := generation.NewObjectSchemas(operator.renderedManifest)
+	if err != nil {
+		return nil, fmt.Errorf("prepare retained DPF resource verifier: compile retained operator CRD schemas: %w", err)
+	}
+	index := retained.Index()
+	rules, err := controllercontract.Select(index.Release, index.Profile, index.Renderer, schemas)
+	if err != nil {
+		return nil, fmt.Errorf("select retained controller contract before management access: %w", err)
+	}
+	metadata, err := controllerMetadataForPlan(rules, plan)
 	if err != nil {
 		return nil, fmt.Errorf("prepare retained controller metadata: %w", err)
 	}
-	reconciler, err := newReconciler(operator.renderedManifest, plan.Digest(), metadata)
+	reconciler, err := newReconciler(rules, plan.Digest(), metadata)
 	if err != nil {
 		return nil, fmt.Errorf("prepare retained DPF resource verifier: %w", err)
 	}
@@ -128,7 +139,7 @@ func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) 
 	return &managementExecution{operator: operator, preflight: prerequisites,
 		managementVerificationInputs: managementVerificationInputs{
 			retained: retained, plan: plan, operatorReleaseName: operator.releaseName,
-			operatorVersion: "v" + inputs.ReleaseVersion, reconciler: reconciler,
+			operatorVersion: "v" + inputs.ReleaseVersion, rules: rules, reconciler: reconciler,
 			namespaces: namespaces, operatorNamespace: namespace, kamajiNamespace: prerequisites.overrides.Kamaji,
 			configObject: configObject, manager: manager, crds: crds}}, nil
 }
@@ -136,7 +147,7 @@ func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) 
 func runPreparedManagement(ctx context.Context, client managementRunnerClient, execution *managementExecution,
 	journal *executionJournal, pollInterval time.Duration,
 ) (managementBootstrapReceipt, error) {
-	if ctx == nil || client == nil || execution == nil || execution.plan == nil || execution.operator == nil || execution.reconciler == nil || journal == nil || pollInterval <= 0 {
+	if ctx == nil || client == nil || execution == nil || execution.rules.Validate() != nil || execution.plan == nil || execution.operator == nil || execution.reconciler == nil || journal == nil || pollInterval <= 0 {
 		return managementBootstrapReceipt{}, fmt.Errorf("management runner requires a prepared execution, client, report and positive polling interval")
 	}
 	if _, bounded := ctx.Deadline(); !bounded {
@@ -269,7 +280,7 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 	if err := waitOperatorCRDs(ctx, client, crds, journal, pollInterval); err != nil {
 		return managementBootstrapReceipt{}, err
 	}
-	managerObserved, err := waitManagerDeployment(ctx, client, manager, journal, pollInterval)
+	managerObserved, err := waitManagerDeployment(execution.rules, ctx, client, manager, journal, pollInterval)
 	if err != nil {
 		return managementBootstrapReceipt{}, err
 	}
@@ -293,7 +304,7 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageNamespaces, Operation: "namespace-recheck", Subject: operatorNamespace}, true,
 			"MANAGEMENT_NAMESPACE_CHANGED", "The operator namespace identity is no longer valid; inspect partial bootstrap state before retrying.", err)
 	}
-	currentConfig, err := executeNativeObject(ctx, client, reconciler, configObject, generation.StageOperatorConfig, journal, false, pollInterval)
+	currentConfig, err := executeNativeObject(execution.rules, ctx, client, reconciler, configObject, generation.StageOperatorConfig, journal, false, pollInterval)
 	if err != nil {
 		return managementBootstrapReceipt{}, err
 	}
@@ -321,7 +332,7 @@ func runPreparedManagement(ctx context.Context, client managementRunnerClient, e
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageOperator, Operation: "manager-recheck", Subject: manager.GetNamespace() + "/" + manager.GetName()}, false,
 			"DPF_MANAGER_CHANGED", "The ready manager Deployment identity or retained specification changed before receipt.", err)
 	}
-	if readiness := EvaluateReadiness(managerCurrent); !readiness.Ready {
+	if readiness := execution.rules.ResourceReadiness(managerCurrent); !readiness.Ready {
 		return managementBootstrapReceipt{}, journalFailure(journal, executionEvent{Stage: generation.StageOperator, Operation: "manager-recheck", Subject: manager.GetNamespace() + "/" + manager.GetName()}, false,
 			readiness.ReasonCode, readiness.Message, nil)
 	}
@@ -411,6 +422,9 @@ func listOperatorConfigs(ctx context.Context, client operatorConfigReader) ([]un
 func waitOperatorConfigReady(ctx context.Context, client resourceReader, reconciler *Reconciler, desired, initial *unstructured.Unstructured,
 	expectedVersion string, journal *executionJournal, interval time.Duration,
 ) (*unstructured.Unstructured, error) {
+	if reconciler == nil || reconciler.rules.Validate() != nil {
+		return nil, fmt.Errorf("selected controller rules and reconciler are required")
+	}
 	event := executionEvent{Stage: generation.StageOperatorConfig, Operation: "readiness", Subject: desired.GetNamespace() + "/" + desired.GetName(), State: "attempted",
 		ReasonCode: "DPF_CONFIG_READINESS_STARTED", Message: "Wait for the exact retained DPFOperatorConfig generation and pinned operator version."}
 	if err := journal.record(event); err != nil {
@@ -454,7 +468,7 @@ func waitOperatorConfigReady(ctx context.Context, client resourceReader, reconci
 					return nil, journalFailure(journal, event, false, "DPF_CONFIG_VERSION_MISMATCH", "DPFOperatorConfig reports a different or invalid operator version while waiting.", nil)
 				}
 			}
-			readiness := EvaluateReadiness(current)
+			readiness := reconciler.rules.ResourceReadiness(current)
 			if readiness.Ready {
 				if !operatorConfigVersionMatches(current, expectedVersion) {
 					return nil, journalFailure(journal, event, false, "DPF_CONFIG_VERSION_MISMATCH", "DPFOperatorConfig is Ready for a different or unreported DPF version.", nil)
@@ -788,7 +802,10 @@ func discoveredResourceMatches(resources *metav1.APIResourceList, requirement pr
 	return count == 1
 }
 
-func waitManagerDeployment(ctx context.Context, client resourceReader, desired *unstructured.Unstructured, journal *executionJournal, interval time.Duration) (*unstructured.Unstructured, error) {
+func waitManagerDeployment(rules *controllercontract.Rules, ctx context.Context, client resourceReader, desired *unstructured.Unstructured, journal *executionJournal, interval time.Duration) (*unstructured.Unstructured, error) {
+	if err := rules.Validate(); err != nil {
+		return nil, err
+	}
 	event := executionEvent{Stage: generation.StageOperator, Operation: "manager-readiness", Subject: desired.GetNamespace() + "/" + desired.GetName(), State: "attempted", ReasonCode: "DPF_MANAGER_READINESS_STARTED", Message: "Wait for the retained manager Deployment's current generation and replicas."}
 	if err := journal.record(event); err != nil {
 		return nil, err
@@ -819,7 +836,7 @@ func waitManagerDeployment(ctx context.Context, client resourceReader, desired *
 			if !managerDeploymentIntentMatches(desired, current) {
 				return nil, journalFailure(journal, event, false, "DPF_MANAGER_INTENT_CHANGED", "The live manager specification differs from the retained operator chart after API default normalization.", nil)
 			}
-			readiness := EvaluateReadiness(current)
+			readiness := rules.ResourceReadiness(current)
 			switch readiness.ReasonCode {
 			case "RESOURCE_TERMINAL_FAILURE", "RESOURCE_DELETING", "RESOURCE_STATUS_INVALID", "RESOURCE_API_UNSUPPORTED", "RESOURCE_KIND_UNSUPPORTED", "DEPLOYMENT_ROLLOUT_FAILED":
 				return nil, journalFailure(journal, event, false, readiness.ReasonCode, readiness.Message, nil)

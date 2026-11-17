@@ -5,10 +5,12 @@ package deployment
 
 import (
 	"context"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -63,10 +65,10 @@ func (f *runtimeReadOnlyFake) getHBNRuntimeApplication(c context.Context, a, b s
 
 type runtimeTenantReadOnlyFake struct {
 	identity        func(context.Context) error
-	binding         func(tenantSourceReader, TenantReadinessExpected, types.UID) bool
-	target          func(TenantReadinessExpected, types.UID) bool
+	binding         func(tenantSourceReader, controllercontract.TenantReadinessExpected, types.UID) bool
+	target          func(controllercontract.TenantReadinessExpected, types.UID) bool
 	cluster         func() types.UID
-	expected        func() TenantReadinessExpected
+	expected        func() controllercontract.TenantReadinessExpected
 	child           func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error)
 	objects         func(context.Context, string, string) ([]appsv1.DaemonSet, []corev1.Pod, error)
 	pod             func(context.Context, string, string) (*corev1.Pod, error)
@@ -75,14 +77,16 @@ type runtimeTenantReadOnlyFake struct {
 }
 
 func (f *runtimeTenantReadOnlyFake) VerifyIdentity(c context.Context) error { return f.identity(c) }
-func (f *runtimeTenantReadOnlyFake) matchesTenantBinding(s tenantSourceReader, e TenantReadinessExpected, u types.UID) bool {
+func (f *runtimeTenantReadOnlyFake) matchesTenantBinding(s tenantSourceReader, e controllercontract.TenantReadinessExpected, u types.UID) bool {
 	return f.binding(s, e, u)
 }
-func (f *runtimeTenantReadOnlyFake) matchesTenantTarget(e TenantReadinessExpected, u types.UID) bool {
+func (f *runtimeTenantReadOnlyFake) matchesTenantTarget(e controllercontract.TenantReadinessExpected, u types.UID) bool {
 	return f.target(e, u)
 }
-func (f *runtimeTenantReadOnlyFake) clusterIdentity() types.UID           { return f.cluster() }
-func (f *runtimeTenantReadOnlyFake) expectation() TenantReadinessExpected { return f.expected() }
+func (f *runtimeTenantReadOnlyFake) clusterIdentity() types.UID { return f.cluster() }
+func (f *runtimeTenantReadOnlyFake) expectation() controllercontract.TenantReadinessExpected {
+	return f.expected()
+}
 func (f *runtimeTenantReadOnlyFake) getWorkloadChild(c context.Context, o *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	return f.child(c, o)
 }

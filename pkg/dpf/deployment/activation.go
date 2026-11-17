@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
@@ -126,12 +127,12 @@ func activationProgressForNode(observed activationObservation, selected []activa
 	return progress, nil
 }
 
-func activationCompletionReady(observed activationObservation, progress map[string]activationNodeProgress, selected []activationSelectedDevice) bool {
-	if !activationDPUsReady(observed, selected) {
+func activationCompletionReady(rules *controllercontract.Rules, observed activationObservation, progress map[string]activationNodeProgress, selected []activationSelectedDevice) bool {
+	if !activationDPUsReady(rules, observed, selected) {
 		return false
 	}
 	for _, item := range selected {
-		if !activationRemovalComplete(observed, progress[item.nodeName]) {
+		if !activationRemovalComplete(rules, observed, progress[item.nodeName]) {
 			return false
 		}
 		maintenance := observed.maintenance[item.nodeName+"-hold"]
@@ -142,7 +143,7 @@ func activationCompletionReady(observed activationObservation, progress map[stri
 	return true
 }
 
-func activationRemovalComplete(observed activationObservation, progress activationNodeProgress) bool {
+func activationRemovalComplete(rules *controllercontract.Rules, observed activationObservation, progress activationNodeProgress) bool {
 	if progress.maintenanceUID == "" || progress.releasedVersion == "" && !progress.resetAcknowledged || len(progress.dpus) == 0 {
 		return false
 	}
@@ -153,7 +154,7 @@ func activationRemovalComplete(observed activationObservation, progress activati
 	}
 	for name, uid := range progress.dpus {
 		dpu := observed.dpus[name]
-		if dpu == nil || dpu.GetUID() != uid || !EvaluateReadiness(dpu).Ready || !conditionReadiness(dpu, "NodeEffectRemoved", "DPU_STATUS_STALE", true).Ready {
+		if dpu == nil || dpu.GetUID() != uid || !rules.ResourceReadiness(dpu).Ready || !rules.NodeEffectRemoved(dpu).Ready {
 			return false
 		}
 		phase, found, err := unstructured.NestedString(dpu.Object, "status", "phase")
@@ -234,7 +235,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	if err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_PLAN_INVALID", "The retained DPUDeployment stage is missing or ambiguous.", err)
 	}
-	selected, groups, err := bindActivationHosts(prepared.selected, controlPlane.enrollment, inv, request.Targets, deployment)
+	selected, groups, err := bindActivationHosts(prepared.execution.rules, prepared.selected, controlPlane.enrollment, inv, request.Targets, deployment)
 	if err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_HOST_BINDING_INVALID", "Selected DPUs cannot be mapped to unique, explicit authenticated host targets.", err)
 	}
@@ -284,7 +285,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		if err := hbn.ValidateRuntimeTrafficBudget(len(selected), time.Until(deadline(ctx))); err != nil {
 			return receipt, activationFailure(journal, "HBN_RUNTIME_BUDGET_INSUFFICIENT", "Preparation consumed the time required for the complete selected traffic matrix; no DPUDeployment will be created.", err)
 		}
-		created, err = executeNativeObject(ctx, client, execution.reconciler, deployment, generation.StageDeployment, journal, false, interval)
+		created, err = executeNativeObject(prepared.execution.rules, ctx, client, execution.reconciler, deployment, generation.StageDeployment, journal, false, interval)
 		if err != nil {
 			return receipt, err
 		}
@@ -324,11 +325,11 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			if err := prepared.operation.verifyHoldHistory(observed); err != nil {
 				return receipt, err
 			}
-			if err := resolveCompletedResets(ctx, prepared.operation, client, created, execution.plan.Digest(), observed, reboot); err != nil {
+			if err := resolveCompletedResets(prepared.execution.rules, ctx, prepared.operation, client, created, execution.plan.Digest(), observed, reboot); err != nil {
 				return receipt, err
 			}
 		}
-		if activationDPUsReady(observed, selected) && len(observed.dpus) == len(selected) {
+		if activationDPUsReady(prepared.execution.rules, observed, selected) && len(observed.dpus) == len(selected) {
 			for _, item := range selected {
 				proof, known := receipt.progress[item.nodeName]
 				if !known || proof.releasedVersion == "" && !proof.resetAcknowledged {
@@ -399,7 +400,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 				}
 			}
 		}
-		if !anyRebootPending && activationCompletionReady(observed, receipt.progress, selected) {
+		if !anyRebootPending && activationCompletionReady(prepared.execution.rules, observed, receipt.progress, selected) {
 			break
 		}
 		if err := activationWait(ctx, interval); err != nil {
@@ -413,7 +414,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
 		return receipt, err
 	}
-	readyDeployment, err := waitNativeReady(ctx, client, deployment, created.GetUID(), execution.reconciler.Verify, interval, func(state Readiness, terminal bool) error {
+	readyDeployment, err := waitNativeReady(prepared.execution.rules, ctx, client, deployment, created.GetUID(), execution.reconciler.Verify, interval, func(state controllercontract.Readiness, terminal bool) error {
 		status := "waiting"
 		if terminal {
 			status = "failed"
@@ -432,11 +433,11 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	}
 	currentDeployment, err := client.Get(ctx, deployment.DeepCopy())
 	if err != nil || currentDeployment == nil || currentDeployment.GetUID() != created.GetUID() || execution.reconciler.Verify(deployment, currentDeployment) != nil ||
-		!EvaluateReadiness(currentDeployment).Ready || readyDeployment == nil || readyDeployment.GetUID() != created.GetUID() {
+		!prepared.execution.rules.ResourceReadiness(currentDeployment).Ready || readyDeployment == nil || readyDeployment.GetUID() != created.GetUID() {
 		return receipt, activationFailure(journal, "ACTIVATION_DEPLOYMENT_CHANGED", "DPUDeployment readiness or retained identity changed before final receipt.", nil)
 	}
 	final, err := observeActivationScope(ctx, client, execution.verificationInputs(), deployment, created.GetUID(), selected, receipt.progress)
-	if err != nil || !final.complete || final.deployment == nil || !EvaluateReadiness(final.deployment).Ready || !activationCompletionReady(final, receipt.progress, selected) {
+	if err != nil || !final.complete || final.deployment == nil || !prepared.execution.rules.ResourceReadiness(final.deployment).Ready || !activationCompletionReady(prepared.execution.rules, final, receipt.progress, selected) {
 		return receipt, activationFailure(journal, "ACTIVATION_SCOPE_CHANGED", "The complete selected activation scope changed while waiting for deployment readiness.", err)
 	}
 	for _, indexes := range groups {
@@ -484,7 +485,7 @@ func retainedDeploymentObject(execution *managementVerificationInputs) (*unstruc
 	return object, nil
 }
 
-func bindActivationHosts(selected []enrollmentBMC, enrollment enrollmentStageReceipt, inv *inventory.Inventory, targets []config.Target,
+func bindActivationHosts(rules *controllercontract.Rules, selected []enrollmentBMC, enrollment enrollmentStageReceipt, inv *inventory.Inventory, targets []config.Target,
 	deployment *unstructured.Unstructured,
 ) ([]activationSelectedDevice, map[string][]int, error) {
 	if inv == nil || deployment == nil || len(selected) == 0 || len(enrollment.Devices) != len(selected) {
@@ -494,7 +495,7 @@ func bindActivationHosts(selected []enrollmentBMC, enrollment enrollmentStageRec
 	for i := range selected {
 		devices[i] = selected[i].device
 	}
-	sets, err := activationSetIntents(deployment, devices)
+	sets, err := rules.ActivationSetIntents(deployment, devices)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -541,7 +542,7 @@ func bindActivationHosts(selected []enrollmentBMC, enrollment enrollmentStageRec
 		if len(deviceName) == 0 || len(deviceName) > 62 || len(validation.IsDNS1123Label(deviceName)) != 0 {
 			return nil, nil, fmt.Errorf("selected serial cannot produce a valid DPF device name")
 		}
-		dpuName := generatedDPUEName(nodeName, deviceName)
+		dpuName := rules.GeneratedDPUEName(nodeName, deviceName)
 		set, found := sets[strings.ToLower(item.device.Serial)]
 		if !found {
 			return nil, nil, fmt.Errorf("retained DPUDeployment has no exact selector for a selected serial")
@@ -590,91 +591,7 @@ func uniqueInventoryHost(inv *inventory.Inventory, id string) *inventory.Device 
 	return result
 }
 
-func activationSetIntents(deployment *unstructured.Unstructured, selected []generation.ResolvedDevice) (map[string]*unstructured.Unstructured, error) {
-	if deployment == nil || deployment.GetAPIVersion() != "svc.dpu.nvidia.com/v1alpha1" || deployment.GetKind() != "DPUDeployment" ||
-		len(validation.IsDNS1123Subdomain(deployment.GetName())) != 0 || len(validation.IsDNS1123Label(deployment.GetNamespace())) != 0 || len(selected) == 0 {
-		return nil, fmt.Errorf("retained DPUDeployment and selected device identities are required")
-	}
-	software, softwareFound, softwareErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "blueFieldSoftware")
-	flavor, flavorFound, flavorErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "flavor")
-	if softwareErr != nil || !softwareFound || len(validation.IsDNS1123Subdomain(software)) != 0 || flavorErr != nil || !flavorFound || len(validation.IsDNS1123Subdomain(flavor)) != 0 ||
-		nestedFieldPresent(deployment.Object, "spec", "dpus", "bfb") || nestedFieldPresent(deployment.Object, "spec", "dpus", "flavorTemplate") {
-		return nil, fmt.Errorf("native activation requires explicit BlueFieldSoftware and flavor names, without BFB or flavor templates")
-	}
-	settings, found, err := unstructured.NestedSlice(deployment.Object, "spec", "dpus", "dpuSets")
-	if err != nil || !found || len(settings) != len(selected) {
-		return nil, fmt.Errorf("retained DPUDeployment does not contain one DPUSet selector per selected DPU")
-	}
-	sets := make(map[string]*unstructured.Unstructured, len(selected))
-	seenSuffix := map[string]bool{}
-	for _, settingRaw := range settings {
-		setting, ok := settingRaw.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("retained DPUSet selector is malformed")
-		}
-		suffix, ok := setting["nameSuffix"].(string)
-		if !ok || suffix == "" || seenSuffix[suffix] || len(validation.IsDNS1123Subdomain(deployment.GetName()+"-"+suffix)) != 0 {
-			return nil, fmt.Errorf("retained DPUSet name suffix is missing, invalid or duplicated")
-		}
-		seenSuffix[suffix] = true
-		selector, found, nestedErr := unstructured.NestedStringMap(setting, "dpuDeviceSelector", "matchLabels")
-		if nestedErr != nil || !found || len(selector) == 0 {
-			return nil, fmt.Errorf("retained DPUSet device selector is missing or malformed")
-		}
-		matches := 0
-		serial := ""
-		for _, item := range selected {
-			labels := item.SelectorLabels
-			if len(labels) > 0 && reflect.DeepEqual(selector, labels) {
-				matches++
-				serial = strings.ToLower(item.Serial)
-			}
-		}
-		if matches != 1 || sets[serial] != nil {
-			return nil, fmt.Errorf("retained DPUSet selector does not uniquely match one selected device")
-		}
-		clusterSelector, found, nestedErr := unstructured.NestedStringMap(setting, "dpuClusterSelector")
-		if nestedErr != nil || !found || len(clusterSelector) == 0 {
-			return nil, fmt.Errorf("retained DPUSet tenant selector is missing or malformed")
-		}
-		set := &unstructured.Unstructured{Object: map[string]any{
-			"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1",
-			"kind":       "DPUSet",
-			"metadata": map[string]any{
-				"name":      deployment.GetName() + "-" + suffix,
-				"namespace": deployment.GetNamespace(),
-				"labels":    map[string]any{activationParentLabel: deployment.GetNamespace() + "_" + deployment.GetName()},
-			},
-			"spec": map[string]any{
-				"dpuDeviceSelector": map[string]any{"matchLabels": stringMapJSON(selector)},
-				"dpuTemplate": map[string]any{
-					"spec": map[string]any{
-						"blueFieldSoftware": map[string]any{"name": software},
-						"dpuFlavor":         flavor,
-						"cluster": map[string]any{
-							"selector": map[string]any{"matchLabels": stringMapJSON(clusterSelector)},
-						},
-					},
-				},
-			},
-		}}
-		sets[serial] = set
-	}
-	if len(sets) != len(selected) {
-		return nil, fmt.Errorf("retained DPUSet selectors do not cover every selected device")
-	}
-	return sets, nil
-}
-
-func stringMapJSON(values map[string]string) map[string]any {
-	result := make(map[string]any, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
-}
-
-func validateActivationDeployment(deployment *unstructured.Unstructured, selected []activationSelectedDevice, namespace string, tenant TenantReadinessExpected) error {
+func validateActivationDeployment(deployment *unstructured.Unstructured, selected []activationSelectedDevice, namespace string, tenant controllercontract.TenantReadinessExpected) error {
 	if deployment == nil || deployment.GetNamespace() != namespace || deployment.GetName() == "" || tenant.Namespace == "" || len(selected) == 0 {
 		return fmt.Errorf("retained DPUDeployment identity differs from the selected tenant")
 	}
@@ -687,17 +604,8 @@ func validateActivationDeployment(deployment *unstructured.Unstructured, selecte
 	return nil
 }
 
-func generatedDPUEName(nodeName, deviceName string) string {
-	const maxLength = 63
-	maxPrefix := maxLength - len(deviceName) - 1
-	if len(nodeName) > maxPrefix {
-		nodeName = nodeName[:maxPrefix]
-	}
-	return nodeName + "-" + deviceName
-}
-
-// observeActivationScope is pure: only the stage's confirmed effects may
-// add to progress. Missing maintenance never authorizes a new operation.
+// observeActivationScope reads live state without changing progress; only the
+// stage's confirmed effects may add to progress. Missing maintenance never authorizes a new operation.
 func observeActivationScope(ctx context.Context, client activationObservationReader, execution *managementVerificationInputs, deployment *unstructured.Unstructured,
 	deploymentUID types.UID, selected []activationSelectedDevice, progress map[string]activationNodeProgress,
 ) (activationObservation, error) {
@@ -729,7 +637,7 @@ func observeActivationScope(ctx context.Context, client activationObservationRea
 		if set == nil {
 			return observation, nil
 		}
-		if set.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || set.GetKind() != "DPUSet" || set.GetNamespace() != deployment.GetNamespace() || set.GetResourceVersion() == "" || set.GetGeneration() < 1 || set.GetDeletionTimestamp() != nil || set.GetUID() == "" || !activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deploymentUID) || !activationDPUSetMatches(set, want) {
+		if set.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || set.GetKind() != "DPUSet" || set.GetNamespace() != deployment.GetNamespace() || set.GetResourceVersion() == "" || set.GetGeneration() < 1 || set.GetDeletionTimestamp() != nil || set.GetUID() == "" || !activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deploymentUID) || !activationDPUSetMatches(execution.rules, set, want) {
 			return observation, activationCoordinationError(activationParticipantOwner)
 		}
 		observation.sets[set.GetName()] = set
@@ -778,7 +686,7 @@ func observeActivationScope(ctx context.Context, client activationObservationRea
 		if dpu == nil {
 			continue
 		}
-		if dpu.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || dpu.GetKind() != "DPU" || dpu.GetNamespace() != deployment.GetNamespace() || dpu.GetResourceVersion() == "" || dpu.GetGeneration() < 1 || dpu.GetDeletionTimestamp() != nil || dpu.GetUID() == "" || !activationOwnerMatches(dpu, "provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", set.GetName(), set.GetUID()) || !activationDPUMatches(dpu, want) {
+		if dpu.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || dpu.GetKind() != "DPU" || dpu.GetNamespace() != deployment.GetNamespace() || dpu.GetResourceVersion() == "" || dpu.GetGeneration() < 1 || dpu.GetDeletionTimestamp() != nil || dpu.GetUID() == "" || !activationOwnerMatches(dpu, "provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", set.GetName(), set.GetUID()) || !activationDPUMatches(execution.rules, dpu, want) {
 			return observation, activationCoordinationError(activationParticipantOwner)
 		}
 		if policyErr := activationNativeNodeEffectPolicy(dpu, "spec", "nodeEffect"); policyErr != nil {
@@ -825,7 +733,7 @@ func observeActivationScope(ctx context.Context, client activationObservationRea
 	if observation.complete {
 		for _, want := range selected {
 			maintenance := observation.maintenance[want.nodeName+"-hold"]
-			removed := activationRemovalComplete(observation, progress[want.nodeName])
+			removed := activationRemovalComplete(execution.rules, observation, progress[want.nodeName])
 			if maintenance != nil && maintenance.GetDeletionTimestamp() != nil && !removed {
 				proof := progress[want.nodeName]
 				if proof.releasedVersion == "" && !proof.resetAcknowledged {
@@ -875,27 +783,10 @@ func (s activationSelectedDevice) deviceName() string { return strings.ToLower(s
 
 // Read only the qualified consumed references; other controller-populated
 // template fields retain their existing dedicated activation checks.
-func activationSetReferences(set *unstructured.Unstructured) (string, string, error) {
-	if set == nil {
-		return "", "", fmt.Errorf("selected DPUSet intent is missing")
-	}
-	software, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuTemplate", "spec", "blueFieldSoftware")
-	flavor, flavorFound, flavorErr := unstructured.NestedString(set.Object, "spec", "dpuTemplate", "spec", "dpuFlavor")
-	if err != nil || !found || len(software) != 1 || len(validation.IsDNS1123Subdomain(software["name"])) != 0 || flavorErr != nil || !flavorFound || len(validation.IsDNS1123Subdomain(flavor)) != 0 ||
-		nestedFieldPresent(set.Object, "spec", "dpuTemplate", "spec", "bfb") || nestedFieldPresent(set.Object, "spec", "dpuTemplate", "spec", "dpuFlavorTemplate") {
-		return "", "", fmt.Errorf("selected DPUSet consumed software or flavor reference is missing or unsupported")
-	}
-	return software["name"], flavor, nil
-}
 
-func nestedFieldPresent(object map[string]any, fields ...string) bool {
-	_, found, err := unstructured.NestedFieldNoCopy(object, fields...)
-	return found || err != nil
-}
-
-func activationDPUSetMatches(set *unstructured.Unstructured, selected activationSelectedDevice) bool {
-	software, flavor, err := activationSetReferences(set)
-	wantSoftware, wantFlavor, wantErr := activationSetReferences(selected.dpuSet)
+func activationDPUSetMatches(rules *controllercontract.Rules, set *unstructured.Unstructured, selected activationSelectedDevice) bool {
+	software, flavor, err := rules.ActivationSetReferences(set)
+	wantSoftware, wantFlavor, wantErr := rules.ActivationSetReferences(selected.dpuSet)
 	if err != nil || wantErr != nil || software != wantSoftware || flavor != wantFlavor {
 		return false
 	}
@@ -919,8 +810,8 @@ func activationDPUSetMatches(set *unstructured.Unstructured, selected activation
 	return err == nil && (!found || !force)
 }
 
-func activationDPUMatches(dpu *unstructured.Unstructured, selected activationSelectedDevice) bool {
-	wantSoftware, wantFlavor, wantErr := activationSetReferences(selected.dpuSet)
+func activationDPUMatches(rules *controllercontract.Rules, dpu *unstructured.Unstructured, selected activationSelectedDevice) bool {
+	wantSoftware, wantFlavor, wantErr := rules.ActivationSetReferences(selected.dpuSet)
 	software, softwareFound, softwareErr := unstructured.NestedString(dpu.Object, "spec", "blueFieldSoftware")
 	flavor, flavorFound, flavorErr := unstructured.NestedString(dpu.Object, "spec", "dpuFlavor")
 	if wantErr != nil || softwareErr != nil || !softwareFound || software != wantSoftware || flavorErr != nil || !flavorFound || flavor != wantFlavor || nestedFieldPresent(dpu.Object, "spec", "bfb") {
@@ -1561,7 +1452,7 @@ func activationReceiptList(objects map[string]*unstructured.Unstructured) []acti
 	return receipts
 }
 
-func activationDPUsReady(observed activationObservation, selected []activationSelectedDevice) bool {
+func activationDPUsReady(rules *controllercontract.Rules, observed activationObservation, selected []activationSelectedDevice) bool {
 	if len(observed.dpus) != len(selected) {
 		return false
 	}
@@ -1570,7 +1461,7 @@ func activationDPUsReady(observed activationObservation, selected []activationSe
 		if dpu == nil || dpu.GetUID() == "" {
 			return false
 		}
-		readiness := EvaluateReadiness(dpu)
+		readiness := rules.ResourceReadiness(dpu)
 		if !readiness.Ready {
 			return false
 		}
@@ -1781,4 +1672,9 @@ func (c *APIClient) patchActivationAnnotation(ctx context.Context, object *unstr
 
 func activationClusterSelectorMatches(setIntent, expected map[string]string) bool {
 	return len(setIntent) > 0 && reflect.DeepEqual(setIntent, expected)
+}
+
+func nestedFieldPresent(object map[string]any, fields ...string) bool {
+	_, found, err := unstructured.NestedFieldNoCopy(object, fields...)
+	return found || err != nil
 }

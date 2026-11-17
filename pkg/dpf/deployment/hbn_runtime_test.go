@@ -183,7 +183,7 @@ func runtimeStageFixtureFromActivated(t *testing.T, base activationIntegrationFi
 		object.SetLabels(map[string]string{activationParentLabel: parent, hbnServiceReferenceLabel: hbnContainerName})
 		object.SetAnnotations(map[string]string{hbnServiceVersionAnnotation: "aabbccddee", "dpu.nvidia.com/consumed-by": "doca-hbn-random"})
 		object.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "svc.dpu.nvidia.com/v1alpha1", Kind: "DPUDeployment", Name: base.client.deployment.GetName(), UID: activation.DeploymentUID, Controller: &controller}, {APIVersion: "svc.dpu.nvidia.com/v1alpha1", Kind: "DPUService", Name: "doca-hbn-random", UID: "service-uid", Controller: &notController}})
-		object, err = base.prepared.execution.reconciler.schemas.DefaultedCopy(object)
+		object, err = base.prepared.execution.rules.DefaultedCopy(object)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -198,7 +198,7 @@ func runtimeStageFixtureFromActivated(t *testing.T, base activationIntegrationFi
 	service.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "svc.dpu.nvidia.com/v1alpha1", Kind: "DPUDeployment", Name: base.client.deployment.GetName(), UID: activation.DeploymentUID, Controller: &controller}})
 	service.SetLabels(map[string]string{activationParentLabel: parent, hbnServiceReferenceLabel: hbnContainerName})
 	service.SetAnnotations(map[string]string{hbnServiceVersionAnnotation: "aabbccddee"})
-	service, err = base.prepared.execution.reconciler.schemas.DefaultedCopy(service)
+	service, err = base.prepared.execution.rules.DefaultedCopy(service)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -84,7 +85,7 @@ func (*enrollmentScopeClient) connectTenant(context.Context, *generation.Plan, t
 	return &tenantClient{}, nil
 }
 
-func (*enrollmentScopeClient) observeTenantSources(context.Context, TenantReadinessExpected) (tenantSources, error) {
+func (*enrollmentScopeClient) observeTenantSources(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error) {
 	return tenantSources{}, nil
 }
 

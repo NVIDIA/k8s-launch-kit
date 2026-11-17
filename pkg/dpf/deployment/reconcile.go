@@ -14,7 +14,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -65,30 +66,20 @@ const (
 // Reconciler verifies DPF objects against the CRD schemas retained from the
 // selected operator chart and one immutable bundle identity.
 type Reconciler struct {
-	schemas            *generation.ObjectSchemas
+	rules              *controllercontract.Rules
 	bundleDigest       string
-	controllerMetadata controllerMetadataPolicy
+	controllerMetadata controllercontract.MetadataPolicy
 }
 
-// NewReconciler validates the retained operator projection and bundle digest.
-func NewReconciler(operatorManifest []byte, bundleDigest string) (*Reconciler, error) {
-	return newReconciler(operatorManifest, bundleDigest, nil)
-}
-
-// The native runner binds dynamic metadata once, before any API effects.
-// Public callers retain the strict static-only metadata policy.
-func newReconciler(operatorManifest []byte, bundleDigest string, policy controllerMetadataPolicy) (*Reconciler, error) {
-	if len(operatorManifest) == 0 {
-		return nil, fmt.Errorf("retained operator manifest is required")
+// newReconciler binds explicitly selected immutable rules and metadata.
+func newReconciler(rules *controllercontract.Rules, bundleDigest string, policy controllercontract.MetadataPolicy) (*Reconciler, error) {
+	if err := rules.Validate(); err != nil {
+		return nil, err
 	}
 	if !validSHA256Digest(bundleDigest) {
 		return nil, fmt.Errorf("bundle digest must be a lowercase sha256 digest")
 	}
-	schemas, err := generation.NewObjectSchemas(append([]byte(nil), operatorManifest...))
-	if err != nil {
-		return nil, fmt.Errorf("compile retained operator CRD schemas: %w", err)
-	}
-	return &Reconciler{schemas: schemas, bundleDigest: bundleDigest, controllerMetadata: policy.clone()}, nil
+	return &Reconciler{rules: rules, bundleDigest: bundleDigest, controllerMetadata: policy}, nil
 }
 
 // BundleDigest returns the immutable bundle identity bound to this reconciler.
@@ -173,7 +164,7 @@ func (r *Reconciler) Verify(desired, current *unstructured.Unstructured) error {
 	if current.GetAnnotations()[BundleDigestAnnotation] != r.bundleDigest || current.GetAnnotations()[IntentDigestAnnotation] != marked.GetAnnotations()[IntentDigestAnnotation] {
 		return reconcileError("RESOURCE_OWNERSHIP_CONFLICT", "current resource is not marked for this bundle and desired object", nil)
 	}
-	if !labelsMatch(marked, current) {
+	if !r.rules.LabelsMatch(marked, current) {
 		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource labels differ from desired", nil)
 	}
 	if !maps.Equal(marked.GetAnnotations(), current.GetAnnotations()) {
@@ -182,22 +173,22 @@ func (r *Reconciler) Verify(desired, current *unstructured.Unstructured) error {
 	if !reflect.DeepEqual(marked.GetOwnerReferences(), current.GetOwnerReferences()) {
 		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource owner references differ from desired", nil)
 	}
-	if err := validateControllerMetadata(current, r.controllerMetadata); err != nil {
+	if err := r.rules.ValidateMetadata(current, r.controllerMetadata); err != nil {
 		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource has unsupported controller metadata", err)
 	}
-	want, err := r.schemas.DefaultedCopy(marked)
+	want, err := r.rules.DefaultedCopy(marked)
 	if err != nil {
 		return reconcileError("RESOURCE_SCHEMA_INVALID", "desired resource fails the retained DPF schema", err)
 	}
-	got, err := r.schemas.DefaultedCopy(current)
+	got, err := r.rules.DefaultedCopy(current)
 	if err != nil {
 		return reconcileError("RESOURCE_SCHEMA_INVALID", "current resource fails the retained DPF schema", err)
 	}
-	if err := allowDPUClusterKubeconfig(want, got); err != nil {
+	want, got, err = r.rules.ComparisonCopies(want, got)
+	if err != nil {
 		return reconcileError("RESOURCE_CONTENT_CONFLICT", "current DPUCluster controller field differs from the expected value", err)
 	}
 	for _, object := range []*unstructured.Unstructured{want, got} {
-		defaultDPUFlavorAdmissionObjects(object)
 		delete(object.Object, "metadata")
 		delete(object.Object, "status")
 	}
@@ -205,25 +196,6 @@ func (r *Reconciler) Verify(desired, current *unstructured.Unstructured) error {
 		return reconcileError("RESOURCE_CONTENT_CONFLICT", "current resource content differs from desired", nil)
 	}
 	return nil
-}
-
-// DPF 26.8's no-op DPUFlavor webhook still serializes these nonpointer
-// value-struct sections as {}. Compare that wire representation only after
-// schema validation/pruning checks; never overwrite a present value, including
-// null. This is intentionally not general webhook or empty-object normalization.
-func defaultDPUFlavorAdmissionObjects(object *unstructured.Unstructured) {
-	if object == nil || object.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || object.GetKind() != "DPUFlavor" {
-		return
-	}
-	spec, ok := object.Object["spec"].(map[string]any)
-	if !ok || spec == nil {
-		return
-	}
-	for _, field := range []string{"grub", "sysctl", "ovs", "containerdConfig"} {
-		if _, present := spec[field]; !present {
-			spec[field] = map[string]any{}
-		}
-	}
 }
 
 // Keep post-create ambiguity while naming only a verifier-owned finite category.
@@ -273,72 +245,10 @@ func (r *Reconciler) markedDesired(desired *unstructured.Unstructured) (*unstruc
 	}
 	annotations[IntentDigestAnnotation] = intentDigest
 	copy.SetAnnotations(annotations)
-	if _, err := r.schemas.DefaultedCopy(copy); err != nil {
+	if _, err := r.rules.DefaultedCopy(copy); err != nil {
 		return nil, reconcileError("RESOURCE_SCHEMA_INVALID", "desired resource fails the retained DPF schema", err)
 	}
 	return copy, nil
-}
-
-func allowDPUClusterKubeconfig(desired, current *unstructured.Unstructured) error {
-	if desired.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || desired.GetKind() != "DPUCluster" {
-		return nil
-	}
-	_, wantFound, err := unstructured.NestedString(desired.Object, "spec", "kubeconfig")
-	if err != nil {
-		return fmt.Errorf("read desired DPUCluster kubeconfig: %w", err)
-	}
-	got, gotFound, err := unstructured.NestedString(current.Object, "spec", "kubeconfig")
-	if err != nil {
-		return fmt.Errorf("read current DPUCluster kubeconfig: %w", err)
-	}
-	if !wantFound && gotFound {
-		expected := desired.GetName() + "-admin-kubeconfig"
-		if got != expected {
-			return fmt.Errorf("DPUCluster kubeconfig differs from deterministic controller-owned Secret name")
-		}
-		unstructured.RemoveNestedField(current.Object, "spec", "kubeconfig")
-	}
-	return nil
-}
-
-func labelsMatch(desired, current *unstructured.Unstructured) bool {
-	want, got := desired.GetLabels(), current.GetLabels()
-	for key, value := range want {
-		if got[key] != value {
-			return false
-		}
-	}
-	if len(got) == len(want) {
-		return true
-	}
-	if !controllerMayMarkDependency(current.GetKind()) || len(got) != len(want)+1 {
-		return false
-	}
-	for key, value := range got {
-		if _, expected := want[key]; expected {
-			continue
-		}
-		const prefix = "svc.dpu.nvidia.com/consumed-by-dpudeployment-"
-		suffix := strings.TrimPrefix(key, prefix)
-		if suffix == key || len(suffix) != 10 || value != "" {
-			return false
-		}
-		for _, character := range suffix {
-			if !strings.ContainsRune("0123456789abcdef", character) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func controllerMayMarkDependency(kind string) bool {
-	switch kind {
-	case "BlueFieldSoftware", "DPUFlavor", "DPUServiceTemplate", "DPUServiceConfiguration":
-		return true
-	default:
-		return false
-	}
 }
 
 func objectDigest(object *unstructured.Unstructured) (string, error) {

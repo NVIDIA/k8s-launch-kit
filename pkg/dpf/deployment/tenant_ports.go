@@ -10,6 +10,8 @@ import (
 	"net/netip"
 	"reflect"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,10 +21,10 @@ import (
 
 type tenantVerificationReader interface {
 	VerifyIdentity(context.Context) error
-	matchesTenantBinding(tenantSourceReader, TenantReadinessExpected, types.UID) bool
-	matchesTenantTarget(TenantReadinessExpected, types.UID) bool
+	matchesTenantBinding(tenantSourceReader, controllercontract.TenantReadinessExpected, types.UID) bool
+	matchesTenantTarget(controllercontract.TenantReadinessExpected, types.UID) bool
 	clusterIdentity() types.UID
-	expectation() TenantReadinessExpected
+	expectation() controllercontract.TenantReadinessExpected
 	getWorkloadChild(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error)
 }
 type tenantAllocationReader interface {
@@ -39,7 +41,7 @@ type hbnRuntimeTenantReader interface {
 }
 type tenantBootstrapReader interface {
 	VerifyIdentity(context.Context) error
-	expectation() TenantReadinessExpected
+	expectation() controllercontract.TenantReadinessExpected
 	readNode(context.Context, string) (*corev1.Node, error)
 	readSecret(context.Context, string, string) (*corev1.Secret, error)
 	readConfigMap(context.Context, string, string) (*corev1.ConfigMap, error)
@@ -57,17 +59,17 @@ type tenantStageReader interface {
 	readRuntimeCommand(context.Context, string, string, hbnRuntimeCommand, netip.Prefix) ([]byte, error)
 }
 
-func (c *tenantClient) matchesTenantBinding(source tenantSourceReader, expected TenantReadinessExpected, uid types.UID) bool {
+func (c *tenantClient) matchesTenantBinding(source tenantSourceReader, expected controllercontract.TenantReadinessExpected, uid types.UID) bool {
 	return c != nil && c.source == source && c.matchesTenantTarget(expected, uid)
 }
 func (c *tenantClient) matchesTenantSource(source tenantSourceReader) bool {
 	return c != nil && c.source == source
 }
-func (c *tenantClient) matchesTenantTarget(expected TenantReadinessExpected, uid types.UID) bool {
+func (c *tenantClient) matchesTenantTarget(expected controllercontract.TenantReadinessExpected, uid types.UID) bool {
 	return c != nil && c.dpuClusterUID == string(uid) && reflect.DeepEqual(c.expected, expected)
 }
 func (c *tenantClient) clusterIdentity() types.UID { return types.UID(c.dpuClusterUID) }
-func (c *tenantClient) expectation() TenantReadinessExpected {
+func (c *tenantClient) expectation() controllercontract.TenantReadinessExpected {
 	expected := c.expected
 	expected.Labels = maps.Clone(expected.Labels)
 	expected.NodeSelector = maps.Clone(expected.NodeSelector)
@@ -97,7 +99,7 @@ func (c *tenantClient) bootstrapCredentialSource(ctx context.Context) (string, [
 	if err != nil {
 		return "", nil, err
 	}
-	digest, endpoint, data, err := validateTenantSources(c.expected, c.dpuClusterUID, sources)
+	digest, endpoint, data, err := validateTenantSources(c.rules, c.expected, c.dpuClusterUID, sources)
 	if err != nil || digest != c.sourceDigest {
 		return "", nil, fmt.Errorf("tenant credential source changed")
 	}

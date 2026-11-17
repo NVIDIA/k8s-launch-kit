@@ -4,8 +4,10 @@
 package deployment
 
 import (
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"testing"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestTenantKeepalivedRejectsBrokenNetworkConfiguration(t *testing.T) {
@@ -56,8 +58,8 @@ func TestTenantKeepalivedRejectsBrokenNetworkConfiguration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			expected, observed := readyTenantFixture(t)
 			mutate(observed.Keepalived[0], observed.Keepalived[1])
-			got := EvaluateTenantReadiness(expected, observed)
-			if got.Ready || got.State != TenantReadinessConflict || got.ReasonCode != "TENANT_KEEPALIVED_SPEC_MISMATCH" {
+			got := testRules(t).TenantReadiness(expected, observed)
+			if got.Ready || got.State != controllercontract.TenantReadinessConflict || got.ReasonCode != "TENANT_KEEPALIVED_SPEC_MISMATCH" {
 				t.Fatalf("broken configuration accepted or misclassified: %#v", got)
 			}
 		})
@@ -82,8 +84,8 @@ func TestTenantReadinessWaitsForObservedPlacementAndGeneration(t *testing.T) {
 			case "unknown placement":
 				unstructured.RemoveNestedField(observed.Keepalived[1].Object, "status", "numberMisscheduled")
 			}
-			got := EvaluateTenantReadiness(expected, observed)
-			if got.Ready || got.State != TenantReadinessPending {
+			got := testRules(t).TenantReadiness(expected, observed)
+			if got.Ready || got.State != controllercontract.TenantReadinessPending {
 				t.Fatalf("ordinary convergence not classified pending: %#v", got)
 			}
 		})

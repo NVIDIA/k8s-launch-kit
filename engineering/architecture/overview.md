@@ -325,6 +325,26 @@ management/tenant readers, plus explicit bounded command, traffic and image I/O.
 Its inputs and lease closure retain no operation store, first-create callback,
 installer, selector/activation patcher, resetter or host configurer. The retained
 plan, bundle and compiled schemas remain immutable data owners.
+Management preparation selects one concrete immutable controller rules value from
+the validated retained release, profile and renderer, with the existing compiled
+`generation.ObjectSchemas`, before opening management access. Catalog discovery
+support does not select controller semantics. Unsupported tuples fail before
+access or effects; the rules add no persisted compatibility version or second
+schema/default registry.
+
+`pkg/dpf/deployment/internal/controllercontract` owns the pure resource,
+enrollment, workload and tenant status projections, Kamaji/keepalived comparison,
+controller metadata tokens, activation names/references, narrow admission
+normalization and HBN expected specs/App values. Selected rules travel through
+verification inputs, tenant source verification and waiters. Projections use
+explicit retained inputs and detached outputs; fresh observations, cohort and
+identity selection, ownership, leases, checkpoint transitions and final physical
+and runtime fences remain in deployment. The reconciler's `Ensure` still performs
+read/create/race I/O; only its controller comparison projections are pure.
+Schema validation and pruning precede narrow DPUFlavor/DPUCluster normalization.
+The comparison API copies the schema-defaulted inputs again to keep its ownership
+contract explicit and preserve desired/current schema diagnostic ordering.
+
 Private I/O composition may select a typed request limiter before native client
 construction for deterministic transport tests. Ordinary application calls pass
 nil and preserve client-go pacing, credentials, TLS and request controls; the
@@ -410,6 +430,7 @@ flowchart TB
 | `pkg/app` | Discover/generate/root workflow state and Network Operator plugin coordination | CLI parsing or process exit |
 | `pkg/dpf/app` | Discover, generate and deploy operation composition; pure generation/retained-plan resolution, explicit access and artifact I/O, collectors and permission checks, publication and external reboot composition | CLI binding, process signals, final output or deployment state machine |
 | `pkg/dpf/managementaccess` | Bounded explicit management credential/TLS snapshots, client construction and fresh cluster identity reads | Discovery inventory, deployment eligibility, ambient Host kubeconfig fallback or cached identity success |
+| `pkg/dpf/deployment/internal/controllercontract` | Explicit selected immutable controller semantics and pure expected/status projections, reusing retained generation schemas | Live reads, ownership/effect authority, retries, operation or receipt state |
 | `pkg/dpf/discovery` | Expanded management inventory, provisioning observations and discovery checks using explicit management access | Credential loading or base management access construction |
 | `pkg/networkoperatorplugin` | Discovery, rendering, deployment state machine, validation primitives | Target selection |
 | `pkg/config`, `pkg/options` | Host configuration, YAML presence and option models | A universal union of Host and DPF configuration |

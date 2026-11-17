@@ -75,7 +75,7 @@ func observeOwnedResumeAllocations(ctx context.Context, client activationObserva
 			}
 		}
 		for _, item := range proof.selected {
-			node, err := uniqueTenantNode(nodes, item.nodeName, item.dpuSet.GetNamespace())
+			node, err := uniqueTenantNode(prepared.execution.rules, nodes, item.nodeName, item.dpuSet.GetNamespace())
 			if err != nil {
 				continue
 			} // No current selected Node means no positive allowance.
@@ -84,7 +84,7 @@ func observeOwnedResumeAllocations(ctx context.Context, client activationObserva
 				continue
 			}
 			dpu, set, physicalNode := uniqueObjectByName(proof.scope.objects("DPU"), item.dpuName), uniqueObjectByName(proof.scope.objects("DPUSet"), item.dpuSet.GetName()), uniqueObjectByName(proof.scope.objects("DPUNode"), item.nodeName)
-			if dpu == nil || set == nil || physicalNode == nil || physicalNode.GetUID() != item.receipt.DPUNodeUID || !activationDPUMatches(dpu, item) || !activationDPUSetMatches(set, item) || !activationOwnerMatches(dpu, set.GetAPIVersion(), set.GetKind(), set.GetName(), set.GetUID()) || !enrolledNodeReadiness(physicalNode).Ready {
+			if dpu == nil || set == nil || physicalNode == nil || physicalNode.GetUID() != item.receipt.DPUNodeUID || !activationDPUMatches(prepared.execution.rules, dpu, item) || !activationDPUSetMatches(prepared.execution.rules, set, item) || !activationOwnerMatches(dpu, set.GetAPIVersion(), set.GetKind(), set.GetName(), set.GetUID()) || !prepared.execution.rules.EnrolledNodeReadiness(physicalNode).Ready {
 				continue
 			}
 

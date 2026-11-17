@@ -103,7 +103,7 @@ func TestActivationControllerWireLifecycle(t *testing.T) {
 				t.Fatalf("real controller coordination/removal: calls=%d claims=%d live-maintenance=%d receipt=%#v err=%v", calls, f.client.guardCalls, len(f.client.maint), receipt.Maintenance, err)
 			}
 			for _, dpu := range f.client.dpus {
-				if !EvaluateReadiness(&dpu).Ready || !conditionReadiness(&dpu, "NodeEffectRemoved", "DPU_STATUS_STALE", true).Ready {
+				if !testRules(t).ResourceReadiness(&dpu).Ready || !testRules(t).NodeEffectRemoved(&dpu).Ready {
 					t.Fatal("DPU did not reach current Ready and NodeEffectRemoved")
 				}
 			}
@@ -217,7 +217,7 @@ func (f *activationIntegrationFake) seedActivationVersions(deployment *unstructu
 	chain.SetAnnotations(map[string]string{"svc.dpu.nvidia.com/dpuservicechain-version": "aabbccddee"})
 	f.versions = []unstructured.Unstructured{}
 	for _, object := range []*unstructured.Unstructured{service, chain} {
-		normalized, e := f.execution.reconciler.schemas.DefaultedCopy(object)
+		normalized, e := f.execution.rules.DefaultedCopy(object)
 		if e != nil {
 			return e
 		}
@@ -252,7 +252,7 @@ func completeActivationWithoutReset(f *activationIntegrationFake, nodeName strin
 	f.maint = remaining
 	ready := true
 	for _, dpu := range f.dpus {
-		if !EvaluateReadiness(&dpu).Ready {
+		if !f.execution.rules.ResourceReadiness(&dpu).Ready {
 			ready = false
 		}
 	}
@@ -638,21 +638,21 @@ func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 	// even when a separate Service-normalization result is subsequently changed.
 	unstructured.RemoveNestedField(configuration.Object, "spec", "serviceConfiguration", "serviceDaemonSet", "annotations")
 	configurationBefore := configuration.DeepCopy()
-	projection, err := compileHBNServiceSpec(f.prepared.execution.verificationInputs(), template, configuration, service.GetName(), created.GetNamespace(), hbnContainerName, id, selector, cluster, names)
+	projection, err := f.prepared.execution.rules.HBNServiceSpec(template, configuration, service.GetName(), created.GetNamespace(), hbnContainerName, id, selector, cluster, names)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := projection.daemonSet["annotations"]; exists {
+	if _, exists := projection.DaemonSet["annotations"]; exists {
 		t.Fatal("raw App inputs acquired an absent Service field")
 	}
-	rawBefore, err := json.Marshal([]any{projection.source, projection.values, projection.daemonSet})
+	rawBefore, err := json.Marshal([]any{projection.Source, projection.Values, projection.DaemonSet})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = unstructured.SetNestedField(projection.spec, "schema-only", "serviceDaemonSet", "labels", "test")
-	_ = unstructured.SetNestedField(projection.spec, "schema-only", "helmChart", "values", "test")
-	_ = unstructured.SetNestedField(projection.spec, "schema-only", "helmChart", "source", "repoURL")
-	rawAfter, err := json.Marshal([]any{projection.source, projection.values, projection.daemonSet})
+	_ = unstructured.SetNestedField(projection.Spec, "schema-only", "serviceDaemonSet", "labels", "test")
+	_ = unstructured.SetNestedField(projection.Spec, "schema-only", "helmChart", "values", "test")
+	_ = unstructured.SetNestedField(projection.Spec, "schema-only", "helmChart", "source", "repoURL")
+	rawAfter, err := json.Marshal([]any{projection.Source, projection.Values, projection.DaemonSet})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,9 +660,9 @@ func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 		t.Fatal("Service normalization aliases raw App or retained inputs")
 	}
 	// Raw outputs also own their maps independently of retained source inputs.
-	projection.values["raw-only"] = "independent"
-	projection.daemonSet["raw-only"] = "independent"
-	projection.source["repoURL"] = "raw-only"
+	projection.Values["raw-only"] = "independent"
+	projection.DaemonSet["raw-only"] = "independent"
+	projection.Source["repoURL"] = "raw-only"
 	if !reflect.DeepEqual(template, templateBefore) || !reflect.DeepEqual(configuration, configurationBefore) {
 		t.Fatal("raw output mutation escaped into retained input")
 	}

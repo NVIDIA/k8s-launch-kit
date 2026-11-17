@@ -796,9 +796,9 @@ func newActivationIntegrationFixtureFromExecution(t *testing.T, execution *manag
 		t.Fatal(err)
 	}
 	deployment.SetUID(activationIntegrationDeploymentUID)
-	bound, _, err := bindActivationHosts(prepared.selected, controlPlane.enrollment, inv, request.Targets, deployment)
+	bound, _, err := bindActivationHosts(testRules(t), prepared.selected, controlPlane.enrollment, inv, request.Targets, deployment)
 	if err != nil {
-		t.Fatalf("bindActivationHosts(): %v", err)
+		t.Fatalf("bindActivationHosts(testRules(t), ): %v", err)
 	}
 	client.setSelected(bound, selected)
 	phases := map[types.UID]string{}

@@ -120,7 +120,7 @@ func verifyActivationSoftware(ctx context.Context, client activationSoftwareRead
 	if current == nil || current.GetUID() != receipt.SoftwareUID || current.GetGeneration() != receipt.Generation || execution.reconciler.Verify(desired, current) != nil {
 		return fmt.Errorf("verified software identity or retained intent changed")
 	}
-	targets, err := softwareCacheTargets(desired, current, execution.plan.Intent().Software, selectedSoftwarePSIDs(execution.plan.Intent()))
+	targets, err := softwareCacheTargets(execution.rules, desired, current, execution.plan.Intent().Software, selectedSoftwarePSIDs(execution.plan.Intent()))
 	if err != nil || len(targets) != len(receipt.Components) || receipt.VerifiedAt.IsZero() {
 		return fmt.Errorf("verified software component receipt is incomplete")
 	}
@@ -182,20 +182,19 @@ func validateActivationScope(snapshot enrollmentScopeSnapshot, execution *manage
 		if device == nil || node == nil || device.GetUID() != item.receipt.DeviceUID || node.GetUID() != item.receipt.DPUNodeUID {
 			return fmt.Errorf("selected enrollment Device or Node UID changed")
 		}
-		if err := validateEnrolledDevice(device, item.item, execution.operatorNamespace, true); err != nil {
+		if err := validateEnrolledDevice(execution.rules, device, item.item, execution.operatorNamespace, true); err != nil {
 			return err
 		}
 		if err := verifyEnrollmentSelectors(device, item.item.device.SelectorLabels); err != nil {
 			return err
 		}
-		if check := enrolledDeviceReadiness(device); !check.Ready {
+		if check := execution.rules.EnrolledDeviceReadiness(device); !check.Ready {
 			return fmt.Errorf("selected DPUDevice lost current credential, certificate or hardware readiness: %s", check.ReasonCode)
 		}
 		if err := validateActivationDPUNode(node, item, selected); err != nil {
 			return err
 		}
-		invalid, check := findCondition(node, "InvalidDPUDetails")
-		if !check.Ready || invalid != nil && invalid.status != "False" {
+		if !execution.rules.ValidDPUDetails(node) {
 			return fmt.Errorf("selected DPUNode details are invalid or unverified")
 		}
 	}
@@ -214,7 +213,7 @@ func validateActivationScope(snapshot enrollmentScopeSnapshot, execution *manage
 	for i := range sets {
 		set := &sets[i]
 		item := activationSelectedSet(selected, set.GetName())
-		if item == nil || set.GetNamespace() != deployment.GetNamespace() || !activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deploymentUID) || !activationDPUSetMatches(set, *item) || !activationSelectorsMatch(set, item.dpuSet) {
+		if item == nil || set.GetNamespace() != deployment.GetNamespace() || !activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deploymentUID) || !activationDPUSetMatches(execution.rules, set, *item) || !activationSelectorsMatch(set, item.dpuSet) {
 			return fmt.Errorf("an unrelated or changed DPUSet exists")
 		}
 	}
@@ -222,7 +221,7 @@ func validateActivationScope(snapshot enrollmentScopeSnapshot, execution *manage
 	for i := range dpus {
 		dpu := &dpus[i]
 		item := activationSelectedDPU(selected, dpu.GetName())
-		if item == nil || dpu.GetNamespace() != deployment.GetNamespace() || !activationDPUMatches(dpu, *item) {
+		if item == nil || dpu.GetNamespace() != deployment.GetNamespace() || !activationDPUMatches(execution.rules, dpu, *item) {
 			return fmt.Errorf("an unrelated or changed DPU exists")
 		}
 		set := uniqueObjectByName(sets, item.dpuSet.GetName())

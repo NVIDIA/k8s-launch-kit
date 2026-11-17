@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
-	jsonpatch "github.com/evanphx/json-patch/v5"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
@@ -133,7 +134,7 @@ func (f *enrollmentStageFake) getOperatorCRD(ctx context.Context, name string) (
 func (f *enrollmentStageFake) discoverResourceList(ctx context.Context, gv string) (*metav1.APIResourceList, error) {
 	return f.operator.discoverResourceList(ctx, gv)
 }
-func (f *enrollmentStageFake) observeTenantSources(ctx context.Context, e TenantReadinessExpected) (tenantSources, error) {
+func (f *enrollmentStageFake) observeTenantSources(ctx context.Context, e controllercontract.TenantReadinessExpected) (tenantSources, error) {
 	return f.sources.observeTenantSources(ctx, e)
 }
 func (f *enrollmentStageFake) verifyEnrollmentBMCs(_ context.Context, _ []enrollmentBMC, _ time.Duration, _ *executionJournal) error {

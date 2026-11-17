@@ -113,7 +113,7 @@ func verifyOwnedResumeResources(ctx context.Context, client activationControlRea
 	if err != nil {
 		return proof, err
 	}
-	selected, _, err := bindActivationHosts(prepared.selected, control.enrollment, inv, access.Targets, deployment)
+	selected, _, err := bindActivationHosts(prepared.execution.rules, prepared.selected, control.enrollment, inv, access.Targets, deployment)
 	if err != nil {
 		return proof, err
 	}

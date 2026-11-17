@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -191,7 +193,7 @@ func TestWorkloadReadyFenceIdentityDiagnostics(t *testing.T) {
 				} else {
 					code = strings.Replace(code, "MANAGEMENT_IDENTITY_", "TENANT_API_IDENTITY_", 1)
 					original := testTenant(f.controlPlane.tenant.Client).source
-					testTenant(f.controlPlane.tenant.Client).source = tenantWaitSourceFunc(func(ctx context.Context, e TenantReadinessExpected) (tenantSources, error) {
+					testTenant(f.controlPlane.tenant.Client).source = tenantWaitSourceFunc(func(ctx context.Context, e controllercontract.TenantReadinessExpected) (tenantSources, error) {
 						hit = true
 						if scenario == "drift" {
 							testTenant(f.controlPlane.tenant.Client).systemUID = "previous-tenant"
@@ -201,7 +203,7 @@ func TestWorkloadReadyFenceIdentityDiagnostics(t *testing.T) {
 					})
 				}
 				journal := testJournal(execution)
-				_, err = waitWorkloadResource(f.ctx, client, execution.reconciler, f.controlPlane.tenant.Client, target, current.GetUID(), journal, time.Millisecond)
+				_, err = waitWorkloadResource(testRules(t), f.ctx, client, execution.reconciler, f.controlPlane.tenant.Client, target, current.GetUID(), journal, time.Millisecond)
 				text := journal.file.(*managementMemoryFile).String()
 				if !hit || err == nil || !strings.Contains(text, `"reasonCode":"`+code+`"`) || strings.Contains(text+err.Error(), "private-identity-canary") {
 					t.Fatalf("hit=%v err=%v journal=%s", hit, err, text)

@@ -347,7 +347,7 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 	sources.secret.Data = map[string][]byte{"super-admin.conf": kubeconfig}
 	base.client.sources.sources = sources
 	tenant := testTenant(base.controlPlane.tenant.Client)
-	digest, _, _, err := validateTenantSources(expected, "dc-uid", sources)
+	digest, _, _, err := validateTenantSources(testRules(t), expected, "dc-uid", sources)
 	if err != nil {
 		t.Fatal(err)
 	}

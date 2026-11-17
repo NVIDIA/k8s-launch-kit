@@ -112,7 +112,7 @@ func compileActivationVersionGraph(execution *managementVerificationInputs, depl
 	bad := func() (activationVersionGraph, bool, error) {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantGraph)
 	}
-	if execution == nil || execution.plan == nil || execution.reconciler == nil || execution.reconciler.schemas == nil || deployment == nil {
+	if execution == nil || execution.plan == nil || execution.reconciler == nil || execution.rules == nil || deployment == nil {
 		return bad()
 	}
 
@@ -163,11 +163,11 @@ func compileActivationVersionGraph(execution *managementVerificationInputs, depl
 	if template == nil || configuration == nil {
 		return bad()
 	}
-	template, e = execution.reconciler.schemas.DefaultedCopy(template)
+	template, e = execution.rules.DefaultedCopy(template)
 	if e != nil {
 		return bad()
 	}
-	configuration, e = execution.reconciler.schemas.DefaultedCopy(configuration)
+	configuration, e = execution.rules.DefaultedCopy(configuration)
 	if e != nil {
 		return bad()
 	}
@@ -218,15 +218,15 @@ func compileActivationVersionGraph(execution *managementVerificationInputs, depl
 	if selectorErr != nil || clusterErr != nil || chainSelectorErr != nil || chainClusterErr != nil || !jsonEqual(observedSelector, nodeSelector) || !jsonEqual(observedCluster, clusterSelector) || !jsonEqual(chainCluster, clusterSelector) || !jsonEqual(chainSelector, map[string]any{"matchExpressions": chainExpressions}) {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantSelector)
 	}
-	expected, e := compileHBNServiceSpec(execution, template, configuration, service.GetName(), service.GetNamespace(), hbnContainerName, id, nodeSelector, clusterSelector, opaque)
-	if e != nil || !jsonEqual(service.Object["spec"], expected.spec) {
+	expected, e := execution.rules.HBNServiceSpec(template, configuration, service.GetName(), service.GetNamespace(), hbnContainerName, id, nodeSelector, clusterSelector, opaque)
+	if e != nil || !jsonEqual(service.Object["spec"], expected.Spec) {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantServiceSpec)
 	}
 	expectedChain, e := activationChainSpec(deployment, id, clusterSelector, parent, versionLabels[activationChainVersionKey])
 	if e != nil {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantChainSpec)
 	}
-	normalized, e := execution.reconciler.schemas.DefaultedCopy(runtimeObject("DPUServiceChain", chain.GetName(), chain.GetNamespace(), expectedChain))
+	normalized, e := execution.rules.DefaultedCopy(runtimeObject("DPUServiceChain", chain.GetName(), chain.GetNamespace(), expectedChain))
 	if e != nil || !jsonEqual(chain.Object["spec"], normalized.Object["spec"]) || chain.GetAnnotations()[activationChainVersionKey] == "" {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantChainSpec)
 	}

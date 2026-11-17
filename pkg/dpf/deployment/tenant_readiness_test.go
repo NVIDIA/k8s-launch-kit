@@ -9,15 +9,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestEvaluateTenantReadinessConvergedResources(t *testing.T) {
 	expected, observed := readyTenantFixture(t)
 	before := cloneTenantObserved(observed)
-	got := EvaluateTenantReadiness(expected, observed)
+	got := testRules(t).TenantReadiness(expected, observed)
 	if !got.Ready || got.State != "ready" || got.ReasonCode != "TENANT_RESOURCES_CONVERGED" {
-		t.Fatalf("EvaluateTenantReadiness() = %#v, want converged", got)
+		t.Fatalf("testRules(t).TenantReadiness() = %#v, want converged", got)
 	}
 	if !reflect.DeepEqual(observed, before) {
 		t.Fatal("tenant readiness mutated the observed resources")
@@ -28,7 +29,7 @@ func TestEvaluateTenantReadinessBlocksStaleAndProgressingStatus(t *testing.T) {
 	t.Run("Kamaji observed generation lags", func(t *testing.T) {
 		expected, observed := readyTenantFixture(t)
 		observed.TenantControlPlane.Object["status"].(map[string]any)["observedGeneration"] = int64(1)
-		got := EvaluateTenantReadiness(expected, observed)
+		got := testRules(t).TenantReadiness(expected, observed)
 		if got.Ready || got.State != "pending" || got.ReasonCode != "TENANT_CONTROL_PLANE_STATUS_STALE" {
 			t.Fatalf("got %#v", got)
 		}
@@ -36,7 +37,7 @@ func TestEvaluateTenantReadinessBlocksStaleAndProgressingStatus(t *testing.T) {
 	t.Run("Kamaji upgrading", func(t *testing.T) {
 		expected, observed := readyTenantFixture(t)
 		observed.TenantControlPlane.Object["status"].(map[string]any)["kubernetesResources"].(map[string]any)["version"].(map[string]any)["status"] = "Upgrading"
-		got := EvaluateTenantReadiness(expected, observed)
+		got := testRules(t).TenantReadiness(expected, observed)
 		if got.Ready || got.State != "pending" || got.ReasonCode != "TENANT_CONTROL_PLANE_PROGRESSING" {
 			t.Fatalf("got %#v", got)
 		}
@@ -44,7 +45,7 @@ func TestEvaluateTenantReadinessBlocksStaleAndProgressingStatus(t *testing.T) {
 	t.Run("malformed generation", func(t *testing.T) {
 		expected, observed := readyTenantFixture(t)
 		observed.TenantControlPlane.Object["status"].(map[string]any)["observedGeneration"] = "two"
-		got := EvaluateTenantReadiness(expected, observed)
+		got := testRules(t).TenantReadiness(expected, observed)
 		if got.Ready || got.State != "invalid" || got.ReasonCode != "TENANT_CONTROL_PLANE_STATUS_INVALID" {
 			t.Fatalf("got %#v", got)
 		}
@@ -54,29 +55,29 @@ func TestEvaluateTenantReadinessBlocksStaleAndProgressingStatus(t *testing.T) {
 func TestEvaluateTenantReadinessRejectsDeletingWrongOwnerAndSpecDrift(t *testing.T) {
 	tests := []struct {
 		name       string
-		mutate     func(*TenantReadinessExpected, *TenantReadinessObserved)
+		mutate     func(*controllercontract.TenantReadinessExpected, *controllercontract.TenantReadinessObserved)
 		wantReason string
 	}{
-		{name: "deleting cluster", mutate: func(_ *TenantReadinessExpected, o *TenantReadinessObserved) {
+		{name: "deleting cluster", mutate: func(_ *controllercontract.TenantReadinessExpected, o *controllercontract.TenantReadinessObserved) {
 			o.DPUCluster.Object["metadata"].(map[string]any)["deletionTimestamp"] = "2026-11-14T00:00:00Z"
 		}, wantReason: "TENANT_RESOURCE_DELETING"},
-		{name: "wrong owner uid", mutate: func(_ *TenantReadinessExpected, o *TenantReadinessObserved) {
+		{name: "wrong owner uid", mutate: func(_ *controllercontract.TenantReadinessExpected, o *controllercontract.TenantReadinessObserved) {
 			refs := o.TenantControlPlane.Object["metadata"].(map[string]any)["ownerReferences"].([]any)
 			refs[0].(map[string]any)["uid"] = "another-cluster-uid"
 		}, wantReason: "TENANT_CONTROL_PLANE_OWNERSHIP_MISMATCH"},
-		{name: "VIP changed", mutate: func(_ *TenantReadinessExpected, o *TenantReadinessObserved) {
+		{name: "VIP changed", mutate: func(_ *controllercontract.TenantReadinessExpected, o *controllercontract.TenantReadinessObserved) {
 			o.DPUCluster.Object["spec"].(map[string]any)["clusterEndpoint"].(map[string]any)["keepalived"].(map[string]any)["vip"] = "192.0.2.99"
 		}, wantReason: "TENANT_SPEC_MISMATCH"},
-		{name: "node selector changed", mutate: func(_ *TenantReadinessExpected, o *TenantReadinessObserved) {
+		{name: "node selector changed", mutate: func(_ *controllercontract.TenantReadinessExpected, o *controllercontract.TenantReadinessObserved) {
 			o.Keepalived[1].Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["nodeSelector"].(map[string]any)["node-role.kubernetes.io/control-plane"] = "false"
 		}, wantReason: "TENANT_KEEPALIVED_SPEC_MISMATCH"},
-		{name: "service drift", mutate: func(_ *TenantReadinessExpected, o *TenantReadinessObserved) {
+		{name: "service drift", mutate: func(_ *controllercontract.TenantReadinessExpected, o *controllercontract.TenantReadinessObserved) {
 			o.Service.Object["spec"].(map[string]any)["selector"].(map[string]any)["kamaji.clastix.io/name"] = "other"
 		}, wantReason: "TENANT_SERVICE_SPEC_MISMATCH"},
-		{name: "service target port drift", mutate: func(_ *TenantReadinessExpected, o *TenantReadinessObserved) {
+		{name: "service target port drift", mutate: func(_ *controllercontract.TenantReadinessExpected, o *controllercontract.TenantReadinessObserved) {
 			o.Service.Object["spec"].(map[string]any)["ports"].([]any)[0].(map[string]any)["targetPort"] = int64(6443)
 		}, wantReason: "TENANT_SERVICE_SPEC_MISMATCH"},
-		{name: "running version drift", mutate: func(_ *TenantReadinessExpected, o *TenantReadinessObserved) {
+		{name: "running version drift", mutate: func(_ *controllercontract.TenantReadinessExpected, o *controllercontract.TenantReadinessObserved) {
 			o.TenantControlPlane.Object["status"].(map[string]any)["kubernetesResources"].(map[string]any)["version"].(map[string]any)["version"] = "v1.34.0"
 		}, wantReason: "TENANT_CONTROL_PLANE_VERSION_MISMATCH"},
 	}
@@ -84,7 +85,7 @@ func TestEvaluateTenantReadinessRejectsDeletingWrongOwnerAndSpecDrift(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			expected, observed := readyTenantFixture(t)
 			test.mutate(&expected, &observed)
-			got := EvaluateTenantReadiness(expected, observed)
+			got := testRules(t).TenantReadiness(expected, observed)
 			if got.Ready || got.ReasonCode != test.wantReason {
 				t.Fatalf("got %#v, want reason %s", got, test.wantReason)
 			}
@@ -94,7 +95,7 @@ func TestEvaluateTenantReadinessRejectsDeletingWrongOwnerAndSpecDrift(t *testing
 
 func TestEvaluateTenantReadinessDoesNotClaimTenantAPIOrVIPReachability(t *testing.T) {
 	expected, observed := readyTenantFixture(t)
-	got := EvaluateTenantReadiness(expected, observed)
+	got := testRules(t).TenantReadiness(expected, observed)
 	if !got.Ready || got.ReasonCode != "TENANT_RESOURCES_CONVERGED" {
 		t.Fatalf("got %#v", got)
 	}
@@ -107,15 +108,15 @@ func TestEvaluateTenantReadinessUsesKamajiPluralCIDRFields(t *testing.T) {
 	expected, observed := readyTenantFixture(t)
 	// Kamaji 26.8 documents plural fields as authoritative over legacy singular fields.
 	observed.TenantControlPlane.Object["spec"].(map[string]any)["networkProfile"].(map[string]any)["podCidr"] = "10.244.0.0/16"
-	got := EvaluateTenantReadiness(expected, observed)
+	got := testRules(t).TenantReadiness(expected, observed)
 	if !got.Ready {
 		t.Fatalf("plural podCidrs matches retained intent; deprecated podCidr must not override it: %#v", got)
 	}
 }
 
 // Each caller owns fresh mutable selector maps.
-func readyTenantExpectedFixture() TenantReadinessExpected {
-	return TenantReadinessExpected{
+func readyTenantExpectedFixture() controllercontract.TenantReadinessExpected {
+	return controllercontract.TenantReadinessExpected{
 		Name: "hbn-tenant", Namespace: "hbn-tenant",
 		Labels: map[string]string{"l8k.example/tenant": "hbn"}, MaxNodes: 2,
 		KubernetesVersion: "v1.35.6", VIP: "192.0.2.20", Interface: "eth0",
@@ -124,7 +125,7 @@ func readyTenantExpectedFixture() TenantReadinessExpected {
 	}
 }
 
-func readyTenantFixture(t *testing.T) (TenantReadinessExpected, TenantReadinessObserved) {
+func readyTenantFixture(t *testing.T) (controllercontract.TenantReadinessExpected, controllercontract.TenantReadinessObserved) {
 	expected := readyTenantExpectedFixture()
 	dc := tenantObject("provisioning.dpu.nvidia.com/v1alpha1", "DPUCluster", "hbn-tenant", "hbn-tenant", map[string]any{
 		"uid": "dc-uid", "labels": map[string]any{"l8k.example/tenant": "hbn"},
@@ -201,7 +202,7 @@ func readyTenantFixture(t *testing.T) (TenantReadinessExpected, TenantReadinessO
 	}
 	ds.Object["status"] = map[string]any{"observedGeneration": int64(2), "desiredNumberScheduled": int64(3), "numberReady": int64(3), "updatedNumberScheduled": int64(3), "numberMisscheduled": int64(0)}
 
-	return expected, TenantReadinessObserved{DPUCluster: dc, TenantControlPlane: tcp, Service: service, Keepalived: []*unstructured.Unstructured{cm, ds}}
+	return expected, controllercontract.TenantReadinessObserved{DPUCluster: dc, TenantControlPlane: tcp, Service: service, Keepalived: []*unstructured.Unstructured{cm, ds}}
 }
 
 func tenantObject(apiVersion, kind, name, namespace string, metadata, spec, status map[string]any) *unstructured.Unstructured {
@@ -213,7 +214,7 @@ func tenantCondition(kind, status string) map[string]any {
 	return map[string]any{"type": kind, "status": status, "reason": "Ready"}
 }
 
-func cloneTenantObserved(in TenantReadinessObserved) TenantReadinessObserved {
+func cloneTenantObserved(in controllercontract.TenantReadinessObserved) controllercontract.TenantReadinessObserved {
 	out := in
 	if in.DPUCluster != nil {
 		out.DPUCluster = in.DPUCluster.DeepCopy()

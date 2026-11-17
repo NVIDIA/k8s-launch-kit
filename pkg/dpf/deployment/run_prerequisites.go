@@ -46,7 +46,7 @@ func rebindActivatedHostInventory(ctx context.Context, client activationObservat
 	if err != nil {
 		return activation, err
 	}
-	selected, groups, err := bindActivationHosts(prepared.selected, control.enrollment, current, targets, deployment)
+	selected, groups, err := bindActivationHosts(prepared.execution.rules, prepared.selected, control.enrollment, current, targets, deployment)
 	if err != nil {
 		return activation, err
 	}
@@ -65,7 +65,7 @@ func rebindActivatedHostInventory(ctx context.Context, client activationObservat
 		}
 	}
 	observed, err := observeActivationScope(ctx, client, prepared.execution.verificationInputs(), deployment, activation.DeploymentUID, selected, activation.progress)
-	if err != nil || !observed.complete || !EvaluateReadiness(observed.deployment).Ready || !activationCompletionReady(observed, activation.progress, selected) {
+	if err != nil || !observed.complete || !prepared.execution.rules.ResourceReadiness(observed.deployment).Ready || !activationCompletionReady(prepared.execution.rules, observed, activation.progress, selected) {
 		return activation, fmt.Errorf("POST_ACTIVATION_SCOPE_CHANGED: current activation completion could not be proven")
 	}
 	activation.selected, activation.groups = selected, groups

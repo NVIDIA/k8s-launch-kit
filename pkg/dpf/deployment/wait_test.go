@@ -4,12 +4,16 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,7 +42,7 @@ func TestWaitNativeReadyRechecksIntentAndLiveStatus(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	reads, verifies := 0, 0
-	var outcomes []Readiness
+	var outcomes []controllercontract.Readiness
 	client := resourceReadFunc(func(_ context.Context, input *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 		reads++
 		if input.GetName() != "dpfoperatorconfig" {
@@ -47,12 +51,12 @@ func TestWaitNativeReadyRechecksIntentAndLiveStatus(t *testing.T) {
 		input.SetName("mutation")
 		return waitConfig(reads >= 2), nil
 	})
-	obj, err := waitNativeReady(ctx, client, waitConfig(false), "config-uid", func(desired, current *unstructured.Unstructured) error {
+	obj, err := waitNativeReady(testRules(t), ctx, client, waitConfig(false), "config-uid", func(desired, current *unstructured.Unstructured) error {
 		verifies++
 		desired.SetName("mutation")
 		current.SetUID("mutation")
 		return nil
-	}, time.Millisecond, func(state Readiness, _ bool) error { outcomes = append(outcomes, state); return nil })
+	}, time.Millisecond, func(state controllercontract.Readiness, _ bool) error { outcomes = append(outcomes, state); return nil })
 	if err != nil || reads != 2 || verifies != 2 || obj == nil || obj.GetUID() != "config-uid" || len(outcomes) != 2 || outcomes[0].Ready || !outcomes[1].Ready {
 		t.Fatalf("wait result: obj=%v err=%v reads=%d verifies=%d outcomes=%+v", obj, err, reads, verifies, outcomes)
 	}
@@ -65,14 +69,14 @@ func TestWaitNativeReadyRejectsReplacementAndIntentDrift(t *testing.T) {
 		if replacement {
 			current.SetUID("replacement-uid")
 		}
-		var outcome Readiness
-		obj, err := waitNativeReady(ctx, resourceReadFunc(func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+		var outcome controllercontract.Readiness
+		obj, err := waitNativeReady(testRules(t), ctx, resourceReadFunc(func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 			return current, nil
 		}), waitConfig(false), "config-uid",
 			func(*unstructured.Unstructured, *unstructured.Unstructured) error {
 				return errors.New("secret-data-from-live-object")
 			}, time.Millisecond,
-			func(state Readiness, _ bool) error { outcome = state; return nil })
+			func(state controllercontract.Readiness, _ bool) error { outcome = state; return nil })
 		cancel()
 		if err == nil || obj != nil || outcome.Ready || strings.Contains(err.Error(), "secret-data") {
 			t.Fatalf("accepted replacement/drift or leaked object data: %v %v %+v", obj, err, outcome)
@@ -94,7 +98,7 @@ func TestWaitNativeReadyRetriesOnlyTemporaryReadFailure(t *testing.T) {
 			}
 			return waitConfig(true), nil
 		})
-		_, err := waitNativeReady(ctx, client, waitConfig(false), "config-uid", func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }, time.Millisecond, func(Readiness, bool) error { return nil })
+		_, err := waitNativeReady(testRules(t), ctx, client, waitConfig(false), "config-uid", func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }, time.Millisecond, func(controllercontract.Readiness, bool) error { return nil })
 		cancel()
 		if transient && (err != nil || reads != 2) || !transient && (err == nil || reads != 1) {
 			t.Fatalf("unexpected retry: transient=%v reads=%d err=%v", transient, reads, err)
@@ -108,10 +112,10 @@ func TestWaitNativeReadyStopsOnReportFailureAndCancellation(t *testing.T) {
 		reads := 0
 		reportFailure := errors.New("report disk full")
 		var states []string
-		_, err := waitNativeReady(ctx, resourceReadFunc(func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+		_, err := waitNativeReady(testRules(t), ctx, resourceReadFunc(func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 			reads++
 			return waitConfig(false), nil
-		}), waitConfig(false), "config-uid", func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }, time.Hour, func(state Readiness, _ bool) error {
+		}), waitConfig(false), "config-uid", func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }, time.Hour, func(state controllercontract.Readiness, _ bool) error {
 			states = append(states, state.ReasonCode)
 			if canceled {
 				cancel()
@@ -153,11 +157,11 @@ func TestWaitNativeReadyStopsOnTerminalControllerOutcome(t *testing.T) {
 			current := waitConfig(false)
 			tc.mutate(current)
 			reads, observations := 0, 0
-			obj, err := waitNativeReady(ctx, resourceReadFunc(func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+			obj, err := waitNativeReady(testRules(t), ctx, resourceReadFunc(func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 				reads++
 				return current.DeepCopy(), nil
 			}), current.DeepCopy(), "config-uid", func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }, time.Hour,
-				func(state Readiness, terminal bool) error {
+				func(state controllercontract.Readiness, terminal bool) error {
 					observations++
 					if !terminal || state.Ready || state.ReasonCode != tc.code {
 						t.Errorf("incorrect terminal result: %+v, terminal=%v", state, terminal)
@@ -193,7 +197,7 @@ func TestSoftwareWaitTracksConditionsAndStopsOnTerminalReason(t *testing.T) {
 				reads++
 				return current(reads > 1), nil
 			})
-			_, err := waitNativeReady(ctx, client, current(false), "software-uid", func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }, time.Millisecond, func(Readiness, bool) error { return nil })
+			_, err := waitNativeReady(testRules(t), ctx, client, current(false), "software-uid", func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }, time.Millisecond, func(controllercontract.Readiness, bool) error { return nil })
 			if terminal {
 				if err == nil || reads != 1 || !strings.Contains(err.Error(), "RESOURCE_TERMINAL_FAILURE") || !strings.Contains(err.Error(), "Controller reason: Failed") {
 					t.Fatalf("terminal wait: reads=%d err=%v", reads, err)
@@ -202,5 +206,52 @@ func TestSoftwareWaitTracksConditionsAndStopsOnTerminalReason(t *testing.T) {
 				t.Fatalf("pending wait: reads=%d err=%v", reads, err)
 			}
 		})
+	}
+}
+
+func TestFinishReadinessWaitPreservesPublicDiagnostics(t *testing.T) {
+	for _, outcome := range []struct {
+		name, code, message string
+		cause               error
+	}{
+		{name: "timeout", code: "READINESS_TIMEOUT", message: "Readiness was not established before the execution deadline.", cause: context.DeadlineExceeded},
+		{name: "canceled", code: "READINESS_CANCELED", message: "The readiness wait was canceled.", cause: context.Canceled},
+	} {
+		for _, journalFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/journal-fails-%t", outcome.name, journalFails), func(t *testing.T) {
+				file := &executionTestFile{}
+				if journalFails {
+					file.failAt = 1
+				}
+				journal := &executionJournal{file: file, digest: "sha256:" + strings.Repeat("a", 64)}
+				observations := 0
+				var recordingErr error
+				err := finishReadinessWait(func(state controllercontract.Readiness, terminal bool) error {
+					observations++
+					if !terminal || state.Ready || state.ReasonCode != outcome.code || state.Message != outcome.message {
+						t.Errorf("terminal diagnostic changed: state=%+v terminal=%t", state, terminal)
+					}
+					recordingErr = journal.record(executionEvent{Stage: "test", Operation: "readiness", State: "failed", ReasonCode: state.ReasonCode, Message: state.Message})
+					return recordingErr
+				}, controllercontract.Readiness{Ready: false, ReasonCode: "DEVICE_STATUS_STALE", Message: "previous controller detail"}, outcome.cause)
+				want := outcome.message + "; last check: DEVICE_STATUS_STALE: " + outcome.cause.Error()
+				if journalFails {
+					if recordingErr == nil || !errors.Is(err, recordingErr) {
+						t.Fatalf("journal failure was lost: recorded=%v returned=%v", recordingErr, err)
+					}
+					want = recordingErr.Error() + "\n" + want
+				}
+				if err == nil || err.Error() != want || !errors.Is(err, outcome.cause) || observations != 1 {
+					t.Fatalf("terminal error changed: err=%v want=%q observations=%d", err, want, observations)
+				}
+				var event executionEvent
+				if decodeErr := json.NewDecoder(bytes.NewReader(file.Bytes())).Decode(&event); decodeErr != nil {
+					t.Fatal(decodeErr)
+				}
+				if event.State != "failed" || event.ReasonCode != outcome.code || event.Message != outcome.message {
+					t.Fatalf("journal diagnostic changed: %+v", event)
+				}
+			})
+		}
 	}
 }

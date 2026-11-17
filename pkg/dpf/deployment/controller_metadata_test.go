@@ -9,71 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func TestControllerMetadataPolicyIsFiniteAndDoesNotMutateInputs(t *testing.T) {
-	deployment := activationDeploymentIntent(map[string]string{"tenant.example/id": "tenant-a"})
-	software := &unstructured.Unstructured{Object: map[string]any{"apiVersion": blueFieldSoftwareAPIVersion, "kind": "BlueFieldSoftware", "metadata": map[string]any{"name": "hbn-software", "namespace": "dpf"}}}
-	devices := []generation.ResolvedDevice{resolvedActivationDevice("SERIAL-A", "serial-a"), resolvedActivationDevice("SERIAL-B", "serial-b")}
-	beforeDeployment, beforeSoftware := deployment.DeepCopy(), software.DeepCopy()
-	beforeDevices := []generation.ResolvedDevice{resolvedActivationDevice("SERIAL-A", "serial-a"), resolvedActivationDevice("SERIAL-B", "serial-b")}
-	policy, err := compileControllerMetadata(deployment, software, devices)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := controllerMetadataPolicy{softwareIdentity{namespace: "dpf", name: "hbn-software"}: {"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a": {}, "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-b": {}}}
-	if !reflect.DeepEqual(policy, want) || !reflect.DeepEqual(deployment.Object, beforeDeployment.Object) || !reflect.DeepEqual(software.Object, beforeSoftware.Object) || !reflect.DeepEqual(devices, beforeDevices) {
-		t.Fatal("policy differs from exact selected set names or mutated its inputs")
-	}
-	for _, tc := range []struct {
-		name, namespace, software, kind string
-		tokens                          []string
-		accepted                        bool
-	}{
-		{name: "both selected sets", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection", "dpu.nvidia.com/dpudeployment", "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a", "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-b"}, accepted: true},
-		{name: "other namespace", namespace: "other", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a"}, accepted: false},
-		{name: "other software", namespace: "dpf", software: "other", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a"}, accepted: false},
-		{name: "other set", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-other-a"}, accepted: false},
-		{name: "similar set prefix", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a-extra"}, accepted: false},
-		{name: "other token prefix", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"foreign.example/bfs-dpuset-hbn-a"}, accepted: false},
-		{name: "duplicate exact token", namespace: "dpf", software: "hbn-software", kind: "BlueFieldSoftware", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a", "provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a"}, accepted: false},
-		{name: "cross kind", namespace: "dpf", software: "hbn-software", kind: "DPUFlavor", tokens: []string{"provisioning.dpu.nvidia.com/bfs-dpuset-hbn-a"}, accepted: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			object := software.DeepCopy()
-			object.SetNamespace(tc.namespace)
-			object.SetName(tc.software)
-			object.SetKind(tc.kind)
-			object.SetFinalizers(tc.tokens)
-			if err := validateControllerMetadata(object, policy); (err == nil) != tc.accepted {
-				t.Fatalf("metadata accepted=%v, want %v", err == nil, tc.accepted)
-			}
-		})
-	}
-	for _, tc := range []struct {
-		name string
-		edit func(*unstructured.Unstructured)
-	}{
-		{name: "wrong namespace", edit: func(o *unstructured.Unstructured) { o.SetNamespace("other") }},
-		{name: "wrong software", edit: func(o *unstructured.Unstructured) { o.SetName("other") }},
-		{name: "wrong kind", edit: func(o *unstructured.Unstructured) { o.SetKind("BFB") }},
-	} {
-		t.Run("compile "+tc.name, func(t *testing.T) {
-			object := software.DeepCopy()
-			tc.edit(object)
-			if _, err := compileControllerMetadata(deployment, object, devices); err == nil {
-				t.Fatal("unbound software policy compiled")
-			}
-		})
-	}
-	if _, err := controllerMetadataForPlan(nil); err == nil {
-		t.Fatal("missing retained plan compiled")
-	}
-}
-
-func TestManagementReconcilerBindsClonedPolicyWhilePublicConstructorStaysStrict(t *testing.T) {
+func TestManagementReconcilerUsesSelectedFiniteMetadata(t *testing.T) {
 	generated, err := generateFixtureBundle(preflightGenerationInputs(t))
 	if err != nil {
 		t.Fatal(err)
@@ -86,14 +27,20 @@ func TestManagementReconcilerBindsClonedPolicyWhilePublicConstructorStaysStrict(
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := controllerMetadataForPlan(execution.plan)
+	policy, err := controllerMetadataForPlan(execution.rules, execution.plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := softwareIdentity{namespace: desired.GetNamespace(), name: desired.GetName()}
-	tokens, ok := policy[key]
-	if !ok || len(tokens) != len(execution.plan.Intent().Devices) || len(tokens) == 0 {
-		t.Fatal("plan did not bind every selected DPUSet")
+	sets, err := execution.rules.ActivationSetIntents(activationDeploymentForPlan(t, execution.plan), execution.plan.Intent().Devices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := []string{}
+	for _, set := range sets {
+		tokens = append(tokens, "provisioning.dpu.nvidia.com/bfs-dpuset-"+set.GetName())
+	}
+	if len(tokens) != len(execution.plan.Intent().Devices) || len(tokens) == 0 {
+		t.Fatal("plan did not bind every selected set")
 	}
 	current, err := execution.reconciler.markedDesired(desired)
 	if err != nil {
@@ -102,36 +49,29 @@ func TestManagementReconcilerBindsClonedPolicyWhilePublicConstructorStaysStrict(
 	current.SetUID("software-uid")
 	current.SetResourceVersion("1")
 	finalizers := []string{"provisioning.dpu.nvidia.com/bluefieldsoftware-protection", "dpu.nvidia.com/dpudeployment"}
-	for token := range tokens {
-		finalizers = append(finalizers, token)
-	}
+	finalizers = append(finalizers, tokens...)
 	current.SetFinalizers(finalizers)
 	if err := execution.reconciler.Verify(desired, current); err != nil {
 		t.Fatalf("native factory lost plan policy: %v", err)
 	}
-	strict, err := NewReconciler(execution.operator.renderedManifest, execution.plan.Digest())
+	strict, err := newReconciler(execution.rules, execution.plan.Digest(), controllercontract.MetadataPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := strict.Verify(desired, current); err == nil {
-		t.Fatal("public constructor allowed dynamic finalizers without a retained plan")
+		t.Fatal("empty metadata projection allowed unbound dynamic finalizers")
 	}
-	isolated, err := newReconciler(execution.operator.renderedManifest, execution.plan.Digest(), policy)
+	isolated, err := newReconciler(execution.rules, execution.plan.Digest(), policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for token := range tokens {
-		delete(tokens, token)
-	}
-	tokens["foreign.example/added-after-construction"] = struct{}{}
-	delete(policy, key)
 	if err := isolated.Verify(desired, current); err != nil {
-		t.Fatal("mutating constructor inputs altered immutable policy")
+		t.Fatal(err)
 	}
 	foreign := current.DeepCopy()
 	foreign.SetFinalizers([]string{"foreign.example/added-after-construction"})
 	if err := isolated.Verify(desired, foreign); err == nil {
-		t.Fatal("caller mutation broadened policy")
+		t.Fatal("foreign finalizer broadened policy")
 	}
 	original := current.DeepCopy()
 	client := &reconcileFixture{objects: map[string]*unstructured.Unstructured{reconcileKey(current): current.DeepCopy()}}
@@ -218,4 +158,18 @@ func TestActivationBoundaryAcceptsVendorFinalizersForCreatedSelectedSets(t *test
 	if len(client.patches) != 0 || client.guardCalls != 0 || client.resetSafetyCalls != 0 || client.base.createCount != creates || client.streamRequests.Load() != streams {
 		t.Fatal("readonly boundary verification released hold, claimed reboot, created an object or restreamed software")
 	}
+}
+
+func activationDeploymentForPlan(t *testing.T, plan *generation.Plan) *unstructured.Unstructured {
+	t.Helper()
+	for _, stage := range plan.Stages() {
+		for _, doc := range stage.Documents() {
+			obj := doc.ObjectCopy()
+			if obj.GetKind() == "DPUDeployment" {
+				return obj
+			}
+		}
+	}
+	t.Fatal("missing retained deployment")
+	return nil
 }

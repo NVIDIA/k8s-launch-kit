@@ -4,18 +4,19 @@
 package deployment
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-// compileHBNRuntimeBinding is the one owner of expected Service and App values.
+// compileHBNRuntimeBinding binds pure expected Service and App projections to
+// fresh selected-child, owner, cohort and image observations.
 // It implements the HBN subset of pinned DPF 26.8's generateDPUService,
 // generateDPUServiceInterface, addNetworkAnnotationToServiceDaemonSet and
 // argoCDValuesFromDPUService. Observed random names are accepted only after
@@ -46,11 +47,11 @@ func compileHBNRuntimeBinding(execution *managementVerificationInputs, activatio
 	if template == nil || configuration == nil {
 		return bad()
 	}
-	template, err = execution.reconciler.schemas.DefaultedCopy(template)
+	template, err = execution.rules.DefaultedCopy(template)
 	if err != nil {
 		return bad()
 	}
-	configuration, err = execution.reconciler.schemas.DefaultedCopy(configuration)
+	configuration, err = execution.rules.DefaultedCopy(configuration)
 	if err != nil {
 		return bad()
 	}
@@ -99,11 +100,11 @@ func compileHBNRuntimeBinding(execution *managementVerificationInputs, activatio
 	if err != nil {
 		return bad()
 	}
-	projection, err := compileHBNServiceSpec(execution, template, configuration, service.GetName(), desired.Namespace, reference, id, nodeSelector, clusterSelector, names)
-	if err != nil || !jsonEqual(service.Object["spec"], projection.spec) {
+	projection, err := execution.rules.HBNServiceSpec(template, configuration, service.GetName(), desired.Namespace, reference, id, nodeSelector, clusterSelector, names)
+	if err != nil || !jsonEqual(service.Object["spec"], projection.Spec) {
 		return bad()
 	}
-	expectedSpec, sds, values, source := projection.spec, projection.daemonSet, projection.values, projection.source
+	expectedSpec, sds, values, source := projection.Spec, projection.DaemonSet, projection.Values, projection.Source
 	effectiveSDS := runtime.DeepCopyJSON(sds)
 	effectiveLabels := effectiveSDS["labels"].(map[string]any)
 	effectiveLabels[hbnServiceIDLabel] = id
@@ -115,128 +116,24 @@ func compileHBNRuntimeBinding(execution *managementVerificationInputs, activatio
 		annotations = map[string]any{}
 	}
 	existing, _ := annotations["k8s.v1.cni.cncf.io/networks"].(string)
-	annotation, err := compileHBNNetworkAnnotation(existing, networks)
+	annotation, err := execution.rules.HBNNetworkAnnotation(existing, networks)
 	if err != nil {
 		return bad()
 	}
 	annotations["k8s.v1.cni.cncf.io/networks"] = annotation
 	effectiveSDS["annotations"] = annotations
-	effective := mergeHBNValues(map[string]any{"serviceDaemonSet": effectiveSDS}, values)
+	effective, err := execution.rules.HBNApplicationValues(effectiveSDS, values)
+	if err != nil {
+		return bad()
+	}
 	return hbnPodBindingIntent{DPUDeploymentName: deployment.GetName(), DPUDeploymentUID: string(activation.DeploymentUID), DPUServiceUID: string(service.GetUID()),
 		ExpectedServiceSpec: expectedSpec, ApplicationValues: effective, ArgoNamespace: execution.operatorNamespace, DPUServiceName: service.GetName(), DPUServiceNamespace: desired.Namespace,
 		DPUServiceCreatedAt: service.GetCreationTimestamp().Time, DPUClusterName: desired.Bootstrap.Tenant.Name, DPUClusterNamespace: desired.Bootstrap.Tenant.Namespace, TargetNamespace: desired.Namespace,
 		ChartRepoURL: strings.TrimPrefix(stringValue(source, "repoURL"), "oci://"), ChartName: desired.Generation.Chart, ChartPath: stringValue(source, "path"), ChartVersion: stringValue(source, "version"), ChartReleaseName: stringValue(source, "releaseName"), ServiceID: id, Image: image}, nil
 }
 
-type hbnServiceProjection struct {
-	spec map[string]any
-	// App values use the pinned producer's pre-defaulting maps, not values
-	// introduced only by structural defaults on the Service API object.
-	source    map[string]any
-	values    map[string]any
-	daemonSet map[string]any
-}
-
-// compileHBNServiceSpec projects retained template/configuration values with
-// explicit controller identity references. It performs no reads and accepts no
-// observed configuration values; late runtime validation also qualifies the
-// referenced interface objects before calling it.
-func compileHBNServiceSpec(execution *managementVerificationInputs, template, configuration *unstructured.Unstructured,
-	name, namespace, reference, id string, nodeSelector, clusterSelector map[string]any, names []any,
-) (hbnServiceProjection, error) {
-	source, _, err := unstructured.NestedMap(template.Object, "spec", "helmChart", "source")
-	if err != nil || source == nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	if _, ok := source["path"]; !ok {
-		source["path"] = ""
-	} // typed ApplicationSource.Path has no omitempty
-	templateValues, _, err := unstructured.NestedMap(template.Object, "spec", "helmChart", "values")
-	if err != nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	configValues, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration", "helmChart", "values")
-	if err != nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	values := mergeHBNValues(configValues, templateValues)
-	sds, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration", "serviceDaemonSet")
-	if err != nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	if sds == nil {
-		sds = map[string]any{}
-	}
-	labels, _, err := unstructured.NestedMap(sds, "labels")
-	if err != nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	if labels == nil {
-		labels = map[string]any{}
-	}
-	labels[hbnServiceReferenceLabel] = reference
-	sds["labels"] = labels
-	sds["nodeSelector"] = nodeSelector
-	// HBN uses only predefined mybrhbn networks, so DPF's dynamic resource
-	// injection and ConfigPorts branches cannot add unretained values here.
-	config, _, err := unstructured.NestedMap(configuration.Object, "spec", "serviceConfiguration")
-	if err != nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	for key := range config {
-		if key != "helmChart" && key != "serviceDaemonSet" && key != "deployInCluster" {
-			return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-		}
-	}
-	if value, ok := config["deployInCluster"]; ok && value != false {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	spec := map[string]any{"helmChart": map[string]any{"source": source, "values": values}, "serviceID": id, "serviceDaemonSet": sds, "interfaces": names, "dpuClusterSelector": clusterSelector, "security": map[string]any{"privileged": true}}
-	if value, ok := config["deployInCluster"]; ok {
-		spec["deployInCluster"] = value
-	}
-	if security, found, e := unstructured.NestedMap(template.Object, "spec", "security"); e != nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	} else if found {
-		spec["security"] = security
-	}
-	expected := runtimeObject("DPUService", name, namespace, spec)
-	expected, err = execution.reconciler.schemas.DefaultedCopy(expected)
-	if err != nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	expectedSpec, _, err := unstructured.NestedMap(expected.Object, "spec")
-	if err != nil {
-		return hbnServiceProjection{}, fmt.Errorf("HBN_SERVICE_EXPECTATION_MISMATCH")
-	}
-	return hbnServiceProjection{spec: expectedSpec, source: source, values: values, daemonSet: sds}, nil
-}
-
-func runtimeObject(kind, name, namespace string, spec map[string]any) *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "svc.dpu.nvidia.com/v1alpha1", "kind": kind, "metadata": map[string]any{"name": name, "namespace": namespace}, "spec": spec}}
-}
-
-// mergeHBNValues mirrors DPF MergeMaps: destination wins recursively, including
-// explicit false/zero/null. It never aliases or mutates either input.
-func mergeHBNValues(dst, src map[string]any) map[string]any {
-	result := runtime.DeepCopyJSON(src)
-	if result == nil {
-		result = map[string]any{}
-	}
-	for key, value := range dst {
-		if left, ok := value.(map[string]any); ok {
-			if right, ok := result[key].(map[string]any); ok {
-				result[key] = mergeHBNValues(left, right)
-				continue
-			}
-		}
-		result[key] = runtime.DeepCopyJSONValue(value)
-	}
-	return result
-}
-
-func compileHBNServiceInterfaces(execution *managementVerificationInputs, service *unstructured.Unstructured, observed []unstructured.Unstructured, configuration *unstructured.Unstructured, selector, clusterSelector map[string]any, id, version string) ([]any, []hbnNetworkSelection, error) {
-	bad := func() ([]any, []hbnNetworkSelection, error) {
+func compileHBNServiceInterfaces(execution *managementVerificationInputs, service *unstructured.Unstructured, observed []unstructured.Unstructured, configuration *unstructured.Unstructured, selector, clusterSelector map[string]any, id, version string) ([]any, []controllercontract.HBNNetworkSelection, error) {
+	bad := func() ([]any, []controllercontract.HBNNetworkSelection, error) {
 		return nil, nil, fmt.Errorf("HBN_RUNTIME_INTERFACES_MISMATCH")
 	}
 	rows, found, err := unstructured.NestedSlice(configuration.Object, "spec", "interfaces")
@@ -244,7 +141,7 @@ func compileHBNServiceInterfaces(execution *managementVerificationInputs, servic
 		return bad()
 	}
 	names := []string{}
-	networks := []hbnNetworkSelection{}
+	networks := []controllercontract.HBNNetworkSelection{}
 	for _, raw := range rows {
 		row, ok := raw.(map[string]any)
 		if !ok {
@@ -291,15 +188,12 @@ func compileHBNServiceInterfaces(execution *managementVerificationInputs, servic
 		if len(owners) != 2 || !deploymentOwner || !serviceOwner {
 			return bad()
 		}
-		// The pinned typed ServiceInterfaceSetSpecTemplate serializes its empty
-		// ObjectMeta as metadata:{}; structural defaulting does not create it.
-		spec := map[string]any{"dpuClusterSelector": clusterSelector, "template": map[string]any{"metadata": map[string]any{}, "spec": map[string]any{"nodeSelector": selector, "template": map[string]any{"metadata": map[string]any{"labels": map[string]any{hbnServiceIDLabel: id, "svc.dpu.nvidia.com/interface": name}}, "spec": map[string]any{"interfaceType": "service", "service": map[string]any{"serviceID": id, "network": "mybrhbn", "interfaceName": name}}}}}}
-		expected, err := execution.reconciler.schemas.DefaultedCopy(runtimeObject("DPUServiceInterface", selected.GetName(), selected.GetNamespace(), spec))
+		expected, err := execution.rules.HBNServiceInterface(selected.GetName(), selected.GetNamespace(), name, id, selector, clusterSelector)
 		if err != nil || !jsonEqual(expected.Object["spec"], selected.Object["spec"]) {
 			return bad()
 		}
 		names = append(names, selected.GetName())
-		networks = append(networks, hbnNetworkSelection{Name: "mybrhbn", Interface: name})
+		networks = append(networks, controllercontract.HBNNetworkSelection{Name: "mybrhbn", Interface: name})
 	}
 	slices.Sort(names)
 	if len(slices.Compact(names)) != 3 {
@@ -312,57 +206,6 @@ func compileHBNServiceInterfaces(execution *managementVerificationInputs, servic
 	return result, networks, nil
 }
 
-// The retained HBN profile's Multus fields, in pinned Multus JSON field order.
-// Additional unqualified fields fail closed rather than silently disappearing.
-type hbnNetworkSelection struct {
-	Name      string          `json:"name"`
-	Namespace string          `json:"namespace,omitempty"`
-	Interface string          `json:"interface,omitempty"`
-	CNIArgs   *map[string]any `json:"cni-args"`
-}
-
-func compileHBNNetworkAnnotation(existing string, networks []hbnNetworkSelection) (string, error) {
-	generated := map[string]hbnNetworkSelection{"invalid-interface": {Name: "invalid-network", Namespace: "invalid-namespace", Interface: "invalid-interface"}}
-	for _, network := range networks {
-		generated[network.Interface] = network
-	}
-	var result []hbnNetworkSelection
-	if existing != "" {
-		decoder := json.NewDecoder(strings.NewReader(existing))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&result); err != nil {
-			return "", err
-		}
-	}
-	seen := map[string]bool{}
-	for i, network := range result {
-		if seen[network.Interface] {
-			return "", fmt.Errorf("duplicate network interface")
-		}
-		seen[network.Interface] = true
-		if value, found := generated[network.Interface]; found {
-			if network.Name != "" {
-				value.Name = network.Name
-			}
-			if network.Namespace != "" {
-				value.Namespace = network.Namespace
-			}
-			if network.CNIArgs != nil {
-				value.CNIArgs = network.CNIArgs
-			}
-			result[i] = value
-			delete(generated, network.Interface)
-		}
-	}
-	for _, value := range generated {
-		result = append(result, value)
-	}
-	slices.SortFunc(result, func(a, b hbnNetworkSelection) int {
-		if c := strings.Compare(a.Name, b.Name); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Interface, b.Interface)
-	})
-	encoded, err := json.Marshal(result)
-	return string(encoded), err
+func runtimeObject(kind, name, namespace string, spec map[string]any) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "svc.dpu.nvidia.com/v1alpha1", "kind": kind, "metadata": map[string]any{"name": name, "namespace": namespace}, "spec": spec}}
 }

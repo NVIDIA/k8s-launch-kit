@@ -34,7 +34,7 @@ type tenantStageManagementClient interface {
 func (c *APIClient) connectTenant(ctx context.Context, plan *generation.Plan, uid types.UID, reconciler *Reconciler,
 	journal *executionJournal, interval, requestTimeout time.Duration,
 ) (tenantStageReader, error) {
-	return connectRetainedTenant(ctx, c, plan, uid, reconciler, journal, interval, requestTimeout, c.tenantDial, c.requestLimiter)
+	return connectRetainedTenant(reconciler.rules, ctx, c, plan, uid, reconciler, journal, interval, requestTimeout, c.tenantDial, c.requestLimiter)
 }
 
 type tenantStageReceipt struct {
@@ -115,7 +115,7 @@ func runTenantStage(ctx context.Context, management tenantStageManagementClient,
 	if target != nil {
 		resourceClient = existingOnlyResourceClient{ResourceClient: management}
 	}
-	cluster, err := executeNativeObject(ctx, resourceClient, reconciler, desired, generation.StageTenant, journal, false, interval)
+	cluster, err := executeNativeObject(execution.rules, ctx, resourceClient, reconciler, desired, generation.StageTenant, journal, false, interval)
 	if err != nil {
 		return tenantStageReceipt{}, err
 	}
@@ -139,7 +139,7 @@ func runTenantStage(ctx context.Context, management tenantStageManagementClient,
 func validateTenantStageInputs(ctx context.Context, management tenantStageManagementClient, execution *managementExecution, receipt managementBootstrapReceipt,
 	journal *executionJournal, interval, requestTimeout time.Duration, observeNetwork tenantNetworkObserver,
 ) error {
-	if ctx == nil || management == nil || execution == nil || execution.plan == nil || execution.operator == nil || execution.reconciler == nil || execution.configObject == nil || execution.manager == nil || len(execution.namespaces) == 0 || journal == nil || observeNetwork == nil {
+	if ctx == nil || management == nil || execution == nil || execution.rules.Validate() != nil || execution.plan == nil || execution.operator == nil || execution.reconciler == nil || execution.configObject == nil || execution.manager == nil || len(execution.namespaces) == 0 || journal == nil || observeNetwork == nil {
 		return fmt.Errorf("tenant stage requires a retained plan, bound management client, report and fresh network observer")
 	}
 	if _, ok := ctx.Deadline(); !ok || interval <= 0 || requestTimeout <= 0 {
@@ -171,7 +171,7 @@ func verifyManagementBootstrap(ctx context.Context, client identityResourceReade
 	if err := client.VerifyIdentity(ctx); err != nil {
 		return bootstrapVerificationFailure("BOOTSTRAP_MANAGEMENT_UNVERIFIED", err)
 	}
-	if execution == nil || execution.manager == nil || execution.configObject == nil || execution.reconciler == nil {
+	if execution == nil || execution.rules.Validate() != nil || execution.manager == nil || execution.configObject == nil || execution.reconciler == nil {
 		return bootstrapVerificationFailure("BOOTSTRAP_PLAN_INVALID", nil)
 	}
 	if receipt.OperatorRelease != execution.operatorReleaseName || receipt.ManagerDeploymentName != execution.manager.GetName() || receipt.OperatorNamespace != execution.operatorNamespace {
@@ -207,7 +207,7 @@ func verifyManagementBootstrap(ctx context.Context, client identityResourceReade
 	if !operatorConfigVersionMatches(config, execution.operatorVersion) {
 		return bootstrapVerificationFailure("BOOTSTRAP_CONFIG_VERSION_CHANGED", nil)
 	}
-	if readiness := EvaluateReadiness(config); !readiness.Ready {
+	if readiness := execution.rules.ResourceReadiness(config); !readiness.Ready {
 		return errBootstrapConfigNotReady
 	}
 	currentManager, err := client.Get(ctx, execution.manager.DeepCopy())
@@ -217,7 +217,7 @@ func verifyManagementBootstrap(ctx context.Context, client identityResourceReade
 	if currentManager == nil || currentManager.GetUID() != types.UID(receipt.ManagerDeploymentUID) || !managerDeploymentIntentMatches(execution.manager, currentManager) {
 		return bootstrapVerificationFailure("BOOTSTRAP_MANAGER_CHANGED", err)
 	}
-	if readiness := EvaluateReadiness(currentManager); !readiness.Ready {
+	if readiness := execution.rules.ResourceReadiness(currentManager); !readiness.Ready {
 		return bootstrapVerificationFailure("BOOTSTRAP_MANAGER_NOT_READY", nil)
 	}
 	if err := client.VerifyIdentity(ctx); err != nil {

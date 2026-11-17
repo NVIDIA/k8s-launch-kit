@@ -66,11 +66,8 @@ func newControlPlaneVerificationInputs(prepared *preparedControlPlaneRun, contro
 				execution.crds[i].spec = runtime.DeepCopyJSONValue(execution.crds[i].spec).(map[string]any)
 			}
 		}
-		if execution.reconciler != nil {
-			reconciler := *execution.reconciler
-			reconciler.controllerMetadata = reconciler.controllerMetadata.clone()
-			execution.reconciler = &reconciler
-		}
+		// Reconciler, selected rules and opaque metadata are immutable verification data.
+
 		view.execution = &execution
 	}
 	return view

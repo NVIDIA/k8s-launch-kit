@@ -145,7 +145,7 @@ func TestStagedSoftwareVerificationBracketsStreamsAndCleansUp(t *testing.T) {
 			})
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			receipt, err := verifyStagedSoftware(ctx, fake, verify, desired, current, locks, selected, "operator", "nvcr.io/nvidia/doca/dpf-system:v26.8.0", 1024)
+			receipt, err := verifyStagedSoftware(testRules(t), ctx, fake, verify, desired, current, locks, selected, "operator", "nvcr.io/nvidia/doca/dpf-system:v26.8.0", 1024)
 			if tc.wantPass {
 				if err != nil || receipt.SoftwareUID != current.GetUID() || len(receipt.Components) != 2 || receipt.VerifiedAt.IsZero() || requests.Load() != 2 || fake.reads != 2 || fake.snapshots != 2 || fake.identityChecks != 2 {
 					t.Fatalf("incomplete receipt or verification: %#v, %v", receipt, err)
