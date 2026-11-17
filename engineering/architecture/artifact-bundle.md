@@ -13,9 +13,10 @@ paths use the same filename rules and deterministic order.
 
 The lower-level `ParseResources` entrypoint validates resource YAML and
 identities while retaining each caller-supplied source name and physical
-document number. Host `FromFiles` applies its filename roles and values rules
-around that parser. DPF stage validation supplies its indexed nested paths
-directly, then applies stage membership, destination, namespace and projection
+document number. Host `FromFiles` shares its decoder and identity checker,
+applying filename roles and values rules in sorted file order with one
+complete-set identity map. DPF stage validation supplies its indexed nested paths
+to `ParseResources`, then applies stage membership, destination, namespace and projection
 rules in the DPF bundle package. Helm SDK setup is shared through
 `pkg/helmclient`; namespace and storage-driver choices remain explicit inputs,
 with Host defaults applied by Host callers.
