@@ -92,7 +92,30 @@ func fillOperatorDefaults(subs []config.OCPOperatorSubscription) {
 func DefaultOCPOperatorSubscriptions(cfg *config.LaunchKitConfig) []config.OCPOperatorSubscription {
 	subs := effectiveOperatorSubscriptions(cfg)
 	fillOperatorDefaults(subs)
+	reconcileNetworkOperatorChannel(cfg, subs)
 	return subs
+}
+
+// isReleaseChannel reports whether an OLM channel name pins the given release line
+// (e.g. "v26.7" or "26.7" for release "26.7").
+func isReleaseChannel(channel, release string) bool {
+	return channel == "v"+release || channel == release
+}
+
+// reconcileNetworkOperatorChannel repoints the network-operator channel at the
+// selected release line offline, so a saved or default channel left over from a
+// different release does not render a Subscription on the wrong line. discover
+// instead verifies the channel against the live PackageManifest.
+func reconcileNetworkOperatorChannel(cfg *config.LaunchKitConfig, subs []config.OCPOperatorSubscription) {
+	if cfg.NetworkOperator == nil || cfg.NetworkOperator.SelectedRelease == "" {
+		return
+	}
+	release := cfg.NetworkOperator.SelectedRelease
+	for i := range subs {
+		if subs[i].Package == olmNetworkOperatorPkg && !isReleaseChannel(subs[i].Channel, release) {
+			subs[i].Channel = "v" + release
+		}
+	}
 }
 
 // effectiveOperatorGroups derives one OperatorGroup per unique operator namespace
@@ -343,6 +366,7 @@ func EnsureOCPOperatorInstallDefaults(cfg *config.LaunchKitConfig) {
 	}
 	operators := effectiveOperatorSubscriptions(cfg)
 	fillOperatorDefaults(operators)
+	reconcileNetworkOperatorChannel(cfg, operators)
 	cfg.OCPOperatorInstall.Operators = operators
 
 	groups := effectiveOperatorGroups(cfg)

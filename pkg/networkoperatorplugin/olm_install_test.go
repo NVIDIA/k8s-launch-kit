@@ -83,9 +83,16 @@ func TestOCPOperatorInstallManagedRendersInstallArtifacts(t *testing.T) {
 	packages := make([]string, 0, len(docs))
 	for _, doc := range docs {
 		assert.Equal(t, "Subscription", doc["kind"])
-		packages = append(packages, specString(t, doc, "name"))
+		name := specString(t, doc, "name")
+		packages = append(packages, name)
 		assert.Equal(t, "Automatic", specString(t, doc, "installPlanApproval"))
-		assert.Equal(t, "stable", specString(t, doc, "channel"))
+		// The network operator pins its release-specific channel offline; the
+		// others fall back to the stable channel.
+		if name == "nvidia-network-operator" {
+			assert.Equal(t, "v26.7", specString(t, doc, "channel"))
+		} else {
+			assert.Equal(t, "stable", specString(t, doc, "channel"))
+		}
 		assert.Equal(t, "openshift-marketplace", specString(t, doc, "sourceNamespace"))
 	}
 	sort.Strings(packages)
@@ -342,6 +349,25 @@ func TestEnsureOCPOperatorInstallDefaultsReconcilesNamespace(t *testing.T) {
 	assert.Equal(t, "new-ns", op.Namespace, "namespace tracks the effective config")
 	assert.Equal(t, "v26.7", op.Channel, "saved channel preserved")
 	assert.Equal(t, "Manual", op.InstallPlanApproval, "saved approval preserved")
+}
+
+// TestEnsureOCPOperatorInstallDefaultsReconcilesStaleChannel verifies a saved
+// network-operator channel is repointed when selectedRelease changes offline.
+func TestEnsureOCPOperatorInstallDefaultsReconcilesStaleChannel(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	cfg.NetworkOperator.SelectedRelease = "26.10"
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
+		Manage: true,
+		Operators: []config.OCPOperatorSubscription{{
+			Package: "nvidia-network-operator", Namespace: cfg.NetworkOperator.Namespace,
+			Channel: "v26.7", Source: "certified-operators", SourceNamespace: "openshift-marketplace",
+		}},
+	}
+
+	EnsureOCPOperatorInstallDefaults(cfg)
+
+	assert.Equal(t, "v26.10", operatorSub(t, cfg, "nvidia-network-operator").Channel,
+		"stale channel reconciled to the selected release")
 }
 
 // TestDiscoverOCPOperatorInstallHonorsSavedChoices verifies discovery uses the
