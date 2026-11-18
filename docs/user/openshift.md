@@ -59,6 +59,37 @@ site entries; use Launch Kit deploy for the additive merge. Follow
 A successful ConfigMap patch does not prove propagation to each node or successful
 pod attachment; verify those during workload validation.
 
+### Generate operator-install artifacts (optional)
+
+By default Launch Kit expects the operators above to be installed out of band.
+Pass `--manage-operators` to `discover` or `generate` to also emit their OLM
+install artifacts — one `Namespace`, one `OperatorGroup` per unique namespace,
+and one `Subscription` per operator — into the bundle as
+`00-operator-namespaces.yaml`, `00-operatorgroups.yaml`, and
+`00-subscriptions.yaml`. Every supported OpenShift profile emits them; default
+output (without the flag) is unchanged.
+
+`discover` reads each operator's channel, catalog source, and source namespace
+from its OLM `PackageManifest`. The NVIDIA Network Operator channel is pinned to
+the release-specific channel named for `networkOperator.selectedRelease` (e.g.
+`v26.7`), so Automatic upgrades stay on that line instead of following a moving
+channel such as `stable`; discovery fails fast when no such channel exists, or
+when a package resolves ambiguously to more than one catalog. Without a prior
+`discover`, `generate` fills offline defaults: the Network Operator uses the
+release-specific channel for `selectedRelease`, the other operators use `stable`,
+and catalogs default to the certified/Red Hat sources — confirm them before
+applying.
+
+The Subscriptions use `installPlanApproval: Automatic`, so OLM applies updates
+within the subscribed channel in place; changing an operator's channel or
+`selectedRelease` and re-applying upgrades the installed operator to that line
+rather than holding at the previous version.
+
+Launch Kit does not install operators during `deploy`: apply the three artifacts
+first, wait for the CSVs to reach `Succeeded` and their CRDs to be established,
+then run `deploy`. If `deploy` runs before the operators are ready, it stops and
+points back to these artifacts.
+
 ## 1. Discover the intended workers
 
 Prepare a site-owned seed configuration. This illustrates the required scope, **not** a complete hardware inventory; discovery supplies NIC and GPU details. Replace the worker names and namespaces with site values:

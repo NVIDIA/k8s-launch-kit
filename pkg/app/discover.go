@@ -168,6 +168,7 @@ func (l *Launcher) discoverClusterConfig() error {
 	finalInput.Config.DiscoveredSecondaryNetwork = discoveryConfig.DiscoveredSecondaryNetwork
 	finalInput.Config.DiscoveredDOCAHost = discoveryConfig.DiscoveredDOCAHost
 	finalInput.Config.DiscoveredDOCAHostScope = nil
+	finalInput.Config.OCPOperatorInstall = discoveryConfig.OCPOperatorInstall
 	if l.options.UserConfig != "" {
 		preserveSpectrumXRailAssignments(rawInput.Config.ClusterConfig, finalInput.Config.ClusterConfig, l.ui)
 	}
@@ -201,6 +202,15 @@ func (l *Launcher) discoverClusterConfig() error {
 		l.recordResolvedProfile(finalConfig)
 	}
 
+	// Gate on the resolved value so a saved ocpOperatorInstall.manage and the
+	// --manage-operators flag behave the same. Runs on finalConfig: the operator
+	// set depends on the resolved profile, filled in only after the walk above.
+	if finalConfig.OCPOperatorInstall != nil && finalConfig.OCPOperatorInstall.Manage {
+		if err := networkoperatorplugin.DiscoverOCPOperatorInstall(ctx, l.kubeClient, finalConfig, l.ui); err != nil {
+			return err
+		}
+	}
+
 	config.PopulateSpectrumXInterfaceNames(finalConfig)
 
 	// Compute effective save path:
@@ -230,6 +240,9 @@ func (l *Launcher) discoverClusterConfig() error {
 		paths := []string{"clusterConfig", "discoveredSecondaryNetwork", "discoveredDocaHost"}
 		if rawInput.Config.DiscoveredDOCAHostScope != nil {
 			paths = append(paths, "discoveredDocaHostScope")
+		}
+		if finalConfig.OCPOperatorInstall != nil {
+			paths = append(paths, "ocpOperatorInstall")
 		}
 		inputs := configflags.Infer(l.options)
 		for _, override := range inputs.Overrides {

@@ -11,6 +11,9 @@ description: |
   IP over Infiniband with RDMA sharev device profile offers InfiniBand networking with shared RDMA resources.
 deploymentGuide: ipoib-rdma-shared.rst
 templates:
+  - ../sriov-ethernet-rdma-ocp/00-operator-namespaces.yaml
+  - ../sriov-ethernet-rdma-ocp/00-operatorgroups.yaml
+  - ../sriov-ethernet-rdma-ocp/00-subscriptions.yaml
   - ../sriov-ethernet-rdma-ocp/04-cni-sysctl-allowlist-patch.yaml
   - 30-nicconfigurationtemplate.yaml
   - ../sriov-ethernet-rdma-ocp/02-maintenanceoperatorconfig.yaml

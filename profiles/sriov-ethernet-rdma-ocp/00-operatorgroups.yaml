@@ -1,0 +1,10 @@
+{{- range .OCPOperatorInstall.OperatorGroups }}
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: "{{ .Name }}"
+  namespace: "{{ .Namespace }}"
+spec:
+  targetNamespaces: [{{ range $i, $ns := .TargetNamespaces }}{{ if $i }}, {{ end }}"{{ $ns }}"{{ end }}]
+{{- end }}
