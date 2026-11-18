@@ -5,6 +5,7 @@ package networkoperatorplugin
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -13,7 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -527,4 +530,48 @@ func TestDiscoverOCPOperatorInstallRefreshesSavedSubscriptionName(t *testing.T) 
 
 	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
 	assert.Equal(t, "new-sub", operatorSub(t, cfg, "nvidia-network-operator").Name, "refresh the saved Subscription name from the cluster")
+}
+
+// TestDiscoverOCPOperatorInstallErrsOnAmbiguousSubscription verifies discovery
+// fails instead of emitting a package-named Subscription when the namespace
+// already has more than one matching installation.
+func TestDiscoverOCPOperatorInstallErrsOnAmbiguousSubscription(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	nfdNs := config.DefaultNFDOperatorNamespace
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	subA := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", nfdNs, "nfd-a",
+		map[string]interface{}{"spec": map[string]interface{}{"name": "nfd"}})
+	subB := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", nfdNs, "nfd-b",
+		map[string]interface{}{"spec": map[string]interface{}{"name": "nfd"}})
+	c := fake.NewClientBuilder().WithObjects(manifest, subA, subB).Build()
+
+	err := DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multiple Subscriptions install nfd")
+}
+
+// TestDiscoverOCPOperatorInstallErrsOnForbiddenSubscriptionList verifies a denied
+// Subscription read stops discovery rather than falling back to a package name.
+func TestDiscoverOCPOperatorInstallErrsOnForbiddenSubscriptionList(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	nfdNs := config.DefaultNFDOperatorNamespace
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	customNfd := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", nfdNs, "site-nfd",
+		map[string]interface{}{"spec": map[string]interface{}{"name": "nfd"}})
+	c := fake.NewClientBuilder().WithObjects(manifest, customNfd).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			lo := &client.ListOptions{}
+			for _, o := range opts {
+				o.ApplyToList(lo)
+			}
+			if list.GetObjectKind().GroupVersionKind().Kind == "SubscriptionList" && lo.Namespace == nfdNs {
+				return errors.New("forbidden")
+			}
+			return cl.List(ctx, list, opts...)
+		},
+	}).Build()
+
+	err := DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list Subscriptions")
 }

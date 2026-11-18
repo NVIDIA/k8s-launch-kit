@@ -223,8 +223,14 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 	for i := range operators {
 		op := &operators[i]
 		// Always read the live Subscription name so a saved name does not go stale
-		// if the installation is recreated under a different name.
-		if sub, err := findOCPOperatorSubscription(ctx, c, ocpOperator{packageName: op.Package, namespace: op.Namespace}); err == nil && sub != nil {
+		// if the installation is recreated under a different name. Propagate lookup
+		// errors (forbidden, ambiguous, wrong package) so a failed inspection never
+		// falls back to a package-named Subscription that would duplicate on apply.
+		sub, err := findOCPOperatorSubscription(ctx, c, ocpOperator{packageName: op.Package, namespace: op.Namespace})
+		if err != nil {
+			return err
+		}
+		if sub != nil {
 			op.Name = sub.GetName()
 		}
 		manifests, ok := byPackage[op.Package]

@@ -71,11 +71,13 @@ output (without the flag) is unchanged.
 
 `discover` reads each operator's channel, catalog source, and source namespace
 from its OLM `PackageManifest`. The NVIDIA Network Operator channel is pinned to
-the one whose current CSV is on `networkOperator.selectedRelease`, so Automatic
-upgrades stay within that release line; discovery fails fast when no channel
-matches the selected release, or when a package resolves ambiguously to more than
-one catalog. Without a prior `discover`, `generate` fills offline defaults (the
-`stable` channel and the certified/Red Hat catalogs) that you must confirm before
+the release-specific channel named for `networkOperator.selectedRelease` (e.g.
+`v26.7`), so Automatic upgrades stay on that line instead of following a moving
+channel such as `stable`; discovery fails fast when no such channel exists, or
+when a package resolves ambiguously to more than one catalog. Without a prior
+`discover`, `generate` fills offline defaults: the Network Operator uses the
+release-specific channel for `selectedRelease`, the other operators use `stable`,
+and catalogs default to the certified/Red Hat sources — confirm them before
 applying.
 
 The Subscriptions use `installPlanApproval: Automatic`, so OLM applies updates
