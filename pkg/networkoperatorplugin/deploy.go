@@ -214,6 +214,9 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	if err != nil {
 		return pkgerrors.NewValidationError("invalid deployment artifacts", err, "Correct the generated manifests and rerun deploy")
 	}
+	if len(selected.operatorInstall) > 0 {
+		uiOutput.Info("Skipping %d operator-install artifact(s); deploy does not manage operator installation — apply them and wait for the operators to be Ready first.", len(selected.operatorInstall))
+	}
 	if err := checkLiveIPPoolCIDRs(ctx, kubeClient, artifacts, opts.Config); err != nil {
 		return pkgerrors.NewValidationError(fmt.Sprintf("IPPool address collision check failed: %v", err), nil, "Choose non-overlapping subnets or correct cluster CIDR overrides and API access")
 	}

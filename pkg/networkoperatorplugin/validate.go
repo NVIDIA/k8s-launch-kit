@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -210,6 +211,11 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 	var results []ValidationResult
 	for _, doc := range artifacts.Documents() {
 		if doc.Role() != bundle.Deployment {
+			continue
+		}
+		// Opt-in OLM install artifacts are applied manually, not by l8k, so they
+		// are not part of the deployed state this validates.
+		if isOLMInstallTemplate(filepath.Base(doc.Source().File)) {
 			continue
 		}
 		obj := doc.ObjectCopy()
