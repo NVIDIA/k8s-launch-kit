@@ -635,7 +635,7 @@ func runIbWriteBwBatch(ctx context.Context, restConfig *rest.Config, namespaceBy
 		return results
 	}
 
-	tctx, cancel := context.WithTimeout(ctx, ibWriteBwBatchTimeoutFor(tests))
+	tctx, cancel := context.WithTimeout(ctx, ibWriteBwBatchTimeoutFor(tests, gpuDirect))
 	defer cancel()
 
 	serverCmd := ibWriteBwBatchServerCommandMode(tests, size, gpuDirect)
@@ -735,7 +735,7 @@ func ibWriteBwBatchClientCommandMode(tests []PingTest, size int, gpuDirect bool)
 	var b strings.Builder
 	b.WriteString(`run_with_timeout() { seconds="$1"; shift; if command -v timeout >/dev/null 2>&1; then timeout --kill-after=2s "${seconds}s" "$@"; else "$@" & pid=$!; (sleep "$seconds"; kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null) & watchdog=$!; wait "$pid"; rc=$?; kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null; return "$rc"; fi; }; `)
 	for i, test := range tests {
-		timeoutSeconds := int(commandTimeoutFor(test, ibWriteBwCommandTimeout).Seconds())
+		timeoutSeconds := int(ibWriteBwCommandTimeoutFor(test, gpuDirect).Seconds())
 		if timeoutSeconds <= 0 {
 			timeoutSeconds = 1
 		}
@@ -876,10 +876,18 @@ func ibWriteBwBatchPort(index int) int {
 	return 18515 + index
 }
 
-func ibWriteBwBatchTimeoutFor(tests []PingTest) time.Duration {
+func ibWriteBwCommandTimeoutFor(test PingTest, gpuDirect bool) time.Duration {
+	// CUDA initialization needs the full allowance even for non-gating probes.
+	if gpuDirect {
+		return ibWriteBwCommandTimeout
+	}
+	return commandTimeoutFor(test, ibWriteBwCommandTimeout)
+}
+
+func ibWriteBwBatchTimeoutFor(tests []PingTest, gpuDirect bool) time.Duration {
 	timeout := 20*time.Second + rdmaServerLogTimeout
 	for _, test := range tests {
-		timeout += commandTimeoutFor(test, ibWriteBwCommandTimeout) + rdmaBatchSettleDelayFor([]PingTest{test})
+		timeout += ibWriteBwCommandTimeoutFor(test, gpuDirect) + rdmaBatchSettleDelayFor([]PingTest{test})
 	}
 	return timeout
 }

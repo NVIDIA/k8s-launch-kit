@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -204,6 +205,51 @@ func TestGPUDirectDMABufCommandsUseEndpointGPUIndices(t *testing.T) {
 	assert.NotContains(t, server, "--use_cuda=4")
 	assert.Contains(t, client, "--use_cuda=4 --use_cuda_dmabuf")
 	assert.NotContains(t, client, "--use_cuda=7")
+}
+
+func TestIbWriteBwBatchClientCommandBudgets(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		expectation Expectation
+		hostSeconds int
+	}{
+		{name: "default", hostSeconds: 45},
+		{name: "required", expectation: ExpectRequired, hostSeconds: 45},
+		{name: "observe", expectation: ExpectObserve, hostSeconds: 5},
+		{name: "forbidden", expectation: ExpectForbidden, hostSeconds: 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			test := PingTest{
+				SrcIP: "192.0.2.10", DstIP: "192.0.2.20",
+				SrcRDMADev: "mlx5_1", DstRDMADev: "mlx5_9",
+				SrcGPUIndex: 4, DstGPUIndex: 7, Expectation: tc.expectation,
+			}
+			host := ibWriteBwBatchClientCommandMode([]PingTest{test}, 65536, false)
+			gpu := ibWriteBwBatchClientCommandMode([]PingTest{test}, 65536, true)
+
+			assert.Contains(t, host, fmt.Sprintf("run_with_timeout %d ib_write_bw ", tc.hostSeconds))
+			assert.NotContains(t, host, "--use_cuda")
+			assert.Contains(t, gpu, "run_with_timeout 45 ib_write_bw ")
+			assert.NotContains(t, gpu, "run_with_timeout 5 ib_write_bw ")
+			assert.Contains(t, gpu, "--use_cuda=4 --use_cuda_dmabuf")
+		})
+	}
+}
+
+func TestIbWriteBwBatchTimeoutIncludesClientBudgets(t *testing.T) {
+	tests := []PingTest{
+		{Expectation: ""},
+		{Expectation: ExpectRequired},
+		{Expectation: ExpectObserve},
+		{Expectation: ExpectForbidden},
+	}
+
+	// Both include setup/log allowances and per-test settle time. Only the
+	// GPU batch needs 45 seconds for the observation and forbidden clients.
+	assert.Equal(t, 133*time.Second, ibWriteBwBatchTimeoutFor(tests, false))
+	assert.Equal(t, 213*time.Second, ibWriteBwBatchTimeoutFor(tests, true))
+	assert.Equal(t, 25*time.Second, ibWriteBwBatchTimeoutFor(nil, false))
+	assert.Equal(t, 25*time.Second, ibWriteBwBatchTimeoutFor(nil, true))
 }
 
 func TestGPUDirectDMABufRejectsMissingTopologyWithoutGPUZeroFallback(t *testing.T) {

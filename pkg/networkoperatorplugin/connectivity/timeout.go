@@ -83,7 +83,7 @@ func automaticTimeoutBudget(plan MatrixPlan, checks []Check) timeoutBudget {
 		case CheckIBWriteBW, CheckGPUDirectDMABuf:
 			budget.Tests += requiredRouteBudget(tests)
 			for _, batch := range groupRPingTests(tests) {
-				budget.Tests += ibWriteBwBatchTimeoutFor(batch) + rdmaServerCleanupTimeout
+				budget.Tests += ibWriteBwBatchTimeoutFor(batch, check == CheckGPUDirectDMABuf) + rdmaServerCleanupTimeout
 			}
 		}
 	}
