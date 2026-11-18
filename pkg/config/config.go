@@ -508,12 +508,22 @@ const DefaultOCPInstallPlanApproval = "Automatic"
 // OCPOperatorInstallConfig is the opt-in OLM install block. Manage=false (or a
 // nil parent) keeps generate's output byte-for-byte identical to today.
 type OCPOperatorInstallConfig struct {
-	Manage    bool                      `yaml:"manage"`
-	Operators []OCPOperatorSubscription `yaml:"operators,omitempty"`
+	Manage         bool                      `yaml:"manage"`
+	Operators      []OCPOperatorSubscription `yaml:"operators,omitempty"`
+	OperatorGroups []OCPOperatorGroup        `yaml:"operatorGroups,omitempty"`
 }
 
-// UniqueNamespaces lists each operator namespace once; OpenShift allows only one
-// OperatorGroup per namespace.
+// OCPOperatorGroup is one namespace's OLM OperatorGroup. Discovery reuses an
+// existing group's name and target namespaces so apply updates it instead of
+// creating a second group, which OLM rejects as TooManyOperatorGroups.
+type OCPOperatorGroup struct {
+	Name             string   `yaml:"name"`
+	Namespace        string   `yaml:"namespace"`
+	TargetNamespaces []string `yaml:"targetNamespaces"`
+}
+
+// UniqueNamespaces lists each operator namespace once; the Namespace artifacts
+// are deduplicated so operators sharing a namespace emit it only once.
 func (c *OCPOperatorInstallConfig) UniqueNamespaces() []string {
 	seen := make(map[string]bool, len(c.Operators))
 	var namespaces []string

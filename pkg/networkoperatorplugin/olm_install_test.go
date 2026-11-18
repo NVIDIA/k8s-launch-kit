@@ -385,3 +385,68 @@ func TestDiscoverOCPOperatorInstallReusesExistingSubscriptionName(t *testing.T) 
 	// An operator with no existing Subscription falls back to the package name.
 	assert.Equal(t, "nfd", operatorSub(t, cfg, "nfd").Name)
 }
+
+func operatorGroup(t *testing.T, cfg *config.LaunchKitConfig, namespace string) config.OCPOperatorGroup {
+	t.Helper()
+	for _, g := range cfg.OCPOperatorInstall.OperatorGroups {
+		if g.Namespace == namespace {
+			return g
+		}
+	}
+	t.Fatalf("no OperatorGroup for namespace %q", namespace)
+	return config.OCPOperatorGroup{}
+}
+
+// TestDiscoverOCPOperatorInstallReusesExistingOperatorGroup verifies discovery
+// adopts an existing group's name and target namespaces so apply updates it
+// instead of creating a second group in the namespace.
+func TestDiscoverOCPOperatorInstallReusesExistingOperatorGroup(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	ns := cfg.NetworkOperator.Namespace
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	existing := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", ns, "existing-site-group",
+		map[string]interface{}{"spec": map[string]interface{}{"targetNamespaces": []interface{}{ns}}})
+	c := fake.NewClientBuilder().WithObjects(manifest, existing).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	g := operatorGroup(t, cfg, ns)
+	assert.Equal(t, "existing-site-group", g.Name, "reuse the existing OperatorGroup name")
+	assert.Equal(t, []string{ns}, g.TargetNamespaces, "preserve its target namespaces")
+
+	// A namespace with no existing group falls back to a namespace-named OwnNamespace group.
+	nfdGroup := operatorGroup(t, cfg, "openshift-nfd")
+	assert.Equal(t, "openshift-nfd", nfdGroup.Name)
+	assert.Equal(t, []string{"openshift-nfd"}, nfdGroup.TargetNamespaces)
+}
+
+// TestDiscoverOCPOperatorInstallErrsOnMultipleOperatorGroups verifies a hard error
+// when a namespace already has more than one OperatorGroup.
+func TestDiscoverOCPOperatorInstallErrsOnMultipleOperatorGroups(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	ns := cfg.NetworkOperator.Namespace
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	og1 := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", ns, "group-a",
+		map[string]interface{}{"spec": map[string]interface{}{"targetNamespaces": []interface{}{ns}}})
+	og2 := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", ns, "group-b",
+		map[string]interface{}{"spec": map[string]interface{}{"targetNamespaces": []interface{}{ns}}})
+	c := fake.NewClientBuilder().WithObjects(manifest, og1, og2).Build()
+
+	err := DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TooManyOperatorGroups")
+}
+
+// TestDiscoverOCPOperatorInstallErrsOnSelectorOperatorGroup verifies a hard error
+// for a selector-based group the descriptor cannot reproduce.
+func TestDiscoverOCPOperatorInstallErrsOnSelectorOperatorGroup(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	ns := cfg.NetworkOperator.Namespace
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	og := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", ns, "selector-group",
+		map[string]interface{}{"spec": map[string]interface{}{"selector": map[string]interface{}{"matchLabels": map[string]interface{}{"team": "net"}}}})
+	c := fake.NewClientBuilder().WithObjects(manifest, og).Build()
+
+	err := DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "selector-based")
+}

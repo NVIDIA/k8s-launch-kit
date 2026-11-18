@@ -95,6 +95,76 @@ func DefaultOCPOperatorSubscriptions(cfg *config.LaunchKitConfig) []config.OCPOp
 	return subs
 }
 
+// effectiveOperatorGroups derives one OperatorGroup per unique operator namespace
+// (authoritative from cfg) and carries over a saved group's name and target
+// namespaces, leaving unset fields empty.
+func effectiveOperatorGroups(cfg *config.LaunchKitConfig) []config.OCPOperatorGroup {
+	saved := map[string]config.OCPOperatorGroup{}
+	if cfg.OCPOperatorInstall != nil {
+		for _, g := range cfg.OCPOperatorInstall.OperatorGroups {
+			saved[g.Namespace] = g
+		}
+	}
+	seen := map[string]bool{}
+	var groups []config.OCPOperatorGroup
+	for _, op := range requiredOCPOperators(cfg, true) {
+		if op.namespace == "" || seen[op.namespace] {
+			continue
+		}
+		seen[op.namespace] = true
+		group := config.OCPOperatorGroup{Namespace: op.namespace}
+		if prev, ok := saved[op.namespace]; ok {
+			group.Name = prev.Name
+			group.TargetNamespaces = prev.TargetNamespaces
+		}
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+// fillOperatorGroupDefaults names each group after its namespace and scopes it
+// OwnNamespace when discovery did not reuse an existing group.
+func fillOperatorGroupDefaults(groups []config.OCPOperatorGroup) {
+	for i := range groups {
+		g := &groups[i]
+		if g.Name == "" {
+			g.Name = g.Namespace
+		}
+		if g.TargetNamespaces == nil {
+			g.TargetNamespaces = []string{g.Namespace}
+		}
+	}
+}
+
+var operatorGroupListGVK = schema.GroupVersionKind{
+	Group:   "operators.coreos.com",
+	Version: "v1",
+	Kind:    "OperatorGroupList",
+}
+
+// existingOperatorGroup returns the single OperatorGroup in namespace, or nil when
+// there is none. It errors on more than one (OLM's TooManyOperatorGroups) and on a
+// selector-based group, which this descriptor cannot faithfully reproduce.
+func existingOperatorGroup(ctx context.Context, c client.Client, namespace string) (*unstructured.Unstructured, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(operatorGroupListGVK)
+	if err := c.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("list OperatorGroups in %s: %w", namespace, err)
+	}
+	switch len(list.Items) {
+	case 0:
+		return nil, nil
+	case 1:
+		og := &list.Items[0]
+		if selector, _, _ := unstructured.NestedMap(og.Object, "spec", "selector"); len(selector) > 0 {
+			return nil, fmt.Errorf("OperatorGroup %s/%s is selector-based; manage its membership manually", namespace, og.GetName())
+		}
+		return og, nil
+	default:
+		return nil, fmt.Errorf("namespace %s already has %d OperatorGroups (TooManyOperatorGroups); resolve to one before managing operators", namespace, len(list.Items))
+	}
+}
+
 var packageManifestListGVK = schema.GroupVersionKind{
 	Group:   "packages.operators.coreos.com",
 	Version: "v1",
@@ -173,9 +243,32 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 	}
 
 	fillOperatorDefaults(operators)
+
+	groups := effectiveOperatorGroups(cfg)
+	for i := range groups {
+		g := &groups[i]
+		if g.Name != "" {
+			continue
+		}
+		existing, err := existingOperatorGroup(ctx, c, g.Namespace)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			g.Name = existing.GetName()
+			targets, _, _ := unstructured.NestedStringSlice(existing.Object, "spec", "targetNamespaces")
+			if targets == nil {
+				targets = []string{}
+			}
+			g.TargetNamespaces = targets
+		}
+	}
+	fillOperatorGroupDefaults(groups)
+
 	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
-		Manage:    true,
-		Operators: operators,
+		Manage:         true,
+		Operators:      operators,
+		OperatorGroups: groups,
 	}
 	return nil
 }
@@ -248,4 +341,8 @@ func EnsureOCPOperatorInstallDefaults(cfg *config.LaunchKitConfig) {
 	operators := effectiveOperatorSubscriptions(cfg)
 	fillOperatorDefaults(operators)
 	cfg.OCPOperatorInstall.Operators = operators
+
+	groups := effectiveOperatorGroups(cfg)
+	fillOperatorGroupDefaults(groups)
+	cfg.OCPOperatorInstall.OperatorGroups = groups
 }
