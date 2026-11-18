@@ -222,10 +222,10 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 
 	for i := range operators {
 		op := &operators[i]
-		if op.Name == "" {
-			if sub, err := findOCPOperatorSubscription(ctx, c, ocpOperator{packageName: op.Package, namespace: op.Namespace}); err == nil && sub != nil {
-				op.Name = sub.GetName()
-			}
+		// Always read the live Subscription name so a saved name does not go stale
+		// if the installation is recreated under a different name.
+		if sub, err := findOCPOperatorSubscription(ctx, c, ocpOperator{packageName: op.Package, namespace: op.Namespace}); err == nil && sub != nil {
+			op.Name = sub.GetName()
 		}
 		manifests, ok := byPackage[op.Package]
 		if !ok {
@@ -270,9 +270,8 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 	groups := effectiveOperatorGroups(cfg)
 	for i := range groups {
 		g := &groups[i]
-		if g.Name != "" {
-			continue
-		}
+		// Always read the live namespace: a saved name goes stale if the group is
+		// recreated under a different name, which would duplicate it on apply.
 		existing, err := existingOperatorGroup(ctx, c, g.Namespace)
 		if err != nil {
 			return err

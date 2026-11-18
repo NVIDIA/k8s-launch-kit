@@ -491,3 +491,40 @@ func TestDiscoverOCPOperatorInstallErrsOnSelectorOperatorGroup(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "selector-based")
 }
+
+// TestDiscoverOCPOperatorInstallRefreshesSavedOperatorGroupName verifies a saved
+// group name is refreshed from the live namespace, so re-discovery adopts a group
+// an administrator recreated under a different name instead of duplicating it.
+func TestDiscoverOCPOperatorInstallRefreshesSavedOperatorGroupName(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	ns := cfg.NetworkOperator.Namespace
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
+		Manage:         true,
+		OperatorGroups: []config.OCPOperatorGroup{{Name: "old-group", Namespace: ns, TargetNamespaces: []string{ns}}},
+	}
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	live := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", ns, "new-site-group",
+		map[string]interface{}{"spec": map[string]interface{}{"targetNamespaces": []interface{}{ns}}})
+	c := fake.NewClientBuilder().WithObjects(manifest, live).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	assert.Equal(t, "new-site-group", operatorGroup(t, cfg, ns).Name, "refresh the saved group name from the cluster")
+}
+
+// TestDiscoverOCPOperatorInstallRefreshesSavedSubscriptionName verifies a saved
+// Subscription name is likewise refreshed from the live namespace.
+func TestDiscoverOCPOperatorInstallRefreshesSavedSubscriptionName(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	ns := cfg.NetworkOperator.Namespace
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
+		Manage:    true,
+		Operators: []config.OCPOperatorSubscription{{Package: "nvidia-network-operator", Name: "old-sub", Namespace: ns}},
+	}
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", releaseChannel277)
+	live := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", ns, "new-sub",
+		map[string]interface{}{"spec": map[string]interface{}{"name": "nvidia-network-operator"}})
+	c := fake.NewClientBuilder().WithObjects(manifest, live).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	assert.Equal(t, "new-sub", operatorSub(t, cfg, "nvidia-network-operator").Name, "refresh the saved Subscription name from the cluster")
+}
